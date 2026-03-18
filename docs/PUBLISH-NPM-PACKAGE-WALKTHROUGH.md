@@ -230,7 +230,7 @@ cd path\to\client-website
 npm install @damianhch/client-cms
 ```
 
-Use your real scope and package name (e.g. `@asoldi/client-cms` if you used that). Then add the mount and route as in the main setup docs.
+Use your real scope and package name (e.g. `@asoldi/client-cms` if you used that). Then add the mount, route, and **Hostinger env** (CMS_HUB_URL, CMS_SITE_KEY) as in **[CLIENT-SITE-DEPLOYMENT.md](CLIENT-SITE-DEPLOYMENT.md)**.
 
 ---
 

@@ -18,10 +18,8 @@ When the **Users** feature is enabled for a client, the client CMS must support 
 
 ## Step 1 – In the hub (main Asoldi site)
 
-1. Open your main site’s **super-admin**: e.g.  
-   `https://seashell-camel-446716.hostingersite.com/superadmin`  
-   (or `https://asoldi.com/superadmin` when you move).
-2. Log in (same as /admin on the main site).
+1. Open your main site’s **Admin → Manage clients**: e.g. `https://asoldi.com/admin`, then click **Manage clients** in the sidebar.
+2. Log in (same credentials as before for /admin).
 3. Click **Add site**:
    - **Name:** e.g. Mong Sushi
    - **Domain:** e.g. `mongsushi.no` (the client’s live domain, or test domain for staging).
@@ -192,10 +190,19 @@ On the **client’s** Hostinger (or other host), set these in the **environment 
 | `NPM_TOKEN`    | `ghp_...` GitHub PAT with `read:packages` | Yes | Lets Hostinger install `@damianhch/client-cms` |
 
 - **CMS_HUB_URL** – Base URL of the main Asoldi site (the hub). The client CMS calls `{CMS_HUB_URL}/api/hub/site-config` (or equivalent) to get features. Use your production URL when the hub is on asoldi.com, or the test URL for staging.
-- **CMS_SITE_KEY** – Identifies this client in the hub. Paste the key you copied when you added the site in super-admin.
+- **CMS_SITE_KEY** – Identifies this client in the hub. Paste the key you copied when you added the site in Admin → Manage clients (main site).
 - **NPM_TOKEN** – GitHub Personal Access Token with `read:packages` (and `repo` if the package repo is private). This is read by `.npmrc` so Hostinger’s `npm install` can download `@damianhch/client-cms` without 401 errors.
 
 If the client CMS package also has its own **admin login** (separate from the hub), you may need to set admin credentials on the client host as well (e.g. `CMS_ADMIN_USERNAME`, `CMS_ADMIN_PASSWORD`). Check the **@damianhch/client-cms** README or docs for that. For the hub connection and install, the three above are what you need.
+
+---
+
+## Preserve hub data when you deploy the main site
+
+The hub stores client sites in **`data/sites.json`** on the **main site’s server**. That file is in `.gitignore`, so it is **not** in the repo. When you deploy updates to the main site (Asoldi):
+
+- **Keep** the `data/` folder (and `data/sites.json`) on the server. Many hosts do not overwrite ignored files; if yours does a full clean deploy, back up `data/sites.json` before deploy and restore it after, or re-add each client in Admin → Manage clients and set **CMS_SITE_KEY** on each client again.
+- If the list in Manage clients is empty after a deploy, the file was reset—add mongsushi.no (and any other clients) again, copy each site key, and update the client’s **CMS_SITE_KEY** env var so their CMS continues to work.
 
 ---
 
@@ -224,5 +231,5 @@ After deployment:
 
 If the client’s domain changes (e.g. mongsushi.no → newdomain.com):
 
-1. In the hub (super-admin), edit the site and set **Domain** to the new domain.
+1. In the hub (Admin → Manage clients), edit the site and set **Domain** to the new domain.
 2. On the client host, you can leave **CMS_SITE_KEY** as is (sites are identified by key). Only update **CMS_HUB_URL** if the main Asoldi hub URL changes.

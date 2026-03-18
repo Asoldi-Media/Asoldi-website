@@ -25,20 +25,24 @@ To have **this** site’s /admin driven by the hub, add a site in super-admin wi
 
 ## 2. Add CMS to a client (e.g. mongsushi.no)
 
+**Full step-by-step (including Hostinger env):** see **[CLIENT-SITE-DEPLOYMENT.md](CLIENT-SITE-DEPLOYMENT.md)**.
+
+Short version:
+
 1. In the **hub** (/superadmin): Add site **Mong Sushi**, domain **mongsushi.no**. Copy the **site key**.
 2. In the **mongsushi.no project**:
-   - Install the client CMS package: `npm install @asoldi/client-cms` (from the [website-cms](https://github.com/Damianhch/website-cms) repo, published to npm/GitHub Packages).
+   - Configure npm for GitHub Packages and install: `npm install @damianhch/client-cms` (see [PUBLISH-NPM-PACKAGE-WALKTHROUGH.md](PUBLISH-NPM-PACKAGE-WALKTHROUGH.md) Part E).
    - In the server: mount the CMS routes at `/api/cms`. Example:
      ```js
-     import createCmsRoutes from '@asoldi/client-cms';
+     import createCmsRoutes from '@damianhch/client-cms';
      app.use('/api/cms', createCmsRoutes({
        hubUrl: process.env.CMS_HUB_URL || 'https://asoldi.com',
        siteKey: process.env.CMS_SITE_KEY,
        dataPath: './data',
      }));
      ```
-   - In the React app: add `<Route path="/admin" element={<ClientCMS />} />` and import `ClientCMS` from `@asoldi/client-cms/ClientCMS`.
-   - Set env on the host: `CMS_HUB_URL=https://asoldi.com` (or test URL), `CMS_SITE_KEY=<paste key>`.
+   - In the React app: add `<Route path="/admin" element={<ClientCMS />} />` and import `ClientCMS` from `@damianhch/client-cms`.
+   - On Hostinger (or host): set `CMS_HUB_URL` and `CMS_SITE_KEY=<paste key>` (see CLIENT-SITE-DEPLOYMENT.md).
 3. Deploy mongsushi.no. Then **mongsushi.no/admin** will show the Client CMS and only the features you enabled in the hub for that site.
 
 Repeat for each of your 10+ clients: add site in hub → install package + mount routes + route → set env → deploy.
