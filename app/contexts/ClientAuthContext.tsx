@@ -3,8 +3,27 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 const CLIENT_TOKEN_KEY = 'clientToken';
 const CLIENT_AUTH_EVENT = 'client-auth-changed';
 
+type ClientBusiness = {
+  id: string;
+  name: string;
+  role: 'owner' | 'admin' | 'collaborator';
+  status: string;
+  email?: string;
+};
+
+type ClientMembership = {
+  id: string;
+  businessId: string;
+  userId: string;
+  email: string;
+  role: 'owner' | 'admin' | 'collaborator';
+  status: string;
+};
+
 type ClientProfile = {
   userId: string;
+  businessId?: string;
+  ownerUserId?: string;
   email: string;
   name: string;
   businessName: string;
@@ -57,10 +76,14 @@ type ClientAuthContextValue = {
   isClient: boolean;
   user: ClientAuthUser | null;
   profile: ClientProfile | null;
+  businesses: ClientBusiness[];
+  activeBusinessId: string;
+  membership: ClientMembership | null;
   token: string;
   setClientSession: (token: string) => Promise<void>;
   clearClientSession: () => void;
   refreshClientSession: () => Promise<void>;
+  switchBusiness: (businessId: string) => Promise<void>;
   authHeaders: () => Record<string, string>;
   updateProfileState: (next: ClientProfile | null) => void;
 };
@@ -70,10 +93,14 @@ const ClientAuthContext = createContext<ClientAuthContextValue>({
   isClient: false,
   user: null,
   profile: null,
+  businesses: [],
+  activeBusinessId: '',
+  membership: null,
   token: '',
   setClientSession: async () => {},
   clearClientSession: () => {},
   refreshClientSession: async () => {},
+  switchBusiness: async () => {},
   authHeaders: () => ({}),
   updateProfileState: () => {},
 });
@@ -99,6 +126,17 @@ export function ClientAuthProvider({ children }: { children: React.ReactNode }) 
   const [token, setToken] = useState('');
   const [user, setUser] = useState<ClientAuthUser | null>(null);
   const [profile, setProfile] = useState<ClientProfile | null>(null);
+  const [businesses, setBusinesses] = useState<ClientBusiness[]>([]);
+  const [activeBusinessId, setActiveBusinessId] = useState('');
+  const [membership, setMembership] = useState<ClientMembership | null>(null);
+
+  const applySession = useCallback((data: any) => {
+    if (data?.user) setUser(data.user);
+    if (data?.profile !== undefined) setProfile(data.profile || null);
+    if (Array.isArray(data?.businesses)) setBusinesses(data.businesses);
+    if (typeof data?.activeBusinessId === 'string') setActiveBusinessId(data.activeBusinessId);
+    if (data?.membership !== undefined) setMembership(data.membership || null);
+  }, []);
 
   const refreshClientSession = useCallback(async () => {
     const existing = getClientToken();
@@ -106,6 +144,9 @@ export function ClientAuthProvider({ children }: { children: React.ReactNode }) 
       setToken('');
       setUser(null);
       setProfile(null);
+      setBusinesses([]);
+      setActiveBusinessId('');
+      setMembership(null);
       setLoading(false);
       return;
     }
@@ -124,25 +165,33 @@ export function ClientAuthProvider({ children }: { children: React.ReactNode }) 
         setToken('');
         setUser(null);
         setProfile(null);
+        setBusinesses([]);
+        setActiveBusinessId('');
+        setMembership(null);
         setLoading(false);
         return;
       }
-      setUser(data.user || null);
-      setProfile(data.profile || null);
+      applySession(data);
     } catch {
       // Keep local token but clear resolved identity on network failures.
       setUser(null);
       setProfile(null);
+      setBusinesses([]);
+      setActiveBusinessId('');
+      setMembership(null);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [applySession]);
 
   const clearClientSession = useCallback(() => {
     removeClientToken();
     setToken('');
     setUser(null);
     setProfile(null);
+    setBusinesses([]);
+    setActiveBusinessId('');
+    setMembership(null);
     window.dispatchEvent(new Event(CLIENT_AUTH_EVENT));
   }, []);
 
@@ -182,18 +231,40 @@ export function ClientAuthProvider({ children }: { children: React.ReactNode }) 
     };
   }, [refreshClientSession]);
 
+  const switchBusiness = useCallback(async (businessId: string) => {
+    const existing = getClientToken();
+    if (!existing || !businessId) return;
+    const response = await fetch('/api/client/businesses/switch', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${existing}`,
+      },
+      body: JSON.stringify({ businessId }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.message || 'Kunne ikke bytte bedrift.');
+    }
+    applySession(data);
+  }, [applySession]);
+
   const value = useMemo<ClientAuthContextValue>(() => ({
     loading,
     isClient: Boolean(user?.id),
     user,
     profile,
+    businesses,
+    activeBusinessId,
+    membership,
     token,
     setClientSession,
     clearClientSession,
     refreshClientSession,
+    switchBusiness,
     authHeaders: () => (token ? { Authorization: `Bearer ${token}` } : {}),
     updateProfileState,
-  }), [loading, user, profile, token, setClientSession, clearClientSession, refreshClientSession, updateProfileState]);
+  }), [loading, user, profile, businesses, activeBusinessId, membership, token, setClientSession, clearClientSession, refreshClientSession, switchBusiness, updateProfileState]);
 
   return (
     <ClientAuthContext.Provider value={value}>

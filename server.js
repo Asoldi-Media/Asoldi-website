@@ -31,6 +31,21 @@ import * as employees from './data/employees.js';
 import * as sales from './data/sales.js';
 import { SALES_CONTACT_CORRECTIONS } from './data/sales-contact-corrections.js';
 import * as clientPortal from './data/client-portal.js';
+import * as clientBusinesses from './data/client-businesses.js';
+import {
+  isAllowedClientUploadName,
+  readClientMedia,
+  saveClientUploadBuffer,
+} from './lib/client-media-store.js';
+import {
+  getAssistantState,
+  getJobForUser,
+  handleAssistantChat,
+  importProductFiles,
+  startProductScrape,
+} from './lib/ai-assistant/service.js';
+import { parsePublicHttpUrl } from './lib/ai-assistant/safe-url.js';
+import { applyMakerBundleToPortal } from './lib/maker-bundle-sync.js';
 import * as offers from './data/offers.js';
 import * as resetTokens from './data/reset-tokens.js';
 import { getPersistentDataDir, pruneAllDataBackups } from './data/storage-path.js';
@@ -131,6 +146,7 @@ import {
   firefliesIdsFromPaste,
   findStoredFirefliesMeetingForMeetLink,
   listStoredFirefliesMeetings,
+  listStoredFirefliesMeetingsForMeetLink,
   meetingRefForClient,
   rankMeetingsByTitle,
   storeFirefliesMeeting,
@@ -1475,6 +1491,7 @@ async function restartMakerTunnel(targetUrl = DEFAULT_MAKER_LOCAL_URL) {
       if (settled) return;
       settled = true;
       makerTunnelUrl = url;
+      globalThis.__asoldiMakerTunnelUrl = url;
       makerTunnelTargetUrl = normalizedTarget;
       makerTunnelStartedAt = new Date().toISOString();
       resolve({
@@ -1873,7 +1890,8 @@ function clientTokenFromRequest(req) {
   const auth = req.headers.authorization;
   const bearer = auth && auth.startsWith('Bearer ') ? auth.slice(7) : '';
   const fallbackHeader = sanitizeText(req.headers['x-client-token']);
-  return bearer || fallbackHeader || '';
+  const queryToken = sanitizeText(req.query?.token);
+  return bearer || fallbackHeader || queryToken || '';
 }
 
 function normalizeSalesDetailLinks(value = {}, fallback = {}) {
@@ -7757,13 +7775,17 @@ async function finalizeClientGoogleSignIn(googleProfile) {
     throw new Error('E-posten er registrert for en annen brukertype.');
   }
 
-  const profile = clientPortal.upsertClientProfile(user.id, {
-    email,
-    name: googleProfile.name || undefined,
-  });
+  clientPortal.ensureClientProfileForUser(user);
+  if (googleProfile.name) {
+    clientPortal.upsertClientProfile(user.id, {
+      email,
+      name: googleProfile.name,
+    });
+  }
+  const session = clientPortal.presentClientSession(user);
   const token = signToken({ role: 'client', userId: user.id, at: Date.now(), provider: 'google' });
-  const redirectPath = profile?.onboardingCompleted ? '/kunde/hjem' : '/kunde/onboarding';
-  return { token, redirectPath, profile };
+  const redirectPath = session?.profile?.onboardingCompleted ? '/kunde/hjem' : '/kunde/onboarding';
+  return { token, redirectPath, ...session };
 }
 
 async function maybeSyncCalendar(client, previousClient = null, options = {}) {
@@ -9460,16 +9482,10 @@ app.post('/api/client/auth/signup', async (req, res) => {
     return res.status(400).json({ message: created.error || 'Kunne ikke opprette konto.' });
   }
   const user = await store.getUserById(created.user.id);
-  const profile = clientPortal.ensureClientProfileForUser(user);
   const token = signToken({ role: 'client', userId: created.user.id, at: Date.now() });
   res.status(201).json({
     token,
-    user: {
-      id: created.user.id,
-      email,
-      role: 'client',
-    },
-    profile,
+    ...clientPortal.presentClientSession(user),
   });
 });
 
@@ -9507,20 +9523,15 @@ app.post('/api/client/auth/social-signin', async (req, res) => {
     return res.status(409).json({ message: 'E-posten er registrert for en annen brukertype.' });
   }
 
-  const profile = clientPortal.upsertClientProfile(user.id, {
-    email,
-    name: name || undefined,
-  });
+  clientPortal.ensureClientProfileForUser(user);
+  if (name) {
+    clientPortal.upsertClientProfile(user.id, { email, name });
+  }
   const token = signToken({ role: 'client', userId: user.id, at: Date.now(), provider });
   res.json({
     token,
-    user: {
-      id: user.id,
-      email,
-      role: 'client',
-      provider,
-    },
-    profile,
+    provider,
+    ...clientPortal.presentClientSession(user),
   });
 });
 
@@ -9535,16 +9546,10 @@ app.post('/api/client/auth/login', async (req, res) => {
     return res.status(401).json({ message: 'Ugyldig e-post eller passord.' });
   }
   const user = await store.getUserById(result.user.id);
-  const profile = clientPortal.ensureClientProfileForUser(user);
   const token = signToken({ role: 'client', userId: result.user.id, at: Date.now() });
   res.json({
     token,
-    user: {
-      id: result.user.id,
-      email: result.user.username,
-      role: 'client',
-    },
-    profile,
+    ...clientPortal.presentClientSession(user),
   });
 });
 
@@ -9588,19 +9593,167 @@ function clientAuth(req, res, next) {
   return next();
 }
 
-app.get('/api/client/auth/me', clientAuth, async (req, res) => {
+function clientOfferLookup(user) {
+  const session = clientPortal.presentClientSession(user);
+  return {
+    userId: user.id,
+    email: user.username,
+    businessId: session?.activeBusinessId || session?.profile?.businessId || '',
+    membershipBusinessIds: (session?.businesses || []).map((row) => row.id),
+  };
+}
+
+function stampOfferBusiness(offer, user) {
+  if (!offer) return null;
+  const lookup = clientOfferLookup(user);
+  if (offer.businessId && offer.targetUserId) return offer;
+  return offers.updateOffer(offer.id, {
+    businessId: offer.businessId || lookup.businessId,
+    targetUserId: offer.targetUserId || user.id,
+    targetEmail: offer.targetEmail || normalizeEmail(user.username),
+  }) || offer;
+}
+
+async function loadClientUser(req, res) {
   const user = await store.getUserById(req.client.userId);
   if (!user || user.role !== 'client') {
-    return res.status(401).json({ message: 'User not found' });
+    res.status(401).json({ message: 'Unauthorized' });
+    return null;
   }
-  const profile = clientPortal.ensureClientProfileForUser(user);
+  return user;
+}
+
+app.get('/api/client/auth/me', clientAuth, async (req, res) => {
+  const user = await loadClientUser(req, res);
+  if (!user) return;
+  return res.json(clientPortal.presentClientSession(user));
+});
+
+app.get('/api/client/businesses', clientAuth, async (req, res) => {
+  const user = await loadClientUser(req, res);
+  if (!user) return;
+  return res.json(clientPortal.presentClientSession(user));
+});
+
+app.post('/api/client/businesses', clientAuth, async (req, res) => {
+  const user = await loadClientUser(req, res);
+  if (!user) return;
+  const profile = clientPortal.createBusinessForUser(user, { name: sanitizeText(req.body?.name) });
+  if (!profile) return res.status(400).json({ message: 'Kunne ikke opprette bedriften.' });
+  return res.status(201).json(clientPortal.presentClientSession(user));
+});
+
+app.post('/api/client/businesses/switch', clientAuth, async (req, res) => {
+  const user = await loadClientUser(req, res);
+  if (!user) return;
+  const businessId = sanitizeText(req.body?.businessId);
+  const switched = clientPortal.switchBusinessForUser(user.id, businessId);
+  if (!switched) return res.status(403).json({ message: 'Du har ikke tilgang til denne bedriften.' });
+  return res.json(clientPortal.presentClientSession(user));
+});
+
+app.get('/api/client/businesses/:businessId/members', clientAuth, async (req, res) => {
+  const user = await loadClientUser(req, res);
+  if (!user) return;
+  const access = clientPortal.requireBusinessAccess(user.id, req.params.businessId);
+  if (!access.ok) return res.status(access.status).json({ message: access.message });
   return res.json({
-    user: {
-      id: user.id,
-      email: user.username,
-      role: 'client',
-    },
-    profile,
+    members: clientBusinesses.getMembershipsForBusiness(req.params.businessId).map(clientBusinesses.publicMembership),
+  });
+});
+
+app.post('/api/client/businesses/:businessId/members', clientAuth, async (req, res) => {
+  const user = await loadClientUser(req, res);
+  if (!user) return;
+  const access = clientPortal.requireBusinessAccess(user.id, req.params.businessId, { manage: true });
+  if (!access.ok) return res.status(access.status).json({ message: access.message });
+  const email = normalizeEmail(req.body?.email);
+  if (!isValidEmail(email)) return res.status(400).json({ message: 'Skriv inn en gyldig e-postadresse.' });
+  const existingUser = await findClientUserByEmail(email);
+  const invited = clientBusinesses.inviteMember({
+    businessId: req.params.businessId,
+    email,
+    role: sanitizeText(req.body?.role || 'collaborator'),
+    invitedBy: user.id,
+    userId: existingUser?.id || '',
+  });
+  if (!invited.ok) return res.status(invited.status || 400).json({ message: invited.message });
+  return res.status(invited.alreadyPending ? 200 : 201).json({
+    membership: clientBusinesses.publicMembership(invited.membership),
+    alreadyPending: Boolean(invited.alreadyPending),
+    members: clientBusinesses.getMembershipsForBusiness(req.params.businessId).map(clientBusinesses.publicMembership),
+  });
+});
+
+app.post('/api/client/businesses/:businessId/members/:membershipId/revoke', clientAuth, async (req, res) => {
+  const user = await loadClientUser(req, res);
+  if (!user) return;
+  const access = clientPortal.requireBusinessAccess(user.id, req.params.businessId, { manage: true });
+  if (!access.ok) return res.status(access.status).json({ message: access.message });
+  const revoked = clientBusinesses.revokeMembership({
+    businessId: req.params.businessId,
+    membershipId: req.params.membershipId,
+    actorUserId: user.id,
+  });
+  if (!revoked.ok) return res.status(revoked.status || 400).json({ message: revoked.message });
+  return res.json({
+    ok: true,
+    members: clientBusinesses.getMembershipsForBusiness(req.params.businessId).map(clientBusinesses.publicMembership),
+  });
+});
+
+app.post('/api/client/businesses/:businessId/leave', clientAuth, async (req, res) => {
+  const user = await loadClientUser(req, res);
+  if (!user) return;
+  const left = clientBusinesses.leaveBusiness({ businessId: req.params.businessId, userId: user.id });
+  if (!left.ok) return res.status(left.status || 400).json({ message: left.message });
+  const remaining = clientPortal.listBusinessesForUser(user.id);
+  if (remaining[0]?.id) clientBusinesses.setActiveBusinessId(user.id, remaining[0].id);
+  return res.json(clientPortal.presentClientSession(user));
+});
+
+app.post('/api/client/businesses/:businessId/transfer', clientAuth, async (req, res) => {
+  const user = await loadClientUser(req, res);
+  if (!user) return;
+  const access = clientPortal.requireBusinessAccess(user.id, req.params.businessId, { transfer: true });
+  if (!access.ok) return res.status(access.status).json({ message: access.message });
+  const toUserId = sanitizeText(req.body?.userId);
+  const transferred = clientBusinesses.transferOwnership({
+    businessId: req.params.businessId,
+    toUserId,
+    actorUserId: user.id,
+  });
+  if (!transferred.ok) return res.status(transferred.status || 400).json({ message: transferred.message });
+  const nextOwner = await store.getUserById(toUserId);
+  clientPortal.setBusinessOwner(req.params.businessId, toUserId, nextOwner?.username || '');
+  return res.json({
+    ok: true,
+    ...clientPortal.presentClientSession(user),
+    members: clientBusinesses.getMembershipsForBusiness(req.params.businessId).map(clientBusinesses.publicMembership),
+  });
+});
+
+app.post('/api/client/account/change-email', clientAuth, async (req, res) => {
+  const user = await loadClientUser(req, res);
+  if (!user) return;
+  const nextEmail = normalizeEmail(req.body?.email);
+  const password = String(req.body?.password || '');
+  if (!isValidEmail(nextEmail)) return res.status(400).json({ message: 'Skriv inn en gyldig e-postadresse.' });
+  if (!password) return res.status(400).json({ message: 'Bekreft med passordet ditt.' });
+  const verified = await store.verifyClient(user.username, password);
+  if (!verified.ok) return res.status(401).json({ message: 'Feil passord.' });
+  if (nextEmail === normalizeEmail(user.username)) {
+    return res.json(clientPortal.presentClientSession(user));
+  }
+  const updated = await store.updateUserUsername(user.id, nextEmail);
+  if (!updated.ok) {
+    return res.status(409).json({ message: 'E-posten er allerede i bruk.' });
+  }
+  clientPortal.updateOwnedLoginEmails(user.id, nextEmail);
+  const refreshed = await store.getUserById(user.id);
+  return res.json({
+    ok: true,
+    ...clientPortal.presentClientSession(refreshed),
   });
 });
 
@@ -9662,14 +9815,15 @@ app.post('/api/client/referrals', clientAuth, async (req, res) => {
 });
 
 app.get('/api/client/settings', clientAuth, async (req, res) => {
-  const user = await store.getUserById(req.client.userId);
-  if (!user || user.role !== 'client') return res.status(401).json({ message: 'Unauthorized' });
-  const profile = clientPortal.ensureClientProfileForUser(user);
-  const billing = await buildClientBillingOverview(profile);
+  const user = await loadClientUser(req, res);
+  if (!user) return;
+  const session = clientPortal.presentClientSession(user);
+  const billing = await buildClientBillingOverview(session.profile);
   return res.json({
-    profile,
-    clientDataBank: profile?.clientDataBank || null,
+    ...session,
+    clientDataBank: session.profile?.clientDataBank || null,
     billing,
+    members: clientBusinesses.getMembershipsForBusiness(session.activeBusinessId).map(clientBusinesses.publicMembership),
   });
 });
 
@@ -9691,6 +9845,166 @@ app.put('/api/client/settings/client-data', clientAuth, async (req, res) => {
     clientDataBank: bank,
   }, { syncPortalState: false });
   return res.json({ profile, clientDataBank: profile?.clientDataBank || null });
+});
+
+const clientAssistantUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024, files: 12 },
+});
+
+function clientMediaMime(fileName = '') {
+  const ext = String(fileName || '').toLowerCase().split('.').pop();
+  const map = {
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    webp: 'image/webp',
+    gif: 'image/gif',
+    svg: 'image/svg+xml',
+    avif: 'image/avif',
+    pdf: 'application/pdf',
+  };
+  return map[ext] || 'application/octet-stream';
+}
+
+app.get('/api/client/ai-assistant/state', clientAuth, async (req, res) => {
+  const user = await store.getUserById(req.client.userId);
+  if (!user || user.role !== 'client') return res.status(401).json({ message: 'Unauthorized' });
+  clientPortal.ensureClientProfileForUser(user);
+  return res.json(await getAssistantState(user.id));
+});
+
+app.post('/api/client/ai-assistant/chat', clientAuth, (req, res) => {
+  clientAssistantUpload.array('files', 12)(req, res, async (error) => {
+    if (error) {
+      return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
+        message: error.message || 'Opplasting feilet.',
+      });
+    }
+    const user = await store.getUserById(req.client.userId);
+    if (!user || user.role !== 'client') return res.status(401).json({ message: 'Unauthorized' });
+    clientPortal.ensureClientProfileForUser(user);
+    let messages = [];
+    try {
+      messages = JSON.parse(req.body?.messages || '[]');
+    } catch {
+      messages = [];
+    }
+    const files = (Array.isArray(req.files) ? req.files : []).map((file) => ({
+      originalName: file.originalname,
+      buffer: file.buffer,
+    }));
+    try {
+      const result = await handleAssistantChat(user.id, {
+        text: sanitizeText(req.body?.text),
+        messages,
+        files,
+      });
+      return res.json(result);
+    } catch (err) {
+      return res.status(err.status || 500).json({ message: err.message || 'AI-assistenten feilet.' });
+    }
+  });
+});
+
+app.post('/api/client/ai-assistant/products/scrape', clientAuth, async (req, res) => {
+  const user = await store.getUserById(req.client.userId);
+  if (!user || user.role !== 'client') return res.status(401).json({ message: 'Unauthorized' });
+  try {
+    parsePublicHttpUrl(req.body?.url);
+    const result = await startProductScrape(user.id, sanitizeText(req.body?.url));
+    return res.json(result);
+  } catch (err) {
+    return res.status(err.status || 400).json({ message: err.message || 'Ugyldig URL.' });
+  }
+});
+
+app.get('/api/client/ai-assistant/products/jobs/:jobId', clientAuth, async (req, res) => {
+  const user = await store.getUserById(req.client.userId);
+  if (!user || user.role !== 'client') return res.status(401).json({ message: 'Unauthorized' });
+  const job = getJobForUser(req.params.jobId, user.id);
+  if (!job) return res.status(404).json({ message: 'Fant ikke jobben.' });
+  return res.json(job);
+});
+
+app.post('/api/client/ai-assistant/products/import', clientAuth, (req, res) => {
+  clientAssistantUpload.array('files', 12)(req, res, async (error) => {
+    if (error) {
+      return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
+        message: error.message || 'Opplasting feilet.',
+      });
+    }
+    const user = await store.getUserById(req.client.userId);
+    if (!user || user.role !== 'client') return res.status(401).json({ message: 'Unauthorized' });
+    const files = (Array.isArray(req.files) ? req.files : []).map((file) => ({
+      originalName: file.originalname,
+      buffer: file.buffer,
+    }));
+    try {
+      const result = await importProductFiles(user.id, {
+        files,
+        text: sanitizeText(req.body?.text),
+      });
+      return res.json(result);
+    } catch (err) {
+      return res.status(err.status || 500).json({ message: err.message || 'Import feilet.' });
+    }
+  });
+});
+
+app.post('/api/client/media', clientAuth, (req, res) => {
+  clientAssistantUpload.single('file')(req, res, async (error) => {
+    if (error) {
+      return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
+        message: error.message || 'Opplasting feilet.',
+      });
+    }
+    const user = await store.getUserById(req.client.userId);
+    if (!user || user.role !== 'client') return res.status(401).json({ message: 'Unauthorized' });
+    const file = req.file;
+    if (!file) return res.status(400).json({ message: 'Mangler fil.' });
+    if (!isAllowedClientUploadName(file.originalname)) {
+      return res.status(400).json({ message: 'Filtypen er ikke tillatt.' });
+    }
+    try {
+      const saved = await saveClientUploadBuffer(user.id, {
+        buffer: file.buffer,
+        originalName: file.originalname,
+      });
+      return res.status(201).json(saved);
+    } catch (err) {
+      return res.status(err.status || 500).json({ message: err.message || 'Kunne ikke lagre filen.' });
+    }
+  });
+});
+
+app.get('/client-media/:userId/:fileName', clientAuth, async (req, res) => {
+  if (req.client.userId !== req.params.userId) {
+    return res.status(403).json({ message: 'Forbidden' });
+  }
+  const stored = readClientMedia(req.params.userId, decodeURIComponent(req.params.fileName));
+  if (!stored) return res.status(404).json({ message: 'Fant ikke filen.' });
+  res.setHeader('Content-Type', clientMediaMime(stored.fileName));
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  return res.send(stored.buffer);
+});
+
+app.post('/api/internal/maker/client-bundle', async (req, res) => {
+  if (!isMakerStatusCallbackAuthorized(req)) {
+    return res.status(401).json({ message: 'Unauthorized callback.' });
+  }
+  const result = applyMakerBundleToPortal({
+    portalUserId: sanitizeText(req.body?.portalUserId),
+    salesClientId: sanitizeText(req.body?.salesClientId),
+    businessId: sanitizeText(req.body?.businessId),
+    email: sanitizeText(req.body?.email),
+    bundle: req.body?.bundle && typeof req.body.bundle === 'object' ? req.body.bundle : {},
+    runId: sanitizeText(req.body?.runId),
+    publicPreviewUrl: sanitizeText(req.body?.publicPreviewUrl),
+    tunnelUrl: sanitizeText(req.body?.tunnelUrl),
+  });
+  if (!result.ok) return res.status(result.status || 400).json({ message: result.message });
+  return res.json(result);
 });
 
 app.get('/api/client/billing/overview', clientAuth, async (req, res) => {
@@ -10650,9 +10964,9 @@ function applyOfferPlanToUser(userId, offer) {
 app.get('/api/client/offer', clientAuth, async (req, res) => {
   const user = await store.getUserById(req.client.userId);
   if (!user || user.role !== 'client') return res.status(401).json({ message: 'Unauthorized' });
-  let offer = offers.getActiveOfferForUser({ userId: user.id, email: user.username });
+  let offer = offers.getActiveOfferForUser(clientOfferLookup(user));
   if (!offer) return res.json({ offer: null });
-  offer = hydrateOfferPreviewFromSalesImport(offer, { persist: true });
+  offer = stampOfferBusiness(hydrateOfferPreviewFromSalesImport(offer, { persist: true }), user);
   applyOfferPlanToUser(user.id, offer);
   return res.json({ offer: presentClientOffer(offer) });
 });
@@ -10660,7 +10974,7 @@ app.get('/api/client/offer', clientAuth, async (req, res) => {
 app.post('/api/client/offer/accept', clientAuth, async (req, res) => {
   const user = await store.getUserById(req.client.userId);
   if (!user || user.role !== 'client') return res.status(401).json({ message: 'Unauthorized' });
-  const offer = offers.getActiveOfferForUser({ userId: user.id, email: user.username });
+  const offer = stampOfferBusiness(offers.getActiveOfferForUser(clientOfferLookup(user)), user);
   if (!offer) return res.status(404).json({ message: 'Fant ingen tilbud på denne kontoen.' });
   const screen = req.body?.screen && typeof req.body.screen === 'object' ? req.body.screen : {};
   const saved = offers.recordOfferAcceptance(offer.id, {
@@ -10697,7 +11011,11 @@ app.post('/api/client/website/existing-code', clientAuth, async (req, res) => {
   if (!offer) {
     return res.status(404).json({ message: 'Fant ingen tilbud med denne koden. Sjekk at koden er riktig.' });
   }
-  const claimed = offers.claimOffer(offer.id, { userId: user.id, email: user.username });
+  const claimed = offers.claimOffer(offer.id, {
+    userId: user.id,
+    email: user.username,
+    businessId: clientOfferLookup(user).businessId,
+  });
   clientPortal.setClientExistingWebsiteCode(user.id, code);
   const plan = findWebsitePlan(offer.planId);
   if (plan) {
@@ -11188,6 +11506,20 @@ app.post('/api/admin/sales/maker-status-callback', async (req, res) => {
     return res.status(401).json({ message: 'Unauthorized callback.' });
   }
   const event = sanitizeText(req.body?.event) || 'run.step.updated';
+  if (event === 'run.client-bundle.updated' && req.body?.bundle) {
+    const result = applyMakerBundleToPortal({
+      portalUserId: sanitizeText(req.body?.portalUserId),
+      salesClientId: sanitizeText(req.body?.salesClientId),
+      businessId: sanitizeText(req.body?.businessId),
+      email: sanitizeText(req.body?.email),
+      bundle: req.body.bundle,
+      runId: sanitizeText(req.body?.runId),
+      publicPreviewUrl: sanitizeText(req.body?.publicPreviewUrl),
+      tunnelUrl: sanitizeText(req.body?.tunnelUrl),
+    });
+    if (!result.ok) return res.status(result.status || 400).json({ message: result.message });
+    return res.json(result);
+  }
   const runId = sanitizeText(req.body?.runId);
   const salesClientId = sanitizeText(req.body?.salesClientId);
   const callbackStatus = sanitizeText(req.body?.status);
@@ -12271,7 +12603,8 @@ app.post('/api/admin/sales/:id/connect-portal', salesAuth, async (req, res) => {
   }
   const plan = toClientWebsitePlan(tier);
   const previewUrl = getPublicSalesPreviewUrl(existing) || '';
-  clientPortal.ensureClientProfileForUser(user);
+  const session = clientPortal.presentClientSession(user);
+  const businessId = session?.activeBusinessId || session?.profile?.businessId || user.id;
   clientPortal.setClientSelectedWebsitePlan(user.id, {
     id: plan.id,
     name: plan.name,
@@ -12280,7 +12613,7 @@ app.post('/api/admin/sales/:id/connect-portal', salesAuth, async (req, res) => {
   });
   clientPortal.upsertClientProfile(user.id, {
     websiteBuilder: { salesClientId: existing.id, previewUrl },
-  });
+  }, { businessId });
   const portalOffer = offers.findPortalOfferForSales({
     salesOfferId: salesOffer?.id,
     salesClientId: existing.id,
@@ -12289,6 +12622,7 @@ app.post('/api/admin/sales/:id/connect-portal', salesAuth, async (req, res) => {
     offers.updateOffer(portalOffer.id, {
       targetUserId: user.id,
       targetEmail: clientEmail,
+      businessId,
       planId: plan.id,
       planName: plan.name,
       price: plan.price,
@@ -12297,13 +12631,90 @@ app.post('/api/admin/sales/:id/connect-portal', salesAuth, async (req, res) => {
   }
   const updated = sales.updateSalesClient(existing.id, {
     portalUserId: user.id,
+    portalBusinessId: businessId,
     portalConnectedAt: new Date().toISOString(),
     portalTierId: tier.id,
   });
   res.json({
     client: updated,
     user: { id: user.id, email: clientEmail },
+    businessId,
     tier: { id: tier.id, name: plan.name },
+  });
+});
+
+app.post('/api/admin/sales/:id/change-client-login', salesAuth, async (req, res) => {
+  if (!req.salesUser?.isAdmin) {
+    return res.status(403).json({ message: 'Bare admin kan bytte innloggings-e-post.' });
+  }
+  const existing = sales.getSalesClientById(req.params.id);
+  if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
+  const nextEmail = normalizeEmail(req.body?.email);
+  if (!isValidEmail(nextEmail)) return res.status(400).json({ message: 'Skriv inn en gyldig e-postadresse.' });
+  const user = existing.portalUserId
+    ? await store.getUserById(existing.portalUserId)
+    : await findClientUserByEmail(existing.clientEmail);
+  if (!user || user.role !== 'client') {
+    return res.status(404).json({ message: 'Fant ingen kundekonto å oppdatere.' });
+  }
+  const updatedUser = await store.updateUserUsername(user.id, nextEmail);
+  if (!updatedUser.ok) return res.status(409).json({ message: 'E-posten er allerede i bruk.' });
+  if (req.body?.password) {
+    const nextPassword = String(req.body.password);
+    if (!passwordValid(nextPassword)) {
+      return res.status(400).json({ message: 'Passord må være minst 8 tegn.' });
+    }
+    await store.updateUserPassword(user.id, nextPassword);
+  }
+  clientPortal.updateOwnedLoginEmails(user.id, nextEmail);
+  const client = sales.updateSalesClient(existing.id, { clientEmail: nextEmail });
+  return res.json({
+    ok: true,
+    client,
+    user: { id: user.id, email: nextEmail },
+  });
+});
+
+app.post('/api/admin/sales/:id/reassign-portal', salesAuth, async (req, res) => {
+  if (!req.salesUser?.isAdmin) {
+    return res.status(403).json({ message: 'Bare admin kan flytte eierskap.' });
+  }
+  const existing = sales.getSalesClientById(req.params.id);
+  if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
+  const nextEmail = normalizeEmail(req.body?.email);
+  if (!isValidEmail(nextEmail)) return res.status(400).json({ message: 'Skriv inn e-posten til den nye eieren.' });
+  const nextUser = await findClientUserByEmail(nextEmail);
+  if (!nextUser) {
+    return res.status(404).json({ message: 'Ny eier må ha opprettet kundekonto først.' });
+  }
+  const previousProfile = existing.portalUserId
+    ? clientPortal.getClientProfileByBusinessId(existing.portalBusinessId)
+      || clientPortal.getClientProfileByUserId(existing.portalUserId)
+    : null;
+  const targetBusinessId = sanitizeText(
+    existing.portalBusinessId || req.body?.businessId || previousProfile?.businessId
+  );
+  if (!targetBusinessId) {
+    return res.status(400).json({ message: 'Mangler bedrift å flytte. Koble portalen først.' });
+  }
+  const moved = clientBusinesses.staffReassignOwner({
+    businessId: targetBusinessId,
+    toUserId: nextUser.id,
+    email: nextEmail,
+  });
+  if (!moved.ok) return res.status(moved.status || 400).json({ message: moved.message });
+  clientPortal.setBusinessOwner(targetBusinessId, nextUser.id, nextEmail);
+  const client = sales.updateSalesClient(existing.id, {
+    portalUserId: nextUser.id,
+    portalBusinessId: targetBusinessId,
+    clientEmail: nextEmail,
+    portalConnectedAt: new Date().toISOString(),
+  });
+  return res.json({
+    ok: true,
+    client,
+    businessId: targetBusinessId,
+    user: { id: nextUser.id, email: nextEmail },
   });
 });
 
@@ -12554,6 +12965,7 @@ function compactOfferClient(client = {}) {
     businessName: client.businessName || '',
     contactPerson: client.contactPerson || '',
     contactEmail: client.contactEmail || '',
+    websiteEmail: client.websiteEmail || '',
     clientEmail: client.clientEmail || '',
     contactPhone: client.contactPhone || '',
     orgNumber: client.orgNumber || '',
@@ -12705,6 +13117,26 @@ async function attachRecentFirefliesByMeetLink(client) {
   return sales.getSalesClientById(client.id) || client;
 }
 
+/** Transcripts already stored for this client's calendar Meet, so Bytt opptak can list them. */
+function linkCalendarSessionTranscripts(client) {
+  if (!client?.id) return client;
+  const meetLink = sanitizeText(client?.calendar?.meetLink);
+  const stored = listStoredFirefliesMeetingsForMeetLink(meetLink);
+  let current = client;
+  for (const row of stored) {
+    if (!row?.meetingId) continue;
+    const already = (current.meetings || []).some((item) => sanitizeText(item.meetingId) === sanitizeText(row.meetingId));
+    if (already) continue;
+    linkFirefliesMeeting(current.id, meetingRefForClient({ ...row, meetLink: row.meetingLink || meetLink }, {
+      clientId: current.id,
+      linkedBy: 'meet-link',
+      confidence: 'medium',
+    }));
+    current = sales.getSalesClientById(current.id) || current;
+  }
+  return current;
+}
+
 function meetingForOffer(client, offer) {
   if (sanitizeText(offer?.meetingSource) === 'manual' && sanitizeText(offer?.meetingId)) {
     const chosen = readStoredFirefliesMeeting(offer.meetingId)
@@ -12782,15 +13214,19 @@ function presentOfferMeetings(client, offer) {
   const selected = sanitizeText(offer?.meetingId)
     || (client?.progression?.meetingHeld ? sanitizeText(client?.lockedOfferMeetingId) : '')
     || sanitizeText(salesMeetingRef(client)?.meetingId);
-  return (Array.isArray(client?.meetings) ? client.meetings : []).map((row) => ({
-    meetingId: row.meetingId,
-    title: row.title || 'Fireflies-møte',
-    when: row.when || formatOfferMeetingWhen(row.startedAt),
-    durationMinutes: row.durationMinutes === '' || row.durationMinutes == null ? '' : Number(row.durationMinutes),
-    hasTranscript: Boolean(row.hasTranscript),
-    liveJoined: Boolean(row.liveJoinedAt) || String(row.meetingId || '').startsWith('live:'),
-    selected: Boolean(selected) && selected === row.meetingId,
-  }));
+  return (Array.isArray(client?.meetings) ? client.meetings : []).map((row) => {
+    const stored = readStoredFirefliesMeeting(row.meetingId);
+    const hasTranscript = Boolean(row.hasTranscript) || Boolean(sanitizeText(stored?.transcript));
+    return {
+      meetingId: row.meetingId,
+      title: row.title || stored?.title || 'Fireflies-møte',
+      when: row.when || formatOfferMeetingWhen(row.startedAt || stored?.startedAt),
+      durationMinutes: row.durationMinutes === '' || row.durationMinutes == null ? '' : Number(row.durationMinutes),
+      hasTranscript,
+      liveJoined: Boolean(row.liveJoinedAt) || String(row.meetingId || '').startsWith('live:'),
+      selected: Boolean(selected) && selected === row.meetingId,
+    };
+  }).sort((a, b) => Number(b.hasTranscript) - Number(a.hasTranscript));
 }
 
 async function offerIdentityValues(client, req) {
@@ -12820,8 +13256,10 @@ function quoteMatchesOffer(offer, built, sentence) {
   return true;
 }
 
-function applyMeetingQuoteToOffer(offer, client) {
-  if (!offer || offer.status !== 'draft' || salesOffers.offerPreviewIsCurrent(offer)) return offer;
+function applyMeetingQuoteToOffer(offer, client, { forceProducts = false } = {}) {
+  if (!offer || offer.status === 'sent') return offer;
+  if (forceProducts && offer.products?.length) return offer;
+  if (!forceProducts && (offer.status !== 'draft' || salesOffers.offerPreviewIsCurrent(offer))) return offer;
   const built = buildOfferFromMeetingQuote(client?.details?.meetingQuote);
   if (!built) return offer;
   const sentence = workshopStartSentence(client?.details?.meetingQuote?.startDate);
@@ -12912,12 +13350,10 @@ function offerPatchFromBody(body = {}, current = {}) {
   return patch;
 }
 
-/** Til on the offer page. Stored only when it differs from the client card, so clearing it falls back. */
-function offerRecipientPatch(body = {}, client = {}) {
+/** Til is the website email on the client card. Offer saves do not keep a separate recipient. */
+function offerRecipientPatch(body = {}) {
   if (typeof body.to !== 'string') return null;
-  const email = sanitizeText(body.to);
-  const card = sanitizeText(client?.contactEmail);
-  return { contactEmail: email && email.toLowerCase() !== card.toLowerCase() ? email : '' };
+  return { contactEmail: '' };
 }
 
 async function notifyOfferReviewRequested(offer, client, req) {
@@ -12990,12 +13426,8 @@ function clientForOfferFill(client) {
   return { ...client, notes: offerProductNotes(client) };
 }
 
-function workshopSentenceForClient(client, workshopStart = '') {
-  const direct = sanitizeText(client?.details?.meetingQuote?.startDate);
-  if (/^\d{4}-\d{2}-\d{2}$/.test(direct)) return workshopStartSentence(direct);
-  const fromTalk = sanitizeText(workshopStart).replace(/^startdato for workshop:\s*/i, '').replace(/\.$/, '');
-  if (fromTalk) return `Startdato for workshop: ${fromTalk}.`;
-  return workshopStartSentence('');
+function workshopSentenceForClient(client) {
+  return workshopStartSentence(sanitizeText(client?.details?.meetingQuote?.startDate));
 }
 
 function offerContextBlocker(client, meeting) {
@@ -13018,7 +13450,7 @@ async function fillOpenOfferSlotsFromSalesMeeting(offer, client, req) {
   const nuances = await fillOfferFromTranscript({ client: clientForOfferFill(client), meeting: meeting || {}, products: offer.products, tierId: offer.tierId });
   const filled = refreshOfferShell(fillOfferSlots(html, {
     ...nuances,
-    workshop: workshopSentenceForClient(client, nuances.workshopStart),
+    workshop: workshopSentenceForClient(client),
   }, { onlyOpen: true }));
   if (filled === html) return offer;
   return salesOffers.updateSalesOffer(offer.id, {
@@ -13040,9 +13472,9 @@ async function composeOfferMessage(offer, client, req, { to = '' } = {}) {
 }
 
 /** Why a rep cannot send this offer right now ('' when they can). Mirrors the composer's disabled hints. */
-function offerSendBlocker(offer, { ignorePreview = false } = {}) {
+function offerSendBlocker(offer, { ignorePreview = false, ignoreReviewGate = false } = {}) {
   if (!offer.products.length) return 'Velg en nettside-tier (eller få tilbudet verifisert) før du sender.';
-  if (!salesOffers.offerCanBeSentBySales(offer)) {
+  if (!ignoreReviewGate && !salesOffers.offerCanBeSentBySales(offer)) {
     return offer.status === 'review-requested'
       ? 'Tilbudet venter på gjennomgang hos admin.'
       : 'Dette tilbudet må kjøres via admin først (skreddersydd eller merket for gjennomgang).';
@@ -13070,6 +13502,7 @@ app.get('/api/admin/sales/:id/offer', salesAuth, async (req, res) => {
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
   client = ensureOfferMeetingHistory(client);
   client = await attachRecentFirefliesByMeetLink(client);
+  client = linkCalendarSessionTranscripts(client);
   const offer = await ensureOfferDraft(client, req);
   const sender = await resolveSalesSenderForAccount(req.salesUser);
   const meeting = meetingForOffer(client, offer);
@@ -13092,6 +13525,7 @@ app.get('/api/admin/sales/:id/offer/meeting', salesAuth, async (req, res) => {
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
   client = ensureOfferMeetingHistory(client);
+  client = linkCalendarSessionTranscripts(client);
   const offer = salesOffers.getOfferForClient(client.id);
   const meeting = meetingForOffer(client, offer);
   return res.json({
@@ -13153,7 +13587,7 @@ app.post('/api/admin/sales/:id/offer/fill', salesAuth, async (req, res) => {
     const nuances = await fillOfferFromTranscript({ client: clientForOfferFill(client), meeting: meeting || {}, products: current.products, tierId: current.tierId });
     const filled = fillOfferSlots(html, {
       ...nuances,
-      workshop: workshopSentenceForClient(client, nuances.workshopStart),
+      workshop: workshopSentenceForClient(client),
     });
     const updated = salesOffers.updateSalesOffer(current.id, {
       email: { html: filled },
@@ -13314,7 +13748,7 @@ app.post('/api/admin/sales/:id/offer/preview', salesAuth, async (req, res) => {
       },
       placeholders: findOfferPlaceholders(offer.email.html),
       readiness,
-      blocker: readiness.ready ? offerSendBlocker(offer, { ignorePreview: true }) : readiness.message,
+      blocker: readiness.ready ? offerSendBlocker(offer, { ignorePreview: true, ignoreReviewGate: true }) : readiness.message,
     });
   } catch (error) {
     res.status(400).json({ message: sanitizeText(error?.message) || 'Kunne ikke lage forhåndsvisning.' });
@@ -13360,6 +13794,7 @@ function publishSalesOfferToPortal({ salesClient, offer, letterHtml, contractHtm
     previewUrl,
     targetUserId: user?.id || '',
     targetEmail: normalizeEmail(email),
+    businessId: sanitizeText(salesClient.portalBusinessId),
     letterHtml,
     contractHtml,
   });
@@ -13528,8 +13963,11 @@ app.get('/api/admin/offers/:id', salesAuth, async (req, res) => {
   if (!requireOfferAdmin(req, res)) return;
   const stored = salesOffers.getSalesOfferById(req.params.id);
   if (!stored) return res.status(404).json({ message: 'Offer not found.' });
-  const offer = refreshStoredOfferShell(stored, req);
+  let offer = refreshStoredOfferShell(stored, req);
   const client = sales.getSalesClientById(offer.salesClientId);
+  if (client && !offer.products?.length && offer.status !== 'sent' && offer.status !== 'verified') {
+    offer = applyMeetingQuoteToOffer(offer, client, { forceProducts: true });
+  }
   const ownerNames = await salesOwnerNameMap(req);
   const meetings = (client?.meetings || []).map((ref) => ({ ...ref, media: describeFirefliesMedia(ref.meetingId) }));
   res.json({
@@ -15038,6 +15476,7 @@ app.post('/api/admin/sales/offers', salesAuth, async (req, res) => {
     }
   }
 
+  const salesClientForOffer = salesClientId ? sales.getSalesClientById(salesClientId) : null;
   const offer = offers.createOffer({
     ownerId: req.salesUser.accountKey,
     salesClientId,
@@ -15049,6 +15488,7 @@ app.post('/api/admin/sales/offers', salesAuth, async (req, res) => {
     previewUrl,
     targetUserId: resolvedTargetUserId,
     targetEmail: resolvedTargetEmail,
+    businessId: sanitizeText(salesClientForOffer?.portalBusinessId || body.businessId),
   });
   res.status(201).json({ offer });
 });

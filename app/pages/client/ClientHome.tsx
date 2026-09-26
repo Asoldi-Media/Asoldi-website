@@ -238,14 +238,7 @@ export const ClientHome = () => {
                       Betaling
                       <ChevronDown size={16} className="text-[#9CA3AF]" />
                     </summary>
-                    <button
-                      type="button"
-                      onClick={() => navigate('/kunde/tjenester/nettside/checkout')}
-                      className="mt-3 w-full rounded-xl border border-[#E7E9EE] bg-[#F4F5F7] px-4 py-3 text-left opacity-60 hover:opacity-80"
-                    >
-                      <p className="text-sm font-semibold text-[#6B7280]">Gå til betaling</p>
-                      <p className="mt-0.5 text-xs text-[#9CA3AF]">Du kan betale når du vil. Oppsettet av nettsiden kommer først.</p>
-                    </button>
+                    <p className="mt-3 text-sm text-[#6B7280]">Betaling åpnes når Asoldi slår på checkout for kontoen din.</p>
                   </details>
                 ) : null}
 
@@ -260,13 +253,6 @@ export const ClientHome = () => {
             <section className="rounded-2xl border border-[#E7E9EE] bg-white p-6">
               <div className="flex items-center justify-between">
                 <h3 className="text-base font-semibold text-[#111827]">Din nettside</h3>
-                <button
-                  type="button"
-                  onClick={() => navigate('/kunde/tjenester/nettside/planer')}
-                  className="text-sm text-[#FF5B00] hover:text-[#E55200]"
-                >
-                  Detaljer
-                </button>
               </div>
 
               <div className="mt-4 rounded-xl border border-[#EDEFF3] bg-[#FCFCFD] p-4">

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Gift, MessageSquare, UserCircle2, ChevronRight, LogOut, Settings, CreditCard } from 'lucide-react';
+import { Gift, MessageSquare, UserCircle2, ChevronRight, LogOut, Settings, CreditCard, Building2, Check } from 'lucide-react';
 import { useClientAuth } from '../../contexts/ClientAuthContext';
 import { ClientReferralModal } from './ClientReferralModal';
 import { REFERRAL_REWARD_LABEL } from '../../../lib/client-referral.js';
@@ -38,30 +38,48 @@ function SidebarLink({
 export function ClientPortalLayout({ children, title, subtitle }: Props) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { profile, clearClientSession } = useClientAuth();
+  const { profile, businesses, activeBusinessId, switchBusiness, clearClientSession } = useClientAuth();
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [businessMenuOpen, setBusinessMenuOpen] = useState(false);
   const [referralOpen, setReferralOpen] = useState(false);
+  const [switching, setSwitching] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
+  const businessMenuRef = useRef<HTMLDivElement | null>(null);
+  const activeBusiness = businesses.find((row) => row.id === activeBusinessId) || businesses[0] || null;
 
   const isHome = location.pathname === '/kunde' || location.pathname === '/kunde/hjem';
   const isServices = location.pathname.startsWith('/kunde/tjenester');
   const isSettings = location.pathname.startsWith('/kunde/innstillinger');
 
   useEffect(() => {
-    if (!profileMenuOpen) return;
+    if (!profileMenuOpen && !businessMenuOpen) return;
     function handleOutsideClick(event: MouseEvent) {
-      if (!profileMenuRef.current) return;
-      if (!profileMenuRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (profileMenuRef.current && !profileMenuRef.current.contains(target)) {
         setProfileMenuOpen(false);
+      }
+      if (businessMenuRef.current && !businessMenuRef.current.contains(target)) {
+        setBusinessMenuOpen(false);
       }
     }
     document.addEventListener('mousedown', handleOutsideClick);
     return () => document.removeEventListener('mousedown', handleOutsideClick);
-  }, [profileMenuOpen]);
+  }, [profileMenuOpen, businessMenuOpen]);
 
   function logout() {
     clearClientSession();
     navigate('/login');
+  }
+
+  async function chooseBusiness(businessId: string) {
+    if (!businessId || businessId === activeBusinessId || switching) return;
+    setSwitching(true);
+    try {
+      await switchBusiness(businessId);
+      setBusinessMenuOpen(false);
+    } finally {
+      setSwitching(false);
+    }
   }
 
   return (
@@ -103,6 +121,47 @@ export function ClientPortalLayout({ children, title, subtitle }: Props) {
               {subtitle ? <p className="text-xs text-[#6B7280]">{subtitle}</p> : null}
             </div>
             <div className="flex items-center gap-3">
+              <div className="relative" ref={businessMenuRef}>
+                <button
+                  type="button"
+                  onClick={() => setBusinessMenuOpen((prev) => !prev)}
+                  className="inline-flex max-w-[240px] items-center gap-2 rounded-full border border-[#E5E7EB] bg-white px-3 py-2 text-sm"
+                  aria-label="Bytt bedrift"
+                >
+                  <Building2 size={14} />
+                  <span className="truncate">{activeBusiness?.name || profile?.businessName || 'Bedrift'}</span>
+                  <ChevronRight size={12} className="rotate-90 text-[#9CA3AF]" />
+                </button>
+                {businessMenuOpen ? (
+                  <div className="absolute right-0 mt-2 min-w-[260px] rounded-xl border border-[#E5E7EB] bg-white p-2 shadow-lg z-20">
+                    <p className="px-2 py-1 text-[11px] uppercase tracking-wide text-[#9CA3AF]">Bedrifter</p>
+                    {businesses.map((row) => (
+                      <button
+                        key={row.id}
+                        type="button"
+                        disabled={switching}
+                        onClick={() => void chooseBusiness(row.id)}
+                        className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm hover:bg-[#F9FAFB] disabled:opacity-50"
+                      >
+                        <span>
+                          <span className="block font-medium">{row.name}</span>
+                          <span className="block text-[11px] text-[#6B7280]">
+                            {row.role === 'owner' ? 'Eier' : row.role === 'admin' ? 'Admin' : 'Samarbeidspartner'}
+                          </span>
+                        </span>
+                        {row.id === activeBusinessId ? <Check size={14} className="text-[#FF5B00]" /> : null}
+                      </button>
+                    ))}
+                    <Link
+                      to="/kunde/innstillinger/konto"
+                      onClick={() => setBusinessMenuOpen(false)}
+                      className="mt-1 block rounded-lg px-3 py-2 text-sm text-[#FF5B00] hover:bg-[#FFF7ED]"
+                    >
+                      Administrer bedrifter
+                    </Link>
+                  </div>
+                ) : null}
+              </div>
               <button
                 type="button"
                 onClick={() => setReferralOpen(true)}

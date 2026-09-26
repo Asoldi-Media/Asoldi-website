@@ -283,7 +283,7 @@ export function MeetingNotesModal({ businessName, quote, saving, embedded = fals
           <aside className="border-t lg:border-t-0 lg:border-l border-[#E6E9EF] bg-[#F8F9FB] flex flex-col min-h-0">
             <div className="px-4 py-3 border-b border-[#E6E9EF]">
               <h4 className="font-medium text-[#111827]">Spørsmål i møtet</h4>
-              <p className="text-[11px] text-[#6B7280]">Transkriptet tar med svarene. Skriv produktnotater under. Startdato settes på tilbudssiden.</p>
+              <p className="text-[11px] text-[#6B7280]">Transkriptet tar med svarene. Startdato og produktnotater ligger under, og følger med i tilbudet.</p>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               <ol className="list-decimal pl-4 space-y-2 text-sm text-[#111827]">
@@ -291,6 +291,16 @@ export function MeetingNotesModal({ businessName, quote, saving, embedded = fals
                   <li key={question}>{question}</li>
                 ))}
               </ol>
+              <label className="block">
+                <span className="text-xs text-[#6B7280]">Startdato for workshop</span>
+                <input
+                  type="date"
+                  value={state.startDate || ''}
+                  onChange={(e) => setState((prev) => ({ ...prev, startDate: e.target.value }))}
+                  className="mt-1 w-full px-3 py-2 rounded-lg bg-white border border-[#E5E7EB] text-sm text-[#111827]"
+                />
+                <span className="mt-1 block text-[11px] text-[#6B7280]">Tomt felt: e-posten sier at datoen avtales senere.</span>
+              </label>
               <label className="block">
                 <span className="text-xs text-[#6B7280]">Produktnotater</span>
                 <textarea

@@ -81,6 +81,10 @@ export default defineConfig(({ command, mode }) => {
           target: process.env.API_PROXY_TARGET || 'http://localhost:3001',
           changeOrigin: true,
         },
+        '/client-media': {
+          target: process.env.API_PROXY_TARGET || 'http://localhost:3001',
+          changeOrigin: true,
+        },
       },
     },
   };

@@ -1,5 +1,8 @@
 import { readFileSync, existsSync } from 'fs';
+import { randomBytes } from 'crypto';
 import { getDataFilePath, ensurePersistentDataDir, writeDataJson } from './storage-path.js';
+import { resolvePortalCatalogs } from '../lib/client-product-catalog.js';
+import * as clientBusinesses from './client-businesses.js';
 
 const CLIENT_PROFILES_PATH = getDataFilePath('client-portal-profiles.json');
 const CLIENT_STATE_PATH = getDataFilePath('client-portal-state.json');
@@ -350,6 +353,7 @@ function defaultClientDataBank(seed = {}) {
       days: DEFAULT_OPENING_DAYS.map((row) => ({ ...row })),
     },
     affiliations: [],
+    productCatalogs: [],
     products: [],
     media: {
       mainHeroImages: [],
@@ -357,6 +361,12 @@ function defaultClientDataBank(seed = {}) {
       logos: [],
       icons: [],
       uncategorized: [],
+      teamImages: [],
+      aboutImages: [],
+      locationImages: [],
+      illustrationImages: [],
+      offeringImages: [],
+      briefs: [],
     },
     websiteCreatorQuestions: {
       targetAudience: '',
@@ -365,6 +375,28 @@ function defaultClientDataBank(seed = {}) {
       primaryAction: '',
       importantKeywords: [],
       competitorLinks: [],
+      businessWhat: '',
+      businessStory: '',
+      differentiator: '',
+      reviews: '',
+      extraContext: '',
+      wantedPages: '',
+      customSections: '',
+      websiteDomain: '',
+      town: '',
+      country: '',
+      relevantLinks: '',
+    },
+    makerLink: {
+      bundleId: '',
+      bundleName: '',
+      email: '',
+      salesClientId: '',
+      runId: '',
+      publicPreviewUrl: '',
+      tunnelUrl: '',
+      businessId: '',
+      syncedAt: '',
     },
   };
 }
@@ -420,6 +452,12 @@ function normalizeClientDataBank(input = {}, fallback = {}) {
     logos: normalizeMediaList(src.media?.logos, base.media.logos),
     icons: normalizeMediaList(src.media?.icons, base.media.icons),
     uncategorized: normalizeMediaList(src.media?.uncategorized, base.media.uncategorized),
+    teamImages: normalizeMediaList(src.media?.teamImages || src.media?.employeeImages, base.media.teamImages || []),
+    aboutImages: normalizeMediaList(src.media?.aboutImages, base.media.aboutImages || []),
+    locationImages: normalizeMediaList(src.media?.locationImages, base.media.locationImages || []),
+    illustrationImages: normalizeMediaList(src.media?.illustrationImages, base.media.illustrationImages || []),
+    offeringImages: normalizeMediaList(src.media?.offeringImages || src.media?.menuImages, base.media.offeringImages || []),
+    briefs: Array.isArray(src.media?.briefs) ? src.media.briefs.filter((row) => row && typeof row === "object") : (base.media.briefs || []),
   };
 
   const websiteCreatorQuestions = {
@@ -429,7 +467,37 @@ function normalizeClientDataBank(input = {}, fallback = {}) {
     primaryAction: sanitizeText(src.websiteCreatorQuestions?.primaryAction || base.websiteCreatorQuestions.primaryAction),
     importantKeywords: normalizeTextList(src.websiteCreatorQuestions?.importantKeywords, base.websiteCreatorQuestions.importantKeywords),
     competitorLinks: normalizeTextList(src.websiteCreatorQuestions?.competitorLinks, base.websiteCreatorQuestions.competitorLinks),
+    businessWhat: sanitizeText(src.websiteCreatorQuestions?.businessWhat || base.websiteCreatorQuestions.businessWhat),
+    businessStory: sanitizeText(src.websiteCreatorQuestions?.businessStory || base.websiteCreatorQuestions.businessStory),
+    differentiator: sanitizeText(src.websiteCreatorQuestions?.differentiator || base.websiteCreatorQuestions.differentiator),
+    reviews: sanitizeText(src.websiteCreatorQuestions?.reviews || base.websiteCreatorQuestions.reviews),
+    extraContext: sanitizeText(src.websiteCreatorQuestions?.extraContext || base.websiteCreatorQuestions.extraContext),
+    wantedPages: sanitizeText(src.websiteCreatorQuestions?.wantedPages || base.websiteCreatorQuestions.wantedPages),
+    customSections: sanitizeText(src.websiteCreatorQuestions?.customSections || base.websiteCreatorQuestions.customSections),
+    websiteDomain: sanitizeText(src.websiteCreatorQuestions?.websiteDomain || base.websiteCreatorQuestions.websiteDomain),
+    town: sanitizeText(src.websiteCreatorQuestions?.town || base.websiteCreatorQuestions.town),
+    country: sanitizeText(src.websiteCreatorQuestions?.country || base.websiteCreatorQuestions.country),
+    relevantLinks: sanitizeText(src.websiteCreatorQuestions?.relevantLinks || base.websiteCreatorQuestions.relevantLinks),
   };
+
+  const makerLink = {
+    bundleId: sanitizeText(src.makerLink?.bundleId || base.makerLink?.bundleId),
+    bundleName: sanitizeText(src.makerLink?.bundleName || base.makerLink?.bundleName),
+    email: sanitizeText(src.makerLink?.email || base.makerLink?.email).toLowerCase(),
+    salesClientId: sanitizeText(src.makerLink?.salesClientId || base.makerLink?.salesClientId),
+    runId: sanitizeText(src.makerLink?.runId || base.makerLink?.runId),
+    publicPreviewUrl: sanitizeText(src.makerLink?.publicPreviewUrl || base.makerLink?.publicPreviewUrl),
+    tunnelUrl: sanitizeText(src.makerLink?.tunnelUrl || base.makerLink?.tunnelUrl),
+    businessId: sanitizeText(src.makerLink?.businessId || base.makerLink?.businessId),
+    syncedAt: sanitizeText(src.makerLink?.syncedAt || base.makerLink?.syncedAt),
+  };
+
+  const resolvedCatalogs = resolvePortalCatalogs({
+    productCatalogs: src.productCatalogs || base.productCatalogs,
+    products: src.products || base.products,
+    extraHay: businessCard.industry,
+    keepEmptyProducts: true,
+  });
 
   return {
     businessCard,
@@ -437,9 +505,13 @@ function normalizeClientDataBank(input = {}, fallback = {}) {
     brandIdentity,
     openingHours,
     affiliations: normalizeAffiliations(src.affiliations, base.affiliations),
-    products: normalizeProducts(src.products, base.products),
+    productCatalogs: resolvedCatalogs.productCatalogs,
+    products: resolvedCatalogs.products.length
+      ? resolvedCatalogs.products
+      : normalizeProducts(src.products, base.products),
     media,
     websiteCreatorQuestions,
+    makerLink,
   };
 }
 
@@ -506,7 +578,9 @@ function normalizeProfile(input = {}) {
     || clientDataBank.brandIdentity.orgNumber
   );
   return {
-    userId: sanitizeText(input.userId),
+    businessId: sanitizeText(input.businessId || input.userId),
+    ownerUserId: sanitizeText(input.ownerUserId || input.userId),
+    userId: sanitizeText(input.ownerUserId || input.userId),
     email: sanitizeText(input.email).toLowerCase(),
     name,
     fullName: name,
@@ -553,7 +627,7 @@ function defaultTodoList(selectedPlanName = '', existingCode = '') {
       title: 'Steg 1: Sett opp nettsiden din',
       description: 'Inkluderer SEO-optimalisering, kontaktskjema, hosting og vedlikehold.',
       actionLabel: 'Start',
-      actionPath: '/kunde/tjenester/nettside/start',
+      actionPath: '/kunde/ai-assistant',
       completed: false,
     },
     {
@@ -646,10 +720,23 @@ export function listClientProfiles() {
   return readProfiles().map(normalizeProfile).sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 }
 
+export function getClientProfileByBusinessId(businessId) {
+  const target = sanitizeText(businessId);
+  if (!target) return null;
+  return listClientProfiles().find((entry) => sanitizeText(entry.businessId || entry.userId) === target) || null;
+}
+
 export function getClientProfileByUserId(userId) {
   const target = sanitizeText(userId);
   if (!target) return null;
-  return listClientProfiles().find((entry) => entry.userId === target) || null;
+  const activeId = clientBusinesses.getActiveBusinessId(target);
+  if (activeId) {
+    const active = getClientProfileByBusinessId(activeId);
+    if (active) return active;
+  }
+  const owned = listClientProfiles().filter((entry) => sanitizeText(entry.ownerUserId || entry.userId) === target);
+  if (owned.length === 1) return owned[0];
+  return owned.find((entry) => sanitizeText(entry.businessId || entry.userId) === target) || owned[0] || null;
 }
 
 export function getClientProfile(userId) {
@@ -657,31 +744,34 @@ export function getClientProfile(userId) {
 }
 
 export function upsertClientProfile(userId, patch = {}, options = {}) {
-  const target = sanitizeText(userId);
-  if (!target) return null;
+  const ownerId = sanitizeText(options.ownerUserId || patch.ownerUserId || userId);
+  const businessId = sanitizeText(options.businessId || patch.businessId || clientBusinesses.getActiveBusinessId(ownerId) || userId);
+  if (!businessId) return null;
   const syncPortalState = options.syncPortalState !== false;
   const state = readProfiles().map(normalizeProfile);
-  const index = state.findIndex((entry) => entry.userId === target);
+  const index = state.findIndex((entry) => sanitizeText(entry.businessId || entry.userId) === businessId);
   const now = nowIso();
 
   if (index === -1) {
     const created = normalizeProfile({
-      userId: target,
+      userId: ownerId,
+      ownerUserId: ownerId,
+      businessId,
       ...patch,
       createdAt: now,
       updatedAt: now,
     });
     state.push(created);
     writeProfiles(state);
-    if (syncPortalState) syncPortalStateFromProfile(target, created);
+    if (syncPortalState) syncPortalStateFromProfile(businessId, created);
     return created;
   }
 
-  const merged = mergeProfilePatch(state[index], patch);
+  const merged = mergeProfilePatch(state[index], { ...patch, businessId, ownerUserId: ownerId || state[index].ownerUserId });
   state[index] = merged;
   writeProfiles(state);
   if (syncPortalState) {
-    syncPortalStateFromProfile(target, merged, {
+    syncPortalStateFromProfile(businessId, merged, {
       selectedWebsitePlanId: merged.websiteBuilder.selectedPlanId,
       selectedWebsitePlanName: merged.websiteBuilder.selectedPlanName,
       websiteCode: merged.websiteBuilder.existingWebsiteCode,
@@ -700,12 +790,144 @@ export function upsertClientProfile(userId, patch = {}, options = {}) {
 
 export function ensureClientProfileForUser(user) {
   if (!user?.id) return null;
+  clientBusinesses.acceptPendingInvitesForUser({
+    userId: user.id,
+    email: sanitizeText(user.username).toLowerCase(),
+  });
   const existing = getClientProfileByUserId(user.id);
-  if (existing) return existing;
-  return upsertClientProfile(user.id, {
+  if (existing) {
+    if (sanitizeText(existing.ownerUserId || existing.userId) === sanitizeText(user.id)) {
+      clientBusinesses.ensureOwnerMembership({
+        userId: user.id,
+        email: existing.email || user.username,
+        businessId: existing.businessId || existing.userId,
+      });
+    }
+    return existing;
+  }
+  const created = upsertClientProfile(user.id, {
     email: sanitizeText(user.username).toLowerCase(),
     onboardingCompleted: false,
+    businessId: user.id,
+    ownerUserId: user.id,
+  }, { businessId: user.id, ownerUserId: user.id });
+  clientBusinesses.ensureOwnerMembership({
+    userId: user.id,
+    email: user.username,
+    businessId: user.id,
   });
+  return created;
+}
+
+export function createBusinessForUser(user, { name = '' } = {}) {
+  if (!user?.id) return null;
+  const businessId = `biz_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`;
+  const profile = upsertClientProfile(user.id, {
+    email: sanitizeText(user.username).toLowerCase(),
+    name: sanitizeText(user.name),
+    businessName: sanitizeText(name) || 'Ny bedrift',
+    onboardingCompleted: false,
+    businessId,
+    ownerUserId: user.id,
+  }, { businessId, ownerUserId: user.id });
+  clientBusinesses.ensureOwnerMembership({
+    userId: user.id,
+    email: user.username,
+    businessId,
+  });
+  clientBusinesses.setActiveBusinessId(user.id, businessId);
+  return profile;
+}
+
+function businessRow(profile, membership) {
+  return {
+    id: membership?.businessId || profile?.businessId || profile?.userId || '',
+    name: profile?.businessName || profile?.clientDataBank?.businessCard?.companyName || profile?.email || 'Bedrift',
+    role: membership?.role || 'owner',
+    status: membership?.status || 'active',
+    email: profile?.email || membership?.email || '',
+  };
+}
+
+export function listBusinessesForUser(userId) {
+  const target = sanitizeText(userId);
+  const memberships = clientBusinesses.getActiveMembershipsForUser(target);
+  const seen = new Set();
+  const rows = [];
+  for (const membership of memberships) {
+    if (seen.has(membership.businessId)) continue;
+    seen.add(membership.businessId);
+    rows.push(businessRow(getClientProfileByBusinessId(membership.businessId), membership));
+  }
+  if (rows.length) return rows.filter((row) => row.id);
+  return listClientProfiles()
+    .filter((entry) => sanitizeText(entry.ownerUserId || entry.userId) === target)
+    .map((profile) => businessRow(profile, clientBusinesses.getMembership(target, profile.businessId)))
+    .filter((row) => row.id);
+}
+
+export function presentClientSession(user) {
+  if (!user?.id) return null;
+  const profile = ensureClientProfileForUser(user);
+  const businesses = listBusinessesForUser(user.id);
+  const activeBusinessId = sanitizeText(
+    clientBusinesses.getActiveBusinessId(user.id) || profile?.businessId || businesses[0]?.id
+  );
+  const membership = clientBusinesses.getMembership(user.id, activeBusinessId);
+  return {
+    user: {
+      id: user.id,
+      email: sanitizeText(user.username).toLowerCase(),
+      role: 'client',
+    },
+    profile,
+    businesses,
+    activeBusinessId,
+    membership: membership ? clientBusinesses.publicMembership(membership) : null,
+  };
+}
+
+export function requireBusinessAccess(userId, businessId, { manage = false, transfer = false } = {}) {
+  const membership = clientBusinesses.getMembership(userId, businessId);
+  if (!membership || membership.status !== 'active') {
+    return { ok: false, status: 403, message: 'Du har ikke tilgang til denne bedriften.' };
+  }
+  if (transfer && !clientBusinesses.canTransferOwnership(membership.role)) {
+    return { ok: false, status: 403, message: 'Bare eier kan overføre bedriften.' };
+  }
+  if (manage && !clientBusinesses.canManageMembers(membership.role)) {
+    return { ok: false, status: 403, message: 'Bare eier eller admin kan administrere medlemmer.' };
+  }
+  return { ok: true, membership };
+}
+
+export function updateOwnedLoginEmails(userId, email) {
+  const ownerId = sanitizeText(userId);
+  const next = sanitizeText(email).toLowerCase();
+  if (!ownerId || !next) return [];
+  clientBusinesses.updateMembershipEmailsForUser(ownerId, next);
+  return listClientProfiles()
+    .filter((entry) => sanitizeText(entry.ownerUserId || entry.userId) === ownerId)
+    .map((entry) => upsertClientProfile(ownerId, { email: next }, {
+      businessId: entry.businessId,
+      ownerUserId: ownerId,
+      syncPortalState: false,
+    }));
+}
+
+export function setBusinessOwner(businessId, ownerUserId, email = '') {
+  const profile = getClientProfileByBusinessId(businessId);
+  if (!profile) return null;
+  return upsertClientProfile(ownerUserId, {
+    ownerUserId,
+    email: sanitizeText(email).toLowerCase() || profile.email,
+  }, { businessId, ownerUserId, syncPortalState: false });
+}
+
+export function switchBusinessForUser(userId, businessId) {
+  const next = clientBusinesses.setActiveBusinessId(userId, businessId);
+  if (!next) return null;
+  return getClientProfileByBusinessId(next);
 }
 
 export function setClientOnboarding(userId, data = {}) {
@@ -749,8 +971,9 @@ export function setClientPayment(userId, patch = {}) {
   return upsertClientProfile(userId, { payment: next }, { syncPortalState: false });
 }
 
-export function setClientDataBank(userId, patch = {}) {
-  return upsertClientProfile(userId, { clientDataBank: patch }, { syncPortalState: false });
+export function setClientDataBank(userId, patch = {}, options = {}) {
+  const businessId = sanitizeText(options.businessId || clientBusinesses.getActiveBusinessId(userId) || userId);
+  return upsertClientProfile(userId, { clientDataBank: patch, businessId }, { syncPortalState: false, businessId });
 }
 
 export function setClientAppliedPromotionCode(userId, promotionCode = null) {
@@ -780,7 +1003,7 @@ export function getClientDashboardData(profile) {
         title: 'Sett opp din nettside',
         description: 'Kom i gang med nettsiden din – velg plan, design og innhold.',
         actionLabel: 'Start her',
-        route: '/kunde/tjenester/nettside/start',
+        route: '/kunde/ai-assistant',
       },
     ],
     marketingElements: [

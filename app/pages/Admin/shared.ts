@@ -449,6 +449,7 @@ export type SalesClient = {
   /** Account email on asoldi.com. Separate from the contact email used for meeting mail. */
   clientEmail?: string;
   portalUserId?: string;
+  portalBusinessId?: string;
   portalConnectedAt?: string;
   portalTierId?: string;
   /** Public website email. Empty means use contactEmail until the Maker draft adds another. */

@@ -17,9 +17,9 @@ export const ClientServices = () => {
         <div className="grid md:grid-cols-3 gap-4">
           <ServiceCard
             title="Nettside"
-            description="Start nettsideflyten, velg plan og gå til checkout."
+            description="Sett opp produktdata og innhold med AI-assistenten."
             ctaLabel="Åpne"
-            onClick={() => navigate('/kunde/tjenester/nettside/start')}
+            onClick={() => navigate('/kunde/ai-assistant')}
           />
           <ServiceCard
             title="E-post"

@@ -80,6 +80,7 @@ function normalizeOffer(raw = {}) {
     previewUrl: sanitizeText(raw.previewUrl),
     targetUserId: sanitizeText(raw.targetUserId),
     targetEmail: sanitizeText(raw.targetEmail).toLowerCase(),
+    businessId: sanitizeText(raw.businessId),
     salesOfferId: sanitizeText(raw.salesOfferId),
     letterHtml: String(raw.letterHtml || '').slice(0, 600_000),
     contractHtml: String(raw.contractHtml || '').slice(0, 600_000),
@@ -109,13 +110,38 @@ export function getOfferByCode(code) {
   return listOffers().find((entry) => entry.code === target) || null;
 }
 
-export function getActiveOfferForUser({ userId = '', email = '' } = {}) {
+export function getActiveOfferForUser({
+  userId = '',
+  email = '',
+  businessId = '',
+  membershipBusinessIds = [],
+} = {}) {
   const uid = sanitizeText(userId);
   const mail = sanitizeText(email).toLowerCase();
-  if (!uid && !mail) return null;
-  return (
-    listOffers().find((entry) => (uid && entry.targetUserId === uid) || (mail && entry.targetEmail === mail)) || null
-  );
+  const biz = sanitizeText(businessId);
+  const extra = (Array.isArray(membershipBusinessIds) ? membershipBusinessIds : [])
+    .map((id) => sanitizeText(id))
+    .filter(Boolean);
+  if (!uid && !mail && !biz && !extra.length) return null;
+  const list = listOffers();
+  if (biz) {
+    const hit = list.find((entry) => entry.businessId === biz);
+    if (hit) return hit;
+  }
+  if (extra.length) {
+    const hit = list.find((entry) => extra.includes(entry.businessId));
+    if (hit) return hit;
+  }
+  const allowed = new Set([biz, ...extra].filter(Boolean));
+  const allowedOrUnbound = (entry) => !entry.businessId || allowed.has(entry.businessId);
+  if (uid) {
+    const hit = list.find((entry) => entry.targetUserId === uid && allowedOrUnbound(entry));
+    if (hit) return hit;
+  }
+  if (mail) {
+    return list.find((entry) => entry.targetEmail === mail && allowedOrUnbound(entry)) || null;
+  }
+  return null;
 }
 
 function codeExists(code, list = listOffers()) {
@@ -248,10 +274,11 @@ export function recordOfferAcceptance(id, evidence = {}) {
   });
 }
 
-export function claimOffer(id, { userId = '', email = '' } = {}) {
+export function claimOffer(id, { userId = '', email = '', businessId = '' } = {}) {
   return updateOffer(id, {
     targetUserId: sanitizeText(userId),
     targetEmail: sanitizeText(email).toLowerCase(),
+    businessId: sanitizeText(businessId),
     claimed: true,
     claimedAt: nowIso(),
   });

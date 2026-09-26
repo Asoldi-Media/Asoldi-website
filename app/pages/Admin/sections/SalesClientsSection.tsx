@@ -444,6 +444,8 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
   const formDuration = useMemo(() => durationForMode(form.meetingMode), [form.meetingMode]);
   const flowClient = clients.find((entry) => entry.id === flowClientId) || null;
   const inClientFlow = Boolean(flowClient && normalizeSalesProduct(flowClient.product) !== 'ssu');
+  const clientCardDirty = editingId === flowClientId
+    && clientCardSnapshot(form, websiteEmailTouched) !== clientCardBaselineRef.current;
   const contractMissing = inClientFlow
     ? offerMissingFields({
       businessName: form.businessName,
@@ -3022,8 +3024,23 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                   <div className="font-semibold">{flowClient?.businessName || 'Kunde'}</div>
                   <div className="text-xs text-[#6B7280]">Kundekort, produktnotater og tilbud</div>
                 </div>
-                <button type="button" onClick={requestCloseClientFlow} className="px-3 py-2 rounded-lg bg-[#F3F4F6] text-sm">Lukk</button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={saving || !clientCardDirty}
+                    onClick={() => { void saveForm(undefined, { keepOpen: true }); }}
+                    className={`px-3 py-2 rounded-lg text-sm font-medium ${
+                      clientCardDirty
+                        ? 'bg-[#FF5B00] text-white'
+                        : 'bg-[#F3F4F6] text-[#9CA3AF] cursor-default'
+                    }`}
+                  >
+                    {saving ? 'Lagrer…' : 'Lagre'}
+                  </button>
+                  <button type="button" onClick={requestCloseClientFlow} className="px-3 py-2 rounded-lg bg-[#F3F4F6] text-sm text-[#111827]">Lukk</button>
+                </div>
               </div>
+              {error ? <p className="px-5 pt-2 text-xs text-red-600">{error}</p> : null}
               <div className="px-5 py-3">
                 <SalesFlowSteps step={flowStep} onStep={(step) => void goFlowStep(step)} />
               </div>
@@ -3071,7 +3088,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                 label="Website email"
                 type="email"
                 value={form.websiteEmail || form.contactEmail}
-                hint="Autofilled from this client's contact email. Used on the website if the Maker draft has no other email. Changing this does not change the contact email."
+                hint="This is Til on the offer. It starts as the contact email. Change it here if the offer should go to another address. It is not edited on the offer page."
                 onChange={(value) => {
                   const next = value.trim();
                   const contact = form.contactEmail.trim();

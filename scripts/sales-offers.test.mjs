@@ -167,7 +167,7 @@ test('offer draft shows the client and the editing rep instead of identity merge
   assert.doesNotMatch(fromReply, /mottatt svar/);
 });
 
-test('offer party: empty override uses the card, Til wins for email, map address is the address', () => {
+test('offer party: empty override uses the card, Til is the website email, map address is the address', () => {
   assert.equal(readiness.contractAddressFor({ meetingPlace: 'Kartveien 1', businessAddress: 'Gammel vei 2' }), 'Kartveien 1');
   const resolved = readiness.resolveOfferParty(CLIENT, {
     party: { businessName: 'Annet AS', orgNumber: '', address: '', contactPerson: '', contactEmail: 'annet@example.com' },
@@ -179,7 +179,12 @@ test('offer party: empty override uses the card, Til wins for email, map address
   assert.equal(resolved.contactEmail, 'til@example.com');
   const cleared = readiness.resolveOfferParty(CLIENT, { party: { businessName: '', contactEmail: 'annet@example.com' } });
   assert.equal(cleared.businessName, CLIENT.businessName);
-  assert.equal(cleared.contactEmail, 'annet@example.com');
+  assert.equal(cleared.contactEmail, CLIENT.contactEmail);
+  const website = readiness.resolveOfferParty(
+    { ...CLIENT, websiteEmail: 'post@kafe.no' },
+    { party: { contactEmail: 'annet@example.com' } },
+  );
+  assert.equal(website.contactEmail, 'post@kafe.no');
 });
 
 test('offer readiness: contract fields must be on the client card', () => {

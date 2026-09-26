@@ -69,7 +69,9 @@
 
 .staff-light .bg-\[\#FF5B00\],
 .staff-light .bg-\[\#e55200\],
-.staff-light .hover\:bg-\[\#e55200\]:hover {
+.staff-light .hover\:bg-\[\#e55200\]:hover,
+.staff-light .bg-emerald-500,
+.staff-light .bg-emerald-600 {
   color: #ffffff !important;
 }
 

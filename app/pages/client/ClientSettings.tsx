@@ -8,11 +8,20 @@ import {
   Loader2,
   Plus,
   Trash2,
+  Users,
 } from 'lucide-react';
 import { ClientRouteGuard } from '../../components/client/ClientRouteGuard';
 import { ClientPortalLayout } from '../../components/client/ClientPortalLayout';
 import { useClientAuth } from '../../contexts/ClientAuthContext';
 import { CLIENT_WEBSITE_PLANS } from '../../data/clientWebsitePlans';
+import {
+  PRODUCT_LAYOUTS,
+  buildEmptyCatalog,
+  buildEmptyCategory,
+  buildEmptyProductItem,
+  layoutLabel,
+  resolvePortalCatalogs,
+} from '../../../lib/client-product-catalog.js';
 
 type SettingsSection = 'kundedata' | 'fakturering' | 'konto';
 
@@ -39,6 +48,41 @@ type AffiliationCategory = {
   id: string;
   categoryName: string;
   items: AffiliationItem[];
+};
+
+type ExtraOption = {
+  name: string;
+  price: string;
+};
+
+type CatalogProduct = {
+  id: string;
+  title: string;
+  name: string;
+  description: string;
+  price: string;
+  subtitle: string;
+  comparePrice: string;
+  contactInsteadOfPrice: boolean;
+  imageUrl: string;
+  image: string;
+  allergens: string;
+  included: string[];
+  extraTexts: string[];
+  extraOptions: ExtraOption[];
+};
+
+type CatalogCategory = {
+  id: string;
+  name: string;
+  products: CatalogProduct[];
+};
+
+type ProductCatalog = {
+  id: string;
+  layout: 'normal' | 'meny' | 'tiers';
+  label: string;
+  categories: CatalogCategory[];
 };
 
 type ProductItem = {
@@ -89,14 +133,21 @@ type ClientDataBank = {
     days: OpeningDay[];
   };
   affiliations: AffiliationCategory[];
+  productCatalogs: ProductCatalog[];
   products: ProductCategory[];
-  media: {
-    mainHeroImages: string[];
-    galleryImages: string[];
-    logos: string[];
-    icons: string[];
-    uncategorized: string[];
-  };
+    media: {
+      mainHeroImages: string[];
+      galleryImages: string[];
+      logos: string[];
+      icons: string[];
+      uncategorized: string[];
+      teamImages: string[];
+      aboutImages: string[];
+      locationImages: string[];
+      illustrationImages: string[];
+      offeringImages: string[];
+      briefs: Array<Record<string, unknown>>;
+    };
   websiteCreatorQuestions: {
     targetAudience: string;
     keyMessage: string;
@@ -104,6 +155,27 @@ type ClientDataBank = {
     primaryAction: string;
     importantKeywords: string[];
     competitorLinks: string[];
+    businessWhat: string;
+    businessStory: string;
+    differentiator: string;
+    reviews: string;
+    extraContext: string;
+    wantedPages: string;
+    customSections: string;
+    websiteDomain: string;
+    town: string;
+    country: string;
+    relevantLinks: string;
+  };
+  makerLink?: {
+    bundleId?: string;
+    bundleName?: string;
+    email?: string;
+    salesClientId?: string;
+    runId?: string;
+    publicPreviewUrl?: string;
+    tunnelUrl?: string;
+    syncedAt?: string;
   };
 };
 
@@ -203,11 +275,16 @@ const BILLING_STATUS_LABELS: Record<string, string> = {
   incomplete: 'Ufullstendig',
 };
 
-const MEDIA_BUCKETS: Array<{ key: keyof ClientDataBank['media']; label: string }> = [
+const MEDIA_BUCKETS: Array<{ key: Exclude<keyof ClientDataBank['media'], 'briefs'>; label: string }> = [
   { key: 'mainHeroImages', label: 'Hovedbilde' },
   { key: 'galleryImages', label: 'Bildegalleri' },
   { key: 'logos', label: 'Logo' },
   { key: 'icons', label: 'Ikoner' },
+  { key: 'teamImages', label: 'Team' },
+  { key: 'aboutImages', label: 'Om oss' },
+  { key: 'locationImages', label: 'Lokasjon' },
+  { key: 'illustrationImages', label: 'Illustrasjoner' },
+  { key: 'offeringImages', label: 'Tjenester / meny' },
   { key: 'uncategorized', label: 'Ukategorisert' },
 ];
 
@@ -278,6 +355,7 @@ function defaultClientDataBank(profile: any): ClientDataBank {
       days: DEFAULT_DAYS,
     },
     affiliations: [],
+    productCatalogs: [],
     products: [],
     media: {
       mainHeroImages: [],
@@ -285,6 +363,12 @@ function defaultClientDataBank(profile: any): ClientDataBank {
       logos: [],
       icons: [],
       uncategorized: [],
+      teamImages: [],
+      aboutImages: [],
+      locationImages: [],
+      illustrationImages: [],
+      offeringImages: [],
+      briefs: [],
     },
     websiteCreatorQuestions: {
       targetAudience: '',
@@ -293,6 +377,27 @@ function defaultClientDataBank(profile: any): ClientDataBank {
       primaryAction: '',
       importantKeywords: [],
       competitorLinks: [],
+      businessWhat: '',
+      businessStory: '',
+      differentiator: '',
+      reviews: '',
+      extraContext: '',
+      wantedPages: '',
+      customSections: '',
+      websiteDomain: '',
+      town: '',
+      country: '',
+      relevantLinks: '',
+    },
+    makerLink: {
+      bundleId: '',
+      bundleName: '',
+      email: '',
+      salesClientId: '',
+      runId: '',
+      publicPreviewUrl: '',
+      tunnelUrl: '',
+      syncedAt: '',
     },
   };
 }
@@ -333,23 +438,14 @@ function ensureClientDataBank(input: any, profile: any): ClientDataBank {
     }))
     : [];
 
-  const products: ProductCategory[] = Array.isArray(bank?.products)
-    ? bank.products.map((category: any, categoryIndex: number) => ({
-      id: String(category?.id || randomId(`prod-cat-${categoryIndex + 1}`)),
-      categoryName: String(category?.categoryName || category?.name || '').trim(),
-      items: Array.isArray(category?.items)
-        ? category.items.map((item: any, itemIndex: number) => ({
-          id: String(item?.id || randomId(`prod-item-${itemIndex + 1}`)),
-          title: String(item?.title || '').trim(),
-          description: String(item?.description || item?.desc || '').trim(),
-          price: String(item?.price || '').trim(),
-          contactInsteadOfPrice: Boolean(item?.contactInsteadOfPrice),
-          imageUrl: String(item?.imageUrl || item?.image || '').trim(),
-          included: item?.included !== undefined ? Boolean(item.included) : Boolean(item?.isSelected ?? true),
-        }))
-        : [],
-    }))
-    : [];
+  const resolved = resolvePortalCatalogs({
+    productCatalogs: bank?.productCatalogs,
+    products: bank?.products,
+    extraHay: String(bank?.businessCard?.industry || ''),
+    keepEmptyProducts: true,
+  });
+  const productCatalogs = resolved.productCatalogs as ProductCatalog[];
+  const products = resolved.products as ProductCategory[];
 
   const next: ClientDataBank = {
     businessCard: {
@@ -392,6 +488,7 @@ function ensureClientDataBank(input: any, profile: any): ClientDataBank {
       days: openingDays,
     },
     affiliations,
+    productCatalogs,
     products,
     media: {
       mainHeroImages: ensureList(bank?.media?.mainHeroImages, []),
@@ -399,6 +496,12 @@ function ensureClientDataBank(input: any, profile: any): ClientDataBank {
       logos: ensureList(bank?.media?.logos, []),
       icons: ensureList(bank?.media?.icons, []),
       uncategorized: ensureList(bank?.media?.uncategorized, []),
+      teamImages: ensureList(bank?.media?.teamImages, []),
+      aboutImages: ensureList(bank?.media?.aboutImages, []),
+      locationImages: ensureList(bank?.media?.locationImages, []),
+      illustrationImages: ensureList(bank?.media?.illustrationImages, []),
+      offeringImages: ensureList(bank?.media?.offeringImages, []),
+      briefs: Array.isArray(bank?.media?.briefs) ? bank.media.briefs : [],
     },
     websiteCreatorQuestions: {
       targetAudience: String(bank?.websiteCreatorQuestions?.targetAudience || '').trim(),
@@ -407,6 +510,27 @@ function ensureClientDataBank(input: any, profile: any): ClientDataBank {
       primaryAction: String(bank?.websiteCreatorQuestions?.primaryAction || '').trim(),
       importantKeywords: ensureList(bank?.websiteCreatorQuestions?.importantKeywords, []),
       competitorLinks: ensureList(bank?.websiteCreatorQuestions?.competitorLinks, []),
+      businessWhat: String(bank?.websiteCreatorQuestions?.businessWhat || '').trim(),
+      businessStory: String(bank?.websiteCreatorQuestions?.businessStory || '').trim(),
+      differentiator: String(bank?.websiteCreatorQuestions?.differentiator || '').trim(),
+      reviews: String(bank?.websiteCreatorQuestions?.reviews || '').trim(),
+      extraContext: String(bank?.websiteCreatorQuestions?.extraContext || '').trim(),
+      wantedPages: String(bank?.websiteCreatorQuestions?.wantedPages || '').trim(),
+      customSections: String(bank?.websiteCreatorQuestions?.customSections || '').trim(),
+      websiteDomain: String(bank?.websiteCreatorQuestions?.websiteDomain || '').trim(),
+      town: String(bank?.websiteCreatorQuestions?.town || '').trim(),
+      country: String(bank?.websiteCreatorQuestions?.country || '').trim(),
+      relevantLinks: String(bank?.websiteCreatorQuestions?.relevantLinks || '').trim(),
+    },
+    makerLink: {
+      bundleId: String(bank?.makerLink?.bundleId || '').trim(),
+      bundleName: String(bank?.makerLink?.bundleName || '').trim(),
+      email: String(bank?.makerLink?.email || '').trim(),
+      salesClientId: String(bank?.makerLink?.salesClientId || '').trim(),
+      runId: String(bank?.makerLink?.runId || '').trim(),
+      publicPreviewUrl: String(bank?.makerLink?.publicPreviewUrl || '').trim(),
+      tunnelUrl: String(bank?.makerLink?.tunnelUrl || '').trim(),
+      syncedAt: String(bank?.makerLink?.syncedAt || '').trim(),
     },
   };
 
@@ -422,12 +546,35 @@ function sectionPath(section: SettingsSection) {
 export const ClientSettings = () => {
   const location = useLocation();
   const navigate = useNavigate();
-  const { token, profile, updateProfileState, clearClientSession } = useClientAuth();
+  const {
+    token,
+    user,
+    profile,
+    businesses,
+    activeBusinessId,
+    membership,
+    updateProfileState,
+    refreshClientSession,
+    clearClientSession,
+  } = useClientAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [busyAction, setBusyAction] = useState('');
   const [deletingAccount, setDeletingAccount] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState('');
+  const [members, setMembers] = useState<Array<{
+    id: string;
+    userId: string;
+    email: string;
+    role: string;
+    status: string;
+  }>>([]);
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState<'admin' | 'collaborator'>('collaborator');
+  const [newBusinessName, setNewBusinessName] = useState('');
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [transferUserId, setTransferUserId] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [billing, setBilling] = useState<BillingOverview | null>(null);
@@ -442,6 +589,12 @@ export const ClientSettings = () => {
   }, [location.pathname]);
 
   useEffect(() => {
+    if (activeSection !== 'kundedata' || location.hash !== '#produkter') return;
+    const node = document.getElementById('produkter');
+    if (node) node.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [activeSection, location.hash, loading]);
+
+  useEffect(() => {
     let active = true;
     async function loadSettings() {
       if (!token) return;
@@ -454,6 +607,8 @@ export const ClientSettings = () => {
         if (!response.ok) throw new Error(payload.message || 'Kunne ikke laste innstillinger.');
         if (!active) return;
         if (payload.profile) updateProfileState(payload.profile);
+        if (Array.isArray(payload.members)) setMembers(payload.members);
+        setLoginEmail((prev) => prev || payload.user?.email || user?.email || '');
         setClientData(ensureClientDataBank(payload.clientDataBank || payload.profile?.clientDataBank, payload.profile || profile));
         setBilling((payload.billing || null) as BillingOverview | null);
       } catch (err) {
@@ -467,7 +622,7 @@ export const ClientSettings = () => {
     return () => {
       active = false;
     };
-  }, [token, updateProfileState]);
+  }, [token, updateProfileState, activeBusinessId]);
 
   useEffect(() => {
     const query = clientData.generalInfo.companyAddress.trim();
@@ -637,6 +792,136 @@ export const ClientSettings = () => {
     }
   }
 
+  const canManageMembers = membership?.role === 'owner' || membership?.role === 'admin';
+  const canTransfer = membership?.role === 'owner';
+
+  async function inviteMember() {
+    if (!token || !activeBusinessId) return;
+    setBusyAction('invite');
+    setError('');
+    setSuccess('');
+    try {
+      const response = await fetch(`/api/client/businesses/${encodeURIComponent(activeBusinessId)}/members`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ email: inviteEmail, role: inviteRole }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.message || 'Kunne ikke invitere.');
+      if (Array.isArray(payload.members)) setMembers(payload.members);
+      setInviteEmail('');
+      setSuccess(payload.alreadyPending ? 'Invitasjonen venter allerede.' : 'Personen er lagt til eller invitert.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Kunne ikke invitere.');
+    } finally {
+      setBusyAction('');
+    }
+  }
+
+  async function revokeMember(membershipId: string) {
+    if (!token || !activeBusinessId) return;
+    setBusyAction(`revoke:${membershipId}`);
+    setError('');
+    try {
+      const response = await fetch(
+        `/api/client/businesses/${encodeURIComponent(activeBusinessId)}/members/${encodeURIComponent(membershipId)}/revoke`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.message || 'Kunne ikke fjerne medlemmet.');
+      if (Array.isArray(payload.members)) setMembers(payload.members);
+      setSuccess('Medlemmet er fjernet.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Kunne ikke fjerne medlemmet.');
+    } finally {
+      setBusyAction('');
+    }
+  }
+
+  async function createBusiness() {
+    if (!token) return;
+    setBusyAction('create-business');
+    setError('');
+    setSuccess('');
+    try {
+      const response = await fetch('/api/client/businesses', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ name: newBusinessName }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.message || 'Kunne ikke opprette bedrift.');
+      await refreshClientSession();
+      setNewBusinessName('');
+      setSuccess('Ny bedrift er opprettet. Du kan bytte i menyen øverst.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Kunne ikke opprette bedrift.');
+    } finally {
+      setBusyAction('');
+    }
+  }
+
+  async function changeLoginEmail() {
+    if (!token) return;
+    setBusyAction('change-email');
+    setError('');
+    setSuccess('');
+    try {
+      const response = await fetch('/api/client/account/change-email', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ email: loginEmail, password: loginPassword }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.message || 'Kunne ikke bytte e-post.');
+      setLoginPassword('');
+      await refreshClientSession();
+      setSuccess('Innloggings-e-post er oppdatert.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Kunne ikke bytte e-post.');
+    } finally {
+      setBusyAction('');
+    }
+  }
+
+  async function transferBusiness() {
+    if (!token || !activeBusinessId) return;
+    setBusyAction('transfer');
+    setError('');
+    setSuccess('');
+    try {
+      const response = await fetch(`/api/client/businesses/${encodeURIComponent(activeBusinessId)}/transfer`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ userId: transferUserId }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.message || 'Kunne ikke overføre bedriften.');
+      if (Array.isArray(payload.members)) setMembers(payload.members);
+      await refreshClientSession();
+      setSuccess('Eierskap er overført. Du er nå admin på denne bedriften.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Kunne ikke overføre bedriften.');
+    } finally {
+      setBusyAction('');
+    }
+  }
+
   async function deleteAccount() {
     if (!token) return;
     if (deleteConfirm.trim().toUpperCase() !== 'SLETT') {
@@ -712,28 +997,52 @@ export const ClientSettings = () => {
     });
   }
 
-  function updateProductCategory(categoryIndex: number, field: 'categoryName', value: string) {
+  function syncCatalogs(productCatalogs: ProductCatalog[]) {
+    const resolved = resolvePortalCatalogs({ productCatalogs, keepEmptyProducts: true });
+    return {
+      productCatalogs: resolved.productCatalogs as ProductCatalog[],
+      products: resolved.products as ProductCategory[],
+    };
+  }
+
+  function updateCatalogs(mutator: (catalogs: ProductCatalog[]) => ProductCatalog[]) {
     setClientData((prev) => {
-      const categories = [...prev.products];
-      categories[categoryIndex] = { ...categories[categoryIndex], [field]: value };
-      return { ...prev, products: categories };
+      const nextCatalogs = mutator(prev.productCatalogs.length ? prev.productCatalogs : []);
+      return { ...prev, ...syncCatalogs(nextCatalogs) };
     });
   }
 
-  function updateProductItem(
-    categoryIndex: number,
-    itemIndex: number,
-    field: keyof ProductItem,
-    value: string | boolean,
-  ) {
-    setClientData((prev) => {
-      const categories = [...prev.products];
-      const category = categories[categoryIndex];
-      const items = [...category.items];
-      items[itemIndex] = { ...items[itemIndex], [field]: value } as ProductItem;
-      categories[categoryIndex] = { ...category, items };
-      return { ...prev, products: categories };
+  function primaryCatalog(catalogs: ProductCatalog[]) {
+    return catalogs[0] || null;
+  }
+
+  async function uploadProductImage(catalogIndex: number, categoryIndex: number, productIndex: number, file: File) {
+    if (!token) return;
+    const body = new FormData();
+    body.append('file', file);
+    const response = await fetch('/api/client/media', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body,
     });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || 'Kunne ikke laste opp bilde.');
+    const url = payload.url || '';
+    updateCatalogs((catalogs) => catalogs.map((catalog, cIdx) => {
+      if (cIdx !== catalogIndex) return catalog;
+      return {
+        ...catalog,
+        categories: catalog.categories.map((category, catIdx) => {
+          if (catIdx !== categoryIndex) return category;
+          return {
+            ...category,
+            products: category.products.map((product, pIdx) => (
+              pIdx === productIndex ? { ...product, imageUrl: url, image: url } : product
+            )),
+          };
+        }),
+      };
+    }));
   }
 
   const summary = billing?.summary;
@@ -792,6 +1101,27 @@ export const ClientSettings = () => {
 
             {activeSection === 'kundedata' ? (
               <div className="space-y-5">
+                {clientData.makerLink?.bundleId || clientData.makerLink?.publicPreviewUrl ? (
+                  <section className="rounded-2xl border border-[#E5E7EB] bg-[#FFF7F2] p-5">
+                    <h2 className="text-lg font-semibold text-[#111827]">Nettsidebygger-kobling</h2>
+                    <p className="mt-1 text-sm text-[#6B7280]">
+                      Data fra Website Maker synkes hit, så AI-assistenten og salg bruker samme kundebank.
+                    </p>
+                    <div className="mt-3 text-sm text-[#374151] space-y-1">
+                      {clientData.makerLink?.bundleName ? <p>Klient: {clientData.makerLink.bundleName}</p> : null}
+                      {clientData.makerLink?.syncedAt ? <p>Sist synket: {new Date(clientData.makerLink.syncedAt).toLocaleString('nb-NO')}</p> : null}
+                      {clientData.makerLink?.publicPreviewUrl ? (
+                        <p>
+                          Forhåndsvisning:{' '}
+                          <a href={clientData.makerLink.publicPreviewUrl} target="_blank" rel="noreferrer" className="text-[#FF5B00] underline break-all">
+                            {clientData.makerLink.publicPreviewUrl}
+                          </a>
+                        </p>
+                      ) : null}
+                    </div>
+                  </section>
+                ) : null}
+
                 <section className="rounded-2xl border border-[#E5E7EB] bg-white p-5">
                   <h2 className="text-lg font-semibold text-[#111827]">1) Bedriftskort og nettsidemål</h2>
                   <p className="mt-1 text-sm text-[#6B7280]">
@@ -1286,138 +1616,399 @@ export const ClientSettings = () => {
                   </div>
                 </section>
 
-                <section className="rounded-2xl border border-[#E5E7EB] bg-white p-5">
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-lg font-semibold text-[#111827]">6) Produkter og tjenester</h2>
+                <section id="produkter" className="rounded-2xl border border-[#E5E7EB] bg-white p-5 scroll-mt-24">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h2 className="text-lg font-semibold text-[#111827]">6) Produkter og tjenester</h2>
+                      <p className="text-xs text-[#6B7280] mt-1">Samme felter som web-suite: Normal, Meny eller Tiers.</p>
+                    </div>
                     <button
                       type="button"
-                      onClick={() => setClientData((prev) => ({
-                        ...prev,
-                        products: [
-                          ...prev.products,
-                          { id: randomId('prod-cat'), categoryName: '', items: [] },
-                        ],
-                      }))}
+                      onClick={() => updateCatalogs((catalogs) => {
+                        const catalog = catalogs[0] || buildEmptyCatalog('normal', { withStarterCategory: false }) as ProductCatalog;
+                        return [{
+                          ...catalog,
+                          categories: [...catalog.categories, buildEmptyCategory('Ny kategori') as CatalogCategory],
+                        }];
+                      })}
                       className="inline-flex items-center gap-1 text-sm text-[#FF5B00]"
                     >
                       <Plus size={14} /> Ny kategori
                     </button>
                   </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {PRODUCT_LAYOUTS.map((entry) => {
+                      const active = (primaryCatalog(clientData.productCatalogs)?.layout || 'normal') === entry.id;
+                      return (
+                        <button
+                          key={entry.id}
+                          type="button"
+                          onClick={() => updateCatalogs((catalogs) => {
+                            const catalog = catalogs[0] || buildEmptyCatalog(entry.id, { withStarterCategory: false }) as ProductCatalog;
+                            return [{ ...catalog, layout: entry.id as ProductCatalog['layout'], label: layoutLabel(entry.id) }];
+                          })}
+                          className={`rounded-full border px-3 py-1.5 text-xs ${active ? 'border-[#FF5B00] bg-[#FFF4EC] text-[#FF5B00]' : 'border-[#E5E7EB] text-[#6B7280]'}`}
+                        >
+                          {entry.label}
+                        </button>
+                      );
+                    })}
+                  </div>
                   <div className="mt-4 space-y-4">
-                    {clientData.products.length === 0 ? (
-                      <p className="text-sm text-[#6B7280]">Ingen produktkategorier enda.</p>
+                    {(clientData.productCatalogs[0]?.categories || []).length === 0 ? (
+                      <p className="text-sm text-[#6B7280]">Ingen produktkategorier enda. Bruk AI-assistenten eller legg til manuelt.</p>
                     ) : null}
-                    {clientData.products.map((category, categoryIndex) => (
-                      <div key={category.id} className="rounded-xl border border-[#E5E7EB] p-4 space-y-3">
-                        <div className="flex items-center gap-2">
-                          <input
-                            value={category.categoryName}
-                            onChange={(e) => updateProductCategory(categoryIndex, 'categoryName', e.target.value)}
-                            placeholder="Kategori-navn"
-                            className="flex-1 rounded-lg border border-[#D1D5DB] px-3 py-2 text-sm outline-none focus:border-[#FF5B00]"
-                          />
+                    {(clientData.productCatalogs[0]?.categories || []).map((category, categoryIndex) => {
+                      const layout = clientData.productCatalogs[0]?.layout || 'normal';
+                      return (
+                        <div key={category.id} className="rounded-xl border border-[#E5E7EB] p-4 space-y-3">
+                          <div className="flex items-center gap-2">
+                            <input
+                              value={category.name}
+                              onChange={(e) => {
+                                const name = e.target.value;
+                                updateCatalogs((catalogs) => catalogs.map((catalog, idx) => (
+                                  idx !== 0 ? catalog : {
+                                    ...catalog,
+                                    categories: catalog.categories.map((row, rowIdx) => (
+                                      rowIdx === categoryIndex ? { ...row, name } : row
+                                    )),
+                                  }
+                                )));
+                              }}
+                              placeholder="Kategori-navn"
+                              className="flex-1 rounded-lg border border-[#D1D5DB] px-3 py-2 text-sm outline-none focus:border-[#FF5B00]"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => updateCatalogs((catalogs) => catalogs.map((catalog, idx) => (
+                                idx !== 0 ? catalog : {
+                                  ...catalog,
+                                  categories: catalog.categories.filter((_, current) => current !== categoryIndex),
+                                }
+                              )))}
+                              className="rounded-lg border border-[#FECACA] px-2 py-2 text-red-600"
+                              aria-label="Fjern produktkategori"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                          <div className="space-y-3">
+                            {category.products.map((item, itemIndex) => (
+                              <div key={item.id} className="rounded-lg border border-[#EEF2F7] p-3 space-y-2">
+                                <div className="grid gap-2 md:grid-cols-2">
+                                  <input
+                                    value={item.title}
+                                    onChange={(e) => {
+                                      const title = e.target.value;
+                                      updateCatalogs((catalogs) => catalogs.map((catalog, idx) => (
+                                        idx !== 0 ? catalog : {
+                                          ...catalog,
+                                          categories: catalog.categories.map((row, rowIdx) => (
+                                            rowIdx !== categoryIndex ? row : {
+                                              ...row,
+                                              products: row.products.map((product, pIdx) => (
+                                                pIdx === itemIndex ? { ...product, title, name: title } : product
+                                              )),
+                                            }
+                                          )),
+                                        }
+                                      )));
+                                    }}
+                                    placeholder="Produktnavn"
+                                    className="rounded-lg border border-[#D1D5DB] px-3 py-2 text-sm outline-none focus:border-[#FF5B00]"
+                                  />
+                                  <input
+                                    value={item.price}
+                                    disabled={item.contactInsteadOfPrice}
+                                    onChange={(e) => {
+                                      const price = e.target.value;
+                                      updateCatalogs((catalogs) => catalogs.map((catalog, idx) => (
+                                        idx !== 0 ? catalog : {
+                                          ...catalog,
+                                          categories: catalog.categories.map((row, rowIdx) => (
+                                            rowIdx !== categoryIndex ? row : {
+                                              ...row,
+                                              products: row.products.map((product, pIdx) => (
+                                                pIdx === itemIndex ? { ...product, price } : product
+                                              )),
+                                            }
+                                          )),
+                                        }
+                                      )));
+                                    }}
+                                    placeholder={layout === 'meny' ? 'Pris' : 'Pris (f.eks. 1 999,-)'}
+                                    className="rounded-lg border border-[#D1D5DB] px-3 py-2 text-sm outline-none focus:border-[#FF5B00] disabled:opacity-50"
+                                  />
+                                </div>
+                                <input
+                                  value={item.comparePrice}
+                                  onChange={(e) => {
+                                    const comparePrice = e.target.value;
+                                    updateCatalogs((catalogs) => catalogs.map((catalog, idx) => (
+                                      idx !== 0 ? catalog : {
+                                        ...catalog,
+                                        categories: catalog.categories.map((row, rowIdx) => (
+                                          rowIdx !== categoryIndex ? row : {
+                                            ...row,
+                                            products: row.products.map((product, pIdx) => (
+                                              pIdx === itemIndex ? { ...product, comparePrice } : product
+                                            )),
+                                          }
+                                        )),
+                                      }
+                                    )));
+                                  }}
+                                  placeholder={layout === 'meny' ? 'Ta-med-pris' : 'Sammenligningspris'}
+                                  className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 text-sm outline-none focus:border-[#FF5B00]"
+                                />
+                                {(layout === 'normal' || layout === 'tiers') ? (
+                                  <input
+                                    value={item.subtitle}
+                                    onChange={(e) => {
+                                      const subtitle = e.target.value;
+                                      updateCatalogs((catalogs) => catalogs.map((catalog, idx) => (
+                                        idx !== 0 ? catalog : {
+                                          ...catalog,
+                                          categories: catalog.categories.map((row, rowIdx) => (
+                                            rowIdx !== categoryIndex ? row : {
+                                              ...row,
+                                              products: row.products.map((product, pIdx) => (
+                                                pIdx === itemIndex ? { ...product, subtitle } : product
+                                              )),
+                                            }
+                                          )),
+                                        }
+                                      )));
+                                    }}
+                                    placeholder="Undertittel"
+                                    className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 text-sm outline-none focus:border-[#FF5B00]"
+                                  />
+                                ) : null}
+                                {layout === 'meny' ? (
+                                  <input
+                                    value={item.allergens}
+                                    onChange={(e) => {
+                                      const allergens = e.target.value;
+                                      updateCatalogs((catalogs) => catalogs.map((catalog, idx) => (
+                                        idx !== 0 ? catalog : {
+                                          ...catalog,
+                                          categories: catalog.categories.map((row, rowIdx) => (
+                                            rowIdx !== categoryIndex ? row : {
+                                              ...row,
+                                              products: row.products.map((product, pIdx) => (
+                                                pIdx === itemIndex ? { ...product, allergens } : product
+                                              )),
+                                            }
+                                          )),
+                                        }
+                                      )));
+                                    }}
+                                    placeholder="Allergener"
+                                    className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 text-sm outline-none focus:border-[#FF5B00]"
+                                  />
+                                ) : null}
+                                {layout === 'tiers' ? (
+                                  <textarea
+                                    value={(item.included || []).join('\n')}
+                                    onChange={(e) => {
+                                      const included = e.target.value.split('\n').map((row) => row.trim()).filter(Boolean);
+                                      updateCatalogs((catalogs) => catalogs.map((catalog, idx) => (
+                                        idx !== 0 ? catalog : {
+                                          ...catalog,
+                                          categories: catalog.categories.map((row, rowIdx) => (
+                                            rowIdx !== categoryIndex ? row : {
+                                              ...row,
+                                              products: row.products.map((product, pIdx) => (
+                                                pIdx === itemIndex ? { ...product, included } : product
+                                              )),
+                                            }
+                                          )),
+                                        }
+                                      )));
+                                    }}
+                                    placeholder="Hva er inkludert (ett punkt per linje)"
+                                    rows={3}
+                                    className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 text-sm outline-none focus:border-[#FF5B00]"
+                                  />
+                                ) : (
+                                  <textarea
+                                    value={item.description}
+                                    onChange={(e) => {
+                                      const description = e.target.value;
+                                      updateCatalogs((catalogs) => catalogs.map((catalog, idx) => (
+                                        idx !== 0 ? catalog : {
+                                          ...catalog,
+                                          categories: catalog.categories.map((row, rowIdx) => (
+                                            rowIdx !== categoryIndex ? row : {
+                                              ...row,
+                                              products: row.products.map((product, pIdx) => (
+                                                pIdx === itemIndex ? { ...product, description } : product
+                                              )),
+                                            }
+                                          )),
+                                        }
+                                      )));
+                                    }}
+                                    placeholder="Beskrivelse"
+                                    rows={2}
+                                    className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 text-sm outline-none focus:border-[#FF5B00]"
+                                  />
+                                )}
+                                {layout === 'meny' ? (
+                                  <textarea
+                                    value={(item.extraOptions || []).map((opt) => (opt.price ? `${opt.name} (${opt.price})` : opt.name)).join('\n')}
+                                    onChange={(e) => {
+                                      const extraOptions = e.target.value.split('\n').map((row) => {
+                                        const match = row.match(/^(.*?)(?:\s*\((.+)\))?$/);
+                                        return { name: String(match?.[1] || '').trim(), price: String(match?.[2] || '').trim() };
+                                      }).filter((row) => row.name || row.price);
+                                      updateCatalogs((catalogs) => catalogs.map((catalog, idx) => (
+                                        idx !== 0 ? catalog : {
+                                          ...catalog,
+                                          categories: catalog.categories.map((row, rowIdx) => (
+                                            rowIdx !== categoryIndex ? row : {
+                                              ...row,
+                                              products: row.products.map((product, pIdx) => (
+                                                pIdx === itemIndex ? { ...product, extraOptions } : product
+                                              )),
+                                            }
+                                          )),
+                                        }
+                                      )));
+                                    }}
+                                    placeholder="Ekstra tillegg, ett per linje: Ekstra ost (15)"
+                                    rows={2}
+                                    className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 text-sm outline-none focus:border-[#FF5B00]"
+                                  />
+                                ) : (
+                                  <textarea
+                                    value={(item.extraTexts || []).join('\n')}
+                                    onChange={(e) => {
+                                      const extraTexts = e.target.value.split('\n').map((row) => row.trim()).filter(Boolean);
+                                      updateCatalogs((catalogs) => catalogs.map((catalog, idx) => (
+                                        idx !== 0 ? catalog : {
+                                          ...catalog,
+                                          categories: catalog.categories.map((row, rowIdx) => (
+                                            rowIdx !== categoryIndex ? row : {
+                                              ...row,
+                                              products: row.products.map((product, pIdx) => (
+                                                pIdx === itemIndex ? { ...product, extraTexts } : product
+                                              )),
+                                            }
+                                          )),
+                                        }
+                                      )));
+                                    }}
+                                    placeholder="Ekstra infotekst (ett punkt per linje)"
+                                    rows={2}
+                                    className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 text-sm outline-none focus:border-[#FF5B00]"
+                                  />
+                                )}
+                                <div className="flex flex-wrap items-center gap-3">
+                                  {item.imageUrl ? (
+                                    <img src={item.imageUrl.startsWith('/client-media/') ? `${item.imageUrl}${item.imageUrl.includes('?') ? '&' : '?'}token=${encodeURIComponent(token || '')}` : item.imageUrl} alt="" className="h-14 w-14 rounded-lg object-cover border border-[#E5E7EB]" />
+                                  ) : null}
+                                  <input
+                                    value={item.imageUrl}
+                                    onChange={(e) => {
+                                      const imageUrl = e.target.value;
+                                      updateCatalogs((catalogs) => catalogs.map((catalog, idx) => (
+                                        idx !== 0 ? catalog : {
+                                          ...catalog,
+                                          categories: catalog.categories.map((row, rowIdx) => (
+                                            rowIdx !== categoryIndex ? row : {
+                                              ...row,
+                                              products: row.products.map((product, pIdx) => (
+                                                pIdx === itemIndex ? { ...product, imageUrl, image: imageUrl } : product
+                                              )),
+                                            }
+                                          )),
+                                        }
+                                      )));
+                                    }}
+                                    placeholder={layout === 'meny' ? 'Produktbilde (valgfritt)' : 'Produktbilde URL'}
+                                    className="flex-1 min-w-[180px] rounded-lg border border-[#D1D5DB] px-3 py-2 text-sm outline-none focus:border-[#FF5B00]"
+                                  />
+                                  <label className="rounded-lg border border-[#E5E7EB] px-3 py-2 text-xs text-[#374151] cursor-pointer hover:bg-[#F9FAFB]">
+                                    Last opp
+                                    <input
+                                      type="file"
+                                      accept="image/*"
+                                      className="hidden"
+                                      onChange={(e) => {
+                                        const file = e.target.files?.[0];
+                                        if (file) void uploadProductImage(0, categoryIndex, itemIndex, file);
+                                        e.target.value = '';
+                                      }}
+                                    />
+                                  </label>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-4">
+                                  <label className="inline-flex items-center gap-2 text-sm">
+                                    <input
+                                      type="checkbox"
+                                      checked={item.contactInsteadOfPrice}
+                                      onChange={(e) => {
+                                        const contactInsteadOfPrice = e.target.checked;
+                                        updateCatalogs((catalogs) => catalogs.map((catalog, idx) => (
+                                          idx !== 0 ? catalog : {
+                                            ...catalog,
+                                            categories: catalog.categories.map((row, rowIdx) => (
+                                              rowIdx !== categoryIndex ? row : {
+                                                ...row,
+                                                products: row.products.map((product, pIdx) => (
+                                                  pIdx === itemIndex ? { ...product, contactInsteadOfPrice } : product
+                                                )),
+                                              }
+                                            )),
+                                          }
+                                        )));
+                                      }}
+                                    />
+                                    Ingen pris, kontakt i stedet
+                                  </label>
+                                  <button
+                                    type="button"
+                                    onClick={() => updateCatalogs((catalogs) => catalogs.map((catalog, idx) => (
+                                      idx !== 0 ? catalog : {
+                                        ...catalog,
+                                        categories: catalog.categories.map((row, rowIdx) => (
+                                          rowIdx !== categoryIndex ? row : {
+                                            ...row,
+                                            products: row.products.filter((_, current) => current !== itemIndex),
+                                          }
+                                        )),
+                                      }
+                                    )))}
+                                    className="ml-auto rounded-lg border border-[#FECACA] px-2 py-1 text-xs text-red-600"
+                                  >
+                                    Fjern produkt
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                           <button
                             type="button"
-                            onClick={() => setClientData((prev) => ({
-                              ...prev,
-                              products: prev.products.filter((_, current) => current !== categoryIndex),
-                            }))}
-                            className="rounded-lg border border-[#FECACA] px-2 py-2 text-red-600"
-                            aria-label="Fjern produktkategori"
+                            onClick={() => updateCatalogs((catalogs) => catalogs.map((catalog, idx) => (
+                              idx !== 0 ? catalog : {
+                                ...catalog,
+                                categories: catalog.categories.map((row, rowIdx) => (
+                                  rowIdx !== categoryIndex ? row : {
+                                    ...row,
+                                    products: [...row.products, buildEmptyProductItem() as CatalogProduct],
+                                  }
+                                )),
+                              }
+                            )))}
+                            className="inline-flex items-center gap-1 text-xs text-[#FF5B00]"
                           >
-                            <Trash2 size={14} />
+                            <Plus size={12} /> Legg til produkt
                           </button>
                         </div>
-                        <div className="space-y-2">
-                          {category.items.map((item, itemIndex) => (
-                            <div key={item.id} className="rounded-lg border border-[#EEF2F7] p-3 space-y-2">
-                              <div className="grid gap-2 md:grid-cols-2">
-                                <input
-                                  value={item.title}
-                                  onChange={(e) => updateProductItem(categoryIndex, itemIndex, 'title', e.target.value)}
-                                  placeholder="Produktnavn"
-                                  className="rounded-lg border border-[#D1D5DB] px-3 py-2 text-sm outline-none focus:border-[#FF5B00]"
-                                />
-                                <input
-                                  value={item.price}
-                                  onChange={(e) => updateProductItem(categoryIndex, itemIndex, 'price', e.target.value)}
-                                  placeholder="Pris (f.eks. 1 999,-)"
-                                  className="rounded-lg border border-[#D1D5DB] px-3 py-2 text-sm outline-none focus:border-[#FF5B00]"
-                                />
-                              </div>
-                              <textarea
-                                value={item.description}
-                                onChange={(e) => updateProductItem(categoryIndex, itemIndex, 'description', e.target.value)}
-                                placeholder="Beskrivelse"
-                                rows={2}
-                                className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 text-sm outline-none focus:border-[#FF5B00]"
-                              />
-                              <input
-                                value={item.imageUrl}
-                                onChange={(e) => updateProductItem(categoryIndex, itemIndex, 'imageUrl', e.target.value)}
-                                placeholder="Produktbilde URL"
-                                className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 text-sm outline-none focus:border-[#FF5B00]"
-                              />
-                              <div className="flex flex-wrap items-center gap-4">
-                                <label className="inline-flex items-center gap-2 text-sm">
-                                  <input
-                                    type="checkbox"
-                                    checked={item.contactInsteadOfPrice}
-                                    onChange={(e) => updateProductItem(categoryIndex, itemIndex, 'contactInsteadOfPrice', e.target.checked)}
-                                  />
-                                  Kontakt oss i stedet for pris
-                                </label>
-                                <label className="inline-flex items-center gap-2 text-sm">
-                                  <input
-                                    type="checkbox"
-                                    checked={item.included}
-                                    onChange={(e) => updateProductItem(categoryIndex, itemIndex, 'included', e.target.checked)}
-                                  />
-                                  Produktet er valgt/inkludert
-                                </label>
-                                <button
-                                  type="button"
-                                  onClick={() => setClientData((prev) => {
-                                    const categories = [...prev.products];
-                                    const nextItems = categories[categoryIndex].items.filter((_, current) => current !== itemIndex);
-                                    categories[categoryIndex] = { ...categories[categoryIndex], items: nextItems };
-                                    return { ...prev, products: categories };
-                                  })}
-                                  className="ml-auto rounded-lg border border-[#FECACA] px-2 py-1 text-xs text-red-600"
-                                >
-                                  Fjern produkt
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => setClientData((prev) => {
-                            const categories = [...prev.products];
-                            categories[categoryIndex] = {
-                              ...categories[categoryIndex],
-                              items: [
-                                ...categories[categoryIndex].items,
-                                {
-                                  id: randomId('prod-item'),
-                                  title: '',
-                                  description: '',
-                                  price: '',
-                                  contactInsteadOfPrice: false,
-                                  imageUrl: '',
-                                  included: true,
-                                },
-                              ],
-                            };
-                            return { ...prev, products: categories };
-                          })}
-                          className="inline-flex items-center gap-1 text-xs text-[#FF5B00]"
-                        >
-                          <Plus size={12} /> Legg til produkt
-                        </button>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </section>
 
@@ -1551,6 +2142,135 @@ export const ClientSettings = () => {
                             ...prev.websiteCreatorQuestions,
                             competitorLinks: e.target.value.split(',').map((word) => word.trim()).filter(Boolean),
                           },
+                        }))}
+                        className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 outline-none focus:border-[#FF5B00]"
+                      />
+                    </label>
+                    <label className="text-sm md:col-span-2">
+                      <span className="block text-[#374151] mb-1">Hva bedriften gjør</span>
+                      <textarea
+                        rows={3}
+                        value={clientData.websiteCreatorQuestions.businessWhat}
+                        onChange={(e) => setClientData((prev) => ({
+                          ...prev,
+                          websiteCreatorQuestions: { ...prev.websiteCreatorQuestions, businessWhat: e.target.value },
+                        }))}
+                        className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 outline-none focus:border-[#FF5B00]"
+                      />
+                    </label>
+                    <label className="text-sm md:col-span-2">
+                      <span className="block text-[#374151] mb-1">Bedriftshistorie</span>
+                      <textarea
+                        rows={3}
+                        value={clientData.websiteCreatorQuestions.businessStory}
+                        onChange={(e) => setClientData((prev) => ({
+                          ...prev,
+                          websiteCreatorQuestions: { ...prev.websiteCreatorQuestions, businessStory: e.target.value },
+                        }))}
+                        className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 outline-none focus:border-[#FF5B00]"
+                      />
+                    </label>
+                    <label className="text-sm md:col-span-2">
+                      <span className="block text-[#374151] mb-1">Hva som skiller dere</span>
+                      <textarea
+                        rows={3}
+                        value={clientData.websiteCreatorQuestions.differentiator}
+                        onChange={(e) => setClientData((prev) => ({
+                          ...prev,
+                          websiteCreatorQuestions: { ...prev.websiteCreatorQuestions, differentiator: e.target.value },
+                        }))}
+                        className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 outline-none focus:border-[#FF5B00]"
+                      />
+                    </label>
+                    <label className="text-sm md:col-span-2">
+                      <span className="block text-[#374151] mb-1">Anmeldelser</span>
+                      <textarea
+                        rows={4}
+                        value={clientData.websiteCreatorQuestions.reviews}
+                        onChange={(e) => setClientData((prev) => ({
+                          ...prev,
+                          websiteCreatorQuestions: { ...prev.websiteCreatorQuestions, reviews: e.target.value },
+                        }))}
+                        className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 outline-none focus:border-[#FF5B00]"
+                      />
+                    </label>
+                    <label className="text-sm md:col-span-2">
+                      <span className="block text-[#374151] mb-1">Ekstra kontekst til AI</span>
+                      <textarea
+                        rows={3}
+                        value={clientData.websiteCreatorQuestions.extraContext}
+                        onChange={(e) => setClientData((prev) => ({
+                          ...prev,
+                          websiteCreatorQuestions: { ...prev.websiteCreatorQuestions, extraContext: e.target.value },
+                        }))}
+                        className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 outline-none focus:border-[#FF5B00]"
+                      />
+                    </label>
+                    <label className="text-sm">
+                      <span className="block text-[#374151] mb-1">Ønskede sider</span>
+                      <textarea
+                        rows={2}
+                        value={clientData.websiteCreatorQuestions.wantedPages}
+                        onChange={(e) => setClientData((prev) => ({
+                          ...prev,
+                          websiteCreatorQuestions: { ...prev.websiteCreatorQuestions, wantedPages: e.target.value },
+                        }))}
+                        className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 outline-none focus:border-[#FF5B00]"
+                      />
+                    </label>
+                    <label className="text-sm">
+                      <span className="block text-[#374151] mb-1">Egne seksjoner</span>
+                      <textarea
+                        rows={2}
+                        value={clientData.websiteCreatorQuestions.customSections}
+                        onChange={(e) => setClientData((prev) => ({
+                          ...prev,
+                          websiteCreatorQuestions: { ...prev.websiteCreatorQuestions, customSections: e.target.value },
+                        }))}
+                        className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 outline-none focus:border-[#FF5B00]"
+                      />
+                    </label>
+                    <label className="text-sm">
+                      <span className="block text-[#374151] mb-1">Nettadresse</span>
+                      <input
+                        value={clientData.websiteCreatorQuestions.websiteDomain}
+                        onChange={(e) => setClientData((prev) => ({
+                          ...prev,
+                          websiteCreatorQuestions: { ...prev.websiteCreatorQuestions, websiteDomain: e.target.value },
+                        }))}
+                        className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 outline-none focus:border-[#FF5B00]"
+                      />
+                    </label>
+                    <label className="text-sm">
+                      <span className="block text-[#374151] mb-1">By</span>
+                      <input
+                        value={clientData.websiteCreatorQuestions.town}
+                        onChange={(e) => setClientData((prev) => ({
+                          ...prev,
+                          websiteCreatorQuestions: { ...prev.websiteCreatorQuestions, town: e.target.value },
+                        }))}
+                        className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 outline-none focus:border-[#FF5B00]"
+                      />
+                    </label>
+                    <label className="text-sm">
+                      <span className="block text-[#374151] mb-1">Land</span>
+                      <input
+                        value={clientData.websiteCreatorQuestions.country}
+                        onChange={(e) => setClientData((prev) => ({
+                          ...prev,
+                          websiteCreatorQuestions: { ...prev.websiteCreatorQuestions, country: e.target.value },
+                        }))}
+                        className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 outline-none focus:border-[#FF5B00]"
+                      />
+                    </label>
+                    <label className="text-sm md:col-span-2">
+                      <span className="block text-[#374151] mb-1">Relevante lenker</span>
+                      <textarea
+                        rows={3}
+                        value={clientData.websiteCreatorQuestions.relevantLinks}
+                        onChange={(e) => setClientData((prev) => ({
+                          ...prev,
+                          websiteCreatorQuestions: { ...prev.websiteCreatorQuestions, relevantLinks: e.target.value },
                         }))}
                         className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 outline-none focus:border-[#FF5B00]"
                       />
@@ -1734,10 +2454,167 @@ export const ClientSettings = () => {
                 <section className="rounded-2xl border border-[#E5E7EB] bg-white p-5">
                   <h2 className="text-lg font-semibold text-[#111827]">Kontoinformasjon</h2>
                   <div className="mt-3 space-y-2 text-sm">
-                    <p><span className="text-[#6B7280]">E-post:</span> {profile?.email || '—'}</p>
-                    <p><span className="text-[#6B7280]">Bedrift:</span> {profile?.businessName || clientData.generalInfo.companyName || '—'}</p>
-                    <p><span className="text-[#6B7280]">Konto-ID:</span> {profile?.userId || '—'}</p>
+                    <p><span className="text-[#6B7280]">Innlogging:</span> {user?.email || profile?.email || '—'}</p>
+                    <p><span className="text-[#6B7280]">Aktiv bedrift:</span> {profile?.businessName || clientData.generalInfo.companyName || '—'}</p>
+                    <p><span className="text-[#6B7280]">Bruker-ID:</span> {user?.id || '—'}</p>
+                    <p><span className="text-[#6B7280]">Bedrift-ID:</span> {profile?.businessId || activeBusinessId || '—'}</p>
+                    <p><span className="text-[#6B7280]">Rolle:</span> {membership?.role === 'owner' ? 'Eier' : membership?.role === 'admin' ? 'Admin' : 'Samarbeidspartner'}</p>
                   </div>
+                </section>
+
+                <section className="rounded-2xl border border-[#E5E7EB] bg-white p-5">
+                  <h2 className="text-lg font-semibold text-[#111827]">Bytt innloggings-e-post</h2>
+                  <p className="mt-1 text-sm text-[#6B7280]">
+                    E-post brukes bare til innlogging og første invitasjon. Nettside, salg og Website Maker er låst til bedrift-ID.
+                  </p>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                    <input
+                      type="email"
+                      value={loginEmail}
+                      onChange={(e) => setLoginEmail(e.target.value)}
+                      placeholder="ny@epost.no"
+                      className="rounded-lg border border-[#E5E7EB] px-3 py-2 text-sm outline-none focus:border-[#FF5B00]"
+                    />
+                    <input
+                      type="password"
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                      placeholder="Nåværende passord"
+                      className="rounded-lg border border-[#E5E7EB] px-3 py-2 text-sm outline-none focus:border-[#FF5B00]"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void changeLoginEmail()}
+                    disabled={busyAction === 'change-email' || !loginEmail || !loginPassword}
+                    className="mt-3 rounded-lg bg-[#111827] px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                  >
+                    {busyAction === 'change-email' ? 'Lagrer...' : 'Oppdater e-post'}
+                  </button>
+                  <p className="mt-2 text-xs text-[#9CA3AF]">
+                    Mistet tilgang til e-posten? Ring oss, så flytter vi innloggingen til en ny adresse uten å løsne bedriften.
+                  </p>
+                </section>
+
+                <section className="rounded-2xl border border-[#E5E7EB] bg-white p-5">
+                  <h2 className="text-lg font-semibold text-[#111827]">Bedrifter på denne brukeren</h2>
+                  <p className="mt-1 text-sm text-[#6B7280]">
+                    Samme innlogging kan eie eller hjelpe på flere bedrifter. Bytt øverst i portalen, som i Google eller GitHub.
+                  </p>
+                  <ul className="mt-3 space-y-2 text-sm">
+                    {businesses.map((row) => (
+                      <li key={row.id} className="flex items-center justify-between rounded-lg border border-[#E5E7EB] px-3 py-2">
+                        <span>
+                          <span className="font-medium">{row.name}</span>
+                          <span className="ml-2 text-[#6B7280]">{row.role}</span>
+                        </span>
+                        {row.id === activeBusinessId ? <span className="text-xs text-[#FF5B00]">Aktiv</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                    <input
+                      value={newBusinessName}
+                      onChange={(e) => setNewBusinessName(e.target.value)}
+                      placeholder="Ny bedrift, f.eks. byrået ditt"
+                      className="flex-1 rounded-lg border border-[#E5E7EB] px-3 py-2 text-sm outline-none focus:border-[#FF5B00]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void createBusiness()}
+                      disabled={busyAction === 'create-business'}
+                      className="rounded-lg border border-[#E5E7EB] px-4 py-2 text-sm font-medium hover:bg-[#F9FAFB] disabled:opacity-50"
+                    >
+                      {busyAction === 'create-business' ? 'Oppretter...' : 'Opprett bedrift'}
+                    </button>
+                  </div>
+                </section>
+
+                <section className="rounded-2xl border border-[#E5E7EB] bg-white p-5">
+                  <div className="flex items-center gap-2">
+                    <Users size={18} />
+                    <h2 className="text-lg font-semibold text-[#111827]">Samarbeidspartnere</h2>
+                  </div>
+                  <p className="mt-1 text-sm text-[#6B7280]">
+                    Inviter en utvikler eller kontoansvarlig. Har de allerede Asoldi, får de tilgang med en gang. Hvis ikke, kobles de på når de registrerer seg med samme e-post.
+                  </p>
+                  {canManageMembers ? (
+                    <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+                      <input
+                        type="email"
+                        value={inviteEmail}
+                        onChange={(e) => setInviteEmail(e.target.value)}
+                        placeholder="kollega@byra.no"
+                        className="flex-1 rounded-lg border border-[#E5E7EB] px-3 py-2 text-sm outline-none focus:border-[#FF5B00]"
+                      />
+                      <select
+                        value={inviteRole}
+                        onChange={(e) => setInviteRole(e.target.value as 'admin' | 'collaborator')}
+                        className="rounded-lg border border-[#E5E7EB] px-3 py-2 text-sm"
+                      >
+                        <option value="collaborator">Samarbeidspartner</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => void inviteMember()}
+                        disabled={busyAction === 'invite' || !inviteEmail}
+                        className="rounded-lg bg-[#FF5B00] px-4 py-2 text-sm font-medium text-white disabled:opacity-50"
+                      >
+                        {busyAction === 'invite' ? 'Inviterer...' : 'Inviter'}
+                      </button>
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-sm text-[#6B7280]">Bare eier eller admin kan invitere.</p>
+                  )}
+                  <ul className="mt-4 space-y-2 text-sm">
+                    {members.map((row) => (
+                      <li key={row.id} className="flex items-center justify-between rounded-lg border border-[#E5E7EB] px-3 py-2">
+                        <span>
+                          <span className="font-medium">{row.email || row.userId || 'Invitert'}</span>
+                          <span className="ml-2 text-[#6B7280]">{row.role} · {row.status}</span>
+                        </span>
+                        {canManageMembers && row.role !== 'owner' ? (
+                          <button
+                            type="button"
+                            onClick={() => void revokeMember(row.id)}
+                            disabled={busyAction === `revoke:${row.id}`}
+                            className="text-xs text-red-600 hover:underline disabled:opacity-50"
+                          >
+                            Fjern
+                          </button>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                  {canTransfer ? (
+                    <div className="mt-5 border-t border-[#E5E7EB] pt-4">
+                      <h3 className="text-sm font-semibold">Overfør eierskap</h3>
+                      <p className="mt-1 text-xs text-[#6B7280]">
+                        Ny eier må allerede være med i bedriften. Du blir værende som admin (andre admin).
+                      </p>
+                      <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+                        <select
+                          value={transferUserId}
+                          onChange={(e) => setTransferUserId(e.target.value)}
+                          className="flex-1 rounded-lg border border-[#E5E7EB] px-3 py-2 text-sm"
+                        >
+                          <option value="">Velg medlem</option>
+                          {members.filter((row) => row.role !== 'owner' && row.status === 'active' && row.userId).map((row) => (
+                            <option key={row.id} value={row.userId}>{row.email} ({row.role})</option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => void transferBusiness()}
+                          disabled={busyAction === 'transfer' || !transferUserId}
+                          className="rounded-lg border border-[#E5E7EB] px-4 py-2 text-sm font-medium disabled:opacity-50"
+                        >
+                          {busyAction === 'transfer' ? 'Overfører...' : 'Overfør'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
                 </section>
 
                 <section className="rounded-2xl border border-red-200 bg-red-50/60 p-5">

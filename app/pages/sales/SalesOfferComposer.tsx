@@ -13,7 +13,6 @@ import {
   previewClientOffer,
   requestClientOfferReview,
   saveClientOffer,
-  saveClientWorkshopStart,
   sendClientOffer,
   startNewClientOffer,
   type MergeField,
@@ -24,12 +23,14 @@ import { getSalesToken, type SalesOffer, type SalesSender } from '../Admin/share
 import { ContractSummaryCard, HtmlPreview, OfferProductsCard, OfferStatusChip } from './offerUi';
 import { SalesFlowSteps } from './SalesFlowSteps';
 import { clientCardParty, offerMissingFields, offerReadinessMessage } from '../../../lib/offer-readiness.js';
+import { resolveWebsiteEmail } from '../../../lib/sales-website-email.js';
 
 type OfferClient = {
   id: string;
   businessName: string;
   contactPerson: string;
   contactEmail: string;
+  websiteEmail?: string;
   clientEmail?: string;
   hasProductNotes?: boolean;
   workshopStartDate?: string;
@@ -62,6 +63,17 @@ type PreviewState = {
 
 const AUTOSAVE_MS = 1500;
 
+function formatWorkshopDate(value = '') {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return 'Avtales senere';
+  const [year, month, day] = value.split('-').map((part) => Number(part));
+  return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString('nb-NO', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+}
+
 type ComposerProps = {
   embedded?: boolean;
   clientId?: string;
@@ -90,7 +102,6 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
   const [canSendEmail, setCanSendEmail] = useState(true);
 
   const [to, setTo] = useState('');
-  const [startDate, setStartDate] = useState('');
   const [meetingsOpen, setMeetingsOpen] = useState(false);
   const [fillPhase, setFillPhase] = useState<'' | 'running' | 'done' | 'error'>('');
   const [fillMessage, setFillMessage] = useState('');
@@ -104,7 +115,6 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
   const [previewState, setPreviewState] = useState<PreviewState | null>(null);
   const dirtyRef = useRef(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const startDateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const htmlRef = useRef(html);
   const subjectRef = useRef(subject);
   const preheaderRef = useRef(preheader);
@@ -170,8 +180,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
         address: stored?.address || card.address,
         contactPerson: stored?.contactPerson || card.contactPerson,
       });
-      setTo(stored?.contactEmail || card.contactEmail);
-      setStartDate(data.client.workshopStartDate || '');
+      setTo(resolveWebsiteEmail(data.client));
       applyOffer(data.offer);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Kunne ikke åpne tilbudet');
@@ -238,14 +247,13 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
   function partyPayload() {
     const card = clientCardParty(clientRef.current || {});
     const draft = partyRef.current;
-    const email = toRef.current.trim();
     const org = draft.orgNumber.replace(/\D+/g, '');
     return {
       businessName: draft.businessName.trim() === card.businessName ? '' : draft.businessName.trim(),
       orgNumber: org === card.orgNumber ? '' : org,
       address: draft.address.trim() === card.address ? '' : draft.address.trim(),
       contactPerson: draft.contactPerson.trim() === card.contactPerson ? '' : draft.contactPerson.trim(),
-      contactEmail: email.toLowerCase() === card.contactEmail.toLowerCase() ? '' : email,
+      contactEmail: '',
     };
   }
 
@@ -459,7 +467,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     setError('');
     setNotice('');
     try {
-      const payload = { to, party: partyPayload(), delivery };
+      const payload = { to: resolveWebsiteEmail(client || {}), party: partyPayload(), delivery };
       const data = await sendClientOffer(clientId, payload) as {
         offer: SalesOffer;
         copyTo?: string;
@@ -493,7 +501,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
         address: fresh.address,
         contactPerson: fresh.contactPerson,
       });
-      setTo(fresh.contactEmail);
+      setTo(resolveWebsiteEmail(client || {}));
       applyOffer(data.offer);
       setNotice('Nytt tilbudsutkast opprettet.');
     } catch (err) {
@@ -528,17 +536,9 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     void handleFillRef.current();
   }, [autoFillToken, loading, locked, fillDisabledReason, offer?.id]);
 
-  function onStartDateChange(value: string) {
-    setStartDate(value);
-    if (startDateTimer.current) clearTimeout(startDateTimer.current);
-    startDateTimer.current = setTimeout(() => {
-      void saveClientWorkshopStart(clientId, value).catch((err) => {
-        setError(err instanceof Error ? err.message : 'Kunne ikke lagre startdato');
-      });
-    }, 400);
-  }
-
   const card = useMemo(() => clientCardParty(client || {}), [client]);
+  const offerTo = resolveWebsiteEmail(client || {}) || to;
+  const workshopDateLabel = formatWorkshopDate(client?.workshopStartDate || '');
   const readiness = useMemo(() => {
     const missing = offerMissingFields({
       businessName: party.businessName,
@@ -546,7 +546,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
       meetingPlace: party.address,
       businessAddress: party.address,
       contactPerson: party.contactPerson,
-      contactEmail: to,
+      contactEmail: offerTo,
     });
     return { ready: missing.length === 0, missing, message: offerReadinessMessage(missing) };
   }, [party, to]);
@@ -669,32 +669,6 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
 
               <div className="grid xl:grid-cols-[minmax(0,1fr)_320px] gap-4">
                 <div className="flex flex-col gap-4 min-w-0">
-                  <div className="max-w-md space-y-3">
-                    <label className="block text-xs text-gray-400">
-                      Til
-                      <input
-                        value={to}
-                        onChange={(e) => {
-                          setTo(e.target.value);
-                          setEditedSincePreview(true);
-                          if (!locked) scheduleSave();
-                        }}
-                        disabled={status === 'sent'}
-                        className="mt-1 w-full px-3 py-2 rounded-lg bg-[#111] border border-white/15 text-white text-sm disabled:opacity-50"
-                      />
-                    </label>
-                    <label className="block text-xs text-gray-400">
-                      Startdato for workshop
-                      <input
-                        type="date"
-                        value={startDate}
-                        onChange={(e) => onStartDateChange(e.target.value)}
-                        disabled={locked}
-                        className="mt-1 w-full px-3 py-2 rounded-lg bg-[#111] border border-white/15 text-white text-sm disabled:opacity-50"
-                      />
-                      <span className="mt-1 block text-[11px] text-gray-500">Tomt felt: datoen tas fra transkriptet, ellers avtaler vi den senere.</span>
-                    </label>
-                  </div>
                   <div className="grid md:grid-cols-2 gap-3">
                     <label className="text-xs text-gray-400">
                       Emne
@@ -755,10 +729,34 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                       )}
                     </div>
                     {meetingsOpen && !locked && (
-                      <div className="mt-2 space-y-2">
-                        {meetings.length > 0 && (
+                      <div className="mt-2 space-y-3">
+                        <div>
+                          <div className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">Transkript fra kalenderøkten</div>
+                          {meetings.some((entry) => entry.hasTranscript) ? (
+                            <div className="flex flex-wrap gap-2">
+                              {meetings.filter((entry) => entry.hasTranscript).map((entry) => (
+                                <button
+                                  key={entry.meetingId}
+                                  type="button"
+                                  disabled={busy === 'meeting'}
+                                  onClick={() => void handlePickMeeting({ meetingId: entry.meetingId })}
+                                  className={`px-2 py-1 rounded-md text-left ${
+                                    entry.selected || entry.meetingId === meeting?.meetingId
+                                      ? 'bg-[#FF5B00]/20 text-white'
+                                      : 'bg-white/10 text-white hover:bg-white/15'
+                                  }`}
+                                >
+                                  {entry.title || 'Uten tittel'}{entry.when ? ` · ${entry.when}` : ''}
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="text-[11px] text-gray-500">Ingen transkript er knyttet til denne kalenderøkten ennå.</p>
+                          )}
+                        </div>
+                        {meetings.some((entry) => !entry.hasTranscript) && (
                           <div className="flex flex-wrap gap-2">
-                            {meetings.map((entry) => (
+                            {meetings.filter((entry) => !entry.hasTranscript).map((entry) => (
                               <button
                                 key={entry.meetingId}
                                 type="button"
@@ -767,29 +765,32 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                                 className={`px-2 py-1 rounded-md text-left ${
                                   entry.selected || entry.meetingId === meeting?.meetingId
                                     ? 'bg-[#FF5B00]/20 text-white'
-                                    : 'bg-white/10 text-white hover:bg-white/15'
+                                    : 'bg-white/10 text-gray-300 hover:bg-white/15'
                                 }`}
                               >
-                                {entry.title || 'Uten tittel'}{entry.when ? ` · ${entry.when}` : ''}{entry.hasTranscript ? '' : ' · uten transkript'}
+                                {entry.title || 'Uten tittel'}{entry.when ? ` · ${entry.when}` : ''} · venter på transkript
                               </button>
                             ))}
                           </div>
                         )}
-                        <div className="flex flex-wrap items-end gap-2">
-                          <input
-                            value={meetingQuery}
-                            onChange={(event) => setMeetingQuery(event.target.value)}
-                            placeholder="Møtenavn eller Fireflies-lenke"
-                            className="flex-1 min-w-[180px] px-2 py-1.5 rounded-md bg-[#111] border border-white/15 text-white text-xs"
-                          />
-                          <button
-                            type="button"
-                            disabled={busy === 'meeting' || meetingQuery.trim().length < 3}
-                            onClick={() => void handlePickMeeting({ title: meetingQuery.trim() })}
-                            className="px-2 py-1.5 rounded-md bg-white/10 text-xs hover:bg-white/15 disabled:opacity-50"
-                          >
-                            {busy === 'meeting' ? 'Henter…' : 'Hent'}
-                          </button>
+                        <div>
+                          <div className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">Legg til Fireflies-lenke eller navn</div>
+                          <div className="flex flex-wrap items-end gap-2">
+                            <input
+                              value={meetingQuery}
+                              onChange={(event) => setMeetingQuery(event.target.value)}
+                              placeholder="https://app.fireflies.ai/view/… eller møtenavn"
+                              className="flex-1 min-w-[180px] px-2 py-1.5 rounded-md bg-[#111] border border-white/15 text-white text-xs"
+                            />
+                            <button
+                              type="button"
+                              disabled={busy === 'meeting' || meetingQuery.trim().length < 3}
+                              onClick={() => void handlePickMeeting({ title: meetingQuery.trim() })}
+                              className="px-2 py-1.5 rounded-md bg-white/10 text-xs hover:bg-white/15 disabled:opacity-50"
+                            >
+                              {busy === 'meeting' ? 'Henter…' : 'Legg til'}
+                            </button>
+                          </div>
                         </div>
                         {meetingMatches.length > 1 && (
                           <div className="flex flex-wrap gap-2">
@@ -906,12 +907,19 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                   <ContractSummaryCard summary={offer.contract.summary} mvaIncluded={mvaIncluded} />
                   <div className="rounded-xl border border-white/10 bg-[#161616] p-4 text-xs text-gray-300 space-y-2">
                     <div className="font-medium text-white text-sm">Kontraktdata for dette tilbudet</div>
-                    <p className="text-[11px] text-gray-500">Krysset nullstiller feltet til kundekortet. E-posten er den samme som Til.</p>
+                    <p className="text-[11px] text-gray-500">Krysset nullstiller feltet til kundekortet. Til og startdato settes på de forrige stegene.</p>
+                    <div className="rounded-lg border border-white/10 bg-black/20 px-2 py-1.5">
+                      <div className="text-[10px] uppercase tracking-wide text-gray-500">Til</div>
+                      <div className="text-sm text-white break-all">{offerTo || '—'}</div>
+                    </div>
+                    <div className="rounded-lg border border-white/10 bg-black/20 px-2 py-1.5">
+                      <div className="text-[10px] uppercase tracking-wide text-gray-500">Startdato for workshop</div>
+                      <div className="text-sm text-white">{workshopDateLabel}</div>
+                    </div>
                     <PartyField label="Bedrift" value={party.businessName} cardValue={card.businessName} disabled={locked} onChange={(value) => { setParty((prev) => ({ ...prev, businessName: value })); scheduleSave(); }} onReset={() => { setParty((prev) => ({ ...prev, businessName: card.businessName })); scheduleSave(); }} />
                     <PartyField label="Org. nr" value={party.orgNumber} cardValue={card.orgNumber} disabled={locked} onChange={(value) => { setParty((prev) => ({ ...prev, orgNumber: value })); scheduleSave(); }} onReset={() => { setParty((prev) => ({ ...prev, orgNumber: card.orgNumber })); scheduleSave(); }} />
                     <PartyField label="Adresse" value={party.address} cardValue={card.address} disabled={locked} onChange={(value) => { setParty((prev) => ({ ...prev, address: value })); scheduleSave(); }} onReset={() => { setParty((prev) => ({ ...prev, address: card.address })); scheduleSave(); }} />
                     <PartyField label="Innehaver" value={party.contactPerson} cardValue={card.contactPerson} disabled={locked} onChange={(value) => { setParty((prev) => ({ ...prev, contactPerson: value })); scheduleSave(); }} onReset={() => { setParty((prev) => ({ ...prev, contactPerson: card.contactPerson })); scheduleSave(); }} />
-                    <PartyField label="E-post" value={to} cardValue={card.contactEmail} disabled={status === 'sent'} onChange={(value) => { setTo(value); setEditedSincePreview(true); if (!locked) scheduleSave(); }} onReset={() => { setTo(card.contactEmail); setEditedSincePreview(true); if (!locked) scheduleSave(); }} />
                   </div>
                   {sender && (
                     <div className="rounded-xl border border-white/10 bg-[#161616] p-4 text-xs text-gray-300 space-y-1">
@@ -991,8 +999,8 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                       type="button"
                       onClick={() => void approvePreview()}
                       disabled={busy === 'approve' || previewState.placeholders.length > 0 || Boolean(previewState.blocker) || !readiness.ready}
-                      title={!readiness.ready ? readiness.message : previewState.placeholders.length ? 'Fyll ut eller slett feltene fra malen først' : previewState.blocker || 'Bekreft at e-posten er riktig – da kan du sende'}
-                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-500 text-black text-sm font-medium disabled:opacity-50"
+                      title={!readiness.ready ? readiness.message : previewState.placeholders.length ? 'Fyll ut eller slett feltene fra malen først' : previewState.blocker || 'Bekreft at e-posten er riktig'}
+                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium disabled:opacity-50"
                     >
                       {busy === 'approve' ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
                       Ser riktig ut – klar til sending

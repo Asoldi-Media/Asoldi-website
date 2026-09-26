@@ -456,9 +456,9 @@ export function OfferReviewSection() {
                       <button
                         type="button"
                         onClick={() => void verify()}
-                        disabled={busy === 'verify' || !offer.products.length}
-                        title={!offer.products.length ? 'Legg til minst ett produkt' : 'Låser innholdet og gir selger beskjed om at tilbudet kan sendes'}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500 text-black text-xs font-medium disabled:opacity-50"
+                        disabled={busy === 'verify'}
+                        title="Låser innholdet og gir selger beskjed om at tilbudet kan sendes"
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-medium disabled:opacity-50"
                       >
                         {busy === 'verify' ? <Loader2 size={13} className="animate-spin" /> : <ShieldCheck size={13} />} Verifiser og send til selger
                       </button>

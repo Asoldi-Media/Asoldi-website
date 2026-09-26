@@ -415,6 +415,7 @@ function normalizeSalesClient(raw = {}) {
     websiteEmail: normalizeStoredWebsiteEmail(raw.websiteEmail, raw.contactEmail),
     clientEmail: sanitizeText(raw.clientEmail).toLowerCase(),
     portalUserId: sanitizeText(raw.portalUserId),
+    portalBusinessId: sanitizeText(raw.portalBusinessId),
     portalConnectedAt: sanitizeText(raw.portalConnectedAt),
     portalTierId: sanitizeText(raw.portalTierId),
     contactPhone: sanitizeText(raw.contactPhone),

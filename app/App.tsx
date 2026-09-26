@@ -44,6 +44,7 @@ const ClientSettings = lazy(() => import('./pages/client/ClientSettings').then((
 const ClientWebsiteStart = lazy(() => import('./pages/client/ClientWebsiteStart').then((m) => ({ default: m.ClientWebsiteStart })));
 const ClientWebsitePlans = lazy(() => import('./pages/client/ClientWebsitePlans').then((m) => ({ default: m.ClientWebsitePlans })));
 const ClientWebsiteCheckout = lazy(() => import('./pages/client/ClientWebsiteCheckout').then((m) => ({ default: m.ClientWebsiteCheckout })));
+const ClientAiAssistant = lazy(() => import('./pages/client/ClientAiAssistant').then((m) => ({ default: m.ClientAiAssistant })));
 
 function AppLayout() {
   const location = useLocation();
@@ -114,6 +115,7 @@ function AppLayout() {
           <Route path="/kunde/tilbud" element={<ClientOfferReview />} />
           <Route path="/kunde/onboarding" element={<ClientOnboarding />} />
           <Route path="/kunde/tjenester" element={<ClientServices />} />
+          <Route path="/kunde/ai-assistant" element={<ClientAiAssistant />} />
           <Route path="/kunde/innstillinger" element={<ClientSettings />} />
           <Route path="/kunde/innstillinger/fakturering" element={<ClientSettings />} />
           <Route path="/kunde/innstillinger/billing" element={<ClientSettings />} />
