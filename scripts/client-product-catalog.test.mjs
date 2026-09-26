@@ -27,6 +27,7 @@ import {
   formatWooStorePrice,
 } from '../lib/ai-assistant/products-scrape.js';
 import { isPrivateIp, parsePublicHttpUrl } from '../lib/ai-assistant/safe-url.js';
+import { extractUrlsFromText, shouldIngestSources } from '../lib/ai-assistant/products-ingest.js';
 import { extractFirstUrl } from '../lib/ai-assistant/chat.js';
 
 test('legacy kundedata products migrate into a normal catalog', () => {
@@ -236,6 +237,19 @@ test('SSRF guard blocks private hosts and allows https shops', () => {
 
 test('chat extracts the first public URL', () => {
   assert.equal(extractFirstUrl('se https://butikk.no/produkter takk'), 'https://butikk.no/produkter');
+});
+
+test('natural chat finds a bare domain and does not ingest "pris" small talk', () => {
+  const spoken = 'jeg har ingen filer, men sjekk ut asoldi.com for prisene på produkter';
+  const urls = extractUrlsFromText(spoken);
+  assert.equal(urls.length, 1);
+  assert.match(urls[0], /^https:\/\/asoldi\.com\/?$/);
+  assert.equal(extractFirstUrl(spoken), urls[0]);
+  assert.equal(shouldIngestSources({ text: spoken }), true);
+  assert.equal(shouldIngestSources({ text: 'hva slags priser bruker dere egentlig?' }), false);
+  assert.equal(shouldIngestSources({ text: 'Toast 89 kr\nKaffe 45 kr\nBolle 30 kr' }), true);
+  assert.equal(extractUrlsFromText('skriv til hei@asoldi.com').length, 0);
+  assert.match(extractFirstUrl('sjekk www.topspin.no/meny'), /topspin\.no\/meny/);
 });
 
 test('explicit cake catalog stays normal even when industry is restaurant', () => {

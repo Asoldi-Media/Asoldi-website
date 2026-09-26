@@ -48,6 +48,7 @@ function TypeLine({ text, className }: { text: string; className?: string }) {
 export const ClientAiAssistant = () => {
   const { token, profile, updateProfileState } = useClientAuth();
   const fileRef = useRef<HTMLInputElement>(null);
+  const composerRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([
     { id: '1', role: 'ai', text: PRODUCT_ASSISTANT_GREETING },
@@ -154,6 +155,13 @@ export const ClientAiAssistant = () => {
         keepBusy = true;
         setJobId(payload.jobId);
         setStatusLine(payload.assistantMessage || 'Henter produkter…');
+        if (payload.assistantMessage) {
+          setMessages((prev) => [...prev, {
+            id: String(Date.now() + 1),
+            role: 'ai',
+            text: payload.assistantMessage,
+          }]);
+        }
         return;
       }
       if (payload.nextAction === 'manual') {
@@ -300,9 +308,10 @@ export const ClientAiAssistant = () => {
                   <Paperclip className="w-4 h-4" />
                 </button>
                 <input
+                  ref={composerRef}
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
-                  placeholder="Lim inn URL, skriv notater, og legg ved filer — alt leses sammen"
+                  placeholder="Skriv fritt — sjekk cafeen.no, lim inn en liste, eller legg ved filer"
                   className="w-full bg-transparent px-4 py-4 outline-none text-[15px] text-[#121212] placeholder-gray-400"
                   disabled={busy}
                 />
@@ -327,11 +336,11 @@ export const ClientAiAssistant = () => {
                 }}
               />
               <p className="mt-2 text-[12px] text-gray-400">
-                Filer, lenker og tekst vurderes som én kilde. Legg ved flere dokumenter før du sender.
+                Skriv fritt. cafeen.no er nok — du trenger ikke https://. Filer og tekst leses sammen.
               </p>
               <div className="flex flex-wrap gap-2 mt-3">
                 <button type="button" onClick={() => fileRef.current?.click()} className="bg-white/70 border border-gray-200 px-4 py-2 rounded-lg text-[13px] text-gray-600">Legg ved filer</button>
-                <button type="button" onClick={() => setInputValue((prev) => (prev.includes('https://') ? prev : `${prev}${prev ? '\n' : ''}https://`.trim()))} className="bg-white/70 border border-gray-200 px-4 py-2 rounded-lg text-[13px] text-gray-600">Lim inn URL</button>
+                <button type="button" onClick={() => composerRef.current?.focus()} className="bg-white/70 border border-gray-200 px-4 py-2 rounded-lg text-[13px] text-gray-600">Skriv nettside</button>
                 <Link to="/kunde/innstillinger#produkter" className="bg-white/70 border border-gray-200 px-4 py-2 rounded-lg text-[13px] text-gray-600">Sett opp manuelt</Link>
               </div>
             </form>
