@@ -15,9 +15,13 @@ import {
   collectHtmlProducts,
   detectStorePlatform,
   extractJsonLdProducts,
+  extractJsImportUrls,
   extractPricedMenuItems,
+  extractPricedRecordsFromSource,
+  extractPricingCards,
   extractSameOriginLinks,
   isLikelyProductHref,
+  looksLikeJsShell,
   mapShopifyProductsJson as mapShopify,
   mapWooStoreProducts,
   formatWooStorePrice,
@@ -170,6 +174,53 @@ test('JSON-LD products and same-origin product links extract', () => {
   const links = extractSameOriginLinks(html, 'https://cafe.no/');
   assert.ok(links.includes('https://cafe.no/meny/frokost'));
   assert.equal(isLikelyProductHref('/products/hoodie'), true);
+});
+
+test('catalog URLs include pricing, plans and services, not account chrome', () => {
+  assert.equal(isLikelyProductHref('/pricing'), true);
+  assert.equal(isLikelyProductHref('/priser'), true);
+  assert.equal(isLikelyProductHref('/tjenester'), true);
+  assert.equal(isLikelyProductHref('/services/web-development'), true);
+  assert.equal(isLikelyProductHref('/pakker'), true);
+  assert.equal(isLikelyProductHref('/about'), false);
+  assert.equal(isLikelyProductHref('/login'), false);
+  assert.equal(isLikelyProductHref('/kunde/ai-assistant'), false);
+});
+
+test('JS shells are detected and priced objects are read from bundles', () => {
+  const shell = '<!doctype html><html><body><div id="root"></div><script type="module" src="/assets/index-abc.js"></script></body></html>';
+  assert.equal(looksLikeJsShell(shell), true);
+  assert.equal(looksLikeJsShell('<main><h1>Meny</h1><p>Toast 89 kr</p></main>'), false);
+  const bundle = `
+    const c=[{id:"tier-1-standard",name:"Tier 1: Standard",shortName:"Starter",description:"Simpel nettside.",monthlyExMva:999,includes:["Hosting","Kontaktskjema"]},
+    {id:"Starter",name:"Starter",description:"Sosiale medier.",normalPrice:"1 999,-/mnd",features:["Strategi","Rapportering"]},
+    {id:"mail",name:"Starter",price:"1 499,-/mnd",description:"E-post pakke.",includedFeatures:["2 kampanjer per måned","Kalender"]},
+    {id:"skreddersydd",name:"Skreddersydd",price:"Etter avtale",description:"Avanserte behov.",includedFeatures:["API-integrasjoner"]}];
+  `;
+  const products = extractPricedRecordsFromSource(bundle);
+  assert.ok(products.some((row) => row.title === 'Starter' && /999/.test(row.price) && /mnd/.test(row.price)));
+  assert.ok(products.some((row) => row.title === 'Starter' && /1 999/.test(row.price)));
+  assert.ok(products.some((row) => row.title === 'Starter' && /1 499/.test(row.price)));
+  assert.ok(products.some((row) => row.title === 'Skreddersydd' && /avtale/i.test(row.price)));
+  const imports = extractJsImportUrls(
+    'import{t as M}from"./website-tiers-aaa.js";const x="assets/Pricing-bbb.js"',
+    'https://agency.example/assets/index-ccc.js',
+  );
+  assert.ok(imports.includes('https://agency.example/assets/website-tiers-aaa.js'));
+  assert.ok(imports.includes('https://agency.example/assets/Pricing-bbb.js'));
+});
+
+test('pricing cards and Service JSON-LD extract without shop markup', () => {
+  const html = `
+    <script type="application/ld+json">{"@type":"Offer","name":"SEO-pakke","price":"1499","priceCurrency":"NOK"}</script>
+    <article class="pricing-card"><h3>Vekst</h3><p>2 999,-/mnd</p><ul><li>Profiloptimalisering</li><li>Annonser</li></ul></article>
+  `;
+  const products = collectHtmlProducts(html);
+  assert.ok(products.some((row) => row.title === 'SEO-pakke' && /1499/.test(row.price)));
+  const cards = extractPricingCards(html);
+  assert.equal(cards[0].title, 'Vekst');
+  assert.match(cards[0].price, /2 999/);
+  assert.ok(cards[0].included.includes('Profiloptimalisering'));
 });
 
 test('SSRF guard blocks private hosts and allows https shops', () => {
