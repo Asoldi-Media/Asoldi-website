@@ -9905,6 +9905,8 @@ app.post('/api/client/ai-assistant/chat', clientAuth, (req, res) => {
     }
     const files = (Array.isArray(req.files) ? req.files : []).map((file) => ({
       originalName: file.originalname,
+      name: file.originalname,
+      mimeType: file.mimetype,
       buffer: file.buffer,
     }));
     try {
@@ -9951,6 +9953,8 @@ app.post('/api/client/ai-assistant/products/import', clientAuth, (req, res) => {
     if (!user || user.role !== 'client') return res.status(401).json({ message: 'Unauthorized' });
     const files = (Array.isArray(req.files) ? req.files : []).map((file) => ({
       originalName: file.originalname,
+      name: file.originalname,
+      mimeType: file.mimetype,
       buffer: file.buffer,
     }));
     try {

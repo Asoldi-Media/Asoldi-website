@@ -139,7 +139,16 @@ export const ClientAiAssistant = () => {
     const trimmed = text.trim();
     const attached = files.length ? files : pendingFiles;
     if (!trimmed && !attached.length) return;
-    const fileLabel = attached.length ? `${attached.length} fil(er): ${attached.map((file) => file.name).join(', ')}` : '';
+    const docs = attached.filter((file) => /\.(pdf|odt|ods|docx|doc|xlsx|xls|csv|txt|md)$/i.test(file.name));
+    const media = attached.filter((file) => /\.(png|jpe?g|webp|gif|heic|avif|mp4|mov|webm)$/i.test(file.name));
+    const fileLabel = attached.length
+      ? [
+        docs.length ? `${docs.length} dokument${docs.length === 1 ? '' : 'er'}` : '',
+        media.length ? `${media.length} ${media.length === 1 ? 'bilde/video' : 'bilder/video'}` : '',
+        !docs.length && !media.length ? `${attached.length} fil(er)` : '',
+        attached.map((file) => file.name).join(', '),
+      ].filter(Boolean).join(': ')
+      : '';
     setBusy(true);
     setStatusLine(attached.length ? 'Leser filene…' : 'Jobber…');
     setMessages((prev) => [...prev, { id: String(Date.now()), role: 'user', text: [trimmed, fileLabel].filter(Boolean).join('\n') }]);
