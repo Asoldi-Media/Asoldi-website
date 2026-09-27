@@ -13,6 +13,7 @@ test('diet labels are not offering groups', () => {
   assert.equal(offeringRole('Glutenfri pizza'), 'diet');
   assert.equal(offeringRole('Drikke'), 'drikke');
   assert.equal(offeringRole('Kaker'), 'kaker');
+  assert.equal(offeringRole('Allergi meny smørbrød'), 'smørbrød');
 });
 
 test('allergen leftovers become products in Meny, not many diet categories', () => {
@@ -79,4 +80,43 @@ test('website tiers stay put when food arrives', () => {
   assert.equal(food.categories.length, 1);
   assert.equal(food.categories[0].name, 'Meny');
   assert.equal(food.categories[0].products[0].title, 'Ciabatta');
+});
+
+test('allergen-file catalogs fold into the real shop group, not a second Smørbrød', () => {
+  const stale = placeIncomingCatalogs([], [{
+    layout: 'meny',
+    label: 'Allergi-meny',
+    categories: [
+      { name: 'Allergi meny smørbrød', products: [{ title: 'Reke', allergens: 'Reker' }] },
+    ],
+  }, {
+    layout: 'meny',
+    label: 'Meny',
+    categories: [
+      { name: 'Smørbrød', products: [{ title: 'Reke', price: '125 kr' }] },
+      { name: 'Drikke', products: [{ title: 'Kaffe', price: '45 kr' }] },
+    ],
+  }]);
+  const names = stale.flatMap((catalog) => (catalog.categories || []).map((category) => category.name));
+  assert.equal(names.filter((name) => /smørbrød/i.test(name)).length, 1);
+  assert.equal(names.some((name) => /allergi/i.test(name)), false);
+  assert.equal(stale.filter((catalog) => catalog.layout === 'meny').length, 1);
+
+  const cleaned = placeIncomingCatalogs(stale, []);
+  const cleanedNames = cleaned.flatMap((catalog) => (catalog.categories || []).map((category) => `${catalog.label} · ${category.name}`));
+  assert.equal(cleanedNames.some((name) => /allergi/i.test(name)), false);
+  assert.equal(cleaned.find((catalog) => catalog.layout === 'meny').categories.find((category) => category.name === 'Smørbrød').products[0].price, '125 kr');
+});
+
+test('dessert and kaker stay separate shop groups', () => {
+  const placed = placeIncomingCatalogs([], [{
+    layout: 'meny',
+    label: 'Meny',
+    categories: [
+      { name: 'Dessert', products: [{ title: 'Iscup', price: '45 kr' }] },
+      { name: 'Kaker', products: [{ title: 'Eplekake', price: '55 kr' }] },
+    ],
+  }]);
+  const names = placed[0].categories.map((category) => category.name).sort();
+  assert.deepEqual(names, ['Dessert', 'Kaker']);
 });
