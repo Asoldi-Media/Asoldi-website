@@ -61,6 +61,7 @@ export const ClientAiAssistant = () => {
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [makerLinked, setMakerLinked] = useState(false);
   const [previewUrl, setPreviewUrl] = useState('');
+  const [dragOver, setDragOver] = useState(false);
 
   function applyCatalog(catalogs: any[]) {
     const summary = summarizeCatalogs(catalogs);
@@ -108,6 +109,7 @@ export const ClientAiAssistant = () => {
         if (payload.status === 'done' || payload.status === 'failed') {
           setBusy(false);
           setJobId('');
+          setStatusLine('');
           setMessages((prev) => [
             ...prev,
             {
@@ -127,12 +129,19 @@ export const ClientAiAssistant = () => {
     return () => { stop = true; };
   }, [jobId, token]);
 
+  function queueFiles(fileList: FileList | File[] | null) {
+    const files = Array.from(fileList || []);
+    if (files.length) setPendingFiles((prev) => [...prev, ...files]);
+    return files;
+  }
+
   async function sendToAssistant(text: string, files: File[] = []) {
     const trimmed = text.trim();
     const attached = files.length ? files : pendingFiles;
     if (!trimmed && !attached.length) return;
     const fileLabel = attached.length ? `${attached.length} fil(er): ${attached.map((file) => file.name).join(', ')}` : '';
     setBusy(true);
+    setStatusLine(attached.length ? 'Leser filene…' : 'Jobber…');
     setMessages((prev) => [...prev, { id: String(Date.now()), role: 'user', text: [trimmed, fileLabel].filter(Boolean).join('\n') }]);
     setInputValue('');
     setPendingFiles([]);
@@ -180,7 +189,10 @@ export const ClientAiAssistant = () => {
         text: error instanceof Error ? error.message : 'Noe gikk galt.',
       }]);
     } finally {
-      if (!keepBusy) setBusy(false);
+      if (!keepBusy) {
+        setBusy(false);
+        setStatusLine('');
+      }
     }
   }
 
@@ -241,10 +253,34 @@ export const ClientAiAssistant = () => {
                 ) : null}
               </p>
             ) : null}
-            {statusLine ? <p className="mt-auto pt-6 text-xs text-[#FF5B00]">{statusLine}</p> : null}
+            {(busy || statusLine) ? (
+              <div className="mt-6 rounded-xl border border-[#FF5B00]/20 bg-[#FFF6F0] px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#FF5B00] animate-bounce" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#FF5B00] animate-bounce [animation-delay:120ms]" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#FF5B00] animate-bounce [animation-delay:240ms]" />
+                  <p className="text-xs text-[#FF5B00]">{statusLine || 'Jobber…'}</p>
+                </div>
+              </div>
+            ) : null}
           </div>
 
-          <div className="flex-1 flex flex-col h-full min-h-0 overflow-hidden">
+          <div
+            className="flex-1 flex flex-col h-full min-h-0 overflow-hidden"
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDragOver(true);
+            }}
+            onDragLeave={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOver(false);
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              setDragOver(false);
+              const dropped = queueFiles(e.dataTransfer.files);
+              if (dropped.length && !busy) void sendToAssistant(inputValue, [...pendingFiles, ...dropped]);
+            }}
+          >
             <header className="w-full flex justify-between items-center shrink-0 pb-4">
               <Link to="/kunde/hjem" className="flex items-center gap-2 font-medium text-[16px] text-[#121212] no-underline hover:opacity-80">
                 <ChevronLeft className="w-4 h-4" />
@@ -279,6 +315,23 @@ export const ClientAiAssistant = () => {
                     </motion.div>
                   ))}
                 </AnimatePresence>
+                {busy ? (
+                  <motion.div
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="self-start flex items-start gap-4 max-w-[84%]"
+                  >
+                    <div className="w-6 h-6 shrink-0 mt-0.5 text-[#FF5B00]">✦</div>
+                    <div>
+                      <div className="flex items-center gap-1.5 h-6">
+                        <span className="w-2 h-2 rounded-full bg-[#FF5B00] animate-bounce" />
+                        <span className="w-2 h-2 rounded-full bg-[#FF5B00] animate-bounce [animation-delay:140ms]" />
+                        <span className="w-2 h-2 rounded-full bg-[#FF5B00] animate-bounce [animation-delay:280ms]" />
+                      </div>
+                      <p className="text-[14px] text-gray-500">{statusLine || 'Tenker og leser kildene…'}</p>
+                    </div>
+                  </motion.div>
+                ) : null}
               </div>
             </div>
 
@@ -303,7 +356,7 @@ export const ClientAiAssistant = () => {
                   ))}
                 </div>
               ) : null}
-              <div className="relative flex items-center bg-white border border-gray-100 rounded-[16px] shadow-[0_8px_30px_rgba(0,0,0,0.06)] overflow-hidden">
+              <div className={`relative flex items-center bg-white border rounded-[16px] shadow-[0_8px_30px_rgba(0,0,0,0.06)] overflow-hidden ${dragOver ? 'border-[#FF5B00] bg-[#FFF6F0]' : 'border-gray-100'}`}>
                 <button type="button" onClick={() => fileRef.current?.click()} className="ml-3 text-gray-400 hover:text-[#121212]" aria-label="Legg ved fil">
                   <Paperclip className="w-4 h-4" />
                 </button>
@@ -311,7 +364,7 @@ export const ClientAiAssistant = () => {
                   ref={composerRef}
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
-                  placeholder="Skriv fritt — sjekk cafeen.no, lim inn en liste, eller legg ved filer"
+                  placeholder={dragOver ? 'Slipp filer eller bilder her' : 'Skriv fritt — slipp bilder, menyer eller en nettside'}
                   className="w-full bg-transparent px-4 py-4 outline-none text-[15px] text-[#121212] placeholder-gray-400"
                   disabled={busy}
                 />
@@ -328,15 +381,14 @@ export const ClientAiAssistant = () => {
                 type="file"
                 multiple
                 className="hidden"
-                accept=".xlsx,.xls,.csv,.pdf,.docx,.odt,.txt,.md,.png,.jpg,.jpeg,.webp"
+                accept=".xlsx,.xls,.csv,.pdf,.docx,.odt,.txt,.md,.png,.jpg,.jpeg,.webp,.gif,.heic,.avif,.mp4,.mov,.webm"
                 onChange={(e) => {
-                  const files = Array.from(e.target.files || []);
-                  if (files.length) setPendingFiles((prev) => [...prev, ...files]);
+                  queueFiles(e.target.files);
                   e.target.value = '';
                 }}
               />
               <p className="mt-2 text-[12px] text-gray-400">
-                Skriv fritt. cafeen.no er nok — du trenger ikke https://. Filer og tekst leses sammen.
+                Dra og slipp bilder, video eller menyer hit. cafeen.no er nok — du trenger ikke https://.
               </p>
               <div className="flex flex-wrap gap-2 mt-3">
                 <button type="button" onClick={() => fileRef.current?.click()} className="bg-white/70 border border-gray-200 px-4 py-2 rounded-lg text-[13px] text-gray-600">Legg ved filer</button>

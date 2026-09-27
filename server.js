@@ -9860,7 +9860,7 @@ app.put('/api/client/settings/client-data', clientAuth, async (req, res) => {
 
 const clientAssistantUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 20 * 1024 * 1024, files: 12 },
+  limits: { fileSize: 32 * 1024 * 1024, files: 20 },
 });
 
 function clientMediaMime(fileName = '') {
@@ -9886,10 +9886,12 @@ app.get('/api/client/ai-assistant/state', clientAuth, async (req, res) => {
 });
 
 app.post('/api/client/ai-assistant/chat', clientAuth, (req, res) => {
-  clientAssistantUpload.array('files', 12)(req, res, async (error) => {
+  clientAssistantUpload.array('files', 20)(req, res, async (error) => {
     if (error) {
       return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
-        message: error.message || 'Opplasting feilet.',
+        message: error.code === 'LIMIT_FILE_SIZE'
+          ? 'Filen er for stor (maks 32 MB).'
+          : (error.message || 'Opplasting feilet.'),
       });
     }
     const user = await store.getUserById(req.client.userId);
@@ -9939,7 +9941,7 @@ app.get('/api/client/ai-assistant/products/jobs/:jobId', clientAuth, async (req,
 });
 
 app.post('/api/client/ai-assistant/products/import', clientAuth, (req, res) => {
-  clientAssistantUpload.array('files', 12)(req, res, async (error) => {
+  clientAssistantUpload.array('files', 20)(req, res, async (error) => {
     if (error) {
       return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
         message: error.message || 'Opplasting feilet.',
