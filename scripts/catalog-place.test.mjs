@@ -4,6 +4,8 @@ import {
   isDietOrVariantLabel,
   offeringRole,
   placeIncomingCatalogs,
+  similarHeading,
+  harvestHeadings,
 } from '../lib/ai-assistant/catalog-place.js';
 import { mergeImportedCatalogs } from '../lib/client-product-catalog.js';
 
@@ -13,7 +15,33 @@ test('diet labels are not offering groups', () => {
   assert.equal(offeringRole('Glutenfri pizza'), 'diet');
   assert.equal(offeringRole('Drikke'), 'drikke');
   assert.equal(offeringRole('Kaker'), 'kaker');
-  assert.equal(offeringRole('Allergi meny smørbrød'), 'smørbrød');
+});
+
+test('new sources place against website headings by similar leftover names', () => {
+  const website = [{
+    layout: 'meny',
+    label: 'Meny',
+    origin: 'website',
+    categories: [
+      { name: 'Sandwiches', products: [{ title: 'Shrimp', price: '12' }] },
+      { name: 'Drinks', products: [{ title: 'Coffee', price: '4' }] },
+    ],
+  }];
+  const headings = harvestHeadings(website);
+  assert.equal(similarHeading('Dietary menu sandwiches', headings).name, 'Sandwiches');
+  const placed = placeIncomingCatalogs(website, [{
+    layout: 'meny',
+    label: 'Dietary sheet 1',
+    origin: 'document',
+    sourceName: 'Dietary sheet 1.odt',
+    categories: [
+      { name: 'Dietary menu sandwiches', products: [{ title: 'Shrimp', allergens: 'Shellfish' }] },
+    ],
+  }]);
+  const names = placed.flatMap((catalog) => (catalog.categories || []).map((category) => category.name));
+  assert.equal(names.filter((name) => /sandwich/i.test(name)).length, 1);
+  assert.equal(names.some((name) => /dietary/i.test(name)), false);
+  assert.equal(placed.filter((catalog) => catalog.layout === 'meny').length, 1);
 });
 
 test('allergen leftovers become products in Meny, not many diet categories', () => {
@@ -92,6 +120,7 @@ test('allergen-file catalogs fold into the real shop group, not a second Smørbr
   }, {
     layout: 'meny',
     label: 'Meny',
+    origin: 'website',
     categories: [
       { name: 'Smørbrød', products: [{ title: 'Reke', price: '125 kr' }] },
       { name: 'Drikke', products: [{ title: 'Kaffe', price: '45 kr' }] },
