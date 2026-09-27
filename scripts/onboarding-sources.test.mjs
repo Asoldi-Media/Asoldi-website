@@ -42,6 +42,7 @@ test('onboarding sources land in kundedata for later website intake', () => {
     instagramUrl: 'https://instagram.com/cafeen',
     facebookUrl: 'https://facebook.com/cafeen',
     googleMapsUrl: 'https://www.google.com/maps/search/?api=1&query_place_id=ChIJ1',
+    googlePlaceId: 'ChIJ1',
     googlePlaceName: 'Cafeen',
   }, {
     phone: '40000000',
@@ -49,8 +50,19 @@ test('onboarding sources land in kundedata for later website intake', () => {
   });
   assert.equal(bank.generalInfo.websiteUrl, 'https://cafeen.no');
   assert.equal(bank.generalInfo.instagramUrl, 'https://instagram.com/cafeen');
+  assert.equal(bank.generalInfo.googlePlaceId, 'ChIJ1');
   assert.equal(bank.openingHours.googleBusinessSyncUrl.includes('ChIJ1'), true);
   assert.equal(bank.websiteCreatorQuestions.websiteDomain, 'https://cafeen.no');
   assert.match(bank.websiteCreatorQuestions.relevantLinks, /instagram.com\/cafeen/);
   assert.equal(bank.generalInfo.companyPhone, '40000000');
+});
+
+test('Place ID alone builds the official Maps URL for later buttons', () => {
+  const bank = portal.applyIntakeSourcesToBank({}, {
+    googlePlaceId: 'ChIJN1t_tDeuEmsRUsoyG83frY4',
+    googlePlaceName: "Joe's Pizza",
+  });
+  assert.equal(bank.generalInfo.googlePlaceId, 'ChIJN1t_tDeuEmsRUsoyG83frY4');
+  assert.match(bank.generalInfo.googleMapsUrl, /query_place_id=ChIJN1t_tDeuEmsRUsoyG83frY4/);
+  assert.match(bank.openingHours.googleBusinessSyncUrl, /query_place_id=ChIJN1t_tDeuEmsRUsoyG83frY4/);
 });

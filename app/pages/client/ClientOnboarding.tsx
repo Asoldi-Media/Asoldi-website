@@ -1,9 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { useClientAuth } from '../../contexts/ClientAuthContext';
 import { ClientRouteGuard } from '../../components/client/ClientRouteGuard';
+import { GooglePlaceAutocomplete } from '../../components/client/GooglePlaceAutocomplete';
 
 type FormState = {
   name: string;
@@ -88,6 +89,8 @@ export const ClientOnboarding = () => {
   const [placeResults, setPlaceResults] = useState<PlaceOption[]>([]);
   const [placeLoading, setPlaceLoading] = useState(false);
   const [placeError, setPlaceError] = useState('');
+  const [placesApiKey, setPlacesApiKey] = useState('');
+  const [placesAutocomplete, setPlacesAutocomplete] = useState(false);
   const [form, setForm] = useState<FormState>({
     name: profile?.name || '',
     businessName: profile?.businessName || '',
@@ -160,6 +163,32 @@ export const ClientOnboarding = () => {
     setPlaceError('');
   }
 
+  const selectGooglePlace = useCallback((place: PlaceOption) => {
+    setForm((prev) => ({
+      ...prev,
+      googleMapsUrl: place.mapsUrl,
+      googlePlaceId: place.placeId,
+      googlePlaceName: place.name,
+    }));
+    setPlaceQuery(place.name);
+    setPlaceResults([]);
+    setPlaceError('');
+  }, []);
+
+  useEffect(() => {
+    if (!token) return;
+    fetch('/api/client/places-config', { headers: { Authorization: `Bearer ${token}` } })
+      .then((res) => res.json().catch(() => ({})))
+      .then((data) => {
+        setPlacesAutocomplete(Boolean(data?.autocomplete && data?.apiKey));
+        setPlacesApiKey(String(data?.apiKey || ''));
+      })
+      .catch(() => {
+        setPlacesAutocomplete(false);
+        setPlacesApiKey('');
+      });
+  }, [token]);
+
   useEffect(() => {
     if (current.key !== 'businessName') return;
     const query = String(form.businessName || '').trim();
@@ -198,14 +227,14 @@ export const ClientOnboarding = () => {
   }, [current.key, form.businessName, token]);
 
   useEffect(() => {
-    if (current.kind !== 'sources') return;
+    if (current.kind !== 'sources' || placesAutocomplete) return;
     if (!placeQuery && form.businessName && !form.googleMapsUrl) {
       setPlaceQuery([form.businessName, form.businessAddress].filter(Boolean).join(' '));
     }
-  }, [current.kind, form.businessName, form.businessAddress, form.googleMapsUrl, placeQuery]);
+  }, [current.kind, form.businessName, form.businessAddress, form.googleMapsUrl, placeQuery, placesAutocomplete]);
 
   useEffect(() => {
-    if (current.kind !== 'sources') return;
+    if (current.kind !== 'sources' || placesAutocomplete) return;
     const query = placeQuery.trim();
     if (query.length < 3) {
       setPlaceResults([]);
@@ -242,7 +271,7 @@ export const ClientOnboarding = () => {
       active = false;
       clearTimeout(timer);
     };
-  }, [current.kind, placeQuery, form.googlePlaceName, token]);
+  }, [current.kind, placeQuery, form.googlePlaceName, token, placesAutocomplete]);
 
   async function completeOnboarding() {
     setLoading(true);
@@ -412,47 +441,61 @@ export const ClientOnboarding = () => {
                 <div>
                   <span className="text-sm text-[#374151]">Google-bedrift / Maps <span className="text-[#9CA3AF]">(valgfritt)</span></span>
                   <p className="mt-1 text-xs text-[#6B7280]">
-                    Søk på bedriftsnavn og velg riktig profil. Du trenger ikke kopiere en Maps-lenke.
+                    Skriv bedriftsnavnet og velg i Google-listen. Vi lagrer Place ID — du trenger ikke kopiere en Maps-lenke.
                   </p>
-                  <input
-                    type="text"
-                    value={placeQuery}
-                    onChange={(e) => {
-                      setPlaceQuery(e.target.value);
-                      if (form.googlePlaceName) {
-                        patchForm({ googleMapsUrl: '', googlePlaceId: '', googlePlaceName: '' });
-                      }
-                    }}
-                    placeholder="Søk f.eks. Bydelskafe Trondheim"
-                    className="mt-2 w-full rounded-xl border border-[#DDE2EA] bg-white px-4 py-3 outline-none focus:border-[#FF5B00]"
-                  />
-                  {form.googlePlaceName ? (
-                    <p className="mt-2 text-xs text-[#059669]">
-                      Valgt: {form.googlePlaceName}
-                      {form.googleMapsUrl ? ' · Google-profilen er lagret' : ''}
-                    </p>
-                  ) : null}
-                  {placeLoading ? <p className="mt-2 text-xs text-[#6B7280]">Søker i Google-profiler…</p> : null}
-                  {placeError ? <p className="mt-2 text-xs text-red-500">{placeError}</p> : null}
-                  {!placeLoading && placeResults.length > 0 ? (
-                    <div className="mt-2 max-h-56 overflow-y-auto rounded-xl border border-[#E5E7EB] bg-white divide-y divide-[#EEF1F5]">
-                      {placeResults.map((option) => (
-                        <button
-                          key={`${option.placeId}:${option.name}`}
-                          type="button"
-                          onClick={() => selectPlace(option)}
-                          className="w-full text-left px-4 py-3 hover:bg-[#F8F9FB]"
-                        >
-                          <div className="text-sm font-medium text-[#111827]">{option.name}</div>
-                          <div className="text-xs text-[#6B7280]">
-                            {option.address || 'Google-bedrift'}
-                            {option.rating ? ` · ${option.rating}` : ''}
-                            {option.reviews ? ` (${option.reviews} anmeldelser)` : ''}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  ) : null}
+                  {placesAutocomplete && placesApiKey ? (
+                    <GooglePlaceAutocomplete
+                      key={form.googlePlaceId || 'empty'}
+                      apiKey={placesApiKey}
+                      defaultQuery={form.businessName}
+                      selectedName={form.googlePlaceName}
+                      onSelect={selectGooglePlace}
+                      onClear={() => patchForm({ googleMapsUrl: '', googlePlaceId: '', googlePlaceName: '' })}
+                      onLoadError={() => setPlacesAutocomplete(false)}
+                    />
+                  ) : (
+                    <>
+                      <input
+                        type="text"
+                        value={placeQuery}
+                        onChange={(e) => {
+                          setPlaceQuery(e.target.value);
+                          if (form.googlePlaceName) {
+                            patchForm({ googleMapsUrl: '', googlePlaceId: '', googlePlaceName: '' });
+                          }
+                        }}
+                        placeholder="Søk f.eks. Bydelskafe Trondheim"
+                        className="mt-2 w-full rounded-xl border border-[#DDE2EA] bg-white px-4 py-3 outline-none focus:border-[#FF5B00]"
+                      />
+                      {form.googlePlaceName ? (
+                        <p className="mt-2 text-xs text-[#059669]">
+                          Valgt: {form.googlePlaceName}
+                          {form.googleMapsUrl ? ' · Google-profilen er lagret' : ''}
+                        </p>
+                      ) : null}
+                      {placeLoading ? <p className="mt-2 text-xs text-[#6B7280]">Søker i Google-profiler…</p> : null}
+                      {placeError ? <p className="mt-2 text-xs text-red-500">{placeError}</p> : null}
+                      {!placeLoading && placeResults.length > 0 ? (
+                        <div className="mt-2 max-h-56 overflow-y-auto rounded-xl border border-[#E5E7EB] bg-white divide-y divide-[#EEF1F5]">
+                          {placeResults.map((option) => (
+                            <button
+                              key={`${option.placeId}:${option.name}`}
+                              type="button"
+                              onClick={() => selectPlace(option)}
+                              className="w-full text-left px-4 py-3 hover:bg-[#F8F9FB]"
+                            >
+                              <div className="text-sm font-medium text-[#111827]">{option.name}</div>
+                              <div className="text-xs text-[#6B7280]">
+                                {option.address || 'Google-bedrift'}
+                                {option.rating ? ` · ${option.rating}` : ''}
+                                {option.reviews ? ` (${option.reviews} anmeldelser)` : ''}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </>
+                  )}
                 </div>
               </div>
             ) : null}

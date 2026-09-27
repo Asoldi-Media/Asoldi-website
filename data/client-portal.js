@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from 'fs';
 import { randomBytes } from 'crypto';
 import { getDataFilePath, ensurePersistentDataDir, writeDataJson } from './storage-path.js';
 import { resolvePortalCatalogs } from '../lib/client-product-catalog.js';
+import { mapsUrlFromPlace } from '../lib/google-places-search.js';
 import * as clientBusinesses from './client-businesses.js';
 
 const CLIENT_PROFILES_PATH = getDataFilePath('client-portal-profiles.json');
@@ -546,9 +547,10 @@ export function applyIntakeSourcesToBank(bank = {}, sources = {}, contact = {}) 
   const websiteUrl = sanitizeText(sources.websiteUrl || sources.existingWebsiteUrl);
   const instagramUrl = sanitizeText(sources.instagramUrl);
   const facebookUrl = sanitizeText(sources.facebookUrl);
-  const googleMapsUrl = sanitizeText(sources.googleMapsUrl || sources.googleBusinessProfile);
   const googlePlaceId = sanitizeText(sources.googlePlaceId);
   const googlePlaceName = sanitizeText(sources.googlePlaceName);
+  const googleMapsUrl = sanitizeText(sources.googleMapsUrl || sources.googleBusinessProfile)
+    || mapsUrlFromPlace({ placeId: googlePlaceId, name: googlePlaceName });
   const socialMediaLinks = uniqueTexts([
     ...(current.generalInfo.socialMediaLinks || []),
     instagramUrl,

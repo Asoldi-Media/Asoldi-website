@@ -10268,6 +10268,20 @@ app.get('/api/client/brreg-search', clientAuth, async (req, res) => {
   }
 });
 
+app.get('/api/client/places-config', clientAuth, async (req, res) => {
+  const user = await store.getUserById(req.client.userId);
+  if (!user || user.role !== 'client') return res.status(401).json({ message: 'Unauthorized' });
+  const apiKey = sanitizeText(
+    process.env.GOOGLE_MAPS_API_KEY
+    || process.env.GOOGLE_PLACES_API_KEY
+    || process.env.VITE_GOOGLE_MAPS_API_KEY
+  );
+  return res.json({
+    autocomplete: Boolean(apiKey),
+    apiKey,
+  });
+});
+
 app.get('/api/client/places-search', clientAuth, async (req, res) => {
   const user = await store.getUserById(req.client.userId);
   if (!user || user.role !== 'client') return res.status(401).json({ message: 'Unauthorized' });
