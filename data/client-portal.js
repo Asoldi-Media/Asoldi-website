@@ -333,6 +333,12 @@ function defaultClientDataBank(seed = {}) {
       websiteLanguage: 'Norsk (Norge)',
       companyPhone: '',
       companyEmail: email,
+      websiteUrl: '',
+      instagramUrl: '',
+      facebookUrl: '',
+      googleMapsUrl: '',
+      googlePlaceId: '',
+      googlePlaceName: '',
       socialMediaLinks: [],
       extraLinks: [{ name: '', url: '' }],
     },
@@ -420,6 +426,12 @@ function normalizeClientDataBank(input = {}, fallback = {}) {
     websiteLanguage: sanitizeText(src.generalInfo?.websiteLanguage || src.generalInfo?.language || base.generalInfo.websiteLanguage) || 'Norsk (Norge)',
     companyPhone: sanitizeText(src.generalInfo?.companyPhone || src.generalInfo?.phone || base.generalInfo.companyPhone),
     companyEmail: sanitizeText(src.generalInfo?.companyEmail || src.generalInfo?.email || base.generalInfo.companyEmail).toLowerCase(),
+    websiteUrl: sanitizeText(src.generalInfo?.websiteUrl || src.generalInfo?.existingWebsiteUrl || base.generalInfo.websiteUrl),
+    instagramUrl: sanitizeText(src.generalInfo?.instagramUrl || base.generalInfo.instagramUrl),
+    facebookUrl: sanitizeText(src.generalInfo?.facebookUrl || base.generalInfo.facebookUrl),
+    googleMapsUrl: sanitizeText(src.generalInfo?.googleMapsUrl || src.generalInfo?.googleBusinessProfile || base.generalInfo.googleMapsUrl),
+    googlePlaceId: sanitizeText(src.generalInfo?.googlePlaceId || base.generalInfo.googlePlaceId),
+    googlePlaceName: sanitizeText(src.generalInfo?.googlePlaceName || base.generalInfo.googlePlaceName),
     socialMediaLinks: normalizeTextList(src.generalInfo?.socialMediaLinks || src.generalInfo?.socialLinks, base.generalInfo.socialMediaLinks),
     extraLinks: normalizeNameUrlLinks(src.generalInfo?.extraLinks, base.generalInfo.extraLinks),
   };
@@ -513,6 +525,66 @@ function normalizeClientDataBank(input = {}, fallback = {}) {
     websiteCreatorQuestions,
     makerLink,
   };
+}
+
+function uniqueTexts(values = []) {
+  const seen = new Set();
+  const out = [];
+  for (const value of values) {
+    const text = sanitizeText(value);
+    if (!text) continue;
+    const key = text.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+  }
+  return out;
+}
+
+export function applyIntakeSourcesToBank(bank = {}, sources = {}, contact = {}) {
+  const current = normalizeClientDataBank(bank, bank);
+  const websiteUrl = sanitizeText(sources.websiteUrl || sources.existingWebsiteUrl);
+  const instagramUrl = sanitizeText(sources.instagramUrl);
+  const facebookUrl = sanitizeText(sources.facebookUrl);
+  const googleMapsUrl = sanitizeText(sources.googleMapsUrl || sources.googleBusinessProfile);
+  const googlePlaceId = sanitizeText(sources.googlePlaceId);
+  const googlePlaceName = sanitizeText(sources.googlePlaceName);
+  const socialMediaLinks = uniqueTexts([
+    ...(current.generalInfo.socialMediaLinks || []),
+    instagramUrl,
+    facebookUrl,
+  ]);
+  const relevantLinks = uniqueTexts([
+    ...(String(current.websiteCreatorQuestions.relevantLinks || '').split(/\n+/)),
+    websiteUrl,
+    instagramUrl,
+    facebookUrl,
+    googleMapsUrl,
+  ]).join('\n');
+  return normalizeClientDataBank({
+    ...current,
+    generalInfo: {
+      ...current.generalInfo,
+      companyPhone: sanitizeText(contact.phone || contact.companyPhone || current.generalInfo.companyPhone),
+      companyEmail: sanitizeText(contact.email || contact.companyEmail || current.generalInfo.companyEmail).toLowerCase(),
+      websiteUrl: websiteUrl || current.generalInfo.websiteUrl,
+      instagramUrl: instagramUrl || current.generalInfo.instagramUrl,
+      facebookUrl: facebookUrl || current.generalInfo.facebookUrl,
+      googleMapsUrl: googleMapsUrl || current.generalInfo.googleMapsUrl,
+      googlePlaceId: googlePlaceId || current.generalInfo.googlePlaceId,
+      googlePlaceName: googlePlaceName || current.generalInfo.googlePlaceName,
+      socialMediaLinks,
+    },
+    openingHours: {
+      ...current.openingHours,
+      googleBusinessSyncUrl: googleMapsUrl || current.openingHours.googleBusinessSyncUrl,
+    },
+    websiteCreatorQuestions: {
+      ...current.websiteCreatorQuestions,
+      websiteDomain: websiteUrl || current.websiteCreatorQuestions.websiteDomain,
+      relevantLinks,
+    },
+  }, current);
 }
 
 function normalizeCustomPlan(input = {}) {

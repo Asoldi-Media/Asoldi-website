@@ -45,6 +45,7 @@ import {
   startProductScrape,
 } from './lib/ai-assistant/service.js';
 import { parsePublicHttpUrl } from './lib/ai-assistant/safe-url.js';
+import { fetchGoogleMapsPlaces } from './lib/google-places-search.js';
 import { applyMakerBundleToPortal } from './lib/maker-bundle-sync.js';
 import * as offers from './data/offers.js';
 import * as resetTokens from './data/reset-tokens.js';
@@ -9768,6 +9769,15 @@ app.put('/api/client/profile', clientAuth, async (req, res) => {
   const user = await store.getUserById(req.client.userId);
   if (!user || user.role !== 'client') return res.status(401).json({ message: 'Unauthorized' });
   const body = req.body || {};
+  const current = clientPortal.ensureClientProfileForUser(user);
+  const clientDataBank = clientPortal.applyIntakeSourcesToBank(
+    current?.clientDataBank || {},
+    body.sources && typeof body.sources === 'object' ? body.sources : {},
+    {
+      phone: body.phone || body.companyPhone,
+      email: body.email || body.companyEmail,
+    },
+  );
   const profile = clientPortal.upsertClientProfile(user.id, {
     name: sanitizeText(body.name),
     businessName: sanitizeText(body.businessName),
@@ -9775,6 +9785,7 @@ app.put('/api/client/profile', clientAuth, async (req, res) => {
     position: sanitizeText(body.position),
     discoveryChannel: sanitizeText(body.discoveryChannel),
     onboardingCompleted: parseBoolean(body.onboardingCompleted, true),
+    clientDataBank,
   });
   return res.json({ profile });
 });
@@ -10254,6 +10265,28 @@ app.get('/api/client/brreg-search', clientAuth, async (req, res) => {
     return res.json({ results });
   } catch (error) {
     return res.status(502).json({ message: error.message || 'Failed searching BRREG.' });
+  }
+});
+
+app.get('/api/client/places-search', clientAuth, async (req, res) => {
+  const user = await store.getUserById(req.client.userId);
+  if (!user || user.role !== 'client') return res.status(401).json({ message: 'Unauthorized' });
+  const query = sanitizeText(req.query?.q);
+  if (query.length < 2) return res.json({ results: [] });
+  if (!SERPAPI_API_KEY) {
+    return res.status(503).json({
+      results: [],
+      message: 'Søk i Google-profiler er ikke satt opp. Lim inn Maps-lenken i stedet.',
+    });
+  }
+  try {
+    const results = await fetchGoogleMapsPlaces(query, { apiKey: SERPAPI_API_KEY });
+    return res.json({ results });
+  } catch (error) {
+    return res.status(502).json({
+      results: [],
+      message: error.message || 'Kunne ikke søke i Google-profiler.',
+    });
   }
 });
 
