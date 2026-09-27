@@ -261,18 +261,18 @@ test('explicit cake catalog stays normal even when industry is restaurant', () =
   assert.equal(coerced.layout, 'normal');
 });
 
-test('summarize and merge keep separate Maker catalogs', () => {
+test('summarize and merge fold shop sources into one hierarchy', () => {
   const merged = mergeImportedCatalogs([], [
     { layout: 'meny', label: 'Meny', categories: [{ name: 'Drikke', products: [{ title: 'Kaffe', price: '45 kr' }] }] },
     { layout: 'meny', label: 'Tapas', categories: [{ name: 'Tapas', products: [{ title: 'Tapas', included: ['Reker'] }] }] },
     { layout: 'normal', label: 'Kaker', categories: [{ name: 'Kaker', products: [{ title: 'Ostekake', price: '380 kr' }] }] },
   ]);
-  assert.equal(merged.length, 3);
+  assert.equal(merged.length, 1);
+  const names = merged[0].categories.map((category) => category.name).sort();
+  assert.deepEqual(names, ['Drikke', 'Kaker', 'Tapas']);
   const summary = summarizeCatalogs(merged);
   assert.equal(summary.productCount, 3);
-  assert.equal(summary.catalogCount, 3);
-  assert.match(summary.layoutLabel, /Meny/);
-  assert.match(summary.layoutLabel, /Kaker/);
+  assert.equal(summary.catalogCount, 1);
 });
 
 test('koldtbord parser recovers run-on PDF text and extras', () => {

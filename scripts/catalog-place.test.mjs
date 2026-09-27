@@ -137,6 +137,30 @@ test('allergen-file catalogs fold into the real shop group, not a second Smørbr
   assert.equal(cleaned.find((catalog) => catalog.layout === 'meny').categories.find((category) => category.name === 'Smørbrød').products[0].price, '125 kr');
 });
 
+test('attribute-sheet leftovers do not invent aisles when a shop tree exists', () => {
+  const placed = placeIncomingCatalogs([{
+    layout: 'meny',
+    label: 'Meny',
+    origin: 'website',
+    categories: [
+      { name: 'Smørbrød', products: [{ title: 'Reke', price: '125 kr' }] },
+    ],
+  }], [{
+    layout: 'meny',
+    label: 'Sheet',
+    source: 'allergen-sheet',
+    categories: [
+      { name: 'Glutenfritt', products: [{ title: 'Grove horn', allergens: 'Egg' }] },
+      { name: 'Allergi meny smørbrød', products: [{ title: 'Reke', allergens: 'Reker' }] },
+    ],
+  }]);
+  const food = placed.find((catalog) => catalog.layout === 'meny');
+  const names = food.categories.map((category) => category.name);
+  assert.equal(names.includes('Smørbrød'), true);
+  assert.equal(names.some((name) => /gluten|allergi/i.test(name)), false);
+  assert.equal(food.categories.find((category) => category.name === 'Smørbrød').products[0].allergens, 'Reker');
+});
+
 test('dessert and kaker stay separate shop groups', () => {
   const placed = placeIncomingCatalogs([], [{
     layout: 'meny',
