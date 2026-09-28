@@ -544,6 +544,20 @@ test('users store + sender: phone is normalized, formatted and flows into {{sign
   const updated = await users.updateUserProfile(created.user.id, { phone: '+47 999 88 777' });
   assert.equal(updated.user.phone, '+4799988777', 'admin edit wins over the seed');
   assert.equal((await users.getUserByUsername('alexander@asoldi.com')).phone, '+4799988777', 'seed does not overwrite an existing number');
+
+  const damian = await users.createUser('damian@asoldi.com', 'secret-pass-2', 'sales', { name: 'Damian', phone: '+47 400 00 001' });
+  assert.equal(damian.ok, true);
+  await users.updateAdminSender({ name: 'Damian', fromEmail: 'damian@asoldi.com' });
+  assert.equal(
+    users.linkedSenderProfile({ role: 'admin', username: 'admin' }).phone,
+    '+4740000001',
+    'admin offer sender uses the Users-row number for the same inbox',
+  );
+  await users.updateAdminSender({ phone: '+47 400 00 002' });
+  assert.equal((await users.getUserByUsername('damian@asoldi.com')).phone, '+4740000002');
+  assert.equal((await users.getAdminSender()).phone, '+4740000002');
+  await users.updateUserProfile(damian.user.id, { phone: '+47 400 00 003' });
+  assert.equal((await users.getAdminSender()).phone, '+4740000003', 'saving the Users row copies the number onto admin');
 });
 
 test('meeting quote sets tier pages, one-time host, and workshop date on the offer', () => {

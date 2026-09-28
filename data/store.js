@@ -157,6 +157,132 @@ export function toPublicUser(u) {
   return publicUser;
 }
 
+const GENERIC_STAFF_LOCAL = new Set(['admin', 'asoldi', 'asoldicom', 'contact', 'user']);
+
+/** Email / local-part keys so damian@asoldi.com and the admin sender for that inbox count as the same person. */
+export function staffIdentityKeys(profile = {}) {
+  const keys = new Set();
+  const add = (value) => {
+    const raw = String(value || '').trim().toLowerCase();
+    if (!raw) return;
+    keys.add(raw);
+    if (raw.includes('@')) {
+      const local = raw.split('@')[0];
+      const compact = local.replace(/[^a-z0-9]/g, '');
+      if (local && !GENERIC_STAFF_LOCAL.has(compact)) keys.add(local);
+      return;
+    }
+    const compact = raw.replace(/[^a-z0-9]/g, '');
+    if (!GENERIC_STAFF_LOCAL.has(compact)) keys.add(`${raw}@asoldi.com`);
+  };
+  add(profile.username);
+  add(profile.fromEmail);
+  return [...keys];
+}
+
+export function profilesShareStaffIdentity(left = {}, right = {}) {
+  const keys = new Set(staffIdentityKeys(left));
+  return staffIdentityKeys(right).some((key) => keys.has(key));
+}
+
+function firstNameLocal(value = '') {
+  const first = String(value || '').trim().split(/\s+/)[0] || '';
+  const compact = first.toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (!compact || GENERIC_STAFF_LOCAL.has(compact)) return '';
+  return first.toLowerCase();
+}
+
+function findLinkedUser(admin = {}, extraUsername = '') {
+  const users = seedKnownPhones(readUsers());
+  const named = firstNameLocal(admin.name);
+  const probe = {
+    username: admin.username || extraUsername,
+    fromEmail: admin.fromEmail
+      || (String(extraUsername).includes('@') ? extraUsername : '')
+      || (named ? `${named}@asoldi.com` : ''),
+  };
+  return users.find((user) => profilesShareStaffIdentity(user, probe)) || null;
+}
+
+function userIsAdminInbox(user, admin) {
+  if (!user || !admin) return false;
+  if (profilesShareStaffIdentity(user, admin)) return true;
+  const linked = findLinkedUser(admin);
+  return Boolean(linked && linked.id === user.id);
+}
+
+function syncAdminFromUser(user, { phone = false, name = false } = {}) {
+  const admin = readAdmin();
+  if (!admin || !userIsAdminInbox(user, admin)) return;
+  let changed = false;
+  if (phone) {
+    const next = normalizePhone(user.phone);
+    if (next !== normalizePhone(admin.phone)) {
+      admin.phone = next;
+      changed = true;
+    }
+  }
+  if (name) {
+    const next = String(user.name || '').trim();
+    if (next && next !== String(admin.name || '').trim()) {
+      admin.name = next;
+      changed = true;
+    }
+  }
+  if (changed) writeAdmin(admin);
+}
+
+function syncUsersFromAdmin(admin, { phone = false, name = false } = {}) {
+  const users = readUsers();
+  let changed = false;
+  for (const user of users) {
+    if (!userIsAdminInbox(user, admin)) continue;
+    if (phone) {
+      const next = normalizePhone(admin.phone);
+      if (next !== normalizePhone(user.phone)) {
+        user.phone = next;
+        changed = true;
+      }
+    }
+    if (name) {
+      const next = String(admin.name || '').trim();
+      if (next && next !== String(user.name || '').trim()) {
+        user.name = next;
+        changed = true;
+      }
+    }
+  }
+  if (changed) writeUsers(users);
+}
+
+/**
+ * Phone/name for the person who is sending: admin.json when logged in as admin, otherwise the Users row.
+ * If those two records are the same inbox, a number saved on either side is used.
+ */
+export function linkedSenderProfile({ role = '', userId = '', username = '' } = {}) {
+  const admin = readAdmin() || {};
+  if (String(role).toLowerCase() === 'admin') {
+    const linked = findLinkedUser(admin, username);
+    return {
+      name: String(admin.name || linked?.name || '').trim(),
+      fromEmail: String(admin.fromEmail || '').trim().toLowerCase(),
+      phone: normalizePhone(admin.phone) || normalizePhone(linked?.phone),
+      username: String(admin.username || username || '').trim(),
+    };
+  }
+  const users = seedKnownPhones(readUsers());
+  const user = (userId && users.find((entry) => entry.id === userId))
+    || (username && users.find((entry) => String(entry.username || '').toLowerCase() === String(username).toLowerCase()))
+    || null;
+  const linkedAdmin = user && profilesShareStaffIdentity(user, admin) ? admin : null;
+  return {
+    name: String(user?.name || linkedAdmin?.name || '').trim(),
+    fromEmail: String(user?.fromEmail || '').trim().toLowerCase(),
+    phone: normalizePhone(user?.phone) || normalizePhone(linkedAdmin?.phone),
+    username: String(user?.username || username || '').trim(),
+  };
+}
+
 export async function createUser(username, password, role = DEFAULT_ROLE, extra = {}) {
   const users = readUsers();
   const existing = await getUserByUsername(username);
@@ -167,7 +293,7 @@ export async function createUser(username, password, role = DEFAULT_ROLE, extra 
   const name = String(extra.name || '').trim();
   const fromEmail = String(extra.fromEmail || '').trim().toLowerCase();
   const phone = normalizePhone(extra.phone);
-  users.push({
+  const created = {
     id,
     username,
     passwordHash,
@@ -176,9 +302,11 @@ export async function createUser(username, password, role = DEFAULT_ROLE, extra 
     ...(name ? { name } : {}),
     ...(fromEmail ? { fromEmail } : {}),
     ...(phone ? { phone } : {}),
-  });
+  };
+  users.push(created);
   writeUsers(users);
-  return { ok: true, user: toPublicUser(users[users.length - 1]) };
+  syncAdminFromUser(created, { phone: Boolean(phone), name: Boolean(name) });
+  return { ok: true, user: toPublicUser(created) };
 }
 
 export async function updateUserProfile(id, patch = {}) {
@@ -189,6 +317,10 @@ export async function updateUserProfile(id, patch = {}) {
   if (patch.fromEmail !== undefined) users[i].fromEmail = String(patch.fromEmail || '').trim().toLowerCase();
   if (patch.phone !== undefined) users[i].phone = normalizePhone(patch.phone);
   writeUsers(users);
+  syncAdminFromUser(users[i], {
+    phone: patch.phone !== undefined,
+    name: patch.name !== undefined,
+  });
   return { ok: true, user: toPublicUser(users[i]) };
 }
 
@@ -211,6 +343,10 @@ export async function updateAdminSender(patch = {}) {
   if (patch.fromEmail !== undefined) admin.fromEmail = String(patch.fromEmail || '').trim().toLowerCase();
   if (patch.phone !== undefined) admin.phone = normalizePhone(patch.phone);
   writeAdmin(admin);
+  syncUsersFromAdmin(admin, {
+    phone: patch.phone !== undefined,
+    name: patch.name !== undefined,
+  });
   return publicAdminSender(admin);
 }
 

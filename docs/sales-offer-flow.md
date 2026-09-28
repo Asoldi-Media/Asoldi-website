@@ -60,10 +60,12 @@ MVA (`priceLineFor`). The flag rides along in `offerContentHash`, so flipping it
 
 **Signer phone.** `{{signerPhone}}` / `{{signerEmail}}` in the footer come from the sending account
 (`lib/sales-sender.js` → `profile.phone`). Phone lives on `users.json` (per user) and `admin.json` (admin sender
-profile) in the persistent data dir, so it survives deploys. Required for the `sales` role and for the admin
-sender profile (Admin → Users → *Your sender profile*), optional for everyone else; server-side validation in
-`POST/PUT /api/admin/users` and `PUT /api/admin/me/sender`. `data/store.js#seedKnownPhones` backfills known
-numbers (alexander@asoldi.com → `+47 923 31 098`) on first read if the stored record has none.
+profile) in the persistent data dir, so it survives deploys. The same inbox is treated as one person: a number
+saved on the Users row for `damian@asoldi.com` is also used when that person sends as admin, and the other way
+around. Required for the `sales` role and for the admin sender profile (Admin → Users → *Your sender profile*),
+optional for everyone else; server-side validation in `POST/PUT /api/admin/users` and `PUT /api/admin/me/sender`.
+`data/store.js#seedKnownPhones` backfills known numbers (alexander@asoldi.com → `+47 923 31 098`) on first read
+if the stored record has none.
 
 ## Pricing source of truth
 

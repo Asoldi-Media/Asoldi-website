@@ -21,6 +21,8 @@ type Props = {
   onDeleteUser: (id: string) => void;
   onRoleChange: (id: string, option: EmployeeRoleOption) => void;
   onMarkPaymentRequestHandled: (userId: string) => void;
+  savingUserId?: string | null;
+  notice?: { kind: 'ok' | 'err'; text: string } | null;
 };
 
 /** Phone is mandatory for roles that sign customer e-mails (it is printed as {{signerPhone}}). */
@@ -29,7 +31,7 @@ function phoneRequiredFor(role: AdminUser['role']) {
 }
 
 /** "+4792331098" → "+47 923 31 098" for display; anything else is shown as stored. */
-function displayPhone(value = '') {
+export function displayPhone(value = '') {
   const raw = String(value || '').trim();
   if (/^\+47\d{8}$/.test(raw)) {
     const local = raw.slice(3);
@@ -78,7 +80,9 @@ function AdminSenderCard() {
       }
       setSender(data.sender);
       setDraft({ ...data.sender, phone: displayPhone(data.sender.phone) });
-      setMessage('Saved.');
+      setMessage(data.sender?.phone
+        ? `Lagret. Telefon ${displayPhone(data.sender.phone)} er på plass.`
+        : 'Lagret.');
     } finally {
       setSaving(false);
     }
@@ -131,7 +135,7 @@ function AdminSenderCard() {
         <button type="submit" disabled={saving} className="px-4 py-2 rounded-lg bg-[#FF5B00] text-white font-medium disabled:opacity-50">
           {saving ? 'Saving…' : 'Save'}
         </button>
-        {message && <span className={`text-xs ${message === 'Saved.' ? 'text-emerald-300' : 'text-red-300'}`}>{message}</span>}
+        {message && <span className={`text-xs ${/lagret/i.test(message) || message === 'Saved.' ? 'text-emerald-300' : 'text-red-300'}`}>{message}</span>}
       </form>
     </div>
   );
@@ -155,12 +159,26 @@ export function UsersSection(props: Props) {
     onDeleteUser,
     onRoleChange,
     onMarkPaymentRequestHandled,
+    savingUserId = null,
+    notice = null,
   } = props;
 
   return (
     <div className="max-w-4xl">
       <h1 className="text-2xl font-bold text-white mb-6">Users</h1>
-      <p className="text-gray-400 text-sm mb-6">Users who can log in at `/login` as employees. New users default to role `none`.</p>
+      <p className="text-gray-400 text-sm mb-6">Users who can log in at `/login` as employees. New users default to role `none`. Click Save after editing a row — typing alone does not store the number.</p>
+      {notice && (
+        <div
+          role="status"
+          className={`mb-6 px-4 py-3 rounded-lg border text-sm ${
+            notice.kind === 'ok'
+              ? 'bg-emerald-950/70 border-emerald-700/50 text-emerald-100'
+              : 'bg-red-950/70 border-red-700/50 text-red-100'
+          }`}
+        >
+          {notice.text}
+        </div>
+      )}
 
       <div className="rounded-xl bg-[#2a2a2a] border border-white/10 p-6 mb-8">
         <div className="flex items-center justify-between gap-3 mb-3">
@@ -283,6 +301,7 @@ export function UsersSection(props: Props) {
                 onUpdateUser={onUpdateUser}
                 onDeleteUser={onDeleteUser}
                 onRoleChange={onRoleChange}
+                saving={savingUserId === user.id}
               />
             ))}
           </tbody>
@@ -303,6 +322,7 @@ const EditableUserRow: React.FC<{
   onUpdateUser: (id: string, patch: { username?: string; password?: string; name?: string; phone?: string }) => void;
   onDeleteUser: (id: string) => void;
   onRoleChange: (id: string, option: EmployeeRoleOption) => void;
+  saving?: boolean;
 }> = function EditableUserRow({
   user,
   editing,
@@ -313,6 +333,7 @@ const EditableUserRow: React.FC<{
   onUpdateUser,
   onDeleteUser,
   onRoleChange,
+  saving = false,
 }) {
   const [draftUsername, setDraftUsername] = useState(user.username);
   const [draftName, setDraftName] = useState(user.name || '');
@@ -403,10 +424,20 @@ const EditableUserRow: React.FC<{
                 onChange={(e) => onEditPasswordChange(e.target.value)}
                 className="px-2 py-1 rounded bg-[#1a1a1a] border border-white/20 text-white w-32 text-sm"
               />
-              <button type="button" onClick={() => onUpdateUser(user.id, { username: draftUsername, name: draftName, phone: draftPhone })} className="text-xs px-2 py-1 rounded bg-white/10 text-white">
-                Save
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => onUpdateUser(user.id, { username: draftUsername, name: draftName, phone: draftPhone })}
+                className="text-xs px-2 py-1 rounded bg-white/10 text-white disabled:opacity-50"
+              >
+                {saving ? 'Saving…' : 'Save'}
               </button>
-              <button type="button" onClick={() => editPassword && onUpdateUser(user.id, { password: editPassword })} className="text-xs px-2 py-1 rounded bg-[#FF5B00] text-white">
+              <button
+                type="button"
+                disabled={saving || !editPassword}
+                onClick={() => editPassword && onUpdateUser(user.id, { password: editPassword })}
+                className="text-xs px-2 py-1 rounded bg-[#FF5B00] text-white disabled:opacity-50"
+              >
                 Set password
               </button>
               <button type="button" onClick={() => onStartEdit(null)} className="text-gray-400 hover:text-white text-xs">Cancel</button>

@@ -611,7 +611,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                   <AlertTriangle size={18} className="shrink-0 mt-0.5" />
                   <div>
                     <div className="font-medium">Telefonnummeret ditt mangler</div>
-                    <div>E-posten signeres med navn, e-post og telefon fra brukeren din ({sender.fromEmail}). Be admin legge inn nummeret under Admin → Users, ellers vises kontornummeret.</div>
+                    <div>E-posten signeres med navn, e-post og telefon fra brukeren din ({sender.fromEmail}). Be admin klikke Save under Admin → Users (eller «Your sender profile» hvis du sender som admin). Ellers vises kontornummeret.</div>
                   </div>
                 </div>
               )}

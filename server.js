@@ -7780,28 +7780,11 @@ function salesUserFromAccountKey(accountKey = '') {
 
 async function resolveSalesSenderForAccount(salesUser = {}) {
   const accountKey = sanitizeText(salesUser.accountKey);
-  let profile = {};
-  if (salesUser.role === 'admin' || String(accountKey).startsWith('admin:')) {
-    const admin = await store.getAdmin();
-    profile = {
-      name: admin?.name || '',
-      fromEmail: admin?.fromEmail || '',
-      phone: admin?.phone || '',
-      username: admin?.username || String(accountKey).slice('admin:'.length),
-    };
-  } else if (salesUser.userId) {
-    try {
-      const user = await store.getUserById(salesUser.userId);
-      profile = {
-        name: user?.name || '',
-        fromEmail: user?.fromEmail || '',
-        phone: user?.phone || '',
-        username: user?.username || '',
-      };
-    } catch {
-      profile = {};
-    }
-  }
+  const profile = store.linkedSenderProfile({
+    role: salesUser.role,
+    userId: salesUser.userId,
+    username: salesUser.username || (String(accountKey).startsWith('admin:') ? String(accountKey).slice('admin:'.length) : ''),
+  });
   const calendarStatus = getGoogleCalendarStatus(accountKey);
   return buildSalesSender({
     ...profile,
@@ -8807,7 +8790,8 @@ app.put('/api/admin/users/:id', adminAuth, async (req, res) => {
     const result = await store.updateUserEmployeeProduct(id, employeeProduct);
     if (!result.ok) return res.status(400).json({ message: result.error });
   }
-  res.json({ ok: true });
+  const user = await store.getUserById(id);
+  res.json({ ok: true, user: user ? store.toPublicUser(user) : undefined });
 });
 
 app.delete('/api/admin/users/:id', adminAuth, async (req, res) => {

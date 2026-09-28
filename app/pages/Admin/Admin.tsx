@@ -1,10 +1,10 @@
-import React, { Suspense, lazy, useCallback, useEffect, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { BarChart3, ChevronDown, FileSignature, FileText, FolderCog, Globe, Image as ImageIcon, LogOut, Mail, Newspaper, Share2, ShoppingBag, Users, UserPlus } from 'lucide-react';
 import { Helmet } from 'react-helmet-async';
 import { ManageClientsSection } from './sections/ManageClientsSection';
 import { PagesSection } from './sections/PagesSection';
-import { UsersSection } from './sections/UsersSection';
+import { UsersSection, displayPhone } from './sections/UsersSection';
 import { EmployeesSection } from './sections/EmployeesSection';
 import {
   API,
@@ -57,6 +57,15 @@ export const Admin = () => {
   const [newPassword, setNewPassword] = useState('');
   const [changePasswordError, setChangePasswordError] = useState('');
   const [userRoleSaving, setUserRoleSaving] = useState<string | null>(null);
+  const [savingUserId, setSavingUserId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function flashNotice(kind: 'ok' | 'err', text: string) {
+    setNotice({ kind, text });
+    if (noticeTimer.current) window.clearTimeout(noticeTimer.current);
+    noticeTimer.current = window.setTimeout(() => setNotice(null), 7000);
+  }
   const [sites, setSites] = useState<Site[]>([]);
   const [paymentRequests, setPaymentRequests] = useState<ClientPaymentRequest[]>([]);
   const [markingPaymentRequestId, setMarkingPaymentRequestId] = useState<string | null>(null);
@@ -210,10 +219,11 @@ export const Admin = () => {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        alert(data.message || 'Failed to create user');
+        flashNotice('err', data.message || 'Failed to create user');
         return;
       }
       setUserForm({ username: '', password: '', name: '', phone: '' });
+      flashNotice('ok', `User ${data.username || userForm.username} created.`);
       await fetchUsers();
     } finally {
       setLoading(false);
@@ -230,9 +240,10 @@ export const Admin = () => {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        alert(data.message || 'Failed to mark payment request as handled');
+        flashNotice('err', data.message || 'Failed to mark payment request as handled');
         return;
       }
+      flashNotice('ok', 'Payment request marked as handled.');
       await fetchPaymentRequests();
     } finally {
       setMarkingPaymentRequestId(null);
@@ -252,9 +263,10 @@ export const Admin = () => {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        alert(data.message || 'Failed');
+        flashNotice('err', data.message || 'Could not change role');
         return;
       }
+      flashNotice('ok', 'Role saved.');
       setUsers((prev) =>
         prev.map((user) => {
           if (user.id !== id) return user;
@@ -268,6 +280,7 @@ export const Admin = () => {
   }
 
   async function handleUpdateUser(id: string, patch: { username?: string; password?: string; name?: string; phone?: string } = {}) {
+    setSavingUserId(id);
     setLoading(true);
     try {
       const body: { username?: string; password?: string; name?: string; phone?: string } = {};
@@ -282,13 +295,22 @@ export const Admin = () => {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        alert(data.message || 'Update failed');
+        flashNotice('err', data.message || 'Update failed — nothing was stored.');
         return;
       }
       setEditingId(null);
       setEditPassword('');
       await fetchUsers();
+      const saved = data.user as AdminUser | undefined;
+      if (patch.password) {
+        flashNotice('ok', `Password saved for ${saved?.username || 'user'}.`);
+      } else if (saved?.phone) {
+        flashNotice('ok', `Saved ${saved.username}. Phone ${displayPhone(saved.phone)} is stored.`);
+      } else {
+        flashNotice('ok', `Saved ${saved?.username || 'user'}.`);
+      }
     } finally {
+      setSavingUserId(null);
       setLoading(false);
     }
   }
@@ -300,9 +322,10 @@ export const Admin = () => {
       const res = await fetch(`${API}/admin/users/${id}`, { method: 'DELETE', headers: authHeaders() });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        alert(data.message || 'Delete failed');
+        flashNotice('err', data.message || 'Delete failed');
         return;
       }
+      flashNotice('ok', 'User deleted.');
       await fetchUsers();
     } finally {
       setLoading(false);
@@ -320,11 +343,13 @@ export const Admin = () => {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       setChangePasswordError(data.message || 'Failed');
+      flashNotice('err', data.message || 'Could not change password');
       return;
     }
     setChangePasswordOpen(false);
     setCurrentPassword('');
     setNewPassword('');
+    flashNotice('ok', 'Your password was changed.');
   }
 
   async function handleAddSite(e: React.FormEvent) {
@@ -344,9 +369,10 @@ export const Admin = () => {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        alert(data.message || 'Failed');
+        flashNotice('err', data.message || 'Failed to add site');
         return;
       }
+      flashNotice('ok', 'Site saved.');
       setAddSiteOpen(false);
       setAddSiteName('');
       setAddSiteDomain('');
@@ -376,9 +402,10 @@ export const Admin = () => {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        alert(data.message || 'Failed');
+        flashNotice('err', data.message || 'Failed to save site');
         return;
       }
+      flashNotice('ok', 'Site saved.');
       setEditingSiteId(null);
       await fetchSites();
     } finally {
@@ -393,9 +420,10 @@ export const Admin = () => {
       const res = await fetch(`${API}/hub/sites/${id}`, { method: 'DELETE', headers: authHeaders() });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        alert(data.message || 'Failed');
+        flashNotice('err', data.message || 'Failed to delete site');
         return;
       }
+      flashNotice('ok', 'Site removed.');
       await fetchSites();
     } finally {
       setLoading(false);
@@ -413,7 +441,7 @@ export const Admin = () => {
       });
       if (!featureRes.ok) {
         const data = await featureRes.json().catch(() => ({}));
-        alert(data.message || 'Could not save services');
+        flashNotice('err', data.message || 'Could not save services');
         return;
       }
       const res = await fetch(`${API}/hub/sites/${clientAdminSiteId}/client-admin`, {
@@ -429,9 +457,10 @@ export const Admin = () => {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        alert(data.message || 'Could not save client admin');
+        flashNotice('err', data.message || 'Could not save client admin');
         return;
       }
+      flashNotice('ok', 'Client admin saved.');
       setClientAdminSiteId(null);
       setClientAdminForm((form) => ({ ...form, password: '' }));
       await fetchSites();
@@ -527,6 +556,18 @@ export const Admin = () => {
         </aside>
 
         <main className="flex-1 ml-60 p-8">
+          {notice && (
+            <div
+              role="status"
+              className={`fixed top-4 right-4 z-[80] max-w-sm px-4 py-3 rounded-lg border text-sm shadow-lg ${
+                notice.kind === 'ok'
+                  ? 'bg-emerald-950 border-emerald-600 text-emerald-50'
+                  : 'bg-red-950 border-red-600 text-red-50'
+              }`}
+            >
+              {notice.text}
+            </div>
+          )}
           {tab === 'clients' && (
             <ManageClientsSection
               sites={sites}
@@ -599,6 +640,8 @@ export const Admin = () => {
               onDeleteUser={handleDeleteUser}
               onRoleChange={handleUserRoleChange}
               onMarkPaymentRequestHandled={handleMarkPaymentRequestHandled}
+              savingUserId={savingUserId}
+              notice={notice}
             />
           )}
           {tab === 'employees' && <EmployeesSection />}
