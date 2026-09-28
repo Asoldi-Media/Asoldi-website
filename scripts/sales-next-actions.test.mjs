@@ -204,6 +204,11 @@ test('offer and contract cannot skip møtet hatt without fast track', () => {
   assert.equal(salesProgressBlockedReason(row, 'contractSigned', { fastTrack: true }), '');
 });
 
+test('kontrakt signert is blocked until sendt tilbud', () => {
+  const row = client({ progression: { meetingHeld: true, offerSent: false } });
+  assert.match(salesProgressBlockedReason(row, 'contractSigned'), /sendt tilbud/i);
+});
+
 test('fast track marks later goals done and opens contract', () => {
   const row = client();
   const result = applyProgressionChange(row, 'contractSigned', true, { fastTrack: true });
@@ -397,7 +402,7 @@ test('checkmark removes one action and leaves the others', () => {
   assert.equal(again.some((action) => action.presetKey === 'sms1h' && !action.doneAt), false);
 });
 
-test('checkmark on the meeting also marks møtet hatt and opens sett tilbud', () => {
+test('checkmark on the meeting also marks møtet hatt and opens sendt tilbud', () => {
   const row = client();
   const meeting = decorateNextActions(row).find((action) => action.presetKey === 'meeting');
   const done = applyNextActionMutation(row, { op: 'complete', id: meeting.id });
@@ -450,7 +455,7 @@ test('a sold client gets oppfølging 1mnd as a call, and stays out of the ranked
   assert.equal(grouped.pastDue.length, 0);
 });
 
-test('møtet hatt adds oppsjekk sett on sett tilbud for 09:00 next day Oslo', () => {
+test('møtet hatt adds oppsjekk sett on sendt tilbud for 09:00 next day Oslo', () => {
   const now = Date.parse('2026-09-28T14:00:00.000Z');
   const result = applyProgressionChange(client(), 'meetingHeld', true, { nowMs: now });
   assert.equal(result.error, undefined);
@@ -482,7 +487,7 @@ test('next day 09:00 uses Europe/Oslo in winter', () => {
   assert.equal(nextDayAtNineAmIso(now), '2026-12-02T08:00:00.000Z');
 });
 
-test('pipeline counts split confirmation, upcoming meetings, contracts, and wins', () => {
+test('pipeline counts split confirmation, upcoming meetings, unsent offers, contracts, and wins', () => {
   const now = Date.parse('2026-09-28T12:00:00.000Z');
   const awaitingConfirm = client({
     id: 'confirm',
@@ -495,6 +500,12 @@ test('pipeline counts split confirmation, upcoming meetings, contracts, and wins
     agreedTime: true,
     meetingAt: '2026-09-30T10:00:00.000Z',
     reminders: { thankYouSentAt: '2026-09-27T10:00:00.000Z' },
+  });
+  const awaitingOffer = client({
+    id: 'offer',
+    agreedTime: true,
+    meetingAt: '2026-09-20T10:00:00.000Z',
+    progression: { meetingHeld: true, offerSent: false, contractSigned: false },
   });
   const contract = client({
     id: 'contract',
@@ -511,14 +522,16 @@ test('pipeline counts split confirmation, upcoming meetings, contracts, and wins
   });
   assert.equal(classifySalesPipelineState(awaitingConfirm, now), 'awaitingMeetingConfirm');
   assert.equal(classifySalesPipelineState(upcoming, now), 'upcomingMeeting');
+  assert.equal(classifySalesPipelineState(awaitingOffer, now), 'awaitingOfferSend');
   assert.equal(classifySalesPipelineState(contract, now), 'awaitingContract');
   assert.equal(classifySalesPipelineState(win, now), 'win');
   assert.equal(classifySalesPipelineState(archived, now), '');
   assert.deepEqual(
-    countSalesPipelineStates([awaitingConfirm, upcoming, contract, win, archived], now),
+    countSalesPipelineStates([awaitingConfirm, upcoming, awaitingOffer, contract, win, archived], now),
     {
       awaitingMeetingConfirm: 1,
       upcomingMeeting: 1,
+      awaitingOfferSend: 1,
       awaitingContract: 1,
       win: 1,
     }

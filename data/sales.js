@@ -614,7 +614,7 @@ export function patchSalesClientsById(entries = []) {
       salesMigrations: patch.salesMigrations
         ? { ...(client.salesMigrations || {}), ...patch.salesMigrations }
         : client.salesMigrations,
-      updatedAt: client.updatedAt,
+      updatedAt: Object.prototype.hasOwnProperty.call(patch, 'updatedAt') ? patch.updatedAt : client.updatedAt,
     });
   });
   if (updated) writeState(next);
@@ -843,6 +843,18 @@ export function markSalesReminderSent(id, key, at = nowIso()) {
   if (key === '1h') patch.reminder1hSentAt = at;
   if (!Object.keys(patch).length) return null;
   return updateSalesClient(id, { reminders: patch });
+}
+
+export function applySilentOwnerPatches(entries = []) {
+  const now = nowIso();
+  const patches = [];
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const id = sanitizeText(entry?.id);
+    const ownerId = sanitizeText(entry?.ownerId || entry?.patch?.ownerId);
+    if (!id || !ownerId) continue;
+    patches.push({ id, patch: { ownerId, updatedAt: now } });
+  }
+  return patchSalesClientsById(patches);
 }
 
 export function clearSalesMeetingScheduling(id) {

@@ -89,6 +89,10 @@ import { confirmationSendGaps } from './lib/sales-next-actions.js';
 import { normalizeStoredWebsiteEmail, resolveWebsiteEmail } from './lib/sales-website-email.js';
 import { extractBookingFromLead, salesBookingFacts } from './lib/sales-booking-facts.js';
 import {
+  baardFarkasPatchEntries,
+  planBaardFarkasReassign,
+} from './lib/sales-baard-farkas-assign.js';
+import {
   generalSalesOwnerKeys,
   isGeneralSalesOwnerKey,
   resolveMyphonerSalesOwnerId as pickMyphonerSalesOwnerId,
@@ -12054,6 +12058,39 @@ app.post('/api/admin/sales/backfill-booking-facts', salesAuth, async (req, res) 
   }
   const summary = await backfillSalesBookingFacts({ force: parseBoolean(req.body?.force, false) });
   return res.json({ ok: true, ...summary });
+});
+
+app.post('/api/admin/sales/reassign-baard-farkas', salesAuth, async (req, res) => {
+  if (!req.salesUser?.isAdmin) {
+    return res.status(403).json({ message: 'Only admin can reassign these sales clients.' });
+  }
+  const dryRun = parseBoolean(req.body?.dryRun, true);
+  try {
+    const users = await store.getAllUsers();
+    const plan = planBaardFarkasReassign(sales.getSalesClients(), users);
+    if (plan.error) return res.status(400).json({ ok: false, message: plan.error });
+    let applied = { total: 0, updated: 0 };
+    if (!dryRun) {
+      applied = sales.applySilentOwnerPatches(baardFarkasPatchEntries(plan));
+    }
+    return res.json({
+      ok: true,
+      dryRun,
+      cutoffYmd: plan.cutoffYmd,
+      alexander: plan.alexander,
+      damianOwnerKey: plan.damianOwnerKey,
+      toAlexander: plan.toAlexander.length,
+      toDamian: plan.toDamian.length,
+      updated: dryRun ? 0 : applied.updated,
+      movedToAlexander: plan.toAlexander,
+      movedToDamian: plan.toDamian,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      message: sanitizeText(error?.message) || 'Failed reassigning Bård leads.',
+    });
+  }
 });
 
 app.get('/api/admin/sales/email-audit', salesAuth, (req, res) => {
