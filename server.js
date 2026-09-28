@@ -216,6 +216,15 @@ import {
   isClientGoogleConfigured,
   resolveClientGoogleRedirectUri,
 } from './lib/client-google-auth.js';
+import { mountClientAnalyticsRoutes } from './lib/client-analytics-http.js';
+import { startMapsRankingLoop } from './lib/maps-ranking-scheduler.js';
+import {
+  analyticsAccessFor,
+  buildAnalyticsDashboard,
+  findHubSiteForProfile,
+  findProfileForSiteKey,
+} from './lib/client-analytics-service.js';
+import { analyticsGoalsFromBank } from './lib/analytics-insights.js';
 import {
   getStripe,
   isStripeConfigured,
@@ -9724,6 +9733,8 @@ async function loadClientUser(req, res) {
   return user;
 }
 
+mountClientAnalyticsRoutes(app, { clientAuth, loadClientUser, clientPortal });
+
 app.get('/api/client/auth/me', clientAuth, async (req, res) => {
   const user = await loadClientUser(req, res);
   if (!user) return;
@@ -10415,6 +10426,29 @@ app.get('/api/client/dashboard', clientAuth, async (req, res) => {
   if (!user || user.role !== 'client') return res.status(401).json({ message: 'Unauthorized' });
   const profile = clientPortal.ensureClientProfileForUser(user);
   const dashboard = clientPortal.getClientDashboardData(profile);
+  try {
+    const hubSite = findHubSiteForProfile(profile);
+    const access = analyticsAccessFor(profile, hubSite);
+    if (access.allowed) {
+      const stats = await buildAnalyticsDashboard({ profile, hubSite, range: '30d' });
+      dashboard.analyticsAllowed = true;
+      dashboard.analyticsLevel = access.level;
+      dashboard.performance = {
+        uniqueViews: stats.traffic?.uniqueVisitors || 0,
+        bounceRate: stats.traffic?.bounceRate || 0,
+        bounceDeltaPct: 0,
+        purchases: 0,
+        clicks: stats.gbp?.insights?.websiteClicks || stats.traffic?.visits || 0,
+        visits: stats.traffic?.visits || 0,
+        monthLabel: '30 dager',
+      };
+    } else {
+      dashboard.analyticsAllowed = false;
+      dashboard.analyticsLevel = access.level;
+    }
+  } catch {
+    // Keep the placeholder cards if analytics is not ready.
+  }
   return res.json({
     profile,
     dashboard,
@@ -11505,15 +11539,20 @@ app.patch('/api/client-portal/state', clientAuthV2, async (req, res) => {
 app.get('/api/hub/site-config', (req, res) => {
   const siteKey = req.query.site_key;
   const domain = req.query.domain;
+  function withGoals(config, key) {
+    const { profile } = findProfileForSiteKey(key);
+    return { ...config, analyticsGoals: analyticsGoalsFromBank(profile?.clientDataBank) };
+  }
   if (siteKey) {
     const config = hub.getSiteConfig(siteKey, false);
     if (!config) return res.status(404).json({ message: 'Site not found' });
-    return res.json(config);
+    return res.json(withGoals(config, siteKey));
   }
   if (domain) {
     const config = hub.getSiteConfig(domain, true);
     if (!config) return res.status(404).json({ message: 'Site not found' });
-    return res.json(config);
+    const site = hub.getSiteByDomain(domain);
+    return res.json(withGoals(config, site?.site_key));
   }
   return res.status(400).json({ message: 'Provide site_key or domain' });
 });
@@ -11554,6 +11593,7 @@ app.get('/api/cms/config', (req, res) => {
     ecommerceCatalogType: null,
     websitePlan: null,
     desiredCmsVersion: null,
+    analyticsLevel: 'none',
   });
 });
 
@@ -13464,6 +13504,8 @@ function quoteMatchesOffer(offer, built, sentence) {
   if (!product || !next || offer.tierId !== built.tierId) return false;
   if (product.priceExMva !== next.priceExMva || product.pages !== next.pages) return false;
   if (sanitizeText(product.note) !== sanitizeText(next.note)) return false;
+  const includesOf = (item) => (Array.isArray(item?.includes) ? item.includes : []).map((line) => sanitizeText(line)).join('\n');
+  if (includesOf(product) !== includesOf(next)) return false;
   const html = offer.email?.html || '';
   if (!html.includes(sentence)) return false;
   const once = built.billing === 'once';
@@ -13859,8 +13901,10 @@ app.post('/api/admin/sales/:id/offer/new', salesAuth, async (req, res) => {
       ? { summary: previous.contract.summary, generatedAt: previous.contract.generatedAt || '' }
       : {},
   }, { actor: offerActor(req) });
-  const filled = await autoFillOfferIfReady(created, client, req);
-  res.status(201).json({ offer: presentOffer(filled), copied: Boolean(previous?.email?.html) });
+  const synced = applyMeetingQuoteToOffer(created, client);
+  const copied = Boolean(previous?.email?.html);
+  const filled = copied ? synced : await autoFillOfferIfReady(synced, client, req);
+  res.status(201).json({ offer: presentOffer(filled), copied });
 });
 
 app.post('/api/admin/sales/:id/offer/fill', salesAuth, async (req, res) => {
@@ -16468,6 +16512,7 @@ ensureData().then(() => {
   startMyphonerRecordingRetryLoop();
   startSalesGeocodeWarmupLoop();
   startLanPreviewAutoPublishLoop();
+  startMapsRankingLoop();
   sendDueSalesReminders().catch((error) => console.error('Initial sales reminder run failed:', error));
   sendDueFirefliesLiveJoins().catch((error) => console.error('[fireflies] initial live-join failed:', error));
   app.listen(PORT, '0.0.0.0', () => {

@@ -8,6 +8,8 @@ import {
   LegalCallout,
 } from '../../components/legal/LegalLayout';
 
+const legalLinkClass = 'text-[#FF5B00] hover:underline';
+
 export const Vilkar = () => {
   return (
     <LegalLayout
@@ -22,12 +24,18 @@ export const Vilkar = () => {
         </p>
         <p>
           Ved å bruke nettstedet, opprette en konto, velge en tjenestepakke eller på annen måte inngå et
-          kundeforhold med oss, bekrefter du at du har lest og godtar disse vilkårene samt vår{' '}
-          <Link to="/personvern" className="text-[#FF5B00] hover:underline">
+          kundeforhold med oss, bekrefter du at du har lest og godtar disse vilkårene, vår{' '}
+          <Link to="/personvern" className={legalLinkClass}>
             personvernerklæring
+          </Link>{' '}
+          og, når vi behandler personopplysninger på vegne av deg, vår{' '}
+          <Link to="/databehandleravtale" className={legalLinkClass}>
+            databehandleravtale
           </Link>
-          . Vilkårene utgjør avtalegrunnlaget mellom deg og Asoldi – du trenger ikke å signere et separat dokument for
-          at vilkårene skal gjelde.
+          . En signert tjenesteavtale (tilbudskontrakt) viser partene, valgt pakke og pris. Den viser til disse
+          sidene i stedet for å gjenta hele katalogteksten. Ved motstrid mellom den signerte avtalens konkrete
+          kommersielle vilkår (parter, pris, valgt omfang, forsinkelse, ansvarstak, eierskap og avslutning) og
+          denne siden, går den signerte avtalen foran.
         </p>
       </LegalSection>
 
@@ -42,50 +50,90 @@ export const Vilkar = () => {
         />
       </LegalSection>
 
-      <LegalSection id="tjenestevilkar" title="3. Tjenestevilkår (abonnement)">
+      <LegalSection id="tjenestekatalog" title="3. Tjenestekatalog">
         <p>
-          Følgende vilkår gjelder når du inngår en tjenesteavtale med Asoldi om utvikling, hosting, vedlikehold og
-          digitale tjenester. Avtaleperioden starter den dagen tjenesteavtalen inngås. Du velger én (1) av
-          tjenestepakkene beskrevet nedenfor.
+          Asoldi leverer nettside, hosting, vedlikehold og tilknyttede digitale tjenester som et løpende
+          månedsabonnement. Nedenfor beskrives tjenestene, deretter hva som inngår i hvert nivå. Priser er
+          oppgitt per måned ekskl. merverdiavgift med mindre noe annet er avtalt.
         </p>
 
-        <LegalSubheading>Nivå 1 – Nettsidepakke (1000 kr per måned)</LegalSubheading>
+        <LegalSubheading>Hva tjenestene betyr</LegalSubheading>
+        <p>
+          Nivåteksten nedenfor er en kort oversikt over hva som inngår. Forklaringene her sier hva
+          tjenestenavnene betyr. Den signerte kontrakten har samme forklaringer på engelsk i punkt 5.
+        </p>
         <LegalList
           items={[
-            'Full utvikling av en enkel nettside uten nettbutikk.',
+            'Nettsidedesign og utvikling: Responsivt design (mobil, nettbrett og PC), utvikling og layout av de avtalte sidene. Siden er HTML-basert, har sitemap og settes opp mot kundens domene.',
+            'Domenekobling: Kunden må kjøpe og eie sitt eget domene hvis de ikke allerede har ett. Asoldi selger ikke domenenavnet. Har kunden allerede et domene, kobler vi det til hostingen som inngår i månedsprisen. Koblingsarbeidet er inkludert; kunden betaler domeneregistratoren separat for selve navnet.',
+            'Hosting og oppetid: Drift på Asoldis Hostinger-nettverk så lenge abonnementet er aktivt. Siden holdes tilgjengelig med kommersielt rimelig oppetid. Planlagt vedlikehold og feil hos tredjepart kan forekomme. Hosting inngår i månedsprisen.',
+            'Vedlikehold og datalagring: Løpende drift slik at siden holder seg oppe — sikkerhet, sikkerhetskopier og teknisk stell. Vi tar datalagring på alvor og lagrer nettsidedata for å drifte, sikre og vedlikeholde tjenesten, se databehandleravtalen.',
+            'Kontaktskjema og standard seksjoner: Kontaktskjema og vanlige bedriftsseksjoner for valgt omfang. Skjemaet lar besøkende sende melding og legge igjen e-post.',
+            'Innholdsendringer: Inntil fire (4) mindre oppdateringer per måned, for eksempel priser, bilder eller tekst. Å legge til eller fjerne seksjoner, eller en større ombygging, avtales særskilt.',
+            'Veiledningsmøte: Ett oppstartsmøte, én gang. På alle nivåer viser vi hvordan kunden bruker CMS. Når nettbutikk inngår, dekker samme møte også produkter, kunder og tilkobling av betalingsløsning. Etter det er enkle spørsmål tillatt; vi gir ikke løpende opplæring i å redigere siden.',
+            'SEO (når det inngår): Løpende arbeid mot avtalte søkeord — tekst og teknisk struktur, sitemap, synlighet i Google Søk, Google Maps / Google Business Profile og AI-søk. Valgfrie steds- eller søkeordsrelaterte blogginnlegg inntil tre per uke når kunden ønsker det, og internlenkenettverket, når nivået inkluderer det. Ingen garanti for plassering, trafikk eller omsetning.',
+            'Internlenkenettverk: Eksisterende Asoldi-kunder kan peke mot nye kunder, og nye mot andre i nettverket. Antall lenker varierer med kundebasen.',
+            'Anmeldelser og synk mot sosiale medier (når det inngår): Krever at kunden logger inn på de aktuelle kontoene slik at vi kan koble synken. Vi lagrer ikke innloggingspassord til sosiale medier i kundens profil på asoldi.com. Kunden eier kontoene.',
+            'Innsamling og lagring av e-postlister til markedsføring (når det inngår).',
+            'Analyse og rapportering i kunde-CMS: Nivå 1 har verken analyseside eller rapportering. Nivå 2 får analyseside og en bi-ukentlig grunrapport (hver 14. dag). Nivå 3 får dypere innsikt og en ukentlig avansert rapport (hver 7. dag), inkludert nettbutikk-nøkkeltall når det inngår. Rapportene leveres i CMS, ikke som separat PDF med mindre det er avtalt skriftlig.',
+            'Nettbutikk (når det inngår): Butikkoppsett, produktsider, utsjekk og kunderegistrering, inkludert nettbutikk-nøkkeltall som kjøp, konvertering og gjennomsnittlig ordreverdi.',
+            'Flerspråklig nettside og butikk (nivå 3).',
+            'Support i avtalt tid, se punkt 8.',
+          ]}
+        />
+        <p>
+          SEO gir ingen garanti for en bestemt plassering, et bestemt trafikkvolum eller et bestemt
+          omsetningsresultat. Arbeidet er løpende.
+        </p>
+
+        <LegalSubheading>Nivå 1 – Standard (999 kr eks. mva per måned)</LegalSubheading>
+        <LegalList
+          items={[
+            'Full utvikling av en enkel nettside uten nettbutikk, inntil fem (5) hovedsider, med responsivt design, utvikling og layout.',
+            'HTML-basert side med sitemap.',
+            'Kobling av kundens eget domene til inkludert hosting. Kunden kjøper domenet selv hvis de ikke har ett.',
             'Hosting og vedlikehold under aktivt abonnement.',
-            'Kontaktskjema.',
-            'Alle seksjoner som kreves for en standard bedriftsnettside, unntatt nettbutikk og visning av anmeldelser.',
-            'Opptil fire (4) endringer per måned i layout eller visuelt innhold (bilder, video, layoutstruktur).',
-            'Ingen tillegg eller fjerning av seksjoner og ingen avansert funksjonalitet.',
+            'Kontaktskjema og seksjoner som kreves for en standard bedriftsnettside, unntatt nettbutikk og visning av anmeldelser.',
+            'Opptil fire (4) mindre innholdsendringer per måned (for eksempel priser, bilder eller tekst). Ingen tillegg eller fjerning av seksjoner.',
+            'Ett veiledningsmøte om CMS, holdt én gang.',
+            'Inneholder ikke SEO-program, bloggskriving, internlenkenettverk, nettbutikk, analyseside i CMS eller rangerings- og resultatrapportering.',
             'Leveringstid: 2 uker fra prosjektstart.',
           ]}
         />
 
-        <LegalSubheading>Nivå 2 – Nettside + SEO + E-post + Analyse (1500 kr per måned)</LegalSubheading>
-        <p>Inkluderer alt i Nivå 1, i tillegg til:</p>
+        <LegalSubheading>Nivå 2 – SEO (1 499 kr eks. mva per måned)</LegalSubheading>
+        <p>Inkluderer alt i Nivå 1, utvidet til inntil syv (7) hovedsider, i tillegg til:</p>
         <LegalList
           items={[
-            'SEO-optimalisering for 1–3 nøkkelord.',
-            'Funksjonalitet for visning av anmeldelser.',
-            'Synkronisering med sosiale medier.',
-            'Innsamling og lagring av e-postlister for markedsføringsformål.',
-            'Innledende veiledningsmøte om hvor e-postlister kan finnes.',
+            'Søkeordsoptimalisert tekst på siden.',
+            'SEO for 1–3 avtalte søkeord, inkludert arbeid mot rangering i Google Søk, Google Maps (Google Business Profile) og AI-søk.',
+            'Stedstilpassede, søkeordsrelaterte blogginnlegg inntil tre (3) per uke når kunden ønsker det.',
+            'Deltakelse i Asoldis internlenkenettverk. Antall lenker varierer med kundebasen.',
+            'Visning av anmeldelser og synk mot sosiale medier. Kunden logger inn for å koble kontoene; Asoldi lagrer ikke disse passordene i kundens asoldi.com-profil.',
+            'Innsamling og lagring av e-postlister. Veiledningsmøtet dekker også hvor listene finnes og hvordan de brukes.',
+            'Analyseside i CMS med kundens egne søkeordsrangeringer, trafikk, avvisningsrate, konvertering og Google Business Profile-utvikling.',
+            'Bi-ukentlig grunrapport (hver 14. dag) i analysesiden: rangering og et sammendrag av perioden. En separat PDF inngår ikke med mindre det er avtalt skriftlig.',
             'Leveringstid: 2 uker fra prosjektstart.',
           ]}
         />
 
-        <LegalSubheading>Nivå 3 – Nettside + Nettbutikk (2000 kr per måned)</LegalSubheading>
-        <p>Inkluderer alt i Nivå 2, i tillegg til:</p>
+        <LegalSubheading>Nivå 3 – Nettbutikk (1 999 kr eks. mva per måned)</LegalSubheading>
+        <p>Inkluderer alt i Nivå 2, utvidet til inntil ti (10) hovedsider, i tillegg til:</p>
         <LegalList
           items={[
-            'Nettbutikkfunksjonalitet, inkludert oppsett av butikk, produktsider, utsjekk og brukerregistrering.',
-            'Analysepanel tilgjengelig i CMS.',
-            'Visning av fluktfrekvens, besøksrater og gjennomsnittlig ordreverdi.',
-            'Innledende veiledningsmøte og gjennomgang av nettbutikk- og analysefunksjonalitet.',
+            'Nettbutikkfunksjonalitet: butikkoppsett, produktsider, utsjekk og kunderegistrering.',
+            'Flerspråklig nettside og butikk.',
+            'Ukentlig avansert rapport (hver 7. dag) i analysesiden: rangering, dypere sammendrag enn nivå 2, og nettbutikk-nøkkeltall (kjøp, konverteringsrate, gjennomsnittlig ordreverdi).',
+            'Veiledningsmøtet dekker også nettbutikk: legge inn produkter, legge til kunder og koble til betalingsløsning, pluss analysesiden.',
             'Leveringstid: 3 uker fra prosjektstart.',
           ]}
         />
+
+        <LegalSubheading>Skreddersydd</LegalSubheading>
+        <p>
+          Omfang, pris og leveringstid avtales særskilt. Tjenestene ovenfor kan inngå helt eller delvis. Den
+          signerte tilbudskontrakten fastsetter det konkrete omfanget.
+        </p>
       </LegalSection>
 
       <LegalSection id="betaling" title="4. Betalingsvilkår">
@@ -95,8 +143,8 @@ export const Vilkar = () => {
             'Første måned faktureres forholdsmessig: månedspris ÷ antall dager i måneden × antall gjenværende dager etter levering.',
             'Faktura for første måned forfaller innen 7 dager etter levering av produktet. Påfølgende fakturaer forfaller innen 7 dager etter utstedelse.',
             'Godkjente betalingsmetoder: bankoverføring og Stripe.',
-            'Det er ingen etableringsavgift.',
-            'Ved forsinket betaling påløper et gebyr på 100 kr etter 14 dager. Ved fortsatt manglende betaling kan tjenesten suspenderes og avtalen sies opp, se punkt 13.',
+            'Det er ingen etableringsavgift for å starte abonnementet.',
+            'Ved forsinket betaling påløper forsinkelsesrente og gebyrer etter gjeldende norsk lov. Ved fortsatt manglende betaling kan tjenesten suspenderes og avtalen sies opp, se punkt 13.',
           ]}
         />
       </LegalSection>
@@ -107,21 +155,26 @@ export const Vilkar = () => {
             'Minste bindingstid er 6 måneder.',
             'Oppsigelse krever 15 dagers varsel, og kunden betaler for hele oppsigelsesmåneden.',
             'Kunden kan ikke nedgradere til et lavere nivå etter at funksjonalitet fra et høyere nivå er lagt til.',
-            'Ved oppsigelse får kunden full tilgang til nettsidedesign og eventuell spesialutviklet kode, med unntak av det som følger av punkt 7.',
-            'Asoldi kan utføre migrering av hosting og eventuell domeneoverføring for 1400 kr, eller kostnadsfritt bistå kunden med å åpne hosting og domene slik at kunden selv kan gjennomføre overføringen.',
-            'Dersom nettsiden ikke er overført til kunden innen 15 dager fra oppsigelse, arkiverer Asoldi designet og beholder fullt eierskap. For å få tilgang til designet igjen må kunden betale migreringsgebyret.',
+            'Kunden eier varig innholdet på nettsiden, designet og eventuell kode utviklet spesifikt for kunden. Eierskapet går ikke automatisk tilbake til Asoldi etter oppsigelse eller etter en frist.',
+            'Innen syv (7) virkedager etter at abonnementet er avsluttet, gir Asoldi kunden tilgang til nettsidefilene slik siden står ved opphør (et øyeblikksbilde av den levende siden).',
+            'Dersom kunden ønsker at Asoldi skal sette opp siden hos en ny vert eller på et nytt domene, kan kunden engasjere oss til det. Arbeidet faktureres etter gebyret for hosting-oppsett / overføring som til enhver tid er oppgitt på asoldi.com. Beløpet skrives ikke inn her fordi det kan endres.',
+            'Dersom kunden forlater Asoldis Hostinger-nettverk, beholder kunden den eksporterte nettsiden slik den er ved opphør, men mister løpende abonnementstjenester: kontinuerlige nettsideoppdateringer, internlenkenettverket, nye CMS-oppdateringer, stedstilpasset bloggskriving for SEO, øvrig SEO-arbeid, support og andre løpende tjenester beskrevet i disse vilkårene.',
           ]}
         />
       </LegalSection>
 
       <LegalSection id="arbeidsomfang" title="6. Arbeidsomfang">
-        <p>Asoldi skal levere:</p>
+        <p>
+          Asoldi leverer tjenestene som inngår i valgt nivå, med den betydningen som er beskrevet i punkt 3.
+          Tjenester som ikke står i valgt nivå eller i den signerte kontraktens punkt 1, inngår ikke.
+        </p>
         <LegalList
           items={[
             'Profesjonelt nettsidedesign og utvikling i henhold til valgt tjenestenivå.',
-            'Hosting og vedlikehold under aktivt abonnement.',
-            'Rimelige månedlige oppdateringer, opptil fire endringer per måned, fleksibelt avhengig av kompleksitet.',
-            'Ingen opplæring i redigering av nettsiden; enkle spørsmål er tillatt som del av administrasjonen.',
+            'Domenekobling, hosting og vedlikehold på Asoldis Hostinger-nettverk under aktivt abonnement.',
+            'Rimelige månedlige innholdsendringer, opptil fire per måned.',
+            'Ett veiledningsmøte som beskrevet i punkt 3. Ingen løpende opplæring i redigering; enkle spørsmål er tillatt som del av administrasjonen.',
+            'SEO-, blogg- og analysetjenester når det inngår i valgt nivå, inkludert rapportering med den frekvensen og kvaliteten som hører til nivået.',
           ]}
         />
         <p>
@@ -140,18 +193,18 @@ export const Vilkar = () => {
 
         <LegalSubheading>Hostingfeil</LegalSubheading>
         <p>
-          Dersom Asoldi over lengre tid blir ute av stand til å hoste nettsiden, mottar kunden en full eksport
-          (inkludert SQL-fil og nødvendige nettsidefiler) kostnadsfritt. Full migrering til nytt domene eller ny
-          hostingleverandør er valgfritt.
+          Dersom Asoldi over lengre tid blir ute av stand til å hoste nettsiden, mottar kunden en full eksport av
+          nettsidefilene og innholdet kostnadsfritt. Full migrering til nytt domene eller ny hostingleverandør er
+          valgfritt og følger i så fall gebyret for hosting-oppsett som er oppgitt på asoldi.com.
         </p>
 
         <LegalSubheading>Immaterielle rettigheter og eierskap</LegalSubheading>
         <LegalList
           items={[
             'I abonnementsperioden har kunden full rett til å bruke nettsiden.',
-            'Ved oppsigelse beholder kunden eierskap til nettsidedesignet og eventuell kode utviklet spesifikt for kunden.',
-            'Etter 15 dager fra oppsigelse går eierskapet fullt tilbake til Asoldi dersom kunden ikke har eksportert eller migrert nettsiden.',
-            'Hostingmiljø, DNS-oppføringer, temaer, utvidelser/plugins og tredjepartslisenser forblir Asoldis eiendom.',
+            'Kunden eier varig nettsidens innhold (inklusive data kunden selv styrer), designet og eventuell kode utviklet spesifikt for kunden. Dette eierskapet går ikke tilbake til Asoldi.',
+            'Asoldi eier hostingmiljøet, verktøy for DNS-administrasjon, Asoldi CMS-programvaren, felles plattformkomponenter og tredjepartslisenser. Oppsigelse overfører ikke disse plattformressursene.',
+            'Etter oppsigelse leverer Asoldi nettsidefilene innen syv (7) virkedager, se punkt 5.',
           ]}
         />
       </LegalSection>
@@ -174,17 +227,21 @@ export const Vilkar = () => {
       <LegalSection id="gdpr" title="10. GDPR og databehandling">
         <LegalList
           items={[
-            'Kunden er behandlingsansvarlig for personopplysninger som samles inn via nettsiden.',
-            'Asoldi er databehandler og kan få tilgang til data for vedlikehold, sikkerhet og korrekt funksjonalitet.',
-            'Kunden er ansvarlig for GDPR-overholdelse knyttet til kundedata som samles inn via skjemaer, nettbutikk eller e-postlister.',
+            'Kunden er behandlingsansvarlig for personopplysninger som samles inn via kundens nettside (skjemaer, nettbutikk, e-postlister og lignende).',
+            'Asoldi er databehandler for slike opplysninger og behandler dem for å hoste, vedlikeholde, sikre og drifte tjenesten.',
+            'Kunden er ansvarlig for GDPR-etterlevelse overfor sine egne sluttkunder, inkludert personvernerklæring på egen nettside.',
           ]}
         />
         <p>
-          Se vår{' '}
-          <Link to="/personvern" className="text-[#FF5B00] hover:underline">
-            personvernerklæring
-          </Link>{' '}
-          for hvordan Asoldi behandler personopplysninger.
+          Nærmere regler om lagringssted, underleverandører, sikkerhet, sletting og håndtering ved opphør står i{' '}
+          <Link to="/databehandleravtale" className={legalLinkClass}>
+            databehandleravtalen
+          </Link>
+          . Hvordan Asoldi behandler opplysninger om deg som vår kunde, står i{' '}
+          <Link to="/personvern" className={legalLinkClass}>
+            personvernerklæringen
+          </Link>
+          .
         </p>
       </LegalSection>
 
@@ -194,8 +251,10 @@ export const Vilkar = () => {
           items={['indirekte, tilfeldige eller følgeskader,', 'tap av inntekter, virksomhet eller data.']}
         />
         <p>
-          Asoldis samlede ansvar er begrenset til beløpet kunden betalte ved siste månedlige betaling. Tjenestene
-          leveres «som de er», og vi gir ingen garanti for spesifikke kommersielle resultater.
+          Asoldis samlede ansvar som følger av kundeforholdet er begrenset til abonnementsbeløpene kunden har
+          betalt for de seks (6) månedene umiddelbart før kravet oppstod (ekskl. merverdiavgift), med mindre
+          ufravikelig norsk lov gir kunden et mer omfattende krav. Tjenestene leveres «som de er», og vi gir
+          ingen garanti for spesifikke kommersielle resultater.
         </p>
       </LegalSection>
 
@@ -211,15 +270,14 @@ export const Vilkar = () => {
         <p>Dersom betaling ikke er mottatt innen 14 dager etter forfall:</p>
         <LegalList
           items={[
-            'nettsiden suspenderes midlertidig (tas offline) frem til betaling er mottatt,',
-            'et purregebyr på NOK 100,- legges til i tillegg til nettsidekostnaden for hver dag som går etter de første 14 dagene.',
+            'nettsiden kan suspenderes midlertidig (tas offline) frem til betaling er mottatt,',
+            'det påløper forsinkelsesrente og gebyrer etter gjeldende norsk lov. Det brukes ikke en fast dagsmulkt på 100 kroner.',
           ]}
         />
         <p>Dersom betaling ikke er mottatt innen 30 dager:</p>
         <LegalList
           items={[
-            'utestående beløp kan sendes til inkasso,',
-            'purregebyret legges til inkassokravet hver 14. dag i avdrag frem til hele beløpet er betalt, med mindre annen intern avtale er inngått,',
+            'utestående beløp kan sendes til inkasso i samsvar med norsk lov,',
             'kunden forblir ansvarlig for alle ubetalte fakturaer.',
           ]}
         />
@@ -233,15 +291,18 @@ export const Vilkar = () => {
         </p>
         <p>
           Vi kan oppdatere vilkårene ved behov. Vesentlige endringer varsles på nettstedet, og fortsatt bruk av
-          tjenestene etter at endringer er publisert regnes som aksept av de oppdaterte vilkårene.
+          tjenestene etter at endringer er publisert regnes som aksept av de oppdaterte vilkårene. For en allerede
+          signert tilbudskontrakt gjelder de publiserte sidene slik de sto på signeringsdatoen, med mindre partene
+          blir enige om noe annet.
         </p>
       </LegalSection>
 
       <LegalCallout title="Slik inngås avtalen">
         <p>
           Du aksepterer disse vilkårene når du tar i bruk nettstedet eller kundeportalen, velger en tjenestepakke
-          eller bekrefter en bestilling – uten behov for et separat signert dokument. Det konkrete tjenestenivået,
-          prisen og oppstartsdatoen fremgår av bestillingen eller bekreftelsen du mottar fra oss.
+          eller bekrefter en bestilling. Når du mottar et tilbud, signerer du den konkrete tjenesteavtalen i
+          kundeportalen. Det konkrete tjenestenivået, prisen og oppstartsdatoen fremgår av tilbudet. Hele
+          tjenestekatalogen, personvernreglene og databehandleravtalen ligger på asoldi.com.
         </p>
       </LegalCallout>
     </LegalLayout>

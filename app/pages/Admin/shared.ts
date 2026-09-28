@@ -535,7 +535,7 @@ export const CATALOG_TYPE_OPTIONS: { id: EcommerceCatalogType; name: string }[] 
 export function featuresFromPlan(planId: WebsitePlanId): Features {
   switch (planId) {
     case 'tier-2-seo':
-      return { users: true, analytics: false, ecommerce: false, blog: true, socialSync: true, emailMarketing: true, general: false };
+      return { users: true, analytics: true, ecommerce: false, blog: true, socialSync: true, emailMarketing: true, general: false };
     case 'tier-3-ecommerce':
       return { users: true, analytics: true, ecommerce: true, blog: true, socialSync: true, emailMarketing: true, general: true };
     case 'custom':

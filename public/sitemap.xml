@@ -62,19 +62,25 @@
   </url>
   <url>
     <loc>https://asoldi.com/personvern</loc>
-    <lastmod>2026-06-17</lastmod>
+    <lastmod>2026-09-28</lastmod>
     <changefreq>yearly</changefreq>
     <priority>0.4</priority>
   </url>
   <url>
     <loc>https://asoldi.com/vilkar</loc>
-    <lastmod>2026-06-17</lastmod>
+    <lastmod>2026-09-28</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.4</priority>
+  </url>
+  <url>
+    <loc>https://asoldi.com/databehandleravtale</loc>
+    <lastmod>2026-09-28</lastmod>
     <changefreq>yearly</changefreq>
     <priority>0.4</priority>
   </url>
   <url>
     <loc>https://asoldi.com/informasjonskapsler</loc>
-    <lastmod>2026-06-17</lastmod>
+    <lastmod>2026-09-28</lastmod>
     <changefreq>yearly</changefreq>
     <priority>0.4</priority>
   </url>

@@ -23,7 +23,12 @@ export const Personvern = () => {
         </p>
         <p>
           Vi behandler personopplysninger i samsvar med personvernforordningen (GDPR) og norsk personvernlovgivning.
-          Ved å bruke nettstedet og tjenestene våre samtykker du til behandlingen som er beskrevet her.
+          Ved å bruke nettstedet og tjenestene våre samtykker du til behandlingen som er beskrevet her. Når vi
+          behandler personopplysninger på vegne av en kunde (kundens egne sluttbrukere), gjelder i tillegg{' '}
+          <Link to="/databehandleravtale" className="text-[#FF5B00] hover:underline">
+            databehandleravtalen
+          </Link>
+          .
         </p>
       </LegalSection>
 
@@ -140,17 +145,22 @@ export const Personvern = () => {
         </p>
         <LegalList
           items={[
-            'Hosting- og infrastrukturleverandører (drift av nettsted og lagring).',
-            'Google (autentisering og kalender) og andre innloggingsleverandører.',
+            'Hostinger (hosting og lagring av asoldi.com, kundens nettside og CMS-data i EØS).',
+            'GitHub (privat kodelager for kundens nettsidefiler).',
+            'Google (autentisering, kalender og kart) og andre innloggingsleverandører.',
             'E-postleverandør for transaksjons- og support-e-post.',
-            'Betalingsleverandør for å behandle betalinger.',
+            'Stripe for å behandle betalinger av Asoldi-abonnement.',
             'Analyse- og kommunikasjonsverktøy som er innebygd på nettstedet.',
           ]}
         />
         <p>
           Databehandlere er bundet av databehandleravtaler og kan kun behandle opplysninger etter våre instrukser.
           Opplysninger kan overføres utenfor EU/EØS dersom leverandøren er lokalisert der; i så fall sikres
-          overføringen med EUs standardkontraktsvilkår eller annet gyldig overføringsgrunnlag.
+          overføringen med EUs standardkontraktsvilkår eller annet gyldig overføringsgrunnlag. Se også{' '}
+          <Link to="/databehandleravtale" className="text-[#FF5B00] hover:underline">
+            databehandleravtalen
+          </Link>{' '}
+          for underleverandører når vi behandler data på en kundes vegne.
         </p>
       </LegalSection>
 
@@ -158,7 +168,9 @@ export const Personvern = () => {
         <p>
           Vi oppbevarer personopplysninger så lenge det er nødvendig for formålene de ble samlet inn for, eller så
           lenge vi er pålagt etter lov (f.eks. bokføringsloven for fakturadata). Kontodata slettes eller anonymiseres
-          innen rimelig tid etter at kundeforholdet avsluttes, med mindre annet følger av lov.
+          innen rimelig tid etter at kundeforholdet avsluttes, med mindre annet følger av lov. Personopplysninger
+          vi behandler på kundens vegne slettes etter databehandleravtalen (normalt innen 30 dager etter eksport
+          ved opphør).
         </p>
       </LegalSection>
 
@@ -208,7 +220,12 @@ export const Personvern = () => {
           Når vi utvikler og drifter en nettside for en kunde, er kunden behandlingsansvarlig for personopplysninger
           som samles inn via nettsiden (f.eks. via skjemaer, nettbutikk eller e-postlister), mens Asoldi opptrer som
           databehandler. Asoldi kan få tilgang til slike data for vedlikehold, sikkerhet og for å sikre korrekt
-          funksjonalitet. Kunden er ansvarlig for sin egen GDPR-etterlevelse overfor sine sluttbrukere. Se også våre{' '}
+          funksjonalitet. Kunden er ansvarlig for sin egen GDPR-etterlevelse overfor sine sluttbrukere. Rollene,
+          lagringssted, underleverandører, sikkerhet og sletting er beskrevet i{' '}
+          <Link to="/databehandleravtale" className="text-[#FF5B00] hover:underline">
+            databehandleravtalen
+          </Link>
+          . Se også våre{' '}
           <Link to="/vilkar" className="text-[#FF5B00] hover:underline">
             vilkår for bruk
           </Link>

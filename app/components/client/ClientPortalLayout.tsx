@@ -4,6 +4,7 @@ import { Gift, MessageSquare, UserCircle2, ChevronRight, LogOut, Settings, Credi
 import { useClientAuth } from '../../contexts/ClientAuthContext';
 import { ClientReferralModal } from './ClientReferralModal';
 import { REFERRAL_REWARD_LABEL } from '../../../lib/client-referral.js';
+import { analyticsLevelForPlan, ANALYTICS_LEVEL_NONE } from '../../../lib/website-tiers.js';
 
 type Props = {
   children: React.ReactNode;
@@ -48,8 +49,11 @@ export function ClientPortalLayout({ children, title, subtitle }: Props) {
   const activeBusiness = businesses.find((row) => row.id === activeBusinessId) || businesses[0] || null;
 
   const isHome = location.pathname === '/kunde' || location.pathname === '/kunde/hjem';
+  const isAnalytics = location.pathname.startsWith('/kunde/analyse') || location.pathname.startsWith('/kunde/analytics');
   const isServices = location.pathname.startsWith('/kunde/tjenester');
   const isSettings = location.pathname.startsWith('/kunde/innstillinger');
+  const planId = profile?.payment?.planId || profile?.websiteBuilder?.selectedPlanId || '';
+  const showAnalytics = analyticsLevelForPlan(planId) !== ANALYTICS_LEVEL_NONE;
 
   useEffect(() => {
     if (!profileMenuOpen && !businessMenuOpen) return;
@@ -100,6 +104,7 @@ export function ClientPortalLayout({ children, title, subtitle }: Props) {
 
           <nav className="space-y-2">
             <SidebarLink to="/kunde/hjem" label="Hjem" active={isHome} />
+            {showAnalytics ? <SidebarLink to="/kunde/analyse" label="Analyse" active={isAnalytics} /> : null}
             <SidebarLink to="/kunde/tjenester" label="Tjenester" active={isServices} hasChevron />
             {isServices ? (
               <div className="ml-3 mt-2 space-y-1 border-l border-[#E5E7EB] pl-3">

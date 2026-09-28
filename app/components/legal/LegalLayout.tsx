@@ -6,11 +6,12 @@ import { SEO } from '../SEO';
 import { BUSINESS, SITE_URL } from '../../config';
 import { getAboutPageSchema } from '../../structuredData';
 
-export const LEGAL_LAST_UPDATED = '17. juni 2026';
+export const LEGAL_LAST_UPDATED = '28. september 2026';
 
 export const LEGAL_PAGES = [
   { path: '/personvern', label: 'Personvernerklæring' },
   { path: '/vilkar', label: 'Vilkår for bruk' },
+  { path: '/databehandleravtale', label: 'Databehandleravtale' },
   { path: '/informasjonskapsler', label: 'Informasjonskapsler' },
 ] as const;
 

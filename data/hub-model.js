@@ -1,4 +1,5 @@
 import { normalizeDeliveryPhase, normalizeDevelopment } from '../lib/development-phase.js';
+import { analyticsLevelFromFlags } from '../lib/website-tiers.js';
 
 export const WEBSITE_PLANS = [
   { id: 'tier-1-standard', name: 'Tier 1: Standard' },
@@ -47,7 +48,7 @@ export function featuresFromPlan(planId) {
     case 'tier-2-seo':
       return {
         users: true,
-        analytics: false,
+        analytics: true,
         ecommerce: false,
         blog: true,
         socialSync: true,
@@ -162,6 +163,7 @@ export function normalizeSite(site) {
     deliveryPhase: normalizeDeliveryPhase(site.deliveryPhase, 'client'),
     development: normalizeDevelopment(site.development),
     createdAt: site.createdAt || new Date().toISOString(),
+    analyticsLevel: analyticsLevelFromFlags({ planId: websitePlan, features }),
   };
 }
 

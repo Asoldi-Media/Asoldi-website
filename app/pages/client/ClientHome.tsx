@@ -6,6 +6,7 @@ import { ClientRouteGuard } from '../../components/client/ClientRouteGuard';
 import { ClientPortalLayout } from '../../components/client/ClientPortalLayout';
 import { useClientAuth } from '../../contexts/ClientAuthContext';
 import { findWebsitePlan } from '../../data/clientWebsitePlans';
+import { analyticsLevelForPlan, ANALYTICS_LEVEL_NONE } from '../../../lib/website-tiers.js';
 import { useClientOffer } from './useClientOffer';
 
 type DashboardTodo = { id: string; title: string; description: string; actionLabel: string; route: string };
@@ -21,8 +22,10 @@ type DashboardResponse = {
       bounceDeltaPct: number;
       purchases: number;
       clicks: number;
+      visits?: number;
       monthLabel: string;
     };
+    analyticsAllowed?: boolean;
     greetingName: string;
   };
 };
@@ -86,6 +89,9 @@ export const ClientHome = () => {
 
   const performance = useMemo(() => data?.dashboard?.performance, [data]);
   const element = data?.dashboard?.marketingElements?.[0];
+  const planId = data?.profile?.payment?.planId || data?.profile?.websiteBuilder?.selectedPlanId || '';
+  const showAnalytics = data?.dashboard?.analyticsAllowed
+    ?? (analyticsLevelForPlan(planId) !== ANALYTICS_LEVEL_NONE);
 
   const todos = useMemo<TodoEntry[]>(() => {
     const baseTodos = (data?.dashboard?.todoList || []) as TodoEntry[];
@@ -262,14 +268,27 @@ export const ClientHome = () => {
                 </div>
               </div>
 
-              <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-                <PerformanceCard title="Unike visninger" value={(performance?.uniqueViews ?? 0).toLocaleString('nb-NO')} />
-                <PerformanceCard title="Avvisningsrate" value={`${performance?.bounceRate ?? 0}%`} hint={`+${performance?.bounceDeltaPct ?? 0}%`} />
-                <PerformanceCard title="Kjøp" value={(performance?.purchases ?? 0).toLocaleString('nb-NO')} />
-                <PerformanceCard title="Klikk" value={(performance?.clicks ?? 0).toLocaleString('nb-NO')} />
-              </div>
+              {showAnalytics ? (
+                <>
+                  <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+                    <PerformanceCard title="Unike visninger" value={(performance?.uniqueViews ?? 0).toLocaleString('nb-NO')} />
+                    <PerformanceCard title="Avvisningsrate" value={`${performance?.bounceRate ?? 0}%`} hint={performance?.bounceDeltaPct ? `${performance.bounceDeltaPct > 0 ? '+' : ''}${performance.bounceDeltaPct}%` : undefined} />
+                    <PerformanceCard title="Besøk" value={(performance?.visits ?? performance?.clicks ?? 0).toLocaleString('nb-NO')} />
+                    <PerformanceCard title="Kjøp" value={(performance?.purchases ?? 0).toLocaleString('nb-NO')} />
+                  </div>
 
-              <p className="mt-3 text-[11px] text-[#B6BBC4]">{performance?.monthLabel || '1 mnd'} · demo-data</p>
+                  <p className="mt-3 text-[11px] text-[#B6BBC4]">{performance?.monthLabel || '30 dager'}</p>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/kunde/analyse')}
+                    className="mt-4 text-sm text-[#FF5B00] hover:underline"
+                  >
+                    Åpne analysesiden
+                  </button>
+                </>
+              ) : (
+                <p className="mt-4 text-sm text-[#9CA3AF]">Analyse inngår fra SEO-nivået.</p>
+              )}
             </section>
 
             <button

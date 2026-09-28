@@ -13,11 +13,14 @@ test('tier 3 plan enables ecommerce, analytics, blog, and social sync', () => {
     ecommerce: true,
     blog: true,
     socialSync: true,
+    emailMarketing: true,
+    general: true,
   });
 });
 
-test('tier 2 plan enables blog and social sync but not ecommerce', () => {
+test('tier 2 plan enables blog, social sync and analytics but not ecommerce', () => {
   assert.equal(featuresFromPlan('tier-2-seo').socialSync, true);
+  assert.equal(featuresFromPlan('tier-2-seo').analytics, true);
   assert.equal(featuresFromPlan('tier-2-seo').ecommerce, false);
 });
 

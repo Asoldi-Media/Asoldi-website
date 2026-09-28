@@ -542,6 +542,15 @@ export const ClientWebsitePlans = () => {
                     >
                       personvernerklæringen
                     </a>
+                    {' '}og{' '}
+                    <a
+                      href="https://asoldi.com/databehandleravtale"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-medium text-[#FF5B00] underline hover:text-[#E55200]"
+                    >
+                      databehandleravtalen
+                    </a>
                     .
                   </span>
                 </label>

@@ -295,6 +295,8 @@ test('maker bundle maps CLIENT_FIELDS into kundedata', () => {
       businessWhat: 'Nabolagskafe',
       reviews: 'Koselig',
       town: 'Trondheim',
+      mainCtaText: 'Bestill bord',
+      mainCtaUrl: '/bestill',
     },
     productCatalogs: [{
       layout: 'meny',
@@ -307,6 +309,9 @@ test('maker bundle maps CLIENT_FIELDS into kundedata', () => {
   assert.equal(bank.websiteCreatorQuestions.businessWhat, 'Nabolagskafe');
   assert.equal(bank.websiteCreatorQuestions.reviews, 'Koselig');
   assert.equal(bank.websiteCreatorQuestions.town, 'Trondheim');
+  assert.equal(bank.websiteCreatorQuestions.mainCtaText, 'Bestill bord');
+  assert.equal(bank.websiteCreatorQuestions.mainCtaUrl, '/bestill');
+  assert.equal(bank.websiteCreatorQuestions.primaryAction, 'Bestill bord');
   assert.equal(bank.productCatalogs[0].categories[0].products[0].title, 'Kaffe');
   assert.equal(bank.makerLink.bundleId, 'bundle-1');
 });

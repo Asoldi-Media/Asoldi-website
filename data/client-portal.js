@@ -393,6 +393,11 @@ function defaultClientDataBank(seed = {}) {
       town: '',
       country: '',
       relevantLinks: '',
+      mainCtaText: '',
+      mainCtaUrl: '',
+    },
+    seo: {
+      keywordPlan: null,
     },
     makerLink: {
       bundleId: '',
@@ -477,7 +482,11 @@ function normalizeClientDataBank(input = {}, fallback = {}) {
     targetAudience: sanitizeText(src.websiteCreatorQuestions?.targetAudience || base.websiteCreatorQuestions.targetAudience),
     keyMessage: sanitizeText(src.websiteCreatorQuestions?.keyMessage || base.websiteCreatorQuestions.keyMessage),
     toneOfVoice: sanitizeText(src.websiteCreatorQuestions?.toneOfVoice || base.websiteCreatorQuestions.toneOfVoice),
-    primaryAction: sanitizeText(src.websiteCreatorQuestions?.primaryAction || base.websiteCreatorQuestions.primaryAction),
+    primaryAction: sanitizeText(
+      src.websiteCreatorQuestions?.primaryAction
+      || src.websiteCreatorQuestions?.mainCtaText
+      || base.websiteCreatorQuestions.primaryAction
+    ),
     importantKeywords: normalizeTextList(src.websiteCreatorQuestions?.importantKeywords, base.websiteCreatorQuestions.importantKeywords),
     competitorLinks: normalizeTextList(src.websiteCreatorQuestions?.competitorLinks, base.websiteCreatorQuestions.competitorLinks),
     businessWhat: sanitizeText(src.websiteCreatorQuestions?.businessWhat || base.websiteCreatorQuestions.businessWhat),
@@ -491,6 +500,18 @@ function normalizeClientDataBank(input = {}, fallback = {}) {
     town: sanitizeText(src.websiteCreatorQuestions?.town || base.websiteCreatorQuestions.town),
     country: sanitizeText(src.websiteCreatorQuestions?.country || base.websiteCreatorQuestions.country),
     relevantLinks: sanitizeText(src.websiteCreatorQuestions?.relevantLinks || base.websiteCreatorQuestions.relevantLinks),
+    mainCtaText: sanitizeText(
+      src.websiteCreatorQuestions?.mainCtaText
+      || src.websiteCreatorQuestions?.primaryAction
+      || base.websiteCreatorQuestions.mainCtaText
+    ),
+    mainCtaUrl: sanitizeText(src.websiteCreatorQuestions?.mainCtaUrl || base.websiteCreatorQuestions.mainCtaUrl),
+  };
+
+  const seo = {
+    keywordPlan: src.seo?.keywordPlan && typeof src.seo.keywordPlan === 'object'
+      ? src.seo.keywordPlan
+      : (base.seo?.keywordPlan || null),
   };
 
   const makerLink = {
@@ -524,6 +545,7 @@ function normalizeClientDataBank(input = {}, fallback = {}) {
       : normalizeProducts(src.products, base.products),
     media,
     websiteCreatorQuestions,
+    seo,
     makerLink,
   };
 }
@@ -1090,12 +1112,13 @@ export function getClientDashboardData(profile) {
       },
     ],
     performance: {
-      uniqueViews: 10000,
-      bounceRate: 9.76,
-      bounceDeltaPct: 10,
-      purchases: 900,
-      clicks: 7000,
-      monthLabel: '1 mnd',
+      uniqueViews: 0,
+      bounceRate: 0,
+      bounceDeltaPct: 0,
+      purchases: 0,
+      clicks: 0,
+      visits: 0,
+      monthLabel: '30 dager',
     },
     greetingName: sanitizeText(normalized.name) || businessName,
   };

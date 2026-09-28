@@ -65,6 +65,7 @@ export function getSiteConfig(siteKeyOrDomain, byDomain = false) {
     ecommerceCatalogType: site.ecommerceCatalogType,
     websitePlan: site.websitePlan,
     desiredCmsVersion: desiredCmsVersion(site),
+    analyticsLevel: site.analyticsLevel || 'none',
     clientAdmin: publicClientAdmin(clientAdmin),
     pendingAdmin:
       clientAdmin.pendingSync && clientAdmin.passwordHash

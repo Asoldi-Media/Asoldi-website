@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Navbar } from './components/Navbar';
 import { Footer } from './components/Footer';
 import { ScrollToTop } from './components/ScrollToTop';
@@ -20,6 +20,7 @@ const Page1000kr = lazy(() => import('./pages/1000kr').then((m) => ({ default: m
 const BliAnsatt = lazy(() => import('./pages/BliAnsatt').then((m) => ({ default: m.BliAnsatt })));
 const Personvern = lazy(() => import('./pages/legal/Personvern').then((m) => ({ default: m.Personvern })));
 const Vilkar = lazy(() => import('./pages/legal/Vilkar').then((m) => ({ default: m.Vilkar })));
+const Databehandleravtale = lazy(() => import('./pages/legal/Databehandleravtale').then((m) => ({ default: m.Databehandleravtale })));
 const Informasjonskapsler = lazy(() => import('./pages/legal/Informasjonskapsler').then((m) => ({ default: m.Informasjonskapsler })));
 const Login = lazy(() => import('./pages/Login').then((m) => ({ default: m.Login })));
 const EmployeeLogin = lazy(() => import('./pages/login/EmployeeLogin').then((m) => ({ default: m.EmployeeLogin })));
@@ -45,11 +46,12 @@ const ClientWebsiteStart = lazy(() => import('./pages/client/ClientWebsiteStart'
 const ClientWebsitePlans = lazy(() => import('./pages/client/ClientWebsitePlans').then((m) => ({ default: m.ClientWebsitePlans })));
 const ClientWebsiteCheckout = lazy(() => import('./pages/client/ClientWebsiteCheckout').then((m) => ({ default: m.ClientWebsiteCheckout })));
 const ClientAiAssistant = lazy(() => import('./pages/client/ClientAiAssistant').then((m) => ({ default: m.ClientAiAssistant })));
+const ClientAnalytics = lazy(() => import('./pages/client/ClientAnalytics').then((m) => ({ default: m.ClientAnalytics })));
 
 function AppLayout() {
   const location = useLocation();
-  const hideShell = /^\/(admin|superadmin|ansatt|sales|developer|previews|login|kunde)(\/|$)/.test(location.pathname);
-  const useLightShell = /^\/(login|kunde)(\/|$)/.test(location.pathname);
+  const hideShell = /^\/(admin|superadmin|ansatt|sales|developer|previews|login|kunde|client)(\/|$)/.test(location.pathname);
+  const useLightShell = /^\/(login|kunde|client)(\/|$)/.test(location.pathname);
 
   useEffect(() => {
     if (location.pathname === '/ansatt') return;
@@ -116,6 +118,11 @@ function AppLayout() {
           <Route path="/kunde/onboarding" element={<ClientOnboarding />} />
           <Route path="/kunde/tjenester" element={<ClientServices />} />
           <Route path="/kunde/ai-assistant" element={<ClientAiAssistant />} />
+          <Route path="/kunde/analyse" element={<ClientAnalytics />} />
+          <Route path="/kunde/analytics" element={<ClientAnalytics />} />
+          <Route path="/client" element={<Navigate to="/kunde" replace />} />
+          <Route path="/client/analyse" element={<Navigate to="/kunde/analyse" replace />} />
+          <Route path="/client/innstillinger" element={<Navigate to="/kunde/innstillinger" replace />} />
           <Route path="/kunde/innstillinger" element={<ClientSettings />} />
           <Route path="/kunde/innstillinger/fakturering" element={<ClientSettings />} />
           <Route path="/kunde/innstillinger/billing" element={<ClientSettings />} />
@@ -127,6 +134,7 @@ function AppLayout() {
           <Route path="/bli-ansatt" element={<BliAnsatt />} />
           <Route path="/personvern" element={<Personvern />} />
           <Route path="/vilkar" element={<Vilkar />} />
+          <Route path="/databehandleravtale" element={<Databehandleravtale />} />
           <Route path="/informasjonskapsler" element={<Informasjonskapsler />} />
         </Routes>
       </Suspense>

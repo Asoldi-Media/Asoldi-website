@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { ClientRouteGuard } from '../../components/client/ClientRouteGuard';
 import { ClientPortalLayout } from '../../components/client/ClientPortalLayout';
+import { GoogleBusinessConnectCard } from '../../components/client/GoogleBusinessConnectCard';
 import { useClientAuth } from '../../contexts/ClientAuthContext';
 import { CLIENT_WEBSITE_PLANS } from '../../data/clientWebsitePlans';
 import {
@@ -166,6 +167,8 @@ type ClientDataBank = {
     town: string;
     country: string;
     relevantLinks: string;
+    mainCtaText: string;
+    mainCtaUrl: string;
   };
   makerLink?: {
     bundleId?: string;
@@ -388,6 +391,8 @@ function defaultClientDataBank(profile: any): ClientDataBank {
       town: '',
       country: '',
       relevantLinks: '',
+      mainCtaText: '',
+      mainCtaUrl: '',
     },
     makerLink: {
       bundleId: '',
@@ -507,7 +512,7 @@ function ensureClientDataBank(input: any, profile: any): ClientDataBank {
       targetAudience: String(bank?.websiteCreatorQuestions?.targetAudience || '').trim(),
       keyMessage: String(bank?.websiteCreatorQuestions?.keyMessage || '').trim(),
       toneOfVoice: String(bank?.websiteCreatorQuestions?.toneOfVoice || '').trim(),
-      primaryAction: String(bank?.websiteCreatorQuestions?.primaryAction || '').trim(),
+      primaryAction: String(bank?.websiteCreatorQuestions?.primaryAction || bank?.websiteCreatorQuestions?.mainCtaText || '').trim(),
       importantKeywords: ensureList(bank?.websiteCreatorQuestions?.importantKeywords, []),
       competitorLinks: ensureList(bank?.websiteCreatorQuestions?.competitorLinks, []),
       businessWhat: String(bank?.websiteCreatorQuestions?.businessWhat || '').trim(),
@@ -521,6 +526,8 @@ function ensureClientDataBank(input: any, profile: any): ClientDataBank {
       town: String(bank?.websiteCreatorQuestions?.town || '').trim(),
       country: String(bank?.websiteCreatorQuestions?.country || '').trim(),
       relevantLinks: String(bank?.websiteCreatorQuestions?.relevantLinks || '').trim(),
+      mainCtaText: String(bank?.websiteCreatorQuestions?.mainCtaText || bank?.websiteCreatorQuestions?.primaryAction || '').trim(),
+      mainCtaUrl: String(bank?.websiteCreatorQuestions?.mainCtaUrl || '').trim(),
     },
     makerLink: {
       bundleId: String(bank?.makerLink?.bundleId || '').trim(),
@@ -1101,6 +1108,7 @@ export const ClientSettings = () => {
 
             {activeSection === 'kundedata' ? (
               <div className="space-y-5">
+                {token ? <GoogleBusinessConnectCard token={token} /> : null}
                 {clientData.makerLink?.bundleId || clientData.makerLink?.publicPreviewUrl ? (
                   <section className="rounded-2xl border border-[#E5E7EB] bg-[#FFF7F2] p-5">
                     <h2 className="text-lg font-semibold text-[#111827]">Nettsidebygger-kobling</h2>
@@ -2107,16 +2115,36 @@ export const ClientSettings = () => {
                         className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 outline-none focus:border-[#FF5B00]"
                       />
                     </label>
-                    <label className="text-sm">
-                      <span className="block text-[#374151] mb-1">Primær CTA-handling</span>
-                      <input
-                        value={clientData.websiteCreatorQuestions.primaryAction}
+                    <label className="text-sm md:col-span-2">
+                      <span className="block text-[#374151] mb-1">Hovedhandling (CTA)</span>
+                      <textarea
+                        value={clientData.websiteCreatorQuestions.mainCtaText || clientData.websiteCreatorQuestions.primaryAction}
                         onChange={(e) => setClientData((prev) => ({
                           ...prev,
-                          websiteCreatorQuestions: { ...prev.websiteCreatorQuestions, primaryAction: e.target.value },
+                          websiteCreatorQuestions: {
+                            ...prev.websiteCreatorQuestions,
+                            mainCtaText: e.target.value,
+                            primaryAction: e.target.value,
+                          },
                         }))}
+                        rows={3}
+                        placeholder="F.eks. bestill bord, be om tilbud, handle i nettbutikken"
                         className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 outline-none focus:border-[#FF5B00]"
                       />
+                      <span className="mt-1 block text-xs text-[#9CA3AF]">Beskrivelse av det dere vil at besøkende skal gjøre. Brukes som etikett i analyse.</span>
+                    </label>
+                    <label className="text-sm md:col-span-2">
+                      <span className="block text-[#374151] mb-1">Hoved-CTA-side (valgfri URL)</span>
+                      <input
+                        value={clientData.websiteCreatorQuestions.mainCtaUrl}
+                        onChange={(e) => setClientData((prev) => ({
+                          ...prev,
+                          websiteCreatorQuestions: { ...prev.websiteCreatorQuestions, mainCtaUrl: e.target.value },
+                        }))}
+                        placeholder="/bestill eller https://kunde.no/booking"
+                        className="w-full rounded-lg border border-[#D1D5DB] px-3 py-2 outline-none focus:border-[#FF5B00]"
+                      />
+                      <span className="mt-1 block text-xs text-[#9CA3AF]">Analysesiden måler visninger og klikk til denne siden.</span>
                     </label>
                     <label className="text-sm md:col-span-2">
                       <span className="block text-[#374151] mb-1">Viktige nøkkelord (kommaseparert)</span>

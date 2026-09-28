@@ -105,8 +105,12 @@ ex. MVA, MVA 25 % and incl. MVA **per month** (retainer). The shell has no envel
 ## Contract PDF
 
 `lib/offer-contract-pdf.js` (pdfkit). Sections follow the original “Web utviklings kontrakt” template: parties,
-scope summary (no price breakdown), monthly fee ex./incl. MVA, delivery, client obligations, IP, termination,
-signatures. Asoldi’s handwritten signature is stamped above the Service Provider line
+chosen tier/scope (including monthly SEO/ecommerce work and CMS reporting: none / basic every 14 days / advanced every 7 days), monthly fee ex./incl. MVA,
+delivery, payment, ownership/offboarding, then Section 5 service meanings (design, domain, hosting, maintenance, forms, content changes, one-time guidance, SEO, social sync without stored passwords, email lists, analytics, ecommerce) plus the published
+`asoldi.com/vilkar`, `asoldi.com/personvern` and `asoldi.com/databehandleravtale`. Late payment follows
+Norwegian statutory interest/fees (no NOK 100/day). Liability is capped at six months of fees. The client
+keeps permanent ownership of content, design and custom code; Asoldi sends website files within 7 business
+days after the subscription ends. Asoldi’s handwritten signature is stamped above the Service Provider line
 (`assets/asoldi-contract-signature.png`). Three blank tier templates: `GET /api/admin/offers/contract-template/<tierId>.pdf`.
 For an offer: tier contract when only a tier is present; admin-verified summary when custom products exist.
 

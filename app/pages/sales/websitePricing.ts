@@ -65,9 +65,6 @@ export const PRICING = {
     { id: 'dashboard', name: 'Analyse-dashbord', price: 150 },
     { id: 'blog', name: 'Blogg-integrasjon', price: 400 },
     { id: 'unlimited', name: 'Ubegrenset innholdsendringer (oppgradering fra 4/mnd)', price: 1000, oneTimeMonths: 6 },
-    { id: 'customapp', name: 'Skreddersydde web-applikasjoner', price: 2000 },
-    { id: 'api', name: 'Avanserte API-integrasjoner', price: 1500 },
-    { id: 'server', name: 'Dedikert server & prioritert support', price: 800, scalesWithPages: true },
   ] as PricingService[],
   multilingual: {
     id: 'multilingual',

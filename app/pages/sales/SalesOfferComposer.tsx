@@ -490,10 +490,12 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
         contactPerson: stored?.contactPerson || fresh.contactPerson,
       });
       setTo(resolveWebsiteEmail(client || {}));
-      autoFillKeyRef.current = '';
       applyOffer(data.offer);
+      autoFillKeyRef.current = data.copied
+        ? `${data.offer.id}:${data.offer.meetingId || ''}`
+        : '';
       setNotice(data.copied
-        ? 'Nytt utkast er en kopi av tilbudet som ble sendt. Endre det du trenger, og send på nytt.'
+        ? 'Nytt utkast er en kopi av tilbudet som ble sendt. Kundeteksten er beholdt. Pakkelisten følger gjeldende katalog. Ikke trykk Generer på nytt med mindre du vil skrive e-posten på nytt fra transkriptet.'
         : 'Nytt tilbudsutkast opprettet.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Kunne ikke starte nytt tilbud');

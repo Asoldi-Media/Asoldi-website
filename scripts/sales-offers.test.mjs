@@ -37,6 +37,14 @@ test('website tiers: 5/7/10 pages, SEO tier has Google/Maps/AI, only e-commerce 
   assert.ok(has(t2, /google/i) && has(t2, /\bAI\b/i), 'tier 2 lists Google ranking + AI');
   assert.ok(has(t3, /flerspråk|multilingual/i), 'tier 3 is multilingual');
   assert.ok(!has(t1, /flerspråk/i) && !has(t2, /flerspråk/i), 'tier 1/2 are not multilingual');
+  assert.ok(has(t2, /bi-ukentlig grunrapport/i), 'tier 2 lists bi-weekly basic report');
+  assert.ok(has(t3, /ukentlig avansert rapport/i), 'tier 3 lists weekly advanced report');
+  assert.ok(!has(t1, /rapport/i) && !has(t1, /analyse-dashbord/i), 'tier 1 has no analytics reporting');
+  assert.ok(has(t1, /koble til eget domene/i) && has(t1, /veiledningsmøte/i), 'tier 1 includes domain + guidance');
+  assert.ok(!has(t1, /skreddersydde web/i) && !has(t2, /api-integrasjon/i) && !has(t3, /dedikert server/i));
+  assert.equal(tiers.analyticsLevelForPlan(t2.id), 'basic');
+  assert.equal(tiers.reportingIntervalDaysForLevel('basic'), 14);
+  assert.equal(tiers.reportingIntervalDaysForLevel('advanced'), 7);
   assert.equal(tiers.withMva(1000), 1250);
 });
 
@@ -225,6 +233,40 @@ test('contract pdf: tier contract and custom-summary contract both render a PDF'
   // A verified custom summary makes the contract available even without a fixed tier
   assert.equal(contractPdf.offerContractIsAvailable({ tierId: 'custom', products: summary.products, contract: { summary: null } }), false);
   assert.equal(contractPdf.offerContractIsAvailable({ tierId: 'custom', products: summary.products, contract: { summary } }), true);
+});
+
+test('contract terms: statutory late interest, six-month liability, permanent ownership, legal pages', () => {
+  const article = contractPdf.contractArticleModel({ client: CLIENT, tierId: tiers.WEBSITE_TIERS[1].id });
+  const blob = JSON.stringify(article);
+  assert.match(blob, /forsinkelsesrente og gebyrer etter gjeldende norsk lov/);
+  assert.match(blob, /six \(6\) months/);
+  assert.match(blob, /seven \(7\) business days/);
+  assert.match(blob, /asoldi\.com\/vilkar/);
+  assert.match(blob, /asoldi\.com\/databehandleravtale/);
+  assert.match(blob, /three \(3\) per week/);
+  assert.match(blob, /basic report every fourteen \(14\) days/i);
+  assert.doesNotMatch(blob, /NOK 100/);
+  assert.doesNotMatch(blob, /ownership reverts/i);
+  assert.doesNotMatch(blob, /last monthly payment/i);
+  const seo = tiers.WEBSITE_TIERS[1];
+  assert.ok(seo.includes.some((line) => /analyse-dashbord/i.test(line)));
+  assert.ok(seo.includes.some((line) => /bi-ukentlig grunrapport/i.test(line)));
+  assert.ok(seo.includes.some((line) => /3\/uke|3 per uke/i.test(line)));
+
+  const starter = JSON.stringify(contractPdf.contractArticleModel({ client: CLIENT, tierId: tiers.WEBSITE_TIERS[0].id }));
+  assert.match(starter, /does not include an analytics page/i);
+  assert.doesNotMatch(starter, /every fourteen \(14\) days/);
+
+  const shop = JSON.stringify(contractPdf.contractArticleModel({ client: CLIENT, tierId: tiers.WEBSITE_TIERS[2].id }));
+  assert.match(shop, /advanced report every seven \(7\) days/i);
+  assert.match(blob, /Domain connection/);
+  assert.match(blob, /does not store the Client/);
+  assert.match(blob, /Guidance meeting \(once\)/);
+  assert.doesNotMatch(blob, /custom web.?app/i);
+  assert.doesNotMatch(blob, /dedicated server/i);
+  assert.doesNotMatch(blob, /advanced API/i);
+  assert.ok(tiers.WEBSITE_TIERS[0].includes.some((line) => /koble til eget domene/i.test(line)));
+  assert.ok(tiers.WEBSITE_TIERS[0].includes.some((line) => /veiledningsmøte/i.test(line)));
 });
 
 test('fireflies matcher: attendee email wins, then host+time, then fuzzy name', () => {
