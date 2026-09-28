@@ -174,3 +174,54 @@
   background: #ff5b00;
   color: #fff;
 }
+
+@media (max-width: 767px) {
+  .email-gjs {
+    height: min(62vh, 520px);
+    min-height: 360px;
+  }
+
+  .email-gjs .gjs-editor {
+    min-height: 340px;
+  }
+
+  .email-gjs .gjs-pn-views,
+  .email-gjs .gjs-pn-views-container {
+    display: none;
+  }
+
+  .email-gjs.is-blocks-open .gjs-pn-views {
+    display: flex;
+    z-index: 21;
+  }
+
+  .email-gjs.is-blocks-open .gjs-pn-views-container {
+    display: block;
+    position: absolute;
+    z-index: 20;
+    top: 40px;
+    right: 0;
+    bottom: 0;
+    width: min(280px, 88vw);
+    background: #222;
+    box-shadow: -12px 0 32px rgba(0, 0, 0, 0.45);
+  }
+
+  .email-gjs .gjs-cv-canvas {
+    width: 100% !important;
+    right: 0 !important;
+    left: 0 !important;
+    top: 40px !important;
+    overflow: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .email-gjs .gjs-cv-canvas iframe {
+    min-height: 280px;
+  }
+
+  .email-gjs .gjs-frame-wrapper {
+    margin: 8px auto !important;
+    max-width: 100%;
+  }
+}

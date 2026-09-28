@@ -1,8 +1,13 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { LayoutGrid } from 'lucide-react';
 import grapesjs, { type Editor } from 'grapesjs';
 import presetNewsletter from 'grapesjs-preset-newsletter';
 import 'grapesjs/dist/css/grapes.min.css';
 import './email-editor.css';
+
+function isPhoneViewport() {
+  return typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches;
+}
 
 export type MergeField = { token: string; label: string; sample?: string };
 
@@ -60,11 +65,25 @@ export function EmailVisualEditor({
   const editorRef = useRef<Editor | null>(null);
   const onChangeRef = useRef(onHtmlChange);
   const onProjectRef = useRef(onProjectChange);
+  const [blocksOpen, setBlocksOpen] = useState(false);
   onChangeRef.current = onHtmlChange;
   onProjectRef.current = onProjectChange;
 
   useEffect(() => {
+    rootRef.current?.classList.toggle('is-blocks-open', blocksOpen);
+    const editor = editorRef.current;
+    if (!editor) return;
+    try {
+      editor.Panels.getButton('views', 'open-blocks')?.set('active', blocksOpen);
+      editor.refresh();
+    } catch {
+      // Panel IDs differ across GrapesJS presets; CSS still shows/hides the block tray.
+    }
+  }, [blocksOpen]);
+
+  useEffect(() => {
     if (!rootRef.current) return undefined;
+    const phone = isPhoneViewport();
     const editor = grapesjs.init({
       container: rootRef.current,
       height: '100%',
@@ -79,7 +98,7 @@ export function EmailVisualEditor({
         modalLabelExport: 'Kopier den inlinede HTML-en og lim den inn der du trenger den.',
         modalBtnImport: 'Importer',
         importPlaceholder: '<table width="100%" role="presentation"><tr><td style="padding:24px;font-family:Arial">Hei {{firstName}},</td></tr></table>',
-        showBlocksOnLoad: true,
+        showBlocksOnLoad: !phone,
         showStylesOnChange: true,
         useCustomTheme: false,
         textCleanCanvas: 'Tøm hele e-posten?',
@@ -89,7 +108,7 @@ export function EmailVisualEditor({
         devices: [
           { id: 'desktop', name: 'PC', width: '' },
           { id: 'tablet', name: 'Nettbrett', width: '768px', widthMedia: '768px' },
-          { id: 'mobile', name: 'Telefon', width: '390px', widthMedia: '480px' },
+          { id: 'mobile', name: 'Telefon', width: phone ? '100%' : '390px', widthMedia: '480px' },
         ],
       },
       assetManager: {
@@ -148,7 +167,16 @@ export function EmailVisualEditor({
     editor.on('update', emit);
     editor.on('load', () => {
       loadCanvas(editor, html, grapesProject);
+      if (phone) {
+        try {
+          editor.setDevice('mobile');
+          editor.Panels.getButton('views', 'open-blocks')?.set('active', false);
+        } catch {
+          // Keep the canvas visible even if device/panel APIs differ.
+        }
+      }
       emit();
+      editor.refresh();
     });
 
     editorRef.current = editor;
@@ -170,7 +198,16 @@ export function EmailVisualEditor({
   }
 
   return (
-    <div className="flex flex-col h-full min-h-[620px] gap-3">
+    <div className="flex flex-col h-full min-h-[360px] sm:min-h-[620px] gap-2 sm:gap-3">
+      <div className="flex items-center justify-between gap-2 sm:hidden">
+        <button
+          type="button"
+          onClick={() => setBlocksOpen((open) => !open)}
+          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 text-xs text-gray-200"
+        >
+          <LayoutGrid size={12} /> {blocksOpen ? 'Skjul blokker' : 'Blokker'}
+        </button>
+      </div>
       {mergeFields.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
           {mergeFields.map((field) => (
@@ -186,8 +223,8 @@ export function EmailVisualEditor({
           ))}
         </div>
       )}
-      <div ref={rootRef} className="email-gjs flex-1" />
-      <p className="text-[11px] text-gray-500">
+      <div ref={rootRef} className={`email-gjs flex-1 ${blocksOpen ? 'is-blocks-open' : ''}`} />
+      <p className="hidden sm:block text-[11px] text-gray-500">
         Dra blokker inn i malen, flytt seksjoner, og klikk tekst for å redigere. PC / telefon bytter du øverst i editoren.
       </p>
     </div>

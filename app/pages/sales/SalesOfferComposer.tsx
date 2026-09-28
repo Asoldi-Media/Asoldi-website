@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { AlertTriangle, Copy, ExternalLink, FileText, Loader2, RefreshCw, Send, ShieldCheck, X } from 'lucide-react';
@@ -8,7 +8,7 @@ import {
   useClientOfferMeeting,
   getClientOffer,
   getClientOfferMeeting,
-  openAuthedPdf,
+  fetchAuthedPdf,
   requestClientOfferReview,
   saveClientOffer,
   sendClientOffer,
@@ -21,6 +21,10 @@ import { ContractSummaryCard, HtmlPreview, OfferProductsCard, OfferStatusChip } 
 import { SalesFlowSteps } from './SalesFlowSteps';
 import { clientCardParty, offerMissingFields, offerReadinessMessage } from '../../../lib/offer-readiness.js';
 import { resolveWebsiteEmail } from '../../../lib/sales-website-email.js';
+
+const PdfPreviewOverlay = React.lazy(() =>
+  import('./PdfPreviewOverlay').then((mod) => ({ default: mod.PdfPreviewOverlay }))
+);
 
 type OfferClient = {
   id: string;
@@ -102,6 +106,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
   const [preheader, setPreheader] = useState('');
   const [html, setHtml] = useState('');
   const [htmlKey, setHtmlKey] = useState('');
+  const [contractPdfUrl, setContractPdfUrl] = useState('');
   const dirtyRef = useRef(false);
   const autoFillKeyRef = useRef('');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -111,12 +116,14 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
   const toRef = useRef(to);
   const partyRef = useRef(party);
   const clientRef = useRef(client);
+  const contractPdfUrlRef = useRef(contractPdfUrl);
   htmlRef.current = html;
   subjectRef.current = subject;
   preheaderRef.current = preheader;
   toRef.current = to;
   partyRef.current = party;
   clientRef.current = client;
+  contractPdfUrlRef.current = contractPdfUrl;
 
   const status = offer?.status || 'draft';
   const locked = status === 'review-requested' || status === 'verified' || status === 'sent';
@@ -190,6 +197,10 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     }
     void load();
   }, [clientId, navigate, load]);
+
+  useEffect(() => () => {
+    if (contractPdfUrlRef.current) URL.revokeObjectURL(contractPdfUrlRef.current);
+  }, []);
 
   const meetingReady = Boolean(meeting?.hasTranscript || meeting?.hasSummary);
 
@@ -396,13 +407,20 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     setError('');
     try {
       await flushSave();
-      await openAuthedPdf(`/admin/sales/${encodeURIComponent(clientId)}/offer/contract.pdf`);
+      if (contractPdfUrlRef.current) URL.revokeObjectURL(contractPdfUrlRef.current);
+      const url = await fetchAuthedPdf(`/admin/sales/${encodeURIComponent(clientId)}/offer/contract.pdf`);
+      setContractPdfUrl(url);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Kunne ikke lage kontrakt');
     } finally {
       setBusy('');
     }
   }
+
+  const closeContractPreview = useCallback(() => {
+    if (contractPdfUrlRef.current) URL.revokeObjectURL(contractPdfUrlRef.current);
+    setContractPdfUrl('');
+  }, []);
 
   async function handleRequestReview() {
     setBusy('review');
@@ -640,21 +658,6 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
 
               <div className="grid xl:grid-cols-[minmax(0,1fr)_320px] gap-4">
                 <div className="flex flex-col gap-4 min-w-0">
-                  {!locked && (
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <p className="text-xs text-gray-400">E-posten skrives én gang når et Fireflies-opptak er valgt. Den blir liggende til du skriver den på nytt.</p>
-                      <button
-                        type="button"
-                        onClick={() => void handleFill(true)}
-                        disabled={busy === 'fill' || Boolean(fillDisabledReason)}
-                        title={fillDisabledReason || 'Skriv e-posten på nytt fra transkriptet og tilbudet'}
-                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 text-xs whitespace-nowrap hover:bg-white/15 disabled:opacity-50"
-                      >
-                        {busy === 'fill' ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                        Generer på nytt
-                      </button>
-                    </div>
-                  )}
                   <div className="grid md:grid-cols-2 gap-3">
                     <label className="text-xs text-gray-400">
                       Emne
@@ -666,38 +669,48 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                     </label>
                   </div>
 
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className={`text-xs ${fillPhase === 'error' ? 'text-amber-200' : fillPhase === 'done' ? 'text-emerald-300' : 'text-gray-400'}`}>
-                      {fillPhase === 'running' || busy === 'fill'
-                        ? 'Fyller ut e-posten…'
-                        : (fillMessage || (fillDisabledReason && meetingSelected ? fillDisabledReason : 'E-posten fylles ut når salgsmøtet fra Fireflies er valgt og transkriptet er klart.'))}
-                    </p>
-                    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                      <label
-                        className={`inline-flex items-center gap-2 text-xs ${locked ? 'text-gray-500' : 'text-gray-300'}`}
-                        title="Standard: mva legges til på toppen av prisen. Slå på for å la oppgitt pris være det kunden betaler inkl. mva (for kunder med lavt budsjett)."
+                  <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
+                    {(fillPhase === 'running' || busy === 'fill' || fillMessage) && (
+                      <p className={`text-xs mr-auto ${fillPhase === 'error' ? 'text-amber-200' : fillPhase === 'done' ? 'text-emerald-300' : 'text-gray-400'}`}>
+                        {fillPhase === 'running' || busy === 'fill' ? 'Fyller ut e-posten…' : fillMessage}
+                      </p>
+                    )}
+                    <label
+                      className={`inline-flex items-center gap-2 text-xs ${locked ? 'text-gray-500' : 'text-gray-300'}`}
+                      title="Standard: mva legges til på toppen av prisen. Slå på for å la oppgitt pris være det kunden betaler inkl. mva (for kunder med lavt budsjett)."
+                    >
+                      <input
+                        type="checkbox"
+                        checked={mvaIncluded}
+                        disabled={locked || busy === 'mva'}
+                        onChange={(e) => void toggleMvaIncluded(e.target.checked)}
+                      />
+                      Inkluder mva i prisen
+                    </label>
+                    <label
+                      className={`inline-flex items-center gap-2 text-xs ${isCustom || locked ? 'text-gray-500' : 'text-gray-300'}`}
+                      title={isCustom ? 'Skreddersydde tilbud må alltid via admin' : 'Valgfritt for tier 1–3: la admin se gjennom tilbudet før du sender'}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={reviewChecked}
+                        disabled={locked || isCustom || busy === 'review-toggle'}
+                        onChange={(e) => void toggleReviewFirst(e.target.checked)}
+                      />
+                      Kjør via admin først{isCustom ? ' (påkrevd for skreddersydd)' : ''}
+                    </label>
+                    {!locked && (
+                      <button
+                        type="button"
+                        onClick={() => void handleFill(true)}
+                        disabled={busy === 'fill' || Boolean(fillDisabledReason)}
+                        title={fillDisabledReason || 'Skriv e-posten på nytt fra transkriptet og tilbudet'}
+                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 text-xs whitespace-nowrap hover:bg-white/15 disabled:opacity-50"
                       >
-                        <input
-                          type="checkbox"
-                          checked={mvaIncluded}
-                          disabled={locked || busy === 'mva'}
-                          onChange={(e) => void toggleMvaIncluded(e.target.checked)}
-                        />
-                        Inkluder mva i prisen
-                      </label>
-                      <label
-                        className={`inline-flex items-center gap-2 text-xs ${isCustom || locked ? 'text-gray-500' : 'text-gray-300'}`}
-                        title={isCustom ? 'Skreddersydde tilbud må alltid via admin' : 'Valgfritt for tier 1–3: la admin se gjennom tilbudet før du sender'}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={reviewChecked}
-                          disabled={locked || isCustom || busy === 'review-toggle'}
-                          onChange={(e) => void toggleReviewFirst(e.target.checked)}
-                        />
-                        Kjør via admin først{isCustom ? ' (påkrevd for skreddersydd)' : ''}
-                      </label>
-                    </div>
+                        {busy === 'fill' ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                        Generer på nytt
+                      </button>
+                    )}
                   </div>
 
                   <div className="rounded-lg border border-white/10 px-3 py-2 text-xs text-gray-400">
@@ -812,9 +825,9 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                     </div>
                   )}
 
-                  <div className="min-h-[620px]">
+                  <div className="min-h-[360px] sm:min-h-[620px]">
                     {locked ? (
-                      <HtmlPreview html={html} className="min-h-[620px] h-[900px]" />
+                      <HtmlPreview html={html} className="min-h-[360px] h-[70vh] sm:min-h-[620px] sm:h-[900px]" />
                     ) : (
                       <EmailVisualEditor html={html} htmlKey={htmlKey} mergeFields={mergeFields} onHtmlChange={onHtmlChange} />
                     )}
@@ -825,7 +838,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                       type="button"
                       onClick={() => void openContract()}
                       disabled={busy === 'contract' || !offer.contractAvailable}
-                      title={offer.contractAvailable ? 'Åpner kontrakten som PDF' : isCustom ? 'Kontrakten for skreddersydd lages av admin ved verifisering' : 'Velg en tier først'}
+                      title={offer.contractAvailable ? 'Viser kontrakten her i salg' : isCustom ? 'Kontrakten for skreddersydd lages av admin ved verifisering' : 'Velg en tier først'}
                       className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white/10 text-sm disabled:opacity-50"
                     >
                       {busy === 'contract' ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />} Se kontrakt (PDF)
@@ -938,6 +951,11 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
           )}
         </main>
       </div>
+      {contractPdfUrl && (
+        <Suspense fallback={null}>
+          <PdfPreviewOverlay url={contractPdfUrl} title="Kontrakt" onClose={closeContractPreview} />
+        </Suspense>
+      )}
     </>
   );
 }

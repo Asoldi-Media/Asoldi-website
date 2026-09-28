@@ -156,15 +156,20 @@ export function approveClientOfferPreview(clientId: string) {
   return emailRequest(`/admin/sales/${encodeURIComponent(clientId)}/offer/approve-preview`, { method: 'POST', body: '{}' }) as Promise<{ offer: SalesOffer }>;
 }
 
-/** PDF routes need the Authorization header, so fetch as a blob and open it in a new tab. */
-export async function openAuthedPdf(path: string) {
+/** PDF routes need the Authorization header, so fetch as a blob URL (revoke when the preview closes). */
+export async function fetchAuthedPdf(path: string) {
   const response = await fetch(`${API}${path}`, { headers: salesAuthHeaders() });
   if (!response.ok) {
     const data = await response.json().catch(() => ({} as { message?: string }));
     throw new Error(String((data as { message?: string }).message || `Kunne ikke hente PDF (${response.status})`));
   }
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
+  const buffer = await response.arrayBuffer();
+  return URL.createObjectURL(new Blob([buffer], { type: 'application/pdf' }));
+}
+
+/** Opens an authed PDF in a new tab. Prefer PdfPreviewOverlay + fetchAuthedPdf inside the sales terminal. */
+export async function openAuthedPdf(path: string) {
+  const url = await fetchAuthedPdf(path);
   window.open(url, '_blank', 'noopener');
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }

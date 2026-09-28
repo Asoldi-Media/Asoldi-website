@@ -36,6 +36,8 @@ import { offerMissingFields, offerReadinessMessage } from '../../../../lib/offer
 import { SalesGoalTimeline } from './SalesGoalTimeline';
 import {
   clientIsSalesWin,
+  classifySalesPipelineState,
+  countSalesPipelineStates,
   formatGoalLabel,
   getActiveNextAction,
   getCalendarNextAction,
@@ -45,6 +47,7 @@ import {
   groupSalesClientsByNextAction,
   confirmationSendGaps,
   clientNeedsConfirmationSend,
+  SALES_PIPELINE_STATES,
 } from '../../../../lib/sales-next-actions.js';
 import { salesBookingFacts } from '../../../../lib/sales-booking-facts.js';
 import { calendarDurationForMode } from '../../../../lib/sales-meeting-duration.js';
@@ -430,6 +433,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
   const [clientSearchQuery, setClientSearchQuery] = useState('');
   const [ownerFilter, setOwnerFilter] = useState('');
   const [goalFilter, setGoalFilter] = useState('');
+  const [pipelineFilter, setPipelineFilter] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<SalesFormState>(INITIAL_FORM);
@@ -561,18 +565,19 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
     if (!clientMatchesNameSearch(client)) return false;
     if (ownerFilter === 'unassigned' && String(client.ownerId || '').trim()) return false;
     if (ownerFilter && ownerFilter !== 'unassigned' && String(client.ownerId || '') !== ownerFilter) return false;
+    if (pipelineFilter && classifySalesPipelineState(client, meetingNowMs) !== pipelineFilter) return false;
     if (goalFilter === 'sold') return clientIsSalesWin(client);
     if (goalFilter && getCurrentGoalKey(client) !== goalFilter) return false;
     return true;
   };
-  const hasActiveFilters = Boolean(normalizedClientSearchQuery || ownerFilter || goalFilter);
+  const hasActiveFilters = Boolean(normalizedClientSearchQuery || ownerFilter || goalFilter || pipelineFilter);
   const timelineClients = useMemo(
     () => productClients.filter((client) => (
       client.status !== 'not-sold'
       && !clientIsSalesWin(client)
       && clientMatchesFilters(client)
     )),
-    [productClients, normalizedClientSearchQuery, ownerFilter, goalFilter]
+    [productClients, normalizedClientSearchQuery, ownerFilter, goalFilter, pipelineFilter, meetingNowMs]
   );
   const salesRepOptions = useMemo(
     () => salesOwners.filter((owner) => String(owner.accountKey || '').startsWith('sales:')),
@@ -610,7 +615,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
   }, [productClients]);
   const archivedClients = useMemo(
     () => productClients.filter((client) => client.status === 'not-sold' && clientMatchesFilters(client)),
-    [productClients, normalizedClientSearchQuery, ownerFilter, goalFilter]
+    [productClients, normalizedClientSearchQuery, ownerFilter, goalFilter, pipelineFilter, meetingNowMs]
   );
   const winClients = useMemo(
     () => productClients
@@ -625,7 +630,21 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
         if (bMs == null) return -1;
         return aMs - bMs;
       }),
-    [productClients, normalizedClientSearchQuery, ownerFilter, goalFilter]
+    [productClients, normalizedClientSearchQuery, ownerFilter, goalFilter, pipelineFilter, meetingNowMs]
+  );
+  const pipelineScopeClients = useMemo(
+    () => productClients.filter((client) => {
+      if (client.status === 'not-sold') return false;
+      if (!clientMatchesNameSearch(client)) return false;
+      if (ownerFilter === 'unassigned' && String(client.ownerId || '').trim()) return false;
+      if (ownerFilter && ownerFilter !== 'unassigned' && String(client.ownerId || '') !== ownerFilter) return false;
+      return true;
+    }),
+    [productClients, normalizedClientSearchQuery, ownerFilter]
+  );
+  const pipelineCounts = useMemo(
+    () => countSalesPipelineStates(pipelineScopeClients, meetingNowMs),
+    [pipelineScopeClients, meetingNowMs]
   );
   const activeMeetingGroups = useMemo(
     () => groupSalesClientsByNextAction(assignedTimelineClients, meetingNowMs),
@@ -1867,6 +1886,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
     setClientSearchQuery('');
     setOwnerFilter('');
     setGoalFilter('');
+    setPipelineFilter('');
   }
 
   const showCalendarConnect = calendarStatus?.configured !== false;
@@ -2869,10 +2889,43 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                 {clientSearchQuery ? <> matches for <span className="text-white">{clientSearchQuery}</span></> : ' filtered clients'}
                 {ownerFilter ? <> · owner: <span className="text-white">{ownerFilter === 'unassigned' ? 'Unassigned' : ownerLabel(ownerFilterOptions.find((owner) => owner.accountKey === ownerFilter) || { accountKey: ownerFilter, username: ownerFilter, name: ownerFilter })}</span></> : null}
                 {goalFilter ? <> · step: <span className="text-white">{goalFilterOptions.find((option) => option.id === goalFilter)?.label || goalFilter}</span></> : null}
+                {pipelineFilter ? <> · pipeline: <span className="text-white">{SALES_PIPELINE_STATES.find((state) => state.id === pipelineFilter)?.label || pipelineFilter}</span></> : null}
               </p>
             )}
           </form>
         )}
+
+        <div>
+          <div className="text-[11px] text-gray-400">Listefremgang · klikk for å vise bare denne gruppen</div>
+          <div className="mt-1.5 grid grid-cols-2 lg:grid-cols-4 gap-2">
+          {SALES_PIPELINE_STATES.map((state) => {
+            const count = pipelineCounts[state.id as keyof typeof pipelineCounts] || 0;
+            const selected = pipelineFilter === state.id;
+            return (
+              <button
+                key={state.id}
+                type="button"
+                onClick={() => setPipelineFilter(selected ? '' : state.id)}
+                className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                  selected
+                    ? 'bg-[#FF5B00] border-[#FF5B00] text-white'
+                    : 'bg-black/20 border-white/10 text-gray-200 hover:bg-white/10'
+                }`}
+              >
+                <span className={`block text-lg font-semibold tabular-nums leading-none ${selected ? 'text-white' : 'text-white'}`}>
+                  {count}
+                </span>
+                <span className={`mt-1 block text-[12px] font-medium ${selected ? 'text-white' : 'text-gray-200'}`}>
+                  {state.label}
+                </span>
+                <span className={`hidden sm:block mt-0.5 text-[10px] ${selected ? 'text-white/80' : 'text-gray-400'}`}>
+                  {state.hint}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        </div>
 
         {selectedCount > 0 && (
           <div className="flex flex-wrap items-center gap-2">
@@ -3071,6 +3124,8 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
               </div>
             </div>
           )}
+          {pipelineFilter !== 'win' && (
+          <>
           <div className="hidden sm:block text-xs text-gray-400">
             Sorted by next action time. Recently overdue clients stay above the main list for 48 hours, then move to <span className="text-red-300">Forfalt</span>. Click a section header to hide the cards and only see the count.
           </div>
@@ -3120,7 +3175,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
             return renderSalesClientCard(row.client, false);
           })}
 
-          {timelineClients.length === 0 && (
+          {timelineClients.length === 0 && pipelineFilter !== 'win' && (
             <div className="lg:col-span-2 2xl:col-span-3 rounded-2xl bg-[#2a2a2a] border border-white/10 p-8 text-center text-gray-400">
               {hasActiveFilters
                 ? (
@@ -3137,6 +3192,8 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
             </div>
           )}
         </div>
+          </>
+          )}
         </div>
       )}
 

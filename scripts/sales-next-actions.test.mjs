@@ -5,6 +5,8 @@ import {
   applyProgressionChange,
   applyMeetingHeldOrphanReset,
   classifyNextActionBucket,
+  classifySalesPipelineState,
+  countSalesPipelineStates,
   decorateNextActions,
   defaultAddToCalendar,
   getActiveNextAction,
@@ -16,6 +18,9 @@ import {
   getVisibleGoalKeys,
   groupSalesClientsByNextAction,
   inferMeetingHeld,
+  isAutoOfferCheckIn,
+  nextDayAtNineAmIso,
+  OFFER_CHECKIN_NAME,
   clientHasAssignedSalesRep,
   clientNeedsConfirmationSend,
   salesProgressBlockedReason,
@@ -400,7 +405,9 @@ test('checkmark on the meeting also marks møtet hatt and opens sett tilbud', ()
   assert.equal(done.progression.meetingHeld, true);
   const after = { ...row, progression: done.progression, nextActions: done.nextActions };
   assert.equal(getCurrentGoalKey(after), 'offerSent');
-  assert.equal(getActiveNextAction(after), null);
+  const checkIn = getActiveNextAction(after);
+  assert.equal(checkIn?.presetKey, 'checkIn');
+  assert.equal(checkIn?.name, OFFER_CHECKIN_NAME);
   assert.equal(done.nextActions.some((action) => action.presetKey === 'meeting' && !action.doneAt), false);
 });
 
@@ -441,4 +448,79 @@ test('a sold client gets oppfølging 1mnd as a call, and stays out of the ranked
   assert.equal(grouped.upcoming.length, 0);
   assert.equal(grouped.recentPastDue.length, 0);
   assert.equal(grouped.pastDue.length, 0);
+});
+
+test('møtet hatt adds oppsjekk sett on sett tilbud for 09:00 next day Oslo', () => {
+  const now = Date.parse('2026-09-28T14:00:00.000Z');
+  const result = applyProgressionChange(client(), 'meetingHeld', true, { nowMs: now });
+  assert.equal(result.error, undefined);
+  const action = result.nextActions.find((entry) => isAutoOfferCheckIn(entry));
+  assert.ok(action);
+  assert.equal(action.goalKey, 'offerSent');
+  assert.equal(action.name, OFFER_CHECKIN_NAME);
+  assert.equal(action.dueAt, nextDayAtNineAmIso(now));
+  assert.equal(action.dueAt, '2026-09-29T07:00:00.000Z');
+  const after = { ...client(), progression: result.progression, nextActions: result.nextActions };
+  assert.equal(getActiveNextAction(after)?.id, action.id);
+  const again = applyProgressionChange(after, 'meetingHeld', true, { nowMs: now + HOUR_MS });
+  assert.equal(again.error, undefined);
+  assert.equal(again.nextActions.filter((entry) => isAutoOfferCheckIn(entry)).length, 1);
+  assert.equal(again.nextActions.find((entry) => isAutoOfferCheckIn(entry)).dueAt, action.dueAt);
+});
+
+test('unchecking møtet hatt removes the auto oppsjekk sett', () => {
+  const now = Date.parse('2026-09-28T14:00:00.000Z');
+  const held = applyProgressionChange(client(), 'meetingHeld', true, { nowMs: now });
+  const after = { ...client(), progression: held.progression, nextActions: held.nextActions };
+  const undone = applyProgressionChange(after, 'meetingHeld', false, { nowMs: now });
+  assert.equal(undone.error, undefined);
+  assert.equal(undone.nextActions.some((entry) => isAutoOfferCheckIn(entry)), false);
+});
+
+test('next day 09:00 uses Europe/Oslo in winter', () => {
+  const now = Date.parse('2026-12-01T15:00:00.000Z');
+  assert.equal(nextDayAtNineAmIso(now), '2026-12-02T08:00:00.000Z');
+});
+
+test('pipeline counts split confirmation, upcoming meetings, contracts, and wins', () => {
+  const now = Date.parse('2026-09-28T12:00:00.000Z');
+  const awaitingConfirm = client({
+    id: 'confirm',
+    agreedTime: true,
+    meetingAt: '2026-09-30T10:00:00.000Z',
+    reminders: { thankYouSentAt: '' },
+  });
+  const upcoming = client({
+    id: 'future',
+    agreedTime: true,
+    meetingAt: '2026-09-30T10:00:00.000Z',
+    reminders: { thankYouSentAt: '2026-09-27T10:00:00.000Z' },
+  });
+  const contract = client({
+    id: 'contract',
+    progression: { meetingHeld: true, offerSent: true, contractSigned: false },
+  });
+  const win = client({
+    id: 'win',
+    progression: { meetingHeld: true, offerSent: true, contractSigned: true },
+  });
+  const archived = client({
+    id: 'dead',
+    status: 'not-sold',
+    progression: { meetingHeld: true, offerSent: true, contractSigned: true },
+  });
+  assert.equal(classifySalesPipelineState(awaitingConfirm, now), 'awaitingMeetingConfirm');
+  assert.equal(classifySalesPipelineState(upcoming, now), 'upcomingMeeting');
+  assert.equal(classifySalesPipelineState(contract, now), 'awaitingContract');
+  assert.equal(classifySalesPipelineState(win, now), 'win');
+  assert.equal(classifySalesPipelineState(archived, now), '');
+  assert.deepEqual(
+    countSalesPipelineStates([awaitingConfirm, upcoming, contract, win, archived], now),
+    {
+      awaitingMeetingConfirm: 1,
+      upcomingMeeting: 1,
+      awaitingContract: 1,
+      win: 1,
+    }
+  );
 });

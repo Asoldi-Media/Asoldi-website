@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { Loader2, LogOut } from 'lucide-react';
 import { SalesClientsSection } from '../Admin/sections/SalesClientsSection';
+import { SalesScriptsDock } from './SalesScriptsDock';
 import { API, getSalesToken } from '../Admin/shared';
 
 export const SalesWorkspace = () => {
@@ -105,6 +106,7 @@ export const SalesWorkspace = () => {
         <main className="max-w-[1200px] mx-auto px-3 sm:px-6 py-4 sm:py-8">
           <SalesClientsSection />
         </main>
+        <SalesScriptsDock />
       </div>
     </>
   );

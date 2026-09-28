@@ -31,7 +31,7 @@ export default defineConfig(({ command, mode }) => {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
     },
     optimizeDeps: {
-      include: ['grapesjs', 'grapesjs-preset-newsletter'],
+      include: ['grapesjs', 'grapesjs-preset-newsletter', 'pdfjs-dist'],
     },
     resolve: {
       alias: {
@@ -52,6 +52,7 @@ export default defineConfig(({ command, mode }) => {
               if (id.includes('react-router')) return 'router';
               if (id.includes('lucide-react')) return 'icons';
               if (id.includes('grapesjs')) return 'email-editor';
+              if (id.includes('pdfjs-dist')) return 'pdf-preview';
             }
           },
           chunkFileNames: 'assets/[name]-[hash].js',
