@@ -267,6 +267,13 @@ test('contract terms: statutory late interest, six-month liability, permanent ow
   assert.doesNotMatch(blob, /advanced API/i);
   assert.ok(tiers.WEBSITE_TIERS[0].includes.some((line) => /koble til eget domene/i.test(line)));
   assert.ok(tiers.WEBSITE_TIERS[0].includes.some((line) => /veiledningsmøte/i.test(line)));
+  assert.doesNotMatch(blob, /Google Business Profile development/i);
+  assert.doesNotMatch(blob, /Asoldi \/ Hostinger hosting network/);
+  assert.match(blob, /leaves the Asoldi hosting network/);
+  assert.match(blob, /one \(1\) month of service free of charge/);
+  assert.match(blob, /Domain access/);
+  assert.match(blob, /inspiration materials/);
+  assert.match(blob, /Sections 6 and 7 do not apply/);
 });
 
 test('fireflies matcher: attendee email wins, then host+time, then fuzzy name', () => {
@@ -492,6 +499,18 @@ test('contract pdf: mva-included offers state the incl. VAT price as the quoted 
   const buffer = await contractPdf.buildContractPdf({ client: CLIENT, ...inputs });
   assert.ok(buffer.length > 1000);
   assert.equal(buffer.subarray(0, 4).toString(), '%PDF');
+  const exVat = JSON.stringify(contractPdf.contractArticleModel({ client: CLIENT, tierId: tiers.WEBSITE_TIERS[0].id, mvaIncluded: false }));
+  const inclVat = JSON.stringify(contractPdf.contractArticleModel({ client: CLIENT, tierId: tiers.WEBSITE_TIERS[0].id, mvaIncluded: true }));
+  assert.match(exVat, /Monthly price: 999 kr excl\. VAT/);
+  assert.match(inclVat, /Monthly price: 999 kr incl\. VAT/);
+  assert.doesNotMatch(exVat, /Monthly price: 999 kr incl\. VAT/);
+  assert.notEqual(exVat, inclVat);
+  const products = offerEmail.productsWithTier([], tiers.WEBSITE_TIERS[0].id);
+  const emailEx = offerEmail.buildOfferEmail({ client: CLIENT, products, mvaIncluded: false, mergeTags: false }).html;
+  const emailIncl = offerEmail.buildOfferEmail({ client: CLIENT, products, mvaIncluded: true, mergeTags: false }).html;
+  assert.match(emailEx, /data-mva-included="0"/);
+  assert.match(emailIncl, /data-mva-included="1"/);
+  assert.match(emailIncl, /mva er inkludert|inkl\. mva/i);
 });
 
 test('users store + sender: phone is normalized, formatted and flows into {{signerPhone}}', async () => {
@@ -651,6 +670,9 @@ test('portal contract html uses a document header, party columns, and numbered s
   );
   assert.match(html, /offer-contract-masthead/);
   assert.match(html, /<h1>Service agreement<\/h1>/);
+  assert.match(html, /leaves the Asoldi hosting network/);
+  assert.match(html, /Domain access/);
+  assert.doesNotMatch(html, /Google Business Profile development/);
   assert.match(html, /offer-contract-parties/);
   assert.match(html, /Byneset Bydelskafé/);
   assert.match(html, /1\. Service scope/);

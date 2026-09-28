@@ -71,7 +71,7 @@ export const Vilkar = () => {
             'Kontaktskjema og standard seksjoner: Kontaktskjema og vanlige bedriftsseksjoner for valgt omfang. Skjemaet lar besøkende sende melding og legge igjen e-post.',
             'Innholdsendringer: Inntil fire (4) mindre oppdateringer per måned, for eksempel priser, bilder eller tekst. Å legge til eller fjerne seksjoner, eller en større ombygging, avtales særskilt.',
             'Veiledningsmøte: Ett oppstartsmøte, én gang. På alle nivåer viser vi hvordan kunden bruker CMS. Når nettbutikk inngår, dekker samme møte også produkter, kunder og tilkobling av betalingsløsning. Etter det er enkle spørsmål tillatt; vi gir ikke løpende opplæring i å redigere siden.',
-            'SEO (når det inngår): Løpende arbeid mot avtalte søkeord — tekst og teknisk struktur, sitemap, synlighet i Google Søk, Google Maps / Google Business Profile og AI-søk. Valgfrie steds- eller søkeordsrelaterte blogginnlegg inntil tre per uke når kunden ønsker det, og internlenkenettverket, når nivået inkluderer det. Ingen garanti for plassering, trafikk eller omsetning.',
+            'SEO (når det inngår): Løpende arbeid mot avtalte søkeord — tekst og teknisk struktur, sitemap, synlighet i Google Søk, Google Maps og AI-søk. Valgfrie steds- eller søkeordsrelaterte blogginnlegg inntil tre per uke når kunden ønsker det, og internlenkenettverket, når nivået inkluderer det. Drift eller utvikling av kundens Google Business Profile er et eget produkt og inngår ikke. Ingen garanti for plassering, trafikk eller omsetning.',
             'Internlenkenettverk: Eksisterende Asoldi-kunder kan peke mot nye kunder, og nye mot andre i nettverket. Antall lenker varierer med kundebasen.',
             'Anmeldelser og synk mot sosiale medier (når det inngår): Krever at kunden logger inn på de aktuelle kontoene slik at vi kan koble synken. Vi lagrer ikke innloggingspassord til sosiale medier i kundens profil på asoldi.com. Kunden eier kontoene.',
             'Innsamling og lagring av e-postlister til markedsføring (når det inngår).',
@@ -106,12 +106,12 @@ export const Vilkar = () => {
         <LegalList
           items={[
             'Søkeordsoptimalisert tekst på siden.',
-            'SEO for 1–3 avtalte søkeord, inkludert arbeid mot rangering i Google Søk, Google Maps (Google Business Profile) og AI-søk.',
+            'SEO for 1–3 avtalte søkeord, inkludert arbeid mot rangering i Google Søk, Google Maps og AI-søk.',
             'Stedstilpassede, søkeordsrelaterte blogginnlegg inntil tre (3) per uke når kunden ønsker det.',
             'Deltakelse i Asoldis internlenkenettverk. Antall lenker varierer med kundebasen.',
             'Visning av anmeldelser og synk mot sosiale medier. Kunden logger inn for å koble kontoene; Asoldi lagrer ikke disse passordene i kundens asoldi.com-profil.',
             'Innsamling og lagring av e-postlister. Veiledningsmøtet dekker også hvor listene finnes og hvordan de brukes.',
-            'Analyseside i CMS med kundens egne søkeordsrangeringer, trafikk, avvisningsrate, konvertering og Google Business Profile-utvikling.',
+            'Analyseside i CMS med kundens egne søkeordsrangeringer, trafikk, avvisningsrate og konvertering.',
             'Bi-ukentlig grunrapport (hver 14. dag) i analysesiden: rangering og et sammendrag av perioden. En separat PDF inngår ikke med mindre det er avtalt skriftlig.',
             'Leveringstid: 2 uker fra prosjektstart.',
           ]}
@@ -158,7 +158,7 @@ export const Vilkar = () => {
             'Kunden eier varig innholdet på nettsiden, designet og eventuell kode utviklet spesifikt for kunden. Eierskapet går ikke automatisk tilbake til Asoldi etter oppsigelse eller etter en frist.',
             'Innen syv (7) virkedager etter at abonnementet er avsluttet, gir Asoldi kunden tilgang til nettsidefilene slik siden står ved opphør (et øyeblikksbilde av den levende siden).',
             'Dersom kunden ønsker at Asoldi skal sette opp siden hos en ny vert eller på et nytt domene, kan kunden engasjere oss til det. Arbeidet faktureres etter gebyret for hosting-oppsett / overføring som til enhver tid er oppgitt på asoldi.com. Beløpet skrives ikke inn her fordi det kan endres.',
-            'Dersom kunden forlater Asoldis Hostinger-nettverk, beholder kunden den eksporterte nettsiden slik den er ved opphør, men mister løpende abonnementstjenester: kontinuerlige nettsideoppdateringer, internlenkenettverket, nye CMS-oppdateringer, stedstilpasset bloggskriving for SEO, øvrig SEO-arbeid, support og andre løpende tjenester beskrevet i disse vilkårene.',
+            'Dersom kunden forlater Asoldis hostingnettverk, beholder kunden den eksporterte nettsiden slik den er ved opphør, men mister løpende abonnementstjenester: kontinuerlige nettsideoppdateringer, internlenkenettverket, nye CMS-oppdateringer, stedstilpasset bloggskriving for SEO, øvrig SEO-arbeid, support og andre løpende tjenester beskrevet i disse vilkårene.',
           ]}
         />
       </LegalSection>
@@ -193,9 +193,10 @@ export const Vilkar = () => {
 
         <LegalSubheading>Hostingfeil</LegalSubheading>
         <p>
-          Dersom Asoldi over lengre tid blir ute av stand til å hoste nettsiden, mottar kunden en full eksport av
-          nettsidefilene og innholdet kostnadsfritt. Full migrering til nytt domene eller ny hostingleverandør er
-          valgfritt og følger i så fall gebyret for hosting-oppsett som er oppgitt på asoldi.com.
+          Dersom Asoldi over lengre tid blir ute av stand til å hoste nettsiden, får kunden én (1) måned med
+          tjeneste gratis. Eventuelt ytterligere ansvar for skade er begrenset som i punkt 11: seks (6) måneder
+          av valgt nivås vederlag (ekskl. merverdiavgift), med mindre ufravikelig norsk lov gir kunden et mer
+          omfattende krav.
         </p>
 
         <LegalSubheading>Immaterielle rettigheter og eierskap</LegalSubheading>
@@ -220,8 +221,24 @@ export const Vilkar = () => {
       </LegalSection>
 
       <LegalSection id="kundens-ansvar" title="9. Kundens ansvar">
-        <p>Kunden skal levere materialet som kreves for nettsiden, herunder:</p>
-        <LegalList items={['Logo(er).', 'Bilder og/eller videoer.', 'Annet ønsket materiale som er nødvendig for nettsiden.']} />
+        <p>Kunden skal innen rimelig tid etter signering levere det som kreves for nettsiden, herunder:</p>
+        <LegalList
+          items={[
+            'Logo(er).',
+            'Bilder og/eller videoer som trengs til siden.',
+            'Domenetilgang slik at Asoldi kan koble domenet til hosting.',
+            'Annet materiale som er nødvendig for å bygge og lansere siden.',
+          ]}
+        />
+        <p>
+          Kunden kan i tillegg gi inspirasjonsmateriell, fargepalett og ønsket språk på siden. Dette hjelper
+          arbeidet, men er ikke påkrevd for at Asoldi skal starte.
+        </p>
+        <p>
+          Dersom kunden ikke leverer nødvendige opplysninger og tilganger innen rimelig tid, gjelder ikke
+          leveringsgaranti og hostingfeil i punkt 7: kunden har da ikke krav på gratis tjeneste eller annen
+          kompensasjon for forsinket levering eller hostingfeil som skyldes eller forlenges av den forsinkelsen.
+        </p>
       </LegalSection>
 
       <LegalSection id="gdpr" title="10. GDPR og databehandling">

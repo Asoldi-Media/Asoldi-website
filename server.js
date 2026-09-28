@@ -11115,6 +11115,7 @@ async function handleStripeWebhook(req, res) {
   return res.json({ received: true });
 }
 
+/** Live contract for /kunde/tilbud: same article as the sales PDF, rebuilt from current code. */
 function portalContractHtml(offer) {
   const stored = offer?.contractHtml || '';
   if (!offer?.salesOfferId || !offer?.salesClientId) return stored;
