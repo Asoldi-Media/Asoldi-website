@@ -105,7 +105,10 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
   const [meetingsOpen, setMeetingsOpen] = useState(false);
   const [fillPhase, setFillPhase] = useState<'' | 'running' | 'done' | 'error'>('');
   const [fillMessage, setFillMessage] = useState('');
-  const [delivery, setDelivery] = useState<'email' | 'portal'>('email');
+  const [sendEmail, setSendEmail] = useState(true);
+  const [sendPortal, setSendPortal] = useState(false);
+  const [portalAccount, setPortalAccount] = useState<{ email: string; found: boolean } | null>(null);
+  const [fillRequest, setFillRequest] = useState(0);
   const [subject, setSubject] = useState('');
   const [preheader, setPreheader] = useState('');
   const [html, setHtml] = useState('');
@@ -114,6 +117,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
   const [editedSincePreview, setEditedSincePreview] = useState(false);
   const [previewState, setPreviewState] = useState<PreviewState | null>(null);
   const dirtyRef = useRef(false);
+  const autoFillKeyRef = useRef('');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const htmlRef = useRef(html);
   const subjectRef = useRef(subject);
@@ -164,8 +168,10 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
         sender: SalesSender;
         deepseek: boolean;
         canSendEmail: boolean;
+        portalAccount?: { email: string; found: boolean };
       };
       setClient(data.client);
+      setPortalAccount(data.portalAccount || null);
       setMergeFields(Array.isArray(data.mergeFields) ? data.mergeFields : []);
       setMeeting(data.meeting || null);
       setMeetings(Array.isArray(data.meetings) ? data.meetings : []);
@@ -358,6 +364,9 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
       }
       setMeetingMatches([]);
       setMeetingQuery('');
+      setMeetingsOpen(false);
+      autoFillKeyRef.current = '';
+      setFillRequest((current) => current + 1);
       if (Array.isArray(data.meetings)) setMeetings(data.meetings);
       if (data.meeting) setMeeting(data.meeting);
       if (data.offer) applyOffer(data.offer);
@@ -380,7 +389,8 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     setFillMessage('Fyller ut e-posten…');
     setError('');
     try {
-      const data = await fillClientOffer(clientId, { html, meetingId: meeting?.meetingId || '' }) as { offer: SalesOffer };
+      await flushSave();
+      const data = await fillClientOffer(clientId, { meetingId: meeting?.meetingId || '' }) as { offer: SalesOffer };
       applyOffer(data.offer);
       setFillPhase('done');
       setFillMessage('E-posten er fylt ut fra møtet og produktnotatene.');
@@ -467,21 +477,33 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     setError('');
     setNotice('');
     try {
-      const payload = { to: resolveWebsiteEmail(client || {}), party: partyPayload(), delivery };
+      const channels = [sendEmail ? 'email' : '', sendPortal ? 'portal' : ''].filter(Boolean);
+      const payload = { to: resolveWebsiteEmail(client || {}), party: partyPayload(), channels };
       const data = await sendClientOffer(clientId, payload) as {
         offer: SalesOffer;
         copyTo?: string;
         contractFileName?: string;
         delivery?: string;
+        channels?: string[];
         accountFound?: boolean;
+        portalEmail?: string;
         websiteCode?: string;
       };
       applyOffer(data.offer);
       const code = data.websiteCode || data.offer?.websiteCode || '';
       const codeNote = code ? ` Nettsidekode: ${code} — lim inn på asoldi.com for å aktivere nettsiden.` : '';
-      setNotice(data.delivery === 'portal'
-        ? `Tilbudet ligger på asoldi.com for ${client?.clientEmail || to}${data.accountFound ? '' : '. Kontoen finnes ikke enda — tilbudet vises når kunden registrerer seg med den e-posten.'}${codeNote}`
-        : `Tilbud sendt til ${to}${data.contractFileName ? ` med ${data.contractFileName}` : ''}${data.copyTo ? ` · Kopi: ${data.copyTo}` : ''}.${codeNote}`);
+      const sentChannels = data.channels?.length ? data.channels : (data.delivery === 'both' ? ['email', 'portal'] : [data.delivery || 'email']);
+      const portalEmail = data.portalEmail || resolveWebsiteEmail(client || {}) || to;
+      const parts = [];
+      if (sentChannels.includes('email')) {
+        parts.push(`E-post sendt til ${to}${data.contractFileName ? ` med ${data.contractFileName}` : ''}${data.copyTo ? ` · Kopi: ${data.copyTo}` : ''}`);
+      }
+      if (sentChannels.includes('portal')) {
+        parts.push(data.accountFound
+          ? `Lagt på asoldi.com-kontoen ${portalEmail}`
+          : `Klart for asoldi.com (${portalEmail}). Kontoen finnes ikke enda — tilbudet vises når kunden registrerer seg med den e-posten`);
+      }
+      setNotice(`${parts.join('. ')}.${codeNote}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sending feilet');
     } finally {
@@ -493,17 +515,21 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     setBusy('new');
     setError('');
     try {
-      const data = await startNewClientOffer(clientId) as { offer: SalesOffer };
+      const data = await startNewClientOffer(clientId) as { offer: SalesOffer; copied?: boolean };
       const fresh = clientCardParty(client || {});
+      const stored = data.offer.party;
       setParty({
-        businessName: fresh.businessName,
-        orgNumber: fresh.orgNumber,
-        address: fresh.address,
-        contactPerson: fresh.contactPerson,
+        businessName: stored?.businessName || fresh.businessName,
+        orgNumber: stored?.orgNumber || fresh.orgNumber,
+        address: stored?.address || fresh.address,
+        contactPerson: stored?.contactPerson || fresh.contactPerson,
       });
       setTo(resolveWebsiteEmail(client || {}));
+      autoFillKeyRef.current = '';
       applyOffer(data.offer);
-      setNotice('Nytt tilbudsutkast opprettet.');
+      setNotice(data.copied
+        ? 'Nytt utkast er en kopi av tilbudet som ble sendt. Endre det du trenger, og forhåndsvis på nytt før du sender.'
+        : 'Nytt tilbudsutkast opprettet.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Kunne ikke starte nytt tilbud');
     } finally {
@@ -523,18 +549,15 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
 
   const handleFillRef = useRef(handleFill);
   handleFillRef.current = handleFill;
-  const fillRunRef = useRef(0);
+  const meetingSelected = Boolean(meeting?.meetingId);
+  const openPlaceholders = (offer?.placeholders || []).length;
   useEffect(() => {
-    if (!autoFillToken || loading || locked) return;
-    if (fillRunRef.current === autoFillToken) return;
-    if (fillDisabledReason) {
-      setFillPhase('error');
-      setFillMessage(fillDisabledReason);
-      return;
-    }
-    fillRunRef.current = autoFillToken;
+    if (loading || locked || !offer?.id || !meetingSelected || fillDisabledReason || !openPlaceholders) return;
+    const key = `${offer.id}:${meeting?.meetingId || ''}:${autoFillToken}:${fillRequest}`;
+    if (autoFillKeyRef.current === key) return;
+    autoFillKeyRef.current = key;
     void handleFillRef.current();
-  }, [autoFillToken, loading, locked, fillDisabledReason, offer?.id]);
+  }, [autoFillToken, loading, locked, fillDisabledReason, offer?.id, meeting?.meetingId, meetingSelected, openPlaceholders, fillRequest]);
 
   const card = useMemo(() => clientCardParty(client || {}), [client]);
   const offerTo = resolveWebsiteEmail(client || {}) || to;
@@ -549,20 +572,21 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
       contactEmail: offerTo,
     });
     return { ready: missing.length === 0, missing, message: offerReadinessMessage(missing) };
-  }, [party, to]);
+  }, [party, offerTo]);
 
   const sendDisabledReason = useMemo(() => {
     if (!offer) return '';
-    if (!canSendEmail) return 'E-post er ikke konfigurert på serveren.';
+    if (!sendEmail && !sendPortal) return 'Velg e-post, asoldi.com, eller begge.';
+    if (sendEmail && !canSendEmail) return 'E-post er ikke konfigurert på serveren.';
     if (!readiness.ready) return readiness.message;
-    if (!to) return 'Mangler e-postadresse.';
+    if (!offerTo) return 'Mangler e-postadresse.';
     if (!offer.products.length) return 'Velg en nettside-tier først.';
     if (status === 'review-requested') return 'Venter på gjennomgang hos admin.';
     if (needsReview && status !== 'verified') return 'Dette tilbudet må verifiseres av admin før det kan sendes.';
     if (placeholders.length) return `${placeholders.length} felt fra malen er ikke fylt ut enda.`;
     if (!previewApproved) return 'Forhåndsvis e-posten og godkjenn før du sender.';
     return '';
-  }, [offer, canSendEmail, readiness, to, status, needsReview, placeholders.length, previewApproved]);
+  }, [offer, canSendEmail, readiness, offerTo, status, needsReview, placeholders.length, previewApproved, sendEmail, sendPortal]);
 
   const showSendButton = status !== 'sent' && (!needsReview || status === 'verified');
   const title = 'Se gjennom tilbud';
@@ -682,7 +706,9 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
 
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className={`text-xs ${fillPhase === 'error' ? 'text-amber-200' : fillPhase === 'done' ? 'text-emerald-300' : 'text-gray-400'}`}>
-                      {fillPhase === 'running' || busy === 'fill' ? 'Fyller ut e-posten…' : (fillMessage || 'E-posten fylles når du går hit fra produktnotatene.')}
+                      {fillPhase === 'running' || busy === 'fill'
+                        ? 'Fyller ut e-posten…'
+                        : (fillMessage || (fillDisabledReason && meetingSelected ? fillDisabledReason : 'E-posten fylles ut når salgsmøtet fra Fireflies er valgt og transkriptet er klart.'))}
                     </p>
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                       <label
@@ -872,25 +898,35 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                       <div className="flex flex-wrap items-center gap-3 rounded-lg border border-white/10 px-3 py-2">
                         <span className="text-xs text-gray-400">Levering</span>
                         <label className="inline-flex items-center gap-1.5 text-sm">
-                          <input type="radio" name="offer-delivery" checked={delivery === 'email'} onChange={() => setDelivery('email')} />
+                          <input type="checkbox" checked={sendEmail} onChange={(event) => setSendEmail(event.target.checked)} />
                           E-post
                         </label>
-                        <label className="inline-flex items-center gap-1.5 text-sm" title={client?.clientEmail ? `Legges på kontoen ${client.clientEmail}` : 'Sett klient-e-post på kundekortet'}>
-                          <input type="radio" name="offer-delivery" checked={delivery === 'portal'} onChange={() => setDelivery('portal')} disabled={!client?.clientEmail} />
-                          Asoldi.com{client?.clientEmail ? ` (${client.clientEmail})` : ''}
+                        <label
+                          className="inline-flex items-center gap-1.5 text-sm"
+                          title={portalAccount?.found
+                            ? `Legges på kundekontoen ${portalAccount.email}`
+                            : `Legges på asoldi.com for ${offerTo || 'e-posten på kortet'}`}
+                        >
+                          <input type="checkbox" checked={sendPortal} onChange={(event) => setSendPortal(event.target.checked)} disabled={!offerTo} />
+                          Asoldi.com{offerTo ? ` (${portalAccount?.found ? portalAccount.email : offerTo})` : ''}
                         </label>
+                        {sendPortal && offerTo && (
+                          <span className={`text-[11px] ${portalAccount?.found ? 'text-emerald-300' : 'text-amber-200'}`}>
+                            {portalAccount?.found ? 'Kundekonto funnet' : 'Ingen kundekonto med denne e-posten enda'}
+                          </span>
+                        )}
                       </div>
                     )}
                     {showSendButton && (
                       <button
                         type="button"
                         onClick={() => void handleSend()}
-                        disabled={busy === 'send' || Boolean(sendDisabledReason) || (delivery === 'portal' && !client?.clientEmail)}
-                        title={delivery === 'portal' && !client?.clientEmail ? 'Sett klient-e-post på kundekortet' : sendDisabledReason}
+                        disabled={busy === 'send' || Boolean(sendDisabledReason)}
+                        title={sendDisabledReason}
                         className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#FF5B00] text-white text-sm disabled:opacity-50"
                       >
                         {busy === 'send' ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                        {delivery === 'portal' ? 'Legg tilbudet på asoldi.com' : 'Send tilbud + kontrakt'}
+                        {sendEmail && sendPortal ? 'Send e-post og legg på asoldi.com' : sendPortal ? 'Legg tilbudet på asoldi.com' : 'Send tilbud + kontrakt'}
                       </button>
                     )}
                     {sendDisabledReason && showSendButton && (

@@ -13491,6 +13491,42 @@ function offerContextBlocker(client, meeting) {
   return '';
 }
 
+/** Fill empty letter slots when the selected Fireflies meeting (or product notes) can support it. */
+async function autoFillOfferIfReady(offer, client, req) {
+  if (!offer || offer.status === 'sent' || offer.status === 'verified' || offer.status === 'review-requested') return offer;
+  try {
+    return await fillOpenOfferSlotsFromSalesMeeting(offer, client, req);
+  } catch (error) {
+    console.warn(`[offer] autofill ${sanitizeText(error?.message) || error}`);
+    return offer;
+  }
+}
+
+function offerSendToEmail(client, requested = '') {
+  return normalizeEmail(requested)
+    || normalizeEmail(resolveWebsiteEmail(client))
+    || normalizeEmail(client?.contactEmail)
+    || normalizeEmail(client?.clientEmail);
+}
+
+async function portalAccountForClient(client, requested = '') {
+  const preferred = offerSendToEmail(client, requested);
+  const seen = new Set();
+  for (const raw of [preferred, client?.clientEmail, client?.websiteEmail, client?.contactEmail]) {
+    const email = normalizeEmail(raw);
+    if (!isValidEmail(email) || seen.has(email)) continue;
+    seen.add(email);
+    let user = null;
+    try {
+      user = await findClientUserByEmail(email);
+    } catch {
+      user = null;
+    }
+    if (user) return { email, found: true, userId: user.id, user };
+  }
+  return { email: preferred, found: false, userId: '', user: null };
+}
+
 /** Writes the meeting transcript and sales notes into still-empty offer slots. */
 async function fillOpenOfferSlotsFromSalesMeeting(offer, client, req) {
   if (!offer || offer.status === 'sent') return offer;
@@ -13556,9 +13592,11 @@ app.get('/api/admin/sales/:id/offer', salesAuth, async (req, res) => {
   client = ensureOfferMeetingHistory(client);
   client = await attachRecentFirefliesByMeetLink(client);
   client = linkCalendarSessionTranscripts(client);
-  const offer = await ensureOfferDraft(client, req);
+  let offer = await ensureOfferDraft(client, req);
+  offer = await autoFillOfferIfReady(offer, client, req);
   const sender = await resolveSalesSenderForAccount(req.salesUser);
   const meeting = meetingForOffer(client, offer);
+  const portalAccount = await portalAccountForClient(client);
   res.json({
     offer: presentOffer(offer),
     client: compactOfferClient(client),
@@ -13570,6 +13608,7 @@ app.get('/api/admin/sales/:id/offer', salesAuth, async (req, res) => {
     meeting: presentMeetingForOffer(meeting, offer, client),
     meetings: presentOfferMeetings(client, offer),
     canSendEmail: emailLib.canSendEmail(),
+    portalAccount: { email: portalAccount.email, found: portalAccount.found },
   });
 });
 
@@ -13610,19 +13649,40 @@ app.post('/api/admin/sales/:id/offer/new', salesAuth, async (req, res) => {
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
   const current = salesOffers.getOfferForClient(client.id);
-  if (current && current.status !== 'sent') return res.json({ offer: presentOffer(current) });
+  if (current && current.status !== 'sent') return res.json({ offer: presentOffer(current), copied: false });
   const sender = await resolveSalesSenderForAccount(req.salesUser);
+  const values = salesEmailMergeMap(client, client?.calendar || {}, sender);
+  const previous = current?.status === 'sent' ? current : null;
+  const built = buildOfferFromMeetingQuote(client?.details?.meetingQuote);
   const email = withResolvedOfferIdentity(
-    buildOfferEmailForClient(client, {}, { sender }),
-    salesEmailMergeMap(client, client?.calendar || {}, sender)
+    previous?.email?.html
+      ? previous.email
+      : buildOfferEmailForClient(client, {
+        products: built?.products || [],
+        billing: built?.billing || 'month',
+        oneTimeFees: built?.oneTimeFees || [],
+        nuances: { workshop: workshopStartSentence(client?.details?.meetingQuote?.startDate) },
+        tierId: built?.tierId || '',
+      }, { sender }),
+    values
   );
   const created = salesOffers.createSalesOffer({
     salesClientId: client.id,
     ownerId: sanitizeText(client.ownerId) || sanitizeText(req.salesUser?.accountKey),
     email: { subject: email.subject, preheader: email.preheader, html: email.html },
-    meetingId: salesMeetingRef(client)?.meetingId || '',
+    products: previous?.products?.length ? previous.products : (built?.products || []),
+    tierId: previous?.tierId || built?.tierId || '',
+    mvaIncluded: Boolean(previous?.mvaIncluded),
+    party: previous?.party || {},
+    reviewRequested: previous ? Boolean(previous.reviewRequested) : built?.tierId === CUSTOM_TIER_ID,
+    meetingId: previous?.meetingId || salesMeetingRef(client)?.meetingId || '',
+    meetingSource: previous?.meetingSource || '',
+    contract: previous?.contract?.summary
+      ? { summary: previous.contract.summary, generatedAt: previous.contract.generatedAt || '' }
+      : {},
   }, { actor: offerActor(req) });
-  res.status(201).json({ offer: presentOffer(created) });
+  const filled = await autoFillOfferIfReady(created, client, req);
+  res.status(201).json({ offer: presentOffer(filled), copied: Boolean(previous?.email?.html) });
 });
 
 app.post('/api/admin/sales/:id/offer/fill', salesAuth, async (req, res) => {
@@ -13638,14 +13698,14 @@ app.post('/api/admin/sales/:id/offer/fill', salesAuth, async (req, res) => {
   try {
     const html = typeof req.body?.html === 'string' ? req.body.html : current.email.html;
     const nuances = await fillOfferFromTranscript({ client: clientForOfferFill(client), meeting: meeting || {}, products: current.products, tierId: current.tierId });
-    const filled = fillOfferSlots(html, {
+    const filled = refreshOfferShell(fillOfferSlots(html, {
       ...nuances,
       workshop: workshopSentenceForClient(client),
-    });
+    }, { onlyOpen: true }));
     const updated = salesOffers.updateSalesOffer(current.id, {
       email: { html: filled },
-      meetingId: sanitizeText(meeting.meetingId),
-    }, { actor: offerActor(req), action: 'ai-filled', note: sanitizeText(meeting.title) });
+      meetingId: sanitizeText(meeting?.meetingId),
+    }, { actor: offerActor(req), action: 'ai-filled', note: sanitizeText(meeting?.title) });
     res.json({ offer: presentOffer(updated), nuances });
   } catch (error) {
     const status = Number(error?.status) >= 400 ? Number(error.status) : 502;
@@ -13722,11 +13782,12 @@ app.post('/api/admin/sales/:id/offer/use-meeting', salesAuth, async (req, res) =
     reasons: ['Valgt på tilbudet'],
     linkedBy: 'manual',
   }, { linkedBy: 'manual' }));
-  const updated = salesOffers.updateSalesOffer(current.id, {
+  const picked = salesOffers.updateSalesOffer(current.id, {
     meetingId: record.meetingId,
     meetingSource: 'manual',
   }, { actor: offerActor(req), action: 'meeting-picked', note: sanitizeText(record.title) });
   const fresh = sales.getSalesClientById(client.id) || client;
+  const updated = await autoFillOfferIfReady(picked, fresh, req);
   const meeting = meetingForOffer(fresh, updated);
   res.json({
     offer: presentOffer(updated),
@@ -13873,15 +13934,14 @@ async function attachWebsiteCodeToSentOffer(salesClient, offer, { letterHtml = '
   } catch {
     contractHtml = '';
   }
-  const email = normalizeEmail(salesClient.clientEmail) || normalizeEmail(to);
-  const user = await findClientUserByEmail(email);
+  const account = await portalAccountForClient(salesClient, to);
   return publishSalesOfferToPortal({
     salesClient,
     offer,
     letterHtml,
     contractHtml,
-    user,
-    email,
+    user: account.user,
+    email: account.email,
   });
 }
 
@@ -13895,16 +13955,16 @@ app.post('/api/admin/sales/:id/offer/send', salesAuth, async (req, res) => {
   const client = sales.getSalesClientById(req.params.id);
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
-  const delivery = sanitizeText(req.body?.delivery) === 'portal' ? 'portal' : 'email';
-  if (delivery === 'email' && !emailLib.canSendEmail()) {
+  const channels = salesOffers.normalizeOfferChannels(req.body || {});
+  const sendEmail = channels.includes('email');
+  const sendPortal = channels.includes('portal');
+  if (sendEmail && !emailLib.canSendEmail()) {
     return res.status(400).json({ message: salesEmailFailureMessage('smtp-not-configured') });
   }
 
   let offer = await ensureOfferDraft(client, req);
   if (offer.status === 'sent') return res.status(409).json({ message: 'Tilbudet er allerede sendt.', offer: presentOffer(offer) });
-  const to = delivery === 'portal'
-    ? (normalizeEmail(client.clientEmail) || sanitizeText(req.body?.to) || offer.party?.contactEmail || client.contactEmail)
-    : (sanitizeText(req.body?.to) || offer.party?.contactEmail || client.contactEmail);
+  const to = offerSendToEmail(client, req.body?.to);
   const readiness = offerReadiness(client, offer, { to });
   if (!readiness.ready) return res.status(400).json({ message: readiness.message, readiness });
   const blocker = offerSendBlocker(offer);
@@ -13914,50 +13974,50 @@ app.post('/api/admin/sales/:id/offer/send', salesAuth, async (req, res) => {
   }
   offer = persistOfferDraft(offer, client, req.body, req, { content: false });
   if (!to || !isValidEmail(to)) return res.status(400).json({ message: salesEmailFailureMessage('missing-email') });
+  const delivery = sendEmail && sendPortal ? 'both' : (sendPortal ? 'portal' : 'email');
   try {
     const { composed } = await composeOfferMessage(offer, client, req, { to });
-    if (delivery === 'portal') {
+    if (sendPortal) {
       const view = clientWithOfferParty(client, offer, { to });
       const contractHtml = contractHtmlForOffer(offer, view);
       if (!contractHtml) return res.status(400).json({ message: 'Velg en tier før tilbudet kan legges på asoldi.com.' });
-      const sent = salesOffers.markSalesOfferSent(offer.id, { actor: offerActor(req), to, delivery: 'portal' });
-      const portalOffer = await attachWebsiteCodeToSentOffer(client, sent, { letterHtml: composed.html, to });
-      markOfferSentProgress(client);
-      return res.json({
-        ok: true,
-        offer: presentOffer(sent),
-        delivery: 'portal',
-        websiteCode: portalOffer?.code || '',
-        accountFound: Boolean(await findClientUserByEmail(normalizeEmail(client.clientEmail) || to)),
+    }
+    let contractFileName = '';
+    if (sendEmail) {
+      const packed = await offerContractBuffer(offer, client, { to });
+      contractFileName = packed.fileName;
+      await emailLib.sendEmail({
+        to,
+        from: composed.from,
+        replyTo: composed.replyTo,
+        bcc: salesEmailCopyBcc(to),
+        subject: composed.subject,
+        text: composed.text || htmlToPlainText(composed.html),
+        html: composed.html,
+        attachments: [
+          ...(Array.isArray(composed.attachments) ? composed.attachments : []),
+          { filename: packed.fileName, content: packed.buffer, contentType: 'application/pdf' },
+        ],
       });
     }
-    const { buffer, fileName } = await offerContractBuffer(offer, client, { to });
-    await emailLib.sendEmail({
-      to,
-      from: composed.from,
-      replyTo: composed.replyTo,
-      bcc: salesEmailCopyBcc(to),
-      subject: composed.subject,
-      text: composed.text || htmlToPlainText(composed.html),
-      html: composed.html,
-      attachments: [
-        ...(Array.isArray(composed.attachments) ? composed.attachments : []),
-        { filename: fileName, content: buffer, contentType: 'application/pdf' },
-      ],
-    });
-    const sent = salesOffers.markSalesOfferSent(offer.id, { actor: offerActor(req), to, delivery: 'email' });
+    const sent = salesOffers.markSalesOfferSent(offer.id, { actor: offerActor(req), to, delivery });
     const portalOffer = await attachWebsiteCodeToSentOffer(client, sent, { letterHtml: composed.html, to });
+    const account = await portalAccountForClient(client, to);
     markOfferSentProgress(client);
-    res.json({
+    return res.json({
       ok: true,
       offer: presentOffer(sent),
-      copyTo: salesEmailCopyBcc(to),
-      contractFileName: fileName,
-      delivery: 'email',
+      channels,
+      delivery,
+      copyTo: sendEmail ? salesEmailCopyBcc(to) : '',
+      contractFileName,
       websiteCode: portalOffer?.code || '',
+      accountFound: account.found,
+      portalEmail: account.email,
     });
   } catch (error) {
-    res.status(500).json({ message: delivery === 'portal' ? (sanitizeText(error?.message) || 'Kunne ikke legge tilbudet på asoldi.com.') : formatSmtpSendError(error) });
+    const portalOnly = sendPortal && !sendEmail;
+    res.status(500).json({ message: portalOnly ? (sanitizeText(error?.message) || 'Kunne ikke legge tilbudet på asoldi.com.') : formatSmtpSendError(error) });
   }
 });
 

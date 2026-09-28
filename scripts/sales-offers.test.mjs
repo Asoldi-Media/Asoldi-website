@@ -536,3 +536,18 @@ test('meeting quote sets tier pages, one-time host, and workshop date on the off
   assert.match(html, /data-offer-slot="workshop"/);
   assert.match(html, /15\. oktober 2026/);
 });
+
+test('offer send can target email, asoldi.com, or both', () => {
+  assert.deepEqual(store.normalizeOfferChannels({}), ['email']);
+  assert.deepEqual(store.normalizeOfferChannels({ delivery: 'portal' }), ['portal']);
+  assert.deepEqual(store.normalizeOfferChannels({ delivery: 'both' }), ['email', 'portal']);
+  assert.deepEqual(store.normalizeOfferChannels({ channels: ['portal', 'email', 'email'] }), ['portal', 'email']);
+  const offer = store.createSalesOffer({
+    salesClientId: 'client-both',
+    email: { subject: 'Hei', html: '<p>Hei</p>' },
+  });
+  const sent = store.markSalesOfferSent(offer.id, { to: 'kari@byneset-kafe.no', delivery: 'both' });
+  assert.equal(sent.delivery, 'both');
+  assert.equal(sent.status, 'sent');
+  assert.equal(sent.sentTo, 'kari@byneset-kafe.no');
+});

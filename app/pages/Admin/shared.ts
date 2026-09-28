@@ -426,7 +426,7 @@ export type SalesOffer = {
   sentAt: string;
   sentTo: string;
   sentBy: string;
-  delivery?: 'email' | 'portal';
+  delivery?: 'email' | 'portal' | 'both';
   websiteCode?: string;
   createdAt: string;
   updatedAt: string;

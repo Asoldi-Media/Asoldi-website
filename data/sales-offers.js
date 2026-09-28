@@ -174,7 +174,7 @@ export function normalizeSalesOffer(raw = {}) {
     sentAt: sanitizeText(raw.sentAt),
     sentTo: sanitizeText(raw.sentTo),
     sentBy: sanitizeText(raw.sentBy),
-    delivery: sanitizeText(raw.delivery) === 'portal' ? 'portal' : 'email',
+    delivery: normalizeOfferDelivery(raw.delivery),
     createdAt,
     updatedAt: sanitizeText(raw.updatedAt) || createdAt,
   };
@@ -309,10 +309,32 @@ export function reopenSalesOffer(id, { actor = '', note = '', toDraft = false } 
   }, { actor, action: toDraft ? 'returned-to-sales' : 'reopened', note });
 }
 
+export function normalizeOfferDelivery(value = '') {
+  const channel = sanitizeText(value).toLowerCase();
+  if (channel === 'portal' || channel === 'both') return channel;
+  return 'email';
+}
+
+/** Email, asoldi.com, or both. A missing choice stays email-only. */
+export function normalizeOfferChannels(input = {}) {
+  const source = input && typeof input === 'object' ? input : {};
+  const channels = [];
+  const raw = Array.isArray(source.channels) ? source.channels : [];
+  for (const item of raw) {
+    const value = sanitizeText(item).toLowerCase();
+    if ((value === 'email' || value === 'portal') && !channels.includes(value)) channels.push(value);
+  }
+  if (channels.length) return channels;
+  const delivery = sanitizeText(source.delivery).toLowerCase();
+  if (delivery === 'both') return ['email', 'portal'];
+  if (delivery === 'portal') return ['portal'];
+  return ['email'];
+}
+
 export function markSalesOfferSent(id, { actor = '', to = '', pdfPath = '', delivery = 'email' } = {}) {
   const current = getSalesOfferById(id);
   if (!current) return null;
-  const channel = sanitizeText(delivery) === 'portal' ? 'portal' : 'email';
+  const channel = normalizeOfferDelivery(delivery);
   return updateSalesOffer(id, {
     status: 'sent',
     sentAt: nowIso(),
