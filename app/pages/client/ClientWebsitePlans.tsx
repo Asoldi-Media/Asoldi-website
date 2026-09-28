@@ -6,21 +6,12 @@ import { ClientPortalLayout } from '../../components/client/ClientPortalLayout';
 import { ClientRouteGuard } from '../../components/client/ClientRouteGuard';
 import { useClientAuth } from '../../contexts/ClientAuthContext';
 import { CHECKOUT_BENEFITS, CLIENT_WEBSITE_PLANS, findWebsitePlan } from '../../data/clientWebsitePlans';
+import { useClientOffer } from './useClientOffer';
 import {
   formatPriceAmount,
   normalizeCouponCode,
   parsePriceAmount,
 } from '../../data/coupons';
-
-type ClientOffer = {
-  id: string;
-  code: string;
-  planId: string;
-  planName: string;
-  price: string;
-  note: string;
-  previewUrl: string;
-} | null;
 
 type CheckoutLegalAcknowledgement = {
   termsAccepted: boolean;
@@ -52,9 +43,8 @@ const PREVIEW_FEATURE_COUNT = 4;
 export const ClientWebsitePlans = () => {
   const navigate = useNavigate();
   const { token, user, profile, updateProfileState } = useClientAuth();
-  const [loading, setLoading] = useState(true);
+  const { offer, loading, error: offerError } = useClientOffer(token);
   const [error, setError] = useState('');
-  const [offer, setOffer] = useState<ClientOffer>(null);
   const [selectedPlanId, setSelectedPlanId] = useState(profile?.websiteBuilder?.selectedPlanId || 'tier-1-standard');
   const [savingSelection, setSavingSelection] = useState(false);
   const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({});
@@ -72,21 +62,8 @@ export const ClientWebsitePlans = () => {
   const previousPlanIdRef = useRef(selectedPlanId);
 
   useEffect(() => {
-    async function load() {
-      setLoading(true);
-      setError('');
-      try {
-        const response = await fetch('/api/client/offer', { headers: { Authorization: `Bearer ${token}` } });
-        const payload = await response.json().catch(() => ({}));
-        if (response.ok) setOffer((payload.offer as ClientOffer) || null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Kunne ikke laste tilbud.');
-      } finally {
-        setLoading(false);
-      }
-    }
-    if (token) void load();
-  }, [token]);
+    if (offerError) setError(offerError);
+  }, [offerError]);
 
   useEffect(() => {
     let active = true;

@@ -551,3 +551,61 @@ test('offer send can target email, asoldi.com, or both', () => {
   assert.equal(sent.status, 'sent');
   assert.equal(sent.sentTo, 'kari@byneset-kafe.no');
 });
+
+test('portal letter strips email chrome and keeps greeting plus product specs', async () => {
+  const { extractOfferLetterBody } = await import('../lib/offer-letter-html.js');
+  const { renderBrandedSalesEmailHtml } = await import('../lib/sales-email-layout.js');
+  const branded = `
+    <table class="email-bg">
+      <tr><td class="email-hero"><img src="hero.jpg" alt="hero"></td></tr>
+      <tr><td class="pad-title"><h1>Tilbud fra Asoldi</h1></td></tr>
+      <tr>
+        <td class="pad-body">
+          <p>Hei Kari,</p>
+          <p data-offer-slot="intro">Takk for samtalen om nettsiden.</p>
+          <h2>Hva er inkludert</h2>
+          <div id="offer-products">
+            <table data-offer-product="1"><tr><td>Pakke 2<br>Opp til 7 sider</td></tr></table>
+            <div id="offer-products-end"></div>
+          </div>
+          <p>Med vennlig hilsen<br/><strong>Anna fra Asoldi</strong></p>
+        </td>
+      </tr>
+      <tr><td class="email-footer">© 2026 Alle rettigheter reservert</td></tr>
+    </table>`;
+  const letter = extractOfferLetterBody(branded);
+  assert.match(letter, /Hei Kari/);
+  assert.match(letter, /Takk for samtalen/);
+  assert.match(letter, /Opp til 7 sider/);
+  assert.match(letter, /id="offer-products"/);
+  assert.doesNotMatch(letter, /email-hero|email-footer|hero\.jpg|Tilbud fra Asoldi/);
+  assert.equal(extractOfferLetterBody(letter), letter);
+
+  const products = offerEmail.productsWithTier([], tiers.WEBSITE_TIERS[1].id);
+  const email = offerEmail.buildOfferEmail({
+    client: CLIENT,
+    products,
+    mergeTags: false,
+    layout: (_client, view) => ({ html: renderBrandedSalesEmailHtml(view) }),
+  });
+  const fromShell = extractOfferLetterBody(email.html);
+  assert.match(fromShell, /Hei/);
+  assert.match(fromShell, /Opp til 7 sider/);
+  assert.match(fromShell, /id="offer-products"/);
+  assert.doesNotMatch(fromShell, /email-hero|email-footer|Tilbud fra Asoldi/);
+});
+
+test('portal contract html uses a document header, party columns, and numbered sections', async () => {
+  const { contractHtmlForOffer } = await import('../lib/offer-contract-html.js');
+  const html = contractHtmlForOffer(
+    { tierId: tiers.WEBSITE_TIERS[0].id, sentAt: '2026-09-28T08:00:00.000Z' },
+    CLIENT,
+  );
+  assert.match(html, /offer-contract-masthead/);
+  assert.match(html, /<h1>Service agreement<\/h1>/);
+  assert.match(html, /offer-contract-parties/);
+  assert.match(html, /Byneset Bydelskafé/);
+  assert.match(html, /1\. Service scope/);
+  assert.match(html, /offer-contract-sign/);
+  assert.match(html, /Jeg aksepterer avtalen/);
+});

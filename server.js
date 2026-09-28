@@ -94,6 +94,11 @@ import {
   resolveMyphonerSalesOwnerId as pickMyphonerSalesOwnerId,
 } from './lib/myphoner-sales-owner.js';
 import {
+  fillProffUrlFromOrgNumber,
+  mergeKeptSalesDetailLinks,
+  promoteGoogleBusinessFromOtherLinks,
+} from './lib/sales-client-links.js';
+import {
   buildOfferEmailForClient,
   composeEmailForClient,
   deleteEmailTemplate,
@@ -124,6 +129,7 @@ import { buildOfferFromMeetingQuote } from './lib/offer-from-quote.js';
 import { clientWithOfferParty, offerMissingFields, offerReadinessMessage } from './lib/offer-readiness.js';
 import { buildContractPdf, contractFileName, contractInputsForOffer, offerContractIsAvailable } from './lib/offer-contract-pdf.js';
 import { contractHtmlForOffer } from './lib/offer-contract-html.js';
+import { extractOfferLetterBody } from './lib/offer-letter-html.js';
 import { isDeepseekConfigured } from './lib/deepseek.js';
 import { fillOfferFromTranscript, meetingContextIsTooThin, reflectContractFromEmail } from './lib/offer-ai.js';
 import { matchMeetingToClients, recordingMatchesSalesMeeting } from './lib/fireflies-client-match.js';
@@ -390,7 +396,7 @@ const MYPHONER_RECORDING_RETRY_DELAYS_MS = String(process.env.MYPHONER_RECORDING
 const MYPHONER_RECORDING_DOWNLOAD_ENABLED = String(process.env.MYPHONER_RECORDING_DOWNLOAD_ENABLED || '1') !== '0';
 const MYPHONER_RECORDING_PENDING_BATCH = Math.max(1, Number(process.env.MYPHONER_RECORDING_PENDING_BATCH || 20));
 const SALES_LINK_BACKFILL_ENABLED = String(process.env.SALES_LINK_BACKFILL_ENABLED || '1') !== '0';
-const SALES_LINK_BACKFILL_VERSION = sanitizeText(process.env.SALES_LINK_BACKFILL_VERSION || 'social-links-v5-strict-serp-myphoner');
+const SALES_LINK_BACKFILL_VERSION = sanitizeText(process.env.SALES_LINK_BACKFILL_VERSION || 'social-links-v6-retain-proff-maps');
 const SALES_LINK_BACKFILL_LIMIT = Number(process.env.SALES_LINK_BACKFILL_LIMIT || 0);
 const SALES_MEETING_TIMEZONE = sanitizeText(process.env.GOOGLE_CALENDAR_TIMEZONE || 'Europe/Oslo') || 'Europe/Oslo';
 const MYPHONER_RECORDINGS_DIR = path.join(getPersistentDataDir(), 'myphoner-recordings');
@@ -1966,11 +1972,18 @@ function buildSalesInput(body = {}, { existing = null, requireCore = false } = {
     if (requested) return sales.normalizeSalesProduct(requested);
     return sales.normalizeSalesProduct(existing?.product || 'asoldi');
   })();
-  const details = normalizeSalesDetailLinks(source.details, existing?.details);
+  const details = promoteGoogleBusinessFromOtherLinks(
+    normalizeSalesDetailLinks(source.details, existing?.details),
+    classifySalesLink
+  );
   // Kontraktdata fallback: the proff.no link carries the org number, so a client saved
   // without an explicit org nr still gets it (the Sales UI also pre-fills it live).
   const orgFromProff = extractProffOrganizationNumberFromUrl(details.proffUrl);
-  const orgNumber = orgFromProff || sales.sanitizeOrgNumber(source.orgNumber ?? existing?.orgNumber);
+  const orgNumber = orgFromProff || sales.sanitizeOrgNumber(source.orgNumber || existing?.orgNumber);
+  details.proffUrl = fillProffUrlFromOrgNumber(details.proffUrl, orgNumber, {
+    shouldResolve: shouldResolveProffUrl,
+    buildDirect: buildDirectProffLookupUrlFromOrganizationNumber,
+  });
   const payload = {
     businessName: sanitizeText(source.businessName ?? existing?.businessName),
     contactPerson: sanitizeText(source.contactPerson ?? existing?.contactPerson),
@@ -2653,9 +2666,10 @@ function classifySalesLink(url = '') {
     searchParams.has('query_place_id');
   if (
     host.includes('maps.google.') ||
-    host.includes('google') && (pathName.includes('/maps') || pathName.includes('/business') || hasGoogleMapsQuerySignal) ||
+    (host.includes('google') && (pathName.includes('/maps') || pathName.includes('/business') || hasGoogleMapsQuerySignal)) ||
     host.includes('maps.app.goo.gl') ||
-    host.includes('g.page')
+    host.includes('g.page') ||
+    ((host === 'goo.gl' || host.endsWith('.goo.gl')) && pathName.includes('/maps'))
   ) {
     return { kind: 'googleBusiness', url: normalized };
   }
@@ -3070,13 +3084,16 @@ function buildSalesDetailsFromMyphonerLead(lead = {}, leadDataMap = new Map()) {
     else if (kind === 'googleBusiness' && !classified.googleBusiness) classified.googleBusiness = url;
     else if (!classified.others.includes(url)) classified.others.push(url);
   }
-  return normalizeSalesDetailLinks({
-    instagramUrl: classified.instagram,
-    facebookUrl: classified.facebook,
-    proffUrl: classified.proff,
-    googleBusinessProfile: classified.googleBusiness,
-    otherLinks: classified.others.join('\n'),
-  });
+  return promoteGoogleBusinessFromOtherLinks(
+    normalizeSalesDetailLinks({
+      instagramUrl: classified.instagram,
+      facebookUrl: classified.facebook,
+      proffUrl: classified.proff,
+      googleBusinessProfile: classified.googleBusiness,
+      otherLinks: classified.others.join('\n'),
+    }),
+    classifySalesLink
+  );
 }
 
 function normalizeSearchText(value = '') {
@@ -3512,8 +3529,6 @@ function inferFallbackSocialLinks({
   instagramUrl = '',
   facebookUrl = '',
 } = {}) {
-  const currentInstagramHandle = sanitizeSocialHandle(extractSocialProfileIdentifier(instagramUrl));
-  const currentFacebookHandle = sanitizeSocialHandle(extractSocialProfileIdentifier(facebookUrl));
   const businessHandle = sanitizeSocialHandle(buildBusinessSocialHandleSeed(businessName));
 
   const inferred = {
@@ -3525,20 +3540,14 @@ function inferFallbackSocialLinks({
     },
   };
 
-  // Only mirror an already-verified opposite-platform handle. Never invent from business name.
-  if (!sanitizeText(instagramUrl) && currentFacebookHandle) {
-    inferred.instagramUrl = `https://www.instagram.com/${currentFacebookHandle}/`;
-    inferred.sources.instagram = 'from-facebook-handle';
-  } else if (!sanitizeText(instagramUrl) && businessHandle && MYPHONER_SOCIAL_FORCE_FILL_ENABLED) {
-    // Opt-in only: business-name slug fill is historically a major source of wrong links.
+  // Only invent from the business name when explicitly enabled. Opposite-platform
+  // mirroring is confirmed through the same SerpAPI confidence gate, not by copying the handle.
+  if (!sanitizeText(instagramUrl) && businessHandle && MYPHONER_SOCIAL_FORCE_FILL_ENABLED) {
     inferred.instagramUrl = `https://www.instagram.com/${businessHandle}/`;
     inferred.sources.instagram = 'from-business-name';
   }
 
-  if (!sanitizeText(facebookUrl) && currentInstagramHandle) {
-    inferred.facebookUrl = `https://www.facebook.com/${currentInstagramHandle}/`;
-    inferred.sources.facebook = 'from-instagram-handle';
-  } else if (!sanitizeText(facebookUrl) && businessHandle && MYPHONER_SOCIAL_FORCE_FILL_ENABLED) {
+  if (!sanitizeText(facebookUrl) && businessHandle && MYPHONER_SOCIAL_FORCE_FILL_ENABLED) {
     inferred.facebookUrl = `https://www.facebook.com/${businessHandle}/`;
     inferred.sources.facebook = 'from-business-name';
   }
@@ -3581,6 +3590,53 @@ function preferMyphonerSocialUrl(currentUrl = '', leadUrl = '', canonicalize = (
   if (leadCanonical) return leadCanonical;
   const currentCanonical = sanitizeText(canonicalize(currentUrl || ''));
   return currentCanonical || sanitizeText(currentUrl || '');
+}
+
+function buildOppositeHandleSocialQueries({ provider = 'instagram', oppositeUrl = '', context = {} } = {}) {
+  const socialProvider = sanitizeText(provider).toLowerCase().includes('face') ? 'facebook' : 'instagram';
+  const siteDomain = socialProvider === 'facebook' ? 'facebook.com' : 'instagram.com';
+  const handle = sanitizeSocialHandle(extractSocialProfileIdentifier(oppositeUrl));
+  if (!handle) return [];
+  const businessName = sanitizeText(context?.businessName || '');
+  const cityToken = sanitizeText(context?.cityToken || '');
+  const fragments = [
+    [`site:${siteDomain}/${handle}`, businessName, cityToken],
+    [`"${handle}"`, `site:${siteDomain}`, businessName, cityToken],
+  ];
+  const querySet = new Set();
+  for (const parts of fragments) {
+    const query = parts
+      .map((entry) => sanitizeText(entry))
+      .filter(Boolean)
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!query || query.length < 4) continue;
+    querySet.add(query);
+  }
+  return [...querySet];
+}
+
+async function resolveSocialUrlFromOppositeHandle({
+  provider = 'instagram',
+  oppositeUrl = '',
+  context = {},
+} = {}) {
+  const handle = sanitizeSocialHandle(extractSocialProfileIdentifier(oppositeUrl));
+  if (!handle) {
+    return { url: '', reason: 'no-opposite-handle', queryCount: 0, rawResultCount: 0, uniqueCandidateCount: 0 };
+  }
+  const isFacebook = sanitizeText(provider).toLowerCase().includes('face');
+  return resolveBestSearchCandidate({
+    queries: buildOppositeHandleSocialQueries({ provider, oppositeUrl, context }),
+    context,
+    normalizeUrl: isFacebook ? canonicalizeFacebookProfileUrl : canonicalizeInstagramProfileUrl,
+    minScore: Math.max(2, MYPHONER_SOCIAL_CONFIDENCE_MIN_SCORE),
+    minConfidenceMargin: Math.max(0, MYPHONER_SOCIAL_CONFIDENCE_MIN_MARGIN),
+    minBusinessTokenMatches: Math.max(1, MYPHONER_SOCIAL_CONFIDENCE_MIN_TOKEN_MATCHES),
+    strictConfidence: true,
+    requireIdentifierMatch: !isFacebook,
+  });
 }
 
 
@@ -4106,7 +4162,10 @@ async function enrichSalesClientLinksFromMyphoner({
     };
   }
 
-  const currentDetails = normalizeSalesDetailLinks(currentClient.details || {});
+  const currentDetails = promoteGoogleBusinessFromOtherLinks(
+    normalizeSalesDetailLinks(currentClient.details || {}),
+    classifySalesLink
+  );
   const nextDetails = { ...currentDetails };
   const currentMeetingPlace = sanitizeText(currentClient.meetingPlace);
   const currentBusinessName = sanitizeText(currentClient.businessName);
@@ -4139,6 +4198,7 @@ async function enrichSalesClientLinksFromMyphoner({
   if (!nextDetails.googleBusinessProfile && leadDetails.googleBusinessProfile) {
     nextDetails.googleBusinessProfile = leadDetails.googleBusinessProfile;
   }
+  Object.assign(nextDetails, promoteGoogleBusinessFromOtherLinks(nextDetails, classifySalesLink));
 
   let searchContext = buildSalesLinkSearchContext(currentClient, source, map);
   const orgNumber = sanitizeText(searchContext.organizationNumber).replace(/\D+/g, '');
@@ -4191,59 +4251,54 @@ async function enrichSalesClientLinksFromMyphoner({
   // Proff is orgnr-first: MyPhoner has no proff link, but its orgnr builds a
   // deterministic proff.no/selskap/x/x/x/<orgnr> URL that Proff resolves itself.
   if (!nextDetails.proffUrl && leadDetails.proffUrl) nextDetails.proffUrl = leadDetails.proffUrl;
-
+  const existingProffOrgnr = extractProffOrganizationNumberFromUrl(nextDetails.proffUrl);
+  const shouldRewriteProff = (url = '') =>
+    shouldResolveProffUrl(url) || Boolean(
+      strictProffOrgnr &&
+      sanitizeText(url) &&
+      extractProffOrganizationNumberFromUrl(url) !== strictProffOrgnr
+    );
+  nextDetails.proffUrl = fillProffUrlFromOrgNumber(nextDetails.proffUrl, strictProffOrgnr, {
+    shouldResolve: shouldRewriteProff,
+    buildDirect: buildDirectProffLookupUrlFromOrganizationNumber,
+  });
   let proffResolution = {
     url: sanitizeText(nextDetails.proffUrl),
-    reason: sanitizeText(nextDetails.proffUrl) ? 'already-present' : 'not-attempted',
+    reason: !strictProffOrgnr
+      ? (sanitizeText(nextDetails.proffUrl) ? 'already-present' : 'missing-orgnr')
+      : sanitizeText(existingProffOrgnr) && existingProffOrgnr === strictProffOrgnr && !shouldResolveProffUrl(nextDetails.proffUrl)
+        ? 'already-present'
+        : (sanitizeText(nextDetails.proffUrl) ? 'proff-orgnr-direct' : 'missing-orgnr'),
   };
-  const existingProffOrgnr = extractProffOrganizationNumberFromUrl(nextDetails.proffUrl);
-  const proffNeedsResolution = shouldResolveProffUrl(nextDetails.proffUrl) || Boolean(
-    strictProffOrgnr &&
-    sanitizeText(nextDetails.proffUrl) &&
-    (!existingProffOrgnr || existingProffOrgnr !== strictProffOrgnr)
-  );
-  if (proffNeedsResolution && strictProffOrgnr) {
-    proffResolution = await resolveProffCompanyUrlByOrganizationNumber({
-      organizationNumber: strictProffOrgnr,
-      context: socialContext,
-    });
-    if (sanitizeText(proffResolution.url)) {
-      nextDetails.proffUrl = sanitizeText(proffResolution.url);
-    } else if (sanitizeText(nextDetails.proffUrl)) {
-      // Drop stale search/org-only placeholders so they remain eligible for repair.
-      nextDetails.proffUrl = '';
-    }
-  } else if (proffNeedsResolution && !strictProffOrgnr) {
-    proffResolution = {
-      url: '',
-      reason: 'missing-orgnr',
-    };
-  }
   socialDiagnostics.proff = proffResolution;
 
   const myphonerInstagramUrl = sanitizeText(canonicalizeInstagramProfileUrl(leadDetails.instagramUrl));
   const myphonerFacebookUrl = sanitizeText(canonicalizeFacebookProfileUrl(leadDetails.facebookUrl));
-  // Never wipe MyPhoner-provided profiles; only re-check likely invented auto-fill URLs.
-  const shouldSearchInstagram =
-    !myphonerInstagramUrl &&
-    shouldRevalidateSocialProfileUrl(nextDetails.instagramUrl, 'instagram', socialBusinessNameHint);
-  const shouldSearchFacebook =
-    !myphonerFacebookUrl &&
-    shouldRevalidateSocialProfileUrl(nextDetails.facebookUrl, 'facebook', socialBusinessNameHint);
-  if (shouldSearchInstagram && nextDetails.instagramUrl) {
-    socialDiagnostics.instagramCleared = {
-      previousUrl: sanitizeText(nextDetails.instagramUrl),
-      reason: 'likely-invented-handle',
-    };
-    nextDetails.instagramUrl = '';
-  }
-  if (shouldSearchFacebook && nextDetails.facebookUrl) {
-    socialDiagnostics.facebookCleared = {
-      previousUrl: sanitizeText(nextDetails.facebookUrl),
-      reason: 'likely-invented-handle',
-    };
-    nextDetails.facebookUrl = '';
-  }
+  const instagramSearchOptions = {
+    queries: buildSocialSearchQueries({
+      provider: 'instagram',
+      context: socialContext,
+    }),
+    context: socialContext,
+    normalizeUrl: canonicalizeInstagramProfileUrl,
+    minScore: Math.max(2, MYPHONER_SOCIAL_CONFIDENCE_MIN_SCORE),
+    minConfidenceMargin: Math.max(0, MYPHONER_SOCIAL_CONFIDENCE_MIN_MARGIN),
+    minBusinessTokenMatches: Math.max(1, MYPHONER_SOCIAL_CONFIDENCE_MIN_TOKEN_MATCHES),
+    strictConfidence: true,
+    requireIdentifierMatch: true,
+  };
+  const facebookSearchOptions = {
+    queries: buildSocialSearchQueries({
+      provider: 'facebook',
+      context: socialContext,
+    }),
+    context: socialContext,
+    normalizeUrl: canonicalizeFacebookProfileUrl,
+    minScore: Math.max(2, MYPHONER_SOCIAL_CONFIDENCE_MIN_SCORE),
+    minConfidenceMargin: Math.max(0, MYPHONER_SOCIAL_CONFIDENCE_MIN_MARGIN),
+    minBusinessTokenMatches: Math.max(1, MYPHONER_SOCIAL_CONFIDENCE_MIN_TOKEN_MATCHES),
+    strictConfidence: true,
+  };
 
   let instagramResolution = {
     url: sanitizeText(nextDetails.instagramUrl),
@@ -4254,22 +4309,24 @@ async function enrichSalesClientLinksFromMyphoner({
     top: null,
     runnerUp: null,
   };
-  if (!nextDetails.instagramUrl) {
-    instagramResolution = await resolveBestSearchCandidate({
-      queries: buildSocialSearchQueries({
-        provider: 'instagram',
-        context: socialContext,
-      }),
-      context: socialContext,
-      normalizeUrl: canonicalizeInstagramProfileUrl,
-      minScore: Math.max(2, MYPHONER_SOCIAL_CONFIDENCE_MIN_SCORE),
-      minConfidenceMargin: Math.max(0, MYPHONER_SOCIAL_CONFIDENCE_MIN_MARGIN),
-      minBusinessTokenMatches: Math.max(1, MYPHONER_SOCIAL_CONFIDENCE_MIN_TOKEN_MATCHES),
-      strictConfidence: true,
-      requireIdentifierMatch: true,
-    });
-    if (instagramResolution.url) nextDetails.instagramUrl = instagramResolution.url;
-  } else if (sanitizeText(leadDetails.instagramUrl)) {
+  const existingInstagramUrl = sanitizeText(nextDetails.instagramUrl);
+  const instagramLooksUnverified =
+    Boolean(existingInstagramUrl) &&
+    !myphonerInstagramUrl &&
+    shouldRevalidateSocialProfileUrl(existingInstagramUrl, 'instagram', socialBusinessNameHint);
+  if (!existingInstagramUrl || instagramLooksUnverified) {
+    instagramResolution = await resolveBestSearchCandidate(instagramSearchOptions);
+    if (instagramResolution.url) {
+      nextDetails.instagramUrl = instagramResolution.url;
+    } else if (existingInstagramUrl) {
+      nextDetails.instagramUrl = existingInstagramUrl;
+      instagramResolution = {
+        ...instagramResolution,
+        url: existingInstagramUrl,
+        reason: 'kept-existing',
+      };
+    }
+  } else if (myphonerInstagramUrl) {
     instagramResolution.reason = 'myphoner-social-url';
   }
   socialDiagnostics.instagram = instagramResolution;
@@ -4283,87 +4340,111 @@ async function enrichSalesClientLinksFromMyphoner({
     top: null,
     runnerUp: null,
   };
-  if (!nextDetails.facebookUrl) {
-    facebookResolution = await resolveBestSearchCandidate({
-      queries: buildSocialSearchQueries({
-        provider: 'facebook',
-        context: socialContext,
-      }),
-      context: socialContext,
-      normalizeUrl: canonicalizeFacebookProfileUrl,
-      minScore: Math.max(2, MYPHONER_SOCIAL_CONFIDENCE_MIN_SCORE),
-      minConfidenceMargin: Math.max(0, MYPHONER_SOCIAL_CONFIDENCE_MIN_MARGIN),
-      minBusinessTokenMatches: Math.max(1, MYPHONER_SOCIAL_CONFIDENCE_MIN_TOKEN_MATCHES),
-      strictConfidence: true,
-    });
-    if (facebookResolution.url) nextDetails.facebookUrl = facebookResolution.url;
-  } else if (sanitizeText(leadDetails.facebookUrl)) {
+  const existingFacebookUrl = sanitizeText(nextDetails.facebookUrl);
+  const facebookLooksUnverified =
+    Boolean(existingFacebookUrl) &&
+    !myphonerFacebookUrl &&
+    shouldRevalidateSocialProfileUrl(existingFacebookUrl, 'facebook', socialBusinessNameHint);
+  if (!existingFacebookUrl || facebookLooksUnverified) {
+    facebookResolution = await resolveBestSearchCandidate(facebookSearchOptions);
+    if (facebookResolution.url) {
+      nextDetails.facebookUrl = facebookResolution.url;
+    } else if (existingFacebookUrl) {
+      nextDetails.facebookUrl = existingFacebookUrl;
+      facebookResolution = {
+        ...facebookResolution,
+        url: existingFacebookUrl,
+        reason: 'kept-existing',
+      };
+    }
+  } else if (myphonerFacebookUrl) {
     facebookResolution.reason = 'myphoner-social-url';
   }
   socialDiagnostics.facebook = facebookResolution;
 
-  // Mirror a verified opposite-platform handle only. Business-name slug invention stays opt-in.
-  if (!nextDetails.instagramUrl || !nextDetails.facebookUrl) {
+  if (!nextDetails.instagramUrl && nextDetails.facebookUrl) {
+    const mirroredInstagram = await resolveSocialUrlFromOppositeHandle({
+      provider: 'instagram',
+      oppositeUrl: nextDetails.facebookUrl,
+      context: socialContext,
+    });
+    if (mirroredInstagram.url) {
+      nextDetails.instagramUrl = mirroredInstagram.url;
+      socialDiagnostics.instagram = {
+        ...mirroredInstagram,
+        reason: 'confirmed-facebook-handle',
+      };
+    } else {
+      socialDiagnostics.instagram = {
+        ...(socialDiagnostics.instagram || {}),
+        ...mirroredInstagram,
+        reason: sanitizeText(mirroredInstagram.reason) || 'mirror-unconfirmed',
+      };
+    }
+  }
+  if (!nextDetails.facebookUrl && nextDetails.instagramUrl) {
+    const mirroredFacebook = await resolveSocialUrlFromOppositeHandle({
+      provider: 'facebook',
+      oppositeUrl: nextDetails.instagramUrl,
+      context: socialContext,
+    });
+    if (mirroredFacebook.url) {
+      nextDetails.facebookUrl = mirroredFacebook.url;
+      socialDiagnostics.facebook = {
+        ...mirroredFacebook,
+        reason: 'confirmed-instagram-handle',
+      };
+    } else {
+      socialDiagnostics.facebook = {
+        ...(socialDiagnostics.facebook || {}),
+        ...mirroredFacebook,
+        reason: sanitizeText(mirroredFacebook.reason) || 'mirror-unconfirmed',
+      };
+    }
+  }
+
+  // Business-name slug invention stays opt-in and off by default.
+  if ((!nextDetails.instagramUrl || !nextDetails.facebookUrl) && MYPHONER_SOCIAL_FORCE_FILL_ENABLED) {
     const fallbackSocial = inferFallbackSocialLinks({
       businessName: baseBusinessName || currentClient.businessName,
       instagramUrl: nextDetails.instagramUrl,
       facebookUrl: nextDetails.facebookUrl,
     });
-
     if (!nextDetails.instagramUrl && fallbackSocial.instagramUrl) {
-      const allowFill =
-        fallbackSocial.sources?.instagram === 'from-facebook-handle' || MYPHONER_SOCIAL_FORCE_FILL_ENABLED;
-      if (allowFill) {
-        nextDetails.instagramUrl = fallbackSocial.instagramUrl;
-        socialDiagnostics.instagram = {
-          ...(socialDiagnostics.instagram || {}),
-          url: fallbackSocial.instagramUrl,
-          reason:
-            fallbackSocial.sources?.instagram === 'from-facebook-handle'
-              ? 'mirror-facebook-handle'
-              : 'force-fill-handle',
-          forced: fallbackSocial.sources?.instagram !== 'from-facebook-handle',
-          fallbackSource: sanitizeText(fallbackSocial.sources?.instagram),
-        };
-      }
+      nextDetails.instagramUrl = fallbackSocial.instagramUrl;
+      socialDiagnostics.instagram = {
+        ...(socialDiagnostics.instagram || {}),
+        url: fallbackSocial.instagramUrl,
+        reason: 'force-fill-handle',
+        forced: true,
+        fallbackSource: sanitizeText(fallbackSocial.sources?.instagram),
+      };
     }
-
     if (!nextDetails.facebookUrl && fallbackSocial.facebookUrl) {
-      const allowFill =
-        fallbackSocial.sources?.facebook === 'from-instagram-handle' || MYPHONER_SOCIAL_FORCE_FILL_ENABLED;
-      if (allowFill) {
-        nextDetails.facebookUrl = fallbackSocial.facebookUrl;
-        socialDiagnostics.facebook = {
-          ...(socialDiagnostics.facebook || {}),
-          url: fallbackSocial.facebookUrl,
-          reason:
-            fallbackSocial.sources?.facebook === 'from-instagram-handle'
-              ? 'mirror-instagram-handle'
-              : 'force-fill-handle',
-          forced: fallbackSocial.sources?.facebook !== 'from-instagram-handle',
-          fallbackSource: sanitizeText(fallbackSocial.sources?.facebook),
-        };
-      }
+      nextDetails.facebookUrl = fallbackSocial.facebookUrl;
+      socialDiagnostics.facebook = {
+        ...(socialDiagnostics.facebook || {}),
+        url: fallbackSocial.facebookUrl,
+        reason: 'force-fill-handle',
+        forced: true,
+        fallbackSource: sanitizeText(fallbackSocial.sources?.facebook),
+      };
     }
   }
 
-  const normalizedNext = normalizeSalesDetailLinks(nextDetails, currentDetails);
+  const normalizedNext = promoteGoogleBusinessFromOtherLinks(
+    normalizeSalesDetailLinks(nextDetails, currentDetails),
+    classifySalesLink
+  );
+  const currentOrgNumber = sales.sanitizeOrgNumber(currentClient.orgNumber);
   const changedFields = ['instagramUrl', 'facebookUrl', 'proffUrl', 'googleBusinessProfile'].filter((field) => {
     const previous = sanitizeText(currentDetails[field]);
     const nextValue = sanitizeText(normalizedNext[field]);
     if (nextValue && nextValue !== previous) return true;
     if (field === 'proffUrl' && previous && !nextValue && shouldResolveProffUrl(previous)) return true;
-    // Persist clearing of invented/wrong social auto-fill links.
-    if (
-      (field === 'instagramUrl' || field === 'facebookUrl') &&
-      previous &&
-      !nextValue &&
-      isLikelyInventedSocialProfileUrl(previous, socialBusinessNameHint)
-    ) {
-      return true;
-    }
     return false;
   });
+  if (strictProffOrgnr && strictProffOrgnr !== currentOrgNumber) changedFields.push('orgNumber');
   if (!currentMeetingPlace && leadMeetingPlace) changedFields.push('meetingPlace');
   if (resolvedBusinessName && normalizeLooseKey(resolvedBusinessName) !== normalizeLooseKey(currentBusinessName)) {
     changedFields.push('businessName');
@@ -4407,6 +4488,9 @@ async function enrichSalesClientLinksFromMyphoner({
   }
   if (resolvedWebsiteDomain !== currentWebsiteDomain) {
     updatePayload.websiteDomain = resolvedWebsiteDomain;
+  }
+  if (strictProffOrgnr && strictProffOrgnr !== currentOrgNumber) {
+    updatePayload.orgNumber = strictProffOrgnr;
   }
   const updated = sales.updateSalesClient(targetClientId, updatePayload);
   return {
@@ -4541,6 +4625,8 @@ function extractOrganizationNumberFromText(value = '') {
 
 function extractOrganizationNumberFromClientRecord(client = {}) {
   const source = client && typeof client === 'object' ? client : {};
+  const fromField = sales.sanitizeOrgNumber(source?.orgNumber);
+  if (fromField) return fromField;
   const proffUrl = coerceHttpUrl(source?.details?.proffUrl || '');
   if (proffUrl) {
     try {
@@ -5448,6 +5534,7 @@ function buildSalesInputFromMyphonerLead(lead = {}, resourcePath = '') {
       meetingAt,
       industry: pickLeadDataValue(leadDataMap, ['industry', 'branche', 'bransje']),
       websiteDomain,
+      orgNumber: extractOrganizationNumberFromLead(source, leadDataMap),
       details: buildSalesDetailsFromMyphonerLead(source, leadDataMap),
     },
     { requireCore: false }
@@ -5470,7 +5557,8 @@ function mergeMyphonerSalesInput(existing = {}, incoming = {}) {
       contactPhone: next.contactPhone || current.contactPhone,
       industry: next.industry || current.industry,
       websiteDomain: sanitizeSalesWebsiteDomain(next.websiteDomain),
-      details: normalizeSalesDetailLinks(next.details || {}, current.details || {}),
+      orgNumber: next.orgNumber || current.orgNumber,
+      details: mergeKeptSalesDetailLinks(next.details || {}, current.details || {}),
       meetingMode: mergedMeetingMode,
       meetingPlace: next.meetingPlace || current.meetingPlace,
       agreedTime: incomingHasMeeting ? true : Boolean(current.agreedTime),
@@ -8146,6 +8234,13 @@ async function syncCalendarInviteForThankYou(client, { actorAccountKey = '', req
 
 function isSalesRepAccountKey(accountKey = '') {
   return sanitizeText(accountKey).startsWith('sales:');
+}
+
+function sameCalendarInstant(left = '', right = '') {
+  const a = new Date(left || '').getTime();
+  const b = new Date(right || '').getTime();
+  if (!Number.isFinite(a) && !Number.isFinite(b)) return true;
+  return a === b;
 }
 
 function thankYouSendActor(client, fallbackUser = null) {
@@ -10981,6 +11076,20 @@ async function handleStripeWebhook(req, res) {
   return res.json({ received: true });
 }
 
+function portalContractHtml(offer) {
+  const stored = offer?.contractHtml || '';
+  if (!offer?.salesOfferId || !offer?.salesClientId) return stored;
+  const salesOffer = salesOffers.getSalesOfferById(offer.salesOfferId);
+  const salesClient = sales.getSalesClientById(offer.salesClientId);
+  if (!salesOffer || !salesClient || !offerContractIsAvailable(salesOffer)) return stored;
+  try {
+    const view = clientWithOfferParty(salesClient, salesOffer, { to: offer.targetEmail });
+    return contractHtmlForOffer(salesOffer, view) || stored;
+  } catch {
+    return stored;
+  }
+}
+
 function presentClientOffer(offer) {
   if (!offer) return null;
   const plan = findWebsitePlan(offer.planId);
@@ -10993,8 +11102,8 @@ function presentClientOffer(offer) {
     price: offer.price || plan?.price || '',
     note: offer.note || '',
     previewUrl: offer.previewUrl || '',
-    letterHtml: offer.letterHtml || '',
-    contractHtml: offer.contractHtml || '',
+    letterHtml: extractOfferLetterBody(offer.letterHtml || ''),
+    contractHtml: portalContractHtml(offer),
     accepted: Boolean(acceptance?.acceptedAt),
     acceptedAt: acceptance?.acceptedAt || '',
   };
@@ -12544,14 +12653,24 @@ app.put('/api/admin/sales/:id', salesAuth, async (req, res) => {
 
     const meetingChanged =
       existing.agreedTime !== client.agreedTime ||
-      existing.meetingAt !== client.meetingAt ||
+      !sameCalendarInstant(existing.meetingAt, client.meetingAt) ||
       existing.meetingMode !== client.meetingMode ||
       existing.contactEmail !== client.contactEmail;
-
-    const syncResult = await maybeSyncCalendar(client, existing, {
-      notifyAttendees: Boolean(existing?.reminders?.thankYouSentAt) && meetingChanged,
-      actorAccountKey: isSalesRepAccountKey(client.ownerId) ? client.ownerId : req.salesUser.accountKey,
-    });
+    const ownerKey = sanitizeText(client.ownerId);
+    if (salesUserOwnerKeys(req.salesUser).has(ownerKey)) {
+      await ensureSharedCalendarTokens(req.salesUser.accountKey);
+      if (getGoogleCalendarStatus(req.salesUser.accountKey).connected) {
+        shareGoogleCalendarToken(req.salesUser.accountKey, [ownerKey]);
+      }
+    }
+    // Stepping through the client card re-saves unchanged meeting details. Don't
+    // move the event or warn about the owner calendar unless the booking changed.
+    const syncResult = meetingChanged || !sanitizeText(existing?.calendar?.eventId)
+      ? await maybeSyncCalendar(client, existing, {
+          notifyAttendees: Boolean(existing?.reminders?.thankYouSentAt) && meetingChanged,
+          actorAccountKey: req.salesUser.accountKey,
+        })
+      : { client, warnings: [], calendarInviteSent: false };
     client = syncResult.client || client;
 
     const thankYou = await autoSendThankYouFromOwner(client, { existing });
@@ -13046,7 +13165,6 @@ function presentOffer(offer) {
     needsVerification: salesOffers.offerNeedsVerification(offer),
     canSend: salesOffers.offerCanBeSentBySales(offer),
     contractAvailable: offerContractIsAvailable(offer),
-    // Send is gated on a full preview of exactly this content, and on no template placeholders left.
     previewCurrent: salesOffers.offerPreviewIsCurrent(offer),
     placeholders: findOfferPlaceholders(offer.email?.html),
   };
@@ -13561,7 +13679,7 @@ async function composeOfferMessage(offer, client, req, { to = '' } = {}) {
 }
 
 /** Why a rep cannot send this offer right now ('' when they can). Mirrors the composer's disabled hints. */
-function offerSendBlocker(offer, { ignorePreview = false, ignoreReviewGate = false } = {}) {
+function offerSendBlocker(offer, { ignoreReviewGate = false } = {}) {
   if (!offer.products.length) return 'Velg en nettside-tier (eller få tilbudet verifisert) før du sender.';
   if (!ignoreReviewGate && !salesOffers.offerCanBeSentBySales(offer)) {
     return offer.status === 'review-requested'
@@ -13572,7 +13690,6 @@ function offerSendBlocker(offer, { ignorePreview = false, ignoreReviewGate = fal
   if (placeholders.length) {
     return `E-posten har ${placeholders.length} felt fra malen som ikke er fylt ut: ${placeholders.slice(0, 3).map((label) => `«${label}»`).join(', ')}${placeholders.length > 3 ? ' …' : ''}. Fyll ut eller slett dem før du sender.`;
   }
-  if (!ignorePreview && !salesOffers.offerPreviewIsCurrent(offer)) return 'Forhåndsvis e-posten og bekreft at den ser riktig ut før du sender.';
   return '';
 }
 
@@ -13593,7 +13710,6 @@ app.get('/api/admin/sales/:id/offer', salesAuth, async (req, res) => {
   client = await attachRecentFirefliesByMeetLink(client);
   client = linkCalendarSessionTranscripts(client);
   let offer = await ensureOfferDraft(client, req);
-  offer = await autoFillOfferIfReady(offer, client, req);
   const sender = await resolveSalesSenderForAccount(req.salesUser);
   const meeting = meetingForOffer(client, offer);
   const portalAccount = await portalAccountForClient(client);
@@ -13696,12 +13812,13 @@ app.post('/api/admin/sales/:id/offer/fill', salesAuth, async (req, res) => {
   const contextBlocker = offerContextBlocker(client, meeting);
   if (contextBlocker) return res.status(400).json({ message: contextBlocker });
   try {
-    const html = typeof req.body?.html === 'string' ? req.body.html : current.email.html;
+    const force = Boolean(req.body?.force);
+    const html = typeof req.body?.html === 'string' && !force ? req.body.html : current.email.html;
     const nuances = await fillOfferFromTranscript({ client: clientForOfferFill(client), meeting: meeting || {}, products: current.products, tierId: current.tierId });
     const filled = refreshOfferShell(fillOfferSlots(html, {
       ...nuances,
       workshop: workshopSentenceForClient(client),
-    }, { onlyOpen: true }));
+    }, { onlyOpen: !force }));
     const updated = salesOffers.updateSalesOffer(current.id, {
       email: { html: filled },
       meetingId: sanitizeText(meeting?.meetingId),
@@ -13787,12 +13904,11 @@ app.post('/api/admin/sales/:id/offer/use-meeting', salesAuth, async (req, res) =
     meetingSource: 'manual',
   }, { actor: offerActor(req), action: 'meeting-picked', note: sanitizeText(record.title) });
   const fresh = sales.getSalesClientById(client.id) || client;
-  const updated = await autoFillOfferIfReady(picked, fresh, req);
-  const meeting = meetingForOffer(fresh, updated);
+  const meeting = meetingForOffer(fresh, picked);
   res.json({
-    offer: presentOffer(updated),
-    meeting: presentMeetingForOffer(meeting, updated, fresh),
-    meetings: presentOfferMeetings(fresh, updated),
+    offer: presentOffer(picked),
+    meeting: presentMeetingForOffer(meeting, picked, fresh),
+    meetings: presentOfferMeetings(fresh, picked),
   });
 });
 
@@ -13862,7 +13978,7 @@ app.post('/api/admin/sales/:id/offer/preview', salesAuth, async (req, res) => {
       },
       placeholders: findOfferPlaceholders(offer.email.html),
       readiness,
-      blocker: readiness.ready ? offerSendBlocker(offer, { ignorePreview: true, ignoreReviewGate: true }) : readiness.message,
+      blocker: readiness.ready ? offerSendBlocker(offer, { ignoreReviewGate: true }) : readiness.message,
     });
   } catch (error) {
     res.status(400).json({ message: sanitizeText(error?.message) || 'Kunne ikke lage forhåndsvisning.' });

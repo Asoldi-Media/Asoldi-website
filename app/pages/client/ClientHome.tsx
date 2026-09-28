@@ -6,6 +6,7 @@ import { ClientRouteGuard } from '../../components/client/ClientRouteGuard';
 import { ClientPortalLayout } from '../../components/client/ClientPortalLayout';
 import { useClientAuth } from '../../contexts/ClientAuthContext';
 import { findWebsitePlan } from '../../data/clientWebsitePlans';
+import { useClientOffer } from './useClientOffer';
 
 type DashboardTodo = { id: string; title: string; description: string; actionLabel: string; route: string };
 
@@ -25,18 +26,6 @@ type DashboardResponse = {
     greetingName: string;
   };
 };
-
-type ClientOffer = {
-  id: string;
-  code: string;
-  planId: string;
-  planName: string;
-  price: string;
-  note: string;
-  previewUrl: string;
-  accepted?: boolean;
-  acceptedAt?: string;
-} | null;
 
 type TodoEntry = DashboardTodo & { accent?: boolean };
 
@@ -70,7 +59,7 @@ export const ClientHome = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [data, setData] = useState<DashboardResponse | null>(null);
-  const [offer, setOffer] = useState<ClientOffer>(null);
+  const { offer } = useClientOffer(token);
   const [dismissed, setDismissed] = useState<string[]>([]);
 
   useEffect(() => {
@@ -82,15 +71,10 @@ export const ClientHome = () => {
       setLoading(true);
       setError('');
       try {
-        const [dashboardRes, offerRes] = await Promise.all([
-          fetch('/api/client/dashboard', { headers: { Authorization: `Bearer ${token}` } }),
-          fetch('/api/client/offer', { headers: { Authorization: `Bearer ${token}` } }),
-        ]);
+        const dashboardRes = await fetch('/api/client/dashboard', { headers: { Authorization: `Bearer ${token}` } });
         const payload = await dashboardRes.json().catch(() => ({}));
         if (!dashboardRes.ok) throw new Error(payload.message || 'Kunne ikke laste dashboard.');
         setData(payload as DashboardResponse);
-        const offerPayload = await offerRes.json().catch(() => ({}));
-        setOffer(offerRes.ok ? (offerPayload.offer as ClientOffer) : null);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Kunne ikke laste dashboard.');
       } finally {

@@ -418,7 +418,6 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
   const [recordingErrorByClient, setRecordingErrorByClient] = useState<Record<string, string>>({});
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({});
   const [savingNoteId, setSavingNoteId] = useState<string | null>(null);
-  const [offerFillToken, setOfferFillToken] = useState(0);
   const notesFlushRef = useRef<null | (() => Promise<void>)>(null);
   const clientCardBaselineRef = useRef('');
   const [discardPrompt, setDiscardPrompt] = useState(false);
@@ -1206,7 +1205,8 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
         method,
         body: JSON.stringify(payload),
       });
-      const warnings = Array.isArray(data.warnings) ? data.warnings.filter(Boolean) : [];
+      const warnings = (Array.isArray(data.warnings) ? data.warnings.filter(Boolean) : [])
+        .filter((line) => !/client owner calendar/i.test(String(line)));
       const saved = (data.client || {}) as SalesClient;
       const meetingUpdated = Boolean(editingId && data.meetingChanged && data.calendarInviteSent);
       const savedId = editingId || saved.id || '';
@@ -1266,7 +1266,6 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
         return;
       }
     }
-    if (step === 3) setOfferFillToken((current) => current + 1);
     const next = new URLSearchParams(searchParams);
     next.set('flow', flowClientId);
     next.set('step', String(step));
@@ -3230,7 +3229,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
               />
             )}
             {inClientFlow && flowStep === 3 && flowClient && (
-              <SalesOfferComposer embedded clientId={flowClient.id} autoFillToken={offerFillToken} />
+              <SalesOfferComposer embedded clientId={flowClient.id} />
             )}
           </div>
           {inClientFlow && (

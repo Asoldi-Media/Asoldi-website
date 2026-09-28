@@ -1,22 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { AlertTriangle, Copy, ExternalLink, Eye, FileText, Loader2, Paperclip, RefreshCw, Send, ShieldCheck, X } from 'lucide-react';
+import { AlertTriangle, Copy, ExternalLink, FileText, Loader2, RefreshCw, Send, ShieldCheck, X } from 'lucide-react';
 import { EmailVisualEditor } from './EmailVisualEditor';
 import {
-  approveClientOfferPreview,
   fillClientOffer,
   useClientOfferMeeting,
   getClientOffer,
   getClientOfferMeeting,
   openAuthedPdf,
-  previewClientOffer,
   requestClientOfferReview,
   saveClientOffer,
   sendClientOffer,
   startNewClientOffer,
   type MergeField,
-  type OfferPreview,
   type OfferReadiness,
 } from './emailApi';
 import { getSalesToken, type SalesOffer, type SalesSender } from '../Admin/shared';
@@ -55,12 +52,6 @@ type MeetingInfo = {
 
 type MeetingMatch = { meetingId: string; title: string; when: string; durationMinutes?: number | ''; selected?: boolean; hasTranscript?: boolean; liveJoined?: boolean };
 
-type PreviewState = {
-  preview: OfferPreview;
-  placeholders: string[];
-  blocker: string;
-};
-
 const AUTOSAVE_MS = 1500;
 
 function formatWorkshopDate(value = '') {
@@ -77,16 +68,15 @@ function formatWorkshopDate(value = '') {
 type ComposerProps = {
   embedded?: boolean;
   clientId?: string;
-  autoFillToken?: number;
 };
 
-export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = '', autoFillToken = 0 }: ComposerProps = {}) {
+export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = '' }: ComposerProps = {}) {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const clientId = clientIdProp || params.get('clientId') || '';
 
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<'' | 'tier' | 'mva' | 'review-toggle' | 'fill' | 'review' | 'send' | 'contract' | 'new' | 'save' | 'preview' | 'approve' | 'meeting'>('');
+  const [busy, setBusy] = useState<'' | 'tier' | 'mva' | 'review-toggle' | 'fill' | 'review' | 'send' | 'contract' | 'new' | 'save' | 'meeting'>('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [offer, setOffer] = useState<SalesOffer | null>(null);
@@ -108,14 +98,10 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
   const [sendEmail, setSendEmail] = useState(true);
   const [sendPortal, setSendPortal] = useState(false);
   const [portalAccount, setPortalAccount] = useState<{ email: string; found: boolean } | null>(null);
-  const [fillRequest, setFillRequest] = useState(0);
   const [subject, setSubject] = useState('');
   const [preheader, setPreheader] = useState('');
   const [html, setHtml] = useState('');
   const [htmlKey, setHtmlKey] = useState('');
-  // Edits made since the last approved preview (before the autosave has told the server about them).
-  const [editedSincePreview, setEditedSincePreview] = useState(false);
-  const [previewState, setPreviewState] = useState<PreviewState | null>(null);
   const dirtyRef = useRef(false);
   const autoFillKeyRef = useRef('');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -140,8 +126,6 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
   const needsReview = reviewChecked;
   const mvaIncluded = Boolean(offer?.mvaIncluded);
   const placeholders = offer?.placeholders || [];
-  const previewApproved = Boolean(offer?.previewCurrent) && !editedSincePreview;
-
   const applyOffer = useCallback((next: SalesOffer, { resetHtml = true } = {}) => {
     setOffer(next);
     setSubject(next.email.subject || '');
@@ -151,7 +135,6 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
       setHtmlKey(`${next.id}-${next.updatedAt}-${Date.now()}`);
     }
     dirtyRef.current = false;
-    setEditedSincePreview(false);
   }, []);
 
   const load = useCallback(async () => {
@@ -267,7 +250,6 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
   const scheduleSave = useCallback((extra: Record<string, unknown> = {}) => {
     if (!offer || locked) return;
     dirtyRef.current = true;
-    setEditedSincePreview(true);
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       try {
@@ -366,7 +348,6 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
       setMeetingQuery('');
       setMeetingsOpen(false);
       autoFillKeyRef.current = '';
-      setFillRequest((current) => current + 1);
       if (Array.isArray(data.meetings)) setMeetings(data.meetings);
       if (data.meeting) setMeeting(data.meeting);
       if (data.offer) applyOffer(data.offer);
@@ -378,22 +359,24 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     }
   }
 
-  async function handleFill() {
+  async function handleFill(force = false) {
     if (fillDisabledReason) {
-      setFillPhase('error');
-      setFillMessage(fillDisabledReason);
+      if (force) {
+        setFillPhase('error');
+        setFillMessage(fillDisabledReason);
+      }
       return;
     }
     setBusy('fill');
     setFillPhase('running');
-    setFillMessage('Fyller ut e-posten…');
+    setFillMessage(force ? 'Skriver e-posten på nytt…' : 'Fyller ut e-posten…');
     setError('');
     try {
       await flushSave();
-      const data = await fillClientOffer(clientId, { meetingId: meeting?.meetingId || '' }) as { offer: SalesOffer };
+      const data = await fillClientOffer(clientId, { meetingId: meeting?.meetingId || '', force }) as { offer: SalesOffer };
       applyOffer(data.offer);
       setFillPhase('done');
-      setFillMessage('E-posten er fylt ut fra møtet og produktnotatene.');
+      setFillMessage(force ? 'E-posten er skrevet på nytt fra møtet og produktnotatene.' : 'E-posten er fylt ut fra møtet og produktnotatene.');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'AI-utfylling feilet';
       setFillPhase('error');
@@ -412,46 +395,6 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
       await openAuthedPdf(`/admin/sales/${encodeURIComponent(clientId)}/offer/contract.pdf`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Kunne ikke lage kontrakt');
-    } finally {
-      setBusy('');
-    }
-  }
-
-  async function openPreview() {
-    setBusy('preview');
-    setError('');
-    try {
-      if (saveTimer.current) {
-        clearTimeout(saveTimer.current);
-        saveTimer.current = null;
-      }
-      const data = await previewClientOffer(clientId, locked ? { to } : { to, html, subject, preheader, party: partyPayload() });
-      setOffer(data.offer);
-      if (data.offer?.email?.html && data.offer.email.html !== html) {
-        setHtml(data.offer.email.html);
-        setHtmlKey(`${data.offer.id}-${data.offer.updatedAt}-${Date.now()}`);
-      }
-      if (data.offer?.email?.subject) setSubject(data.offer.email.subject);
-      dirtyRef.current = false;
-      setPreviewState({ preview: data.preview, placeholders: data.placeholders || [], blocker: data.blocker || '' });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Forhåndsvisning feilet');
-    } finally {
-      setBusy('');
-    }
-  }
-
-  async function approvePreview() {
-    setBusy('approve');
-    setError('');
-    try {
-      const data = await approveClientOfferPreview(clientId);
-      setOffer(data.offer);
-      setEditedSincePreview(false);
-      setPreviewState(null);
-      setNotice('Forhåndsvisningen er godkjent – du kan nå sende tilbudet.');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Kunne ikke godkjenne forhåndsvisningen');
     } finally {
       setBusy('');
     }
@@ -528,7 +471,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
       autoFillKeyRef.current = '';
       applyOffer(data.offer);
       setNotice(data.copied
-        ? 'Nytt utkast er en kopi av tilbudet som ble sendt. Endre det du trenger, og forhåndsvis på nytt før du sender.'
+        ? 'Nytt utkast er en kopi av tilbudet som ble sendt. Endre det du trenger, og send på nytt.'
         : 'Nytt tilbudsutkast opprettet.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Kunne ikke starte nytt tilbud');
@@ -551,13 +494,14 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
   handleFillRef.current = handleFill;
   const meetingSelected = Boolean(meeting?.meetingId);
   const openPlaceholders = (offer?.placeholders || []).length;
+  const alreadyAutoFilled = (offer?.history || []).some((entry) => entry.action === 'ai-filled');
   useEffect(() => {
-    if (loading || locked || !offer?.id || !meetingSelected || fillDisabledReason || !openPlaceholders) return;
-    const key = `${offer.id}:${meeting?.meetingId || ''}:${autoFillToken}:${fillRequest}`;
+    if (loading || locked || !offer?.id || !meetingSelected || fillDisabledReason || !openPlaceholders || alreadyAutoFilled) return;
+    const key = `${offer.id}:${meeting?.meetingId || ''}`;
     if (autoFillKeyRef.current === key) return;
     autoFillKeyRef.current = key;
-    void handleFillRef.current();
-  }, [autoFillToken, loading, locked, fillDisabledReason, offer?.id, meeting?.meetingId, meetingSelected, openPlaceholders, fillRequest]);
+    void handleFillRef.current(false);
+  }, [loading, locked, fillDisabledReason, offer?.id, meeting?.meetingId, meetingSelected, openPlaceholders, alreadyAutoFilled]);
 
   const card = useMemo(() => clientCardParty(client || {}), [client]);
   const offerTo = resolveWebsiteEmail(client || {}) || to;
@@ -584,9 +528,8 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     if (status === 'review-requested') return 'Venter på gjennomgang hos admin.';
     if (needsReview && status !== 'verified') return 'Dette tilbudet må verifiseres av admin før det kan sendes.';
     if (placeholders.length) return `${placeholders.length} felt fra malen er ikke fylt ut enda.`;
-    if (!previewApproved) return 'Forhåndsvis e-posten og godkjenn før du sender.';
     return '';
-  }, [offer, canSendEmail, readiness, offerTo, status, needsReview, placeholders.length, previewApproved, sendEmail, sendPortal]);
+  }, [offer, canSendEmail, readiness, offerTo, status, needsReview, placeholders.length, sendEmail, sendPortal]);
 
   const showSendButton = status !== 'sent' && (!needsReview || status === 'verified');
   const title = 'Se gjennom tilbud';
@@ -659,7 +602,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                   <div>
                     <div className="font-medium">Verifisert av admin – klart til å sendes</div>
                     {offer.adminNote && <div className="text-sky-300">Melding fra admin: {offer.adminNote}</div>}
-                    <div className="text-sky-300 text-xs mt-1">Innholdet er låst. Forhåndsvis e-posten, godkjenn, og send.</div>
+                    <div className="text-sky-300 text-xs mt-1">Innholdet er låst. Du kan sende det herfra.</div>
                   </div>
                 </div>
               )}
@@ -693,6 +636,21 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
 
               <div className="grid xl:grid-cols-[minmax(0,1fr)_320px] gap-4">
                 <div className="flex flex-col gap-4 min-w-0">
+                  {!locked && (
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-xs text-gray-400">E-posten skrives én gang når et Fireflies-opptak er valgt. Den blir liggende til du skriver den på nytt.</p>
+                      <button
+                        type="button"
+                        onClick={() => void handleFill(true)}
+                        disabled={busy === 'fill' || Boolean(fillDisabledReason)}
+                        title={fillDisabledReason || 'Skriv e-posten på nytt fra transkriptet og tilbudet'}
+                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 text-xs whitespace-nowrap hover:bg-white/15 disabled:opacity-50"
+                      >
+                        {busy === 'fill' ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                        Generer på nytt
+                      </button>
+                    </div>
+                  )}
                   <div className="grid md:grid-cols-2 gap-3">
                     <label className="text-xs text-gray-400">
                       Emne
@@ -869,19 +827,6 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                       {busy === 'contract' ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />} Se kontrakt (PDF)
                     </button>
 
-                    {status !== 'sent' && (
-                      <button
-                        type="button"
-                        onClick={() => void openPreview()}
-                        disabled={busy === 'preview'}
-                        title="Viser e-posten slik kunden får den – med navn, priser og signatur fylt inn"
-                        className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm disabled:opacity-50 ${showSendButton && !previewApproved && !sendDisabledReason.startsWith('Kundekortet') ? 'bg-white text-black' : 'bg-white/10'}`}
-                      >
-                        {busy === 'preview' ? <Loader2 size={14} className="animate-spin" /> : <Eye size={14} />}
-                        {previewApproved ? 'Forhåndsvis igjen' : 'Forhåndsvis e-post'}
-                      </button>
-                    )}
-
                     {status !== 'sent' && needsReview && status !== 'verified' && (
                       <button
                         type="button"
@@ -908,7 +853,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                             : `Legges på asoldi.com for ${offerTo || 'e-posten på kortet'}`}
                         >
                           <input type="checkbox" checked={sendPortal} onChange={(event) => setSendPortal(event.target.checked)} disabled={!offerTo} />
-                          Asoldi.com{offerTo ? ` (${portalAccount?.found ? portalAccount.email : offerTo})` : ''}
+                          Asoldi.com
                         </label>
                         {sendPortal && offerTo && (
                           <span className={`text-[11px] ${portalAccount?.found ? 'text-emerald-300' : 'text-amber-200'}`}>
@@ -922,18 +867,15 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                         type="button"
                         onClick={() => void handleSend()}
                         disabled={busy === 'send' || Boolean(sendDisabledReason)}
-                        title={sendDisabledReason}
-                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#FF5B00] text-white text-sm disabled:opacity-50"
+                        title={sendDisabledReason || (sendEmail && sendPortal ? 'Send e-post og legg tilbudet på asoldi.com' : sendPortal ? 'Legg tilbudet på asoldi.com' : 'Send tilbudet på e-post')}
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#FF5B00] text-white text-sm whitespace-nowrap shrink-0 disabled:opacity-50"
                       >
                         {busy === 'send' ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                        {sendEmail && sendPortal ? 'Send e-post og legg på asoldi.com' : sendPortal ? 'Legg tilbudet på asoldi.com' : 'Send tilbud + kontrakt'}
+                        {sendEmail && sendPortal ? 'Send begge' : sendPortal ? 'Legg på Asoldi' : 'Send e-post'}
                       </button>
                     )}
                     {sendDisabledReason && showSendButton && (
                       <span className="text-xs text-gray-500 self-center">{sendDisabledReason}</span>
-                    )}
-                    {!sendDisabledReason && showSendButton && previewApproved && (
-                      <span className="text-xs text-emerald-300 self-center">Forhåndsvisning godkjent{offer.previewedAt ? ` ${new Date(offer.previewedAt).toLocaleTimeString('nb-NO', { hour: '2-digit', minute: '2-digit' })}` : ''}.</span>
                     )}
                   </div>
                 </div>
@@ -980,73 +922,6 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
             </>
           )}
         </main>
-
-        {previewState && offer && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true">
-            <div className="w-full max-w-[860px] max-h-[94vh] flex flex-col rounded-2xl border border-white/10 bg-[#1f1f1f] shadow-2xl">
-              <div className="flex items-start justify-between gap-3 border-b border-white/10 px-5 py-4">
-                <div className="min-w-0">
-                  <div className="text-base font-semibold">Slik ser e-posten ut for kunden</div>
-                  <div className="text-xs text-gray-400 mt-1 space-y-0.5">
-                    <div>Til: <span className="text-gray-200">{previewState.preview.to || to || '—'}</span> · Fra: <span className="text-gray-200">{previewState.preview.from}</span></div>
-                    <div>Emne: <span className="text-gray-200">{previewState.preview.subject}</span></div>
-                    <div className="inline-flex items-center gap-1">
-                      <Paperclip size={12} />
-                      {previewState.preview.contractAvailable
-                        ? <span>Vedlegg: <span className="text-gray-200">{previewState.preview.contractFileName}</span></span>
-                        : <span className="text-amber-300">Ingen kontrakt kan lages enda (velg tier, eller få tilbudet verifisert).</span>}
-                    </div>
-                  </div>
-                </div>
-                <button type="button" onClick={() => setPreviewState(null)} className="p-1.5 rounded-lg bg-white/10 hover:bg-white/15" aria-label="Lukk">
-                  <X size={16} />
-                </button>
-              </div>
-
-              {(previewState.placeholders.length > 0 || previewState.blocker) && (
-                <div className="mx-5 mt-4 flex items-start gap-3 rounded-xl border border-amber-500/40 bg-amber-900/20 px-4 py-3 text-sm text-amber-200">
-                  <AlertTriangle size={18} className="shrink-0 mt-0.5" />
-                  <div>
-                    {previewState.placeholders.length > 0 && (
-                      <div>
-                        <div className="font-medium">{previewState.placeholders.length} felt fra malen mangler innhold</div>
-                        <div className="text-xs mt-0.5">{previewState.placeholders.map((label) => `«${label}»`).join(' · ')}</div>
-                      </div>
-                    )}
-                    {previewState.blocker && previewState.placeholders.length === 0 && <div>{previewState.blocker}</div>}
-                  </div>
-                </div>
-              )}
-
-              <div className="flex-1 min-h-0 p-5">
-                <HtmlPreview html={previewState.preview.html} className="h-[60vh] min-h-[360px]" />
-              </div>
-
-              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/10 px-5 py-4">
-                <div className="text-xs text-gray-400">
-                  Signatur: {previewState.preview.sender.name} · {previewState.preview.sender.email}{previewState.preview.sender.phone ? ` · ${previewState.preview.sender.phone}` : ' · (telefon mangler)'}
-                </div>
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => setPreviewState(null)} className="px-3 py-2 rounded-lg bg-white/10 text-sm">
-                    {locked ? 'Lukk' : 'Rediger videre'}
-                  </button>
-                  {status !== 'sent' && (
-                    <button
-                      type="button"
-                      onClick={() => void approvePreview()}
-                      disabled={busy === 'approve' || previewState.placeholders.length > 0 || Boolean(previewState.blocker) || !readiness.ready}
-                      title={!readiness.ready ? readiness.message : previewState.placeholders.length ? 'Fyll ut eller slett feltene fra malen først' : previewState.blocker || 'Bekreft at e-posten er riktig'}
-                      className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium disabled:opacity-50"
-                    >
-                      {busy === 'approve' ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
-                      Ser riktig ut – klar til sending
-                    </button>
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
     </>
   );

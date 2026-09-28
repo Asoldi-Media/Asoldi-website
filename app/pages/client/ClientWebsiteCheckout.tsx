@@ -9,8 +9,7 @@ import { useClientAuth } from '../../contexts/ClientAuthContext';
 import { CHECKOUT_BENEFITS, CLIENT_WEBSITE_PLANS } from '../../data/clientWebsitePlans';
 import { formatPriceAmount, normalizeCouponCode, parsePriceAmount } from '../../data/coupons';
 import { requestClientApi } from './auth';
-
-type ClientOffer = { id: string; code: string; planId: string; previewUrl: string } | null;
+import { useClientOffer } from './useClientOffer';
 
 type PaymentMethod = 'faktura' | 'vipps' | 'kort';
 
@@ -63,7 +62,7 @@ export const ClientWebsiteCheckout = () => {
   const [couponInput, setCouponInput] = useState('');
   const [couponBusy, setCouponBusy] = useState(false);
   const [couponError, setCouponError] = useState('');
-  const [offer, setOffer] = useState<ClientOffer>(null);
+  const { offer } = useClientOffer(token);
 
   // Card (embedded Stripe Checkout)
   const [stripePromise, setStripePromise] = useState<Promise<Stripe | null> | null>(null);
@@ -83,16 +82,11 @@ export const ClientWebsiteCheckout = () => {
     async function refreshProfile() {
       if (!token) return;
       try {
-        const [profileRes, offerRes] = await Promise.all([
-          fetch('/api/client/profile', { headers: { Authorization: `Bearer ${token}` } }),
-          fetch('/api/client/offer', { headers: { Authorization: `Bearer ${token}` } }),
-        ]);
+        const profileRes = await fetch('/api/client/profile', { headers: { Authorization: `Bearer ${token}` } });
         const data = await profileRes.json().catch(() => ({}));
         if (profileRes.ok && data.profile) {
           updateProfileState(data.profile);
         }
-        const offerData = await offerRes.json().catch(() => ({}));
-        if (offerRes.ok) setOffer((offerData.offer as ClientOffer) || null);
       } catch {
         // Ignore refresh errors.
       }
