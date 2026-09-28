@@ -325,6 +325,9 @@ test('sales offers store: draft → review → verify → send lifecycle with lo
   assert.equal(verified.status, 'verified');
   assert.equal(verified.adminNote, 'Send som avtalt');
   assert.equal(store.offerCanBeSentBySales(verified), true);
+  assert.equal(store.offerContentIsLocked(verified), true);
+  const attempted = store.upsertClientOfferDraft(CLIENT.id, { email: { html: '<p>hack</p>' } });
+  assert.equal(attempted.email.html, '<p>hei</p>', 'verified offers stay frozen for the sales upsert');
 
   const reopened = store.reopenSalesOffer(created.id, { actor: 'damian' });
   assert.equal(reopened.status, 'review-requested', 'default reopen keeps it in the admin queue');
@@ -596,6 +599,9 @@ test('portal letter strips email chrome and keeps greeting plus product specs', 
 });
 
 test('portal contract html uses a document header, party columns, and numbered sections', async () => {
+  const { existsSync } = await import('node:fs');
+  const { dirname, join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
   const { contractHtmlForOffer } = await import('../lib/offer-contract-html.js');
   const html = contractHtmlForOffer(
     { tierId: tiers.WEBSITE_TIERS[0].id, sentAt: '2026-09-28T08:00:00.000Z' },
@@ -607,5 +613,55 @@ test('portal contract html uses a document header, party columns, and numbered s
   assert.match(html, /Byneset Bydelskafé/);
   assert.match(html, /1\. Service scope/);
   assert.match(html, /offer-contract-sign/);
+  assert.match(html, /asoldi-contract-signature\.png/);
+  assert.match(html, /offer-contract-stamp/);
   assert.match(html, /Jeg aksepterer avtalen/);
+  const stamp = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'asoldi-contract-signature.png');
+  assert.equal(existsSync(stamp), true, 'portal signature PNG is served from public/');
+});
+
+test('meeting quote describes the selected plan for admin review', () => {
+  const described = quoteOffer.describeMeetingQuote({
+    tierId: 'seo',
+    pages: 7,
+    selected: ['seo', 'blog'],
+    oneTimeAddOns: ['pos'],
+    productNotes: 'De vil ha meny og bordbooking.',
+    productGoal: 'Flere bookinger fra Google.',
+  });
+  assert.match(described.plan, /SEO/i);
+  assert.match(described.plan, /Koble opp til kassasystem/);
+  assert.equal(described.notes, 'De vil ha meny og bordbooking.');
+  assert.equal(described.goal, 'Flere bookinger fra Google.');
+});
+
+test('client intent briefing uses transcript, notes and the selected plan', async () => {
+  const chat = async () => ({
+    headline: 'Kunden vil ha meny, booking og SEO.',
+    wants: ['Meny på nettsiden', 'Bordbooking'],
+    uncertainties: ['Språk er ikke avklart'],
+  });
+  const briefing = await offerAi.summarizeClientIntent({
+    client: CLIENT,
+    meeting: { title: 'Møte', transcript: 'Vi trenger meny og booking på nettsiden.', summary: 'Meny og booking.' },
+    quote: { tierId: 'seo', pages: 7, selected: ['seo'], productNotes: 'Booking er viktigst.' },
+    products: offerEmail.productsWithTier([], tiers.WEBSITE_TIERS[1].id),
+    notes: 'Booking er viktigst.',
+    deps: { chat },
+  });
+  assert.equal(briefing.source, 'ai');
+  assert.match(briefing.headline, /meny/i);
+  assert.ok(briefing.wants.includes('Bordbooking'));
+  assert.ok(briefing.plan);
+  const fallback = await offerAi.summarizeClientIntent({
+    client: CLIENT,
+    quote: { tierId: 'starter', pages: 5, productGoal: 'En enkel nettside.' },
+    notes: '',
+    deps: { chat: async () => { throw new Error('offline'); } },
+  });
+  assert.equal(fallback.source, 'fallback');
+  assert.match(fallback.headline, /enkel nettside/i);
+  const hashA = offerAi.clientIntentSourceHash({ notes: 'a', products: [] });
+  const hashB = offerAi.clientIntentSourceHash({ notes: 'b', products: [] });
+  assert.notEqual(hashA, hashB);
 });

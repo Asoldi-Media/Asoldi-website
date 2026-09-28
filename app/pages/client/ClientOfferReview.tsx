@@ -25,8 +25,12 @@ const CONTRACT_CLASS = [
   '[&_p]:mt-2.5 [&_strong]:text-[#111827]',
   '[&_ul]:mt-2 [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-5',
   '[&_ol]:mt-2 [&_ol]:mb-3 [&_ol]:list-decimal [&_ol]:pl-5',
-  '[&_.offer-contract-sign]:mt-10 [&_.offer-contract-sign]:grid [&_.offer-contract-sign]:grid-cols-1 [&_.offer-contract-sign]:gap-8 [&_.offer-contract-sign]:border-t [&_.offer-contract-sign]:border-[#E8E4DC] [&_.offer-contract-sign]:pt-8 sm:[&_.offer-contract-sign]:grid-cols-2',
+  '[&_.offer-contract-sign]:mt-6 [&_.offer-contract-sign]:grid [&_.offer-contract-sign]:grid-cols-1 [&_.offer-contract-sign]:gap-10 sm:[&_.offer-contract-sign]:grid-cols-2',
   '[&_.offer-contract-sign_h2]:mt-0',
+  '[&_.offer-contract-sign-label]:mt-3 [&_.offer-contract-sign-label]:mb-1 [&_.offer-contract-sign-label]:text-[13px] [&_.offer-contract-sign-label]:text-[#1F2937]',
+  '[&_.offer-contract-sign-line]:relative [&_.offer-contract-sign-line]:mt-2 [&_.offer-contract-sign-line]:flex [&_.offer-contract-sign-line]:min-h-[56px] [&_.offer-contract-sign-line]:items-end [&_.offer-contract-sign-line]:border-b [&_.offer-contract-sign-line]:border-[#222222]',
+  '[&_.offer-contract-stamp]:mb-[-2px] [&_.offer-contract-stamp]:block [&_.offer-contract-stamp]:h-[52px] [&_.offer-contract-stamp]:w-auto [&_.offer-contract-stamp]:max-w-full [&_.offer-contract-stamp]:object-contain [&_.offer-contract-stamp]:object-left',
+  '[&_.offer-contract-sign-date]:mt-2 [&_.offer-contract-sign-date]:text-[13px] [&_.offer-contract-sign-date]:text-[#1F2937]',
 ].join(' ');
 
 export const ClientOfferReview = () => {

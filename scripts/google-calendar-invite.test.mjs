@@ -10,6 +10,10 @@ import {
   shouldIncludeFireflies,
   withoutAttendeeEmails,
 } from '../lib/google-calendar.js';
+import {
+  GOOGLE_CALENDAR_OAUTH_EVENT,
+  renderGoogleCalendarOAuthResultHtml,
+} from '../lib/google-calendar-oauth-ui.js';
 
 const client = {
   businessName: 'Test Bakeri',
@@ -112,4 +116,30 @@ test('calendar invite lead defaults to 8s and can be disabled', () => {
   assert.equal(calendarInviteLeadMs(), 0);
   if (previous == null) delete process.env.CALENDAR_INVITE_LEAD_MS;
   else process.env.CALENDAR_INVITE_LEAD_MS = previous;
+});
+
+test('OAuth success page tells the sales tab the calendar is connected', () => {
+  const html = renderGoogleCalendarOAuthResultHtml({
+    ok: true,
+    googleEmail: 'rep@asoldi.com',
+    googleName: 'Rep',
+    tokenUpdatedAt: '2026-09-28T09:00:00.000Z',
+  });
+  assert.match(html, /Google Calendar connected as rep@asoldi\.com/);
+  assert.match(html, /BroadcastChannel/);
+  assert.match(html, /window\.opener\.postMessage/);
+  assert.match(html, /localStorage\.setItem/);
+  assert.match(html, new RegExp(GOOGLE_CALENDAR_OAUTH_EVENT));
+  assert.match(html, /"connected":true/);
+  assert.match(html, /window\.close\(\)/);
+});
+
+test('OAuth failure page tells the sales tab the connect did not finish', () => {
+  const html = renderGoogleCalendarOAuthResultHtml({
+    ok: false,
+    error: 'Invalid or expired OAuth state.',
+  });
+  assert.match(html, /Invalid or expired OAuth state/);
+  assert.match(html, /"connected":false/);
+  assert.match(html, /BroadcastChannel/);
 });

@@ -417,6 +417,19 @@ export type SalesOffer = {
   meetingId: string;
   meetingSource?: '' | 'manual';
   adminNote: string;
+  clientIntent?: {
+    headline: string;
+    wants: string[];
+    plan: string;
+    notes: string;
+    goal: string;
+    identity: string;
+    customSections: string;
+    uncertainties: string[];
+    source: 'ai' | 'fallback';
+    sourceHash: string;
+    generatedAt: string;
+  } | null;
   history: { at: string; by: string; action: string; note: string }[];
   reviewRequestedAt: string;
   verifiedAt: string;

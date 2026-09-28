@@ -87,7 +87,7 @@ import {
 } from './lib/sales-email.js';
 import { confirmationSendGaps } from './lib/sales-next-actions.js';
 import { normalizeStoredWebsiteEmail, resolveWebsiteEmail } from './lib/sales-website-email.js';
-import { extractBookingFromLead } from './lib/sales-booking-facts.js';
+import { extractBookingFromLead, salesBookingFacts } from './lib/sales-booking-facts.js';
 import {
   generalSalesOwnerKeys,
   isGeneralSalesOwnerKey,
@@ -131,7 +131,7 @@ import { buildContractPdf, contractFileName, contractInputsForOffer, offerContra
 import { contractHtmlForOffer } from './lib/offer-contract-html.js';
 import { extractOfferLetterBody } from './lib/offer-letter-html.js';
 import { isDeepseekConfigured } from './lib/deepseek.js';
-import { fillOfferFromTranscript, meetingContextIsTooThin, reflectContractFromEmail } from './lib/offer-ai.js';
+import { clientIntentSourceHash, fillOfferFromTranscript, meetingContextIsTooThin, reflectContractFromEmail, summarizeClientIntent } from './lib/offer-ai.js';
 import { matchMeetingToClients, recordingMatchesSalesMeeting } from './lib/fireflies-client-match.js';
 import { describeFirefliesMedia, firefliesMediaFilePath, persistFirefliesMedia } from './lib/fireflies-media.js';
 import { CUSTOM_TIER_ID, WEBSITE_TIERS, resolveTier, tierById, toClientWebsitePlan } from './lib/website-tiers.js';
@@ -204,6 +204,7 @@ import {
   upsertMeetingEvent,
   upsertSalesReminderEvent,
 } from './lib/google-calendar.js';
+import { renderGoogleCalendarOAuthResultHtml } from './lib/google-calendar-oauth-ui.js';
 import {
   createClientGoogleAuthUrl,
   exchangeClientGoogleCode,
@@ -11618,21 +11619,27 @@ app.get('/api/admin/sales/google/oauth/callback', async (req, res) => {
   const code = sanitizeText(req.query.code);
   const state = sanitizeText(req.query.state);
   const accountKey = consumeOAuthState(state);
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
   if (accountKey === null) {
-    return res.status(400).send('<h2>Invalid or expired OAuth state.</h2>');
+    return res.status(400).send(renderGoogleCalendarOAuthResultHtml({
+      ok: false,
+      error: 'Invalid or expired OAuth state.',
+    }));
   }
   try {
     const siblings = await resolveSiblingCalendarAccountKeys(accountKey);
     const status = await exchangeGoogleCalendarCode(code, accountKey, siblings);
-    const connectedAs = sanitizeText(status?.googleEmail);
-    const heading = connectedAs
-      ? `Google Calendar connected as ${connectedAs}.`
-      : 'Google Calendar connected.';
-    return res.send(
-      `<html><body><h3>${heading.replace(/[<>&]/g, '')}</h3><p>You can close this window.</p><script>window.close()</script></body></html>`
-    );
+    return res.send(renderGoogleCalendarOAuthResultHtml({
+      ok: true,
+      googleEmail: sanitizeText(status?.googleEmail),
+      googleName: sanitizeText(status?.googleName),
+      tokenUpdatedAt: sanitizeText(status?.tokenUpdatedAt),
+    }));
   } catch (error) {
-    return res.status(500).send(`<h2>Google Calendar connection failed:</h2><pre>${String(error.message || error)}</pre>`);
+    return res.status(500).send(renderGoogleCalendarOAuthResultHtml({
+      ok: false,
+      error: String(error.message || error || 'Google Calendar connection failed.'),
+    }));
   }
 });
 
@@ -13148,6 +13155,7 @@ function compactOfferClient(client = {}) {
     hasSalesNotes: Boolean(String(client.notes || '').trim()),
     hasProductNotes: Boolean(sanitizeText(client?.details?.meetingQuote?.productNotes)),
     workshopStartDate: sanitizeText(client?.details?.meetingQuote?.startDate),
+    meetingQuote: client?.details?.meetingQuote || null,
     meetingAt: client.meetingAt || '',
     meetings: Array.isArray(client.meetings) ? client.meetings : [],
   };
@@ -13175,7 +13183,7 @@ function presentOffer(offer) {
  * template (no envelope icon, left-aligned heading) on read so the fix shows up without a "Nytt tilbud".
  */
 function refreshStoredOfferShell(offer, req) {
-  if (!offer || offer.status === 'sent') return offer;
+  if (!offer || salesOffers.offerContentIsLocked(offer)) return offer;
   const html = refreshOfferShell(offer.email?.html || '');
   if (html === (offer.email?.html || '')) return offer;
   return salesOffers.updateSalesOffer(offer.id, { email: { html } }, { actor: offerActor(req), action: '' }) || offer;
@@ -13428,7 +13436,7 @@ function quoteMatchesOffer(offer, built, sentence) {
 }
 
 function applyMeetingQuoteToOffer(offer, client, { forceProducts = false } = {}) {
-  if (!offer || offer.status === 'sent') return offer;
+  if (!offer || salesOffers.offerContentIsLocked(offer)) return offer;
   if (forceProducts && offer.products?.length) return offer;
   if (!forceProducts && (offer.status !== 'draft' || salesOffers.offerPreviewIsCurrent(offer))) return offer;
   const built = buildOfferFromMeetingQuote(client?.details?.meetingQuote);
@@ -13451,8 +13459,7 @@ function applyMeetingQuoteToOffer(offer, client, { forceProducts = false } = {})
 async function ensureOfferDraft(client, req) {
   const existing = salesOffers.getOfferForClient(client.id);
   if (existing) {
-    // A confirmed preview is the message they signed off on — do not rewrite it on send/open.
-    if (existing.status === 'sent' || salesOffers.offerPreviewIsCurrent(existing)) return existing;
+    if (salesOffers.offerContentIsLocked(existing) || salesOffers.offerPreviewIsCurrent(existing)) return existing;
     const refreshed = refreshStoredOfferShell(existing, req);
     const values = await offerIdentityValues(client, req);
     const email = withResolvedOfferIdentity(refreshed?.email || {}, values);
@@ -13557,14 +13564,14 @@ async function notifyOfferVerified(offer, client, req) {
   const to = owners[sanitizeText(offer.ownerId)]
     || (await accountKeyToEmail(offer.ownerId))
     || readFirefliesWebhookConfig().notifyEmail;
-  const link = `${origin}/sales?client=${encodeURIComponent(client.id)}`;
+  const link = `${origin}/sales?flow=${encodeURIComponent(client.id)}&step=3`;
   const text = [
     `Verifisert tilbud klart: ${client.businessName}`,
     offer.adminNote ? `Melding fra admin: ${offer.adminNote}` : '',
     '',
     summarizeOfferProducts(offer.products, { mvaIncluded: offer.mvaIncluded }),
     '',
-    `Åpne kunden og trykk "Send tilbud": ${link}`,
+    `Åpne og send tilbudet: ${link}`,
   ].filter((line, index, all) => line !== '' || all[index - 1] !== '').join('\n');
   if (!emailLib.canSendEmail()) return { sent: false, reason: 'smtp-not-configured' };
   await emailLib.sendEmail({
@@ -13591,6 +13598,26 @@ async function offerContractBuffer(offer, client, { to = '' } = {}) {
 
 function offerProductNotes(client) {
   return sanitizeText(client?.details?.meetingQuote?.productNotes);
+}
+
+async function persistClientIntent(offer, client, { force = false, actor = '' } = {}) {
+  if (!offer || offer.status === 'sent') return offer;
+  if (!force && offer.status !== 'review-requested' && offer.status !== 'verified') return offer;
+  const meeting = meetingForOffer(client, offer);
+  const quote = client?.details?.meetingQuote || {};
+  const notes = offerProductNotes(client);
+  const sourceHash = clientIntentSourceHash({ meeting: meeting || {}, quote, products: offer.products, notes });
+  if (!force && offer.clientIntent?.sourceHash === sourceHash && offer.clientIntent?.headline) return offer;
+  const briefing = await summarizeClientIntent({
+    client,
+    meeting: meeting || {},
+    quote,
+    products: offer.products,
+    notes,
+  });
+  return salesOffers.updateSalesOffer(offer.id, {
+    clientIntent: { ...briefing, sourceHash, generatedAt: new Date().toISOString() },
+  }, { actor, action: '' }) || offer;
 }
 
 function clientForOfferFill(client) {
@@ -13647,7 +13674,7 @@ async function portalAccountForClient(client, requested = '') {
 
 /** Writes the meeting transcript and sales notes into still-empty offer slots. */
 async function fillOpenOfferSlotsFromSalesMeeting(offer, client, req) {
-  if (!offer || offer.status === 'sent') return offer;
+  if (!offer || salesOffers.offerContentIsLocked(offer)) return offer;
   const html = offer.email?.html || '';
   const open = ['need', 'project', 'terms', 'benefits'].some((slot) => offerSlotIsOpen(html, slot));
   if (!open) return offer;
@@ -13750,13 +13777,11 @@ app.put('/api/admin/sales/:id/offer', salesAuth, async (req, res) => {
   if (current.status === 'sent') {
     return res.status(409).json({ message: 'Tilbudet er allerede sendt. Start et nytt tilbud for å endre.', offer: presentOffer(current) });
   }
-  if (current.status === 'verified' && !req.salesUser?.isAdmin) {
-    return res.status(409).json({ message: 'Tilbudet er verifisert av admin og låst. Be admin åpne det igjen for endringer.', offer: presentOffer(current) });
+  if (salesOffers.offerContentIsLocked(current) && !req.salesUser?.isAdmin) {
+    const updated = persistOfferDraft(current, client, req.body, req, { content: false });
+    return res.json({ offer: presentOffer(updated), readiness: offerReadiness(client, updated) });
   }
-  const patch = offerPatchFromBody(req.body || {}, current);
-  const recipient = offerRecipientPatch(req.body || {}, client);
-  if (recipient) patch.party = { ...(patch.party || {}), ...recipient };
-  const updated = salesOffers.updateSalesOffer(current.id, patch, { actor: offerActor(req), action: '' });
+  const updated = persistOfferDraft(current, client, req.body, req);
   res.json({ offer: presentOffer(updated), readiness: offerReadiness(client, updated) });
 });
 
@@ -13807,7 +13832,9 @@ app.post('/api/admin/sales/:id/offer/fill', salesAuth, async (req, res) => {
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
   if (!isDeepseekConfigured()) return res.status(503).json({ message: 'DeepSeek er ikke konfigurert (DEEPSEEK_API_KEY mangler).' });
   const current = await ensureOfferDraft(client, req);
-  if (current.status === 'sent') return res.status(409).json({ message: 'Tilbudet er allerede sendt.' });
+  if (salesOffers.offerContentIsLocked(current)) {
+    return res.status(409).json({ message: 'Tilbudet er låst. Innholdet kan ikke skrives om fra transkriptet.' });
+  }
   const meeting = meetingForOffer(client, current);
   const contextBlocker = offerContextBlocker(client, meeting);
   if (contextBlocker) return res.status(400).json({ message: contextBlocker });
@@ -13835,7 +13862,9 @@ app.post('/api/admin/sales/:id/offer/use-meeting', salesAuth, async (req, res) =
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
   const current = await ensureOfferDraft(client, req);
-  if (current.status === 'sent') return res.status(409).json({ message: 'Tilbudet er allerede sendt.' });
+  if (salesOffers.offerContentIsLocked(current)) {
+    return res.status(409).json({ message: 'Tilbudet er låst. Møtegrunnlaget kan ikke byttes.' });
+  }
   if (req.body?.clear) {
     const auto = salesMeetingRef(client);
     const updated = salesOffers.updateSalesOffer(current.id, {
@@ -13922,13 +13951,19 @@ app.post('/api/admin/sales/:id/offer/request-review', salesAuth, async (req, res
   const readiness = offerReadiness(client, drafted, { to: req.body?.to });
   if (!readiness.ready) return res.status(400).json({ message: readiness.message, readiness });
   const updated = salesOffers.requestOfferReview(drafted.id, { actor: offerActor(req), note: sanitizeText(req.body?.note) });
+  let withIntent = updated;
+  try {
+    withIntent = await persistClientIntent(updated, client, { force: true, actor: offerActor(req) });
+  } catch {
+    withIntent = updated;
+  }
   let notification = { sent: false };
   try {
     notification = await notifyOfferReviewRequested(updated, client, req);
   } catch (error) {
     notification = { sent: false, reason: sanitizeText(error?.message) };
   }
-  res.json({ offer: presentOffer(updated), notification });
+  res.json({ offer: presentOffer(withIntent), notification });
 });
 
 app.get('/api/admin/sales/:id/offer/contract.pdf', salesAuth, async (req, res) => {
@@ -14194,8 +14229,15 @@ app.get('/api/admin/offers/:id', salesAuth, async (req, res) => {
   if (!stored) return res.status(404).json({ message: 'Offer not found.' });
   let offer = refreshStoredOfferShell(stored, req);
   const client = sales.getSalesClientById(offer.salesClientId);
-  if (client && !offer.products?.length && offer.status !== 'sent' && offer.status !== 'verified') {
+  if (client && !offer.products?.length && !salesOffers.offerContentIsLocked(offer)) {
     offer = applyMeetingQuoteToOffer(offer, client, { forceProducts: true });
+  }
+  if (client && offer.status !== 'sent') {
+    try {
+      offer = await persistClientIntent(offer, client, { actor: offerActor(req) });
+    } catch {
+      // Keep the offer even if the briefing model fails; the fallback card still renders notes/plan.
+    }
   }
   const ownerNames = await salesOwnerNameMap(req);
   const meetings = (client?.meetings || []).map((ref) => ({ ...ref, media: describeFirefliesMedia(ref.meetingId) }));
@@ -14209,6 +14251,16 @@ app.get('/api/admin/offers/:id', salesAuth, async (req, res) => {
     meetings,
     deepseek: isDeepseekConfigured(),
   });
+});
+
+app.post('/api/admin/offers/:id/client-intent', salesAuth, async (req, res) => {
+  if (!requireOfferAdmin(req, res)) return;
+  const current = salesOffers.getSalesOfferById(req.params.id);
+  if (!current) return res.status(404).json({ message: 'Offer not found.' });
+  const client = sales.getSalesClientById(current.salesClientId);
+  if (!client) return res.status(404).json({ message: 'Kunden finnes ikke lenger.' });
+  const updated = await persistClientIntent(current, client, { force: true, actor: offerActor(req) });
+  res.json({ offer: presentOffer(updated) });
 });
 
 app.put('/api/admin/offers/:id', salesAuth, async (req, res) => {
@@ -16093,6 +16145,14 @@ app.use(
   })
 );
 
+app.get('/asoldi-contract-signature.png', (req, res) => {
+  const file = join(__dirname, 'assets', 'asoldi-contract-signature.png');
+  if (!existsSync(file)) return res.status(404).type('text/plain').send('Not found');
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  return res.type('png').sendFile(file);
+});
+
 app.use(express.static(distPath, {
   setHeaders: (res, filePath) => {
     if (filePath.endsWith('.js')) res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
@@ -16195,16 +16255,19 @@ async function backfillSalesBookingFacts({ force = false } = {}) {
     const patches = [];
     for (const client of sales.getSalesClients()) {
       summary.scanned += 1;
-      if (!force && client.salesMigrations?.bookingFactsV1) continue;
+      const existingFacts = salesBookingFacts(client);
+      if (!force && existingFacts.booker && existingFacts.bookedAt && existingFacts.listName && existingFacts.meetingFor) {
+        continue;
+      }
       const my = client.myphoner || {};
-      let bookedByEmail = sanitizeText(my.bookedByEmail);
+      let bookedByEmail = sanitizeText(my.bookedByEmail) || sanitizeText(my.latestCallUserEmail);
       let bookedByName = sanitizeText(my.bookedByName);
       let bookedAt = sanitizeText(my.bookedAt);
       let listName = sanitizeText(my.listName);
       let listId = sanitizeText(my.listId);
       let meetingAt = sanitizeText(client.meetingAt);
       const leadId = sanitizeText(my.leadId);
-      const missing = () => !bookedByEmail || !bookedAt || !listName || !meetingAt;
+      const missing = () => !(bookedByEmail || bookedByName) || !bookedAt || !listName || !meetingAt;
       let fetchFailed = false;
       if (leadId && missing() && myphonerApi.isMyPhonerConfigured()) {
         summary.fetched += 1;
@@ -16213,19 +16276,32 @@ async function backfillSalesBookingFacts({ force = false } = {}) {
           fetchFailed = true;
           summary.failed += 1;
         } else {
-          const lead = myphonerApi.unwrapMyPhonerLead(leadRes.data);
-          const extracted = extractBookingFromLead(lead);
+          let lead = myphonerApi.unwrapMyPhonerLead(leadRes.data);
+          let extracted = extractBookingFromLead(lead);
+          if (!(extracted.bookedByEmail || extracted.bookedByName)) {
+            const eventsRes = await myphonerApi.fetchMyPhonerLeadEvents(leadId);
+            const eventRows = Array.isArray(eventsRes?.data)
+              ? eventsRes.data
+              : Array.isArray(eventsRes?.data?.events)
+                ? eventsRes.data.events
+                : [];
+            if (eventsRes?.success && eventRows.length) {
+              lead = { ...lead, events: eventRows };
+              extracted = extractBookingFromLead(lead);
+            }
+          }
           if (!bookedByEmail) bookedByEmail = sanitizeText(extracted.bookedByEmail);
           if (!bookedByName) bookedByName = sanitizeText(extracted.bookedByName);
           if (!bookedAt) bookedAt = sanitizeText(extracted.bookedAt);
           if (!listName && extracted.listName) listName = sanitizeText(extracted.listName);
           if (!listId && extracted.listId) listId = sanitizeText(extracted.listId);
           if (!meetingAt) meetingAt = sanitizeText(parseMyphonerMeetingAt(lead, getLeadDataMap(lead)));
-          if (!bookedByEmail && sanitizeText(my.latestCallId)) {
+          if (!(bookedByEmail || bookedByName) && sanitizeText(my.latestCallId)) {
             const callRes = await myphonerApi.fetchMyPhonerCallById(my.latestCallId);
             if (callRes.success) {
-              const fromCall = extractBookingFromLead({}, callRes.data);
+              const fromCall = extractBookingFromLead(lead, callRes.data);
               if (fromCall.bookedByEmail) bookedByEmail = sanitizeText(fromCall.bookedByEmail);
+              if (fromCall.bookedByName) bookedByName = sanitizeText(fromCall.bookedByName);
             }
           }
         }
@@ -16234,14 +16310,14 @@ async function backfillSalesBookingFacts({ force = false } = {}) {
       if (fetchFailed) continue;
       if (!bookedByName && bookedByEmail) bookedByName = nameByEmail.get(bookedByEmail.toLowerCase()) || '';
       if (!bookedAt && leadId) bookedAt = sanitizeText(client.createdAt);
-      if (!bookedByEmail || !bookedAt || !listName || !meetingAt) summary.stillMissing += 1;
+      if (!(bookedByEmail || bookedByName) || !bookedAt || !listName || !meetingAt) summary.stillMissing += 1;
       const myphonerPatch = {};
       if (bookedByEmail && bookedByEmail !== sanitizeText(my.bookedByEmail)) myphonerPatch.bookedByEmail = bookedByEmail;
       if (bookedByName && bookedByName !== sanitizeText(my.bookedByName)) myphonerPatch.bookedByName = bookedByName;
       if (bookedAt && bookedAt !== sanitizeText(my.bookedAt)) myphonerPatch.bookedAt = bookedAt;
       if (listName && listName !== sanitizeText(my.listName)) myphonerPatch.listName = listName;
       if (listId && listId !== sanitizeText(my.listId)) myphonerPatch.listId = listId;
-      const patch = { salesMigrations: { bookingFactsV1: true } };
+      const patch = { salesMigrations: { bookingFactsV1: true, bookingFactsV2: true } };
       if (Object.keys(myphonerPatch).length) patch.myphoner = myphonerPatch;
       if (!sanitizeText(client.meetingAt) && meetingAt) {
         patch.meetingAt = meetingAt;

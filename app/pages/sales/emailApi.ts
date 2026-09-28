@@ -179,6 +179,10 @@ export function getAdminOffer(id: string) {
   return emailRequest(`/admin/offers/${encodeURIComponent(id)}`);
 }
 
+export function refreshAdminOfferIntent(id: string) {
+  return emailRequest(`/admin/offers/${encodeURIComponent(id)}/client-intent`, { method: 'POST', body: '{}' });
+}
+
 export function saveAdminOffer(id: string, payload: Record<string, unknown>) {
   return emailRequest(`/admin/offers/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) });
 }

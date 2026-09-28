@@ -96,6 +96,20 @@ test('online confirmation keeps the Google Meet CTA', () => {
   assert.match(message.html, /Åpne Google Meet/);
 });
 
+test('online calendar blocks 60 minutes while client copy stays 30', () => {
+  const client = getSalesEmailPreviewClient();
+  const message = composeEmailForClient(client, 'thank-you').message;
+  assert.match(message.html, /satt av 30 min/);
+  assert.equal(message.html.includes('60 min'), false);
+  assert.match(message.icalEvent.content, /DTSTART:20260916T120000Z/);
+  assert.match(message.icalEvent.content, /DTEND:20260916T130000Z/);
+  assert.match(message.icalEvent.content, /Varighet: ca\. 30 minutter/);
+  const irl = buildSalesCalendarInvite(getSalesEmailPreviewClient({ meetingMode: 'in-person' }), {
+    eventId: 'evt-irl',
+  });
+  assert.match(irl.content, /DTEND:20260916T123000Z/);
+});
+
 test('3-day reminder copy follows the meeting type', () => {
   const online = composeEmailForClient(getSalesEmailPreviewClient(), 'reminder-3d').message;
   const irl = composeEmailForClient(getSalesEmailPreviewClient({ meetingMode: 'in-person' }), 'reminder-3d').message;

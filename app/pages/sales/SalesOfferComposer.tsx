@@ -247,27 +247,31 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
   }
 
   // Autosave the draft so the rep can leave and come back (and so admin review sees the latest content).
+  // After admin lock, only the recipient (Til) can still be saved.
   const scheduleSave = useCallback((extra: Record<string, unknown> = {}) => {
-    if (!offer || locked) return;
-    dirtyRef.current = true;
+    if (!offer || status === 'sent') return;
+    if (!locked) dirtyRef.current = true;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       try {
-        const data = await saveClientOffer(clientId, {
-          html: htmlRef.current,
-          subject: subjectRef.current,
-          preheader: preheaderRef.current,
-          to: toRef.current,
-          party: partyPayload(),
-          ...extra,
-        }) as { offer: SalesOffer };
+        const payload = locked
+          ? { to: toRef.current }
+          : {
+            html: htmlRef.current,
+            subject: subjectRef.current,
+            preheader: preheaderRef.current,
+            to: toRef.current,
+            party: partyPayload(),
+            ...extra,
+          };
+        const data = await saveClientOffer(clientId, payload) as { offer: SalesOffer };
         setOffer(data.offer);
         dirtyRef.current = false;
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Autolagring feilet');
       }
     }, AUTOSAVE_MS);
-  }, [clientId, offer, locked]);
+  }, [clientId, offer, locked, status]);
 
   function onHtmlChange(next: string) {
     if (next === html) return;
@@ -421,7 +425,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     setNotice('');
     try {
       const channels = [sendEmail ? 'email' : '', sendPortal ? 'portal' : ''].filter(Boolean);
-      const payload = { to: resolveWebsiteEmail(client || {}), party: partyPayload(), channels };
+      const payload = { to: (to || '').trim() || resolveWebsiteEmail(client || {}), party: partyPayload(), channels };
       const data = await sendClientOffer(clientId, payload) as {
         offer: SalesOffer;
         copyTo?: string;
@@ -504,7 +508,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
   }, [loading, locked, fillDisabledReason, offer?.id, meeting?.meetingId, meetingSelected, openPlaceholders, alreadyAutoFilled]);
 
   const card = useMemo(() => clientCardParty(client || {}), [client]);
-  const offerTo = resolveWebsiteEmail(client || {}) || to;
+  const offerTo = (to || '').trim() || resolveWebsiteEmail(client || {});
   const workshopDateLabel = formatWorkshopDate(client?.workshopStartDate || '');
   const readiness = useMemo(() => {
     const missing = offerMissingFields({
@@ -543,7 +547,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
       <div className={embedded ? 'text-white' : 'staff-light min-h-screen bg-[#1a1a1a] text-white'}>
         {!embedded && (
         <header className="border-b border-white/10 bg-[#222]">
-          <div className="max-w-[1400px] mx-auto px-6 py-4 flex flex-wrap items-center justify-between gap-4">
+          <div className="max-w-[1400px] mx-auto px-3 sm:px-6 py-3 sm:py-4 flex flex-wrap items-center justify-between gap-2">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <h1 className="text-lg font-semibold">{title}</h1>
@@ -563,7 +567,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
 
         {!embedded && (
         <div className="bg-white text-[#111827] border-b border-[#E6E9EF]">
-          <div className="max-w-[1400px] mx-auto px-6 py-3">
+          <div className="max-w-[1400px] mx-auto px-3 sm:px-6 py-0 sm:py-3">
             <SalesFlowSteps
               step={3}
               onStep={(step) => {
@@ -574,7 +578,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
           </div>
         </div>
         )}
-        <main className="max-w-[1400px] mx-auto px-6 py-6 flex flex-col gap-4">
+        <main className={`${embedded ? 'px-3 sm:px-6 py-3 sm:py-6' : 'max-w-[1400px] mx-auto px-3 sm:px-6 py-4 sm:py-6'} flex flex-col gap-4`}>
           {error && <p className="text-red-300 text-sm">{error}</p>}
           {notice && <p className="text-emerald-200 text-sm">{notice}</p>}
 
@@ -887,8 +891,19 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                     <div className="font-medium text-white text-sm">Kontraktdata for dette tilbudet</div>
                     <p className="text-[11px] text-gray-500">Krysset nullstiller feltet til kundekortet. Til og startdato settes på de forrige stegene.</p>
                     <div className="rounded-lg border border-white/10 bg-black/20 px-2 py-1.5">
-                      <div className="text-[10px] uppercase tracking-wide text-gray-500">Til</div>
-                      <div className="text-sm text-white break-all">{offerTo || '—'}</div>
+                      <label className="text-[10px] uppercase tracking-wide text-gray-500">
+                        Til
+                        <input
+                          type="email"
+                          value={to}
+                          onChange={(event) => {
+                            setTo(event.target.value);
+                            scheduleSave({ to: event.target.value });
+                          }}
+                          disabled={status === 'sent'}
+                          className="mt-0.5 w-full bg-transparent text-sm text-white outline-none disabled:opacity-50"
+                        />
+                      </label>
                     </div>
                     <div className="rounded-lg border border-white/10 bg-black/20 px-2 py-1.5">
                       <div className="text-[10px] uppercase tracking-wide text-gray-500">Startdato for workshop</div>

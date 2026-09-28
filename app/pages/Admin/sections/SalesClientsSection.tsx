@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArchiveX,
+  Calendar,
   CalendarCheck2,
   CalendarClock,
   ChevronDown,
@@ -15,6 +16,7 @@ import {
   Pencil,
   Phone,
   Plus,
+  ShieldCheck,
   Search,
   StickyNote,
   Tag,
@@ -45,6 +47,8 @@ import {
   clientNeedsConfirmationSend,
 } from '../../../../lib/sales-next-actions.js';
 import { salesBookingFacts } from '../../../../lib/sales-booking-facts.js';
+import { calendarDurationForMode } from '../../../../lib/sales-meeting-duration.js';
+import { GOOGLE_CALENDAR_OAUTH_EVENT } from '../../../../lib/google-calendar-oauth-ui.js';
 import {
   clientHasPublicPreviewSnapshot,
   getPublicClientPreviewUrl,
@@ -85,6 +89,10 @@ const OFFER_TIERS = [
 const SALES_MAP_DEFAULT_CENTER: [number, number] = [63.4305, 10.3951];
 const SALES_MAP_DEFAULT_ZOOM = 5;
 
+function salesIsMobileViewport() {
+  return typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches;
+}
+
 type CalendarStatus = {
   configured: boolean;
   connected: boolean;
@@ -98,6 +106,42 @@ type CalendarStatus = {
   loginUsername?: string;
   loginAccountKey?: string;
 };
+
+function calendarChipLabel(status: CalendarStatus | null) {
+  if (!status?.connected) return 'Kalender';
+  const email = String(status.googleEmail || '').trim();
+  if (!email) return 'Kalender';
+  return email.split('@')[0] || 'Kalender';
+}
+
+type CalendarConnectSnapshot = {
+  connected: boolean;
+  tokenUpdatedAt: string;
+  googleEmail: string;
+};
+
+type GoogleCalendarOAuthMessage = {
+  type: string;
+  connected?: boolean;
+  googleEmail?: string;
+  googleName?: string;
+  tokenUpdatedAt?: string;
+  error?: string;
+};
+
+const GOOGLE_CALENDAR_CONNECT_POLL_MS = 1200;
+const GOOGLE_CALENDAR_CONNECT_MAX_MS = 120_000;
+
+function isGoogleCalendarOAuthMessage(data: unknown): data is GoogleCalendarOAuthMessage {
+  return Boolean(data && typeof data === 'object' && (data as { type?: string }).type === GOOGLE_CALENDAR_OAUTH_EVENT);
+}
+
+function calendarStatusLooksUpdated(snapshot: CalendarConnectSnapshot, next: CalendarStatus | null | undefined) {
+  if (!next?.connected) return false;
+  if (!snapshot.connected) return true;
+  return String(next.tokenUpdatedAt || '') !== snapshot.tokenUpdatedAt
+    || String(next.googleEmail || '') !== snapshot.googleEmail;
+}
 
 type SalesOwnerOption = {
   accountKey: string;
@@ -244,8 +288,8 @@ function salesMeetLink(client: { meetingMode?: string; calendar?: { meetLink?: s
   return link;
 }
 
-function durationForMode(_mode: 'online' | 'in-person') {
-  return 30;
+function durationForMode(mode: 'online' | 'in-person') {
+  return calendarDurationForMode(mode);
 }
 
 function toDateTimeLocal(value = '') {
@@ -370,6 +414,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
   const [productCounts, setProductCounts] = useState<{ asoldi: number; ssu: number }>({ asoldi: 0, ssu: 0 });
   const [productBracket, setProductBracket] = useState<SalesProduct>('asoldi');
   const [calendarStatus, setCalendarStatus] = useState<CalendarStatus | null>(null);
+  const [calendarConnecting, setCalendarConnecting] = useState(false);
   const [isSalesAdmin, setIsSalesAdmin] = useState(false);
   const [salesOwners, setSalesOwners] = useState<SalesOwnerOption[]>([]);
   const [assigningOwnerId, setAssigningOwnerId] = useState<string | null>(null);
@@ -398,11 +443,19 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
     try {
       const raw = window.localStorage.getItem('asoldi-sales-timeline-collapsed');
       const parsed = raw ? JSON.parse(raw) as Record<string, boolean> : {};
-      return { archived: true, ...parsed };
+      return {
+        archived: true,
+        ...parsed,
+        ...(salesIsMobileViewport() ? { recentPastDue: true } : {}),
+      };
     } catch {
-      return { archived: true };
+      return { archived: true, ...(salesIsMobileViewport() ? { recentPastDue: true } : {}) };
     }
   });
+  const [toolsOpen, setToolsOpen] = useState(() => !salesIsMobileViewport());
+  const [mapOpen, setMapOpen] = useState(false);
+  const [mapMounted, setMapMounted] = useState(false);
+  const [calendarPanelOpen, setCalendarPanelOpen] = useState(false);
   const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
   const { websiteMakerBaseUrl } = useWebsiteMakerBaseUrl();
   const [meetingNowMs, setMeetingNowMs] = useState(() => Date.now());
@@ -421,12 +474,14 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
   const notesFlushRef = useRef<null | (() => Promise<void>)>(null);
   const clientCardBaselineRef = useRef('');
   const [discardPrompt, setDiscardPrompt] = useState(false);
+  const [verifiedInboxOpen, setVerifiedInboxOpen] = useState(false);
   const [previewMissingToastId, setPreviewMissingToastId] = useState<string | null>(null);
   const meetingMapContainerRef = useRef<HTMLDivElement | null>(null);
   const meetingMapRef = useRef<any>(null);
   const meetingMapMarkerLayerRef = useRef<any>(null);
   const recordingBlobUrlsRef = useRef<Record<string, string>>({});
   const previewMissingTimerRef = useRef<number | null>(null);
+  const calendarConnectStopRef = useRef<null | (() => void)>(null);
 
   // Website offers (tier + nettsidekode given to a client).
   const [offers, setOffers] = useState<WebsiteOffer[]>([]);
@@ -530,6 +585,10 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
   const assignedTimelineClients = useMemo(
     () => timelineClients.filter((client) => !isSalesAdmin || String(client.ownerId || '').startsWith('sales:')),
     [timelineClients, isSalesAdmin]
+  );
+  const verifiedInbox = useMemo(
+    () => productClients.filter((client) => client.offerStatus === 'verified' && client.status !== 'not-sold'),
+    [productClients]
   );
   const emailAudit = useMemo(() => {
     const rows = productClients.map((client) => {
@@ -751,8 +810,9 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
 
   async function loadCalendarStatus() {
     try {
-      const data = await request('/admin/sales/google/status');
-      setCalendarStatus(data as CalendarStatus);
+      const data = await request('/admin/sales/google/status') as CalendarStatus;
+      setCalendarStatus(data);
+      return data;
     } catch {
       setCalendarStatus((prev) => prev || {
         configured: true,
@@ -761,6 +821,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
         redirectUri: '',
         tokenUpdatedAt: '',
       });
+      return null;
     }
   }
 
@@ -769,6 +830,14 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
     void loadOffers();
     void loadCalendarStatus();
   }, []);
+
+  useEffect(() => {
+    if (isSalesAdmin) return undefined;
+    const timer = window.setInterval(() => {
+      void loadSales({ clearMessages: false, showLoading: false });
+    }, 20_000);
+    return () => window.clearInterval(timer);
+  }, [isSalesAdmin]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setMeetingNowMs(Date.now()), 60_000);
@@ -800,12 +869,13 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
       URL.revokeObjectURL(url);
     }
     if (previewMissingTimerRef.current) window.clearTimeout(previewMissingTimerRef.current);
+    calendarConnectStopRef.current?.();
   }, []);
 
   useEffect(() => {
     let cancelled = false;
     async function syncMeetingMap() {
-      if (!meetingMapContainerRef.current) return;
+      if (!meetingMapContainerRef.current || !mapMounted) return;
       const L = await import('leaflet');
       if (cancelled || !meetingMapContainerRef.current) return;
 
@@ -898,7 +968,19 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [visibleMeetingMapPins]);
+  }, [visibleMeetingMapPins, mapMounted]);
+
+  useEffect(() => {
+    if (!mapOpen) return undefined;
+    const timer = window.setTimeout(() => {
+      try {
+        meetingMapRef.current?.invalidateSize?.();
+      } catch {
+        // Map may not be ready yet.
+      }
+    }, 80);
+    return () => window.clearTimeout(timer);
+  }, [mapOpen]);
 
   useEffect(
     () => () => {
@@ -1128,6 +1210,17 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
     next.set('flow', client.id);
     next.set('step', '1');
     setSearchParams(next, { replace: true });
+    setShowForm(false);
+  }
+
+  function openVerifiedOffer(client: SalesClient) {
+    fillEditForm(client);
+    const next = new URLSearchParams(searchParams);
+    next.delete('notes');
+    next.set('flow', client.id);
+    next.set('step', '3');
+    setSearchParams(next, { replace: true });
+    setVerifiedInboxOpen(false);
     setShowForm(false);
   }
 
@@ -1624,6 +1717,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
 
   async function connectGoogleCalendar() {
     setError('');
+    calendarConnectStopRef.current?.();
     try {
       const data = await request('/admin/sales/google/auth-url');
       const popup = window.open(String(data.authUrl || ''), 'asoldi-google-calendar', 'width=560,height=760');
@@ -1631,10 +1725,122 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
         setError('Popup blocked. Please allow popups and try again.');
         return;
       }
-      setTimeout(() => {
-        void loadSales();
-      }, 2500);
+      const snapshot: CalendarConnectSnapshot = {
+        connected: Boolean(calendarStatus?.connected),
+        tokenUpdatedAt: String(calendarStatus?.tokenUpdatedAt || ''),
+        googleEmail: String(calendarStatus?.googleEmail || ''),
+      };
+      setCalendarConnecting(true);
+      setNotice('Finish signing in with Google. This page updates when the calendar is connected.');
+
+      let stopped = false;
+      const startedAt = Date.now();
+      let channel: BroadcastChannel | null = null;
+      let pollTimer = 0;
+
+      const cleanup = () => {
+        window.clearInterval(pollTimer);
+        window.removeEventListener('message', onMessage);
+        window.removeEventListener('storage', onStorage);
+        try { channel?.close(); } catch { /* ignore */ }
+        calendarConnectStopRef.current = null;
+      };
+
+      const stopWaiting = () => {
+        if (stopped) return;
+        stopped = true;
+        cleanup();
+        setCalendarConnecting(false);
+      };
+
+      const finishConnected = async (hint?: GoogleCalendarOAuthMessage) => {
+        if (stopped) return;
+        stopped = true;
+        cleanup();
+        if (hint?.connected) {
+          setCalendarStatus((prev) => ({
+            configured: prev?.configured !== false,
+            calendarId: prev?.calendarId || '',
+            redirectUri: prev?.redirectUri || '',
+            tokenUpdatedAt: hint.tokenUpdatedAt || prev?.tokenUpdatedAt || '',
+            accountKey: prev?.accountKey,
+            loginRole: prev?.loginRole,
+            loginUsername: prev?.loginUsername,
+            loginAccountKey: prev?.loginAccountKey,
+            connected: true,
+            googleEmail: hint.googleEmail || prev?.googleEmail,
+            googleName: hint.googleName || prev?.googleName,
+          }));
+        }
+        const next = await loadCalendarStatus();
+        const email = next?.googleEmail || hint?.googleEmail || '';
+        setNotice(email ? `Google Calendar connected as ${email}.` : 'Google Calendar connected.');
+        setCalendarConnecting(false);
+        setCalendarPanelOpen(false);
+      };
+
+      const finishFailed = (message = '') => {
+        if (stopped) return;
+        setError(message || 'Google Calendar connection failed.');
+        setNotice('');
+        stopWaiting();
+      };
+
+      const onPayload = (payload: GoogleCalendarOAuthMessage) => {
+        if (payload.connected) void finishConnected(payload);
+        else finishFailed(payload.error || '');
+      };
+
+      const onMessage = (event: MessageEvent) => {
+        if (event.origin !== window.location.origin) return;
+        if (!isGoogleCalendarOAuthMessage(event.data)) return;
+        onPayload(event.data);
+      };
+
+      const onStorage = (event: StorageEvent) => {
+        if (event.key !== GOOGLE_CALENDAR_OAUTH_EVENT || !event.newValue) return;
+        try {
+          const parsed = JSON.parse(event.newValue) as unknown;
+          if (isGoogleCalendarOAuthMessage(parsed)) onPayload(parsed);
+        } catch {
+          // Ignore a leftover or partial storage write.
+        }
+        try { window.localStorage.removeItem(GOOGLE_CALENDAR_OAUTH_EVENT); } catch { /* ignore */ }
+      };
+
+      window.addEventListener('message', onMessage);
+      window.addEventListener('storage', onStorage);
+      try {
+        channel = new BroadcastChannel(GOOGLE_CALENDAR_OAUTH_EVENT);
+        channel.onmessage = (event) => {
+          if (isGoogleCalendarOAuthMessage(event.data)) onPayload(event.data);
+        };
+      } catch {
+        // BroadcastChannel is unavailable in some embedded browsers.
+      }
+
+      pollTimer = window.setInterval(() => {
+        void (async () => {
+          if (stopped) return;
+          if (Date.now() - startedAt > GOOGLE_CALENDAR_CONNECT_MAX_MS) {
+            setNotice('');
+            stopWaiting();
+            return;
+          }
+          const next = await loadCalendarStatus();
+          if (stopped) return;
+          if (calendarStatusLooksUpdated(snapshot, next)) {
+            const email = next?.googleEmail || '';
+            setNotice(email ? `Google Calendar connected as ${email}.` : 'Google Calendar connected.');
+            stopWaiting();
+            setCalendarPanelOpen(false);
+          }
+        })();
+      }, GOOGLE_CALENDAR_CONNECT_POLL_MS);
+
+      calendarConnectStopRef.current = stopWaiting;
     } catch (err) {
+      setCalendarConnecting(false);
       setError(err instanceof Error ? err.message : 'Failed to start Google OAuth');
     }
   }
@@ -1693,7 +1899,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
               <React.Fragment key={client.id}>
                 <div
                   onClick={(event) => handleClientCardClick(event, client.id)}
-                  className={`rounded-2xl bg-[#2a2a2a] border p-4 flex flex-col gap-3 cursor-pointer ${
+                  className={`rounded-2xl bg-[#2a2a2a] border p-3 sm:p-4 flex flex-col gap-2 sm:gap-3 cursor-pointer min-w-0 ${
                     clientSelected
                       ? 'border-[#FF5B00] ring-1 ring-[#FF5B00]/40'
                       : confirmationGaps.length
@@ -1704,8 +1910,8 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                   }`}
                 >
                 <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 min-w-0">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 min-w-0 flex-wrap">
                       <input
                         type="checkbox"
                         checked={clientSelected}
@@ -1714,7 +1920,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                         aria-label={`Select ${client.businessName || 'client'}`}
                         className="h-4 w-4 shrink-0 accent-[#FF5B00] cursor-pointer"
                       />
-                      <h3 className="text-white font-semibold truncate min-w-0 flex-1">{client.businessName || 'Unnamed business'}</h3>
+                      <h3 className="text-white font-semibold truncate min-w-0 flex-1 text-sm sm:text-base">{client.businessName || 'Unnamed business'}</h3>
                       {isWin ? (
                         <span className="shrink-0 text-[11px] px-2 py-0.5 rounded bg-emerald-900/40 text-emerald-200 border border-emerald-700/40">Solgt</span>
                       ) : null}
@@ -1758,11 +1964,15 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                         <UserRound size={12} className="shrink-0" />
                         <span className="truncate">{client.contactPerson || 'No contact person'}</span>
                         {client.contactPhone ? (
-                          <span className="shrink-0 inline-flex items-center gap-1">
+                          <a
+                            href={`tel:${client.contactPhone.replace(/\s+/g, '')}`}
+                            onClick={(event) => event.stopPropagation()}
+                            className="shrink-0 inline-flex items-center gap-1 hover:text-white"
+                          >
                             <span aria-hidden="true">·</span>
                             <Phone size={11} />
                             {client.contactPhone}
-                          </span>
+                          </a>
                         ) : null}
                       </div>
                     ) : null}
@@ -1832,7 +2042,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                       <button
                         type="button"
                         onClick={() => openPublicPreview(client)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
+                        className="inline-flex items-center gap-1.5 px-3 py-2 sm:py-1.5 min-h-[40px] sm:min-h-0 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
                         title={publicPreviewUrl}
                       >
                         <ExternalLink size={13} />
@@ -1912,7 +2122,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                   </div>
                 )}
 
-                <div className="flex items-center gap-2 pt-1">
+                <div className="flex flex-wrap items-center gap-2">
                   {!clientIsSsu && (
                     <button
                       type="button"
@@ -1925,7 +2135,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                       title={canMarkSold
                         ? 'Kontrakt signert. Åpner deployment-utvikling.'
                         : 'Solgt nettside kan bare klikkes når kontrakt er signert.'}
-                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs disabled:opacity-40 ${
+                      className={`inline-flex items-center gap-1.5 px-3 py-2 sm:py-1.5 min-h-[40px] sm:min-h-0 rounded-lg text-xs disabled:opacity-40 ${
                         websiteSold
                           ? 'bg-emerald-900/40 border border-emerald-700/40 text-emerald-200'
                           : 'bg-white/10 text-gray-400'
@@ -1982,6 +2192,19 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
 
                 {expanded && (
                   <div className="space-y-4 border-t border-white/10 pt-3">
+                    <div className="rounded-xl bg-black/20 border border-white/10 p-4">
+                      <div className="text-sm text-white font-medium mb-2">Booking</div>
+                      <ul className="space-y-1 text-sm">
+                        {bookingRows.map(([label, value]) => (
+                          <li key={label}>
+                            <span className="text-gray-400">{label}: </span>
+                            {value
+                              ? <span className="text-gray-200">{value}</span>
+                              : <span className="text-red-300">Mangler</span>}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <button
                         type="button"
@@ -2023,19 +2246,6 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                         </button>
                       </div>
                     )}
-                    <div className="rounded-xl bg-black/20 border border-white/10 p-4">
-                      <div className="text-sm text-white font-medium mb-2">Booking</div>
-                      <ul className="space-y-1 text-sm">
-                        {bookingRows.map(([label, value]) => (
-                          <li key={label}>
-                            <span className="text-gray-400">{label}: </span>
-                            {value
-                              ? <span className="text-gray-100">{value}</span>
-                              : <span className="text-red-300">Mangler</span>}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
                     <div className="grid sm:grid-cols-2 gap-4 rounded-xl bg-black/20 border border-white/10 p-4">
                       <details open className="text-sm text-gray-200">
                         <summary className="cursor-pointer text-white font-medium mb-2">Contact & meeting</summary>
@@ -2068,7 +2278,10 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                           <li>Meeting: {client.meetingMode === 'in-person' ? 'In person' : 'Online (Google Meet)'}</li>
                           <li>Address: {client.meetingPlace || '—'}</li>
                           <li>Industry: {client.industry || '—'}</li>
-                          <li>Duration: {durationForMode(client.meetingMode)} min</li>
+                          <li>
+                            Duration: {durationForMode(client.meetingMode)} min
+                            {client.meetingMode === 'online' ? ' in calendar (client sees 30)' : ''}
+                          </li>
                           <li>Agreed time: {client.agreedTime ? 'Yes' : 'No'}</li>
                         </ul>
                       </details>
@@ -2423,81 +2636,90 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-2xl bg-[#2a2a2a] border border-white/10 p-5">
-        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-          <div className="min-w-0">
-            <span className={`inline-flex text-xs px-2 py-1 rounded ${calendarStatus?.connected ? 'bg-green-900/40 text-green-300' : 'bg-amber-900/40 text-amber-300'}`}>
-              Google Calendar: {calendarStatus?.connected ? 'Connected' : calendarStatus?.configured === false ? 'Not configured' : 'Not connected'}
+    <div className="space-y-3 sm:space-y-4 min-w-0">
+      {!isSalesAdmin && verifiedInbox.length > 0 && (
+        <div className="relative rounded-2xl border border-sky-400/30 bg-sky-900/30 p-3 sm:p-4">
+          <button
+            type="button"
+            onClick={() => setVerifiedInboxOpen((open) => !open)}
+            className="w-full flex items-center justify-between gap-3 text-left"
+          >
+            <span className="inline-flex items-center gap-2 text-sm font-medium text-sky-100">
+              <ShieldCheck size={16} />
+              Tilbud verifisert
+              <span className="inline-flex min-w-6 h-6 items-center justify-center rounded-full bg-sky-500 text-white text-xs font-semibold px-1.5">
+                {verifiedInbox.length}
+              </span>
             </span>
-            {calendarStatus?.connected && calendarStatus.googleEmail && (
-              <p className="mt-2 text-[11px] text-gray-300">
-                Connected as <span className="text-white">{calendarStatus.googleEmail}</span>
-                {calendarStatus.googleName ? ` (${calendarStatus.googleName})` : ''}. Meetings go on that account’s main Google Calendar — open calendar.google.com while signed into that same Google account.
-              </p>
-            )}
-            {calendarStatus?.connected && !calendarStatus.googleEmail && (
-              <p className="mt-2 text-[11px] text-amber-200">
-                Calendar is connected, but we do not yet know which Google account. Click Reconnect and pick the Google account used for work meetings.
-              </p>
-            )}
-            <p className="mt-2 text-[11px] text-gray-400">
-              Logged in as {loggedInAs}. This login is for the Sales page and Asoldi mail.
-              Calendar is a separate Google login for whoever is signed in now — any sales user connects their own calendar.
-              Use a personal Gmail, or a Google account created with their @asoldi.com address (that is not Gmail; it is a Google login on the work email).
-              {calendarStatus?.loginRole === 'admin'
-                ? ' You are logged in as admin, so Connect binds the admin’s Google account. Each salesperson must log in at /sales as themselves and click Connect.'
-                : ''}
-            </p>
+            <ChevronDown size={16} className={`text-sky-300 transition-transform ${verifiedInboxOpen ? '' : '-rotate-90'}`} />
+          </button>
+          {verifiedInboxOpen && (
+            <div className="mt-3 rounded-xl border border-white/10 bg-[#1a1a1a] overflow-hidden">
+              {verifiedInbox.map((client) => (
+                <button
+                  key={client.id}
+                  type="button"
+                  onClick={() => openVerifiedOffer(client)}
+                  className="w-full text-left px-3 py-2.5 text-sm text-white hover:bg-white/5 border-b border-white/5 last:border-b-0"
+                >
+                  {client.businessName || 'Uten navn'}
+                </button>
+              ))}
             </div>
-          {showCalendarConnect && (
-            <button type="button" onClick={connectGoogleCalendar} className="shrink-0 px-3 py-2 rounded-lg bg-[#FF5B00] text-white hover:bg-[#e55200]">
-              {calendarStatus?.connected ? 'Reconnect Google Calendar' : 'Connect Google Calendar'}
-            </button>
           )}
         </div>
+      )}
+
+      <div className="rounded-2xl bg-[#2a2a2a] border border-white/10 p-3 sm:p-4 space-y-3">
+        <div className="flex items-center gap-2 overflow-x-auto">
+          <button
+            type="button"
+            onClick={() => setCalendarPanelOpen(true)}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs shrink-0 ${
+              calendarStatus?.connected
+                ? 'bg-green-900/30 text-green-300 border border-green-700/40'
+                : 'bg-red-900/30 text-red-300 border border-red-700/40'
+            }`}
+            title={calendarStatus?.connected
+              ? (calendarStatus.googleEmail || 'Google Calendar connected')
+              : 'Connect Google Calendar'}
+          >
+            {calendarConnecting ? <Loader2 size={14} className="animate-spin" /> : <Calendar size={14} />}
+            <span>{calendarChipLabel(calendarStatus)}</span>
+          </button>
         </div>
 
-      <div className="rounded-2xl bg-[#2a2a2a] border border-white/10 p-5">
-        <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
-            <div>
-            <h2 className="text-lg font-semibold text-white">Sales clients</h2>
-            <p className="text-sm text-gray-400 mt-1">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h2 className="text-base sm:text-lg font-semibold text-white">Sales clients</h2>
+            <p className="hidden sm:block text-sm text-gray-400 mt-1">
               {isSsuBracket
                 ? 'SSU partner leads from MyPhoner. Meeting time/type and contract/payment only — no website Maker flow.'
                 : 'Website leads: meetings, Google Calendar, and public preview. Signed websites go to Utvikling → Deployment. Preview-nettsider lages av utvikler.'}
             </p>
-            {!isSsuBracket && (
-              <p className="text-[11px] text-gray-500 mt-2">
-                Meeting laptop / client preview: bookmark{' '}
-                <a href="https://asoldi.com/previews" className="text-emerald-300 hover:underline">
-                  https://asoldi.com/previews
-                </a>
-                {' '}or open the public <code>asoldi.com/sales-preview/…</code> link on the client card.
-              </p>
-            )}
-            </div>
-          <div className="flex items-center gap-3">
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
             {!isSsuBracket && (
               <a
                 href="https://asoldi.com/previews"
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/15"
+                className="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/15"
                 title="Open the public asoldi.com preview board"
               >
                 <MonitorSmartphone size={16} />
-                Public previews
+                <span className="hidden sm:inline">Public previews</span>
               </a>
             )}
-            <button type="button" onClick={openCreate} className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#FF5B00] text-white font-medium hover:bg-[#e55200]">
+            <button type="button" onClick={openCreate} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#FF5B00] text-white text-sm font-medium hover:bg-[#e55200]">
               <Plus size={16} />
-              Add client
+              <span className="hidden sm:inline">Add client</span>
+              <span className="sm:hidden">Add</span>
             </button>
           </div>
         </div>
 
-        <div className="mt-4 flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2">
           <button
             type="button"
             onClick={() => setProductBracket('asoldi')}
@@ -2522,37 +2744,52 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
           </button>
         </div>
 
-        <form onSubmit={applyClientNameSearch} className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
-          <label className="text-xs font-semibold text-gray-200 uppercase tracking-wide">Search and filter</label>
-          <div className="mt-2 flex flex-col gap-2">
+        <button
+          type="button"
+          onClick={() => setToolsOpen((open) => !open)}
+          className="w-full flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-left text-sm text-gray-200"
+        >
+          <span className="inline-flex items-center gap-2 min-w-0">
+            <Search size={14} className="shrink-0 text-gray-400" />
+            <span className="font-medium">Search and filter</span>
+            {hasActiveFilters ? <span className="text-[11px] text-[#FF5B00]">Active</span> : null}
+            {selectedCount > 0 ? <span className="text-[11px] text-gray-400">{selectedCount} selected</span> : null}
+          </span>
+          <ChevronDown size={16} className={`shrink-0 text-gray-400 transition-transform ${toolsOpen ? '' : '-rotate-90'}`} />
+        </button>
+
+        {toolsOpen && (
+          <form onSubmit={applyClientNameSearch} className="rounded-xl border border-white/10 bg-black/20 p-2.5 sm:p-3 space-y-2.5">
             <div className="flex flex-col sm:flex-row gap-2">
               <div className="relative flex-1">
                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                        <input
+                <input
                   value={clientSearchInput}
                   onChange={(e) => setClientSearchInput(e.target.value)}
-                  placeholder="Business, contact, or area (e.g. oslo area)"
+                  placeholder="Business, contact, or area"
                   className="w-full pl-9 pr-3 py-2 rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm"
                 />
-                      </div>
-              <button
-                type="submit"
-                className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#FF5B00] text-white text-sm hover:bg-[#e55200]"
-              >
-                <Search size={14} />
-                Search
-              </button>
-              {hasActiveFilters && (
+              </div>
+              <div className="flex gap-2">
                 <button
-                  type="button"
-                  onClick={clearClientNameSearch}
-                  className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/15"
+                  type="submit"
+                  className="inline-flex flex-1 sm:flex-none items-center justify-center gap-2 px-3 py-2 rounded-lg bg-[#FF5B00] text-white text-sm hover:bg-[#e55200]"
                 >
-                  <X size={14} />
-                  Clear
+                  <Search size={14} />
+                  Search
                 </button>
-              )}
-                      </div>
+                {hasActiveFilters && (
+                  <button
+                    type="button"
+                    onClick={clearClientNameSearch}
+                    className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/15"
+                  >
+                    <X size={14} />
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               <label className="text-[11px] text-gray-400">
                 <span className="inline-flex items-center gap-1 mb-1">
@@ -2591,199 +2828,201 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                   ))}
                 </select>
               </label>
-                    </div>
-          </div>
-          {hasActiveFilters && (
-            <p className="mt-2 text-[11px] text-gray-400">
-              Showing
-              {clientSearchQuery ? <> matches for <span className="text-white">{clientSearchQuery}</span></> : ' filtered clients'}
-              {ownerFilter ? <> · owner: <span className="text-white">{ownerFilter === 'unassigned' ? 'Unassigned' : ownerLabel(ownerFilterOptions.find((owner) => owner.accountKey === ownerFilter) || { accountKey: ownerFilter, username: ownerFilter, name: ownerFilter })}</span></> : null}
-              {goalFilter ? <> · step: <span className="text-white">{goalFilterOptions.find((option) => option.id === goalFilter)?.label || goalFilter}</span></> : null}
-            </p>
-          )}
-        </form>
-
-        <div className="mt-4 rounded-xl border border-white/10 bg-black/20 p-3">
-          <div className="text-xs font-semibold text-gray-200 uppercase tracking-wide">Email coverage</div>
-          <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
-            <span className="px-2 py-1 rounded border border-white/10 bg-black/30 text-gray-300">Total: {emailAudit.total}</span>
-            <span className="px-2 py-1 rounded border border-green-700/30 bg-green-900/20 text-green-300">Valid (non-test): {emailAudit.validNonTest}</span>
-            <span className="px-2 py-1 rounded border border-amber-700/30 bg-amber-900/20 text-amber-300">Missing: {emailAudit.missing}</span>
-            <span className="px-2 py-1 rounded border border-red-700/30 bg-red-900/20 text-red-300">Invalid: {emailAudit.invalid}</span>
-            <span className="px-2 py-1 rounded border border-purple-700/30 bg-purple-900/20 text-purple-300">Test-like: {emailAudit.flaggedTest}</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="sticky top-2 z-30 rounded-2xl border border-[#FF5B00]/30 bg-[#2a2a2a] p-3 shadow-lg shadow-black/40">
-        <div className="flex flex-col gap-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <label className="inline-flex items-center gap-2 text-sm text-gray-200 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={allVisibleSelected}
-                disabled={!visibleSelectableIds.length || bulkBusy}
-                onChange={toggleSelectAllVisible}
-                className="h-4 w-4 accent-[#FF5B00]"
-              />
-              Select all visible
-              <span className="text-xs text-gray-400">
-                {selectedCount
-                  ? `${selectedCount} selected`
-                  : `${visibleSelectableIds.length} clients on this list`}
-                    </span>
-            </label>
-            {selectedCount > 0 && (
-              <button
-                type="button"
-                onClick={() => setSelectedClientIds([])}
-                disabled={bulkBusy}
-                className="text-xs text-gray-400 hover:text-white disabled:opacity-50"
-              >
-                Clear selection
-              </button>
+            </div>
+            <div className="flex flex-wrap gap-1.5 text-[11px]">
+              <span className="px-2 py-0.5 rounded border border-white/10 bg-black/30 text-gray-300">Mail {emailAudit.total}</span>
+              <span className="px-2 py-0.5 rounded border border-green-700/30 bg-green-900/20 text-green-300">OK {emailAudit.validNonTest}</span>
+              <span className="px-2 py-0.5 rounded border border-amber-700/30 bg-amber-900/20 text-amber-300">Missing {emailAudit.missing}</span>
+              <span className="px-2 py-0.5 rounded border border-red-700/30 bg-red-900/20 text-red-300">Invalid {emailAudit.invalid}</span>
+              <span className="px-2 py-0.5 rounded border border-purple-700/30 bg-purple-900/20 text-purple-300">Test {emailAudit.flaggedTest}</span>
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-white/10">
+              <label className="inline-flex items-center gap-2 text-sm text-gray-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={allVisibleSelected}
+                  disabled={!visibleSelectableIds.length || bulkBusy}
+                  onChange={toggleSelectAllVisible}
+                  className="h-4 w-4 accent-[#FF5B00]"
+                />
+                Select all
+                <span className="text-xs text-gray-400">
+                  {selectedCount
+                    ? `${selectedCount} selected`
+                    : `${visibleSelectableIds.length} visible`}
+                </span>
+              </label>
+              {selectedCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedClientIds([])}
+                  disabled={bulkBusy}
+                  className="text-xs text-gray-400 hover:text-white disabled:opacity-50"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+            {hasActiveFilters && (
+              <p className="text-[11px] text-gray-400">
+                Showing
+                {clientSearchQuery ? <> matches for <span className="text-white">{clientSearchQuery}</span></> : ' filtered clients'}
+                {ownerFilter ? <> · owner: <span className="text-white">{ownerFilter === 'unassigned' ? 'Unassigned' : ownerLabel(ownerFilterOptions.find((owner) => owner.accountKey === ownerFilter) || { accountKey: ownerFilter, username: ownerFilter, name: ownerFilter })}</span></> : null}
+                {goalFilter ? <> · step: <span className="text-white">{goalFilterOptions.find((option) => option.id === goalFilter)?.label || goalFilter}</span></> : null}
+              </p>
             )}
-                  </div>
-          {selectedCount > 0 ? (
-                  <div className="flex flex-wrap items-center gap-2">
-              {isSalesAdmin && salesOwners.length > 0 && (
-                <div className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-2 py-1.5">
-                  <Users size={14} className="text-[#FF5B00]" />
-                  <select
-                    value={bulkAssignOwnerId}
-                    disabled={bulkBusy}
-                    onChange={(event) => setBulkAssignOwnerId(event.target.value)}
-                    className="bg-transparent text-xs text-gray-200 outline-none disabled:opacity-50"
-                  >
-                    <option value="">Velg selger…</option>
-                    {salesRepOptions.map((owner) => (
-                      <option key={owner.accountKey} value={owner.accountKey}>
-                        {ownerLabel(owner)}
-                      </option>
-                    ))}
-                  </select>
-                      <button
-                        type="button"
-                    disabled={bulkBusy || !bulkAssignOwnerId}
-                    onClick={() => void runBulkAction('assign', { ownerId: bulkAssignOwnerId })}
-                    className="px-2 py-1 rounded-md bg-[#FF5B00] text-white text-xs hover:bg-[#e55200] disabled:opacity-50"
-                  >
-                    Tildel
-                      </button>
-                </div>
-                    )}
-                    <button
-                      type="button"
-                disabled={bulkBusy}
-                onClick={() => void runBulkAction('delete')}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-900/40 text-red-200 text-xs hover:bg-red-900/50 disabled:opacity-50"
-              >
-                {bulkBusy ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
-                Delete
-                    </button>
-                    <button
-                      type="button"
-                disabled={bulkBusy}
-                onClick={() => void runBulkAction('not-sold')}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-gray-200 text-xs hover:bg-white/15 disabled:opacity-50"
-              >
-                <ArchiveX size={13} />
-                Not sold
-              </button>
-              <button
-                type="button"
-                disabled={bulkBusy}
-                onClick={() => void runBulkAction('secondary')}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-gray-200 text-xs hover:bg-white/15 disabled:opacity-50"
-              >
-                Secondary
-              </button>
-              <button
-                type="button"
-                disabled={bulkBusy}
-                onClick={() => void runBulkAction('restore')}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-gray-200 text-xs hover:bg-white/15 disabled:opacity-50"
-              >
-                <Undo2 size={13} />
-                Restore
-              </button>
-              <button
-                type="button"
-                disabled={bulkBusy}
-                onClick={() => void runBulkAction('send-welcome')}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FF5B00] text-white text-xs hover:bg-[#e55200] disabled:opacity-50"
-              >
-                {bulkBusy ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />}
-                Send bekreftelse
-                    </button>
-                  </div>
-          ) : (
-            <p className="text-[11px] text-gray-500">
-              Tick client cards to run mass actions.
-              {isSalesAdmin
-                ? ' Huk av kunder under Tildel selger, velg selger, og bekreftelsen sendes fra den selgeren.'
-                : ' Assigning clients between sales reps is admin-only.'}
-            </p>
-          )}
-                </div>
+          </form>
+        )}
+
+        {selectedCount > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            {isSalesAdmin && salesOwners.length > 0 && (
+              <div className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-2 py-1.5 max-w-full">
+                <Users size={14} className="text-[#FF5B00] shrink-0" />
+                <select
+                  value={bulkAssignOwnerId}
+                  disabled={bulkBusy}
+                  onChange={(event) => setBulkAssignOwnerId(event.target.value)}
+                  className="bg-transparent text-xs text-gray-200 outline-none disabled:opacity-50 min-w-0"
+                >
+                  <option value="">Velg selger…</option>
+                  {salesRepOptions.map((owner) => (
+                    <option key={owner.accountKey} value={owner.accountKey}>
+                      {ownerLabel(owner)}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={bulkBusy || !bulkAssignOwnerId}
+                  onClick={() => void runBulkAction('assign', { ownerId: bulkAssignOwnerId })}
+                  className="px-2 py-1 rounded-md bg-[#FF5B00] text-white text-xs hover:bg-[#e55200] disabled:opacity-50"
+                >
+                  Tildel
+                </button>
+              </div>
+            )}
+            <button
+              type="button"
+              disabled={bulkBusy}
+              onClick={() => void runBulkAction('delete')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-900/40 text-red-200 text-xs hover:bg-red-900/50 disabled:opacity-50"
+            >
+              {bulkBusy ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+              Delete
+            </button>
+            <button
+              type="button"
+              disabled={bulkBusy}
+              onClick={() => void runBulkAction('not-sold')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-gray-200 text-xs hover:bg-white/15 disabled:opacity-50"
+            >
+              <ArchiveX size={13} />
+              Not sold
+            </button>
+            <button
+              type="button"
+              disabled={bulkBusy}
+              onClick={() => void runBulkAction('secondary')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-gray-200 text-xs hover:bg-white/15 disabled:opacity-50"
+            >
+              Secondary
+            </button>
+            <button
+              type="button"
+              disabled={bulkBusy}
+              onClick={() => void runBulkAction('restore')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-gray-200 text-xs hover:bg-white/15 disabled:opacity-50"
+            >
+              <Undo2 size={13} />
+              Restore
+            </button>
+            <button
+              type="button"
+              disabled={bulkBusy}
+              onClick={() => void runBulkAction('send-welcome')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FF5B00] text-white text-xs hover:bg-[#e55200] disabled:opacity-50"
+            >
+              {bulkBusy ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />}
+              Send bekreftelse
+            </button>
+          </div>
+        )}
       </div>
 
       {(error || notice) && (
         <div className="sticky top-2 z-20 space-y-2">
-          {error && <div className="rounded-xl border border-red-500/20 bg-red-500/10 text-red-300 px-4 py-3 shadow-lg shadow-black/30">{error}</div>}
-          {notice && <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-200 px-4 py-3 shadow-lg shadow-black/30">{notice}</div>}
+          {error && <div className="rounded-xl border border-red-500/20 bg-red-500/10 text-red-300 px-3 py-2.5 sm:px-4 sm:py-3 text-sm shadow-lg shadow-black/30">{error}</div>}
+          {notice && <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-200 px-3 py-2.5 sm:px-4 sm:py-3 text-sm shadow-lg shadow-black/30">{notice}</div>}
         </div>
       )}
 
-      <div className="rounded-2xl bg-[#2a2a2a] border border-white/10 p-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-          <div>
-            <h3 className="text-sm font-semibold text-white">Client map (OpenStreetMap)</h3>
-            <p className="text-xs text-gray-400 mt-1">
+      <div className="rounded-2xl bg-[#2a2a2a] border border-white/10 p-3 sm:p-4">
+        <button
+          type="button"
+          onClick={() => {
+            setMapOpen((open) => {
+              const next = !open;
+              if (next) setMapMounted(true);
+              return next;
+            });
+          }}
+          className="w-full flex items-center justify-between gap-2 text-left"
+        >
+          <span className="min-w-0">
+            <span className="block text-sm font-semibold text-white">Client map</span>
+            <span className="hidden sm:block text-xs text-gray-400 mt-0.5">
               Shows every sales client in this list, including online, secondary, and not sold.
-            </p>
-          </div>
-          <span className="text-xs px-2 py-1 rounded bg-black/20 border border-white/10 text-gray-300">
-            {visibleMeetingMapPins.length} pins
+            </span>
           </span>
-        </div>
-        <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-gray-400">
-          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#FF5B00]" /> In person</span>
-          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#3b82f6]" /> Online</span>
-          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#a855f7]" /> Secondary</span>
-          <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#6b7280]" /> Not sold</span>
-        </div>
-        {meetingMapError && (
-          <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/10 text-red-300 px-3 py-2 text-xs">
-            {meetingMapError}
-          </div>
-        )}
-        <div className="mt-3 h-[340px] rounded-xl border border-white/10 overflow-hidden relative z-0 isolate">
-          <div ref={meetingMapContainerRef} className="h-full w-full relative z-0" />
-          {meetingMapLoading && (
-            <div className="absolute inset-0 bg-black/55 flex items-center justify-center text-gray-200 text-sm">
-              <Loader2 size={16} className="animate-spin mr-2" />
-              Loading map pins…
+          <span className="inline-flex items-center gap-2 shrink-0">
+            <span className="text-xs px-2 py-1 rounded bg-black/20 border border-white/10 text-gray-300">
+              {visibleMeetingMapPins.length} pins
+            </span>
+            <ChevronDown size={16} className={`text-gray-400 transition-transform ${mapOpen ? '' : '-rotate-90'}`} />
+          </span>
+        </button>
+        {mapMounted && (
+          <div className={mapOpen ? '' : 'hidden'}>
+            <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-gray-400">
+              <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#FF5B00]" /> In person</span>
+              <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#3b82f6]" /> Online</span>
+              <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#a855f7]" /> Secondary</span>
+              <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#6b7280]" /> Not sold</span>
             </div>
-          )}
-        </div>
-        {!meetingMapLoading && visibleMeetingMapPins.length === 0 && (
-          <p className="mt-2 text-xs text-gray-500">No client addresses to show yet.</p>
-        )}
-        {meetingMapPendingCount > 0 && (
-          <p className="mt-2 text-xs text-sky-300">
-            {meetingMapPendingCount} client(s) still geocoding. Pins will appear automatically.
-          </p>
-        )}
-        {meetingMapUnresolvedCount > 0 && (
-          <p className="mt-2 text-xs text-amber-300">
-            {meetingMapUnresolvedCount} client(s) could not be placed automatically.
-          </p>
-        )}
-        {meetingMapMissingAddressCount > 0 && (
-          <p className="mt-2 text-xs text-gray-500">
-            {meetingMapMissingAddressCount} client(s) have no stored street address yet. They are still mapped by business name while Brønnøysund fills the official address.
-          </p>
+            {meetingMapError && (
+              <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/10 text-red-300 px-3 py-2 text-xs">
+                {meetingMapError}
+              </div>
+            )}
+            <div className="mt-3 h-[220px] sm:h-[340px] rounded-xl border border-white/10 overflow-hidden relative z-0 isolate">
+              <div ref={meetingMapContainerRef} className="h-full w-full relative z-0" />
+              {meetingMapLoading && (
+                <div className="absolute inset-0 bg-black/55 flex items-center justify-center text-gray-200 text-sm">
+                  <Loader2 size={16} className="animate-spin mr-2" />
+                  Loading map pins…
+                </div>
+              )}
+            </div>
+            {!meetingMapLoading && visibleMeetingMapPins.length === 0 && (
+              <p className="mt-2 text-xs text-gray-500">No client addresses to show yet.</p>
+            )}
+            {meetingMapPendingCount > 0 && (
+              <p className="mt-2 text-xs text-sky-300">
+                {meetingMapPendingCount} client(s) still geocoding. Pins will appear automatically.
+              </p>
+            )}
+            {meetingMapUnresolvedCount > 0 && (
+              <p className="mt-2 text-xs text-amber-300">
+                {meetingMapUnresolvedCount} client(s) could not be placed automatically.
+              </p>
+            )}
+            {meetingMapMissingAddressCount > 0 && (
+              <p className="mt-2 text-xs text-gray-500">
+                {meetingMapMissingAddressCount} client(s) have no stored street address yet. They are still mapped by business name while Brønnøysund fills the official address.
+              </p>
+            )}
+          </div>
         )}
       </div>
 
@@ -2798,8 +3037,11 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <div className="text-sm font-semibold text-white">Tildel selger</div>
-                  <p className="text-[11px] text-gray-400 mt-0.5">
+                  <p className="hidden sm:block text-[11px] text-gray-400 mt-0.5">
                     {awaitingRepClients.length} kunder venter. Huk av kortene i seksjonen under, velg selger, så sendes bekreftelsen fra den selgeren og møtet kobles til kalenderen deres.
+                  </p>
+                  <p className="sm:hidden text-[11px] text-gray-400 mt-0.5">
+                    {awaitingRepClients.length} venter
                   </p>
                 </div>
                 <div className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-2 py-1.5">
@@ -2829,7 +3071,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
               </div>
             </div>
           )}
-          <div className="text-xs text-gray-400">
+          <div className="hidden sm:block text-xs text-gray-400">
             Sorted by next action time. Recently overdue clients stay above the main list for 48 hours, then move to <span className="text-red-300">Forfalt</span>. Click a section header to hide the cards and only see the count.
           </div>
           <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-4 items-start">
@@ -2865,7 +3107,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                   <span className="flex items-center justify-between gap-3">
                     <span>
                       <span className="block text-sm font-semibold">{row.title}</span>
-                      <span className="block text-[11px] opacity-80 mt-0.5">{row.hint}</span>
+                      <span className="hidden sm:block text-[11px] opacity-80 mt-0.5">{row.hint}</span>
                     </span>
                     <span className="inline-flex items-center gap-2 shrink-0">
                       <span className="text-sm font-semibold tabular-nums">{row.count}</span>
@@ -3015,15 +3257,15 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
       )}
 
       {(showForm || inClientFlow) && (
-        <div className={inClientFlow ? 'fixed inset-0 z-50 flex flex-col bg-[#1a1a1a]' : 'fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4'}>
+        <div className={inClientFlow ? 'fixed inset-0 z-50 flex flex-col bg-[#1a1a1a]' : 'fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-3 sm:p-4'}>
           {inClientFlow && (
             <div className="shrink-0 border-b border-[#E6E9EF] bg-white text-[#111827]">
-              <div className="px-5 pt-3 flex items-center justify-between gap-3">
-                <div>
-                  <div className="font-semibold">{flowClient?.businessName || 'Kunde'}</div>
-                  <div className="text-xs text-[#6B7280]">Kundekort, produktnotater og tilbud</div>
+              <div className="px-3 sm:px-5 pt-2 sm:pt-3 flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="font-semibold truncate text-sm sm:text-base">{flowClient?.businessName || 'Kunde'}</div>
+                  <div className="hidden sm:block text-xs text-[#6B7280]">Kundekort, produktnotater og tilbud</div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 shrink-0">
                   <button
                     type="button"
                     disabled={saving || !clientCardDirty}
@@ -3039,18 +3281,18 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                   <button type="button" onClick={requestCloseClientFlow} className="px-3 py-2 rounded-lg bg-[#F3F4F6] text-sm text-[#111827]">Lukk</button>
                 </div>
               </div>
-              {error ? <p className="px-5 pt-2 text-xs text-red-600">{error}</p> : null}
-              <div className="px-5 py-3">
+              {error ? <p className="px-3 sm:px-5 pt-2 text-xs text-red-600">{error}</p> : null}
+              <div className="px-3 sm:px-5 py-0 sm:py-3">
                 <SalesFlowSteps step={flowStep} onStep={(step) => void goFlowStep(step)} />
               </div>
             </div>
           )}
           <div className={inClientFlow
             ? `flex-1 min-h-0 ${flowStep === 2 ? 'overflow-hidden' : 'overflow-auto'}`
-            : 'w-full max-w-3xl rounded-2xl bg-[#1f1f1f] border border-white/10 p-6 max-h-[90vh] overflow-y-auto'}>
+            : 'w-full max-w-3xl rounded-2xl bg-[#1f1f1f] border border-white/10 p-4 sm:p-6 max-h-[90vh] overflow-y-auto'}>
             {(!inClientFlow || flowStep === 1) && (
-            <div className={inClientFlow ? 'max-w-3xl mx-auto p-6' : ''}>
-            <h3 className="text-xl font-semibold text-white mb-4">{editingId ? 'Kundekort' : 'Add sales client'}</h3>
+            <div className={inClientFlow ? 'max-w-3xl mx-auto p-3 sm:p-6' : ''}>
+            <h3 className="text-lg sm:text-xl font-semibold text-white mb-4">{editingId ? 'Kundekort' : 'Add sales client'}</h3>
             {inClientFlow && contractMissing.length > 0 && (
               <div className="mb-4 rounded-xl border border-amber-400/40 bg-amber-950/40 px-4 py-3 text-sm text-amber-100">
                 <div className="font-medium">Kontrakten mangler data</div>
@@ -3069,7 +3311,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                       websiteDomain: e.target.value === 'ssu' ? '' : prev.websiteDomain,
                     }))
                   }
-                  className="w-full px-4 py-3 rounded-lg bg-[#161616] border border-white/10 text-white"
+                  className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg bg-[#161616] border border-white/10 text-white"
                 >
                   <option value="asoldi">Websites (Asoldi)</option>
                   <option value="ssu">SSU</option>
@@ -3129,9 +3371,9 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                       meetingMode: e.target.value as 'online' | 'in-person',
                     }))
                   }
-                  className="w-full px-4 py-3 rounded-lg bg-[#161616] border border-white/10 text-white"
+                  className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg bg-[#161616] border border-white/10 text-white"
                 >
-                  <option value="online">Online (30 min)</option>
+                  <option value="online">Online (1 hour in calendar)</option>
                   <option value="in-person">In person (30 min)</option>
                 </select>
               </div>
@@ -3160,11 +3402,16 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                   value={form.meetingAt}
                   onChange={(e) => setForm((prev) => ({ ...prev, meetingAt: e.target.value }))}
                   disabled={!form.agreedTime}
-                  className="w-full px-4 py-3 rounded-lg bg-[#161616] border border-white/10 text-white disabled:opacity-50"
+                  className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg bg-[#161616] border border-white/10 text-white disabled:opacity-50"
                 />
               </div>
 
-              <div className="flex items-center text-sm text-gray-400">Meeting duration: <strong className="text-white ml-1">{formDuration} min</strong></div>
+              <div className="flex flex-wrap items-center gap-x-2 text-sm text-gray-400">
+                Meeting duration: <strong className="text-white">{formDuration} min</strong>
+                {form.meetingMode === 'online' ? (
+                  <span className="text-gray-500">Client still sees 30 min</span>
+                ) : null}
+              </div>
 
               <TextArea label="Other links (one per line)" value={form.otherLinks} onChange={(value) => setForm((prev) => ({ ...prev, otherLinks: value }))} />
 
@@ -3233,7 +3480,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
             )}
           </div>
           {inClientFlow && (
-            <div className="shrink-0 sticky bottom-0 z-10 border-t border-[#E6E9EF] bg-white px-5 py-3 flex items-center justify-between gap-3">
+            <div className="shrink-0 sticky bottom-0 z-10 border-t border-[#E6E9EF] bg-white px-3 sm:px-5 py-3 flex items-center justify-between gap-3">
               <button
                 type="button"
                 disabled={saving || flowStep === 1}
@@ -3248,10 +3495,61 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                 onClick={() => void goFlowStep((flowStep + 1) as 1 | 2 | 3)}
                 className="px-4 py-2.5 rounded-lg bg-[#FF5B00] text-sm font-medium text-white disabled:opacity-40"
               >
-                {saving ? 'Lagrer…' : flowStep === 1 ? 'Neste · Produktnotater' : flowStep === 2 ? 'Neste · Tilbud' : 'Neste'}
+                {saving ? 'Lagrer…' : (
+                  <>
+                    <span className="sm:hidden">Neste</span>
+                    <span className="hidden sm:inline">{flowStep === 1 ? 'Neste · Produktnotater' : flowStep === 2 ? 'Neste · Tilbud' : 'Neste'}</span>
+                  </>
+                )}
               </button>
             </div>
           )}
+        </div>
+      )}
+      {calendarPanelOpen && (
+        <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center bg-black/60 p-3 sm:p-4">
+          <div className="w-full max-w-md rounded-2xl bg-[#2a2a2a] border border-white/10 p-4 sm:p-5 text-white shadow-xl" role="dialog" aria-modal="true" aria-labelledby="sales-calendar-title">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 id="sales-calendar-title" className="text-base font-semibold">Google Calendar</h3>
+                <p className={`mt-1 text-xs ${calendarStatus?.connected ? 'text-green-300' : 'text-red-300'}`}>
+                  {calendarStatus?.connected
+                    ? (calendarStatus.googleEmail
+                      ? `Connected as ${calendarStatus.googleEmail}${calendarStatus.googleName ? ` (${calendarStatus.googleName})` : ''}`
+                      : 'Connected, but the Google account is unknown. Reconnect and pick the work account.')
+                    : calendarStatus?.configured === false
+                      ? 'Not configured on the server.'
+                      : 'Not connected'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCalendarPanelOpen(false)}
+                className="p-2 rounded-lg bg-white/10 hover:bg-white/15"
+                aria-label="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <p className="mt-3 text-[11px] text-gray-400">
+              Logged in as {loggedInAs}. Calendar is a separate Google login for this sales user.
+              {calendarStatus?.loginRole === 'admin'
+                ? ' You are logged in as admin, so Connect binds the admin’s Google account. Each salesperson must log in at /sales as themselves and connect.'
+                : ' Use a personal Gmail, or a Google account created with their @asoldi.com address.'}
+            </p>
+            {showCalendarConnect && (
+              <button
+                type="button"
+                onClick={() => void connectGoogleCalendar()}
+                className="mt-4 w-full inline-flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg bg-[#FF5B00] text-white text-sm hover:bg-[#e55200]"
+              >
+                {calendarConnecting ? <Loader2 size={14} className="animate-spin" /> : <Calendar size={14} />}
+                {calendarConnecting
+                  ? 'Waiting for Google…'
+                  : calendarStatus?.connected ? 'Reconnect Google Calendar' : 'Connect Google Calendar'}
+              </button>
+            )}
+          </div>
         </div>
       )}
       {discardPrompt && (
@@ -3308,7 +3606,7 @@ function Field({
         value={value}
         required={required}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full px-4 py-3 rounded-lg bg-[#161616] border border-white/10 text-white"
+        className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg bg-[#161616] border border-white/10 text-white"
       />
       {hint ? <p className="mt-1 text-xs text-gray-500">{hint}</p> : null}
     </div>
@@ -3331,7 +3629,7 @@ function TextArea({
         rows={3}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full px-4 py-3 rounded-lg bg-[#161616] border border-white/10 text-white resize-y"
+        className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg bg-[#161616] border border-white/10 text-white resize-y"
       />
     </div>
   );

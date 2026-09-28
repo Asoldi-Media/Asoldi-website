@@ -24,8 +24,11 @@ draft ──(request review)──▶ review-requested ──(verify)──▶ v
   straight away.
 * `review-requested` – rep clicked **Se gjennom tilbud (admin)**. Content is locked for the rep; admin gets an
   e-mail (`FIREFLIES_NOTIFY_EMAIL`, default `ansatte@asoldi.com`) and the offer shows in the Tilbud queue.
-* `verified` – admin approved. Content is locked; rep gets an e-mail and a **Send tilbud + kontrakt** button.
-  Any admin content edit drops it back to `review-requested`.
+  Opening, refreshing or changing the Fireflies recording does **not** rewrite the e-mail or prices.
+* `verified` – admin approved. Content stays locked forever for the rep (no visual editor, no “Generer på nytt”,
+  no meeting-quote remake). Admin edits after this drop the offer back to `review-requested` until they verify
+  again. The rep can still change **Til**, choose e-post/asoldi.com, and send. `/sales` shows **Tilbud verifisert**
+  with a count and a list of business names.
 * `sent` – e-mail + contract PDF delivered (BCC copy to the rep). **Nytt tilbud** starts a fresh draft.
 
 **Custom tier (`Skreddersydd`) always requires verification.** Standard tiers require it only when the rep ticks
@@ -89,9 +92,11 @@ ex. MVA, MVA 25 % and incl. MVA **per month** (retainer). The shell has no envel
 
 `lib/deepseek.js` (`DEEPSEEK_API_KEY`, optional `DEEPSEEK_MODEL`) + `lib/offer-ai.js`:
 
+* **Hva kunden vil ha** (admin Tilbud) → `summarizeClientIntent` reads transcript, product notes and the selected
+  plan into a briefing at the top of the review screen. Regenerates when those sources change.
 * **Fyll ut med kundedetaljer** → `fillOfferFromTranscript` reads the linked Fireflies transcript/summary and
   returns `need / project / terms / benefits` for the slots. Disabled (with hint) when no meeting is linked or
-  DeepSeek isn’t configured. Nothing runs automatically.
+  DeepSeek isn’t configured. Nothing runs automatically on a locked offer.
 * **Speil e-posten i kontrakten** (admin) → `reflectContractFromEmail` summarises the edited e-mail into a
   contract scope (title, scope sentence, per-product includes ≤ 8 bullets, extra terms, delivery weeks). Prices
   and page counts are re-anchored on the structured product list so the model cannot drift them. Admin can edit
@@ -140,7 +145,7 @@ Sales (owner or admin): `GET/PUT /api/admin/sales/:id/offer`, `POST …/offer/ne
 `GET …/offer/contract.pdf`, `POST …/offer/send`. Sender profile: `GET/PUT /api/admin/me/sender` (admin).
 
 Admin only: `GET /api/admin/offers[?status=]`, `GET/PUT /api/admin/offers/:id`,
-`POST …/:id/reflect-contract`, `PUT …/:id/contract`, `POST …/:id/verify`, `POST …/:id/reopen` (`{toDraft}`),
+`POST …/:id/client-intent` (refresh the “hva kunden vil ha” briefing), `POST …/:id/reflect-contract`, `PUT …/:id/contract`, `POST …/:id/verify`, `POST …/:id/reopen` (`{toDraft}`),
 `GET …/:id/contract.pdf`, `GET /api/admin/offers/contract-template/:tierId.pdf`,
 `GET /api/admin/fireflies/meetings[?unmatched=1|clientId=]`, `GET/POST …/:meetingId[/link|/unlink|/refresh]`.
 

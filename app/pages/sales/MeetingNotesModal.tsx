@@ -31,9 +31,58 @@ type Props = {
   onFlushReady?: (flush: () => Promise<void>) => void;
 };
 
+const SALES_MEETING_SCRIPT: { title: string; goal?: string; lines: { text?: string; quote?: string }[] }[] = [
+  {
+    title: 'Bli kjent',
+    lines: [
+      { quote: 'Hvorfor sa dere ja til et møte med oss?' },
+      { quote: 'Hvor lenge har dere drevet bedriften, og hvorfor startet dere? Fortell litt mer.' },
+      { quote: 'Hva er en kunde verdt for dere over en livstid?' },
+      { quote: 'Hva er hovedproduktet deres?' },
+      { quote: 'Har dere gjort dere noen tanker om design eller funksjonalitet? Hva er målet?' },
+    ],
+  },
+  {
+    title: 'Fremvisning',
+    lines: [
+      { text: 'Vis nettsiden (SEO-analyse hvis de allerede har en nettside) og spør:', quote: 'Hva synes dere?' },
+      { text: 'Snakk om endringer og spesifikasjoner' },
+      { text: 'Snakk om funksjonalitet' },
+      { text: 'Snakk om identitet: farger, stil og språk (har de dette?)' },
+      { text: 'Avklar hvilke egne seksjoner siden trenger' },
+      { text: 'Vis andre prosjekter og reviews' },
+      { text: 'Avklar tid og betaling: hvor mye tid de vil bruke, hosting, og om de vil betale over tid eller med en gang. Når vil de starte?' },
+      { text: 'Bekreft at media, logo, bilder og lenker blir sendt' },
+    ],
+  },
+  {
+    title: 'Pris',
+    lines: [
+      { text: 'Oppsummer samtalen og painpoints' },
+      { text: 'Sammenlign med andre aktører i bransjen (kvalitet og kost)' },
+      { text: 'Si prisen:', quote: 'Så en investering fra deres side, med [funksjonalitet], hadde vært [sum]. Hva synes du om dette tallet?' },
+      { text: 'Håndter innvendinger' },
+    ],
+  },
+  {
+    title: 'Signatur',
+    goal: 'mål: signert avtale',
+    lines: [
+      { quote: 'For å starte prosjektet trenger vi en signatur som lar oss sette i gang. Den dekker tjenesten deres, prisen og forventet leveringstid, og dere betaler ikke noe før prosjektet er levert.' },
+      { text: 'Signerer de nå: gå videre til steg 5' },
+      { text: 'Vil de ha tilbud på e-post: send tilbud med kontraktkopi innen 2 timer, og avtal et telefonmøte innen 48 timer for å få signaturen' },
+    ],
+  },
+  {
+    title: 'Neste steg',
+    lines: [
+      { text: 'En kollega tar workshop med kunden:', quote: 'Før workshopen kan dere tenke gjennom hva dere ellers ønsker på nettsiden, utover det vi allerede har snakket om. Så tar [kollega] workshop med dere.' },
+    ],
+  },
+];
+
 export function MeetingNotesModal({ businessName, quote, saving, embedded = false, onClose, onPersist, onContinue, onFlushReady }: Props) {
   const [state, setState] = useState<MeetingQuoteState>(() => normalizeMeetingQuote(quote || emptyMeetingQuote()));
-  const [savedLabel, setSavedLabel] = useState('Lagres automatisk');
   const persistRef = useRef(onPersist);
   persistRef.current = onPersist;
   const skipFirst = useRef(true);
@@ -43,11 +92,9 @@ export function MeetingNotesModal({ businessName, quote, saving, embedded = fals
       skipFirst.current = false;
       return;
     }
-    setSavedLabel('Lagrer…');
     const timer = window.setTimeout(() => {
       void Promise.resolve(persistRef.current({ meetingQuote: hostForcesOneTime ? { ...state, oneTime: true } : state }))
-        .then(() => setSavedLabel('Lagret'))
-        .catch(() => setSavedLabel('Kunne ikke lagre'));
+        .catch(() => undefined);
     }, 700);
     return () => window.clearTimeout(timer);
   }, [state]);
@@ -116,13 +163,6 @@ export function MeetingNotesModal({ businessName, quote, saving, embedded = fals
     void Promise.resolve(persistRef.current({ meetingQuote: quoteToSave() })).then(() => onContinue());
   }
 
-  const meetingQuestions = [
-    'Hvilke egne seksjoner trenger siden? For eksempel meny, booking, blogg eller galleri.',
-    'Hva er hovedproduktet, og hva er målet med nettsiden?',
-    'Identitet: farger, stil og språk.',
-    'Valider at media, logo, bilder og lenker blir sendt.',
-  ];
-
   const includedPages = includedPagesFor(state.tierId, state.customMode);
 
   function extraPages() {
@@ -150,8 +190,8 @@ export function MeetingNotesModal({ businessName, quote, saving, embedded = fals
           </button>
         </div>
         )}
-        <div className="grid lg:grid-cols-[minmax(0,1fr)_340px] min-h-0 flex-1 overflow-hidden">
-          <div className="overflow-y-auto p-5 space-y-4 text-sm text-[#374151]">
+        <div className="grid grid-rows-2 lg:grid-rows-1 lg:grid-cols-2 min-h-0 flex-1 overflow-hidden">
+          <div className="overflow-y-auto p-3 sm:p-5 space-y-4 text-sm text-[#374151] min-h-0">
             <label className="block">
               <span className="text-xs text-[#6B7280]">Antall sider</span>
               <input
@@ -282,13 +322,27 @@ export function MeetingNotesModal({ businessName, quote, saving, embedded = fals
 
           <aside className="border-t lg:border-t-0 lg:border-l border-[#E6E9EF] bg-[#F8F9FB] flex flex-col min-h-0">
             <div className="px-4 py-3 border-b border-[#E6E9EF]">
-              <h4 className="font-medium text-[#111827]">Spørsmål i møtet</h4>
-              <p className="text-[11px] text-[#6B7280]">Transkriptet tar med svarene. Startdato og produktnotater ligger under, og følger med i tilbudet.</p>
+              <h4 className="font-medium text-[#111827]">Spørsmål til møte</h4>
             </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              <ol className="list-decimal pl-4 space-y-2 text-sm text-[#111827]">
-                {meetingQuestions.map((question) => (
-                  <li key={question}>{question}</li>
+            <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-4">
+              <ol className="space-y-4">
+                {SALES_MEETING_SCRIPT.map((stage, index) => (
+                  <li key={stage.title}>
+                    <h5 className="text-sm font-semibold text-[#111827]">
+                      {index + 1}. {stage.title}
+                      {stage.goal ? (
+                        <span className="font-normal text-[#6B7280]"> ({stage.goal})</span>
+                      ) : null}
+                    </h5>
+                    <ul className="mt-1.5 list-disc space-y-1.5 pl-4 text-[13px] leading-snug text-[#374151]">
+                      {stage.lines.map((line, lineIndex) => (
+                        <li key={`${stage.title}-${lineIndex}`}>
+                          {line.text ? <span>{line.text}{line.quote ? ' ' : ''}</span> : null}
+                          {line.quote ? <span className="text-[#111827]">«{line.quote}»</span> : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </li>
                 ))}
               </ol>
               <label className="block">
@@ -312,9 +366,8 @@ export function MeetingNotesModal({ businessName, quote, saving, embedded = fals
                 />
               </label>
             </div>
-            <div className="p-4 border-t border-[#E6E9EF] space-y-2 bg-white">
-              <p className="text-[11px] text-[#6B7280]">{saving ? 'Lagrer…' : savedLabel}</p>
-              {!embedded && (
+            {!embedded && (
+            <div className="p-4 border-t border-[#E6E9EF] bg-white">
               <button
                 type="button"
                 disabled={saving}
@@ -324,8 +377,8 @@ export function MeetingNotesModal({ businessName, quote, saving, embedded = fals
                 {saving ? <Loader2 size={16} className="animate-spin" /> : null}
                 Gå til tilbud
               </button>
-              )}
             </div>
+            )}
           </aside>
         </div>
     </>

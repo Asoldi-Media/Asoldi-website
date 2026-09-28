@@ -7,6 +7,7 @@ import {
   listFirefliesMeetings,
   openAuthedPdf,
   reflectAdminOfferContract,
+  refreshAdminOfferIntent,
   reopenAdminOffer,
   saveAdminOffer,
   saveAdminOfferContract,
@@ -37,6 +38,14 @@ type OfferDetail = {
     meetingPlace: string;
     industry: string;
     meetings: { meetingId: string; title: string; when: string }[];
+    meetingQuote?: {
+      tierId?: string;
+      productNotes?: string;
+      productGoal?: string;
+      identity?: string;
+      customSections?: string;
+      selected?: string[];
+    } | null;
   } | null;
   readiness: OfferReadiness;
   ownerName: string;
@@ -70,6 +79,77 @@ const EMPTY_CUSTOM: Omit<OfferProduct, 'id'> = {
 
 function linesToList(value: string) {
   return value.split('\n').map((line) => line.trim()).filter(Boolean);
+}
+
+function ClientIntentCard({
+  intent,
+  busy,
+  onRefresh,
+}: {
+  intent: NonNullable<SalesOffer['clientIntent']> | null | undefined;
+  busy: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <div className="rounded-xl border border-sky-400/30 bg-sky-900/30 p-4 space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="text-xs uppercase tracking-wide text-sky-300">Hva kunden vil ha</div>
+          <p className="mt-1 text-sm text-white font-medium">
+            {intent?.headline || 'Sammendraget kommer når transkript, notater eller pakke er på plass.'}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={busy}
+          className="shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/10 text-xs text-white disabled:opacity-50"
+          title="Lag sammendraget på nytt fra transkript, notater og valgt pakke"
+        >
+          {busy ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />} Oppdater
+        </button>
+      </div>
+      {intent?.wants?.length ? (
+        <ul className="list-disc pl-5 text-sm text-gray-200 space-y-1">
+          {intent.wants.map((line) => <li key={line}>{line}</li>)}
+        </ul>
+      ) : null}
+      <div className="grid sm:grid-cols-2 gap-3 text-xs text-gray-300">
+        {intent?.plan ? (
+          <div>
+            <div className="uppercase tracking-wide text-gray-500 mb-1">Valgt pakke og tillegg</div>
+            <p>{intent.plan}</p>
+          </div>
+        ) : null}
+        {intent?.notes ? (
+          <div>
+            <div className="uppercase tracking-wide text-gray-500 mb-1">Produktnotater</div>
+            <p className="whitespace-pre-wrap">{intent.notes}</p>
+          </div>
+        ) : null}
+        {intent?.goal ? (
+          <div>
+            <div className="uppercase tracking-wide text-gray-500 mb-1">Mål</div>
+            <p className="whitespace-pre-wrap">{intent.goal}</p>
+          </div>
+        ) : null}
+        {intent?.identity || intent?.customSections ? (
+          <div>
+            <div className="uppercase tracking-wide text-gray-500 mb-1">Identitet / seksjoner</div>
+            <p className="whitespace-pre-wrap">{[intent.identity, intent.customSections].filter(Boolean).join('\n')}</p>
+          </div>
+        ) : null}
+      </div>
+      {intent?.uncertainties?.length ? (
+        <div className="rounded-lg border border-amber-400/30 bg-amber-900/20 px-3 py-2 text-xs text-amber-200">
+          <div className="font-medium mb-1">Uklart i kildene</div>
+          <ul className="list-disc pl-4 space-y-0.5">
+            {intent.uncertainties.map((line) => <li key={line}>{line}</li>)}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export function OfferReviewSection() {
@@ -202,6 +282,15 @@ export function OfferReviewSection() {
       patchOffer(data.offer);
       setNotice('Lagret.');
       void loadList();
+    });
+  }
+
+  async function refreshIntent() {
+    if (!offer) return;
+    await runAction('intent', async () => {
+      const data = await refreshAdminOfferIntent(offer.id) as { offer: SalesOffer };
+      patchOffer(data.offer);
+      setNotice('Sammendraget er oppdatert fra transkript, notater og valgt pakke.');
     });
   }
 
@@ -428,6 +517,11 @@ export function OfferReviewSection() {
             <p className="text-sm text-gray-400 inline-flex items-center gap-2"><Loader2 size={14} className="animate-spin" /> Åpner tilbudet…</p>
           ) : (
             <div className="space-y-4">
+              <ClientIntentCard
+                intent={offer.clientIntent}
+                busy={busy === 'intent'}
+                onRefresh={() => void refreshIntent()}
+              />
               <div className="rounded-xl border border-white/10 bg-[#1f1f1f] p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>

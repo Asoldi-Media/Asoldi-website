@@ -7,6 +7,11 @@
   color: #111827;
 }
 
+.staff-light .text-gray-50,
+.staff-light .text-gray-100 {
+  color: #111827;
+}
+
 .staff-light .text-gray-200,
 .staff-light .text-gray-300 {
   color: #374151;

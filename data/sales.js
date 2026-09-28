@@ -12,6 +12,7 @@ import {
   inferMeetingHeld,
   salesProgressBlockedReason as nextActionProgressBlockedReason,
 } from '../lib/sales-next-actions.js';
+import { calendarDurationForMode } from '../lib/sales-meeting-duration.js';
 
 const SALES_PATH = getDataFilePath('sales-clients.json');
 
@@ -114,8 +115,7 @@ function normalizeMeetingMode(value) {
 }
 
 function durationForMode(mode) {
-  // Keep both online and in-person meetings at the same baseline duration.
-  return 30;
+  return calendarDurationForMode(mode);
 }
 
 function readSalesFile() {

@@ -16,6 +16,7 @@ const OFFERS_PATH = getDataFilePath('sales-offers.json');
 export const OFFER_STATUSES = ['draft', 'review-requested', 'verified', 'sent'];
 const MAX_HISTORY = 60;
 const MAX_HTML_LENGTH = 600_000;
+const MAX_INTENT_TEXT = 2000;
 
 function nowIso() {
   return new Date().toISOString();
@@ -139,6 +140,33 @@ function normalizeHistory(list) {
     .slice(-MAX_HISTORY);
 }
 
+export function normalizeClientIntent(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const wants = sanitizeList(raw.wants).slice(0, 8);
+  const uncertainties = sanitizeList(raw.uncertainties).slice(0, 8);
+  const headline = sanitizeText(raw.headline).slice(0, 280);
+  if (!headline && !wants.length && !sanitizeText(raw.plan) && !sanitizeText(raw.notes)) return null;
+  return {
+    headline,
+    wants,
+    plan: sanitizeText(raw.plan).slice(0, MAX_INTENT_TEXT),
+    notes: sanitizeText(raw.notes).slice(0, MAX_INTENT_TEXT),
+    goal: sanitizeText(raw.goal).slice(0, MAX_INTENT_TEXT),
+    identity: sanitizeText(raw.identity).slice(0, MAX_INTENT_TEXT),
+    customSections: sanitizeText(raw.customSections).slice(0, MAX_INTENT_TEXT),
+    uncertainties,
+    source: sanitizeText(raw.source) === 'ai' ? 'ai' : 'fallback',
+    sourceHash: sanitizeText(raw.sourceHash).slice(0, 64),
+    generatedAt: sanitizeText(raw.generatedAt),
+  };
+}
+
+/** Reps must not change email, price or contract once the offer is with admin or verified. */
+export function offerContentIsLocked(offer = {}) {
+  const status = normalizeOfferStatus(offer?.status);
+  return status === 'review-requested' || status === 'verified' || status === 'sent';
+}
+
 export function normalizeSalesOffer(raw = {}) {
   const createdAt = sanitizeText(raw.createdAt) || nowIso();
   const contract = raw.contract && typeof raw.contract === 'object' ? raw.contract : {};
@@ -167,6 +195,7 @@ export function normalizeSalesOffer(raw = {}) {
     meetingId: sanitizeText(raw.meetingId),
     meetingSource: sanitizeText(raw.meetingSource) === 'manual' ? 'manual' : '',
     adminNote: sanitizeText(raw.adminNote).slice(0, 2000),
+    clientIntent: normalizeClientIntent(raw.clientIntent),
     history: normalizeHistory(raw.history),
     reviewRequestedAt: sanitizeText(raw.reviewRequestedAt),
     verifiedAt: sanitizeText(raw.verifiedAt),
@@ -269,8 +298,8 @@ export function updateSalesOffer(id, patch = {}, { actor = '', action = 'updated
 export function upsertClientOfferDraft(salesClientId, patch = {}, { actor = '', ownerId = '' } = {}) {
   const current = getOfferForClient(salesClientId);
   if (current && current.status !== 'sent') {
-    // Verified offers are locked for the rep; only admins change content after verification.
-    if (current.status === 'verified' && !patch.__allowVerifiedEdit) {
+    // Content is locked for the rep while admin reviews or after verification.
+    if (offerContentIsLocked(current) && current.status !== 'sent' && !patch.__allowVerifiedEdit) {
       return current;
     }
     const { __allowVerifiedEdit, ...rest } = patch;
