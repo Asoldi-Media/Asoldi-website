@@ -670,6 +670,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
       | { kind: 'header'; id: string; title: string; hint: string; count: number; tone: 'assign' | 'recent' | 'upcoming' | 'past' | 'none'; collapsed: boolean }
       | { kind: 'divider'; id: string }
       | { kind: 'client'; client: SalesClient; compact: boolean }
+      | { kind: 'more'; id: string; bucketId: string; count: number; collapsed: boolean }
     > = [];
     const pushSection = (
       id: string,
@@ -683,7 +684,10 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
       if (rows.length) rows.push({ kind: 'divider', id: `after-${rows.length}` });
       rows.push({ kind: 'header', id, title, hint, count: clients.length, tone, collapsed });
       const visible = collapsed ? clients.slice(0, SALES_COMPACT_PREVIEW) : clients;
-      for (const client of visible) rows.push({ kind: 'client', client, compact: collapsed });
+      for (const client of visible) rows.push({ kind: 'client', client, compact: true });
+      if (clients.length > SALES_COMPACT_PREVIEW) {
+        rows.push({ kind: 'more', id: `more-${id}`, bucketId: id, count: clients.length, collapsed });
+      }
     };
     if (isSalesAdmin) {
       pushSection(
@@ -1718,6 +1722,21 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
     });
   }
 
+  function renderCategoryMore(bucketId: string, count: number, className = '') {
+    if (count <= SALES_COMPACT_PREVIEW) return null;
+    const collapsed = collapsedBuckets[bucketId] !== false;
+    return (
+      <button
+        type="button"
+        onClick={() => toggleTimelineBucket(bucketId)}
+        className={`rounded-xl border border-white/20 bg-white/10 hover:bg-white/15 px-3 py-2.5 text-sm font-medium text-white flex items-center justify-center gap-2 ${className}`}
+      >
+        {collapsed ? `Vis alle ${count} kunder` : 'Vis færre'}
+        <ChevronDown size={16} className={`transition-transform ${collapsed ? '' : 'rotate-180'}`} />
+      </button>
+    );
+  }
+
   function formatBulkResult(data: Record<string, unknown>, action = '') {
     const updated = Number(data.updated) || 0;
     const deleted = Number(data.deleted) || 0;
@@ -1980,8 +1999,8 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
               <React.Fragment key={client.id}>
                 <div
                   onClick={(event) => handleClientCardClick(event, client.id)}
-                  className={`rounded-2xl border p-3 sm:p-4 flex flex-col gap-2 sm:gap-3 cursor-pointer min-w-0 ${
-                    showCompact ? 'relative overflow-hidden pb-8' : ''
+                  className={`rounded-2xl border flex flex-col cursor-pointer min-w-0 ${
+                    showCompact ? 'p-2.5 gap-1' : 'p-3 sm:p-4 gap-2 sm:gap-3'
                   } ${
                     clientSelected
                       ? 'bg-[#3f3f3f] hover:bg-[#454545] border-[#FF5B00] ring-1 ring-[#FF5B00]/40'
@@ -2021,14 +2040,14 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                         </span>
                       ) : null}
                     </div>
-                    <div className={`mt-1 flex items-center gap-1.5 text-xs min-w-0 ${calendarAction ? 'text-sky-300' : 'text-gray-400'}`}>
+                    <div className={`flex items-center gap-1.5 text-xs min-w-0 ${showCompact ? 'mt-0.5' : 'mt-1'} ${calendarAction ? 'text-sky-300' : 'text-gray-400'}`}>
                       {calendarAction ? (
                         <CalendarCheck2 size={12} className="shrink-0" aria-label="På kalenderen" />
                       ) : (
                         <CalendarClock size={12} className="shrink-0" />
                       )}
                       <span className="truncate">{nextAction?.dueAt ? formatWhen(nextAction.dueAt) : 'Ingen neste handling satt'}</span>
-                      {calendarAction ? (
+                      {!showCompact && calendarAction ? (
                         <span
                           className="shrink-0 px-1.5 py-px rounded border border-sky-400/30 bg-sky-400/10 text-[10px] uppercase tracking-wide text-sky-200"
                           title="Neste handling ligger på kalenderen — viktig kontaktpunkt"
@@ -2043,7 +2062,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                       </div>
                     )}
                     {(client.contactPerson || client.contactPhone) ? (
-                      <div className="mt-1 flex items-center gap-1.5 text-xs text-gray-400 min-w-0">
+                      <div className={`${showCompact ? 'mt-0.5' : 'mt-1'} flex items-center gap-1.5 text-xs text-gray-400 min-w-0`}>
                         <UserRound size={12} className="shrink-0" />
                         <span className="truncate">{client.contactPerson || 'No contact person'}</span>
                         {client.contactPhone ? (
@@ -2059,10 +2078,24 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                         ) : null}
                       </div>
                     ) : null}
-                    <div className="mt-1 text-[11px] text-gray-500 truncate">
+                    <div className={`${showCompact ? 'mt-0.5' : 'mt-1'} text-[11px] text-gray-500 truncate`}>
                       {client.meetingMode === 'in-person' ? 'IRL' : 'Online'}
                       {client.meetingPlace ? ` · ${client.meetingPlace}` : ''}
                     </div>
+                    {showCompact ? (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          togglePeekCard(client.id);
+                        }}
+                        className="mt-0.5 mx-auto p-0.5 rounded text-gray-400 hover:text-white"
+                        title="Vis mer på dette kortet"
+                        aria-label="Vis mer på dette kortet"
+                      >
+                        <ChevronDown size={14} />
+                      </button>
+                    ) : null}
                     {!showCompact && isSalesAdmin && salesRepOptions.length > 0 && (
                       <label className="mt-2 flex items-center gap-2 text-[11px] text-gray-400">
                         <span className="shrink-0">Selger</span>
@@ -2095,38 +2128,13 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                     onClick={() => openEdit(client)}
                     title="Edit client"
                     aria-label="Edit client"
-                    className="shrink-0 p-2 rounded-lg bg-white/10 text-white hover:bg-white/15"
+                    className={`shrink-0 rounded-lg bg-white/10 text-white hover:bg-white/15 ${showCompact ? 'p-1' : 'p-2'}`}
                   >
-                    <Pencil size={14} />
+                    <Pencil size={showCompact ? 12 : 14} />
                   </button>
                 </div>
 
-                {showCompact ? (
-                  <>
-                    <div className="max-h-16 overflow-hidden opacity-40 pointer-events-none select-none">
-                      <SalesGoalTimeline
-                        client={client}
-                        progressBusyKey={progressBusyKey}
-                        actionBusy={nextActionBusyId === client.id}
-                        onToggleGoal={(key, extra) => void toggleProgress(client, key, extra)}
-                        onMutateAction={(body) => mutateNextAction(client, body)}
-                        variant={isWin ? 'win' : 'active'}
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        togglePeekCard(client.id);
-                      }}
-                      className="absolute inset-x-0 bottom-0 h-16 w-full flex items-end justify-center pb-1.5 bg-gradient-to-t from-white via-white/80 to-transparent"
-                      title="Vis mer på dette kortet"
-                      aria-label="Vis mer på dette kortet"
-                    >
-                      <ChevronDown size={16} className="text-[#1a1a1a]" />
-                    </button>
-                  </>
-                ) : (
+                {showCompact ? null : (
                 <>
                 {compact && peeked ? (
                   <button
@@ -3301,15 +3309,28 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                   type="button"
                   onClick={() => toggleTimelineBucket(row.id)}
                   className={`md:col-span-2 lg:col-span-3 rounded-xl border px-3 py-2.5 text-left ${toneClass}`}
+                  aria-expanded={!collapsed}
                 >
                   <span className="flex items-center justify-between gap-3">
                     <span className="block text-sm font-semibold">{row.title}</span>
                     <span className="inline-flex items-center gap-2 shrink-0">
                       <span className="text-sm font-semibold tabular-nums">{row.count}</span>
+                      {row.count > SALES_COMPACT_PREVIEW ? (
+                        <span className="text-xs font-medium opacity-80">
+                          {collapsed ? 'Vis alle' : 'Vis færre'}
+                        </span>
+                      ) : null}
                       <ChevronDown size={16} className={`transition-transform ${collapsed ? '' : 'rotate-180'}`} />
                     </span>
                   </span>
                 </button>
+              );
+            }
+            if (row.kind === 'more') {
+              return (
+                <div key={row.id} className="md:col-span-2 lg:col-span-3">
+                  {renderCategoryMore(row.bucketId, row.count, 'w-full')}
+                </div>
               );
             }
             return renderSalesClientCard(row.client, false, row.compact);
@@ -3349,14 +3370,20 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
               <span className="text-xs px-2 py-1 rounded bg-emerald-900/30 border border-emerald-700/30 text-emerald-200">
                 {winClients.length} solgt
               </span>
+              {winClients.length > SALES_COMPACT_PREVIEW ? (
+                <span className="text-xs text-gray-300">
+                  {collapsedBuckets.wins !== false ? 'Vis alle' : 'Vis færre'}
+                </span>
+              ) : null}
               <ChevronDown size={16} className={`text-gray-400 transition-transform ${collapsedBuckets.wins !== false ? '' : 'rotate-180'}`} />
             </span>
           </button>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {(collapsedBuckets.wins !== false ? winClients.slice(0, SALES_COMPACT_PREVIEW) : winClients).map((client) => (
-              renderSalesClientCard(client, true, collapsedBuckets.wins !== false)
+              renderSalesClientCard(client, true, true)
             ))}
           </div>
+          {renderCategoryMore('wins', winClients.length)}
         </div>
       )}
 
@@ -3372,19 +3399,24 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
               <span className="text-xs px-2 py-1 rounded bg-black/20 border border-white/10 text-gray-300">
                 {archivedClients.length} archived
               </span>
+              {archivedClients.length > SALES_COMPACT_PREVIEW ? (
+                <span className="text-xs text-gray-300">
+                  {collapsedBuckets.archived !== false ? 'Vis alle' : 'Vis færre'}
+                </span>
+              ) : null}
               <ChevronDown size={16} className={`text-gray-400 transition-transform ${collapsedBuckets.archived !== false ? '' : 'rotate-180'}`} />
             </span>
           </button>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             {(collapsedBuckets.archived !== false ? archivedClients.slice(0, SALES_COMPACT_PREVIEW) : archivedClients).map((client) => {
               const clientSelected = selectedClientIds.includes(client.id);
-              const compactArchived = collapsedBuckets.archived !== false && !peekCardIds[client.id];
+              const compactArchived = !peekCardIds[client.id];
               return (
               <div
                 key={client.id}
                 onClick={(event) => handleClientCardClick(event, client.id)}
-                className={`rounded-xl border p-3 space-y-2 cursor-pointer ${
-                  compactArchived ? 'relative overflow-hidden pb-8' : ''
+                className={`rounded-xl border p-2.5 cursor-pointer ${
+                  compactArchived ? '' : 'space-y-2'
                 } ${
                   clientSelected
                     ? 'bg-[#3f3f3f] hover:bg-[#454545] border-[#FF5B00] ring-1 ring-[#FF5B00]/40'
@@ -3409,40 +3441,39 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                         .filter(Boolean)
                         .join(' · ')}
                     </div>
+                    {compactArchived ? (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          togglePeekCard(client.id);
+                        }}
+                        className="mt-0.5 mx-auto p-0.5 rounded text-gray-400 hover:text-white"
+                        title="Vis mer på dette kortet"
+                        aria-label="Vis mer på dette kortet"
+                      >
+                        <ChevronDown size={14} />
+                      </button>
+                    ) : null}
                   </div>
                   <span className="text-[11px] px-2 py-0.5 rounded bg-red-900/30 text-red-300 border border-red-700/30">
                     Not sold
                   </span>
                 </div>
-                {compactArchived ? (
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      togglePeekCard(client.id);
-                    }}
-                    className="absolute inset-x-0 bottom-0 h-14 w-full flex items-end justify-center pb-1.5 bg-gradient-to-t from-white via-white/80 to-transparent"
-                    title="Vis mer på dette kortet"
-                    aria-label="Vis mer på dette kortet"
-                  >
-                    <ChevronDown size={16} className="text-[#1a1a1a]" />
-                  </button>
-                ) : (
+                {!compactArchived && (
                 <>
-                {collapsedBuckets.archived !== false ? (
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      togglePeekCard(client.id);
-                    }}
-                    className="self-center p-1 rounded-full bg-white/10 text-gray-300 hover:text-white"
-                    title="Vis mindre"
-                    aria-label="Vis mindre"
-                  >
-                    <ChevronDown size={16} className="rotate-180 mx-auto" />
-                  </button>
-                ) : null}
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    togglePeekCard(client.id);
+                  }}
+                  className="self-center p-1 rounded-full bg-white/10 text-gray-300 hover:text-white"
+                  title="Vis mindre"
+                  aria-label="Vis mindre"
+                >
+                  <ChevronDown size={16} className="rotate-180 mx-auto" />
+                </button>
                 <div className="text-xs text-gray-400">
                   Archived: {formatDateTime(client.archive?.archivedAt || client.updatedAt)}
                 </div>
@@ -3487,6 +3518,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
               );
             })}
           </div>
+          {renderCategoryMore('archived', archivedClients.length)}
         </div>
       )}
 
