@@ -448,6 +448,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
   const [savingNoteId, setSavingNoteId] = useState<string | null>(null);
   const notesFlushRef = useRef<null | (() => Promise<void>)>(null);
   const clientCardBaselineRef = useRef('');
+  const salesListGenRef = useRef(0);
   const [discardPrompt, setDiscardPrompt] = useState(false);
   const [verifiedInboxOpen, setVerifiedInboxOpen] = useState(false);
   const [previewMissingToastId, setPreviewMissingToastId] = useState<string | null>(null);
@@ -751,14 +752,16 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
 
   async function loadSales(options: { clearMessages?: boolean; showLoading?: boolean } = {}) {
     const clearMessages = options.clearMessages !== false;
-    const showLoading = options.showLoading !== false;
+    const showLoading = options.showLoading === true;
     if (showLoading) setLoading(true);
     if (clearMessages) {
       setError('');
       setNotice('');
     }
+    const gen = ++salesListGenRef.current;
     try {
       const data = await request('/admin/sales');
+      if (gen !== salesListGenRef.current) return;
       const nextClients = Array.isArray(data.clients) ? data.clients : [];
       setClients(nextClients);
       const nextIds = new Set(nextClients.map((client: SalesClient) => client.id));
@@ -811,7 +814,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
   }
 
   useEffect(() => {
-    void loadSales();
+    void loadSales({ showLoading: true });
     void loadOffers();
     void loadCalendarStatus();
   }, []);
@@ -1064,7 +1067,15 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
   }
 
   function applySavedClient(saved: SalesClient) {
-    setClients((prev) => prev.map((entry) => (entry.id === saved.id ? saved : entry)));
+    if (!saved?.id) return;
+    salesListGenRef.current += 1;
+    setClients((prev) => {
+      const index = prev.findIndex((entry) => entry.id === saved.id);
+      if (index === -1) return [saved, ...prev];
+      const next = prev.slice();
+      next[index] = saved;
+      return next;
+    });
     setNoteDrafts((prev) => {
       if (!Object.prototype.hasOwnProperty.call(prev, saved.id)) return prev;
       const next = { ...prev };
@@ -1296,7 +1307,8 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
           return next;
         });
       }
-      await loadSales({ clearMessages: false });
+      if (saved?.id) applySavedClient(saved);
+      else await loadSales({ clearMessages: false, showLoading: false });
       clientCardBaselineRef.current = clientCardSnapshot(form, websiteEmailTouched);
       if (options?.keepOpen) {
         setError(warnings.length ? warnings.join(' | ') : '');
@@ -1329,7 +1341,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
 
   async function goFlowStep(step: 1 | 2 | 3) {
     if (!inClientFlow || step === flowStep) return;
-    if (flowStep === 1) {
+    if (flowStep === 1 && clientCardDirty) {
       const ok = await saveForm(undefined, { keepOpen: true });
       if (!ok) return;
     }
@@ -1368,7 +1380,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
     setProgressBusyKey(`${client.id}:${key}`);
     setError('');
     try {
-      await request(`/admin/sales/${client.id}/progression`, {
+      const data = await request(`/admin/sales/${client.id}/progression`, {
         method: 'PATCH',
         body: JSON.stringify({
           key,
@@ -1376,7 +1388,9 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
           fastTrack,
         }),
       });
-      await loadSales();
+      const saved = data?.client as SalesClient | undefined;
+      if (saved?.id) applySavedClient(saved);
+      else await loadSales({ clearMessages: false, showLoading: false });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed updating progression');
     } finally {
@@ -1388,11 +1402,16 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
     setNextActionBusyId(client.id);
     setError('');
     try {
-      await request(`/admin/sales/${client.id}/next-actions`, {
+      const data = await request(`/admin/sales/${client.id}/next-actions`, {
         method: 'PATCH',
         body: JSON.stringify(body),
       });
-      await loadSales();
+      const saved = data?.client as SalesClient | undefined;
+      if (saved?.id) applySavedClient(saved);
+      else await loadSales({ clearMessages: false, showLoading: false });
+      const warnings = (Array.isArray(data?.warnings) ? data.warnings.filter(Boolean) : [])
+        .filter((line) => !/client owner calendar/i.test(String(line)));
+      if (warnings.length) setError(warnings.join(' | '));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed updating next action');
     } finally {
@@ -3021,7 +3040,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
         )}
       </div>
 
-      {loading ? (
+      {loading && clients.length === 0 ? (
         <div className="min-h-[180px] flex items-center justify-center text-gray-400">
           <Loader2 className="animate-spin mr-2" size={18} /> Loading sales clients…
         </div>
