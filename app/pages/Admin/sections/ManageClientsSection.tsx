@@ -29,7 +29,7 @@ export function ManageClientsSection({
   const liveSites = sites.filter((site) => site.deliveryPhase !== 'development');
 
   return (
-    <div className="max-w-6xl space-y-6">
+    <div className={view === 'sales' ? 'space-y-6' : 'max-w-6xl space-y-6'}>
       <div>
         <h1 className="text-2xl font-bold text-white mb-2">Manage clients</h1>
         <p className="text-gray-400 text-sm">

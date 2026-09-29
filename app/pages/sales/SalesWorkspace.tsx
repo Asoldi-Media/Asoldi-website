@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
-import { Loader2, LogOut } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { SalesClientsSection } from '../Admin/sections/SalesClientsSection';
 import { SalesScriptsDock } from './SalesScriptsDock';
 import { API, getSalesToken } from '../Admin/shared';
@@ -46,7 +46,7 @@ export const SalesWorkspace = () => {
   if (status === 'checking') {
     return (
       <div className="staff-light min-h-screen bg-[#1a1a1a] flex items-center justify-center text-gray-300">
-        <Loader2 className="animate-spin mr-2" size={20} /> Laster salgsarbeidsplass…
+        <Loader2 className="animate-spin mr-2" size={20} /> Laster salgsterminal…
       </div>
     );
   }
@@ -69,43 +69,11 @@ export const SalesWorkspace = () => {
   return (
     <>
       <Helmet>
-        <title>Salgsarbeidsplass – Asoldi</title>
+        <title>Salgsterminal – Asoldi</title>
         <meta name="robots" content="noindex,nofollow" />
       </Helmet>
       <div className="staff-light min-h-screen bg-[#1a1a1a] text-white">
-        <header className="border-b border-white/10 bg-[#222]">
-          <div className="max-w-[1200px] mx-auto px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              <h1 className="text-base sm:text-lg font-semibold truncate">Salgsarbeidsplass</h1>
-              <p className="hidden sm:block text-xs text-gray-400">Dine salgskunder, møter og din egen Google Kalender.</p>
-            </div>
-            <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-              <Link
-                to="/sales/email/templates"
-                className="inline-flex items-center px-2.5 sm:px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-xs sm:text-sm"
-              >
-                Maler
-              </Link>
-              <Link
-                to="/previews"
-                className="hidden sm:inline-flex items-center px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-sm"
-              >
-                Public previews
-              </Link>
-              <button
-                type="button"
-                onClick={logout}
-                className="inline-flex items-center gap-2 px-2.5 sm:px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-xs sm:text-sm"
-              >
-                <LogOut size={15} />
-                <span className="hidden sm:inline">Logg ut</span>
-              </button>
-            </div>
-          </div>
-        </header>
-        <main className="max-w-[1200px] mx-auto px-3 sm:px-6 py-4 sm:py-8">
-          <SalesClientsSection />
-        </main>
+        <SalesClientsSection onLogout={logout} />
         <SalesScriptsDock />
       </div>
     </>

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArchiveX,
   Calendar,
@@ -11,7 +11,9 @@ import {
   Filter,
   Gift,
   Loader2,
+  LogOut,
   Mail,
+  MapPin,
   MonitorSmartphone,
   Pencil,
   Phone,
@@ -88,9 +90,40 @@ const OFFER_TIERS = [
 ];
 const SALES_MAP_DEFAULT_CENTER: [number, number] = [63.4305, 10.3951];
 const SALES_MAP_DEFAULT_ZOOM = 5;
+const SALES_COMPACT_PREVIEW = 6;
+const SALES_BUCKETS_STORAGE_KEY = 'asoldi-sales-timeline-collapsed-v2';
+const DEFAULT_SALES_BUCKETS_COLLAPSED: Record<string, boolean> = {
+  awaitingRep: true,
+  recentPastDue: true,
+  upcoming: true,
+  pastDue: true,
+  noNextAction: true,
+  archived: true,
+  wins: true,
+};
+
+type SalesHeaderPanel = 'filter' | 'calendar' | 'map' | null;
 
 function salesIsMobileViewport() {
   return typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches;
+}
+
+function googleCalendarEmbedUrl(email = '') {
+  const src = String(email || '').trim();
+  if (!src) return '';
+  const params = new URLSearchParams({
+    src,
+    ctz: 'Europe/Oslo',
+    mode: 'WEEK',
+    showTitle: '0',
+    showNav: '1',
+    showDate: '1',
+    showPrint: '0',
+    showTabs: '1',
+    showCalendars: '0',
+    showTz: '0',
+  });
+  return `https://calendar.google.com/calendar/embed?${params.toString()}`;
 }
 
 type CalendarStatus = {
@@ -164,6 +197,7 @@ type MeetingMapPin = {
 
 type Props = {
   onMovedToDevelopment?: () => void;
+  onLogout?: () => void;
 };
 
 type SalesFormState = {
@@ -379,7 +413,7 @@ function isValidClientEmail(value = '') {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
 }
 
-export function SalesClientsSection({ onMovedToDevelopment }: Props) {
+export function SalesClientsSection({ onMovedToDevelopment, onLogout }: Props) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const flowClientId = searchParams.get('flow') || '';
@@ -416,19 +450,17 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
   const [nextActionBusyId, setNextActionBusyId] = useState<string | null>(null);
   const [collapsedBuckets, setCollapsedBuckets] = useState<Record<string, boolean>>(() => {
     try {
-      const raw = window.localStorage.getItem('asoldi-sales-timeline-collapsed');
+      const raw = window.localStorage.getItem(SALES_BUCKETS_STORAGE_KEY);
       const parsed = raw ? JSON.parse(raw) as Record<string, boolean> : {};
-      return {
-        archived: true,
-        ...parsed,
-        ...(salesIsMobileViewport() ? { recentPastDue: true } : {}),
-      };
+      return { ...DEFAULT_SALES_BUCKETS_COLLAPSED, ...parsed };
     } catch {
-      return { archived: true, ...(salesIsMobileViewport() ? { recentPastDue: true } : {}) };
+      return { ...DEFAULT_SALES_BUCKETS_COLLAPSED };
     }
   });
-  const [toolsOpen, setToolsOpen] = useState(() => !salesIsMobileViewport());
-  const [mapOpen, setMapOpen] = useState(false);
+  const [headerPanel, setHeaderPanel] = useState<SalesHeaderPanel>(null);
+  const [productMenuOpen, setProductMenuOpen] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [peekCardIds, setPeekCardIds] = useState<Record<string, boolean>>({});
   const [mapMounted, setMapMounted] = useState(false);
   const [calendarPanelOpen, setCalendarPanelOpen] = useState(false);
   const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
@@ -458,6 +490,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
   const recordingBlobUrlsRef = useRef<Record<string, string>>({});
   const previewMissingTimerRef = useRef<number | null>(null);
   const calendarConnectStopRef = useRef<null | (() => void)>(null);
+  const headerShellRef = useRef<HTMLDivElement | null>(null);
 
   // Website offers (tier + nettsidekode given to a client).
   const [offers, setOffers] = useState<WebsiteOffer[]>([]);
@@ -495,6 +528,9 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
     [clients, productBracket]
   );
   const isSsuBracket = productBracket === 'ssu';
+  const mapOpen = headerPanel === 'map';
+  const canSignOut = Boolean(onLogout) && typeof window !== 'undefined' && window.location.pathname.startsWith('/sales');
+  const calendarEmbedUrl = googleCalendarEmbedUrl(calendarStatus?.googleEmail || '');
   const clientMatchesNameSearch = (client: SalesClient) => {
     if (!normalizedClientSearchQuery) return true;
     const haystack = [
@@ -629,9 +665,9 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
   );
   const timelineRows = useMemo(() => {
     const rows: Array<
-      | { kind: 'header'; id: string; title: string; hint: string; count: number; tone: 'assign' | 'recent' | 'upcoming' | 'past' | 'none' }
+      | { kind: 'header'; id: string; title: string; hint: string; count: number; tone: 'assign' | 'recent' | 'upcoming' | 'past' | 'none'; collapsed: boolean }
       | { kind: 'divider'; id: string }
-      | { kind: 'client'; client: SalesClient }
+      | { kind: 'client'; client: SalesClient; compact: boolean }
     > = [];
     const pushSection = (
       id: string,
@@ -640,10 +676,12 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
       clients: SalesClient[],
       tone: 'assign' | 'recent' | 'upcoming' | 'past' | 'none'
     ) => {
-      rows.push({ kind: 'header', id, title, hint, count: clients.length, tone });
-      if (!collapsedBuckets[id]) {
-        for (const client of clients) rows.push({ kind: 'client', client });
-      }
+      if (!clients.length) return;
+      const collapsed = collapsedBuckets[id] !== false;
+      if (rows.length) rows.push({ kind: 'divider', id: `after-${rows.length}` });
+      rows.push({ kind: 'header', id, title, hint, count: clients.length, tone, collapsed });
+      const visible = collapsed ? clients.slice(0, SALES_COMPACT_PREVIEW) : clients;
+      for (const client of visible) rows.push({ kind: 'client', client, compact: collapsed });
     };
     if (isSalesAdmin) {
       pushSection(
@@ -661,7 +699,6 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
       activeMeetingGroups.recentPastDue || [],
       'recent'
     );
-    rows.push({ kind: 'divider', id: 'after-recent' });
     pushSection(
       'upcoming',
       'Neste handling',
@@ -669,7 +706,6 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
       activeMeetingGroups.upcoming,
       'upcoming'
     );
-    rows.push({ kind: 'divider', id: 'after-upcoming' });
     pushSection(
       'pastDue',
       'Forfalt',
@@ -969,6 +1005,26 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
     }, 80);
     return () => window.clearTimeout(timer);
   }, [mapOpen]);
+
+  useEffect(() => {
+    if (!headerPanel && !productMenuOpen && !accountMenuOpen) return undefined;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && headerShellRef.current?.contains(target)) return;
+      closeHeaderMenus();
+    };
+    const onScroll = (event: Event) => {
+      const target = event.target as Node | null;
+      if (target && headerShellRef.current?.contains(target)) return;
+      closeHeaderMenus();
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('scroll', onScroll, true);
+    };
+  }, [headerPanel, productMenuOpen, accountMenuOpen]);
 
   useEffect(
     () => () => {
@@ -1628,11 +1684,31 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
     toggleClientSelected(clientId);
   }
 
+  function closeHeaderMenus() {
+    setHeaderPanel(null);
+    setProductMenuOpen(false);
+    setAccountMenuOpen(false);
+  }
+
+  function toggleHeaderPanel(panel: SalesHeaderPanel) {
+    setProductMenuOpen(false);
+    setAccountMenuOpen(false);
+    setHeaderPanel((current) => {
+      const next = current === panel ? null : panel;
+      if (next === 'map') setMapMounted(true);
+      return next;
+    });
+  }
+
+  function togglePeekCard(clientId: string) {
+    setPeekCardIds((prev) => ({ ...prev, [clientId]: !prev[clientId] }));
+  }
+
   function toggleTimelineBucket(id: string) {
     setCollapsedBuckets((prev) => {
       const next = { ...prev, [id]: !prev[id] };
       try {
-        window.localStorage.setItem('asoldi-sales-timeline-collapsed', JSON.stringify(next));
+        window.localStorage.setItem(SALES_BUCKETS_STORAGE_KEY, JSON.stringify(next));
       } catch {
         // ignore
       }
@@ -1874,7 +1950,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
   const showCalendarConnect = calendarStatus?.configured !== false;
   const loggedInAs = calendarStatus?.loginUsername || 'this Sales login';
 
-  function renderSalesClientCard(client: SalesClient, isWin = false) {
+  function renderSalesClientCard(client: SalesClient, isWin = false, compact = false) {
             const clientIsSsu = isSsuClient(client);
             const publicPreviewUrl = getPublicClientPreviewUrl(client);
             const clientOffers = offers.filter((entry) => entry.salesClientId === client.id);
@@ -1889,6 +1965,8 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
             const clientSelected = selectedClientIds.includes(client.id);
             const confirmationGaps = client.reminders?.thankYouSentAt ? [] : confirmationSendGaps(client);
             const needsConfirmation = clientNeedsConfirmationSend(client);
+            const peeked = Boolean(peekCardIds[client.id]);
+            const showCompact = compact && !peeked;
             const booking = salesBookingFacts(client);
             const bookingRows = [
               ['Booket av', booking.booker],
@@ -1901,6 +1979,8 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                 <div
                   onClick={(event) => handleClientCardClick(event, client.id)}
                   className={`rounded-2xl border p-3 sm:p-4 flex flex-col gap-2 sm:gap-3 cursor-pointer min-w-0 ${
+                    showCompact ? 'relative overflow-hidden pb-8' : ''
+                  } ${
                     clientSelected
                       ? 'bg-[#3f3f3f] hover:bg-[#454545] border-[#FF5B00] ring-1 ring-[#FF5B00]/40'
                       : confirmationGaps.length
@@ -1925,15 +2005,15 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                       {isWin ? (
                         <span className="shrink-0 text-[11px] px-2 py-0.5 rounded bg-emerald-900/40 text-emerald-200 border border-emerald-700/40">Solgt</span>
                       ) : null}
-                      {confirmationGaps.length > 0 ? (
+                      {!showCompact && confirmationGaps.length > 0 ? (
                         <span className="shrink-0 max-w-[46%] px-2 py-0.5 rounded text-[11px] bg-red-500/15 border border-red-500/40 text-red-200 truncate" title={`Mangler ${confirmationGaps.join(', ')}`}>
                           Bekreftelse stoppet
                         </span>
-                      ) : needsConfirmation ? (
+                      ) : !showCompact && needsConfirmation ? (
                         <span className="shrink-0 max-w-[46%] px-2 py-0.5 rounded text-[11px] bg-amber-500/15 border border-amber-500/40 text-amber-200 truncate">
                           Bekreftelse ikke sendt
                         </span>
-                      ) : nextAction?.name ? (
+                      ) : !showCompact && nextAction?.name ? (
                         <span className="shrink-0 max-w-[40%] px-2 py-0.5 rounded text-[11px] bg-black/20 border border-white/10 text-gray-200 truncate">
                           {nextAction.name}
                         </span>
@@ -1955,7 +2035,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                         </span>
                       ) : null}
                     </div>
-                    {confirmationGaps.length > 0 && (
+                    {(!showCompact && confirmationGaps.length > 0) && (
                       <div className="mt-2 rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1.5 text-[11px] leading-snug text-red-200">
                         Bekreftelse sendes ikke. Mangler {confirmationGaps.join(', ')}.
                       </div>
@@ -1981,7 +2061,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                       {client.meetingMode === 'in-person' ? 'IRL' : 'Online'}
                       {client.meetingPlace ? ` · ${client.meetingPlace}` : ''}
                     </div>
-                    {isSalesAdmin && salesRepOptions.length > 0 && (
+                    {!showCompact && isSalesAdmin && salesRepOptions.length > 0 && (
                       <label className="mt-2 flex items-center gap-2 text-[11px] text-gray-400">
                         <span className="shrink-0">Selger</span>
                         <select
@@ -2018,6 +2098,48 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                     <Pencil size={14} />
                   </button>
                 </div>
+
+                {showCompact ? (
+                  <>
+                    <div className="max-h-16 overflow-hidden opacity-40 pointer-events-none select-none">
+                      <SalesGoalTimeline
+                        client={client}
+                        progressBusyKey={progressBusyKey}
+                        actionBusy={nextActionBusyId === client.id}
+                        onToggleGoal={(key, extra) => void toggleProgress(client, key, extra)}
+                        onMutateAction={(body) => mutateNextAction(client, body)}
+                        variant={isWin ? 'win' : 'active'}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        togglePeekCard(client.id);
+                      }}
+                      className="absolute inset-x-0 bottom-0 h-16 w-full flex items-end justify-center pb-1.5 bg-gradient-to-t from-white via-white/80 to-transparent"
+                      title="Vis mer på dette kortet"
+                      aria-label="Vis mer på dette kortet"
+                    >
+                      <ChevronDown size={16} className="text-[#1a1a1a]" />
+                    </button>
+                  </>
+                ) : (
+                <>
+                {compact && peeked ? (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      togglePeekCard(client.id);
+                    }}
+                    className="self-center -mt-1 mb-1 p-1 rounded-full bg-white/10 text-gray-300 hover:text-white"
+                    title="Vis mindre"
+                    aria-label="Vis mindre"
+                  >
+                    <ChevronDown size={16} className="rotate-180" />
+                  </button>
+                ) : null}
 
                 <ClientNotesField
                   label="Notater"
@@ -2630,13 +2752,336 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                     )}
                   </div>
                 )}
+                </>
+                )}
                 </div>
               </React.Fragment>
             );
   }
 
   return (
-    <div className="sales-clients-surface space-y-3 sm:space-y-4 min-w-0">
+    <div className="sales-clients-surface min-h-screen bg-[#1a1a1a] text-white">
+      <div ref={headerShellRef} className="sticky top-0 z-40 border-b border-white/10 bg-[#161616]/95 backdrop-blur-md">
+        <div className="max-w-[1440px] mx-auto px-3 sm:px-5 py-2.5 flex items-center gap-2 sm:gap-3 flex-nowrap overflow-x-auto">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <img src="/media/Untitled-1.png" alt="Asoldi" className="h-8 sm:h-9 w-auto shrink-0" />
+            <div className="min-w-0 relative">
+              <h1 className="text-sm sm:text-base font-semibold leading-tight truncate">Salgsterminal</h1>
+              <button
+                type="button"
+                onClick={() => {
+                  setHeaderPanel(null);
+                  setAccountMenuOpen(false);
+                  setProductMenuOpen((open) => !open);
+                }}
+                className="mt-0.5 inline-flex items-center gap-1 text-[11px] sm:text-xs text-gray-300 hover:text-white"
+                aria-expanded={productMenuOpen}
+              >
+                <span className="truncate">
+                  {isSsuBracket ? 'SSU' : 'Website'} ({isSsuBracket ? productCounts.ssu : productCounts.asoldi})
+                </span>
+                <ChevronDown size={12} className={`shrink-0 transition-transform ${productMenuOpen ? 'rotate-180' : ''}`} />
+              </button>
+              {productMenuOpen && (
+                <div className="absolute left-0 top-full mt-1 z-50 min-w-[160px] rounded-xl border border-white/10 bg-[#1f1f1f] shadow-xl overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => { setProductBracket('asoldi'); setProductMenuOpen(false); }}
+                    className={`w-full text-left px-3 py-2 text-sm ${productBracket === 'asoldi' ? 'bg-[#FF5B00] text-white' : 'text-gray-200 hover:bg-white/10'}`}
+                  >
+                    Website ({productCounts.asoldi})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setProductBracket('ssu'); setProductMenuOpen(false); }}
+                    className={`w-full text-left px-3 py-2 text-sm ${productBracket === 'ssu' ? 'bg-[#FF5B00] text-white' : 'text-gray-200 hover:bg-white/10'}`}
+                  >
+                    SSU ({productCounts.ssu})
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1 sm:gap-1.5 min-w-0 flex-1">
+            <button
+              type="button"
+              onClick={() => toggleHeaderPanel('filter')}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs sm:text-sm ${
+                headerPanel === 'filter' ? 'bg-[#FF5B00] text-white' : 'bg-white/10 text-white hover:bg-white/15'
+              }`}
+              aria-expanded={headerPanel === 'filter'}
+            >
+              <Filter size={14} />
+              <span className="hidden sm:inline">Filter</span>
+              {hasActiveFilters ? <span className="h-1.5 w-1.5 rounded-full bg-white sm:bg-orange-200" /> : null}
+              <ChevronDown size={12} className={`hidden sm:block transition-transform ${headerPanel === 'filter' ? 'rotate-180' : ''}`} />
+            </button>
+            <button
+              type="button"
+              onClick={() => toggleHeaderPanel('calendar')}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs sm:text-sm ${
+                headerPanel === 'calendar' ? 'bg-[#FF5B00] text-white' : 'bg-white/10 text-white hover:bg-white/15'
+              }`}
+              aria-expanded={headerPanel === 'calendar'}
+            >
+              <Calendar size={14} />
+              <span className="hidden sm:inline">Calendar</span>
+              <ChevronDown size={12} className={`hidden sm:block transition-transform ${headerPanel === 'calendar' ? 'rotate-180' : ''}`} />
+            </button>
+            <button
+              type="button"
+              onClick={() => toggleHeaderPanel('map')}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs sm:text-sm ${
+                headerPanel === 'map' ? 'bg-[#FF5B00] text-white' : 'bg-white/10 text-white hover:bg-white/15'
+              }`}
+              aria-expanded={headerPanel === 'map'}
+            >
+              <MapPin size={14} />
+              <span className="hidden sm:inline">Client map</span>
+              <span className="sm:hidden">Kart</span>
+              <ChevronDown size={12} className={`hidden sm:block transition-transform ${headerPanel === 'map' ? 'rotate-180' : ''}`} />
+            </button>
+          </div>
+
+          <div className="ml-auto flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {isSalesAdmin && (
+              <>
+                <Link
+                  to="/sales/email/templates"
+                  className="hidden sm:inline-flex items-center px-2.5 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-xs sm:text-sm"
+                >
+                  Maler
+                </Link>
+                {!isSsuBracket && (
+                  <a
+                    href="https://asoldi.com/previews"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
+                    title="Open the public asoldi.com preview board"
+                  >
+                    <MonitorSmartphone size={14} />
+                    Public previews
+                  </a>
+                )}
+              </>
+            )}
+            <button type="button" onClick={openCreate} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#FF5B00] text-white text-sm font-medium hover:bg-[#e55200]">
+              <Plus size={16} />
+              <span className="hidden sm:inline">Add client</span>
+              <span className="sm:hidden">Add</span>
+            </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setHeaderPanel(null);
+                  setProductMenuOpen(false);
+                  setAccountMenuOpen((open) => !open);
+                }}
+                className={`inline-flex items-center justify-center h-10 w-10 rounded-lg ${
+                  accountMenuOpen ? 'bg-[#FF5B00] text-white' : 'bg-white/10 text-white hover:bg-white/15'
+                }`}
+                title="Konto"
+                aria-expanded={accountMenuOpen}
+                aria-label="Konto"
+              >
+                <UserRound size={16} />
+              </button>
+              {accountMenuOpen && (
+                <div className="absolute right-0 top-full mt-1 z-50 w-72 rounded-xl border border-white/10 bg-[#1f1f1f] shadow-xl p-3">
+                  <p className={`text-xs ${calendarStatus?.connected ? 'text-green-300' : 'text-red-300'}`}>
+                    {calendarStatus?.connected
+                      ? (calendarStatus.googleEmail
+                        ? `Kalender koblet som ${calendarStatus.googleEmail}`
+                        : 'Kalender koblet')
+                      : 'Kalender ikke koblet'}
+                  </p>
+                  <p className="mt-1 text-[11px] text-gray-400">Innlogget som {loggedInAs}</p>
+                  {showCalendarConnect && (
+                    <button
+                      type="button"
+                      onClick={() => { setAccountMenuOpen(false); setCalendarPanelOpen(true); }}
+                      className="mt-2 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/15"
+                    >
+                      <Calendar size={14} />
+                      {calendarStatus?.connected ? 'Kalenderinnstillinger' : 'Koble Google Calendar'}
+                    </button>
+                  )}
+                  {canSignOut && (
+                    <button
+                      type="button"
+                      onClick={() => onLogout?.()}
+                      className="mt-2 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/15"
+                    >
+                      <LogOut size={14} />
+                      Logg ut
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {(headerPanel || mapMounted) && (
+          <div className={headerPanel ? 'border-t border-white/10 bg-[#1a1a1a]' : 'hidden'}>
+            <div className="max-w-[1440px] mx-auto px-3 sm:px-5 py-3">
+              {headerPanel && (
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <p className="text-[11px] text-gray-400">
+                  Lukk: klikk {headerPanel === 'filter' ? 'Filter' : headerPanel === 'calendar' ? 'Calendar' : 'Client map'} igjen, klikk under, eller scroll.
+                </p>
+                <button type="button" onClick={closeHeaderMenus} className="inline-flex items-center gap-1 text-xs text-gray-300 hover:text-white">
+                  <X size={12} /> Lukk
+                </button>
+              </div>
+              )}
+              {headerPanel === 'filter' && (
+                <form onSubmit={applyClientNameSearch} className="rounded-xl border border-white/10 bg-black/20 p-2.5 sm:p-3 space-y-2.5">
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <div className="relative flex-1">
+                      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                      <input
+                        value={clientSearchInput}
+                        onChange={(e) => setClientSearchInput(e.target.value)}
+                        placeholder="Business, contact, or area"
+                        className="w-full pl-9 pr-3 py-2 rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm"
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="submit"
+                        className="inline-flex flex-1 sm:flex-none items-center justify-center gap-2 px-3 py-2 rounded-lg bg-[#FF5B00] text-white text-sm hover:bg-[#e55200]"
+                      >
+                        <Search size={14} />
+                        Search
+                      </button>
+                      {hasActiveFilters && (
+                        <button
+                          type="button"
+                          onClick={clearClientNameSearch}
+                          className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/15"
+                        >
+                          <X size={14} />
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {isSalesAdmin && (
+                    <label className="text-[11px] text-gray-400 block">
+                      <span className="inline-flex items-center gap-1 mb-1">
+                        <Filter size={12} />
+                        Sales rep
+                      </span>
+                      <select
+                        value={ownerFilter}
+                        onChange={(event) => setOwnerFilter(event.target.value)}
+                        className="mt-1 w-full rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+                      >
+                        <option value="">All owners</option>
+                        <option value="unassigned">Unassigned</option>
+                        {ownerFilterOptions.map((owner) => (
+                          <option key={owner.accountKey} value={owner.accountKey}>
+                            {ownerLabel(owner)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  <div className="flex flex-wrap gap-1.5 text-[11px]">
+                    <span className="px-2 py-0.5 rounded border border-white/10 bg-black/30 text-gray-300">Mail {emailAudit.total}</span>
+                    <span className="px-2 py-0.5 rounded border border-green-700/30 bg-green-900/20 text-green-300">OK {emailAudit.validNonTest}</span>
+                    <span className="px-2 py-0.5 rounded border border-amber-700/30 bg-amber-900/20 text-amber-300">Missing {emailAudit.missing}</span>
+                    <span className="px-2 py-0.5 rounded border border-red-700/30 bg-red-900/20 text-red-300">Invalid {emailAudit.invalid}</span>
+                    <span className="px-2 py-0.5 rounded border border-purple-700/30 bg-purple-900/20 text-purple-300">Test {emailAudit.flaggedTest}</span>
+                  </div>
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-white/10">
+                    <label className="inline-flex items-center gap-2 text-sm text-gray-200 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={allVisibleSelected}
+                        disabled={!visibleSelectableIds.length || bulkBusy}
+                        onChange={toggleSelectAllVisible}
+                        className="h-4 w-4 accent-[#FF5B00]"
+                      />
+                      Select all
+                      <span className="text-xs text-gray-400">
+                        {selectedCount
+                          ? `${selectedCount} selected`
+                          : `${visibleSelectableIds.length} visible`}
+                      </span>
+                    </label>
+                    {selectedCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedClientIds([])}
+                        disabled={bulkBusy}
+                        className="text-xs text-gray-400 hover:text-white disabled:opacity-50"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                </form>
+              )}
+              {headerPanel === 'calendar' && (
+                <div className="rounded-xl border border-white/10 overflow-hidden bg-black/20">
+                  {calendarEmbedUrl ? (
+                    <iframe
+                      title="Google Calendar"
+                      src={calendarEmbedUrl}
+                      className="w-full bg-white"
+                      style={{ border: 0, minHeight: 520 }}
+                    />
+                  ) : (
+                    <div className="p-4 text-sm text-gray-300 space-y-3">
+                      <p>Koble Google Calendar for å se ukeplanen her.</p>
+                      <button
+                        type="button"
+                        onClick={() => { closeHeaderMenus(); setCalendarPanelOpen(true); }}
+                        className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-[#FF5B00] text-white text-sm"
+                      >
+                        <Calendar size={14} />
+                        Koble Google Calendar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+              {mapMounted && (
+                <div className={headerPanel === 'map' ? '' : 'hidden'} aria-hidden={headerPanel !== 'map'}>
+                  <div className="flex flex-wrap gap-2 text-[11px] text-gray-400">
+                    <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#FF5B00]" /> In person</span>
+                    <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#3b82f6]" /> Online</span>
+                    <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#a855f7]" /> Secondary</span>
+                    <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#6b7280]" /> Not sold</span>
+                    <span className="text-xs px-2 py-1 rounded bg-black/20 border border-white/10 text-gray-300">{visibleMeetingMapPins.length} pins</span>
+                  </div>
+                  {meetingMapError && (
+                    <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/10 text-red-300 px-3 py-2 text-xs">
+                      {meetingMapError}
+                    </div>
+                  )}
+                  <div className="mt-3 h-[220px] sm:h-[340px] rounded-xl border border-white/10 overflow-hidden relative z-0 isolate">
+                    <div ref={meetingMapContainerRef} className="h-full w-full relative z-0" />
+                    {meetingMapLoading && (
+                      <div className="absolute inset-0 bg-black/55 flex items-center justify-center text-gray-200 text-sm">
+                        <Loader2 size={16} className="animate-spin mr-2" />
+                        Loading map pins…
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="max-w-[1440px] mx-auto px-3 sm:px-6 py-4 space-y-3 sm:space-y-4">
       {!isSalesAdmin && verifiedInbox.length > 0 && (
         <div className="relative rounded-2xl border border-sky-400/30 bg-sky-900/30 p-3 sm:p-4">
           <button
@@ -2671,194 +3116,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
       )}
 
       <div className="rounded-2xl bg-[#2a2a2a] border border-white/10 p-3 sm:p-4 space-y-3">
-        <div className="flex items-center gap-2 overflow-x-auto">
-          <button
-            type="button"
-            onClick={() => setCalendarPanelOpen(true)}
-            className={`inline-flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs shrink-0 ${
-              calendarStatus?.connected
-                ? 'bg-green-900/30 text-green-300 border border-green-700/40'
-                : 'bg-red-900/30 text-red-300 border border-red-700/40'
-            }`}
-            title={calendarStatus?.connected
-              ? (calendarStatus.googleEmail || 'Google Calendar connected')
-              : 'Connect Google Calendar'}
-          >
-            {calendarConnecting ? <Loader2 size={14} className="animate-spin" /> : <Calendar size={14} />}
-            <span>{calendarChipLabel(calendarStatus)}</span>
-          </button>
-        </div>
-
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <h2 className="text-base sm:text-lg font-semibold text-white">Sales clients</h2>
-            <p className="hidden sm:block text-sm text-gray-400 mt-1">
-              {isSsuBracket
-                ? 'SSU partner leads from MyPhoner. Meeting time/type and contract/payment only — no website Maker flow.'
-                : 'Website leads: meetings, Google Calendar, and public preview. Signed websites go to Utvikling → Deployment. Preview-nettsider lages av utvikler.'}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {!isSsuBracket && (
-              <a
-                href="https://asoldi.com/previews"
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/15"
-                title="Open the public asoldi.com preview board"
-              >
-                <MonitorSmartphone size={16} />
-                <span className="hidden sm:inline">Public previews</span>
-              </a>
-            )}
-            <button type="button" onClick={openCreate} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#FF5B00] text-white text-sm font-medium hover:bg-[#e55200]">
-              <Plus size={16} />
-              <span className="hidden sm:inline">Add client</span>
-              <span className="sm:hidden">Add</span>
-            </button>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => setProductBracket('asoldi')}
-            className={`px-3 py-1.5 rounded-lg text-sm border ${
-              productBracket === 'asoldi'
-                ? 'bg-[#FF5B00] border-[#FF5B00] text-white'
-                : 'bg-black/20 border-white/10 text-gray-300 hover:bg-white/10'
-            }`}
-          >
-            Websites ({productCounts.asoldi})
-          </button>
-          <button
-            type="button"
-            onClick={() => setProductBracket('ssu')}
-            className={`px-3 py-1.5 rounded-lg text-sm border ${
-              productBracket === 'ssu'
-                ? 'bg-[#FF5B00] border-[#FF5B00] text-white'
-                : 'bg-black/20 border-white/10 text-gray-300 hover:bg-white/10'
-            }`}
-          >
-            SSU ({productCounts.ssu})
-          </button>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => setToolsOpen((open) => !open)}
-          className="w-full flex items-center justify-between gap-2 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-left text-sm text-gray-200"
-        >
-          <span className="inline-flex items-center gap-2 min-w-0">
-            <Search size={14} className="shrink-0 text-gray-400" />
-            <span className="font-medium">Search and filter</span>
-            {hasActiveFilters ? <span className="text-[11px] text-[#FF5B00]">Active</span> : null}
-            {selectedCount > 0 ? <span className="text-[11px] text-gray-400">{selectedCount} selected</span> : null}
-          </span>
-          <ChevronDown size={16} className={`shrink-0 text-gray-400 transition-transform ${toolsOpen ? '' : '-rotate-90'}`} />
-        </button>
-
-        {toolsOpen && (
-          <form onSubmit={applyClientNameSearch} className="rounded-xl border border-white/10 bg-black/20 p-2.5 sm:p-3 space-y-2.5">
-            <div className="flex flex-col sm:flex-row gap-2">
-              <div className="relative flex-1">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input
-                  value={clientSearchInput}
-                  onChange={(e) => setClientSearchInput(e.target.value)}
-                  placeholder="Business, contact, or area"
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm"
-                />
-              </div>
-              <div className="flex gap-2">
-                <button
-                  type="submit"
-                  className="inline-flex flex-1 sm:flex-none items-center justify-center gap-2 px-3 py-2 rounded-lg bg-[#FF5B00] text-white text-sm hover:bg-[#e55200]"
-                >
-                  <Search size={14} />
-                  Search
-                </button>
-                {hasActiveFilters && (
-                  <button
-                    type="button"
-                    onClick={clearClientNameSearch}
-                    className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/15"
-                  >
-                    <X size={14} />
-                    Clear
-                  </button>
-                )}
-              </div>
-            </div>
-            {isSalesAdmin && (
-              <label className="text-[11px] text-gray-400 block">
-                <span className="inline-flex items-center gap-1 mb-1">
-                  <Filter size={12} />
-                  Sales rep
-                </span>
-                <select
-                  value={ownerFilter}
-                  onChange={(event) => setOwnerFilter(event.target.value)}
-                  className="mt-1 w-full rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
-                >
-                  <option value="">All owners</option>
-                  <option value="unassigned">Unassigned</option>
-                  {ownerFilterOptions.map((owner) => (
-                    <option key={owner.accountKey} value={owner.accountKey}>
-                      {ownerLabel(owner)}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            <div className="flex flex-wrap gap-1.5 text-[11px]">
-              <span className="px-2 py-0.5 rounded border border-white/10 bg-black/30 text-gray-300">Mail {emailAudit.total}</span>
-              <span className="px-2 py-0.5 rounded border border-green-700/30 bg-green-900/20 text-green-300">OK {emailAudit.validNonTest}</span>
-              <span className="px-2 py-0.5 rounded border border-amber-700/30 bg-amber-900/20 text-amber-300">Missing {emailAudit.missing}</span>
-              <span className="px-2 py-0.5 rounded border border-red-700/30 bg-red-900/20 text-red-300">Invalid {emailAudit.invalid}</span>
-              <span className="px-2 py-0.5 rounded border border-purple-700/30 bg-purple-900/20 text-purple-300">Test {emailAudit.flaggedTest}</span>
-            </div>
-            <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-white/10">
-              <label className="inline-flex items-center gap-2 text-sm text-gray-200 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={allVisibleSelected}
-                  disabled={!visibleSelectableIds.length || bulkBusy}
-                  onChange={toggleSelectAllVisible}
-                  className="h-4 w-4 accent-[#FF5B00]"
-                />
-                Select all
-                <span className="text-xs text-gray-400">
-                  {selectedCount
-                    ? `${selectedCount} selected`
-                    : `${visibleSelectableIds.length} visible`}
-                </span>
-              </label>
-              {selectedCount > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setSelectedClientIds([])}
-                  disabled={bulkBusy}
-                  className="text-xs text-gray-400 hover:text-white disabled:opacity-50"
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-            {hasActiveFilters && (
-              <p className="text-[11px] text-gray-400">
-                Showing
-                {clientSearchQuery ? <> matches for <span className="text-white">{clientSearchQuery}</span></> : ' filtered clients'}
-                {isSalesAdmin && ownerFilter ? <> · owner: <span className="text-white">{ownerFilter === 'unassigned' ? 'Unassigned' : ownerLabel(ownerFilterOptions.find((owner) => owner.accountKey === ownerFilter) || { accountKey: ownerFilter, username: ownerFilter, name: ownerFilter })}</span></> : null}
-                {pipelineFilter ? <> · pipeline: <span className="text-white">{SALES_PIPELINE_STATES.find((state) => state.id === pipelineFilter)?.label || pipelineFilter}</span></> : null}
-              </p>
-            )}
-          </form>
-        )}
-
-        <div>
-          <div className="text-[11px] text-gray-400">Listefremgang · klikk for å vise bare denne gruppen</div>
-          <div className="mt-1.5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
           {SALES_PIPELINE_STATES.map((state) => {
             const count = pipelineCounts[state.id as keyof typeof pipelineCounts] || 0;
             const selected = pipelineFilter === state.id;
@@ -2879,13 +3137,9 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                 <span className={`mt-1 block text-[12px] font-medium ${selected ? 'text-white' : 'text-gray-200'}`}>
                   {state.label}
                 </span>
-                <span className={`hidden sm:block mt-0.5 text-[10px] ${selected ? 'text-white/80' : 'text-gray-400'}`}>
-                  {state.hint}
-                </span>
               </button>
             );
           })}
-        </div>
         </div>
 
         {selectedCount > 0 && (
@@ -2965,80 +3219,12 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
       </div>
 
       {(error || notice) && (
-        <div className="sticky top-2 z-20 space-y-2">
+        <div className="space-y-2">
           {error && <div className="rounded-xl border border-red-500/20 bg-red-500/10 text-red-300 px-3 py-2.5 sm:px-4 sm:py-3 text-sm shadow-lg shadow-black/30">{error}</div>}
           {notice && <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-200 px-3 py-2.5 sm:px-4 sm:py-3 text-sm shadow-lg shadow-black/30">{notice}</div>}
         </div>
       )}
 
-      <div className="rounded-2xl bg-[#2a2a2a] border border-white/10 p-3 sm:p-4">
-        <button
-          type="button"
-          onClick={() => {
-            setMapOpen((open) => {
-              const next = !open;
-              if (next) setMapMounted(true);
-              return next;
-            });
-          }}
-          className="w-full flex items-center justify-between gap-2 text-left"
-        >
-          <span className="min-w-0">
-            <span className="block text-sm font-semibold text-white">Client map</span>
-            <span className="hidden sm:block text-xs text-gray-400 mt-0.5">
-              Shows every sales client in this list, including online, secondary, and not sold.
-            </span>
-          </span>
-          <span className="inline-flex items-center gap-2 shrink-0">
-            <span className="text-xs px-2 py-1 rounded bg-black/20 border border-white/10 text-gray-300">
-              {visibleMeetingMapPins.length} pins
-            </span>
-            <ChevronDown size={16} className={`text-gray-400 transition-transform ${mapOpen ? '' : '-rotate-90'}`} />
-          </span>
-        </button>
-        {mapMounted && (
-          <div className={mapOpen ? '' : 'hidden'}>
-            <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-gray-400">
-              <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#FF5B00]" /> In person</span>
-              <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#3b82f6]" /> Online</span>
-              <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#a855f7]" /> Secondary</span>
-              <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-[#6b7280]" /> Not sold</span>
-            </div>
-            {meetingMapError && (
-              <div className="mt-3 rounded-lg border border-red-500/20 bg-red-500/10 text-red-300 px-3 py-2 text-xs">
-                {meetingMapError}
-              </div>
-            )}
-            <div className="mt-3 h-[220px] sm:h-[340px] rounded-xl border border-white/10 overflow-hidden relative z-0 isolate">
-              <div ref={meetingMapContainerRef} className="h-full w-full relative z-0" />
-              {meetingMapLoading && (
-                <div className="absolute inset-0 bg-black/55 flex items-center justify-center text-gray-200 text-sm">
-                  <Loader2 size={16} className="animate-spin mr-2" />
-                  Loading map pins…
-                </div>
-              )}
-            </div>
-            {!meetingMapLoading && visibleMeetingMapPins.length === 0 && (
-              <p className="mt-2 text-xs text-gray-500">No client addresses to show yet.</p>
-            )}
-            {meetingMapPendingCount > 0 && (
-              <p className="mt-2 text-xs text-sky-300">
-                {meetingMapPendingCount} client(s) still geocoding. Pins will appear automatically.
-              </p>
-            )}
-            {meetingMapUnresolvedCount > 0 && (
-              <p className="mt-2 text-xs text-amber-300">
-                {meetingMapUnresolvedCount} client(s) could not be placed automatically.
-              </p>
-            )}
-            {meetingMapMissingAddressCount > 0 && (
-              <p className="mt-2 text-xs text-gray-500">
-                {meetingMapMissingAddressCount} client(s) have no stored street address yet. They are still mapped by business name while Brønnøysund fills the official address.
-              </p>
-            )}
-          </div>
-        )}
-      </div>
 
       {loading && clients.length === 0 ? (
         <div className="min-h-[180px] flex items-center justify-center text-gray-400">
@@ -3051,10 +3237,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <div className="text-sm font-semibold text-white">Tildel selger</div>
-                  <p className="hidden sm:block text-[11px] text-gray-400 mt-0.5">
-                    {awaitingRepClients.length} kunder venter. Huk av kortene i seksjonen under, velg selger, så sendes bekreftelsen fra den selgeren og møtet kobles til kalenderen deres.
-                  </p>
-                  <p className="sm:hidden text-[11px] text-gray-400 mt-0.5">
+                  <p className="text-[11px] text-gray-400 mt-0.5">
                     {awaitingRepClients.length} venter
                   </p>
                 </div>
@@ -3087,22 +3270,19 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
           )}
           {pipelineFilter !== 'win' && (
           <>
-          <div className="hidden sm:block text-xs text-gray-400">
-            Sorted by next action time. Recently overdue clients stay above the main list for 48 hours, then move to <span className="text-red-300">Forfalt</span>. Click a section header to hide the cards and only see the count.
-          </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-4 items-start">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 items-start">
             {timelineRows.map((row) => {
             if (row.kind === 'divider') {
               return (
                 <div
                   key={row.id}
-                  className="lg:col-span-2 2xl:col-span-3 h-px bg-gradient-to-r from-transparent via-neutral-400/70 to-transparent"
+                  className="md:col-span-2 lg:col-span-3 h-px bg-gradient-to-r from-transparent via-neutral-400/70 to-transparent"
                   aria-hidden="true"
                 />
               );
             }
             if (row.kind === 'header') {
-              const collapsed = Boolean(collapsedBuckets[row.id]);
+              const collapsed = row.collapsed;
               const toneClass =
                 row.tone === 'assign'
                   ? 'border-orange-300 bg-orange-50 text-orange-950'
@@ -3118,26 +3298,26 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                   key={row.id}
                   type="button"
                   onClick={() => toggleTimelineBucket(row.id)}
-                  className={`lg:col-span-2 2xl:col-span-3 rounded-xl border px-3 py-2.5 text-left ${toneClass}`}
+                  className={`md:col-span-2 lg:col-span-3 rounded-xl border px-3 py-2.5 text-left ${toneClass}`}
                 >
                   <span className="flex items-center justify-between gap-3">
-                    <span>
-                      <span className="block text-sm font-semibold">{row.title}</span>
-                      <span className="hidden sm:block text-[11px] opacity-80 mt-0.5">{row.hint}</span>
-                    </span>
+                    <span className="block text-sm font-semibold">{row.title}</span>
                     <span className="inline-flex items-center gap-2 shrink-0">
                       <span className="text-sm font-semibold tabular-nums">{row.count}</span>
-                      <ChevronDown size={16} className={`transition-transform ${collapsed ? '-rotate-90' : ''}`} />
+                      {collapsed && row.count > SALES_COMPACT_PREVIEW ? (
+                        <span className="text-[11px] opacity-70">+{row.count - SALES_COMPACT_PREVIEW}</span>
+                      ) : null}
+                      <ChevronDown size={16} className={`transition-transform ${collapsed ? '' : 'rotate-180'}`} />
                     </span>
                   </span>
                 </button>
               );
             }
-            return renderSalesClientCard(row.client, false);
+            return renderSalesClientCard(row.client, false, row.compact);
           })}
 
           {timelineClients.length === 0 && pipelineFilter !== 'win' && (
-            <div className="lg:col-span-2 2xl:col-span-3 rounded-2xl bg-[#2a2a2a] border border-white/10 p-8 text-center text-gray-400">
+            <div className="md:col-span-2 lg:col-span-3 rounded-2xl bg-[#2a2a2a] border border-white/10 p-8 text-center text-gray-400">
               {hasActiveFilters
                 ? (
                   <>
@@ -3160,17 +3340,26 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
 
       {winClients.length > 0 && (
         <div className="rounded-2xl bg-[#2a2a2a] border border-white/10 p-4 space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <h3 className="text-white font-semibold">Wins</h3>
-              <p className="text-[11px] text-gray-400 mt-0.5">Solgte kunder ligger her. Samme kundekort og handlinger, uten møte-, tilbud- og kontraktsteg.</p>
-            </div>
-            <span className="text-xs px-2 py-1 rounded bg-emerald-900/30 border border-emerald-700/30 text-emerald-200">
-              {winClients.length} solgt
+          <button
+            type="button"
+            onClick={() => toggleTimelineBucket('wins')}
+            className="w-full flex items-center justify-between gap-3 text-left"
+          >
+            <h3 className="text-white font-semibold">Wins</h3>
+            <span className="inline-flex items-center gap-2 shrink-0">
+              <span className="text-xs px-2 py-1 rounded bg-emerald-900/30 border border-emerald-700/30 text-emerald-200">
+                {winClients.length} solgt
+              </span>
+              {collapsedBuckets.wins !== false && winClients.length > SALES_COMPACT_PREVIEW ? (
+                <span className="text-[11px] text-gray-400">+{winClients.length - SALES_COMPACT_PREVIEW}</span>
+              ) : null}
+              <ChevronDown size={16} className={`text-gray-400 transition-transform ${collapsedBuckets.wins !== false ? '' : 'rotate-180'}`} />
             </span>
-          </div>
-          <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-3">
-            {winClients.map((client) => renderSalesClientCard(client, true))}
+          </button>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {(collapsedBuckets.wins !== false ? winClients.slice(0, SALES_COMPACT_PREVIEW) : winClients).map((client) => (
+              renderSalesClientCard(client, true, collapsedBuckets.wins !== false)
+            ))}
           </div>
         </div>
       )}
@@ -3182,26 +3371,28 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
             onClick={() => toggleTimelineBucket('archived')}
             className="w-full flex items-center justify-between gap-3 text-left"
           >
-            <div>
-              <h3 className="text-white font-semibold">Archived (Not sold)</h3>
-              <p className="text-[11px] text-gray-500 mt-0.5">Minimert som standard. Klikk for å vise.</p>
-            </div>
+            <h3 className="text-white font-semibold">Archived (Not sold)</h3>
             <span className="inline-flex items-center gap-2 shrink-0">
               <span className="text-xs px-2 py-1 rounded bg-black/20 border border-white/10 text-gray-300">
                 {archivedClients.length} archived
               </span>
-              <ChevronDown size={16} className={`text-gray-400 transition-transform ${collapsedBuckets.archived ? '-rotate-90' : ''}`} />
+              {collapsedBuckets.archived !== false && archivedClients.length > SALES_COMPACT_PREVIEW ? (
+                <span className="text-[11px] text-gray-400">+{archivedClients.length - SALES_COMPACT_PREVIEW}</span>
+              ) : null}
+              <ChevronDown size={16} className={`text-gray-400 transition-transform ${collapsedBuckets.archived !== false ? '' : 'rotate-180'}`} />
             </span>
           </button>
-          {!collapsedBuckets.archived && (
-          <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-3">
-            {archivedClients.map((client) => {
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {(collapsedBuckets.archived !== false ? archivedClients.slice(0, SALES_COMPACT_PREVIEW) : archivedClients).map((client) => {
               const clientSelected = selectedClientIds.includes(client.id);
+              const compactArchived = collapsedBuckets.archived !== false && !peekCardIds[client.id];
               return (
               <div
                 key={client.id}
                 onClick={(event) => handleClientCardClick(event, client.id)}
                 className={`rounded-xl border p-3 space-y-2 cursor-pointer ${
+                  compactArchived ? 'relative overflow-hidden pb-8' : ''
+                } ${
                   clientSelected
                     ? 'bg-[#3f3f3f] hover:bg-[#454545] border-[#FF5B00] ring-1 ring-[#FF5B00]/40'
                     : 'bg-black/20 hover:bg-[#2f2f2f] border-white/10'
@@ -3220,8 +3411,8 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                       />
                       <div className="text-sm font-medium text-white truncate">{client.businessName || 'Unnamed business'}</div>
                     </div>
-                    <div className="text-xs text-gray-400 truncate">
-                      {[client.contactPerson || 'No contact person', client.meetingPlace || 'No address']
+                    <div className="mt-1 text-xs text-gray-400 truncate">
+                      {[client.contactPerson || 'No contact person', client.contactPhone, client.meetingPlace || 'No address']
                         .filter(Boolean)
                         .join(' · ')}
                     </div>
@@ -3230,6 +3421,35 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                     Not sold
                   </span>
                 </div>
+                {compactArchived ? (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      togglePeekCard(client.id);
+                    }}
+                    className="absolute inset-x-0 bottom-0 h-14 w-full flex items-end justify-center pb-1.5 bg-gradient-to-t from-white via-white/80 to-transparent"
+                    title="Vis mer på dette kortet"
+                    aria-label="Vis mer på dette kortet"
+                  >
+                    <ChevronDown size={16} className="text-[#1a1a1a]" />
+                  </button>
+                ) : (
+                <>
+                {collapsedBuckets.archived !== false ? (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      togglePeekCard(client.id);
+                    }}
+                    className="self-center p-1 rounded-full bg-white/10 text-gray-300 hover:text-white"
+                    title="Vis mindre"
+                    aria-label="Vis mindre"
+                  >
+                    <ChevronDown size={16} className="rotate-180 mx-auto" />
+                  </button>
+                ) : null}
                 <div className="text-xs text-gray-400">
                   Archived: {formatDateTime(client.archive?.archivedAt || client.updatedAt)}
                 </div>
@@ -3268,13 +3488,16 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                     Delete permanently
                   </button>
                 </div>
+                </>
+                )}
               </div>
               );
             })}
           </div>
-          )}
         </div>
       )}
+
+      </div>
 
       {(showForm || inClientFlow) && (
         <div className={inClientFlow ? 'fixed inset-0 z-50 flex flex-col bg-[#1a1a1a]' : 'fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-3 sm:p-4'}>
