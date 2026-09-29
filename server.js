@@ -85,7 +85,7 @@ import {
   htmlToPlainText,
   salesEmailMergeMap,
 } from './lib/sales-email.js';
-import { confirmationSendGaps } from './lib/sales-next-actions.js';
+import { confirmationSendGaps, meetingTimeHasPassed } from './lib/sales-next-actions.js';
 import { normalizeStoredWebsiteEmail, resolveWebsiteEmail } from './lib/sales-website-email.js';
 import { extractBookingFromLead, salesBookingFacts } from './lib/sales-booking-facts.js';
 import {
@@ -8300,6 +8300,9 @@ async function autoSendThankYouFromOwner(client, { existing = null, ownerJustAss
   }
   const gaps = confirmationSendGaps(client);
   if (gaps.length) return { sent: false, reason: 'missing-fields', client, gaps };
+  // Past meetings: assign without mailing. Confirmation goes out when the rep
+  // later sets a time that is still in the future.
+  if (meetingTimeHasPassed(client)) return { sent: false, reason: 'meeting-passed', client };
   if (client?.reminders?.thankYouSentAt) {
     const healed = await inviteFirefliesAfterConfirmation(client, {
       actorAccountKey: client.ownerId,

@@ -1558,6 +1558,8 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
         setNotice(`Tildelt. Bekreftelse sendt${data.from ? ` fra ${data.from}` : ''}.`);
       } else if (gaps.length) {
         setError(`Tildelt, men bekreftelse ble ikke sendt. Mangler ${gaps.join(', ')}.`);
+      } else if (data?.thankYouReason === 'meeting-passed') {
+        setNotice('Tildelt. Bekreftelse sendes når selgeren setter en ny møtetid frem i tid.');
       } else {
         setNotice('Tildelt. Bekreftelse sendes fra selgeren når alle møtefeltene er fylt inn.');
       }
@@ -1693,7 +1695,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
         return;
       }
       payload.ownerId = ownerId;
-      if (!window.confirm(`Tildel ${count} valgte kunder til selgeren? Bekreftelse sendes fra selgeren hvis møtetid er satt.`)) return;
+      if (!window.confirm(`Tildel ${count} valgte kunder til selgeren? Bekreftelse sendes bare hvis møtetiden er frem i tid.`)) return;
     }
     if (action === 'send-welcome') {
       if (!window.confirm(`Send bekreftelse til ${count} kund${count === 1 ? 'e' : 'er'}? Den sendes fra selgeren som er tildelt.`)) return;

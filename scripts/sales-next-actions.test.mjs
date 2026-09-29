@@ -23,6 +23,7 @@ import {
   OFFER_CHECKIN_NAME,
   clientHasAssignedSalesRep,
   clientNeedsConfirmationSend,
+  meetingTimeHasPassed,
   salesProgressBlockedReason,
   suggestedDueAtForPreset,
 } from '../lib/sales-next-actions.js';
@@ -366,6 +367,16 @@ test('agreed meeting time keeps the meeting on the calendar after the SMS remind
   });
   assert.equal(custom.error, undefined);
   assert.equal(getCalendarNextAction(client({ agreedTime: false, meetingAt: '', nextActions: custom.nextActions })), null);
+});
+
+test('past meeting times skip auto confirmation until the time is moved forward', () => {
+  const now = Date.parse('2026-09-29T12:00:00.000Z');
+  const past = client({ agreedTime: true, meetingAt: '2026-09-20T10:00:00.000Z' });
+  const future = client({ agreedTime: true, meetingAt: '2026-09-30T10:00:00.000Z' });
+  const unscheduled = client({ agreedTime: false, meetingAt: '' });
+  assert.equal(meetingTimeHasPassed(past, now), true);
+  assert.equal(meetingTimeHasPassed(future, now), false);
+  assert.equal(meetingTimeHasPassed(unscheduled, now), false);
 });
 
 test('already-assigned clients without thank-you still need a confirmation send', () => {
