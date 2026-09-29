@@ -2136,21 +2136,6 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
 
                 {showCompact ? null : (
                 <>
-                {compact && peeked ? (
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      togglePeekCard(client.id);
-                    }}
-                    className="self-center -mt-1 mb-1 p-1 rounded-full bg-white/10 text-gray-300 hover:text-white"
-                    title="Vis mindre"
-                    aria-label="Vis mindre"
-                  >
-                    <ChevronDown size={16} className="rotate-180" />
-                  </button>
-                ) : null}
-
                 <ClientNotesField
                   label="Notater"
                   value={clientNoteDraft(client)}
@@ -2762,6 +2747,20 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                     )}
                   </div>
                 )}
+                {compact && peeked ? (
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      togglePeekCard(client.id);
+                    }}
+                    className="self-center mt-1 p-1 rounded-full bg-white/10 text-gray-300 hover:text-white"
+                    title="Vis mindre"
+                    aria-label="Vis mindre"
+                  >
+                    <ChevronDown size={16} className="rotate-180" />
+                  </button>
+                ) : null}
                 </>
                 )}
                 </div>
@@ -3462,18 +3461,6 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                 </div>
                 {!compactArchived && (
                 <>
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    togglePeekCard(client.id);
-                  }}
-                  className="self-center p-1 rounded-full bg-white/10 text-gray-300 hover:text-white"
-                  title="Vis mindre"
-                  aria-label="Vis mindre"
-                >
-                  <ChevronDown size={16} className="rotate-180 mx-auto" />
-                </button>
                 <div className="text-xs text-gray-400">
                   Archived: {formatDateTime(client.archive?.archivedAt || client.updatedAt)}
                 </div>
@@ -3512,6 +3499,18 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                     Delete permanently
                   </button>
                 </div>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    togglePeekCard(client.id);
+                  }}
+                  className="self-center mt-1 p-1 rounded-full bg-white/10 text-gray-300 hover:text-white"
+                  title="Vis mindre"
+                  aria-label="Vis mindre"
+                >
+                  <ChevronDown size={16} className="rotate-180 mx-auto" />
+                </button>
                 </>
                 )}
               </div>
