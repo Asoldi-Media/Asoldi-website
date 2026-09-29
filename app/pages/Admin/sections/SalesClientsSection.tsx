@@ -34,6 +34,7 @@ import { matchesClientSearchQuery, normalizeClientSearchText } from '../clientSe
 import { MeetingNotesModal } from '../../sales/MeetingNotesModal';
 import { SalesOfferComposer } from '../../sales/SalesOfferComposer';
 import { SalesFlowSteps } from '../../sales/SalesFlowSteps';
+import { SalesScriptsDock } from '../../sales/SalesScriptsDock';
 import { offerMissingFields, offerReadinessMessage } from '../../../../lib/offer-readiness.js';
 import { SalesGoalTimeline } from './SalesGoalTimeline';
 import {
@@ -198,6 +199,7 @@ type MeetingMapPin = {
 type Props = {
   onMovedToDevelopment?: () => void;
   onLogout?: () => void;
+  showScriptsDock?: boolean;
 };
 
 type SalesFormState = {
@@ -413,7 +415,7 @@ function isValidClientEmail(value = '') {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
 }
 
-export function SalesClientsSection({ onMovedToDevelopment, onLogout }: Props) {
+export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScriptsDock = false }: Props) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const flowClientId = searchParams.get('flow') || '';
@@ -2761,9 +2763,9 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout }: Props) {
 
   return (
     <div className="sales-clients-surface min-h-screen bg-[#1a1a1a] text-white">
-      <div ref={headerShellRef} className="sticky top-0 z-40 border-b border-white/10 bg-[#161616]/95 backdrop-blur-md">
-        <div className="max-w-[1440px] mx-auto px-3 sm:px-5 py-2.5 flex items-center gap-2 sm:gap-3 flex-nowrap overflow-x-auto">
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+      <header ref={headerShellRef} className="sales-sticky-header sticky top-0 z-[70] border-b border-white/10 bg-[#161616] shadow-sm">
+        <div className="max-w-[1440px] mx-auto px-3 sm:px-5 py-2.5 flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink-0 relative z-[80]">
             <img src="/media/Untitled-1.png" alt="Asoldi" className="h-8 sm:h-9 w-auto shrink-0" />
             <div className="min-w-0 relative">
               <h1 className="text-sm sm:text-base font-semibold leading-tight truncate">Salgsterminal</h1>
@@ -2783,7 +2785,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout }: Props) {
                 <ChevronDown size={12} className={`shrink-0 transition-transform ${productMenuOpen ? 'rotate-180' : ''}`} />
               </button>
               {productMenuOpen && (
-                <div className="absolute left-0 top-full mt-1 z-50 min-w-[160px] rounded-xl border border-white/10 bg-[#1f1f1f] shadow-xl overflow-hidden">
+                <div className="absolute left-0 top-full mt-1 z-[90] min-w-[180px] rounded-xl border border-white/10 bg-[#1f1f1f] shadow-xl overflow-hidden">
                   <button
                     type="button"
                     onClick={() => { setProductBracket('asoldi'); setProductMenuOpen(false); }}
@@ -2803,7 +2805,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout }: Props) {
             </div>
           </div>
 
-          <div className="flex items-center gap-1 sm:gap-1.5 min-w-0 flex-1">
+          <div className="flex items-center gap-1 sm:gap-1.5 min-w-0 flex-1 overflow-x-auto">
             <button
               type="button"
               onClick={() => toggleHeaderPanel('filter')}
@@ -2890,7 +2892,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout }: Props) {
                 <UserRound size={16} />
               </button>
               {accountMenuOpen && (
-                <div className="absolute right-0 top-full mt-1 z-50 w-72 rounded-xl border border-white/10 bg-[#1f1f1f] shadow-xl p-3">
+                <div className="absolute right-0 top-full mt-1 z-[90] w-72 rounded-xl border border-white/10 bg-[#1f1f1f] shadow-xl p-3">
                   <p className={`text-xs ${calendarStatus?.connected ? 'text-green-300' : 'text-red-300'}`}>
                     {calendarStatus?.connected
                       ? (calendarStatus.googleEmail
@@ -3079,7 +3081,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout }: Props) {
             </div>
           </div>
         )}
-      </div>
+      </header>
 
       <div className="max-w-[1440px] mx-auto px-3 sm:px-6 py-4 space-y-3 sm:space-y-4">
       {!isSalesAdmin && verifiedInbox.length > 0 && (
@@ -3304,9 +3306,6 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout }: Props) {
                     <span className="block text-sm font-semibold">{row.title}</span>
                     <span className="inline-flex items-center gap-2 shrink-0">
                       <span className="text-sm font-semibold tabular-nums">{row.count}</span>
-                      {collapsed && row.count > SALES_COMPACT_PREVIEW ? (
-                        <span className="text-[11px] opacity-70">+{row.count - SALES_COMPACT_PREVIEW}</span>
-                      ) : null}
                       <ChevronDown size={16} className={`transition-transform ${collapsed ? '' : 'rotate-180'}`} />
                     </span>
                   </span>
@@ -3350,9 +3349,6 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout }: Props) {
               <span className="text-xs px-2 py-1 rounded bg-emerald-900/30 border border-emerald-700/30 text-emerald-200">
                 {winClients.length} solgt
               </span>
-              {collapsedBuckets.wins !== false && winClients.length > SALES_COMPACT_PREVIEW ? (
-                <span className="text-[11px] text-gray-400">+{winClients.length - SALES_COMPACT_PREVIEW}</span>
-              ) : null}
               <ChevronDown size={16} className={`text-gray-400 transition-transform ${collapsedBuckets.wins !== false ? '' : 'rotate-180'}`} />
             </span>
           </button>
@@ -3376,9 +3372,6 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout }: Props) {
               <span className="text-xs px-2 py-1 rounded bg-black/20 border border-white/10 text-gray-300">
                 {archivedClients.length} archived
               </span>
-              {collapsedBuckets.archived !== false && archivedClients.length > SALES_COMPACT_PREVIEW ? (
-                <span className="text-[11px] text-gray-400">+{archivedClients.length - SALES_COMPACT_PREVIEW}</span>
-              ) : null}
               <ChevronDown size={16} className={`text-gray-400 transition-transform ${collapsedBuckets.archived !== false ? '' : 'rotate-180'}`} />
             </span>
           </button>
@@ -3500,7 +3493,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout }: Props) {
       </div>
 
       {(showForm || inClientFlow) && (
-        <div className={inClientFlow ? 'fixed inset-0 z-50 flex flex-col bg-[#1a1a1a]' : 'fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-3 sm:p-4'}>
+        <div className={inClientFlow ? 'fixed inset-0 z-[80] flex flex-col bg-[#1a1a1a]' : 'fixed inset-0 z-[80] bg-black/70 flex items-center justify-center p-3 sm:p-4'}>
           {inClientFlow && (
             <div className="shrink-0 border-b border-[#E6E9EF] bg-white text-[#111827]">
               <div className="px-3 sm:px-5 pt-2 sm:pt-3 flex items-center justify-between gap-2">
@@ -3804,6 +3797,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout }: Props) {
           </div>
         </div>
       )}
+      {showScriptsDock && !showForm && !flowClientId ? <SalesScriptsDock /> : null}
     </div>
   );
 }

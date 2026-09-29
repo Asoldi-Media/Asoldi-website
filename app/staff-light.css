@@ -146,9 +146,11 @@
   color: #1f2937;
 }
 
-.staff-light header {
-  background-color: #ffffff;
+.staff-light header,
+.staff-light .sales-sticky-header {
+  background-color: #ffffff !important;
   border-color: #e5e7eb;
+  color: #111827;
 }
 
 .staff-light .sales-action-scroll {

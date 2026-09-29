@@ -81,7 +81,7 @@ function AppLayout() {
   }, [location.pathname]);
 
   return (
-    <div className={`${useLightShell ? 'bg-[#F8F9FB] text-[#111827] selection:bg-black/10' : 'bg-[#050505] text-white selection:bg-white/20'} min-h-screen font-sans overflow-x-hidden`}>
+    <div className={`${useLightShell ? 'bg-[#F8F9FB] text-[#111827] selection:bg-black/10' : 'bg-[#050505] text-white selection:bg-white/20'} min-h-screen font-sans ${location.pathname.startsWith('/sales') ? '' : 'overflow-x-hidden'}`}>
       {!hideShell && <Navbar />}
       <Suspense fallback={<PageLoader />}>
         <Routes>

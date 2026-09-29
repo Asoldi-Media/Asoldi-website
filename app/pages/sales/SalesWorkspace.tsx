@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { Loader2 } from 'lucide-react';
 import { SalesClientsSection } from '../Admin/sections/SalesClientsSection';
-import { SalesScriptsDock } from './SalesScriptsDock';
 import { API, getSalesToken } from '../Admin/shared';
 
 export const SalesWorkspace = () => {
@@ -73,8 +72,7 @@ export const SalesWorkspace = () => {
         <meta name="robots" content="noindex,nofollow" />
       </Helmet>
       <div className="staff-light min-h-screen bg-[#1a1a1a] text-white">
-        <SalesClientsSection onLogout={logout} />
-        <SalesScriptsDock />
+        <SalesClientsSection onLogout={logout} showScriptsDock />
       </div>
     </>
   );
