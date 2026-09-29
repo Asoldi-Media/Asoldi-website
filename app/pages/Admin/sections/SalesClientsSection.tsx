@@ -38,12 +38,9 @@ import {
   clientIsSalesWin,
   classifySalesPipelineState,
   countSalesPipelineStates,
-  formatGoalLabel,
   getActiveNextAction,
   getCalendarNextAction,
   getClientNextActionMs,
-  getCurrentGoalKey,
-  getSalesGoalKeys,
   groupSalesClientsByNextAction,
   confirmationSendGaps,
   clientNeedsConfirmationSend,
@@ -181,8 +178,6 @@ type SalesFormState = {
   businessAddress: string;
   industry: string;
   meetingMode: 'online' | 'in-person';
-  agreedTime: boolean;
-  meetingAt: string;
   websiteDomain: string;
   notes: string;
   instagramUrl: string;
@@ -204,8 +199,6 @@ const INITIAL_FORM: SalesFormState = {
   businessAddress: '',
   industry: '',
   meetingMode: 'online',
-  agreedTime: false,
-  meetingAt: '',
   websiteDomain: '',
   notes: '',
   instagramUrl: '',
@@ -228,8 +221,6 @@ function clientCardSnapshot(form: SalesFormState, websiteEmailTouched: boolean) 
     businessAddress: form.businessAddress.trim(),
     industry: form.industry.trim(),
     meetingMode: form.meetingMode,
-    agreedTime: Boolean(form.agreedTime),
-    meetingAt: form.agreedTime ? form.meetingAt : '',
     websiteDomain: form.product === 'ssu' ? '' : form.websiteDomain.trim(),
     notes: form.notes.trim(),
     instagramUrl: form.instagramUrl.trim(),
@@ -293,25 +284,6 @@ function salesMeetLink(client: { meetingMode?: string; calendar?: { meetLink?: s
 
 function durationForMode(mode: 'online' | 'in-person') {
   return calendarDurationForMode(mode);
-}
-
-function toDateTimeLocal(value = '') {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
-  const hh = String(date.getHours()).padStart(2, '0');
-  const min = String(date.getMinutes()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
-}
-
-function toIsoDateTime(value = '') {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toISOString();
 }
 
 function formatWhen(value = '') {
@@ -432,7 +404,6 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
   const [clientSearchInput, setClientSearchInput] = useState('');
   const [clientSearchQuery, setClientSearchQuery] = useState('');
   const [ownerFilter, setOwnerFilter] = useState('');
-  const [goalFilter, setGoalFilter] = useState('');
   const [pipelineFilter, setPipelineFilter] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -554,30 +525,23 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
       (a.name || a.username || a.accountKey).localeCompare(b.name || b.username || b.accountKey, 'nb-NO', { sensitivity: 'base' })
     );
   }, [salesOwners, productClients]);
-  const goalFilterOptions = useMemo(() => {
-    const keys = getSalesGoalKeys(productBracket) as SalesGoalKey[];
-    return [
-      ...keys.map((key) => ({ id: key, label: formatGoalLabel(key) })),
-      { id: 'sold', label: 'Solgt' },
-    ];
-  }, [productBracket]);
   const clientMatchesFilters = (client: SalesClient) => {
     if (!clientMatchesNameSearch(client)) return false;
-    if (ownerFilter === 'unassigned' && String(client.ownerId || '').trim()) return false;
-    if (ownerFilter && ownerFilter !== 'unassigned' && String(client.ownerId || '') !== ownerFilter) return false;
+    if (isSalesAdmin) {
+      if (ownerFilter === 'unassigned' && String(client.ownerId || '').trim()) return false;
+      if (ownerFilter && ownerFilter !== 'unassigned' && String(client.ownerId || '') !== ownerFilter) return false;
+    }
     if (pipelineFilter && classifySalesPipelineState(client, meetingNowMs) !== pipelineFilter) return false;
-    if (goalFilter === 'sold') return clientIsSalesWin(client);
-    if (goalFilter && getCurrentGoalKey(client) !== goalFilter) return false;
     return true;
   };
-  const hasActiveFilters = Boolean(normalizedClientSearchQuery || ownerFilter || goalFilter || pipelineFilter);
+  const hasActiveFilters = Boolean(normalizedClientSearchQuery || (isSalesAdmin && ownerFilter) || pipelineFilter);
   const timelineClients = useMemo(
     () => productClients.filter((client) => (
       client.status !== 'not-sold'
       && !clientIsSalesWin(client)
       && clientMatchesFilters(client)
     )),
-    [productClients, normalizedClientSearchQuery, ownerFilter, goalFilter, pipelineFilter, meetingNowMs]
+    [productClients, normalizedClientSearchQuery, ownerFilter, pipelineFilter, meetingNowMs, isSalesAdmin]
   );
   const salesRepOptions = useMemo(
     () => salesOwners.filter((owner) => String(owner.accountKey || '').startsWith('sales:')),
@@ -615,7 +579,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
   }, [productClients]);
   const archivedClients = useMemo(
     () => productClients.filter((client) => client.status === 'not-sold' && clientMatchesFilters(client)),
-    [productClients, normalizedClientSearchQuery, ownerFilter, goalFilter, pipelineFilter, meetingNowMs]
+    [productClients, normalizedClientSearchQuery, ownerFilter, pipelineFilter, meetingNowMs, isSalesAdmin]
   );
   const winClients = useMemo(
     () => productClients
@@ -630,17 +594,19 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
         if (bMs == null) return -1;
         return aMs - bMs;
       }),
-    [productClients, normalizedClientSearchQuery, ownerFilter, goalFilter, pipelineFilter, meetingNowMs]
+    [productClients, normalizedClientSearchQuery, ownerFilter, pipelineFilter, meetingNowMs, isSalesAdmin]
   );
   const pipelineScopeClients = useMemo(
     () => productClients.filter((client) => {
       if (client.status === 'not-sold') return false;
       if (!clientMatchesNameSearch(client)) return false;
-      if (ownerFilter === 'unassigned' && String(client.ownerId || '').trim()) return false;
-      if (ownerFilter && ownerFilter !== 'unassigned' && String(client.ownerId || '') !== ownerFilter) return false;
+      if (isSalesAdmin) {
+        if (ownerFilter === 'unassigned' && String(client.ownerId || '').trim()) return false;
+        if (ownerFilter && ownerFilter !== 'unassigned' && String(client.ownerId || '') !== ownerFilter) return false;
+      }
       return true;
     }),
-    [productClients, normalizedClientSearchQuery, ownerFilter]
+    [productClients, normalizedClientSearchQuery, ownerFilter, isSalesAdmin]
   );
   const pipelineCounts = useMemo(
     () => countSalesPipelineStates(pipelineScopeClients, meetingNowMs),
@@ -1204,8 +1170,6 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
       businessAddress: client.businessAddress || '',
       industry: client.industry || '',
       meetingMode: client.meetingMode === 'in-person' ? 'in-person' : 'online',
-      agreedTime: Boolean(client.agreedTime),
-      meetingAt: toDateTimeLocal(client.meetingAt),
       websiteDomain: client.websiteDomain || '',
       notes: clientNoteDraft(client),
       instagramUrl: details.instagramUrl,
@@ -1298,8 +1262,6 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
         businessAddress: form.businessAddress,
         industry: form.industry,
         meetingMode: form.meetingMode,
-        agreedTime: form.agreedTime,
-        meetingAt: form.agreedTime ? toIsoDateTime(form.meetingAt) : '',
         websiteDomain: form.product === 'ssu' ? '' : form.websiteDomain,
         notes: form.notes,
         details: {
@@ -1348,13 +1310,13 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
             ? `Meeting updated on Google Calendar${googleEmail ? ` (${googleEmail})` : ''}. Open that Google account — not a different Gmail / work inbox.`
             : `Meeting saved to Google Calendar${googleEmail ? ` (${googleEmail})` : ''}. Open that Google account to see it. The client only gets a Google invite when you send confirmation.`
         );
-      } else if (payload.agreedTime) {
+      } else if (saved.agreedTime && saved.meetingAt) {
         setNotice('');
         if (!warnings.length) {
           setError('Saved, but no Google Calendar event was created. Check Connect Google Calendar on this login, then save the client again.');
         }
       } else {
-        setNotice('Saved. Turn on Agreed time and set date/time, then save again to create the Google Calendar event.');
+        setNotice('Lagret. Sett møtetiden på møtehandlingen for å opprette Google-kalenderhendelsen.');
       }
       return true;
     } catch (err) {
@@ -1887,7 +1849,6 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
     setClientSearchInput('');
     setClientSearchQuery('');
     setOwnerFilter('');
-    setGoalFilter('');
     setPipelineFilter('');
   }
 
@@ -1902,8 +1863,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
             const showMailActions = expanded && showMailActionsId === client.id;
             const meetingHeld = Boolean(client.progression?.meetingHeld);
             const nextAction = getActiveNextAction(client);
-            // Important contact point: the next action is on the sales rep's calendar
-            // (agreed meeting, "Møtet booket", or any action with add-to-calendar on).
+            // Important contact point: any action on the calendar, even if a reminder sits above it.
             const calendarAction = getCalendarNextAction(client);
             const websiteSold = Boolean(client.progression?.contractSigned);
             const canMarkSold = Boolean(client.progression?.contractSigned);
@@ -1921,14 +1881,14 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
               <React.Fragment key={client.id}>
                 <div
                   onClick={(event) => handleClientCardClick(event, client.id)}
-                  className={`rounded-2xl bg-[#2a2a2a] border p-3 sm:p-4 flex flex-col gap-2 sm:gap-3 cursor-pointer min-w-0 ${
+                  className={`rounded-2xl border p-3 sm:p-4 flex flex-col gap-2 sm:gap-3 cursor-pointer min-w-0 ${
                     clientSelected
-                      ? 'border-[#FF5B00] ring-1 ring-[#FF5B00]/40'
+                      ? 'bg-[#3f3f3f] hover:bg-[#454545] border-[#FF5B00] ring-1 ring-[#FF5B00]/40'
                       : confirmationGaps.length
-                        ? 'border-red-500/70 ring-1 ring-red-500/30'
+                        ? 'bg-[#2a2a2a] hover:bg-[#353535] border-red-500/70 ring-1 ring-red-500/30'
                         : calendarAction
-                        ? 'border-sky-400/50 ring-1 ring-sky-400/20 shadow-[0_0_0_3px_rgba(56,189,248,0.06)]'
-                        : 'border-white/10'
+                        ? 'bg-[#2a2a2a] hover:bg-[#353535] border-sky-400/50 ring-1 ring-sky-400/20 shadow-[0_0_0_3px_rgba(56,189,248,0.06)]'
+                        : 'bg-[#2a2a2a] hover:bg-[#353535] border-white/10'
                   }`}
                 >
                 <div className="flex items-start justify-between gap-2">
@@ -2304,7 +2264,6 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                             Duration: {durationForMode(client.meetingMode)} min
                             {client.meetingMode === 'online' ? ' in calendar (client sees 30)' : ''}
                           </li>
-                          <li>Agreed time: {client.agreedTime ? 'Yes' : 'No'}</li>
                         </ul>
                       </details>
                       <details open className="text-sm text-gray-200">
@@ -2658,7 +2617,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
   }
 
   return (
-    <div className="space-y-3 sm:space-y-4 min-w-0">
+    <div className="sales-clients-surface space-y-3 sm:space-y-4 min-w-0">
       {!isSalesAdmin && verifiedInbox.length > 0 && (
         <div className="relative rounded-2xl border border-sky-400/30 bg-sky-900/30 p-3 sm:p-4">
           <button
@@ -2812,8 +2771,8 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                 )}
               </div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <label className="text-[11px] text-gray-400">
+            {isSalesAdmin && (
+              <label className="text-[11px] text-gray-400 block">
                 <span className="inline-flex items-center gap-1 mb-1">
                   <Filter size={12} />
                   Sales rep
@@ -2832,25 +2791,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                   ))}
                 </select>
               </label>
-              <label className="text-[11px] text-gray-400">
-                <span className="inline-flex items-center gap-1 mb-1">
-                  <Filter size={12} />
-                  Goal step
-                </span>
-                <select
-                  value={goalFilter}
-                  onChange={(event) => setGoalFilter(event.target.value)}
-                  className="mt-1 w-full rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
-                >
-                  <option value="">All steps</option>
-                  {goalFilterOptions.map((option) => (
-                    <option key={option.id} value={option.id}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
+            )}
             <div className="flex flex-wrap gap-1.5 text-[11px]">
               <span className="px-2 py-0.5 rounded border border-white/10 bg-black/30 text-gray-300">Mail {emailAudit.total}</span>
               <span className="px-2 py-0.5 rounded border border-green-700/30 bg-green-900/20 text-green-300">OK {emailAudit.validNonTest}</span>
@@ -2889,8 +2830,7 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
               <p className="text-[11px] text-gray-400">
                 Showing
                 {clientSearchQuery ? <> matches for <span className="text-white">{clientSearchQuery}</span></> : ' filtered clients'}
-                {ownerFilter ? <> · owner: <span className="text-white">{ownerFilter === 'unassigned' ? 'Unassigned' : ownerLabel(ownerFilterOptions.find((owner) => owner.accountKey === ownerFilter) || { accountKey: ownerFilter, username: ownerFilter, name: ownerFilter })}</span></> : null}
-                {goalFilter ? <> · step: <span className="text-white">{goalFilterOptions.find((option) => option.id === goalFilter)?.label || goalFilter}</span></> : null}
+                {isSalesAdmin && ownerFilter ? <> · owner: <span className="text-white">{ownerFilter === 'unassigned' ? 'Unassigned' : ownerLabel(ownerFilterOptions.find((owner) => owner.accountKey === ownerFilter) || { accountKey: ownerFilter, username: ownerFilter, name: ownerFilter })}</span></> : null}
                 {pipelineFilter ? <> · pipeline: <span className="text-white">{SALES_PIPELINE_STATES.find((state) => state.id === pipelineFilter)?.label || pipelineFilter}</span></> : null}
               </p>
             )}
@@ -3242,8 +3182,10 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
               <div
                 key={client.id}
                 onClick={(event) => handleClientCardClick(event, client.id)}
-                className={`rounded-xl bg-black/20 border p-3 space-y-2 cursor-pointer ${
-                  clientSelected ? 'border-[#FF5B00] ring-1 ring-[#FF5B00]/40' : 'border-white/10'
+                className={`rounded-xl border p-3 space-y-2 cursor-pointer ${
+                  clientSelected
+                    ? 'bg-[#3f3f3f] hover:bg-[#454545] border-[#FF5B00] ring-1 ring-[#FF5B00]/40'
+                    : 'bg-black/20 hover:bg-[#2f2f2f] border-white/10'
                 }`}
               >
                 <div className="flex items-start justify-between gap-2">
@@ -3443,27 +3385,9 @@ export function SalesClientsSection({ onMovedToDevelopment }: Props) {
                 onChange={(value) => setForm((prev) => ({ ...prev, meetingPlace: value }))}
               />
 
-              <div className="flex items-center justify-between rounded-lg border border-white/10 bg-[#161616] px-4 py-3">
-                <span className="text-sm text-gray-300">Agreed time</span>
-                <button
-                  type="button"
-                  onClick={() => setForm((prev) => ({ ...prev, agreedTime: !prev.agreedTime, meetingAt: prev.agreedTime ? '' : prev.meetingAt }))}
-                  className={`px-3 py-1 rounded text-xs ${form.agreedTime ? 'bg-[#FF5B00] text-white' : 'bg-white/10 text-gray-300'}`}
-                >
-                  {form.agreedTime ? 'On' : 'Off'}
-                </button>
-              </div>
-
-              <div>
-                <label className="block text-sm text-gray-300 mb-1">Agreed date & time</label>
-                <input
-                  type="datetime-local"
-                  value={form.meetingAt}
-                  onChange={(e) => setForm((prev) => ({ ...prev, meetingAt: e.target.value }))}
-                  disabled={!form.agreedTime}
-                  className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg bg-[#161616] border border-white/10 text-white disabled:opacity-50"
-                />
-              </div>
+              <p className="text-[11px] text-gray-500">
+                Møtetid settes på møtehandlingen i målstegene under. Online/IRL her styrer kalenderlengde og Meet.
+              </p>
 
               <div className="flex flex-wrap items-center gap-x-2 text-sm text-gray-400">
                 Meeting duration: <strong className="text-white">{formDuration} min</strong>

@@ -167,6 +167,22 @@ export function EmailVisualEditor({
     editor.on('update', emit);
     editor.on('load', () => {
       loadCanvas(editor, html, grapesProject);
+      try {
+        const doc = editor.Canvas.getDocument();
+        if (doc && !doc.getElementById('asoldi-selection-style')) {
+          const style = doc.createElement('style');
+          style.id = 'asoldi-selection-style';
+          style.textContent = `
+            ::selection { background: rgba(156, 163, 175, 0.72) !important; color: #111 !important; }
+            ::-moz-selection { background: rgba(156, 163, 175, 0.72) !important; color: #111 !important; }
+            .gjs-selected { outline: 2px solid #9ca3af !important; background-color: rgba(156, 163, 175, 0.28) !important; }
+            .gjs-hovered { outline: 2px dashed #9ca3af !important; background-color: rgba(156, 163, 175, 0.16) !important; }
+          `;
+          doc.head.appendChild(style);
+        }
+      } catch {
+        // Canvas document is not always ready on first load.
+      }
       if (phone) {
         try {
           editor.setDevice('mobile');

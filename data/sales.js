@@ -10,6 +10,8 @@ import {
   decorateNextActions,
   getSalesGoalKeys,
   inferMeetingHeld,
+  MEETING_TIME_BACKFILL_TARGETS,
+  sameMeetingInstant,
   salesProgressBlockedReason as nextActionProgressBlockedReason,
 } from '../lib/sales-next-actions.js';
 import { calendarDurationForMode } from '../lib/sales-meeting-duration.js';
@@ -784,6 +786,122 @@ export function backfillSalesClientProducts({ forceFromList = true } = {}) {
     ssu: next.filter((entry) => entry.product === 'ssu').length,
     asoldi: next.filter((entry) => entry.product === 'asoldi').length,
   };
+}
+
+export function backfillSmsRemindersToMeeting() {
+  const state = readState();
+  let updated = 0;
+  const next = state.map((client) => {
+    if (normalizeSalesStatus(client.status) === 'not-sold') return client;
+    if (!client.agreedTime || !client.meetingAt) return client;
+    if (client.progression?.meetingHeld || clientIsSalesWin(client)) return client;
+    const nextActions = decorateNextActions(client);
+    const before = (Array.isArray(client.nextActions) ? client.nextActions : [])
+      .find((action) => action.presetKey === 'sms1h' && !action.doneAt);
+    const after = nextActions.find((action) => action.presetKey === 'sms1h' && !action.doneAt);
+    if (
+      after
+      && before
+      && sanitizeText(before.dueAt) === sanitizeText(after.dueAt)
+      && Number(before.relativeToMeetingHours) === 1
+    ) {
+      return client;
+    }
+    if (!after) return client;
+    updated += 1;
+    return normalizeSalesClient({
+      ...client,
+      nextActions,
+      updatedAt: nowIso(),
+    });
+  });
+  if (updated) writeState(next);
+  return { scanned: state.length, updated };
+}
+
+export function previewNamedMeetingTimeBackfills() {
+  const clients = getSalesClients();
+  const details = [];
+  for (const target of MEETING_TIME_BACKFILL_TARGETS) {
+    const matches = clients.filter((client) => (
+      target.match(client) && normalizeSalesStatus(client.status) !== 'not-sold'
+    ));
+    if (!matches.length) {
+      details.push({
+        target: target.id,
+        label: target.label,
+        status: 'unmatched',
+        meetingAt: target.meetingAt,
+      });
+      continue;
+    }
+    for (const client of matches) {
+      const alreadySame = Boolean(client.agreedTime)
+        && sameMeetingInstant(client.meetingAt, target.meetingAt);
+      details.push({
+        target: target.id,
+        label: target.label,
+        status: alreadySame ? 'already-set' : 'would-update',
+        clientId: client.id,
+        businessName: client.businessName,
+        contactPerson: client.contactPerson,
+        fromMeetingAt: client.meetingAt,
+        toMeetingAt: target.meetingAt,
+        ownerId: client.ownerId,
+      });
+    }
+  }
+  return { details, patched: 0 };
+}
+
+export function applyNamedMeetingTimeBackfills() {
+  const clients = getSalesClients();
+  const details = [];
+  const patches = [];
+  for (const target of MEETING_TIME_BACKFILL_TARGETS) {
+    const matches = clients.filter((client) => (
+      target.match(client) && normalizeSalesStatus(client.status) !== 'not-sold'
+    ));
+    if (!matches.length) {
+      details.push({
+        target: target.id,
+        label: target.label,
+        status: 'unmatched',
+        meetingAt: target.meetingAt,
+      });
+      continue;
+    }
+    for (const client of matches) {
+      const alreadySame = Boolean(client.agreedTime)
+        && sameMeetingInstant(client.meetingAt, target.meetingAt);
+      const nextActions = decorateNextActions({
+        ...client,
+        agreedTime: true,
+        meetingAt: target.meetingAt,
+      });
+      patches.push({
+        id: client.id,
+        patch: {
+          agreedTime: true,
+          meetingAt: target.meetingAt,
+          nextActions,
+        },
+      });
+      details.push({
+        target: target.id,
+        label: target.label,
+        status: alreadySame ? 'already-set' : 'updated',
+        clientId: client.id,
+        businessName: client.businessName,
+        contactPerson: client.contactPerson,
+        fromMeetingAt: client.meetingAt,
+        toMeetingAt: target.meetingAt,
+        ownerId: client.ownerId,
+      });
+    }
+  }
+  const result = patchSalesClientsById(patches);
+  return { details, patched: result.updated };
 }
 
 export function setSalesCalendar(id, calendarPatch = {}) {

@@ -4,6 +4,7 @@ import {
   applyNextActionMutation,
   applyProgressionChange,
   applyMeetingHeldOrphanReset,
+  actionFollowsNeighbor,
   classifyNextActionBucket,
   classifySalesPipelineState,
   countSalesPipelineStates,
@@ -24,6 +25,10 @@ import {
   clientHasAssignedSalesRep,
   clientNeedsConfirmationSend,
   meetingTimeHasPassed,
+  confirmationShouldSendOnChange,
+  osloWallClockToIso,
+  MEETING_TIME_BACKFILL_TARGETS,
+  canStickAction,
   salesProgressBlockedReason,
   suggestedDueAtForPreset,
 } from '../lib/sales-next-actions.js';
@@ -350,9 +355,9 @@ test('møtet booket preset defaults to add-to-calendar and marks the client as a
   assert.equal(getCalendarNextAction(client({ agreedTime: false, meetingAt: '', nextActions: toggledOff.nextActions })), null);
 });
 
-test('agreed meeting time keeps the meeting on the calendar after the SMS reminder is done', () => {
+test('agreed meeting time keeps the meeting on the calendar even while the SMS reminder is next', () => {
   assert.equal(getActiveNextAction(client())?.presetKey, 'sms1h');
-  assert.equal(getCalendarNextAction(client()), null);
+  assert.equal(getCalendarNextAction(client())?.presetKey, 'meeting');
   const sms = decorateNextActions(client()).find((action) => action.presetKey === 'sms1h');
   const done = applyNextActionMutation(client(), { op: 'complete', id: sms.id });
   const after = client({ nextActions: done.nextActions });
@@ -379,6 +384,20 @@ test('past meeting times skip auto confirmation until the time is moved forward'
   assert.equal(meetingTimeHasPassed(unscheduled, now), false);
 });
 
+test('changing meeting format does not auto-send confirmation; changing time does', () => {
+  const existing = client({
+    meetingMode: 'online',
+    meetingAt: '2026-09-30T10:00:00.000Z',
+    contactPerson: 'Ada',
+    contactEmail: 'ada@test.no',
+  });
+  const modeOnly = { ...existing, meetingMode: 'in-person' };
+  const timeChanged = { ...existing, meetingAt: '2026-10-01T10:00:00.000Z' };
+  assert.equal(confirmationShouldSendOnChange(existing, modeOnly), false);
+  assert.equal(confirmationShouldSendOnChange(existing, timeChanged), true);
+  assert.equal(confirmationShouldSendOnChange(existing, existing, { ownerJustAssigned: true }), true);
+});
+
 test('already-assigned clients without thank-you still need a confirmation send', () => {
   assert.equal(clientHasAssignedSalesRep(client({ ownerId: 'sales:abc' })), true);
   assert.equal(clientHasAssignedSalesRep(client({ ownerId: 'admin:damian' })), false);
@@ -388,6 +407,44 @@ test('already-assigned clients without thank-you still need a confirmation send'
     reminders: { thankYouSentAt: '2026-09-20T10:00:00.000Z' },
   })), false);
   assert.equal(clientNeedsConfirmationSend(client({ ownerId: 'admin:damian' })), false);
+});
+
+test('påminnelse stays one hour before the meeting when the meeting moves', () => {
+  const start = client({ meetingAt: '2026-09-20T14:00:00.000Z' });
+  const meeting = decorateNextActions(start).find((action) => action.presetKey === 'meeting');
+  const moved = applyNextActionMutation(
+    { ...start, nextActions: decorateNextActions(start) },
+    { op: 'update', id: meeting.id, dueAt: '2026-10-01T13:00:00.000Z' }
+  );
+  assert.equal(moved.meetingAt, '2026-10-01T13:00:00.000Z');
+  const sms = moved.nextActions.find((action) => action.presetKey === 'sms1h');
+  assert.equal(sms.relativeToMeetingHours, 1);
+  assert.equal(Date.parse(sms.dueAt), Date.parse('2026-10-01T13:00:00.000Z') - HOUR_MS);
+});
+
+test('editing påminnelse time cannot unpin it from one hour before the meeting', () => {
+  const row = { ...client(), nextActions: decorateNextActions(client()) };
+  const sms = row.nextActions.find((action) => action.presetKey === 'sms1h');
+  const moved = applyNextActionMutation(row, {
+    op: 'update',
+    id: sms.id,
+    dueAt: '2026-10-01T13:00:00.000Z',
+  });
+  const next = moved.nextActions.find((action) => action.presetKey === 'sms1h');
+  assert.equal(next.relativeToMeetingHours, 1);
+  assert.equal(Date.parse(next.dueAt), Date.parse(MEETING_AT) - HOUR_MS);
+});
+
+test('oslo wall clock backfill targets are 15:00 local on 1 Oct and 7 Oct 2026', () => {
+  assert.equal(osloWallClockToIso(2026, 10, 1, 15, 0), '2026-10-01T13:00:00.000Z');
+  assert.equal(osloWallClockToIso(2026, 10, 7, 15, 0), '2026-10-07T13:00:00.000Z');
+  assert.equal(MEETING_TIME_BACKFILL_TARGETS[0].match({ businessName: 'Pokebutikk Khogiani' }), true);
+  assert.equal(MEETING_TIME_BACKFILL_TARGETS[1].match({ contactPerson: 'Deles Are Terjesen' }), true);
+});
+
+test('påminnelse cannot be unpinned from the meeting', () => {
+  const sms = decorateNextActions(client()).find((action) => action.presetKey === 'sms1h');
+  assert.equal(canStickAction(sms), false);
 });
 
 test('every booked client gets an SMS reminder one hour before the meeting', () => {
@@ -401,6 +458,86 @@ test('every booked client gets an SMS reminder one hour before the meeting', () 
   assert.equal(Date.parse(sms.dueAt), Date.parse(MEETING_AT) - HOUR_MS);
   assert.ok(Date.parse(sms.dueAt) < Date.parse(meeting.dueAt));
   assert.equal(getActiveNextAction(client()).presetKey, 'sms1h');
+  assert.equal(actionFollowsNeighbor(sms), true);
+});
+
+test('meeting time lives on the meeting action even before a time is set', () => {
+  const row = client({ agreedTime: false, meetingAt: '' });
+  const meeting = decorateNextActions(row).find((action) => action.presetKey === 'meeting' && !action.doneAt);
+  assert.ok(meeting);
+  assert.equal(meeting.dueAt, '');
+  const deleted = applyNextActionMutation(row, { op: 'delete', id: meeting.id });
+  assert.match(deleted.error, /ikke slettes/i);
+  const timed = applyNextActionMutation(row, {
+    op: 'update',
+    id: meeting.id,
+    dueAt: '2026-09-24T11:00:00.000Z',
+  });
+  assert.equal(timed.error, undefined);
+  assert.equal(timed.meetingAt, '2026-09-24T11:00:00.000Z');
+  assert.equal(timed.agreedTime, true);
+});
+
+test('sticky action keeps its gap when the action below moves', () => {
+  const sold = client({
+    progression: { meetingHeld: true, offerSent: true, contractSigned: true },
+  });
+  const follow = applyNextActionMutation(sold, {
+    op: 'create',
+    presetKey: 'oppfolging',
+    name: 'Oppfølging',
+    dueAt: '2026-09-25T12:00:00.000Z',
+  });
+  const withFollow = { ...sold, nextActions: follow.nextActions };
+  const sms = applyNextActionMutation(withFollow, {
+    op: 'create',
+    presetKey: 'custom',
+    name: 'Send sms',
+    format: 'sms',
+    dueAt: '2026-09-25T11:00:00.000Z',
+    sticky: true,
+  });
+  assert.equal(sms.error, undefined);
+  const sticky = sms.nextActions.find((action) => action.name === 'Send sms');
+  const anchor = sms.nextActions.find((action) => action.presetKey === 'oppfolging');
+  assert.equal(sticky.sticky, true);
+  assert.equal(sticky.stickyAnchorId, anchor.id);
+  assert.equal(sticky.stickyOffsetMs, HOUR_MS);
+  const moved = applyNextActionMutation(
+    { ...sold, nextActions: sms.nextActions },
+    { op: 'update', id: anchor.id, dueAt: '2026-09-26T12:00:00.000Z' }
+  );
+  const movedSms = moved.nextActions.find((action) => action.id === sticky.id);
+  assert.equal(Date.parse(movedSms.dueAt), Date.parse('2026-09-26T12:00:00.000Z') - HOUR_MS);
+});
+
+test('without sticky, changing an action time can reorder the list', () => {
+  const sold = client({
+    progression: { meetingHeld: true, offerSent: true, contractSigned: true },
+  });
+  const follow = applyNextActionMutation(sold, {
+    op: 'create',
+    presetKey: 'oppfolging',
+    name: 'Oppfølging',
+    dueAt: '2026-09-25T12:00:00.000Z',
+  });
+  const withFollow = { ...sold, nextActions: follow.nextActions };
+  const sms = applyNextActionMutation(withFollow, {
+    op: 'create',
+    presetKey: 'custom',
+    name: 'Send sms',
+    format: 'sms',
+    dueAt: '2026-09-25T11:00:00.000Z',
+  });
+  const stickyOff = sms.nextActions.find((action) => action.name === 'Send sms');
+  assert.equal(stickyOff.sticky, false);
+  const later = applyNextActionMutation(
+    { ...sold, nextActions: sms.nextActions },
+    { op: 'update', id: stickyOff.id, dueAt: '2026-09-25T13:00:00.000Z' }
+  );
+  const live = later.nextActions.filter((action) => !action.doneAt && action.presetKey !== 'oppfolging1mnd');
+  assert.equal(live[0].presetKey, 'oppfolging');
+  assert.equal(live[1].name, 'Send sms');
 });
 
 test('checkmark removes one action and leaves the others', () => {

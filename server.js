@@ -85,7 +85,7 @@ import {
   htmlToPlainText,
   salesEmailMergeMap,
 } from './lib/sales-email.js';
-import { confirmationSendGaps, meetingTimeHasPassed } from './lib/sales-next-actions.js';
+import { confirmationSendGaps, confirmationShouldSendOnChange, meetingTimeHasPassed, sameMeetingInstant } from './lib/sales-next-actions.js';
 import { normalizeStoredWebsiteEmail, resolveWebsiteEmail } from './lib/sales-website-email.js';
 import { extractBookingFromLead, salesBookingFacts } from './lib/sales-booking-facts.js';
 import {
@@ -103,6 +103,7 @@ import {
   promoteGoogleBusinessFromOtherLinks,
 } from './lib/sales-client-links.js';
 import {
+  buildContractOnlyEmailForClient,
   buildOfferEmailForClient,
   composeEmailForClient,
   deleteEmailTemplate,
@@ -122,6 +123,7 @@ import {
   escapeHtml as escapeOfferHtml,
   fillOfferSlots,
   findOfferPlaceholders,
+  offerSendContentMode,
   offerSlotIsOpen,
   productsWithTier,
   refreshOfferShell,
@@ -1974,11 +1976,16 @@ function buildSalesQuickFillLinks(details = {}) {
   };
 }
 
-function buildSalesInput(body = {}, { existing = null, requireCore = false } = {}) {
+function buildSalesInput(body = {}, { existing = null, requireCore = false, lockMeetingSchedule = false } = {}) {
   const source = body && typeof body === 'object' ? body : {};
   const mode = normalizeMeetingMode(source.meetingMode ?? existing?.meetingMode ?? 'online');
-  const agreedTime = parseBoolean(source.agreedTime, existing?.agreedTime ?? false);
-  const meetingAt = agreedTime ? sanitizeText(source.meetingAt ?? existing?.meetingAt) : '';
+  const keepSchedule = Boolean(lockMeetingSchedule && existing);
+  const agreedTime = keepSchedule
+    ? Boolean(existing.agreedTime)
+    : parseBoolean(source.agreedTime, existing?.agreedTime ?? false);
+  const meetingAt = keepSchedule
+    ? (agreedTime ? sanitizeText(existing.meetingAt) : '')
+    : (agreedTime ? sanitizeText(source.meetingAt ?? existing?.meetingAt) : '');
   const meetingPlaceRaw = sanitizeText(source.meetingPlace ?? existing?.meetingPlace);
 
   const product = (() => {
@@ -7973,6 +7980,7 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
         eventIdForUpsert,
         accountKey,
         {
+          calendarId: eventIdForUpsert ? (storedCalendarId || targetCalendarId) : targetCalendarId,
           sendUpdates: notifyAttendees ? 'all' : 'none',
           includeAttendees: notifyAttendees || (guestAlreadyInvited && Boolean(eventIdForUpsert)),
           forceGuestInvite: notifyAttendees && (forceGuestInvite || !guestAlreadyInvited || !eventIdForUpsert),
@@ -8300,10 +8308,16 @@ async function autoSendThankYouFromOwner(client, { existing = null, ownerJustAss
   }
   const gaps = confirmationSendGaps(client);
   if (gaps.length) return { sent: false, reason: 'missing-fields', client, gaps };
+  const timeChanged = Boolean(
+    existing
+    && existing.agreedTime
+    && client?.agreedTime
+    && !sameMeetingInstant(existing.meetingAt, client.meetingAt)
+  );
   // Past meetings: assign without mailing. Confirmation goes out when the rep
   // later sets a time that is still in the future.
   if (meetingTimeHasPassed(client)) return { sent: false, reason: 'meeting-passed', client };
-  if (client?.reminders?.thankYouSentAt) {
+  if (client?.reminders?.thankYouSentAt && !timeChanged) {
     const healed = await inviteFirefliesAfterConfirmation(client, {
       actorAccountKey: client.ownerId,
     });
@@ -8314,19 +8328,10 @@ async function autoSendThankYouFromOwner(client, { existing = null, ownerJustAss
       warnings: healed.warnings || [],
     };
   }
-  const becameReady = !existing
-    || ownerJustAssigned
-    || confirmationSendGaps(existing).length > 0
-    || !existing.agreedTime
-    || !existing.meetingAt
-    || existing.meetingAt !== client.meetingAt
-    || existing.meetingMode !== client.meetingMode
-    || existing.contactEmail !== client.contactEmail
-    || existing.contactPerson !== client.contactPerson
-    || existing.businessName !== client.businessName;
-  if (existing && !becameReady) return { sent: false, reason: 'unchanged', client };
+  const becameReady = confirmationShouldSendOnChange(existing, client, { ownerJustAssigned });
+  if (existing && !becameReady && !timeChanged) return { sent: false, reason: 'unchanged', client };
   return sendSalesThankYou(client, {
-    force: false,
+    force: Boolean(client?.reminders?.thankYouSentAt) && timeChanged,
     actorAccountKey: client.ownerId,
     salesUser: salesUserFromAccountKey(client.ownerId),
   });
@@ -12222,6 +12227,73 @@ app.post('/api/admin/sales/backfill-calendar', salesAuth, async (req, res) => {
   }
 });
 
+app.post('/api/admin/sales/backfill-meeting-times', salesAuth, async (req, res) => {
+  if (!req.salesUser?.isAdmin) {
+    return res.status(403).json({ message: 'Only admin can run meeting-time backfill.' });
+  }
+  try {
+    const dryRun = parseBoolean(req.body?.dryRun, true);
+    const sendConfirmations = parseBoolean(req.body?.sendConfirmations, !dryRun);
+    const sms = dryRun
+      ? { scanned: sales.getSalesClients().length, updated: 0, dryRun: true }
+      : sales.backfillSmsRemindersToMeeting();
+    const named = dryRun
+      ? sales.previewNamedMeetingTimeBackfills()
+      : sales.applyNamedMeetingTimeBackfills();
+    const confirmations = [];
+    if (!dryRun) {
+      for (const row of named.details || []) {
+        if (row.status === 'unmatched' || !row.clientId) continue;
+        let client = sales.getSalesClientById(row.clientId);
+        if (!client) continue;
+        const previous = {
+          ...client,
+          meetingAt: row.fromMeetingAt,
+          agreedTime: Boolean(row.fromMeetingAt),
+        };
+        const syncResult = await maybeSyncCalendar(client, previous, {
+          notifyAttendees: true,
+          actorAccountKey: client.ownerId || req.salesUser.accountKey,
+        });
+        client = syncResult.client || client;
+        const thankYou = sendConfirmations
+          ? await sendSalesThankYou(client, {
+              force: true,
+              actorAccountKey: client.ownerId || req.salesUser.accountKey,
+              salesUser: salesUserFromAccountKey(client.ownerId) || req.salesUser,
+            })
+          : { sent: false, reason: 'skipped', client };
+        if (thankYou?.client) client = thankYou.client;
+        console.log(
+          `[mail] backfill thank-you id=${sanitizeText(client.id)} name=${sanitizeText(client.businessName)} sent=${Boolean(thankYou?.sent)} reason=${sanitizeText(thankYou?.reason)} from=${sanitizeText(thankYou?.from)} to=${sanitizeText(client.contactEmail)} meetingAt=${sanitizeText(client.meetingAt)}`
+        );
+        confirmations.push({
+          clientId: client.id,
+          businessName: client.businessName,
+          meetingAt: client.meetingAt,
+          calendarEventId: client.calendar?.eventId || '',
+          thankYouSent: Boolean(thankYou?.sent),
+          thankYouReason: thankYou?.reason || '',
+          warnings: [...(syncResult.warnings || []), ...(thankYou?.warnings || [])],
+        });
+      }
+    }
+    return res.json({
+      ok: true,
+      dryRun,
+      sendConfirmations: Boolean(sendConfirmations && !dryRun),
+      sms,
+      named,
+      confirmations,
+    });
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 500)).json({
+      ok: false,
+      message: sanitizeText(error?.message) || 'Failed backfilling meeting times.',
+    });
+  }
+});
+
 app.post('/api/admin/sales/backfill-integrity', salesAuth, async (req, res) => {
   if (!req.salesUser?.isAdmin) {
     return res.status(403).json({ message: 'Only admin can run sales integrity backfill.' });
@@ -12719,7 +12791,7 @@ app.put('/api/admin/sales/:id', salesAuth, async (req, res) => {
     if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
     if (!canAccessSalesClient(req, existing)) return res.status(403).json({ message: 'Not your sales client.' });
 
-    const payload = buildSalesInput(req.body || {}, { existing });
+    const payload = buildSalesInput(req.body || {}, { existing, lockMeetingSchedule: true });
     let client = sales.updateSalesClient(req.params.id, payload);
     if (!client) return res.status(404).json({ message: 'Sales client not found.' });
 
@@ -12797,19 +12869,28 @@ app.patch('/api/admin/sales/:id/next-actions', salesAuth, async (req, res) => {
     const updated = sales.setSalesNextAction(req.params.id, req.body || {});
     if (!updated) return res.status(404).json({ message: 'Sales client not found.' });
     let client = updated;
-    const meetingChanged = existing.meetingAt !== client.meetingAt || existing.agreedTime !== client.agreedTime;
+    const meetingChanged = !sameCalendarInstant(existing.meetingAt, client.meetingAt)
+      || existing.agreedTime !== client.agreedTime;
+    const warnings = [];
+    let thankYouSent = false;
     if (meetingChanged) {
       const syncResult = await maybeSyncCalendar(client, existing, {
-        notifyAttendees: Boolean(existing?.reminders?.thankYouSentAt),
+        notifyAttendees: Boolean(existing?.reminders?.thankYouSentAt) || Boolean(client?.reminders?.thankYouSentAt),
         actorAccountKey: req.salesUser.accountKey,
       });
       client = syncResult.client || client;
+      warnings.push(...(syncResult.warnings || []));
+      const thankYou = await autoSendThankYouFromOwner(client, { existing });
+      if (thankYou?.client) client = thankYou.client;
+      thankYouSent = Boolean(thankYou?.sent);
+      warnings.push(...(thankYou?.warnings || []));
     }
     const reminderSync = await maybeSyncNextActionCalendars(existing, client, {
       actorAccountKey: req.salesUser.accountKey,
     });
     client = reminderSync.client || client;
-    res.json({ client, warnings: reminderSync.warnings || [] });
+    warnings.push(...(reminderSync.warnings || []));
+    res.json({ client, warnings, thankYouSent, meetingChanged });
   } catch (error) {
     const message = sanitizeText(error?.message) || 'Failed updating next action.';
     res.status(400).json({ message });
@@ -13773,18 +13854,32 @@ async function composeOfferMessage(offer, client, req, { to = '' } = {}) {
 }
 
 /** Why a rep cannot send this offer right now ('' when they can). Mirrors the composer's disabled hints. */
-function offerSendBlocker(offer, { ignoreReviewGate = false } = {}) {
+function offerSendBlocker(offer, { ignoreReviewGate = false, contractOnly = false } = {}) {
   if (!offer.products.length) return 'Velg en nettside-tier (eller få tilbudet verifisert) før du sender.';
   if (!ignoreReviewGate && !salesOffers.offerCanBeSentBySales(offer)) {
     return offer.status === 'review-requested'
       ? 'Tilbudet venter på gjennomgang hos admin.'
       : 'Dette tilbudet må kjøres via admin først (skreddersydd eller merket for gjennomgang).';
   }
+  if (contractOnly) return '';
   const placeholders = findOfferPlaceholders(offer.email.html);
   if (placeholders.length) {
-    return `E-posten har ${placeholders.length} felt fra malen som ikke er fylt ut: ${placeholders.slice(0, 3).map((label) => `«${label}»`).join(', ')}${placeholders.length > 3 ? ' …' : ''}. Fyll ut eller slett dem før du sender.`;
+    return `E-posten har ${placeholders.length} felt fra malen som ikke er fylt ut: ${placeholders.slice(0, 3).map((label) => `«${label}»`).join(', ')}${placeholders.length > 3 ? ' …' : ''}. Fyll ut eller slett dem før du sender, eller velg Kun kontrakt for å sende avtalen under møtet.`;
   }
   return '';
+}
+
+/** In-meeting send: short cover + contract. The stored letter (transcript slots) is not what the client receives. */
+async function composeContractOnlyMessage(offer, client, req, { to = '', attached = true } = {}) {
+  const sender = await resolveSalesSenderForAccount(req.salesUser);
+  const view = clientWithOfferParty(client, offer, { to });
+  const built = buildContractOnlyEmailForClient(view, { sender, attached });
+  const composed = composeEmailForClient(view, 'offer', {
+    html: built.html,
+    subject: built.subject,
+    preheader: built.preheader,
+  }, { sender, attachInvite: false, offer: { products: offer.products, mvaIncluded: offer.mvaIncluded } }).message;
+  return { sender, composed };
 }
 
 function sendPdf(res, buffer, fileName, { download = false } = {}) {
@@ -14184,10 +14279,12 @@ app.post('/api/admin/sales/:id/offer/send', salesAuth, async (req, res) => {
 
   let offer = await ensureOfferDraft(client, req);
   if (offer.status === 'sent') return res.status(409).json({ message: 'Tilbudet er allerede sendt.', offer: presentOffer(offer) });
+  const contentMode = offerSendContentMode(req.body?.content);
+  const contractOnly = contentMode === 'contract';
   const to = offerSendToEmail(client, req.body?.to);
   const readiness = offerReadiness(client, offer, { to });
   if (!readiness.ready) return res.status(400).json({ message: readiness.message, readiness });
-  const blocker = offerSendBlocker(offer);
+  const blocker = offerSendBlocker(offer, { contractOnly });
   if (blocker) {
     const waiting = offer.status === 'review-requested' || (salesOffers.offerNeedsVerification(offer) && offer.status !== 'verified');
     return res.status(waiting ? 409 : 400).json({ message: blocker, offer: presentOffer(offer) });
@@ -14196,7 +14293,9 @@ app.post('/api/admin/sales/:id/offer/send', salesAuth, async (req, res) => {
   if (!to || !isValidEmail(to)) return res.status(400).json({ message: salesEmailFailureMessage('missing-email') });
   const delivery = sendEmail && sendPortal ? 'both' : (sendPortal ? 'portal' : 'email');
   try {
-    const { composed } = await composeOfferMessage(offer, client, req, { to });
+    const { composed } = contractOnly
+      ? await composeContractOnlyMessage(offer, client, req, { to, attached: sendEmail })
+      : await composeOfferMessage(offer, client, req, { to });
     if (sendPortal) {
       const view = clientWithOfferParty(client, offer, { to });
       const contractHtml = contractHtmlForOffer(offer, view);
@@ -14220,7 +14319,7 @@ app.post('/api/admin/sales/:id/offer/send', salesAuth, async (req, res) => {
         ],
       });
     }
-    const sent = salesOffers.markSalesOfferSent(offer.id, { actor: offerActor(req), to, delivery });
+    const sent = salesOffers.markSalesOfferSent(offer.id, { actor: offerActor(req), to, delivery, sentContent: contentMode });
     const portalOffer = await attachWebsiteCodeToSentOffer(client, sent, { letterHtml: composed.html, to });
     const account = await portalAccountForClient(client, to);
     markOfferSentProgress(client);
@@ -14228,6 +14327,7 @@ app.post('/api/admin/sales/:id/offer/send', salesAuth, async (req, res) => {
       ok: true,
       offer: presentOffer(sent),
       channels,
+      content: contentMode,
       delivery,
       copyTo: sendEmail ? salesEmailCopyBcc(to) : '',
       contractFileName,

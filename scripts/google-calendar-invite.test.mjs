@@ -9,6 +9,8 @@ import {
   firefliesNotetakerEmail,
   shouldIncludeFireflies,
   withoutAttendeeEmails,
+  toCalendarDateTime,
+  calendarEventStartMatches,
 } from '../lib/google-calendar.js';
 import {
   GOOGLE_CALENDAR_OAUTH_EVENT,
@@ -142,4 +144,15 @@ test('OAuth failure page tells the sales tab the connect did not finish', () => 
   assert.match(html, /Invalid or expired OAuth state/);
   assert.match(html, /"connected":false/);
   assert.match(html, /BroadcastChannel/);
+});
+
+test('calendar event dateTimes are Oslo wall clock without a Z suffix', () => {
+  assert.equal(toCalendarDateTime('2026-10-01T13:00:00.000Z', 'Europe/Oslo'), '2026-10-01T15:00:00');
+  assert.equal(toCalendarDateTime('2026-10-07T13:00:00.000Z', 'Europe/Oslo'), '2026-10-07T15:00:00');
+});
+
+test('calendar start match detects a stale event that never moved', () => {
+  const want = '2026-10-01T13:00:00.000Z';
+  assert.equal(calendarEventStartMatches({ start: { dateTime: '2026-10-01T15:00:00+02:00' } }, want), true);
+  assert.equal(calendarEventStartMatches({ start: { dateTime: '2026-09-14T09:00:00+02:00' } }, want), false);
 });

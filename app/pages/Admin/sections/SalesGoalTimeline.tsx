@@ -1,9 +1,11 @@
 import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { CalendarDays, CheckCircle2, ChevronsDown, ChevronsUp, Loader2, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { CalendarDays, CheckCircle2, ChevronsDown, ChevronsUp, Loader2, Pencil, Pin, Plus, Trash2, X } from 'lucide-react';
 import type { SalesClient, SalesGoalKey, SalesNextAction, SalesNextActionPreset } from '../shared';
 import {
   AFTER_SALE_GOAL,
   ACTION_FORMATS,
+  actionFollowsNeighbor,
+  canStickAction,
   formatActionFormatLabel,
   formatGoalLabel,
   formatPresetLabel,
@@ -29,6 +31,7 @@ type DraftState = {
   format: SalesActionFormat;
   dueAt: string;
   addToCalendar: boolean;
+  sticky: boolean;
 };
 
 type EditState = {
@@ -136,6 +139,7 @@ export function SalesGoalTimeline({
       format: defaultFormatForPreset(presetKey) as SalesActionFormat,
       dueAt: toDateTimeLocal(suggested),
       addToCalendar: defaultAddToCalendar(presetKey, client),
+      sticky: false,
     });
   }
 
@@ -150,6 +154,7 @@ export function SalesGoalTimeline({
       format: draft.format,
       dueAt: toIsoDateTime(draft.dueAt),
       addToCalendar: draft.addToCalendar,
+      sticky: draft.sticky,
     });
     setDraft(null);
   }
@@ -268,7 +273,15 @@ export function SalesGoalTimeline({
           >
           <div className={actionListMaxPx ? 'space-y-2 pb-6' : 'space-y-2'}>
           {currentActions.map((currentAction) => (
-            <div key={currentAction.id} data-action-row className="rounded-lg border border-white/10 bg-black/30 px-2 py-1.5">
+            <div
+              key={currentAction.id}
+              data-action-row
+              className={`rounded-lg border px-2 py-1.5 ${
+                currentAction.addToCalendar && currentAction.dueAt
+                  ? 'border-sky-400/50 bg-black/30 shadow-[0_0_0_3px_rgba(56,189,248,0.08)] hover:bg-[#3a3a3a]'
+                  : 'border-white/10 bg-black/30 hover:bg-[#3a3a3a]'
+              }`}
+            >
               {edit?.actionId === currentAction.id ? (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <label className="text-[10px] text-gray-400 uppercase tracking-wide">
@@ -280,7 +293,7 @@ export function SalesGoalTimeline({
                     />
                   </label>
                   <label className="text-[10px] text-gray-400 uppercase tracking-wide">
-                    Tid for neste handling
+                    {currentAction.presetKey === 'meeting' ? 'Møtetid' : 'Tid for neste handling'}
                     <input
                       type="datetime-local"
                       value={edit.dueAt}
@@ -335,9 +348,32 @@ export function SalesGoalTimeline({
                     ) : null}
                   </div>
                   {currentAction.addToCalendar ? (
-                    <span title="I Google Kalender" className="shrink-0 text-[#FF5B00]">
+                    <span title="I Google Kalender" className="shrink-0 text-sky-300">
                       <CalendarDays size={12} />
                     </span>
+                  ) : null}
+                  {canStickAction(currentAction) ? (
+                    <button
+                      type="button"
+                      role="checkbox"
+                      aria-checked={actionFollowsNeighbor(currentAction)}
+                      disabled={actionBusy}
+                      onClick={() => void onMutateAction({
+                        op: 'update',
+                        id: currentAction.id,
+                        sticky: !actionFollowsNeighbor(currentAction),
+                      })}
+                      className={`shrink-0 p-1 rounded ${
+                        actionFollowsNeighbor(currentAction)
+                          ? 'text-sky-300 hover:text-sky-200'
+                          : 'text-gray-500 hover:text-white'
+                      }`}
+                      title={actionFollowsNeighbor(currentAction)
+                        ? 'Sticky: følger handlingen under. Klikk for å løsne.'
+                        : 'Sticky: behold avstanden til handlingen under når den flyttes'}
+                    >
+                      <Pin size={12} fill={actionFollowsNeighbor(currentAction) ? 'currentColor' : 'none'} />
+                    </button>
                   ) : null}
                   <button
                     type="button"
@@ -350,7 +386,7 @@ export function SalesGoalTimeline({
                       addToCalendar: Boolean(currentAction.addToCalendar) || currentAction.presetKey === 'meeting',
                     })}
                     className="shrink-0 p-1 rounded text-gray-400 hover:text-white"
-                    title="Endre navn eller tid"
+                    title={currentAction.presetKey === 'meeting' ? 'Endre møtetid' : 'Endre navn eller tid'}
                   >
                     <Pencil size={12} />
                   </button>
@@ -420,6 +456,14 @@ export function SalesGoalTimeline({
                 { format: draft.format, addToCalendar: draft.addToCalendar, presetKey: draft.presetKey },
                 (patch) => setDraft((prev) => prev ? { ...prev, ...patch } : prev),
               )}
+              <label className="sm:col-span-2 inline-flex items-center gap-2 text-[11px] text-gray-300">
+                <input
+                  type="checkbox"
+                  checked={draft.sticky}
+                  onChange={(event) => setDraft((prev) => prev ? { ...prev, sticky: event.target.checked } : prev)}
+                />
+                Sticky — behold avstanden til handlingen under
+              </label>
               <div className="sm:col-span-2 flex gap-2">
                 <button
                   type="button"
@@ -449,7 +493,7 @@ export function SalesGoalTimeline({
                     type="button"
                     disabled={needsMeeting || actionBusy}
                     onClick={() => startPreset(presetKey)}
-                    title={needsMeeting ? 'Sett avtalt møtetid først' : 'Legg til handlingen. Møtet blir stående.'}
+                    title={needsMeeting ? 'Sett møtetiden på møtehandlingen først' : 'Legg til handlingen. Møtet blir stående.'}
                     className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border border-white/10 bg-white/5 text-gray-200 hover:border-white/20 disabled:opacity-40"
                   >
                     <Plus size={11} />

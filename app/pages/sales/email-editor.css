@@ -135,12 +135,22 @@
   color: #fff;
 }
 
+.email-gjs .gjs-highlighter {
+  background-color: rgba(156, 163, 175, 0.42) !important;
+  outline: 2px solid #9ca3af !important;
+}
+
+.email-gjs .gjs-highlighter-sel {
+  background-color: rgba(156, 163, 175, 0.55) !important;
+  outline: 2px solid #d1d5db !important;
+}
+
 .email-gjs .gjs-selected {
-  outline: 2px solid #ff5b00 !important;
+  outline: 2px solid #9ca3af !important;
 }
 
 .email-gjs .gjs-dashed *[data-gjs-highlightable] {
-  outline-color: rgba(255, 91, 0, 0.35);
+  outline-color: rgba(156, 163, 175, 0.55);
 }
 
 .email-gjs .gjs-rte-toolbar,

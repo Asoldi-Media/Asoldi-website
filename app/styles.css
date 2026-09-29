@@ -33,3 +33,13 @@
 .scroll-contain {
   contain: layout style paint;
 }
+
+.sales-clients-surface ::selection {
+  background: rgba(156, 163, 175, 0.75);
+  color: #111;
+}
+
+.sales-clients-surface ::-moz-selection {
+  background: rgba(156, 163, 175, 0.75);
+  color: #111;
+}
