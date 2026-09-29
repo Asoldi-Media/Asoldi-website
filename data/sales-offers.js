@@ -203,6 +203,8 @@ export function normalizeSalesOffer(raw = {}) {
     sentAt: sanitizeText(raw.sentAt),
     sentTo: sanitizeText(raw.sentTo),
     sentBy: sanitizeText(raw.sentBy),
+    /** `contract` = in-meeting send (PDF / portal agreement, no transcript letter). `full` = the offer e-mail. */
+    sentContent: normalizeOfferSentContent(raw.sentContent),
     delivery: normalizeOfferDelivery(raw.delivery),
     createdAt,
     updatedAt: sanitizeText(raw.updatedAt) || createdAt,
@@ -344,6 +346,13 @@ export function normalizeOfferDelivery(value = '') {
   return 'email';
 }
 
+/** Empty stays empty so older sent offers are not relabeled. */
+export function normalizeOfferSentContent(value = '') {
+  const raw = sanitizeText(value).toLowerCase();
+  if (raw === 'contract' || raw === 'full') return raw;
+  return '';
+}
+
 /** Email, asoldi.com, or both. A missing choice stays email-only. */
 export function normalizeOfferChannels(input = {}) {
   const source = input && typeof input === 'object' ? input : {};
@@ -360,18 +369,20 @@ export function normalizeOfferChannels(input = {}) {
   return ['email'];
 }
 
-export function markSalesOfferSent(id, { actor = '', to = '', pdfPath = '', delivery = 'email' } = {}) {
+export function markSalesOfferSent(id, { actor = '', to = '', pdfPath = '', delivery = 'email', sentContent = '' } = {}) {
   const current = getSalesOfferById(id);
   if (!current) return null;
   const channel = normalizeOfferDelivery(delivery);
+  const content = normalizeOfferSentContent(sentContent);
   return updateSalesOffer(id, {
     status: 'sent',
     sentAt: nowIso(),
     sentTo: sanitizeText(to),
     sentBy: sanitizeText(actor),
     delivery: channel,
+    sentContent: content,
     contract: { ...current.contract, pdfPath: sanitizeText(pdfPath) || current.contract.pdfPath },
-  }, { actor, action: 'sent', note: `${channel}:${sanitizeText(to)}` });
+  }, { actor, action: 'sent', note: `${channel}${content ? `:${content}` : ''}:${sanitizeText(to)}` });
 }
 
 export function deleteSalesOffer(id) {
