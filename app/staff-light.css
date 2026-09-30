@@ -62,8 +62,28 @@
   border-color: #e5e7eb;
 }
 
-.staff-light .ring-\[\#FF5B00\]\/40 {
-  --tw-ring-color: rgb(255 91 0 / 0.35);
+.staff-light .ring-\[\#FF5B00\]\/40,
+.staff-light .ring-\[\#FF5B00\]\/25 {
+  --tw-ring-color: rgb(255 91 0 / 0.28);
+}
+
+.staff-light .hover\:bg-\[\#353535\]:hover,
+.staff-light .hover\:bg-\[\#2f2f2f\]:hover {
+  background-color: #f3f4f6;
+}
+
+.staff-light .hover\:bg-\[\#323232\]:hover {
+  background-color: #ffeee3;
+}
+
+.staff-light .sales-client-card-selected {
+  background-color: #fff6ef !important;
+  border-color: #ff5b00;
+  box-shadow: 0 0 0 1px rgba(255, 91, 0, 0.18);
+}
+
+.staff-light .sales-client-card-selected:hover {
+  background-color: #ffeee3 !important;
 }
 
 .staff-light input,

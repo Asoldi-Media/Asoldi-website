@@ -94,6 +94,7 @@ const OFFER_TIERS = [
 const SALES_MAP_DEFAULT_CENTER: [number, number] = [63.4305, 10.3951];
 const SALES_MAP_DEFAULT_ZOOM = 5;
 const SALES_COMPACT_PREVIEW = 6;
+const SALES_CARD_SELECTED = 'sales-client-card-selected border-[#FF5B00] ring-2 ring-[#FF5B00]/25';
 const SALES_BUCKETS_STORAGE_KEY = 'asoldi-sales-timeline-collapsed-v2';
 const DEFAULT_SALES_BUCKETS_COLLAPSED: Record<string, boolean> = {
   awaitingRep: true,
@@ -2018,7 +2019,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                     showCompact ? 'p-2.5 gap-1' : 'p-3 sm:p-4 gap-2 sm:gap-3'
                   } ${
                     clientSelected
-                      ? 'bg-[#3f3f3f] hover:bg-[#454545] border-[#FF5B00] ring-1 ring-[#FF5B00]/40'
+                      ? `bg-[#2a2a2a] hover:bg-[#323232] ${SALES_CARD_SELECTED}`
                       : confirmationGaps.length
                         ? 'bg-[#2a2a2a] hover:bg-[#353535] border-red-500/70 ring-1 ring-red-500/30'
                         : calendarAction
@@ -3436,7 +3437,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                   compactArchived ? '' : 'space-y-2'
                 } ${
                   clientSelected
-                    ? 'bg-[#3f3f3f] hover:bg-[#454545] border-[#FF5B00] ring-1 ring-[#FF5B00]/40'
+                    ? `bg-[#2a2a2a] hover:bg-[#323232] ${SALES_CARD_SELECTED}`
                     : 'bg-black/20 hover:bg-[#2f2f2f] border-white/10'
                 }`}
               >
