@@ -2891,6 +2891,13 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
           </div>
 
           <div className="ml-auto flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <Link
+              to="/sales/context-links"
+              className="hidden sm:inline-flex items-center px-2.5 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-xs sm:text-sm"
+              title="Proof of concept. Lagrer ikke på kundekortet."
+            >
+              POC lenker
+            </Link>
             {isSalesAdmin && (
               <>
                 <Link
@@ -2945,6 +2952,13 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                       : 'Kalender ikke koblet'}
                   </p>
                   <p className="mt-1 text-[11px] text-gray-400">Innlogget som {loggedInAs}</p>
+                  <Link
+                    to="/sales/context-links"
+                    onClick={() => setAccountMenuOpen(false)}
+                    className="mt-2 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/15"
+                  >
+                    POC lenker
+                  </Link>
                   {showCalendarConnect && (
                     <button
                       type="button"
