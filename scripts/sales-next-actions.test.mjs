@@ -38,6 +38,8 @@ import {
   canStickAction,
   salesProgressBlockedReason,
   suggestedDueAtForPreset,
+  clientMatchesMeetingModeFilter,
+  clientNextActionInDateRange,
 } from '../lib/sales-next-actions.js';
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -803,4 +805,30 @@ test('Ny lasts twelve hours after admin assigns a sales rep', () => {
   assert.equal(clientIsNewlyAssigned(row, start + NEW_SALES_ASSIGNMENT_MS - 1), true);
   assert.equal(clientIsNewlyAssigned(row, start + NEW_SALES_ASSIGNMENT_MS), false);
   assert.deepEqual(assignmentStampForOwnerChange('sales:kari', 'sales:kari'), {});
+});
+
+test('meeting format filter matches IRL vs online', () => {
+  const online = client({ meetingMode: 'online' });
+  const irl = client({ meetingMode: 'in-person' });
+  const unset = client({ meetingMode: '' });
+  assert.equal(clientMatchesMeetingModeFilter(online, ''), true);
+  assert.equal(clientMatchesMeetingModeFilter(irl, ''), true);
+  assert.equal(clientMatchesMeetingModeFilter(online, 'online'), true);
+  assert.equal(clientMatchesMeetingModeFilter(irl, 'online'), false);
+  assert.equal(clientMatchesMeetingModeFilter(irl, 'in-person'), true);
+  assert.equal(clientMatchesMeetingModeFilter(online, 'irl'), false);
+  assert.equal(clientMatchesMeetingModeFilter(unset, 'online'), true);
+});
+
+test('date filter uses the next action day, not the booked meeting day', () => {
+  const row = client({ meetingAt: MEETING_AT });
+  const next = getActiveNextAction(row);
+  const nextDay = isoToDatetimeLocalOslo(next.dueAt).slice(0, 10);
+  const meetingDay = isoToDatetimeLocalOslo(MEETING_AT).slice(0, 10);
+  assert.equal(next.presetKey, 'sms1h');
+  assert.notEqual(nextDay, meetingDay);
+  assert.equal(clientNextActionInDateRange(row, nextDay, nextDay), true);
+  assert.equal(clientNextActionInDateRange(row, meetingDay, meetingDay), false);
+  assert.equal(clientNextActionInDateRange(row, '', ''), true);
+  assert.equal(clientNextActionInDateRange(client({ agreedTime: false, meetingAt: '' }), nextDay, nextDay), false);
 });

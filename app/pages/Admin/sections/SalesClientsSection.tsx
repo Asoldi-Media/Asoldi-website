@@ -50,6 +50,8 @@ import {
   clientNeedsConfirmationSend,
   clientIsNewlyAssigned,
   SALES_PIPELINE_STATES,
+  clientMatchesMeetingModeFilter,
+  clientNextActionInDateRange,
 } from '../../../../lib/sales-next-actions.js';
 import { salesBookingFacts } from '../../../../lib/sales-booking-facts.js';
 import { calendarDurationForMode } from '../../../../lib/sales-meeting-duration.js';
@@ -451,6 +453,9 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
   const [clientSearchQuery, setClientSearchQuery] = useState('');
   const [ownerFilter, setOwnerFilter] = useState('');
   const [pipelineFilter, setPipelineFilter] = useState('');
+  const [meetingModeFilter, setMeetingModeFilter] = useState('');
+  const [nextActionFromDate, setNextActionFromDate] = useState('');
+  const [nextActionToDate, setNextActionToDate] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<SalesFormState>(INITIAL_FORM);
@@ -580,16 +585,25 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
       if (ownerFilter && ownerFilter !== 'unassigned' && String(client.ownerId || '') !== ownerFilter) return false;
     }
     if (pipelineFilter && classifySalesPipelineState(client, meetingNowMs) !== pipelineFilter) return false;
+    if (!clientMatchesMeetingModeFilter(client, meetingModeFilter)) return false;
+    if (!clientNextActionInDateRange(client, nextActionFromDate, nextActionToDate)) return false;
     return true;
   };
-  const hasActiveFilters = Boolean(normalizedClientSearchQuery || (isSalesAdmin && ownerFilter) || pipelineFilter);
+  const hasActiveFilters = Boolean(
+    normalizedClientSearchQuery
+    || (isSalesAdmin && ownerFilter)
+    || pipelineFilter
+    || meetingModeFilter
+    || nextActionFromDate
+    || nextActionToDate
+  );
   const timelineClients = useMemo(
     () => productClients.filter((client) => (
       client.status !== 'not-sold'
       && !clientIsSalesWin(client)
       && clientMatchesFilters(client)
     )),
-    [productClients, normalizedClientSearchQuery, ownerFilter, pipelineFilter, meetingNowMs, isSalesAdmin]
+    [productClients, normalizedClientSearchQuery, ownerFilter, pipelineFilter, meetingModeFilter, nextActionFromDate, nextActionToDate, meetingNowMs, isSalesAdmin]
   );
   const salesRepOptions = useMemo(
     () => salesOwners.filter((owner) => String(owner.accountKey || '').startsWith('sales:')),
@@ -627,7 +641,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
   }, [productClients]);
   const archivedClients = useMemo(
     () => productClients.filter((client) => client.status === 'not-sold' && clientMatchesFilters(client)),
-    [productClients, normalizedClientSearchQuery, ownerFilter, pipelineFilter, meetingNowMs, isSalesAdmin]
+    [productClients, normalizedClientSearchQuery, ownerFilter, pipelineFilter, meetingModeFilter, nextActionFromDate, nextActionToDate, meetingNowMs, isSalesAdmin]
   );
   const winClients = useMemo(
     () => productClients
@@ -642,7 +656,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
         if (bMs == null) return -1;
         return aMs - bMs;
       }),
-    [productClients, normalizedClientSearchQuery, ownerFilter, pipelineFilter, meetingNowMs, isSalesAdmin]
+    [productClients, normalizedClientSearchQuery, ownerFilter, pipelineFilter, meetingModeFilter, nextActionFromDate, nextActionToDate, meetingNowMs, isSalesAdmin]
   );
   const pipelineScopeClients = useMemo(
     () => productClients.filter((client) => {
@@ -652,9 +666,11 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
         if (ownerFilter === 'unassigned' && String(client.ownerId || '').trim()) return false;
         if (ownerFilter && ownerFilter !== 'unassigned' && String(client.ownerId || '') !== ownerFilter) return false;
       }
+      if (!clientMatchesMeetingModeFilter(client, meetingModeFilter)) return false;
+      if (!clientNextActionInDateRange(client, nextActionFromDate, nextActionToDate)) return false;
       return true;
     }),
-    [productClients, normalizedClientSearchQuery, ownerFilter, isSalesAdmin]
+    [productClients, normalizedClientSearchQuery, ownerFilter, meetingModeFilter, nextActionFromDate, nextActionToDate, isSalesAdmin]
   );
   const pipelineCounts = useMemo(
     () => countSalesPipelineStates(pipelineScopeClients, meetingNowMs),
@@ -1975,6 +1991,9 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
     setClientSearchQuery('');
     setOwnerFilter('');
     setPipelineFilter('');
+    setMeetingModeFilter('');
+    setNextActionFromDate('');
+    setNextActionToDate('');
   }
 
   const showCalendarConnect = calendarStatus?.configured !== false;
@@ -3018,6 +3037,38 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                       </select>
                     </label>
                   )}
+                  <div className="grid sm:grid-cols-3 gap-2">
+                    <label className="text-[11px] text-gray-400 block">
+                      <span className="block mb-1">Møteform</span>
+                      <select
+                        value={meetingModeFilter}
+                        onChange={(event) => setMeetingModeFilter(event.target.value)}
+                        className="w-full rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+                      >
+                        <option value="">Alle</option>
+                        <option value="online">Online</option>
+                        <option value="in-person">IRL</option>
+                      </select>
+                    </label>
+                    <label className="text-[11px] text-gray-400 block">
+                      <span className="block mb-1">Neste handling fra</span>
+                      <input
+                        type="date"
+                        value={nextActionFromDate}
+                        onChange={(event) => setNextActionFromDate(event.target.value)}
+                        className="w-full rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+                      />
+                    </label>
+                    <label className="text-[11px] text-gray-400 block">
+                      <span className="block mb-1">Neste handling til</span>
+                      <input
+                        type="date"
+                        value={nextActionToDate}
+                        onChange={(event) => setNextActionToDate(event.target.value)}
+                        className="w-full rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+                      />
+                    </label>
+                  </div>
                   <div className="flex flex-wrap gap-1.5 text-[11px]">
                     <span className="px-2 py-0.5 rounded border border-white/10 bg-black/30 text-gray-300">Mail {emailAudit.total}</span>
                     <span className="px-2 py-0.5 rounded border border-green-700/30 bg-green-900/20 text-green-300">OK {emailAudit.validNonTest}</span>
