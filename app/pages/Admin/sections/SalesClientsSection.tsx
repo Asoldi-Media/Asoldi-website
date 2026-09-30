@@ -1729,10 +1729,10 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
       <button
         type="button"
         onClick={() => toggleTimelineBucket(bucketId)}
-        className={`rounded-xl border border-white/20 bg-white/10 hover:bg-white/15 px-3 py-2.5 text-sm font-medium text-white flex items-center justify-center gap-2 ${className}`}
+        className={`inline-flex items-center justify-center gap-1 py-1.5 text-sm text-gray-300 hover:text-white ${className}`}
       >
-        {collapsed ? `Vis alle ${count} kunder` : 'Vis færre'}
-        <ChevronDown size={16} className={`transition-transform ${collapsed ? '' : 'rotate-180'}`} />
+        <span>{collapsed ? `Vis alle ${count} kunder` : 'Vis færre'}</span>
+        <ChevronDown size={16} className={`shrink-0 transition-transform ${collapsed ? '' : 'rotate-180'}`} />
       </button>
     );
   }
@@ -2026,12 +2026,12 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                       {isWin ? (
                         <span className="shrink-0 text-[11px] px-2 py-0.5 rounded bg-emerald-900/40 text-emerald-200 border border-emerald-700/40">Solgt</span>
                       ) : null}
-                      {!showCompact && confirmationGaps.length > 0 ? (
-                        <span className="shrink-0 max-w-[46%] px-2 py-0.5 rounded text-[11px] bg-red-500/15 border border-red-500/40 text-red-200 truncate" title={`Mangler ${confirmationGaps.join(', ')}`}>
+                      {confirmationGaps.length > 0 ? (
+                        <span className={`shrink-0 px-2 py-0.5 rounded text-[11px] bg-red-500/15 border border-red-500/40 text-red-200 truncate ${showCompact ? 'max-w-[52%]' : 'max-w-[46%]'}`} title={`Mangler ${confirmationGaps.join(', ')}`}>
                           Bekreftelse stoppet
                         </span>
-                      ) : !showCompact && needsConfirmation ? (
-                        <span className="shrink-0 max-w-[46%] px-2 py-0.5 rounded text-[11px] bg-amber-500/15 border border-amber-500/40 text-amber-200 truncate">
+                      ) : needsConfirmation ? (
+                        <span className={`shrink-0 px-2 py-0.5 rounded text-[11px] bg-amber-500/15 border border-amber-500/40 text-amber-200 truncate ${showCompact ? 'max-w-[52%]' : 'max-w-[46%]'}`}>
                           Bekreftelse ikke sendt
                         </span>
                       ) : !showCompact && nextAction?.name ? (
@@ -2047,7 +2047,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                         <CalendarClock size={12} className="shrink-0" />
                       )}
                       <span className="truncate">{nextAction?.dueAt ? formatWhen(nextAction.dueAt) : 'Ingen neste handling satt'}</span>
-                      {!showCompact && calendarAction ? (
+                      {calendarAction ? (
                         <span
                           className="shrink-0 px-1.5 py-px rounded border border-sky-400/30 bg-sky-400/10 text-[10px] uppercase tracking-wide text-sky-200"
                           title="Neste handling ligger på kalenderen — viktig kontaktpunkt"
