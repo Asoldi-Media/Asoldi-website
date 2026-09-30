@@ -35,6 +35,7 @@ type DraftState = {
   dueAt: string;
   addToCalendar: boolean;
   sticky: boolean;
+  meetingMode: 'online' | 'in-person';
 };
 
 type EditState = {
@@ -44,6 +45,7 @@ type EditState = {
   format: SalesActionFormat;
   dueAt: string;
   addToCalendar: boolean;
+  meetingMode: 'online' | 'in-person';
 };
 
 type Props = {
@@ -132,6 +134,7 @@ export function SalesGoalTimeline({
       dueAt: toDateTimeLocal(suggested),
       addToCalendar: defaultAddToCalendar(presetKey, client),
       sticky: false,
+      meetingMode: client.meetingMode === 'in-person' ? 'in-person' : 'online',
     });
   }
 
@@ -147,12 +150,14 @@ export function SalesGoalTimeline({
       dueAt: toIsoDateTime(draft.dueAt),
       addToCalendar: draft.addToCalendar,
       sticky: draft.sticky,
+      ...(draft.presetKey === 'meeting' ? { meetingMode: draft.meetingMode } : {}),
     });
     setDraft(null);
   }
 
   async function saveEdit() {
     if (!edit) return;
+    const meeting = client.nextActions.find((action) => action.id === edit.actionId);
     await onMutateAction({
       op: 'update',
       id: edit.actionId,
@@ -161,17 +166,24 @@ export function SalesGoalTimeline({
       format: edit.format,
       dueAt: toIsoDateTime(edit.dueAt),
       addToCalendar: edit.addToCalendar,
+      ...(meeting?.presetKey === 'meeting' ? { meetingMode: edit.meetingMode } : {}),
     });
     setEdit(null);
   }
 
   function formatControls(
-    value: { format: SalesActionFormat; addToCalendar: boolean; presetKey?: string },
-    onChange: (patch: Partial<Pick<DraftState, 'format' | 'addToCalendar'>>) => void,
+    value: {
+      format: SalesActionFormat;
+      addToCalendar: boolean;
+      presetKey?: string;
+      meetingMode?: 'online' | 'in-person';
+    },
+    onChange: (patch: Partial<Pick<DraftState, 'format' | 'addToCalendar' | 'meetingMode'>>) => void,
   ) {
     const calendarLocked = value.presetKey === 'meeting';
+    const showMeetingMode = value.presetKey === 'meeting' && value.format === 'mote';
     return (
-      <div className="sm:col-span-2 flex items-center gap-2">
+      <div className="sm:col-span-2 flex flex-wrap items-center gap-2">
         <select
           aria-label="Format"
           value={value.format}
@@ -182,6 +194,17 @@ export function SalesGoalTimeline({
             <option key={format} value={format}>{formatActionFormatLabel(format)}</option>
           ))}
         </select>
+        {showMeetingMode ? (
+          <select
+            aria-label="Møteform"
+            value={value.meetingMode === 'in-person' ? 'in-person' : 'online'}
+            onChange={(event) => onChange({ meetingMode: event.target.value as 'online' | 'in-person' })}
+            className="w-[7.5rem] shrink-0 rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
+          >
+            <option value="online">Online</option>
+            <option value="in-person">IRL</option>
+          </select>
+        ) : null}
         <span title="15 min i Google Kalender" className="shrink-0 text-gray-300">
           <CalendarDays size={15} />
         </span>
@@ -304,7 +327,12 @@ export function SalesGoalTimeline({
                     />
                   </label>
                   {formatControls(
-                    { format: edit.format, addToCalendar: edit.addToCalendar, presetKey: currentAction.presetKey },
+                    {
+                      format: edit.format,
+                      addToCalendar: edit.addToCalendar,
+                      presetKey: currentAction.presetKey,
+                      meetingMode: edit.meetingMode,
+                    },
                     (patch) => setEdit((prev) => prev ? { ...prev, ...patch } : prev),
                   )}
                   <div className="sm:col-span-2 flex gap-2">
@@ -330,7 +358,7 @@ export function SalesGoalTimeline({
                   <div className="min-w-0 flex-1">
                     <div className="text-xs text-white truncate">
                       {currentAction.name}
-                      {currentAction.format ? (
+                      {currentAction.presetKey === 'meeting' && currentAction.format === 'mote' ? null : currentAction.format ? (
                         <span className="ml-1.5 text-[10px] uppercase tracking-wide text-gray-400">{formatActionFormatLabel(currentAction.format)}</span>
                       ) : null}
                     </div>
@@ -339,6 +367,24 @@ export function SalesGoalTimeline({
                       <div className="mt-0.5 text-[11px] text-gray-300 whitespace-pre-wrap break-words">{currentAction.note}</div>
                     ) : null}
                   </div>
+                  {currentAction.presetKey === 'meeting' && currentAction.format === 'mote' ? (
+                    <select
+                      aria-label="Møteform"
+                      disabled={actionBusy}
+                      value={client.meetingMode === 'in-person' ? 'in-person' : 'online'}
+                      onClick={(event) => event.stopPropagation()}
+                      onChange={(event) => void onMutateAction({
+                        op: 'update',
+                        id: currentAction.id,
+                        meetingMode: event.target.value,
+                      })}
+                      className="shrink-0 w-[5.75rem] rounded-md bg-[#161616] border border-white/10 text-white text-[11px] px-1.5 py-1"
+                      title="Bytt Online/IRL — ny kalenderinvitasjon sendes til kunden"
+                    >
+                      <option value="online">Online</option>
+                      <option value="in-person">IRL</option>
+                    </select>
+                  ) : null}
                   {currentAction.addToCalendar ? (
                     <span title="I Google Kalender" className="shrink-0 text-sky-300">
                       <CalendarDays size={12} />
@@ -376,6 +422,7 @@ export function SalesGoalTimeline({
                       format: (currentAction.format || defaultFormatForPreset(currentAction.presetKey)) as SalesActionFormat,
                       dueAt: toDateTimeLocal(currentAction.dueAt),
                       addToCalendar: Boolean(currentAction.addToCalendar) || currentAction.presetKey === 'meeting',
+                      meetingMode: client.meetingMode === 'in-person' ? 'in-person' : 'online',
                     })}
                     className="shrink-0 p-1 rounded text-gray-400 hover:text-white"
                     title={currentAction.presetKey === 'meeting' ? 'Endre møtetid' : 'Endre navn eller tid'}
@@ -445,7 +492,12 @@ export function SalesGoalTimeline({
                 />
               </label>
               {formatControls(
-                { format: draft.format, addToCalendar: draft.addToCalendar, presetKey: draft.presetKey },
+                {
+                  format: draft.format,
+                  addToCalendar: draft.addToCalendar,
+                  presetKey: draft.presetKey,
+                  meetingMode: draft.meetingMode,
+                },
                 (patch) => setDraft((prev) => prev ? { ...prev, ...patch } : prev),
               )}
               <label className="sm:col-span-2 inline-flex items-center gap-2 text-[11px] text-gray-300">

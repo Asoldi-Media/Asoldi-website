@@ -516,7 +516,6 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
   const [creatingOffer, setCreatingOffer] = useState(false);
   const [lastCreatedCode, setLastCreatedCode] = useState<string | null>(null);
 
-  const formDuration = useMemo(() => durationForMode(form.meetingMode), [form.meetingMode]);
   const flowClient = clients.find((entry) => entry.id === flowClientId) || null;
   const inClientFlow = Boolean(flowClient && normalizeSalesProduct(flowClient.product) !== 'ssu');
   const clientCardDirty = editingId === flowClientId
@@ -1344,7 +1343,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
         orgNumber: form.orgNumber,
         businessAddress: form.businessAddress,
         industry: form.industry,
-        meetingMode: form.meetingMode,
+        ...(editingId ? {} : { meetingMode: form.meetingMode }),
         websiteDomain: form.product === 'ssu' ? '' : form.websiteDomain,
         notes: form.notes,
         details: {
@@ -3647,23 +3646,6 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                 onChange={(value) => setForm((prev) => ({ ...prev, googleBusinessProfile: value }))}
               />
 
-              <div>
-                <label className="block text-sm text-gray-300 mb-1">Meeting mode</label>
-                <select
-                  value={form.meetingMode}
-                  onChange={(e) =>
-                    setForm((prev) => ({
-                      ...prev,
-                      meetingMode: e.target.value as 'online' | 'in-person',
-                    }))
-                  }
-                  className="w-full px-3 sm:px-4 py-2.5 sm:py-3 rounded-lg bg-[#161616] border border-white/10 text-white"
-                >
-                  <option value="online">Online (1 hour in calendar)</option>
-                  <option value="in-person">In person (30 min)</option>
-                </select>
-              </div>
-
               <Field
                 label={form.meetingMode === 'in-person' ? 'Place to meet' : 'Business address (shown on map)'}
                 value={form.meetingPlace}
@@ -3671,15 +3653,8 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
               />
 
               <p className="text-[11px] text-gray-500">
-                Møtetid settes på møtehandlingen i målstegene under. Online/IRL her styrer kalenderlengde og Meet.
+                Møtetid og Online/IRL settes på møtehandlingen i målstegene. Adressen her brukes på kartet og til IRL-møter.
               </p>
-
-              <div className="flex flex-wrap items-center gap-x-2 text-sm text-gray-400">
-                Meeting duration: <strong className="text-white">{formDuration} min</strong>
-                {form.meetingMode === 'online' ? (
-                  <span className="text-gray-500">Client still sees 30 min</span>
-                ) : null}
-              </div>
 
               <TextArea label="Other links (one per line)" value={form.otherLinks} onChange={(value) => setForm((prev) => ({ ...prev, otherLinks: value }))} />
 

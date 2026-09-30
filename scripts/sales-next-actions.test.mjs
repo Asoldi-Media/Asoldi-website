@@ -403,7 +403,7 @@ test('past meeting times skip auto confirmation until the time is moved forward'
   assert.equal(meetingTimeHasPassed(unscheduled, now), false);
 });
 
-test('changing meeting format does not auto-send confirmation; changing time does', () => {
+test('changing meeting time or IRL/online sends confirmation; name and notes do not', () => {
   const existing = client({
     meetingMode: 'online',
     meetingAt: '2026-09-30T10:00:00.000Z',
@@ -412,9 +412,44 @@ test('changing meeting format does not auto-send confirmation; changing time doe
   });
   const modeOnly = { ...existing, meetingMode: 'in-person' };
   const timeChanged = { ...existing, meetingAt: '2026-10-01T10:00:00.000Z' };
-  assert.equal(confirmationShouldSendOnChange(existing, modeOnly), false);
+  assert.equal(confirmationShouldSendOnChange(existing, modeOnly), true);
   assert.equal(confirmationShouldSendOnChange(existing, timeChanged), true);
+  assert.equal(confirmationShouldSendOnChange(existing, existing), false);
   assert.equal(confirmationShouldSendOnChange(existing, existing, { ownerJustAssigned: true }), true);
+});
+
+test('saving IRL/online on the meeting action stores meetingMode', () => {
+  const start = client({ meetingMode: 'online' });
+  const meeting = decorateNextActions(start).find((action) => action.presetKey === 'meeting');
+  const moved = applyNextActionMutation(
+    { ...start, nextActions: decorateNextActions(start) },
+    { op: 'update', id: meeting.id, meetingMode: 'in-person' }
+  );
+  assert.equal(moved.meetingMode, 'in-person');
+  assert.equal(moved.meetingAt, MEETING_AT);
+});
+
+test('IRL/online can be saved on a meeting action before a time is set', () => {
+  const start = client({ agreedTime: false, meetingAt: '', meetingMode: 'online' });
+  const meeting = decorateNextActions(start).find((action) => action.presetKey === 'meeting');
+  const moved = applyNextActionMutation(
+    { ...start, nextActions: decorateNextActions(start) },
+    { op: 'update', id: meeting.id, meetingMode: 'in-person' }
+  );
+  assert.equal(moved.error, undefined);
+  assert.equal(moved.meetingMode, 'in-person');
+  assert.equal(moved.meetingAt, undefined);
+});
+
+test('renaming or noting the meeting action does not change meetingMode', () => {
+  const start = client({ meetingMode: 'in-person' });
+  const meeting = decorateNextActions(start).find((action) => action.presetKey === 'meeting');
+  const renamed = applyNextActionMutation(
+    { ...start, nextActions: decorateNextActions(start) },
+    { op: 'update', id: meeting.id, name: 'Kickoff', note: 'Ta med meny' }
+  );
+  assert.equal(renamed.meetingMode, undefined);
+  assert.equal(renamed.nextActions.find((action) => action.id === meeting.id).name, 'Kickoff');
 });
 
 test('already-assigned clients without thank-you still need a confirmation send', () => {

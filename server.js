@@ -1979,8 +1979,10 @@ function buildSalesQuickFillLinks(details = {}) {
 
 function buildSalesInput(body = {}, { existing = null, requireCore = false, lockMeetingSchedule = false } = {}) {
   const source = body && typeof body === 'object' ? body : {};
-  const mode = normalizeMeetingMode(source.meetingMode ?? existing?.meetingMode ?? 'online');
   const keepSchedule = Boolean(lockMeetingSchedule && existing);
+  const mode = keepSchedule
+    ? normalizeMeetingMode(existing.meetingMode)
+    : normalizeMeetingMode(source.meetingMode ?? existing?.meetingMode ?? 'online');
   const agreedTime = keepSchedule
     ? Boolean(existing.agreedTime)
     : parseBoolean(source.agreedTime, existing?.agreedTime ?? false);
@@ -7982,14 +7984,16 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
         }
         eventIdForUpsert = '';
       }
+      const meetingModeChanged = Boolean(previousClient)
+        && normalizeMeetingMode(previousClient?.meetingMode) !== normalizeMeetingMode(nextClient?.meetingMode);
       const forceRecreate = shouldForceCalendarRecreate(
         previousClient?.meetingAt,
         nextClient?.meetingAt,
         eventIdForUpsert
-      );
+      ) || (meetingModeChanged && Boolean(eventIdForUpsert));
       if (forceRecreate) {
         console.log(
-          `[calendar] recreate id=${sanitizeText(nextClient?.id)} event=${eventIdForUpsert} from=${sanitizeText(previousClient?.meetingAt)} to=${sanitizeText(nextClient?.meetingAt)}`
+          `[calendar] recreate id=${sanitizeText(nextClient?.id)} event=${eventIdForUpsert} from=${sanitizeText(previousClient?.meetingAt)} to=${sanitizeText(nextClient?.meetingAt)} mode=${sanitizeText(previousClient?.meetingMode)}->${sanitizeText(nextClient?.meetingMode)}`
         );
       }
       const calendarMeta = await upsertMeetingEvent(
@@ -8332,10 +8336,15 @@ async function autoSendThankYouFromOwner(client, { existing = null, ownerJustAss
     && client?.agreedTime
     && !sameMeetingInstant(existing.meetingAt, client.meetingAt)
   );
+  const modeChanged = Boolean(
+    existing
+    && normalizeMeetingMode(existing.meetingMode) !== normalizeMeetingMode(client?.meetingMode)
+  );
+  const meetingInviteChanged = timeChanged || modeChanged;
   // Past meetings: assign without mailing. Confirmation goes out when the rep
   // later sets a time that is still in the future.
   if (meetingTimeHasPassed(client)) return { sent: false, reason: 'meeting-passed', client };
-  if (client?.reminders?.thankYouSentAt && !timeChanged) {
+  if (client?.reminders?.thankYouSentAt && !meetingInviteChanged) {
     const healed = await inviteFirefliesAfterConfirmation(client, {
       actorAccountKey: client.ownerId,
     });
@@ -8347,9 +8356,9 @@ async function autoSendThankYouFromOwner(client, { existing = null, ownerJustAss
     };
   }
   const becameReady = confirmationShouldSendOnChange(existing, client, { ownerJustAssigned });
-  if (existing && !becameReady && !timeChanged) return { sent: false, reason: 'unchanged', client };
+  if (existing && !becameReady && !meetingInviteChanged) return { sent: false, reason: 'unchanged', client };
   return sendSalesThankYou(client, {
-    force: Boolean(client?.reminders?.thankYouSentAt) && timeChanged,
+    force: Boolean(client?.reminders?.thankYouSentAt) && meetingInviteChanged,
     actorAccountKey: client.ownerId,
     salesUser: salesUserFromAccountKey(client.ownerId),
   });
@@ -12893,13 +12902,16 @@ app.patch('/api/admin/sales/:id/next-actions', salesAuth, async (req, res) => {
     const updated = sales.setSalesNextAction(req.params.id, req.body || {});
     if (!updated) return res.status(404).json({ message: 'Sales client not found.' });
     let client = updated;
-    const meetingChanged = !sameCalendarInstant(existing.meetingAt, client.meetingAt)
+    const timeChanged = !sameCalendarInstant(existing.meetingAt, client.meetingAt)
       || existing.agreedTime !== client.agreedTime;
+    const modeChanged = normalizeMeetingMode(existing.meetingMode) !== normalizeMeetingMode(client.meetingMode);
+    const meetingChanged = timeChanged || modeChanged;
     const warnings = [];
     let thankYouSent = false;
     if (meetingChanged) {
       const syncResult = await maybeSyncCalendar(client, existing, {
-        notifyAttendees: Boolean(existing?.reminders?.thankYouSentAt) || Boolean(client?.reminders?.thankYouSentAt),
+        notifyAttendees: true,
+        forceGuestInvite: true,
         actorAccountKey: req.salesUser.accountKey,
       });
       client = syncResult.client || client;

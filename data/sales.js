@@ -750,6 +750,7 @@ export function setSalesNextAction(id, patch = {}) {
       updates.meetingAtSource = sanitizeText(applied.meetingAtSource) || 'sales';
     }
   }
+  if (applied.meetingMode) updates.meetingMode = applied.meetingMode;
   return updateSalesClient(id, updates);
 }
 
