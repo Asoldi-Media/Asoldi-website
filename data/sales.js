@@ -809,7 +809,7 @@ export function backfillSmsRemindersToMeeting() {
       after
       && before
       && sanitizeText(before.dueAt) === sanitizeText(after.dueAt)
-      && Number(before.relativeToMeetingHours) === 1
+      && Number(before.relativeToMeetingHours) === 24
     ) {
       return client;
     }

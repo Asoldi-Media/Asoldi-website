@@ -133,16 +133,9 @@ test('editing a sub-step time stops following the meeting', () => {
 });
 
 test('next action ranks the client, not raw meeting time', () => {
-  const withSms = applyNextActionMutation(client(), {
-    op: 'create',
-    goalKey: 'meetingHeld',
-    presetKey: 'sms24h',
-    name: 'SMS 24h',
-    dueAt: suggestedDueAtForPreset('sms24h', client()),
-  });
-  const ranked = { ...client(), nextActions: withSms.nextActions };
+  const ranked = client();
   const active = getActiveNextAction(ranked);
-  assert.equal(active.presetKey, 'sms24h');
+  assert.equal(active.presetKey, 'sms1h');
   assert.equal(getClientNextActionMs(ranked), Date.parse(MEETING_AT) - 24 * HOUR_MS);
 });
 
@@ -435,7 +428,7 @@ test('already-assigned clients without thank-you still need a confirmation send'
   assert.equal(clientNeedsConfirmationSend(client({ ownerId: 'admin:damian' })), false);
 });
 
-test('påminnelse stays one hour before the meeting when the meeting moves', () => {
+test('påminnelse stays 24 hours before the meeting when the meeting moves', () => {
   const start = client({ meetingAt: '2026-09-20T14:00:00.000Z' });
   const meeting = decorateNextActions(start).find((action) => action.presetKey === 'meeting');
   const moved = applyNextActionMutation(
@@ -444,11 +437,11 @@ test('påminnelse stays one hour before the meeting when the meeting moves', () 
   );
   assert.equal(moved.meetingAt, '2026-10-01T13:00:00.000Z');
   const sms = moved.nextActions.find((action) => action.presetKey === 'sms1h');
-  assert.equal(sms.relativeToMeetingHours, 1);
-  assert.equal(Date.parse(sms.dueAt), Date.parse('2026-10-01T13:00:00.000Z') - HOUR_MS);
+  assert.equal(sms.relativeToMeetingHours, 24);
+  assert.equal(Date.parse(sms.dueAt), Date.parse('2026-10-01T13:00:00.000Z') - 24 * HOUR_MS);
 });
 
-test('editing påminnelse time cannot unpin it from one hour before the meeting', () => {
+test('editing påminnelse time cannot unpin it from 24 hours before the meeting', () => {
   const row = { ...client(), nextActions: decorateNextActions(client()) };
   const sms = row.nextActions.find((action) => action.presetKey === 'sms1h');
   const moved = applyNextActionMutation(row, {
@@ -457,8 +450,8 @@ test('editing påminnelse time cannot unpin it from one hour before the meeting'
     dueAt: '2026-10-01T13:00:00.000Z',
   });
   const next = moved.nextActions.find((action) => action.presetKey === 'sms1h');
-  assert.equal(next.relativeToMeetingHours, 1);
-  assert.equal(Date.parse(next.dueAt), Date.parse(MEETING_AT) - HOUR_MS);
+  assert.equal(next.relativeToMeetingHours, 24);
+  assert.equal(Date.parse(next.dueAt), Date.parse(MEETING_AT) - 24 * HOUR_MS);
 });
 
 test('oslo wall clock backfill targets are 15:00 local on 1 Oct and 7 Oct 2026', () => {
@@ -473,7 +466,7 @@ test('påminnelse cannot be unpinned from the meeting', () => {
   assert.equal(canStickAction(sms), false);
 });
 
-test('every booked client gets an SMS reminder one hour before the meeting', () => {
+test('every booked client gets an SMS reminder 24 hours before the meeting', () => {
   const actions = decorateNextActions(client());
   const sms = actions.find((action) => action.presetKey === 'sms1h');
   const meeting = actions.find((action) => action.presetKey === 'meeting');
@@ -481,7 +474,7 @@ test('every booked client gets an SMS reminder one hour before the meeting', () 
   assert.equal(sms.format, 'sms');
   assert.equal(sms.addToCalendar, false);
   assert.equal(sms.note, 'send sms for å sjekke om kunde fortsatt kan møtes');
-  assert.equal(Date.parse(sms.dueAt), Date.parse(MEETING_AT) - HOUR_MS);
+  assert.equal(Date.parse(sms.dueAt), Date.parse(MEETING_AT) - 24 * HOUR_MS);
   assert.ok(Date.parse(sms.dueAt) < Date.parse(meeting.dueAt));
   assert.equal(getActiveNextAction(client()).presetKey, 'sms1h');
   assert.equal(actionFollowsNeighbor(sms), true);
