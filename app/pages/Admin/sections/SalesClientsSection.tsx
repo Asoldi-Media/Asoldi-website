@@ -43,6 +43,7 @@ import {
   countSalesPipelineStates,
   getActiveNextAction,
   getCalendarNextAction,
+  clientMeetingAtIso,
   getClientNextActionMs,
   groupSalesClientsByNextAction,
   confirmationSendGaps,
@@ -321,6 +322,13 @@ function salesMeetLink(client: { meetingMode?: string; calendar?: { meetLink?: s
 
 function durationForMode(mode: 'online' | 'in-person') {
   return calendarDurationForMode(mode);
+}
+
+function formatMeetingHeadline(value = '') {
+  if (!value) return 'Ingen møtetid satt';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('nb-NO', { timeZone: 'Europe/Oslo' });
 }
 
 function formatWhen(value = '') {
@@ -1982,6 +1990,12 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
             const nextAction = getActiveNextAction(client);
             // Important contact point: any action on the calendar, even if a reminder sits above it.
             const calendarAction = getCalendarNextAction(client);
+            const meetingAtIso = clientMeetingAtIso(client);
+            const meetingOnCalendar = Boolean(
+              meetingAtIso
+              && !client.progression?.meetingHeld
+              && (calendarAction?.presetKey === 'meeting' || calendarAction?.presetKey === 'meetingBooked')
+            );
             const websiteSold = Boolean(client.progression?.contractSigned);
             const canMarkSold = Boolean(client.progression?.contractSigned);
             const clientSelected = selectedClientIds.includes(client.id);
@@ -2044,17 +2058,17 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                         </span>
                       ) : null}
                     </div>
-                    <div className={`flex items-center gap-1.5 text-xs min-w-0 ${showCompact ? 'mt-0.5' : 'mt-1'} ${calendarAction ? 'text-sky-300' : 'text-gray-400'}`}>
-                      {calendarAction ? (
+                    <div className={`flex items-center gap-1.5 text-xs min-w-0 ${showCompact ? 'mt-0.5' : 'mt-1'} ${meetingOnCalendar ? 'text-sky-300' : 'text-gray-400'}`}>
+                      {meetingOnCalendar ? (
                         <CalendarCheck2 size={12} className="shrink-0" aria-label="På kalenderen" />
                       ) : (
                         <CalendarClock size={12} className="shrink-0" />
                       )}
-                      <span className="truncate">{nextAction?.dueAt ? formatWhen(nextAction.dueAt) : 'Ingen neste handling satt'}</span>
-                      {calendarAction ? (
+                      <span className="truncate">{formatMeetingHeadline(meetingAtIso)}</span>
+                      {meetingOnCalendar ? (
                         <span
                           className="shrink-0 px-1.5 py-px rounded border border-sky-400/30 bg-sky-400/10 text-[10px] uppercase tracking-wide text-sky-200"
-                          title="Neste handling ligger på kalenderen — viktig kontaktpunkt"
+                          title="Møtet ligger på kalenderen"
                         >
                           Kalender
                         </span>

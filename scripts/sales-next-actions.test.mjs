@@ -12,6 +12,7 @@ import {
   defaultAddToCalendar,
   getActiveNextAction,
   getCalendarNextAction,
+  clientMeetingAtIso,
   getClientNextActionMs,
   getCurrentGoalKey,
   getFutureGoalKeys,
@@ -378,6 +379,25 @@ test('agreed meeting time keeps the meeting on the calendar even while the SMS r
   });
   assert.equal(custom.error, undefined);
   assert.equal(getCalendarNextAction(client({ agreedTime: false, meetingAt: '', nextActions: custom.nextActions })), null);
+});
+
+test('client card meeting time is the meeting, not påminnelse, and stays after møtet hatt', () => {
+  assert.equal(getActiveNextAction(client())?.presetKey, 'sms1h');
+  assert.equal(clientMeetingAtIso(client()), MEETING_AT);
+  const held = applyProgressionChange(client(), 'meetingHeld', true);
+  const afterHeld = client({
+    progression: held.progression,
+    nextActions: held.nextActions,
+  });
+  assert.equal(getCurrentGoalKey(afterHeld), 'offerSent');
+  assert.equal(clientMeetingAtIso(afterHeld), MEETING_AT);
+  const offered = applyProgressionChange(afterHeld, 'offerSent', true);
+  const afterOffer = client({
+    progression: offered.progression,
+    nextActions: offered.nextActions,
+  });
+  assert.equal(getCurrentGoalKey(afterOffer), 'contractSigned');
+  assert.equal(clientMeetingAtIso(afterOffer), MEETING_AT);
 });
 
 test('past meeting times skip auto confirmation until the time is moved forward', () => {
