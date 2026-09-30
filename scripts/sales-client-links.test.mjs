@@ -4,6 +4,9 @@ import {
   fillProffUrlFromOrgNumber,
   mergeKeptSalesDetailLinks,
   promoteGoogleBusinessFromOtherLinks,
+  filterCustomOtherLinks,
+  looksLikeEmailLink,
+  looksLikeMapsOrGoogleBusinessLink,
 } from '../lib/sales-client-links.js';
 
 function classify(url = '') {
@@ -59,16 +62,16 @@ test('Maps URL in other links moves into the Google field', () => {
   assert.equal(promoted.otherLinks, 'https://kafeen.no');
 });
 
-test('existing Google Maps URL is not replaced from other links', () => {
+test('existing Google Maps URL is not replaced, and extra maps/email leave other links', () => {
   const promoted = promoteGoogleBusinessFromOtherLinks(
     {
       googleBusinessProfile: 'https://maps.google.com/?cid=1',
-      otherLinks: 'https://maps.google.com/?cid=2',
+      otherLinks: 'https://maps.google.com/?cid=2\nmailto:post@kafeen.no\npost@kafeen.no\nhttps://kafeen.no',
     },
     classify
   );
   assert.equal(promoted.googleBusinessProfile, 'https://maps.google.com/?cid=1');
-  assert.equal(promoted.otherLinks, 'https://maps.google.com/?cid=2');
+  assert.equal(promoted.otherLinks, 'https://kafeen.no');
 });
 
 test('empty Proff URL is built from a 9-digit org number', () => {
@@ -85,4 +88,23 @@ test('Proff URL is left empty without an org number', () => {
     buildDirect: () => 'https://www.proff.no/selskap/x/x/x/000000000',
   });
   assert.equal(url, '');
+});
+
+test('other links drop maps, emails, and copies of dedicated fields', () => {
+  assert.equal(looksLikeEmailLink('mailto:post@kafeen.no'), true);
+  assert.equal(looksLikeEmailLink('post@kafeen.no'), true);
+  assert.equal(looksLikeEmailLink('https://post@kafeen.no'), true);
+  assert.equal(looksLikeEmailLink('https://kafeen.no'), false);
+  assert.equal(looksLikeMapsOrGoogleBusinessLink('https://www.google.com/maps/search/?api=1&query=Oslo'), true);
+  const cleaned = filterCustomOtherLinks(
+    [
+      'https://maps.google.com/?cid=9',
+      'mailto:hei@kafeen.no',
+      'https://www.instagram.com/kafeen/',
+      'https://kafeen.no/meny',
+      'https://kafeen.no/meny',
+    ].join('\n'),
+    { instagramUrl: 'https://www.instagram.com/kafeen/' }
+  );
+  assert.equal(cleaned, 'https://kafeen.no/meny');
 });

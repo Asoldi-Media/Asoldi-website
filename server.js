@@ -101,6 +101,8 @@ import {
   fillProffUrlFromOrgNumber,
   mergeKeptSalesDetailLinks,
   promoteGoogleBusinessFromOtherLinks,
+  filterCustomOtherLinks,
+  looksLikeEmailLink,
 } from './lib/sales-client-links.js';
 import {
   buildContractOnlyEmailForClient,
@@ -1923,13 +1925,15 @@ function normalizeSalesDetailLinks(value = {}, fallback = {}) {
   const input = value && typeof value === 'object' ? value : {};
   const rawProffUrl = sanitizeText(input.proffUrl ?? base.proffUrl);
   const canonicalProffUrl = canonicalizeProffCompanyUrl(rawProffUrl);
-  return {
+  const next = {
     instagramUrl: sanitizeText(input.instagramUrl ?? base.instagramUrl),
     facebookUrl: sanitizeText(input.facebookUrl ?? base.facebookUrl),
     proffUrl: canonicalProffUrl || rawProffUrl,
     otherLinks: sanitizeText(input.otherLinks ?? base.otherLinks),
     googleBusinessProfile: sanitizeText(input.googleBusinessProfile ?? base.googleBusinessProfile),
   };
+  next.otherLinks = filterCustomOtherLinks(next.otherLinks, next);
+  return next;
 }
 
 function buildSalesRelevantLinks(details = {}) {
@@ -3103,9 +3107,14 @@ function buildSalesDetailsFromMyphonerLead(lead = {}, leadDataMap = new Map()) {
     const { kind, url } = classifySalesLink(candidate);
     if (!url) continue;
     if (kind === 'instagram' && !classified.instagram) classified.instagram = url;
+    else if (kind === 'instagram') continue;
     else if (kind === 'facebook' && !classified.facebook) classified.facebook = url;
+    else if (kind === 'facebook') continue;
     else if (kind === 'proff' && !classified.proff) classified.proff = url;
+    else if (kind === 'proff') continue;
     else if (kind === 'googleBusiness' && !classified.googleBusiness) classified.googleBusiness = url;
+    else if (kind === 'googleBusiness') continue;
+    else if (looksLikeEmailLink(candidate) || looksLikeEmailLink(url)) continue;
     else if (!classified.others.includes(url)) classified.others.push(url);
   }
   return promoteGoogleBusinessFromOtherLinks(

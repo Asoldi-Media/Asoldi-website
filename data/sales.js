@@ -16,6 +16,7 @@ import {
   salesProgressBlockedReason as nextActionProgressBlockedReason,
 } from '../lib/sales-next-actions.js';
 import { calendarDurationForMode } from '../lib/sales-meeting-duration.js';
+import { filterCustomOtherLinks } from '../lib/sales-client-links.js';
 
 const SALES_PATH = getDataFilePath('sales-clients.json');
 
@@ -288,7 +289,7 @@ function parseSalesBoolean(value) {
 
 function normalizeSalesDetails(value = {}) {
   const input = value && typeof value === 'object' ? value : {};
-  return {
+  const details = {
     instagramUrl: sanitizeText(input.instagramUrl),
     facebookUrl: sanitizeText(input.facebookUrl),
     proffUrl: sanitizeText(input.proffUrl),
@@ -298,6 +299,8 @@ function normalizeSalesDetails(value = {}) {
     meetingQuote: normalizeMeetingQuote(input.meetingQuote),
     editEmailBeforeSend: parseSalesBoolean(input.editEmailBeforeSend),
   };
+  details.otherLinks = filterCustomOtherLinks(details.otherLinks, details);
+  return details;
 }
 
 function normalizeMyphoner(value = {}) {
