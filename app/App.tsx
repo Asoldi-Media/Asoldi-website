@@ -35,7 +35,6 @@ const SalesWorkspace = lazy(() => import('./pages/sales/SalesWorkspace').then((m
 const SalesEmailComposer = lazy(() => import('./pages/sales/SalesEmailComposer').then((m) => ({ default: m.SalesEmailComposer })));
 const SalesOfferComposer = lazy(() => import('./pages/sales/SalesOfferComposer').then((m) => ({ default: m.SalesOfferComposer })));
 const EmailTemplateStudioPage = lazy(() => import('./pages/sales/EmailTemplateStudio').then((m) => ({ default: m.EmailTemplateStudioPage })));
-const ClientContextLinksPocPage = lazy(() => import('./pages/sales/ClientContextLinksPoc').then((m) => ({ default: m.ClientContextLinksPocPage })));
 const DeveloperWorkspace = lazy(() => import('./pages/developer/DeveloperWorkspace').then((m) => ({ default: m.DeveloperWorkspace })));
 const LaptopPreviews = lazy(() => import('./pages/sales/LaptopPreviews').then((m) => ({ default: m.LaptopPreviews })));
 const ClientOnboarding = lazy(() => import('./pages/client/ClientOnboarding').then((m) => ({ default: m.ClientOnboarding })));
@@ -111,7 +110,6 @@ function AppLayout() {
           <Route path="/sales/email" element={<SalesEmailComposer />} />
           <Route path="/sales/offer" element={<SalesOfferComposer />} />
           <Route path="/sales/email/templates" element={<EmailTemplateStudioPage />} />
-          <Route path="/sales/context-links" element={<ClientContextLinksPocPage />} />
           <Route path="/developer" element={<DeveloperWorkspace />} />
           <Route path="/previews" element={<LaptopPreviews />} />
           <Route path="/kunde" element={<ClientHome />} />

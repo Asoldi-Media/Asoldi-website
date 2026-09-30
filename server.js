@@ -104,7 +104,6 @@ import {
   filterCustomOtherLinks,
   looksLikeEmailLink,
 } from './lib/sales-client-links.js';
-import { researchClientContextLinks } from './lib/client-context-links.js';
 import {
   buildContractOnlyEmailForClient,
   buildOfferEmailForClient,
@@ -12111,39 +12110,6 @@ app.get('/api/admin/sales', salesAuth, async (req, res) => {
     payload.owners = await listSalesOwnerOptions(req.salesUser);
   }
   res.json(payload);
-});
-
-app.post('/api/admin/sales/context-links-poc', salesAuth, async (req, res) => {
-  if (!SERPAPI_API_KEY) {
-    return res.status(503).json({
-      configured: false,
-      writesToClients: false,
-      message: 'SERPAPI_API_KEY is not configured.',
-    });
-  }
-  const requestedIds = Array.isArray(req.body?.clientIds)
-    ? req.body.clientIds.map((entry) => sanitizeText(entry)).filter(Boolean)
-    : [];
-  const limit = Math.min(8, Math.max(1, Number(req.body?.limit) || requestedIds.length || 5));
-  const owned = sales.getSalesClients().filter((client) => (
-    canAccessSalesClient(req, client)
-    && client.status !== 'not-sold'
-    && sanitizeText(client.businessName)
-  ));
-  const selected = (requestedIds.length
-    ? owned.filter((client) => requestedIds.includes(client.id))
-    : owned
-  ).slice(0, limit);
-  const runs = [];
-  for (const client of selected) {
-    runs.push(await researchClientContextLinks(client, { search: searchSerpApi }));
-  }
-  res.json({
-    ok: true,
-    configured: true,
-    writesToClients: false,
-    runs,
-  });
 });
 
 app.post('/api/admin/sales/backfill-products', salesAuth, (req, res) => {
