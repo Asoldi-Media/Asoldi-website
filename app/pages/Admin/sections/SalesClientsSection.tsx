@@ -1301,7 +1301,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
   }
 
   function requestCloseClientFlow() {
-    if (flowStep === 1 && clientCardSnapshot(form, websiteEmailTouched) !== clientCardBaselineRef.current) {
+    if (clientCardDirty) {
       setDiscardPrompt(true);
       return;
     }
@@ -3796,11 +3796,11 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
         </div>
       )}
       {discardPrompt && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 text-[#111827] shadow-xl" role="dialog" aria-modal="true" aria-labelledby="unsaved-client-card-title">
             <h3 id="unsaved-client-card-title" className="text-lg font-semibold">Lagre endringer?</h3>
             <p className="mt-2 text-sm text-[#4B5563]">
-              Kundekortet har endringer som ikke er lagret. Lagre før du lukker, eller fortsett uten å lagre.
+              Kundekortet har endringer som ikke er lagret. Lagre og lukk, eller lukk uten å lagre.
             </p>
             {error ? <p className="mt-3 text-sm text-red-600">{error}</p> : null}
             <div className="mt-5 flex flex-wrap justify-end gap-2">
@@ -3808,7 +3808,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                 Avbryt
               </button>
               <button type="button" onClick={closeClientFlow} className="px-3 py-2 rounded-lg border border-[#E5E7EB] text-sm">
-                Fortsett uten å lagre
+                Lukk uten å lagre
               </button>
               <button
                 type="button"
@@ -3816,7 +3816,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                 onClick={() => void saveClientCardAndClose()}
                 className="px-3 py-2 rounded-lg bg-[#FF5B00] text-sm font-medium text-white disabled:opacity-50"
               >
-                {saving ? 'Lagrer…' : 'Lagre'}
+                {saving ? 'Lagrer…' : 'Lagre og lukk'}
               </button>
             </div>
           </div>
