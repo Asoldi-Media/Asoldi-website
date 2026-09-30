@@ -27,6 +27,12 @@ import {
   meetingTimeHasPassed,
   confirmationShouldSendOnChange,
   osloWallClockToIso,
+  isoToDatetimeLocalOslo,
+  datetimeLocalOsloToIso,
+  resolveMeetingAtOnMyphonerMerge,
+  assignmentStampForOwnerChange,
+  clientIsNewlyAssigned,
+  NEW_SALES_ASSIGNMENT_MS,
   MEETING_TIME_BACKFILL_TARGETS,
   canStickAction,
   salesProgressBlockedReason,
@@ -684,4 +690,69 @@ test('pipeline counts split confirmation, upcoming meetings, unsent offers, cont
       win: 1,
     }
   );
+});
+
+test('oslo datetime-local roundtrips the time a rep types in the action step', () => {
+  const iso = osloWallClockToIso(2026, 10, 1, 15, 0);
+  assert.equal(iso, '2026-10-01T13:00:00.000Z');
+  assert.equal(isoToDatetimeLocalOslo(iso), '2026-10-01T15:00');
+  assert.equal(datetimeLocalOsloToIso('2026-10-01T15:00'), iso);
+});
+
+test('a sales-written meeting time stays after MyPhoner sends the old booking again', () => {
+  const start = client({
+    meetingAt: '2026-09-20T14:00:00.000Z',
+    meetingAtSource: 'myphoner',
+    ownerId: 'sales:kari',
+  });
+  const meeting = decorateNextActions(start).find((action) => action.presetKey === 'meeting');
+  const moved = applyNextActionMutation(
+    { ...start, nextActions: decorateNextActions(start) },
+    { op: 'update', id: meeting.id, dueAt: '2026-10-01T13:00:00.000Z' }
+  );
+  assert.equal(moved.meetingAt, '2026-10-01T13:00:00.000Z');
+  assert.equal(moved.meetingAtSource, 'sales');
+  const merged = resolveMeetingAtOnMyphonerMerge(
+    {
+      ...start,
+      meetingAt: moved.meetingAt,
+      agreedTime: true,
+      meetingAtSource: 'sales',
+      ownerId: 'sales:kari',
+    },
+    '2026-09-20T14:00:00.000Z'
+  );
+  assert.equal(merged.meetingAt, '2026-10-01T13:00:00.000Z');
+  assert.equal(merged.meetingAtSource, 'sales');
+  const decorated = decorateNextActions({
+    ...start,
+    meetingAt: merged.meetingAt,
+    agreedTime: true,
+    nextActions: moved.nextActions,
+  });
+  assert.equal(decorated.find((action) => action.presetKey === 'meeting').dueAt, '2026-10-01T13:00:00.000Z');
+});
+
+test('MyPhoner can still fill a meeting time when the client is on admin and never written by sales', () => {
+  const merged = resolveMeetingAtOnMyphonerMerge(
+    {
+      meetingAt: '',
+      agreedTime: false,
+      meetingAtSource: '',
+      ownerId: 'admin:damian@asoldi.com',
+    },
+    '2026-10-01T13:00:00.000Z'
+  );
+  assert.equal(merged.meetingAt, '2026-10-01T13:00:00.000Z');
+  assert.equal(merged.meetingAtSource, 'myphoner');
+});
+
+test('Ny lasts twelve hours after admin assigns a sales rep', () => {
+  const assigned = assignmentStampForOwnerChange('', 'sales:kari', '2026-09-30T08:00:00.000Z');
+  assert.equal(assigned.assignedToRepAt, '2026-09-30T08:00:00.000Z');
+  const row = { ownerId: 'sales:kari', assignedToRepAt: assigned.assignedToRepAt };
+  const start = Date.parse('2026-09-30T08:00:00.000Z');
+  assert.equal(clientIsNewlyAssigned(row, start + NEW_SALES_ASSIGNMENT_MS - 1), true);
+  assert.equal(clientIsNewlyAssigned(row, start + NEW_SALES_ASSIGNMENT_MS), false);
+  assert.deepEqual(assignmentStampForOwnerChange('sales:kari', 'sales:kari'), {});
 });

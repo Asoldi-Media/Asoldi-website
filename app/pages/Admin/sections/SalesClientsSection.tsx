@@ -47,6 +47,7 @@ import {
   groupSalesClientsByNextAction,
   confirmationSendGaps,
   clientNeedsConfirmationSend,
+  clientIsNewlyAssigned,
   SALES_PIPELINE_STATES,
 } from '../../../../lib/sales-next-actions.js';
 import { salesBookingFacts } from '../../../../lib/sales-booking-facts.js';
@@ -2023,6 +2024,9 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                         className="h-4 w-4 shrink-0 accent-[#FF5B00] cursor-pointer"
                       />
                       <h3 className="text-white font-semibold truncate min-w-0 flex-1 text-sm sm:text-base">{client.businessName || 'Unnamed business'}</h3>
+                      {clientIsNewlyAssigned(client) ? (
+                        <span className="shrink-0 text-[11px] px-2 py-0.5 rounded bg-lime-500/15 border border-lime-500/40 text-lime-200">Ny</span>
+                      ) : null}
                       {isWin ? (
                         <span className="shrink-0 text-[11px] px-2 py-0.5 rounded bg-emerald-900/40 text-emerald-200 border border-emerald-700/40">Solgt</span>
                       ) : null}

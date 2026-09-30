@@ -17,10 +17,13 @@ import {
   getVisibleGoalKeys,
   GOAL_PRESETS,
   FOLLOW_UP_1M_NOTE,
+  isoToDatetimeLocalOslo,
+  datetimeLocalOsloToIso,
   defaultAddToCalendar,
   defaultFormatForPreset,
   presetNeedsMeeting,
   suggestedDueAtForPreset,
+  SALES_ACTION_TIMEZONE,
 } from '../../../../lib/sales-next-actions.js';
 import type { SalesActionFormat } from '../shared';
 
@@ -54,29 +57,18 @@ type Props = {
 };
 
 function toDateTimeLocal(value = '') {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  const yyyy = date.getFullYear();
-  const mm = String(date.getMonth() + 1).padStart(2, '0');
-  const dd = String(date.getDate()).padStart(2, '0');
-  const hh = String(date.getHours()).padStart(2, '0');
-  const min = String(date.getMinutes()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}T${hh}:${min}`;
+  return isoToDatetimeLocalOslo(value);
 }
 
 function toIsoDateTime(value = '') {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return date.toISOString();
+  return datetimeLocalOsloToIso(value);
 }
 
 function formatWhen(value = '') {
   if (!value) return 'Tid ikke satt';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString('nb-NO');
+  return date.toLocaleString('nb-NO', { timeZone: SALES_ACTION_TIMEZONE });
 }
 
 export function SalesGoalTimeline({

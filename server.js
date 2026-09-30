@@ -85,7 +85,7 @@ import {
   htmlToPlainText,
   salesEmailMergeMap,
 } from './lib/sales-email.js';
-import { confirmationSendGaps, confirmationShouldSendOnChange, meetingTimeHasPassed, sameMeetingInstant } from './lib/sales-next-actions.js';
+import { assignmentStampForOwnerChange, confirmationSendGaps, confirmationShouldSendOnChange, meetingTimeHasPassed, resolveMeetingAtOnMyphonerMerge, sameMeetingInstant } from './lib/sales-next-actions.js';
 import { normalizeStoredWebsiteEmail, resolveWebsiteEmail } from './lib/sales-website-email.js';
 import { extractBookingFromLead, salesBookingFacts } from './lib/sales-booking-facts.js';
 import {
@@ -207,6 +207,7 @@ import {
   calendarIdForAccount,
   resolveCalendarSyncAccountKey,
   shareGoogleCalendarToken,
+  shouldForceCalendarRecreate,
   upsertMeetingEvent,
   upsertSalesReminderEvent,
 } from './lib/google-calendar.js';
@@ -5566,6 +5567,10 @@ function mergeMyphonerSalesInput(existing = {}, incoming = {}) {
   const current = existing && typeof existing === 'object' ? existing : {};
   const next = incoming && typeof incoming === 'object' ? incoming : {};
   const incomingHasMeeting = Boolean(next.meetingAt);
+  const meeting = resolveMeetingAtOnMyphonerMerge(
+    current,
+    incomingHasMeeting ? next.meetingAt : ''
+  );
   const mergedMeetingMode = normalizeMeetingMode(next.meetingMode || current.meetingMode || 'online');
   const nextEmail = sanitizeText(next.contactEmail);
   const currentEmail = sanitizeText(current.contactEmail);
@@ -5582,11 +5587,12 @@ function mergeMyphonerSalesInput(existing = {}, incoming = {}) {
       details: mergeKeptSalesDetailLinks(next.details || {}, current.details || {}),
       meetingMode: mergedMeetingMode,
       meetingPlace: next.meetingPlace || current.meetingPlace,
-      agreedTime: incomingHasMeeting ? true : Boolean(current.agreedTime),
-      meetingAt: incomingHasMeeting ? next.meetingAt : current.meetingAt,
+      agreedTime: meeting.agreedTime,
+      meetingAt: meeting.meetingAt,
     },
     { existing: current, requireCore: false }
   );
+  merged.meetingAtSource = meeting.meetingAtSource;
   if (!merged.businessName) merged.businessName = current.businessName || 'Myphoner client';
   if (!merged.contactPerson) merged.contactPerson = current.contactPerson || merged.businessName;
   return merged;
@@ -5876,6 +5882,7 @@ async function upsertSalesClientFromMyphonerLead({
       ...incomingInput,
       product,
       ownerId: resolvedOwnerId,
+      meetingAtSource: incomingInput.meetingAt ? 'myphoner' : '',
       myphoner: {
         ...myphonerPatch,
         leadIds: mergedLeadIds,
@@ -7975,6 +7982,16 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
         }
         eventIdForUpsert = '';
       }
+      const forceRecreate = shouldForceCalendarRecreate(
+        previousClient?.meetingAt,
+        nextClient?.meetingAt,
+        eventIdForUpsert
+      );
+      if (forceRecreate) {
+        console.log(
+          `[calendar] recreate id=${sanitizeText(nextClient?.id)} event=${eventIdForUpsert} from=${sanitizeText(previousClient?.meetingAt)} to=${sanitizeText(nextClient?.meetingAt)}`
+        );
+      }
       const calendarMeta = await upsertMeetingEvent(
         nextClient,
         eventIdForUpsert,
@@ -7983,10 +8000,11 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
           calendarId: eventIdForUpsert ? (storedCalendarId || targetCalendarId) : targetCalendarId,
           sendUpdates: notifyAttendees ? 'all' : 'none',
           includeAttendees: notifyAttendees || (guestAlreadyInvited && Boolean(eventIdForUpsert)),
-          forceGuestInvite: notifyAttendees && (forceGuestInvite || !guestAlreadyInvited || !eventIdForUpsert),
+          forceGuestInvite: notifyAttendees && (forceGuestInvite || !guestAlreadyInvited || !eventIdForUpsert || forceRecreate),
           // Fred only when the confirmation invite is actually sent. Silent
           // MyPhoner/unassigned creates must not save him without emailing him.
           addFireflies: isOnline && notifyAttendees && !Boolean(nextClient?.progression?.meetingHeld),
+          forceRecreate,
         }
       );
       if (notifyAttendees) {
@@ -12677,7 +12695,10 @@ app.post('/api/admin/sales/bulk', salesAuth, async (req, res) => {
     }
     try {
       if (action === 'assign') {
-        const assigned = sales.updateSalesClient(id, { ownerId });
+        const assigned = sales.updateSalesClient(id, {
+          ownerId,
+          ...assignmentStampForOwnerChange(existing.ownerId, ownerId),
+        });
         if (!assigned) throw new Error('Failed assigning owner.');
         const synced = await maybeSyncCalendar(assigned, existing, {
           notifyAttendees: false,
@@ -12738,7 +12759,10 @@ app.post('/api/admin/sales/:id/owner', salesAuth, async (req, res) => {
   if (!ownerId) {
     return res.status(400).json({ message: 'Choose a Sales user or keep the client on admin.' });
   }
-  let client = sales.updateSalesClient(req.params.id, { ownerId });
+  let client = sales.updateSalesClient(req.params.id, {
+    ownerId,
+    ...assignmentStampForOwnerChange(existing.ownerId, ownerId),
+  });
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
   const syncResult = await maybeSyncCalendar(client, existing, {
     notifyAttendees: false,

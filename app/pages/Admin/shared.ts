@@ -187,9 +187,12 @@ export type SalesNextAction = {
   format: SalesActionFormat;
   dueAt: string;
   doneAt: string;
-  createdAt: string;
-  relativeToMeetingHours: number | null;
-  addToCalendar: boolean;
+    createdAt: string;
+    relativeToMeetingHours: number | null;
+    sticky?: boolean;
+    stickyAnchorId?: string;
+    stickyOffsetMs?: number | null;
+    addToCalendar: boolean;
   calendarEventId: string;
 };
 
@@ -439,6 +442,8 @@ export type SalesOffer = {
   sentAt: string;
   sentTo: string;
   sentBy: string;
+  /** `contract` = sent during the meeting without the transcript letter. `full` = the offer e-mail. */
+  sentContent?: '' | 'full' | 'contract';
   delivery?: 'email' | 'portal' | 'both';
   websiteCode?: string;
   createdAt: string;
@@ -480,6 +485,8 @@ export type SalesClient = {
   meetingDurationMinutes: number;
   agreedTime: boolean;
   meetingAt: string;
+  /** `sales` = written on the meeting action step; MyPhoner must not overwrite it. */
+  meetingAtSource?: '' | 'sales' | 'myphoner';
   websiteDomain: string;
   notes: string;
   details: SalesClientDetails;
@@ -504,6 +511,8 @@ export type SalesClient = {
   };
   status: 'active' | 'not-sold' | 'secondary';
   ownerId?: string;
+  /** Set when admin assigns the card to a sales: owner. "Ny" shows for 12 hours. */
+  assignedToRepAt?: string;
   archive: SalesArchiveMeta;
   createdAt: string;
   updatedAt: string;

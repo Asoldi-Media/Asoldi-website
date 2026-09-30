@@ -11,6 +11,7 @@ import {
   withoutAttendeeEmails,
   toCalendarDateTime,
   calendarEventStartMatches,
+  shouldForceCalendarRecreate,
 } from '../lib/google-calendar.js';
 import {
   GOOGLE_CALENDAR_OAUTH_EVENT,
@@ -155,4 +156,19 @@ test('calendar start match detects a stale event that never moved', () => {
   const want = '2026-10-01T13:00:00.000Z';
   assert.equal(calendarEventStartMatches({ start: { dateTime: '2026-10-01T15:00:00+02:00' } }, want), true);
   assert.equal(calendarEventStartMatches({ start: { dateTime: '2026-09-14T09:00:00+02:00' } }, want), false);
+});
+
+test('an already-created calendar event is recreated when the meeting time changes', () => {
+  assert.equal(
+    shouldForceCalendarRecreate('2026-09-14T09:00:00.000Z', '2026-10-01T13:00:00.000Z', 'evt-1'),
+    true
+  );
+  assert.equal(
+    shouldForceCalendarRecreate('2026-10-01T13:00:00.000Z', '2026-10-01T13:00:00.000Z', 'evt-1'),
+    false
+  );
+  assert.equal(
+    shouldForceCalendarRecreate('2026-09-14T09:00:00.000Z', '2026-10-01T13:00:00.000Z', ''),
+    false
+  );
 });

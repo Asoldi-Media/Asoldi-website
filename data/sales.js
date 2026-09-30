@@ -11,6 +11,7 @@ import {
   getSalesGoalKeys,
   inferMeetingHeld,
   MEETING_TIME_BACKFILL_TARGETS,
+  normalizeMeetingAtSource,
   sameMeetingInstant,
   salesProgressBlockedReason as nextActionProgressBlockedReason,
 } from '../lib/sales-next-actions.js';
@@ -430,6 +431,8 @@ function normalizeSalesClient(raw = {}) {
     meetingDurationMinutes: durationForMode(meetingMode),
     agreedTime,
     meetingAt,
+    meetingAtSource: agreedTime && meetingAt ? normalizeMeetingAtSource(raw.meetingAtSource) : '',
+    assignedToRepAt: sanitizeText(raw.assignedToRepAt),
     websiteDomain: product === 'ssu' ? '' : normalizeWebsiteDomain(raw.websiteDomain),
     notes: sanitizeSalesNotes(raw.notes),
     details: normalizeSalesDetails(raw.details),
@@ -743,6 +746,9 @@ export function setSalesNextAction(id, patch = {}) {
   if (Object.prototype.hasOwnProperty.call(applied, 'meetingAt')) {
     updates.meetingAt = applied.meetingAt;
     updates.agreedTime = Boolean(applied.agreedTime);
+    if (applied.meetingAt) {
+      updates.meetingAtSource = sanitizeText(applied.meetingAtSource) || 'sales';
+    }
   }
   return updateSalesClient(id, updates);
 }
