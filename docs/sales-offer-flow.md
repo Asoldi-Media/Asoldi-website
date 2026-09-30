@@ -44,6 +44,13 @@ On the offer page, **Kontraktdata for dette tilbudet** can replace any of those 
 clears that override. E-post there is the same value as **Til**. Empty overrides fall back to the card.
 Enforced in the UI (amber banner) and on the `send` / `request-review` routes (HTTP 400 with the missing labels).
 
+**During the meeting (Kun kontrakt).** Fireflies only finishes after everyone has left, so the transcript-filled
+offer letter is often not ready while the client is still purchase-ready. On `/sales/offer`, **Hva som sendes →
+Kun kontrakt** sends the agreement without those letter slots. E-post is a short note plus the contract PDF.
+Asoldi.com shows the same agreement (the letter above it does not use the transcript). **Hele tilbudet** stays
+the default and still refuses to send while template placeholders are open. Skreddersydd and “Kjør via admin
+først” still have to be verified before either mode can go out. The sent record stores `sentContent: "contract"`.
+
 **Preview gate.** A rep cannot send until they have opened **Forhåndsvis e-post** (modal with the fully merged
 e-mail, subject, attachment name and signature) and clicked *Ser riktig ut – klar til sending*.
 `POST …/offer/preview` returns the merged HTML + remaining template placeholders + the send blocker;

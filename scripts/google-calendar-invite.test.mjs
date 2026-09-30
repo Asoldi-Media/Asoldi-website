@@ -12,6 +12,8 @@ import {
   toCalendarDateTime,
   calendarEventStartMatches,
   shouldForceCalendarRecreate,
+  presentCalendarEvent,
+  resolveSalesCalendarPreviewAccountKey,
 } from '../lib/google-calendar.js';
 import {
   GOOGLE_CALENDAR_OAUTH_EVENT,
@@ -171,4 +173,46 @@ test('an already-created calendar event is recreated when the meeting time chang
     shouldForceCalendarRecreate('2026-09-14T09:00:00.000Z', '2026-10-01T13:00:00.000Z', ''),
     false
   );
+});
+
+test('sales calendar preview uses the filtered owner only for admin', () => {
+  assert.equal(
+    resolveSalesCalendarPreviewAccountKey({
+      actorAccountKey: 'admin:damian@asoldi.com',
+      isAdmin: true,
+      ownerId: 'sales:alexander',
+    }),
+    'sales:alexander'
+  );
+  assert.equal(
+    resolveSalesCalendarPreviewAccountKey({
+      actorAccountKey: 'sales:alexander',
+      isAdmin: false,
+      ownerId: 'sales:someone-else',
+    }),
+    'sales:alexander'
+  );
+  assert.equal(
+    resolveSalesCalendarPreviewAccountKey({
+      actorAccountKey: 'admin:damian@asoldi.com',
+      isAdmin: true,
+      ownerId: 'unassigned',
+    }),
+    'admin:damian@asoldi.com'
+  );
+});
+
+test('calendar event details keep the title for sales even when Google embed would say Opptatt', () => {
+  const shown = presentCalendarEvent({
+    id: 'evt-1',
+    summary: 'Asoldi · Online møte · Bakeri',
+    start: { dateTime: '2026-09-30T07:00:00.000Z' },
+    end: { dateTime: '2026-09-30T07:30:00.000Z' },
+    location: 'Meet',
+    hangoutLink: 'https://meet.google.com/abc-defg-hij',
+    htmlLink: 'https://www.google.com/calendar/event?eid=1',
+  });
+  assert.equal(shown.summary, 'Asoldi · Online møte · Bakeri');
+  assert.equal(shown.meetLink, 'https://meet.google.com/abc-defg-hij');
+  assert.equal(presentCalendarEvent({ start: { dateTime: '2026-09-30T07:00:00.000Z' } }).summary, 'Opptatt');
 });

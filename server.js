@@ -46,6 +46,12 @@ import {
 } from './lib/ai-assistant/service.js';
 import { parsePublicHttpUrl } from './lib/ai-assistant/safe-url.js';
 import { fetchGoogleMapsPlaces } from './lib/google-places-search.js';
+import {
+  listSerpApiKeys,
+  runWithSerpApiFailover,
+  serpApiErrorMeansNoCredits,
+  serpApiKeyLabel,
+} from './lib/serpapi-keys.js';
 import { applyMakerBundleToPortal } from './lib/maker-bundle-sync.js';
 import * as offers from './data/offers.js';
 import * as resetTokens from './data/reset-tokens.js';
@@ -85,7 +91,7 @@ import {
   htmlToPlainText,
   salesEmailMergeMap,
 } from './lib/sales-email.js';
-import { assignmentStampForOwnerChange, confirmationSendGaps, confirmationShouldSendOnChange, meetingTimeHasPassed, resolveMeetingAtOnMyphonerMerge, sameMeetingInstant } from './lib/sales-next-actions.js';
+import { assignmentStampForOwnerChange, confirmationSendGaps, confirmationShouldSendOnChange, meetingTimeHasPassed, normalizeSecondaryInterest, osloWeekRange, resolveMeetingAtOnMyphonerMerge, sameMeetingInstant } from './lib/sales-next-actions.js';
 import { normalizeStoredWebsiteEmail, resolveWebsiteEmail } from './lib/sales-website-email.js';
 import { extractBookingFromLead, salesBookingFacts } from './lib/sales-booking-facts.js';
 import {
@@ -103,6 +109,7 @@ import {
   promoteGoogleBusinessFromOtherLinks,
   filterCustomOtherLinks,
   looksLikeEmailLink,
+  websiteUrlFromDomain,
 } from './lib/sales-client-links.js';
 import {
   buildContractOnlyEmailForClient,
@@ -205,9 +212,11 @@ import {
   firefliesNotetakerEmail,
   getGoogleCalendarStatus,
   isRealGoogleMeetLink,
+  listCalendarEvents,
   findConnectedCalendarAccountKeysByGoogleEmail,
   calendarIdForAccount,
   resolveCalendarSyncAccountKey,
+  resolveSalesCalendarPreviewAccountKey,
   shareGoogleCalendarToken,
   shouldForceCalendarRecreate,
   upsertMeetingEvent,
@@ -385,7 +394,6 @@ const MYPHONER_DEFAULT_SALES_OWNER_KEY =
 const MYPHONER_AUTO_LINK_ENRICH_ENABLED = String(process.env.MYPHONER_AUTO_LINK_ENRICH || '1') !== '0';
 const MYPHONER_AUTO_LINK_ENRICH_TIMEOUT_MS = Number(process.env.MYPHONER_AUTO_LINK_ENRICH_TIMEOUT_MS || 6000);
 const MYPHONER_AUTO_LINK_SEARCH_CACHE_MS = Number(process.env.MYPHONER_AUTO_LINK_SEARCH_CACHE_MS || 6 * 60 * 60 * 1000);
-const SERPAPI_API_KEY = sanitizeText(process.env.SERPAPI_API_KEY || process.env.SERP_API_KEY);
 const SERPAPI_ENGINE = sanitizeText(process.env.SERPAPI_ENGINE || 'google') || 'google';
 // site:-queries regularly take >10s on SerpAPI; a short timeout silently drops the best results.
 const SERPAPI_TIMEOUT_MS = Number(process.env.SERPAPI_TIMEOUT_MS || 15000);
@@ -467,7 +475,6 @@ const salesSearchCache = new Map();
 let serpApiMissingKeyWarned = false;
 let serpApiLastRequestAt = 0;
 let serpApiRateLimitWarningAt = 0;
-let serpApiBlockedUntilMs = 0;
 let braveSearchLastRequestAt = 0;
 let salesLinkBackfillRunning = false;
 
@@ -1951,33 +1958,21 @@ function buildSalesRelevantLinks(details = {}) {
     other
       .split(/\r?\n|,/)
       .map((entry) => entry.trim())
-      .filter(Boolean)
+      .filter((entry) => !looksLikeEmailLink(entry))
       .forEach(pushUnique);
   }
   return links.join('\n');
 }
 
-function buildSalesQuickFillLinks(details = {}) {
-  const instagramProfile = sanitizeText(details.instagramUrl);
-  const facebookProfile = sanitizeText(details.facebookUrl);
-  const proffLink = sanitizeText(details.proffUrl);
-  const googleBusinessProfile = sanitizeText(details.googleBusinessProfile);
-  const existingLinks = new Set(
-    [instagramProfile, facebookProfile, proffLink, googleBusinessProfile]
-      .map((entry) => sanitizeText(entry))
-      .filter(Boolean)
-  );
-  const otherCandidates = sanitizeText(details.otherLinks)
-    .split(/\r?\n|,/)
-    .map((entry) => entry.trim())
-    .filter(Boolean);
-  const customLink = otherCandidates.find((entry) => !existingLinks.has(entry)) || otherCandidates[0] || '';
+function buildSalesQuickFillLinks(details = {}, websiteDomain = '') {
   return {
-    instagramProfile,
-    facebookProfile,
-    proffLink,
-    googleBusinessProfile,
-    customLink,
+    instagramProfile: sanitizeText(details.instagramUrl),
+    facebookProfile: sanitizeText(details.facebookUrl),
+    proffLink: sanitizeText(details.proffUrl),
+    googleBusinessProfile: sanitizeText(details.googleBusinessProfile),
+    // Existing-site URL mirrors the client card's website domain, not other links
+    // (those used to turn a contact email into https://name@gmail.com/).
+    customLink: websiteUrlFromDomain(websiteDomain),
   };
 }
 
@@ -3167,7 +3162,7 @@ function waitForMs(ms = 0) {
 async function searchSerpApi(queryText = '') {
   const query = sanitizeText(queryText);
   if (!query) return [];
-  if (!SERPAPI_API_KEY) {
+  if (!listSerpApiKeys().length) {
     if (!serpApiMissingKeyWarned) {
       serpApiMissingKeyWarned = true;
       console.warn('[sales] SERPAPI_API_KEY missing: social link enrichment search is disabled.');
@@ -3176,10 +3171,6 @@ async function searchSerpApi(queryText = '') {
   }
 
   const nowMs = Date.now();
-  if (nowMs < serpApiBlockedUntilMs) {
-    return [];
-  }
-
   const cacheKey = `serpapi:${normalizeLooseKey(query)}`;
   pruneSalesSearchCache(nowMs);
   const cached = salesSearchCache.get(cacheKey);
@@ -3188,82 +3179,96 @@ async function searchSerpApi(queryText = '') {
   }
 
   const maxAttempts = Math.max(1, Math.trunc(Number(SERPAPI_RETRY_LIMIT) || 0));
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const now = Date.now();
-    const minInterval = Math.max(0, Math.trunc(Number(SERPAPI_MIN_INTERVAL_MS) || 0));
-    const waitMs = Math.max(0, minInterval - Math.max(0, now - serpApiLastRequestAt));
-    if (waitMs > 0) await waitForMs(waitMs);
-    serpApiLastRequestAt = Date.now();
+  const failover = await runWithSerpApiFailover(async (apiKey) => {
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const now = Date.now();
+      const minInterval = Math.max(0, Math.trunc(Number(SERPAPI_MIN_INTERVAL_MS) || 0));
+      const waitMs = Math.max(0, minInterval - Math.max(0, now - serpApiLastRequestAt));
+      if (waitMs > 0) await waitForMs(waitMs);
+      serpApiLastRequestAt = Date.now();
 
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), Math.max(1000, SERPAPI_TIMEOUT_MS));
-    const params = new URLSearchParams({
-      engine: SERPAPI_ENGINE,
-      q: query,
-      api_key: SERPAPI_API_KEY,
-      num: '20',
-    });
-    if (SERPAPI_HL) params.set('hl', SERPAPI_HL);
-    if (SERPAPI_GL) params.set('gl', SERPAPI_GL);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), Math.max(1000, SERPAPI_TIMEOUT_MS));
+      const params = new URLSearchParams({
+        engine: SERPAPI_ENGINE,
+        q: query,
+        api_key: apiKey,
+        num: '20',
+      });
+      if (SERPAPI_HL) params.set('hl', SERPAPI_HL);
+      if (SERPAPI_GL) params.set('gl', SERPAPI_GL);
 
-    try {
-      const response = await fetch(`https://serpapi.com/search.json?${params.toString()}`, {
-        method: 'GET',
-        headers: {
-          Accept: 'application/json',
-        },
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        if (response.status === 429) {
-          const nowWarn = Date.now();
-          const blockWindowMs = Math.max(30_000, Math.trunc(Number(SERPAPI_RETRY_BACKOFF_MS) || 0) * 10);
-          serpApiBlockedUntilMs = Math.max(serpApiBlockedUntilMs, nowWarn + blockWindowMs);
-          if (nowWarn - serpApiRateLimitWarningAt > 60_000) {
-            serpApiRateLimitWarningAt = nowWarn;
-            console.warn(`[sales] SerpAPI throttled (429); temporarily bypassing SerpAPI for ${Math.round(blockWindowMs / 1000)}s.`);
+      try {
+        const response = await fetch(`https://serpapi.com/search.json?${params.toString()}`, {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json',
+          },
+          signal: controller.signal,
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          if (serpApiErrorMeansNoCredits(response.status, payload)) {
+            console.warn(`[sales] SerpAPI key …${serpApiKeyLabel(apiKey)} is out of searches; continuing the same lookup on the next key.`);
+            return { status: 'no-credits' };
           }
-          return [];
+          if (response.status === 429) {
+            const blockWindowMs = Math.max(30_000, Math.trunc(Number(SERPAPI_RETRY_BACKOFF_MS) || 0) * 10);
+            const nowWarn = Date.now();
+            if (nowWarn - serpApiRateLimitWarningAt > 60_000) {
+              serpApiRateLimitWarningAt = nowWarn;
+              console.warn(`[sales] SerpAPI key …${serpApiKeyLabel(apiKey)} throttled (429); continuing the same lookup on the next key.`);
+            }
+            return { status: 'throttled', retryAfterMs: blockWindowMs };
+          }
+          if (response.status === 503 || response.status === 502 || response.status === 504) {
+            const nowWarn = Date.now();
+            if (nowWarn - serpApiRateLimitWarningAt > 60_000) {
+              serpApiRateLimitWarningAt = nowWarn;
+              console.warn(`[sales] SerpAPI temporary error (${response.status}); retrying with backoff.`);
+            }
+            if (attempt < maxAttempts) {
+              const baseBackoff = Math.max(200, Math.trunc(Number(SERPAPI_RETRY_BACKOFF_MS) || 0));
+              await waitForMs(baseBackoff * attempt);
+              continue;
+            }
+          }
+          return { status: 'error', error: new Error(`SerpAPI HTTP ${response.status}`) };
         }
-        if (response.status === 503 || response.status === 502 || response.status === 504) {
-          const nowWarn = Date.now();
-          if (nowWarn - serpApiRateLimitWarningAt > 60_000) {
-            serpApiRateLimitWarningAt = nowWarn;
-            console.warn(`[sales] SerpAPI temporary error (${response.status}); retrying with backoff.`);
-          }
-          if (attempt < maxAttempts) {
-            const baseBackoff = Math.max(200, Math.trunc(Number(SERPAPI_RETRY_BACKOFF_MS) || 0));
-            await waitForMs(baseBackoff * attempt);
-            continue;
-          }
+        if (serpApiErrorMeansNoCredits(200, payload)) {
+          console.warn(`[sales] SerpAPI key …${serpApiKeyLabel(apiKey)} is out of searches; continuing the same lookup on the next key.`);
+          return { status: 'no-credits' };
         }
-        return [];
+        const rawResults = Array.isArray(payload?.organic_results) ? payload.organic_results : [];
+        const results = rawResults
+          .map((entry) => ({
+            url: coerceHttpUrl(entry?.link || entry?.redirect_link || ''),
+            title: sanitizeText(entry?.title || ''),
+            snippet: sanitizeText(entry?.snippet || entry?.snippet_highlighted_words?.join(' ') || ''),
+          }))
+          .filter((entry) => entry.url)
+          .slice(0, 20);
+        return { status: 'ok', value: results };
+      } catch (error) {
+        if (attempt < maxAttempts) {
+          const baseBackoff = Math.max(200, Math.trunc(Number(SERPAPI_RETRY_BACKOFF_MS) || 0));
+          await waitForMs(baseBackoff * attempt);
+          continue;
+        }
+        return { status: 'error', error };
+      } finally {
+        clearTimeout(timeout);
       }
-      const payload = await response.json().catch(() => ({}));
-      const rawResults = Array.isArray(payload?.organic_results) ? payload.organic_results : [];
-      const results = rawResults
-        .map((entry) => ({
-          url: coerceHttpUrl(entry?.link || entry?.redirect_link || ''),
-          title: sanitizeText(entry?.title || ''),
-          snippet: sanitizeText(entry?.snippet || entry?.snippet_highlighted_words?.join(' ') || ''),
-        }))
-        .filter((entry) => entry.url)
-        .slice(0, 20);
-      salesSearchCache.set(cacheKey, {
-        expiresAt: nowMs + Math.max(60_000, MYPHONER_AUTO_LINK_SEARCH_CACHE_MS),
-        results,
-      });
-      return results;
-    } catch {
-      if (attempt < maxAttempts) {
-        const baseBackoff = Math.max(200, Math.trunc(Number(SERPAPI_RETRY_BACKOFF_MS) || 0));
-        await waitForMs(baseBackoff * attempt);
-        continue;
-      }
-      return [];
-    } finally {
-      clearTimeout(timeout);
     }
+    return { status: 'error' };
+  });
+
+  if (failover.ok && Array.isArray(failover.value)) {
+    salesSearchCache.set(cacheKey, {
+      expiresAt: nowMs + Math.max(60_000, MYPHONER_AUTO_LINK_SEARCH_CACHE_MS),
+      results: failover.value,
+    });
+    return failover.value;
   }
   return [];
 }
@@ -4163,6 +4168,24 @@ async function resolveBestSearchCandidate({
   };
 }
 
+function persistSalesClientLinkProgress({
+  clientId = '',
+  nextDetails = {},
+  currentDetails = {},
+  persist = true,
+} = {}) {
+  if (!persist || !sanitizeText(clientId)) return;
+  const normalizedNext = promoteGoogleBusinessFromOtherLinks(
+    normalizeSalesDetailLinks(nextDetails, currentDetails),
+    classifySalesLink
+  );
+  const changed = ['instagramUrl', 'facebookUrl', 'proffUrl', 'googleBusinessProfile'].some(
+    (field) => sanitizeText(normalizedNext[field]) !== sanitizeText(currentDetails[field])
+  );
+  if (!changed) return;
+  sales.updateSalesClient(clientId, { details: normalizedNext });
+}
+
 async function enrichSalesClientLinksFromMyphoner({
   clientId = '',
   lead = {},
@@ -4347,22 +4370,39 @@ async function enrichSalesClientLinksFromMyphoner({
     Boolean(existingInstagramUrl) &&
     !myphonerInstagramUrl &&
     shouldRevalidateSocialProfileUrl(existingInstagramUrl, 'instagram', socialBusinessNameHint);
-  if (!existingInstagramUrl || instagramLooksUnverified) {
-    instagramResolution = await resolveBestSearchCandidate(instagramSearchOptions);
-    if (instagramResolution.url) {
-      nextDetails.instagramUrl = instagramResolution.url;
-    } else if (existingInstagramUrl) {
-      nextDetails.instagramUrl = existingInstagramUrl;
-      instagramResolution = {
-        ...instagramResolution,
-        url: existingInstagramUrl,
-        reason: 'kept-existing',
-      };
+  try {
+    if (!existingInstagramUrl || instagramLooksUnverified) {
+      instagramResolution = await resolveBestSearchCandidate(instagramSearchOptions);
+      if (instagramResolution.url) {
+        nextDetails.instagramUrl = instagramResolution.url;
+      } else if (existingInstagramUrl) {
+        nextDetails.instagramUrl = existingInstagramUrl;
+        instagramResolution = {
+          ...instagramResolution,
+          url: existingInstagramUrl,
+          reason: 'kept-existing',
+        };
+      }
+    } else if (myphonerInstagramUrl) {
+      instagramResolution.reason = 'myphoner-social-url';
     }
-  } else if (myphonerInstagramUrl) {
-    instagramResolution.reason = 'myphoner-social-url';
+  } catch (error) {
+    console.warn(
+      `[sales] Instagram lookup failed for ${targetClientId}; continuing with Facebook:`,
+      sanitizeText(error?.message) || error
+    );
+    instagramResolution = {
+      ...instagramResolution,
+      reason: 'search-error-continuing',
+    };
   }
   socialDiagnostics.instagram = instagramResolution;
+  persistSalesClientLinkProgress({
+    clientId: targetClientId,
+    nextDetails,
+    currentDetails,
+    persist,
+  });
 
   let facebookResolution = {
     url: sanitizeText(nextDetails.facebookUrl),
@@ -4373,6 +4413,7 @@ async function enrichSalesClientLinksFromMyphoner({
     top: null,
     runnerUp: null,
   };
+  try {
   const existingFacebookUrl = sanitizeText(nextDetails.facebookUrl);
   const facebookLooksUnverified =
     Boolean(existingFacebookUrl) &&
@@ -4434,6 +4475,26 @@ async function enrichSalesClientLinksFromMyphoner({
         reason: sanitizeText(mirroredFacebook.reason) || 'mirror-unconfirmed',
       };
     }
+  }
+
+  socialDiagnostics.facebook = facebookResolution;
+  persistSalesClientLinkProgress({
+    clientId: targetClientId,
+    nextDetails,
+    currentDetails,
+    persist,
+  });
+  } catch (error) {
+    console.warn(
+      `[sales] Facebook/social lookup failed after Instagram for ${targetClientId}:`,
+      sanitizeText(error?.message) || error
+    );
+    socialDiagnostics.facebook = {
+      ...facebookResolution,
+      reason: sanitizeText(facebookResolution?.reason) && facebookResolution.reason !== 'not-attempted'
+        ? facebookResolution.reason
+        : 'continued-after-instagram',
+    };
   }
 
   // Business-name slug invention stays opt-in and off by default.
@@ -10432,14 +10493,14 @@ app.get('/api/client/places-search', clientAuth, async (req, res) => {
   if (!user || user.role !== 'client') return res.status(401).json({ message: 'Unauthorized' });
   const query = sanitizeText(req.query?.q);
   if (query.length < 2) return res.json({ results: [] });
-  if (!SERPAPI_API_KEY) {
+  if (!listSerpApiKeys().length) {
     return res.status(503).json({
       results: [],
       message: 'Søk i Google-profiler er ikke satt opp. Lim inn Maps-lenken i stedet.',
     });
   }
   try {
-    const results = await fetchGoogleMapsPlaces(query, { apiKey: SERPAPI_API_KEY });
+    const results = await fetchGoogleMapsPlaces(query);
     return res.json({ results });
   } catch (error) {
     return res.status(502).json({
@@ -11678,6 +11739,65 @@ app.get('/api/admin/sales/google/status', salesAuth, async (req, res) => {
   }
 });
 
+app.get('/api/admin/sales/google/events', salesAuth, async (req, res) => {
+  try {
+    const requestedOwner = sanitizeText(req.query?.ownerId);
+    const accountKey = resolveSalesCalendarPreviewAccountKey({
+      actorAccountKey: req.salesUser.accountKey,
+      isAdmin: Boolean(req.salesUser.isAdmin),
+      ownerId: requestedOwner,
+    });
+    if (
+      req.salesUser.isAdmin
+      && requestedOwner
+      && requestedOwner !== 'unassigned'
+      && accountKey === requestedOwner
+    ) {
+      const allowed = await resolveAssignableSalesOwnerId(requestedOwner, req.salesUser);
+      if (!allowed) {
+        return res.status(400).json({ message: 'Ugyldig selger for kalender.' });
+      }
+    }
+    const week = osloWeekRange(Date.now(), 0);
+    const timeMin = sanitizeText(req.query?.timeMin) || week.timeMin;
+    const timeMax = sanitizeText(req.query?.timeMax) || week.timeMax;
+    const minMs = Date.parse(timeMin);
+    const maxMs = Date.parse(timeMax);
+    if (!Number.isFinite(minMs) || !Number.isFinite(maxMs) || maxMs <= minMs) {
+      return res.status(400).json({ message: 'Ugyldig kalenderperiode.' });
+    }
+    if (maxMs - minMs > 21 * 24 * 60 * 60 * 1000) {
+      return res.status(400).json({ message: 'Kalenderperioden er for lang.' });
+    }
+    const status = await ensureSharedCalendarTokens(accountKey);
+    const viewingOwn = accountKey === sanitizeText(req.salesUser.accountKey);
+    if (!status.connected) {
+      return res.json({
+        connected: false,
+        accountKey,
+        googleEmail: status.googleEmail,
+        googleName: status.googleName,
+        events: [],
+        timeMin,
+        timeMax,
+        message: viewingOwn
+          ? 'Koble Google Calendar for å se møtedetaljer her. Meeting bookers ser fortsatt bare opptatt.'
+          : 'Denne selgeren har ikke koblet Google Calendar ennå.',
+      });
+    }
+    const listed = await listCalendarEvents(accountKey, { timeMin, timeMax });
+    return res.json({
+      connected: true,
+      accountKey,
+      ...listed,
+      timeMin,
+      timeMax,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to load calendar events.' });
+  }
+});
+
 app.get('/api/admin/sales/google/auth-url', salesAuth, (req, res) => {
   try {
     const state = buildOAuthState(req.salesUser.accountKey);
@@ -11806,7 +11926,7 @@ app.post('/api/admin/sales/maker-status-callback', async (req, res) => {
         googleBusinessProfile: sanitizeText(
           links.googleBusinessProfile ?? fields.googleBusinessProfile ?? client.details?.googleBusinessProfile
         ),
-        otherLinks: sanitizeText(links.customLink ?? fields.customLink ?? client.details?.otherLinks),
+        otherLinks: sanitizeText(client.details?.otherLinks),
       },
       client.details || {}
     );
@@ -11837,7 +11957,8 @@ app.post('/api/admin/sales/maker-status-callback', async (req, res) => {
       }
     }
     if (Object.prototype.hasOwnProperty.call(fields, 'websiteDomain')) {
-      clientPatch.websiteDomain = sanitizeSalesWebsiteDomain(fields.websiteDomain);
+      const mirrored = websiteUrlFromDomain(fields.websiteDomain);
+      clientPatch.websiteDomain = mirrored ? new URL(mirrored).hostname.replace(/^www\./, '') : '';
     }
     const updatedClient = sales.updateSalesClient(client.id, clientPatch);
     const makerPatch = {
@@ -12694,6 +12815,10 @@ app.post('/api/admin/sales/bulk', salesAuth, async (req, res) => {
   }
 
   const reason = sanitizeText(req.body?.reason);
+  const secondaryInterest = normalizeSecondaryInterest(req.body?.interest || req.body?.secondaryInterest);
+  if (action === 'secondary' && !secondaryInterest) {
+    return res.status(400).json({ message: 'Velg Redesign, Consulting eller et sekundært produkt.' });
+  }
   const reminderKind = normalizeSalesReminderKind(req.body?.kind || req.body?.reminderKind || '24h');
   const summary = {
     action,
@@ -12735,7 +12860,7 @@ app.post('/api/admin/sales/bulk', salesAuth, async (req, res) => {
         if (!sales.setSalesStatus(id, 'not-sold', { reason })) throw new Error('Failed marking not sold.');
         summary.updated += 1;
       } else if (action === 'secondary') {
-        if (!sales.setSalesStatus(id, 'secondary', { reason })) throw new Error('Failed moving to secondary.');
+        if (!sales.setSalesStatus(id, 'secondary', { reason, interest: secondaryInterest })) throw new Error('Failed moving to secondary.');
         summary.updated += 1;
       } else if (action === 'restore') {
         if (!sales.setSalesStatus(id, 'active', {})) throw new Error('Failed restoring client.');
@@ -13139,9 +13264,14 @@ app.post('/api/admin/sales/:id/secondary', salesAuth, (req, res) => {
   const existing = sales.getSalesClientById(req.params.id);
   if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, existing)) return res.status(403).json({ message: 'Not your sales client.' });
+  const interest = normalizeSecondaryInterest(req.body?.interest || req.body?.secondaryInterest);
+  if (!interest) {
+    return res.status(400).json({ message: 'Velg Redesign, Consulting eller et sekundært produkt.' });
+  }
   const reason = sanitizeText(req.body?.reason);
   const updated = sales.setSalesStatus(req.params.id, 'secondary', {
     reason,
+    interest,
     archivedAt: new Date().toISOString(),
   });
   if (!updated) return res.status(404).json({ message: 'Sales client not found.' });
@@ -15267,7 +15397,7 @@ app.post('/api/admin/sales/:id/create-maker-run', salesOrDevelopmentAuth, async 
   try {
     const salesDetails = normalizeSalesDetailLinks(client.details || {});
     const relevantLinks = buildSalesRelevantLinks(salesDetails);
-    const quickFillLinks = buildSalesQuickFillLinks(salesDetails);
+    const quickFillLinks = buildSalesQuickFillLinks(salesDetails, client.websiteDomain);
     const clientMeetingPlace = sanitizeText(client.meetingPlace);
     const clientContactPerson = sanitizeText(client.contactPerson);
     const clientPhone = sanitizeText(client.contactPhone);

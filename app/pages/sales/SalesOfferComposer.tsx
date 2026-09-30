@@ -101,6 +101,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
   const [fillMessage, setFillMessage] = useState('');
   const [sendEmail, setSendEmail] = useState(true);
   const [sendPortal, setSendPortal] = useState(false);
+  const [sendContent, setSendContent] = useState<'full' | 'contract'>('full');
   const [portalAccount, setPortalAccount] = useState<{ email: string; found: boolean } | null>(null);
   const [subject, setSubject] = useState('');
   const [preheader, setPreheader] = useState('');
@@ -443,12 +444,13 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     setNotice('');
     try {
       const channels = [sendEmail ? 'email' : '', sendPortal ? 'portal' : ''].filter(Boolean);
-      const payload = { to: (to || '').trim() || resolveWebsiteEmail(client || {}), party: partyPayload(), channels };
+      const payload = { to: (to || '').trim() || resolveWebsiteEmail(client || {}), party: partyPayload(), channels, content: sendContent };
       const data = await sendClientOffer(clientId, payload) as {
         offer: SalesOffer;
         copyTo?: string;
         contractFileName?: string;
         delivery?: string;
+        content?: string;
         channels?: string[];
         accountFound?: boolean;
         portalEmail?: string;
@@ -458,15 +460,18 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
       const code = data.websiteCode || data.offer?.websiteCode || '';
       const codeNote = code ? ` Nettsidekode: ${code} — lim inn på asoldi.com for å aktivere nettsiden.` : '';
       const sentChannels = data.channels?.length ? data.channels : (data.delivery === 'both' ? ['email', 'portal'] : [data.delivery || 'email']);
+      const sentContract = (data.content || sendContent) === 'contract';
       const portalEmail = data.portalEmail || resolveWebsiteEmail(client || {}) || to;
       const parts = [];
       if (sentChannels.includes('email')) {
-        parts.push(`E-post sendt til ${to}${data.contractFileName ? ` med ${data.contractFileName}` : ''}${data.copyTo ? ` · Kopi: ${data.copyTo}` : ''}`);
+        parts.push(sentContract
+          ? `Kontrakt sendt på e-post til ${to}${data.contractFileName ? ` (${data.contractFileName})` : ''}${data.copyTo ? ` · Kopi: ${data.copyTo}` : ''}`
+          : `E-post sendt til ${to}${data.contractFileName ? ` med ${data.contractFileName}` : ''}${data.copyTo ? ` · Kopi: ${data.copyTo}` : ''}`);
       }
       if (sentChannels.includes('portal')) {
         parts.push(data.accountFound
-          ? `Lagt på asoldi.com-kontoen ${portalEmail}`
-          : `Klart for asoldi.com (${portalEmail}). Kontoen finnes ikke enda — tilbudet vises når kunden registrerer seg med den e-posten`);
+          ? `${sentContract ? 'Kontrakt lagt' : 'Lagt'} på asoldi.com-kontoen ${portalEmail}`
+          : `${sentContract ? 'Kontrakt klar' : 'Klart'} for asoldi.com (${portalEmail}). Kontoen finnes ikke enda — tilbudet vises når kunden registrerer seg med den e-posten`);
       }
       setNotice(`${parts.join('. ')}.${codeNote}`);
     } catch (err) {
@@ -551,11 +556,15 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     if (!offer.products.length) return 'Velg en nettside-tier først.';
     if (status === 'review-requested') return 'Venter på gjennomgang hos admin.';
     if (needsReview && status !== 'verified') return 'Dette tilbudet må verifiseres av admin før det kan sendes.';
-    if (placeholders.length) return `${placeholders.length} felt fra malen er ikke fylt ut enda.`;
+    if (sendContent === 'full' && placeholders.length) return `${placeholders.length} felt fra malen er ikke fylt ut enda. Velg Kun kontrakt for å sende avtalen under møtet.`;
     return '';
-  }, [offer, canSendEmail, readiness, offerTo, status, needsReview, placeholders.length, sendEmail, sendPortal]);
+  }, [offer, canSendEmail, readiness, offerTo, status, needsReview, placeholders.length, sendEmail, sendPortal, sendContent]);
 
   const showSendButton = status !== 'sent' && (!needsReview || status === 'verified');
+  const contractSend = sendContent === 'contract';
+  const sendButtonLabel = contractSend
+    ? (sendEmail && sendPortal ? 'Send kontrakt begge' : sendPortal ? 'Legg kontrakt på Asoldi' : 'Send kontrakt')
+    : (sendEmail && sendPortal ? 'Send begge' : sendPortal ? 'Legg på Asoldi' : 'Send e-post');
   const title = 'Se gjennom tilbud';
 
   return (
@@ -574,7 +583,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                 {offer && <OfferStatusChip status={offer.status} />}
               </div>
               <p className="text-xs text-gray-400 truncate">
-                {client?.businessName || 'Kunde'}{client?.contactPerson ? ` · ${client.contactPerson}` : ''} · tilbuds-e-post og kontrakt (PDF) sendes sammen
+                {client?.businessName || 'Kunde'}{client?.contactPerson ? ` · ${client.contactPerson}` : ''} · hele tilbudet, eller kun kontrakt under møtet
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -633,7 +642,11 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
               {status === 'sent' && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-400/30 bg-emerald-900/20 px-4 py-3 text-sm text-emerald-200">
-                    <span>Sendt {offer.sentAt ? new Date(offer.sentAt).toLocaleString('nb-NO') : ''} til {offer.sentTo}.</span>
+                    <span>
+                      {offer.sentContent === 'contract' ? 'Kontrakt sendt' : 'Sendt'}
+                      {' '}{offer.sentAt ? new Date(offer.sentAt).toLocaleString('nb-NO') : ''} til {offer.sentTo}
+                      {offer.sentContent === 'contract' ? '. Uten møtetekst fra transkriptet.' : '.'}
+                    </span>
                     <button type="button" onClick={() => void handleNewOffer()} disabled={busy === 'new'} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 text-xs hover:bg-white/15 disabled:opacity-50">
                       {busy === 'new' ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Nytt tilbud
                     </button>
@@ -822,7 +835,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                         <div className="text-xs mt-1">
                           {placeholders.map((label) => `«${label}»`).join(' · ')}
                         </div>
-                        <div className="text-xs mt-1">Skriv i editoren, eller slett avsnittet. Tilbudet kan ikke sendes med tomme felt.</div>
+                        <div className="text-xs mt-1">Hele tilbudet venter på disse feltene (de fylles fra transkriptet). Velg Kun kontrakt under for å sende avtalen under møtet.</div>
                       </div>
                     </div>
                   )}
@@ -859,7 +872,24 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                       </button>
                     )}
                     {showSendButton && (
-                      <div className="flex flex-wrap items-center gap-3 rounded-lg border border-white/10 px-3 py-2">
+                      <div className="flex flex-col gap-2 rounded-lg border border-white/10 px-3 py-2">
+                        <div className="flex flex-wrap items-center gap-3">
+                          <span className="text-xs text-gray-400">Hva som sendes</span>
+                          <label className="inline-flex items-center gap-1.5 text-sm">
+                            <input type="radio" name="offer-send-content" checked={sendContent === 'full'} onChange={() => setSendContent('full')} />
+                            Hele tilbudet
+                          </label>
+                          <label className="inline-flex items-center gap-1.5 text-sm" title="Sender avtalen nå, uten å vente på Fireflies-transkriptet">
+                            <input type="radio" name="offer-send-content" checked={sendContent === 'contract'} onChange={() => setSendContent('contract')} />
+                            Kun kontrakt
+                          </label>
+                        </div>
+                        {contractSend && (
+                          <p className="text-[11px] text-gray-400 max-w-xl">
+                            Kan sendes under møtet. E-posten er en kort melding med kontrakten som PDF. Asoldi.com viser avtalen. Møteteksten fra transkriptet er ikke med.
+                          </p>
+                        )}
+                        <div className="flex flex-wrap items-center gap-3">
                         <span className="text-xs text-gray-400">Levering</span>
                         <label className="inline-flex items-center gap-1.5 text-sm">
                           <input type="checkbox" checked={sendEmail} onChange={(event) => setSendEmail(event.target.checked)} />
@@ -879,6 +909,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                             {portalAccount?.found ? 'Kundekonto funnet' : 'Ingen kundekonto med denne e-posten enda'}
                           </span>
                         )}
+                        </div>
                       </div>
                     )}
                     {showSendButton && (
@@ -886,11 +917,13 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                         type="button"
                         onClick={() => void handleSend()}
                         disabled={busy === 'send' || Boolean(sendDisabledReason)}
-                        title={sendDisabledReason || (sendEmail && sendPortal ? 'Send e-post og legg tilbudet på asoldi.com' : sendPortal ? 'Legg tilbudet på asoldi.com' : 'Send tilbudet på e-post')}
+                        title={sendDisabledReason || (contractSend
+                          ? 'Send kontrakten nå, uten å vente på transkriptet'
+                          : (sendEmail && sendPortal ? 'Send e-post og legg tilbudet på asoldi.com' : sendPortal ? 'Legg tilbudet på asoldi.com' : 'Send tilbudet på e-post'))}
                         className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#FF5B00] text-white text-sm whitespace-nowrap shrink-0 disabled:opacity-50"
                       >
                         {busy === 'send' ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                        {sendEmail && sendPortal ? 'Send begge' : sendPortal ? 'Legg på Asoldi' : 'Send e-post'}
+                        {sendButtonLabel}
                       </button>
                     )}
                     {sendDisabledReason && showSendButton && (

@@ -628,6 +628,36 @@ test('offer send can target email, asoldi.com, or both', () => {
   assert.equal(sent.delivery, 'both');
   assert.equal(sent.status, 'sent');
   assert.equal(sent.sentTo, 'kari@byneset-kafe.no');
+  assert.equal(sent.sentContent, '');
+
+  const duringMeeting = store.createSalesOffer({
+    salesClientId: 'client-live',
+    email: { subject: 'Hei', html: '<p><span data-offer-placeholder="1">[behov]</span></p>' },
+  });
+  const contractSent = store.markSalesOfferSent(duringMeeting.id, {
+    to: 'kari@byneset-kafe.no',
+    delivery: 'email',
+    sentContent: 'contract',
+  });
+  assert.equal(contractSent.sentContent, 'contract');
+  assert.match(contractSent.history.at(-1).note, /email:contract:/);
+});
+
+test('in-meeting contract mail skips the transcript letter', () => {
+  assert.equal(offerEmail.offerSendContentMode('contract'), 'contract');
+  assert.equal(offerEmail.offerSendContentMode(''), 'full');
+  assert.equal(offerEmail.offerSendContentMode('full'), 'full');
+  const email = offerEmail.buildContractOnlyBodyHtml({ attached: true });
+  const portal = offerEmail.buildContractOnlyBodyHtml({ attached: false });
+  assert.equal(offerEmail.findOfferPlaceholders(email).length, 0);
+  assert.doesNotMatch(email, /data-offer-slot|data-offer-placeholder|\{\{need\}\}/);
+  assert.match(email, /kontrakten vedlagt/i);
+  assert.match(email, /asoldi\.com under Tilbud/);
+  assert.match(portal, /avtalen under/i);
+  assert.doesNotMatch(portal, /vedlagt/);
+  const built = offerEmail.buildContractOnlyEmail({ client: CLIENT, attached: true });
+  assert.match(built.subject, /Kontrakt til \{\{businessName\}\}/);
+  assert.match(built.html, /Hei \{\{firstName\}\}/);
 });
 
 test('portal letter strips email chrome and keeps greeting plus product specs', async () => {

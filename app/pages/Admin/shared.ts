@@ -510,6 +510,8 @@ export type SalesClient = {
     liveUrl?: string;
   };
   status: 'active' | 'not-sold' | 'secondary';
+  /** Saved when a rep marks Secondary: redesign, consulting, video, email, or social. */
+  secondaryInterest?: string;
   ownerId?: string;
   /** Set when admin assigns the card to a sales: owner. "Ny" shows for 12 hours. */
   assignedToRepAt?: string;

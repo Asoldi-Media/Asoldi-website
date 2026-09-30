@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { mapGoogleMapsSearchResults, mapsUrlFromPlace } from '../lib/google-places-search.js';
+import { fetchGoogleMapsPlaces, mapGoogleMapsSearchResults, mapsUrlFromPlace } from '../lib/google-places-search.js';
 
 const dataDir = mkdtempSync(join(tmpdir(), 'asoldi-onboarding-sources-'));
 process.env.APP_DATA_DIR = dataDir;
@@ -65,4 +65,31 @@ test('Place ID alone builds the official Maps URL for later buttons', () => {
   assert.equal(bank.generalInfo.googlePlaceId, 'ChIJN1t_tDeuEmsRUsoyG83frY4');
   assert.match(bank.generalInfo.googleMapsUrl, /query_place_id=ChIJN1t_tDeuEmsRUsoyG83frY4/);
   assert.match(bank.openingHours.googleBusinessSyncUrl, /query_place_id=ChIJN1t_tDeuEmsRUsoyG83frY4/);
+});
+
+test('Maps profile search continues on the backup SerpAPI key in the same request', async () => {
+  const seen = [];
+  const rows = await fetchGoogleMapsPlaces('Bydelskafe Trondheim', {
+    apiKeys: ['maps-empty-key', 'maps-full-key'],
+    fetchImpl: async (url) => {
+      const key = new URL(url).searchParams.get('api_key');
+      seen.push(key);
+      if (key === 'maps-empty-key') {
+        return {
+          ok: false,
+          status: 429,
+          json: async () => ({ error: 'Your account has run out of searches.' }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          local_results: [{ title: 'Bydelskafe', place_id: 'ChIJ-live', address: 'Trondheim' }],
+        }),
+      };
+    },
+  });
+  assert.deepEqual(seen, ['maps-empty-key', 'maps-full-key']);
+  assert.equal(rows[0].placeId, 'ChIJ-live');
 });

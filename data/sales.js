@@ -12,6 +12,7 @@ import {
   inferMeetingHeld,
   MEETING_TIME_BACKFILL_TARGETS,
   normalizeMeetingAtSource,
+  normalizeSecondaryInterest,
   sameMeetingInstant,
   salesProgressBlockedReason as nextActionProgressBlockedReason,
 } from '../lib/sales-next-actions.js';
@@ -452,6 +453,7 @@ function normalizeSalesClient(raw = {}) {
     makerRun: product === 'ssu' ? normalizeMakerRun() : normalizeMakerRun(raw.makerRun),
     hubSite: product === 'ssu' ? normalizeHubSite() : normalizeHubSite(raw.hubSite),
     status,
+    secondaryInterest: status === 'secondary' ? normalizeSecondaryInterest(raw.secondaryInterest) : '',
     archive: status === 'not-sold' || status === 'secondary' ? archive : normalizeArchive(),
     createdAt,
     updatedAt,
@@ -928,9 +930,20 @@ export function setSalesMakerRun(id, makerPatch = {}) {
 
 export function setSalesStatus(id, status, archivePatch = {}) {
   const normalizedStatus = normalizeSalesStatus(status);
-  if (normalizedStatus === 'not-sold' || normalizedStatus === 'secondary') {
+  if (normalizedStatus === 'secondary') {
     return updateSalesClient(id, {
-      status: normalizedStatus,
+      status: 'secondary',
+      secondaryInterest: normalizeSecondaryInterest(archivePatch.interest || archivePatch.secondaryInterest),
+      archive: {
+        archivedAt: sanitizeText(archivePatch.archivedAt) || nowIso(),
+        reason: sanitizeText(archivePatch.reason),
+      },
+    });
+  }
+  if (normalizedStatus === 'not-sold') {
+    return updateSalesClient(id, {
+      status: 'not-sold',
+      secondaryInterest: '',
       archive: {
         archivedAt: sanitizeText(archivePatch.archivedAt) || nowIso(),
         reason: sanitizeText(archivePatch.reason),
@@ -939,6 +952,7 @@ export function setSalesStatus(id, status, archivePatch = {}) {
   }
   return updateSalesClient(id, {
     status: normalizedStatus,
+    secondaryInterest: '',
     archive: {
       archivedAt: '',
       reason: '',

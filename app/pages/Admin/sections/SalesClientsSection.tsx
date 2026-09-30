@@ -37,6 +37,7 @@ import { SalesFlowSteps } from '../../sales/SalesFlowSteps';
 import { SalesScriptsDock } from '../../sales/SalesScriptsDock';
 import { offerMissingFields, offerReadinessMessage } from '../../../../lib/offer-readiness.js';
 import { SalesGoalTimeline } from './SalesGoalTimeline';
+import { SalesCalendarWeek, type SalesCalendarEvent } from './SalesCalendarWeek';
 import {
   clientIsSalesWin,
   classifySalesPipelineState,
@@ -50,8 +51,12 @@ import {
   clientNeedsConfirmationSend,
   clientIsNewlyAssigned,
   SALES_PIPELINE_STATES,
+  SECONDARY_INTEREST_STATES,
+  normalizeSecondaryInterest,
+  secondaryInterestLabel,
   clientMatchesMeetingModeFilter,
   clientNextActionInDateRange,
+  osloWeekRange,
 } from '../../../../lib/sales-next-actions.js';
 import { salesBookingFacts } from '../../../../lib/sales-booking-facts.js';
 import { calendarDurationForMode } from '../../../../lib/sales-meeting-duration.js';
@@ -98,6 +103,8 @@ const SALES_MAP_DEFAULT_ZOOM = 5;
 const SALES_COMPACT_PREVIEW = 6;
 const SALES_CARD_SELECTED = 'sales-client-card-selected border-[#FF5B00] ring-2 ring-[#FF5B00]/25';
 const SALES_BUCKETS_STORAGE_KEY = 'asoldi-sales-timeline-collapsed-v2';
+const SECONDARY_INTEREST_PRIMARY = SECONDARY_INTEREST_STATES.filter((state) => state.group === 'primary');
+const SECONDARY_INTEREST_MORE = SECONDARY_INTEREST_STATES.filter((state) => state.group === 'secondary');
 const DEFAULT_SALES_BUCKETS_COLLAPSED: Record<string, boolean> = {
   awaitingRep: true,
   recentPastDue: true,
@@ -112,24 +119,6 @@ type SalesHeaderPanel = 'filter' | 'calendar' | 'map' | null;
 
 function salesIsMobileViewport() {
   return typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches;
-}
-
-function googleCalendarEmbedUrl(email = '') {
-  const src = String(email || '').trim();
-  if (!src) return '';
-  const params = new URLSearchParams({
-    src,
-    ctz: 'Europe/Oslo',
-    mode: 'WEEK',
-    showTitle: '0',
-    showNav: '1',
-    showDate: '1',
-    showPrint: '0',
-    showTabs: '1',
-    showCalendars: '0',
-    showTz: '0',
-  });
-  return `https://calendar.google.com/calendar/embed?${params.toString()}`;
 }
 
 type CalendarStatus = {
@@ -480,7 +469,22 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
   const [peekCardIds, setPeekCardIds] = useState<Record<string, boolean>>({});
   const [mapMounted, setMapMounted] = useState(false);
   const [calendarPanelOpen, setCalendarPanelOpen] = useState(false);
+  const [calendarWeekOffset, setCalendarWeekOffset] = useState(0);
+  const [calendarWeekLoading, setCalendarWeekLoading] = useState(false);
+  const [calendarWeekError, setCalendarWeekError] = useState('');
+  const [calendarWeekData, setCalendarWeekData] = useState<{
+    connected: boolean;
+    events: SalesCalendarEvent[];
+    googleEmail?: string;
+    accountKey?: string;
+    message?: string;
+  } | null>(null);
   const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
+  const [secondaryPicker, setSecondaryPicker] = useState<{
+    clientIds: string[];
+    selected: string;
+    label: string;
+  } | null>(null);
   const { websiteMakerBaseUrl } = useWebsiteMakerBaseUrl();
   const [meetingNowMs, setMeetingNowMs] = useState(() => Date.now());
   const [meetingMapPins, setMeetingMapPins] = useState<MeetingMapPin[]>([]);
@@ -546,7 +550,10 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
   const isSsuBracket = productBracket === 'ssu';
   const mapOpen = headerPanel === 'map';
   const canSignOut = Boolean(onLogout) && typeof window !== 'undefined' && window.location.pathname.startsWith('/sales');
-  const calendarEmbedUrl = googleCalendarEmbedUrl(calendarStatus?.googleEmail || '');
+  const calendarWeek = useMemo(
+    () => osloWeekRange(meetingNowMs, calendarWeekOffset),
+    [meetingNowMs, calendarWeekOffset]
+  );
   const clientMatchesNameSearch = (client: SalesClient) => {
     if (!normalizedClientSearchQuery) return true;
     const haystack = [
@@ -578,6 +585,12 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
       (a.name || a.username || a.accountKey).localeCompare(b.name || b.username || b.accountKey, 'nb-NO', { sensitivity: 'base' })
     );
   }, [salesOwners, productClients]);
+  const calendarPreviewOwnerId = isSalesAdmin && ownerFilter && ownerFilter !== 'unassigned' ? ownerFilter : '';
+  const calendarPreviewOwner = calendarPreviewOwnerId
+    ? ownerFilterOptions.find((owner) => owner.accountKey === calendarPreviewOwnerId) || null
+    : null;
+  const calendarPreviewIsOwn = !calendarPreviewOwnerId
+    || calendarPreviewOwnerId === String(calendarStatus?.loginAccountKey || '');
   const clientMatchesFilters = (client: SalesClient) => {
     if (!clientMatchesNameSearch(client)) return false;
     if (isSalesAdmin) {
@@ -898,6 +911,42 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
     const timer = window.setInterval(() => setMeetingNowMs(Date.now()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
+
+  useEffect(() => {
+    if (headerPanel !== 'calendar') return undefined;
+    let cancelled = false;
+    const range = osloWeekRange(Date.now(), calendarWeekOffset);
+    const params = new URLSearchParams({
+      timeMin: range.timeMin,
+      timeMax: range.timeMax,
+    });
+    if (isSalesAdmin && ownerFilter && ownerFilter !== 'unassigned') {
+      params.set('ownerId', ownerFilter);
+    }
+    setCalendarWeekLoading(true);
+    setCalendarWeekError('');
+    void request(`/admin/sales/google/events?${params.toString()}`)
+      .then((data) => {
+        if (cancelled) return;
+        setCalendarWeekData({
+          connected: Boolean(data.connected),
+          events: Array.isArray(data.events) ? data.events as SalesCalendarEvent[] : [],
+          googleEmail: String(data.googleEmail || ''),
+          accountKey: String(data.accountKey || ''),
+          message: String(data.message || ''),
+        });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setCalendarWeekError(err instanceof Error ? err.message : 'Kunne ikke hente kalender');
+      })
+      .finally(() => {
+        if (!cancelled) setCalendarWeekLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [headerPanel, calendarWeekOffset, ownerFilter, isSalesAdmin]);
 
   const hasPendingMapGeocodes = meetingMapPendingCount > 0;
   useEffect(() => {
@@ -1540,6 +1589,64 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
     }
   }
 
+  function openSecondaryPicker(clientsToMark: SalesClient[], label = '') {
+    const ids = clientsToMark.map((entry) => entry.id).filter(Boolean);
+    if (!ids.length) return;
+    const shared = ids.length === 1
+      ? normalizeSecondaryInterest(clientsToMark[0]?.secondaryInterest)
+      : '';
+    setSecondaryPicker({
+      clientIds: ids,
+      selected: shared,
+      label: label || (ids.length === 1
+        ? (clientsToMark[0]?.businessName || 'kunden')
+        : `${ids.length} kunder`),
+    });
+    setError('');
+  }
+
+  async function saveSecondaryPicker() {
+    if (!secondaryPicker) return;
+    const interest = normalizeSecondaryInterest(secondaryPicker.selected);
+    if (!interest) {
+      setError('Velg Redesign, Consulting eller et sekundært produkt.');
+      return;
+    }
+    const ids = secondaryPicker.clientIds;
+    if (ids.length === 1) {
+      setStatusBusyId(`secondary:${ids[0]}`);
+    } else {
+      setBulkBusy(true);
+    }
+    setError('');
+    try {
+      if (ids.length === 1) {
+        await request(`/admin/sales/${ids[0]}/secondary`, {
+          method: 'POST',
+          body: JSON.stringify({ interest }),
+        });
+      } else {
+        const data = await request('/admin/sales/bulk', {
+          method: 'POST',
+          body: JSON.stringify({
+            action: 'secondary',
+            clientIds: ids,
+            interest,
+          }),
+        });
+        setNotice(formatBulkResult(data as Record<string, unknown>, 'secondary'));
+        setSelectedClientIds([]);
+      }
+      setSecondaryPicker(null);
+      await loadSales({ clearMessages: false });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed moving client to Sekundært');
+    } finally {
+      setStatusBusyId(null);
+      setBulkBusy(false);
+    }
+  }
+
   async function markNotSold(client: SalesClient) {
     const label = client.businessName || 'this client';
     const reasonInput = window.prompt(`Optional reason for archiving "${label}" as not sold:`, '');
@@ -1560,22 +1667,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
   }
 
   async function markSecondary(client: SalesClient) {
-    const label = client.businessName || 'this client';
-    const reasonInput = window.prompt(`Optional note for moving "${label}" to Sekundært:`, '');
-    if (reasonInput === null) return;
-    setStatusBusyId(`secondary:${client.id}`);
-    setError('');
-    try {
-      await request(`/admin/sales/${client.id}/secondary`, {
-        method: 'POST',
-        body: JSON.stringify({ reason: reasonInput }),
-      });
-      await loadSales();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed moving client to Sekundært');
-    } finally {
-      setStatusBusyId(null);
-    }
+    openSecondaryPicker([client]);
   }
 
   async function restoreArchivedClient(client: SalesClient) {
@@ -1784,7 +1876,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
 
   async function runBulkAction(
     action: 'assign' | 'delete' | 'not-sold' | 'secondary' | 'restore' | 'send-welcome',
-    extra: { ownerId?: string; reason?: string; clientIds?: string[] } = {},
+    extra: { ownerId?: string; reason?: string; clientIds?: string[]; interest?: string } = {},
   ) {
     const clientIds = extra.clientIds?.length ? extra.clientIds : selectedClientIds;
     if (!clientIds.length || bulkBusy) return;
@@ -1810,9 +1902,9 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
       payload.reason = reasonInput;
     }
     if (action === 'secondary') {
-      const reasonInput = window.prompt(`Optional note for moving ${count} selected client${count === 1 ? '' : 's'} to secondary:`, '');
-      if (reasonInput === null) return;
-      payload.reason = reasonInput;
+      const picked = productClients.filter((entry) => clientIds.includes(entry.id));
+      openSecondaryPicker(picked, `${count} kunder`);
+      return;
     }
     setBulkBusy(true);
     setError('');
@@ -2020,6 +2112,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
             const clientSelected = selectedClientIds.includes(client.id);
             const confirmationGaps = client.reminders?.thankYouSentAt ? [] : confirmationSendGaps(client);
             const needsConfirmation = clientNeedsConfirmationSend(client);
+            const interestLabel = secondaryInterestLabel(client.secondaryInterest);
             const peeked = Boolean(peekCardIds[client.id]);
             const showCompact = compact && !peeked;
             const booking = salesBookingFacts(client);
@@ -2063,7 +2156,11 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                       {isWin ? (
                         <span className="shrink-0 text-[11px] px-2 py-0.5 rounded bg-emerald-900/40 text-emerald-200 border border-emerald-700/40">Solgt</span>
                       ) : null}
-                      {confirmationGaps.length > 0 ? (
+                      {interestLabel ? (
+                        <span className={`shrink-0 px-2 py-0.5 rounded text-[11px] bg-violet-500/15 border border-violet-400/40 text-violet-100 truncate ${showCompact ? 'max-w-[52%]' : 'max-w-[46%]'}`}>
+                          {interestLabel}
+                        </span>
+                      ) : confirmationGaps.length > 0 ? (
                         <span className={`shrink-0 px-2 py-0.5 rounded text-[11px] bg-red-500/15 border border-red-500/40 text-red-200 truncate ${showCompact ? 'max-w-[52%]' : 'max-w-[46%]'}`} title={`Mangler ${confirmationGaps.join(', ')}`}>
                           Bekreftelse stoppet
                         </span>
@@ -2312,12 +2409,16 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                   <button
                     type="button"
                     onClick={() => void markSecondary(client)}
-                    disabled={statusBusyId === `secondary:${client.id}` || websiteSold || client.status === 'secondary'}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-gray-200 text-xs hover:bg-white/15 disabled:opacity-50"
-                    title="Move to secondary / not interested in website"
+                    disabled={statusBusyId === `secondary:${client.id}` || websiteSold}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs hover:bg-white/15 disabled:opacity-50 ${
+                      client.status === 'secondary'
+                        ? 'bg-violet-500/20 border border-violet-400/40 text-violet-100'
+                        : 'bg-white/10 text-gray-200'
+                    }`}
+                    title="Velg Redesign, Consulting eller et sekundært produkt"
                   >
                     {statusBusyId === `secondary:${client.id}` ? <Loader2 size={13} className="animate-spin" /> : null}
-                    Secondary
+                    {client.status === 'secondary' && interestLabel ? `Secondary · ${interestLabel}` : 'Secondary'}
                   </button>
                   {isWin && (
                     <button
@@ -3035,6 +3136,9 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                           </option>
                         ))}
                       </select>
+                      <span className="mt-1 block text-[11px] text-gray-500">
+                        Calendar viser denne selgerens møter med detaljer. Meeting bookers ser fortsatt bare opptatt.
+                      </span>
                     </label>
                   )}
                   <div className="grid sm:grid-cols-3 gap-2">
@@ -3106,28 +3210,22 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                 </form>
               )}
               {headerPanel === 'calendar' && (
-                <div className="rounded-xl border border-white/10 overflow-hidden bg-black/20">
-                  {calendarEmbedUrl ? (
-                    <iframe
-                      title="Google Calendar"
-                      src={calendarEmbedUrl}
-                      className="w-full bg-white"
-                      style={{ border: 0, minHeight: 520 }}
-                    />
-                  ) : (
-                    <div className="p-4 text-sm text-gray-300 space-y-3">
-                      <p>Koble Google Calendar for å se ukeplanen her.</p>
-                      <button
-                        type="button"
-                        onClick={() => { closeHeaderMenus(); setCalendarPanelOpen(true); }}
-                        className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-[#FF5B00] text-white text-sm"
-                      >
-                        <Calendar size={14} />
-                        Koble Google Calendar
-                      </button>
-                    </div>
-                  )}
-                </div>
+                <SalesCalendarWeek
+                  days={calendarWeek.days}
+                  events={calendarWeekData?.events || []}
+                  loading={calendarWeekLoading}
+                  connected={Boolean(calendarWeekData?.connected)}
+                  googleEmail={calendarWeekData?.googleEmail || ''}
+                  ownerLabel={calendarPreviewOwner ? ownerLabel(calendarPreviewOwner) : 'deg'}
+                  isOwnCalendar={calendarPreviewIsOwn}
+                  weekOffset={calendarWeekOffset}
+                  message={calendarWeekData?.message || ''}
+                  error={calendarWeekError}
+                  onPrevWeek={() => setCalendarWeekOffset((prev) => prev - 1)}
+                  onNextWeek={() => setCalendarWeekOffset((prev) => prev + 1)}
+                  onThisWeek={() => setCalendarWeekOffset(0)}
+                  onConnect={() => { closeHeaderMenus(); setCalendarPanelOpen(true); }}
+                />
               )}
               {mapMounted && (
                 <div className={headerPanel === 'map' ? '' : 'hidden'} aria-hidden={headerPanel !== 'map'}>
@@ -3194,30 +3292,57 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
       )}
 
       <div className="rounded-2xl bg-[#2a2a2a] border border-white/10 p-3 sm:p-4 space-y-3">
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-          {SALES_PIPELINE_STATES.map((state) => {
-            const count = pipelineCounts[state.id as keyof typeof pipelineCounts] || 0;
-            const selected = pipelineFilter === state.id;
-            return (
-              <button
-                key={state.id}
-                type="button"
-                onClick={() => setPipelineFilter(selected ? '' : state.id)}
-                className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                  selected
-                    ? 'bg-[#FF5B00] border-[#FF5B00] text-white'
-                    : 'bg-black/20 border-white/10 text-gray-200 hover:bg-white/10'
-                }`}
-              >
-                <span className={`block text-lg font-semibold tabular-nums leading-none ${selected ? 'text-white' : 'text-white'}`}>
-                  {count}
-                </span>
-                <span className={`mt-1 block text-[12px] font-medium ${selected ? 'text-white' : 'text-gray-200'}`}>
-                  {state.label}
-                </span>
-              </button>
-            );
-          })}
+        <div className="space-y-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+            {SALES_PIPELINE_STATES.map((state) => {
+              const count = pipelineCounts[state.id as keyof typeof pipelineCounts] || 0;
+              const selected = pipelineFilter === state.id;
+              return (
+                <button
+                  key={state.id}
+                  type="button"
+                  onClick={() => setPipelineFilter(selected ? '' : state.id)}
+                  className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                    selected
+                      ? 'bg-[#FF5B00] border-[#FF5B00] text-white'
+                      : 'bg-black/20 border-white/10 text-gray-200 hover:bg-white/10'
+                  }`}
+                >
+                  <span className={`block text-lg font-semibold tabular-nums leading-none ${selected ? 'text-white' : 'text-white'}`}>
+                    {count}
+                  </span>
+                  <span className={`mt-1 block text-[12px] font-medium ${selected ? 'text-white' : 'text-gray-200'}`}>
+                    {state.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+            {SECONDARY_INTEREST_STATES.map((state) => {
+              const count = pipelineCounts[state.id as keyof typeof pipelineCounts] || 0;
+              const selected = pipelineFilter === state.id;
+              return (
+                <button
+                  key={state.id}
+                  type="button"
+                  onClick={() => setPipelineFilter(selected ? '' : state.id)}
+                  className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                    selected
+                      ? 'bg-[#FF5B00] border-[#FF5B00] text-white'
+                      : 'bg-black/20 border-white/10 text-gray-200 hover:bg-white/10'
+                  }`}
+                >
+                  <span className={`block text-lg font-semibold tabular-nums leading-none ${selected ? 'text-white' : 'text-white'}`}>
+                    {count}
+                  </span>
+                  <span className={`mt-1 block text-[12px] font-medium ${selected ? 'text-white' : 'text-gray-200'}`}>
+                    {state.label}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
         {selectedCount > 0 && (
@@ -3722,8 +3847,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                     onClick={() => {
                       const client = clients.find((entry) => entry.id === editingId);
                       if (!client) return;
-                      void markSecondary(client);
-                      setShowForm(false);
+                      openSecondaryPicker([client]);
                     }}
                     className="px-4 py-2 rounded-lg bg-white/10 text-gray-200 text-sm hover:bg-white/15"
                   >
@@ -3843,6 +3967,85 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                   : calendarStatus?.connected ? 'Reconnect Google Calendar' : 'Connect Google Calendar'}
               </button>
             )}
+          </div>
+        </div>
+      )}
+      {secondaryPicker && (
+        <div className="fixed inset-0 z-[120] flex items-end sm:items-center justify-center bg-black/60 p-3 sm:p-4">
+          <div className="w-full max-w-md rounded-2xl bg-[#2a2a2a] border border-white/10 p-4 sm:p-5 text-white shadow-xl" role="dialog" aria-modal="true" aria-labelledby="sales-secondary-title">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 id="sales-secondary-title" className="text-base font-semibold">Secondary</h3>
+                <p className="mt-1 text-xs text-gray-400">
+                  Velg Redesign, Consulting, eller et sekundært produkt for {secondaryPicker.label}.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSecondaryPicker(null)}
+                className="p-2 rounded-lg bg-white/10 hover:bg-white/15"
+                aria-label="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              {SECONDARY_INTEREST_PRIMARY.map((option) => {
+                const selected = secondaryPicker.selected === option.id;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => setSecondaryPicker((prev) => (prev ? { ...prev, selected: option.id } : prev))}
+                    className={`rounded-xl border px-3 py-2.5 text-left text-sm font-medium ${
+                      selected
+                        ? 'bg-[#FF5B00] border-[#FF5B00] text-white'
+                        : 'bg-black/20 border-white/10 text-gray-200 hover:bg-white/10'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="mt-4 text-[11px] uppercase tracking-wide text-gray-500">Sekundært</p>
+            <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2">
+              {SECONDARY_INTEREST_MORE.map((option) => {
+                const selected = secondaryPicker.selected === option.id;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => setSecondaryPicker((prev) => (prev ? { ...prev, selected: option.id } : prev))}
+                    className={`rounded-xl border px-3 py-2.5 text-left text-sm font-medium ${
+                      selected
+                        ? 'bg-[#FF5B00] border-[#FF5B00] text-white'
+                        : 'bg-black/20 border-white/10 text-gray-200 hover:bg-white/10'
+                    }`}
+                  >
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+            {error ? <p className="mt-3 text-sm text-red-300">{error}</p> : null}
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setSecondaryPicker(null)}
+                className="px-3 py-2 rounded-lg bg-white/10 text-sm text-gray-200 hover:bg-white/15"
+              >
+                Avbryt
+              </button>
+              <button
+                type="button"
+                disabled={!secondaryPicker.selected || bulkBusy || Boolean(statusBusyId)}
+                onClick={() => void saveSecondaryPicker()}
+                className="px-3 py-2 rounded-lg bg-[#FF5B00] text-sm font-medium text-white hover:bg-[#e55200] disabled:opacity-50"
+              >
+                {bulkBusy || statusBusyId ? 'Lagrer…' : 'Lagre'}
+              </button>
+            </div>
           </div>
         </div>
       )}

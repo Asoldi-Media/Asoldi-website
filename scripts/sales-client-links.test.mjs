@@ -7,6 +7,7 @@ import {
   filterCustomOtherLinks,
   looksLikeEmailLink,
   looksLikeMapsOrGoogleBusinessLink,
+  websiteUrlFromDomain,
 } from '../lib/sales-client-links.js';
 
 function classify(url = '') {
@@ -107,4 +108,12 @@ test('other links drop maps, emails, and copies of dedicated fields', () => {
     { instagramUrl: 'https://www.instagram.com/kafeen/' }
   );
   assert.equal(cleaned, 'https://kafeen.no/meny');
+});
+
+test('website URL mirrors the sales domain and ignores an email', () => {
+  assert.equal(websiteUrlFromDomain('nordlys.no'), 'https://nordlys.no');
+  assert.equal(websiteUrlFromDomain('https://www.Nordlys.no/kontakt'), 'https://nordlys.no');
+  assert.equal(websiteUrlFromDomain('karpiakaneta@gmail.com'), '');
+  assert.equal(websiteUrlFromDomain('https://Karpiakaneta@gmail.com/'), '');
+  assert.equal(looksLikeEmailLink('https://Karpiakaneta@gmail.com/'), true);
 });

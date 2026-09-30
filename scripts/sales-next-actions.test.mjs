@@ -22,7 +22,9 @@ import {
   inferMeetingHeld,
   isAutoOfferCheckIn,
   nextDayAtNineAmIso,
+  normalizeSecondaryInterest,
   OFFER_CHECKIN_NAME,
+  secondaryInterestLabel,
   clientHasAssignedSalesRep,
   clientNeedsConfirmationSend,
   meetingTimeHasPassed,
@@ -30,6 +32,8 @@ import {
   osloWallClockToIso,
   isoToDatetimeLocalOslo,
   datetimeLocalOsloToIso,
+  osloWeekRange,
+  groupCalendarEventsByOsloDay,
   resolveMeetingAtOnMyphonerMerge,
   assignmentStampForOwnerChange,
   clientIsNewlyAssigned,
@@ -738,8 +742,83 @@ test('pipeline counts split confirmation, upcoming meetings, unsent offers, cont
       awaitingOfferSend: 1,
       awaitingContract: 1,
       win: 1,
+      redesign: 0,
+      consulting: 0,
+      video: 0,
+      email: 0,
+      social: 0,
     }
   );
+});
+
+test('secondary interest is a pipeline state like bekreftelse ikke sendt', () => {
+  const now = Date.parse('2026-09-27T12:00:00.000Z');
+  const redesign = client({
+    id: 'sec-redesign',
+    status: 'secondary',
+    secondaryInterest: 'redesign',
+    reminders: { thankYouSentAt: '' },
+  });
+  const video = client({
+    id: 'sec-video',
+    status: 'secondary',
+    secondaryInterest: 'Videoproduksjon',
+    agreedTime: true,
+    meetingAt: '2026-09-30T10:00:00.000Z',
+    reminders: { thankYouSentAt: '' },
+  });
+  assert.equal(normalizeSecondaryInterest('Sosiale medier'), 'social');
+  assert.equal(secondaryInterestLabel('email'), 'E-post');
+  assert.equal(classifySalesPipelineState(redesign, now), 'redesign');
+  assert.equal(classifySalesPipelineState(video, now), 'video');
+  assert.equal(classifySalesPipelineState(client({ status: 'secondary' }), now), 'awaitingMeetingConfirm');
+  assert.deepEqual(
+    countSalesPipelineStates([redesign, video], now),
+    {
+      awaitingMeetingConfirm: 0,
+      upcomingMeeting: 0,
+      awaitingOfferSend: 0,
+      awaitingContract: 0,
+      win: 0,
+      redesign: 1,
+      consulting: 0,
+      video: 1,
+      email: 0,
+      social: 0,
+    }
+  );
+});
+
+test('oslo week range starts Monday in Europe/Oslo', () => {
+  const wednesday = Date.parse('2026-09-30T12:00:00.000Z');
+  const week = osloWeekRange(wednesday, 0);
+  assert.deepEqual(week.days, [
+    '2026-09-28',
+    '2026-09-29',
+    '2026-09-30',
+    '2026-10-01',
+    '2026-10-02',
+    '2026-10-03',
+    '2026-10-04',
+  ]);
+  assert.equal(week.timeMin, '2026-09-27T22:00:00.000Z');
+  assert.equal(week.timeMax, '2026-10-04T22:00:00.000Z');
+  const next = osloWeekRange(wednesday, 1);
+  assert.equal(next.days[0], '2026-10-05');
+});
+
+test('calendar events group onto the Oslo day, not UTC', () => {
+  const week = osloWeekRange(Date.parse('2026-09-30T12:00:00.000Z'), 0);
+  const grouped = groupCalendarEventsByOsloDay(
+    [
+      { start: '2026-09-28T07:00:00.000Z', allDay: false, summary: 'Morning' },
+      { start: '2026-09-28', allDay: true, summary: 'All day' },
+    ],
+    week.days
+  );
+  assert.equal(grouped[0].date, '2026-09-28');
+  assert.equal(grouped[0].events.length, 2);
+  assert.equal(grouped[1].events.length, 0);
 });
 
 test('oslo datetime-local roundtrips the time a rep types in the action step', () => {

@@ -127,7 +127,7 @@ export const ClientOfferReview = () => {
               <p className="text-sm font-medium text-[#FF5B00]">Tilbud</p>
               <h1 className="mt-1 text-2xl font-semibold text-[#111827]">{offer.planName || 'Tilbud fra Asoldi'}</h1>
               <p className="mt-2 text-sm text-[#6B7280]">
-                Tilbudsteksten og spesifikasjonene står over avtalen. Bla gjennom avtalen – knappen blir oransje når du er ved bunnen.
+                Bla gjennom avtalen under. Knappen blir oransje når du er ved bunnen.
               </p>
             </div>
 

@@ -1,18 +1,29 @@
 import http from 'node:http';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
-import { getPersistentDataDir } from '../data/storage-path.js';
-import { getSalesClients } from '../data/sales.js';
 import { researchClientContextLinks } from '../lib/client-context-links.js';
+import { deepseekChatJson, isDeepseekConfigured } from '../lib/deepseek.js';
+import {
+  listSerpApiKeys,
+  runWithSerpApiFailover,
+  serpApiErrorMeansNoCredits,
+} from '../lib/serpapi-keys.js';
 
-dotenv.config();
-const productionEnvPath = join(getPersistentDataDir(), 'production.env');
-if (existsSync(productionEnvPath)) dotenv.config({ path: productionEnvPath, override: false });
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const makerRoot = resolve(root, '..', 'website-maker');
+for (const file of [
+  join(root, '.env'),
+  join(root, '.env.local'),
+  join(makerRoot, '.env'),
+  join(makerRoot, '.env.local'),
+]) {
+  if (existsSync(file)) dotenv.config({ path: file, override: false });
+}
 
 const HOST = '127.0.0.1';
-const PORT = Number(process.env.CONTEXT_LINKS_POC_PORT || 4177);
-const key = String(process.env.SERPAPI_API_KEY || process.env.SERP_API_KEY || '').trim();
+const PORT = Number(process.env.CONTEXT_LINKS_POC_PORT || 47821);
 
 function coerceHttpUrl(value = '') {
   const raw = String(value || '').trim();
@@ -28,122 +39,136 @@ function coerceHttpUrl(value = '') {
 }
 
 async function searchSerp(query) {
-  if (!key || !query) return [];
-  const params = new URLSearchParams({
-    engine: 'google',
-    q: query,
-    api_key: key,
-    num: '10',
-    hl: 'no',
-    gl: 'no',
+  if (!listSerpApiKeys().length || !query) {
+    throw new Error('SERPAPI_API_KEY missing');
+  }
+  const failover = await runWithSerpApiFailover(async (apiKey) => {
+    const params = new URLSearchParams({
+      engine: 'google',
+      q: query,
+      api_key: apiKey,
+      num: '10',
+      hl: 'no',
+      gl: 'no',
+    });
+    const response = await fetch(`https://serpapi.com/search.json?${params}`, {
+      headers: { Accept: 'application/json' },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (serpApiErrorMeansNoCredits(response.status, payload)) return { status: 'no-credits' };
+    if (!response.ok) {
+      if (response.status === 429) return { status: 'throttled', retryAfterMs: 30_000 };
+      return { status: 'error', error: new Error(payload.error || `SerpAPI HTTP ${response.status}`) };
+    }
+    const rows = Array.isArray(payload?.organic_results) ? payload.organic_results : [];
+    return {
+      status: 'ok',
+      value: rows
+        .map((entry, index) => ({
+          url: coerceHttpUrl(entry?.link || ''),
+          title: String(entry?.title || '').trim(),
+          snippet: String(entry?.snippet || '').trim(),
+          position: index,
+        }))
+        .filter((entry) => entry.url),
+    };
   });
-  const response = await fetch(`https://serpapi.com/search.json?${params}`, {
-    headers: { Accept: 'application/json' },
-  });
-  if (!response.ok) throw new Error(`SerpAPI HTTP ${response.status}`);
-  const payload = await response.json();
-  const rows = Array.isArray(payload?.organic_results) ? payload.organic_results : [];
-  return rows
-    .map((entry) => ({
-      url: coerceHttpUrl(entry?.link || ''),
-      title: String(entry?.title || '').trim(),
-      snippet: String(entry?.snippet || '').trim(),
-    }))
-    .filter((entry) => entry.url);
+  if (failover.ok) return Array.isArray(failover.value) ? failover.value : [];
+  throw failover.error || new Error('SERPAPI_API_KEY missing');
 }
 
-function publicClients() {
-  return getSalesClients()
-    .filter((client) => client.status !== 'not-sold' && String(client.businessName || '').trim())
-    .map((client) => ({
-      id: client.id,
+async function judgeNovelLinks(candidates, client) {
+  if (!isDeepseekConfigured() || !candidates.length) return candidates.slice(0, 3);
+  const parsed = await deepseekChatJson({
+    temperature: 0.1,
+    maxTokens: 400,
+    system: [
+      'You pick extra research links for a Norwegian sales team.',
+      'We already have Proff.no, the company website, Instagram, Facebook, Google Maps, and business directories (1881, Gule Sider, Cylex, Infobel, Yelono, Restaurant Guru).',
+      'Keep a URL only if it likely adds NEW facts: a news article, interview, feature, or independent review (Trustpilot-style).',
+      'Reject the company website, social profiles, Wikipedia/SNL, kommune/place pages, other businesses, and directory clones.',
+      'Return JSON { "urls": string[] } with 0 to 3 URLs copied exactly from the candidate list. Empty is correct when nothing is useful.',
+    ].join(' '),
+    user: JSON.stringify({
       businessName: client.businessName,
-      meetingPlace: client.meetingPlace || '',
-      meetingMode: client.meetingMode || '',
-    }));
+      candidates: candidates.map((entry) => ({
+        url: entry.url,
+        title: entry.title,
+        snippet: entry.snippet,
+        kind: entry.kind,
+      })),
+    }),
+  });
+  const urls = Array.isArray(parsed?.urls) ? parsed.urls : [];
+  return urls.map((url) => ({ url }));
 }
 
 const PAGE = `<!doctype html>
 <html lang="nb">
 <head>
   <meta charset="utf-8" />
-  <title>Local POC: kundekontekst-lenker</title>
+  <title>Local extra-link test</title>
   <style>
-    body { font-family: sans-serif; margin: 0; background: #f5f6f8; color: #111827; }
-    header { background: #fff; border-bottom: 1px solid #e5e7eb; padding: 16px 24px; }
-    main { max-width: 1100px; margin: 0 auto; padding: 20px 24px 48px; }
-    h1 { font-size: 20px; margin: 0 0 4px; }
-    p.note { margin: 0; color: #6b7280; font-size: 13px; }
-    button { background: #ff5b00; color: #fff; border: 0; border-radius: 8px; padding: 8px 14px; cursor: pointer; }
+    body { font-family: sans-serif; margin: 40px auto; max-width: 720px; color: #111; }
+    input, button { font: inherit; padding: 8px 10px; }
+    input { width: 100%; box-sizing: border-box; margin: 4px 0 12px; }
+    button { background: #111; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
     button:disabled { opacity: .5; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; max-height: 280px; overflow: auto; margin: 12px 0; }
-    label { display: flex; gap: 8px; background: #fff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px; font-size: 14px; }
-    article { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; margin-top: 16px; }
     a { color: #1d4ed8; }
+    .muted { color: #6b7280; font-size: 13px; }
     .err { color: #b91c1c; }
-    .muted { color: #6b7280; font-size: 12px; }
+    article { margin-top: 20px; padding-top: 16px; border-top: 1px solid #e5e7eb; }
+    .drop { font-size: 13px; color: #6b7280; }
   </style>
 </head>
 <body>
-  <header>
-    <h1>Localhost only — Trustpilot / nyheter</h1>
-    <p class="note">This is not the sales page. Nothing is saved to kundekort. Bind: 127.0.0.1</p>
-  </header>
-  <main>
-    <p id="status" class="muted"></p>
-    <button id="run" type="button">Kjør søk på valgte</button>
-    <div id="clients" class="grid"></div>
-    <div id="out"></div>
-  </main>
+  <h1>Extra links (0–3)</h1>
+  <p class="muted">One Google page. Quoted business-name words. News and review sites only. Not the sales page. Nothing is saved.</p>
+  <label>Business name</label>
+  <input id="name" type="text" placeholder="e.g. Byneset Bydelskafe" />
+  <button id="run" type="button">Search</button>
+  <p id="status" class="muted"></p>
+  <div id="out"></div>
   <script>
-    const clientsEl = document.getElementById('clients');
     const statusEl = document.getElementById('status');
     const outEl = document.getElementById('out');
-    let selected = [];
-    async function load() {
-      const data = await (await fetch('/api/clients')).json();
-      statusEl.textContent = data.configured
-        ? data.clients.length + ' lokale kunder lastet. SerpAPI: på'
-        : data.clients.length + ' lokale kunder lastet. SerpAPI: mangler nøkkel i .env / production.env';
-      selected = data.clients.slice(0, 3).map((c) => c.id);
-      clientsEl.innerHTML = data.clients.map((c) => (
-        '<label><input type="checkbox" value="' + c.id + '"' + (selected.includes(c.id) ? ' checked' : '') + '/>'
-        + '<span><strong>' + c.businessName + '</strong><br/><span class="muted">'
-        + (c.meetingMode === 'in-person' ? 'IRL' : 'Online')
-        + (c.meetingPlace ? ' · ' + c.meetingPlace : '')
-        + '</span></span></label>'
-      )).join('');
-      clientsEl.querySelectorAll('input').forEach((input) => {
-        input.addEventListener('change', () => {
-          selected = [...clientsEl.querySelectorAll('input:checked')].map((el) => el.value).slice(0, 8);
-        });
-      });
-    }
+    const runEl = document.getElementById('run');
     document.getElementById('run').addEventListener('click', async () => {
-      outEl.innerHTML = 'Søker…';
-      const response = await fetch('/api/run', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clientIds: selected }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        outEl.innerHTML = '<p class="err">' + (data.message || 'Feil') + '</p>';
+      const businessName = document.getElementById('name').value.trim();
+      if (!businessName) {
+        statusEl.textContent = 'Type a business name.';
         return;
       }
-      outEl.innerHTML = (data.runs || []).map((run) => {
-        const kept = (run.kept || []).map((link) => (
-          '<p><span class="muted">' + link.kind + '</span><br/><a href="' + link.url + '" target="_blank" rel="noreferrer">'
-          + (link.title || link.url) + '</a><br/><span class="muted">' + (link.snippet || '') + '</span></p>'
-        )).join('') || '<p class="muted">Ingen beholdt.</p>';
-        const rejected = (run.rejected || []).slice(0, 5).map((link) => (
-          '<p class="muted">' + link.reason + ' · ' + (link.title || link.url) + '</p>'
+      runEl.disabled = true;
+      outEl.innerHTML = '';
+      statusEl.textContent = 'Searching Google…';
+      try {
+        const response = await fetch('/api/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ businessName }),
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          statusEl.innerHTML = '<span class="err">' + (data.message || 'Failed') + '</span>';
+          return;
+        }
+        statusEl.textContent = 'Query: ' + (data.query || '') + ' · kept ' + (data.kept || []).length + ' of 0–3';
+        const keptHtml = (data.kept || []).map((link) => (
+          '<article><a href="' + link.url + '" target="_blank" rel="noreferrer">'
+          + (link.title || link.url) + '</a><div class="muted">' + (link.kind || '') + ' · ' + link.url
+          + '</div><p>' + (link.snippet || '') + '</p></article>'
+        )).join('') || '<p class="muted">No extra articles or reviews.</p>';
+        const dropped = (data.rejected || []).slice(0, 8).map((link) => (
+          '<div class="drop">' + (link.reason || 'dropped') + ' — ' + (link.title || link.url) + '</div>'
         )).join('');
-        return '<article><h2>' + run.businessName + '</h2><p class="muted">' + (run.queries || []).join(' · ')
-          + '</p><h3>Beholdt</h3>' + kept + '<h3>Forkastet</h3>' + rejected + '</article>';
-      }).join('');
+        outEl.innerHTML = keptHtml + (dropped ? '<h3 class="muted">Dropped from page 1</h3>' + dropped : '');
+      } catch (err) {
+        statusEl.innerHTML = '<span class="err">' + String(err) + '</span>';
+      } finally {
+        runEl.disabled = false;
+      }
     });
-    load().catch((err) => { statusEl.textContent = String(err); });
   </script>
 </body>
 </html>`;
@@ -157,6 +182,28 @@ function sendJson(res, status, body) {
   res.end(json);
 }
 
+function readBody(req) {
+  return new Promise((resolveBody, reject) => {
+    const chunks = [];
+    req.on('data', (chunk) => chunks.push(chunk));
+    req.on('end', () => {
+      try {
+        resolveBody(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
+      } catch (error) {
+        reject(error);
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+async function runResearch(businessName) {
+  return researchClientContextLinks(
+    { businessName },
+    { search: searchSerp, judge: judgeNovelLinks }
+  );
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${HOST}:${PORT}`);
   try {
@@ -165,28 +212,19 @@ const server = http.createServer(async (req, res) => {
       res.end(PAGE);
       return;
     }
-    if (req.method === 'GET' && url.pathname === '/api/clients') {
-      sendJson(res, 200, { configured: Boolean(key), writesToClients: false, clients: publicClients() });
-      return;
-    }
     if (req.method === 'POST' && url.pathname === '/api/run') {
-      if (!key) {
-        sendJson(res, 503, { message: 'SERPAPI_API_KEY missing in local .env or production.env' });
+      if (!listSerpApiKeys().length) {
+        sendJson(res, 503, { message: 'SERPAPI_API_KEY missing' });
         return;
       }
-      const chunks = [];
-      for await (const chunk of req) chunks.push(chunk);
-      const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
-      const ids = Array.isArray(body.clientIds) ? body.clientIds.map(String).filter(Boolean).slice(0, 8) : [];
-      const byId = new Map(getSalesClients().map((client) => [client.id, client]));
-      const selected = (ids.length ? ids : publicClients().slice(0, 2).map((client) => client.id))
-        .map((id) => byId.get(id))
-        .filter(Boolean);
-      const runs = [];
-      for (const client of selected) {
-        runs.push(await researchClientContextLinks(client, { search: searchSerp }));
-      }
-      sendJson(res, 200, { ok: true, writesToClients: false, runs });
+      const body = await readBody(req);
+      const businessName = String(body.businessName || '').trim();
+      const result = await runResearch(businessName);
+      sendJson(res, 200, {
+        query: (result.queries || [])[0] || '',
+        kept: result.kept || [],
+        rejected: result.rejected || [],
+      });
       return;
     }
     sendJson(res, 404, { message: 'Not found' });
@@ -195,8 +233,19 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+if (process.argv.includes('--once')) {
+  const name = process.argv.slice(2).filter((arg) => arg !== '--once')[0] || 'Byneset Bydelskafe';
+  const result = await runResearch(name);
+  console.log(JSON.stringify({
+    query: (result.queries || [])[0] || '',
+    kept: (result.kept || []).map((entry) => ({ kind: entry.kind, title: entry.title, url: entry.url })),
+    rejected: (result.rejected || []).map((entry) => ({ reason: entry.reason, title: entry.title, url: entry.url })),
+  }, null, 2));
+  process.exit(0);
+}
+
 server.listen(PORT, HOST, () => {
-  console.log(`Local context-links POC: http://${HOST}:${PORT}`);
-  console.log(`SerpAPI: ${key ? 'configured' : 'missing'}`);
-  console.log('Not bound to the sales page. Ctrl+C to stop.');
+  console.log(`http://${HOST}:${PORT}`);
+  console.log(`SerpAPI keys: ${listSerpApiKeys().length}`);
+  console.log(`DeepSeek: ${isDeepseekConfigured() ? 'on' : 'off'}`);
 });
