@@ -2039,7 +2039,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                       />
                       <h3 className="text-white font-semibold truncate min-w-0 flex-1 text-sm sm:text-base">{client.businessName || 'Unnamed business'}</h3>
                       {clientIsNewlyAssigned(client) ? (
-                        <span className="shrink-0 text-[11px] px-2 py-0.5 rounded bg-lime-500/15 border border-lime-500/40 text-lime-200">Ny</span>
+                        <span className="sales-chip-ny shrink-0 text-[11px] px-2 py-0.5 rounded font-semibold bg-lime-500/15 border border-lime-500/40 text-lime-200">Ny</span>
                       ) : null}
                       {isWin ? (
                         <span className="shrink-0 text-[11px] px-2 py-0.5 rounded bg-emerald-900/40 text-emerald-200 border border-emerald-700/40">Solgt</span>
@@ -2067,7 +2067,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                       <span className="truncate">{formatMeetingHeadline(meetingAtIso)}</span>
                       {meetingOnCalendar ? (
                         <span
-                          className="shrink-0 px-1.5 py-px rounded border border-sky-400/30 bg-sky-400/10 text-[10px] uppercase tracking-wide text-sky-200"
+                          className="sales-chip-calendar shrink-0 px-1.5 py-px rounded border border-sky-400/30 bg-sky-400/10 text-[10px] uppercase tracking-wide font-semibold text-sky-200"
                           title="Møtet ligger på kalenderen"
                         >
                           Kalender

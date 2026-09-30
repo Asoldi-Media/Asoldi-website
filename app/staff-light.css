@@ -138,8 +138,46 @@
   background-color: #eff6ff;
 }
 
+.staff-light .text-sky-200,
+.staff-light .hover\:text-sky-200:hover {
+  color: #1e40af;
+}
+
 .staff-light .text-sky-300 {
   color: #1d4ed8;
+}
+
+.staff-light .text-lime-200 {
+  color: #3f6212;
+}
+
+.staff-light .bg-lime-500\/15 {
+  background-color: #d9f99d;
+}
+
+.staff-light .border-lime-500\/40 {
+  border-color: #65a30d;
+}
+
+.staff-light .bg-sky-400\/10 {
+  background-color: #bfdbfe;
+}
+
+.staff-light .border-sky-400\/30,
+.staff-light .border-sky-400\/50 {
+  border-color: #3b82f6;
+}
+
+.staff-light .sales-chip-ny {
+  color: #3f6212 !important;
+  background-color: #d9f99d !important;
+  border-color: #4d7c0f !important;
+}
+
+.staff-light .sales-chip-calendar {
+  color: #1e3a8a !important;
+  background-color: #bfdbfe !important;
+  border-color: #2563eb !important;
 }
 
 .staff-light .bg-emerald-900\/20,
