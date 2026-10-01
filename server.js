@@ -36,7 +36,15 @@ import {
   isAllowedClientUploadName,
   readClientMedia,
   saveClientUploadBuffer,
+  listClientUploadFiles,
+  clientMediaMime as clientUploadMime,
 } from './lib/client-media-store.js';
+import * as adminDevRequests from './lib/admin-dev-requests.js';
+import {
+  isAcceptedQueueTarget,
+  resolveMakerQueueRunRequests,
+  summarizeMakerRunForQueue,
+} from './lib/maker-queue.js';
 import {
   getAssistantState,
   getJobForUser,
@@ -86,6 +94,7 @@ import * as myphonerSsuWins from './lib/myphoner-ssu-wins.js';
 import {
   buildSalesEmailPreviewPage,
   getSalesEmailPreviewClient,
+  getSalesWorkshopPreviewClient,
   normalizeSalesReminderKind,
   renderSalesUnsubscribePage,
   htmlToPlainText,
@@ -119,7 +128,8 @@ import {
   getEmailDraft,
   getEmailTemplateById,
   importEmailTemplate,
-  isReminderEmailTemplate,
+  isThankYouEmailTemplate,
+  isWorkshopEmailTemplate,
   listEmailTemplates,
   mergeFieldsMeta,
   saveEmailDraft,
@@ -213,6 +223,7 @@ import {
   getGoogleCalendarStatus,
   isRealGoogleMeetLink,
   listCalendarEvents,
+  prepareSalesCalendarEmbed,
   findConnectedCalendarAccountKeysByGoogleEmail,
   calendarIdForAccount,
   resolveCalendarSyncAccountKey,
@@ -221,7 +232,44 @@ import {
   shouldForceCalendarRecreate,
   upsertMeetingEvent,
   upsertSalesReminderEvent,
+  queryWorkshopFreeBusy,
 } from './lib/google-calendar.js';
+import { loadWorkshopNeedsDocument, patchWorkshopNeedLine } from './lib/workshop-needs.js';
+import { flattenMakerUploadsForLibrary, makerProgressPatchFromHandoff, normalizeDeveloperQa } from './lib/developer-card.js';
+import {
+  DAMIAN_WORKSHOP_CALENDAR_EMAIL,
+  getWorkshopAction,
+  normalizeWorkshopAction,
+  sanitizeWorkshopFormat,
+  syncWorkshopCalendar,
+  tryBuildSalesWorkshopEmail,
+  workshopEmailShouldSend,
+} from './lib/workshop-action.js';
+import {
+  adminBoardViewerIsDamianMailbox,
+  isAdminBoardCalendarQuery,
+  resolveAdminBoardCalendarAccountKey,
+} from './lib/workshop-booking.js';
+import {
+  getWorkshopRecord,
+  mergeWorkshopRecord,
+  normalizeIterationMeeting,
+} from './lib/workshop-record.js';
+import {
+  generateWorkshopSummaryWithDeepSeek,
+} from './lib/workshop-summary.js';
+import { syncIterationCalendar } from './lib/workshop-iteration.js';
+import {
+  appendWorkshopDeskNote,
+  markIterationLogDone,
+  readWorkshopNoteFile,
+} from './lib/workshop-notes.js';
+import {
+  applyFirefliesPurpose,
+  meetingIdForPurpose,
+  presentClientMeetings,
+} from './lib/workshop-meetings.js';
+import { requestWorkshopInvoice } from './lib/workshop-invoice.js';
 import { renderGoogleCalendarOAuthResultHtml } from './lib/google-calendar-oauth-ui.js';
 import {
   createClientGoogleAuthUrl,
@@ -7628,8 +7676,21 @@ function developmentAuth(req, res, next) {
     role: payload.role,
     isAdmin: payload.role === 'admin',
     userId: payload.userId,
+    username: payload.username,
   };
   next();
+}
+
+async function developmentAuthorLabel(req) {
+  const user = req.developmentUser || {};
+  if (user.userId) {
+    const row = await store.getUserById(user.userId);
+    const name = sanitizeText(row?.name);
+    if (name) return name;
+    const username = sanitizeText(row?.username);
+    if (username) return username;
+  }
+  return sanitizeText(user.username) || (user.role === 'admin' ? 'Admin' : 'Utvikler');
 }
 
 async function resolveStaffPrincipalFromToken(payload) {
@@ -7695,6 +7756,14 @@ function canAccessSalesClient(req, client) {
   const ownerId = sanitizeText(client.ownerId);
   if (!ownerId) return false;
   return salesUserOwnerKeys(req.salesUser).has(ownerId);
+}
+
+function jsonSalesClient(client) {
+  if (!client) return client;
+  return {
+    ...client,
+    meetings: presentClientMeetings(client),
+  };
 }
 
 async function listSalesOwnerOptions(salesUser = {}) {
@@ -8727,14 +8796,108 @@ async function maybeJoinFirefliesLive(client, { force = false, ignoreRetryWait =
   }
 }
 
+async function writeDeskLiveJoinStamp(client, kind, stamp = {}) {
+  if (kind === 'workshop') {
+    const action = getWorkshopAction(client);
+    if (!action) return sales.getSalesClientById(client.id) || client;
+    return sales.setSalesWorkshopAction(client.id, { ...action, ...stamp }) || client;
+  }
+  const record = getWorkshopRecord(client);
+  return sales.setSalesWorkshop(client.id, mergeWorkshopRecord(record, {
+    iterationMeeting: { ...record.iterationMeeting, ...stamp },
+  })) || client;
+}
+
+async function maybeJoinFirefliesLiveDeskSlot(client, kind) {
+  const warnings = [];
+  const slot = kind === 'workshop'
+    ? getWorkshopAction(client)
+    : getWorkshopRecord(client).iterationMeeting;
+  if (!slot || sanitizeWorkshopFormat(slot.format) !== 'mote') {
+    return { joined: false, reason: 'not-mote', client, warnings };
+  }
+  if (sanitizeText(slot.firefliesLiveJoinedAt)) {
+    return { joined: false, reason: 'already-joined', client, warnings };
+  }
+  if (!sanitizeText(slot.firefliesInvitedAt)) {
+    return { joined: false, reason: 'not-confirmed', client, warnings };
+  }
+  const meetLink = sanitizeText(slot.meetLink);
+  if (!isRealGoogleMeetLink(meetLink)) {
+    return { joined: false, reason: 'no-meet', client, warnings };
+  }
+  if (!firefliesLiveJoinWindow({ meetingAt: slot.dueAt })) {
+    return { joined: false, reason: 'outside-window', client, warnings };
+  }
+  const lastError = sanitizeText(slot.firefliesLiveJoinError);
+  if (
+    !firefliesLiveJoinErrorIsCodeBug(lastError)
+    && firefliesLiveJoinShouldWait({ attemptAt: slot.firefliesLiveJoinAttemptAt })
+  ) {
+    return { joined: false, reason: 'retry-wait', client, warnings };
+  }
+  const config = readFirefliesWebhookConfig();
+  if (!config.apiKey) {
+    warnings.push('Fireflies API key is missing, so Fred cannot be sent into the Meet from Asoldi.');
+    return { joined: false, reason: 'no-api-key', client, warnings };
+  }
+  const attemptedAt = new Date().toISOString();
+  const title = `${firefliesLiveJoinTitle(client)} · ${kind === 'iteration' ? 'Iterasjon' : 'Workshop'}`;
+  try {
+    const result = await addFirefliesToLiveMeeting({
+      meetingLink: meetLink,
+      title,
+      apiKey: config.apiKey,
+    });
+    if (!result.ok) {
+      const message = result.message || 'Fireflies did not accept the live join.';
+      const next = await writeDeskLiveJoinStamp(client, kind, {
+        firefliesLiveJoinAttemptAt: attemptedAt,
+        firefliesLiveJoinError: message,
+      });
+      warnings.push(message);
+      return { joined: false, reason: message, client: next, warnings };
+    }
+    const next = await writeDeskLiveJoinStamp(client, kind, {
+      firefliesLiveJoinedAt: attemptedAt,
+      firefliesLiveJoinAttemptAt: attemptedAt,
+      firefliesLiveJoinError: '',
+    });
+    sales.linkMeetingToSalesClient(client.id, {
+      meetingId: sales.liveJoinMeetingId(`${client.id}:${kind}`, slot.dueAt),
+      title,
+      when: formatOfferMeetingWhen(slot.dueAt || attemptedAt),
+      startedAt: sanitizeText(slot.dueAt) || attemptedAt,
+      meetLink,
+      hasTranscript: false,
+      liveJoinedAt: attemptedAt,
+      source: 'live-join',
+      linkedBy: 'live-join',
+      purpose: kind,
+      forSalesMeeting: false,
+    });
+    return { joined: true, reason: 'joined', client: sales.getSalesClientById(client.id) || next, warnings };
+  } catch (error) {
+    const message = sanitizeText(error?.message) || 'Fireflies live join failed.';
+    const next = await writeDeskLiveJoinStamp(client, kind, {
+      firefliesLiveJoinAttemptAt: attemptedAt,
+      firefliesLiveJoinError: message,
+    });
+    warnings.push(message);
+    return { joined: false, reason: message, client: next, warnings };
+  }
+}
+
 async function sendDueFirefliesLiveJoins() {
   if (firefliesJoinLoopRunning) return;
   firefliesJoinLoopRunning = true;
   try {
     for (const client of sales.getSalesClients()) {
-      if (!client?.agreedTime || !client?.meetingAt) continue;
-      if (normalizeMeetingMode(client.meetingMode) !== 'online') continue;
-      await maybeJoinFirefliesLive(client);
+      if (client?.agreedTime && client?.meetingAt && normalizeMeetingMode(client.meetingMode) === 'online') {
+        await maybeJoinFirefliesLive(client);
+      }
+      await maybeJoinFirefliesLiveDeskSlot(client, 'workshop');
+      await maybeJoinFirefliesLiveDeskSlot(client, 'iteration');
     }
   } catch (error) {
     console.error('[fireflies] live-join tick failed', error);
@@ -11067,10 +11230,26 @@ async function salesOwnerEmailMap() {
 
 function linkFirefliesMeeting(clientId, ref) {
   const client = sales.getSalesClientById(clientId);
-  return sales.linkMeetingToSalesClient(clientId, {
+  const applied = applyFirefliesPurpose(client || {}, {
     ...ref,
     forSalesMeeting: recordingMatchesSalesMeeting(client || {}, ref),
   });
+  sales.linkMeetingToSalesClient(clientId, applied.ref);
+  const patch = {};
+  if (applied.workshopAction) {
+    const latest = sales.getSalesClientById(clientId);
+    patch.workshopAction = {
+      ...(latest?.workshopAction || {}),
+      firefliesMeetingId: applied.workshopAction.firefliesMeetingId,
+    };
+  }
+  if (applied.workshop) {
+    patch.workshop = applied.workshop;
+  }
+  if (Object.keys(patch).length) {
+    sales.updateSalesClient(clientId, patch);
+  }
+  return sales.getSalesClientById(clientId);
 }
 
 function firefliesClientDeps() {
@@ -11798,6 +11977,135 @@ app.get('/api/admin/sales/google/events', salesAuth, async (req, res) => {
   }
 });
 
+app.get('/api/admin/sales/google/embed', salesAuth, async (req, res) => {
+  try {
+    if (isAdminBoardCalendarQuery(req.query)) {
+      const keys = findConnectedCalendarAccountKeysByGoogleEmail(DAMIAN_WORKSHOP_CALENDAR_EMAIL);
+      const accountKey = resolveAdminBoardCalendarAccountKey({
+        connectedKeys: keys,
+        viewerAccountKey: req.salesUser.accountKey,
+      });
+      const viewerIsDamian = adminBoardViewerIsDamianMailbox({
+        accountKey: req.salesUser.accountKey,
+        username: req.salesUser.username,
+      });
+      if (!accountKey) {
+        return res.json({
+          connected: false,
+          accountKey: '',
+          googleEmail: DAMIAN_WORKSHOP_CALENDAR_EMAIL,
+          embedUrl: '',
+          shareWarning: '',
+          workshopCalendar: true,
+          isOwnCalendar: viewerIsDamian,
+          message: 'damian@asoldi.com er ikke koblet til Google Calendar. Koble den kontoen for å se ukekalenderen. Innlogget selgers kalender brukes ikke her.',
+        });
+      }
+      const status = await ensureSharedCalendarTokens(accountKey);
+      if (!status.connected) {
+        return res.json({
+          connected: false,
+          accountKey,
+          googleEmail: status.googleEmail || DAMIAN_WORKSHOP_CALENDAR_EMAIL,
+          embedUrl: '',
+          shareWarning: '',
+          workshopCalendar: true,
+          isOwnCalendar: viewerIsDamian,
+          message: 'damian@asoldi.com er ikke koblet til Google Calendar. Koble den kontoen for å se ukekalenderen. Innlogget selgers kalender brukes ikke her.',
+        });
+      }
+      const embed = await prepareSalesCalendarEmbed(accountKey);
+      return res.json({
+        ...embed,
+        connected: true,
+        accountKey,
+        workshopCalendar: true,
+        isOwnCalendar: viewerIsDamian,
+        message: '',
+      });
+    }
+    const requestedOwner = sanitizeText(req.query?.ownerId);
+    const accountKey = resolveSalesCalendarPreviewAccountKey({
+      actorAccountKey: req.salesUser.accountKey,
+      isAdmin: Boolean(req.salesUser.isAdmin),
+      ownerId: requestedOwner,
+    });
+    if (
+      req.salesUser.isAdmin
+      && requestedOwner
+      && requestedOwner !== 'unassigned'
+      && accountKey === requestedOwner
+    ) {
+      const allowed = await resolveAssignableSalesOwnerId(requestedOwner, req.salesUser);
+      if (!allowed) {
+        return res.status(400).json({ message: 'Ugyldig selger for kalender.' });
+      }
+    }
+    const status = await ensureSharedCalendarTokens(accountKey);
+    const viewingOwn = accountKey === sanitizeText(req.salesUser.accountKey);
+    if (!status.connected) {
+      return res.json({
+        connected: false,
+        accountKey,
+        googleEmail: status.googleEmail,
+        googleName: status.googleName,
+        embedUrl: '',
+        shareWarning: '',
+        message: viewingOwn
+          ? 'Koble Google Calendar for å se ukekalenderen her. Meeting bookers ser fortsatt bare opptatt.'
+          : 'Denne selgeren har ikke koblet Google Calendar ennå.',
+      });
+    }
+    const embed = await prepareSalesCalendarEmbed(accountKey);
+    return res.json({
+      ...embed,
+      connected: true,
+      accountKey,
+      message: viewingOwn ? '' : '',
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to load calendar embed.' });
+  }
+});
+
+app.get('/api/admin/sales/google/workshop-availability', salesAuth, async (req, res) => {
+  try {
+    const weekOffset = Math.max(-8, Math.min(16, Number(req.query?.weekOffset) || 0));
+    const week = osloWeekRange(Date.now(), weekOffset);
+    const keys = findConnectedCalendarAccountKeysByGoogleEmail(DAMIAN_WORKSHOP_CALENDAR_EMAIL);
+    if (!keys.length) {
+      return res.json({
+        connected: false,
+        googleEmail: DAMIAN_WORKSHOP_CALENDAR_EMAIL,
+        accountKey: '',
+        days: week.days,
+        timeMin: week.timeMin,
+        timeMax: week.timeMax,
+        busy: [],
+        message: 'damian@asoldi.com er ikke koblet til Google Calendar. Koble den kontoen for å se ledig tid. Selgerens kalender brukes ikke her.',
+      });
+    }
+    const accountKey = keys[0];
+    await ensureSharedCalendarTokens(accountKey);
+    const listed = await queryWorkshopFreeBusy(accountKey, {
+      timeMin: week.timeMin,
+      timeMax: week.timeMax,
+    });
+    return res.json({
+      connected: true,
+      accountKey,
+      googleEmail: listed.googleEmail || DAMIAN_WORKSHOP_CALENDAR_EMAIL,
+      days: week.days,
+      timeMin: week.timeMin,
+      timeMax: week.timeMax,
+      busy: listed.busy,
+      message: '',
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message || 'Failed to load workshop availability.' });
+  }
+});
+
 app.get('/api/admin/sales/google/auth-url', salesAuth, (req, res) => {
   try {
     const state = buildOAuthState(req.salesUser.accountKey);
@@ -11968,6 +12276,9 @@ app.post('/api/admin/sales/maker-status-callback', async (req, res) => {
       statusUpdatedAt: new Date().toISOString(),
       fieldsSyncedAt: new Date().toISOString(),
     };
+    if (sanitizeText(fields.templateSetId)) {
+      makerPatch.templateSetId = sanitizeText(fields.templateSetId);
+    }
     const updated = sales.setSalesMakerRun(client.id, makerPatch);
     return res.json({ ok: true, event, client: updated, fieldsApplied: true });
   }
@@ -12045,6 +12356,7 @@ app.post('/api/admin/sales/maker-status-callback', async (req, res) => {
   if (sanitizeText(linked.latestStepStatus)) patch.latestStepStatus = linked.latestStepStatus;
   else if (callbackStatus) patch.latestStepStatus = callbackStatus;
   if (sanitizeText(linked.intakeStatus)) patch.intakeStatus = linked.intakeStatus;
+  Object.assign(patch, makerProgressPatchFromHandoff(handoff));
 
   const updated = sales.setSalesMakerRun(client.id, patch);
   if (sanitizeText(patch.latestReadyStep) && resolveProdAdminBaseUrl()) {
@@ -12153,6 +12465,8 @@ app.post('/api/admin/sales/preview-send-emails', salesAuth, async (req, res) => 
     { kind: 'reminder-24h', mode: 'in-person' },
     { kind: 'reminder-1h', mode: 'online' },
     { kind: 'reminder-1h', mode: 'in-person' },
+    { kind: 'workshop', mode: 'online' },
+    { kind: 'workshop-sms-ring', mode: 'online' },
   ];
   const variants = requested
     ? allVariants.filter((variant) => requested.some((item) => {
@@ -12167,12 +12481,20 @@ app.post('/api/admin/sales/preview-send-emails', salesAuth, async (req, res) => 
   const sent = [];
   try {
     for (const variant of variants) {
-      const client = getSalesEmailPreviewClient({
-        meetingMode: variant.mode,
-        contactEmail: to,
-        contactPerson: 'Damian',
-        businessName: 'Asoldi',
-      });
+      const isWorkshop = variant.kind === 'workshop' || variant.kind === 'workshop-sms-ring';
+      const client = isWorkshop
+        ? getSalesWorkshopPreviewClient({
+          contactEmail: to,
+          contactPerson: 'Damian',
+          businessName: 'Asoldi',
+          format: variant.kind === 'workshop-sms-ring' ? 'sms-ring' : 'mote',
+        })
+        : getSalesEmailPreviewClient({
+          meetingMode: variant.mode,
+          contactEmail: to,
+          contactPerson: 'Damian',
+          businessName: 'Asoldi',
+        });
       const composed = composeEmailForClient(client, variant.kind, null, {
         sender,
         attachInvite: false,
@@ -12210,7 +12532,7 @@ app.get('/api/admin/sales', salesAuth, async (req, res) => {
       : owned;
   const clients = filtered.map((client) => {
     const offer = salesOffers.getOfferForClient(client.id);
-    return { ...client, offerStatus: offer ? offer.status : '' };
+    return { ...jsonSalesClient(client), offerStatus: offer ? offer.status : '' };
   });
   const calendar = presentCalendarStatus(
     await ensureSharedCalendarTokens(req.salesUser.accountKey),
@@ -12593,7 +12915,57 @@ app.get('/api/admin/sales/:id', salesAuth, (req, res) => {
   const client = sales.getSalesClientById(req.params.id);
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
-  res.json({ client });
+  res.json({ client: jsonSalesClient(client) });
+});
+
+async function workshopNeedsMakerFetch(client) {
+  return async (runId) => {
+    const websiteMakerBaseUrl = resolveWebsiteMakerBaseUrl('', client);
+    if (!websiteMakerBaseUrl) return { failed: true };
+    try {
+      const run = await fetchMakerRunRecord({ websiteMakerBaseUrl, runId });
+      return { run };
+    } catch {
+      return { failed: true };
+    }
+  };
+}
+
+app.get('/api/admin/sales/:id/workshop-needs', salesAuth, async (req, res) => {
+  if (!req.salesUser?.isAdmin) {
+    return res.status(403).json({ message: 'Only admin can open the workshop need-list.' });
+  }
+  const client = sales.getSalesClientById(req.params.id);
+  if (!client) return res.status(404).json({ message: 'Sales client not found.' });
+  try {
+    const document = await loadWorkshopNeedsDocument(client, {
+      fetchMakerRun: await workshopNeedsMakerFetch(client),
+    });
+    res.json(document);
+  } catch (error) {
+    res.status(error.status || 500).json({ message: error.message || 'Failed to load workshop needs.' });
+  }
+});
+
+app.patch('/api/admin/sales/:id/workshop-needs', salesAuth, async (req, res) => {
+  if (!req.salesUser?.isAdmin) {
+    return res.status(403).json({ message: 'Only admin can edit the workshop need-list.' });
+  }
+  const client = sales.getSalesClientById(req.params.id);
+  if (!client) return res.status(404).json({ message: 'Sales client not found.' });
+  try {
+    patchWorkshopNeedLine(client.id, {
+      lineId: req.body?.lineId,
+      checked: req.body?.checked,
+      wording: req.body?.wording,
+    });
+    const document = await loadWorkshopNeedsDocument(client, {
+      fetchMakerRun: await workshopNeedsMakerFetch(client),
+    });
+    res.json(document);
+  } catch (error) {
+    res.status(error.status || 500).json({ message: error.message || 'Failed to update workshop needs.' });
+  }
 });
 
 function recordingContentTypeForPath(filePath = '') {
@@ -13231,6 +13603,276 @@ app.patch('/api/admin/sales/:id/notes', salesAuth, (req, res) => {
   res.json({ client: updated });
 });
 
+async function sendWorkshopBookingEmail(client, action, salesUser) {
+  const recipient = sanitizeText(client?.contactEmail);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
+    return { sent: false, warning: 'Workshop-e-post ble ikke sendt: kunden mangler e-post.' };
+  }
+  if (!emailLib.canSendEmail()) {
+    return { sent: false, warning: 'Workshop-e-post ble ikke sendt: e-post er ikke konfigurert.' };
+  }
+  const sender = await resolveSalesSenderForAccount(salesUser);
+  const built = await tryBuildSalesWorkshopEmail(client, { meetLink: action.meetLink }, {
+    sender,
+    workshop: {
+      format: action.format,
+      dueAt: action.dueAt,
+      meetLink: action.meetLink,
+    },
+  });
+  if (!built) {
+    return { sent: false, warning: '' };
+  }
+  await emailLib.sendEmail({
+    to: recipient,
+    from: built.from,
+    replyTo: built.replyTo,
+    bcc: salesEmailCopyBcc(recipient),
+    subject: built.subject,
+    text: built.text,
+    html: built.html,
+    attachments: built.attachments,
+  });
+  return { sent: true };
+}
+
+app.patch('/api/admin/sales/:id/workshop-action', salesAuth, async (req, res) => {
+  const existing = sales.getSalesClientById(req.params.id);
+  if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
+  if (!canAccessSalesClient(req, existing)) return res.status(403).json({ message: 'Not your sales client.' });
+  const previous = normalizeWorkshopAction(existing.workshopAction || {});
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const next = normalizeWorkshopAction({
+    ...previous,
+    name: Object.prototype.hasOwnProperty.call(body, 'name') ? body.name : previous.name,
+    format: Object.prototype.hasOwnProperty.call(body, 'format') ? body.format : previous.format,
+    dueAt: Object.prototype.hasOwnProperty.call(body, 'dueAt') ? body.dueAt : previous.dueAt,
+    addToCalendar: Object.prototype.hasOwnProperty.call(body, 'addToCalendar')
+      ? body.addToCalendar
+      : previous.addToCalendar,
+    calendarEventId: previous.calendarEventId,
+    meetLink: previous.meetLink,
+    accountKey: previous.accountKey,
+    firefliesInvitedAt: previous.firefliesInvitedAt,
+    firefliesMeetingId: previous.firefliesMeetingId,
+    firefliesLiveJoinedAt: previous.firefliesLiveJoinedAt,
+    firefliesLiveJoinAttemptAt: previous.firefliesLiveJoinAttemptAt,
+    firefliesLiveJoinError: previous.firefliesLiveJoinError,
+    id: previous.id,
+  });
+  try {
+    const sync = await syncWorkshopCalendar({
+      client: existing,
+      previousAction: previous,
+      nextAction: next,
+    });
+    const updated = sales.setSalesWorkshopAction(existing.id, sync.action);
+    const client = updated || existing;
+    const warnings = [...(sync.warnings || [])];
+    let emailSent = false;
+    if (workshopEmailShouldSend(previous, sync.action)) {
+      try {
+        const mailed = await sendWorkshopBookingEmail(client, sync.action, req.salesUser);
+        emailSent = Boolean(mailed.sent);
+        if (mailed.warning) warnings.push(mailed.warning);
+      } catch (error) {
+        warnings.push(`Workshop-e-post feilet: ${error.message}`);
+      }
+    }
+    return res.json({ client: jsonSalesClient(client), warnings, emailSent });
+  } catch (error) {
+    const message = sanitizeText(error?.message) || 'Failed updating workshop action.';
+    return res.status(400).json({ message });
+  }
+});
+
+const workshopNoteUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 32 * 1024 * 1024, files: 20 },
+});
+
+function workshopAuthorLabel(req) {
+  return sanitizeText(req.salesUser?.name || req.salesUser?.username || req.salesUser?.accountKey || offerActor(req));
+}
+
+function loadWorkshopSummaryMeetings(client) {
+  const salesId = meetingIdForPurpose(client, 'sales');
+  const workshopId = meetingIdForPurpose(client, 'workshop');
+  return {
+    salesMeeting: salesId ? (readStoredFirefliesMeeting(salesId) || {}) : {},
+    workshopMeeting: workshopId ? (readStoredFirefliesMeeting(workshopId) || {}) : {},
+  };
+}
+
+app.post('/api/admin/sales/:id/workshop/summary', salesAuth, async (req, res) => {
+  if (!requireOfferAdmin(req, res)) return;
+  if (!req.body?.confirm) {
+    return res.status(400).json({ message: 'Bekreft først før sammendraget genereres.' });
+  }
+  const existing = sales.getSalesClientById(req.params.id);
+  if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
+  const record = getWorkshopRecord(existing);
+  const offer = salesOffers.getOfferForClient(existing.id);
+  const { salesMeeting, workshopMeeting } = loadWorkshopSummaryMeetings(existing);
+  try {
+    const summary = await generateWorkshopSummaryWithDeepSeek({
+      client: existing,
+      salesMeeting,
+      workshopMeeting,
+      offer: offer || {},
+    });
+    const history = record.summary ? [...record.summaryHistory, record.summary] : record.summaryHistory;
+    const updated = sales.setSalesWorkshop(existing.id, mergeWorkshopRecord(record, {
+      heldAt: record.heldAt || new Date().toISOString(),
+      summary,
+      summaryHistory: history,
+    }));
+    return res.json({ client: jsonSalesClient(updated), summary });
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 502)).json({
+      message: sanitizeText(error?.message) || 'Kunne ikke lage workshop-sammendraget.',
+    });
+  }
+});
+
+app.patch('/api/admin/sales/:id/workshop/iterated', salesAuth, (req, res) => {
+  if (!requireOfferAdmin(req, res)) return;
+  const existing = sales.getSalesClientById(req.params.id);
+  if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
+  const record = getWorkshopRecord(existing);
+  const iterated = Boolean(req.body?.iterated);
+  const updated = sales.setSalesWorkshop(existing.id, mergeWorkshopRecord(record, {
+    iteratedAt: iterated ? (record.iteratedAt || new Date().toISOString()) : '',
+  }));
+  return res.json({ client: jsonSalesClient(updated) });
+});
+
+app.post('/api/admin/sales/:id/workshop/notes', salesAuth, (req, res) => {
+  if (!requireOfferAdmin(req, res)) return;
+  workshopNoteUpload.array('files', 20)(req, res, (error) => {
+    if (error) {
+      return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
+        message: error.code === 'LIMIT_FILE_SIZE'
+          ? 'Filen er for stor (maks 32 MB).'
+          : (error.message || 'Opplasting feilet.'),
+      });
+    }
+    const existing = sales.getSalesClientById(req.params.id);
+    if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
+    try {
+      const workshop = appendWorkshopDeskNote({
+        client: existing,
+        kind: req.body?.kind === 'iteration' ? 'iteration' : 'workshop',
+        text: req.body?.text,
+        files: (Array.isArray(req.files) ? req.files : []).map((file) => ({
+          originalName: file.originalname,
+          mime: file.mimetype,
+          buffer: file.buffer,
+          bytes: file.size,
+        })),
+        by: workshopAuthorLabel(req),
+      });
+      const updated = sales.setSalesWorkshop(existing.id, workshop);
+      return res.json({ client: jsonSalesClient(updated) });
+    } catch (err) {
+      return res.status(httpStatusFromError(err, 400)).json({
+        message: err.message || 'Kunne ikke lagre notatet.',
+      });
+    }
+  });
+});
+
+app.get('/api/admin/sales/:id/workshop/notes/:noteId/files/:fileId', salesAuth, (req, res) => {
+  const existing = sales.getSalesClientById(req.params.id);
+  if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
+  if (!canAccessSalesClient(req, existing)) return res.status(403).json({ message: 'Not your sales client.' });
+  try {
+    const stored = readWorkshopNoteFile(req.params.id, req.params.noteId, req.params.fileId);
+    const mime = stored.mime || 'application/octet-stream';
+    const inline = String(mime).startsWith('image/');
+    res.setHeader('Content-Type', mime);
+    res.setHeader(
+      'Content-Disposition',
+      `${inline ? 'inline' : 'attachment'}; filename="${String(stored.originalName || 'fil').replace(/"/g, '')}"`
+    );
+    return res.send(stored.buffer);
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 404)).json({ message: error.message || 'Fant ikke filen.' });
+  }
+});
+
+app.patch('/api/admin/sales/:id/workshop/iteration-log/:entryId', salesAuth, (req, res) => {
+  const existing = sales.getSalesClientById(req.params.id);
+  if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
+  if (!canAccessSalesClient(req, existing)) return res.status(403).json({ message: 'Not your sales client.' });
+  try {
+    const workshop = markIterationLogDone(existing, req.params.entryId, {
+      done: req.body?.done !== false,
+      by: workshopAuthorLabel(req),
+    });
+    const updated = sales.setSalesWorkshop(existing.id, workshop);
+    return res.json({ client: jsonSalesClient(updated) });
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 400)).json({ message: error.message || 'Kunne ikke oppdatere loggen.' });
+  }
+});
+
+app.post('/api/admin/sales/:id/workshop/iteration-meeting', salesAuth, async (req, res) => {
+  if (!requireOfferAdmin(req, res)) return;
+  const existing = sales.getSalesClientById(req.params.id);
+  if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
+  const record = getWorkshopRecord(existing);
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const nextMeeting = normalizeIterationMeeting({
+    ...record.iterationMeeting,
+    dueAt: Object.prototype.hasOwnProperty.call(body, 'dueAt') ? body.dueAt : record.iterationMeeting.dueAt,
+    format: Object.prototype.hasOwnProperty.call(body, 'format') ? body.format : record.iterationMeeting.format,
+    addToCalendar: Object.prototype.hasOwnProperty.call(body, 'addToCalendar')
+      ? body.addToCalendar
+      : record.iterationMeeting.addToCalendar,
+    calendarEventId: record.iterationMeeting.calendarEventId,
+    meetLink: record.iterationMeeting.meetLink,
+    firefliesMeetingId: record.iterationMeeting.firefliesMeetingId,
+  });
+  const send = Boolean(body.send);
+  if (send && !nextMeeting.dueAt) {
+    return res.status(400).json({ message: 'Sett tid før du sender iterasjonsmøtet.' });
+  }
+  if (!send) {
+    const updated = sales.setSalesWorkshop(existing.id, mergeWorkshopRecord(record, {
+      iterationMeeting: nextMeeting,
+    }));
+    return res.json({ client: jsonSalesClient(updated), warnings: [] });
+  }
+  try {
+    const sync = await syncIterationCalendar({
+      client: existing,
+      previousMeeting: record.iterationMeeting,
+      nextMeeting,
+    });
+    const updated = sales.setSalesWorkshop(existing.id, mergeWorkshopRecord(record, {
+      iterationMeeting: sync.meeting,
+    }));
+    return res.json({ client: jsonSalesClient(updated), warnings: sync.warnings || [] });
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 400)).json({
+      message: sanitizeText(error?.message) || 'Kunne ikke sende iterasjonsmøtet.',
+    });
+  }
+});
+
+app.post('/api/admin/sales/:id/workshop/invoice-request', salesAuth, (req, res) => {
+  if (!requireOfferAdmin(req, res)) return;
+  const existing = sales.getSalesClientById(req.params.id);
+  if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
+  try {
+    const result = requestWorkshopInvoice(existing);
+    return res.json({ ok: true, invoiceRequest: result.invoiceRequest, client: jsonSalesClient(existing) });
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 400)).json({ message: error.message || 'Kunne ikke sende fakturaforespørsel.' });
+  }
+});
+
 app.patch('/api/admin/sales/:id/details', salesAuth, (req, res) => {
   const existing = sales.getSalesClientById(req.params.id);
   if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
@@ -13379,7 +14021,8 @@ app.post('/api/admin/sales/:id/send-composed-email', salesAuth, async (req, res)
     }
     const templateKey = sanitizeText(req.body?.templateKey || req.body?.markAs) || 'thank-you';
     const isOnline = normalizeMeetingMode(client?.meetingMode) === 'online';
-    const isThankYou = !isReminderEmailTemplate(templateKey);
+    const isWorkshop = isWorkshopEmailTemplate(templateKey);
+    const isThankYou = isThankYouEmailTemplate(templateKey);
     let calendarWarnings = [];
     if (isThankYou) {
       const syncResult = await syncCalendarInviteForThankYou(client, {
@@ -13424,15 +14067,15 @@ app.post('/api/admin/sales/:id/send-composed-email', salesAuth, async (req, res)
         : markAs.includes('reminder') || markAs === '24h'
           ? '24h'
           : 'thankYou';
-    const updated = sales.markSalesReminderSent(client.id, reminderKey);
+    const updated = isWorkshop ? client : sales.markSalesReminderSent(client.id, reminderKey);
     return res.json({
       ok: true,
       sent: true,
-      meetLink: client?.calendar?.meetLink || '',
+      meetLink: isWorkshop ? '' : (client?.calendar?.meetLink || ''),
       copyTo: salesEmailCopyBcc(to),
       client: updated || client,
       warnings: calendarWarnings,
-      calendarInvite: Boolean(client?.calendar?.eventId),
+      calendarInvite: isWorkshop ? false : Boolean(client?.calendar?.eventId),
     });
   } catch (error) {
     return res.status(500).json({ message: formatSmtpSendError(error) });
@@ -15004,6 +15647,7 @@ app.post('/api/admin/sales/:id/link-maker-run', salesOrDevelopmentAuth, async (r
     const updated = sales.setSalesMakerRun(client.id, {
       runId,
       ...buildMakerRunLinks(websiteMakerBaseUrl, runId, runHandoff),
+      ...makerProgressPatchFromHandoff(runHandoff),
       industry: mergedIndustry,
       createdAt: sanitizeText(client.makerRun?.createdAt) || new Date().toISOString(),
     });
@@ -15346,6 +15990,7 @@ app.post('/api/admin/sales/:id/refresh-maker-handoff', salesOrDevelopmentAuth, a
     const updated = sales.setSalesMakerRun(client.id, {
       runId,
       ...makerLinks,
+      ...makerProgressPatchFromHandoff(runHandoff),
       industry:
         sanitizeText(client.industry) ||
         sanitizeText(client.makerRun?.industry) ||
@@ -15434,6 +16079,7 @@ app.post('/api/admin/sales/:id/create-maker-run', salesOrDevelopmentAuth, async 
     );
     const requestBody = {
       existingRunId,
+      templateSetId: sanitizeText(client.makerRun?.templateSetId),
       businessName: client.businessName || 'Untitled client run',
       industry: client.industry || '',
       source: 'sales',
@@ -15464,6 +16110,7 @@ app.post('/api/admin/sales/:id/create-maker-run', salesOrDevelopmentAuth, async 
       const updated = sales.setSalesMakerRun(client.id, {
         runId: browserCreatedRunId,
         ...makerLinks,
+        ...makerProgressPatchFromHandoff(runHandoff),
         industry: client.industry || '',
         createdAt:
           forceNewRun || !sanitizeText(client.makerRun?.createdAt)
@@ -15578,6 +16225,7 @@ app.post('/api/admin/sales/:id/create-maker-run', salesOrDevelopmentAuth, async 
     const updated = sales.setSalesMakerRun(client.id, {
       runId,
       ...makerLinks,
+      ...makerProgressPatchFromHandoff(runHandoff),
       industry: client.industry || '',
       createdAt:
         forceNewRun || !sanitizeText(client.makerRun?.createdAt)
@@ -15963,6 +16611,430 @@ app.patch('/api/admin/development/:id', developmentAuth, (req, res) => {
     deploymentItems: listDevelopmentBoard(),
     movedToClients: Boolean(nextDevelopment.nettsideFerdig),
   });
+});
+
+function makerUnreachableMessage(error, base) {
+  const raw = String(error?.message || 'Failed reaching the Website Maker.');
+  if (/ENOTFOUND|getaddrinfo|Could not resolve|EAI_AGAIN/i.test(raw) || /ENOTFOUND|getaddrinfo/i.test(String(error?.cause || ''))) {
+    return `Website Maker host could not be resolved (${base}). Check the Website Maker URL.`;
+  }
+  if (/ECONNREFUSED|ETIMEDOUT|fetch failed/i.test(raw)) {
+    return `Website Maker is unreachable at ${base} (${raw}). Confirm Maker is running at that URL.`;
+  }
+  return raw;
+}
+
+function resolveDevelopmentMakerBase(req) {
+  return resolveWebsiteMakerBaseUrl(req.body?.websiteMakerBaseUrl || req.query?.websiteMakerBaseUrl);
+}
+
+async function fetchMakerJson(base, pathname, { method = 'GET', body } = {}) {
+  const response = await fetch(`${base}${pathname}`, {
+    method,
+    headers: {
+      ...getWebsiteMakerAuthHeaders(),
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+  const payloadBuffer = Buffer.from(await response.arrayBuffer());
+  let data = {};
+  try {
+    data = JSON.parse(payloadBuffer.toString('utf8'));
+  } catch {
+    data = {};
+  }
+  if (!response.ok) {
+    throw makeHttpError(
+      response.status === 401 || response.status === 404 ? response.status : 502,
+      parseMakerErrorMessage(payloadBuffer, data.error || data.message || `Website Maker error (${response.status}).`)
+    );
+  }
+  return data;
+}
+
+app.get('/api/admin/development/maker-queue', developmentAuth, async (req, res) => {
+  const base = resolveDevelopmentMakerBase(req);
+  if (!base) {
+    return res.status(400).json({ message: 'Website Maker URL is invalid. Use a valid host or URL (for example https://example.com).' });
+  }
+  if (isPrivateMakerUrl(base) && requestIsPublicInternetHost(req)) {
+    return res.status(502).json({
+      message: `Website Maker is unreachable at ${base} from this host. Start the Maker tunnel, then retry.`,
+    });
+  }
+  try {
+    const data = await fetchMakerJson(base, '/api/pipeline-queue');
+    return res.json(data);
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 502)).json({
+      message: error.status ? error.message : makerUnreachableMessage(error, base),
+    });
+  }
+});
+
+app.post('/api/admin/development/maker-queue', developmentAuth, async (req, res) => {
+  const base = resolveDevelopmentMakerBase(req);
+  if (!base) {
+    return res.status(400).json({ message: 'Website Maker URL is invalid. Use a valid host or URL (for example https://example.com).' });
+  }
+  const target = sanitizeText(req.body?.target);
+  if (!isAcceptedQueueTarget(target)) {
+    return res.status(400).json({ message: 'Unknown pipeline queue target.' });
+  }
+  const salesClientIds = Array.isArray(req.body?.salesClientIds) ? req.body.salesClientIds : [];
+  const runIds = Array.isArray(req.body?.runIds) ? req.body.runIds : [];
+  const { linked, failures } = resolveMakerQueueRunRequests({
+    getClientById: (id) => sales.getSalesClientById(id),
+    salesClientIds,
+    runIds,
+  });
+  if (!linked.length) {
+    return res.status(400).json({
+      message: failures[0]?.error || 'No Website Maker run is linked.',
+      failures,
+    });
+  }
+  if (isPrivateMakerUrl(base) && requestIsPublicInternetHost(req)) {
+    return res.status(502).json({
+      message: `Website Maker is unreachable at ${base} from this host. Start the Maker tunnel, then retry.`,
+      failures,
+    });
+  }
+  try {
+    const data = await fetchMakerJson(base, '/api/pipeline-queue', {
+      method: 'POST',
+      body: {
+        target,
+        runIds: linked.map((entry) => entry.runId),
+        salesClientIds: linked.map((entry) => entry.salesClientId),
+      },
+    });
+    return res.json({ ok: true, ...data, failures });
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 502)).json({
+      message: error.status ? error.message : makerUnreachableMessage(error, base),
+      failures,
+    });
+  }
+});
+
+app.delete('/api/admin/development/maker-queue', developmentAuth, async (req, res) => {
+  const base = resolveDevelopmentMakerBase(req);
+  const itemId = sanitizeText(req.query?.itemId || req.body?.itemId);
+  if (!base) {
+    return res.status(400).json({ message: 'Website Maker URL is invalid. Use a valid host or URL (for example https://example.com).' });
+  }
+  if (!itemId) return res.status(400).json({ message: 'itemId is required.' });
+  if (isPrivateMakerUrl(base) && requestIsPublicInternetHost(req)) {
+    return res.status(502).json({
+      message: `Website Maker is unreachable at ${base} from this host. Start the Maker tunnel, then retry.`,
+    });
+  }
+  try {
+    const data = await fetchMakerJson(base, `/api/pipeline-queue?itemId=${encodeURIComponent(itemId)}`, {
+      method: 'DELETE',
+    });
+    return res.json(data);
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 502)).json({
+      message: error.status ? error.message : makerUnreachableMessage(error, base),
+    });
+  }
+});
+
+app.get('/api/admin/development/maker-run/:runId', developmentAuth, async (req, res) => {
+  const base = resolveDevelopmentMakerBase(req);
+  const runId = sanitizeText(req.params.runId);
+  if (!base) {
+    return res.status(400).json({ message: 'Website Maker URL is invalid. Use a valid host or URL (for example https://example.com).' });
+  }
+  if (!runId) return res.status(400).json({ message: 'Run ID is required.' });
+  if (isPrivateMakerUrl(base) && requestIsPublicInternetHost(req)) {
+    return res.status(502).json({
+      message: `Website Maker is unreachable at ${base} from this host. Start the Maker tunnel, then retry.`,
+    });
+  }
+  try {
+    const run = await fetchMakerRunRecord({ websiteMakerBaseUrl: base, runId });
+    return res.json({ run, ...summarizeMakerRunForQueue({ ...run, id: runId }) });
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 502)).json({
+      message: error.status ? error.message : makerUnreachableMessage(error, base),
+    });
+  }
+});
+
+app.all('/api/admin/development/maker-language/:runId', developmentAuth, async (req, res) => {
+  const method = String(req.method || 'GET').toUpperCase();
+  if (!['GET', 'POST', 'DELETE'].includes(method)) {
+    return res.status(405).json({ message: 'Method not allowed.' });
+  }
+  const base = resolveDevelopmentMakerBase(req);
+  const runId = sanitizeText(req.params.runId);
+  if (!base) {
+    return res.status(400).json({ message: 'Website Maker URL is invalid. Use a valid host or URL (for example https://example.com).' });
+  }
+  if (!runId) return res.status(400).json({ message: 'Run ID is required.' });
+  if (isPrivateMakerUrl(base) && requestIsPublicInternetHost(req)) {
+    return res.status(502).json({
+      message: `Website Maker is unreachable at ${base} from this host. Start the Maker tunnel, then retry.`,
+    });
+  }
+  try {
+    const data = await fetchMakerJson(base, `/api/runs/${encodeURIComponent(runId)}/language`, {
+      method,
+      ...(method === 'GET' ? {} : { body: req.body && typeof req.body === 'object' ? req.body : {} }),
+    });
+    return res.json(data);
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 502)).json({
+      message: error.status ? error.message : makerUnreachableMessage(error, base),
+    });
+  }
+});
+
+app.get('/api/admin/development/:id/workshop-needs', developmentAuth, async (req, res) => {
+  const target = resolveDevelopmentTarget(req.params.id);
+  if (!target?.client) return res.status(404).json({ message: 'Development client not found.' });
+  const base = resolveDevelopmentMakerBase(req);
+  try {
+    const document = await loadWorkshopNeedsDocument(target.client, {
+      fetchMakerRun: async (runId) => {
+        if (!base) return { failed: true };
+        if (isPrivateMakerUrl(base) && requestIsPublicInternetHost(req)) return { failed: true };
+        try {
+          const run = await fetchMakerRunRecord({ websiteMakerBaseUrl: base, runId });
+          return { run };
+        } catch {
+          return { failed: true };
+        }
+      },
+      listMail: async () => ({ skipped: true, reason: 'developer-read', messages: [] }),
+    });
+    return res.json(document);
+  } catch (error) {
+    return res.status(error.status || 500).json({ message: error.message || 'Failed to load workshop needs.' });
+  }
+});
+
+app.patch('/api/admin/development/:id/developer-qa', developmentAuth, (req, res) => {
+  const target = resolveDevelopmentTarget(req.params.id);
+  if (!target?.client) return res.status(404).json({ message: 'Development client not found.' });
+  const current = normalizeDeveloperQa(target.client.developerQa);
+  const incoming = req.body && typeof req.body === 'object' ? req.body : {};
+  const next = normalizeDeveloperQa({
+    textOk: Object.prototype.hasOwnProperty.call(incoming, 'textOk') ? incoming.textOk : current.textOk,
+    mediaOk: Object.prototype.hasOwnProperty.call(incoming, 'mediaOk') ? incoming.mediaOk : current.mediaOk,
+    responsiveOk: Object.prototype.hasOwnProperty.call(incoming, 'responsiveOk') ? incoming.responsiveOk : current.responsiveOk,
+  });
+  const updated = sales.setSalesDeveloperQa(target.client.id, next);
+  if (!updated) return res.status(404).json({ message: 'Sales client not found.' });
+  return res.json({ ok: true, client: updated, developerQa: updated.developerQa });
+});
+
+app.get('/api/admin/development/:id/media', developmentAuth, async (req, res) => {
+  const target = resolveDevelopmentTarget(req.params.id);
+  if (!target?.client) return res.status(404).json({ message: 'Development client not found.' });
+  const fromClient = listClientUploadFiles(target.client.portalUserId).map((file) => ({
+    ...file,
+    source: 'client',
+    url: `/api/admin/development/${encodeURIComponent(req.params.id)}/media/client/${encodeURIComponent(file.fileName)}`,
+  }));
+  const runId = sanitizeText(target.client.makerRun?.runId);
+  const base = resolveDevelopmentMakerBase(req);
+  let fromMaker = [];
+  let makerError = '';
+  if (!runId) {
+    makerError = 'No Website Maker run is linked.';
+  } else if (!base) {
+    makerError = 'Website Maker URL is invalid. Use a valid host or URL (for example https://example.com).';
+  } else if (isPrivateMakerUrl(base) && requestIsPublicInternetHost(req)) {
+    makerError = `Website Maker is unreachable at ${base} from this host. Start the Maker tunnel, then retry.`;
+  } else {
+    try {
+      const run = await fetchMakerRunRecord({ websiteMakerBaseUrl: base, runId });
+      const runFiles = flattenMakerUploadsForLibrary(run?.uploads, 'run').map((file) => ({
+        ...file,
+        url: `/api/admin/development/${encodeURIComponent(req.params.id)}/media/maker?source=run&field=${encodeURIComponent(file.field)}&index=${file.index}&websiteMakerBaseUrl=${encodeURIComponent(base)}`,
+      }));
+      const bundleId = sanitizeText(run?.metadata?.clientBundleId);
+      let bundleFiles = [];
+      if (bundleId) {
+        const bundle = await fetchMakerJson(base, `/api/client-bundles/${encodeURIComponent(bundleId)}/uploads`);
+        bundleFiles = flattenMakerUploadsForLibrary(bundle?.uploads, 'bundle', { bundleId }).map((file) => ({
+          ...file,
+          url: `/api/admin/development/${encodeURIComponent(req.params.id)}/media/maker?source=bundle&bundleId=${encodeURIComponent(bundleId)}&field=${encodeURIComponent(file.field)}&index=${file.index}&websiteMakerBaseUrl=${encodeURIComponent(base)}`,
+        }));
+      }
+      fromMaker = [...runFiles, ...bundleFiles];
+    } catch (error) {
+      makerError = error.status ? error.message : makerUnreachableMessage(error, base);
+      fromMaker = [];
+    }
+  }
+  return res.json({ fromClient, fromMaker, makerError });
+});
+
+app.get('/api/admin/development/:id/media/client/:fileName', developmentAuth, (req, res) => {
+  const target = resolveDevelopmentTarget(req.params.id);
+  if (!target?.client) return res.status(404).json({ message: 'Development client not found.' });
+  const portalUserId = sanitizeText(target.client.portalUserId);
+  if (!portalUserId) return res.status(404).json({ message: 'Fant ikke filen.' });
+  const stored = readClientMedia(portalUserId, decodeURIComponent(req.params.fileName || ''));
+  if (!stored) return res.status(404).json({ message: 'Fant ikke filen.' });
+  const mime = clientUploadMime(stored.fileName);
+  res.setHeader('Content-Type', mime);
+  res.setHeader(
+    'Content-Disposition',
+    `${String(mime).startsWith('image/') ? 'inline' : 'attachment'}; filename="${String(stored.fileName || 'fil').replace(/"/g, '')}"`
+  );
+  res.setHeader('Cache-Control', 'private, max-age=3600');
+  return res.send(stored.buffer);
+});
+
+app.get('/api/admin/development/:id/media/maker', developmentAuth, async (req, res) => {
+  const target = resolveDevelopmentTarget(req.params.id);
+  if (!target?.client) return res.status(404).json({ message: 'Development client not found.' });
+  const base = resolveDevelopmentMakerBase(req);
+  const source = sanitizeText(req.query?.source) === 'bundle' ? 'bundle' : 'run';
+  const field = sanitizeText(req.query?.field);
+  const index = Number(req.query?.index);
+  const runId = sanitizeText(target.client.makerRun?.runId);
+  const bundleId = sanitizeText(req.query?.bundleId);
+  if (!base) {
+    return res.status(400).json({ message: 'Website Maker URL is invalid. Use a valid host or URL (for example https://example.com).' });
+  }
+  if (!field || !Number.isInteger(index) || index < 0) {
+    return res.status(400).json({ message: 'field and index are required.' });
+  }
+  if (isPrivateMakerUrl(base) && requestIsPublicInternetHost(req)) {
+    return res.status(502).json({
+      message: `Website Maker is unreachable at ${base} from this host. Start the Maker tunnel, then retry.`,
+    });
+  }
+  const pathname = source === 'bundle'
+    ? `/preview/client-bundles/${encodeURIComponent(bundleId)}/upload?field=${encodeURIComponent(field)}&index=${index}`
+    : `/preview/${encodeURIComponent(runId)}/upload?field=${encodeURIComponent(field)}&index=${index}`;
+  try {
+    const response = await fetch(`${base}${pathname}`, {
+      method: 'GET',
+      headers: getWebsiteMakerAuthHeaders(),
+    });
+    if (!response.ok) {
+      return res.status(response.status === 404 ? 404 : 502).json({
+        message: makerUnreachableMessage({ message: `Website Maker media failed (${response.status})` }, base),
+      });
+    }
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const contentType = response.headers.get('content-type') || 'application/octet-stream';
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    return res.send(buffer);
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 502)).json({
+      message: error.status ? error.message : makerUnreachableMessage(error, base),
+    });
+  }
+});
+
+const devRequestUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 32 * 1024 * 1024, files: 20 },
+});
+
+app.get('/api/admin/dev-requests', developmentAuth, (req, res) => {
+  try {
+    const unreadKey = req.developmentUser?.role === 'developer' ? 'unreadForDeveloper' : 'unreadForAdmin';
+    return res.json({ threads: adminDevRequests.listThreads({ unreadKey }) });
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 400)).json({ message: error.message || 'Kunne ikke laste forespørsler.' });
+  }
+});
+
+app.get('/api/admin/dev-requests/:salesClientId/files/:fileId', developmentAuth, (req, res) => {
+  try {
+    const stored = adminDevRequests.readStagingFile(req.params.salesClientId, req.params.fileId);
+    const mime = stored.file.mime || 'application/octet-stream';
+    const inline = String(mime).startsWith('image/');
+    res.setHeader('Content-Type', mime);
+    res.setHeader(
+      'Content-Disposition',
+      `${inline ? 'inline' : 'attachment'}; filename="${String(stored.file.originalName || 'fil').replace(/"/g, '')}"`
+    );
+    return res.send(stored.buffer);
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 404)).json({ message: error.message || 'Fant ikke filen.' });
+  }
+});
+
+app.post('/api/admin/dev-requests/:salesClientId/messages', developmentAuth, (req, res) => {
+  devRequestUpload.array('files', 20)(req, res, async (error) => {
+    if (error) {
+      return res.status(error.code === 'LIMIT_FILE_SIZE' ? 413 : 400).json({
+        message: error.code === 'LIMIT_FILE_SIZE'
+          ? 'Filen er for stor (maks 32 MB).'
+          : (error.message || 'Opplasting feilet.'),
+      });
+    }
+    try {
+      const result = adminDevRequests.addMessage({
+        salesClientId: req.params.salesClientId,
+        authorRole: req.developmentUser?.role === 'admin' ? 'admin' : 'developer',
+        authorLabel: await developmentAuthorLabel(req),
+        text: req.body?.text,
+        files: (Array.isArray(req.files) ? req.files : []).map((file) => ({
+          originalName: file.originalname,
+          mime: file.mimetype,
+          buffer: file.buffer,
+        })),
+      });
+      return res.json(result);
+    } catch (err) {
+      return res.status(httpStatusFromError(err, 400)).json({ message: err.message || 'Kunne ikke sende meldingen.' });
+    }
+  });
+});
+
+app.post('/api/admin/dev-requests/:salesClientId/files/:fileId/commit', developmentAuth, async (req, res) => {
+  try {
+    const result = await adminDevRequests.commitFile({
+      salesClientId: req.params.salesClientId,
+      fileId: req.params.fileId,
+      destination: req.body?.destination,
+      websiteMakerBaseUrl: req.body?.websiteMakerBaseUrl,
+      publicHost: requestIsPublicInternetHost(req),
+    });
+    return res.json(result);
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 400)).json({ message: error.message || 'Kunne ikke legge inn filen.' });
+  }
+});
+
+app.post('/api/admin/dev-requests/:salesClientId/files/:fileId/commit-complete', developmentAuth, (req, res) => {
+  try {
+    const result = adminDevRequests.completeCommit({
+      salesClientId: req.params.salesClientId,
+      fileId: req.params.fileId,
+      destination: req.body?.destination,
+      field: req.body?.field,
+      url: req.body?.url,
+    });
+    return res.json(result);
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 400)).json({ message: error.message || 'Kunne ikke bekrefte innlegging.' });
+  }
+});
+
+app.get('/api/admin/dev-requests/:salesClientId', developmentAuth, (req, res) => {
+  try {
+    const thread = adminDevRequests.getThread(req.params.salesClientId, {
+      readerRole: req.developmentUser?.role === 'admin' ? 'admin' : 'developer',
+    });
+    return res.json(thread);
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 404)).json({ message: error.message || 'Kunne ikke laste tråden.' });
+  }
 });
 
 // --- Sales: search registered client portal users (to grant website offers to).

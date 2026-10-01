@@ -1,0 +1,268 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { evaluateWorkshopNeeds } from '../lib/workshop-needs.js';
+import {
+  DEVELOPER_PROGRESS_CHIPS,
+  DEVELOPER_QA_LABELS,
+  WORKSHOP_NOT_HELD_MESSAGE,
+  developerMaterialsView,
+  developerMediaLibraryView,
+  developerSummaryView,
+  makerCustomEditPath,
+  makerProgressPatchFromHandoff,
+  normalizeDeveloperQa,
+  pipelineStatusFromMakerRun,
+  resolveDeveloperProgressClick,
+} from '../lib/developer-card.js';
+
+const here = dirname(fileURLToPath(import.meta.url));
+
+function emptyBank(overrides = {}) {
+  return {
+    brandIdentity: { logos: { normal: '', favicon: '' } },
+    media: {
+      mainHeroImages: [],
+      galleryImages: [],
+      logos: [],
+      icons: [],
+      teamImages: [],
+      aboutImages: [],
+      locationImages: [],
+      illustrationImages: [],
+      offeringImages: [],
+      uncategorized: [],
+    },
+    products: [],
+    productCatalogs: [],
+    websiteCreatorQuestions: { websiteDomain: '' },
+    ...overrides,
+  };
+}
+
+function catalogWithProducts(count) {
+  return [{
+    layout: 'normal',
+    label: 'Produkter',
+    categories: [{
+      name: 'Katalog',
+      products: Array.from({ length: count }, (_, index) => ({
+        title: `Vare ${index + 1}`,
+        price: '100',
+      })),
+    }],
+  }];
+}
+
+function baseClient(overrides = {}) {
+  return {
+    id: 'client-1',
+    businessName: 'Test Bakeri',
+    websiteDomain: '',
+    details: { meetingQuote: { selected: ['hosting'], productNotes: '', productGoal: '', customSections: '' } },
+    ...overrides,
+  };
+}
+
+function markFor(view, key) {
+  return view.binaries.find((row) => row.key === key)?.mark || '';
+}
+
+function countFor(view, key) {
+  return view.counts.find((row) => row.key === key)?.value;
+}
+
+test('summary text renders the four T07 sections', () => {
+  const view = developerSummaryView({
+    heldAt: '2026-10-01T10:00:00.000Z',
+    summary: {
+      intro: 'Intro om bakeriet.',
+      voice: 'Rolig stemme.',
+      whatTheyWant: 'Meny og booking.',
+      functionality: 'Nettsiden skal ta imot bordbestilling.',
+    },
+  });
+  assert.equal(view.ready, true);
+  assert.equal(view.intro, 'Intro om bakeriet.');
+  assert.equal(view.voice, 'Rolig stemme.');
+  assert.equal(view.whatTheyWant, 'Meny og booking.');
+  assert.equal(view.functionality, 'Nettsiden skal ta imot bordbestilling.');
+  assert.equal(view.message, '');
+});
+
+test('empty summary shows workshop-not-done copy and no generated prose', () => {
+  const empty = developerSummaryView(null);
+  assert.equal(empty.ready, false);
+  assert.equal(empty.message, WORKSHOP_NOT_HELD_MESSAGE);
+  assert.equal(empty.intro, '');
+  assert.equal(empty.voice, '');
+  assert.equal(empty.whatTheyWant, '');
+  assert.equal(empty.functionality, '');
+
+  const heldWithoutText = developerSummaryView({ heldAt: '2026-10-01T10:00:00.000Z', summary: null });
+  assert.equal(heldWithoutText.ready, false);
+  assert.equal(heldWithoutText.message, WORKSHOP_NOT_HELD_MESSAGE);
+});
+
+test('missing Kundedata logo is red; product count stays a number', () => {
+  const missing = evaluateWorkshopNeeds({
+    client: baseClient(),
+    bank: emptyBank(),
+  });
+  const missingView = developerMaterialsView(missing);
+  assert.equal(markFor(missingView, 'logo'), 'red');
+  assert.equal(countFor(missingView, 'products'), 0);
+
+  const present = evaluateWorkshopNeeds({
+    client: baseClient(),
+    bank: emptyBank({
+      brandIdentity: { logos: { normal: '/client-media/u/logo.png' } },
+      productCatalogs: catalogWithProducts(12),
+    }),
+  });
+  const presentView = developerMaterialsView(present);
+  assert.equal(markFor(presentView, 'logo'), 'green');
+  assert.equal(countFor(presentView, 'products'), 12);
+});
+
+test('domain is green only when Maker or Kundedata has one; sales domain is unmarked', () => {
+  const makerOnly = evaluateWorkshopNeeds({
+    client: baseClient({ websiteDomain: 'ignore-sales.no' }),
+    bank: emptyBank(),
+    maker: { run: { metadata: { productionDomain: 'bakeri.no' }, answers: { websiteDomain: '' } } },
+  });
+  assert.equal(markFor(developerMaterialsView(makerOnly), 'domain'), 'green');
+
+  const kundeOnly = evaluateWorkshopNeeds({
+    client: baseClient({ websiteDomain: 'ignore-sales.no' }),
+    bank: emptyBank({ websiteCreatorQuestions: { websiteDomain: 'kunde-domene.no' } }),
+  });
+  assert.equal(markFor(developerMaterialsView(kundeOnly), 'domain'), 'green');
+
+  const salesOnly = evaluateWorkshopNeeds({
+    client: baseClient({ websiteDomain: 'sales-only.no' }),
+    bank: emptyBank(),
+    maker: {},
+  });
+  const salesView = developerMaterialsView(salesOnly);
+  assert.equal(markFor(salesView, 'domain'), 'none');
+  assert.notEqual(markFor(salesView, 'domain'), 'red');
+  assert.notEqual(markFor(salesView, 'domain'), 'green');
+});
+
+test('Lang does not enqueue; grey chips including CMS and SEO do not enqueue', () => {
+  const status = { step1Ready: true, languageLocked: true, generateTextReady: true };
+  const lang = DEVELOPER_PROGRESS_CHIPS.find((chip) => chip.id === 'lang');
+  const langClick = resolveDeveloperProgressClick(lang, status);
+  assert.equal(langClick.enqueue, false);
+  assert.equal(langClick.type, 'language');
+
+  for (const id of ['layout', 'maps', 'cms', 'seo']) {
+    const chip = DEVELOPER_PROGRESS_CHIPS.find((row) => row.id === id);
+    const click = resolveDeveloperProgressClick(chip, status);
+    assert.equal(click.enqueue, false, `${id} must not enqueue`);
+    assert.equal(click.type, 'noop');
+  }
+  const cms = DEVELOPER_PROGRESS_CHIPS.find((chip) => chip.id === 'cms');
+  assert.equal(cms.target, 'cms');
+  assert.notEqual(cms.target, '3');
+});
+
+test('Step 2.2 stays off until 2.1 is ready; clickable steps enqueue T03 targets', () => {
+  const locked = { step1Ready: true, languageLocked: true, generateTextReady: false };
+  const step22 = DEVELOPER_PROGRESS_CHIPS.find((chip) => chip.id === '2.2');
+  const blocked = resolveDeveloperProgressClick(step22, locked);
+  assert.equal(blocked.enqueue, false);
+  assert.equal(blocked.type, 'disabled');
+
+  const ready = resolveDeveloperProgressClick(step22, { ...locked, generateTextReady: true });
+  assert.equal(ready.enqueue, true);
+  assert.equal(ready.target, 'inject-media');
+
+  const step1 = resolveDeveloperProgressClick(
+    DEVELOPER_PROGRESS_CHIPS.find((chip) => chip.id === '1'),
+    {}
+  );
+  assert.equal(step1.enqueue, true);
+  assert.equal(step1.target, '1');
+});
+
+test('?panel=custom is the Custom edit path', () => {
+  assert.equal(makerCustomEditPath('run-abc'), '/run/run-abc?panel=custom');
+  assert.equal(makerCustomEditPath(''), '');
+});
+
+test('QA labels are Norwegian and ticks persist as booleans', () => {
+  assert.equal(DEVELOPER_QA_LABELS.textOk, 'Tekst er bra');
+  assert.equal(DEVELOPER_QA_LABELS.mediaOk, 'Mediafiler er bra');
+  assert.equal(DEVELOPER_QA_LABELS.responsiveOk, 'Responsivitet er bra');
+  assert.deepEqual(normalizeDeveloperQa({ textOk: true }), {
+    textOk: true,
+    mediaOk: false,
+    responsiveOk: false,
+  });
+});
+
+test('handoff progress fields persist without treating sales domain as a fill', () => {
+  const patch = makerProgressPatchFromHandoff({
+    steps: { 1: 'ready', '1.5': 'idle', 2: 'partial', 3: 'idle' },
+    step2Substeps: { 'generate-text': 'ready', 'inject-media': 'idle' },
+    language: { confirmed: true, code: 'nb' },
+    cms: 'idle',
+    customSite: { exists: true, previewPath: '/preview/run-abc/custom' },
+    productionDomain: 'bakeri.no',
+  });
+  assert.equal(patch.language.confirmed, true);
+  assert.equal(patch.customSite.exists, true);
+  assert.equal(patch.productionDomain, 'bakeri.no');
+  const status = pipelineStatusFromMakerRun(patch);
+  assert.equal(status.step1Ready, true);
+  assert.equal(status.generateTextReady, true);
+  assert.equal(status.injectMediaReady, false);
+});
+
+test('Maker error does not fake an empty client media library', () => {
+  const view = developerMediaLibraryView({
+    fromClient: [{ fileName: 'logo.png' }],
+    fromMaker: [],
+    makerError: 'Website Maker is unreachable at http://192.168.1.10:3000 from this host.',
+  });
+  assert.equal(view.fromClient.length, 1);
+  assert.equal(view.fromClient[0].fileName, 'logo.png');
+  assert.equal(view.fromMaker.length, 0);
+  assert.match(view.makerError, /unreachable/);
+});
+
+test('progress chips stay in the locked order and enqueue only through T03', () => {
+  assert.deepEqual(
+    DEVELOPER_PROGRESS_CHIPS.map((chip) => chip.id),
+    ['1', 'lang', '1.5', '2.1', '2.2', 'layout', 'maps', 'cms', 'seo']
+  );
+  const card = readFileSync(join(here, '../app/pages/developer/DeveloperClientCard.tsx'), 'utf8');
+  assert.match(card, /enqueueMakerQueue/);
+  assert.match(card, /openLanguageLock/);
+  assert.match(card, /Custom edit/);
+  assert.match(card, /Tools & details/);
+  assert.match(card, /variant="tools"/);
+  assert.match(card, /Fra kunden/);
+  assert.match(card, /Fra Website Maker/);
+  assert.equal(card.includes('/step/3'), false);
+  assert.equal(card.includes("target: '3'"), false);
+});
+
+test('Development card still mounts one request thread and the queue bar', () => {
+  const section = readFileSync(join(here, '../app/pages/Admin/sections/DevelopmentClientsSection.tsx'), 'utf8');
+  assert.match(section, /DeveloperRunQueueBar/);
+  assert.equal(section.includes('DeveloperRequestThread'), false);
+  const card = readFileSync(join(here, '../app/pages/developer/DeveloperClientCard.tsx'), 'utf8');
+  const cardThreads = card.split('<DeveloperRequestThread').length - 1;
+  assert.equal(cardThreads, 1);
+  const server = readFileSync(join(here, '../server.js'), 'utf8');
+  assert.match(server, /app\.get\('\/api\/admin\/development\/:id\/workshop-needs', developmentAuth/);
+  assert.match(server, /app\.get\('\/api\/admin\/development\/:id\/media', developmentAuth/);
+  assert.match(server, /app\.get\('\/api\/admin\/development\/:id\/media\/client\/:fileName', developmentAuth/);
+  assert.match(server, /listClientUploadFiles/);
+  assert.match(server, /loadWorkshopNeedsDocument/);
+});

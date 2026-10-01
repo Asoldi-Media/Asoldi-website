@@ -170,13 +170,109 @@ export type Site = {
   development?: SalesDevelopment;
 };
 
-export type ManageClientsView = 'clients' | 'development' | 'sales';
+export type ManageClientsView = 'clients' | 'development' | 'sales' | 'admin';
 
 export type SalesGoalKey = 'meetingHeld' | 'offerSent' | 'contractSigned' | 'paymentReceived';
 
 export type SalesNextActionPreset = 'meeting' | 'meetingBooked' | 'findMeetingTime' | 'sms24h' | 'sms1h' | 'call2h' | 'sendOffer' | 'checkIn' | 'upsell' | 'oppgrader' | 'oppfolging' | 'oppfolging1mnd' | 'custom';
 
-export type SalesActionFormat = 'email' | 'sms' | 'ring' | 'mote';
+export type SalesActionFormat = 'email' | 'sms' | 'ring' | 'mote' | 'sms-ring';
+
+export type WorkshopActionFormat = 'mote' | 'sms-ring';
+
+export type WorkshopAction = {
+  id?: string;
+  name: string;
+  format: WorkshopActionFormat;
+  dueAt: string;
+  addToCalendar: boolean;
+  calendarEventId: string;
+  meetLink: string;
+  accountKey?: string;
+  firefliesInvitedAt?: string;
+  firefliesMeetingId?: string;
+  firefliesLiveJoinedAt?: string;
+  firefliesLiveJoinAttemptAt?: string;
+  firefliesLiveJoinError?: string;
+};
+
+export type WorkshopSummary = {
+  intro: string;
+  voice: string;
+  whatTheyWant: string;
+  functionality: string;
+  generatedAt: string;
+  source: 'ai' | 'fallback';
+  fromNotesOnly: boolean;
+  language: 'nb';
+};
+
+export type WorkshopNoteFile = {
+  id: string;
+  originalName: string;
+  mime: string;
+  bytes: number;
+};
+
+export type WorkshopNote = {
+  id: string;
+  kind: 'workshop' | 'iteration';
+  at: string;
+  by: string;
+  text: string;
+  files: WorkshopNoteFile[];
+};
+
+export type WorkshopIterationLogEntry = {
+  id: string;
+  at: string;
+  by: string;
+  text: string;
+  files: WorkshopNoteFile[];
+  doneAt: string;
+  doneBy: string;
+};
+
+export type WorkshopIterationMeeting = {
+  dueAt: string;
+  format: WorkshopActionFormat;
+  addToCalendar: boolean;
+  calendarEventId: string;
+  meetLink: string;
+  sentAt: string;
+  firefliesMeetingId?: string;
+  accountKey?: string;
+  firefliesInvitedAt?: string;
+  firefliesLiveJoinedAt?: string;
+  firefliesLiveJoinAttemptAt?: string;
+  firefliesLiveJoinError?: string;
+};
+
+export type WorkshopHeardFact = {
+  id: string;
+  title: string;
+  detail: string;
+  source: string;
+  quote: string;
+  at: string;
+};
+
+export type WorkshopRecord = {
+  heldAt: string;
+  iteratedAt: string;
+  summary: WorkshopSummary | null;
+  summaryHistory: WorkshopSummary[];
+  notes: WorkshopNote[];
+  iterationLog: WorkshopIterationLogEntry[];
+  iterationMeeting: WorkshopIterationMeeting;
+  heardFacts: WorkshopHeardFact[];
+};
+
+export type DeveloperQa = {
+  textOk: boolean;
+  mediaOk: boolean;
+  responsiveOk: boolean;
+};
 
 export type SalesNextAction = {
   id: string;
@@ -227,6 +323,15 @@ export type DevelopmentItem = {
   nextActionName?: string;
   /** Time used for ranking: next action due, else meeting time. */
   rankAt?: string;
+  workshop?: WorkshopRecord | null;
+  workshopHeldAt?: string;
+  workshopSummary?: WorkshopSummary | null;
+  iterationLog?: WorkshopIterationLogEntry[];
+  iterationMeeting?: WorkshopIterationMeeting | null;
+  hasIterationMeeting?: boolean;
+  iterationTranscript?: string;
+  developerQa?: DeveloperQa;
+  portalUserId?: string;
   makerRun: SalesMakerRunMeta | null;
   websiteImport: SalesWebsiteImportMeta | null;
   hubSite?: SalesClient['hubSite'] | null;
@@ -296,6 +401,14 @@ export type SalesMakerRunMeta = {
   fieldsSyncedAt?: string;
   industry: string;
   createdAt: string;
+  templateSetId?: string;
+  steps?: Record<string, string>;
+  step2Substeps?: Record<string, string>;
+  language?: { confirmed: boolean; code: string };
+  cms?: string;
+  customSite?: { exists: boolean; previewPath: string };
+  productionDomain?: string;
+  websiteDomain?: string;
 };
 
 export type SalesArchiveMeta = {
@@ -371,6 +484,8 @@ export type SalesClientMeeting = {
   linkedAt: string;
   linkedBy: string;
   forSalesMeeting?: boolean;
+  purpose?: 'sales' | 'workshop' | 'iteration' | '';
+  hasVideo?: boolean;
 };
 
 export type OfferProduct = {
@@ -494,6 +609,11 @@ export type SalesClient = {
   progression: SalesProgression;
   salesMigrations?: { meetingHeldOrphansV1?: boolean };
   nextActions: SalesNextAction[];
+  /** Booked workshop clock. Not the offer startDate and not client.workshop. */
+  workshopAction?: WorkshopAction | null;
+  /** Held workshop, notes, developer summary, iteration. Not the booking. */
+  workshop?: WorkshopRecord | null;
+  developerQa?: DeveloperQa;
   development?: SalesDevelopment;
   reminders: SalesReminders;
   calendar: SalesCalendarMeta;

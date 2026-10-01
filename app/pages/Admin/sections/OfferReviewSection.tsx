@@ -152,7 +152,7 @@ function ClientIntentCard({
   );
 }
 
-export function OfferReviewSection() {
+export function OfferReviewSection({ hideHeader = false }: { hideHeader?: boolean }) {
   const [filter, setFilter] = useState<SalesOfferStatus | 'all'>('review-requested');
   const [rows, setRows] = useState<OfferRow[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -416,10 +416,12 @@ export function OfferReviewSection() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
+        {hideHeader ? <div /> : (
         <div>
           <h1 className="text-2xl font-semibold text-white">Tilbud</h1>
           <p className="text-sm text-gray-400">Gjennomgang av tilbud fra selgerne: rediger e-posten, legg til produkter, speil kontrakten og verifiser.</p>
         </div>
+        )}
         <div className="flex items-center gap-2">
           <button
             type="button"

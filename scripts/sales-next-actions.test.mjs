@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  ACTION_FORMATS,
+  FORMAT_LABELS,
   applyNextActionMutation,
+  sanitizeActionFormat,
   applyProgressionChange,
   applyMeetingHeldOrphanReset,
   actionFollowsNeighbor,
@@ -34,6 +37,9 @@ import {
   datetimeLocalOsloToIso,
   osloWeekRange,
   groupCalendarEventsByOsloDay,
+  osloMinutesFromMidnight,
+  salesCalendarHourSpan,
+  layoutTimedCalendarEvents,
   resolveMeetingAtOnMyphonerMerge,
   assignmentStampForOwnerChange,
   clientIsNewlyAssigned,
@@ -821,6 +827,21 @@ test('calendar events group onto the Oslo day, not UTC', () => {
   assert.equal(grouped[1].events.length, 0);
 });
 
+test('sales calendar week grid places a 30 minute meeting in the Oslo hour slot', () => {
+  const start = '2026-09-28T07:00:00.000Z';
+  const end = '2026-09-28T07:30:00.000Z';
+  assert.equal(osloMinutesFromMidnight(start), 9 * 60);
+  const span = salesCalendarHourSpan([{ start, end, allDay: false }]);
+  assert.equal(span.startHour, 7);
+  assert.equal(span.endHour, 20);
+  const [block] = layoutTimedCalendarEvents([{ start, end, summary: 'Asoldi · Online møte · Bakeri' }], {
+    startHour: 7,
+    hourHeight: 48,
+  });
+  assert.equal(block.top, 2 * 48);
+  assert.equal(block.height, 24);
+});
+
 test('oslo datetime-local roundtrips the time a rep types in the action step', () => {
   const iso = osloWallClockToIso(2026, 10, 1, 15, 0);
   assert.equal(iso, '2026-10-01T13:00:00.000Z');
@@ -910,4 +931,33 @@ test('date filter uses the next action day, not the booked meeting day', () => {
   assert.equal(clientNextActionInDateRange(row, meetingDay, meetingDay), false);
   assert.equal(clientNextActionInDateRange(row, '', ''), true);
   assert.equal(clientNextActionInDateRange(client({ agreedTime: false, meetingAt: '' }), nextDay, nextDay), false);
+});
+
+test('sms-ring is a normal sales format and does not replace sms or ring', () => {
+  assert.equal(ACTION_FORMATS.includes('sms-ring'), true);
+  assert.equal(ACTION_FORMATS.includes('sms'), true);
+  assert.equal(ACTION_FORMATS.includes('ring'), true);
+  assert.equal(FORMAT_LABELS['sms-ring'], 'SMS/ring');
+  assert.equal(sanitizeActionFormat('sms-ring', 'custom'), 'sms-ring');
+});
+
+test('other sales Møte rows can still turn the calendar switch off', () => {
+  const start = client({
+    nextActions: [{
+      id: 'na-custom-mote',
+      goalKey: 'meetingHeld',
+      presetKey: 'custom',
+      name: 'Oppfølging',
+      format: 'mote',
+      dueAt: MEETING_AT,
+      addToCalendar: true,
+    }],
+  });
+  const updated = applyNextActionMutation(
+    { ...start, nextActions: decorateNextActions(start) },
+    { op: 'update', id: 'na-custom-mote', addToCalendar: false, dueAt: MEETING_AT, name: 'Oppfølging' }
+  );
+  const row = updated.nextActions.find((action) => action.id === 'na-custom-mote');
+  assert.equal(row.format, 'mote');
+  assert.equal(row.addToCalendar, false);
 });

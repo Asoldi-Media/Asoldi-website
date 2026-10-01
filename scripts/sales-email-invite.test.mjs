@@ -1,12 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { composeEmailForClient } from '../lib/email-templates-store.js';
+import {
+  composeEmailForClient,
+  isThankYouEmailTemplate,
+  isWorkshopEmailTemplate,
+  listEmailTemplates,
+  shouldAttachCalendarInvite,
+} from '../lib/email-templates-store.js';
 import { deriveReminderSchedule, salesReminderIsDue } from '../data/sales.js';
 import { buildSalesSender } from '../lib/sales-sender.js';
 import {
   buildSalesCalendarInvite,
+  buildSalesThankYouEmail,
+  buildSalesWorkshopEmail,
   embedInlineEmailAssets,
   getSalesEmailPreviewClient,
+  getSalesWorkshopPreviewClient,
+  resolveWorkshopDueAt,
   rewriteSalesEmailAssetsToHosted,
 } from '../lib/sales-email.js';
 import { renderResponsiveSalesEmailHtml } from '../lib/sales-email-layout.js';
@@ -272,4 +282,104 @@ test('welcome merge fills the salesperson name in the body and From line', () =>
   assert.equal(composed.message.subject, 'Hei Alexander');
   assert.match(composed.message.html, /Mvh Alexander fra Asoldi.com/);
   assert.equal(composed.message.icalEvent?.filename, 'asoldi-online-mote.ics');
+});
+
+test('workshop mail hides the envelope that confirmation still shows', () => {
+  const thankYou = composeEmailForClient(getSalesEmailPreviewClient(), 'thank-you').message;
+  const workshop = composeEmailForClient(getSalesWorkshopPreviewClient(), 'workshop').message;
+  assert.match(thankYou.html, /envelope\.png/);
+  assert.match(thankYou.html, /Møtet bekreftet/);
+  assert.match(thankYou.html, /flytte møtet/);
+  assert.equal(workshop.html.includes('envelope.png'), false);
+  assert.equal(workshop.html.includes('asoldi-envelope'), false);
+  assert.match(workshop.html, /class="pad-title" style="padding:32px 40px 8px;text-align:center;"/);
+  assert.match(workshop.html, /Workshop bekreftet/);
+});
+
+test('workshop Møte uses workshopAction.dueAt and a real Meet button', () => {
+  const client = getSalesWorkshopPreviewClient();
+  const message = composeEmailForClient(client, 'workshop').message;
+  assert.match(message.subject, /^Bekreftet: workshop /);
+  assert.match(message.subject, /8\. okt/i);
+  assert.match(message.html, /08\.10\.26 kl 14:00/);
+  assert.match(message.html, /ca\. 30 minutter/);
+  assert.match(message.html, /Åpne Google Meet/);
+  assert.match(message.html, /https:\/\/meet\.google\.com\/aaa-bbbb-ccc/);
+  assert.match(message.html, /flytte workshopen/);
+  assert.equal(message.html.includes('16.09.26'), false);
+  assert.equal(message.html.includes('2026-11-01'), false);
+  assert.equal(message.icalEvent, undefined);
+});
+
+test('workshop SMS/ring is 30 minutes by phone or SMS with no Meet CTA or URL', () => {
+  const client = getSalesWorkshopPreviewClient({
+    format: 'sms-ring',
+    calendar: { meetLink: 'https://meet.google.com/aaa-bbbb-ccc', htmlLink: 'https://calendar.google.com' },
+  });
+  const message = composeEmailForClient(client, 'workshop-sms-ring').message;
+  assert.match(message.subject, /^Bekreftet: workshop /);
+  assert.match(message.html, /Workshop bekreftet/);
+  assert.match(message.html, /ca\. 30 minutter/);
+  assert.match(message.html, /telefon eller SMS/);
+  assert.match(message.html, /flytte workshopen/);
+  assert.equal(message.html.includes('Åpne Google Meet'), false);
+  assert.equal(message.html.includes('meet.google.com'), false);
+  assert.equal(message.html.includes('envelope.png'), false);
+  assert.equal(message.icalEvent, undefined);
+});
+
+test('workshop Meet button is omitted unless the link is a real Google Meet URL', () => {
+  const fake = composeEmailForClient(getSalesWorkshopPreviewClient({
+    workshopAction: { meetLink: 'https://meet.google.com/lookup/asoldi' },
+  }), 'workshop').message;
+  const leftoverSalesMeet = composeEmailForClient(getSalesWorkshopPreviewClient({
+    workshopAction: { meetLink: '' },
+    calendar: { meetLink: 'https://meet.google.com/aaa-bbbb-ccc' },
+  }), 'workshop').message;
+  assert.equal(fake.html.includes('Åpne Google Meet'), false);
+  assert.equal(leftoverSalesMeet.html.includes('Åpne Google Meet'), false);
+  assert.equal(leftoverSalesMeet.html.includes('meet.google.com'), false);
+});
+
+test('workshop time never falls back to the sales meeting or the offer start date', () => {
+  const client = getSalesEmailPreviewClient({
+    meetingAt: '2026-09-16T12:00:00.000Z',
+    details: { meetingQuote: { startDate: '2026-11-01' } },
+  });
+  assert.equal(resolveWorkshopDueAt(client), '');
+  assert.equal(resolveWorkshopDueAt(client, { workshop: { at: '2026-10-08T12:00:00.000Z' } }), '2026-10-08T12:00:00.000Z');
+  const missing = composeEmailForClient(client, 'workshop').message;
+  assert.match(missing.subject, /avtalt tid/);
+  assert.equal(missing.html.includes('16.09.26'), false);
+  assert.equal(missing.html.includes('2026-11-01'), false);
+  const fromOptions = buildSalesWorkshopEmail(client, client.calendar, {
+    workshop: { dueAt: '2026-10-08T12:00:00.000Z', format: 'mote', meetLink: 'https://meet.google.com/aaa-bbbb-ccc' },
+  });
+  assert.match(fromOptions.html, /08\.10\.26 kl 14:00/);
+  assert.equal(fromOptions.html.includes('16.09.26'), false);
+});
+
+test('workshop compose never attaches the sales calendar invite', () => {
+  const client = getSalesWorkshopPreviewClient();
+  assert.equal(isWorkshopEmailTemplate('workshop'), true);
+  assert.equal(isWorkshopEmailTemplate('workshop-sms-ring'), true);
+  assert.equal(isWorkshopEmailTemplate('thank-you'), false);
+  assert.equal(isThankYouEmailTemplate('workshop'), false);
+  assert.equal(isThankYouEmailTemplate('workshop-sms-ring'), false);
+  assert.equal(isThankYouEmailTemplate('thank-you'), true);
+  assert.equal(isThankYouEmailTemplate('reminder-24h'), false);
+  assert.equal(shouldAttachCalendarInvite('workshop'), false);
+  assert.equal(shouldAttachCalendarInvite('workshop-sms-ring', { attachInvite: true }), false);
+  assert.equal(composeEmailForClient(client, 'workshop', null, { attachInvite: true }).message.icalEvent, undefined);
+  assert.equal(composeEmailForClient(client, 'workshop-sms-ring', null, { attachInvite: true }).message.icalEvent, undefined);
+  const thankYou = composeEmailForClient(getSalesEmailPreviewClient(), 'thank-you').message;
+  assert.equal(thankYou.icalEvent?.filename, 'asoldi-online-mote.ics');
+  assert.equal(buildSalesThankYouEmail(getSalesEmailPreviewClient()).html.includes('envelope.png'), true);
+});
+
+test('Admin email presets include both workshop variants', () => {
+  const keys = listEmailTemplates().map((row) => row.key);
+  assert.equal(keys.includes('workshop'), true);
+  assert.equal(keys.includes('workshop-sms-ring'), true);
+  assert.equal(keys.includes('thank-you'), true);
 });

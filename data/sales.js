@@ -18,6 +18,19 @@ import {
 } from '../lib/sales-next-actions.js';
 import { calendarDurationForMode } from '../lib/sales-meeting-duration.js';
 import { filterCustomOtherLinks } from '../lib/sales-client-links.js';
+import { normalizeWorkshopAction } from '../lib/workshop-action.js';
+import { persistWorkshopRecord } from '../lib/workshop-record.js';
+import { normalizeDeveloperQa } from '../lib/developer-card.js';
+
+function persistWorkshopAction(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const hasAny = String(raw.name || '').trim()
+    || String(raw.format || '').trim()
+    || String(raw.dueAt || '').trim()
+    || String(raw.calendarEventId || '').trim();
+  if (!hasAny) return null;
+  return normalizeWorkshopAction(raw);
+}
 
 const SALES_PATH = getDataFilePath('sales-clients.json');
 
@@ -186,20 +199,59 @@ function normalizeWebsiteImport(value = {}) {
   };
 }
 
-function normalizeMakerRun(value = {}) {
+function normalizeMakerRunSteps(value = {}) {
   const input = value && typeof value === 'object' ? value : {};
   return {
-    runId: sanitizeText(input.runId),
+    '1': sanitizeText(input['1']) || 'idle',
+    '1.5': sanitizeText(input['1.5']) || 'idle',
+    '2': sanitizeText(input['2']) || 'idle',
+    '3': sanitizeText(input['3']) || 'idle',
+  };
+}
+
+function normalizeMakerStep2Substeps(value = {}) {
+  const input = value && typeof value === 'object' ? value : {};
+  return {
+    'generate-text': sanitizeText(input['generate-text']) || 'idle',
+    'inject-media': sanitizeText(input['inject-media']) || 'idle',
+    'layout-colors-style': sanitizeText(input['layout-colors-style']) || 'idle',
+    'maps-embed-sync': sanitizeText(input['maps-embed-sync']) || 'idle',
+  };
+}
+
+function normalizeMakerRun(value = {}) {
+  const input = value && typeof value === 'object' ? value : {};
+  const runId = sanitizeText(input.runId);
+  const base = {
+    runId,
     dashboardUrl: sanitizeText(input.dashboardUrl),
     previewUrl: sanitizeText(input.previewUrl),
     latestReadyStep: sanitizeText(input.latestReadyStep),
     latestStepStatus: sanitizeText(input.latestStepStatus),
     intakeStatus: sanitizeText(input.intakeStatus),
+    templateSetId: sanitizeText(input.templateSetId),
     exportPath: sanitizeText(input.exportPath),
     statusUpdatedAt: sanitizeText(input.statusUpdatedAt),
     fieldsSyncedAt: sanitizeText(input.fieldsSyncedAt),
     industry: sanitizeText(input.industry),
     createdAt: sanitizeText(input.createdAt),
+  };
+  if (!runId) return base;
+  return {
+    ...base,
+    steps: normalizeMakerRunSteps(input.steps),
+    step2Substeps: normalizeMakerStep2Substeps(input.step2Substeps),
+    language: {
+      confirmed: Boolean(input.language?.confirmed),
+      code: sanitizeText(input.language?.code),
+    },
+    cms: sanitizeText(input.cms),
+    customSite: {
+      exists: Boolean(input.customSite?.exists),
+      previewPath: sanitizeText(input.customSite?.previewPath),
+    },
+    productionDomain: sanitizeText(input.productionDomain),
+    websiteDomain: sanitizeText(input.websiteDomain),
   };
 }
 
@@ -300,6 +352,7 @@ function normalizeSalesDetails(value = {}) {
     meetingQuote: normalizeMeetingQuote(input.meetingQuote),
     editEmailBeforeSend: parseSalesBoolean(input.editEmailBeforeSend),
   };
+  delete details.workshopAction;
   details.otherLinks = filterCustomOtherLinks(details.otherLinks, details);
   return details;
 }
@@ -368,6 +421,9 @@ function normalizeMeetings(list) {
       linkedAt: sanitizeText(raw.linkedAt) || nowIso(),
       linkedBy: sanitizeText(raw.linkedBy) || 'auto',
       forSalesMeeting: Boolean(raw.forSalesMeeting),
+      purpose: ['sales', 'workshop', 'iteration'].includes(sanitizeText(raw.purpose))
+        ? sanitizeText(raw.purpose)
+        : '',
     });
   }
   return out
@@ -444,6 +500,9 @@ function normalizeSalesClient(raw = {}) {
     progression: nextProgression,
     salesMigrations: reset.salesMigrations,
     nextActions: reset.nextActions,
+    workshopAction: persistWorkshopAction(raw.workshopAction),
+    workshop: persistWorkshopRecord(raw.workshop),
+    developerQa: normalizeDeveloperQa(raw.developerQa),
     development: product === 'ssu' ? normalizeDevelopment() : normalizeDevelopment(raw.development),
     reminders: normalizeReminders(raw.reminders || emptyReminders()),
     calendar: normalizeCalendar(raw.calendar),
@@ -568,6 +627,15 @@ export function updateSalesClient(id, updates = {}) {
     nextActions: Object.prototype.hasOwnProperty.call(updates, 'nextActions')
       ? updates.nextActions
       : current.nextActions,
+    workshopAction: Object.prototype.hasOwnProperty.call(updates, 'workshopAction')
+      ? updates.workshopAction
+      : current.workshopAction,
+    workshop: Object.prototype.hasOwnProperty.call(updates, 'workshop')
+      ? updates.workshop
+      : current.workshop,
+    developerQa: Object.prototype.hasOwnProperty.call(updates, 'developerQa')
+      ? { ...(current.developerQa || {}), ...(updates.developerQa || {}) }
+      : current.developerQa,
     salesMigrations: Object.prototype.hasOwnProperty.call(updates, 'salesMigrations')
       ? { ...(current.salesMigrations || {}), ...(updates.salesMigrations || {}) }
       : current.salesMigrations,
@@ -676,6 +744,22 @@ export function findSalesClientByMeetingId(meetingId) {
   const target = sanitizeText(meetingId);
   if (!target) return null;
   return readState().find((entry) => entry.meetings.some((meeting) => meeting.meetingId === target)) || null;
+}
+
+export function setSalesWorkshopAction(id, workshopAction) {
+  const current = getSalesClientById(id);
+  if (!current) return null;
+  return updateSalesClient(id, {
+    workshopAction: persistWorkshopAction(workshopAction),
+  });
+}
+
+export function setSalesWorkshop(id, workshop) {
+  const current = getSalesClientById(id);
+  if (!current) return null;
+  return updateSalesClient(id, {
+    workshop: persistWorkshopRecord(workshop),
+  });
 }
 
 export function setSalesNotes(id, notes, meetingQuote) {
@@ -926,6 +1010,10 @@ export function setSalesWebsiteImport(id, importPatch = {}) {
 
 export function setSalesMakerRun(id, makerPatch = {}) {
   return updateSalesClient(id, { makerRun: makerPatch });
+}
+
+export function setSalesDeveloperQa(id, qaPatch = {}) {
+  return updateSalesClient(id, { developerQa: qaPatch });
 }
 
 export function setSalesStatus(id, status, archivePatch = {}) {

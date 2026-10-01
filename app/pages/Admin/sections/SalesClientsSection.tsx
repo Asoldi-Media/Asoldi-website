@@ -37,7 +37,8 @@ import { SalesFlowSteps } from '../../sales/SalesFlowSteps';
 import { SalesScriptsDock } from '../../sales/SalesScriptsDock';
 import { offerMissingFields, offerReadinessMessage } from '../../../../lib/offer-readiness.js';
 import { SalesGoalTimeline } from './SalesGoalTimeline';
-import { SalesCalendarWeek, type SalesCalendarEvent } from './SalesCalendarWeek';
+import { WorkshopIterationLog } from './WorkshopIterationLog';
+import { SalesCalendarWeek } from './SalesCalendarWeek';
 import {
   clientIsSalesWin,
   classifySalesPipelineState,
@@ -56,7 +57,6 @@ import {
   secondaryInterestLabel,
   clientMatchesMeetingModeFilter,
   clientNextActionInDateRange,
-  osloWeekRange,
 } from '../../../../lib/sales-next-actions.js';
 import { salesBookingFacts } from '../../../../lib/sales-booking-facts.js';
 import { calendarDurationForMode } from '../../../../lib/sales-meeting-duration.js';
@@ -469,15 +469,15 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
   const [peekCardIds, setPeekCardIds] = useState<Record<string, boolean>>({});
   const [mapMounted, setMapMounted] = useState(false);
   const [calendarPanelOpen, setCalendarPanelOpen] = useState(false);
-  const [calendarWeekOffset, setCalendarWeekOffset] = useState(0);
   const [calendarWeekLoading, setCalendarWeekLoading] = useState(false);
   const [calendarWeekError, setCalendarWeekError] = useState('');
   const [calendarWeekData, setCalendarWeekData] = useState<{
     connected: boolean;
-    events: SalesCalendarEvent[];
+    embedUrl?: string;
     googleEmail?: string;
     accountKey?: string;
     message?: string;
+    shareWarning?: string;
   } | null>(null);
   const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
   const [secondaryPicker, setSecondaryPicker] = useState<{
@@ -550,10 +550,6 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
   const isSsuBracket = productBracket === 'ssu';
   const mapOpen = headerPanel === 'map';
   const canSignOut = Boolean(onLogout) && typeof window !== 'undefined' && window.location.pathname.startsWith('/sales');
-  const calendarWeek = useMemo(
-    () => osloWeekRange(meetingNowMs, calendarWeekOffset),
-    [meetingNowMs, calendarWeekOffset]
-  );
   const clientMatchesNameSearch = (client: SalesClient) => {
     if (!normalizedClientSearchQuery) return true;
     const haystack = [
@@ -915,25 +911,23 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
   useEffect(() => {
     if (headerPanel !== 'calendar') return undefined;
     let cancelled = false;
-    const range = osloWeekRange(Date.now(), calendarWeekOffset);
-    const params = new URLSearchParams({
-      timeMin: range.timeMin,
-      timeMax: range.timeMax,
-    });
+    const params = new URLSearchParams();
     if (isSalesAdmin && ownerFilter && ownerFilter !== 'unassigned') {
       params.set('ownerId', ownerFilter);
     }
+    const query = params.toString();
     setCalendarWeekLoading(true);
     setCalendarWeekError('');
-    void request(`/admin/sales/google/events?${params.toString()}`)
+    void request(`/admin/sales/google/embed${query ? `?${query}` : ''}`)
       .then((data) => {
         if (cancelled) return;
         setCalendarWeekData({
           connected: Boolean(data.connected),
-          events: Array.isArray(data.events) ? data.events as SalesCalendarEvent[] : [],
+          embedUrl: String(data.embedUrl || ''),
           googleEmail: String(data.googleEmail || ''),
           accountKey: String(data.accountKey || ''),
           message: String(data.message || ''),
+          shareWarning: String(data.shareWarning || ''),
         });
       })
       .catch((err) => {
@@ -946,7 +940,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
     return () => {
       cancelled = true;
     };
-  }, [headerPanel, calendarWeekOffset, ownerFilter, isSalesAdmin]);
+  }, [headerPanel, ownerFilter, isSalesAdmin, calendarStatus?.tokenUpdatedAt]);
 
   const hasPendingMapGeocodes = meetingMapPendingCount > 0;
   useEffect(() => {
@@ -1256,6 +1250,32 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed saving product notes');
+      throw err;
+    } finally {
+      setSavingNoteId((current) => (current === client.id ? null : current));
+    }
+  }
+
+  async function saveWorkshopAction(client: SalesClient, payload: {
+    workshopAction: { name: string; format: 'mote' | 'sms-ring'; dueAt: string; addToCalendar: boolean };
+  }) {
+    setSavingNoteId(client.id);
+    setError('');
+    try {
+      const data = await request(`/admin/sales/${client.id}/workshop-action`, {
+        method: 'PATCH',
+        body: JSON.stringify(payload.workshopAction),
+      });
+      const saved = data?.client as SalesClient | undefined;
+      if (saved?.id) {
+        setClients((prev) => prev.map((entry) => (entry.id === saved.id ? saved : entry)));
+      }
+      const warnings = Array.isArray((data as { warnings?: string[] })?.warnings)
+        ? (data as { warnings: string[] }).warnings.filter(Boolean)
+        : [];
+      if (warnings.length) setError(warnings.join(' '));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed saving workshop time');
       throw err;
     } finally {
       setSavingNoteId((current) => (current === client.id ? null : current));
@@ -2287,6 +2307,11 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                   onMutateAction={(body) => mutateNextAction(client, body)}
                   variant={isWin ? 'win' : 'active'}
                 />
+                <WorkshopIterationLog
+                  client={client}
+                  canMarkDone
+                  onClient={(saved) => setClients((prev) => prev.map((entry) => (entry.id === saved.id ? saved : entry)))}
+                />
 
                 <div className="flex flex-wrap items-center gap-2">
                   {!clientIsSsu && (
@@ -3137,7 +3162,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                         ))}
                       </select>
                       <span className="mt-1 block text-[11px] text-gray-500">
-                        Calendar viser denne selgerens møter med detaljer. Meeting bookers ser fortsatt bare opptatt.
+                        Calendar viser Google-uken til denne selgeren (møter og kalenderavtaler). Meeting bookers ser fortsatt bare opptatt.
                       </span>
                     </label>
                   )}
@@ -3211,19 +3236,15 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
               )}
               {headerPanel === 'calendar' && (
                 <SalesCalendarWeek
-                  days={calendarWeek.days}
-                  events={calendarWeekData?.events || []}
+                  embedUrl={calendarWeekData?.embedUrl || ''}
                   loading={calendarWeekLoading}
                   connected={Boolean(calendarWeekData?.connected)}
                   googleEmail={calendarWeekData?.googleEmail || ''}
                   ownerLabel={calendarPreviewOwner ? ownerLabel(calendarPreviewOwner) : 'deg'}
                   isOwnCalendar={calendarPreviewIsOwn}
-                  weekOffset={calendarWeekOffset}
                   message={calendarWeekData?.message || ''}
                   error={calendarWeekError}
-                  onPrevWeek={() => setCalendarWeekOffset((prev) => prev - 1)}
-                  onNextWeek={() => setCalendarWeekOffset((prev) => prev + 1)}
-                  onThisWeek={() => setCalendarWeekOffset(0)}
+                  shareWarning={calendarWeekData?.shareWarning || ''}
                   onConnect={() => { closeHeaderMenus(); setCalendarPanelOpen(true); }}
                 />
               )}
@@ -3884,11 +3905,25 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
             )}
             {inClientFlow && flowStep === 2 && flowClient && (
               <MeetingNotesModal
+                key={flowClient.id}
                 embedded
                 businessName={flowClient.businessName}
                 quote={flowClient.details?.meetingQuote}
+                workshopAction={flowClient.workshopAction}
                 saving={savingNoteId === flowClient.id}
                 onPersist={(payload) => saveMeetingNotes(flowClient, payload)}
+                onPersistWorkshop={(payload) => saveWorkshopAction(flowClient, payload)}
+                onLoadWorkshopAvailability={(weekOffset) => (
+                  request(`/admin/sales/google/workshop-availability?weekOffset=${weekOffset}`) as Promise<{
+                    connected?: boolean;
+                    googleEmail?: string;
+                    message?: string;
+                    days?: string[];
+                    timeMin?: string;
+                    timeMax?: string;
+                    busy?: Array<{ start?: string; end?: string; allDay?: boolean; summary?: string }>;
+                  }>
+                )}
                 onFlushReady={(flush) => { notesFlushRef.current = flush; }}
                 onContinue={() => void goFlowStep(3)}
               />

@@ -26,6 +26,8 @@ import {
   SALES_ACTION_TIMEZONE,
 } from '../../../../lib/sales-next-actions.js';
 import type { SalesActionFormat } from '../shared';
+import { MeetingVideoHover } from './MeetingVideoHover';
+import { clientMeetingHover } from '../../../../lib/workshop-record.js';
 
 type DraftState = {
   presetKey: SalesNextActionPreset;
@@ -97,6 +99,7 @@ export function SalesGoalTimeline({
     () => (currentGoal ? getGoalActions(client, currentGoal) as SalesNextAction[] : []),
     [client, currentGoal]
   );
+  const salesHover = clientMeetingHover(client, 'sales');
   const presets = currentGoal ? (GOAL_PRESETS[currentGoal] || []) : [];
   const hasMeeting = Boolean(client.agreedTime && client.meetingAt);
   const capActionList = currentActions.length > 1 && !edit;
@@ -287,7 +290,8 @@ export function SalesGoalTimeline({
             className={actionListMaxPx ? 'sales-action-scroll overflow-y-auto overscroll-contain pr-1.5' : undefined}
           >
           <div className={actionListMaxPx ? 'space-y-2 pb-6' : 'space-y-2'}>
-          {currentActions.map((currentAction) => (
+          {currentActions.map((currentAction) => {
+            const row = (
             <div
               key={currentAction.id}
               data-action-row
@@ -452,7 +456,13 @@ export function SalesGoalTimeline({
                 </div>
               )}
             </div>
-          ))}
+            );
+            return currentAction.presetKey === 'meeting' ? (
+              <MeetingVideoHover key={currentAction.id} meetingId={salesHover.meetingId} hasVideo={salesHover.hasVideo}>
+                {row}
+              </MeetingVideoHover>
+            ) : row;
+          })}
           </div>
           </div>
           {actionListMaxPx ? (

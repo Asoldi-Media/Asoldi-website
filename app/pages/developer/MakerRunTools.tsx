@@ -33,6 +33,7 @@ type Props = {
   onNotice?: (message: string) => void;
   allowCreate?: boolean;
   allowLink?: boolean;
+  variant?: 'full' | 'tools';
 };
 
 async function makerRequest(path: string, init: RequestInit, authHeaders: Record<string, string>) {
@@ -68,6 +69,7 @@ export function MakerRunTools({
   onNotice,
   allowCreate = true,
   allowLink = true,
+  variant = 'full',
 }: Props) {
   const [creating, setCreating] = useState(false);
   const [opening, setOpening] = useState(false);
@@ -200,6 +202,11 @@ export function MakerRunTools({
     }
   }
 
+  const toolsOnly = variant === 'tools';
+  const createClass = toolsOnly
+    ? 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50'
+    : 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FF5B00] text-white text-xs hover:bg-[#e55200] disabled:opacity-50';
+
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-2">
@@ -208,21 +215,23 @@ export function MakerRunTools({
             type="button"
             onClick={() => void createMakerRun(hasRun)}
             disabled={creating}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FF5B00] text-white text-xs hover:bg-[#e55200] disabled:opacity-50"
+            className={createClass}
           >
             {creating ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />}
             {hasRun ? 'New run' : 'Create run'}
           </button>
         )}
-        <button
-          type="button"
-          onClick={() => void openInMaker()}
-          disabled={!hasRun || opening}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
-        >
-          {opening ? <Loader2 size={13} className="animate-spin" /> : <ExternalLink size={13} />}
-          Open in maker
-        </button>
+        {!toolsOnly && (
+          <button
+            type="button"
+            onClick={() => void openInMaker()}
+            disabled={!hasRun || opening}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
+          >
+            {opening ? <Loader2 size={13} className="animate-spin" /> : <ExternalLink size={13} />}
+            Open in maker
+          </button>
+        )}
         <button
           type="button"
           onClick={() => makerPreviewUrl && window.open(makerPreviewUrl, '_blank')}
@@ -232,15 +241,17 @@ export function MakerRunTools({
           <ExternalLink size={13} />
           Maker preview
         </button>
-        <button
-          type="button"
-          onClick={() => window.open(publicPreviewUrl, '_blank')}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
-          title={publicPreviewUrl}
-        >
-          <ExternalLink size={13} />
-          Open preview
-        </button>
+        {!toolsOnly && (
+          <button
+            type="button"
+            onClick={() => window.open(publicPreviewUrl, '_blank')}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
+            title={publicPreviewUrl}
+          >
+            <ExternalLink size={13} />
+            Open preview
+          </button>
+        )}
         <button
           type="button"
           onClick={() => void copyPublicUrl()}

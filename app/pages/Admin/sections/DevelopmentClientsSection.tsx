@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { CalendarClock, CheckCircle2, ChevronDown, Loader2, Search, X } from 'lucide-react';
+import { ChevronDown, Loader2, Search, X } from 'lucide-react';
 import {
   API,
   developmentAuthHeaders,
@@ -7,7 +7,8 @@ import {
 } from '../shared';
 import { buildClientSearchHaystack, matchesClientSearchQuery, normalizeClientSearchText } from '../clientSearch';
 import { RECENT_OVERDUE_MS } from '../../../../lib/sales-next-actions.js';
-import { MakerRunTools } from '../../developer/MakerRunTools';
+import { DeveloperClientCard } from '../../developer/DeveloperClientCard';
+import { DeveloperRunQueueBar } from '../../developer/DeveloperRunQueueBar';
 import {
   LAN_MAKER_URL,
   LOCAL_MAKER_URL,
@@ -15,13 +16,6 @@ import {
   tunnelPopupMakerOrigin,
   useWebsiteMakerBaseUrl,
 } from '../../sales/websiteMaker';
-
-const DEVELOPMENT_STEPS: { key: keyof DevelopmentItem['development']; label: string }[] = [
-  { key: 'hostingerEnvironmentSetup', label: 'Hostinger environment sat opp' },
-  { key: 'githubRepoPushed', label: 'GitHub repo pushed' },
-  { key: 'v1Ferdig', label: 'V1 ferdig' },
-  { key: 'nettsideFerdig', label: 'Nettside ferdig' },
-];
 
 type Props = {
   hideHeader?: boolean;
@@ -89,18 +83,6 @@ function groupDevelopmentItems(items: DevelopmentItem[], nowMs: number) {
   return groups;
 }
 
-function formatRankTime(value = '') {
-  const ms = new Date(value).getTime();
-  if (!Number.isFinite(ms)) return '';
-  return new Date(ms).toLocaleString('nb-NO', {
-    weekday: 'short',
-    day: '2-digit',
-    month: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
 function bucketToneClass(tone: BucketTone) {
   if (tone === 'recent') return 'border-amber-300 bg-amber-50 text-amber-900';
   if (tone === 'upcoming') return 'border-emerald-200 bg-emerald-50 text-emerald-900';
@@ -108,113 +90,6 @@ function bucketToneClass(tone: BucketTone) {
   return 'border-neutral-200 bg-neutral-50 text-neutral-700';
 }
 
-function DevelopmentCard({
-  item,
-  kind,
-  busyKey,
-  websiteMakerBaseUrl,
-  setWebsiteMakerBaseUrl,
-  onToggleStep,
-  onReload,
-  onClientUpdated,
-  onError,
-  onNotice,
-}: {
-  item: DevelopmentItem;
-  kind: 'preview' | 'deployment';
-  busyKey: string | null;
-  websiteMakerBaseUrl: string;
-  setWebsiteMakerBaseUrl: (value: string) => void;
-  onToggleStep: (item: DevelopmentItem, key: keyof DevelopmentItem['development']) => void;
-  onReload: () => Promise<void> | void;
-  onClientUpdated?: (client: Record<string, unknown> | null | undefined) => void;
-  onError: (message: string) => void;
-  onNotice?: (message: string) => void;
-}) {
-  const contact = [item.contactPerson, item.contactPhone, item.contactEmail]
-    .filter(Boolean)
-    .join(' · ');
-  const salesClientId = String(item.salesClientId || '').trim();
-  const rankLabel = formatRankTime(item.rankAt || item.nextActionAt || item.meetingAt || '');
-
-  return (
-    <div className="rounded-2xl bg-[#2a2a2a] border border-white/10 p-4 flex flex-col gap-3">
-      <div className="min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <h3 className="text-white font-semibold truncate">{item.businessName}</h3>
-          <span
-            className={`shrink-0 px-2 py-0.5 rounded text-[11px] border ${
-              kind === 'preview'
-                ? 'bg-amber-900/30 border-amber-700/30 text-amber-300'
-                : 'bg-sky-900/30 border-sky-700/30 text-sky-300'
-            }`}
-          >
-            {kind === 'preview' ? 'Preview website' : 'Deployment'}
-          </span>
-        </div>
-        {contact && <p className="mt-1 text-xs text-gray-400 truncate">{contact}</p>}
-        {rankLabel && (
-          <p className="mt-1 text-xs text-sky-300 inline-flex items-center gap-1.5">
-            <CalendarClock size={12} />
-            {item.nextActionAt ? `${item.nextActionName || 'Neste handling'}: ` : 'Møte: '}
-            {rankLabel}
-          </p>
-        )}
-        <p className="mt-1 text-xs text-gray-500">
-          {item.websiteDomain || 'No domain yet'}
-          {item.siteKey ? ` · ${item.siteKey}` : ''}
-          {item.industry ? ` · ${item.industry}` : ''}
-        </p>
-      </div>
-
-      {item.notes ? (
-        <p className="text-sm text-gray-300 whitespace-pre-wrap">{item.notes}</p>
-      ) : null}
-
-      {kind === 'deployment' && (
-        <div className="flex flex-wrap gap-1.5">
-          {DEVELOPMENT_STEPS.map((step) => {
-            const done = Boolean(item.development?.[step.key]);
-            return (
-              <button
-                key={step.key}
-                type="button"
-                disabled={busyKey === `${item.id}:${step.key}`}
-                onClick={() => onToggleStep(item, step.key)}
-                className={`px-2 py-1 rounded-md text-[11px] border transition-colors hover:border-[#FF5B00]/40 disabled:opacity-60 ${
-                  done
-                    ? 'bg-green-900/40 border-green-600/40 text-green-300'
-                    : 'bg-black/20 border-white/10 text-gray-400'
-                }`}
-              >
-                {done ? <CheckCircle2 size={11} className="inline mr-1" /> : null}
-                {step.label}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {salesClientId ? (
-        <MakerRunTools
-          salesClientId={salesClientId}
-          client={{ id: salesClientId, makerRun: item.makerRun, websiteImport: item.websiteImport }}
-          websiteMakerBaseUrl={websiteMakerBaseUrl}
-          setWebsiteMakerBaseUrl={setWebsiteMakerBaseUrl}
-          authHeaders={developmentAuthHeaders()}
-          onReload={onReload}
-          onClientUpdated={onClientUpdated}
-          onError={onError}
-          onNotice={onNotice}
-          allowCreate
-          allowLink
-        />
-      ) : (
-        <p className="text-xs text-gray-500">No sales client linked — maker tools need a sales client.</p>
-      )}
-    </div>
-  );
-}
 
 export function DevelopmentClientsSection({ hideHeader = false }: Props) {
   const [previewItems, setPreviewItems] = useState<DevelopmentItem[]>([]);
@@ -228,6 +103,7 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [kindFilter, setKindFilter] = useState<'' | 'preview' | 'deployment'>('');
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [collapsedBuckets, setCollapsedBuckets] = useState<Record<string, boolean>>(() => {
     try {
@@ -295,6 +171,43 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
   );
   const visiblePreviewCount = previewItems.filter(itemMatchesSearch).length;
   const visibleDeploymentCount = deploymentItems.filter(itemMatchesSearch).length;
+  const visibleItems = useMemo(() => {
+    const list: DevelopmentItem[] = [];
+    if (kindFilter !== 'deployment') list.push(...previewItems.filter(itemMatchesSearch));
+    if (kindFilter !== 'preview') list.push(...deploymentItems.filter(itemMatchesSearch));
+    return list;
+  }, [deploymentItems, itemMatchesSearch, kindFilter, previewItems]);
+  const visibleSelectableIds = visibleItems.map((item) => item.id);
+  const allVisibleSelected = Boolean(visibleSelectableIds.length && visibleSelectableIds.every((id) => selectedIds.includes(id)));
+  const selectedClients = visibleItems
+    .filter((item) => selectedIds.includes(item.id))
+    .map((item) => ({
+      id: item.id,
+      salesClientId: String(item.salesClientId || '').trim(),
+      runId: String(item.makerRun?.runId || '').trim(),
+      businessName: String(item.businessName || '').trim(),
+    }));
+
+  function toggleClientSelected(itemId: string) {
+    setSelectedIds((prev) => (prev.includes(itemId) ? prev.filter((id) => id !== itemId) : [...prev, itemId]));
+  }
+
+  function toggleSelectAllVisible() {
+    if (allVisibleSelected) {
+      const hide = new Set(visibleSelectableIds);
+      setSelectedIds((prev) => prev.filter((id) => !hide.has(id)));
+      return;
+    }
+    setSelectedIds((prev) => [...new Set([...prev, ...visibleSelectableIds])]);
+  }
+
+  function handleClientCardClick(event: React.MouseEvent<HTMLElement>, itemId: string) {
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+    if (target.closest('button, a, input, select, textarea, label, audio, details, summary')) return;
+    if (window.getSelection()?.toString()) return;
+    toggleClientSelected(itemId);
+  }
 
   function renderGroupedCards(
     kind: 'preview' | 'deployment',
@@ -329,12 +242,15 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
                 <div className="space-y-4">
                   {items.map((item) => (
                     <React.Fragment key={item.id}>
-                      <DevelopmentCard
+                      <DeveloperClientCard
                         item={item}
                         kind={kind}
                         busyKey={busyKey}
+                        selected={selectedIds.includes(item.id)}
                         websiteMakerBaseUrl={websiteMakerBaseUrl}
                         setWebsiteMakerBaseUrl={setWebsiteMakerBaseUrl}
+                        onToggleSelected={() => toggleClientSelected(item.id)}
+                        onCardClick={(event) => handleClientCardClick(event, item.id)}
                         onToggleStep={(entry, stepKey) => void toggleStep(entry, stepKey)}
                         onReload={loadItems}
                         onClientUpdated={patchDevelopmentClient}
@@ -361,6 +277,8 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
             ...item,
             makerRun: client.makerRun ?? item.makerRun,
             websiteImport: client.websiteImport ?? item.websiteImport,
+            developerQa: client.developerQa ?? item.developerQa,
+            workshop: client.workshop ?? item.workshop,
           }
         : item
     ));
@@ -550,6 +468,17 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
           {notice}
         </div>
       )}
+
+      <DeveloperRunQueueBar
+        websiteMakerBaseUrl={websiteMakerBaseUrl}
+        selectedClients={selectedClients}
+        visibleCount={visibleSelectableIds.length}
+        allVisibleSelected={allVisibleSelected}
+        onToggleSelectAll={toggleSelectAllVisible}
+        onClearSelection={() => setSelectedIds([])}
+        onError={setError}
+        onNotice={setNotice}
+      />
 
       {loading ? (
         <div className="min-h-[160px] flex items-center justify-center text-gray-400">

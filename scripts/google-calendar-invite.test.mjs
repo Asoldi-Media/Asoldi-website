@@ -14,6 +14,10 @@ import {
   shouldForceCalendarRecreate,
   presentCalendarEvent,
   resolveSalesCalendarPreviewAccountKey,
+  googleCalendarOauthScopes,
+  buildGoogleCalendarEmbedUrl,
+  isAsoldiCalendarSummary,
+  GOOGLE_CALENDAR_EMBED_HEIGHT_PX,
 } from '../lib/google-calendar.js';
 import {
   GOOGLE_CALENDAR_OAUTH_EVENT,
@@ -215,4 +219,28 @@ test('calendar event details keep the title for sales even when Google embed wou
   assert.equal(shown.summary, 'Asoldi · Online møte · Bakeri');
   assert.equal(shown.meetLink, 'https://meet.google.com/abc-defg-hij');
   assert.equal(presentCalendarEvent({ start: { dateTime: '2026-09-30T07:00:00.000Z' } }).summary, 'Opptatt');
+});
+
+test('sales calendar oauth asks to read the whole calendar, not only events the app created', () => {
+  const scopes = googleCalendarOauthScopes();
+  assert.equal(scopes.includes('https://www.googleapis.com/auth/calendar.events'), true);
+  assert.equal(scopes.includes('https://www.googleapis.com/auth/calendar.readonly'), true);
+  assert.equal(scopes.includes('https://www.googleapis.com/auth/calendar.acls'), true);
+  assert.equal(scopes.includes('https://www.googleapis.com/auth/gmail.readonly'), true);
+});
+
+test('sales calendar embed is Google week view for that account, not a custom grid', () => {
+  const url = buildGoogleCalendarEmbedUrl({
+    src: 'alexander@asoldi.com',
+    timeZone: 'Europe/Oslo',
+  });
+  assert.match(url, /^https:\/\/calendar\.google\.com\/calendar\/embed\?/);
+  assert.match(url, /src=alexander%40asoldi.com/);
+  assert.match(url, /mode=WEEK/);
+  assert.match(url, /ctz=Europe%2FOslo/);
+  assert.match(url, /showTabs=0/);
+  assert.match(url, new RegExp(`height=${GOOGLE_CALENDAR_EMBED_HEIGHT_PX}`));
+  assert.equal(buildGoogleCalendarEmbedUrl({ src: 'primary' }), '');
+  assert.equal(isAsoldiCalendarSummary('Asoldi · Online møte · Bakeri'), true);
+  assert.equal(isAsoldiCalendarSummary('Dentist'), false);
 });

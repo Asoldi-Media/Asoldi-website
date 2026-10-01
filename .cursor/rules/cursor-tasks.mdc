@@ -1,0 +1,21 @@
+---
+description: Read .cursor-tasks.md and plan before that work
+alwaysApply: true
+---
+
+# Cursor tasks
+
+At the start of a task, read `.cursor-tasks.md` in the repo root. It maps the workshop, admin board, developer page, and website-maker work. The code wins if the file is stale. Update both copies of the file (this repo and the sibling repo) when you learn something the next chat needs.
+
+Before writing or editing code for a task in that file, or for work that touches those systems:
+
+1. Switch to Plan mode.
+2. Research the current code the task names. Do not treat the file as a substitute for reading the code.
+3. State the goal of this task and the larger step it belongs to.
+4. List the systems this change depends on, and which other tasks must already be done.
+5. Ask every question under that task's "Ask before coding" heading. Wait for answers. If the user says to use the defaults, use the recommended default written under each question.
+6. Do not start a second task from the file in the same chat.
+
+When the work is finished, run that task's testing section, including the production check, and say what you could not verify.
+
+If the user is not working on a task from that file and the change does not touch those systems, do the requested work without that question checklist.
