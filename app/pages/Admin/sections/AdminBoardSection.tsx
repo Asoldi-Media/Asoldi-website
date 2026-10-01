@@ -2,7 +2,7 @@ import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from
 import { CalendarDays, ChevronDown, Loader2 } from 'lucide-react';
 import { API, salesAuthHeaders, type SalesClient } from '../shared';
 import { formatActionFormatLabel, SALES_ACTION_TIMEZONE } from '../../../../lib/sales-next-actions.js';
-import { getWorkshopAction } from '../../../../lib/workshop-action.js';
+import { getWorkshopAction } from '../../../../lib/workshop-action-shared.js';
 import {
   adminBoardViewerIsDamianMailbox,
   DAMIAN_WORKSHOP_CALENDAR_EMAIL,
