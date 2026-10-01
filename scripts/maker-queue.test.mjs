@@ -6,6 +6,7 @@ import {
   isClickableQueueTarget,
   resolveMakerQueueRunRequests,
   summarizeMakerRunForQueue,
+  targetsUntil,
 } from '../lib/maker-queue.js';
 
 test('linked sales clients enqueue; missing run fails that item', () => {
@@ -23,17 +24,19 @@ test('linked sales clients enqueue; missing run fails that item', () => {
   assert.equal(result.failures[0].error, 'No Website Maker run is linked.');
 });
 
-test('full Step 2 is one accepted target and CMS is not clickable', () => {
+test('full Step 2 is accepted; CMS is grey; Layout Maps and SEO are clickable', () => {
   assert.equal(isAcceptedQueueTarget('2'), true);
   assert.equal(isAcceptedQueueTarget('cms'), true);
   assert.equal(isAcceptedQueueTarget('3'), true);
   assert.equal(isClickableQueueTarget('1'), true);
   assert.equal(isClickableQueueTarget('inject-media'), true);
+  assert.equal(isClickableQueueTarget('layout-colors-style'), true);
+  assert.equal(isClickableQueueTarget('maps-embed-sync'), true);
   assert.equal(isClickableQueueTarget('2'), false);
   assert.equal(isClickableQueueTarget('cms'), false);
-  assert.equal(isClickableQueueTarget('3'), false);
+  assert.equal(isClickableQueueTarget('3'), true);
   assert.ok(GREY_QUEUE_TARGETS.some((entry) => entry.target === 'cms'));
-  assert.ok(GREY_QUEUE_TARGETS.some((entry) => entry.target === '3'));
+  assert.equal(GREY_QUEUE_TARGETS.some((entry) => entry.target === '3'), false);
 });
 
 test('wizard status comes from Maker run substeps and language lock', () => {
@@ -55,4 +58,16 @@ test('wizard status comes from Maker run substeps and language lock', () => {
   });
   assert.equal(unlocked.languageLocked, false);
   assert.equal(unlocked.generateTextReady, false);
+});
+
+test('until-chain includes Layout Maps and SEO and skips Lang and CMS', () => {
+  assert.deepEqual(targetsUntil('layout-colors-style'), [
+    '1',
+    '1.5',
+    'generate-text',
+    'inject-media',
+    'layout-colors-style',
+  ]);
+  assert.equal(targetsUntil('3').includes('cms'), false);
+  assert.equal(targetsUntil('3').at(-1), '3');
 });

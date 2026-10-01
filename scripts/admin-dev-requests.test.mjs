@@ -216,3 +216,52 @@ test('Maker LAN handoff does not mark committed or write libraries', async () =>
   });
   assert.equal(completed.messages[0].files[0].committed.destination, 'maker');
 });
+
+test('client domain-help owned vs buy land as distinct requests on the sales client', () => {
+  const ownedClient = seedClient({ id: 'domain-help-owned' });
+  const owned = lib.addClientDomainHelp({
+    portalUserId: PORTAL_USER,
+    salesClientId: ownedClient.id,
+    kind: 'domain-nameservers-owned',
+    domain: 'https://www.cafe-test.no/path',
+    businessName: 'Cafe Test',
+  });
+  const ownedMessage = owned.messages[owned.messages.length - 1];
+  assert.equal(owned.salesClientId, ownedClient.id);
+  assert.equal(ownedMessage.authorRole, 'client');
+  assert.equal(ownedMessage.kind, 'domain-nameservers-owned');
+  assert.match(ownedMessage.text, /eid domene/);
+  assert.equal(owned.lastKindLabel, 'Hjelp kunde sette opp navnservere på eid domene');
+
+  const buyClient = sales.createSalesClient({
+    id: 'domain-help-buy',
+    businessName: 'Kjøp AS',
+    product: 'asoldi',
+    portalUserId: 'portal-buy-user',
+  });
+  const buy = lib.addClientDomainHelp({
+    portalUserId: 'portal-buy-user',
+    kind: 'domain-nameservers-buy',
+    domain: 'nybutikk.no',
+    businessName: 'Kjøp AS',
+  });
+  const buyMessage = buy.messages[buy.messages.length - 1];
+  assert.equal(buy.salesClientId, buyClient.id);
+  assert.equal(buyMessage.kind, 'domain-nameservers-buy');
+  assert.equal(buy.lastKindLabel, 'Hjelp kunde sette opp navnservere på ikke-eid domene');
+
+  const listed = lib.listThreads();
+  const ownedRow = listed.find((row) => row.salesClientId === ownedClient.id);
+  const buyRow = listed.find((row) => row.salesClientId === buyClient.id);
+  assert.equal(ownedRow.lastKind, 'domain-nameservers-owned');
+  assert.equal(buyRow.lastKind, 'domain-nameservers-buy');
+  assert.equal(ownedRow.lastAuthorRole, 'client');
+});
+
+test('domain help without a linked sales client is refused', () => {
+  assert.throws(() => lib.addClientDomainHelp({
+    portalUserId: 'nobody',
+    kind: 'domain-nameservers-owned',
+    domain: 'missing.no',
+  }), /koblet/);
+});

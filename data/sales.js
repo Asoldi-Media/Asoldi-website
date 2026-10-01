@@ -21,6 +21,7 @@ import { filterCustomOtherLinks } from '../lib/sales-client-links.js';
 import { normalizeWorkshopAction } from '../lib/workshop-action.js';
 import { persistWorkshopRecord } from '../lib/workshop-record.js';
 import { normalizeDeveloperQa } from '../lib/developer-card.js';
+import { normalizeDueDate } from '../lib/website-due.js';
 
 function persistWorkshopAction(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -503,6 +504,9 @@ function normalizeSalesClient(raw = {}) {
     workshopAction: persistWorkshopAction(raw.workshopAction),
     workshop: persistWorkshopRecord(raw.workshop),
     developerQa: normalizeDeveloperQa(raw.developerQa),
+    contractSignedAt: nextProgression.contractSigned ? sanitizeText(raw.contractSignedAt) : '',
+    websiteDueOverride: normalizeDueDate(raw.websiteDueOverride),
+    websiteDeliveryWeeks: Math.max(0, Math.round(Number(raw.websiteDeliveryWeeks) || 0)),
     development: product === 'ssu' ? normalizeDevelopment() : normalizeDevelopment(raw.development),
     reminders: normalizeReminders(raw.reminders || emptyReminders()),
     calendar: normalizeCalendar(raw.calendar),
@@ -803,11 +807,21 @@ export function setSalesProgress(id, key, value, { fastTrack = false } = {}) {
   const lockId = held
     ? (sanitizeText(current.lockedOfferMeetingId) || pickLockedOfferMeetingId(current))
     : '';
+  const turningOn = mapped === 'contractSigned' && Boolean(value) && !current.progression?.contractSigned;
+  const turningOff = mapped === 'contractSigned' && !value;
   return updateSalesClient(id, {
     progression: applied.progression,
     nextActions: applied.nextActions,
     lockedOfferMeetingId: lockId,
+    ...(turningOn ? { contractSignedAt: new Date().toISOString() } : {}),
+    ...(turningOff ? { contractSignedAt: '' } : {}),
   });
+}
+
+export function setClientWebsiteDue(id, dueOverride = '') {
+  const current = getSalesClientById(id);
+  if (!current) return null;
+  return updateSalesClient(id, { websiteDueOverride: normalizeDueDate(dueOverride) });
 }
 
 export function liveJoinMeetingId(clientId, meetingAt = '') {

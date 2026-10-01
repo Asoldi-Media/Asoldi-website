@@ -37,9 +37,17 @@ import {
   readClientMedia,
   saveClientUploadBuffer,
   listClientUploadFiles,
+  deleteClientUploadFile,
+  stripClientUploadFromBank,
   clientMediaMime as clientUploadMime,
 } from './lib/client-media-store.js';
 import * as adminDevRequests from './lib/admin-dev-requests.js';
+import {
+  DOMAIN_HELP_BUY,
+  DOMAIN_HELP_OWNED,
+  normalizeDomainInput,
+  normalizeDomainSetup,
+} from './lib/domain-setup.js';
 import {
   isAcceptedQueueTarget,
   resolveMakerQueueRunRequests,
@@ -145,6 +153,7 @@ import {
   offerSendContentMode,
   offerSlotIsOpen,
   productsWithTier,
+  replaceOfferDelivery,
   refreshOfferShell,
   resolveOfferIdentityTags,
   workshopStartSentence,
@@ -153,6 +162,7 @@ import {
 import { buildOfferFromMeetingQuote } from './lib/offer-from-quote.js';
 import { clientWithOfferParty, offerMissingFields, offerReadinessMessage } from './lib/offer-readiness.js';
 import { buildContractPdf, contractFileName, contractInputsForOffer, offerContractIsAvailable } from './lib/offer-contract-pdf.js';
+import { deliveryWeeksForOffer, normalizeDueDate, offerDeliveryPhraseNb, resolveWebsiteDue } from './lib/website-due.js';
 import { contractHtmlForOffer } from './lib/offer-contract-html.js';
 import { extractOfferLetterBody } from './lib/offer-letter-html.js';
 import { isDeepseekConfigured } from './lib/deepseek.js';
@@ -236,6 +246,7 @@ import {
 } from './lib/google-calendar.js';
 import { loadWorkshopNeedsDocument, patchWorkshopNeedLine } from './lib/workshop-needs.js';
 import { flattenMakerUploadsForLibrary, makerProgressPatchFromHandoff, normalizeDeveloperQa } from './lib/developer-card.js';
+import { LOCAL_EDITOR_ORIGIN } from './lib/maker-editor-origin.js';
 import {
   DAMIAN_WORKSHOP_CALENDAR_EMAIL,
   getWorkshopAction,
@@ -10137,6 +10148,9 @@ app.put('/api/client/profile', clientAuth, async (req, res) => {
     current?.clientDataBank || {},
     body.sources && typeof body.sources === 'object' ? body.sources : {},
     {
+      name: body.name,
+      title: body.position,
+      position: body.position,
       phone: body.phone || body.companyPhone,
       email: body.email || body.companyEmail,
     },
@@ -10219,6 +10233,61 @@ app.put('/api/client/settings/client-data', clientAuth, async (req, res) => {
     clientDataBank: bank,
   }, { syncPortalState: false });
   return res.json({ profile, clientDataBank: profile?.clientDataBank || null });
+});
+
+app.post('/api/client/domain-help', clientAuth, async (req, res) => {
+  const user = await store.getUserById(req.client.userId);
+  if (!user || user.role !== 'client') return res.status(401).json({ message: 'Unauthorized' });
+  const profile = clientPortal.ensureClientProfileForUser(user)
+    || clientPortal.getClientProfileByUserId(user.id);
+  const bank = profile?.clientDataBank && typeof profile.clientDataBank === 'object'
+    ? profile.clientDataBank
+    : {};
+  const kind = sanitizeText(req.body?.kind);
+  const domain = normalizeDomainInput(
+    req.body?.domain
+    || bank.domainSetup?.domain
+    || bank.websiteCreatorQuestions?.websiteDomain
+  );
+  try {
+    const thread = adminDevRequests.addClientDomainHelp({
+      portalUserId: user.id,
+      salesClientId: bank.makerLink?.salesClientId,
+      email: user.username || profile?.email || bank.generalInfo?.companyEmail,
+      authorLabel: bank.businessCard?.companyName || profile?.businessName || 'Kunde',
+      kind,
+      domain,
+      businessName: bank.businessCard?.companyName || profile?.businessName,
+    });
+    const nextBank = {
+      ...bank,
+      websiteCreatorQuestions: {
+        ...(bank.websiteCreatorQuestions || {}),
+        websiteDomain: domain || bank.websiteCreatorQuestions?.websiteDomain || '',
+      },
+      domainSetup: normalizeDomainSetup({
+        ...(bank.domainSetup || {}),
+        domain,
+        ownership: kind === DOMAIN_HELP_OWNED ? 'owned' : 'buy',
+        status: 'help-requested',
+        helpBuy: kind === DOMAIN_HELP_BUY,
+        helpNameservers: kind === DOMAIN_HELP_OWNED,
+        requestKind: kind,
+        requestSentAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }),
+    };
+    const saved = clientPortal.setClientDataBank(user.id, nextBank);
+    return res.json({
+      ok: true,
+      thread,
+      clientDataBank: saved?.clientDataBank || nextBank,
+    });
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 400)).json({
+      message: error.message || 'Kunne ikke sende domeneforespørselen.',
+    });
+  }
 });
 
 const clientAssistantUpload = multer({
@@ -13382,6 +13451,42 @@ app.delete('/api/admin/sales/:id', salesAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+app.get('/api/admin/sales/:id/website-due', salesAuth, (req, res) => {
+  if (!requireOfferAdmin(req, res)) return;
+  const client = sales.getSalesClientById(req.params.id);
+  if (!client) return res.status(404).json({ message: 'Client not found.' });
+  res.json(websiteDueView(client));
+});
+
+app.patch('/api/admin/sales/:id/website-due', salesAuth, (req, res) => {
+  if (!requireOfferAdmin(req, res)) return;
+  if (typeof req.body?.dueDate !== 'string') return res.status(400).json({ message: 'Mangler dato.' });
+  const dueDate = normalizeDueDate(req.body.dueDate);
+  if (String(req.body.dueDate).trim() && !dueDate) return res.status(400).json({ message: 'Ugyldig dato.' });
+  const client = sales.setClientWebsiteDue(req.params.id, dueDate);
+  if (!client) return res.status(404).json({ message: 'Client not found.' });
+  const offer = salesOffers.getOfferForClient(client.id);
+  if (offer) {
+    const patch = { dueDate };
+    if (offer.status !== 'sent') {
+      patch.email = {
+        html: replaceOfferDelivery(offer.email?.html || '', offer.products, { dueDate, tierId: offer.tierId }),
+      };
+      if (offer.status === 'verified') {
+        patch.status = 'review-requested';
+        patch.verifiedAt = '';
+        patch.verifiedBy = '';
+      }
+    }
+    salesOffers.updateSalesOffer(offer.id, patch, {
+      actor: offerActor(req),
+      action: 'due-date',
+      note: dueDate || 'cleared',
+    });
+  }
+  res.json(websiteDueView(sales.getSalesClientById(client.id)));
+});
+
 app.patch('/api/admin/sales/:id/progression', salesAuth, (req, res) => {
   const key = sanitizeText(req.body?.key);
   const value = parseBoolean(req.body?.value, false);
@@ -14484,11 +14589,17 @@ function offerPatchFromBody(body = {}, current = {}) {
     else if (current.tierId === CUSTOM_TIER_ID && typeof body.reviewRequested !== 'boolean') patch.reviewRequested = false;
   }
   if (current.tierId === CUSTOM_TIER_ID && !tierChanged) patch.reviewRequested = true;
-  if (products || mvaChanged) {
+  if (typeof body.dueDate === 'string') patch.dueDate = normalizeDueDate(body.dueDate);
+  const dueDate = Object.prototype.hasOwnProperty.call(patch, 'dueDate') ? patch.dueDate : normalizeDueDate(current.dueDate);
+  if (products || mvaChanged || Object.prototype.hasOwnProperty.call(patch, 'dueDate')) {
     const list = products || current.products || [];
     if (products) patch.products = products;
     const html = typeof email.html === 'string' ? email.html : current.email?.html || '';
-    patch.email = { ...(patch.email || {}), html: applyOfferProducts(html, list, { mvaIncluded }) };
+    const tierId = patch.tierId || current.tierId || '';
+    patch.email = {
+      ...(patch.email || {}),
+      html: applyOfferProducts(html, list, { mvaIncluded, dueDate, tierId }),
+    };
   }
   if (body.party && typeof body.party === 'object') patch.party = body.party;
   return patch;
@@ -15265,6 +15376,9 @@ app.put('/api/admin/offers/:id', salesAuth, async (req, res) => {
     patch.verifiedBy = '';
   }
   const updated = salesOffers.updateSalesOffer(current.id, patch, { actor: offerActor(req), action: contentChanged ? 'admin-edited' : '' });
+  if (updated?.salesClientId && Object.prototype.hasOwnProperty.call(patch, 'dueDate')) {
+    sales.setClientWebsiteDue(updated.salesClientId, updated.dueDate);
+  }
   res.json({ offer: presentOffer(updated) });
 });
 
@@ -16515,14 +16629,51 @@ app.post('/api/admin/sales/:id/got-client', salesAuth, async (req, res) => {
   });
 });
 
+function clientsWithWebsiteDue(clients = []) {
+  const offers = salesOffers.latestOffersByClient();
+  return clients.map((client) => {
+    const offer = offers.get(client.id) || null;
+    const tierId = offer?.tierId || client.portalTierId || client.details?.meetingQuote?.tierId || '';
+    const weeks = deliveryWeeksForOffer({ tierId, products: offer?.products || [] });
+    return {
+      ...client,
+      websiteDueOverride: offer?.dueDate || client.websiteDueOverride || '',
+      websiteDeliveryWeeks: weeks || client.websiteDeliveryWeeks || 0,
+    };
+  });
+}
+
+function websiteDueView(client) {
+  const offer = salesOffers.getOfferForClient(client.id);
+  const tierId = offer?.tierId || client.portalTierId || client.details?.meetingQuote?.tierId || '';
+  const products = offer?.products || [];
+  const weeks = deliveryWeeksForOffer({ tierId, products }) || client.websiteDeliveryWeeks || 0;
+  const dueOverride = offer?.dueDate || client.websiteDueOverride || '';
+  const due = resolveWebsiteDue({
+    contractSigned: client.progression?.contractSigned,
+    contractSignedAt: client.contractSignedAt,
+    dueOverride,
+    weeks,
+  });
+  return {
+    dueDate: normalizeDueDate(dueOverride),
+    weeks,
+    phrase: offerDeliveryPhraseNb({ tierId, products, dueDate: dueOverride }),
+    contractSigned: Boolean(client.progression?.contractSigned),
+    contractSignedAt: client.contractSignedAt || '',
+    started: due.started,
+    label: due.label,
+  };
+}
+
 function listDevelopmentBoard() {
-  const salesClients = sales.getSalesClients();
+  const salesClients = clientsWithWebsiteDue(sales.getSalesClients());
   const sites = hub.getAllSites();
   return buildDevelopmentItems(salesClients, sites);
 }
 
 function listPreviewBoard() {
-  return buildPreviewItems(sales.getSalesClients(), hub.getAllSites());
+  return buildPreviewItems(clientsWithWebsiteDue(sales.getSalesClients()), hub.getAllSites());
 }
 
 function resolveDevelopmentTarget(itemId) {
@@ -16624,8 +16775,25 @@ function makerUnreachableMessage(error, base) {
   return raw;
 }
 
-function resolveDevelopmentMakerBase(req) {
-  return resolveWebsiteMakerBaseUrl(req.body?.websiteMakerBaseUrl || req.query?.websiteMakerBaseUrl);
+function developmentMakerUnreachableMessage(error, base = LOCAL_EDITOR_ORIGIN) {
+  const raw = String(error?.message || 'Failed reaching the Website Maker.');
+  if (/ECONNREFUSED|ETIMEDOUT|fetch failed|ENOTFOUND|getaddrinfo/i.test(raw) || /ENOTFOUND|getaddrinfo/i.test(String(error?.cause || ''))) {
+    return `Website Maker is unreachable at ${base}. Start Docker Maker on port 3000.`;
+  }
+  return raw;
+}
+
+function resolveDevelopmentMakerBase() {
+  return LOCAL_EDITOR_ORIGIN;
+}
+
+function developmentMakerPublicHostBlocked(req, res, extra = {}) {
+  if (!(isPrivateMakerUrl(LOCAL_EDITOR_ORIGIN) && requestIsPublicInternetHost(req))) return false;
+  res.status(502).json({
+    message: `Website Maker is unreachable at ${LOCAL_EDITOR_ORIGIN} from this host. Use local /developer and start Docker Maker on port 3000.`,
+    ...extra,
+  });
+  return true;
 }
 
 async function fetchMakerJson(base, pathname, { method = 'GET', body } = {}) {
@@ -16654,32 +16822,23 @@ async function fetchMakerJson(base, pathname, { method = 'GET', body } = {}) {
 }
 
 app.get('/api/admin/development/maker-queue', developmentAuth, async (req, res) => {
-  const base = resolveDevelopmentMakerBase(req);
-  if (!base) {
-    return res.status(400).json({ message: 'Website Maker URL is invalid. Use a valid host or URL (for example https://example.com).' });
-  }
-  if (isPrivateMakerUrl(base) && requestIsPublicInternetHost(req)) {
-    return res.status(502).json({
-      message: `Website Maker is unreachable at ${base} from this host. Start the Maker tunnel, then retry.`,
-    });
-  }
+  const base = resolveDevelopmentMakerBase();
+  if (developmentMakerPublicHostBlocked(req, res)) return;
   try {
     const data = await fetchMakerJson(base, '/api/pipeline-queue');
     return res.json(data);
   } catch (error) {
     return res.status(httpStatusFromError(error, 502)).json({
-      message: error.status ? error.message : makerUnreachableMessage(error, base),
+      message: error.status ? error.message : developmentMakerUnreachableMessage(error, base),
     });
   }
 });
 
 app.post('/api/admin/development/maker-queue', developmentAuth, async (req, res) => {
-  const base = resolveDevelopmentMakerBase(req);
-  if (!base) {
-    return res.status(400).json({ message: 'Website Maker URL is invalid. Use a valid host or URL (for example https://example.com).' });
-  }
-  const target = sanitizeText(req.body?.target);
-  if (!isAcceptedQueueTarget(target)) {
+  const base = resolveDevelopmentMakerBase();
+  const untilTarget = sanitizeText(req.body?.untilTarget);
+  const target = sanitizeText(req.body?.target || untilTarget);
+  if (!isAcceptedQueueTarget(target) && !isAcceptedQueueTarget(untilTarget)) {
     return res.status(400).json({ message: 'Unknown pipeline queue target.' });
   }
   const salesClientIds = Array.isArray(req.body?.salesClientIds) ? req.body.salesClientIds : [];
@@ -16695,17 +16854,12 @@ app.post('/api/admin/development/maker-queue', developmentAuth, async (req, res)
       failures,
     });
   }
-  if (isPrivateMakerUrl(base) && requestIsPublicInternetHost(req)) {
-    return res.status(502).json({
-      message: `Website Maker is unreachable at ${base} from this host. Start the Maker tunnel, then retry.`,
-      failures,
-    });
-  }
+  if (developmentMakerPublicHostBlocked(req, res, { failures })) return;
   try {
     const data = await fetchMakerJson(base, '/api/pipeline-queue', {
       method: 'POST',
       body: {
-        target,
+        ...(untilTarget ? { untilTarget } : { target }),
         runIds: linked.map((entry) => entry.runId),
         salesClientIds: linked.map((entry) => entry.salesClientId),
       },
@@ -16713,24 +16867,17 @@ app.post('/api/admin/development/maker-queue', developmentAuth, async (req, res)
     return res.json({ ok: true, ...data, failures });
   } catch (error) {
     return res.status(httpStatusFromError(error, 502)).json({
-      message: error.status ? error.message : makerUnreachableMessage(error, base),
+      message: error.status ? error.message : developmentMakerUnreachableMessage(error, base),
       failures,
     });
   }
 });
 
 app.delete('/api/admin/development/maker-queue', developmentAuth, async (req, res) => {
-  const base = resolveDevelopmentMakerBase(req);
+  const base = resolveDevelopmentMakerBase();
   const itemId = sanitizeText(req.query?.itemId || req.body?.itemId);
-  if (!base) {
-    return res.status(400).json({ message: 'Website Maker URL is invalid. Use a valid host or URL (for example https://example.com).' });
-  }
   if (!itemId) return res.status(400).json({ message: 'itemId is required.' });
-  if (isPrivateMakerUrl(base) && requestIsPublicInternetHost(req)) {
-    return res.status(502).json({
-      message: `Website Maker is unreachable at ${base} from this host. Start the Maker tunnel, then retry.`,
-    });
-  }
+  if (developmentMakerPublicHostBlocked(req, res)) return;
   try {
     const data = await fetchMakerJson(base, `/api/pipeline-queue?itemId=${encodeURIComponent(itemId)}`, {
       method: 'DELETE',
@@ -16738,29 +16885,71 @@ app.delete('/api/admin/development/maker-queue', developmentAuth, async (req, re
     return res.json(data);
   } catch (error) {
     return res.status(httpStatusFromError(error, 502)).json({
-      message: error.status ? error.message : makerUnreachableMessage(error, base),
+      message: error.status ? error.message : developmentMakerUnreachableMessage(error, base),
     });
   }
 });
 
 app.get('/api/admin/development/maker-run/:runId', developmentAuth, async (req, res) => {
-  const base = resolveDevelopmentMakerBase(req);
+  const base = resolveDevelopmentMakerBase();
   const runId = sanitizeText(req.params.runId);
-  if (!base) {
-    return res.status(400).json({ message: 'Website Maker URL is invalid. Use a valid host or URL (for example https://example.com).' });
-  }
   if (!runId) return res.status(400).json({ message: 'Run ID is required.' });
-  if (isPrivateMakerUrl(base) && requestIsPublicInternetHost(req)) {
-    return res.status(502).json({
-      message: `Website Maker is unreachable at ${base} from this host. Start the Maker tunnel, then retry.`,
-    });
-  }
+  if (developmentMakerPublicHostBlocked(req, res)) return;
   try {
     const run = await fetchMakerRunRecord({ websiteMakerBaseUrl: base, runId });
     return res.json({ run, ...summarizeMakerRunForQueue({ ...run, id: runId }) });
   } catch (error) {
     return res.status(httpStatusFromError(error, 502)).json({
-      message: error.status ? error.message : makerUnreachableMessage(error, base),
+      message: error.status ? error.message : developmentMakerUnreachableMessage(error, base),
+    });
+  }
+});
+
+app.post('/api/admin/development/maker-run/:runId/domain', developmentAuth, async (req, res) => {
+  const base = resolveDevelopmentMakerBase();
+  const runId = sanitizeText(req.params.runId);
+  const websiteDomain = sanitizeText(req.body?.websiteDomain);
+  const salesClientId = sanitizeText(req.body?.salesClientId);
+  if (!runId) return res.status(400).json({ message: 'Run ID is required.' });
+  const makerSaved = parseBoolean(req.body?.makerSaved, false);
+  if (!makerSaved && developmentMakerPublicHostBlocked(req, res)) return;
+  try {
+    let run = null;
+    if (!makerSaved) {
+      await fetchMakerJson(base, `/api/runs/${encodeURIComponent(runId)}/save-intake`, {
+        method: 'POST',
+        body: { answers: { websiteDomain } },
+      });
+      run = await fetchMakerRunRecord({ websiteMakerBaseUrl: base, runId });
+    }
+    const runHandoff = run?.salesHandoff && typeof run.salesHandoff === 'object' ? run.salesHandoff : {};
+    const summary = summarizeMakerRunForQueue(
+      run
+        ? { ...run, id: runId }
+        : { id: runId, answers: { websiteDomain }, metadata: { productionDomain: websiteDomain } }
+    );
+    if (!run) {
+      run = { id: runId, answers: { websiteDomain }, metadata: { productionDomain: websiteDomain } };
+    }
+    let client = salesClientId ? sales.getSalesClientById(salesClientId) : null;
+    if (!client) {
+      client = sales.getSalesClients().find((entry) => sanitizeText(entry?.makerRun?.runId) === runId) || null;
+    }
+    if (client) {
+      client = sales.setSalesMakerRun(client.id, {
+        ...(client.makerRun || {}),
+        runId,
+        ...makerProgressPatchFromHandoff({
+          ...runHandoff,
+          productionDomain: summary.websiteDomain,
+          websiteDomain: summary.websiteDomain,
+        }),
+      });
+    }
+    return res.json({ ok: true, run, client, ...summary });
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 502)).json({
+      message: error.status ? error.message : developmentMakerUnreachableMessage(error, base),
     });
   }
 });
@@ -16770,17 +16959,10 @@ app.all('/api/admin/development/maker-language/:runId', developmentAuth, async (
   if (!['GET', 'POST', 'DELETE'].includes(method)) {
     return res.status(405).json({ message: 'Method not allowed.' });
   }
-  const base = resolveDevelopmentMakerBase(req);
+  const base = resolveDevelopmentMakerBase();
   const runId = sanitizeText(req.params.runId);
-  if (!base) {
-    return res.status(400).json({ message: 'Website Maker URL is invalid. Use a valid host or URL (for example https://example.com).' });
-  }
   if (!runId) return res.status(400).json({ message: 'Run ID is required.' });
-  if (isPrivateMakerUrl(base) && requestIsPublicInternetHost(req)) {
-    return res.status(502).json({
-      message: `Website Maker is unreachable at ${base} from this host. Start the Maker tunnel, then retry.`,
-    });
-  }
+  if (developmentMakerPublicHostBlocked(req, res)) return;
   try {
     const data = await fetchMakerJson(base, `/api/runs/${encodeURIComponent(runId)}/language`, {
       method,
@@ -16789,7 +16971,7 @@ app.all('/api/admin/development/maker-language/:runId', developmentAuth, async (
     return res.json(data);
   } catch (error) {
     return res.status(httpStatusFromError(error, 502)).json({
-      message: error.status ? error.message : makerUnreachableMessage(error, base),
+      message: error.status ? error.message : developmentMakerUnreachableMessage(error, base),
     });
   }
 });
@@ -16797,7 +16979,7 @@ app.all('/api/admin/development/maker-language/:runId', developmentAuth, async (
 app.get('/api/admin/development/:id/workshop-needs', developmentAuth, async (req, res) => {
   const target = resolveDevelopmentTarget(req.params.id);
   if (!target?.client) return res.status(404).json({ message: 'Development client not found.' });
-  const base = resolveDevelopmentMakerBase(req);
+  const base = resolveDevelopmentMakerBase();
   try {
     const document = await loadWorkshopNeedsDocument(target.client, {
       fetchMakerRun: async (runId) => {
@@ -16842,7 +17024,7 @@ app.get('/api/admin/development/:id/media', developmentAuth, async (req, res) =>
     url: `/api/admin/development/${encodeURIComponent(req.params.id)}/media/client/${encodeURIComponent(file.fileName)}`,
   }));
   const runId = sanitizeText(target.client.makerRun?.runId);
-  const base = resolveDevelopmentMakerBase(req);
+  const base = resolveDevelopmentMakerBase();
   let fromMaker = [];
   let makerError = '';
   if (!runId) {
@@ -16850,7 +17032,7 @@ app.get('/api/admin/development/:id/media', developmentAuth, async (req, res) =>
   } else if (!base) {
     makerError = 'Website Maker URL is invalid. Use a valid host or URL (for example https://example.com).';
   } else if (isPrivateMakerUrl(base) && requestIsPublicInternetHost(req)) {
-    makerError = `Website Maker is unreachable at ${base} from this host. Start the Maker tunnel, then retry.`;
+    makerError = `Website Maker is unreachable at ${base} from this host. Use local /developer and start Docker Maker on port 3000.`;
   } else {
     try {
       const run = await fetchMakerRunRecord({ websiteMakerBaseUrl: base, runId });
@@ -16876,6 +17058,63 @@ app.get('/api/admin/development/:id/media', developmentAuth, async (req, res) =>
   return res.json({ fromClient, fromMaker, makerError });
 });
 
+app.delete('/api/admin/development/:id/media/client/:fileName', developmentAuth, (req, res) => {
+  const target = resolveDevelopmentTarget(req.params.id);
+  if (!target?.client) return res.status(404).json({ message: 'Development client not found.' });
+  const portalUserId = sanitizeText(target.client.portalUserId);
+  const fileName = decodeURIComponent(req.params.fileName || '');
+  if (!portalUserId || !deleteClientUploadFile(portalUserId, fileName)) {
+    return res.status(404).json({ message: 'Fant ikke filen.' });
+  }
+  const profile = clientPortal.getClientProfileByUserId(portalUserId);
+  const bank = profile?.clientDataBank;
+  if (bank && typeof bank === 'object') {
+    clientPortal.upsertClientProfile(portalUserId, {
+      clientDataBank: stripClientUploadFromBank(bank, fileName),
+    }, { syncPortalState: false });
+  }
+  return res.json({ ok: true });
+});
+
+app.delete('/api/admin/development/:id/media/maker', developmentAuth, async (req, res) => {
+  const target = resolveDevelopmentTarget(req.params.id);
+  if (!target?.client) return res.status(404).json({ message: 'Development client not found.' });
+  const base = resolveDevelopmentMakerBase();
+  const source = sanitizeText(req.body?.source) === 'bundle' ? 'bundle' : 'run';
+  const field = sanitizeText(req.body?.field);
+  const index = Number(req.body?.index);
+  const runId = sanitizeText(target.client.makerRun?.runId);
+  const bundleId = sanitizeText(req.body?.bundleId);
+  if (!base) {
+    return res.status(400).json({ message: 'Website Maker URL is invalid. Use a valid host or URL (for example https://example.com).' });
+  }
+  if (!field || !Number.isInteger(index) || index < 0) {
+    return res.status(400).json({ message: 'field and index are required.' });
+  }
+  if (source === 'bundle' && !bundleId) {
+    return res.status(400).json({ message: 'bundleId is required.' });
+  }
+  if (source === 'run' && !runId) {
+    return res.status(400).json({ message: 'No Website Maker run is linked.' });
+  }
+  if (isPrivateMakerUrl(base) && requestIsPublicInternetHost(req)) {
+    return res.status(502).json({
+      message: `Website Maker is unreachable at ${base} from this host. Use local /developer and start Docker Maker on port 3000.`,
+    });
+  }
+  const pathname = source === 'bundle'
+    ? `/api/client-bundles/${encodeURIComponent(bundleId)}/uploads`
+    : `/api/runs/${encodeURIComponent(runId)}/uploads`;
+  try {
+    const data = await fetchMakerJson(base, pathname, { method: 'DELETE', body: { field, index } });
+    return res.json({ ok: true, uploads: data.uploads || {} });
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 502)).json({
+      message: error.status ? error.message : makerUnreachableMessage(error, base),
+    });
+  }
+});
+
 app.get('/api/admin/development/:id/media/client/:fileName', developmentAuth, (req, res) => {
   const target = resolveDevelopmentTarget(req.params.id);
   if (!target?.client) return res.status(404).json({ message: 'Development client not found.' });
@@ -16896,7 +17135,7 @@ app.get('/api/admin/development/:id/media/client/:fileName', developmentAuth, (r
 app.get('/api/admin/development/:id/media/maker', developmentAuth, async (req, res) => {
   const target = resolveDevelopmentTarget(req.params.id);
   if (!target?.client) return res.status(404).json({ message: 'Development client not found.' });
-  const base = resolveDevelopmentMakerBase(req);
+  const base = resolveDevelopmentMakerBase();
   const source = sanitizeText(req.query?.source) === 'bundle' ? 'bundle' : 'run';
   const field = sanitizeText(req.query?.field);
   const index = Number(req.query?.index);
@@ -16910,7 +17149,7 @@ app.get('/api/admin/development/:id/media/maker', developmentAuth, async (req, r
   }
   if (isPrivateMakerUrl(base) && requestIsPublicInternetHost(req)) {
     return res.status(502).json({
-      message: `Website Maker is unreachable at ${base} from this host. Start the Maker tunnel, then retry.`,
+      message: `Website Maker is unreachable at ${base} from this host. Use local /developer and start Docker Maker on port 3000.`,
     });
   }
   const pathname = source === 'bundle'

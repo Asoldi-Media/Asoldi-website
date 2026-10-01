@@ -321,8 +321,15 @@ export type DevelopmentItem = {
   /** Active next action due time / name from the sales card. */
   nextActionAt?: string;
   nextActionName?: string;
-  /** Time used for ranking: next action due, else meeting time. */
+  /** Time used for ranking: website due date after the contract is signed. */
   rankAt?: string;
+  websiteDue?: {
+    started: boolean;
+    dueAt: string;
+    weeks: number;
+    override: boolean;
+    label: string;
+  };
   workshop?: WorkshopRecord | null;
   workshopHeldAt?: string;
   workshopSummary?: WorkshopSummary | null;

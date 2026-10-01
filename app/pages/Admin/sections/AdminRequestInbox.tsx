@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { API, authHeaders as defaultAuthHeaders } from '../shared';
 import { RequestThreadPanel, type RequestAuthHeaders } from '../../developer/DeveloperRequestThread';
+import { WebsiteDueField } from './WebsiteDueField';
 
 type InboxRow = {
   salesClientId: string;
@@ -11,6 +12,8 @@ type InboxRow = {
   unreadForDeveloper: number;
   lastSnippet: string;
   lastAuthorRole: string;
+  lastKind?: string;
+  lastKindLabel?: string;
 };
 
 type Props = {
@@ -83,7 +86,7 @@ export function AdminRequestInbox({
       <div>
         <h3 className="text-sm font-semibold text-white">Forespørsler</h3>
         <p className="text-xs text-gray-400 mt-0.5">
-          Tråd med utvikler. Filer vises her, men legges ikke inn i Maker eller Kundedata fra admin.
+          Tråd med kunde og utvikler. Domeneforespørsler og utviklerfiler vises på dette kundekortet.
         </p>
       </div>
 
@@ -121,13 +124,19 @@ export function AdminRequestInbox({
                     <span className="text-[11px] text-gray-500">{formatWhen(row.updatedAt)}</span>
                   )}
                 </span>
-                {row.lastSnippet ? (
+                {row.lastKindLabel ? (
+                  <span className="block text-[11px] text-amber-300 truncate mt-0.5">{row.lastKindLabel}</span>
+                ) : row.lastSnippet ? (
                   <span className="block text-[11px] text-gray-400 truncate mt-0.5">{row.lastSnippet}</span>
                 ) : null}
               </button>
             ))
           )}
         </div>
+      ) : null}
+
+      {openId ? (
+        <WebsiteDueField salesClientId={openId} authHeaders={resolvedHeaders} />
       ) : null}
 
       {openId ? (

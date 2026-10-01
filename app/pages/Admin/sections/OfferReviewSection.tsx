@@ -19,6 +19,7 @@ import {
 import { ContractSummaryCard, OFFER_STATUS_LABEL, OfferProductsCard, OfferStatusChip } from '../../sales/offerUi';
 import { API, salesAuthHeaders, type OfferContractSummary, type OfferProduct, type SalesOffer, type SalesOfferStatus } from '../shared';
 import { ClientMeetingCard, MeetingCard, type StoredMeetingRow } from './MeetingDataPanel';
+import { WebsiteDueField } from './WebsiteDueField';
 
 type OfferRow = SalesOffer & {
   client: { id: string; businessName: string; contactPerson: string; contactEmail: string } | null;
@@ -671,6 +672,10 @@ export function OfferReviewSection({ hideHeader = false }: { hideHeader?: boolea
                     </div>
                   </div>
                   <aside className="space-y-3">
+                    <WebsiteDueField
+                      salesClientId={String(offer.salesClientId || detail.client?.id || '')}
+                      authHeaders={salesAuthHeaders()}
+                    />
                     <OfferProductsCard
                       products={offer.products}
                       mvaIncluded={Boolean(offer.mvaIncluded)}

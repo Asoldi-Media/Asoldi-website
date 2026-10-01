@@ -8,6 +8,7 @@ import {
   Database,
   CreditCard,
   UserCircle2,
+  Users,
 } from 'lucide-react';
 import type { DataTab, SettingsSection } from './clientDataTypes';
 
@@ -16,6 +17,7 @@ const DATA_ITEMS: Array<{ id: DataTab; label: string; icon: typeof User }> = [
   { id: 'bedrifts_kort', label: 'Bedrifts kort', icon: User },
   { id: 'produkter', label: 'Produkter', icon: Box },
   { id: 'media', label: 'Media', icon: ImageIcon },
+  { id: 'ansatte', label: 'Ansatte', icon: Users },
   { id: 'generell', label: 'Generell info', icon: FileText },
   { id: 'v2', label: 'Nettsidebygger v2-spørsmål', icon: ListChecks },
 ];

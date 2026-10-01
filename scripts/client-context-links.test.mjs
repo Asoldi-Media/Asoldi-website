@@ -19,19 +19,43 @@ const byneset = {
   websiteUrl: 'https://bynesetcafe.no',
 };
 
-test('one Google query quotes each business-name word', () => {
+test('one Google query uses the business name without quotes', () => {
   const queries = buildContextSearchQueries(client);
   assert.equal(queries.length, 1);
-  assert.equal(queries[0], '"Frogner" "Grill"');
+  assert.equal(queries[0], 'Frogner Grill');
 });
 
-test('Byneset Bydelskafe is quoted per word and does not append the place', () => {
+test('legal AS is stripped from the search name', () => {
+  assert.equal(buildContextSearchQueries({
+    businessName: 'Frogner Grill AS',
+    industry: 'restaurant',
+  })[0], 'Frogner Grill');
+});
+
+test('short names get the industry on the query', () => {
+  assert.equal(buildContextSearchQueries({
+    businessName: 'Rosto AS',
+    industry: 'restaurant',
+  })[0], 'Rosto restaurant');
+});
+
+test('a foreign restaurant with the same short name is dropped', () => {
+  const verdict = scoreContextLink({
+    url: 'https://www.tripadvisor.com/Restaurant_Review-g188630-d23560936-Reviews-Restaurant_Rosto-Leiden_South_Holland_Province.html',
+    title: 'RESTAURANT ROSTO, Leiden - Restaurant Reviews',
+    snippet: 'Restaurant Rosto in Leiden, Netherlands.',
+  }, { businessName: 'Rosto', industry: 'restaurant' });
+  assert.equal(verdict.keep, false);
+  assert.equal(verdict.reason, 'not-norway');
+});
+
+test('Byneset Bydelskafe is searched as typed and does not append the place', () => {
   const queries = buildContextSearchQueries({
     ...byneset,
     place: 'Byneset',
     meetingPlace: 'Byneset',
   });
-  assert.equal(queries[0], '"Byneset" "Bydelskafe"');
+  assert.equal(queries[0], 'Byneset Bydelskafe');
 });
 
 test('maps, email, Instagram and Google search pages are not kept', () => {
@@ -161,11 +185,42 @@ test('AI judge can drop directory-like leftovers and keep 0-3 novel links', asyn
   assert.equal(selected[0].url, 'https://www.avisagaula.no/a');
 });
 
+test('a news article that names the cafe in the snippet is keepable', () => {
+  const verdict = scoreContextLink({
+    url: 'https://www.avisagaula.no/12-pa-gata-er-du-fornoyd-med-lonna-di/s/5-156-28739',
+    title: '12 på gata: Er du fornøyd med lønna di?',
+    snippet: 'Daglig leder Byneset bydelskafé. Vil ikke oppgi lønn.',
+  }, byneset);
+  assert.equal(verdict.keep, true);
+  assert.equal(verdict.kind, 'news');
+});
+
+test('google news feature about the cafe is kept even without a snippet', () => {
+  const verdict = scoreContextLink({
+    url: 'https://www.avisagaula.no/byneset-bydelskaf-gi-godt-skussmal-til-stedet-det-er-litt-stas-med-buffeen/s/5-156-17070',
+    title: 'Byneset bydelskafé: – Gi godt skussmål til stedet. Det er litt stas med buffeen',
+    snippet: '',
+  }, byneset);
+  assert.equal(verdict.keep, true);
+  assert.equal(verdict.kind, 'news');
+});
+
+test('a Byneset news story that is not about the cafe is dropped', () => {
+  const verdict = scoreContextLink({
+    url: 'https://www.avisagaula.no/jakob-margido-esp-er-dod/s/5-156-29728',
+    title: 'Byneset og Leinstrand, Dødsfall | Jakob Margido Esp er død',
+    snippet: '',
+  }, byneset);
+  assert.equal(verdict.keep, false);
+  assert.equal(verdict.reason, 'name-not-in-result');
+});
+
 test('research uses the search callback and does not invent URLs', async () => {
   const seen = [];
   const result = await researchClientContextLinks(client, {
-    search: async (query) => {
-      seen.push(query);
+    search: async (query, { engine } = {}) => {
+      seen.push({ query, engine: engine || 'google' });
+      if (engine === 'google_news') return [];
       return [{
         url: 'https://www.trustpilot.com/review/frognergrill.no',
         title: 'Frogner Grill Reviews | Trustpilot',
@@ -173,6 +228,9 @@ test('research uses the search callback and does not invent URLs', async () => {
       }];
     },
   });
-  assert.deepEqual(seen, ['"Frogner" "Grill"']);
+  assert.deepEqual(seen, [
+    { query: 'Frogner Grill', engine: 'google' },
+    { query: 'Frogner Grill', engine: 'google_news' },
+  ]);
   assert.equal(result.kept[0].url, 'https://www.trustpilot.com/review/frognergrill.no');
 });

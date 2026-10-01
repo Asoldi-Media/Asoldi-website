@@ -23,7 +23,28 @@ export function resolveClientCatalogs(input: PortalCatalogInput): {
 }
 
 export type SettingsSection = 'kundedata' | 'fakturering' | 'konto';
-export type DataTab = 'bedrifts_kort' | 'produkter' | 'media' | 'generell' | 'v2';
+export type DataTab = 'bedrifts_kort' | 'produkter' | 'media' | 'ansatte' | 'generell' | 'v2';
+
+export type StaffMember = {
+  id: string;
+  title: string;
+  name: string;
+  phone: string;
+  email: string;
+  imageUrl: string;
+};
+
+export type DomainSetup = {
+  domain: string;
+  ownership: '' | 'owned' | 'buy';
+  status: string;
+  helpBuy: boolean;
+  helpNameservers: boolean;
+  nameserversConfirmed: boolean;
+  requestKind: string;
+  requestSentAt: string;
+  updatedAt: string;
+};
 
 export type OpeningDay = {
   day: string;
@@ -135,6 +156,8 @@ export type ClientDataBank = {
     days: OpeningDay[];
   };
   affiliations: AffiliationCategory[];
+  staff: StaffMember[];
+  domainSetup: DomainSetup;
   productCatalogs: ProductCatalog[];
   products: ProductCategory[];
   media: {
@@ -258,6 +281,7 @@ export function dataTabFromHash(hash: string): DataTab {
   if (value === 'produkter') return 'produkter';
   if (value === 'media') return 'media';
   if (value === 'generell' || value === 'generell-info') return 'generell';
+  if (value === 'ansatte') return 'ansatte';
   if (value === 'v2' || value === 'nettsidebygger') return 'v2';
   return 'bedrifts_kort';
 }
@@ -266,6 +290,7 @@ export function hashForDataTab(tab: DataTab) {
   if (tab === 'produkter') return '#produkter';
   if (tab === 'media') return '#media';
   if (tab === 'generell') return '#generell';
+  if (tab === 'ansatte') return '#ansatte';
   if (tab === 'v2') return '#v2';
   return '';
 }
@@ -306,6 +331,18 @@ export function defaultClientDataBank(profile: any): ClientDataBank {
       days: DEFAULT_DAYS,
     },
     affiliations: [],
+    staff: [],
+    domainSetup: {
+      domain: '',
+      ownership: '',
+      status: '',
+      helpBuy: false,
+      helpNameservers: false,
+      nameserversConfirmed: false,
+      requestKind: '',
+      requestSentAt: '',
+      updatedAt: '',
+    },
     productCatalogs: [],
     products: [],
     media: {
@@ -398,7 +435,7 @@ export function ensureClientDataBank(input: any, profile: any): ClientDataBank {
     keepEmptyProducts: true,
   });
   const productCatalogs = resolved.productCatalogs;
-  const products = resolved.products
+  const products = resolved.products;
 
   return {
     businessCard: {
@@ -441,6 +478,29 @@ export function ensureClientDataBank(input: any, profile: any): ClientDataBank {
       days: openingDays,
     },
     affiliations,
+    staff: Array.isArray(bank?.staff)
+      ? bank.staff.map((row: any, index: number) => ({
+        id: String(row?.id || randomId(`ansatt-${index + 1}`)),
+        title: String(row?.title || row?.role || '').trim(),
+        name: String(row?.name || '').trim(),
+        phone: String(row?.phone || row?.number || '').trim(),
+        email: String(row?.email || '').trim(),
+        imageUrl: String(row?.imageUrl || row?.image || '').trim(),
+      }))
+      : [],
+    domainSetup: {
+      domain: String(bank?.domainSetup?.domain || bank?.websiteCreatorQuestions?.websiteDomain || '').trim(),
+      ownership: bank?.domainSetup?.ownership === 'owned' || bank?.domainSetup?.ownership === 'buy'
+        ? bank.domainSetup.ownership
+        : '',
+      status: String(bank?.domainSetup?.status || '').trim(),
+      helpBuy: Boolean(bank?.domainSetup?.helpBuy),
+      helpNameservers: Boolean(bank?.domainSetup?.helpNameservers),
+      nameserversConfirmed: Boolean(bank?.domainSetup?.nameserversConfirmed),
+      requestKind: String(bank?.domainSetup?.requestKind || '').trim(),
+      requestSentAt: String(bank?.domainSetup?.requestSentAt || '').trim(),
+      updatedAt: String(bank?.domainSetup?.updatedAt || '').trim(),
+    },
     productCatalogs,
     products,
     media: {
@@ -470,7 +530,7 @@ export function ensureClientDataBank(input: any, profile: any): ClientDataBank {
       extraContext: String(bank?.websiteCreatorQuestions?.extraContext || '').trim(),
       wantedPages: String(bank?.websiteCreatorQuestions?.wantedPages || '').trim(),
       customSections: String(bank?.websiteCreatorQuestions?.customSections || '').trim(),
-      websiteDomain: String(bank?.websiteCreatorQuestions?.websiteDomain || '').trim(),
+      websiteDomain: String(bank?.domainSetup?.domain || bank?.websiteCreatorQuestions?.websiteDomain || '').trim(),
       town: String(bank?.websiteCreatorQuestions?.town || '').trim(),
       country: String(bank?.websiteCreatorQuestions?.country || '').trim(),
       relevantLinks: String(bank?.websiteCreatorQuestions?.relevantLinks || '').trim(),

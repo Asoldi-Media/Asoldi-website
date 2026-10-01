@@ -22,9 +22,11 @@ type ThreadFile = {
 type ThreadMessage = {
   id: string;
   at: string;
-  authorRole: 'admin' | 'developer';
+  authorRole: 'admin' | 'developer' | 'client';
   authorLabel: string;
   text: string;
+  kind?: string;
+  domain?: string;
   files: ThreadFile[];
 };
 
@@ -40,12 +42,21 @@ type ThreadPayload = {
   messages: ThreadMessage[];
 };
 
+type ExtraMessage = {
+  id: string;
+  at: string;
+  authorLabel: string;
+  text: string;
+};
+
 type PanelProps = {
   salesClientId: string;
   makerRunId?: string;
   websiteMakerBaseUrl?: string;
   authHeaders: RequestAuthHeaders;
   allowCommit?: boolean;
+  layout?: 'panel' | 'side';
+  extraMessages?: ExtraMessage[];
 };
 
 function formatWhen(value = '') {
@@ -100,6 +111,8 @@ export function RequestThreadPanel({
   websiteMakerBaseUrl = '',
   authHeaders,
   allowCommit = false,
+  layout = 'panel',
+  extraMessages = [],
 }: PanelProps) {
   const [thread, setThread] = useState<ThreadPayload | null>(null);
   const [text, setText] = useState('');
@@ -281,6 +294,20 @@ export function RequestThreadPanel({
     }
   }
 
+  const side = layout === 'side';
+  const timeline = [
+    ...(thread?.messages || []).map((message) => ({ ...message, source: 'request' as const })),
+    ...extraMessages.map((message) => ({
+      id: message.id,
+      at: message.at,
+      authorRole: 'developer' as const,
+      authorLabel: message.authorLabel,
+      text: message.text,
+      files: [] as ThreadFile[],
+      source: 'note' as const,
+    })),
+  ].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+
   const committedLabel = (file: ThreadFile) => {
     if (!file.committed) return '';
     if (file.committed.destination === 'maker') return 'Lagt inn i Maker';
@@ -288,24 +315,37 @@ export function RequestThreadPanel({
   };
 
   return (
-    <div className="rounded-2xl bg-black/20 border border-white/10 p-3 space-y-3">
+    <div className={`rounded-2xl bg-black/20 border border-white/10 p-3 space-y-3 ${side ? 'h-full flex flex-col' : ''}`}>
       <div>
-        <h4 className="text-xs font-semibold text-gray-200 uppercase tracking-wide">Forespørsel</h4>
-        <p className="text-[11px] text-gray-500 mt-0.5">
-          Meldinger og filer mellom admin og utvikler. Filer ligger her til noen legger dem inn.
-        </p>
+        <h4 className="text-xs font-semibold text-gray-200 uppercase tracking-wide">
+          {side ? 'Iterasjon' : 'Forespørsel'}
+        </h4>
+        {side ? null : (
+          <p className="text-[11px] text-gray-500 mt-0.5">
+            Meldinger og filer mellom kunde, admin og utvikler. Filer ligger her til noen legger dem inn.
+          </p>
+        )}
       </div>
 
-      <div ref={listRef} className="max-h-64 overflow-y-auto space-y-2 pr-1">
-        {(thread?.messages || []).length === 0 ? (
+      <div ref={listRef} className={`${side ? 'max-h-[420px] flex-1' : 'max-h-64'} overflow-y-auto space-y-2 pr-1`}>
+        {timeline.length === 0 ? (
           <p className="text-xs text-gray-500">Ingen meldinger ennå.</p>
         ) : (
-          (thread?.messages || []).map((message) => (
+          timeline.map((message) => (
             <div key={message.id} className="rounded-xl bg-[#1a1a1a] border border-white/10 p-2.5 space-y-1.5">
               <div className="flex items-center justify-between gap-2 text-[11px] text-gray-400">
                 <span className="text-gray-200">{message.authorLabel || message.authorRole}</span>
                 <span>{formatWhen(message.at)}</span>
               </div>
+              {message.kind ? (
+                <p className="text-[11px] text-amber-300">
+                  {message.kind === 'domain-nameservers-owned'
+                    ? 'Hjelp kunde sette opp navnservere på eid domene'
+                    : message.kind === 'domain-nameservers-buy'
+                      ? 'Hjelp kunde sette opp navnservere på ikke-eid domene'
+                      : message.kind}
+                </p>
+              ) : null}
               {message.text ? (
                 <p className="text-sm text-gray-200 whitespace-pre-wrap">{message.text}</p>
               ) : null}
@@ -426,6 +466,7 @@ type DeveloperProps = {
   makerRunId?: string;
   websiteMakerBaseUrl?: string;
   authHeaders: RequestAuthHeaders;
+  extraMessages?: ExtraMessage[];
 };
 
 export function DeveloperRequestThread({
@@ -433,6 +474,7 @@ export function DeveloperRequestThread({
   makerRunId = '',
   websiteMakerBaseUrl = '',
   authHeaders,
+  extraMessages = [],
 }: DeveloperProps) {
   if (!salesClientId) return null;
   return (
@@ -442,6 +484,8 @@ export function DeveloperRequestThread({
       websiteMakerBaseUrl={websiteMakerBaseUrl}
       authHeaders={authHeaders}
       allowCommit
+      layout="side"
+      extraMessages={extraMessages}
     />
   );
 }

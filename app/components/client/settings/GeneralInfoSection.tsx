@@ -456,18 +456,6 @@ export function GeneralInfoSection({ token, clientData, setClientData, onError }
               className="w-full bg-white border border-gray-200 rounded-lg px-4 py-2.5 text-[13px] outline-none focus:border-[#FF5B00]"
             />
           </div>
-          <div className="md:col-span-2">
-            <label className="text-[13px] font-medium text-gray-700 mb-2 block">Nettadresse</label>
-            <input
-              value={clientData.websiteCreatorQuestions.websiteDomain}
-              onChange={(e) => setClientData((prev) => ({
-                ...prev,
-                websiteCreatorQuestions: { ...prev.websiteCreatorQuestions, websiteDomain: e.target.value },
-              }))}
-              placeholder="https://..."
-              className="w-full bg-white border border-gray-200 rounded-lg px-4 py-2.5 text-[13px] outline-none focus:border-[#FF5B00]"
-            />
-          </div>
         </div>
         <div className="flex flex-col gap-2">
           <label className="text-[13px] font-medium text-gray-700">Sosiale medier</label>

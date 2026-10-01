@@ -1,20 +1,29 @@
 import { API } from '../Admin/shared';
+import { LOCAL_EDITOR_ORIGIN } from '../../../lib/maker-editor-origin.js';
 import {
   CLICKABLE_QUEUE_TARGETS,
   GREY_QUEUE_TARGETS,
   isClickableQueueTarget,
+  summarizeMakerRunForQueue,
 } from '../../../lib/maker-queue.js';
+import {
+  buildPipelineQueuePostBody,
+  fetchLocalMakerJson,
+} from '../../../lib/maker-browser-client.js';
 
 export { CLICKABLE_QUEUE_TARGETS, GREY_QUEUE_TARGETS, isClickableQueueTarget };
+
+export const DEVELOPER_MAKER_ORIGIN = LOCAL_EDITOR_ORIGIN;
 
 export type MakerQueueAuthHeaders = Record<string, string>;
 
 export type EnqueueMakerQueueInput = {
-  websiteMakerBaseUrl: string;
+  websiteMakerBaseUrl?: string;
   salesClientIds?: string[];
   runIds?: string[];
-  target: string;
-  authHeaders: MakerQueueAuthHeaders;
+  target?: string;
+  untilTarget?: string;
+  authHeaders?: MakerQueueAuthHeaders;
 };
 
 export type LanguageLockOpenInput = {
@@ -41,12 +50,12 @@ export function openLanguageLock(input: LanguageLockOpenInput) {
   }
   languageLockOpener({
     runId,
-    websiteMakerBaseUrl: String(input.websiteMakerBaseUrl || '').trim(),
+    websiteMakerBaseUrl: DEVELOPER_MAKER_ORIGIN,
     businessName: String(input.businessName || '').trim(),
   });
 }
 
-async function parseMakerProxy(response: Response) {
+async function parseAsoldiJson(response: Response) {
   const data = await response.json().catch(() => ({} as Record<string, unknown>));
   if (!response.ok) {
     throw new Error(
@@ -61,49 +70,89 @@ async function parseMakerProxy(response: Response) {
 }
 
 export async function enqueueMakerQueue({
-  websiteMakerBaseUrl,
   salesClientIds = [],
   runIds = [],
   target,
-  authHeaders,
+  untilTarget,
 }: EnqueueMakerQueueInput) {
-  const response = await fetch(`${API}/admin/development/maker-queue`, {
-    method: 'POST',
-    headers: { ...authHeaders, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ websiteMakerBaseUrl, salesClientIds, runIds, target }),
+  const body = buildPipelineQueuePostBody({
+    runIds,
+    salesClientIds,
+    target,
+    untilTarget,
   });
-  return parseMakerProxy(response);
+  if (!body.runIds.length) {
+    throw new Error('No Website Maker run is linked.');
+  }
+  return fetchLocalMakerJson('/api/pipeline-queue', { method: 'POST', body });
 }
 
-export async function fetchMakerQueue(websiteMakerBaseUrl: string, authHeaders: MakerQueueAuthHeaders) {
-  const url = new URL(`${API}/admin/development/maker-queue`, window.location.origin);
-  url.searchParams.set('websiteMakerBaseUrl', websiteMakerBaseUrl);
-  const response = await fetch(`${url.pathname}${url.search}`, { headers: authHeaders });
-  return parseMakerProxy(response);
+export async function fetchMakerQueue(
+  _websiteMakerBaseUrl = DEVELOPER_MAKER_ORIGIN,
+  _authHeaders?: MakerQueueAuthHeaders
+) {
+  return fetchLocalMakerJson('/api/pipeline-queue');
 }
 
 export async function cancelMakerQueueItem(
-  websiteMakerBaseUrl: string,
+  _websiteMakerBaseUrl: string,
   itemId: string,
-  authHeaders: MakerQueueAuthHeaders
+  _authHeaders?: MakerQueueAuthHeaders
 ) {
-  const url = new URL(`${API}/admin/development/maker-queue`, window.location.origin);
-  url.searchParams.set('websiteMakerBaseUrl', websiteMakerBaseUrl);
-  url.searchParams.set('itemId', itemId);
-  const response = await fetch(`${url.pathname}${url.search}`, { method: 'DELETE', headers: authHeaders });
-  return parseMakerProxy(response);
+  const id = String(itemId || '').trim();
+  if (!id) throw new Error('itemId is required.');
+  return fetchLocalMakerJson(`/api/pipeline-queue?itemId=${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
 }
 
 export async function fetchMakerRunStatus(
-  websiteMakerBaseUrl: string,
+  _websiteMakerBaseUrl: string,
   runId: string,
-  authHeaders: MakerQueueAuthHeaders
+  _authHeaders?: MakerQueueAuthHeaders
 ) {
-  const url = new URL(
-    `${API}/admin/development/maker-run/${encodeURIComponent(runId)}`,
-    window.location.origin
+  const id = String(runId || '').trim();
+  if (!id) throw new Error('Run ID is required.');
+  const run = await fetchLocalMakerJson(`/api/runs/${encodeURIComponent(id)}?poll=1`);
+  return {
+    run,
+    ...summarizeMakerRunForQueue({ ...run, id }),
+  };
+}
+
+export async function saveMakerRunDomain({
+  runId,
+  websiteDomain,
+  salesClientId,
+  authHeaders,
+}: {
+  runId: string;
+  websiteDomain: string;
+  salesClientId?: string;
+  authHeaders: MakerQueueAuthHeaders;
+}) {
+  const id = String(runId || '').trim();
+  if (!id) throw new Error('Run ID is required.');
+  await fetchLocalMakerJson(`/api/runs/${encodeURIComponent(id)}/save-intake`, {
+    method: 'POST',
+    body: { answers: { websiteDomain: String(websiteDomain || '').trim() } },
+  });
+  const run = await fetchLocalMakerJson(`/api/runs/${encodeURIComponent(id)}?poll=1`);
+  const summary = summarizeMakerRunForQueue({ ...run, id });
+  const clientId = String(salesClientId || '').trim();
+  if (!clientId) return { ok: true, run, ...summary };
+  const response = await fetch(
+    `${API}/admin/development/maker-run/${encodeURIComponent(id)}/domain`,
+    {
+      method: 'POST',
+      headers: { ...authHeaders, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        websiteDomain: String(websiteDomain || '').trim(),
+        salesClientId: clientId,
+        makerSaved: true,
+      }),
+    }
   );
-  url.searchParams.set('websiteMakerBaseUrl', websiteMakerBaseUrl);
-  const response = await fetch(`${url.pathname}${url.search}`, { headers: authHeaders });
-  return parseMakerProxy(response);
+  const data = await parseAsoldiJson(response) as Record<string, unknown>;
+  return { ...summary, ...data, run: data.run || run };
 }

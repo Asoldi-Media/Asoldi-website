@@ -48,3 +48,15 @@ test('failover continues the same search on the backup key after the first is em
   assert.deepEqual(result.value, { hits: ['facebook.com/x'] });
   assert.deepEqual(seen, ['empty-acc', 'full-acc']);
 });
+
+test('both empty accounts surface as out of searches, not a missing key', async () => {
+  const result = await runWithSerpApiFailover(async () => ({ status: 'no-credits' }), {
+    env: {
+      SERPAPI_API_KEY: 'empty-a',
+      SERPAPI_API_KEY_2: 'empty-b',
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'no-credits');
+  assert.match(String(result.error?.message || ''), /out of searches/i);
+});

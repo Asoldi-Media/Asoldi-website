@@ -3,10 +3,10 @@ import { Copy, ExternalLink, Link2, Loader2, Wand2 } from 'lucide-react';
 import { API } from '../Admin/shared';
 import type { SalesMakerRunMeta, SalesWebsiteImportMeta } from '../Admin/shared';
 import {
-  LAN_MAKER_URL,
   buildMakerRunUrl,
   clientHasPublicPreviewSnapshot,
   createRunViaMakerPopup,
+  openMakerCreatePopup,
   getPublicClientPreviewUrl,
   healStaleLocalMakerBase,
   normalizeHttpBaseUrl,
@@ -14,6 +14,7 @@ import {
   resolveMakerPreviewUrl,
   resolveOpenInMakerUrl,
 } from '../sales/websiteMaker';
+import { LOCAL_EDITOR_ORIGIN } from '../../../lib/maker-editor-origin.js';
 
 type MakerClientLike = {
   id: string;
@@ -25,7 +26,7 @@ type Props = {
   salesClientId: string;
   client: MakerClientLike;
   websiteMakerBaseUrl: string;
-  setWebsiteMakerBaseUrl: (value: string) => void;
+  setWebsiteMakerBaseUrl?: (value: string) => void;
   authHeaders: Record<string, string>;
   onReload: () => Promise<void> | void;
   onClientUpdated?: (client: Record<string, unknown> | null | undefined) => void;
@@ -33,7 +34,7 @@ type Props = {
   onNotice?: (message: string) => void;
   allowCreate?: boolean;
   allowLink?: boolean;
-  variant?: 'full' | 'tools';
+  variant?: 'full' | 'tools' | 'create';
 };
 
 async function makerRequest(path: string, init: RequestInit, authHeaders: Record<string, string>) {
@@ -72,6 +73,7 @@ export function MakerRunTools({
   variant = 'full',
 }: Props) {
   const [creating, setCreating] = useState(false);
+  const [localError, setLocalError] = useState('');
   const [opening, setOpening] = useState(false);
   const [linking, setLinking] = useState(false);
   const [runIdDraft, setRunIdDraft] = useState('');
@@ -100,14 +102,28 @@ export function MakerRunTools({
       const confirmed = window.confirm('Do you want to delete the other run request?');
       if (!confirmed) return;
     }
+    if (!salesClientId) {
+      const message = 'This client is not linked to a sales record, so a Maker run cannot be created.';
+      setLocalError(message);
+      onError(message);
+      return;
+    }
+    const popup = openMakerCreatePopup();
+    if (!popup) {
+      const message = 'Popup blocked. Allow popups for this site and try Create run again.';
+      setLocalError(message);
+      onError(message);
+      return;
+    }
     setCreating(true);
+    setLocalError('');
     onError('');
     try {
       const makerBase =
         healStaleLocalMakerBase(websiteMakerBaseUrl) ||
         normalizeHttpBaseUrl(websiteMakerBaseUrl) ||
-        LAN_MAKER_URL;
-      if (makerBase !== websiteMakerBaseUrl) setWebsiteMakerBaseUrl(makerBase);
+        LOCAL_EDITOR_ORIGIN;
+      if (makerBase !== websiteMakerBaseUrl) setWebsiteMakerBaseUrl?.(makerBase);
       let data = await makerRequest(`/admin/sales/${salesClientId}/create-maker-run`, {
         method: 'POST',
         body: JSON.stringify({ websiteMakerBaseUrl: makerBase, forceNewRun }),
@@ -117,7 +133,8 @@ export function MakerRunTools({
           String(data.websiteMakerBaseUrl || makerBase),
           data.requestBody && typeof data.requestBody === 'object'
             ? (data.requestBody as Record<string, unknown>)
-            : {}
+            : {},
+          popup
         );
         data = await makerRequest(`/admin/sales/${salesClientId}/create-maker-run`, {
           method: 'POST',
@@ -129,11 +146,23 @@ export function MakerRunTools({
         }, authHeaders);
       }
       const resolvedBase = normalizeHttpBaseUrl(String(data?.websiteMakerBaseUrl || '')) || makerBase;
-      if (resolvedBase) setWebsiteMakerBaseUrl(resolvedBase);
+      if (resolvedBase) setWebsiteMakerBaseUrl?.(resolvedBase);
+      try {
+        if (!popup.closed) popup.close();
+      } catch {
+        // The Maker window may already have closed itself.
+      }
       if (data?.client && onClientUpdated) onClientUpdated(data.client as Record<string, unknown>);
       else await onReload();
     } catch (err) {
-      onError(err instanceof Error ? err.message : 'Failed creating website run');
+      const message = err instanceof Error ? err.message : 'Failed creating website run';
+      setLocalError(message);
+      onError(message);
+      try {
+        if (!popup.closed) popup.close();
+      } catch {
+        // Ignore a popup that is already gone.
+      }
     } finally {
       setCreating(false);
     }
@@ -160,7 +189,7 @@ export function MakerRunTools({
         body: JSON.stringify({ websiteMakerBaseUrl, runId: makerRunId }),
       }, authHeaders);
       const resolvedBase = normalizeHttpBaseUrl(String(data?.websiteMakerBaseUrl || ''));
-      if (resolvedBase) setWebsiteMakerBaseUrl(resolvedBase);
+      if (resolvedBase) setWebsiteMakerBaseUrl?.(resolvedBase);
       if (data?.client && onClientUpdated) onClientUpdated(data.client as Record<string, unknown>);
       else await onReload();
     } catch (err) {
@@ -203,17 +232,39 @@ export function MakerRunTools({
   }
 
   const toolsOnly = variant === 'tools';
+  const createOnly = variant === 'create';
   const createClass = toolsOnly
     ? 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50'
     : 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FF5B00] text-white text-xs hover:bg-[#e55200] disabled:opacity-50';
 
+  if (createOnly) {
+    if (hasRun || !allowCreate) return null;
+    return (
+      <button
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          void createMakerRun(false);
+        }}
+        disabled={creating}
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FF5B00] text-white text-xs hover:bg-[#e55200] disabled:opacity-50"
+      >
+        {creating ? <Loader2 size={13} className="animate-spin" /> : <Wand2 size={13} />}
+        Start run
+      </button>
+    );
+  }
+
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" onClick={(event) => event.stopPropagation()}>
       <div className="flex flex-wrap gap-2">
         {allowCreate && (
           <button
             type="button"
-            onClick={() => void createMakerRun(hasRun)}
+            onClick={(event) => {
+              event.stopPropagation();
+              void createMakerRun(hasRun);
+            }}
             disabled={creating}
             className={createClass}
           >
@@ -261,6 +312,9 @@ export function MakerRunTools({
           Copy public URL
         </button>
       </div>
+      {localError ? (
+        <p className="text-xs text-red-200">{localError}</p>
+      ) : null}
       {allowLink && (
         <div className="flex flex-wrap items-center gap-2">
           <input

@@ -22,7 +22,7 @@ export function WebsiteQuestionsSection({ clientData, setClientData }: Props) {
     <div className="max-w-4xl w-full pb-20">
       <h3 className="text-[20px] font-semibold text-[#121212] mb-2">Nettsidebygger v2-spørsmål</h3>
       <p className="text-sm text-gray-500 mb-6">
-        Spørsmål som bare brukes når nettsiden bygges. Adresse, språk, telefon, e-post, by, land og nettadresse ligger under Generell info.
+        Spørsmål som bare brukes når nettsiden bygges. Adresse, språk, telefon, e-post, by og land ligger under Generell info. Domene settes øverst på Bedrifts kort.
       </p>
       <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm grid gap-4 md:grid-cols-2">
         <Field label="Målgruppe">

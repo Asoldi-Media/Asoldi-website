@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from 'fs';
 import { createHash } from 'crypto';
 import { getDataFilePath, ensurePersistentDataDir, writeDataJson } from './storage-path.js';
 import { CUSTOM_TIER_ID, tierById } from '../lib/website-tiers.js';
+import { normalizeDueDate } from '../lib/website-due.js';
 
 /**
  * Offer (tilbud) drafts: the offer email + product blocks + contract summary for one sales client.
@@ -206,6 +207,7 @@ export function normalizeSalesOffer(raw = {}) {
     /** `contract` = in-meeting send (PDF / portal agreement, no transcript letter). `full` = the offer e-mail. */
     sentContent: normalizeOfferSentContent(raw.sentContent),
     delivery: normalizeOfferDelivery(raw.delivery),
+    dueDate: normalizeDueDate(raw.dueDate),
     createdAt,
     updatedAt: sanitizeText(raw.updatedAt) || createdAt,
   };
@@ -237,6 +239,17 @@ export function getSalesOfferById(id) {
 }
 
 /** The offer a rep is currently working on for this client: the newest one (sent offers stay visible). */
+export function latestOffersByClient() {
+  const map = new Map();
+  for (const offer of readAll()) {
+    const id = offer.salesClientId;
+    if (!id) continue;
+    const prev = map.get(id);
+    if (!prev || String(offer.updatedAt) > String(prev.updatedAt)) map.set(id, offer);
+  }
+  return map;
+}
+
 export function getOfferForClient(salesClientId) {
   const target = sanitizeText(salesClientId);
   if (!target) return null;

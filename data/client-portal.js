@@ -4,6 +4,7 @@ import { getDataFilePath, ensurePersistentDataDir, writeDataJson } from './stora
 import { resolvePortalCatalogs } from '../lib/client-product-catalog.js';
 import { mapsUrlFromPlace } from '../lib/google-places-search.js';
 import * as clientBusinesses from './client-businesses.js';
+import { emptyDomainSetup, normalizeDomainSetup } from '../lib/domain-setup.js';
 
 const CLIENT_PROFILES_PATH = getDataFilePath('client-portal-profiles.json');
 const CLIENT_STATE_PATH = getDataFilePath('client-portal-state.json');
@@ -295,6 +296,63 @@ function normalizeAffiliations(input, fallback = []) {
   }).filter((category) => category.categoryName || category.items.length);
 }
 
+function normalizeStaff(input, fallback = []) {
+  const source = Array.isArray(input) ? input : (Array.isArray(fallback) ? fallback : []);
+  return source.map((row, index) => ({
+    id: sanitizeText(row?.id) || `ansatt-${index + 1}`,
+    title: sanitizeText(row?.title || row?.role),
+    name: sanitizeText(row?.name),
+    phone: sanitizeText(row?.phone || row?.number),
+    email: sanitizeText(row?.email).toLowerCase(),
+    imageUrl: sanitizeText(row?.imageUrl || row?.image),
+  }));
+}
+
+export const SIGNER_STAFF_ID = 'ansatt-signer';
+
+function staffMatchKey(row = {}) {
+  const email = sanitizeText(row.email).toLowerCase();
+  if (email) return `email:${email}`;
+  const name = sanitizeText(row.name).toLowerCase();
+  const phone = sanitizeText(row.phone).replace(/\s+/g, '');
+  if (name && phone) return `np:${name}:${phone}`;
+  if (name) return `name:${name}`;
+  return '';
+}
+
+export function ensureSignerInStaff(staff = [], signer = {}) {
+  const list = Array.isArray(staff) ? staff.map((row) => ({ ...row })) : [];
+  const member = {
+    id: SIGNER_STAFF_ID,
+    title: sanitizeText(signer.title || signer.position),
+    name: sanitizeText(signer.name),
+    phone: sanitizeText(signer.phone),
+    email: sanitizeText(signer.email).toLowerCase(),
+    imageUrl: '',
+  };
+  if (!member.name) return list;
+  if (!member.title && !member.phone && !member.email) return list;
+
+  const signerKey = staffMatchKey(member);
+  const index = list.findIndex((row) => {
+    if (sanitizeText(row?.id) === SIGNER_STAFF_ID) return true;
+    const key = staffMatchKey(row);
+    return Boolean(signerKey && key && key === signerKey);
+  });
+  if (index >= 0) {
+    const current = list[index];
+    list[index] = {
+      ...current,
+      title: current.title || member.title,
+      name: current.name || member.name,
+      phone: current.phone || member.phone,
+      email: current.email || member.email,
+    };
+    return list;
+  }
+  return [member, ...list];
+}
+
 function normalizeProducts(input, fallback = []) {
   const source = Array.isArray(input) ? input : (Array.isArray(fallback) ? fallback : []);
   return source.map((category, categoryIndex) => {
@@ -360,6 +418,8 @@ function defaultClientDataBank(seed = {}) {
       days: DEFAULT_OPENING_DAYS.map((row) => ({ ...row })),
     },
     affiliations: [],
+    staff: [],
+    domainSetup: emptyDomainSetup(),
     productCatalogs: [],
     products: [],
     media: {
@@ -478,6 +538,16 @@ function normalizeClientDataBank(input = {}, fallback = {}) {
     briefs: Array.isArray(src.media?.briefs) ? src.media.briefs.filter((row) => row && typeof row === "object") : (base.media.briefs || []),
   };
 
+  const domainSetup = normalizeDomainSetup(src.domainSetup, {
+    ...(base.domainSetup || emptyDomainSetup()),
+    domain: sanitizeText(
+      src.domainSetup?.domain
+      || src.websiteCreatorQuestions?.websiteDomain
+      || base.domainSetup?.domain
+      || base.websiteCreatorQuestions?.websiteDomain
+    ),
+  });
+
   const websiteCreatorQuestions = {
     targetAudience: sanitizeText(src.websiteCreatorQuestions?.targetAudience || base.websiteCreatorQuestions.targetAudience),
     keyMessage: sanitizeText(src.websiteCreatorQuestions?.keyMessage || base.websiteCreatorQuestions.keyMessage),
@@ -496,7 +566,11 @@ function normalizeClientDataBank(input = {}, fallback = {}) {
     extraContext: sanitizeText(src.websiteCreatorQuestions?.extraContext || base.websiteCreatorQuestions.extraContext),
     wantedPages: sanitizeText(src.websiteCreatorQuestions?.wantedPages || base.websiteCreatorQuestions.wantedPages),
     customSections: sanitizeText(src.websiteCreatorQuestions?.customSections || base.websiteCreatorQuestions.customSections),
-    websiteDomain: sanitizeText(src.websiteCreatorQuestions?.websiteDomain || base.websiteCreatorQuestions.websiteDomain),
+    websiteDomain: sanitizeText(
+      domainSetup.domain
+      || src.websiteCreatorQuestions?.websiteDomain
+      || base.websiteCreatorQuestions.websiteDomain
+    ),
     town: sanitizeText(src.websiteCreatorQuestions?.town || base.websiteCreatorQuestions.town),
     country: sanitizeText(src.websiteCreatorQuestions?.country || base.websiteCreatorQuestions.country),
     relevantLinks: sanitizeText(src.websiteCreatorQuestions?.relevantLinks || base.websiteCreatorQuestions.relevantLinks),
@@ -539,6 +613,8 @@ function normalizeClientDataBank(input = {}, fallback = {}) {
     brandIdentity,
     openingHours,
     affiliations: normalizeAffiliations(src.affiliations, base.affiliations),
+    staff: normalizeStaff(src.staff, base.staff),
+    domainSetup,
     productCatalogs: resolvedCatalogs.productCatalogs,
     products: resolvedCatalogs.products.length
       ? resolvedCatalogs.products
@@ -585,7 +661,7 @@ export function applyIntakeSourcesToBank(bank = {}, sources = {}, contact = {}) 
     facebookUrl,
     googleMapsUrl,
   ]).join('\n');
-  return normalizeClientDataBank({
+  const nextBank = normalizeClientDataBank({
     ...current,
     generalInfo: {
       ...current.generalInfo,
@@ -609,6 +685,15 @@ export function applyIntakeSourcesToBank(bank = {}, sources = {}, contact = {}) 
       relevantLinks,
     },
   }, current);
+  return {
+    ...nextBank,
+    staff: ensureSignerInStaff(nextBank.staff, {
+      title: contact.title || contact.position,
+      name: contact.name,
+      phone: contact.phone || contact.companyPhone || nextBank.generalInfo.companyPhone,
+      email: contact.email || contact.companyEmail || nextBank.generalInfo.companyEmail,
+    }),
+  };
 }
 
 function normalizeCustomPlan(input = {}) {
@@ -673,16 +758,26 @@ function normalizeProfile(input = {}) {
     || input.organizationNumber
     || clientDataBank.brandIdentity.orgNumber
   );
+  const position = sanitizeText(input.position);
+  const email = sanitizeText(input.email).toLowerCase();
+  const staff = onboarding && !(clientDataBank.staff || []).length
+    ? ensureSignerInStaff(clientDataBank.staff, {
+      title: position,
+      name,
+      phone: clientDataBank.generalInfo.companyPhone,
+      email: clientDataBank.generalInfo.companyEmail || email,
+    })
+    : clientDataBank.staff;
   return {
     businessId: sanitizeText(input.businessId || input.userId),
     ownerUserId: sanitizeText(input.ownerUserId || input.userId),
     userId: sanitizeText(input.ownerUserId || input.userId),
-    email: sanitizeText(input.email).toLowerCase(),
+    email,
     name,
     fullName: name,
     businessName: normalizedBusinessName,
     businessOrgNumber: normalizedBusinessOrgNumber,
-    position: sanitizeText(input.position),
+    position,
     discoveryChannel: source,
     source,
     onboardingCompleted: onboarding,
@@ -690,7 +785,7 @@ function normalizeProfile(input = {}) {
     customWebsitePlan: normalizeCustomPlan(input.customWebsitePlan),
     websiteBuilder: normalizeWebsiteBuilder(input.websiteBuilder),
     payment: normalizePayment(input.payment),
-    clientDataBank,
+    clientDataBank: staff === clientDataBank.staff ? clientDataBank : { ...clientDataBank, staff },
     createdAt,
     updatedAt: sanitizeText(input.updatedAt) || createdAt,
   };

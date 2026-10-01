@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
-import { researchClientContextLinks } from '../lib/client-context-links.js';
+import { researchClientContextLinks, CONTEXT_SEARCH_SERP_PARAMS } from '../lib/client-context-links.js';
 import { deepseekChatJson, isDeepseekConfigured } from '../lib/deepseek.js';
 import {
   listSerpApiKeys,
@@ -38,18 +38,17 @@ function coerceHttpUrl(value = '') {
   }
 }
 
-async function searchSerp(query) {
+async function searchSerp(query, { engine = 'google' } = {}) {
   if (!listSerpApiKeys().length || !query) {
     throw new Error('SERPAPI_API_KEY missing');
   }
   const failover = await runWithSerpApiFailover(async (apiKey) => {
     const params = new URLSearchParams({
-      engine: 'google',
+      engine,
       q: query,
       api_key: apiKey,
       num: '10',
-      hl: 'no',
-      gl: 'no',
+      ...CONTEXT_SEARCH_SERP_PARAMS,
     });
     const response = await fetch(`https://serpapi.com/search.json?${params}`, {
       headers: { Accept: 'application/json' },
@@ -60,21 +59,23 @@ async function searchSerp(query) {
       if (response.status === 429) return { status: 'throttled', retryAfterMs: 30_000 };
       return { status: 'error', error: new Error(payload.error || `SerpAPI HTTP ${response.status}`) };
     }
-    const rows = Array.isArray(payload?.organic_results) ? payload.organic_results : [];
+    const rows = engine === 'google_news'
+      ? (Array.isArray(payload?.news_results) ? payload.news_results : [])
+      : (Array.isArray(payload?.organic_results) ? payload.organic_results : []);
     return {
       status: 'ok',
       value: rows
         .map((entry, index) => ({
           url: coerceHttpUrl(entry?.link || ''),
           title: String(entry?.title || '').trim(),
-          snippet: String(entry?.snippet || '').trim(),
+          snippet: String(entry?.snippet || entry?.highlight || '').trim(),
           position: index,
         }))
         .filter((entry) => entry.url),
     };
   });
   if (failover.ok) return Array.isArray(failover.value) ? failover.value : [];
-  throw failover.error || new Error('SERPAPI_API_KEY missing');
+  throw failover.error || new Error('SerpAPI search failed');
 }
 
 async function judgeNovelLinks(candidates, client) {
@@ -85,8 +86,8 @@ async function judgeNovelLinks(candidates, client) {
     system: [
       'You pick extra research links for a Norwegian sales team.',
       'We already have Proff.no, the company website, Instagram, Facebook, Google Maps, and business directories (1881, Gule Sider, Cylex, Infobel, Yelono, Restaurant Guru).',
-      'Keep a URL only if it likely adds NEW facts: a news article, interview, feature, or independent review (Trustpilot-style).',
-      'Reject the company website, social profiles, Wikipedia/SNL, kommune/place pages, other businesses, and directory clones.',
+      'Keep a URL only if the page itself is about THIS business: a news article, interview, feature, or independent review (Trustpilot-style).',
+      'Reject passing mentions, related-story teasers, the company website, social profiles, Wikipedia/SNL, kommune/place pages, other businesses, and directory clones.',
       'Return JSON { "urls": string[] } with 0 to 3 URLs copied exactly from the candidate list. Empty is correct when nothing is useful.',
     ].join(' '),
     user: JSON.stringify({
@@ -123,9 +124,11 @@ const PAGE = `<!doctype html>
 </head>
 <body>
   <h1>Extra links (0–3)</h1>
-  <p class="muted">One Google page. Quoted business-name words. News and review sites only. Not the sales page. Nothing is saved.</p>
+  <p class="muted">Norwegian Google (google.no). Drops AS. Short names get industry. Articles and reviews only, 0–3 links. Not the sales page.</p>
   <label>Business name</label>
-  <input id="name" type="text" placeholder="e.g. Byneset Bydelskafe" />
+  <input id="name" type="text" placeholder="e.g. Rosto" />
+  <label>Industry (used when the name is under 7 characters)</label>
+  <input id="industry" type="text" placeholder="e.g. restaurant" />
   <button id="run" type="button">Search</button>
   <p id="status" class="muted"></p>
   <div id="out"></div>
@@ -135,6 +138,7 @@ const PAGE = `<!doctype html>
     const runEl = document.getElementById('run');
     document.getElementById('run').addEventListener('click', async () => {
       const businessName = document.getElementById('name').value.trim();
+      const industry = document.getElementById('industry').value.trim();
       if (!businessName) {
         statusEl.textContent = 'Type a business name.';
         return;
@@ -146,7 +150,7 @@ const PAGE = `<!doctype html>
         const response = await fetch('/api/run', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ businessName }),
+          body: JSON.stringify({ businessName, industry }),
         });
         const data = await response.json();
         if (!response.ok) {
@@ -197,9 +201,9 @@ function readBody(req) {
   });
 }
 
-async function runResearch(businessName) {
+async function runResearch(businessName, industry = '') {
   return researchClientContextLinks(
-    { businessName },
+    { businessName, industry },
     { search: searchSerp, judge: judgeNovelLinks }
   );
 }
@@ -219,7 +223,8 @@ const server = http.createServer(async (req, res) => {
       }
       const body = await readBody(req);
       const businessName = String(body.businessName || '').trim();
-      const result = await runResearch(businessName);
+      const industry = String(body.industry || '').trim();
+      const result = await runResearch(businessName, industry);
       sendJson(res, 200, {
         query: (result.queries || [])[0] || '',
         kept: result.kept || [],
@@ -234,8 +239,10 @@ const server = http.createServer(async (req, res) => {
 });
 
 if (process.argv.includes('--once')) {
-  const name = process.argv.slice(2).filter((arg) => arg !== '--once')[0] || 'Byneset Bydelskafe';
-  const result = await runResearch(name);
+  const args = process.argv.slice(2).filter((arg) => arg !== '--once');
+  const name = args[0] || 'Byneset Bydelskafe';
+  const industry = args[1] || '';
+  const result = await runResearch(name, industry);
   console.log(JSON.stringify({
     query: (result.queries || [])[0] || '',
     kept: (result.kept || []).map((entry) => ({ kind: entry.kind, title: entry.title, url: entry.url })),

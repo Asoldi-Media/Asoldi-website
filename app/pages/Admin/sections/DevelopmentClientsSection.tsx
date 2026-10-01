@@ -8,14 +8,10 @@ import {
 import { buildClientSearchHaystack, matchesClientSearchQuery, normalizeClientSearchText } from '../clientSearch';
 import { RECENT_OVERDUE_MS } from '../../../../lib/sales-next-actions.js';
 import { DeveloperClientCard } from '../../developer/DeveloperClientCard';
+import { pipelineStatusFromMakerRun } from '../../../../lib/developer-card.js';
 import { DeveloperRunQueueBar } from '../../developer/DeveloperRunQueueBar';
-import {
-  LAN_MAKER_URL,
-  LOCAL_MAKER_URL,
-  openMakerTunnelPopup,
-  tunnelPopupMakerOrigin,
-  useWebsiteMakerBaseUrl,
-} from '../../sales/websiteMaker';
+import { LOCAL_EDITOR_ORIGIN } from '../../../../lib/maker-editor-origin.js';
+import { fetchMakerQueue } from '../../developer/makerQueue';
 
 type Props = {
   hideHeader?: boolean;
@@ -26,23 +22,23 @@ type BucketTone = 'recent' | 'upcoming' | 'past' | 'none';
 
 const BUCKET_META: Record<BucketId, { title: string; hint: string; tone: BucketTone }> = {
   recentPastDue: {
-    title: 'Forfalt (siste 48 timer)',
-    hint: 'Nylig forfalt — vises over listen så du ikke mister dem.',
+    title: 'Frist nylig passert',
+    hint: 'Leveringsfristen gikk ut de siste 48 timene.',
     tone: 'recent',
   },
   upcoming: {
-    title: 'Neste handling / møte',
-    hint: 'Kommende møter og handlinger, nærmeste først.',
+    title: 'Kommende frist',
+    hint: 'Nettsidefrist etter signert kontrakt, nærmeste først.',
     tone: 'upcoming',
   },
   pastDue: {
-    title: 'Forfalt',
-    hint: 'Mer enn 48 timer etter avtalt tid.',
+    title: 'Forfalt frist',
+    hint: 'Mer enn 48 timer etter leveringsfristen.',
     tone: 'past',
   },
   noNextAction: {
-    title: 'Ingen avtalt tid',
-    hint: 'Ingen neste handling eller møtetid — alfabetisk.',
+    title: 'Ingen frist ennå',
+    hint: 'Fristen starter når kontrakt er signert. Uten dato sorteres de alfabetisk.',
     tone: 'none',
   },
 };
@@ -51,7 +47,7 @@ const BUCKET_ORDER: BucketId[] = ['recentPastDue', 'upcoming', 'pastDue', 'noNex
 const COLLAPSED_STORAGE_KEY = 'asoldi-development-timeline-collapsed';
 
 function itemRankMs(item: DevelopmentItem) {
-  const raw = String(item.rankAt || item.nextActionAt || item.meetingAt || '').trim();
+  const raw = String(item.websiteDue?.dueAt || item.rankAt || '').trim();
   if (!raw) return null;
   const ms = new Date(raw).getTime();
   return Number.isFinite(ms) ? ms : null;
@@ -98,11 +94,17 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busyKey, setBusyKey] = useState<string | null>(null);
-  const [startingMakerTunnel, setStartingMakerTunnel] = useState(false);
-  const { websiteMakerBaseUrl, setWebsiteMakerBaseUrl } = useWebsiteMakerBaseUrl();
+  const websiteMakerBaseUrl = LOCAL_EDITOR_ORIGIN;
+  const [queueItems, setQueueItems] = useState<Array<Record<string, unknown>>>([]);
+  const [queueMemory, setQueueMemory] = useState<Record<string, unknown> | null>(null);
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [kindFilter, setKindFilter] = useState<'' | 'preview' | 'deployment'>('');
+  const [runFilter, setRunFilter] = useState<'' | 'with-run' | 'without-run'>('');
+  const [stepFilter, setStepFilter] = useState('');
+  const [dueFilter, setDueFilter] = useState<'' | 'started' | 'waiting' | 'overdue' | 'upcoming'>('');
+  const [onlyWithRequests, setOnlyWithRequests] = useState(false);
+  const [threadMap, setThreadMap] = useState<Record<string, { lastKindLabel: string }>>({});
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [collapsedBuckets, setCollapsedBuckets] = useState<Record<string, boolean>>(() => {
@@ -140,9 +142,13 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
     setSearchInput('');
     setSearchQuery('');
     setKindFilter('');
+    setRunFilter('');
+    setStepFilter('');
+    setDueFilter('');
+    setOnlyWithRequests(false);
   }
 
-  const hasActiveFilters = Boolean(searchQuery || kindFilter);
+  const hasActiveFilters = Boolean(searchQuery || kindFilter || runFilter || stepFilter || dueFilter || onlyWithRequests);
   const itemMatchesSearch = useCallback(
     (item: DevelopmentItem) => {
       if (!searchQuery) return true;
@@ -161,22 +167,52 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
     },
     [searchQuery]
   );
+  const itemVisible = useCallback(
+    (item: DevelopmentItem) => {
+      if (!itemMatchesSearch(item)) return false;
+      const hasRun = Boolean(String(item.makerRun?.runId || '').trim());
+      if (runFilter === 'with-run' && !hasRun) return false;
+      if (runFilter === 'without-run' && hasRun) return false;
+      if (stepFilter) {
+        const status = pipelineStatusFromMakerRun(item.makerRun || {});
+        const ready = stepFilter === '1' ? status.step1Ready
+          : stepFilter === 'lang' ? status.languageLocked
+            : stepFilter === '1.5' ? status.step15Ready
+              : stepFilter === '2.1' ? status.generateTextReady
+                : stepFilter === '2.2' ? status.injectMediaReady
+                  : false;
+        if (!ready) return false;
+      }
+      if (dueFilter) {
+        const started = Boolean(item.websiteDue?.started && item.websiteDue?.dueAt);
+        const dueMs = started ? Date.parse(String(item.websiteDue?.dueAt || '')) : NaN;
+        if (dueFilter === 'started' && !started) return false;
+        if (dueFilter === 'waiting' && started) return false;
+        if (dueFilter === 'overdue' && !(started && Number.isFinite(dueMs) && dueMs < nowMs)) return false;
+        if (dueFilter === 'upcoming' && !(started && Number.isFinite(dueMs) && dueMs >= nowMs)) return false;
+      }
+      if (!onlyWithRequests) return true;
+      const id = String(item.salesClientId || item.id || '').trim();
+      return Boolean(threadMap[id]);
+    },
+    [itemMatchesSearch, runFilter, stepFilter, dueFilter, nowMs, onlyWithRequests, threadMap]
+  );
   const previewGroups = useMemo(
-    () => groupDevelopmentItems(previewItems.filter(itemMatchesSearch), nowMs),
-    [previewItems, itemMatchesSearch, nowMs]
+    () => groupDevelopmentItems(previewItems.filter(itemVisible), nowMs),
+    [previewItems, itemVisible, nowMs]
   );
   const deploymentGroups = useMemo(
-    () => groupDevelopmentItems(deploymentItems.filter(itemMatchesSearch), nowMs),
-    [deploymentItems, itemMatchesSearch, nowMs]
+    () => groupDevelopmentItems(deploymentItems.filter(itemVisible), nowMs),
+    [deploymentItems, itemVisible, nowMs]
   );
-  const visiblePreviewCount = previewItems.filter(itemMatchesSearch).length;
-  const visibleDeploymentCount = deploymentItems.filter(itemMatchesSearch).length;
+  const visiblePreviewCount = previewItems.filter(itemVisible).length;
+  const visibleDeploymentCount = deploymentItems.filter(itemVisible).length;
   const visibleItems = useMemo(() => {
     const list: DevelopmentItem[] = [];
-    if (kindFilter !== 'deployment') list.push(...previewItems.filter(itemMatchesSearch));
-    if (kindFilter !== 'preview') list.push(...deploymentItems.filter(itemMatchesSearch));
+    if (kindFilter !== 'deployment') list.push(...previewItems.filter(itemVisible));
+    if (kindFilter !== 'preview') list.push(...deploymentItems.filter(itemVisible));
     return list;
-  }, [deploymentItems, itemMatchesSearch, kindFilter, previewItems]);
+  }, [deploymentItems, itemVisible, kindFilter, previewItems]);
   const visibleSelectableIds = visibleItems.map((item) => item.id);
   const allVisibleSelected = Boolean(visibleSelectableIds.length && visibleSelectableIds.every((id) => selectedIds.includes(id)));
   const selectedClients = visibleItems
@@ -248,7 +284,11 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
                         busyKey={busyKey}
                         selected={selectedIds.includes(item.id)}
                         websiteMakerBaseUrl={websiteMakerBaseUrl}
-                        setWebsiteMakerBaseUrl={setWebsiteMakerBaseUrl}
+                        queueItems={queueItems}
+                        requestLabel={
+                          threadMap[String(item.salesClientId || item.id || '')]?.lastKindLabel
+                          || (threadMap[String(item.salesClientId || item.id || '')] ? 'Forespørsel' : '')
+                        }
                         onToggleSelected={() => toggleClientSelected(item.id)}
                         onCardClick={(event) => handleClientCardClick(event, item.id)}
                         onToggleStep={(entry, stepKey) => void toggleStep(entry, stepKey)}
@@ -308,9 +348,46 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
     }
   }, []);
 
+  const loadThreads = useCallback(async () => {
+    try {
+      const response = await fetch(`${API}/admin/dev-requests`, {
+        headers: developmentAuthHeaders(),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) return;
+      const next: Record<string, { lastKindLabel: string }> = {};
+      for (const row of Array.isArray(data.threads) ? data.threads : []) {
+        const id = String(row.salesClientId || '').trim();
+        if (!id) continue;
+        next[id] = { lastKindLabel: String(row.lastKindLabel || '') };
+      }
+      setThreadMap(next);
+    } catch {
+      // Keep the development list even if request threads fail.
+    }
+  }, []);
+
   useEffect(() => {
     void loadItems();
-  }, [loadItems]);
+    void loadThreads();
+  }, [loadItems, loadThreads]);
+
+  const refreshQueue = useCallback(async () => {
+    const data = await fetchMakerQueue(websiteMakerBaseUrl, developmentAuthHeaders()) as {
+      items?: Array<Record<string, unknown>>;
+      memory?: Record<string, unknown>;
+    };
+    setQueueItems(Array.isArray(data.items) ? data.items : []);
+    setQueueMemory(data.memory && typeof data.memory === 'object' ? data.memory : null);
+  }, [websiteMakerBaseUrl]);
+
+  useEffect(() => {
+    void refreshQueue().catch(() => {});
+    const timer = window.setInterval(() => {
+      void refreshQueue().catch(() => {});
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [refreshQueue]);
 
   async function toggleStep(item: DevelopmentItem, key: keyof DevelopmentItem['development']) {
     setBusyKey(`${item.id}:${key}`);
@@ -345,20 +422,6 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
     }
   }
 
-  async function startMakerTunnel() {
-    setStartingMakerTunnel(true);
-    setError('');
-    try {
-      const tunnelHost = tunnelPopupMakerOrigin(websiteMakerBaseUrl);
-      const tunnelUrl = await openMakerTunnelPopup(tunnelHost);
-      setWebsiteMakerBaseUrl(tunnelUrl);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start Website Maker tunnel');
-    } finally {
-      setStartingMakerTunnel(false);
-    }
-  }
-
   const empty = !loading && previewItems.length === 0 && deploymentItems.length === 0;
 
   return (
@@ -371,44 +434,6 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
           </p>
         </div>
       )}
-
-      <div className="rounded-2xl bg-[#2a2a2a] border border-white/10 p-4 space-y-2">
-        <div className="text-xs font-semibold text-gray-200 uppercase tracking-wide">Website Maker URL</div>
-        <div className="flex flex-col sm:flex-row gap-2">
-          <input
-            value={websiteMakerBaseUrl}
-            onChange={(e) => setWebsiteMakerBaseUrl(e.target.value)}
-            placeholder={LAN_MAKER_URL}
-            className="flex-1 px-3 py-2 rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm"
-          />
-          <button
-            type="button"
-            onClick={() => setWebsiteMakerBaseUrl(LAN_MAKER_URL)}
-            className="px-3 py-2 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
-          >
-            Office LAN
-          </button>
-          <button
-            type="button"
-            onClick={() => setWebsiteMakerBaseUrl(LOCAL_MAKER_URL)}
-            className="px-3 py-2 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
-          >
-            This computer
-          </button>
-          <button
-            type="button"
-            onClick={() => void startMakerTunnel()}
-            disabled={startingMakerTunnel}
-            className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
-          >
-            {startingMakerTunnel ? <Loader2 size={13} className="animate-spin" /> : null}
-            Start tunnel
-          </button>
-        </div>
-        <p className="text-[11px] text-gray-500">
-          Opprett run, åpne Maker og Maker preview skjer her — ikke i Sales.
-        </p>
-      </div>
 
       <form onSubmit={applySearch} className="rounded-2xl bg-[#2a2a2a] border border-white/10 p-4">
         <label className="text-xs font-semibold text-gray-200 uppercase tracking-wide">Search and filter</label>
@@ -432,6 +457,47 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
               <option value="preview">Preview websites</option>
               <option value="deployment">Deployment</option>
             </select>
+            <select
+              value={runFilter}
+              onChange={(event) => setRunFilter(event.target.value as '' | 'with-run' | 'without-run')}
+              className="rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+            >
+              <option value="">Alle run</option>
+              <option value="with-run">Har website-run</option>
+              <option value="without-run">Ingen website-run</option>
+            </select>
+            <select
+              value={stepFilter}
+              onChange={(event) => setStepFilter(event.target.value)}
+              className="rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+            >
+              <option value="">Alle steg</option>
+              <option value="1">Steg 1 klar</option>
+              <option value="lang">Språk låst</option>
+              <option value="1.5">Steg 1.5 klar</option>
+              <option value="2.1">Steg 2.1 klar</option>
+              <option value="2.2">Steg 2.2 klar</option>
+            </select>
+            <select
+              value={dueFilter}
+              onChange={(event) => setDueFilter(event.target.value as '' | 'started' | 'waiting' | 'overdue' | 'upcoming')}
+              className="rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+            >
+              <option value="">Alle frister</option>
+              <option value="waiting">Venter på signert kontrakt</option>
+              <option value="upcoming">Kommende frist</option>
+              <option value="overdue">Forfalt frist</option>
+              <option value="started">Har fristdato</option>
+            </select>
+            <label className="inline-flex items-center gap-2 rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={onlyWithRequests}
+                onChange={(event) => setOnlyWithRequests(event.target.checked)}
+                className="h-4 w-4 accent-[#FF5B00]"
+              />
+              Med forespørsel
+            </label>
             <button
               type="submit"
               className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-[#FF5B00] text-white text-sm hover:bg-[#e55200]"
@@ -451,7 +517,7 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
             )}
           </div>
           <p className="text-[11px] text-gray-400">
-            Sorted by next action / meeting time. Recently overdue clients stay on top for 48 hours, then move to{' '}
+            Sortert etter nettsidefrist. Fristen starter når salg huker av signert kontrakt. Nylig forfalt ligger øverst i 48 timer, deretter{' '}
             <span className="text-red-300">Forfalt</span>. Click a section header to collapse it.
             {hasActiveFilters ? ` Showing ${visiblePreviewCount} preview and ${visibleDeploymentCount} deployment client(s).` : ''}
           </p>
@@ -474,6 +540,9 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
         selectedClients={selectedClients}
         visibleCount={visibleSelectableIds.length}
         allVisibleSelected={allVisibleSelected}
+        items={queueItems}
+        memory={queueMemory}
+        onRefreshQueue={refreshQueue}
         onToggleSelectAll={toggleSelectAllVisible}
         onClearSelection={() => setSelectedIds([])}
         onError={setError}

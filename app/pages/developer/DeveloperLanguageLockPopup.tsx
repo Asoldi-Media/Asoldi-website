@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Loader2, X } from 'lucide-react';
-import { API } from '../Admin/shared';
+import { fetchLocalMakerJson } from '../../../lib/maker-browser-client.js';
 import type { MakerQueueAuthHeaders } from './makerQueue';
 
 type SupportedLanguage = { code: string; name: string };
@@ -30,28 +30,13 @@ type Props = {
   onChanged?: () => void;
 };
 
-async function parseBody(response: Response) {
-  const data = await response.json().catch(() => ({} as Record<string, unknown>));
-  if (!response.ok) {
-    throw new Error(String((data as { message?: string; error?: string }).message || (data as { error?: string }).error || `Request failed (${response.status})`));
-  }
-  return data;
-}
-
-function languageUrl(runId: string, websiteMakerBaseUrl: string) {
-  const url = new URL(
-    `${API}/admin/development/maker-language/${encodeURIComponent(runId)}`,
-    window.location.origin
-  );
-  url.searchParams.set('websiteMakerBaseUrl', websiteMakerBaseUrl);
-  return `${url.pathname}${url.search}`;
+function languagePath(runId: string) {
+  return `/api/runs/${encodeURIComponent(runId)}/language`;
 }
 
 export function DeveloperLanguageLockPopup({
   runId,
-  websiteMakerBaseUrl,
   businessName = '',
-  authHeaders,
   onClose,
   onChanged,
 }: Props) {
@@ -64,13 +49,11 @@ export function DeveloperLanguageLockPopup({
 
   const refresh = useCallback(async () => {
     if (!runId) return;
-    const data = await parseBody(
-      await fetch(languageUrl(runId, websiteMakerBaseUrl), { headers: authHeaders })
-    ) as LanguageInfo;
+    const data = await fetchLocalMakerJson(languagePath(runId)) as LanguageInfo;
     setInfo(data);
     setChoice((prev) => prev || String(data?.detection?.candidate?.code || ''));
     setErr('');
-  }, [authHeaders, runId, websiteMakerBaseUrl]);
+  }, [runId]);
 
   useEffect(() => {
     void refresh().catch((error) => setErr(error instanceof Error ? error.message : 'Failed to load language detection.'));
@@ -82,18 +65,14 @@ export function DeveloperLanguageLockPopup({
     try {
       const detected = info?.detection?.candidate?.code || '';
       const overridden = Boolean(detected) && choice !== detected;
-      await parseBody(
-        await fetch(languageUrl(runId, websiteMakerBaseUrl), {
-          method: 'POST',
-          headers: { ...authHeaders, 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            websiteMakerBaseUrl,
-            code: choice,
-            source: overridden ? 'override' : info?.detection?.source || 'explicit',
-            overridden,
-          }),
-        })
-      );
+      await fetchLocalMakerJson(languagePath(runId), {
+        method: 'POST',
+        body: {
+          code: choice,
+          source: overridden ? 'override' : info?.detection?.source || 'explicit',
+          overridden,
+        },
+      });
       await refresh();
       onChanged?.();
     } catch (error) {
@@ -107,13 +86,7 @@ export function DeveloperLanguageLockPopup({
     setBusy(true);
     setErr('');
     try {
-      await parseBody(
-        await fetch(languageUrl(runId, websiteMakerBaseUrl), {
-          method: 'DELETE',
-          headers: { ...authHeaders, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ websiteMakerBaseUrl }),
-        })
-      );
+      await fetchLocalMakerJson(languagePath(runId), { method: 'DELETE' });
       setChoice('');
       await refresh();
       onChanged?.();

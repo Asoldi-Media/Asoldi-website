@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Loader2 } from 'lucide-react';
+import { makerUnreachableIsLocal } from '../../../lib/maker-editor-origin.js';
 import { developmentAuthHeaders } from '../Admin/shared';
 import { DeveloperLanguageLockPopup } from './DeveloperLanguageLockPopup';
 import {
@@ -7,7 +8,6 @@ import {
   GREY_QUEUE_TARGETS,
   cancelMakerQueueItem,
   enqueueMakerQueue,
-  fetchMakerQueue,
   fetchMakerRunStatus,
   openLanguageLock,
   registerLanguageLockOpener,
@@ -37,6 +37,7 @@ type RunStatus = {
   step1Ready?: boolean;
   languageLocked?: boolean;
   generateTextReady?: boolean;
+  hasDomain?: boolean;
 };
 
 type Props = {
@@ -44,6 +45,9 @@ type Props = {
   selectedClients: QueueSelectedClient[];
   visibleCount: number;
   allVisibleSelected: boolean;
+  items?: Array<Record<string, unknown>>;
+  memory?: Record<string, unknown> | null;
+  onRefreshQueue?: () => Promise<void> | void;
   onToggleSelectAll: () => void;
   onClearSelection: () => void;
   onError: (message: string) => void;
@@ -53,6 +57,7 @@ type Props = {
 const WAIT_REASON_LABEL: Record<string, string> = {
   'heap-budget': 'Venter: heap-budsjett',
   'os-memory': 'Venter: lite ledig minne',
+  'run-busy': 'Venter: samme run kjører',
 };
 
 const STATUS_LABEL: Record<string, string> = {
@@ -74,11 +79,29 @@ function chipClass(active: boolean, disabled: boolean) {
   return 'px-2 py-1 rounded-md text-[11px] border bg-white/10 border-white/10 text-white hover:bg-white/15';
 }
 
+function asQueueItems(raw: Array<Record<string, unknown>> | undefined): QueueItem[] {
+  return (Array.isArray(raw) ? raw : []).map((item) => ({
+    id: String(item.id || ''),
+    runId: String(item.runId || ''),
+    salesClientId: String(item.salesClientId || ''),
+    target: String(item.target || ''),
+    status: String(item.status || ''),
+    waitReason: item.waitReason == null ? null : String(item.waitReason),
+    error: item.error == null ? null : String(item.error),
+    createdAt: item.createdAt ? String(item.createdAt) : '',
+    startedAt: item.startedAt ? String(item.startedAt) : '',
+    finishedAt: item.finishedAt ? String(item.finishedAt) : '',
+  }));
+}
+
 export function DeveloperRunQueueBar({
   websiteMakerBaseUrl,
   selectedClients,
   visibleCount,
   allVisibleSelected,
+  items: itemsProp,
+  memory: memoryProp,
+  onRefreshQueue,
   onToggleSelectAll,
   onClearSelection,
   onError,
@@ -86,28 +109,14 @@ export function DeveloperRunQueueBar({
 }: Props) {
   const [target, setTarget] = useState('1');
   const [busy, setBusy] = useState(false);
-  const [items, setItems] = useState<QueueItem[]>([]);
-  const [memory, setMemory] = useState<Record<string, unknown> | null>(null);
   const [langOpen, setLangOpen] = useState<null | { runId: string; businessName: string }>(null);
   const [runStatus, setRunStatus] = useState<Record<string, RunStatus>>({});
+  const [localEditorNote, setLocalEditorNote] = useState(false);
   const selectedRunKey = selectedClients.map((client) => client.runId).filter(Boolean).sort().join('|');
   const selectedCount = selectedClients.length;
   const selectedWithRun = selectedClients.filter((client) => client.runId);
-
-  const refreshQueue = useCallback(async () => {
-    if (!websiteMakerBaseUrl) return;
-    const data = await fetchMakerQueue(websiteMakerBaseUrl, developmentAuthHeaders()) as { items?: QueueItem[]; memory?: Record<string, unknown> };
-    setItems(Array.isArray(data.items) ? data.items : []);
-    setMemory(data.memory && typeof data.memory === 'object' ? data.memory : null);
-  }, [websiteMakerBaseUrl]);
-
-  useEffect(() => {
-    void refreshQueue().catch((error) => onError(error instanceof Error ? error.message : 'Kunne ikke lese køen.'));
-    const timer = window.setInterval(() => {
-      void refreshQueue().catch(() => {});
-    }, 2000);
-    return () => window.clearInterval(timer);
-  }, [onError, refreshQueue]);
+  const items = asQueueItems(itemsProp);
+  const memory = memoryProp && typeof memoryProp === 'object' ? memoryProp : null;
 
   useEffect(() => {
     registerLanguageLockOpener((input) => {
@@ -148,7 +157,7 @@ export function DeveloperRunQueueBar({
   );
   const step1Ready = statuses.length > 0 && statuses.every((status) => status.step1Ready);
   const languageLocked = statuses.length > 0 && statuses.every((status) => status.languageLocked);
-  const generateTextReady = statuses.length > 0 && statuses.every((status) => status.generateTextReady);
+  const hasDomain = statuses.length > 0 && statuses.every((status) => status.hasDomain);
   const langClient = selectedWithRun.length === 1 ? selectedWithRun[0] : null;
   const langDisabledReason = !langClient
     ? 'Velg én klient med et Maker-run for å låse språk.'
@@ -162,15 +171,15 @@ export function DeveloperRunQueueBar({
       : !languageLocked
         ? 'Detect & lock the website language first'
         : '';
-  const step22DisabledReason = !selectedWithRun.length
+  const seoDisabledReason = !selectedWithRun.length
     ? ''
-    : !generateTextReady
-      ? 'Requires generate-text first'
+    : !hasDomain
+      ? 'Set a website domain before Step 4 SEO'
       : '';
 
   function clickableDisabled(clickTarget: string) {
     if (clickTarget === '1.5') return Boolean(step15DisabledReason);
-    if (clickTarget === 'inject-media') return Boolean(step22DisabledReason);
+    if (clickTarget === '3') return Boolean(seoDisabledReason);
     return false;
   }
 
@@ -180,28 +189,46 @@ export function DeveloperRunQueueBar({
       return;
     }
     if (clickableDisabled(target)) {
-      onError(target === '1.5' ? step15DisabledReason : step22DisabledReason);
+      onError(target === '1.5' ? step15DisabledReason : seoDisabledReason);
       return;
     }
     setBusy(true);
     onError('');
     try {
+      const linked = selectedClients.filter((client) => client.runId);
+      const missing = selectedClients.filter((client) => !client.runId);
       const data = await enqueueMakerQueue({
         websiteMakerBaseUrl,
-        salesClientIds: selectedClients.map((client) => client.salesClientId).filter(Boolean),
-        runIds: selectedClients.filter((client) => !client.salesClientId && client.runId).map((client) => client.runId),
-        target,
-        authHeaders: developmentAuthHeaders(),
-      }) as { failures?: { salesClientId?: string; error?: string }[]; added?: unknown[] };
-      const failures = Array.isArray(data.failures) ? data.failures : [];
+        salesClientIds: linked.map((client) => client.salesClientId).filter(Boolean),
+        runIds: linked.map((client) => client.runId),
+        untilTarget: target,
+      }) as { failures?: { salesClientId?: string; error?: string }[]; skipped?: { error?: string }[]; added?: unknown[] };
+      const failures = [
+        ...missing.map((client) => ({
+          salesClientId: client.salesClientId,
+          error: 'No Website Maker run is linked.',
+        })),
+        ...(Array.isArray(data.failures) ? data.failures : []),
+      ];
+      const skippedErrors = (Array.isArray(data.skipped) ? data.skipped : [])
+        .map((entry) => String(entry.error || '').trim())
+        .filter(Boolean);
       if (failures.length) {
         onError(failures.map((entry) => entry.error || 'No Website Maker run is linked.').join(' | '));
+      } else if (skippedErrors.length && !(Array.isArray(data.added) && data.added.length)) {
+        onError(skippedErrors[0]);
       } else {
-        onNotice?.(`Køet ${targetLabel(target)} for ${selectedClients.length} klient(er).`);
+        onNotice?.(`Køet ${targetLabel(target)} for ${selectedClients.length} klient(er). Ekstra jobber venter til RAM tillater det.`);
       }
-      await refreshQueue();
+      await onRefreshQueue?.();
     } catch (error) {
-      onError(error instanceof Error ? error.message : 'Kunne ikke legge i kø.');
+      const message = error instanceof Error ? error.message : 'Kunne ikke legge i kø.';
+      if (makerUnreachableIsLocal(message)) {
+        setLocalEditorNote(true);
+        onError(message);
+      } else {
+        onError(message);
+      }
     } finally {
       setBusy(false);
     }
@@ -210,7 +237,7 @@ export function DeveloperRunQueueBar({
   async function cancelItem(itemId: string) {
     try {
       await cancelMakerQueueItem(websiteMakerBaseUrl, itemId, developmentAuthHeaders());
-      await refreshQueue();
+      await onRefreshQueue?.();
     } catch (error) {
       onError(error instanceof Error ? error.message : 'Kunne ikke avbryte.');
     }
@@ -224,8 +251,13 @@ export function DeveloperRunQueueBar({
         <div>
           <div className="text-xs font-semibold text-gray-200 uppercase tracking-wide">Maker-kø</div>
           <p className="text-[11px] text-gray-400 mt-0.5">
-            Kjør ett klikkbart steg for valgte klienter. Layout, Maps, steg 2, CMS og SEO vises grå til de slås på.
+            Kjør valgte klienter til og med det steget. Bare så mange jobber som RAM tåler kjører samtidig; resten venter.
           </p>
+          {localEditorNote ? (
+            <p className="text-[11px] text-gray-400 mt-1">
+              Start Docker Maker on port 3000 (127.0.0.1:3000).
+            </p>
+          ) : null}
         </div>
         <label className="inline-flex items-center gap-2 text-sm text-gray-200 cursor-pointer">
           <input
@@ -253,8 +285,8 @@ export function DeveloperRunQueueBar({
           const title =
             entry.target === '1.5' && step15DisabledReason
               ? step15DisabledReason
-              : entry.target === 'inject-media' && step22DisabledReason
-                ? step22DisabledReason
+              : entry.target === '3' && seoDisabledReason
+                ? seoDisabledReason
                 : '';
           return (
             <button
@@ -290,7 +322,7 @@ export function DeveloperRunQueueBar({
             key={entry.target}
             type="button"
             disabled
-            title="Ikke klikkbar ennå"
+            title="CMS setup and beyond"
             className={chipClass(false, true)}
           >
             {entry.label}

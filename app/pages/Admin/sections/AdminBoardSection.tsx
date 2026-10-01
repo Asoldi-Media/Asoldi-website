@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
 import { CalendarDays, ChevronDown, Loader2 } from 'lucide-react';
-import { API, salesAuthHeaders, type SalesClient } from '../shared';
+import { API, authHeaders, salesAuthHeaders, type SalesClient } from '../shared';
 import { formatActionFormatLabel, SALES_ACTION_TIMEZONE } from '../../../../lib/sales-next-actions.js';
 import { getWorkshopAction } from '../../../../lib/workshop-action-shared.js';
 import {
@@ -86,12 +86,21 @@ async function request(path: string, init?: RequestInit) {
   return data as Record<string, unknown>;
 }
 
+type ThreadSummary = {
+  salesClientId: string;
+  lastSnippet: string;
+  lastKindLabel: string;
+  unreadForAdmin: number;
+};
+
 function AdminBoardCard({
   client,
   onClient,
+  thread,
 }: {
   client: SalesClient;
   onClient: (client: SalesClient) => void;
+  thread?: ThreadSummary;
 }) {
   const action = getWorkshopAction(client);
   const onCalendar = Boolean(action?.addToCalendar);
@@ -141,6 +150,12 @@ function AdminBoardCard({
         <p className="text-[11px] text-gray-500">Ingen workshop avtalt.</p>
       )}
 
+      {thread?.lastKindLabel ? (
+        <p className="text-[11px] text-amber-300">{thread.lastKindLabel}</p>
+      ) : thread ? (
+        <p className="text-[11px] text-sky-300">Åpen forespørsel</p>
+      ) : null}
+
       <div data-admin-card-actions>
         <WorkshopAdminActionRow client={client} onClient={onClient} />
       </div>
@@ -158,6 +173,8 @@ export function AdminBoardSection() {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [collapsedBuckets, setCollapsedBuckets] = useState<Record<string, boolean>>({});
   const [calendarOpen, setCalendarOpen] = useState(true);
+  const [onlyWithRequests, setOnlyWithRequests] = useState(false);
+  const [threadMap, setThreadMap] = useState<Record<string, ThreadSummary>>({});
   const [calendarLoading, setCalendarLoading] = useState(true);
   const [calendarError, setCalendarError] = useState('');
   const [calendarConnecting, setCalendarConnecting] = useState(false);
@@ -211,10 +228,32 @@ export function AdminBoardSection() {
     }
   }, []);
 
+  const loadThreads = useCallback(async () => {
+    try {
+      const response = await fetch(`${API}/admin/dev-requests`, { headers: authHeaders() });
+      const data = await response.json().catch(() => ({} as { threads?: ThreadSummary[] }));
+      if (!response.ok) return;
+      const next: Record<string, ThreadSummary> = {};
+      for (const row of Array.isArray(data.threads) ? data.threads : []) {
+        const id = String(row.salesClientId || '').trim();
+        if (!id) continue;
+        next[id] = {
+          salesClientId: id,
+          lastSnippet: String(row.lastSnippet || ''),
+          lastKindLabel: String(row.lastKindLabel || ''),
+          unreadForAdmin: Number(row.unreadForAdmin) || 0,
+        };
+      }
+      setThreadMap(next);
+    } catch {
+      // Keep the board even if the request list is unavailable.
+    }
+  }, []);
+
   useEffect(() => {
     let active = true;
     setLoading(true);
-    void loadClients()
+    void Promise.all([loadClients(), loadThreads()])
       .catch((err) => {
         if (active) setError(err instanceof Error ? err.message : 'Kunne ikke hente kunder');
       })
@@ -224,7 +263,7 @@ export function AdminBoardSection() {
     return () => {
       active = false;
     };
-  }, [loadClients]);
+  }, [loadClients, loadThreads]);
 
   useEffect(() => {
     if (!calendarOpen) return undefined;
@@ -232,7 +271,11 @@ export function AdminBoardSection() {
     return undefined;
   }, [calendarOpen, loadCalendar]);
 
-  const groups = useMemo(() => groupAdminBoardClients(clients, nowMs), [clients, nowMs]);
+  const visibleClients = useMemo(() => {
+    if (!onlyWithRequests) return clients;
+    return clients.filter((client) => Boolean(threadMap[client.id]));
+  }, [clients, onlyWithRequests, threadMap]);
+  const groups = useMemo(() => groupAdminBoardClients(visibleClients, nowMs), [visibleClients, nowMs]);
   const isOwnCalendar = calendarWeek.isOwnCalendar
     || adminBoardViewerIsDamianMailbox(viewer);
 
@@ -318,7 +361,22 @@ export function AdminBoardSection() {
         ) : null}
       </div>
 
-      <AdminRequestInbox />
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <label className="inline-flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={onlyWithRequests}
+            onChange={(event) => setOnlyWithRequests(event.target.checked)}
+            className="h-4 w-4 accent-[#FF5B00]"
+          />
+          Bare kunder med forespørsel
+        </label>
+        {onlyWithRequests ? (
+          <span className="text-xs text-gray-500">
+            {visibleClients.length} av {clients.length} kundekort
+          </span>
+        ) : null}
+      </div>
 
       {error ? (
         <div className="rounded-xl border border-red-500/20 bg-red-500/10 text-red-300 px-3 py-2.5 text-sm">
@@ -332,7 +390,9 @@ export function AdminBoardSection() {
         </div>
       ) : !BUCKETS.some((bucket) => (groups[bucket.id] || []).length) ? (
         <p className="text-sm text-gray-500 text-center py-8">
-          Ingen aktive nettside-kunder på admin-tavlen. MyPhoner-vinnere og manuelt lagt til kunder vises her og blir på Sales.
+          {onlyWithRequests
+            ? 'Ingen kunder med forespørsel akkurat nå.'
+            : 'Ingen aktive nettside-kunder på admin-tavlen. MyPhoner-vinnere og manuelt lagt til kunder vises her og blir på Sales.'}
         </p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 items-start">
@@ -371,7 +431,12 @@ export function AdminBoardSection() {
                   </span>
                 </button>
                 {visible.map((client) => (
-                  <AdminBoardCard key={client.id} client={client} onClient={replaceClient} />
+                  <AdminBoardCard
+                    key={client.id}
+                    client={client}
+                    onClient={replaceClient}
+                    thread={threadMap[client.id]}
+                  />
                 ))}
               </React.Fragment>
             );

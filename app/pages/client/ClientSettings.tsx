@@ -17,6 +17,7 @@ import { BusinessCardSection } from '../../components/client/settings/BusinessCa
 import { ProductsSection } from '../../components/client/settings/ProductsSection';
 import { MediaSection } from '../../components/client/settings/MediaSection';
 import { GeneralInfoSection } from '../../components/client/settings/GeneralInfoSection';
+import { StaffSection } from '../../components/client/settings/StaffSection';
 import { WebsiteQuestionsSection } from '../../components/client/settings/WebsiteQuestionsSection';
 import {
   type ClientDataBank,
@@ -554,8 +555,14 @@ export const ClientSettings = () => {
                 </div>
               ) : null}
 
-              {activeSection === 'kundedata' && dataTab === 'bedrifts_kort' ? (
-                <BusinessCardSection clientData={clientData} setClientData={setClientData} />
+              {activeSection === 'kundedata' && dataTab === 'bedrifts_kort' && token ? (
+                <BusinessCardSection
+                  token={token}
+                  clientData={clientData}
+                  setClientData={setClientData}
+                  onError={setError}
+                  onSaved={updateProfileState}
+                />
               ) : null}
               {activeSection === 'kundedata' && dataTab === 'produkter' && token ? (
                 <ProductsSection
@@ -568,6 +575,9 @@ export const ClientSettings = () => {
               ) : null}
               {activeSection === 'kundedata' && dataTab === 'media' && token ? (
                 <MediaSection token={token} clientData={clientData} setClientData={setClientData} onError={setError} />
+              ) : null}
+              {activeSection === 'kundedata' && dataTab === 'ansatte' && token ? (
+                <StaffSection token={token} clientData={clientData} setClientData={setClientData} onError={setError} />
               ) : null}
               {activeSection === 'kundedata' && dataTab === 'generell' && token ? (
                 <GeneralInfoSection token={token} clientData={clientData} setClientData={setClientData} onError={setError} />

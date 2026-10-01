@@ -3339,31 +3339,6 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
               );
             })}
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-            {SECONDARY_INTEREST_STATES.map((state) => {
-              const count = pipelineCounts[state.id as keyof typeof pipelineCounts] || 0;
-              const selected = pipelineFilter === state.id;
-              return (
-                <button
-                  key={state.id}
-                  type="button"
-                  onClick={() => setPipelineFilter(selected ? '' : state.id)}
-                  className={`rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                    selected
-                      ? 'bg-[#FF5B00] border-[#FF5B00] text-white'
-                      : 'bg-black/20 border-white/10 text-gray-200 hover:bg-white/10'
-                  }`}
-                >
-                  <span className={`block text-lg font-semibold tabular-nums leading-none ${selected ? 'text-white' : 'text-white'}`}>
-                    {count}
-                  </span>
-                  <span className={`mt-1 block text-[12px] font-medium ${selected ? 'text-white' : 'text-gray-200'}`}>
-                    {state.label}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
         </div>
 
         {selectedCount > 0 && (

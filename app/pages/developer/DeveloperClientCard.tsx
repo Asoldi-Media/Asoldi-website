@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { CalendarClock, CheckCircle2, ExternalLink, Loader2, Pencil } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, FileText, Loader2, Pencil } from 'lucide-react';
 import {
   API,
   developmentAuthHeaders,
@@ -7,22 +7,24 @@ import {
 } from '../Admin/shared';
 import { MakerRunTools } from './MakerRunTools';
 import { DeveloperRequestThread } from './DeveloperRequestThread';
-import { enqueueMakerQueue, fetchMakerRunStatus, openLanguageLock } from './makerQueue';
+import { DeveloperAuthImage, DeveloperClientBrief, DeveloperMediaLibrary, type BriefMediaFile, type MaterialDot } from './DeveloperClientBrief';
+import { enqueueMakerQueue, fetchMakerRunStatus, openLanguageLock, saveMakerRunDomain } from './makerQueue';
+import { summarizeMaterialDots } from '../../../lib/client-material-dots.js';
 import {
   DEVELOPER_PROGRESS_CHIPS,
-  DEVELOPER_QA_LABELS,
-  developerMaterialsView,
+  chipStepReady,
   developerMediaLibraryView,
   developerSummaryView,
   makerCustomEditUrl,
   makerCustomPreviewPath,
+  makerStepPreviewPath,
   normalizeDeveloperQa,
   pipelineStatusFromMakerRun,
   resolveDeveloperProgressClick,
 } from '../../../lib/developer-card.js';
+import { LOCAL_EDITOR_ORIGIN, editorMakerOrigin, makerUnreachableIsLocal } from '../../../lib/maker-editor-origin.js';
 import {
   buildMakerRunUrl,
-  getPublicClientPreviewUrl,
   normalizeMakerDashboardDraftUrl,
   resolveOpenInMakerUrl,
 } from '../sales/websiteMaker';
@@ -43,6 +45,14 @@ type MediaFile = {
   mime?: string;
   bytes?: number;
   field?: string;
+  index?: number;
+  bundleId?: string;
+};
+
+type QueueItemLike = {
+  runId?: unknown;
+  target?: unknown;
+  status?: unknown;
 };
 
 type Props = {
@@ -51,7 +61,8 @@ type Props = {
   busyKey: string | null;
   selected: boolean;
   websiteMakerBaseUrl: string;
-  setWebsiteMakerBaseUrl: (value: string) => void;
+  queueItems?: QueueItemLike[];
+  requestLabel?: string;
   onToggleSelected: () => void;
   onCardClick: (event: React.MouseEvent<HTMLElement>) => void;
   onToggleStep: (item: DevelopmentItem, key: keyof DevelopmentItem['development']) => void;
@@ -60,29 +71,6 @@ type Props = {
   onError: (message: string) => void;
   onNotice?: (message: string) => void;
 };
-
-function formatRankTime(value = '') {
-  const ms = new Date(value).getTime();
-  if (!Number.isFinite(ms)) return '';
-  return new Date(ms).toLocaleString('nb-NO', {
-    weekday: 'short',
-    day: '2-digit',
-    month: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-function formatWhen(value = '') {
-  const ms = new Date(value).getTime();
-  if (!Number.isFinite(ms)) return '';
-  return new Date(ms).toLocaleString('nb-NO', {
-    day: '2-digit',
-    month: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
 
 function chipClass(kind: 'grey' | 'disabled' | 'ready' | 'idle') {
   if (kind === 'grey' || kind === 'disabled') {
@@ -100,7 +88,8 @@ export function DeveloperClientCard({
   busyKey,
   selected,
   websiteMakerBaseUrl,
-  setWebsiteMakerBaseUrl,
+  queueItems = [],
+  requestLabel = '',
   onToggleSelected,
   onCardClick,
   onToggleStep,
@@ -112,10 +101,24 @@ export function DeveloperClientCard({
   const contact = [item.contactPerson, item.contactPhone, item.contactEmail].filter(Boolean).join(' · ');
   const salesClientId = String(item.salesClientId || '').trim();
   const makerRunId = String(item.makerRun?.runId || '').trim();
-  const rankLabel = formatRankTime(item.rankAt || item.nextActionAt || item.meetingAt || '');
+  const dueLabel = String(item.websiteDue?.label || '').trim();
+  const dueOverdue = Boolean(
+    item.websiteDue?.started
+    && item.websiteDue?.dueAt
+    && Date.parse(item.websiteDue.dueAt) < Date.now()
+  );
   const summary = developerSummaryView(item.workshop);
   const [qa, setQa] = useState(() => normalizeDeveloperQa(item.developerQa));
-  const [materials, setMaterials] = useState(() => developerMaterialsView({}));
+  const [dots, setDots] = useState<MaterialDot[]>([]);
+  const [domainCard, setDomainCard] = useState<{ hostname: string; statusLabel: string; present: boolean }>({
+    hostname: '',
+    statusLabel: '',
+    present: false,
+  });
+  const [briefOpen, setBriefOpen] = useState(false);
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [mediaReload, setMediaReload] = useState(0);
+  const [deletingMedia, setDeletingMedia] = useState('');
   const [media, setMedia] = useState<{ fromClient: MediaFile[]; fromMaker: MediaFile[]; makerError: string }>({
     fromClient: [],
     fromMaker: [],
@@ -124,6 +127,10 @@ export function DeveloperClientCard({
   const [enqueueBusy, setEnqueueBusy] = useState('');
   const [openingMaker, setOpeningMaker] = useState(false);
   const [liveStatus, setLiveStatus] = useState<Record<string, unknown> | null>(null);
+  const [actionPage, setActionPage] = useState(1);
+  const [chipMenu, setChipMenu] = useState('');
+  const [domainDraft, setDomainDraft] = useState('');
+  const [savingDomain, setSavingDomain] = useState(false);
 
   useEffect(() => {
     setQa(normalizeDeveloperQa(item.developerQa));
@@ -139,6 +146,10 @@ export function DeveloperClientCard({
     languageLocked: Boolean(liveStatus?.languageLocked ?? persistedStatus.languageLocked),
     generateTextReady: Boolean(liveStatus?.generateTextReady ?? persistedStatus.generateTextReady),
     injectMediaReady: Boolean(liveStatus?.injectMediaReady ?? persistedStatus.injectMediaReady),
+    layoutReady: Boolean(liveStatus?.layoutReady ?? persistedStatus.layoutReady),
+    mapsReady: Boolean(liveStatus?.mapsReady ?? persistedStatus.mapsReady),
+    seoReady: Boolean(liveStatus?.seoReady ?? persistedStatus.seoReady),
+    hasDomain: Boolean(liveStatus?.hasDomain ?? persistedStatus.hasDomain),
   };
 
   useEffect(() => {
@@ -152,10 +163,16 @@ export function DeveloperClientCard({
       .then(async (response) => {
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.message || 'Kunne ikke laste materialer.');
-        setMaterials(developerMaterialsView(data));
+        setDots(Array.isArray(data.dots) ? data.dots : []);
+        const card = data.domainCard && typeof data.domainCard === 'object' ? data.domainCard : {};
+        setDomainCard({
+          hostname: String(card.hostname || '').trim(),
+          statusLabel: String(card.statusLabel || '').trim(),
+          present: Boolean(card.present),
+        });
       })
       .catch(() => {
-        setMaterials(developerMaterialsView({}));
+        setDots([]);
       });
   }, [item.id, salesClientId, websiteMakerBaseUrl]);
 
@@ -186,7 +203,7 @@ export function DeveloperClientCard({
           makerError: error instanceof Error ? error.message : 'Kunne ikke lese mediabiblioteket.',
         }));
       });
-  }, [item.id, salesClientId, websiteMakerBaseUrl, makerRunId]);
+  }, [item.id, salesClientId, websiteMakerBaseUrl, makerRunId, mediaReload]);
 
   useEffect(() => {
     if (!makerRunId || !websiteMakerBaseUrl) {
@@ -204,25 +221,72 @@ export function DeveloperClientCard({
     return () => {
       cancelled = true;
     };
-  }, [makerRunId, websiteMakerBaseUrl]);
+  }, [makerRunId, websiteMakerBaseUrl, queueItems]);
 
-  const customEditUrl = makerCustomEditUrl(websiteMakerBaseUrl, makerRunId);
+  const editorBase = editorMakerOrigin(websiteMakerBaseUrl) || LOCAL_EDITOR_ORIGIN;
+  const customEditUrl = makerCustomEditUrl(editorBase, makerRunId);
   const customPreviewPath = makerCustomPreviewPath(makerRunId, item.makerRun?.customSite || null);
   const customPreviewUrl = customPreviewPath
-    ? `${String(websiteMakerBaseUrl || '').replace(/\/+$/, '')}${customPreviewPath}`
+    ? `${editorBase}${customPreviewPath}`
     : '';
-  const publicPreviewUrl = getPublicClientPreviewUrl({
-    id: salesClientId,
-    websiteImport: item.websiteImport,
-  });
   const makerDashboardUrl = resolveOpenInMakerUrl({
-    baseUrl: websiteMakerBaseUrl,
+    baseUrl: editorBase,
     runId: makerRunId,
     storedDashboardUrl: normalizeMakerDashboardDraftUrl(String(item.makerRun?.dashboardUrl || '').trim()),
     intakeStatus: String(item.makerRun?.intakeStatus || ''),
     latestReadyStep: String(item.makerRun?.latestReadyStep || ''),
   });
-  const domainMark = materials.binaries.find((row) => row.key === 'domain')?.mark || 'none';
+  const makerHostname = String(
+    liveStatus?.websiteDomain
+    || item.makerRun?.productionDomain
+    || item.makerRun?.websiteDomain
+    || ''
+  ).trim();
+  const domainView = domainCard.present
+    ? domainCard
+    : { hostname: makerHostname, statusLabel: '', present: Boolean(makerHostname) };
+
+  useEffect(() => {
+    setDomainDraft(domainView.hostname || makerHostname);
+  }, [domainView.hostname, makerHostname]);
+
+  const dotSummary = summarizeMaterialDots(dots);
+  const workshopHeld = summary.ready || Boolean(item.workshopHeldAt);
+  const shortDescription = (summary.ready ? summary.intro : item.notes || '').replace(/\s+/g, ' ').trim();
+  const libraryFiles: BriefMediaFile[] = [
+    ...media.fromClient.map((file) => ({ ...file, source: file.source || 'client' })),
+    ...media.fromMaker.map((file) => ({ ...file, source: file.source || 'run' })),
+  ];
+  const imageFiles = libraryFiles.filter((file) => (
+    String(file.mime || '').startsWith('image/')
+    || /\.(png|jpe?g|webp|gif|svg|avif)$/i.test(file.fileName || '')
+  ));
+  const previewImages = imageFiles.slice(0, 6);
+  const hiddenImages = Math.max(0, imageFiles.length - previewImages.length);
+  const iterationMessages = [
+    ...(item.iterationTranscript
+      ? [{
+          id: 'iteration-transcript',
+          at: item.workshopHeldAt || item.rankAt || '',
+          authorLabel: 'Transkript',
+          text: item.iterationTranscript,
+        }]
+      : []),
+    ...(item.iterationLog || []).map((entry) => ({
+      id: `iteration-${entry.id}`,
+      at: entry.at || '',
+      authorLabel: entry.doneAt ? 'Iterasjon, ferdig' : 'Iterasjon',
+      text: entry.text || '',
+    })),
+  ];
+
+  function chipQueued(target: string) {
+    return queueItems.some((entry) => (
+      String(entry.runId || '') === makerRunId
+      && String(entry.target || '') === target
+      && (entry.status === 'queued' || entry.status === 'running')
+    ));
+  }
 
   async function patchQa(key: 'textOk' | 'mediaOk' | 'responsiveOk', value: boolean) {
     const next = { ...qa, [key]: value };
@@ -247,7 +311,7 @@ export function DeveloperClientCard({
       onError('No Website Maker run is linked to this client yet.');
       return;
     }
-    const fallbackUrl = makerDashboardUrl || buildMakerRunUrl(websiteMakerBaseUrl, makerRunId, 'dashboard');
+    const fallbackUrl = makerDashboardUrl || buildMakerRunUrl(editorBase, makerRunId, 'dashboard');
     if (!fallbackUrl) {
       onError('Could not resolve Website Maker URL for this client.');
       return;
@@ -258,7 +322,7 @@ export function DeveloperClientCard({
       const data = await fetch(`${API}/admin/sales/${encodeURIComponent(salesClientId)}/refresh-maker-handoff`, {
         method: 'POST',
         headers: { ...developmentAuthHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ websiteMakerBaseUrl, runId: makerRunId }),
+        body: JSON.stringify({ websiteMakerBaseUrl: editorBase, runId: makerRunId }),
       }).then(async (response) => {
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.message || 'Opened Maker, but the stored link could not be refreshed.');
@@ -267,9 +331,42 @@ export function DeveloperClientCard({
       if (data?.client && onClientUpdated) onClientUpdated(data.client as Record<string, unknown>);
       else await onReload();
     } catch (error) {
-      onError(error instanceof Error ? error.message : 'Opened Maker, but the stored link could not be refreshed.');
+      const message = error instanceof Error ? error.message : 'Opened Maker, but the stored link could not be refreshed.';
+      if (!makerUnreachableIsLocal(message)) onError(message);
     } finally {
       setOpeningMaker(false);
+    }
+  }
+
+  async function enqueueTarget(chip: (typeof DEVELOPER_PROGRESS_CHIPS)[number], mode: 'until' | 'rerun') {
+    if (!makerRunId) {
+      onError('No Website Maker run is linked to this client yet.');
+      return;
+    }
+    setEnqueueBusy(chip.id);
+    setChipMenu('');
+    onError('');
+    try {
+      const data = await enqueueMakerQueue({
+        websiteMakerBaseUrl,
+        salesClientIds: [salesClientId],
+        runIds: [makerRunId],
+        ...(mode === 'until' ? { untilTarget: chip.target } : { target: chip.target }),
+      }) as { skipped?: { error?: string }[]; added?: unknown[] };
+      const skipped = (Array.isArray(data.skipped) ? data.skipped : [])
+        .map((entry) => String(entry.error || '').trim())
+        .filter(Boolean);
+      if (Array.isArray(data.added) && data.added.length) {
+        onNotice?.(`Køet ${chip.label}.`);
+      }
+      if (skipped.length) onError(skipped[0]);
+      if (!skipped.length && !(Array.isArray(data.added) && data.added.length)) {
+        onNotice?.(`${chip.label} er allerede klar.`);
+      }
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Kunne ikke legge i kø.');
+    } finally {
+      setEnqueueBusy('');
     }
   }
 
@@ -277,7 +374,7 @@ export function DeveloperClientCard({
     const chip = DEVELOPER_PROGRESS_CHIPS.find((row) => row.id === chipId);
     if (!chip) return;
     const resolved = resolveDeveloperProgressClick(chip, status);
-    if (!resolved.enqueue && resolved.type !== 'language') {
+    if (!resolved.enqueue && resolved.type !== 'language' && resolved.type !== 'ready') {
       if (resolved.reason) onError(resolved.reason);
       return;
     }
@@ -293,44 +390,123 @@ export function DeveloperClientCard({
       });
       return;
     }
-    setEnqueueBusy(chip.id);
+    if (resolved.type === 'ready') {
+      setChipMenu((current) => (current === chip.id ? '' : chip.id));
+      return;
+    }
+    await enqueueTarget(chip, 'until');
+  }
+
+  function openStepPreview(target: string) {
+    const path = makerStepPreviewPath(makerRunId, target);
+    if (!path) return;
+    window.open(`${editorBase}${path}`, '_blank');
+    setChipMenu('');
+  }
+
+  async function saveDomain() {
+    if (!makerRunId) {
+      onError('No Website Maker run is linked to this client yet.');
+      return;
+    }
+    setSavingDomain(true);
     onError('');
     try {
-      await enqueueMakerQueue({
-        websiteMakerBaseUrl,
-        salesClientIds: [salesClientId],
-        target: resolved.target,
+      const data = await saveMakerRunDomain({
+        runId: makerRunId,
+        websiteDomain: domainDraft,
+        salesClientId,
         authHeaders: developmentAuthHeaders(),
       });
-      onNotice?.(`Køet ${chip.label}.`);
+      if (data?.client && onClientUpdated) onClientUpdated(data.client as Record<string, unknown>);
+      setLiveStatus((prev) => ({ ...(prev || {}), hasDomain: Boolean(data.hasDomain), websiteDomain: data.websiteDomain }));
+      onNotice?.(data.hasDomain ? 'Domene lagret på Maker-runet.' : 'Domene fjernet fra Maker-runet.');
     } catch (error) {
-      onError(error instanceof Error ? error.message : 'Kunne ikke legge i kø.');
+      onError(error instanceof Error ? error.message : 'Kunne ikke lagre domenet.');
     } finally {
-      setEnqueueBusy('');
+      setSavingDomain(false);
     }
   }
 
-  const openAuthedMedia = useCallback(async (url = '') => {
-    if (!url) return;
+  async function deleteMedia(file: BriefMediaFile) {
+    if (!window.confirm(`Slette ${file.fileName || 'filen'}?`)) return;
+    const key = `${file.source}-${file.field || ''}-${file.index ?? ''}-${file.fileName}`;
+    setDeletingMedia(key);
+    onError('');
     try {
-      const response = await fetch(url, { headers: developmentAuthHeaders() });
-      if (!response.ok) throw new Error('Kunne ikke åpne filen.');
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      window.open(objectUrl, '_blank');
+      const makerFile = file.source === 'run' || file.source === 'bundle';
+      const response = makerFile
+        ? await fetch(`${API}/admin/development/${encodeURIComponent(item.id)}/media/maker`, {
+            method: 'DELETE',
+            headers: { ...developmentAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              source: file.source,
+              field: file.field,
+              index: file.index,
+              bundleId: file.bundleId,
+              websiteMakerBaseUrl,
+            }),
+          })
+        : await fetch(String(file.url || ''), { method: 'DELETE', headers: developmentAuthHeaders() });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || 'Kunne ikke slette filen.');
+      setMediaReload((value) => value + 1);
     } catch (error) {
-      onError(error instanceof Error ? error.message : 'Kunne ikke åpne filen.');
+      onError(error instanceof Error ? error.message : 'Kunne ikke slette filen.');
+    } finally {
+      setDeletingMedia('');
     }
-  }, [onError]);
+  }
 
   function chipVisual(chip: (typeof DEVELOPER_PROGRESS_CHIPS)[number], resolved: ReturnType<typeof resolveDeveloperProgressClick>) {
     if (chip.kind === 'grey' || resolved.type === 'disabled' || resolved.type === 'noop') return 'grey';
-    if (chip.id === 'lang') return status.languageLocked ? 'ready' : 'idle';
-    if (chip.id === '1') return status.step1Ready ? 'ready' : 'idle';
-    if (chip.id === '1.5') return status.step15Ready ? 'ready' : 'idle';
-    if (chip.id === '2.1') return status.generateTextReady ? 'ready' : 'idle';
-    if (chip.id === '2.2') return status.injectMediaReady ? 'ready' : 'idle';
+    if (chipStepReady(chip, status)) return 'ready';
     return 'idle';
+  }
+
+  function renderProgressChips() {
+    return (
+      <div className="flex flex-wrap gap-1.5">
+        {DEVELOPER_PROGRESS_CHIPS.map((chip) => {
+          const resolved = resolveDeveloperProgressClick(chip, status);
+          const visual = chipVisual(chip, resolved);
+          const queued = Boolean(chip.target && chipQueued(chip.target));
+          const clickable = resolved.type === 'enqueue' || resolved.type === 'enqueue-until' || resolved.type === 'language' || resolved.type === 'ready';
+          return (
+            <div key={chip.id} className="relative">
+              <button
+                type="button"
+                disabled={!clickable || enqueueBusy === chip.id}
+                title={resolved.reason || chip.label}
+                onClick={() => void onProgressClick(chip.id)}
+                className={chipClass(clickable ? visual : 'grey')}
+              >
+                {enqueueBusy === chip.id || queued ? <Loader2 size={11} className="inline mr-1 animate-spin" /> : null}
+                {chip.label}
+              </button>
+              {chipMenu === chip.id && resolved.type === 'ready' ? (
+                <div className="absolute z-20 mt-1 min-w-[120px] rounded-lg border border-white/10 bg-[#1a1a1a] p-1 shadow-lg">
+                  <button
+                    type="button"
+                    onClick={() => openStepPreview(chip.target)}
+                    className="block w-full text-left px-2 py-1 rounded text-[11px] text-white hover:bg-white/10"
+                  >
+                    Preview
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void enqueueTarget(chip, 'rerun')}
+                    className="block w-full text-left px-2 py-1 rounded text-[11px] text-white hover:bg-white/10"
+                  >
+                    Run
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    );
   }
 
   return (
@@ -340,7 +516,10 @@ export function DeveloperClientCard({
         selected ? `hover:bg-[#323232] ${CARD_SELECTED}` : 'border-white/10 hover:bg-[#323232]'
       }`}
     >
-      <div className="min-w-0">
+      <div className="flex flex-col xl:flex-row gap-4">
+        <div className="min-w-0 flex-1 space-y-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           <input
             type="checkbox"
@@ -351,37 +530,64 @@ export function DeveloperClientCard({
             className="h-4 w-4 shrink-0 accent-[#FF5B00] cursor-pointer"
           />
           <h3 className="text-white font-semibold truncate">{item.businessName}</h3>
-          <span
-            className={`shrink-0 px-2 py-0.5 rounded text-[11px] border ${
-              kind === 'preview'
-                ? 'bg-amber-900/30 border-amber-700/30 text-amber-300'
-                : 'bg-sky-900/30 border-sky-700/30 text-sky-300'
-            }`}
-          >
-            {kind === 'preview' ? 'Preview website' : 'Deployment'}
-          </span>
+          {requestLabel ? (
+            <span className="shrink-0 px-2 py-0.5 rounded text-[11px] border bg-amber-900/30 border-amber-700/30 text-amber-300">
+              {requestLabel}
+            </span>
+          ) : null}
         </div>
         {contact && <p className="mt-1 text-xs text-gray-400 truncate">{contact}</p>}
-        {rankLabel && (
-          <p className="mt-1 text-xs text-sky-300 inline-flex items-center gap-1.5">
+        {shortDescription ? (
+          <p className="mt-1 text-xs text-gray-400 line-clamp-2">{shortDescription}</p>
+        ) : null}
+        {dueLabel ? (
+          <p className={`mt-1 text-xs flex items-center gap-1.5 ${
+            dueOverdue ? 'text-red-300' : item.websiteDue?.started ? 'text-sky-300' : 'text-gray-400'
+          }`}
+          >
             <CalendarClock size={12} />
-            {item.nextActionAt ? `${item.nextActionName || 'Neste handling'}: ` : 'Møte: '}
-            {rankLabel}
+            {dueLabel}
           </p>
-        )}
-        <p className="mt-1 text-xs text-gray-400 inline-flex items-center gap-1.5">
-          {domainMark === 'green' ? (
-            <span className="inline-block h-2 w-2 rounded-full bg-green-400" title="Domene er satt" />
+        ) : null}
+        {salesClientId ? (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setBriefOpen(true);
+            }}
+            className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
+          >
+            <FileText size={13} />
+            Prosjektdokument
+          </button>
+        ) : null}
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <span
+            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] border ${
+              domainView.present
+                ? 'bg-green-900/40 border-green-600/40 text-green-300'
+                : 'bg-black/20 border-white/10 text-gray-400'
+            }`}
+          >
+            {domainView.present ? domainView.hostname : 'Ingen domene'}
+            {domainView.present && domainView.statusLabel ? ` · ${domainView.statusLabel}` : ''}
+          </span>
+          <span
+            className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] border ${
+              workshopHeld
+                ? 'bg-green-900/40 border-green-600/40 text-green-300'
+                : 'bg-red-900/30 border-red-700/40 text-red-300'
+            }`}
+          >
+            {workshopHeld ? 'Workshop holdt' : 'Workshop ikke holdt'}
+          </span>
+          {item.industry ? (
+            <span className="text-[11px] text-gray-500">{item.industry}</span>
           ) : null}
-          {domainMark === 'green' ? 'Domene satt' : 'Ingen domene ennå'}
-          {item.siteKey ? ` · ${item.siteKey}` : ''}
-          {item.industry ? ` · ${item.industry}` : ''}
-        </p>
+        </div>
       </div>
-
-      {item.notes ? (
-        <p className="text-sm text-gray-300 whitespace-pre-wrap">{item.notes}</p>
-      ) : null}
+      </div>
 
       {kind === 'deployment' && (
         <div className="flex flex-wrap gap-1.5">
@@ -409,252 +615,219 @@ export function DeveloperClientCard({
 
       {salesClientId ? (
         <>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              disabled={!makerRunId || !customEditUrl}
-              onClick={() => customEditUrl && window.open(customEditUrl, '_blank')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FF5B00] text-white text-xs hover:bg-[#e55200] disabled:opacity-50"
-            >
-              <Pencil size={13} />
-              Custom edit
-            </button>
-            {customPreviewUrl ? (
-              <button
-                type="button"
-                onClick={() => window.open(customPreviewUrl, '_blank')}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
-              >
-                <ExternalLink size={13} />
-                Custom site
-              </button>
-            ) : null}
-            <button
-              type="button"
-              onClick={() => window.open(publicPreviewUrl, '_blank')}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
-              title={publicPreviewUrl}
-            >
-              <ExternalLink size={13} />
-              Open preview
-            </button>
-            <button
-              type="button"
-              onClick={() => void openInMaker()}
-              disabled={!makerRunId || openingMaker}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
-            >
-              {openingMaker ? <Loader2 size={13} className="animate-spin" /> : <ExternalLink size={13} />}
-              Open in maker
-            </button>
-          </div>
-
-          <details className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-gray-200">
-            <summary className="cursor-pointer text-white font-medium">Tools & details</summary>
-            <div className="mt-3">
-              <MakerRunTools
-                salesClientId={salesClientId}
-                client={{ id: salesClientId, makerRun: item.makerRun, websiteImport: item.websiteImport }}
-                websiteMakerBaseUrl={websiteMakerBaseUrl}
-                setWebsiteMakerBaseUrl={setWebsiteMakerBaseUrl}
-                authHeaders={developmentAuthHeaders()}
-                onReload={onReload}
-                onClientUpdated={onClientUpdated}
-                onError={onError}
-                onNotice={onNotice}
-                allowCreate
-                allowLink
-                variant="tools"
-              />
-            </div>
-          </details>
-
-          <section className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-2">
-            <h4 className="text-xs font-semibold text-gray-200 uppercase tracking-wide">Client summary</h4>
-            {summary.ready ? (
-              <div className="space-y-2 text-sm text-gray-300">
-                <div>
-                  <div className="text-[11px] uppercase tracking-wide text-gray-500">Intro</div>
-                  <p className="whitespace-pre-wrap">{summary.intro}</p>
-                </div>
-                <div>
-                  <div className="text-[11px] uppercase tracking-wide text-gray-500">Voice</div>
-                  <p className="whitespace-pre-wrap">{summary.voice}</p>
-                </div>
-                <div>
-                  <div className="text-[11px] uppercase tracking-wide text-gray-500">What they want</div>
-                  <p className="whitespace-pre-wrap">{summary.whatTheyWant}</p>
-                </div>
-                <div>
-                  <div className="text-[11px] uppercase tracking-wide text-gray-500">Functionality</div>
-                  <p className="whitespace-pre-wrap">{summary.functionality}</p>
-                </div>
+          <div
+            className="rounded-xl bg-black/20 border border-white/10 p-4 min-h-[112px] space-y-3"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[11px] uppercase tracking-wide text-gray-500">
+                {actionPage === 1 ? 'Template og klientdata' : 'Make website'}
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  disabled={actionPage === 1}
+                  onClick={() => setActionPage(1)}
+                  className="p-1 rounded text-gray-400 hover:text-white disabled:opacity-30"
+                  aria-label="Forrige side"
+                >
+                  <ChevronLeft size={14} />
+                </button>
+                <span className="text-[11px] text-gray-400 tabular-nums">{actionPage} / 2</span>
+                <button
+                  type="button"
+                  disabled={actionPage === 2}
+                  onClick={() => setActionPage(2)}
+                  className="p-1 rounded text-gray-400 hover:text-white disabled:opacity-30"
+                  aria-label="Neste side"
+                >
+                  <ChevronRight size={14} />
+                </button>
               </div>
-            ) : (
-              <p className="text-sm text-gray-400">{summary.message}</p>
-            )}
-          </section>
-
-          <section className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-2">
-            <h4 className="text-xs font-semibold text-gray-200 uppercase tracking-wide">QA</h4>
-            {(['textOk', 'mediaOk', 'responsiveOk'] as const).map((key) => (
-              <label key={key} className="flex items-center gap-2 text-sm text-gray-200 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={Boolean(qa[key])}
-                  onChange={(event) => void patchQa(key, event.target.checked)}
-                  className="h-4 w-4 accent-[#FF5B00]"
-                />
-                {DEVELOPER_QA_LABELS[key]}
-              </label>
-            ))}
-            <div>
-              <div className="text-[11px] uppercase tracking-wide text-gray-500">Functionality</div>
-              <p className="text-sm text-gray-300 whitespace-pre-wrap">
-                {summary.ready ? summary.functionality : summary.message}
-              </p>
             </div>
-          </section>
-
-          <section className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-2">
-            <h4 className="text-xs font-semibold text-gray-200 uppercase tracking-wide">Materialer</h4>
-            <div className="flex flex-wrap gap-2 text-xs">
-              {materials.binaries.map((row) => (
-                <span
-                  key={row.key}
-                  className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-md border ${
-                    row.mark === 'green'
-                      ? 'border-green-600/40 bg-green-900/30 text-green-300'
-                      : row.mark === 'red'
-                        ? 'border-red-700/40 bg-red-900/20 text-red-300'
-                        : 'border-white/10 bg-black/20 text-gray-400'
+            {actionPage === 1 ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="w-full text-[11px] text-gray-400">Importer nytt eller velg eksisterende template</p>
+                <MakerRunTools
+                  salesClientId={salesClientId}
+                  client={{ id: salesClientId, makerRun: item.makerRun, websiteImport: item.websiteImport }}
+                  websiteMakerBaseUrl={websiteMakerBaseUrl}
+                  authHeaders={developmentAuthHeaders()}
+                  onReload={onReload}
+                  onClientUpdated={onClientUpdated}
+                  onError={onError}
+                  onNotice={onNotice}
+                  allowCreate
+                  allowLink={false}
+                  variant="create"
+                />
+                <button
+                  type="button"
+                  onClick={() => void openInMaker()}
+                  disabled={!makerRunId || openingMaker}
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs disabled:opacity-50 ${
+                    makerRunId
+                      ? 'bg-[#FF5B00] text-white hover:bg-[#e55200]'
+                      : 'bg-white/10 text-white hover:bg-white/15'
                   }`}
                 >
-                  <span
-                    className={`inline-block h-2 w-2 rounded-full ${
-                      row.mark === 'green' ? 'bg-green-400' : row.mark === 'red' ? 'bg-red-400' : 'bg-gray-600'
-                    }`}
-                  />
-                  {row.label}
-                </span>
-              ))}
-              {materials.counts.map((row) => (
-                <span key={row.key} className="px-2 py-1 rounded-md border border-white/10 bg-black/20 text-gray-300 tabular-nums">
-                  {row.label}: {row.value}
-                </span>
-              ))}
-            </div>
-          </section>
-
-          <section className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-2">
-            <h4 className="text-xs font-semibold text-gray-200 uppercase tracking-wide">Pipeline</h4>
-            <div className="flex flex-wrap gap-1.5">
-              {DEVELOPER_PROGRESS_CHIPS.map((chip) => {
-                const resolved = resolveDeveloperProgressClick(chip, status);
-                const visual = chipVisual(chip, resolved);
-                const clickable = resolved.type === 'enqueue' || resolved.type === 'language';
-                return (
-                  <button
-                    key={chip.id}
-                    type="button"
-                    disabled={!clickable || enqueueBusy === chip.id}
-                    title={resolved.reason || chip.label}
-                    onClick={() => void onProgressClick(chip.id)}
-                    className={chipClass(clickable ? visual : 'grey')}
-                  >
-                    {enqueueBusy === chip.id ? <Loader2 size={11} className="inline mr-1 animate-spin" /> : null}
-                    {chip.label}
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-
-          <section className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-3">
-            <h4 className="text-xs font-semibold text-gray-200 uppercase tracking-wide">Mediebibliotek</h4>
-            <div>
-              <h5 className="text-sm font-medium text-white">Fra kunden</h5>
-              {media.fromClient.length ? (
-                <ul className="mt-1 space-y-1 text-xs text-gray-300">
-                  {media.fromClient.map((file) => (
-                    <li key={`client-${file.fileName}`}>
-                      <button
-                        type="button"
-                        onClick={() => void openAuthedMedia(file.url)}
-                        className="text-left hover:text-white underline-offset-2 hover:underline"
-                      >
-                        {file.fileName}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="mt-1 text-xs text-gray-500">Ingen filer i Kundedata ennå.</p>
-              )}
-            </div>
-            <div>
-              <h5 className="text-sm font-medium text-white">Fra Website Maker</h5>
-              {media.makerError ? (
-                <p className="mt-1 text-xs text-red-300">{media.makerError}</p>
-              ) : media.fromMaker.length ? (
-                <ul className="mt-1 space-y-1 text-xs text-gray-300">
-                  {media.fromMaker.map((file) => (
-                    <li key={`maker-${file.source}-${file.field}-${file.fileName}`}>
-                      <button
-                        type="button"
-                        onClick={() => void openAuthedMedia(file.url)}
-                        className="text-left hover:text-white underline-offset-2 hover:underline"
-                      >
-                        {file.fileName}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="mt-1 text-xs text-gray-500">Ingen Maker-filer ennå.</p>
-              )}
-            </div>
-          </section>
-
-          <section className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-2">
-            <h4 className="text-xs font-semibold text-gray-200 uppercase tracking-wide">Iterert</h4>
-            {item.hasIterationMeeting && item.iterationTranscript ? (
-              <div>
-                <div className="text-[11px] uppercase tracking-wide text-gray-500">Transkript</div>
-                <p className="text-sm text-gray-300 whitespace-pre-wrap">{item.iterationTranscript}</p>
+                  {openingMaker ? <Loader2 size={13} className="animate-spin" /> : <ExternalLink size={13} />}
+                  Open in maker
+                </button>
               </div>
-            ) : null}
-            {(item.iterationLog || []).length ? (
-              <ul className="space-y-1.5">
-                {(item.iterationLog || []).map((entry) => {
-                  const done = Boolean(entry.doneAt);
-                  return (
-                    <li
-                      key={entry.id}
-                      className={`text-sm ${done ? 'text-gray-500' : 'text-gray-300'}`}
-                    >
-                      {done ? <CheckCircle2 size={12} className="inline mr-1 text-green-400" /> : null}
-                      <span className="text-[11px] text-gray-500 mr-2">{formatWhen(entry.at)}</span>
-                      {entry.text}
-                    </li>
-                  );
-                })}
-              </ul>
             ) : (
-              <p className="text-xs text-gray-500">Ingen iterasjonsnotater ennå.</p>
+              <div className="space-y-3">
+                {renderProgressChips()}
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    value={domainDraft}
+                    onChange={(event) => setDomainDraft(event.target.value)}
+                    placeholder="nettsted.no"
+                    className="flex-1 px-3 py-2 rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void saveDomain()}
+                    disabled={!makerRunId || savingDomain}
+                    className="px-3 py-2 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
+                  >
+                    {savingDomain ? <Loader2 size={13} className="inline animate-spin" /> : null}
+                    Lagre domene
+                  </button>
+                </div>
+                <p className="text-[11px] text-gray-500">Steg 4 SEO er av til et domene er lagret på runet.</p>
+              </div>
             )}
-          </section>
+          </div>
 
-          <DeveloperRequestThread
-            salesClientId={salesClientId}
-            makerRunId={makerRunId}
-            websiteMakerBaseUrl={websiteMakerBaseUrl}
-            authHeaders={developmentAuthHeaders()}
-          />
+          <div className="flex flex-wrap items-end gap-3" onClick={(event) => event.stopPropagation()}>
+            <button
+              type="button"
+              onClick={() => setBriefOpen(true)}
+              className="text-left"
+            >
+              <span className="block text-[11px] uppercase tracking-wide text-gray-500">Datapunkter</span>
+              <span className="text-sm text-white tabular-nums">
+                {dotSummary.total ? (
+                  <>
+                    <span className="text-green-300">{dotSummary.filled}</span>
+                    /{dotSummary.total}
+                  </>
+                ) : '–'}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setBriefOpen(true)}
+              className="text-left"
+            >
+              <span className="block text-[11px] uppercase tracking-wide text-gray-500">Mediefiler</span>
+              <span className="text-sm text-white tabular-nums">{libraryFiles.length}</span>
+            </button>
+            <div className="flex items-center gap-1.5">
+              {previewImages.map((file) => (
+                <button
+                  key={`${file.source}-${file.field || ''}-${file.fileName}`}
+                  type="button"
+                  onClick={() => setBriefOpen(true)}
+                  className="h-12 w-12 rounded-md overflow-hidden border border-white/10"
+                >
+                  <DeveloperAuthImage
+                    url={file.url}
+                    authHeaders={developmentAuthHeaders()}
+                    alt={file.fileName}
+                    className="h-full w-full object-cover"
+                  />
+                </button>
+              ))}
+              {hiddenImages > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setLibraryOpen(true)}
+                  className="text-xs text-gray-300 underline-offset-2 hover:underline"
+                >
+                  vis {hiddenImages} mer
+                </button>
+              ) : null}
+            </div>
+          </div>
         </>
       ) : (
         <p className="text-xs text-gray-500">No sales client linked — maker tools need a sales client.</p>
       )}
+        </div>
+        {salesClientId ? (
+          <aside className="w-full xl:w-[340px] shrink-0" onClick={(event) => event.stopPropagation()}>
+            <DeveloperRequestThread
+              salesClientId={salesClientId}
+              makerRunId={makerRunId}
+              websiteMakerBaseUrl={websiteMakerBaseUrl}
+              authHeaders={developmentAuthHeaders()}
+              extraMessages={iterationMessages}
+            />
+          </aside>
+        ) : null}
+      </div>
+      {salesClientId ? (
+        <details className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-gray-200" onClick={(event) => event.stopPropagation()}>
+          <summary className="cursor-pointer text-white font-medium">Tools & details</summary>
+          <div className="mt-3">
+            <MakerRunTools
+              salesClientId={salesClientId}
+              client={{ id: salesClientId, makerRun: item.makerRun, websiteImport: item.websiteImport }}
+              websiteMakerBaseUrl={websiteMakerBaseUrl}
+              authHeaders={developmentAuthHeaders()}
+              onReload={onReload}
+              onClientUpdated={onClientUpdated}
+              onError={onError}
+              onNotice={onNotice}
+              allowCreate={Boolean(makerRunId)}
+              allowLink
+              variant="tools"
+            />
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={!makerRunId || !customEditUrl}
+                onClick={() => customEditUrl && window.open(customEditUrl, '_blank')}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
+              >
+                <Pencil size={13} />
+                Custom edit
+              </button>
+              {customPreviewUrl ? (
+                <button
+                  type="button"
+                  onClick={() => window.open(customPreviewUrl, '_blank')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
+                >
+                  <ExternalLink size={13} />
+                  Custom site
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </details>
+      ) : null}
+      <DeveloperClientBrief
+        open={briefOpen}
+        onClose={() => setBriefOpen(false)}
+        summary={summary}
+        qa={qa}
+        onToggleQa={(key, value) => void patchQa(key, value)}
+        files={libraryFiles}
+        authHeaders={developmentAuthHeaders()}
+        dots={dots}
+        onOpenLibrary={() => setLibraryOpen(true)}
+      />
+      <DeveloperMediaLibrary
+        open={libraryOpen}
+        onClose={() => setLibraryOpen(false)}
+        files={libraryFiles}
+        authHeaders={developmentAuthHeaders()}
+        deletingKey={deletingMedia}
+        onDelete={(file) => void deleteMedia(file)}
+      />
     </div>
   );
 }

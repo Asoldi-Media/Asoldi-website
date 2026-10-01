@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { editorMakerOrigin, LOCAL_EDITOR_ORIGIN, makerOriginsMatch } from '../../../lib/maker-editor-origin.js';
 
 export const MAKER_BASE_URL_STORAGE_KEY = 'asoldi.sales.websiteMakerBaseUrl.v1';
 export const LAN_MAKER_URL = 'http://192.168.68.92:3000';
@@ -263,9 +264,23 @@ export function resolveMakerPreviewUrl({
   return buildMakerRunUrl(baseUrl, makerRunId, 'preview', String(latestReadyStep || '3'));
 }
 
+export function openMakerCreatePopup(): Window | null {
+  const popupName = `asoldi-sales-create-run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const popup = window.open('about:blank', popupName, 'width=560,height=520');
+  if (!popup) return null;
+  try {
+    popup.document.title = 'Website Maker';
+    popup.document.body.textContent = 'Creating the website run…';
+  } catch {
+    // about:blank is same-origin until it navigates to Maker.
+  }
+  return popup;
+}
+
 export async function createRunViaMakerPopup(
   makerBase: string,
-  requestBody: Record<string, unknown>
+  requestBody: Record<string, unknown>,
+  existingPopup?: Window | null
 ): Promise<{ runId: string; handoff: Record<string, unknown> }> {
   const makerOrigin = normalizeHttpBaseUrl(makerBase);
   if (!makerOrigin) {
@@ -279,8 +294,7 @@ export async function createRunViaMakerPopup(
   } catch {
     // Fall back to postMessage if the payload cannot be hashed.
   }
-  const popupName = `asoldi-sales-create-run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const popup = window.open(popupUrl.toString(), popupName, 'width=520,height=420');
+  const popup = existingPopup && !existingPopup.closed ? existingPopup : openMakerCreatePopup();
   if (!popup) {
     throw new Error('Popup blocked. Allow popups for this site and try Create run again.');
   }
@@ -313,7 +327,7 @@ export async function createRunViaMakerPopup(
     }, 450);
 
     const onMessage = (event: MessageEvent) => {
-      if (event.origin !== makerOrigin) return;
+      if (!makerOriginsMatch(event.origin, makerOrigin)) return;
       const payload = event.data && typeof event.data === 'object' ? (event.data as Record<string, unknown>) : null;
       if (!payload) return;
       if (payload.type === 'asoldi-sales-create-run-listening') {
@@ -339,17 +353,22 @@ export async function createRunViaMakerPopup(
     };
 
     window.addEventListener('message', onMessage);
+    try {
+      popup.location.href = popupUrl.toString();
+    } catch {
+      finish(() => reject(new Error('Could not open Website Maker. Allow popups for this site and try Create run again.')));
+    }
   });
 }
 
 export function useWebsiteMakerBaseUrl() {
-  const [websiteMakerBaseUrl, setWebsiteMakerBaseUrl] = useState(LAN_MAKER_URL);
+  const [websiteMakerBaseUrl, setWebsiteMakerBaseUrl] = useState(LOCAL_EDITOR_ORIGIN);
 
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem(MAKER_BASE_URL_STORAGE_KEY);
       if (!stored) return;
-      const normalized = healStaleLocalMakerBase(stored) || normalizeHttpBaseUrl(stored);
+      const normalized = editorMakerOrigin(healStaleLocalMakerBase(stored) || stored);
       if (normalized) setWebsiteMakerBaseUrl(normalized);
     } catch {
       // Ignore storage access issues.
@@ -357,7 +376,7 @@ export function useWebsiteMakerBaseUrl() {
   }, []);
 
   useEffect(() => {
-    const normalized = healStaleLocalMakerBase(websiteMakerBaseUrl) || normalizeHttpBaseUrl(websiteMakerBaseUrl);
+    const normalized = editorMakerOrigin(websiteMakerBaseUrl);
     if (!normalized) return;
     if (normalized !== websiteMakerBaseUrl) {
       setWebsiteMakerBaseUrl(normalized);

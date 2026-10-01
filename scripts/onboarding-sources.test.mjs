@@ -52,9 +52,47 @@ test('onboarding sources land in kundedata for later website intake', () => {
   assert.equal(bank.generalInfo.instagramUrl, 'https://instagram.com/cafeen');
   assert.equal(bank.generalInfo.googlePlaceId, 'ChIJ1');
   assert.equal(bank.openingHours.googleBusinessSyncUrl.includes('ChIJ1'), true);
-  assert.equal(bank.websiteCreatorQuestions.websiteDomain, 'https://cafeen.no');
+  assert.equal(bank.websiteCreatorQuestions.websiteDomain, 'cafeen.no');
   assert.match(bank.websiteCreatorQuestions.relevantLinks, /instagram.com\/cafeen/);
   assert.equal(bank.generalInfo.companyPhone, '40000000');
+  assert.equal(bank.staff.length, 0);
+});
+
+test('onboarding contact person is added as the first Ansatte employee', () => {
+  const bank = portal.applyIntakeSourcesToBank({}, {}, {
+    name: 'Kari Nordmann',
+    title: 'Daglig leder',
+    phone: '400 00 000',
+    email: 'kari@cafeen.no',
+  });
+  assert.equal(bank.staff.length, 1);
+  assert.equal(bank.staff[0].id, portal.SIGNER_STAFF_ID);
+  assert.equal(bank.staff[0].title, 'Daglig leder');
+  assert.equal(bank.staff[0].name, 'Kari Nordmann');
+  assert.equal(bank.staff[0].phone, '400 00 000');
+  assert.equal(bank.staff[0].email, 'kari@cafeen.no');
+});
+
+test('onboarding signer is not duplicated when already in Ansatte', () => {
+  const first = portal.applyIntakeSourcesToBank({}, {}, {
+    name: 'Kari Nordmann',
+    title: 'Daglig leder',
+    phone: '40000000',
+    email: 'kari@cafeen.no',
+  });
+  const again = portal.applyIntakeSourcesToBank(first, {}, {
+    name: 'Kari Nordmann',
+    title: 'Daglig leder',
+    phone: '40000000',
+    email: 'kari@cafeen.no',
+  });
+  assert.equal(again.staff.length, 1);
+  assert.equal(again.staff[0].email, 'kari@cafeen.no');
+});
+
+test('name-only signup does not create an empty employee', () => {
+  const bank = portal.applyIntakeSourcesToBank({}, {}, { name: 'Kari' });
+  assert.equal(bank.staff.length, 0);
 });
 
 test('Place ID alone builds the official Maps URL for later buttons', () => {

@@ -1,17 +1,31 @@
 import React, { useState } from 'react';
 import { Edit } from 'lucide-react';
 import type { ClientDataBank } from './clientDataTypes';
+import { DomainSetupOverlay } from './DomainSetupOverlay';
 
 type Field = 'name' | 'industry' | 'goal';
 
 type Props = {
+  token: string;
   clientData: ClientDataBank;
   setClientData: React.Dispatch<React.SetStateAction<ClientDataBank>>;
+  onError: (message: string) => void;
+  onSaved?: (profile?: unknown) => void;
 };
 
-export function BusinessCardSection({ clientData, setClientData }: Props) {
+export function BusinessCardSection({ token, clientData, setClientData, onError, onSaved }: Props) {
   const [editing, setEditing] = useState<Field | null>(null);
+  const [domainOpen, setDomainOpen] = useState(false);
   const card = clientData.businessCard;
+  const domain = String(clientData.domainSetup?.domain || clientData.websiteCreatorQuestions.websiteDomain || '').trim();
+  const status = String(clientData.domainSetup?.status || '').trim();
+  const statusLabel = status === 'help-requested'
+    ? 'Forespørsel sendt til Asoldi'
+    : status === 'waiting-purchase'
+      ? 'Venter til domenet er kjøpt'
+      : status === 'nameservers-submitted'
+        ? 'Navnservere er bekreftet'
+        : '';
 
   function setField(field: Field, value: string) {
     setClientData((prev) => {
@@ -33,11 +47,26 @@ export function BusinessCardSection({ clientData, setClientData }: Props) {
     <div className="max-w-4xl w-full">
       <h3 className="text-[20px] font-semibold text-[#121212] mb-6">Bedrifts kort</h3>
       <div className="bg-white border border-gray-200 rounded-2xl p-6 shadow-sm flex flex-col gap-5">
+        <div className="flex flex-col gap-1 border-b border-gray-100 pb-4">
+          <span className="text-[12px] font-medium text-gray-500 uppercase tracking-wider">Domene</span>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-[15px] text-[#121212] font-medium truncate">
+              {domain || <span className="text-gray-400 font-normal">Ikke satt opp</span>}
+            </span>
+            <button
+              type="button"
+              onClick={() => setDomainOpen(true)}
+              className="shrink-0 bg-[#FF5B00] text-white px-4 py-2 rounded-full text-[13px] font-semibold hover:bg-[#e05000]"
+            >
+              {domain ? 'Endre domene' : 'Sett opp domene'}
+            </button>
+          </div>
+          {statusLabel ? <p className="text-xs text-gray-500">{statusLabel}</p> : null}
+        </div>
         <InlineRow
           label="Bedriftsnavn"
           editing={editing === 'name'}
           onEdit={() => setEditing('name')}
-          onDone={() => setEditing(null)}
         >
           {editing === 'name' ? (
             <input
@@ -59,7 +88,6 @@ export function BusinessCardSection({ clientData, setClientData }: Props) {
           label="Bransje"
           editing={editing === 'industry'}
           onEdit={() => setEditing('industry')}
-          onDone={() => setEditing(null)}
         >
           {editing === 'industry' ? (
             <input
@@ -81,7 +109,6 @@ export function BusinessCardSection({ clientData, setClientData }: Props) {
           label="Nettsidens mål"
           editing={editing === 'goal'}
           onEdit={() => setEditing('goal')}
-          onDone={() => setEditing(null)}
           multiline
         >
           {editing === 'goal' ? (
@@ -99,6 +126,16 @@ export function BusinessCardSection({ clientData, setClientData }: Props) {
           )}
         </InlineRow>
       </div>
+      {domainOpen ? (
+        <DomainSetupOverlay
+          token={token}
+          clientData={clientData}
+          setClientData={setClientData}
+          onClose={() => setDomainOpen(false)}
+          onError={onError}
+          onSaved={onSaved}
+        />
+      ) : null}
     </div>
   );
 }
@@ -114,7 +151,6 @@ function InlineRow({
   children: React.ReactNode;
   editing: boolean;
   onEdit: () => void;
-  onDone: () => void;
   multiline?: boolean;
 }) {
   return (

@@ -4,6 +4,8 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { evaluateWorkshopNeeds } from '../lib/workshop-needs.js';
+import { scoreClientMaterials } from '../lib/client-material-dots.js';
+import { editorMakerOrigin, makerOriginsMatch, makerUnreachableIsLocal } from '../lib/maker-editor-origin.js';
 import {
   DEVELOPER_PROGRESS_CHIPS,
   DEVELOPER_QA_LABELS,
@@ -152,33 +154,46 @@ test('domain is green only when Maker or Kundedata has one; sales domain is unma
   assert.notEqual(markFor(salesView, 'domain'), 'green');
 });
 
-test('Lang does not enqueue; grey chips including CMS and SEO do not enqueue', () => {
-  const status = { step1Ready: true, languageLocked: true, generateTextReady: true };
+test('Lang does not enqueue; CMS stays grey; Layout Maps and SEO enqueue', () => {
+  const status = { step1Ready: true, languageLocked: true, generateTextReady: true, hasDomain: true };
   const lang = DEVELOPER_PROGRESS_CHIPS.find((chip) => chip.id === 'lang');
   const langClick = resolveDeveloperProgressClick(lang, status);
   assert.equal(langClick.enqueue, false);
   assert.equal(langClick.type, 'language');
 
-  for (const id of ['layout', 'maps', 'cms', 'seo']) {
-    const chip = DEVELOPER_PROGRESS_CHIPS.find((row) => row.id === id);
-    const click = resolveDeveloperProgressClick(chip, status);
-    assert.equal(click.enqueue, false, `${id} must not enqueue`);
-    assert.equal(click.type, 'noop');
-  }
   const cms = DEVELOPER_PROGRESS_CHIPS.find((chip) => chip.id === 'cms');
+  const cmsClick = resolveDeveloperProgressClick(cms, status);
+  assert.equal(cmsClick.enqueue, false);
+  assert.equal(cmsClick.type, 'noop');
   assert.equal(cms.target, 'cms');
   assert.notEqual(cms.target, '3');
+
+  for (const id of ['layout', 'maps', 'seo']) {
+    const chip = DEVELOPER_PROGRESS_CHIPS.find((row) => row.id === id);
+    const click = resolveDeveloperProgressClick(chip, status);
+    assert.equal(click.enqueue, true, `${id} must enqueue until that step`);
+    assert.equal(click.type, 'enqueue-until');
+  }
+
+  const seoNoDomain = resolveDeveloperProgressClick(
+    DEVELOPER_PROGRESS_CHIPS.find((chip) => chip.id === 'seo'),
+    { ...status, hasDomain: false }
+  );
+  assert.equal(seoNoDomain.enqueue, false);
+  assert.equal(seoNoDomain.type, 'disabled');
 });
 
-test('Step 2.2 stays off until 2.1 is ready; clickable steps enqueue T03 targets', () => {
+test('unfinished later chips enqueue until that step; ready chips offer preview', () => {
   const locked = { step1Ready: true, languageLocked: true, generateTextReady: false };
   const step22 = DEVELOPER_PROGRESS_CHIPS.find((chip) => chip.id === '2.2');
-  const blocked = resolveDeveloperProgressClick(step22, locked);
-  assert.equal(blocked.enqueue, false);
-  assert.equal(blocked.type, 'disabled');
+  const untilMedia = resolveDeveloperProgressClick(step22, locked);
+  assert.equal(untilMedia.enqueue, true);
+  assert.equal(untilMedia.type, 'enqueue-until');
+  assert.equal(untilMedia.untilTarget, 'inject-media');
 
-  const ready = resolveDeveloperProgressClick(step22, { ...locked, generateTextReady: true });
-  assert.equal(ready.enqueue, true);
+  const ready = resolveDeveloperProgressClick(step22, { ...locked, generateTextReady: true, injectMediaReady: true });
+  assert.equal(ready.enqueue, false);
+  assert.equal(ready.type, 'ready');
   assert.equal(ready.target, 'inject-media');
 
   const step1 = resolveDeveloperProgressClick(
@@ -186,12 +201,25 @@ test('Step 2.2 stays off until 2.1 is ready; clickable steps enqueue T03 targets
     {}
   );
   assert.equal(step1.enqueue, true);
-  assert.equal(step1.target, '1');
+  assert.equal(step1.untilTarget, '1');
 });
 
 test('?panel=custom is the Custom edit path', () => {
   assert.equal(makerCustomEditPath('run-abc'), '/run/run-abc?panel=custom');
   assert.equal(makerCustomEditPath(''), '');
+});
+
+test('Custom edit opens Maker on this computer when the office address is stale', () => {
+  assert.equal(editorMakerOrigin(''), 'http://127.0.0.1:3000');
+  assert.equal(editorMakerOrigin('http://192.168.68.92:3000'), 'http://127.0.0.1:3000');
+  assert.equal(editorMakerOrigin('https://maker.example.com'), 'https://maker.example.com');
+  assert.equal(makerOriginsMatch('http://localhost:3000', 'http://127.0.0.1:3000'), true);
+  assert.equal(makerOriginsMatch('http://localhost:3000', 'https://asoldi.com'), false);
+  assert.equal(
+    makerUnreachableIsLocal('Website Maker is unreachable at http://192.168.68.92:3000 from this host. Start the Maker tunnel, then retry.'),
+    true
+  );
+  assert.equal(makerUnreachableIsLocal('Website Maker run lookup failed (404)'), false);
 });
 
 test('QA labels are Norwegian and ticks persist as booleans', () => {
@@ -246,16 +274,28 @@ test('progress chips stay in the locked order and enqueue only through T03', () 
   assert.match(card, /Custom edit/);
   assert.match(card, /Tools & details/);
   assert.match(card, /variant="tools"/);
-  assert.match(card, /Fra kunden/);
-  assert.match(card, /Fra Website Maker/);
+  assert.match(card, /Prosjektdokument/);
+  assert.match(card, /Start run|variant="create"/);
+  assert.match(card, /Importer nytt eller velg eksisterende template/);
+  assert.match(card, /Lagre domene/);
+  assert.match(card, /untilTarget/);
+  assert.equal(card.includes('Open preview'), false);
+  const brief = readFileSync(join(here, '../app/pages/developer/DeveloperClientBrief.tsx'), 'utf8');
+  assert.match(brief, /Fra kunden/);
+  assert.match(brief, /Fra Website Maker/);
+  assert.match(brief, /Checklist/);
+  assert.match(brief, /flex flex-wrap items-start/);
+  assert.equal(brief.includes('Å gjøre'), false);
   assert.equal(card.includes('/step/3'), false);
-  assert.equal(card.includes("target: '3'"), false);
 });
 
 test('Development card still mounts one request thread and the queue bar', () => {
   const section = readFileSync(join(here, '../app/pages/Admin/sections/DevelopmentClientsSection.tsx'), 'utf8');
   assert.match(section, /DeveloperRunQueueBar/);
   assert.equal(section.includes('DeveloperRequestThread'), false);
+  assert.equal(section.includes('Start tunnel'), false);
+  assert.equal(section.includes('Website Maker URL'), false);
+  assert.match(section, /LOCAL_EDITOR_ORIGIN/);
   const card = readFileSync(join(here, '../app/pages/developer/DeveloperClientCard.tsx'), 'utf8');
   const cardThreads = card.split('<DeveloperRequestThread').length - 1;
   assert.equal(cardThreads, 1);
@@ -265,4 +305,74 @@ test('Development card still mounts one request thread and the queue bar', () =>
   assert.match(server, /app\.get\('\/api\/admin\/development\/:id\/media\/client\/:fileName', developmentAuth/);
   assert.match(server, /listClientUploadFiles/);
   assert.match(server, /loadWorkshopNeedsDocument/);
+  assert.match(server, /app\.delete\('\/api\/admin\/development\/:id\/media\/client\/:fileName', developmentAuth/);
+  assert.match(server, /app\.delete\('\/api\/admin\/development\/:id\/media\/maker', developmentAuth/);
+});
+
+function dot(rows, id) {
+  return rows.find((row) => row.id === id);
+}
+
+test('material dots score Kundedata facts, partial staff and products, and reviews', () => {
+  const named = scoreClientMaterials({
+    client: baseClient(),
+    bank: emptyBank({
+      brandIdentity: {
+        logos: { normal: '', favicon: '' },
+        colors: { primary: '#FF5B00', secondary: '#111827', accent: '#F9F9F8' },
+      },
+    }),
+  });
+  assert.equal(dot(named, 'business-name').mark, 'green');
+  assert.equal(dot(named, 'logo').mark, 'red');
+  assert.equal(dot(named, 'color-primary').mark, 'red');
+  assert.equal(dot(named, 'staff-email').mark, 'red');
+  assert.equal(named.some((row) => /domain|domene/i.test(`${row.id} ${row.label}`)), false);
+
+  const partialStaff = scoreClientMaterials({
+    client: baseClient(),
+    bank: emptyBank({
+      staff: [{ title: 'Baker', name: 'Kari', phone: '', email: '', imageUrl: '' }],
+    }),
+  });
+  assert.equal(dot(partialStaff, 'staff-name').mark, 'green');
+  assert.equal(dot(partialStaff, 'staff-email').mark, 'orange');
+  assert.equal(dot(partialStaff, 'staff-phone').mark, 'orange');
+  assert.equal(dot(partialStaff, 'staff-image').mark, 'orange');
+
+  const partialPrice = scoreClientMaterials({
+    client: baseClient(),
+    bank: emptyBank({
+      productCatalogs: [{
+        layout: 'normal',
+        categories: [{
+          name: 'Meny',
+          products: [
+            { title: 'Bolle', price: '40' },
+            { title: 'Kake', price: '' },
+          ],
+        }],
+      }],
+    }),
+  });
+  assert.equal(dot(partialPrice, 'product-price').mark, 'orange');
+  assert.equal(dot(partialPrice, 'product-name').mark, 'green');
+
+  const twoReviews = scoreClientMaterials({
+    client: baseClient(),
+    bank: emptyBank(),
+    maker: { run: { answers: { reviews: ['Veldig godt brød i sentrum.', 'Hyggelig betjening hver gang.'] } } },
+  });
+  assert.equal(dot(twoReviews, 'reviews').mark, 'orange');
+  assert.match(dot(twoReviews, 'reviews').detail, /2 av 5/);
+
+  const fiveReviews = scoreClientMaterials({
+    client: baseClient(),
+    bank: emptyBank({
+      websiteCreatorQuestions: {
+        reviews: ['En.', 'To.', 'Tre.', 'Fire.', 'Fem.'].map((word) => `${word} anmeldelse som er lang nok.`).join('\n'),
+      },
+    }),
+  });
+  assert.equal(dot(fiveReviews, 'reviews').mark, 'green');
 });
