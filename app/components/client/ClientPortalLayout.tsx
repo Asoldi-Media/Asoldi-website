@@ -1,6 +1,21 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Gift, MessageSquare, UserCircle2, ChevronRight, LogOut, Settings, CreditCard, Building2, Check } from 'lucide-react';
+import {
+  Gift,
+  MessageSquare,
+  UserCircle2,
+  ChevronRight,
+  LogOut,
+  Settings,
+  CreditCard,
+  Building2,
+  Check,
+  Home,
+  BarChart3,
+  Briefcase,
+  PanelLeftOpen,
+  PanelLeftClose,
+} from 'lucide-react';
 import { useClientAuth } from '../../contexts/ClientAuthContext';
 import { ClientReferralModal } from './ClientReferralModal';
 import { REFERRAL_REWARD_LABEL } from '../../../lib/client-referral.js';
@@ -10,33 +25,47 @@ type Props = {
   children: React.ReactNode;
   title?: string;
   subtitle?: string;
+  innerNav?: React.ReactNode;
 };
+
+const ASOLDI_LOGO = '/media/Untitled-1.png';
 
 function SidebarLink({
   to,
   label,
   active,
+  icon: Icon,
   hasChevron = false,
+  collapsed = false,
 }: {
   to: string;
   label: string;
   active: boolean;
+  icon: React.ComponentType<{ size?: number; className?: string }>;
   hasChevron?: boolean;
+  collapsed?: boolean;
 }) {
   return (
     <Link
       to={to}
-      className={`flex items-center justify-between rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+      title={label}
+      aria-label={label}
+      className={`flex items-center rounded-lg text-sm font-medium transition-colors ${
+        collapsed ? 'justify-center px-0 py-2.5' : 'justify-between px-3 py-2'
+      } ${
         active ? 'bg-white text-[#111827] shadow-sm' : 'text-[#30353D] hover:bg-white/80'
       }`}
     >
-      <span>{label}</span>
-      {hasChevron ? <ChevronRight size={14} /> : null}
+      <span className={`flex items-center ${collapsed ? '' : 'gap-2.5'}`}>
+        <Icon size={collapsed ? 18 : 16} className={active ? 'text-[#FF5B00]' : 'text-[#4B5563]'} />
+        {collapsed ? null : <span>{label}</span>}
+      </span>
+      {!collapsed && hasChevron ? <ChevronRight size={14} /> : null}
     </Link>
   );
 }
 
-export function ClientPortalLayout({ children, title, subtitle }: Props) {
+export function ClientPortalLayout({ children, title, subtitle, innerNav }: Props) {
   const location = useLocation();
   const navigate = useNavigate();
   const { profile, businesses, activeBusinessId, switchBusiness, clearClientSession } = useClientAuth();
@@ -54,6 +83,13 @@ export function ClientPortalLayout({ children, title, subtitle }: Props) {
   const isSettings = location.pathname.startsWith('/kunde/innstillinger');
   const planId = profile?.payment?.planId || profile?.websiteBuilder?.selectedPlanId || '';
   const showAnalytics = analyticsLevelForPlan(planId) !== ANALYTICS_LEVEL_NONE;
+  const [hubExpanded, setHubExpanded] = useState(!isSettings);
+
+  useEffect(() => {
+    setHubExpanded(!isSettings);
+  }, [isSettings]);
+
+  const collapsed = !hubExpanded;
 
   useEffect(() => {
     if (!profileMenuOpen && !businessMenuOpen) return;
@@ -88,25 +124,70 @@ export function ClientPortalLayout({ children, title, subtitle }: Props) {
 
   return (
     <div className="min-h-screen bg-[#F8F9FB] text-[#111827]">
-      <div className="mx-auto max-w-[1460px] min-h-screen flex">
-        <aside className="w-[220px] border-r border-[#E7E9EE] bg-[#F3F4F6] px-4 py-5 flex flex-col">
-          <Link
-            to="/kunde/hjem"
-            className="flex items-center gap-3 mb-8 rounded-xl -mx-1 px-1 py-1 transition-colors hover:bg-white/70"
-            aria-label="Til hjem"
-          >
-            <div className="w-10 h-10 rounded-xl bg-[#FF5B00] text-white flex items-center justify-center font-bold">A</div>
-            <div>
-              <p className="text-sm font-semibold">Asoldi HUB</p>
-              <p className="text-xs text-[#6B7280]">Kundeportal</p>
-            </div>
-          </Link>
+      <div className={`min-h-screen flex ${innerNav ? 'w-full' : 'mx-auto max-w-[1460px]'}`}>
+        <aside
+          className={`border-r border-[#E7E9EE] bg-[#F3F4F6] py-5 flex flex-col shrink-0 transition-[width] duration-200 ${
+            collapsed ? 'w-[72px] px-2' : 'w-[220px] px-4'
+          }`}
+        >
+          <div className={`flex items-center mb-6 ${collapsed ? 'justify-center' : 'gap-3'}`}>
+            <Link
+              to="/kunde/hjem"
+              className={`flex items-center rounded-xl transition-colors hover:bg-white/70 ${
+                collapsed ? 'justify-center p-1' : 'gap-3 -mx-1 px-1 py-1 flex-1 min-w-0'
+              }`}
+              aria-label="Til hjem"
+            >
+              <img
+                src={ASOLDI_LOGO}
+                alt="Asoldi"
+                className={`object-contain shrink-0 ${collapsed ? 'h-9 w-9' : 'h-10 w-10'}`}
+              />
+              {collapsed ? null : (
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">Asoldi HUB</p>
+                  <p className="text-xs text-[#6B7280]">Kundeportal</p>
+                </div>
+              )}
+            </Link>
+            {isSettings && !collapsed ? (
+              <button
+                type="button"
+                onClick={() => setHubExpanded(false)}
+                className="inline-flex items-center justify-center rounded-lg p-1.5 text-[#6B7280] hover:bg-white hover:text-[#111827] shrink-0"
+                aria-label="Minimer sidemeny"
+                title="Minimer sidemeny"
+              >
+                <PanelLeftClose size={16} />
+              </button>
+            ) : null}
+          </div>
+          {collapsed ? (
+            <button
+              type="button"
+              onClick={() => setHubExpanded(true)}
+              className="mb-4 inline-flex w-full items-center justify-center rounded-lg py-1.5 text-[#6B7280] hover:bg-white hover:text-[#111827]"
+              aria-label="Utvid sidemeny"
+              title="Utvid sidemeny"
+            >
+              <PanelLeftOpen size={16} />
+            </button>
+          ) : null}
 
           <nav className="space-y-2">
-            <SidebarLink to="/kunde/hjem" label="Hjem" active={isHome} />
-            {showAnalytics ? <SidebarLink to="/kunde/analyse" label="Analyse" active={isAnalytics} /> : null}
-            <SidebarLink to="/kunde/tjenester" label="Tjenester" active={isServices} hasChevron />
-            {isServices ? (
+            <SidebarLink to="/kunde/hjem" label="Hjem" active={isHome} icon={Home} collapsed={collapsed} />
+            {showAnalytics ? (
+              <SidebarLink to="/kunde/analyse" label="Analyse" active={isAnalytics} icon={BarChart3} collapsed={collapsed} />
+            ) : null}
+            <SidebarLink
+              to="/kunde/tjenester"
+              label="Tjenester"
+              active={isServices}
+              icon={Briefcase}
+              hasChevron
+              collapsed={collapsed}
+            />
+            {isServices && !collapsed ? (
               <div className="ml-3 mt-2 space-y-1 border-l border-[#E5E7EB] pl-3">
                 <Link to="/kunde/tjenester" className={`block rounded-md px-2 py-1.5 text-xs ${location.pathname === '/kunde/tjenester' ? 'bg-white text-[#111827] font-medium' : 'text-[#4B5563] hover:bg-white/70'}`}>Nettside</Link>
                 <span className="block rounded-md px-2 py-1.5 text-xs text-[#9CA3AF]">E-post (låst)</span>
@@ -115,12 +196,18 @@ export function ClientPortalLayout({ children, title, subtitle }: Props) {
             ) : null}
           </nav>
           <div className="mt-auto pt-5">
-            <SidebarLink to="/kunde/innstillinger" label="Innstillinger" active={isSettings} />
+            <SidebarLink
+              to="/kunde/innstillinger"
+              label="Innstillinger"
+              active={isSettings}
+              icon={Settings}
+              collapsed={collapsed}
+            />
           </div>
         </aside>
 
-        <div className="flex-1 min-w-0">
-          <header className="h-[72px] bg-white border-b border-[#E7E9EE] px-6 flex items-center justify-between">
+        <div className="flex-1 min-w-0 flex flex-col">
+          <header className="h-[72px] bg-white border-b border-[#E7E9EE] px-6 flex items-center justify-between shrink-0">
             <div>
               {title ? <h1 className="text-lg font-semibold">{title}</h1> : null}
               {subtitle ? <p className="text-xs text-[#6B7280]">{subtitle}</p> : null}
@@ -224,7 +311,10 @@ export function ClientPortalLayout({ children, title, subtitle }: Props) {
             </div>
           </header>
 
-          <main className="p-6">{children}</main>
+          <div className="flex-1 min-h-0 flex">
+            {innerNav}
+            <main className={`flex-1 min-w-0 ${innerNav ? 'overflow-y-auto' : 'p-6'}`}>{children}</main>
+          </div>
         </div>
       </div>
       <ClientReferralModal open={referralOpen} onClose={() => setReferralOpen(false)} />
