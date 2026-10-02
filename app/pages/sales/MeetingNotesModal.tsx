@@ -5,7 +5,6 @@ import {
   isoToDatetimeLocalOslo,
 } from '../../../lib/sales-next-actions.js';
 import { WORKSHOP_FORMATS, offerStartDateFromWorkshopDueAt } from '../../../lib/workshop-action-shared.js';
-import { SalesCalendarWeek } from '../Admin/sections/SalesCalendarWeek';
 import {
   PRICING,
   type MeetingQuoteState,
@@ -136,7 +135,6 @@ export function MeetingNotesModal({
 }: Props) {
   const [state, setState] = useState<MeetingQuoteState>(() => normalizeMeetingQuote(quote || emptyMeetingQuote()));
   const [workshop, setWorkshop] = useState<WorkshopDraft>(() => workshopDraftFromAction(workshopAction));
-  const [availabilityOpen, setAvailabilityOpen] = useState(false);
   const persistRef = useRef(onPersist);
   persistRef.current = onPersist;
   const persistWorkshopRef = useRef(onPersistWorkshop);
@@ -253,14 +251,6 @@ export function MeetingNotesModal({
     void Promise.resolve(persistRef.current({ meetingQuote: quoteToSave() }))
       .then(() => persistWorkshopNow())
       .then(() => onContinue());
-  }
-
-  function openAvailability() {
-    setAvailabilityOpen(true);
-  }
-
-  function closeAvailability() {
-    setAvailabilityOpen(false);
   }
 
   const includedPages = includedPagesFor(state.tierId, state.customMode);
@@ -456,19 +446,6 @@ export function MeetingNotesModal({
                     className="mt-1 w-full px-3 py-2 rounded-lg bg-white border border-[#E5E7EB] text-sm text-[#111827]"
                   />
                 </label>
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={openAvailability}
-                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#FF5B00] text-white text-xs font-medium hover:bg-[#e55200]"
-                  >
-                    <CalendarDays size={14} />
-                    Finn ledig tid
-                  </button>
-                  <span className="text-[11px] text-[#6B7280]">
-                    Kalenderen er damian@asoldi.com. Tid og format kan settes her.
-                  </span>
-                </div>
                 <label className="block">
                   <span className="text-xs text-[#6B7280]">Tid</span>
                   <input
@@ -524,45 +501,6 @@ export function MeetingNotesModal({
                   SMS, ring og SMS/ring inviterer ikke kunden.
                 </p>
               </div>
-              {availabilityOpen ? (
-                <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-3">
-                  <div className="w-full max-w-5xl max-h-[90vh] overflow-hidden rounded-2xl bg-[#111827] border border-white/10 shadow-2xl flex flex-col">
-                    <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-white/10">
-                      <div>
-                        <h4 className="font-medium text-white">Finn ledig tid</h4>
-                        <p className="text-[11px] text-gray-400">
-                          Kalender for damian@asoldi.com. Lukk og sett tid i skjemaet etterpå.
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={closeAvailability}
-                        className="p-2 rounded-lg bg-white/10 text-white hover:bg-white/15"
-                        aria-label="Lukk"
-                      >
-                        <X size={16} />
-                      </button>
-                    </div>
-                    <div className="flex-1 overflow-auto">
-                      <SalesCalendarWeek
-                        workshopCalendar
-                        ownerLabel="damian@asoldi.com"
-                        isOwnCalendar={false}
-                        onConnect={() => undefined}
-                      />
-                    </div>
-                    <div className="p-3 border-t border-white/10">
-                      <button
-                        type="button"
-                        onClick={closeAvailability}
-                        className="w-full px-4 py-2 rounded-lg bg-[#FF5B00] text-white text-sm"
-                      >
-                        Lukk
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ) : null}
               <label className="block">
                 <span className="text-xs text-[#6B7280]">Produktnotater</span>
                 <textarea

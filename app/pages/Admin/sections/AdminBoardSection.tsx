@@ -5,9 +5,7 @@ import { API, authHeaders, salesAuthHeaders, type SalesClient } from '../shared'
 import { SALES_ACTION_TIMEZONE } from '../../../../lib/sales-next-actions.js';
 import { getWorkshopAction, workshopInvitesClient } from '../../../../lib/workshop-action-shared.js';
 import {
-  adminBoardViewerIsDamianMailbox,
   clientMatchesAdminBoardFilters,
-  DAMIAN_WORKSHOP_CALENDAR_EMAIL,
   filterAdminBoardClients,
   groupAdminBoardClients,
 } from '../../../../lib/workshop-booking.js';
@@ -16,7 +14,6 @@ import {
   matchesClientSearchQuery,
   normalizeClientSearchText,
 } from '../clientSearch';
-import { SalesCalendarWeek } from './SalesCalendarWeek';
 import { AdminRequestInbox } from './AdminRequestInbox';
 import { WorkshopAdminActionRow } from './WorkshopAdminActionRow';
 import { workshopGoalHeld } from '../../../../lib/workshop-goal-timeline.js';
@@ -260,7 +257,6 @@ export function AdminBoardSection() {
   const [error, setError] = useState('');
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [collapsedBuckets, setCollapsedBuckets] = useState<Record<string, boolean>>({});
-  const [calendarOpen, setCalendarOpen] = useState(false);
   const [searchInput, setSearchInput] = useState('');
   const [bucketFilter, setBucketFilter] = useState('');
   const [formatFilter, setFormatFilter] = useState('');
@@ -268,10 +264,6 @@ export function AdminBoardSection() {
   const [whenFilter, setWhenFilter] = useState('');
   const [onlyWithRequests, setOnlyWithRequests] = useState(false);
   const [threadMap, setThreadMap] = useState<Record<string, ThreadSummary>>({});
-  const [calendarConnecting, setCalendarConnecting] = useState(false);
-  const [calendarRefresh, setCalendarRefresh] = useState(0);
-  const [calendarError, setCalendarError] = useState('');
-  const [viewer, setViewer] = useState({ accountKey: '', username: '' });
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
@@ -279,16 +271,9 @@ export function AdminBoardSection() {
   }, []);
 
   const loadClients = useCallback(async () => {
-    const data = await request('/admin/sales');
+    const data = await request('/admin/sales', { signal: AbortSignal.timeout(12_000) });
     const next = Array.isArray(data.clients) ? data.clients as SalesClient[] : [];
     setClients(next);
-    const calendar = data.calendar && typeof data.calendar === 'object'
-      ? data.calendar as { loginAccountKey?: string; loginUsername?: string }
-      : {};
-    setViewer({
-      accountKey: String(calendar.loginAccountKey || ''),
-      username: String(calendar.loginUsername || ''),
-    });
   }, []);
 
   const loadThreads = useCallback(async () => {
@@ -358,46 +343,9 @@ export function AdminBoardSection() {
     });
   }, [boardClients, onlyWithRequests, threadMap, searchQuery, bucketFilter, formatFilter, statusFilter, whenFilter, nowMs]);
   const groups = useMemo(() => groupAdminBoardClients(visibleClients, nowMs), [visibleClients, nowMs]);
-  const isOwnCalendar = adminBoardViewerIsDamianMailbox(viewer);
 
   function replaceClient(next: SalesClient) {
     setClients((prev) => prev.map((entry) => (entry.id === next.id ? next : entry)));
-  }
-
-  async function connectDamianCalendar() {
-    if (!isOwnCalendar) return;
-    setCalendarError('');
-    try {
-      const data = await request('/admin/sales/google/auth-url');
-      const popup = window.open(String(data.authUrl || ''), 'asoldi-google-calendar', 'width=560,height=760');
-      if (!popup) {
-        setCalendarError('Popup blocked. Please allow popups and try again.');
-        return;
-      }
-      setCalendarConnecting(true);
-      let tries = 0;
-      const timer = window.setInterval(() => {
-        tries += 1;
-        void request('/admin/sales/google/status')
-          .then((status) => {
-            const connected = Boolean(status.connected);
-            if (connected) setCalendarRefresh((value) => value + 1);
-            if (connected || tries >= 30) {
-              window.clearInterval(timer);
-              setCalendarConnecting(false);
-            }
-          })
-          .catch(() => {
-            if (tries >= 30) {
-              window.clearInterval(timer);
-              setCalendarConnecting(false);
-            }
-          });
-      }, 2000);
-    } catch (err) {
-      setCalendarConnecting(false);
-      setCalendarError(err instanceof Error ? err.message : 'Kunne ikke starte Google-innlogging');
-    }
   }
 
   function toggleBucket(id: string) {
@@ -406,35 +354,6 @@ export function AdminBoardSection() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-2xl border border-white/10 bg-[#2a2a2a] overflow-hidden">
-        <button
-          type="button"
-          onClick={() => setCalendarOpen((open) => !open)}
-          className="w-full flex items-center justify-between gap-3 px-3 py-2.5 text-left"
-          aria-expanded={calendarOpen}
-        >
-          <span className="text-sm font-semibold text-white">Kalender for {DAMIAN_WORKSHOP_CALENDAR_EMAIL}</span>
-          <ChevronDown size={16} className={`text-gray-400 transition-transform ${calendarOpen ? '' : '-rotate-90'}`} />
-        </button>
-        {calendarOpen ? (
-          <div className="border-t border-white/10">
-            {calendarError ? (
-              <p className="px-3 py-2 text-sm text-red-300">{calendarError}</p>
-            ) : null}
-            {calendarConnecting ? (
-              <p className="px-3 py-2 text-sm text-gray-300">Venter på Google-innlogging…</p>
-            ) : null}
-            <SalesCalendarWeek
-              workshopCalendar
-              ownerLabel={DAMIAN_WORKSHOP_CALENDAR_EMAIL}
-              isOwnCalendar={isOwnCalendar}
-              refreshKey={String(calendarRefresh)}
-              onConnect={() => { void connectDamianCalendar(); }}
-            />
-          </div>
-        ) : null}
-      </div>
-
       <form
         onSubmit={(event) => event.preventDefault()}
         className="rounded-2xl bg-[#2a2a2a] border border-white/10 p-4 space-y-3"

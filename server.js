@@ -247,6 +247,7 @@ import {
   listConnectedAsoldiCalendarSources,
   loadSalesCalendarWeek,
   prepareSalesCalendarEmbed,
+  SALES_WEEK_CALENDAR_DISABLED,
   findConnectedCalendarAccountKeysByGoogleEmail,
   calendarIdForAccount,
   resolveCalendarSyncAccountKey,
@@ -12143,19 +12144,32 @@ app.get('/api/admin/sales/session', salesAuth, (req, res) => {
   });
 });
 
-app.get('/api/admin/sales/google/status', salesAuth, async (req, res) => {
-  try {
-    const status = await ensureSharedCalendarTokens(req.salesUser.accountKey);
-    res.json(presentCalendarStatus(status, req.salesUser));
-  } catch (error) {
-    res.status(500).json({ message: error.message || 'Failed to read Google Calendar status.' });
-  }
+app.get('/api/admin/sales/google/status', salesAuth, (req, res) => {
+  res.json(presentCalendarStatus(
+    getGoogleCalendarStatus(req.salesUser.accountKey),
+    req.salesUser
+  ));
 });
 
 app.get('/api/admin/sales/google/events', salesAuth, async (req, res) => {
   try {
     const weekOffset = Math.max(-8, Math.min(16, Number(req.query?.weekOffset) || 0));
     const week = osloWeekRange(Date.now(), weekOffset);
+    if (SALES_WEEK_CALENDAR_DISABLED) {
+      return res.json({
+        connected: false,
+        accountKey: '',
+        googleEmail: '',
+        googleEmails: [],
+        events: [],
+        days: week.days,
+        weekOffset,
+        timeMin: week.timeMin,
+        timeMax: week.timeMax,
+        warnings: [],
+        message: 'Kalenderen er slått av midlertidig.',
+      });
+    }
     const timeMin = sanitizeText(req.query?.timeMin) || week.timeMin;
     const timeMax = sanitizeText(req.query?.timeMax) || week.timeMax;
     const minMs = Date.parse(timeMin);
@@ -12260,6 +12274,16 @@ app.get('/api/admin/sales/google/events', salesAuth, async (req, res) => {
 
 app.get('/api/admin/sales/google/embed', salesAuth, async (req, res) => {
   try {
+    if (SALES_WEEK_CALENDAR_DISABLED) {
+      return res.json({
+        connected: false,
+        accountKey: '',
+        googleEmail: '',
+        embedUrl: '',
+        shareWarning: '',
+        message: 'Kalenderen er slått av midlertidig.',
+      });
+    }
     if (isAdminBoardCalendarQuery(req.query)) {
       const keys = findConnectedCalendarAccountKeysByGoogleEmail(DAMIAN_WORKSHOP_CALENDAR_EMAIL);
       const accountKey = resolveAdminBoardCalendarAccountKey({
@@ -12353,6 +12377,18 @@ app.get('/api/admin/sales/google/workshop-availability', salesAuth, async (req, 
   try {
     const weekOffset = Math.max(-8, Math.min(16, Number(req.query?.weekOffset) || 0));
     const week = osloWeekRange(Date.now(), weekOffset);
+    if (SALES_WEEK_CALENDAR_DISABLED) {
+      return res.json({
+        connected: false,
+        googleEmail: DAMIAN_WORKSHOP_CALENDAR_EMAIL,
+        accountKey: '',
+        days: week.days,
+        timeMin: week.timeMin,
+        timeMax: week.timeMax,
+        busy: [],
+        message: 'Kalenderen er slått av midlertidig.',
+      });
+    }
     const keys = findConnectedCalendarAccountKeysByGoogleEmail(DAMIAN_WORKSHOP_CALENDAR_EMAIL);
     if (!keys.length) {
       return res.json({
@@ -12820,7 +12856,7 @@ app.get('/api/admin/sales', salesAuth, async (req, res) => {
     return { ...jsonSalesClient(client), offerStatus: offer ? offer.status : '' };
   });
   const calendar = presentCalendarStatus(
-    await ensureSharedCalendarTokens(req.salesUser.accountKey),
+    getGoogleCalendarStatus(req.salesUser.accountKey),
     req.salesUser
   );
   const sender = await resolveSalesSenderForAccount(req.salesUser);

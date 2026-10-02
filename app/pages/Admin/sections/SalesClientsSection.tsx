@@ -38,7 +38,6 @@ import { SalesScriptsDock } from '../../sales/SalesScriptsDock';
 import { offerMissingFields, offerReadinessMessage } from '../../../../lib/offer-readiness.js';
 import { SalesGoalTimeline } from './SalesGoalTimeline';
 import { WorkshopIterationLog } from './WorkshopIterationLog';
-import { SalesCalendarWeek } from './SalesCalendarWeek';
 import {
   clientIsSalesWin,
   classifySalesPipelineState,
@@ -115,7 +114,7 @@ const DEFAULT_SALES_BUCKETS_COLLAPSED: Record<string, boolean> = {
   wins: true,
 };
 
-type SalesHeaderPanel = 'filter' | 'calendar' | 'map' | null;
+type SalesHeaderPanel = 'filter' | 'map' | null;
 
 function salesIsMobileViewport() {
   return typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches;
@@ -571,12 +570,6 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
       (a.name || a.username || a.accountKey).localeCompare(b.name || b.username || b.accountKey, 'nb-NO', { sensitivity: 'base' })
     );
   }, [salesOwners, productClients]);
-  const calendarPreviewOwnerId = isSalesAdmin && ownerFilter && ownerFilter !== 'unassigned' ? ownerFilter : '';
-  const calendarPreviewOwner = calendarPreviewOwnerId
-    ? ownerFilterOptions.find((owner) => owner.accountKey === calendarPreviewOwnerId) || null
-    : null;
-  const calendarPreviewIsOwn = !calendarPreviewOwnerId
-    || calendarPreviewOwnerId === String(calendarStatus?.loginAccountKey || '');
   const clientMatchesFilters = (client: SalesClient) => {
     if (!clientMatchesNameSearch(client)) return false;
     if (isSalesAdmin) {
@@ -826,7 +819,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
     }
     const gen = ++salesListGenRef.current;
     try {
-      const data = await request('/admin/sales');
+      const data = await request('/admin/sales', { signal: AbortSignal.timeout(12_000) });
       if (gen !== salesListGenRef.current) return;
       const nextClients = Array.isArray(data.clients) ? data.clients : [];
       setClients(nextClients);
@@ -2950,18 +2943,6 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
             </button>
             <button
               type="button"
-              onClick={() => toggleHeaderPanel('calendar')}
-              className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs sm:text-sm ${
-                headerPanel === 'calendar' ? 'bg-[#FF5B00] text-white' : 'bg-white/10 text-white hover:bg-white/15'
-              }`}
-              aria-expanded={headerPanel === 'calendar'}
-            >
-              <Calendar size={14} />
-              <span className="hidden sm:inline">Calendar</span>
-              <ChevronDown size={12} className={`hidden sm:block transition-transform ${headerPanel === 'calendar' ? 'rotate-180' : ''}`} />
-            </button>
-            <button
-              type="button"
               onClick={() => toggleHeaderPanel('map')}
               className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs sm:text-sm ${
                 headerPanel === 'map' ? 'bg-[#FF5B00] text-white' : 'bg-white/10 text-white hover:bg-white/15'
@@ -3062,7 +3043,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
               {headerPanel && (
               <div className="flex items-center justify-between gap-2 mb-2">
                 <p className="text-[11px] text-gray-400">
-                  Lukk: klikk {headerPanel === 'filter' ? 'Filter' : headerPanel === 'calendar' ? 'Calendar' : 'Client map'} igjen, klikk under, eller scroll.
+                  Lukk: klikk {headerPanel === 'filter' ? 'Filter' : 'Client map'} igjen, klikk under, eller scroll.
                 </p>
                 <button type="button" onClick={closeHeaderMenus} className="inline-flex items-center gap-1 text-xs text-gray-300 hover:text-white">
                   <X size={12} /> Lukk
@@ -3120,9 +3101,6 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                           </option>
                         ))}
                       </select>
-                      <span className="mt-1 block text-[11px] text-gray-500">
-                        Calendar viser Google-uken til denne selgeren (møter og kalenderavtaler). Meeting bookers ser fortsatt bare opptatt.
-                      </span>
                     </label>
                   )}
                   <div className="grid sm:grid-cols-3 gap-2">
@@ -3192,15 +3170,6 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                     )}
                   </div>
                 </form>
-              )}
-              {headerPanel === 'calendar' && (
-                <SalesCalendarWeek
-                  ownerId={calendarPreviewOwnerId}
-                  ownerLabel={calendarPreviewOwner ? ownerLabel(calendarPreviewOwner) : (isSalesAdmin ? 'alle selgere' : 'deg')}
-                  isOwnCalendar={calendarPreviewIsOwn}
-                  refreshKey={String(calendarStatus?.tokenUpdatedAt || '')}
-                  onConnect={() => { closeHeaderMenus(); setCalendarPanelOpen(true); }}
-                />
               )}
               {mapMounted && (
                 <div className={headerPanel === 'map' ? '' : 'hidden'} aria-hidden={headerPanel !== 'map'}>
