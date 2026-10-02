@@ -74,7 +74,7 @@ import * as offers from './data/offers.js';
 import * as resetTokens from './data/reset-tokens.js';
 import { getPersistentDataDir, pruneAllDataBackups } from './data/storage-path.js';
 import { applyPersistentProductionEnv } from './lib/persistent-env.js';
-import { applyProxyKeepAlive, describeProxyTimeouts, proxyHttpServerOptions } from './lib/http-server-timeouts.js';
+import { applyProxyKeepAlive, describeProxyTimeouts, proxyHttpServerOptions, applyCloseProxyConnection } from './lib/http-server-timeouts.js';
 import * as salesPreview from './lib/sales-preview-import.js';
 import {
   fillExportZipWithMakerAssets,
@@ -352,6 +352,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
+app.use(applyCloseProxyConnection);
 const PORT = process.env.PORT || 3000;
 const distPath = join(__dirname, 'dist');
 const publicPath = join(__dirname, 'public');
