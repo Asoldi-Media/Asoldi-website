@@ -395,7 +395,9 @@ test('need-list files never write Kundedata, Maker, hub media, or other booking 
   const salesSrc = readFileSync(join(root, 'app/pages/Admin/sections/SalesClientsSection.tsx'), 'utf8');
   const devSrc = readFileSync(join(root, 'app/pages/Admin/sections/DevelopmentClientsSection.tsx'), 'utf8');
   const manageSrc = readFileSync(join(root, 'app/pages/Admin/sections/ManageClientsSection.tsx'), 'utf8');
+  const adminSrc = readFileSync(join(root, 'app/pages/Admin/sections/AdminBoardSection.tsx'), 'utf8');
   assert.equal(salesSrc.includes('WorkshopNeedsPanel'), false);
   assert.equal(devSrc.includes('WorkshopNeedsPanel'), false);
   assert.equal(manageSrc.includes('WorkshopNeedsPanel'), false);
+  assert.equal(adminSrc.includes('WorkshopNeedsPanel'), false);
 });

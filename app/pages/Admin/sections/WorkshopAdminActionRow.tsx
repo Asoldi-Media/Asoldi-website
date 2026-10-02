@@ -1,9 +1,41 @@
-import React, { useState } from 'react';
-import { CalendarDays, CheckCircle2, Loader2, Paperclip, Plus, Send } from 'lucide-react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import {
+  CalendarDays,
+  CheckCircle2,
+  ChevronsDown,
+  ChevronsUp,
+  Loader2,
+  Paperclip,
+  Pencil,
+  Plus,
+  Send,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { API, salesAuthHeaders, type SalesClient, type WorkshopActionFormat, type WorkshopGoalAction } from '../shared';
-import { formatActionFormatLabel, isoToDatetimeLocalOslo, datetimeLocalOsloToIso } from '../../../../lib/sales-next-actions.js';
-import { WORKSHOP_FORMATS } from '../../../../lib/workshop-action-shared.js';
+import {
+  formatActionFormatLabel,
+  isoToDatetimeLocalOslo,
+  datetimeLocalOsloToIso,
+  SMS_REMINDER_NOTE,
+  SALES_ACTION_TIMEZONE,
+} from '../../../../lib/sales-next-actions.js';
+import { WORKSHOP_FORMATS, WORKSHOP_DEFAULT_NAME } from '../../../../lib/workshop-action-shared.js';
 import { clientMeetingHover } from '../../../../lib/workshop-record.js';
+import {
+  ADMIN_GOAL_PRESETS,
+  defaultFormatForAdminPreset,
+  formatAdminGoalLabel,
+  formatAdminPresetLabel,
+  getAdminCurrentGoalKey,
+  getAdminFutureGoalKeys,
+  getAdminGoalActions,
+  getAdminRemainingGoalCount,
+  getAdminVisibleGoalKeys,
+  suggestedAdminActionDueAt,
+  workshopGoalHeld,
+  workshopGoalIterated,
+} from '../../../../lib/workshop-goal-timeline.js';
 import { MeetingVideoHover } from './MeetingVideoHover';
 import { WorkshopIterationLog } from './WorkshopIterationLog';
 
@@ -12,13 +44,58 @@ type Props = {
   onClient?: (client: SalesClient) => void;
 };
 
+type DraftState = {
+  presetKey: string;
+  name: string;
+  note: string;
+  format: WorkshopActionFormat;
+  dueAt: string;
+  addToCalendar: boolean;
+};
+
+type EditState = {
+  kind: 'extra' | 'workshop' | 'iteration';
+  actionId: string;
+  name: string;
+  note: string;
+  format: WorkshopActionFormat;
+  dueAt: string;
+  addToCalendar: boolean;
+};
+
 const CHIP = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50';
+
+function toWorkshopEdit(client: SalesClient): EditState {
+  const booking = client.workshopAction;
+  return {
+    kind: 'workshop',
+    actionId: 'workshop',
+    name: booking?.name || WORKSHOP_DEFAULT_NAME,
+    note: '',
+    format: (booking?.format || 'mote') as WorkshopActionFormat,
+    dueAt: isoToDatetimeLocalOslo(booking?.dueAt || ''),
+    addToCalendar: Boolean(booking?.addToCalendar || (booking?.format || 'mote') === 'mote'),
+  };
+}
+
+function toIterationEdit(client: SalesClient): EditState {
+  const iteration = client.workshop?.iterationMeeting;
+  return {
+    kind: 'iteration',
+    actionId: 'iteration',
+    name: 'Iterasjonsmøte',
+    note: '',
+    format: (iteration?.format || 'mote') as WorkshopActionFormat,
+    dueAt: isoToDatetimeLocalOslo(iteration?.dueAt || ''),
+    addToCalendar: Boolean(iteration?.addToCalendar || (iteration?.format || 'mote') === 'mote'),
+  };
+}
 
 function formatWhen(value = '') {
   if (!value) return 'Tid ikke satt';
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString('nb-NO');
+  return date.toLocaleString('nb-NO', { timeZone: SALES_ACTION_TIMEZONE });
 }
 
 async function parseJson(response: Response) {
@@ -29,29 +106,110 @@ async function parseJson(response: Response) {
   return data as { client?: SalesClient; summary?: unknown; warnings?: string[]; message?: string };
 }
 
+function formatControls(
+  value: { format: WorkshopActionFormat; addToCalendar: boolean; lockCalendar?: boolean },
+  onChange: (patch: Partial<{ format: WorkshopActionFormat; addToCalendar: boolean }>) => void,
+) {
+  const calendarOn = value.lockCalendar ? true : value.addToCalendar;
+  return (
+    <div className="sm:col-span-2 flex flex-wrap items-center gap-2">
+      <select
+        aria-label="Format"
+        value={value.format}
+        onChange={(event) => {
+          const format = event.target.value as WorkshopActionFormat;
+          onChange({ format, addToCalendar: format === 'mote' ? true : value.addToCalendar });
+        }}
+        className="min-w-0 flex-1 rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
+      >
+        {WORKSHOP_FORMATS.map((format) => (
+          <option key={format} value={format}>{formatActionFormatLabel(format)}</option>
+        ))}
+      </select>
+      <span title="I Google Kalender" className="shrink-0 text-gray-300">
+        <CalendarDays size={15} />
+      </span>
+      <button
+        type="button"
+        role="switch"
+        aria-label="I Google Kalender"
+        aria-checked={calendarOn}
+        disabled={value.lockCalendar || value.format === 'mote'}
+        onClick={() => onChange({ addToCalendar: !value.addToCalendar })}
+        className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-70 ${
+          calendarOn ? 'bg-[#FF5B00]' : 'bg-white/20'
+        }`}
+      >
+        <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${calendarOn ? 'ml-4' : 'ml-1'}`} />
+      </button>
+    </div>
+  );
+}
+
 export function WorkshopAdminActionRow({ client, onClient }: Props) {
   const workshop = client.workshop;
-  const held = Boolean(workshop?.heldAt && workshop?.summary);
-  const iterated = Boolean(workshop?.iteratedAt);
+  const held = workshopGoalHeld(client);
+  const iterated = workshopGoalIterated(client);
+  const booking = client.workshopAction;
   const iteration = workshop?.iterationMeeting;
-  const hover = clientMeetingHover(client, 'iteration');
+  const workshopHover = clientMeetingHover(client, 'workshop');
+  const iterationHover = clientMeetingHover(client, 'iteration');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
+  const [showFutureGoals, setShowFutureGoals] = useState(false);
+  const [draft, setDraft] = useState<DraftState | null>(null);
+  const [edit, setEdit] = useState<EditState | null>(null);
+  const [workshopDraft, setWorkshopDraft] = useState<EditState>(() => toWorkshopEdit(client));
+  const [iterationDraft, setIterationDraft] = useState<EditState>(() => toIterationEdit(client));
   const [workshopNote, setWorkshopNote] = useState('');
   const [workshopFiles, setWorkshopFiles] = useState<FileList | null>(null);
   const [iterationNote, setIterationNote] = useState('');
   const [iterationFiles, setIterationFiles] = useState<FileList | null>(null);
-  const [workshopName, setWorkshopName] = useState(() => String(client.workshopAction?.name || 'Workshop'));
-  const [workshopDue, setWorkshopDue] = useState(() => isoToDatetimeLocalOslo(client.workshopAction?.dueAt || ''));
-  const [workshopFormat, setWorkshopFormat] = useState<WorkshopActionFormat>(client.workshopAction?.format || 'mote');
-  const [workshopCalendar, setWorkshopCalendar] = useState(Boolean(client.workshopAction?.addToCalendar || client.workshopAction?.format === 'mote'));
-  const [goalActions, setGoalActions] = useState<WorkshopGoalAction[]>(() => (
-    Array.isArray(client.workshop?.goalActions) ? client.workshop.goalActions : []
-  ));
-  const [iterationDue, setIterationDue] = useState(() => isoToDatetimeLocalOslo(iteration?.dueAt || ''));
-  const [iterationFormat, setIterationFormat] = useState<WorkshopActionFormat>(iteration?.format || 'mote');
-  const [iterationCalendar, setIterationCalendar] = useState(Boolean(iteration?.addToCalendar));
   const [noteKind, setNoteKind] = useState<'' | 'workshop' | 'iteration'>('');
+  const actionListRef = useRef<HTMLDivElement | null>(null);
+  const [actionListMaxPx, setActionListMaxPx] = useState<number | null>(null);
+
+  const currentGoal = getAdminCurrentGoalKey(client) as 'haWorkshop' | 'iterated' | '';
+  const remainingCount = getAdminRemainingGoalCount(client);
+  const visibleGoals = getAdminVisibleGoalKeys(client, showFutureGoals) as Array<'haWorkshop' | 'iterated'>;
+  const futureGoalSet = new Set(getAdminFutureGoalKeys(client));
+  const extras = useMemo(
+    () => (currentGoal ? getAdminGoalActions(client, currentGoal) as WorkshopGoalAction[] : []),
+    [client, currentGoal],
+  );
+  const pendingApproval = Boolean(booking?.dueAt) && booking?.status !== 'confirmed';
+  const showWorkshopRow = currentGoal === 'haWorkshop';
+  const showIterationRow = currentGoal === 'iterated';
+  const capActionList = extras.length > 1 && !showWorkshopRow && !showIterationRow && !edit;
+
+  useEffect(() => {
+    setWorkshopDraft(toWorkshopEdit(client));
+  }, [client.id, client.workshopAction?.dueAt, client.workshopAction?.format, client.workshopAction?.name, client.workshopAction?.status]);
+
+  useEffect(() => {
+    setIterationDraft(toIterationEdit(client));
+  }, [client.id, client.workshop?.iterationMeeting?.dueAt, client.workshop?.iterationMeeting?.format, client.workshop?.iterationMeeting?.confirmationSentAt]);
+
+  useLayoutEffect(() => {
+    const root = actionListRef.current;
+    if (!root || !capActionList) {
+      setActionListMaxPx(null);
+      return;
+    }
+    const measure = () => {
+      const rows = root.querySelectorAll<HTMLElement>('[data-action-row]');
+      const first = rows[0];
+      const second = rows[1];
+      if (!first || !second) return;
+      const gap = parseFloat(window.getComputedStyle(second).marginTop) || 0;
+      const next = Math.ceil(first.getBoundingClientRect().height + gap + second.getBoundingClientRect().height / 2);
+      setActionListMaxPx((prev) => (prev === next ? prev : next));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    root.querySelectorAll('[data-action-row]').forEach((node) => observer.observe(node));
+    return () => observer.disconnect();
+  }, [capActionList, extras, showWorkshopRow, showIterationRow, edit]);
 
   async function run(key: string, fn: () => Promise<void>) {
     setBusy(key);
@@ -73,6 +231,7 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
     });
     const data = await parseJson(response);
     if (data.client) onClient?.(data.client);
+    if (Array.isArray(data.warnings) && data.warnings.length) setError(data.warnings.filter(Boolean).join(' | '));
     return data;
   }
 
@@ -84,6 +243,7 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
     });
     const data = await parseJson(response);
     if (data.client) onClient?.(data.client);
+    if (Array.isArray(data.warnings) && data.warnings.length) setError(data.warnings.filter(Boolean).join(' | '));
     return data;
   }
 
@@ -93,9 +253,7 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
     const form = new FormData();
     form.append('kind', kind);
     form.append('text', text);
-    if (files) {
-      Array.from(files).forEach((file) => form.append('files', file));
-    }
+    if (files) Array.from(files).forEach((file) => form.append('files', file));
     const response = await fetch(`${API}/admin/sales/${encodeURIComponent(client.id)}/workshop/notes`, {
       method: 'POST',
       headers: salesAuthHeaders(),
@@ -126,196 +284,413 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
     });
   }
 
-  function saveWorkshopBooking() {
-    void run('workshop-action', async () => {
-      const format = workshopFormat === 'sms' || workshopFormat === 'ring' || workshopFormat === 'sms-ring'
-        ? workshopFormat
-        : 'mote';
-      await patchJson(`/admin/sales/${encodeURIComponent(client.id)}/workshop-action`, {
-        name: workshopName.trim() || 'Workshop',
-        format,
-        dueAt: datetimeLocalOsloToIso(workshopDue),
-        addToCalendar: format === 'mote' ? true : workshopCalendar,
-        confirmSend: true,
-        goalActions,
-      });
+  function startPreset(presetKey: string) {
+    if (!currentGoal) return;
+    setEdit(null);
+    setDraft({
+      presetKey,
+      name: formatAdminPresetLabel(presetKey) === 'Custom' ? '' : formatAdminPresetLabel(presetKey),
+      note: presetKey === 'sms24h' ? SMS_REMINDER_NOTE : '',
+      format: defaultFormatForAdminPreset(presetKey) as WorkshopActionFormat,
+      dueAt: isoToDatetimeLocalOslo(suggestedAdminActionDueAt(presetKey, client, currentGoal)),
+      addToCalendar: false,
     });
   }
 
-  const summary = workshop?.summary;
-  const booking = client.workshopAction;
-  const pendingApproval = Boolean(booking?.dueAt) && booking?.status !== 'confirmed';
+  function saveWorkshopBooking(next: EditState) {
+    void run('workshop-action', async () => {
+      const format = next.format === 'sms' || next.format === 'ring' || next.format === 'sms-ring' ? next.format : 'mote';
+      await patchJson(`/admin/sales/${encodeURIComponent(client.id)}/workshop-action`, {
+        name: next.name.trim() || WORKSHOP_DEFAULT_NAME,
+        format,
+        dueAt: datetimeLocalOsloToIso(next.dueAt),
+        addToCalendar: format === 'mote' ? true : next.addToCalendar,
+        confirmSend: true,
+      });
+      setEdit(null);
+    });
+  }
+
+  function saveIterationMeeting(next: EditState) {
+    void run('iteration', async () => {
+      const format = next.format === 'sms' || next.format === 'ring' || next.format === 'sms-ring' ? next.format : 'mote';
+      await postJson(`/admin/sales/${encodeURIComponent(client.id)}/workshop/iteration-meeting`, {
+        dueAt: datetimeLocalOsloToIso(next.dueAt),
+        format,
+        addToCalendar: format === 'mote' ? true : next.addToCalendar,
+        send: true,
+      });
+      setEdit(null);
+    });
+  }
+
+  function mutateExtra(body: Record<string, unknown>) {
+    return run('extra', async () => {
+      await patchJson(`/admin/sales/${encodeURIComponent(client.id)}/workshop/goal-actions`, body);
+      setEdit(null);
+      setDraft(null);
+    });
+  }
+
+  function actionEditor(state: EditState, onChange: (patch: Partial<EditState>) => void, onSave: () => void) {
+    const lockCalendar = state.kind !== 'extra' && state.format === 'mote';
+    const meetingTime = state.kind === 'workshop' || state.kind === 'iteration';
+    return (
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <label className="text-[10px] text-gray-400 uppercase tracking-wide">
+          Navn
+          <input
+            value={state.name}
+            onChange={(event) => onChange({ name: event.target.value })}
+            className="mt-1 w-full rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
+          />
+        </label>
+        <label className={`text-[10px] text-gray-400 uppercase tracking-wide ${meetingTime ? 'sm:col-span-2' : ''}`}>
+          {meetingTime ? 'Møtetid' : 'Tid for neste handling'}
+          <input
+            type="datetime-local"
+            aria-label={meetingTime ? 'Møtetid' : 'Tid for neste handling'}
+            value={state.dueAt}
+            onChange={(event) => onChange({ dueAt: event.target.value })}
+            className="mt-1 w-full rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
+          />
+        </label>
+        {state.kind === 'extra' ? (
+          <label className="sm:col-span-2 text-[10px] text-gray-400 uppercase tracking-wide">
+            Notat til handlingen
+            <textarea
+              value={state.note}
+              onChange={(event) => onChange({ note: event.target.value })}
+              rows={2}
+              className="mt-1 w-full rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5 resize-y"
+            />
+          </label>
+        ) : null}
+        {formatControls(
+          { format: state.format, addToCalendar: state.addToCalendar, lockCalendar },
+          (patch) => onChange(patch),
+        )}
+        <div className="sm:col-span-2 flex gap-2">
+          <button
+            type="button"
+            disabled={Boolean(busy) || !state.name.trim() || !state.dueAt}
+            onClick={onSave}
+            className="px-2 py-1 rounded-md bg-[#FF5B00] text-white text-[11px] disabled:opacity-50"
+          >
+            {state.kind === 'extra' ? 'Lagre' : (
+              <span className="inline-flex items-center gap-1"><Send size={11} /> Lagre og send</span>
+            )}
+          </button>
+          {state.kind === 'extra' ? (
+            <button type="button" onClick={() => setEdit(null)} className="px-2 py-1 rounded-md bg-white/10 text-gray-200 text-[11px]">
+              Avbryt
+            </button>
+          ) : null}
+        </div>
+        {state.kind === 'workshop' ? (
+          <p className="sm:col-span-2 text-[10px] text-gray-500">
+            Lagre og send oppdaterer møtetiden og sender ny e-post og kalenderinvitasjon for Møte.
+          </p>
+        ) : null}
+        {state.kind === 'iteration' ? (
+          <p className="sm:col-span-2 text-[10px] text-gray-500">
+            Lagre og send oppdaterer iterasjonsmøtet og sender ny e-post og kalenderinvitasjon for Møte.
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+
+  function readRow(
+    title: string,
+    format: WorkshopActionFormat,
+    dueAt: string,
+    note: string,
+    onCalendar: boolean,
+    onEdit: () => void,
+    extra?: { onComplete?: () => void; onDelete?: () => void; badge?: string },
+  ) {
+    return (
+      <div className="flex items-center gap-2 min-w-0">
+        <div className="min-w-0 flex-1">
+          <div className="text-xs text-white truncate">
+            {title}
+            {format ? (
+              <span className="ml-1.5 text-[10px] uppercase tracking-wide text-gray-400">
+                {formatActionFormatLabel(format)}
+              </span>
+            ) : null}
+            {extra?.badge ? (
+              <span className="ml-1.5 text-[10px] uppercase tracking-wide text-amber-300">{extra.badge}</span>
+            ) : null}
+          </div>
+          <div className="text-[11px] text-gray-400 truncate">{formatWhen(dueAt)}</div>
+          {note ? <div className="mt-0.5 text-[11px] text-gray-300 whitespace-pre-wrap break-words">{note}</div> : null}
+        </div>
+        {onCalendar ? (
+          <span title="I Google Kalender" className="shrink-0 text-sky-300"><CalendarDays size={12} /></span>
+        ) : null}
+        <button type="button" onClick={onEdit} className="shrink-0 p-1 rounded text-gray-400 hover:text-white" title="Endre">
+          <Pencil size={12} />
+        </button>
+        {extra?.onComplete ? (
+          <button type="button" disabled={Boolean(busy)} onClick={extra.onComplete} className="shrink-0 p-1 rounded text-gray-400 hover:text-green-300" title="Fullfør handling">
+            <CheckCircle2 size={12} />
+          </button>
+        ) : null}
+        {extra?.onDelete ? (
+          <button type="button" disabled={Boolean(busy)} onClick={extra.onDelete} className="shrink-0 p-1 rounded text-gray-500 hover:text-red-300" title="Fjern handling">
+            <Trash2 size={12} />
+          </button>
+        ) : null}
+      </div>
+    );
+  }
+
+  const presets = currentGoal ? (ADMIN_GOAL_PRESETS[currentGoal] || []) : [];
 
   return (
     <div className="space-y-2" onClick={(event) => event.stopPropagation()}>
       <div className="flex flex-wrap items-center gap-1.5">
-        <button
-          type="button"
-          disabled={busy === 'summary'}
-          onClick={confirmSummary}
-          className={`px-2 py-1 rounded-md text-[11px] border transition-colors disabled:opacity-60 ${
-            held
-              ? 'bg-green-900/40 border-green-600/40 text-green-300 hover:border-green-500/50'
-              : 'bg-black/20 border-white/10 text-gray-300 hover:border-white/20'
-          }`}
-        >
-          {busy === 'summary' ? <Loader2 size={11} className="inline mr-1 animate-spin" /> : held ? <CheckCircle2 size={11} className="inline mr-1" /> : null}
-          Ha workshop
-        </button>
-        <button
-          type="button"
-          disabled={!held || busy === 'iterated'}
-          onClick={() => void run('iterated', async () => {
-            await patchJson(`/admin/sales/${encodeURIComponent(client.id)}/workshop/iterated`, { iterated: !iterated });
-          })}
-          className={`px-2 py-1 rounded-md text-[11px] border transition-colors disabled:opacity-60 ${
-            iterated
-              ? 'bg-green-900/40 border-green-600/40 text-green-300 hover:border-green-500/50'
-              : 'bg-black/20 border-white/10 text-gray-300 hover:border-white/20'
-          }`}
-        >
-          {busy === 'iterated' ? <Loader2 size={11} className="inline mr-1 animate-spin" /> : iterated ? <CheckCircle2 size={11} className="inline mr-1" /> : null}
-          Iterert
-        </button>
-      </div>
-
-      <div className="rounded-lg border border-white/10 bg-black/20 p-2 space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <div className="text-[11px] text-gray-400">Workshop-handling</div>
-          {pendingApproval ? (
-            <span className="text-[10px] uppercase tracking-wide text-amber-300">Venter på godkjenning</span>
-          ) : booking?.status === 'confirmed' ? (
-            <span className="text-[10px] uppercase tracking-wide text-emerald-300">Bekreftet</span>
-          ) : null}
-        </div>
-        <input
-          type="text"
-          value={workshopName}
-          onChange={(event) => setWorkshopName(event.target.value)}
-          className="w-full rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
-        />
-        <input
-          type="datetime-local"
-          value={workshopDue}
-          onChange={(event) => setWorkshopDue(event.target.value)}
-          className="w-full rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
-        />
-        <div className="flex flex-wrap items-center gap-2">
-          <select
-            value={workshopFormat}
-            onChange={(event) => {
-              const format = event.target.value as WorkshopActionFormat;
-              setWorkshopFormat(format);
-              if (format === 'mote') setWorkshopCalendar(true);
-            }}
-            className="min-w-0 flex-1 rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
-          >
-            {WORKSHOP_FORMATS.map((format) => (
-              <option key={format} value={format}>{formatActionFormatLabel(format)}</option>
-            ))}
-          </select>
-          <CalendarDays size={14} className="text-gray-400" />
-          <button
-            type="button"
-            role="switch"
-            aria-label="I Google Kalender"
-            aria-checked={workshopFormat === 'mote' ? true : workshopCalendar}
-            disabled={workshopFormat === 'mote'}
-            onClick={() => setWorkshopCalendar((prev) => !prev)}
-            className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-70 ${
-              (workshopFormat === 'mote' ? true : workshopCalendar) ? 'bg-[#FF5B00]' : 'bg-white/20'
-            }`}
-          >
-            <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
-              (workshopFormat === 'mote' ? true : workshopCalendar) ? 'ml-4' : 'ml-1'
-            }`} />
-          </button>
-        </div>
-        {goalActions.map((row) => (
-          <div key={row.id} className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
-            <input
-              type="text"
-              value={row.name}
-              onChange={(event) => setGoalActions((prev) => prev.map((item) => (
-                item.id === row.id ? { ...item, name: event.target.value } : item
-              )))}
-              className="rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
-            />
-            <input
-              type="datetime-local"
-              value={isoToDatetimeLocalOslo(row.dueAt)}
-              onChange={(event) => setGoalActions((prev) => prev.map((item) => (
-                item.id === row.id ? { ...item, dueAt: datetimeLocalOsloToIso(event.target.value) } : item
-              )))}
-              className="rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
-            />
-            <select
-              value={row.format}
-              onChange={(event) => setGoalActions((prev) => prev.map((item) => (
-                item.id === row.id ? { ...item, format: event.target.value as WorkshopActionFormat } : item
-              )))}
-              className="rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
+        {visibleGoals.map((key) => {
+          const done = key === 'haWorkshop' ? held : iterated;
+          const isFuture = futureGoalSet.has(key);
+          const keyBusy = key === 'haWorkshop' ? busy === 'summary' : busy === 'iterated';
+          return (
+            <button
+              key={key}
+              type="button"
+              disabled={keyBusy || isFuture}
+              onClick={() => {
+                if (key === 'haWorkshop') confirmSummary();
+                else {
+                  void run('iterated', async () => {
+                    await patchJson(`/admin/sales/${encodeURIComponent(client.id)}/workshop/iterated`, { iterated: !iterated });
+                  });
+                }
+              }}
+              title={isFuture ? 'Fullfør nåværende mål først' : done ? 'Klikk for å angre dette målet' : 'Marker dette målet som ferdig. Neste mål vises automatisk.'}
+              className={`px-2 py-1 rounded-md text-[11px] border transition-colors disabled:opacity-60 ${
+                done
+                  ? 'bg-green-900/40 border-green-600/40 text-green-300 hover:border-green-500/50'
+                  : 'bg-black/20 border-white/10 text-gray-300 hover:border-white/20'
+              }`}
             >
-              {WORKSHOP_FORMATS.map((format) => (
-                <option key={format} value={format}>{formatActionFormatLabel(format)}</option>
-              ))}
-            </select>
+              {keyBusy ? <Loader2 size={11} className="inline mr-1 animate-spin" /> : done ? <CheckCircle2 size={11} className="inline mr-1" /> : null}
+              {formatAdminGoalLabel(key)}
+            </button>
+          );
+        })}
+        {remainingCount > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowFutureGoals((prev) => !prev)}
+            className="inline-flex items-center justify-center p-1 text-gray-400 hover:text-gray-200"
+            title={showFutureGoals ? 'Skjul senere mål' : `Vis ${remainingCount} senere mål`}
+            aria-label={showFutureGoals ? 'Skjul senere mål' : `Vis ${remainingCount} senere mål`}
+          >
+            {showFutureGoals ? <ChevronsUp size={16} /> : <ChevronsDown size={16} />}
+          </button>
+        )}
+      </div>
+
+      {currentGoal ? (
+        <div className="rounded-xl border border-white/10 bg-black/20 p-2.5 space-y-2">
+          <div className="text-[11px] text-gray-400">
+            Neste handling i <span className="text-gray-200">{formatAdminGoalLabel(currentGoal)}</span>
           </div>
-        ))}
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setGoalActions((prev) => [
-              ...prev,
-              {
-                id: `wga-${Date.now()}`,
-                name: 'Handling',
-                format: 'sms',
-                dueAt: '',
-                addToCalendar: false,
-              },
-            ])}
-            className={CHIP}
-          >
-            <Plus size={12} />
-            Legg til handling
-          </button>
-          <button
-            type="button"
-            disabled={busy === 'workshop-action' || !workshopDue}
-            onClick={saveWorkshopBooking}
-            className={CHIP}
-          >
-            {busy === 'workshop-action' ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
-            Lagre
-          </button>
+
+          <div className="relative">
+            <div
+              ref={actionListRef}
+              style={actionListMaxPx ? { maxHeight: actionListMaxPx } : undefined}
+              className={actionListMaxPx ? 'sales-action-scroll overflow-y-auto overscroll-contain pr-1.5' : undefined}
+            >
+              <div className={actionListMaxPx ? 'space-y-2 pb-6' : 'space-y-2'}>
+                {showWorkshopRow ? (
+                  <MeetingVideoHover meetingId={workshopHover.meetingId} hasVideo={workshopHover.hasVideo}>
+                    <div
+                      data-action-row
+                      className={`rounded-lg border px-2 py-1.5 ${
+                        booking?.addToCalendar && booking?.dueAt
+                          ? 'border-sky-400/50 bg-black/30 shadow-[0_0_0_3px_rgba(56,189,248,0.08)]'
+                          : 'border-white/10 bg-black/30'
+                      }`}
+                    >
+                      <div className="mb-1.5 flex items-center justify-between gap-2">
+                        <div className="text-[11px] text-gray-400">Workshop-møte</div>
+                        {pendingApproval ? (
+                          <span className="text-[10px] uppercase tracking-wide text-amber-300">Venter</span>
+                        ) : booking?.status === 'confirmed' ? (
+                          <span className="text-[10px] uppercase tracking-wide text-emerald-300">Bekreftet</span>
+                        ) : null}
+                      </div>
+                      {actionEditor(
+                        workshopDraft,
+                        (patch) => setWorkshopDraft((prev) => ({ ...prev, ...patch })),
+                        () => saveWorkshopBooking(workshopDraft),
+                      )}
+                    </div>
+                  </MeetingVideoHover>
+                ) : null}
+
+                {showIterationRow ? (
+                  <MeetingVideoHover meetingId={iterationHover.meetingId} hasVideo={iterationHover.hasVideo}>
+                    <div
+                      data-action-row
+                      className={`rounded-lg border px-2 py-1.5 ${
+                        iteration?.addToCalendar && iteration?.dueAt
+                          ? 'border-sky-400/50 bg-black/30 shadow-[0_0_0_3px_rgba(56,189,248,0.08)]'
+                          : 'border-white/10 bg-black/30'
+                      }`}
+                    >
+                      <div className="mb-1.5 text-[11px] text-gray-400">Iterasjonsmøte</div>
+                      {actionEditor(
+                        iterationDraft,
+                        (patch) => setIterationDraft((prev) => ({ ...prev, ...patch })),
+                        () => saveIterationMeeting(iterationDraft),
+                      )}
+                    </div>
+                  </MeetingVideoHover>
+                ) : null}
+
+                {extras.map((row) => (
+                  <div
+                    key={row.id}
+                    data-action-row
+                    className={`rounded-lg border px-2 py-1.5 ${
+                      row.addToCalendar && row.dueAt
+                        ? 'border-sky-400/50 bg-black/30 shadow-[0_0_0_3px_rgba(56,189,248,0.08)]'
+                        : 'border-white/10 bg-black/30'
+                    }`}
+                  >
+                    {edit?.kind === 'extra' && edit.actionId === row.id ? actionEditor(
+                      edit,
+                      (patch) => setEdit((prev) => (prev ? { ...prev, ...patch } : prev)),
+                      () => {
+                        if (!edit) return;
+                        void mutateExtra({
+                          op: 'update',
+                          id: row.id,
+                          name: edit.name,
+                          note: edit.note,
+                          format: edit.format,
+                          dueAt: datetimeLocalOsloToIso(edit.dueAt),
+                          addToCalendar: edit.addToCalendar,
+                        });
+                      },
+                    ) : readRow(
+                      row.name,
+                      row.format,
+                      row.dueAt,
+                      row.note || '',
+                      Boolean(row.addToCalendar),
+                      () => setEdit({
+                        kind: 'extra',
+                        actionId: row.id,
+                        name: row.name,
+                        note: row.note || '',
+                        format: row.format,
+                        dueAt: isoToDatetimeLocalOslo(row.dueAt),
+                        addToCalendar: Boolean(row.addToCalendar),
+                      }),
+                      {
+                        onComplete: () => void mutateExtra({ op: 'complete', id: row.id }),
+                        onDelete: () => void mutateExtra({ op: 'delete', id: row.id }),
+                      },
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {draft ? (
+            <div className="rounded-lg border border-white/10 bg-black/10 p-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <label className="text-[10px] text-gray-400 uppercase tracking-wide">
+                Navn
+                <input
+                  value={draft.name}
+                  onChange={(event) => setDraft((prev) => (prev ? { ...prev, name: event.target.value } : prev))}
+                  className="mt-1 w-full rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
+                />
+              </label>
+              <label className="text-[10px] text-gray-400 uppercase tracking-wide">
+                Tid for neste handling
+                <input
+                  type="datetime-local"
+                  value={draft.dueAt}
+                  onChange={(event) => setDraft((prev) => (prev ? { ...prev, dueAt: event.target.value } : prev))}
+                  className="mt-1 w-full rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
+                />
+              </label>
+              <label className="sm:col-span-2 text-[10px] text-gray-400 uppercase tracking-wide">
+                Notat til handlingen
+                <textarea
+                  value={draft.note}
+                  onChange={(event) => setDraft((prev) => (prev ? { ...prev, note: event.target.value } : prev))}
+                  rows={2}
+                  className="mt-1 w-full rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5 resize-y"
+                />
+              </label>
+              {formatControls(
+                { format: draft.format, addToCalendar: draft.addToCalendar },
+                (patch) => setDraft((prev) => (prev ? { ...prev, ...patch } : prev)),
+              )}
+              <div className="sm:col-span-2 flex gap-2">
+                <button
+                  type="button"
+                  disabled={Boolean(busy) || !draft.name.trim() || !draft.dueAt}
+                  onClick={() => void mutateExtra({
+                    op: 'create',
+                    goalKey: currentGoal,
+                    presetKey: draft.presetKey,
+                    name: draft.name,
+                    note: draft.note,
+                    format: draft.format,
+                    dueAt: datetimeLocalOsloToIso(draft.dueAt),
+                    addToCalendar: draft.addToCalendar,
+                  })}
+                  className="px-2 py-1 rounded-md bg-[#FF5B00] text-white text-[11px] disabled:opacity-50"
+                >
+                  Sett handling
+                </button>
+                <button type="button" onClick={() => setDraft(null)} className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-white/10 text-gray-200 text-[11px]">
+                  <X size={11} />
+                  Avbryt
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-wrap gap-1.5">
+              {presets.map((presetKey: string) => (
+                <button
+                  key={presetKey}
+                  type="button"
+                  disabled={Boolean(busy)}
+                  onClick={() => startPreset(presetKey)}
+                  className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border border-white/10 bg-white/5 text-gray-200 hover:border-white/20 disabled:opacity-40"
+                >
+                  <Plus size={11} />
+                  {formatAdminPresetLabel(presetKey)}
+                </button>
+              ))}
+              {currentGoal === 'haWorkshop' ? (
+                <button type="button" onClick={() => setNoteKind((prev) => (prev === 'workshop' ? '' : 'workshop'))} className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border border-white/10 bg-white/5 text-gray-200 hover:border-white/20">
+                  Manuelt workshop-notat
+                </button>
+              ) : null}
+              {currentGoal === 'iterated' ? (
+                <button type="button" onClick={() => setNoteKind((prev) => (prev === 'iteration' ? '' : 'iteration'))} className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border border-white/10 bg-white/5 text-gray-200 hover:border-white/20">
+                  Manuelt iterasjonsnotat
+                </button>
+              ) : null}
+            </div>
+          )}
         </div>
-        <p className="text-[10px] text-gray-500">
-          Lagre sender workshop-e-post og kalenderinvitasjon bare for Møte med kalender på.
-        </p>
-      </div>
+      ) : null}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          disabled={busy === 'invoice'}
-          onClick={() => void run('invoice', async () => {
-            await postJson(`/admin/sales/${encodeURIComponent(client.id)}/workshop/invoice-request`, {});
-          })}
-          className={CHIP}
-        >
-          {busy === 'invoice' ? <Loader2 size={12} className="animate-spin" /> : null}
-          Send faktura
-        </button>
-        <button type="button" onClick={() => setNoteKind((prev) => (prev === 'workshop' ? '' : 'workshop'))} className={CHIP}>
-          Manuelt workshop-notat
-        </button>
-        <button type="button" onClick={() => setNoteKind((prev) => (prev === 'iteration' ? '' : 'iteration'))} className={CHIP}>
-          Manuelt iterasjonsnotat
-        </button>
-      </div>
-
-      {noteKind ? (
+      {noteKind && ((noteKind === 'workshop' && currentGoal === 'haWorkshop') || (noteKind === 'iteration' && currentGoal === 'iterated')) ? (
         <div className="rounded-lg border border-white/10 bg-black/20 p-2 space-y-2">
           <textarea
             value={noteKind === 'workshop' ? workshopNote : iterationNote}
@@ -334,12 +709,7 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
                 className="text-[11px] text-gray-400"
               />
             </label>
-            <button
-              type="button"
-              disabled={busy === 'note'}
-              onClick={() => void run('note', () => postNote(noteKind))}
-              className={CHIP}
-            >
+            <button type="button" disabled={busy === 'note'} onClick={() => void run('note', () => postNote(noteKind))} className={CHIP}>
               {busy === 'note' ? <Loader2 size={12} className="animate-spin" /> : null}
               Legg til
             </button>
@@ -347,7 +717,7 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
         </div>
       ) : null}
 
-      {workshop?.notes?.length ? (
+      {currentGoal === 'haWorkshop' && workshop?.notes?.length ? (
         <div className="max-h-28 overflow-y-auto space-y-1">
           {workshop.notes.map((note) => (
             <div key={note.id} className="rounded-md border border-white/10 bg-black/20 px-2 py-1 text-[11px] text-gray-300">
@@ -358,80 +728,7 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
         </div>
       ) : null}
 
-      <div className="rounded-lg border border-white/10 bg-black/20 p-2 space-y-2">
-        <div className="text-[11px] text-gray-400">Iterasjonsmøte</div>
-        <MeetingVideoHover meetingId={hover.meetingId} hasVideo={hover.hasVideo}>
-          <div className="text-xs text-white">
-            Iterasjonsmøte
-            <span className="ml-1.5 text-[10px] uppercase tracking-wide text-gray-400">
-              {formatActionFormatLabel(iterationFormat)}
-            </span>
-            <div className="text-[11px] text-gray-400">{formatWhen(iteration?.dueAt || datetimeLocalOsloToIso(iterationDue))}</div>
-          </div>
-        </MeetingVideoHover>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          <input
-            type="datetime-local"
-            value={iterationDue}
-            onChange={(event) => setIterationDue(event.target.value)}
-            className="rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
-          />
-          <select
-            value={iterationFormat}
-            onChange={(event) => {
-              const format = event.target.value as WorkshopActionFormat;
-              setIterationFormat(format);
-              if (format === 'mote') setIterationCalendar(true);
-            }}
-            className="rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
-          >
-            <option value="mote">Møte</option>
-            <option value="sms-ring">SMS/ring</option>
-          </select>
-        </div>
-        {iterationFormat === 'sms-ring' ? (
-          <label className="inline-flex items-center gap-2 text-[11px] text-gray-300">
-            <input
-              type="checkbox"
-              checked={iterationCalendar}
-              onChange={(event) => setIterationCalendar(event.target.checked)}
-            />
-            Legg i kalender (privat, ingen invitasjon)
-          </label>
-        ) : (
-          <p className="text-[11px] text-gray-500">Møte er 30 minutter online med Meet og Fireflies.</p>
-        )}
-        <button
-          type="button"
-          disabled={!iterationDue || busy === 'iteration'}
-          onClick={() => void run('iteration', async () => {
-            await postJson(`/admin/sales/${encodeURIComponent(client.id)}/workshop/iteration-meeting`, {
-              dueAt: datetimeLocalOsloToIso(iterationDue),
-              format: iterationFormat,
-              addToCalendar: iterationFormat === 'mote' ? true : iterationCalendar,
-              send: true,
-            });
-          })}
-          className={CHIP}
-        >
-          {busy === 'iteration' ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
-          Send
-        </button>
-      </div>
-
-      <WorkshopIterationLog client={client} canMarkDone onClient={onClient} />
-
-      {summary ? (
-        <div className="rounded-lg border border-white/10 bg-black/20 p-2 space-y-1.5 text-[11px] text-gray-300">
-          <div className="text-gray-400">Utviklersammendrag</div>
-          <div><span className="text-gray-500">Intro. </span>{summary.intro}</div>
-          <div><span className="text-gray-500">Voice. </span>{summary.voice}</div>
-          <div><span className="text-gray-500">What they want. </span>{summary.whatTheyWant}</div>
-          <div><span className="text-gray-500">Functionality. </span>{summary.functionality}</div>
-        </div>
-      ) : (
-        <p className="text-[11px] text-gray-500">Sammendraget lages først når du trykker Ha workshop.</p>
-      )}
+      {currentGoal === 'iterated' ? <WorkshopIterationLog client={client} canMarkDone onClient={onClient} /> : null}
 
       {error ? <p className="text-[11px] text-red-300">{error}</p> : null}
     </div>

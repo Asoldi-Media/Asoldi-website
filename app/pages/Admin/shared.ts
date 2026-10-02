@@ -248,6 +248,7 @@ export type WorkshopIterationMeeting = {
   firefliesLiveJoinedAt?: string;
   firefliesLiveJoinAttemptAt?: string;
   firefliesLiveJoinError?: string;
+  confirmationSentAt?: string;
 };
 
 export type WorkshopHeardFact = {
@@ -262,9 +263,14 @@ export type WorkshopHeardFact = {
 export type WorkshopGoalAction = {
   id: string;
   name: string;
+  note?: string;
   format: WorkshopActionFormat;
   dueAt: string;
   addToCalendar: boolean;
+  goalKey?: 'haWorkshop' | 'iterated';
+  presetKey?: string;
+  doneAt?: string;
+  calendarEventId?: string;
 };
 
 export type WorkshopRecord = {

@@ -14,12 +14,18 @@ import {
   buildIterationCalendarPlan,
   buildIterationInvitePayload,
   buildIterationPrivatePayload,
+  iterationEmailShouldSend,
 } from '../lib/workshop-iteration.js';
 import {
   clientMeetingHover,
   persistWorkshopRecord,
   normalizeWorkshopRecord,
 } from '../lib/workshop-record.js';
+import {
+  applyWorkshopGoalActionOp,
+  getAdminCurrentGoalKey,
+  getAdminVisibleGoalKeys,
+} from '../lib/workshop-goal-timeline.js';
 import { getWorkshopAction } from '../lib/workshop-action.js';
 import {
   buildMeetingAttendees,
@@ -210,18 +216,30 @@ test('hover uses that meeting id, never meetings[0]', () => {
   assert.notEqual(iteration.meetingId, 'latest-other');
 });
 
-test('T06 still mounts T01/T02 and T07 fills the existing actions slot', () => {
+test('T06 mounts T02 and T07 in the actions slot; T01 needs stay off Admin', () => {
   const adminSrc = readNearby('../app/pages/Admin/sections/AdminBoardSection.tsx');
-  assert.match(adminSrc, /WorkshopNeedsPanel/);
+  assert.equal(adminSrc.includes('WorkshopNeedsPanel'), false);
   assert.match(adminSrc, /AdminRequestInbox/);
   assert.match(adminSrc, /data-admin-card-actions/);
   assert.match(adminSrc, /WorkshopAdminActionRow/);
+  assert.match(adminSrc, /Details & tools/);
+  assert.match(adminSrc, /Search and filter/);
   assert.equal(adminSrc.includes('ManageClientsView'), false);
+  assert.equal(adminSrc.includes('SalesGoalTimeline'), false);
+
+  const rowSrc = readNearby('../app/pages/Admin/sections/WorkshopAdminActionRow.tsx');
+  assert.match(rowSrc, /ChevronsDown/);
+  assert.match(rowSrc, /getAdminCurrentGoalKey/);
+  assert.match(rowSrc, /Iterasjonsmøte/);
+  assert.match(rowSrc, /currentGoal === 'iterated'/);
+  assert.match(rowSrc, /Møtetid/);
+  assert.match(rowSrc, /workshopDraft/);
 
   const serverSrc = readNearby('../server.js');
   assert.match(serverSrc, /\/api\/admin\/sales\/:id\/workshop-needs/);
   assert.match(serverSrc, /\/api\/admin\/dev-requests/);
   assert.match(serverSrc, /\/api\/admin\/sales\/:id\/workshop-action/);
+  assert.match(serverSrc, /\/api\/admin\/sales\/:id\/workshop\/goal-actions/);
   assert.match(serverSrc, /\/api\/admin\/sales\/preview-send-emails/);
   assert.match(serverSrc, /\/api\/admin\/sales\/:id\/workshop\/summary/);
   assert.equal(serverSrc.includes('summarizeClientIntent({'), true);
@@ -231,4 +249,41 @@ test('T06 still mounts T01/T02 and T07 fills the existing actions slot', () => {
   const cardSrc = readNearby('../app/pages/developer/DeveloperClientCard.tsx');
   assert.match(cardSrc, /DeveloperRequestThread/);
   assert.equal(developerSrc.includes('DeveloperRequestThread'), false);
+});
+
+test('Admin goal chips hide Iterert until Ha workshop is done', () => {
+  const open = { workshop: { heldAt: '', summary: null } };
+  assert.equal(getAdminCurrentGoalKey(open), 'haWorkshop');
+  assert.deepEqual(getAdminVisibleGoalKeys(open), ['haWorkshop']);
+  const held = { workshop: { heldAt: DUE, summary: { intro: 'x', voice: 'x', whatTheyWant: 'x', functionality: 'x' } } };
+  assert.equal(getAdminCurrentGoalKey(held), 'iterated');
+  assert.deepEqual(getAdminVisibleGoalKeys(held), ['haWorkshop', 'iterated']);
+});
+
+test('extra goal-action create does not look like confirmSend', () => {
+  const applied = applyWorkshopGoalActionOp({ goalActions: [] }, {
+    op: 'create',
+    goalKey: 'haWorkshop',
+    presetKey: 'sms24h',
+    name: 'SMS 24h',
+    format: 'sms',
+    dueAt: DUE,
+    addToCalendar: false,
+  });
+  assert.equal(applied.error, undefined);
+  assert.equal(applied.goalActions.length, 1);
+  assert.equal(applied.goalActions[0].goalKey, 'haWorkshop');
+  assert.equal(Object.prototype.hasOwnProperty.call(applied, 'confirmSend'), false);
+  const rowSrc = readNearby('../app/pages/Admin/sections/WorkshopAdminActionRow.tsx');
+  assert.match(rowSrc, /workshop\/goal-actions/);
+  assert.match(rowSrc, /confirmSend: true/);
+  assert.equal(/confirmSend: true,\s*goalActions/.test(rowSrc), false);
+});
+
+test('iteration email send is Møte plus send gate', () => {
+  const next = { format: 'mote', dueAt: DUE };
+  assert.equal(iterationEmailShouldSend({}, next, { send: true }), true);
+  assert.equal(iterationEmailShouldSend({}, next, {}), false);
+  assert.equal(iterationEmailShouldSend({}, { format: 'sms-ring', dueAt: DUE, addToCalendar: true }, { send: true }), false);
+  assert.equal(iterationEmailShouldSend({ confirmationSentAt: DUE, format: 'mote', dueAt: DUE }, next, { send: true }), false);
 });

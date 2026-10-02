@@ -7,6 +7,7 @@ import {
   ADMIN_BOARD_UNBOOKED_BUCKET,
   adminBoardViewerIsDamianMailbox,
   classifyAdminWorkshopBucket,
+  clientMatchesAdminBoardFilters,
   filterAdminBoardClients,
   getWorkshopAction,
   groupAdminBoardClients,
@@ -170,10 +171,12 @@ test('booking helper and Admin UI never treat startDate as a booking or copy Sal
 
   const adminSrc = readNearby('../app/pages/Admin/sections/AdminBoardSection.tsx');
   assert.match(adminSrc, /workshopCalendar=1/);
-  assert.match(adminSrc, /WorkshopNeedsPanel/);
+  assert.equal(adminSrc.includes('WorkshopNeedsPanel'), false);
   assert.match(adminSrc, /AdminRequestInbox/);
   assert.match(adminSrc, /data-admin-card-actions/);
   assert.match(adminSrc, /WorkshopAdminActionRow/);
+  assert.match(adminSrc, /Search and filter/);
+  assert.match(adminSrc, /clientMatchesAdminBoardFilters/);
   assert.equal(adminSrc.includes('SalesGoalTimeline'), false);
   assert.equal(adminSrc.includes('meetingQuote.startDate'), false);
 
@@ -191,4 +194,40 @@ test('booking helper and Admin UI never treat startDate as a booking or copy Sal
   const cardSrc = readNearby('../app/pages/developer/DeveloperClientCard.tsx');
   assert.match(cardSrc, /DeveloperRequestThread/);
   assert.equal(developerSrc.includes('DeveloperRequestThread'), false);
+});
+
+test('Admin board filters match today, format, and held separately from search', () => {
+  const today = {
+    id: 'today',
+    status: 'active',
+    product: 'asoldi',
+    businessName: 'Today AS',
+    workshopAction: { name: 'Workshop', format: 'mote', dueAt: '2026-10-07T12:00:00.000Z', status: 'confirmed', confirmationSentAt: '2026-10-06T10:00:00.000Z' },
+  };
+  const sms = {
+    id: 'sms',
+    status: 'active',
+    product: 'asoldi',
+    businessName: 'SMS AS',
+    workshopAction: { name: 'Workshop', format: 'sms', dueAt: DUE, status: 'draft' },
+  };
+  const held = {
+    id: 'held',
+    status: 'active',
+    product: 'asoldi',
+    businessName: 'Held AS',
+    workshopAction: { name: 'Workshop', format: 'mote', dueAt: '2026-10-01T10:00:00.000Z', status: 'confirmed' },
+    workshop: { heldAt: '2026-10-01T10:30:00.000Z', summary: { intro: 'x' } },
+  };
+  assert.equal(clientMatchesAdminBoardFilters(today, { when: 'today' }, NOW), true);
+  assert.equal(clientMatchesAdminBoardFilters(sms, { when: 'today' }, NOW), false);
+  assert.equal(clientMatchesAdminBoardFilters(today, { format: 'mote' }, NOW), true);
+  assert.equal(clientMatchesAdminBoardFilters(sms, { format: 'mote' }, NOW), false);
+  assert.equal(clientMatchesAdminBoardFilters(sms, { format: 'sms' }, NOW), true);
+  assert.equal(clientMatchesAdminBoardFilters(held, { status: 'held' }, NOW), true);
+  assert.equal(clientMatchesAdminBoardFilters(today, { status: 'held' }, NOW), false);
+  assert.equal(clientMatchesAdminBoardFilters(today, { status: 'confirmed' }, NOW), true);
+  assert.equal(clientMatchesAdminBoardFilters(sms, { status: 'draft' }, NOW), true);
+  assert.equal(clientMatchesAdminBoardFilters(held, { when: 'overdue' }, NOW), true);
+  assert.equal(clientMatchesAdminBoardFilters(today, { bucket: 'upcoming' }, NOW), true);
 });

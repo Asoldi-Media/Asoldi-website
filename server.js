@@ -259,6 +259,7 @@ import {
   tryBuildSalesWorkshopEmail,
   workshopEmailShouldSend,
   workshopIsConfirmed,
+  maybeSyncWorkshopGoalActionCalendars,
 } from './lib/workshop-action.js';
 import {
   adminBoardViewerIsDamianMailbox,
@@ -269,11 +270,20 @@ import {
   getWorkshopRecord,
   mergeWorkshopRecord,
   normalizeIterationMeeting,
+  ITERATION_DEFAULT_NAME,
 } from './lib/workshop-record.js';
+import { applyWorkshopGoalActionOp } from './lib/workshop-goal-timeline.js';
 import {
   generateWorkshopSummaryWithDeepSeek,
 } from './lib/workshop-summary.js';
-import { syncIterationCalendar } from './lib/workshop-iteration.js';
+import {
+  ITERATION_DURATION_MINUTES,
+  buildIterationSyntheticMeetingClient,
+  iterationEmailShouldSend,
+  iterationInvitesClient,
+  syncIterationCalendar,
+  tryBuildSalesIterationEmail,
+} from './lib/workshop-iteration.js';
 import {
   appendWorkshopDeskNote,
   markIterationLogDone,
@@ -13755,6 +13765,48 @@ async function sendWorkshopBookingEmail(client, action, salesUser) {
   return { sent: true };
 }
 
+async function sendIterationMeetingEmail(client, meeting, salesUser) {
+  const recipient = sanitizeText(client?.contactEmail);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
+    return { sent: false, warning: 'Iterasjons-e-post ble ikke sendt: kunden mangler e-post.' };
+  }
+  if (!emailLib.canSendEmail()) {
+    return { sent: false, warning: 'Iterasjons-e-post ble ikke sendt: e-post er ikke konfigurert.' };
+  }
+  const sender = await resolveSalesSenderForAccount(salesUser);
+  const calendar = { meetLink: meeting.meetLink, eventId: meeting.calendarEventId };
+  const built = await tryBuildSalesIterationEmail(client, calendar, {
+    sender,
+    iteration: {
+      dueAt: meeting.dueAt,
+      meetLink: meeting.meetLink,
+    },
+  });
+  if (!built) {
+    return { sent: false, warning: '' };
+  }
+  const synthetic = buildIterationSyntheticMeetingClient(client, meeting);
+  const organizer = emailLib.parseMailbox(built.from || sender.from || '');
+  const invite = buildSalesCalendarInvite(synthetic, calendar, {
+    organizerEmail: organizer.address || sender.fromEmail || DAMIAN_WORKSHOP_CALENDAR_EMAIL,
+    organizerName: organizer.name || sender.name || 'Asoldi',
+    durationMinutes: ITERATION_DURATION_MINUTES,
+    summary: `Asoldi · ${ITERATION_DEFAULT_NAME} · ${sanitizeText(client.businessName) || 'kunde'}`,
+  });
+  await emailLib.sendEmail({
+    to: recipient,
+    from: built.from,
+    replyTo: built.replyTo,
+    bcc: salesEmailCopyBcc(recipient),
+    subject: built.subject,
+    text: built.text,
+    html: built.html,
+    attachments: built.attachments,
+    icalEvent: invite || undefined,
+  });
+  return { sent: true };
+}
+
 app.patch('/api/admin/sales/:id/workshop-action', salesAuth, async (req, res) => {
   const existing = sales.getSalesClientById(req.params.id);
   if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
@@ -13841,6 +13893,30 @@ app.patch('/api/admin/sales/:id/workshop-action', salesAuth, async (req, res) =>
   } catch (error) {
     const message = sanitizeText(error?.message) || 'Failed updating workshop action.';
     return res.status(400).json({ message });
+  }
+});
+
+app.patch('/api/admin/sales/:id/workshop/goal-actions', salesAuth, async (req, res) => {
+  if (!requireOfferAdmin(req, res)) return;
+  const existing = sales.getSalesClientById(req.params.id);
+  if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
+  if (!canAccessSalesClient(req, existing)) return res.status(403).json({ message: 'Not your sales client.' });
+  const record = getWorkshopRecord(existing);
+  const applied = applyWorkshopGoalActionOp(record, req.body || {});
+  if (applied.error) return res.status(400).json({ message: applied.error });
+  try {
+    const sync = await maybeSyncWorkshopGoalActionCalendars(existing, record, {
+      ...record,
+      goalActions: applied.goalActions,
+    });
+    const updated = sales.setSalesWorkshop(existing.id, mergeWorkshopRecord(record, {
+      goalActions: sync.goalActions,
+    }));
+    return res.json({ client: jsonSalesClient(updated), warnings: sync.warnings || [] });
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 400)).json({
+      message: sanitizeText(error?.message) || 'Kunne ikke lagre handlingen.',
+    });
   }
 });
 
@@ -13991,6 +14067,7 @@ app.post('/api/admin/sales/:id/workshop/iteration-meeting', salesAuth, async (re
     calendarEventId: record.iterationMeeting.calendarEventId,
     meetLink: record.iterationMeeting.meetLink,
     firefliesMeetingId: record.iterationMeeting.firefliesMeetingId,
+    confirmationSentAt: record.iterationMeeting.confirmationSentAt,
   });
   const send = Boolean(body.send);
   if (send && !nextMeeting.dueAt) {
@@ -14008,10 +14085,26 @@ app.post('/api/admin/sales/:id/workshop/iteration-meeting', salesAuth, async (re
       previousMeeting: record.iterationMeeting,
       nextMeeting,
     });
+    let meeting = {
+      ...sync.meeting,
+      confirmationSentAt: record.iterationMeeting.confirmationSentAt,
+    };
+    const warnings = [...(sync.warnings || [])];
+    let emailSent = false;
+    if (iterationEmailShouldSend(record.iterationMeeting, meeting, { send }) && iterationInvitesClient(meeting)) {
+      try {
+        const mailed = await sendIterationMeetingEmail(existing, meeting, req.salesUser);
+        emailSent = Boolean(mailed.sent);
+        if (mailed.warning) warnings.push(mailed.warning);
+        if (emailSent) meeting = { ...meeting, confirmationSentAt: new Date().toISOString() };
+      } catch (error) {
+        warnings.push(`Iterasjons-e-post feilet: ${sanitizeText(error?.message) || 'ukjent feil'}`);
+      }
+    }
     const updated = sales.setSalesWorkshop(existing.id, mergeWorkshopRecord(record, {
-      iterationMeeting: sync.meeting,
+      iterationMeeting: meeting,
     }));
-    return res.json({ client: jsonSalesClient(updated), warnings: sync.warnings || [] });
+    return res.json({ client: jsonSalesClient(updated), warnings, emailSent });
   } catch (error) {
     return res.status(httpStatusFromError(error, 400)).json({
       message: sanitizeText(error?.message) || 'Kunne ikke sende iterasjonsmøtet.',

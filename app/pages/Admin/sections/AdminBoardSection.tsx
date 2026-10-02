@@ -1,19 +1,25 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react';
-import { CalendarDays, ChevronDown, Loader2 } from 'lucide-react';
+import { ChevronDown, Loader2, Mail, Search, X } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { API, authHeaders, salesAuthHeaders, type SalesClient } from '../shared';
-import { formatActionFormatLabel, SALES_ACTION_TIMEZONE } from '../../../../lib/sales-next-actions.js';
-import { getWorkshopAction } from '../../../../lib/workshop-action-shared.js';
+import { SALES_ACTION_TIMEZONE } from '../../../../lib/sales-next-actions.js';
+import { getWorkshopAction, workshopInvitesClient } from '../../../../lib/workshop-action-shared.js';
 import {
   adminBoardViewerIsDamianMailbox,
+  clientMatchesAdminBoardFilters,
   DAMIAN_WORKSHOP_CALENDAR_EMAIL,
+  filterAdminBoardClients,
   groupAdminBoardClients,
 } from '../../../../lib/workshop-booking.js';
+import {
+  buildClientSearchHaystack,
+  matchesClientSearchQuery,
+  normalizeClientSearchText,
+} from '../clientSearch';
 import { SalesCalendarWeek } from './SalesCalendarWeek';
-import { WorkshopNeedsPanel } from './WorkshopNeedsPanel';
 import { AdminRequestInbox } from './AdminRequestInbox';
 import { WorkshopAdminActionRow } from './WorkshopAdminActionRow';
-import { MeetingVideoHover } from './MeetingVideoHover';
-import { clientMeetingHover } from '../../../../lib/workshop-record.js';
+import { workshopGoalHeld } from '../../../../lib/workshop-goal-timeline.js';
 
 const OfferReviewSection = lazy(() =>
   import('./OfferReviewSection').then((m) => ({ default: m.OfferReviewSection }))
@@ -102,9 +108,36 @@ function AdminBoardCard({
   onClient: (client: SalesClient) => void;
   thread?: ThreadSummary;
 }) {
+  const navigate = useNavigate();
   const action = getWorkshopAction(client);
-  const onCalendar = Boolean(action?.addToCalendar);
-  const hover = clientMeetingHover(client, 'workshop');
+  const [expanded, setExpanded] = useState(false);
+  const [showMail, setShowMail] = useState(false);
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const held = workshopGoalHeld(client);
+  const summary = client.workshop?.summary;
+  const iteration = client.workshop?.iterationMeeting;
+  const showWorkshopMail = workshopInvitesClient(action);
+  const showIterationMail = held && iteration?.format === 'mote' && Boolean(iteration?.dueAt);
+
+  async function sendInvoice() {
+    setBusy('invoice');
+    setError('');
+    try {
+      const response = await fetch(`${API}/admin/sales/${encodeURIComponent(client.id)}/workshop/invoice-request`, {
+        method: 'POST',
+        headers: { ...salesAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(String((data as { message?: string }).message || 'Kunne ikke sende fakturaforespørsel.'));
+      if ((data as { client?: SalesClient }).client) onClient((data as { client: SalesClient }).client);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Kunne ikke sende fakturaforespørsel.');
+    } finally {
+      setBusy('');
+    }
+  }
 
   return (
     <article className="rounded-2xl border bg-[#2a2a2a] border-white/10 p-3 sm:p-4 flex flex-col gap-3 min-w-0">
@@ -119,37 +152,6 @@ function AdminBoardCard({
         ) : null}
       </div>
 
-      {action ? (
-        <MeetingVideoHover meetingId={hover.meetingId} hasVideo={hover.hasVideo}>
-          <div
-            className={`rounded-xl border bg-black/20 p-2.5 ${
-              onCalendar ? 'border-sky-400/40' : 'border-white/10'
-            }`}
-          >
-            <div className="flex items-start gap-2 min-w-0">
-              <div className="min-w-0 flex-1">
-                <div className="text-xs text-white truncate">
-                  {action.name || 'Workshop'}
-                  {action.format ? (
-                    <span className="ml-1.5 text-[10px] uppercase tracking-wide text-gray-400">
-                      {formatActionFormatLabel(action.format)}
-                    </span>
-                  ) : null}
-                </div>
-                <div className="text-[11px] text-gray-400 truncate">{formatWhen(action.dueAt)}</div>
-              </div>
-              {onCalendar ? (
-                <span title="I Google Kalender" className="shrink-0 text-sky-300">
-                  <CalendarDays size={12} />
-                </span>
-              ) : null}
-            </div>
-          </div>
-        </MeetingVideoHover>
-      ) : (
-        <p className="text-[11px] text-gray-500">Ingen workshop avtalt.</p>
-      )}
-
       {thread?.lastKindLabel ? (
         <p className="text-[11px] text-amber-300">{thread.lastKindLabel}</p>
       ) : thread ? (
@@ -160,8 +162,88 @@ function AdminBoardCard({
         <WorkshopAdminActionRow client={client} onClient={onClient} />
       </div>
 
-      <WorkshopNeedsPanel clientId={client.id} />
       <AdminRequestInbox salesClientId={client.id} />
+
+      <div className="flex items-center justify-between gap-2 mt-auto pt-1">
+        <button
+          type="button"
+          onClick={() => {
+            setExpanded((prev) => !prev);
+            if (expanded) setShowMail(false);
+          }}
+          className="text-xs text-[#FF5B00] hover:underline"
+        >
+          {expanded ? 'Hide details' : 'Details & tools'}
+        </button>
+      </div>
+
+      {expanded ? (
+        <div className="space-y-3 border-t border-white/10 pt-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              disabled={busy === 'invoice'}
+              onClick={() => void sendInvoice()}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
+            >
+              {busy === 'invoice' ? <Loader2 size={13} className="animate-spin" /> : null}
+              Send faktura
+            </button>
+            {(showWorkshopMail || showIterationMail) ? (
+              <button
+                type="button"
+                onClick={() => setShowMail((prev) => !prev)}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs ${
+                  showMail ? 'bg-[#FF5B00] text-white' : 'bg-white/10 text-white hover:bg-white/15'
+                }`}
+              >
+                <Mail size={13} />
+                {showMail ? 'Skjul e-postmaler' : 'Vis e-postmaler'}
+              </button>
+            ) : (
+              <p className="text-[11px] text-gray-500">E-postmal vises når format er Møte med kalender på.</p>
+            )}
+          </div>
+          {showMail && (showWorkshopMail || showIterationMail) ? (
+            <div className="flex flex-wrap items-center gap-2 rounded-xl bg-black/20 border border-white/10 p-3">
+              {showWorkshopMail ? (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/sales/email?clientId=${encodeURIComponent(client.id)}&template=workshop`)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
+                >
+                  Workshop-e-post
+                </button>
+              ) : null}
+              {showIterationMail ? (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/sales/email?clientId=${encodeURIComponent(client.id)}&template=iteration`)}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
+                >
+                  Iterasjonsmøte-e-post
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          <ul className="space-y-1 text-[11px] text-gray-400">
+            <li>Meet: {action?.meetLink || '—'}</li>
+            <li>Workshop sendt: {action?.confirmationSentAt ? formatWhen(action.confirmationSentAt) : 'Nei'}</li>
+            <li>Iterasjon Meet: {iteration?.meetLink || '—'}</li>
+            <li>Iterasjon sendt: {iteration?.confirmationSentAt ? formatWhen(iteration.confirmationSentAt) : 'Nei'}</li>
+          </ul>
+          {held && summary ? (
+            <div className="rounded-lg border border-white/10 bg-black/20 p-2 space-y-1.5 text-[11px] text-gray-300">
+              <div className="text-gray-400">Utviklersammendrag</div>
+              <div><span className="text-gray-500">Intro. </span>{summary.intro}</div>
+              <div><span className="text-gray-500">Voice. </span>{summary.voice}</div>
+              <div><span className="text-gray-500">What they want. </span>{summary.whatTheyWant}</div>
+              <div><span className="text-gray-500">Functionality. </span>{summary.functionality}</div>
+            </div>
+          ) : null}
+          {error ? <p className="text-[11px] text-red-300">{error}</p> : null}
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -173,6 +255,11 @@ export function AdminBoardSection() {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [collapsedBuckets, setCollapsedBuckets] = useState<Record<string, boolean>>({});
   const [calendarOpen, setCalendarOpen] = useState(false);
+  const [searchInput, setSearchInput] = useState('');
+  const [bucketFilter, setBucketFilter] = useState('');
+  const [formatFilter, setFormatFilter] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [whenFilter, setWhenFilter] = useState('');
   const [onlyWithRequests, setOnlyWithRequests] = useState(false);
   const [threadMap, setThreadMap] = useState<Record<string, ThreadSummary>>({});
   const [calendarLoading, setCalendarLoading] = useState(false);
@@ -271,10 +358,35 @@ export function AdminBoardSection() {
     return undefined;
   }, [calendarOpen, loadCalendar]);
 
+  const searchQuery = normalizeClientSearchText(searchInput);
+  const hasActiveFilters = Boolean(
+    searchQuery || bucketFilter || formatFilter || statusFilter || whenFilter || onlyWithRequests
+  );
+  const boardClients = useMemo(() => filterAdminBoardClients(clients), [clients]);
   const visibleClients = useMemo(() => {
-    if (!onlyWithRequests) return clients;
-    return clients.filter((client) => Boolean(threadMap[client.id]));
-  }, [clients, onlyWithRequests, threadMap]);
+    return boardClients.filter((client) => {
+      if (onlyWithRequests && !threadMap[client.id]) return false;
+      if (searchQuery) {
+        const haystack = buildClientSearchHaystack([
+          client.businessName,
+          client.contactPerson,
+          client.contactEmail,
+          client.websiteEmail,
+          client.contactPhone,
+          client.meetingPlace,
+          client.industry,
+          client.notes,
+        ]);
+        if (!matchesClientSearchQuery(haystack, searchQuery)) return false;
+      }
+      return clientMatchesAdminBoardFilters(client, {
+        bucket: bucketFilter,
+        format: formatFilter,
+        status: statusFilter,
+        when: whenFilter,
+      }, nowMs);
+    });
+  }, [boardClients, onlyWithRequests, threadMap, searchQuery, bucketFilter, formatFilter, statusFilter, whenFilter, nowMs]);
   const groups = useMemo(() => groupAdminBoardClients(visibleClients, nowMs), [visibleClients, nowMs]);
   const isOwnCalendar = calendarWeek.isOwnCalendar
     || adminBoardViewerIsDamianMailbox(viewer);
@@ -361,22 +473,104 @@ export function AdminBoardSection() {
         ) : null}
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <label className="inline-flex items-center gap-2 text-sm text-gray-300 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={onlyWithRequests}
-            onChange={(event) => setOnlyWithRequests(event.target.checked)}
-            className="h-4 w-4 accent-[#FF5B00]"
-          />
-          Bare kunder med forespørsel
-        </label>
-        {onlyWithRequests ? (
-          <span className="text-xs text-gray-500">
-            {visibleClients.length} av {clients.length} kundekort
-          </span>
+      <form
+        onSubmit={(event) => event.preventDefault()}
+        className="rounded-2xl bg-[#2a2a2a] border border-white/10 p-4 space-y-3"
+      >
+        <label className="text-xs font-semibold text-gray-200 uppercase tracking-wide">Search and filter</label>
+        <div className="flex flex-col sm:flex-row gap-2">
+          <div className="relative flex-1">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              value={searchInput}
+              onChange={(event) => setSearchInput(event.target.value)}
+              placeholder="Bedrift, kontakt, e-post eller sted"
+              className="w-full pl-9 pr-3 py-2 rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm"
+            />
+          </div>
+          {hasActiveFilters ? (
+            <button
+              type="button"
+              onClick={() => {
+                setSearchInput('');
+                setBucketFilter('');
+                setFormatFilter('');
+                setStatusFilter('');
+                setWhenFilter('');
+                setOnlyWithRequests(false);
+              }}
+              className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/15"
+            >
+              <X size={14} />
+              Clear
+            </button>
+          ) : null}
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
+          <select
+            aria-label="Gruppe"
+            value={bucketFilter}
+            onChange={(event) => setBucketFilter(event.target.value)}
+            className="rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+          >
+            <option value="">Alle grupper</option>
+            <option value="unbooked">Ingen workshop avtalt</option>
+            <option value="upcoming">Neste handling</option>
+            <option value="recentPastDue">Forfalt (siste 48 timer)</option>
+            <option value="pastDue">Forfalt</option>
+            <option value="noTime">Tid ikke satt</option>
+          </select>
+          <select
+            aria-label="Format"
+            value={formatFilter}
+            onChange={(event) => setFormatFilter(event.target.value)}
+            className="rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+          >
+            <option value="">Alle format</option>
+            <option value="mote">Møte</option>
+            <option value="sms">SMS</option>
+            <option value="ring">Ring</option>
+            <option value="sms-ring">SMS/ring</option>
+          </select>
+          <select
+            aria-label="Status"
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value)}
+            className="rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+          >
+            <option value="">Alle statuser</option>
+            <option value="confirmed">Bekreftet</option>
+            <option value="draft">Kladd</option>
+            <option value="held">Ha workshop ferdig</option>
+            <option value="not-held">Ikke hatt workshop</option>
+          </select>
+          <select
+            aria-label="Tid"
+            value={whenFilter}
+            onChange={(event) => setWhenFilter(event.target.value)}
+            className="rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+          >
+            <option value="">Alle tider</option>
+            <option value="today">I dag</option>
+            <option value="week">Denne uken</option>
+            <option value="overdue">Forfalt</option>
+          </select>
+          <label className="inline-flex items-center gap-2 rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={onlyWithRequests}
+              onChange={(event) => setOnlyWithRequests(event.target.checked)}
+              className="h-4 w-4 accent-[#FF5B00]"
+            />
+            Med forespørsel
+          </label>
+        </div>
+        {hasActiveFilters ? (
+          <p className="text-xs text-gray-500">
+            {visibleClients.length} av {boardClients.length} kundekort
+          </p>
         ) : null}
-      </div>
+      </form>
 
       {error ? (
         <div className="rounded-xl border border-red-500/20 bg-red-500/10 text-red-300 px-3 py-2.5 text-sm">
@@ -390,15 +584,15 @@ export function AdminBoardSection() {
         </div>
       ) : !BUCKETS.some((bucket) => (groups[bucket.id] || []).length) ? (
         <p className="text-sm text-gray-500 text-center py-8">
-          {onlyWithRequests
-            ? 'Ingen kunder med forespørsel akkurat nå.'
+          {hasActiveFilters
+            ? 'Ingen kunder matcher søket.'
             : 'Ingen aktive nettside-kunder på admin-tavlen. MyPhoner-vinnere og manuelt lagt til kunder vises her og blir på Sales.'}
         </p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 items-start">
           {BUCKETS.filter((bucket) => (groups[bucket.id] || []).length).map((bucket, index) => {
             const list = groups[bucket.id] || [];
-            const collapsed = collapsedBuckets[bucket.id] !== false;
+            const collapsed = hasActiveFilters ? false : collapsedBuckets[bucket.id] !== false;
             const visible = collapsed ? list.slice(0, COMPACT_PREVIEW) : list;
             return (
               <React.Fragment key={bucket.id}>
@@ -421,7 +615,7 @@ export function AdminBoardSection() {
                     </span>
                     <span className="inline-flex items-center gap-2 shrink-0">
                       <span className="text-sm font-semibold tabular-nums">{list.length}</span>
-                      {list.length > COMPACT_PREVIEW ? (
+                      {list.length > COMPACT_PREVIEW && !hasActiveFilters ? (
                         <span className="text-xs font-medium opacity-80">
                           {collapsed ? 'Vis alle' : 'Vis færre'}
                         </span>

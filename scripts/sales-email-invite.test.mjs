@@ -4,6 +4,7 @@ import {
   composeEmailForClient,
   isThankYouEmailTemplate,
   isWorkshopEmailTemplate,
+  isIterationEmailTemplate,
   listEmailTemplates,
   shouldAttachCalendarInvite,
 } from '../lib/email-templates-store.js';
@@ -13,10 +14,13 @@ import {
   buildSalesCalendarInvite,
   buildSalesThankYouEmail,
   buildSalesWorkshopEmail,
+  buildSalesIterationEmail,
   embedInlineEmailAssets,
   getSalesEmailPreviewClient,
   getSalesWorkshopPreviewClient,
+  getSalesIterationPreviewClient,
   resolveWorkshopDueAt,
+  resolveIterationDueAt,
   rewriteSalesEmailAssetsToHosted,
 } from '../lib/sales-email.js';
 import { renderResponsiveSalesEmailHtml } from '../lib/sales-email-layout.js';
@@ -381,5 +385,23 @@ test('Admin email presets include both workshop variants', () => {
   const keys = listEmailTemplates().map((row) => row.key);
   assert.equal(keys.includes('workshop'), true);
   assert.equal(keys.includes('workshop-sms-ring'), true);
+  assert.equal(keys.includes('iteration'), true);
   assert.equal(keys.includes('thank-you'), true);
+});
+
+test('iteration mail hides the envelope and uses the approved copy', () => {
+  const message = composeEmailForClient(getSalesIterationPreviewClient(), 'iteration').message;
+  assert.equal(message.html.includes('envelope.png'), false);
+  assert.equal(message.html.includes('asoldi-envelope'), false);
+  assert.match(message.subject, /^Bekreftet: iterasjonsmøte /);
+  assert.match(message.html, /Iterasjonsmøte bekreftet/);
+  assert.match(message.html, /flytte iterasjonsmøtet/);
+  assert.equal(resolveIterationDueAt(getSalesIterationPreviewClient()), '2026-10-15T12:00:00.000Z');
+  assert.equal(isIterationEmailTemplate('iteration'), true);
+  assert.equal(isWorkshopEmailTemplate('iteration'), false);
+  assert.equal(isThankYouEmailTemplate('iteration'), false);
+  assert.equal(shouldAttachCalendarInvite('iteration'), false);
+  assert.equal(composeEmailForClient(getSalesIterationPreviewClient(), 'iteration', null, { attachInvite: true }).message.icalEvent, undefined);
+  const built = buildSalesIterationEmail(getSalesIterationPreviewClient());
+  assert.match(built.subject, /^Bekreftet: iterasjonsmøte /);
 });

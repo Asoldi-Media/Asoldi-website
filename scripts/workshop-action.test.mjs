@@ -242,7 +242,7 @@ test('Sales persist stays a draft; Admin Save is the send gate', () => {
 
   const adminRowSrc = readFileSync(new URL('../app/pages/Admin/sections/WorkshopAdminActionRow.tsx', import.meta.url), 'utf8');
   assert.match(adminRowSrc, /confirmSend:\s*true/);
-  assert.match(adminRowSrc, /Legg til handling/);
+  assert.match(adminRowSrc, /ADMIN_GOAL_PRESETS/);
   assert.match(adminRowSrc, /WORKSHOP_FORMATS/);
 
   const adminSrc = readFileSync(new URL('../app/pages/Admin/sections/AdminBoardSection.tsx', import.meta.url), 'utf8');
