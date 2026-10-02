@@ -167,8 +167,6 @@ function AdminBoardCard({
         <WorkshopAdminActionRow client={client} onClient={onClient} />
       </div>
 
-      <AdminRequestInbox salesClientId={client.id} />
-
       <div className="flex items-center justify-between gap-2 mt-auto pt-1">
         <button
           type="button"
@@ -237,6 +235,8 @@ function AdminBoardCard({
             <li>Iterasjon Meet: {iteration?.meetLink || '—'}</li>
             <li>Iterasjon sendt: {iteration?.confirmationSentAt ? formatWhen(iteration.confirmationSentAt) : 'Nei'}</li>
           </ul>
+          <AdminRequestInbox salesClientId={client.id} />
+
           {held && summary ? (
             <div className="rounded-lg border border-white/10 bg-black/20 p-2 space-y-1.5 text-[11px] text-gray-300">
               <div className="text-gray-400">Utviklersammendrag</div>

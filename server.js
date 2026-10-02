@@ -336,6 +336,7 @@ import {
   findProfileForSiteKey,
 } from './lib/client-analytics-service.js';
 import { analyticsGoalsFromBank } from './lib/analytics-insights.js';
+import { buildLocalBlogBrief, LOCAL_BLOG_ENV, salesClientForSite } from './lib/local-blog-brief.js';
 import {
   getStripe,
   isStripeConfigured,
@@ -368,6 +369,7 @@ app.use((req, res, next) => {
   const started = Date.now();
   const cookie = req.headers.cookie || '';
   const dropped = cookieNamesToDrop(cookie);
+  if (dropped.length) res.setHeader('Clear-Site-Data', '"cookies"');
   for (const name of dropped) {
     for (const line of expireCookieLines(name, req.hostname)) {
       if (line) res.append('Set-Cookie', line);
@@ -12114,6 +12116,39 @@ app.post('/api/hub/heartbeat', (req, res) => {
     ok: true,
     lastSeenAt: result.site.cms?.lastSeenAt || '',
     packageVersion: result.site.cms?.packageVersion || '',
+  });
+});
+
+function localBlogBearer(req) {
+  const header = String(req.get('authorization') || '');
+  const match = header.match(/^Bearer\s+(\S+)/i);
+  return match ? match[1].trim() : '';
+}
+
+// Client CMS reads only its own service brief. The token is not the site key.
+app.get('/api/hub/local-blog-brief', (req, res) => {
+  const token = localBlogBearer(req);
+  const siteKey = sanitizeText(req.get('x-site-key') || req.query.site_key);
+  const site = hub.findSiteByLocalBlogToken(token);
+  if (!site || !siteKey || site.site_key !== siteKey) {
+    return res.status(401).json({ message: 'Unauthorized' });
+  }
+  const salesClient = salesClientForSite(site, sales.getSalesClients());
+  let profile = salesClient?.portalUserId
+    ? clientPortal.getClientProfileByUserId(salesClient.portalUserId)
+    : null;
+  if (!profile) profile = findProfileForSiteKey(site.site_key).profile;
+  return res.json(buildLocalBlogBrief({ site, profile, salesClient }));
+});
+
+app.post('/api/hub/sites/:id/local-blog-token', adminAuth, (req, res) => {
+  const result = hub.issueLocalBlogToken(req.params.id);
+  if (!result.ok) return res.status(404).json({ message: result.error });
+  return res.json({
+    token: result.token,
+    issuedAt: result.site.localBlog?.issuedAt || '',
+    site: result.site,
+    env: LOCAL_BLOG_ENV,
   });
 });
 

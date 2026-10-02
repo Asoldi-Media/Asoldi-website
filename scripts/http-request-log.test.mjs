@@ -25,8 +25,10 @@ test('fat tracking cookies are expired and small ones stay', () => {
   assert.ok(names.includes('twk_uuid_abc'));
   assert.equal(names.includes('__stripe_mid'), false);
   assert.equal(names.includes('ok'), false);
-  assert.equal(expireCookieLine('sbjs_current'), 'sbjs_current=; Max-Age=0; Path=/; Secure; SameSite=Lax');
-  assert.equal(expireCookieLine('a b'), 'ab=; Max-Age=0; Path=/; Secure; SameSite=Lax');
+  const lines = expireCookieLines('sbjs_current', 'asoldi.com');
+  assert.equal(lines[0], 'sbjs_current=; Max-Age=0; Path=/; Secure; SameSite=Lax');
+  assert.ok(lines.some((line) => line.includes('Domain=.asoldi.com')));
+  assert.equal(expireCookieLines('a b')[0].startsWith('ab='), true);
   assert.equal(parseCookiePairs('').length, 0);
 });
 
@@ -36,8 +38,17 @@ test('a cookie header over 6KB drops the largest pairs', () => {
   assert.deepEqual(names, ['bulk']);
 });
 
+test('admin cards do not fetch a thread per client until details are opened', () => {
+  const board = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../app/pages/Admin/sections/AdminBoardSection.tsx'), 'utf8');
+  const card = board.slice(board.indexOf('function AdminBoardCard'), board.indexOf('export function AdminBoardSection'));
+  const expandedAt = card.indexOf('{expanded ? (');
+  const inboxAt = card.indexOf('<AdminRequestInbox');
+  assert.ok(expandedAt > 0 && inboxAt > expandedAt);
+});
+
 test('every response can expire oversized cookies and /api/health shows the sizes', () => {
   assert.match(server, /cookieNamesToDrop\(cookie\)/);
+  assert.match(server, /Clear-Site-Data/);
   assert.match(server, /httpRequestSummary\(\)/);
   assert.match(server, /app\.post\('\/api\/diag\/browser'/);
   assert.match(server, /expireCookieLines\(name, req\.hostname\)/);
