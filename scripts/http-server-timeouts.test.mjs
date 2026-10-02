@@ -4,12 +4,14 @@ import { createServer } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { get } from 'node:http';
 import {
   PROXY_CONNECTIONS_CHECKING_INTERVAL_MS,
   PROXY_HEADERS_TIMEOUT_MS,
   PROXY_KEEP_ALIVE_MS,
   PROXY_REQUEST_TIMEOUT_MS,
   PROXY_SOCKET_TIMEOUT_MS,
+  PROXY_UPSTREAM_IDLE_MS,
   applyProxyKeepAlive,
   describeProxyTimeouts,
   proxyHttpServerOptions,
@@ -17,26 +19,45 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 
-test('proxy keep-alive stays on so JS/CSS bodies are not truncated to 0 bytes', () => {
-  assert.equal(PROXY_KEEP_ALIVE_MS, 0);
-  assert.equal(PROXY_HEADERS_TIMEOUT_MS, 0);
+test('proxy keep-alive outlasts Hostinger 15 minute idle without closing the body', () => {
+  assert.equal(PROXY_UPSTREAM_IDLE_MS, 15 * 60 * 1000);
+  assert.ok(PROXY_KEEP_ALIVE_MS > PROXY_UPSTREAM_IDLE_MS);
+  assert.ok(PROXY_HEADERS_TIMEOUT_MS > PROXY_KEEP_ALIVE_MS);
   assert.equal(PROXY_REQUEST_TIMEOUT_MS, 0);
   assert.equal(PROXY_SOCKET_TIMEOUT_MS, 0);
-  assert.equal(PROXY_CONNECTIONS_CHECKING_INTERVAL_MS, 0);
+  assert.ok(PROXY_CONNECTIONS_CHECKING_INTERVAL_MS > 0);
   const options = proxyHttpServerOptions();
   assert.equal(options.keepAlive, true);
-  assert.equal(options.keepAliveTimeout, 0);
-  assert.equal(options.headersTimeout, 0);
+  assert.equal(options.keepAliveTimeout, PROXY_KEEP_ALIVE_MS);
+  assert.equal(options.headersTimeout, PROXY_HEADERS_TIMEOUT_MS);
   assert.equal(options.requestTimeout, 0);
-  assert.equal(options.connectionsCheckingInterval, 0);
+  assert.equal(options.connectionsCheckingInterval, PROXY_CONNECTIONS_CHECKING_INTERVAL_MS);
   const server = createServer(options);
   applyProxyKeepAlive(server);
-  assert.equal(server.keepAliveTimeout, 0);
-  assert.equal(server.headersTimeout, 0);
+  assert.equal(server.keepAliveTimeout, PROXY_KEEP_ALIVE_MS);
+  assert.equal(server.headersTimeout, PROXY_HEADERS_TIMEOUT_MS);
   assert.equal(server.requestTimeout, 0);
   assert.equal(server.timeout, 0);
   assert.match(describeProxyTimeouts(server), /requestTimeout=0/);
   server.close();
+});
+
+test('a finished response is not cut off', async () => {
+  const server = createServer(proxyHttpServerOptions(), (_req, res) => {
+    res.end('ok');
+  });
+  applyProxyKeepAlive(server);
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  const body = await new Promise((resolve, reject) => {
+    get({ host: '127.0.0.1', port, path: '/' }, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+    }).on('error', reject);
+  });
+  assert.equal(body, 'ok');
+  await new Promise((resolve) => server.close(resolve));
 });
 
 test('server.js creates the HTTP server with proxy timeout options before listen', () => {
