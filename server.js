@@ -1,5 +1,6 @@
 import express from 'express';
 import { createHmac, randomBytes, randomUUID } from 'crypto';
+import { createServer } from 'http';
 import { spawn, spawnSync } from 'child_process';
 import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
@@ -73,7 +74,7 @@ import * as offers from './data/offers.js';
 import * as resetTokens from './data/reset-tokens.js';
 import { getPersistentDataDir, pruneAllDataBackups } from './data/storage-path.js';
 import { applyPersistentProductionEnv } from './lib/persistent-env.js';
-import { applyProxyKeepAlive, describeProxyTimeouts } from './lib/http-server-timeouts.js';
+import { applyProxyKeepAlive, describeProxyTimeouts, proxyHttpServerOptions } from './lib/http-server-timeouts.js';
 import * as salesPreview from './lib/sales-preview-import.js';
 import {
   fillExportZipWithMakerAssets,
@@ -18412,8 +18413,14 @@ ensureData().then(() => {
   startMapsRankingLoop();
   sendDueSalesReminders().catch((error) => console.error('Initial sales reminder run failed:', error));
   sendDueFirefliesLiveJoins().catch((error) => console.error('[fireflies] initial live-join failed:', error));
-  const server = app.listen(PORT, '0.0.0.0', () => {
+  const server = createServer(proxyHttpServerOptions(), app);
+  applyProxyKeepAlive(server);
+  server.on('error', (error) => {
+    console.error('[http] server error', error);
+  });
+  server.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
+    console.log(describeProxyTimeouts(server));
     console.log(`[audio] persistent=${MYPHONER_AUDIO_DIR} extra=${extraMyphonerAudioDirs().join('|') || '(none)'}`);
     runStartupSalesRecordingBackfill().catch((error) => {
       console.error('[sales] startup recording backfill crashed:', sanitizeText(error?.message) || error);
@@ -18427,15 +18434,12 @@ ensureData().then(() => {
     backfillSalesBookingFacts().catch((error) => {
       console.error('[sales booking] startup backfill crashed:', sanitizeText(error?.message) || error);
     });
-    migrateFutureMeetingsOffBlockedCalendar().catch((error) => {
-      console.error('[calendar] gmail-move crashed:', sanitizeText(error?.message) || error);
-    });
+    setTimeout(() => {
+      migrateFutureMeetingsOffBlockedCalendar().catch((error) => {
+        console.error('[calendar] gmail-move crashed:', sanitizeText(error?.message) || error);
+      });
+    }, 180000);
   });
-  applyProxyKeepAlive(server);
-  server.on('error', (error) => {
-    console.error('[http] server error', error);
-  });
-  console.log(describeProxyTimeouts(server));
 }).catch((err) => {
   console.error('Failed to init admin:', err);
   process.exit(1);

@@ -5,36 +5,46 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
+  PROXY_CONNECTIONS_CHECKING_INTERVAL_MS,
   PROXY_HEADERS_TIMEOUT_MS,
   PROXY_KEEP_ALIVE_MS,
   PROXY_REQUEST_TIMEOUT_MS,
   PROXY_SOCKET_TIMEOUT_MS,
   applyProxyKeepAlive,
   describeProxyTimeouts,
+  proxyHttpServerOptions,
 } from '../lib/http-server-timeouts.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const FIVE_MINUTES_MS = 5 * 60 * 1000;
 
-test('proxy timeouts outlast Node 22 default 5-minute requestTimeout and the reverse proxy', () => {
+test('proxy timeouts are disabled so Node never 408s an HTTP/2 keep-alive', () => {
+  assert.equal(PROXY_KEEP_ALIVE_MS, 0);
+  assert.equal(PROXY_HEADERS_TIMEOUT_MS, 0);
   assert.equal(PROXY_REQUEST_TIMEOUT_MS, 0);
   assert.equal(PROXY_SOCKET_TIMEOUT_MS, 0);
-  assert.ok(PROXY_KEEP_ALIVE_MS > FIVE_MINUTES_MS);
-  assert.ok(PROXY_HEADERS_TIMEOUT_MS > PROXY_KEEP_ALIVE_MS);
-  const server = createServer();
+  assert.equal(PROXY_CONNECTIONS_CHECKING_INTERVAL_MS, 0);
+  const options = proxyHttpServerOptions();
+  assert.equal(options.keepAliveTimeout, 0);
+  assert.equal(options.headersTimeout, 0);
+  assert.equal(options.requestTimeout, 0);
+  assert.equal(options.connectionsCheckingInterval, 0);
+  const server = createServer(options);
   applyProxyKeepAlive(server);
-  assert.equal(server.keepAliveTimeout, PROXY_KEEP_ALIVE_MS);
-  assert.equal(server.headersTimeout, PROXY_HEADERS_TIMEOUT_MS);
+  assert.equal(server.keepAliveTimeout, 0);
+  assert.equal(server.headersTimeout, 0);
   assert.equal(server.requestTimeout, 0);
   assert.equal(server.timeout, 0);
   assert.match(describeProxyTimeouts(server), /requestTimeout=0/);
+  assert.match(describeProxyTimeouts(server), /connectionsCheckingInterval=0/);
   server.close();
 });
 
-test('server.js applies proxy keep-alive on the listening HTTP server', () => {
+test('server.js creates the HTTP server with proxy timeout options before listen', () => {
   const src = readFileSync(join(here, '../server.js'), 'utf8');
   assert.equal(src.includes("from './lib/http-server-timeouts.js'"), true);
+  assert.equal(src.includes('proxyHttpServerOptions'), true);
+  assert.equal(src.includes('createServer(proxyHttpServerOptions(), app)'), true);
   assert.equal(src.includes('applyProxyKeepAlive(server)'), true);
-  assert.equal(src.includes('describeProxyTimeouts(server)'), true);
-  assert.equal(src.includes('app.listen(PORT'), true);
+  assert.equal(src.includes('server.listen(PORT'), true);
+  assert.equal(src.includes('app.listen(PORT'), false);
 });
