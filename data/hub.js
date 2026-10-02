@@ -12,8 +12,10 @@ import {
   normalizeSite,
   normalizeWebsitePlan,
   publicClientAdmin,
+  publicLocalBlog,
   resolveCatalogTypeForSite,
 } from './hub-model.js';
+import { hashLocalBlogToken, localBlogTokensMatch } from '../lib/local-blog-token.js';
 import { normalizeDeliveryPhase, normalizeDevelopment, resolveSiteDeliveryPhase } from '../lib/development-phase.js';
 
 const SITES_PATH = getDataFilePath('sites.json');
@@ -36,6 +38,15 @@ function readSites() {
 function writeSites(sites) {
   ensureDataDir();
   writeDataJson(SITES_PATH, sites.map(normalizeSite).filter(Boolean));
+}
+
+function publicSite(site) {
+  if (!site) return null;
+  return {
+    ...site,
+    clientAdmin: publicClientAdmin(site.clientAdmin),
+    localBlog: publicLocalBlog(site.localBlog),
+  };
 }
 
 export function generateSiteKey() {
@@ -78,10 +89,27 @@ export function getSiteConfig(siteKeyOrDomain, byDomain = false) {
 }
 
 export function getAllSites() {
-  return readSites().map((site) => ({
-    ...site,
-    clientAdmin: publicClientAdmin(site.clientAdmin),
-  }));
+  return readSites().map(publicSite);
+}
+
+export function findSiteByLocalBlogToken(token) {
+  const value = String(token || '').trim();
+  if (!value) return null;
+  return readSites().find((site) => localBlogTokensMatch(site.localBlog?.tokenHash, value)) || null;
+}
+
+export function issueLocalBlogToken(id) {
+  const sites = readSites();
+  const i = sites.findIndex((site) => site.id === id);
+  if (i === -1) return { ok: false, error: 'Site not found' };
+  const token = randomBytes(24).toString('hex');
+  sites[i].localBlog = {
+    tokenHash: hashLocalBlogToken(token),
+    issuedAt: new Date().toISOString(),
+  };
+  sites[i] = normalizeSite(sites[i]);
+  writeSites(sites);
+  return { ok: true, token, site: publicSite(sites[i]) };
 }
 
 export function reconcileDeliveryPhases(salesClients = []) {
@@ -130,14 +158,14 @@ export function createSite({
           deliveryPhase,
           development,
         });
-        return updated.ok ? { ...updated.site } : { ...existingByKey, clientAdmin: publicClientAdmin(existingByKey.clientAdmin) };
+        return updated.ok ? updated.site : publicSite(existingByKey);
       }
-      return { ...existingByKey, clientAdmin: publicClientAdmin(existingByKey.clientAdmin) };
+      return publicSite(existingByKey);
     }
   }
   if (domain) {
     const existingByDomain = getSiteByDomain(domain);
-    if (existingByDomain) return { ...existingByDomain, clientAdmin: publicClientAdmin(existingByDomain.clientAdmin) };
+    if (existingByDomain) return publicSite(existingByDomain);
   }
   const sites = readSites();
   const siteKey = requestedKey || generateSiteKey();
@@ -164,7 +192,7 @@ export function createSite({
   });
   sites.push(site);
   writeSites(sites);
-  return { ...site, clientAdmin: publicClientAdmin(site.clientAdmin) };
+  return publicSite(site);
 }
 
 export function updateSite(id, patch = {}) {
@@ -201,7 +229,7 @@ export function updateSite(id, patch = {}) {
   }
   sites[i] = normalizeSite(current);
   writeSites(sites);
-  return { ok: true, site: { ...sites[i], clientAdmin: publicClientAdmin(sites[i].clientAdmin) } };
+  return { ok: true, site: publicSite(sites[i]) };
 }
 
 export function recordHeartbeat(siteKey, { packageVersion, adminUrl, name, adminApplied } = {}) {
@@ -224,7 +252,7 @@ export function recordHeartbeat(siteKey, { packageVersion, adminUrl, name, admin
     });
   }
   writeSites(sites);
-  return { ok: true, site: { ...sites[i], clientAdmin: publicClientAdmin(sites[i].clientAdmin) } };
+  return { ok: true, site: publicSite(sites[i]) };
 }
 
 export async function updateClientAdmin(id, patch = {}) {
@@ -249,7 +277,7 @@ export async function updateClientAdmin(id, patch = {}) {
   sites[i].clientAdmin = next;
   sites[i] = normalizeSite(sites[i]);
   writeSites(sites);
-  return { ok: true, site: { ...sites[i], clientAdmin: publicClientAdmin(sites[i].clientAdmin) } };
+  return { ok: true, site: publicSite(sites[i]) };
 }
 
 export function deleteSite(id) {

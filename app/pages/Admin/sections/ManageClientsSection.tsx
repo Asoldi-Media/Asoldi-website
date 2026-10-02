@@ -14,6 +14,8 @@ type Props = {
   onEditAdmin?: (site: Site) => void;
   onDelete: (id: string) => void;
   onCopyKey: (key: string) => void;
+  issuedLocalBlog?: { siteId: string; token: string } | null;
+  onIssueLocalBlogToken?: (site: Site) => void;
 };
 
 const EMPTY_OPENED: Record<ManageClientsView, boolean> = {
@@ -32,6 +34,8 @@ export function ManageClientsSection({
   onEditAdmin,
   onDelete,
   onCopyKey,
+  issuedLocalBlog = null,
+  onIssueLocalBlogToken,
 }: Props) {
   const [view, setView] = useState<ManageClientsView>('clients');
   const [opened, setOpened] = useState(EMPTY_OPENED);
@@ -92,6 +96,8 @@ export function ManageClientsSection({
             onEditAdmin={onEditAdmin}
             onDelete={onDelete}
             onCopyKey={onCopyKey}
+            issuedLocalBlog={issuedLocalBlog}
+            onIssueLocalBlogToken={onIssueLocalBlogToken}
             hideHeader
           />
         </div>

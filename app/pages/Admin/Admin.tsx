@@ -67,6 +67,7 @@ export const Admin = () => {
     noticeTimer.current = window.setTimeout(() => setNotice(null), 7000);
   }
   const [sites, setSites] = useState<Site[]>([]);
+  const [issuedLocalBlog, setIssuedLocalBlog] = useState<{ siteId: string; token: string } | null>(null);
   const [paymentRequests, setPaymentRequests] = useState<ClientPaymentRequest[]>([]);
   const [markingPaymentRequestId, setMarkingPaymentRequestId] = useState<string | null>(null);
   const [addSiteOpen, setAddSiteOpen] = useState(false);
@@ -413,6 +414,27 @@ export const Admin = () => {
     }
   }
 
+  async function handleIssueLocalBlogToken(site: Site) {
+    if (site.localBlog?.tokenSet && !confirm('Replace the local blog token? The previous Hostinger value will stop working.')) return;
+    setLoading(true);
+    try {
+      const res = await fetch(`${API}/hub/sites/${site.id}/local-blog-token`, {
+        method: 'POST',
+        headers: authHeaders(),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        flashNotice('err', data.message || 'Failed to issue the local blog token');
+        return;
+      }
+      setIssuedLocalBlog({ siteId: site.id, token: String(data.token || '') });
+      flashNotice('ok', 'Local blog token issued. Copy it into this site’s Hostinger env. It is not shown again.');
+      await fetchSites();
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function handleDeleteSite(id: string) {
     if (!confirm('Remove this site from the hub?')) return;
     setLoading(true);
@@ -593,6 +615,8 @@ export const Admin = () => {
               }}
               onDelete={handleDeleteSite}
               onCopyKey={copySiteKey}
+              issuedLocalBlog={issuedLocalBlog}
+              onIssueLocalBlogToken={handleIssueLocalBlogToken}
               onEditAdmin={(site) => {
                 setClientAdminSiteId(site.id);
                 setClientAdminForm({

@@ -156,6 +156,10 @@ export type Site = {
   websitePlan?: WebsitePlanId;
   ecommerceCatalogType?: EcommerceCatalogType | null;
   cms?: SiteCmsMeta;
+  localBlog?: {
+    tokenSet?: boolean;
+    issuedAt?: string;
+  };
   clientAdmin?: {
     name?: string;
     email?: string;

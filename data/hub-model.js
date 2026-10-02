@@ -115,6 +115,31 @@ export function publicClientAdmin(raw) {
   };
 }
 
+export function emptyLocalBlog() {
+  return {
+    tokenHash: '',
+    issuedAt: '',
+  };
+}
+
+export function normalizeLocalBlog(raw) {
+  const base = emptyLocalBlog();
+  if (!raw || typeof raw !== 'object') return base;
+  return {
+    tokenHash: String(raw.tokenHash || ''),
+    issuedAt: String(raw.issuedAt || ''),
+  };
+}
+
+/** Admin-facing view. The token hash never leaves the server. */
+export function publicLocalBlog(raw) {
+  const row = normalizeLocalBlog(raw);
+  return {
+    tokenSet: Boolean(row.tokenHash),
+    issuedAt: row.issuedAt,
+  };
+}
+
 export function emptyCmsMeta() {
   return {
     githubRepo: '',
@@ -159,6 +184,7 @@ export function normalizeSite(site) {
       ecommerceCatalogType: site.ecommerceCatalogType,
     }),
     cms: normalizeCmsMeta(site.cms),
+    localBlog: normalizeLocalBlog(site.localBlog),
     clientAdmin: normalizeClientAdmin(site.clientAdmin),
     deliveryPhase: normalizeDeliveryPhase(site.deliveryPhase, 'client'),
     development: normalizeDevelopment(site.development),

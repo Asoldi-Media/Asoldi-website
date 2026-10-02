@@ -7,11 +7,13 @@ type Props = {
   sites: Site[];
   loading: boolean;
   copyKey: string | null;
+  issuedLocalBlog?: { siteId: string; token: string } | null;
   onAdd: () => void;
   onEdit: (site: Site) => void;
   onEditAdmin?: (site: Site) => void;
   onDelete: (id: string) => void;
   onCopyKey: (key: string) => void;
+  onIssueLocalBlogToken?: (site: Site) => void;
   hideHeader?: boolean;
 };
 
@@ -33,7 +35,19 @@ function formatSeen(value?: string) {
   return date.toLocaleString();
 }
 
-export function ClientSitesSection({ sites, loading, copyKey, onAdd, onEdit, onEditAdmin, onDelete, onCopyKey, hideHeader = false }: Props) {
+export function ClientSitesSection({
+  sites,
+  loading,
+  copyKey,
+  issuedLocalBlog = null,
+  onAdd,
+  onEdit,
+  onEditAdmin,
+  onDelete,
+  onCopyKey,
+  onIssueLocalBlogToken,
+  hideHeader = false,
+}: Props) {
   return (
     <div className="max-w-4xl">
       {!hideHeader && (
@@ -80,6 +94,13 @@ export function ClientSitesSection({ sites, loading, copyKey, onAdd, onEdit, onE
                   Open client admin
                 </a>
               )}
+              {site.features?.blog && (
+                <LocalBlogEnv
+                  site={site}
+                  issuedToken={issuedLocalBlog?.siteId === site.id ? issuedLocalBlog.token : ''}
+                  onIssue={onIssueLocalBlogToken}
+                />
+              )}
             </div>
             <div className="flex items-center gap-2 text-xs flex-wrap justify-end max-w-[220px]">
               {site.features?.users && <FeatureBadge label="Users" color="green" />}
@@ -112,6 +133,49 @@ export function ClientSitesSection({ sites, loading, copyKey, onAdd, onEdit, onE
       {!loading && sites.length === 0 && (
         <p className="text-gray-400 text-center py-8">No sites yet. Add one to get a site key for client CMS.</p>
       )}
+    </div>
+  );
+}
+
+function LocalBlogEnv({
+  site,
+  issuedToken,
+  onIssue,
+}: {
+  site: Site;
+  issuedToken: string;
+  onIssue?: (site: Site) => void;
+}) {
+  return (
+    <div className="mt-3 rounded-lg border border-white/10 bg-black/20 p-3 text-xs text-gray-300 space-y-2">
+      <p className="text-white">Local service posts</p>
+      <p>
+        Token: {site.localBlog?.tokenSet ? 'issued' : 'not issued'}
+        {site.localBlog?.issuedAt ? ` · ${new Date(site.localBlog.issuedAt).toLocaleString()}` : ''}
+      </p>
+      {onIssue && (
+        <button
+          type="button"
+          onClick={() => onIssue(site)}
+          className="px-2 py-1 rounded bg-white/10 text-white hover:bg-white/15"
+        >
+          {site.localBlog?.tokenSet ? 'Replace token' : 'Issue token'}
+        </button>
+      )}
+      {issuedToken && (
+        <p>
+          Paste this once into Hostinger. It is not shown again.{' '}
+          <code className="bg-black/40 px-1 rounded break-all">{issuedToken}</code>
+        </p>
+      )}
+      <p>This screen cannot write the Hostinger env tab. Paste these on that site:</p>
+      <ul className="list-disc pl-4 space-y-1">
+        <li><code>DEEPSEEK_API_KEY</code></li>
+        <li><code>DEEPSEEK_MODEL</code> optional, default <code>deepseek-chat</code></li>
+        <li><code>LOCAL_BLOG_TOKEN</code> the token from this card</li>
+        <li><code>LOCAL_BLOG_ENABLED=1</code> only while Blog is on</li>
+      </ul>
+      <p>hubUrl and siteKey stay in cms.config.json. A republish ships the writer. Posts are text only. Add a cover later in the client blog editor, from the media library.</p>
     </div>
   );
 }
