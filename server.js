@@ -353,6 +353,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
+// hcdn turns a 304 into ERR_HTTP2_PROTOCOL_ERROR. Refresh sends If-None-Match.
+app.set('etag', false);
 const PORT = process.env.PORT || 3000;
 const distPath = join(__dirname, 'dist');
 const publicPath = join(__dirname, 'public');
@@ -18247,16 +18249,28 @@ app.get('/asoldi-contract-signature.png', (req, res) => {
 });
 
 app.use(express.static(distPath, {
+  etag: false,
+  lastModified: false,
   setHeaders: (res, filePath) => {
     if (filePath.endsWith('.js')) res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
     if (filePath.endsWith('.css')) res.setHeader('Content-Type', 'text/css; charset=utf-8');
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    if (filePath.endsWith(`${path.sep}index.html`)) {
+      res.setHeader('Cache-Control', 'no-store');
+    } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    } else {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
   }
 }));
 
 app.use(express.static(publicPath, {
+  etag: false,
+  lastModified: false,
   setHeaders: (res, filePath) => {
     res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'no-cache');
     if (String(filePath).startsWith(PUBLIC_MEDIA_DIR)) res.setHeader('X-Media-Source', 'git');
   }
 }));
@@ -18297,8 +18311,9 @@ app.get('*', (req, res) => {
     }
   }
   const indexPath = join(distPath, 'index.html');
-  if (existsSync(indexPath)) res.sendFile(indexPath);
-  else res.status(500).send('index.html not found');
+  if (!existsSync(indexPath)) return res.status(500).send('index.html not found');
+  res.setHeader('Cache-Control', 'no-store');
+  return res.sendFile(indexPath, { etag: false, lastModified: false });
 });
 
 function ensureHubDefaultSite() {

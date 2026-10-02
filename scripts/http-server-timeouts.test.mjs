@@ -69,6 +69,8 @@ test('server.js creates the HTTP server with proxy timeout options before listen
   assert.equal(src.includes('proxyHttpServerOptions'), true);
   assert.equal(src.includes('applyCloseProxyConnection'), false);
   assert.equal(src.includes('createServer(proxyHttpServerOptions(), app)'), true);
+  assert.equal(src.includes("app.set('etag', false)"), true);
+  assert.equal(src.includes('sendFile(indexPath, { etag: false, lastModified: false })'), true);
   assert.equal(src.includes('applyProxyKeepAlive(server)'), true);
   assert.equal(src.includes('server.listen(PORT'), true);
   assert.equal(src.includes('app.listen(PORT'), false);
