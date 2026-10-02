@@ -172,10 +172,10 @@ export function AdminBoardSection() {
   const [error, setError] = useState('');
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [collapsedBuckets, setCollapsedBuckets] = useState<Record<string, boolean>>({});
-  const [calendarOpen, setCalendarOpen] = useState(true);
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [onlyWithRequests, setOnlyWithRequests] = useState(false);
   const [threadMap, setThreadMap] = useState<Record<string, ThreadSummary>>({});
-  const [calendarLoading, setCalendarLoading] = useState(true);
+  const [calendarLoading, setCalendarLoading] = useState(false);
   const [calendarError, setCalendarError] = useState('');
   const [calendarConnecting, setCalendarConnecting] = useState(false);
   const [viewer, setViewer] = useState({ accountKey: '', username: '' });

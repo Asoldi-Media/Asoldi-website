@@ -1,16 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   DAMIAN_CALENDAR_ACCOUNT_KEY,
   DAMIAN_WORKSHOP_CALENDAR_EMAIL,
   WORKSHOP_DURATION_MINUTES,
+  WORKSHOP_FORMATS,
   buildWorkshopCalendarPlan,
   buildWorkshopInvitePayload,
   buildWorkshopPrivatePayload,
   getWorkshopAction,
   normalizeWorkshopAction,
+  offerStartDateFromWorkshopDueAt,
   pickDamianCalendarAccountKey,
   offerStartDateCreatesEvent,
+  sanitizeWorkshopFormat,
   tryBuildSalesWorkshopEmail,
   workshopDeleteSendUpdates,
   workshopEmailShouldSend,
@@ -169,15 +173,91 @@ test('workshopStartSentence is still date-only and ignores the booked clock', ()
   assert.equal(workshopStartSentence(DUE).startsWith('Startdato for workshop: Vi avtaler'), true);
 });
 
-test('workshop email send follows time/format changes, not the offer date', () => {
+test('offer startDate follows the Oslo date of workshop dueAt', () => {
+  assert.equal(offerStartDateFromWorkshopDueAt(''), '');
+  assert.equal(offerStartDateFromWorkshopDueAt('not-a-date'), '');
+  assert.equal(offerStartDateFromWorkshopDueAt(DUE), '2026-10-08');
+  assert.equal(offerStartDateFromWorkshopDueAt('2026-10-08T22:30:00.000Z'), '2026-10-09');
+  assert.equal(workshopStartSentence(offerStartDateFromWorkshopDueAt(DUE)).includes('8. oktober 2026'), true);
+});
+
+test('sms and ring are first-class workshop formats; only Møte invites', () => {
+  assert.deepEqual(WORKSHOP_FORMATS, ['sms', 'ring', 'sms-ring', 'mote']);
+  assert.equal(sanitizeWorkshopFormat('sms'), 'sms');
+  assert.equal(sanitizeWorkshopFormat('ring'), 'ring');
+  assert.equal(sanitizeWorkshopFormat('SMS/ring'), 'sms-ring');
+  assert.equal(sanitizeWorkshopFormat('mote'), 'mote');
+  assert.equal(normalizeWorkshopAction({ format: 'sms', dueAt: DUE }).format, 'sms');
+  assert.equal(normalizeWorkshopAction({ format: 'ring', dueAt: DUE }).format, 'ring');
+  assert.equal(normalizeWorkshopAction({ format: 'mote', dueAt: DUE }).status, 'draft');
+  assert.equal(workshopInvitesClient({ format: 'sms', dueAt: DUE, addToCalendar: true }), false);
+  assert.equal(workshopInvitesClient({ format: 'ring', dueAt: DUE, addToCalendar: true }), false);
+  assert.equal(workshopInvitesClient({ format: 'mote', dueAt: DUE }), true);
+});
+
+test('workshop email send is Admin confirmSend only; Sales persist does not send', () => {
   const booked = normalizeWorkshopAction({ format: 'mote', dueAt: DUE });
-  const moved = normalizeWorkshopAction({ format: 'mote', dueAt: '2026-10-09T12:00:00.000Z' });
-  const sms = normalizeWorkshopAction({ format: 'sms-ring', dueAt: DUE, addToCalendar: true });
-  assert.equal(workshopEmailShouldSend({}, booked), true);
-  assert.equal(workshopEmailShouldSend(booked, booked), false);
-  assert.equal(workshopEmailShouldSend(booked, moved), true);
-  assert.equal(workshopEmailShouldSend(booked, sms), true);
-  assert.equal(workshopEmailShouldSend(booked, { format: 'mote', dueAt: '' }), false);
+  const confirmed = normalizeWorkshopAction({
+    format: 'mote',
+    dueAt: DUE,
+    confirmationSentAt: '2026-10-01T12:00:00.000Z',
+  });
+  const alreadyOnCalendar = normalizeWorkshopAction({
+    format: 'mote',
+    dueAt: DUE,
+    calendarEventId: 'evt-workshop-1',
+  });
+  const moved = normalizeWorkshopAction({
+    format: 'mote',
+    dueAt: '2026-10-09T12:00:00.000Z',
+    confirmationSentAt: confirmed.confirmationSentAt,
+  });
+  const sms = normalizeWorkshopAction({ format: 'sms', dueAt: DUE, addToCalendar: true });
+  const ring = normalizeWorkshopAction({ format: 'ring', dueAt: DUE, addToCalendar: true });
+  const smsRing = normalizeWorkshopAction({ format: 'sms-ring', dueAt: DUE, addToCalendar: true });
+  assert.equal(workshopEmailShouldSend({}, booked), false);
+  assert.equal(workshopEmailShouldSend({}, booked, { confirmSend: false }), false);
+  assert.equal(workshopEmailShouldSend({}, booked, { confirmSend: true }), true);
+  assert.equal(workshopEmailShouldSend(booked, booked, { confirmSend: true }), true);
+  assert.equal(workshopEmailShouldSend(confirmed, confirmed, { confirmSend: true }), false);
+  assert.equal(workshopEmailShouldSend(alreadyOnCalendar, alreadyOnCalendar, { confirmSend: true }), false);
+  assert.equal(workshopEmailShouldSend(confirmed, moved, { confirmSend: true }), true);
+  assert.equal(workshopEmailShouldSend({}, sms, { confirmSend: true }), false);
+  assert.equal(workshopEmailShouldSend({}, ring, { confirmSend: true }), false);
+  assert.equal(workshopEmailShouldSend({}, smsRing, { confirmSend: true }), false);
+  assert.equal(workshopEmailShouldSend(confirmed, { format: 'mote', dueAt: '' }, { confirmSend: true }), false);
+});
+
+test('Sales persist stays a draft; Admin Save is the send gate', () => {
+  const modalSrc = readFileSync(new URL('../app/pages/sales/MeetingNotesModal.tsx', import.meta.url), 'utf8');
+  assert.equal(modalSrc.includes('timeFormatLocked'), false);
+  assert.equal(modalSrc.includes('Startdato for workshop'), false);
+  assert.match(modalSrc, /SalesCalendarWeek/);
+  assert.match(modalSrc, /damian@asoldi.com/);
+  assert.equal(modalSrc.includes('confirmSend'), false);
+
+  const salesSrc = readFileSync(new URL('../app/pages/Admin/sections/SalesClientsSection.tsx', import.meta.url), 'utf8');
+  assert.match(salesSrc, /workshopCalendar=1/);
+  assert.equal(/workshop-action[\s\S]{0,400}confirmSend:\s*true/.test(salesSrc), false);
+
+  const adminRowSrc = readFileSync(new URL('../app/pages/Admin/sections/WorkshopAdminActionRow.tsx', import.meta.url), 'utf8');
+  assert.match(adminRowSrc, /confirmSend:\s*true/);
+  assert.match(adminRowSrc, /Legg til handling/);
+  assert.match(adminRowSrc, /WORKSHOP_FORMATS/);
+
+  const adminSrc = readFileSync(new URL('../app/pages/Admin/sections/AdminBoardSection.tsx', import.meta.url), 'utf8');
+  assert.match(adminSrc, /const \[calendarOpen, setCalendarOpen\] = useState\(false\)/);
+
+  const serverSrc = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  assert.match(serverSrc, /confirmSend && !requireOfferAdmin/);
+  assert.match(serverSrc, /if \(confirmSend\) \{/);
+  assert.match(serverSrc, /syncWorkshopCalendar/);
+  assert.match(serverSrc, /sendWorkshopBookingEmail/);
+  assert.match(serverSrc, /icalEvent: invite \|\| undefined/);
+  assert.match(serverSrc, /durationMinutes: WORKSHOP_DURATION_MINUTES/);
+
+  const dataSrc = readFileSync(new URL('../data/sales.js', import.meta.url), 'utf8');
+  assert.match(dataSrc, /offerStartDateFromWorkshopDueAt/);
 });
 
 test('busy blocks never keep a Google title', () => {

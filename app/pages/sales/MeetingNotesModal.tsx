@@ -2,9 +2,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarDays, Loader2, X } from 'lucide-react';
 import {
   datetimeLocalOsloToIso,
-  groupCalendarEventsByOsloDay,
   isoToDatetimeLocalOslo,
 } from '../../../lib/sales-next-actions.js';
+import { WORKSHOP_FORMATS, offerStartDateFromWorkshopDueAt } from '../../../lib/workshop-action-shared.js';
+import { SalesCalendarWeek } from '../Admin/sections/SalesCalendarWeek';
 import {
   PRICING,
   type MeetingQuoteState,
@@ -27,26 +28,19 @@ import {
 
 type WorkshopDraft = {
   name: string;
-  format: 'mote' | 'sms-ring';
+  format: 'sms' | 'ring' | 'sms-ring' | 'mote';
   dueAt: string;
   addToCalendar: boolean;
 };
 
-type WorkshopBusyBlock = {
-  start?: string;
-  end?: string;
-  allDay?: boolean;
-  summary?: string;
-};
-
-type WorkshopAvailability = {
+type WorkshopCalendarEmbed = {
   connected?: boolean;
+  embedUrl?: string;
   googleEmail?: string;
   message?: string;
-  days?: string[];
-  timeMin?: string;
-  timeMax?: string;
-  busy?: WorkshopBusyBlock[];
+  shareWarning?: string;
+  isOwnCalendar?: boolean;
+  accountKey?: string;
 };
 
 type Props = {
@@ -64,41 +58,29 @@ type Props = {
   onClose?: () => void;
   onPersist: (payload: { meetingQuote: MeetingQuoteState }) => Promise<void> | void;
   onPersistWorkshop?: (payload: {
-    workshopAction: { name: string; format: 'mote' | 'sms-ring'; dueAt: string; addToCalendar: boolean };
+    workshopAction: { name: string; format: WorkshopDraft['format']; dueAt: string; addToCalendar: boolean };
   }) => Promise<void> | void;
-  onLoadWorkshopAvailability?: (weekOffset: number) => Promise<WorkshopAvailability>;
+  onLoadWorkshopCalendar?: () => Promise<WorkshopCalendarEmbed>;
   onContinue: () => void;
   onFlushReady?: (flush: () => Promise<void>) => void;
 };
 
+function workshopUiFormat(value = ''): WorkshopDraft['format'] {
+  const raw = String(value || '').toLowerCase();
+  if (raw === 'sms') return 'sms';
+  if (raw === 'ring') return 'ring';
+  if (raw === 'sms-ring' || raw === 'sms/ring') return 'sms-ring';
+  return 'mote';
+}
+
 function workshopDraftFromAction(action?: Props['workshopAction']): WorkshopDraft {
-  const format = action?.format === 'sms-ring' ? 'sms-ring' : 'mote';
+  const format = workshopUiFormat(action?.format);
   return {
     name: String(action?.name || 'Workshop').trim() || 'Workshop',
     format,
     dueAt: isoToDatetimeLocalOslo(action?.dueAt || ''),
     addToCalendar: format === 'mote' ? true : Boolean(action?.addToCalendar),
   };
-}
-
-function formatAvailabilityDay(date = '') {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return date;
-  const [year, month, day] = date.split('-').map((part) => Number(part));
-  return new Date(Date.UTC(year, month - 1, day, 12)).toLocaleDateString('nb-NO', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    timeZone: 'UTC',
-  });
-}
-
-function formatBusyRange(start = '', end = '') {
-  const from = isoToDatetimeLocalOslo(start);
-  const to = isoToDatetimeLocalOslo(end);
-  const startTime = from.slice(11, 16);
-  const endTime = to.slice(11, 16);
-  if (!startTime) return 'Opptatt';
-  return endTime ? `Opptatt ${startTime}–${endTime}` : `Opptatt ${startTime}`;
 }
 
 const SALES_MEETING_SCRIPT: { title: string; goal?: string; lines: { text?: string; quote?: string }[] }[] = [
@@ -160,17 +142,14 @@ export function MeetingNotesModal({
   onClose,
   onPersist,
   onPersistWorkshop,
-  onLoadWorkshopAvailability,
+  onLoadWorkshopCalendar,
   onContinue,
   onFlushReady,
 }: Props) {
   const [state, setState] = useState<MeetingQuoteState>(() => normalizeMeetingQuote(quote || emptyMeetingQuote()));
   const [workshop, setWorkshop] = useState<WorkshopDraft>(() => workshopDraftFromAction(workshopAction));
   const [availabilityOpen, setAvailabilityOpen] = useState(false);
-  const [availabilitySeen, setAvailabilitySeen] = useState(false);
-  const [availabilityOpened, setAvailabilityOpened] = useState(false);
-  const [weekOffset, setWeekOffset] = useState(0);
-  const [availability, setAvailability] = useState<WorkshopAvailability | null>(null);
+  const [calendarWeek, setCalendarWeek] = useState<WorkshopCalendarEmbed | null>(null);
   const [availabilityLoading, setAvailabilityLoading] = useState(false);
   const [availabilityError, setAvailabilityError] = useState('');
   const persistRef = useRef(onPersist);
@@ -181,7 +160,7 @@ export function MeetingNotesModal({
   const skipFirstWorkshop = useRef(true);
 
   function workshopPayload() {
-    const format = workshop.format === 'sms-ring' ? 'sms-ring' : 'mote';
+    const format = workshopUiFormat(workshop.format);
     return {
       name: workshop.name.trim() || 'Workshop',
       format,
@@ -196,11 +175,12 @@ export function MeetingNotesModal({
       return;
     }
     const timer = window.setTimeout(() => {
-      void Promise.resolve(persistRef.current({ meetingQuote: hostForcesOneTime ? { ...state, oneTime: true } : state }))
+      const startDate = offerStartDateFromWorkshopDueAt(datetimeLocalOsloToIso(workshop.dueAt));
+      void Promise.resolve(persistRef.current({ meetingQuote: { ...state, startDate } }))
         .catch(() => undefined);
     }, 700);
     return () => window.clearTimeout(timer);
-  }, [state]);
+  }, [state, workshop.dueAt]);
 
   useEffect(() => {
     if (skipFirstWorkshop.current) {
@@ -216,18 +196,18 @@ export function MeetingNotesModal({
   }, [workshop]);
 
   useEffect(() => {
-    if (!availabilityOpen || !onLoadWorkshopAvailability) return;
+    if (!availabilityOpen || !onLoadWorkshopCalendar) return;
     let cancelled = false;
     setAvailabilityLoading(true);
     setAvailabilityError('');
-    void onLoadWorkshopAvailability(weekOffset)
+    void onLoadWorkshopCalendar()
       .then((data) => {
         if (cancelled) return;
-        setAvailability(data || null);
+        setCalendarWeek(data || null);
       })
       .catch((error) => {
         if (cancelled) return;
-        setAvailabilityError(error instanceof Error ? error.message : 'Kunne ikke hente ledig tid.');
+        setAvailabilityError(error instanceof Error ? error.message : 'Kunne ikke hente kalenderen.');
       })
       .finally(() => {
         if (!cancelled) setAvailabilityLoading(false);
@@ -235,12 +215,9 @@ export function MeetingNotesModal({
     return () => {
       cancelled = true;
     };
-  }, [availabilityOpen, weekOffset, onLoadWorkshopAvailability]);
+  }, [availabilityOpen, onLoadWorkshopCalendar]);
 
   const selected = useMemo(() => new Set<string>(state.selected), [state.selected]);
-  const availabilityDays = useMemo(() => (
-    groupCalendarEventsByOsloDay(availability?.busy || [], availability?.days || [])
-  ), [availability]);
   const oneTimeAddOns = useMemo(() => new Set<string>(state.oneTimeAddOns), [state.oneTimeAddOns]);
   const hostForcesOneTime = oneTimeAddOns.has('thirdpartyhost');
   const priced = hostForcesOneTime ? { ...state, oneTime: true } : state;
@@ -294,7 +271,8 @@ export function MeetingNotesModal({
   }
 
   function quoteToSave() {
-    return hostForcesOneTime ? { ...state, oneTime: true } : state;
+    const startDate = offerStartDateFromWorkshopDueAt(datetimeLocalOsloToIso(workshop.dueAt));
+    return hostForcesOneTime ? { ...state, oneTime: true, startDate } : { ...state, startDate };
   }
 
   async function persistWorkshopNow() {
@@ -315,16 +293,12 @@ export function MeetingNotesModal({
   }
 
   function openAvailability() {
-    setAvailabilityOpened(true);
     setAvailabilityOpen(true);
   }
 
   function closeAvailability() {
     setAvailabilityOpen(false);
-    if (availabilityOpened) setAvailabilitySeen(true);
   }
-
-  const timeFormatLocked = !availabilitySeen;
 
   const includedPages = includedPagesFor(state.tierId, state.customMode);
 
@@ -508,16 +482,6 @@ export function MeetingNotesModal({
                   </li>
                 ))}
               </ol>
-              <label className="block">
-                <span className="text-xs text-[#6B7280]">Startdato for workshop</span>
-                <input
-                  type="date"
-                  value={state.startDate || ''}
-                  onChange={(e) => setState((prev) => ({ ...prev, startDate: e.target.value }))}
-                  className="mt-1 w-full px-3 py-2 rounded-lg bg-white border border-[#E5E7EB] text-sm text-[#111827]"
-                />
-                <span className="mt-1 block text-[11px] text-[#6B7280]">Tomt felt: e-posten sier at datoen avtales senere.</span>
-              </label>
               <div className="rounded-xl border border-[#E6E9EF] bg-white p-3 space-y-3">
                 <div className="text-xs font-medium text-[#111827]">Workshop-handling</div>
                 <label className="block">
@@ -539,9 +503,7 @@ export function MeetingNotesModal({
                     Finn ledig tid
                   </button>
                   <span className="text-[11px] text-[#6B7280]">
-                    {availabilitySeen
-                      ? 'Tid og format kan settes. Kalenderen er damian@asoldi.com.'
-                      : 'Åpne og lukk Finn ledig tid før du setter tid og format.'}
+                    Kalenderen er damian@asoldi.com. Tid og format kan settes her.
                   </span>
                 </div>
                 <label className="block">
@@ -549,9 +511,8 @@ export function MeetingNotesModal({
                   <input
                     type="datetime-local"
                     value={workshop.dueAt}
-                    disabled={timeFormatLocked}
                     onChange={(e) => setWorkshop((prev) => ({ ...prev, dueAt: e.target.value }))}
-                    className="mt-1 w-full px-3 py-2 rounded-lg bg-white border border-[#E5E7EB] text-sm text-[#111827] disabled:bg-[#F3F4F6] disabled:text-[#9CA3AF]"
+                    className="mt-1 w-full px-3 py-2 rounded-lg bg-white border border-[#E5E7EB] text-sm text-[#111827]"
                   />
                 </label>
                 <div className="flex flex-wrap items-center gap-2">
@@ -559,19 +520,21 @@ export function MeetingNotesModal({
                     <span className="text-xs text-[#6B7280]">Format</span>
                     <select
                       value={workshop.format}
-                      disabled={timeFormatLocked}
                       onChange={(e) => {
-                        const format = e.target.value === 'sms-ring' ? 'sms-ring' : 'mote';
+                        const format = workshopUiFormat(e.target.value);
                         setWorkshop((prev) => ({
                           ...prev,
                           format,
                           addToCalendar: format === 'mote' ? true : prev.addToCalendar,
                         }));
                       }}
-                      className="mt-1 w-full px-3 py-2 rounded-lg bg-white border border-[#E5E7EB] text-sm text-[#111827] disabled:bg-[#F3F4F6] disabled:text-[#9CA3AF]"
+                      className="mt-1 w-full px-3 py-2 rounded-lg bg-white border border-[#E5E7EB] text-sm text-[#111827]"
                     >
-                      <option value="mote">Møte</option>
-                      <option value="sms-ring">SMS/ring</option>
+                      {WORKSHOP_FORMATS.map((format) => (
+                        <option key={format} value={format}>
+                          {format === 'mote' ? 'Møte' : format === 'sms' ? 'SMS' : format === 'ring' ? 'Ring' : 'SMS/ring'}
+                        </option>
+                      ))}
                     </select>
                   </label>
                   <span title="30 min i Google Kalender hos Damian" className="mt-5 shrink-0 text-[#6B7280]">
@@ -594,84 +557,52 @@ export function MeetingNotesModal({
                   </button>
                 </div>
                 <p className="text-[11px] text-[#6B7280]">
-                  Møte er alltid online, 30 minutter, med Meet og Fireflies på damian@asoldi.com.
-                  SMS/ring er 30 minutter hos Damian uten gjester.
+                  Møte er alltid online, 30 minutter. Admin sender bekreftelse, Meet og Fireflies.
+                  SMS, ring og SMS/ring inviterer ikke kunden.
                 </p>
               </div>
               {availabilityOpen ? (
                 <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-3">
-                  <div className="w-full max-w-3xl max-h-[90vh] overflow-hidden rounded-2xl bg-white border border-[#E6E9EF] shadow-2xl flex flex-col">
-                    <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-[#E6E9EF]">
+                  <div className="w-full max-w-5xl max-h-[90vh] overflow-hidden rounded-2xl bg-[#111827] border border-white/10 shadow-2xl flex flex-col">
+                    <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-white/10">
                       <div>
-                        <h4 className="font-medium text-[#111827]">Finn ledig tid</h4>
-                        <p className="text-[11px] text-[#6B7280]">
-                          Opptatt-blokker for damian@asoldi.com. Ingen møtetitler.
+                        <h4 className="font-medium text-white">Finn ledig tid</h4>
+                        <p className="text-[11px] text-gray-400">
+                          Kalender for damian@asoldi.com. Lukk og sett tid i skjemaet etterpå.
                         </p>
                       </div>
                       <button
                         type="button"
                         onClick={closeAvailability}
-                        className="p-2 rounded-lg bg-[#F3F4F6] text-[#111827] hover:bg-[#E5E7EB]"
+                        className="p-2 rounded-lg bg-white/10 text-white hover:bg-white/15"
                         aria-label="Lukk"
                       >
                         <X size={16} />
                       </button>
                     </div>
-                    <div className="px-4 py-2 border-b border-[#E6E9EF] flex items-center justify-between gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setWeekOffset((prev) => prev - 1)}
-                        className="px-3 py-1.5 rounded-lg bg-[#F3F4F6] text-xs text-[#111827]"
-                      >
-                        Forrige uke
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setWeekOffset((prev) => prev + 1)}
-                        className="px-3 py-1.5 rounded-lg bg-[#F3F4F6] text-xs text-[#111827]"
-                      >
-                        Neste uke
-                      </button>
-                    </div>
-                    <div className="flex-1 overflow-y-auto p-4">
+                    <div className="flex-1 overflow-auto">
                       {availabilityError ? (
-                        <p className="text-sm text-red-600">{availabilityError}</p>
-                      ) : availabilityLoading ? (
-                        <div className="flex items-center gap-2 text-sm text-[#6B7280]">
-                          <Loader2 size={16} className="animate-spin" />
-                          Henter ledig tid…
-                        </div>
-                      ) : availability && !availability.connected ? (
-                        <p className="text-sm text-[#374151]">
-                          {availability.message || 'damian@asoldi.com er ikke koblet til Google Calendar. Selgerens kalender brukes ikke her.'}
-                        </p>
+                        <p className="px-4 py-3 text-sm text-red-300">{availabilityError}</p>
                       ) : (
-                        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2">
-                          {availabilityDays.map((day) => (
-                            <div key={day.date} className="rounded-lg border border-[#E6E9EF] bg-[#F8F9FB] p-2 min-h-[7rem]">
-                              <div className="text-[11px] font-medium text-[#111827] mb-1.5">
-                                {formatAvailabilityDay(day.date)}
-                              </div>
-                              {day.events.length ? day.events.map((block, index) => (
-                                <div
-                                  key={`${day.date}-${index}`}
-                                  className="mb-1 rounded bg-[#FEE2E2] text-[#991B1B] text-[11px] px-1.5 py-1"
-                                >
-                                  {formatBusyRange(block.start, block.end)}
-                                </div>
-                              )) : (
-                                <div className="text-[11px] text-[#9CA3AF]">Ledig</div>
-                              )}
-                            </div>
-                          ))}
-                        </div>
+                        <SalesCalendarWeek
+                          embedUrl={String(calendarWeek?.embedUrl || '')}
+                          loading={availabilityLoading}
+                          connected={Boolean(calendarWeek?.connected)}
+                          googleEmail={String(calendarWeek?.googleEmail || 'damian@asoldi.com')}
+                          ownerLabel="damian@asoldi.com"
+                          isOwnCalendar={Boolean(calendarWeek?.isOwnCalendar)}
+                          message={String(calendarWeek?.message || '')}
+                          error=""
+                          shareWarning={String(calendarWeek?.shareWarning || '')}
+                          onConnect={() => undefined}
+                        />
                       )}
                     </div>
-                    <div className="p-3 border-t border-[#E6E9EF]">
+                    <div className="p-3 border-t border-white/10">
                       <button
                         type="button"
                         onClick={closeAvailability}
-                        className="w-full px-4 py-2 rounded-lg bg-[#111827] text-white text-sm"
+                        className="w-full px-4 py-2 rounded-lg bg-[#FF5B00] text-white text-sm"
                       >
                         Lukk
                       </button>

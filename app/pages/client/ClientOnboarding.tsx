@@ -1,10 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { useClientAuth } from '../../contexts/ClientAuthContext';
 import { ClientRouteGuard } from '../../components/client/ClientRouteGuard';
-import { GooglePlaceAutocomplete } from '../../components/client/GooglePlaceAutocomplete';
+import { searchGoogleProfilesInBrowser } from '../../components/client/searchGoogleProfiles';
 
 type FormState = {
   name: string;
@@ -39,14 +39,20 @@ type PlaceOption = {
   mapsUrl: string;
 };
 
-const DISCOVERY_OPTIONS = ['Fra sosiale medier', 'Referanse', 'Telefon salg', 'Annet'] as const;
+const DISCOVERY_OPTIONS = ['Fra sosiale medier', 'Referanse', 'Over telefon', 'Annet'] as const;
+
+function normalizeDiscovery(value = '') {
+  const text = String(value || '').trim();
+  if (text === 'Telefon salg') return 'Over telefon';
+  return text;
+}
 
 const QUESTION_STEPS = [
   { key: 'name', kind: 'text', title: 'Hva heter du?', placeholder: 'Fornavn og etternavn' },
   { key: 'businessName', kind: 'text', title: 'Hva heter bedriften din?', placeholder: 'Bedriftsnavn' },
   { key: 'position', kind: 'text', title: 'Hva er stillingen din?', placeholder: 'f.eks. Daglig leder' },
   { key: 'contact', kind: 'contact', title: 'Hvordan kan vi nå deg?' },
-  { key: 'sources', kind: 'sources', title: 'Gi oss profilene deres' },
+  { key: 'sources', kind: 'sources', title: 'Gjør onboarding enda lettere!' },
   {
     key: 'discoveryChannel',
     kind: 'select',
@@ -75,6 +81,12 @@ function looksLikeEmail(value = '') {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
 }
 
+function placeTypeLabel(type = '') {
+  const text = String(type || '').trim().replace(/_/g, ' ');
+  if (!text || /^(establishment|point of interest|store|food|premise|geocode)$/i.test(text)) return '';
+  return text;
+}
+
 export const ClientOnboarding = () => {
   const navigate = useNavigate();
   const { profile, token, updateProfileState } = useClientAuth();
@@ -84,13 +96,21 @@ export const ClientOnboarding = () => {
   const [brregResults, setBrregResults] = useState<BrregBusinessOption[]>([]);
   const [brregLoading, setBrregLoading] = useState(false);
   const [brregError, setBrregError] = useState('');
-  const [selectedBrreg, setSelectedBrreg] = useState<BrregBusinessOption | null>(null);
+  const [selectedBrreg, setSelectedBrreg] = useState<BrregBusinessOption | null>(
+    profile?.businessName && profile?.businessOrgNumber
+      ? {
+          name: profile.businessName,
+          organizationNumber: profile.businessOrgNumber,
+          address: '',
+        }
+      : null,
+  );
   const [placeQuery, setPlaceQuery] = useState('');
   const [placeResults, setPlaceResults] = useState<PlaceOption[]>([]);
   const [placeLoading, setPlaceLoading] = useState(false);
   const [placeError, setPlaceError] = useState('');
   const [placesApiKey, setPlacesApiKey] = useState('');
-  const [placesAutocomplete, setPlacesAutocomplete] = useState(false);
+  const [googlePlaceAddress, setGooglePlaceAddress] = useState('');
   const [form, setForm] = useState<FormState>({
     name: profile?.name || '',
     businessName: profile?.businessName || '',
@@ -105,7 +125,7 @@ export const ClientOnboarding = () => {
     googleMapsUrl: String(profile?.clientDataBank?.generalInfo?.googleMapsUrl || profile?.clientDataBank?.openingHours?.googleBusinessSyncUrl || ''),
     googlePlaceId: String(profile?.clientDataBank?.generalInfo?.googlePlaceId || ''),
     googlePlaceName: String(profile?.clientDataBank?.generalInfo?.googlePlaceName || ''),
-    discoveryChannel: profile?.discoveryChannel || '',
+    discoveryChannel: normalizeDiscovery(profile?.discoveryChannel || ''),
   });
 
   const current = QUESTION_STEPS[step];
@@ -116,7 +136,6 @@ export const ClientOnboarding = () => {
     form.facebookUrl,
     form.googleMapsUrl || form.googlePlaceId,
   ].filter((value) => String(value || '').trim()).length;
-  const sourceProgress = Math.round((sourceFilled / 4) * 100);
 
   const canProceed = useMemo(() => {
     if (current.kind === 'sources') return true;
@@ -150,6 +169,15 @@ export const ClientOnboarding = () => {
     });
     setBrregResults([]);
     setBrregError('');
+    setBrregLoading(false);
+  }
+
+  function clearBrregSelection() {
+    setSelectedBrreg(null);
+    setBrregResults([]);
+    setBrregError('');
+    setBrregLoading(false);
+    patchForm({ businessName: '', businessOrgNumber: '', businessAddress: '' });
   }
 
   function selectPlace(option: PlaceOption) {
@@ -158,40 +186,38 @@ export const ClientOnboarding = () => {
       googlePlaceId: option.placeId,
       googlePlaceName: option.name,
     });
-    setPlaceQuery(option.name);
+    setGooglePlaceAddress(option.address || '');
+    setPlaceQuery('');
+    setPlaceResults([]);
+    setPlaceError('');
+    setPlaceLoading(false);
+  }
+
+  function clearGooglePlace() {
+    patchForm({ googleMapsUrl: '', googlePlaceId: '', googlePlaceName: '' });
+    setGooglePlaceAddress('');
+    setPlaceQuery('');
     setPlaceResults([]);
     setPlaceError('');
   }
-
-  const selectGooglePlace = useCallback((place: PlaceOption) => {
-    setForm((prev) => ({
-      ...prev,
-      googleMapsUrl: place.mapsUrl,
-      googlePlaceId: place.placeId,
-      googlePlaceName: place.name,
-    }));
-    setPlaceQuery(place.name);
-    setPlaceResults([]);
-    setPlaceError('');
-  }, []);
 
   useEffect(() => {
     if (!token) return;
     fetch('/api/client/places-config', { headers: { Authorization: `Bearer ${token}` } })
       .then((res) => res.json().catch(() => ({})))
-      .then((data) => {
-        setPlacesAutocomplete(Boolean(data?.autocomplete && data?.apiKey));
-        setPlacesApiKey(String(data?.apiKey || ''));
-      })
-      .catch(() => {
-        setPlacesAutocomplete(false);
-        setPlacesApiKey('');
-      });
+      .then((data) => setPlacesApiKey(String(data?.apiKey || '')))
+      .catch(() => setPlacesApiKey(''));
   }, [token]);
 
   useEffect(() => {
     if (current.key !== 'businessName') return;
     const query = String(form.businessName || '').trim();
+    if (selectedBrreg && query === selectedBrreg.name) {
+      setBrregResults([]);
+      setBrregLoading(false);
+      setBrregError('');
+      return;
+    }
     if (query.length < 2) {
       setBrregResults([]);
       setBrregLoading(false);
@@ -224,25 +250,19 @@ export const ClientOnboarding = () => {
       active = false;
       clearTimeout(timer);
     };
-  }, [current.key, form.businessName, token]);
+  }, [current.key, form.businessName, token, selectedBrreg]);
 
   useEffect(() => {
-    if (current.kind !== 'sources' || placesAutocomplete) return;
-    if (!placeQuery && form.businessName && !form.googleMapsUrl) {
-      setPlaceQuery([form.businessName, form.businessAddress].filter(Boolean).join(' '));
-    }
-  }, [current.kind, form.businessName, form.businessAddress, form.googleMapsUrl, placeQuery, placesAutocomplete]);
-
-  useEffect(() => {
-    if (current.kind !== 'sources' || placesAutocomplete) return;
-    const query = placeQuery.trim();
-    if (query.length < 3) {
+    if (current.kind !== 'sources') return;
+    if (form.googlePlaceId) {
       setPlaceResults([]);
       setPlaceLoading(false);
       return;
     }
-    if (form.googlePlaceName && query === form.googlePlaceName) {
+    const query = placeQuery.trim();
+    if (query.length < 3) {
       setPlaceResults([]);
+      setPlaceLoading(false);
       return;
     }
 
@@ -251,6 +271,12 @@ export const ClientOnboarding = () => {
     setPlaceError('');
     const timer = window.setTimeout(async () => {
       try {
+        if (placesApiKey) {
+          const rows = await searchGoogleProfilesInBrowser(placesApiKey, query);
+          if (!active) return;
+          setPlaceResults(rows);
+          return;
+        }
         const response = await fetch(`/api/client/places-search?q=${encodeURIComponent(query)}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -259,6 +285,22 @@ export const ClientOnboarding = () => {
         if (!active) return;
         setPlaceResults(Array.isArray(data.results) ? data.results : []);
       } catch (err) {
+        if (!active) return;
+        if (placesApiKey) {
+          try {
+            const response = await fetch(`/api/client/places-search?q=${encodeURIComponent(query)}`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!active) return;
+            if (response.ok) {
+              setPlaceResults(Array.isArray(data.results) ? data.results : []);
+              return;
+            }
+          } catch {
+            // The message below covers both failures.
+          }
+        }
         if (!active) return;
         setPlaceResults([]);
         setPlaceError(err instanceof Error ? err.message : 'Kunne ikke søke i Google-profiler.');
@@ -271,7 +313,7 @@ export const ClientOnboarding = () => {
       active = false;
       clearTimeout(timer);
     };
-  }, [current.kind, placeQuery, form.googlePlaceName, token, placesAutocomplete]);
+  }, [current.kind, placeQuery, token, form.googlePlaceId, placesApiKey]);
 
   async function completeOnboarding() {
     setLoading(true);
@@ -393,20 +435,8 @@ export const ClientOnboarding = () => {
                 <p className="text-sm leading-relaxed text-[#4B5563]">
                   Har dere allerede nettside, Instagram, Facebook eller Google-bedrift? Legg inn profilene her.
                   Vi bruker dem til å hente bilder, priser, åpningstider og tekster — så onboarding går mye raskere,
-                  og dere får et mer treffsikkert førsteutkast av nettsiden.
+                  og dere får et mer treffsikkert førsteutkast av nettsiden. Alt er valgfritt.
                 </p>
-                <div>
-                  <div className="flex items-center justify-between text-xs text-[#6B7280] mb-2">
-                    <span>Kilder vi kan hente fra til nettsiden</span>
-                    <span>{sourceFilled} av 4</span>
-                  </div>
-                  <div className="h-2 rounded-full bg-[#EEF1F5] overflow-hidden">
-                    <div className="h-full bg-[#059669] transition-all" style={{ width: `${sourceProgress}%` }} />
-                  </div>
-                  <p className="mt-2 text-xs text-[#6B7280]">
-                    Alt er valgfritt. Jo flere dere fyller, jo mer kan vi gjøre automatisk.
-                  </p>
-                </div>
 
                 <label className="block">
                   <span className="text-sm text-[#374151]">Eksisterende nettside <span className="text-[#9CA3AF]">(valgfritt)</span></span>
@@ -440,41 +470,50 @@ export const ClientOnboarding = () => {
                 </label>
                 <div>
                   <span className="text-sm text-[#374151]">Google-bedrift / Maps <span className="text-[#9CA3AF]">(valgfritt)</span></span>
-                  <p className="mt-1 text-xs text-[#6B7280]">
-                    Skriv bedriftsnavnet og velg i Google-listen. Vi lagrer Place ID — du trenger ikke kopiere en Maps-lenke.
-                  </p>
-                  {placesAutocomplete && placesApiKey ? (
-                    <GooglePlaceAutocomplete
-                      key={form.googlePlaceId || 'empty'}
-                      apiKey={placesApiKey}
-                      defaultQuery={form.businessName}
-                      selectedName={form.googlePlaceName}
-                      onSelect={selectGooglePlace}
-                      onClear={() => patchForm({ googleMapsUrl: '', googlePlaceId: '', googlePlaceName: '' })}
-                      onLoadError={() => setPlacesAutocomplete(false)}
-                    />
+                  {form.googlePlaceId && form.googlePlaceName ? (
+                    <div className="mt-2 rounded-xl border border-[#BBF7D0] bg-[#F0FDF4] px-4 py-3">
+                      <div className="text-sm font-medium text-[#111827]">{form.googlePlaceName}</div>
+                      {googlePlaceAddress ? (
+                        <div className="mt-1 text-xs text-[#6B7280]">{googlePlaceAddress}</div>
+                      ) : null}
+                      <p className="mt-1 text-xs text-[#059669]">Offentlig Google-profil er valgt. Place ID er lagret.</p>
+                      <button
+                        type="button"
+                        onClick={clearGooglePlace}
+                        className="mt-2 text-xs text-[#6B7280] underline"
+                      >
+                        Velg en annen profil
+                      </button>
+                    </div>
                   ) : (
                     <>
+                      <p className="mt-1 text-xs text-[#6B7280]">
+                        Søk på navnet slik det står på Google Maps, og velg profilen. Juridisk navn og Google-navn
+                        er ofte ulike, så vi fyller ikke inn bedriftsnavnet her. Vi lagrer Place ID og det offentlige navnet.
+                      </p>
                       <input
                         type="text"
                         value={placeQuery}
                         onChange={(e) => {
-                          setPlaceQuery(e.target.value);
-                          if (form.googlePlaceName) {
-                            patchForm({ googleMapsUrl: '', googlePlaceId: '', googlePlaceName: '' });
+                          const value = e.target.value;
+                          setPlaceQuery(value);
+                          setPlaceResults([]);
+                          if (value.trim().length >= 3) {
+                            setPlaceLoading(true);
+                            setPlaceError('');
                           }
                         }}
-                        placeholder="Søk f.eks. Bydelskafe Trondheim"
+                        placeholder="Navnet på Google Maps"
+                        autoComplete="off"
                         className="mt-2 w-full rounded-xl border border-[#DDE2EA] bg-white px-4 py-3 outline-none focus:border-[#FF5B00]"
                       />
-                      {form.googlePlaceName ? (
-                        <p className="mt-2 text-xs text-[#059669]">
-                          Valgt: {form.googlePlaceName}
-                          {form.googleMapsUrl ? ' · Google-profilen er lagret' : ''}
+                      {placeLoading ? <p className="mt-2 text-xs text-[#6B7280]">Søker etter Google-profiler…</p> : null}
+                      {placeError ? <p className="mt-2 text-xs text-red-500">{placeError}</p> : null}
+                      {!placeLoading && !placeError && placeQuery.trim().length >= 3 && placeResults.length === 0 ? (
+                        <p className="mt-2 text-xs text-[#6B7280]">
+                          Ingen Google-profil matcher søket. Skriv navnet slik det står på Google Maps.
                         </p>
                       ) : null}
-                      {placeLoading ? <p className="mt-2 text-xs text-[#6B7280]">Søker i Google-profiler…</p> : null}
-                      {placeError ? <p className="mt-2 text-xs text-red-500">{placeError}</p> : null}
                       {!placeLoading && placeResults.length > 0 ? (
                         <div className="mt-2 max-h-56 overflow-y-auto rounded-xl border border-[#E5E7EB] bg-white divide-y divide-[#EEF1F5]">
                           {placeResults.map((option) => (
@@ -487,6 +526,7 @@ export const ClientOnboarding = () => {
                               <div className="text-sm font-medium text-[#111827]">{option.name}</div>
                               <div className="text-xs text-[#6B7280]">
                                 {option.address || 'Google-bedrift'}
+                                {placeTypeLabel(option.type) ? ` · ${placeTypeLabel(option.type)}` : ''}
                                 {option.rating ? ` · ${option.rating}` : ''}
                                 {option.reviews ? ` (${option.reviews} anmeldelser)` : ''}
                               </div>
@@ -501,60 +541,69 @@ export const ClientOnboarding = () => {
             ) : null}
 
             {current.kind === 'text' ? (
-              <>
-                <input
-                  type="text"
-                  value={String(form[current.key as keyof FormState] || '')}
-                  onChange={(e) => setCurrentValue(e.target.value)}
-                  placeholder={current.placeholder}
-                  className="mt-4 w-full rounded-xl border border-[#DDE2EA] bg-white px-4 py-3 text-[#111827] outline-none focus:border-[#FF5B00]"
-                  autoFocus
-                />
-                {current.key === 'businessName' ? (
-                  <div className="mt-3">
-                    <p className="text-xs text-[#6B7280]">
-                      Søk i BRREG med bedriftsnavn eller organisasjonsnummer og velg riktig bedrift.
-                    </p>
-                    {form.businessOrgNumber ? (
-                      <p className="mt-1 text-xs text-[#111827]">
-                        Valgt org.nr: <strong>{form.businessOrgNumber}</strong>
-                      </p>
-                    ) : null}
-                    {brregLoading ? (
-                      <p className="mt-2 text-xs text-[#6B7280]">Søker i BRREG…</p>
-                    ) : null}
-                    {brregError ? (
-                      <p className="mt-2 text-xs text-red-500">{brregError}</p>
-                    ) : null}
-                    {!brregLoading && brregResults.length > 0 ? (
-                      <div className="mt-2 max-h-52 overflow-y-auto rounded-xl border border-[#E5E7EB] bg-white divide-y divide-[#EEF1F5]">
-                        {brregResults.map((option) => (
-                          <button
-                            key={`${option.organizationNumber}:${option.name}`}
-                            type="button"
-                            onClick={() => selectBrregOption(option)}
-                            className="w-full text-left px-4 py-3 hover:bg-[#F8F9FB]"
-                          >
-                            <div className="text-sm font-medium text-[#111827]">{option.name}</div>
-                            <div className="text-xs text-[#6B7280]">
-                              Org.nr {option.organizationNumber}
-                              {option.address ? ` · ${option.address}` : ''}
-                            </div>
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                    {!brregLoading && !brregError && String(form.businessName || '').trim().length >= 2 && brregResults.length === 0 ? (
-                      <p className="mt-2 text-xs text-[#6B7280]">Ingen treff i BRREG for dette søket.</p>
-                    ) : null}
-                    {selectedBrreg ? (
-                      <p className="mt-2 text-xs text-[#059669]">
-                        {selectedBrreg.name} er valgt fra BRREG.
-                      </p>
-                    ) : null}
+              current.key === 'businessName' && selectedBrreg ? (
+                <div className="mt-4 rounded-xl border border-[#BBF7D0] bg-[#F0FDF4] px-4 py-3">
+                  <div className="text-sm font-medium text-[#111827]">{selectedBrreg.name}</div>
+                  <div className="mt-1 text-xs text-[#6B7280]">
+                    Org.nr {selectedBrreg.organizationNumber}
+                    {selectedBrreg.address ? ` · ${selectedBrreg.address}` : ''}
                   </div>
-                ) : null}
-              </>
+                  <p className="mt-1 text-xs text-[#059669]">Dette er bedriften som er valgt.</p>
+                  <button
+                    type="button"
+                    onClick={clearBrregSelection}
+                    className="mt-2 text-xs text-[#6B7280] underline"
+                  >
+                    Velg en annen bedrift
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <input
+                    type="text"
+                    value={String(form[current.key as keyof FormState] || '')}
+                    onChange={(e) => setCurrentValue(e.target.value)}
+                    placeholder={current.placeholder}
+                    autoComplete={current.key === 'businessName' ? 'off' : undefined}
+                    className="mt-4 w-full rounded-xl border border-[#DDE2EA] bg-white px-4 py-3 text-[#111827] outline-none focus:border-[#FF5B00]"
+                    autoFocus
+                  />
+                  {current.key === 'businessName' ? (
+                    <div className="mt-3">
+                      <p className="text-xs text-[#6B7280]">
+                        Søk i BRREG med bedriftsnavn eller organisasjonsnummer og velg riktig bedrift.
+                      </p>
+                      {brregLoading ? (
+                        <p className="mt-2 text-xs text-[#6B7280]">Søker i BRREG…</p>
+                      ) : null}
+                      {brregError ? (
+                        <p className="mt-2 text-xs text-red-500">{brregError}</p>
+                      ) : null}
+                      {!brregLoading && brregResults.length > 0 ? (
+                        <div className="mt-2 max-h-52 overflow-y-auto rounded-xl border border-[#E5E7EB] bg-white divide-y divide-[#EEF1F5]">
+                          {brregResults.map((option) => (
+                            <button
+                              key={`${option.organizationNumber}:${option.name}`}
+                              type="button"
+                              onClick={() => selectBrregOption(option)}
+                              className="w-full text-left px-4 py-3 hover:bg-[#F8F9FB]"
+                            >
+                              <div className="text-sm font-medium text-[#111827]">{option.name}</div>
+                              <div className="text-xs text-[#6B7280]">
+                                Org.nr {option.organizationNumber}
+                                {option.address ? ` · ${option.address}` : ''}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                      {!brregLoading && !brregError && String(form.businessName || '').trim().length >= 2 && brregResults.length === 0 ? (
+                        <p className="mt-2 text-xs text-[#6B7280]">Ingen treff i BRREG for dette søket.</p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </>
+              )
             ) : null}
           </div>
 

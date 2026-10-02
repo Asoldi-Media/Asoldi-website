@@ -7,6 +7,7 @@ import {
 } from '../shared';
 import { buildClientSearchHaystack, matchesClientSearchQuery, normalizeClientSearchText } from '../clientSearch';
 import { RECENT_OVERDUE_MS } from '../../../../lib/sales-next-actions.js';
+import { persistDevelopmentBoard, readStoredDevelopmentBoard } from '../../../../lib/development-phase.js';
 import { DeveloperClientCard } from '../../developer/DeveloperClientCard';
 import { pipelineStatusFromMakerRun } from '../../../../lib/developer-card.js';
 import { DeveloperRunQueueBar } from '../../developer/DeveloperRunQueueBar';
@@ -17,10 +18,36 @@ type Props = {
   hideHeader?: boolean;
 };
 
+type BoardId = 'preview' | 'deployment';
 type BucketId = 'recentPastDue' | 'upcoming' | 'pastDue' | 'noNextAction';
 type BucketTone = 'recent' | 'upcoming' | 'past' | 'none';
 
-const BUCKET_META: Record<BucketId, { title: string; hint: string; tone: BucketTone }> = {
+const COLLAPSED_STORAGE_KEY = 'asoldi-development-timeline-collapsed';
+
+const PREVIEW_BUCKET_META: Record<BucketId, { title: string; hint: string; tone: BucketTone }> = {
+  recentPastDue: {
+    title: 'Forfalt (siste 48 timer)',
+    hint: 'Nylig forfalt møte eller neste handling — vises øverst slik at du ikke mister dem.',
+    tone: 'recent',
+  },
+  upcoming: {
+    title: 'Neste møte',
+    hint: 'Kommende møte eller handling, nærmeste først. Samme rekkefølge som Sales.',
+    tone: 'upcoming',
+  },
+  pastDue: {
+    title: 'Forfalt',
+    hint: 'Mer enn 48 timer etter neste møte eller handling.',
+    tone: 'past',
+  },
+  noNextAction: {
+    title: 'Ingen neste handling',
+    hint: 'Ingen neste handling eller avtalt møtetid. Sortert alfabetisk.',
+    tone: 'none',
+  },
+};
+
+const DEPLOYMENT_BUCKET_META: Record<BucketId, { title: string; hint: string; tone: BucketTone }> = {
   recentPastDue: {
     title: 'Frist nylig passert',
     hint: 'Leveringsfristen gikk ut de siste 48 timene.',
@@ -44,10 +71,14 @@ const BUCKET_META: Record<BucketId, { title: string; hint: string; tone: BucketT
 };
 
 const BUCKET_ORDER: BucketId[] = ['recentPastDue', 'upcoming', 'pastDue', 'noNextAction'];
-const COLLAPSED_STORAGE_KEY = 'asoldi-development-timeline-collapsed';
 
-function itemRankMs(item: DevelopmentItem) {
-  const raw = String(item.websiteDue?.dueAt || item.rankAt || '').trim();
+function itemRankMs(item: DevelopmentItem, kind: BoardId = 'deployment') {
+  const raw = String(
+    item.rankAt
+    || (kind === 'preview' ? (item.nextActionAt || item.meetingAt) : '')
+    || item.websiteDue?.dueAt
+    || ''
+  ).trim();
   if (!raw) return null;
   const ms = new Date(raw).getTime();
   return Number.isFinite(ms) ? ms : null;
@@ -55,7 +86,7 @@ function itemRankMs(item: DevelopmentItem) {
 
 // Same 48-hour window as the Sales board: upcoming → recently overdue (kept on top for
 // 48h) → overdue → no time (alphabetical).
-function groupDevelopmentItems(items: DevelopmentItem[], nowMs: number) {
+function groupDevelopmentItems(items: DevelopmentItem[], nowMs: number, kind: BoardId = 'deployment') {
   const groups: Record<BucketId, DevelopmentItem[]> = {
     recentPastDue: [],
     upcoming: [],
@@ -63,13 +94,13 @@ function groupDevelopmentItems(items: DevelopmentItem[], nowMs: number) {
     noNextAction: [],
   };
   for (const item of items) {
-    const ms = itemRankMs(item);
+    const ms = itemRankMs(item, kind);
     if (ms == null) groups.noNextAction.push(item);
     else if (ms >= nowMs) groups.upcoming.push(item);
     else if (nowMs - ms <= RECENT_OVERDUE_MS) groups.recentPastDue.push(item);
     else groups.pastDue.push(item);
   }
-  const byMs = (a: DevelopmentItem, b: DevelopmentItem) => (itemRankMs(a) || 0) - (itemRankMs(b) || 0);
+  const byMs = (a: DevelopmentItem, b: DevelopmentItem) => (itemRankMs(a, kind) || 0) - (itemRankMs(b, kind) || 0);
   groups.upcoming.sort(byMs);
   groups.recentPastDue.sort(byMs);
   groups.pastDue.sort(byMs);
@@ -97,9 +128,9 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
   const websiteMakerBaseUrl = LOCAL_EDITOR_ORIGIN;
   const [queueItems, setQueueItems] = useState<Array<Record<string, unknown>>>([]);
   const [queueMemory, setQueueMemory] = useState<Record<string, unknown> | null>(null);
+  const [board, setBoard] = useState<BoardId>(() => readStoredDevelopmentBoard('preview'));
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
-  const [kindFilter, setKindFilter] = useState<'' | 'preview' | 'deployment'>('');
   const [runFilter, setRunFilter] = useState<'' | 'with-run' | 'without-run'>('');
   const [stepFilter, setStepFilter] = useState('');
   const [dueFilter, setDueFilter] = useState<'' | 'started' | 'waiting' | 'overdue' | 'upcoming'>('');
@@ -141,14 +172,20 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
   function clearSearch() {
     setSearchInput('');
     setSearchQuery('');
-    setKindFilter('');
     setRunFilter('');
     setStepFilter('');
     setDueFilter('');
     setOnlyWithRequests(false);
   }
 
-  const hasActiveFilters = Boolean(searchQuery || kindFilter || runFilter || stepFilter || dueFilter || onlyWithRequests);
+  function chooseBoard(next: BoardId) {
+    setBoard(next);
+    setSelectedIds([]);
+    if (next === 'preview') setDueFilter('');
+    persistDevelopmentBoard(next);
+  }
+
+  const hasActiveFilters = Boolean(searchQuery || runFilter || stepFilter || dueFilter || onlyWithRequests);
   const itemMatchesSearch = useCallback(
     (item: DevelopmentItem) => {
       if (!searchQuery) return true;
@@ -183,7 +220,7 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
                   : false;
         if (!ready) return false;
       }
-      if (dueFilter) {
+      if (board === 'deployment' && dueFilter) {
         const started = Boolean(item.websiteDue?.started && item.websiteDue?.dueAt);
         const dueMs = started ? Date.parse(String(item.websiteDue?.dueAt || '')) : NaN;
         if (dueFilter === 'started' && !started) return false;
@@ -195,24 +232,22 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
       const id = String(item.salesClientId || item.id || '').trim();
       return Boolean(threadMap[id]);
     },
-    [itemMatchesSearch, runFilter, stepFilter, dueFilter, nowMs, onlyWithRequests, threadMap]
+    [board, itemMatchesSearch, runFilter, stepFilter, dueFilter, nowMs, onlyWithRequests, threadMap]
   );
   const previewGroups = useMemo(
-    () => groupDevelopmentItems(previewItems.filter(itemVisible), nowMs),
+    () => groupDevelopmentItems(previewItems.filter(itemVisible), nowMs, 'preview'),
     [previewItems, itemVisible, nowMs]
   );
   const deploymentGroups = useMemo(
-    () => groupDevelopmentItems(deploymentItems.filter(itemVisible), nowMs),
+    () => groupDevelopmentItems(deploymentItems.filter(itemVisible), nowMs, 'deployment'),
     [deploymentItems, itemVisible, nowMs]
   );
   const visiblePreviewCount = previewItems.filter(itemVisible).length;
   const visibleDeploymentCount = deploymentItems.filter(itemVisible).length;
   const visibleItems = useMemo(() => {
-    const list: DevelopmentItem[] = [];
-    if (kindFilter !== 'deployment') list.push(...previewItems.filter(itemVisible));
-    if (kindFilter !== 'preview') list.push(...deploymentItems.filter(itemVisible));
-    return list;
-  }, [deploymentItems, itemVisible, kindFilter, previewItems]);
+    const source = board === 'preview' ? previewItems : deploymentItems;
+    return source.filter(itemVisible);
+  }, [board, deploymentItems, itemVisible, previewItems]);
   const visibleSelectableIds = visibleItems.map((item) => item.id);
   const allVisibleSelected = Boolean(visibleSelectableIds.length && visibleSelectableIds.every((id) => selectedIds.includes(id)));
   const selectedClients = visibleItems
@@ -255,7 +290,7 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
           const items = groups[bucketId];
           const bucketKey = `${kind}:${bucketId}`;
           const collapsed = Boolean(collapsedBuckets[bucketKey]);
-          const meta = BUCKET_META[bucketId];
+          const meta = (kind === 'preview' ? PREVIEW_BUCKET_META : DEPLOYMENT_BUCKET_META)[bucketId];
           return (
             <div key={bucketKey} className="space-y-3">
               <button
@@ -422,7 +457,7 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
     }
   }
 
-  const empty = !loading && previewItems.length === 0 && deploymentItems.length === 0;
+  const empty = !loading && (board === 'preview' ? previewItems.length === 0 : deploymentItems.length === 0);
 
   return (
     <div className="space-y-6">
@@ -430,10 +465,27 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
         <div>
           <h2 className="text-lg font-semibold text-white">Utvikling</h2>
           <p className="text-gray-400 text-sm">
-            Preview-nettsider for aktive salgskunder, og deployment etter kontrakt er signert.
+            Forhåndsvisning er salgskunder i møterekkefølge. Utvikler er signerte kontrakter med leveringsfrist.
           </p>
         </div>
       )}
+
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => chooseBoard('preview')}
+          className={`px-4 py-2 rounded-lg text-sm font-medium ${board === 'preview' ? 'bg-[#FF5B00] text-white' : 'bg-white/10 text-gray-300 hover:bg-white/15'}`}
+        >
+          Forhåndsvisning
+        </button>
+        <button
+          type="button"
+          onClick={() => chooseBoard('deployment')}
+          className={`px-4 py-2 rounded-lg text-sm font-medium ${board === 'deployment' ? 'bg-[#FF5B00] text-white' : 'bg-white/10 text-gray-300 hover:bg-white/15'}`}
+        >
+          Utvikler
+        </button>
+      </div>
 
       <form onSubmit={applySearch} className="rounded-2xl bg-[#2a2a2a] border border-white/10 p-4">
         <label className="text-xs font-semibold text-gray-200 uppercase tracking-wide">Search and filter</label>
@@ -448,15 +500,6 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
                 className="w-full pl-9 pr-3 py-2 rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm"
               />
             </div>
-            <select
-              value={kindFilter}
-              onChange={(event) => setKindFilter(event.target.value as '' | 'preview' | 'deployment')}
-              className="rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
-            >
-              <option value="">Preview + deployment</option>
-              <option value="preview">Preview websites</option>
-              <option value="deployment">Deployment</option>
-            </select>
             <select
               value={runFilter}
               onChange={(event) => setRunFilter(event.target.value as '' | 'with-run' | 'without-run')}
@@ -478,6 +521,7 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
               <option value="2.1">Steg 2.1 klar</option>
               <option value="2.2">Steg 2.2 klar</option>
             </select>
+            {board === 'deployment' ? (
             <select
               value={dueFilter}
               onChange={(event) => setDueFilter(event.target.value as '' | 'started' | 'waiting' | 'overdue' | 'upcoming')}
@@ -489,6 +533,7 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
               <option value="overdue">Forfalt frist</option>
               <option value="started">Har fristdato</option>
             </select>
+            ) : null}
             <label className="inline-flex items-center gap-2 rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -517,9 +562,11 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
             )}
           </div>
           <p className="text-[11px] text-gray-400">
-            Sortert etter nettsidefrist. Fristen starter når salg huker av signert kontrakt. Nylig forfalt ligger øverst i 48 timer, deretter{' '}
-            <span className="text-red-300">Forfalt</span>. Click a section header to collapse it.
-            {hasActiveFilters ? ` Showing ${visiblePreviewCount} preview and ${visibleDeploymentCount} deployment client(s).` : ''}
+            {board === 'preview'
+              ? 'Forhåndsvisning er sortert som Sales: neste møte eller handling, nærmeste først. Nylig forfalt ligger øverst i 48 timer.'
+              : 'Utvikler er sortert etter nettsidefrist. Fristen starter når salg huker av signert kontrakt.'}
+            {' '}Click a section header to collapse it.
+            {hasActiveFilters ? ` Showing ${board === 'preview' ? visiblePreviewCount : visibleDeploymentCount} client(s).` : ''}
           </p>
         </div>
       </form>
@@ -555,46 +602,38 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
         </div>
       ) : empty ? (
         <p className="text-gray-400 text-center py-8">
-          Ingen preview- eller deployment-kunder ennå. Nye salgskunder vises under Preview websites.
+          {board === 'preview'
+            ? 'Ingen forhåndsvisningskunder ennå. Aktive salgskunder uten signert kontrakt vises her.'
+            : 'Ingen utviklerkunder ennå. Signerte kontrakter flyttes hit fra forhåndsvisning.'}
         </p>
+      ) : board === 'preview' ? (
+        <section className="space-y-3">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Forhåndsvisning</h3>
+            <p className="text-xs text-gray-400 mt-1">
+              Samme kunder som Sales, i møterekkefølge. UI-en er utviklerkortet — lag preview-run slik at sales åpner den offentlige URL-en.
+            </p>
+          </div>
+          {visiblePreviewCount === 0 ? (
+            <p className="text-sm text-gray-500">Ingen forhåndsvisningskunder matcher søket.</p>
+          ) : (
+            renderGroupedCards('preview', previewGroups)
+          )}
+        </section>
       ) : (
-        <>
-          {kindFilter !== 'deployment' && (
-            <section className="space-y-3">
-              <div>
-                <h3 className="text-sm font-semibold text-white">Preview website runs</h3>
-                <p className="text-xs text-gray-400 mt-1">
-                  Aktive salgskunder. Lag preview-run her slik at sales bare åpner den offentlige URL-en.
-                </p>
-              </div>
-              {previewItems.length === 0 ? (
-                <p className="text-sm text-gray-500">Ingen preview-kunder akkurat nå.</p>
-              ) : visiblePreviewCount === 0 ? (
-                <p className="text-sm text-gray-500">Ingen preview-kunder matcher søket.</p>
-              ) : (
-                renderGroupedCards('preview', previewGroups)
-              )}
-            </section>
+        <section className="space-y-3">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Utvikler</h3>
+            <p className="text-xs text-gray-400 mt-1">
+              Signerte kontrakter: pipeline, Hostinger, GitHub, V1 og ferdig nettside.
+            </p>
+          </div>
+          {visibleDeploymentCount === 0 ? (
+            <p className="text-sm text-gray-500">Ingen utviklerkunder matcher søket.</p>
+          ) : (
+            renderGroupedCards('deployment', deploymentGroups)
           )}
-
-          {kindFilter !== 'preview' && (
-            <section className="space-y-3">
-              <div>
-                <h3 className="text-sm font-semibold text-white">Deployment website runs</h3>
-                <p className="text-xs text-gray-400 mt-1">
-                  Signerte kontrakter: Hostinger, GitHub, V1 og ferdig nettside.
-                </p>
-              </div>
-              {deploymentItems.length === 0 ? (
-                <p className="text-sm text-gray-500">Ingen deployment-kunder akkurat nå.</p>
-              ) : visibleDeploymentCount === 0 ? (
-                <p className="text-sm text-gray-500">Ingen deployment-kunder matcher søket.</p>
-              ) : (
-                renderGroupedCards('deployment', deploymentGroups)
-              )}
-            </section>
-          )}
-        </>
+        </section>
       )}
     </div>
   );

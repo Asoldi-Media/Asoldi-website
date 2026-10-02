@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { CheckCircle2, Loader2, Paperclip, Send } from 'lucide-react';
-import { API, salesAuthHeaders, type SalesClient, type WorkshopActionFormat } from '../shared';
+import { CalendarDays, CheckCircle2, Loader2, Paperclip, Plus, Send } from 'lucide-react';
+import { API, salesAuthHeaders, type SalesClient, type WorkshopActionFormat, type WorkshopGoalAction } from '../shared';
 import { formatActionFormatLabel, isoToDatetimeLocalOslo, datetimeLocalOsloToIso } from '../../../../lib/sales-next-actions.js';
+import { WORKSHOP_FORMATS } from '../../../../lib/workshop-action-shared.js';
 import { clientMeetingHover } from '../../../../lib/workshop-record.js';
 import { MeetingVideoHover } from './MeetingVideoHover';
 import { WorkshopIterationLog } from './WorkshopIterationLog';
@@ -40,6 +41,13 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
   const [workshopFiles, setWorkshopFiles] = useState<FileList | null>(null);
   const [iterationNote, setIterationNote] = useState('');
   const [iterationFiles, setIterationFiles] = useState<FileList | null>(null);
+  const [workshopName, setWorkshopName] = useState(() => String(client.workshopAction?.name || 'Workshop'));
+  const [workshopDue, setWorkshopDue] = useState(() => isoToDatetimeLocalOslo(client.workshopAction?.dueAt || ''));
+  const [workshopFormat, setWorkshopFormat] = useState<WorkshopActionFormat>(client.workshopAction?.format || 'mote');
+  const [workshopCalendar, setWorkshopCalendar] = useState(Boolean(client.workshopAction?.addToCalendar || client.workshopAction?.format === 'mote'));
+  const [goalActions, setGoalActions] = useState<WorkshopGoalAction[]>(() => (
+    Array.isArray(client.workshop?.goalActions) ? client.workshop.goalActions : []
+  ));
   const [iterationDue, setIterationDue] = useState(() => isoToDatetimeLocalOslo(iteration?.dueAt || ''));
   const [iterationFormat, setIterationFormat] = useState<WorkshopActionFormat>(iteration?.format || 'mote');
   const [iterationCalendar, setIterationCalendar] = useState(Boolean(iteration?.addToCalendar));
@@ -118,7 +126,25 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
     });
   }
 
+  function saveWorkshopBooking() {
+    void run('workshop-action', async () => {
+      const format = workshopFormat === 'sms' || workshopFormat === 'ring' || workshopFormat === 'sms-ring'
+        ? workshopFormat
+        : 'mote';
+      await patchJson(`/admin/sales/${encodeURIComponent(client.id)}/workshop-action`, {
+        name: workshopName.trim() || 'Workshop',
+        format,
+        dueAt: datetimeLocalOsloToIso(workshopDue),
+        addToCalendar: format === 'mote' ? true : workshopCalendar,
+        confirmSend: true,
+        goalActions,
+      });
+    });
+  }
+
   const summary = workshop?.summary;
+  const booking = client.workshopAction;
+  const pendingApproval = Boolean(booking?.dueAt) && booking?.status !== 'confirmed';
 
   return (
     <div className="space-y-2" onClick={(event) => event.stopPropagation()}>
@@ -151,6 +177,122 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
           {busy === 'iterated' ? <Loader2 size={11} className="inline mr-1 animate-spin" /> : iterated ? <CheckCircle2 size={11} className="inline mr-1" /> : null}
           Iterert
         </button>
+      </div>
+
+      <div className="rounded-lg border border-white/10 bg-black/20 p-2 space-y-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-[11px] text-gray-400">Workshop-handling</div>
+          {pendingApproval ? (
+            <span className="text-[10px] uppercase tracking-wide text-amber-300">Venter på godkjenning</span>
+          ) : booking?.status === 'confirmed' ? (
+            <span className="text-[10px] uppercase tracking-wide text-emerald-300">Bekreftet</span>
+          ) : null}
+        </div>
+        <input
+          type="text"
+          value={workshopName}
+          onChange={(event) => setWorkshopName(event.target.value)}
+          className="w-full rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
+        />
+        <input
+          type="datetime-local"
+          value={workshopDue}
+          onChange={(event) => setWorkshopDue(event.target.value)}
+          className="w-full rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            value={workshopFormat}
+            onChange={(event) => {
+              const format = event.target.value as WorkshopActionFormat;
+              setWorkshopFormat(format);
+              if (format === 'mote') setWorkshopCalendar(true);
+            }}
+            className="min-w-0 flex-1 rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
+          >
+            {WORKSHOP_FORMATS.map((format) => (
+              <option key={format} value={format}>{formatActionFormatLabel(format)}</option>
+            ))}
+          </select>
+          <CalendarDays size={14} className="text-gray-400" />
+          <button
+            type="button"
+            role="switch"
+            aria-label="I Google Kalender"
+            aria-checked={workshopFormat === 'mote' ? true : workshopCalendar}
+            disabled={workshopFormat === 'mote'}
+            onClick={() => setWorkshopCalendar((prev) => !prev)}
+            className={`relative inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors disabled:opacity-70 ${
+              (workshopFormat === 'mote' ? true : workshopCalendar) ? 'bg-[#FF5B00]' : 'bg-white/20'
+            }`}
+          >
+            <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${
+              (workshopFormat === 'mote' ? true : workshopCalendar) ? 'ml-4' : 'ml-1'
+            }`} />
+          </button>
+        </div>
+        {goalActions.map((row) => (
+          <div key={row.id} className="grid grid-cols-1 sm:grid-cols-3 gap-1.5">
+            <input
+              type="text"
+              value={row.name}
+              onChange={(event) => setGoalActions((prev) => prev.map((item) => (
+                item.id === row.id ? { ...item, name: event.target.value } : item
+              )))}
+              className="rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
+            />
+            <input
+              type="datetime-local"
+              value={isoToDatetimeLocalOslo(row.dueAt)}
+              onChange={(event) => setGoalActions((prev) => prev.map((item) => (
+                item.id === row.id ? { ...item, dueAt: datetimeLocalOsloToIso(event.target.value) } : item
+              )))}
+              className="rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
+            />
+            <select
+              value={row.format}
+              onChange={(event) => setGoalActions((prev) => prev.map((item) => (
+                item.id === row.id ? { ...item, format: event.target.value as WorkshopActionFormat } : item
+              )))}
+              className="rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
+            >
+              {WORKSHOP_FORMATS.map((format) => (
+                <option key={format} value={format}>{formatActionFormatLabel(format)}</option>
+              ))}
+            </select>
+          </div>
+        ))}
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setGoalActions((prev) => [
+              ...prev,
+              {
+                id: `wga-${Date.now()}`,
+                name: 'Handling',
+                format: 'sms',
+                dueAt: '',
+                addToCalendar: false,
+              },
+            ])}
+            className={CHIP}
+          >
+            <Plus size={12} />
+            Legg til handling
+          </button>
+          <button
+            type="button"
+            disabled={busy === 'workshop-action' || !workshopDue}
+            onClick={saveWorkshopBooking}
+            className={CHIP}
+          >
+            {busy === 'workshop-action' ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+            Lagre
+          </button>
+        </div>
+        <p className="text-[10px] text-gray-500">
+          Lagre sender workshop-e-post og kalenderinvitasjon bare for Møte med kalender på.
+        </p>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">

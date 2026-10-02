@@ -34,7 +34,7 @@ export function ManageClientsSection({
       <div>
         <h1 className="text-2xl font-bold text-white mb-2">Manage clients</h1>
         <p className="text-gray-400 text-sm">
-          Track live hub clients, websites in development, and sales prospects. Admin is the workshop desk for damian@asoldi.com. New sales clients appear under Development → Preview. Signed contracts move to Deployment.
+          Track live hub clients, websites in development, and sales prospects. Admin is the workshop desk for damian@asoldi.com. New sales clients appear under Development → Forhåndsvisning. Signed contracts move to Utvikler.
         </p>
       </div>
 

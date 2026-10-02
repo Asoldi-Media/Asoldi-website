@@ -13,6 +13,7 @@ import { summarizeMaterialDots } from '../../../lib/client-material-dots.js';
 import {
   DEVELOPER_PROGRESS_CHIPS,
   chipStepReady,
+  developerCardTimeline,
   developerMediaLibraryView,
   developerSummaryView,
   makerCustomEditUrl,
@@ -101,12 +102,7 @@ export function DeveloperClientCard({
   const contact = [item.contactPerson, item.contactPhone, item.contactEmail].filter(Boolean).join(' · ');
   const salesClientId = String(item.salesClientId || '').trim();
   const makerRunId = String(item.makerRun?.runId || '').trim();
-  const dueLabel = String(item.websiteDue?.label || '').trim();
-  const dueOverdue = Boolean(
-    item.websiteDue?.started
-    && item.websiteDue?.dueAt
-    && Date.parse(item.websiteDue.dueAt) < Date.now()
-  );
+  const timeline = developerCardTimeline(item, kind);
   const summary = developerSummaryView(item.workshop);
   const [qa, setQa] = useState(() => normalizeDeveloperQa(item.developerQa));
   const [dots, setDots] = useState<MaterialDot[]>([]);
@@ -540,13 +536,13 @@ export function DeveloperClientCard({
         {shortDescription ? (
           <p className="mt-1 text-xs text-gray-400 line-clamp-2">{shortDescription}</p>
         ) : null}
-        {dueLabel ? (
+        {timeline.label ? (
           <p className={`mt-1 text-xs flex items-center gap-1.5 ${
-            dueOverdue ? 'text-red-300' : item.websiteDue?.started ? 'text-sky-300' : 'text-gray-400'
+            timeline.tone === 'overdue' ? 'text-red-300' : timeline.tone === 'live' ? 'text-sky-300' : 'text-gray-400'
           }`}
           >
             <CalendarClock size={12} />
-            {dueLabel}
+            {timeline.label}
           </p>
         ) : null}
         {salesClientId ? (

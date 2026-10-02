@@ -18,7 +18,7 @@ import {
 } from '../lib/sales-next-actions.js';
 import { calendarDurationForMode } from '../lib/sales-meeting-duration.js';
 import { filterCustomOtherLinks } from '../lib/sales-client-links.js';
-import { normalizeWorkshopAction } from '../lib/workshop-action.js';
+import { normalizeWorkshopAction, offerStartDateFromWorkshopDueAt } from '../lib/workshop-action.js';
 import { persistWorkshopRecord } from '../lib/workshop-record.js';
 import { normalizeDeveloperQa } from '../lib/developer-card.js';
 import { normalizeDueDate } from '../lib/website-due.js';
@@ -750,12 +750,25 @@ export function findSalesClientByMeetingId(meetingId) {
   return readState().find((entry) => entry.meetings.some((meeting) => meeting.meetingId === target)) || null;
 }
 
-export function setSalesWorkshopAction(id, workshopAction) {
+export function setSalesWorkshopAction(id, workshopAction, extras = {}) {
   const current = getSalesClientById(id);
   if (!current) return null;
-  return updateSalesClient(id, {
-    workshopAction: persistWorkshopAction(workshopAction),
-  });
+  const nextAction = persistWorkshopAction(workshopAction);
+  const startDate = offerStartDateFromWorkshopDueAt(nextAction?.dueAt || '');
+  const quote = current.details?.meetingQuote && typeof current.details.meetingQuote === 'object'
+    ? current.details.meetingQuote
+    : {};
+  const updates = {
+    workshopAction: nextAction,
+    details: {
+      ...(current.details || {}),
+      meetingQuote: { ...quote, startDate },
+    },
+  };
+  if (Object.prototype.hasOwnProperty.call(extras, 'workshop')) {
+    updates.workshop = persistWorkshopRecord(extras.workshop);
+  }
+  return updateSalesClient(id, updates);
 }
 
 export function setSalesWorkshop(id, workshop) {

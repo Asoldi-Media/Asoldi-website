@@ -58,6 +58,7 @@ import {
   clientMatchesMeetingModeFilter,
   clientNextActionInDateRange,
 } from '../../../../lib/sales-next-actions.js';
+import { persistDevelopmentBoard } from '../../../../lib/development-phase.js';
 import { salesBookingFacts } from '../../../../lib/sales-booking-facts.js';
 import { calendarDurationForMode } from '../../../../lib/sales-meeting-duration.js';
 import { GOOGLE_CALENDAR_OAUTH_EVENT } from '../../../../lib/google-calendar-oauth-ui.js';
@@ -1257,7 +1258,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
   }
 
   async function saveWorkshopAction(client: SalesClient, payload: {
-    workshopAction: { name: string; format: 'mote' | 'sms-ring'; dueAt: string; addToCalendar: boolean };
+    workshopAction: { name: string; format: 'sms' | 'ring' | 'sms-ring' | 'mote'; dueAt: string; addToCalendar: boolean };
   }) {
     setSavingNoteId(client.id);
     setError('');
@@ -2406,11 +2407,12 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                       disabled={!canMarkSold}
                       onClick={() => {
                         if (!canMarkSold) return;
+                        persistDevelopmentBoard('deployment');
                         onMovedToDevelopment?.();
-                        setNotice(`${client.businessName || 'Kunden'} er solgt og ligger under Utvikling → Deployment.`);
+                        setNotice(`${client.businessName || 'Kunden'} er solgt og ligger under Utvikling → Utvikler.`);
                       }}
                       title={canMarkSold
-                        ? 'Kontrakt signert. Åpner deployment-utvikling.'
+                        ? 'Kontrakt signert. Åpner Utvikler.'
                         : 'Solgt nettside kan bare klikkes når kontrakt er signert.'}
                       className={`inline-flex items-center gap-1.5 px-3 py-2 sm:py-1.5 min-h-[40px] sm:min-h-0 rounded-lg text-xs disabled:opacity-40 ${
                         websiteSold
@@ -3888,15 +3890,15 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                 saving={savingNoteId === flowClient.id}
                 onPersist={(payload) => saveMeetingNotes(flowClient, payload)}
                 onPersistWorkshop={(payload) => saveWorkshopAction(flowClient, payload)}
-                onLoadWorkshopAvailability={(weekOffset) => (
-                  request(`/admin/sales/google/workshop-availability?weekOffset=${weekOffset}`) as Promise<{
+                onLoadWorkshopCalendar={() => (
+                  request('/admin/sales/google/embed?workshopCalendar=1') as Promise<{
                     connected?: boolean;
+                    embedUrl?: string;
                     googleEmail?: string;
                     message?: string;
-                    days?: string[];
-                    timeMin?: string;
-                    timeMax?: string;
-                    busy?: Array<{ start?: string; end?: string; allDay?: boolean; summary?: string }>;
+                    shareWarning?: string;
+                    isOwnCalendar?: boolean;
+                    accountKey?: string;
                   }>
                 )}
                 onFlushReady={(flush) => { notesFlushRef.current = flush; }}

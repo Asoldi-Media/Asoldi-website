@@ -61,7 +61,7 @@ import {
   startProductScrape,
 } from './lib/ai-assistant/service.js';
 import { parsePublicHttpUrl } from './lib/ai-assistant/safe-url.js';
-import { fetchGoogleMapsPlaces } from './lib/google-places-search.js';
+import { googleMapsApiKey, searchPublicGoogleProfiles } from './lib/google-places-search.js';
 import {
   listSerpApiKeys,
   runWithSerpApiFailover,
@@ -107,6 +107,7 @@ import {
   renderSalesUnsubscribePage,
   htmlToPlainText,
   salesEmailMergeMap,
+  buildSalesCalendarInvite,
 } from './lib/sales-email.js';
 import { assignmentStampForOwnerChange, confirmationSendGaps, confirmationShouldSendOnChange, meetingTimeHasPassed, normalizeSecondaryInterest, osloWeekRange, resolveMeetingAtOnMyphonerMerge, sameMeetingInstant } from './lib/sales-next-actions.js';
 import { normalizeStoredWebsiteEmail, resolveWebsiteEmail } from './lib/sales-website-email.js';
@@ -249,12 +250,15 @@ import { flattenMakerUploadsForLibrary, makerProgressPatchFromHandoff, normalize
 import { LOCAL_EDITOR_ORIGIN } from './lib/maker-editor-origin.js';
 import {
   DAMIAN_WORKSHOP_CALENDAR_EMAIL,
+  WORKSHOP_DURATION_MINUTES,
+  buildWorkshopSyntheticMeetingClient,
   getWorkshopAction,
   normalizeWorkshopAction,
   sanitizeWorkshopFormat,
   syncWorkshopCalendar,
   tryBuildSalesWorkshopEmail,
   workshopEmailShouldSend,
+  workshopIsConfirmed,
 } from './lib/workshop-action.js';
 import {
   adminBoardViewerIsDamianMailbox,
@@ -10725,14 +10729,14 @@ app.get('/api/client/places-search', clientAuth, async (req, res) => {
   if (!user || user.role !== 'client') return res.status(401).json({ message: 'Unauthorized' });
   const query = sanitizeText(req.query?.q);
   if (query.length < 2) return res.json({ results: [] });
-  if (!listSerpApiKeys().length) {
+  if (!googleMapsApiKey() && !listSerpApiKeys().length) {
     return res.status(503).json({
       results: [],
       message: 'Søk i Google-profiler er ikke satt opp. Lim inn Maps-lenken i stedet.',
     });
   }
   try {
-    const results = await fetchGoogleMapsPlaces(query);
+    const results = await searchPublicGoogleProfiles(query);
     return res.json({ results });
   } catch (error) {
     return res.status(502).json({
@@ -13717,7 +13721,8 @@ async function sendWorkshopBookingEmail(client, action, salesUser) {
     return { sent: false, warning: 'Workshop-e-post ble ikke sendt: e-post er ikke konfigurert.' };
   }
   const sender = await resolveSalesSenderForAccount(salesUser);
-  const built = await tryBuildSalesWorkshopEmail(client, { meetLink: action.meetLink }, {
+  const calendar = { meetLink: action.meetLink, eventId: action.calendarEventId };
+  const built = await tryBuildSalesWorkshopEmail(client, calendar, {
     sender,
     workshop: {
       format: action.format,
@@ -13728,6 +13733,14 @@ async function sendWorkshopBookingEmail(client, action, salesUser) {
   if (!built) {
     return { sent: false, warning: '' };
   }
+  const synthetic = buildWorkshopSyntheticMeetingClient(client, action);
+  const organizer = emailLib.parseMailbox(built.from || sender.from || '');
+  const invite = buildSalesCalendarInvite(synthetic, calendar, {
+    organizerEmail: organizer.address || sender.fromEmail || DAMIAN_WORKSHOP_CALENDAR_EMAIL,
+    organizerName: organizer.name || sender.name || 'Asoldi',
+    durationMinutes: WORKSHOP_DURATION_MINUTES,
+    summary: `Asoldi · ${sanitizeText(action.name) || 'Workshop'} · ${sanitizeText(client.businessName) || 'kunde'}`,
+  });
   await emailLib.sendEmail({
     to: recipient,
     from: built.from,
@@ -13737,6 +13750,7 @@ async function sendWorkshopBookingEmail(client, action, salesUser) {
     text: built.text,
     html: built.html,
     attachments: built.attachments,
+    icalEvent: invite || undefined,
   });
   return { sent: true };
 }
@@ -13747,7 +13761,9 @@ app.patch('/api/admin/sales/:id/workshop-action', salesAuth, async (req, res) =>
   if (!canAccessSalesClient(req, existing)) return res.status(403).json({ message: 'Not your sales client.' });
   const previous = normalizeWorkshopAction(existing.workshopAction || {});
   const body = req.body && typeof req.body === 'object' ? req.body : {};
-  const next = normalizeWorkshopAction({
+  const confirmSend = Boolean(body.confirmSend);
+  if (confirmSend && !requireOfferAdmin(req, res)) return;
+  const drafted = normalizeWorkshopAction({
     ...previous,
     name: Object.prototype.hasOwnProperty.call(body, 'name') ? body.name : previous.name,
     format: Object.prototype.hasOwnProperty.call(body, 'format') ? body.format : previous.format,
@@ -13764,22 +13780,59 @@ app.patch('/api/admin/sales/:id/workshop-action', salesAuth, async (req, res) =>
     firefliesLiveJoinAttemptAt: previous.firefliesLiveJoinAttemptAt,
     firefliesLiveJoinError: previous.firefliesLiveJoinError,
     id: previous.id,
+    confirmationSentAt: previous.confirmationSentAt,
+    status: 'draft',
+  });
+  const fieldsChanged = drafted.dueAt !== previous.dueAt
+    || drafted.format !== previous.format
+    || Boolean(drafted.addToCalendar) !== Boolean(previous.addToCalendar);
+  const next = normalizeWorkshopAction({
+    ...drafted,
+    status: confirmSend
+      ? 'confirmed'
+      : (workshopIsConfirmed(previous) && !fieldsChanged ? 'confirmed' : 'draft'),
+    confirmationSentAt: previous.confirmationSentAt,
   });
   try {
-    const sync = await syncWorkshopCalendar({
-      client: existing,
-      previousAction: previous,
-      nextAction: next,
-    });
-    const updated = sales.setSalesWorkshopAction(existing.id, sync.action);
+    let action = next;
+    const warnings = [];
+    if (confirmSend) {
+      const sync = await syncWorkshopCalendar({
+        client: existing,
+        previousAction: previous,
+        nextAction: next,
+      });
+      action = normalizeWorkshopAction({
+        ...sync.action,
+        status: 'confirmed',
+        confirmationSentAt: next.confirmationSentAt,
+      });
+      warnings.push(...(sync.warnings || []));
+    }
+    const record = getWorkshopRecord(existing);
+    const extras = Array.isArray(body.goalActions)
+      ? { workshop: mergeWorkshopRecord(record, { goalActions: body.goalActions }) }
+      : {};
+    const updated = sales.setSalesWorkshopAction(existing.id, action, extras);
     const client = updated || existing;
-    const warnings = [...(sync.warnings || [])];
     let emailSent = false;
-    if (workshopEmailShouldSend(previous, sync.action)) {
+    if (workshopEmailShouldSend(previous, action, { confirmSend })) {
       try {
-        const mailed = await sendWorkshopBookingEmail(client, sync.action, req.salesUser);
+        const mailed = await sendWorkshopBookingEmail(client, action, req.salesUser);
         emailSent = Boolean(mailed.sent);
         if (mailed.warning) warnings.push(mailed.warning);
+        if (emailSent && !action.confirmationSentAt) {
+          const stamped = sales.setSalesWorkshopAction(client.id, {
+            ...action,
+            confirmationSentAt: new Date().toISOString(),
+            status: 'confirmed',
+          });
+          return res.json({
+            client: jsonSalesClient(stamped || client),
+            warnings,
+            emailSent,
+          });
+        }
       } catch (error) {
         warnings.push(`Workshop-e-post feilet: ${error.message}`);
       }

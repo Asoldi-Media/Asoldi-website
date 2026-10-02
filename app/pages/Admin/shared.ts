@@ -178,7 +178,7 @@ export type SalesNextActionPreset = 'meeting' | 'meetingBooked' | 'findMeetingTi
 
 export type SalesActionFormat = 'email' | 'sms' | 'ring' | 'mote' | 'sms-ring';
 
-export type WorkshopActionFormat = 'mote' | 'sms-ring';
+export type WorkshopActionFormat = 'sms' | 'ring' | 'sms-ring' | 'mote';
 
 export type WorkshopAction = {
   id?: string;
@@ -186,6 +186,8 @@ export type WorkshopAction = {
   format: WorkshopActionFormat;
   dueAt: string;
   addToCalendar: boolean;
+  status?: 'draft' | 'confirmed';
+  confirmationSentAt?: string;
   calendarEventId: string;
   meetLink: string;
   accountKey?: string;
@@ -257,6 +259,14 @@ export type WorkshopHeardFact = {
   at: string;
 };
 
+export type WorkshopGoalAction = {
+  id: string;
+  name: string;
+  format: WorkshopActionFormat;
+  dueAt: string;
+  addToCalendar: boolean;
+};
+
 export type WorkshopRecord = {
   heldAt: string;
   iteratedAt: string;
@@ -266,6 +276,7 @@ export type WorkshopRecord = {
   iterationLog: WorkshopIterationLogEntry[];
   iterationMeeting: WorkshopIterationMeeting;
   heardFacts: WorkshopHeardFact[];
+  goalActions?: WorkshopGoalAction[];
 };
 
 export type DeveloperQa = {

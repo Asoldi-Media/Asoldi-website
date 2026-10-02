@@ -3,7 +3,15 @@ import assert from 'node:assert/strict';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { fetchGoogleMapsPlaces, mapGoogleMapsSearchResults, mapsUrlFromPlace } from '../lib/google-places-search.js';
+import {
+  fetchGoogleMapsPlaces,
+  mapGoogleMapsSearchResults,
+  mapPlacesApiResults,
+  mapsUrlFromPlace,
+  profileNameMatchesQuery,
+  resetPlacesApiState,
+  searchPublicGoogleProfiles,
+} from '../lib/google-places-search.js';
 
 const dataDir = mkdtempSync(join(tmpdir(), 'asoldi-onboarding-sources-'));
 process.env.APP_DATA_DIR = dataDir;
@@ -130,4 +138,101 @@ test('Maps profile search continues on the backup SerpAPI key in the same reques
   });
   assert.deepEqual(seen, ['maps-empty-key', 'maps-full-key']);
   assert.equal(rows[0].placeId, 'ChIJ-live');
+});
+
+test('places text search maps the public profile name, place id, and maps url', () => {
+  const rows = mapPlacesApiResults({
+    places: [{
+      id: 'ChIJasoldi',
+      displayName: { text: 'Asoldi' },
+      formattedAddress: 'Trondheim, Norge',
+      googleMapsUri: 'https://maps.google.com/?cid=99',
+      rating: 5,
+      userRatingCount: 3,
+      primaryTypeDisplayName: { text: 'Markedsføringsbyrå' },
+    }],
+  });
+  assert.equal(rows[0].name, 'Asoldi');
+  assert.equal(rows[0].placeId, 'ChIJasoldi');
+  assert.equal(rows[0].mapsUrl, 'https://maps.google.com/?cid=99');
+  assert.equal(rows[0].address, 'Trondheim, Norge');
+  assert.equal(rows[0].type, 'Markedsføringsbyrå');
+});
+
+test('unrelated autocomplete hits are not a match for the typed profile name', () => {
+  assert.equal(profileNameMatchesQuery("A Soldier's Child Foundation", 'asoldi'), false);
+  assert.equal(profileNameMatchesQuery('Amryn Soldier Photography', 'asoldi media'), false);
+  assert.equal(profileNameMatchesQuery('ASOL Digital', 'asoldi'), false);
+  assert.equal(profileNameMatchesQuery('Asoldi', 'asoldi media'), true);
+  assert.equal(profileNameMatchesQuery('Asoldi Media', 'asoldi'), true);
+});
+
+test('public profile search keeps the real place and skips unrelated hits', async () => {
+  resetPlacesApiState();
+  const urls = [];
+  const rows = await searchPublicGoogleProfiles('asoldi media', {
+    apiKey: 'test-key',
+    state: { newDisabled: false, legacyDisabled: false },
+    fetchImpl: async (url) => {
+      urls.push(String(url));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          places: [
+            {
+              id: 'ChIJwrong',
+              displayName: { text: "A Soldier's Child Foundation" },
+              formattedAddress: 'Smyrna, Tennessee, USA',
+            },
+            {
+              id: 'ChIJright',
+              displayName: { text: 'Asoldi' },
+              formattedAddress: 'Trondheim, Norge',
+              googleMapsUri: 'https://maps.google.com/?cid=99',
+            },
+          ],
+        }),
+      };
+    },
+  });
+  assert.equal(urls.length, 1);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].name, 'Asoldi');
+  assert.equal(rows[0].placeId, 'ChIJright');
+});
+
+test('profile search uses Norway Maps results when Places rejects the key', async () => {
+  resetPlacesApiState();
+  const rows = await searchPublicGoogleProfiles('Asoldi', {
+    apiKey: 'browser-key',
+    apiKeys: ['serp-key'],
+    state: { newDisabled: false, legacyDisabled: false },
+    fetchImpl: async (url) => {
+      const href = String(url);
+      if (href.includes('places:searchText')) {
+        return { ok: false, status: 403, json: async () => ({ error: { status: 'PERMISSION_DENIED' } }) };
+      }
+      if (href.includes('textsearch')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ status: 'REQUEST_DENIED', error_message: 'referer restrictions' }),
+        };
+      }
+      if (href.includes('serpapi.com')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            local_results: [{ title: 'Asoldi', place_id: 'ChIJserp', address: 'Trondheim, Norge' }],
+          }),
+        };
+      }
+      throw new Error(href);
+    },
+  });
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].placeId, 'ChIJserp');
+  assert.equal(rows[0].name, 'Asoldi');
 });

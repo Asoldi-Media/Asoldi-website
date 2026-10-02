@@ -166,7 +166,7 @@ test('booking helper and Admin UI never treat startDate as a booking or copy Sal
   assert.equal(bookingSrc.includes('details.workshopAction'), false);
 
   const salesSrc = readNearby('../app/pages/Admin/sections/SalesClientsSection.tsx');
-  assert.equal(salesSrc.includes('workshopCalendar'), false);
+  assert.match(salesSrc, /workshopCalendar=1/);
 
   const adminSrc = readNearby('../app/pages/Admin/sections/AdminBoardSection.tsx');
   assert.match(adminSrc, /workshopCalendar=1/);

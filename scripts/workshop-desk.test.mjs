@@ -178,6 +178,7 @@ test('T07 does not create a second workshop booking clock', () => {
     workshop: {
       action: { format: 'sms-ring', dueAt: '2026-12-01T10:00:00.000Z' },
       heldAt: '',
+      goalActions: [{ id: 'wga-1', name: 'Ring dagen før', format: 'ring', dueAt: DUE }],
     },
     details: { workshopAction: { format: 'mote', dueAt: '2026-11-01T09:00:00.000Z' } },
   };
@@ -187,6 +188,9 @@ test('T07 does not create a second workshop booking clock', () => {
   const stored = persistWorkshopRecord(client.workshop);
   assert.equal(stored?.heldAt || '', '');
   assert.equal(Object.prototype.hasOwnProperty.call(normalizeWorkshopRecord(client.workshop), 'action'), false);
+  assert.equal(stored.goalActions.length, 1);
+  assert.equal(stored.goalActions[0].format, 'ring');
+  assert.equal(stored.goalActions[0].name, 'Ring dagen før');
 });
 
 test('hover uses that meeting id, never meetings[0]', () => {

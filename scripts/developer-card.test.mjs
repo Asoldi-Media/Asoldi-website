@@ -10,6 +10,7 @@ import {
   DEVELOPER_PROGRESS_CHIPS,
   DEVELOPER_QA_LABELS,
   WORKSHOP_NOT_HELD_MESSAGE,
+  developerCardTimeline,
   developerMaterialsView,
   developerMediaLibraryView,
   developerSummaryView,
@@ -292,13 +293,29 @@ test('progress chips stay in the locked order and enqueue only through T03', () 
 test('Development card still mounts one request thread and the queue bar', () => {
   const section = readFileSync(join(here, '../app/pages/Admin/sections/DevelopmentClientsSection.tsx'), 'utf8');
   assert.match(section, /DeveloperRunQueueBar/);
+  assert.match(section, /Forhåndsvisning/);
+  assert.match(section, /chooseBoard\('preview'\)/);
+  assert.match(section, /chooseBoard\('deployment'\)/);
+  assert.match(section, /readStoredDevelopmentBoard/);
+  assert.equal(section.includes('kindFilter'), false);
+  assert.equal(section.includes('Preview website runs'), false);
+  assert.equal(section.includes('Deployment website runs'), false);
   assert.equal(section.includes('DeveloperRequestThread'), false);
   assert.equal(section.includes('Start tunnel'), false);
   assert.equal(section.includes('Website Maker URL'), false);
   assert.match(section, /LOCAL_EDITOR_ORIGIN/);
   const card = readFileSync(join(here, '../app/pages/developer/DeveloperClientCard.tsx'), 'utf8');
+  assert.match(card, /developerCardTimeline/);
   const cardThreads = card.split('<DeveloperRequestThread').length - 1;
   assert.equal(cardThreads, 1);
+  const workspace = readFileSync(join(here, '../app/pages/developer/DeveloperWorkspace.tsx'), 'utf8');
+  assert.match(workspace, /Forhåndsvisning for salgskunder/);
+  const manage = readFileSync(join(here, '../app/pages/Admin/sections/ManageClientsSection.tsx'), 'utf8');
+  assert.match(manage, /Development → Forhåndsvisning/);
+  assert.match(manage, /Signed contracts move to Utvikler/);
+  const sales = readFileSync(join(here, '../app/pages/Admin/sections/SalesClientsSection.tsx'), 'utf8');
+  assert.match(sales, /persistDevelopmentBoard\('deployment'\)/);
+  assert.match(sales, /Utvikling → Utvikler/);
   const server = readFileSync(join(here, '../server.js'), 'utf8');
   assert.match(server, /app\.get\('\/api\/admin\/development\/:id\/workshop-needs', developmentAuth/);
   assert.match(server, /app\.get\('\/api\/admin\/development\/:id\/media', developmentAuth/);
@@ -375,4 +392,20 @@ test('material dots score Kundedata facts, partial staff and products, and revie
     }),
   });
   assert.equal(dot(fiveReviews, 'reviews').mark, 'green');
+});
+
+test('preview cards show next meeting, deployment cards show website due', () => {
+  const preview = developerCardTimeline({
+    rankAt: '2026-10-05T10:00:00.000Z',
+    nextActionName: 'Møte',
+    websiteDue: { label: 'Ingen frist ennå', started: false, dueAt: '' },
+  }, 'preview', Date.parse('2026-10-01T10:00:00.000Z'));
+  assert.match(preview.label, /Møte/);
+  assert.equal(preview.tone, 'live');
+  const deployment = developerCardTimeline({
+    rankAt: '2026-10-05T10:00:00.000Z',
+    websiteDue: { label: 'Frist: 20. okt. 2026', started: true, dueAt: '2026-10-20T12:00:00.000Z' },
+  }, 'deployment', Date.parse('2026-10-01T10:00:00.000Z'));
+  assert.equal(deployment.label, 'Frist: 20. okt. 2026');
+  assert.equal(deployment.tone, 'live');
 });

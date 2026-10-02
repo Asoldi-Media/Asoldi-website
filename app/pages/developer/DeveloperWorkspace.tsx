@@ -76,7 +76,7 @@ export const DeveloperWorkspace = () => {
             <div>
               <h1 className="text-lg font-semibold">Utvikling</h1>
               <p className="text-xs text-gray-400">
-                Preview-nettsider for salg, og deployment etter kontrakt er signert.
+                Velg Forhåndsvisning for salgskunder i møterekkefølge, eller Utvikler for signerte kontrakter.
               </p>
             </div>
             <button

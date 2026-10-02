@@ -6,6 +6,7 @@ import {
   isLiveHubClient,
   isDevelopmentSalesClient,
   isPreviewSalesClient,
+  previewTimelineAt,
   resolveSiteDeliveryPhase,
 } from '../lib/development-phase.js';
 
@@ -110,7 +111,34 @@ test('signed client leaves preview and stays on deployment', () => {
   assert.equal(buildDevelopmentItems([bynesetSales], [byneset]).length, 1);
 });
 
-test('ssu and archived clients stay off the preview board', () => {
+test('preview board ranks by next meeting, not website due date', () => {
+  const later = {
+    ...bynesetSales,
+    id: 'sales-later',
+    businessName: 'Zeta Cafe',
+    status: 'active',
+    agreedTime: true,
+    meetingAt: '2026-10-20T10:00:00.000Z',
+    progression: { contractSigned: false },
+    development: { nettsideFerdig: false },
+    hubSite: {},
+    nextActions: [{ name: 'Møte', dueAt: '2026-10-20T10:00:00.000Z', presetKey: 'meeting', doneAt: '' }],
+  };
+  const sooner = {
+    ...later,
+    id: 'sales-sooner',
+    businessName: 'Alpha Cafe',
+    meetingAt: '2026-10-05T10:00:00.000Z',
+    nextActions: [{ name: 'Møte', dueAt: '2026-10-05T10:00:00.000Z', presetKey: 'meeting', doneAt: '' }],
+  };
+  const preview = buildPreviewItems([later, sooner], []);
+  assert.equal(preview.map((item) => item.businessName).join(','), 'Alpha Cafe,Zeta Cafe');
+  assert.ok(Date.parse(preview[0].rankAt) < Date.parse(preview[1].rankAt));
+  assert.equal(preview[0].websiteDue?.dueAt || '', '');
+  assert.equal(buildDevelopmentItems([later, sooner], []).length, 0);
+});
+
+test('SSU and archived clients stay off the preview board', () => {
   const ssu = { ...bynesetSales, product: 'ssu', progression: { contractSigned: false } };
   const archived = { ...bynesetSales, status: 'not-sold', progression: { contractSigned: false } };
   assert.equal(isPreviewSalesClient(ssu), false);
