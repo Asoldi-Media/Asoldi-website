@@ -73,6 +73,7 @@ import * as offers from './data/offers.js';
 import * as resetTokens from './data/reset-tokens.js';
 import { getPersistentDataDir, pruneAllDataBackups } from './data/storage-path.js';
 import { applyPersistentProductionEnv } from './lib/persistent-env.js';
+import { applyProxyKeepAlive } from './lib/http-server-timeouts.js';
 import * as salesPreview from './lib/sales-preview-import.js';
 import {
   fillExportZipWithMakerAssets,
@@ -18235,7 +18236,7 @@ ensureData().then(() => {
   startMapsRankingLoop();
   sendDueSalesReminders().catch((error) => console.error('Initial sales reminder run failed:', error));
   sendDueFirefliesLiveJoins().catch((error) => console.error('[fireflies] initial live-join failed:', error));
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running on port ${PORT}`);
     console.log(`[audio] persistent=${MYPHONER_AUDIO_DIR} extra=${extraMyphonerAudioDirs().join('|') || '(none)'}`);
     runStartupSalesRecordingBackfill().catch((error) => {
@@ -18251,6 +18252,7 @@ ensureData().then(() => {
       console.error('[sales booking] startup backfill crashed:', sanitizeText(error?.message) || error);
     });
   });
+  applyProxyKeepAlive(server);
 }).catch((err) => {
   console.error('Failed to init admin:', err);
   process.exit(1);
