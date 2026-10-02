@@ -54,14 +54,6 @@ function AppLayout() {
   const useLightShell = /^\/(login|kunde|client)(\/|$)/.test(location.pathname);
 
   useEffect(() => {
-    try {
-      sessionStorage.removeItem('asoldi-chunk-retry');
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  useEffect(() => {
     if (location.pathname === '/ansatt') return;
     const ids = ['tawk-script', 'tawkchat-container', 'tawkchat', 'tawkchat-minified-wrapper', 'tawkchat-minified-container'];
     ids.forEach((id) => {

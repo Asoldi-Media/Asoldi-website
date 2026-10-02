@@ -26,16 +26,6 @@
   </head>
   <body>
     <div id="root"></div>
-    <script>
-      window.addEventListener('vite:preloadError', function (event) {
-        event.preventDefault();
-        try {
-          if (sessionStorage.getItem('asoldi-chunk-retry')) return;
-          sessionStorage.setItem('asoldi-chunk-retry', '1');
-        } catch (err) {}
-        window.location.reload();
-      });
-    </script>
     <script src="https://assets.calendly.com/assets/external/widget.js" async></script>
     <script type="module" src="/index.tsx"></script>
   </body>
