@@ -52,7 +52,14 @@ function readOffersFile() {
   }
 }
 
+let offersRevision = 0;
+
+export function offersDataRevision() {
+  return offersRevision;
+}
+
 function writeOffersFile(list) {
+  offersRevision += 1;
   ensurePersistentDataDir();
   writeDataJson(OFFERS_PATH, list);
 }

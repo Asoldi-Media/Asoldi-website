@@ -12841,8 +12841,25 @@ app.post('/api/admin/sales/preview-send-emails', salesAuth, async (req, res) => 
   }
 });
 
+let salesListCache = { key: '', rows: null };
+
+function cachedSalesListRows() {
+  const key = `${sales.salesDataRevision()}:${salesOffers.offersDataRevision()}`;
+  if (salesListCache.key === key && Array.isArray(salesListCache.rows)) return salesListCache.rows;
+  const offersByClient = salesOffers.latestOffersByClient();
+  const rows = sales.getSalesClients().map((client) => {
+    const offer = offersByClient.get(sanitizeText(client.id)) || null;
+    return { ...jsonSalesClient(client), offerStatus: offer ? offer.status : '' };
+  });
+  salesListCache = {
+    key: `${sales.salesDataRevision()}:${salesOffers.offersDataRevision()}`,
+    rows,
+  };
+  return rows;
+}
+
 app.get('/api/admin/sales', salesAuth, async (req, res) => {
-  const all = sales.getSalesClients();
+  const all = cachedSalesListRows();
   const productFilter = sanitizeText(req.query?.product).toLowerCase();
   const owned = req.salesUser.isAdmin
     ? all
@@ -12851,10 +12868,7 @@ app.get('/api/admin/sales', salesAuth, async (req, res) => {
     productFilter === 'asoldi' || productFilter === 'ssu'
       ? owned.filter((client) => sales.normalizeSalesProduct(client.product) === productFilter)
       : owned;
-  const clients = filtered.map((client) => {
-    const offer = salesOffers.getOfferForClient(client.id);
-    return { ...jsonSalesClient(client), offerStatus: offer ? offer.status : '' };
-  });
+  const clients = filtered;
   const calendar = presentCalendarStatus(
     getGoogleCalendarStatus(req.salesUser.accountKey),
     req.salesUser

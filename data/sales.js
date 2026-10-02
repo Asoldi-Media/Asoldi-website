@@ -149,7 +149,14 @@ function readSalesFile() {
   }
 }
 
+let salesRevision = 0;
+
+export function salesDataRevision() {
+  return salesRevision;
+}
+
 function writeSalesFile(list) {
+  salesRevision += 1;
   ensureDataDir();
   writeDataJson(SALES_PATH, list);
 }

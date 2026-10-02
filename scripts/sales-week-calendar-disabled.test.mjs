@@ -8,6 +8,31 @@ import { SALES_WEEK_CALENDAR_DISABLED } from '../lib/google-calendar.js';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 
+test('sales list reads offers once and does not stat a video per meeting', () => {
+  const server = readFileSync(join(root, 'server.js'), 'utf8');
+  const salesGet = server.slice(
+    server.indexOf("app.get('/api/admin/sales', salesAuth"),
+    server.indexOf("app.get('/api/admin/sales/client-search'")
+  );
+  assert.match(salesGet, /cachedSalesListRows\(\)/);
+  assert.equal(salesGet.includes('getSalesClients'), false);
+  assert.equal(salesGet.includes('getOfferForClient'), false);
+  assert.equal(salesGet.includes('latestOffersByClient'), false);
+  const salesSrc = readFileSync(join(root, 'data/sales.js'), 'utf8');
+  const writeSales = salesSrc.slice(salesSrc.indexOf('function writeSalesFile'), salesSrc.indexOf('function emptyReminders'));
+  assert.match(writeSales, /salesRevision \+= 1/);
+  const offersSrc = readFileSync(join(root, 'data/sales-offers.js'), 'utf8');
+  const writeOffers = offersSrc.slice(offersSrc.indexOf('function writeOffersFile'), offersSrc.indexOf('export function normalizeOfferStatus'));
+  assert.match(writeOffers, /offersRevision \+= 1/);
+  const meetings = readFileSync(join(root, 'lib/workshop-meetings.js'), 'utf8');
+  const present = meetings.slice(
+    meetings.indexOf('export function presentClientMeetings'),
+    meetings.indexOf('export function bookedSlotTimesForMatch')
+  );
+  assert.equal(present.includes('describeFirefliesMedia'), false);
+  assert.match(present, /meetingHasStoredVideo/);
+});
+
 test('week calendar Google calls stay off so Admin/Sales list cannot hang Node', () => {
   assert.equal(SALES_WEEK_CALENDAR_DISABLED, true);
   const server = readFileSync(join(root, 'server.js'), 'utf8');

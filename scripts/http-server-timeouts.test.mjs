@@ -9,6 +9,7 @@ import {
   PROXY_CONNECTIONS_CHECKING_INTERVAL_MS,
   PROXY_HEADERS_TIMEOUT_MS,
   PROXY_KEEP_ALIVE_MS,
+  PROXY_MAX_HEADER_BYTES,
   PROXY_REQUEST_TIMEOUT_MS,
   PROXY_SOCKET_TIMEOUT_MS,
   PROXY_UPSTREAM_IDLE_MS,
@@ -32,6 +33,8 @@ test('proxy keep-alive outlasts Hostinger 15 minute idle without closing the bod
   assert.equal(options.headersTimeout, PROXY_HEADERS_TIMEOUT_MS);
   assert.equal(options.requestTimeout, 0);
   assert.equal(options.connectionsCheckingInterval, PROXY_CONNECTIONS_CHECKING_INTERVAL_MS);
+  assert.equal(options.maxHeaderSize, PROXY_MAX_HEADER_BYTES);
+  assert.ok(PROXY_MAX_HEADER_BYTES > 16_384);
   const server = createServer(options);
   applyProxyKeepAlive(server);
   assert.equal(server.keepAliveTimeout, PROXY_KEEP_ALIVE_MS);
