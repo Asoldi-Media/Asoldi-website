@@ -126,7 +126,8 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
 
   function toggleBucket(id: string) {
     setCollapsedBuckets((prev) => {
-      const next = { ...prev, [id]: !prev[id] };
+      const currentlyCollapsed = prev[id] !== false;
+      const next = { ...prev, [id]: currentlyCollapsed ? false : true };
       try {
         window.localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify(next));
       } catch {
@@ -242,7 +243,7 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
       <div className="space-y-3">
         {BUCKET_ORDER.map((bucketId) => {
           const bucketItems = groups[bucketId];
-          const collapsed = Boolean(collapsedBuckets[bucketId]);
+          const collapsed = collapsedBuckets[bucketId] !== false;
           const meta = BUCKET_META[bucketId];
           return (
             <div key={bucketId} className="space-y-3">

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, FileText, Loader2, Pencil } from 'lucide-react';
+import { CalendarClock, CheckCircle2, ExternalLink, FileText, Loader2, Pencil } from 'lucide-react';
 import {
   API,
   developmentAuthHeaders,
@@ -20,10 +20,13 @@ import {
   makerCustomEditUrl,
   makerCustomPreviewPath,
   makerHandoffFromLiveRun,
+  makerLatestPreviewPath,
   makerStepPreviewPath,
   normalizeDeveloperQa,
   pipelineStatusFromMakerRun,
   resolveDeveloperProgressClick,
+  resolveLatestMakerPreviewStep,
+  scoreMakerRunProgress,
 } from '../../../lib/developer-card.js';
 import { LOCAL_EDITOR_ORIGIN, editorMakerOrigin, makerUnreachableIsLocal } from '../../../lib/maker-editor-origin.js';
 import {
@@ -125,8 +128,9 @@ export function DeveloperClientCard({
   });
   const [enqueueBusy, setEnqueueBusy] = useState('');
   const [openingMaker, setOpeningMaker] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [liveStatus, setLiveStatus] = useState<Record<string, unknown> | null>(null);
-  const [actionPage, setActionPage] = useState(() => (String(item.makerRun?.runId || '').trim() ? 2 : 1));
+  const liveRunId = String(liveStatus?.runId || makerRunId).trim();
   const [chipMenu, setChipMenu] = useState('');
   const [domainDraft, setDomainDraft] = useState('');
   const [savingDomain, setSavingDomain] = useState(false);
@@ -139,7 +143,6 @@ export function DeveloperClientCard({
 
   useEffect(() => {
     lastSyncedHandoffRef.current = '';
-    if (makerRunId) setActionPage(2);
   }, [item.id, makerRunId]);
 
   const persistedStatus = useMemo(
@@ -149,6 +152,7 @@ export function DeveloperClientCard({
   const status = {
     step1Ready: Boolean(liveStatus?.step1Ready ?? persistedStatus.step1Ready),
     step15Ready: Boolean(liveStatus?.step15Ready ?? persistedStatus.step15Ready),
+    step2Ready: Boolean(liveStatus?.step2Ready ?? persistedStatus.step2Ready),
     languageLocked: Boolean(liveStatus?.languageLocked ?? persistedStatus.languageLocked),
     generateTextReady: Boolean(liveStatus?.generateTextReady ?? persistedStatus.generateTextReady),
     injectMediaReady: Boolean(liveStatus?.injectMediaReady ?? persistedStatus.injectMediaReady),
@@ -156,10 +160,11 @@ export function DeveloperClientCard({
     mapsReady: Boolean(liveStatus?.mapsReady ?? persistedStatus.mapsReady),
     seoReady: Boolean(liveStatus?.seoReady ?? persistedStatus.seoReady),
     hasDomain: Boolean(liveStatus?.hasDomain ?? persistedStatus.hasDomain),
+    customSiteExists: Boolean(liveStatus?.customSiteExists ?? persistedStatus.customSiteExists),
   };
 
   useEffect(() => {
-    if (!salesClientId) return;
+    if (!detailsOpen || !salesClientId) return;
     const url = new URL(
       `${API}/admin/development/${encodeURIComponent(item.id)}/workshop-needs`,
       window.location.origin
@@ -180,10 +185,10 @@ export function DeveloperClientCard({
       .catch(() => {
         setDots([]);
       });
-  }, [item.id, salesClientId, websiteMakerBaseUrl]);
+  }, [detailsOpen, item.id, salesClientId, websiteMakerBaseUrl]);
 
   useEffect(() => {
-    if (!salesClientId) return;
+    if (!detailsOpen || !salesClientId) return;
     const url = new URL(
       `${API}/admin/development/${encodeURIComponent(item.id)}/media`,
       window.location.origin
@@ -209,18 +214,49 @@ export function DeveloperClientCard({
           makerError: error instanceof Error ? error.message : 'Kunne ikke lese mediabiblioteket.',
         }));
       });
-  }, [item.id, salesClientId, websiteMakerBaseUrl, makerRunId, mediaReload]);
+  }, [detailsOpen, item.id, salesClientId, websiteMakerBaseUrl, makerRunId, mediaReload]);
 
   useEffect(() => {
+    if (!detailsOpen) return undefined;
     let cancelled = false;
+    async function persistLiveRun(runId: string, data: Record<string, unknown>) {
+      setLiveStatus(data);
+      const handoff = makerHandoffFromLiveRun(data.run || {});
+      const signature = JSON.stringify({
+        runId,
+        steps: handoff.steps,
+        sub: handoff.step2Substeps,
+        language: handoff.language,
+        cms: handoff.cms,
+        domain: handoff.productionDomain || handoff.websiteDomain,
+        latestReadyStep: handoff.latestReadyStep,
+      });
+      if (lastSyncedHandoffRef.current === signature) return;
+      lastSyncedHandoffRef.current = signature;
+      const response = await fetch(`${API}/admin/development/${encodeURIComponent(item.id)}/sync-maker-run`, {
+        method: 'POST',
+        headers: { ...developmentAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ runId, handoff }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(String(body.message || body.error || 'Kunne ikke lagre Maker-run på kunden.'));
+      }
+      if (!cancelled && body.client && onClientUpdated) {
+        onClientUpdated(body.client);
+      }
+    }
     async function syncMakerRun() {
+      const found = salesClientId
+        ? await findMakerRunBySalesClientId(salesClientId, item.businessName).catch(() => null)
+        : null;
+      const foundId = String(found?.runId || '').trim();
+      const foundScore = Number(found?.progressScore) || 0;
+      const linkedScore = scoreMakerRunProgress(item.makerRun || {});
       let runId = makerRunId;
-      if (!runId && salesClientId) {
-        try {
-          runId = await findMakerRunBySalesClientId(salesClientId, item.businessName);
-        } catch {
-          runId = '';
-        }
+      if (foundId) {
+        if (!runId) runId = foundId;
+        else if (foundId !== runId && foundScore > linkedScore) runId = foundId;
       }
       if (!runId || !websiteMakerBaseUrl) {
         if (!cancelled) setLiveStatus(null);
@@ -229,28 +265,18 @@ export function DeveloperClientCard({
       try {
         const data = await fetchMakerRunStatus(websiteMakerBaseUrl, runId, developmentAuthHeaders());
         if (cancelled) return;
-        setLiveStatus(data as Record<string, unknown>);
-        const handoff = makerHandoffFromLiveRun(data.run || {});
-        const signature = JSON.stringify({
-          runId,
-          steps: handoff.steps,
-          sub: handoff.step2Substeps,
-          language: handoff.language,
-          cms: handoff.cms,
-          domain: handoff.productionDomain || handoff.websiteDomain,
-        });
-        if (lastSyncedHandoffRef.current === signature) return;
-        lastSyncedHandoffRef.current = signature;
-        const response = await fetch(`${API}/admin/development/${encodeURIComponent(item.id)}/sync-maker-run`, {
-          method: 'POST',
-          headers: { ...developmentAuthHeaders(), 'Content-Type': 'application/json' },
-          body: JSON.stringify({ runId, handoff }),
-        });
-        const body = await response.json().catch(() => ({}));
-        if (!cancelled && response.ok && body.client && onClientUpdated) {
-          onClientUpdated(body.client);
-        }
+        await persistLiveRun(runId, data as Record<string, unknown>);
       } catch {
+        if (foundId && foundId !== runId) {
+          try {
+            const data = await fetchMakerRunStatus(websiteMakerBaseUrl, foundId, developmentAuthHeaders());
+            if (cancelled) return;
+            await persistLiveRun(foundId, data as Record<string, unknown>);
+            return;
+          } catch {
+            // Linked id is missing and the twin also failed.
+          }
+        }
         if (!cancelled) setLiveStatus(null);
       }
     }
@@ -258,17 +284,21 @@ export function DeveloperClientCard({
     return () => {
       cancelled = true;
     };
-  }, [makerRunId, salesClientId, websiteMakerBaseUrl, item.id, item.businessName, queueItems]);
+  }, [detailsOpen, makerRunId, salesClientId, websiteMakerBaseUrl, item.id, item.businessName, queueItems]);
 
   const editorBase = editorMakerOrigin(websiteMakerBaseUrl) || LOCAL_EDITOR_ORIGIN;
-  const customEditUrl = makerCustomEditUrl(editorBase, makerRunId);
-  const customPreviewPath = makerCustomPreviewPath(makerRunId, item.makerRun?.customSite || null);
+  const customEditUrl = makerCustomEditUrl(editorBase, liveRunId);
+  const customPreviewPath = makerCustomPreviewPath(liveRunId, item.makerRun?.customSite || null);
   const customPreviewUrl = customPreviewPath
     ? `${editorBase}${customPreviewPath}`
     : '';
+  const latestPreviewStep = resolveLatestMakerPreviewStep(status);
+  const makerPreviewHref = liveRunId && latestPreviewStep
+    ? `${editorBase}${makerLatestPreviewPath(liveRunId, latestPreviewStep)}`
+    : '';
   const makerDashboardUrl = resolveOpenInMakerUrl({
     baseUrl: editorBase,
-    runId: makerRunId,
+    runId: liveRunId,
     storedDashboardUrl: normalizeMakerDashboardDraftUrl(String(item.makerRun?.dashboardUrl || '').trim()),
     intakeStatus: String(item.makerRun?.intakeStatus || ''),
     latestReadyStep: String(item.makerRun?.latestReadyStep || ''),
@@ -319,7 +349,7 @@ export function DeveloperClientCard({
 
   function chipQueued(target: string) {
     return queueItems.some((entry) => (
-      String(entry.runId || '') === makerRunId
+      String(entry.runId || '') === liveRunId
       && String(entry.target || '') === target
       && (entry.status === 'queued' || entry.status === 'running')
     ));
@@ -344,11 +374,11 @@ export function DeveloperClientCard({
   }
 
   async function openInMaker() {
-    if (!makerRunId) {
+    if (!liveRunId) {
       onError('No Website Maker run is linked to this client yet.');
       return;
     }
-    const fallbackUrl = makerDashboardUrl || buildMakerRunUrl(editorBase, makerRunId, 'dashboard');
+    const fallbackUrl = makerDashboardUrl || buildMakerRunUrl(editorBase, liveRunId, 'dashboard');
     if (!fallbackUrl) {
       onError('Could not resolve Website Maker URL for this client.');
       return;
@@ -359,7 +389,7 @@ export function DeveloperClientCard({
       const data = await fetch(`${API}/admin/sales/${encodeURIComponent(salesClientId)}/refresh-maker-handoff`, {
         method: 'POST',
         headers: { ...developmentAuthHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ websiteMakerBaseUrl: editorBase, runId: makerRunId }),
+        body: JSON.stringify({ websiteMakerBaseUrl: editorBase, runId: liveRunId }),
       }).then(async (response) => {
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.message || 'Opened Maker, but the stored link could not be refreshed.');
@@ -376,7 +406,7 @@ export function DeveloperClientCard({
   }
 
   async function enqueueTarget(chip: (typeof DEVELOPER_PROGRESS_CHIPS)[number], mode: 'until' | 'rerun') {
-    if (!makerRunId) {
+    if (!liveRunId) {
       onError('No Website Maker run is linked to this client yet.');
       return;
     }
@@ -387,7 +417,7 @@ export function DeveloperClientCard({
       const data = await enqueueMakerQueue({
         websiteMakerBaseUrl,
         salesClientIds: [salesClientId],
-        runIds: [makerRunId],
+        runIds: [liveRunId],
         ...(mode === 'until' ? { untilTarget: chip.target } : { target: chip.target }),
       }) as { skipped?: { error?: string }[]; added?: unknown[] };
       const skipped = (Array.isArray(data.skipped) ? data.skipped : [])
@@ -415,13 +445,13 @@ export function DeveloperClientCard({
       if (resolved.reason) onError(resolved.reason);
       return;
     }
-    if (!makerRunId) {
+    if (!liveRunId) {
       onError('No Website Maker run is linked to this client yet.');
       return;
     }
     if (resolved.type === 'language') {
       openLanguageLock({
-        runId: makerRunId,
+        runId: liveRunId,
         websiteMakerBaseUrl,
         businessName: item.businessName,
       });
@@ -435,7 +465,7 @@ export function DeveloperClientCard({
   }
 
   function openStepPreview(target: string) {
-    const path = makerStepPreviewPath(makerRunId, target);
+    const path = makerStepPreviewPath(liveRunId, target);
     if (!path) return;
     window.open(`${editorBase}${path}`, '_blank');
     setChipMenu('');
@@ -462,7 +492,7 @@ export function DeveloperClientCard({
   }
 
   async function saveDomain() {
-    if (!makerRunId) {
+    if (!liveRunId) {
       onError('No Website Maker run is linked to this client yet.');
       return;
     }
@@ -470,7 +500,7 @@ export function DeveloperClientCard({
     onError('');
     try {
       const data = await saveMakerRunDomain({
-        runId: makerRunId,
+        runId: liveRunId,
         websiteDomain: domainDraft,
         salesClientId,
         authHeaders: developmentAuthHeaders(),
@@ -682,85 +712,65 @@ export function DeveloperClientCard({
             className="rounded-xl bg-black/20 border border-white/10 p-4 min-h-[112px] space-y-3"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex items-center justify-between gap-2">
-              <span className="text-[11px] uppercase tracking-wide text-gray-500">
-                {actionPage === 1 ? 'Template og klientdata' : 'Make website'}
-              </span>
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  disabled={actionPage === 1}
-                  onClick={() => setActionPage(1)}
-                  className="p-1 rounded text-gray-400 hover:text-white disabled:opacity-30"
-                  aria-label="Forrige side"
-                >
-                  <ChevronLeft size={14} />
-                </button>
-                <span className="text-[11px] text-gray-400 tabular-nums">{actionPage} / 2</span>
-                <button
-                  type="button"
-                  disabled={actionPage === 2}
-                  onClick={() => setActionPage(2)}
-                  className="p-1 rounded text-gray-400 hover:text-white disabled:opacity-30"
-                  aria-label="Neste side"
-                >
-                  <ChevronRight size={14} />
-                </button>
-              </div>
+            <span className="text-[11px] uppercase tracking-wide text-gray-500">Make website</span>
+            <p className="text-[11px] text-gray-400">Importer nytt eller velg eksisterende template</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <MakerRunTools
+                salesClientId={salesClientId}
+                client={{ id: salesClientId, makerRun: item.makerRun, websiteImport: item.websiteImport }}
+                websiteMakerBaseUrl={websiteMakerBaseUrl}
+                authHeaders={developmentAuthHeaders()}
+                onReload={onReload}
+                onClientUpdated={onClientUpdated}
+                onError={onError}
+                onNotice={onNotice}
+                allowCreate
+                allowLink={false}
+                variant="create"
+                businessName={item.businessName}
+              />
+              <button
+                type="button"
+                onClick={() => void openInMaker()}
+                disabled={!liveRunId || openingMaker}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs disabled:opacity-50 ${
+                  liveRunId
+                    ? 'bg-[#FF5B00] text-white hover:bg-[#e55200]'
+                    : 'bg-white/10 text-white hover:bg-white/15'
+                }`}
+              >
+                {openingMaker ? <Loader2 size={13} className="animate-spin" /> : <ExternalLink size={13} />}
+                Open in maker
+              </button>
+              <button
+                type="button"
+                onClick={() => makerPreviewHref && window.open(makerPreviewHref, '_blank')}
+                disabled={!liveRunId || !makerPreviewHref}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
+              >
+                <ExternalLink size={13} />
+                Maker preview
+              </button>
             </div>
-            {actionPage === 1 ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="w-full text-[11px] text-gray-400">Importer nytt eller velg eksisterende template</p>
-                <MakerRunTools
-                  salesClientId={salesClientId}
-                  client={{ id: salesClientId, makerRun: item.makerRun, websiteImport: item.websiteImport }}
-                  websiteMakerBaseUrl={websiteMakerBaseUrl}
-                  authHeaders={developmentAuthHeaders()}
-                  onReload={onReload}
-                  onClientUpdated={onClientUpdated}
-                  onError={onError}
-                  onNotice={onNotice}
-                  allowCreate
-                  allowLink={false}
-                  variant="create"
-                />
-                <button
-                  type="button"
-                  onClick={() => void openInMaker()}
-                  disabled={!makerRunId || openingMaker}
-                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs disabled:opacity-50 ${
-                    makerRunId
-                      ? 'bg-[#FF5B00] text-white hover:bg-[#e55200]'
-                      : 'bg-white/10 text-white hover:bg-white/15'
-                  }`}
-                >
-                  {openingMaker ? <Loader2 size={13} className="animate-spin" /> : <ExternalLink size={13} />}
-                  Open in maker
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {renderProgressChips()}
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <input
-                    value={domainDraft}
-                    onChange={(event) => setDomainDraft(event.target.value)}
-                    placeholder="nettsted.no"
-                    className="flex-1 px-3 py-2 rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void saveDomain()}
-                    disabled={!makerRunId || savingDomain}
-                    className="px-3 py-2 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
-                  >
-                    {savingDomain ? <Loader2 size={13} className="inline animate-spin" /> : null}
-                    Lagre domene
-                  </button>
-                </div>
-                <p className="text-[11px] text-gray-500">Steg 4 SEO er av til et domene er lagret på runet.</p>
-              </div>
-            )}
+            {renderProgressChips()}
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                value={domainDraft}
+                onChange={(event) => setDomainDraft(event.target.value)}
+                placeholder="nettsted.no"
+                className="flex-1 px-3 py-2 rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm"
+              />
+              <button
+                type="button"
+                onClick={() => void saveDomain()}
+                disabled={!liveRunId || savingDomain}
+                className="px-3 py-2 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
+              >
+                {savingDomain ? <Loader2 size={13} className="inline animate-spin" /> : null}
+                Lagre domene
+              </button>
+            </div>
+            <p className="text-[11px] text-gray-500">Steg 4 SEO er av til et domene er lagret på runet.</p>
           </div>
 
           <div className="flex flex-wrap items-end gap-3" onClick={(event) => event.stopPropagation()}>
@@ -819,11 +829,22 @@ export function DeveloperClientCard({
         <p className="text-xs text-gray-500">No sales client linked — maker tools need a sales client.</p>
       )}
         </div>
-        {salesClientId ? (
+        {salesClientId && !detailsOpen ? (
+          <aside className="w-full xl:w-[340px] shrink-0" onClick={(event) => event.stopPropagation()}>
+            <button
+              type="button"
+              onClick={() => setDetailsOpen(true)}
+              className="w-full rounded-xl border border-white/10 bg-[#2a2a2a] px-3 py-3 text-left text-sm text-white hover:bg-white/10"
+            >
+              Vis tråd og filer
+            </button>
+          </aside>
+        ) : null}
+        {salesClientId && detailsOpen ? (
           <aside className="w-full xl:w-[340px] shrink-0" onClick={(event) => event.stopPropagation()}>
             <DeveloperRequestThread
               salesClientId={salesClientId}
-              makerRunId={makerRunId}
+              makerRunId={liveRunId}
               websiteMakerBaseUrl={websiteMakerBaseUrl}
               authHeaders={developmentAuthHeaders()}
               extraMessages={iterationMessages}
@@ -844,14 +865,15 @@ export function DeveloperClientCard({
               onClientUpdated={onClientUpdated}
               onError={onError}
               onNotice={onNotice}
-              allowCreate={Boolean(makerRunId)}
+              allowCreate={Boolean(liveRunId)}
               allowLink
               variant="tools"
+              businessName={item.businessName}
             />
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
-                disabled={!makerRunId || !customEditUrl}
+                disabled={!liveRunId || !customEditUrl}
                 onClick={() => customEditUrl && window.open(customEditUrl, '_blank')}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
               >
