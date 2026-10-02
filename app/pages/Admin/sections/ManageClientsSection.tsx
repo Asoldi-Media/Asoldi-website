@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ClientSitesSection } from './ClientSitesSection';
 import { DevelopmentClientsSection } from './DevelopmentClientsSection';
 import { SalesClientsSection } from './SalesClientsSection';
@@ -16,6 +16,13 @@ type Props = {
   onCopyKey: (key: string) => void;
 };
 
+const EMPTY_OPENED: Record<ManageClientsView, boolean> = {
+  clients: true,
+  development: false,
+  sales: false,
+  admin: false,
+};
+
 export function ManageClientsSection({
   sites,
   loading,
@@ -27,7 +34,12 @@ export function ManageClientsSection({
   onCopyKey,
 }: Props) {
   const [view, setView] = useState<ManageClientsView>('clients');
+  const [opened, setOpened] = useState(EMPTY_OPENED);
   const liveSites = sites.filter((site) => site.deliveryPhase !== 'development');
+
+  useEffect(() => {
+    setOpened((prev) => (prev[view] ? prev : { ...prev, [view]: true }));
+  }, [view]);
 
   return (
     <div className={view === 'sales' || view === 'admin' ? 'space-y-6' : 'max-w-6xl space-y-6'}>
@@ -69,24 +81,35 @@ export function ManageClientsSection({
         </button>
       </div>
 
-      {view === 'clients' ? (
-        <ClientSitesSection
-          sites={liveSites}
-          loading={loading}
-          copyKey={copyKey}
-          onAdd={onAdd}
-          onEdit={onEdit}
-          onEditAdmin={onEditAdmin}
-          onDelete={onDelete}
-          onCopyKey={onCopyKey}
-          hideHeader
-        />
-      ) : view === 'development' ? (
-        <DevelopmentClientsSection hideHeader />
-      ) : view === 'sales' ? (
-        <SalesClientsSection onMovedToDevelopment={() => setView('development')} />
-      ) : view === 'admin' ? (
-        <AdminBoardSection />
+      {opened.clients ? (
+        <div className={view === 'clients' ? '' : 'hidden'} hidden={view !== 'clients'}>
+          <ClientSitesSection
+            sites={liveSites}
+            loading={loading}
+            copyKey={copyKey}
+            onAdd={onAdd}
+            onEdit={onEdit}
+            onEditAdmin={onEditAdmin}
+            onDelete={onDelete}
+            onCopyKey={onCopyKey}
+            hideHeader
+          />
+        </div>
+      ) : null}
+      {opened.development ? (
+        <div className={view === 'development' ? '' : 'hidden'} hidden={view !== 'development'}>
+          <DevelopmentClientsSection hideHeader />
+        </div>
+      ) : null}
+      {opened.sales ? (
+        <div className={view === 'sales' ? '' : 'hidden'} hidden={view !== 'sales'}>
+          <SalesClientsSection onMovedToDevelopment={() => setView('development')} />
+        </div>
+      ) : null}
+      {opened.admin ? (
+        <div className={view === 'admin' ? '' : 'hidden'} hidden={view !== 'admin'}>
+          <AdminBoardSection />
+        </div>
       ) : null}
     </div>
   );

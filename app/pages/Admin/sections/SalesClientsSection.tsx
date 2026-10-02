@@ -818,28 +818,44 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
       setNotice('');
     }
     const gen = ++salesListGenRef.current;
+    let lastErr: unknown = null;
     try {
-      const data = await request('/admin/sales', { signal: AbortSignal.timeout(12_000) });
-      if (gen !== salesListGenRef.current) return;
-      const nextClients = Array.isArray(data.clients) ? data.clients : [];
-      setClients(nextClients);
-      const nextIds = new Set(nextClients.map((client: SalesClient) => client.id));
-      setSelectedClientIds((prev) => prev.filter((id) => nextIds.has(id)));
-      const counts = data.products && typeof data.products === 'object'
-        ? data.products
-        : {
-            asoldi: nextClients.filter((client: SalesClient) => normalizeSalesProduct(client.product) === 'asoldi').length,
-            ssu: nextClients.filter((client: SalesClient) => normalizeSalesProduct(client.product) === 'ssu').length,
-          };
-      setProductCounts({
-        asoldi: Number(counts.asoldi) || 0,
-        ssu: Number(counts.ssu) || 0,
-      });
-      if (data.calendar) setCalendarStatus(data.calendar as CalendarStatus);
-      setIsSalesAdmin(Boolean(data.isAdmin) || data?.calendar?.loginRole === 'admin');
-      setSalesOwners(Array.isArray(data.owners) ? data.owners : []);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load sales clients');
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          const data = await request('/admin/sales');
+          if (gen !== salesListGenRef.current) return;
+          const nextClients = Array.isArray(data.clients) ? data.clients : [];
+          setClients(nextClients);
+          const nextIds = new Set(nextClients.map((client: SalesClient) => client.id));
+          setSelectedClientIds((prev) => prev.filter((id) => nextIds.has(id)));
+          const counts = data.products && typeof data.products === 'object'
+            ? data.products
+            : {
+                asoldi: nextClients.filter((client: SalesClient) => normalizeSalesProduct(client.product) === 'asoldi').length,
+                ssu: nextClients.filter((client: SalesClient) => normalizeSalesProduct(client.product) === 'ssu').length,
+              };
+          setProductCounts({
+            asoldi: Number(counts.asoldi) || 0,
+            ssu: Number(counts.ssu) || 0,
+          });
+          if (data.calendar) setCalendarStatus(data.calendar as CalendarStatus);
+          setIsSalesAdmin(Boolean(data.isAdmin) || data?.calendar?.loginRole === 'admin');
+          setSalesOwners(Array.isArray(data.owners) ? data.owners : []);
+          lastErr = null;
+          break;
+        } catch (err) {
+          lastErr = err;
+          if (gen !== salesListGenRef.current) return;
+          if (attempt < 2) {
+            await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+          }
+        }
+      }
+      if (lastErr) {
+        setError(lastErr instanceof Error ? lastErr.message : 'Failed to load sales clients');
+      } else {
+        void loadOffers();
+      }
     } finally {
       if (showLoading) setLoading(false);
     }
@@ -873,7 +889,6 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
 
   useEffect(() => {
     void loadSales({ showLoading: true });
-    void loadOffers();
   }, []);
 
   useEffect(() => {

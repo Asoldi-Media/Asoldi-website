@@ -12876,6 +12876,44 @@ app.get('/api/admin/sales', salesAuth, async (req, res) => {
   res.json(payload);
 });
 
+app.get('/api/admin/sales/client-search', salesAuth, async (req, res) => {
+  const query = sanitizeText(req.query?.q).toLowerCase();
+  const allUsers = await store.getAllUsers();
+  const clientUsers = allUsers.filter((entry) => entry.role === 'client');
+  const queryTerms = query
+    .split(/\s+/)
+    .map((term) => term.trim())
+    .filter(Boolean);
+  const results = clientUsers
+    .map((entry) => {
+      const profile = clientPortal.getClientProfile(entry.id);
+      return {
+        userId: entry.id,
+        email: sanitizeText(entry.username).toLowerCase(),
+        name: sanitizeText(profile?.name),
+        businessName: sanitizeText(profile?.businessName),
+        createdAt: entry.createdAt,
+      };
+    })
+    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
+    .filter((entry) => {
+      if (!queryTerms.length) return true;
+      const haystack = `${entry.email} ${entry.name.toLowerCase()} ${entry.businessName.toLowerCase()}`;
+      return queryTerms.every((term) => haystack.includes(term));
+    })
+    .slice(0, 25);
+  res.json({ users: results });
+});
+
+app.get('/api/admin/sales/offers', salesAuth, (req, res) => {
+  const all = offers.listOffers();
+  const visible = req.salesUser.isAdmin
+    ? all
+    : all.filter((entry) => salesUserOwnerKeys(req.salesUser).has(sanitizeText(entry.ownerId)));
+  const list = visible.map((entry) => hydrateOfferPreviewFromSalesImport(entry, { persist: true }));
+  res.json({ offers: list });
+});
+
 app.post('/api/admin/sales/backfill-products', salesAuth, (req, res) => {
   if (!req.salesUser?.isAdmin) {
     return res.status(403).json({ message: 'Only admin can backfill sales products.' });
@@ -17701,46 +17739,7 @@ app.get('/api/admin/dev-requests/:salesClientId', developmentAuth, (req, res) =>
   }
 });
 
-// --- Sales: search registered client portal users (to grant website offers to).
-app.get('/api/admin/sales/client-search', salesAuth, async (req, res) => {
-  const query = sanitizeText(req.query?.q).toLowerCase();
-  const allUsers = await store.getAllUsers();
-  const clientUsers = allUsers.filter((entry) => entry.role === 'client');
-  const queryTerms = query
-    .split(/\s+/)
-    .map((term) => term.trim())
-    .filter(Boolean);
-  const results = clientUsers
-    .map((entry) => {
-      const profile = clientPortal.getClientProfile(entry.id);
-      return {
-        userId: entry.id,
-        email: sanitizeText(entry.username).toLowerCase(),
-        name: sanitizeText(profile?.name),
-        businessName: sanitizeText(profile?.businessName),
-        createdAt: entry.createdAt,
-      };
-    })
-    .sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime())
-    .filter((entry) => {
-      if (!queryTerms.length) return true;
-      const haystack = `${entry.email} ${entry.name.toLowerCase()} ${entry.businessName.toLowerCase()}`;
-      return queryTerms.every((term) => haystack.includes(term));
-    })
-    .slice(0, 25);
-  res.json({ users: results });
-});
-
 // --- Sales: website offers (tier recommendation + nettsidekode) given to clients.
-app.get('/api/admin/sales/offers', salesAuth, (req, res) => {
-  const all = offers.listOffers();
-  const visible = req.salesUser.isAdmin
-    ? all
-    : all.filter((entry) => salesUserOwnerKeys(req.salesUser).has(sanitizeText(entry.ownerId)));
-  const list = visible.map((entry) => hydrateOfferPreviewFromSalesImport(entry, { persist: true }));
-  res.json({ offers: list });
-});
-
 app.post('/api/admin/sales/offers', salesAuth, async (req, res) => {
   const body = req.body || {};
   const plan = findWebsitePlan(body.planId);
