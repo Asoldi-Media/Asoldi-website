@@ -6,6 +6,7 @@ import { ScrollToTop } from './components/ScrollToTop';
 import { PageLoader } from './components/PageLoader';
 import { EmployeeAuthProvider } from './contexts/EmployeeAuthContext';
 import { ClientAuthProvider } from './contexts/ClientAuthContext';
+import { expireFatCookies } from './lib/expire-fat-cookies';
 
 const Home = lazy(() => import('./pages/Home').then((m) => ({ default: m.Home })));
 const Pricing = lazy(() => import('./pages/Pricing').then((m) => ({ default: m.Pricing })));
@@ -54,6 +55,7 @@ function AppLayout() {
   const useLightShell = /^\/(login|kunde|client)(\/|$)/.test(location.pathname);
 
   useEffect(() => {
+    expireFatCookies();
     if (location.pathname === '/ansatt') return;
     const ids = ['tawk-script', 'tawkchat-container', 'tawkchat', 'tawkchat-minified-wrapper', 'tawkchat-minified-container'];
     ids.forEach((id) => {

@@ -60,6 +60,7 @@ import {
 import { salesBookingFacts } from '../../../../lib/sales-booking-facts.js';
 import { calendarDurationForMode } from '../../../../lib/sales-meeting-duration.js';
 import { GOOGLE_CALENDAR_OAUTH_EVENT } from '../../../../lib/google-calendar-oauth-ui.js';
+import { expireFatCookies } from '../../../lib/expire-fat-cookies';
 import {
   clientHasPublicPreviewSnapshot,
   getPublicClientPreviewUrl,
@@ -101,6 +102,7 @@ const SALES_MAP_DEFAULT_CENTER: [number, number] = [63.4305, 10.3951];
 const SALES_MAP_DEFAULT_ZOOM = 5;
 const SALES_COMPACT_PREVIEW = 6;
 const SALES_CARD_SELECTED = 'sales-client-card-selected border-[#FF5B00] ring-2 ring-[#FF5B00]/25';
+const SALES_LIST_CACHE_KEY = 'asoldi-sales-list-v1';
 const SALES_BUCKETS_STORAGE_KEY = 'asoldi-sales-timeline-collapsed-v2';
 const SECONDARY_INTEREST_PRIMARY = SECONDARY_INTEREST_STATES.filter((state) => state.group === 'primary');
 const SECONDARY_INTEREST_MORE = SECONDARY_INTEREST_STATES.filter((state) => state.group === 'secondary');
@@ -115,6 +117,35 @@ const DEFAULT_SALES_BUCKETS_COLLAPSED: Record<string, boolean> = {
 };
 
 type SalesHeaderPanel = 'filter' | 'map' | null;
+
+type SalesListCache = {
+  clients: SalesClient[];
+  products: { asoldi: number; ssu: number };
+};
+
+function readSalesListCache(): SalesListCache | null {
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(SALES_LIST_CACHE_KEY) || '');
+    if (!Array.isArray(parsed?.clients) || !parsed.clients.length) return null;
+    return {
+      clients: parsed.clients as SalesClient[],
+      products: {
+        asoldi: Number(parsed.products?.asoldi) || 0,
+        ssu: Number(parsed.products?.ssu) || 0,
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeSalesListCache(clients: SalesClient[], products: { asoldi: number; ssu: number }) {
+  try {
+    sessionStorage.setItem(SALES_LIST_CACHE_KEY, JSON.stringify({ clients, products, at: Date.now() }));
+  } catch {
+    // Ignore quota / private-mode failures.
+  }
+}
 
 function salesIsMobileViewport() {
   return typeof window !== 'undefined' && window.matchMedia('(max-width: 767px)').matches;
@@ -193,6 +224,8 @@ type Props = {
   onMovedToDevelopment?: () => void;
   onLogout?: () => void;
   showScriptsDock?: boolean;
+  /** When false the section is hidden but kept mounted. Retry a failed load when it becomes true. */
+  active?: boolean;
 };
 
 type SalesFormState = {
@@ -415,14 +448,17 @@ function isValidClientEmail(value = '') {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
 }
 
-export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScriptsDock = false }: Props) {
+export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScriptsDock = false, active = true }: Props) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const flowClientId = searchParams.get('flow') || '';
   const flowStepNumber = Number(searchParams.get('step') || '1');
   const flowStep: 1 | 2 | 3 = flowStepNumber === 2 || flowStepNumber === 3 ? flowStepNumber : 1;
-  const [clients, setClients] = useState<SalesClient[]>([]);
-  const [productCounts, setProductCounts] = useState<{ asoldi: number; ssu: number }>({ asoldi: 0, ssu: 0 });
+  const cachedList = readSalesListCache();
+  const [clients, setClients] = useState<SalesClient[]>(() => cachedList?.clients || []);
+  const [productCounts, setProductCounts] = useState<{ asoldi: number; ssu: number }>(() => (
+    cachedList?.products || { asoldi: 0, ssu: 0 }
+  ));
   const [productBracket, setProductBracket] = useState<SalesProduct>('asoldi');
   const [calendarStatus, setCalendarStatus] = useState<CalendarStatus | null>(null);
   const [calendarConnecting, setCalendarConnecting] = useState(false);
@@ -433,7 +469,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkAssignOwnerId, setBulkAssignOwnerId] = useState('');
   const [sendingMailKey, setSendingMailKey] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !cachedList);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -491,6 +527,9 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
   const notesFlushRef = useRef<null | (() => Promise<void>)>(null);
   const clientCardBaselineRef = useRef('');
   const salesListGenRef = useRef(0);
+  const salesListLoadedRef = useRef(false);
+  const clientsLenRef = useRef(0);
+  const errorRef = useRef('');
   const [discardPrompt, setDiscardPrompt] = useState(false);
   const [verifiedInboxOpen, setVerifiedInboxOpen] = useState(false);
   const [previewMissingToastId, setPreviewMissingToastId] = useState<string | null>(null);
@@ -762,6 +801,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
   }, [meetingMapPins, productClients]);
 
   async function request(path: string, init?: RequestInit) {
+    expireFatCookies();
     const headers: Record<string, string> = {
       ...salesAuthHeaders(),
       ...(init?.headers as Record<string, string> || {}),
@@ -772,6 +812,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
     const response = await fetch(`${API}${path}`, {
       ...init,
       headers,
+      cache: 'no-store',
     });
     const data = await response.json().catch(() => ({} as Record<string, unknown>));
     if (!response.ok) {
@@ -819,9 +860,14 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
     }
     const gen = ++salesListGenRef.current;
     let lastErr: unknown = null;
+    const backoffMs = [0, 1200, 3500];
     try {
-      for (let attempt = 0; attempt < 3; attempt += 1) {
+      for (let attempt = 0; attempt < backoffMs.length; attempt += 1) {
+        if (backoffMs[attempt]) {
+          await new Promise((resolve) => setTimeout(resolve, backoffMs[attempt]));
+        }
         try {
+          expireFatCookies();
           const data = await request('/admin/sales');
           if (gen !== salesListGenRef.current) return;
           const nextClients = Array.isArray(data.clients) ? data.clients : [];
@@ -834,10 +880,12 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                 asoldi: nextClients.filter((client: SalesClient) => normalizeSalesProduct(client.product) === 'asoldi').length,
                 ssu: nextClients.filter((client: SalesClient) => normalizeSalesProduct(client.product) === 'ssu').length,
               };
-          setProductCounts({
+          const nextProducts = {
             asoldi: Number(counts.asoldi) || 0,
             ssu: Number(counts.ssu) || 0,
-          });
+          };
+          setProductCounts(nextProducts);
+          writeSalesListCache(nextClients, nextProducts);
           if (data.calendar) setCalendarStatus(data.calendar as CalendarStatus);
           setIsSalesAdmin(Boolean(data.isAdmin) || data?.calendar?.loginRole === 'admin');
           setSalesOwners(Array.isArray(data.owners) ? data.owners : []);
@@ -846,13 +894,17 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
         } catch (err) {
           lastErr = err;
           if (gen !== salesListGenRef.current) return;
-          if (attempt < 2) {
-            await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
-          }
         }
       }
       if (lastErr) {
-        setError(lastErr instanceof Error ? lastErr.message : 'Failed to load sales clients');
+        const cached = readSalesListCache();
+        if (cached?.clients.length && gen === salesListGenRef.current) {
+          setClients((prev) => prev.length ? prev : cached.clients);
+          setProductCounts((prev) => (prev.asoldi || prev.ssu) ? prev : cached.products);
+          setError('');
+        } else if (gen === salesListGenRef.current) {
+          setError(lastErr instanceof Error ? lastErr.message : 'Failed to load sales clients');
+        }
       } else {
         void loadOffers();
       }
@@ -887,9 +939,17 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
     }
   }
 
+  clientsLenRef.current = clients.length;
+  errorRef.current = error;
+
   useEffect(() => {
-    void loadSales({ showLoading: true });
-  }, []);
+    if (!active) return;
+    const hasList = clientsLenRef.current > 0;
+    const failed = Boolean(errorRef.current);
+    if (salesListLoadedRef.current && hasList && !failed) return;
+    salesListLoadedRef.current = true;
+    void loadSales({ showLoading: !hasList, clearMessages: !hasList });
+  }, [active]);
 
   useEffect(() => {
     if (isSalesAdmin) return undefined;

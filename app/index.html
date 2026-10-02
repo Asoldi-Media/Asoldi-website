@@ -7,6 +7,19 @@
           var raw = document.cookie || '';
           var parts = raw ? raw.split(';') : [];
           var total = raw.length;
+          var host = location.hostname || '';
+          var domains = ['', host, host ? '.' + host : ''];
+          if (host.indexOf('.') !== -1) {
+            var root = host.split('.').slice(-2).join('.');
+            domains.push(root, '.' + root);
+          }
+          function expire(name) {
+            for (var d = 0; d < domains.length; d++) {
+              var domainPart = domains[d] ? '; Domain=' + domains[d] : '';
+              document.cookie = name + '=; Max-Age=0; Path=/; Secure; SameSite=Lax' + domainPart;
+              document.cookie = name + '=; Max-Age=0; Path=/' + domainPart;
+            }
+          }
           for (var i = 0; i < parts.length; i++) {
             var part = parts[i].replace(/^\s+/, '');
             var eq = part.indexOf('=');
@@ -15,9 +28,7 @@
             if (!name) continue;
             var lower = name.toLowerCase();
             if (lower.indexOf('sbjs') === 0 || lower.indexOf('twk') === 0 || value.length > 200 || total > 6000) {
-              if (name !== '__stripe_mid' && name !== '__stripe_sid') {
-                document.cookie = name + '=; Max-Age=0; Path=/';
-              }
+              if (name !== '__stripe_mid' && name !== '__stripe_sid') expire(name);
             }
           }
           if (navigator.sendBeacon) {

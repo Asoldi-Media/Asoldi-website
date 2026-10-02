@@ -2,6 +2,7 @@ import React, { Suspense, lazy, useCallback, useEffect, useMemo, useState } from
 import { ChevronDown, Loader2, Mail, Search, X } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { API, authHeaders, salesAuthHeaders, type SalesClient } from '../shared';
+import { expireFatCookies } from '../../../lib/expire-fat-cookies';
 import { SALES_ACTION_TIMEZONE } from '../../../../lib/sales-next-actions.js';
 import { getWorkshopAction, workshopInvitesClient } from '../../../../lib/workshop-action-shared.js';
 import {
@@ -82,12 +83,13 @@ function formatWhen(value = '') {
 }
 
 async function request(path: string, init?: RequestInit) {
+  expireFatCookies();
   const headers: Record<string, string> = {
     ...salesAuthHeaders(),
     ...(init?.headers as Record<string, string> || {}),
   };
   if (init?.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
-  const response = await fetch(`${API}${path}`, { ...init, headers });
+  const response = await fetch(`${API}${path}`, { ...init, headers, cache: 'no-store' });
   const data = await response.json().catch(() => ({} as Record<string, unknown>));
   if (!response.ok) {
     throw new Error(String((data as { message?: string }).message || `Request failed (${response.status})`));
@@ -271,7 +273,7 @@ export function AdminBoardSection() {
   }, []);
 
   const loadClients = useCallback(async () => {
-    const data = await request('/admin/sales', { signal: AbortSignal.timeout(12_000) });
+    const data = await request('/admin/sales');
     const next = Array.isArray(data.clients) ? data.clients as SalesClient[] : [];
     setClients(next);
   }, []);

@@ -6,8 +6,10 @@ import { dirname, join } from 'node:path';
 import {
   cookieNamesToDrop,
   expireCookieLine,
+  expireCookieLines,
   parseCookiePairs,
 } from '../lib/http-request-log.js';
+import { cookieDomainsForHost } from '../lib/fat-cookies.js';
 
 const server = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../server.js'), 'utf8');
 
@@ -38,4 +40,24 @@ test('every response can expire oversized cookies and /api/health shows the size
   assert.match(server, /cookieNamesToDrop\(cookie\)/);
   assert.match(server, /httpRequestSummary\(\)/);
   assert.match(server, /app\.post\('\/api\/diag\/browser'/);
+  assert.match(server, /expireCookieLines\(name, req\.hostname\)/);
+});
+
+test('expiring tracking cookies also sets Domain=asoldi.com so Tawk/Sourcebuster actually die', () => {
+  const domains = cookieDomainsForHost('asoldi.com');
+  assert.deepEqual(domains, ['', 'asoldi.com', '.asoldi.com']);
+  const lines = expireCookieLines('twk_uuid_abc', 'asoldi.com');
+  assert.ok(lines.some((line) => line.endsWith('; Domain=asoldi.com')));
+  assert.ok(lines.some((line) => line.endsWith('; Domain=.asoldi.com')));
+  const html = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../app/index.html'), 'utf8');
+  assert.match(html, /Domain=/);
+  const app = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../app/App.tsx'), 'utf8');
+  assert.match(app, /expireFatCookies/);
+  const sales = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../app/pages/Admin/sections/SalesClientsSection.tsx'), 'utf8');
+  assert.match(sales, /expireFatCookies/);
+  assert.match(sales, /asoldi-sales-list-v1/);
+  const manage = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../app/pages/Admin/sections/ManageClientsSection.tsx'), 'utf8');
+  assert.match(manage, /active=\{view === 'sales'\}/);
+  const pkg = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../package.json'), 'utf8');
+  assert.match(pkg, /--max-http-header-size=65536/);
 });

@@ -103,7 +103,10 @@ export function ManageClientsSection({
       ) : null}
       {opened.sales ? (
         <div className={view === 'sales' ? '' : 'hidden'} hidden={view !== 'sales'}>
-          <SalesClientsSection onMovedToDevelopment={() => setView('development')} />
+          <SalesClientsSection
+            active={view === 'sales'}
+            onMovedToDevelopment={() => setView('development')}
+          />
         </div>
       ) : null}
       {opened.admin ? (

@@ -78,7 +78,7 @@ import { applyProxyKeepAlive, describeProxyTimeouts, proxyHttpServerOptions } fr
 import {
   cookieHeaderBytes,
   cookieNamesToDrop,
-  expireCookieLine,
+  expireCookieLines,
   httpRequestSummary,
   noteHttpRequest,
   parseCookiePairs,
@@ -369,8 +369,9 @@ app.use((req, res, next) => {
   const cookie = req.headers.cookie || '';
   const dropped = cookieNamesToDrop(cookie);
   for (const name of dropped) {
-    const line = expireCookieLine(name);
-    if (line) res.append('Set-Cookie', line);
+    for (const line of expireCookieLines(name, req.hostname)) {
+      if (line) res.append('Set-Cookie', line);
+    }
   }
   res.on('finish', () => {
     noteHttpRequest({

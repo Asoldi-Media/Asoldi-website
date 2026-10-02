@@ -70,7 +70,10 @@ test('Admin Sales tab keeps the list mounted and retries the client fetch', () =
   const manage = readFileSync(join(root, 'app/pages/Admin/sections/ManageClientsSection.tsx'), 'utf8');
   assert.match(manage, /opened\.sales/);
   assert.match(manage, /hidden=\{view !== 'sales'\}/);
+  assert.match(manage, /active=\{view === 'sales'\}/);
   const salesUi = readFileSync(join(root, 'app/pages/Admin/sections/SalesClientsSection.tsx'), 'utf8');
-  assert.match(salesUi, /for \(let attempt = 0; attempt < 3;/);
+  assert.match(salesUi, /const backoffMs = \[0, 1200, 3500\]/);
+  assert.match(salesUi, /expireFatCookies/);
+  assert.match(salesUi, /asoldi-sales-list-v1/);
   assert.equal(salesUi.includes('AbortSignal.timeout(12_000)'), false);
 });
