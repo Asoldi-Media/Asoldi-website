@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   attendeesToReinvite,
   buildEventSummary,
@@ -243,4 +246,11 @@ test('sales calendar embed is Google week view for that account, not a custom gr
   assert.equal(buildGoogleCalendarEmbedUrl({ src: 'primary' }), '');
   assert.equal(isAsoldiCalendarSummary('Asoldi · Online møte · Bakeri'), true);
   assert.equal(isAsoldiCalendarSummary('Dentist'), false);
+});
+
+test('sales calendar embed does not wait on Google event visibility patches', () => {
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../lib/google-calendar.js'), 'utf8');
+  assert.match(src, /scheduleAsoldiEventVisibility/);
+  assert.match(src, /calendar-embed-timeout/);
+  assert.doesNotMatch(src, /await publishAsoldiEventVisibility/);
 });

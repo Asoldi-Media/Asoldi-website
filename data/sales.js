@@ -21,6 +21,7 @@ import { filterCustomOtherLinks } from '../lib/sales-client-links.js';
 import { normalizeWorkshopAction, offerStartDateFromWorkshopDueAt } from '../lib/workshop-action.js';
 import { persistWorkshopRecord } from '../lib/workshop-record.js';
 import { normalizeDeveloperQa } from '../lib/developer-card.js';
+import { normalizeDeveloperGoals } from '../lib/developer-goals.js';
 import { normalizeDueDate } from '../lib/website-due.js';
 
 function persistWorkshopAction(raw) {
@@ -505,6 +506,7 @@ function normalizeSalesClient(raw = {}) {
     workshopAction: persistWorkshopAction(raw.workshopAction),
     workshop: persistWorkshopRecord(raw.workshop),
     developerQa: normalizeDeveloperQa(raw.developerQa),
+    developerGoals: normalizeDeveloperGoals(raw.developerGoals),
     contractSignedAt: nextProgression.contractSigned ? sanitizeText(raw.contractSignedAt) : '',
     websiteDueOverride: normalizeDueDate(raw.websiteDueOverride),
     websiteDeliveryWeeks: Math.max(0, Math.round(Number(raw.websiteDeliveryWeeks) || 0)),
@@ -641,6 +643,9 @@ export function updateSalesClient(id, updates = {}) {
     developerQa: Object.prototype.hasOwnProperty.call(updates, 'developerQa')
       ? { ...(current.developerQa || {}), ...(updates.developerQa || {}) }
       : current.developerQa,
+    developerGoals: Object.prototype.hasOwnProperty.call(updates, 'developerGoals')
+      ? { ...(current.developerGoals || {}), ...(updates.developerGoals || {}) }
+      : current.developerGoals,
     salesMigrations: Object.prototype.hasOwnProperty.call(updates, 'salesMigrations')
       ? { ...(current.salesMigrations || {}), ...(updates.salesMigrations || {}) }
       : current.salesMigrations,
@@ -1042,6 +1047,10 @@ export function setSalesMakerRun(id, makerPatch = {}) {
 
 export function setSalesDeveloperQa(id, qaPatch = {}) {
   return updateSalesClient(id, { developerQa: qaPatch });
+}
+
+export function setSalesDeveloperGoals(id, goalsPatch = {}) {
+  return updateSalesClient(id, { developerGoals: goalsPatch });
 }
 
 export function setSalesStatus(id, status, archivePatch = {}) {

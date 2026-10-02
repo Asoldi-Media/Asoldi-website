@@ -76,7 +76,7 @@ export const DeveloperWorkspace = () => {
             <div>
               <h1 className="text-lg font-semibold">Utvikling</h1>
               <p className="text-xs text-gray-400">
-                Velg Forhåndsvisning for salgskunder i møterekkefølge, eller Utvikler for signerte kontrakter.
+                Én kundeliste med fire måltrinn: Klar for preview, Klar for deployment, Iterasjon ferdig, Publish.
               </p>
             </div>
             <button

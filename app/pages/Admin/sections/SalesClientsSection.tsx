@@ -58,7 +58,6 @@ import {
   clientMatchesMeetingModeFilter,
   clientNextActionInDateRange,
 } from '../../../../lib/sales-next-actions.js';
-import { persistDevelopmentBoard } from '../../../../lib/development-phase.js';
 import { salesBookingFacts } from '../../../../lib/sales-booking-facts.js';
 import { calendarDurationForMode } from '../../../../lib/sales-meeting-duration.js';
 import { GOOGLE_CALENDAR_OAUTH_EVENT } from '../../../../lib/google-calendar-oauth-ui.js';
@@ -2407,12 +2406,11 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                       disabled={!canMarkSold}
                       onClick={() => {
                         if (!canMarkSold) return;
-                        persistDevelopmentBoard('deployment');
                         onMovedToDevelopment?.();
-                        setNotice(`${client.businessName || 'Kunden'} er solgt og ligger under Utvikling → Utvikler.`);
+                        setNotice(`${client.businessName || 'Kunden'} er solgt og ligger under Utvikling.`);
                       }}
                       title={canMarkSold
-                        ? 'Kontrakt signert. Åpner Utvikler.'
+                        ? 'Kontrakt signert. Åpner Utvikling.'
                         : 'Solgt nettside kan bare klikkes når kontrakt er signert.'}
                       className={`inline-flex items-center gap-1.5 px-3 py-2 sm:py-1.5 min-h-[40px] sm:min-h-0 rounded-lg text-xs disabled:opacity-40 ${
                         websiteSold

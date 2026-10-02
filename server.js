@@ -214,8 +214,7 @@ import { clientWebsitePlans } from './lib/website-tiers.js';
 import { renderSalesEmailDocument } from './lib/sales-email-layout.js';
 import {
   DEVELOPMENT_KEYS,
-  buildDevelopmentItems,
-  buildPreviewItems,
+  buildDeveloperBoardItems,
   findLinkedSalesClient,
   parseDevelopmentItemId,
   siteMatchesSalesClient,
@@ -258,6 +257,7 @@ import {
 } from './lib/google-calendar.js';
 import { loadWorkshopNeedsDocument, patchWorkshopNeedLine } from './lib/workshop-needs.js';
 import { flattenMakerUploadsForLibrary, makerProgressPatchFromHandoff, normalizeDeveloperQa } from './lib/developer-card.js';
+import { applyDeveloperGoalToggle } from './lib/developer-goals.js';
 import { LOCAL_EDITOR_ORIGIN } from './lib/maker-editor-origin.js';
 import {
   DAMIAN_WORKSHOP_CALENDAR_EMAIL,
@@ -337,6 +337,13 @@ import dotenv from 'dotenv';
 dotenv.config();
 applyPersistentProductionEnv();
 console.log(`[mail] transport=${emailLib.resolveMailTransport()}`);
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[process] unhandledRejection', reason);
+});
+process.on('uncaughtException', (error) => {
+  console.error('[process] uncaughtException', error);
+});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -16941,14 +16948,28 @@ function websiteDueView(client) {
   };
 }
 
-function listDevelopmentBoard() {
+function listDeveloperBoard() {
   const salesClients = clientsWithWebsiteDue(sales.getSalesClients());
   const sites = hub.getAllSites();
-  return buildDevelopmentItems(salesClients, sites);
+  return buildDeveloperBoardItems(salesClients, sites);
+}
+
+function listDevelopmentBoard() {
+  return listDeveloperBoard();
 }
 
 function listPreviewBoard() {
-  return buildPreviewItems(clientsWithWebsiteDue(sales.getSalesClients()), hub.getAllSites());
+  return listDeveloperBoard();
+}
+
+function developmentBoardPayload(extra = {}) {
+  const items = listDeveloperBoard();
+  return {
+    items,
+    previewItems: items,
+    deploymentItems: items,
+    ...extra,
+  };
 }
 
 function resolveDevelopmentTarget(itemId) {
@@ -16971,11 +16992,7 @@ function resolveDevelopmentTarget(itemId) {
 
 app.get('/api/admin/development', developmentAuth, (_req, res) => {
   hub.reconcileDeliveryPhases(sales.getSalesClients());
-  res.json({
-    items: listDevelopmentBoard(),
-    previewItems: listPreviewBoard(),
-    deploymentItems: listDevelopmentBoard(),
-  });
+  res.json(developmentBoardPayload());
 });
 
 app.patch('/api/admin/development/:id', developmentAuth, (req, res) => {
@@ -17027,15 +17044,46 @@ app.patch('/api/admin/development/:id', developmentAuth, (req, res) => {
     client = sales.getSalesClientById(client.id);
   }
 
-  res.json({
+  res.json(developmentBoardPayload({
     ok: true,
-    item: listDevelopmentBoard().find((entry) => (
+    item: listDeveloperBoard().find((entry) => (
       (client && entry.salesClientId === client.id) || (site && entry.siteId === site.id)
     )) || null,
-    items: listDevelopmentBoard(),
-    previewItems: listPreviewBoard(),
-    deploymentItems: listDevelopmentBoard(),
     movedToClients: Boolean(nextDevelopment.nettsideFerdig),
+  }));
+});
+
+app.patch('/api/admin/development/:id/goals', developmentAuth, (req, res) => {
+  const key = sanitizeText(req.body?.key);
+  const target = resolveDevelopmentTarget(req.params.id);
+  if (!target?.client) return res.status(404).json({ message: 'Sales client not found.' });
+  const applied = applyDeveloperGoalToggle(target.client.developerGoals, key);
+  if (applied.error) return res.status(400).json({ message: applied.error });
+  const updated = sales.setSalesDeveloperGoals(target.client.id, applied.goals);
+  if (!updated) return res.status(404).json({ message: 'Sales client not found.' });
+  res.json(developmentBoardPayload({
+    ok: true,
+    client: updated,
+    item: listDeveloperBoard().find((entry) => entry.salesClientId === updated.id) || null,
+  }));
+});
+
+app.post('/api/admin/development/:id/sync-maker-run', developmentAuth, (req, res) => {
+  const target = resolveDevelopmentTarget(req.params.id);
+  if (!target?.client) return res.status(404).json({ message: 'Sales client not found.' });
+  const runId = sanitizeText(req.body?.runId);
+  if (!runId) return res.status(400).json({ message: 'Run ID is required.' });
+  const patch = makerProgressPatchFromHandoff(req.body?.handoff || {});
+  const updated = sales.setSalesMakerRun(target.client.id, {
+    ...(target.client.makerRun || {}),
+    runId,
+    ...patch,
+    statusUpdatedAt: new Date().toISOString(),
+  });
+  if (!updated) return res.status(404).json({ message: 'Sales client not found.' });
+  res.json({
+    ok: true,
+    client: updated,
   });
 });
 
@@ -18384,6 +18432,9 @@ ensureData().then(() => {
     });
   });
   applyProxyKeepAlive(server);
+  server.on('error', (error) => {
+    console.error('[http] server error', error);
+  });
   console.log(describeProxyTimeouts(server));
 }).catch((err) => {
   console.error('Failed to init admin:', err);

@@ -120,6 +120,19 @@ export async function fetchMakerRunStatus(
   };
 }
 
+export async function findMakerRunBySalesClientId(
+  salesClientId: string,
+  businessName = ''
+) {
+  const id = String(salesClientId || '').trim();
+  if (!id) return '';
+  const params = new URLSearchParams({ salesClientId: id });
+  const name = String(businessName || '').trim();
+  if (name) params.set('businessName', name);
+  const data = await fetchLocalMakerJson(`/api/runs?${params.toString()}`) as { runId?: string };
+  return String(data.runId || '').trim();
+}
+
 export async function saveMakerRunDomain({
   runId,
   websiteDomain,

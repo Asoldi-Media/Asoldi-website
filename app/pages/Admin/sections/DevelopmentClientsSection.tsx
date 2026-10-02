@@ -6,8 +6,7 @@ import {
   type DevelopmentItem,
 } from '../shared';
 import { buildClientSearchHaystack, matchesClientSearchQuery, normalizeClientSearchText } from '../clientSearch';
-import { RECENT_OVERDUE_MS } from '../../../../lib/sales-next-actions.js';
-import { persistDevelopmentBoard, readStoredDevelopmentBoard } from '../../../../lib/development-phase.js';
+import { DEVELOPER_RECENT_OVERDUE_MS } from '../../../../lib/developer-goals.js';
 import { DeveloperClientCard } from '../../developer/DeveloperClientCard';
 import { pipelineStatusFromMakerRun } from '../../../../lib/developer-card.js';
 import { DeveloperRunQueueBar } from '../../developer/DeveloperRunQueueBar';
@@ -18,64 +17,41 @@ type Props = {
   hideHeader?: boolean;
 };
 
-type BoardId = 'preview' | 'deployment';
 type BucketId = 'recentPastDue' | 'upcoming' | 'pastDue' | 'noNextAction';
 type BucketTone = 'recent' | 'upcoming' | 'past' | 'none';
 
 const COLLAPSED_STORAGE_KEY = 'asoldi-development-timeline-collapsed';
 
-const PREVIEW_BUCKET_META: Record<BucketId, { title: string; hint: string; tone: BucketTone }> = {
+const BUCKET_META: Record<BucketId, { title: string; hint: string; tone: BucketTone }> = {
   recentPastDue: {
-    title: 'Forfalt (siste 48 timer)',
-    hint: 'Nylig forfalt møte eller neste handling — vises øverst slik at du ikke mister dem.',
+    title: 'Forfalt (siste 2 uker)',
+    hint: 'Nylig forfalt møte, handling eller frist — vises øverst i to uker.',
     tone: 'recent',
   },
   upcoming: {
-    title: 'Neste møte',
-    hint: 'Kommende møte eller handling, nærmeste først. Samme rekkefølge som Sales.',
+    title: 'Neste',
+    hint: 'Kommende møte, handling eller leveringsfrist, nærmeste først.',
     tone: 'upcoming',
   },
   pastDue: {
     title: 'Forfalt',
-    hint: 'Mer enn 48 timer etter neste møte eller handling.',
+    hint: 'Mer enn to uker etter neste møte, handling eller frist.',
     tone: 'past',
   },
   noNextAction: {
     title: 'Ingen neste handling',
-    hint: 'Ingen neste handling eller avtalt møtetid. Sortert alfabetisk.',
-    tone: 'none',
-  },
-};
-
-const DEPLOYMENT_BUCKET_META: Record<BucketId, { title: string; hint: string; tone: BucketTone }> = {
-  recentPastDue: {
-    title: 'Frist nylig passert',
-    hint: 'Leveringsfristen gikk ut de siste 48 timene.',
-    tone: 'recent',
-  },
-  upcoming: {
-    title: 'Kommende frist',
-    hint: 'Nettsidefrist etter signert kontrakt, nærmeste først.',
-    tone: 'upcoming',
-  },
-  pastDue: {
-    title: 'Forfalt frist',
-    hint: 'Mer enn 48 timer etter leveringsfristen.',
-    tone: 'past',
-  },
-  noNextAction: {
-    title: 'Ingen frist ennå',
-    hint: 'Fristen starter når kontrakt er signert. Uten dato sorteres de alfabetisk.',
+    hint: 'Ingen neste handling, avtalt møtetid eller frist. Sortert alfabetisk.',
     tone: 'none',
   },
 };
 
 const BUCKET_ORDER: BucketId[] = ['recentPastDue', 'upcoming', 'pastDue', 'noNextAction'];
 
-function itemRankMs(item: DevelopmentItem, kind: BoardId = 'deployment') {
+function itemRankMs(item: DevelopmentItem) {
   const raw = String(
     item.rankAt
-    || (kind === 'preview' ? (item.nextActionAt || item.meetingAt) : '')
+    || item.nextActionAt
+    || item.meetingAt
     || item.websiteDue?.dueAt
     || ''
   ).trim();
@@ -84,9 +60,7 @@ function itemRankMs(item: DevelopmentItem, kind: BoardId = 'deployment') {
   return Number.isFinite(ms) ? ms : null;
 }
 
-// Same 48-hour window as the Sales board: upcoming → recently overdue (kept on top for
-// 48h) → overdue → no time (alphabetical).
-function groupDevelopmentItems(items: DevelopmentItem[], nowMs: number, kind: BoardId = 'deployment') {
+function groupDevelopmentItems(items: DevelopmentItem[], nowMs: number) {
   const groups: Record<BucketId, DevelopmentItem[]> = {
     recentPastDue: [],
     upcoming: [],
@@ -94,13 +68,13 @@ function groupDevelopmentItems(items: DevelopmentItem[], nowMs: number, kind: Bo
     noNextAction: [],
   };
   for (const item of items) {
-    const ms = itemRankMs(item, kind);
+    const ms = itemRankMs(item);
     if (ms == null) groups.noNextAction.push(item);
     else if (ms >= nowMs) groups.upcoming.push(item);
-    else if (nowMs - ms <= RECENT_OVERDUE_MS) groups.recentPastDue.push(item);
+    else if (nowMs - ms <= DEVELOPER_RECENT_OVERDUE_MS) groups.recentPastDue.push(item);
     else groups.pastDue.push(item);
   }
-  const byMs = (a: DevelopmentItem, b: DevelopmentItem) => (itemRankMs(a, kind) || 0) - (itemRankMs(b, kind) || 0);
+  const byMs = (a: DevelopmentItem, b: DevelopmentItem) => (itemRankMs(a) || 0) - (itemRankMs(b) || 0);
   groups.upcoming.sort(byMs);
   groups.recentPastDue.sort(byMs);
   groups.pastDue.sort(byMs);
@@ -119,8 +93,7 @@ function bucketToneClass(tone: BucketTone) {
 
 
 export function DevelopmentClientsSection({ hideHeader = false }: Props) {
-  const [previewItems, setPreviewItems] = useState<DevelopmentItem[]>([]);
-  const [deploymentItems, setDeploymentItems] = useState<DevelopmentItem[]>([]);
+  const [items, setItems] = useState<DevelopmentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -128,7 +101,6 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
   const websiteMakerBaseUrl = LOCAL_EDITOR_ORIGIN;
   const [queueItems, setQueueItems] = useState<Array<Record<string, unknown>>>([]);
   const [queueMemory, setQueueMemory] = useState<Record<string, unknown> | null>(null);
-  const [board, setBoard] = useState<BoardId>(() => readStoredDevelopmentBoard('preview'));
   const [searchInput, setSearchInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [runFilter, setRunFilter] = useState<'' | 'with-run' | 'without-run'>('');
@@ -178,13 +150,6 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
     setOnlyWithRequests(false);
   }
 
-  function chooseBoard(next: BoardId) {
-    setBoard(next);
-    setSelectedIds([]);
-    if (next === 'preview') setDueFilter('');
-    persistDevelopmentBoard(next);
-  }
-
   const hasActiveFilters = Boolean(searchQuery || runFilter || stepFilter || dueFilter || onlyWithRequests);
   const itemMatchesSearch = useCallback(
     (item: DevelopmentItem) => {
@@ -220,7 +185,7 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
                   : false;
         if (!ready) return false;
       }
-      if (board === 'deployment' && dueFilter) {
+      if (dueFilter) {
         const started = Boolean(item.websiteDue?.started && item.websiteDue?.dueAt);
         const dueMs = started ? Date.parse(String(item.websiteDue?.dueAt || '')) : NaN;
         if (dueFilter === 'started' && !started) return false;
@@ -232,22 +197,14 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
       const id = String(item.salesClientId || item.id || '').trim();
       return Boolean(threadMap[id]);
     },
-    [board, itemMatchesSearch, runFilter, stepFilter, dueFilter, nowMs, onlyWithRequests, threadMap]
+    [itemMatchesSearch, runFilter, stepFilter, dueFilter, nowMs, onlyWithRequests, threadMap]
   );
-  const previewGroups = useMemo(
-    () => groupDevelopmentItems(previewItems.filter(itemVisible), nowMs, 'preview'),
-    [previewItems, itemVisible, nowMs]
+  const groups = useMemo(
+    () => groupDevelopmentItems(items.filter(itemVisible), nowMs),
+    [items, itemVisible, nowMs]
   );
-  const deploymentGroups = useMemo(
-    () => groupDevelopmentItems(deploymentItems.filter(itemVisible), nowMs, 'deployment'),
-    [deploymentItems, itemVisible, nowMs]
-  );
-  const visiblePreviewCount = previewItems.filter(itemVisible).length;
-  const visibleDeploymentCount = deploymentItems.filter(itemVisible).length;
-  const visibleItems = useMemo(() => {
-    const source = board === 'preview' ? previewItems : deploymentItems;
-    return source.filter(itemVisible);
-  }, [board, deploymentItems, itemVisible, previewItems]);
+  const visibleCount = items.filter(itemVisible).length;
+  const visibleItems = useMemo(() => items.filter(itemVisible), [itemVisible, items]);
   const visibleSelectableIds = visibleItems.map((item) => item.id);
   const allVisibleSelected = Boolean(visibleSelectableIds.length && visibleSelectableIds.every((id) => selectedIds.includes(id)));
   const selectedClients = visibleItems
@@ -280,22 +237,18 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
     toggleClientSelected(itemId);
   }
 
-  function renderGroupedCards(
-    kind: 'preview' | 'deployment',
-    groups: Record<BucketId, DevelopmentItem[]>
-  ) {
+  function renderGroupedCards(groups: Record<BucketId, DevelopmentItem[]>) {
     return (
       <div className="space-y-3">
         {BUCKET_ORDER.map((bucketId) => {
-          const items = groups[bucketId];
-          const bucketKey = `${kind}:${bucketId}`;
-          const collapsed = Boolean(collapsedBuckets[bucketKey]);
-          const meta = (kind === 'preview' ? PREVIEW_BUCKET_META : DEPLOYMENT_BUCKET_META)[bucketId];
+          const bucketItems = groups[bucketId];
+          const collapsed = Boolean(collapsedBuckets[bucketId]);
+          const meta = BUCKET_META[bucketId];
           return (
-            <div key={bucketKey} className="space-y-3">
+            <div key={bucketId} className="space-y-3">
               <button
                 type="button"
-                onClick={() => toggleBucket(bucketKey)}
+                onClick={() => toggleBucket(bucketId)}
                 className={`w-full rounded-xl border px-3 py-2.5 text-left ${bucketToneClass(meta.tone)}`}
               >
                 <span className="flex items-center justify-between gap-3">
@@ -304,18 +257,18 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
                     <span className="block text-[11px] opacity-80 mt-0.5">{meta.hint}</span>
                   </span>
                   <span className="inline-flex items-center gap-2 shrink-0">
-                    <span className="text-sm font-semibold tabular-nums">{items.length}</span>
+                    <span className="text-sm font-semibold tabular-nums">{bucketItems.length}</span>
                     <ChevronDown size={16} className={`transition-transform ${collapsed ? '-rotate-90' : ''}`} />
                   </span>
                 </span>
               </button>
-              {!collapsed && items.length > 0 && (
+              {!collapsed && bucketItems.length > 0 && (
                 <div className="space-y-4">
-                  {items.map((item) => (
+                  {bucketItems.map((item) => (
                     <React.Fragment key={item.id}>
                       <DeveloperClientCard
                         item={item}
-                        kind={kind}
+                        kind="developer"
                         busyKey={busyKey}
                         selected={selectedIds.includes(item.id)}
                         websiteMakerBaseUrl={websiteMakerBaseUrl}
@@ -346,19 +299,18 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
   const patchDevelopmentClient = useCallback((client) => {
     const salesClientId = String(client?.id || '').trim();
     if (!salesClientId) return;
-    const apply = (items) => items.map((item) => (
+    setItems((current) => current.map((item) => (
       String(item.salesClientId || '') === salesClientId
         ? {
             ...item,
             makerRun: client.makerRun ?? item.makerRun,
             websiteImport: client.websiteImport ?? item.websiteImport,
             developerQa: client.developerQa ?? item.developerQa,
+            developerGoals: client.developerGoals ?? item.developerGoals,
             workshop: client.workshop ?? item.workshop,
           }
         : item
-    ));
-    setPreviewItems(apply);
-    setDeploymentItems(apply);
+    )));
   }, []);
 
   const loadItems = useCallback(async () => {
@@ -371,11 +323,19 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
       if (!response.ok) {
         throw new Error(data.message || 'Failed loading development clients');
       }
-      const deployment = Array.isArray(data.deploymentItems)
-        ? data.deploymentItems
-        : (Array.isArray(data.items) ? data.items : []);
-      setDeploymentItems(deployment);
-      setPreviewItems(Array.isArray(data.previewItems) ? data.previewItems : []);
+      const nextItems = Array.isArray(data.items) && data.items.length
+        ? data.items
+        : [
+            ...(Array.isArray(data.previewItems) ? data.previewItems : []),
+            ...(Array.isArray(data.deploymentItems) ? data.deploymentItems : []),
+          ];
+      const seen = new Set();
+      setItems(nextItems.filter((item) => {
+        const id = String(item?.id || '');
+        if (!id || seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed loading development clients');
     } finally {
@@ -440,13 +400,8 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
       if (!response.ok) {
         throw new Error(data.message || 'Failed updating development step');
       }
-      if (Array.isArray(data.previewItems) || Array.isArray(data.deploymentItems) || Array.isArray(data.items)) {
-        setPreviewItems(Array.isArray(data.previewItems) ? data.previewItems : previewItems);
-        setDeploymentItems(
-          Array.isArray(data.deploymentItems)
-            ? data.deploymentItems
-            : (Array.isArray(data.items) ? data.items : deploymentItems)
-        );
+      if (Array.isArray(data.items) && data.items.length) {
+        setItems(data.items);
       } else {
         await loadItems();
       }
@@ -457,7 +412,7 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
     }
   }
 
-  const empty = !loading && (board === 'preview' ? previewItems.length === 0 : deploymentItems.length === 0);
+  const empty = !loading && items.length === 0;
 
   return (
     <div className="space-y-6">
@@ -465,27 +420,10 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
         <div>
           <h2 className="text-lg font-semibold text-white">Utvikling</h2>
           <p className="text-gray-400 text-sm">
-            Forhåndsvisning er salgskunder i møterekkefølge. Utvikler er signerte kontrakter med leveringsfrist.
+            Én kundeliste. Marker Klar for preview, Klar for deployment, Iterasjon ferdig og Publish over handlingsboksen.
           </p>
         </div>
       )}
-
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={() => chooseBoard('preview')}
-          className={`px-4 py-2 rounded-lg text-sm font-medium ${board === 'preview' ? 'bg-[#FF5B00] text-white' : 'bg-white/10 text-gray-300 hover:bg-white/15'}`}
-        >
-          Forhåndsvisning
-        </button>
-        <button
-          type="button"
-          onClick={() => chooseBoard('deployment')}
-          className={`px-4 py-2 rounded-lg text-sm font-medium ${board === 'deployment' ? 'bg-[#FF5B00] text-white' : 'bg-white/10 text-gray-300 hover:bg-white/15'}`}
-        >
-          Utvikler
-        </button>
-      </div>
 
       <form onSubmit={applySearch} className="rounded-2xl bg-[#2a2a2a] border border-white/10 p-4">
         <label className="text-xs font-semibold text-gray-200 uppercase tracking-wide">Search and filter</label>
@@ -521,7 +459,6 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
               <option value="2.1">Steg 2.1 klar</option>
               <option value="2.2">Steg 2.2 klar</option>
             </select>
-            {board === 'deployment' ? (
             <select
               value={dueFilter}
               onChange={(event) => setDueFilter(event.target.value as '' | 'started' | 'waiting' | 'overdue' | 'upcoming')}
@@ -533,7 +470,6 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
               <option value="overdue">Forfalt frist</option>
               <option value="started">Har fristdato</option>
             </select>
-            ) : null}
             <label className="inline-flex items-center gap-2 rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2 cursor-pointer">
               <input
                 type="checkbox"
@@ -562,11 +498,9 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
             )}
           </div>
           <p className="text-[11px] text-gray-400">
-            {board === 'preview'
-              ? 'Forhåndsvisning er sortert som Sales: neste møte eller handling, nærmeste først. Nylig forfalt ligger øverst i 48 timer.'
-              : 'Utvikler er sortert etter nettsidefrist. Fristen starter når salg huker av signert kontrakt.'}
+            Sortert etter neste møte, handling eller leveringsfrist. Nylig forfalt ligger øverst i to uker.
             {' '}Click a section header to collapse it.
-            {hasActiveFilters ? ` Showing ${board === 'preview' ? visiblePreviewCount : visibleDeploymentCount} client(s).` : ''}
+            {hasActiveFilters ? ` Showing ${visibleCount} client(s).` : ''}
           </p>
         </div>
       </form>
@@ -602,36 +536,14 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
         </div>
       ) : empty ? (
         <p className="text-gray-400 text-center py-8">
-          {board === 'preview'
-            ? 'Ingen forhåndsvisningskunder ennå. Aktive salgskunder uten signert kontrakt vises her.'
-            : 'Ingen utviklerkunder ennå. Signerte kontrakter flyttes hit fra forhåndsvisning.'}
+          Ingen utviklerkunder ennå. Aktive salgskunder og signerte kontrakter vises her.
         </p>
-      ) : board === 'preview' ? (
-        <section className="space-y-3">
-          <div>
-            <h3 className="text-sm font-semibold text-white">Forhåndsvisning</h3>
-            <p className="text-xs text-gray-400 mt-1">
-              Samme kunder som Sales, i møterekkefølge. UI-en er utviklerkortet — lag preview-run slik at sales åpner den offentlige URL-en.
-            </p>
-          </div>
-          {visiblePreviewCount === 0 ? (
-            <p className="text-sm text-gray-500">Ingen forhåndsvisningskunder matcher søket.</p>
-          ) : (
-            renderGroupedCards('preview', previewGroups)
-          )}
-        </section>
       ) : (
         <section className="space-y-3">
-          <div>
-            <h3 className="text-sm font-semibold text-white">Utvikler</h3>
-            <p className="text-xs text-gray-400 mt-1">
-              Signerte kontrakter: pipeline, Hostinger, GitHub, V1 og ferdig nettside.
-            </p>
-          </div>
-          {visibleDeploymentCount === 0 ? (
-            <p className="text-sm text-gray-500">Ingen utviklerkunder matcher søket.</p>
+          {visibleCount === 0 ? (
+            <p className="text-sm text-gray-500">Ingen kunder matcher søket.</p>
           ) : (
-            renderGroupedCards('deployment', deploymentGroups)
+            renderGroupedCards(groups)
           )}
         </section>
       )}

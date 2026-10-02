@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildDevelopmentItems,
+  buildDeveloperBoardItems,
   buildPreviewItems,
   isLiveHubClient,
   isDevelopmentSalesClient,
+  isDeveloperBoardClient,
   isPreviewSalesClient,
   previewTimelineAt,
   resolveSiteDeliveryPhase,
@@ -144,4 +146,22 @@ test('SSU and archived clients stay off the preview board', () => {
   assert.equal(isPreviewSalesClient(ssu), false);
   assert.equal(isPreviewSalesClient(archived), false);
   assert.equal(buildPreviewItems([ssu, archived], []).length, 0);
+});
+
+test('developer board merges unsigned preview clients and signed contracts', () => {
+  const unsigned = {
+    ...bynesetSales,
+    id: 'sales-preview',
+    businessName: 'New Cafe',
+    status: 'active',
+    progression: { contractSigned: false },
+    hubSite: {},
+  };
+  assert.equal(isDeveloperBoardClient(unsigned), true);
+  assert.equal(isDeveloperBoardClient(bynesetSales), true);
+  const board = buildDeveloperBoardItems([unsigned, bynesetSales], [byneset]);
+  assert.equal(board.length, 2);
+  assert.equal(board.some((item) => item.businessName === 'New Cafe'), true);
+  assert.equal(board.some((item) => item.businessName === 'Byneset Bydelskafe'), true);
+  assert.equal(board.every((item) => item.developerGoals && item.developerGoals.readyForPreview === false), true);
 });

@@ -285,6 +285,15 @@ export type WorkshopRecord = {
   goalActions?: WorkshopGoalAction[];
 };
 
+export type DeveloperGoalKey = 'readyForPreview' | 'readyForDeployment' | 'iterationDone' | 'publish';
+
+export type DeveloperGoals = {
+  readyForPreview: boolean;
+  readyForDeployment: boolean;
+  iterationDone: boolean;
+  publish: boolean;
+};
+
 export type DeveloperQa = {
   textOk: boolean;
   mediaOk: boolean;
@@ -355,6 +364,7 @@ export type DevelopmentItem = {
   hasIterationMeeting?: boolean;
   iterationTranscript?: string;
   developerQa?: DeveloperQa;
+  developerGoals?: DeveloperGoals;
   portalUserId?: string;
   makerRun: SalesMakerRunMeta | null;
   websiteImport: SalesWebsiteImportMeta | null;
@@ -639,6 +649,7 @@ export type SalesClient = {
   /** Held workshop, notes, developer summary, iteration. Not the booking. */
   workshop?: WorkshopRecord | null;
   developerQa?: DeveloperQa;
+  developerGoals?: DeveloperGoals;
   development?: SalesDevelopment;
   reminders: SalesReminders;
   calendar: SalesCalendarMeta;

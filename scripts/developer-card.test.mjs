@@ -15,6 +15,7 @@ import {
   developerMediaLibraryView,
   developerSummaryView,
   makerCustomEditPath,
+  makerHandoffFromLiveRun,
   makerProgressPatchFromHandoff,
   normalizeDeveloperQa,
   pipelineStatusFromMakerRun,
@@ -252,6 +253,31 @@ test('handoff progress fields persist without treating sales domain as a fill', 
   assert.equal(status.injectMediaReady, false);
 });
 
+test('live Maker run nested steps become a persistable handoff', () => {
+  const handoff = makerHandoffFromLiveRun({
+    steps: {
+      '1': { status: 'ready' },
+      '1.5': { status: 'ready' },
+      '2': {
+        status: 'partial',
+        substeps: { 'generate-text': { status: 'ready' }, 'inject-media': { status: 'idle' } },
+      },
+      '3': { status: 'idle' },
+    },
+    metadata: { finalizedLanguage: { confirmed: true, code: 'nb' }, productionDomain: 'bakeri.no' },
+    answers: { websiteDomain: 'bakeri.no' },
+  });
+  assert.equal(handoff.steps['1'], 'ready');
+  assert.equal(handoff.step2Substeps['generate-text'], 'ready');
+  assert.equal(handoff.language.confirmed, true);
+  const status = pipelineStatusFromMakerRun(makerProgressPatchFromHandoff(handoff));
+  assert.equal(status.step1Ready, true);
+  assert.equal(status.step15Ready, true);
+  assert.equal(status.generateTextReady, true);
+  assert.equal(status.injectMediaReady, false);
+  assert.equal(status.languageLocked, true);
+});
+
 test('Maker error does not fake an empty client media library', () => {
   const view = developerMediaLibraryView({
     fromClient: [{ fileName: 'logo.png' }],
@@ -280,6 +306,9 @@ test('progress chips stay in the locked order and enqueue only through T03', () 
   assert.match(card, /Importer nytt eller velg eksisterende template/);
   assert.match(card, /Lagre domene/);
   assert.match(card, /untilTarget/);
+  assert.match(card, /DeveloperGoalTimeline/);
+  assert.match(card, /sync-maker-run/);
+  assert.match(card, /findMakerRunBySalesClientId/);
   assert.equal(card.includes('Open preview'), false);
   const brief = readFileSync(join(here, '../app/pages/developer/DeveloperClientBrief.tsx'), 'utf8');
   assert.match(brief, /Fra kunden/);
@@ -293,10 +322,12 @@ test('progress chips stay in the locked order and enqueue only through T03', () 
 test('Development card still mounts one request thread and the queue bar', () => {
   const section = readFileSync(join(here, '../app/pages/Admin/sections/DevelopmentClientsSection.tsx'), 'utf8');
   assert.match(section, /DeveloperRunQueueBar/);
-  assert.match(section, /Forhåndsvisning/);
-  assert.match(section, /chooseBoard\('preview'\)/);
-  assert.match(section, /chooseBoard\('deployment'\)/);
-  assert.match(section, /readStoredDevelopmentBoard/);
+  assert.match(section, /Forfalt \(siste 2 uker\)/);
+  assert.match(section, /DEVELOPER_RECENT_OVERDUE_MS/);
+  assert.match(section, /kind="developer"/);
+  assert.equal(section.includes("chooseBoard('preview')"), false);
+  assert.equal(section.includes("chooseBoard('deployment')"), false);
+  assert.equal(section.includes('readStoredDevelopmentBoard'), false);
   assert.equal(section.includes('kindFilter'), false);
   assert.equal(section.includes('Preview website runs'), false);
   assert.equal(section.includes('Deployment website runs'), false);
@@ -309,17 +340,19 @@ test('Development card still mounts one request thread and the queue bar', () =>
   const cardThreads = card.split('<DeveloperRequestThread').length - 1;
   assert.equal(cardThreads, 1);
   const workspace = readFileSync(join(here, '../app/pages/developer/DeveloperWorkspace.tsx'), 'utf8');
-  assert.match(workspace, /Forhåndsvisning for salgskunder/);
+  assert.match(workspace, /Klar for preview/);
   const manage = readFileSync(join(here, '../app/pages/Admin/sections/ManageClientsSection.tsx'), 'utf8');
-  assert.match(manage, /Development → Forhåndsvisning/);
-  assert.match(manage, /Signed contracts move to Utvikler/);
+  assert.match(manage, /Klar for preview/);
+  assert.match(manage, /Klar for deployment/);
   const sales = readFileSync(join(here, '../app/pages/Admin/sections/SalesClientsSection.tsx'), 'utf8');
-  assert.match(sales, /persistDevelopmentBoard\('deployment'\)/);
-  assert.match(sales, /Utvikling → Utvikler/);
+  assert.match(sales, /ligger under Utvikling/);
+  assert.equal(sales.includes("persistDevelopmentBoard('deployment')"), false);
   const server = readFileSync(join(here, '../server.js'), 'utf8');
   assert.match(server, /app\.get\('\/api\/admin\/development\/:id\/workshop-needs', developmentAuth/);
   assert.match(server, /app\.get\('\/api\/admin\/development\/:id\/media', developmentAuth/);
   assert.match(server, /app\.get\('\/api\/admin\/development\/:id\/media\/client\/:fileName', developmentAuth/);
+  assert.match(server, /app\.patch\('\/api\/admin\/development\/:id\/goals', developmentAuth/);
+  assert.match(server, /app\.post\('\/api\/admin\/development\/:id\/sync-maker-run', developmentAuth/);
   assert.match(server, /listClientUploadFiles/);
   assert.match(server, /loadWorkshopNeedsDocument/);
   assert.match(server, /app\.delete\('\/api\/admin\/development\/:id\/media\/client\/:fileName', developmentAuth/);
@@ -396,7 +429,7 @@ test('material dots score Kundedata facts, partial staff and products, and revie
 
 test('preview cards show next meeting, deployment cards show website due', () => {
   const preview = developerCardTimeline({
-    rankAt: '2026-10-05T10:00:00.000Z',
+    nextActionAt: '2026-10-05T10:00:00.000Z',
     nextActionName: 'Møte',
     websiteDue: { label: 'Ingen frist ennå', started: false, dueAt: '' },
   }, 'preview', Date.parse('2026-10-01T10:00:00.000Z'));
@@ -408,4 +441,9 @@ test('preview cards show next meeting, deployment cards show website due', () =>
   }, 'deployment', Date.parse('2026-10-01T10:00:00.000Z'));
   assert.equal(deployment.label, 'Frist: 20. okt. 2026');
   assert.equal(deployment.tone, 'live');
+  const developer = developerCardTimeline({
+    websiteDue: { label: 'Frist: 20. okt. 2026', started: true, dueAt: '2026-10-20T12:00:00.000Z' },
+  }, 'developer', Date.parse('2026-10-01T10:00:00.000Z'));
+  assert.equal(developer.label, 'Frist: 20. okt. 2026');
+  assert.equal(developer.tone, 'live');
 });

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, FileText, Loader2, Pencil } from 'lucide-react';
 import {
   API,
@@ -6,9 +6,10 @@ import {
   type DevelopmentItem,
 } from '../Admin/shared';
 import { MakerRunTools } from './MakerRunTools';
+import { DeveloperGoalTimeline } from './DeveloperGoalTimeline';
 import { DeveloperRequestThread } from './DeveloperRequestThread';
 import { DeveloperAuthImage, DeveloperClientBrief, DeveloperMediaLibrary, type BriefMediaFile, type MaterialDot } from './DeveloperClientBrief';
-import { enqueueMakerQueue, fetchMakerRunStatus, openLanguageLock, saveMakerRunDomain } from './makerQueue';
+import { enqueueMakerQueue, fetchMakerRunStatus, findMakerRunBySalesClientId, openLanguageLock, saveMakerRunDomain } from './makerQueue';
 import { summarizeMaterialDots } from '../../../lib/client-material-dots.js';
 import {
   DEVELOPER_PROGRESS_CHIPS,
@@ -18,6 +19,7 @@ import {
   developerSummaryView,
   makerCustomEditUrl,
   makerCustomPreviewPath,
+  makerHandoffFromLiveRun,
   makerStepPreviewPath,
   normalizeDeveloperQa,
   pipelineStatusFromMakerRun,
@@ -29,6 +31,7 @@ import {
   normalizeMakerDashboardDraftUrl,
   resolveOpenInMakerUrl,
 } from '../sales/websiteMaker';
+import { showDeveloperDeployChips } from '../../../lib/developer-goals.js';
 
 const CARD_SELECTED = 'border-[#FF5B00] ring-2 ring-[#FF5B00]/25';
 
@@ -58,7 +61,7 @@ type QueueItemLike = {
 
 type Props = {
   item: DevelopmentItem;
-  kind: 'preview' | 'deployment';
+  kind: 'preview' | 'deployment' | 'developer';
   busyKey: string | null;
   selected: boolean;
   websiteMakerBaseUrl: string;
@@ -123,14 +126,21 @@ export function DeveloperClientCard({
   const [enqueueBusy, setEnqueueBusy] = useState('');
   const [openingMaker, setOpeningMaker] = useState(false);
   const [liveStatus, setLiveStatus] = useState<Record<string, unknown> | null>(null);
-  const [actionPage, setActionPage] = useState(1);
+  const [actionPage, setActionPage] = useState(() => (String(item.makerRun?.runId || '').trim() ? 2 : 1));
   const [chipMenu, setChipMenu] = useState('');
   const [domainDraft, setDomainDraft] = useState('');
   const [savingDomain, setSavingDomain] = useState(false);
+  const [goalBusy, setGoalBusy] = useState('');
+  const lastSyncedHandoffRef = useRef('');
 
   useEffect(() => {
     setQa(normalizeDeveloperQa(item.developerQa));
   }, [item.developerQa]);
+
+  useEffect(() => {
+    lastSyncedHandoffRef.current = '';
+    if (makerRunId) setActionPage(2);
+  }, [item.id, makerRunId]);
 
   const persistedStatus = useMemo(
     () => pipelineStatusFromMakerRun(item.makerRun || {}),
@@ -202,22 +212,53 @@ export function DeveloperClientCard({
   }, [item.id, salesClientId, websiteMakerBaseUrl, makerRunId, mediaReload]);
 
   useEffect(() => {
-    if (!makerRunId || !websiteMakerBaseUrl) {
-      setLiveStatus(null);
-      return;
-    }
     let cancelled = false;
-    void fetchMakerRunStatus(websiteMakerBaseUrl, makerRunId, developmentAuthHeaders())
-      .then((data) => {
-        if (!cancelled) setLiveStatus(data as Record<string, unknown>);
-      })
-      .catch(() => {
+    async function syncMakerRun() {
+      let runId = makerRunId;
+      if (!runId && salesClientId) {
+        try {
+          runId = await findMakerRunBySalesClientId(salesClientId, item.businessName);
+        } catch {
+          runId = '';
+        }
+      }
+      if (!runId || !websiteMakerBaseUrl) {
         if (!cancelled) setLiveStatus(null);
-      });
+        return;
+      }
+      try {
+        const data = await fetchMakerRunStatus(websiteMakerBaseUrl, runId, developmentAuthHeaders());
+        if (cancelled) return;
+        setLiveStatus(data as Record<string, unknown>);
+        const handoff = makerHandoffFromLiveRun(data.run || {});
+        const signature = JSON.stringify({
+          runId,
+          steps: handoff.steps,
+          sub: handoff.step2Substeps,
+          language: handoff.language,
+          cms: handoff.cms,
+          domain: handoff.productionDomain || handoff.websiteDomain,
+        });
+        if (lastSyncedHandoffRef.current === signature) return;
+        lastSyncedHandoffRef.current = signature;
+        const response = await fetch(`${API}/admin/development/${encodeURIComponent(item.id)}/sync-maker-run`, {
+          method: 'POST',
+          headers: { ...developmentAuthHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ runId, handoff }),
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!cancelled && response.ok && body.client && onClientUpdated) {
+          onClientUpdated(body.client);
+        }
+      } catch {
+        if (!cancelled) setLiveStatus(null);
+      }
+    }
+    void syncMakerRun();
     return () => {
       cancelled = true;
     };
-  }, [makerRunId, websiteMakerBaseUrl, queueItems]);
+  }, [makerRunId, salesClientId, websiteMakerBaseUrl, item.id, item.businessName, queueItems]);
 
   const editorBase = editorMakerOrigin(websiteMakerBaseUrl) || LOCAL_EDITOR_ORIGIN;
   const customEditUrl = makerCustomEditUrl(editorBase, makerRunId);
@@ -398,6 +439,26 @@ export function DeveloperClientCard({
     if (!path) return;
     window.open(`${editorBase}${path}`, '_blank');
     setChipMenu('');
+  }
+
+  async function toggleGoal(key: string) {
+    setGoalBusy(key);
+    onError('');
+    try {
+      const response = await fetch(`${API}/admin/development/${encodeURIComponent(item.id)}/goals`, {
+        method: 'PATCH',
+        headers: { ...developmentAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ key }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || 'Kunne ikke oppdatere målet.');
+      if (data.client && onClientUpdated) onClientUpdated(data.client);
+      else await onReload();
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Kunne ikke oppdatere målet.');
+    } finally {
+      setGoalBusy('');
+    }
   }
 
   async function saveDomain() {
@@ -585,7 +646,7 @@ export function DeveloperClientCard({
       </div>
       </div>
 
-      {kind === 'deployment' && (
+      {showDeveloperDeployChips(item.developerGoals) && (
         <div className="flex flex-wrap gap-1.5">
           {DEVELOPMENT_STEPS.map((step) => {
             const done = Boolean(item.development?.[step.key]);
@@ -611,6 +672,12 @@ export function DeveloperClientCard({
 
       {salesClientId ? (
         <>
+          <DeveloperGoalTimeline
+            goals={item.developerGoals}
+            busyKey={goalBusy ? `goals:${item.id}:${goalBusy}` : null}
+            itemId={item.id}
+            onToggle={(key) => void toggleGoal(key)}
+          />
           <div
             className="rounded-xl bg-black/20 border border-white/10 p-4 min-h-[112px] space-y-3"
             onClick={(event) => event.stopPropagation()}
