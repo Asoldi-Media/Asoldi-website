@@ -25,6 +25,7 @@ import {
   applyWorkshopGoalActionOp,
   getAdminCurrentGoalKey,
   getAdminVisibleGoalKeys,
+  resolveAdminMeetJoin,
 } from '../lib/workshop-goal-timeline.js';
 import { getWorkshopAction } from '../lib/workshop-action.js';
 import {
@@ -234,6 +235,9 @@ test('T06 mounts T02 and T07 in the actions slot; T01 needs stay off Admin', () 
   assert.match(rowSrc, /currentGoal === 'iterated'/);
   assert.match(rowSrc, /Møtetid/);
   assert.match(rowSrc, /workshopDraft/);
+  assert.match(rowSrc, /Meet link/);
+  assert.match(rowSrc, /resolveAdminMeetJoin/);
+  assert.match(rowSrc, /damian@asoldi\.com/);
 
   const serverSrc = readNearby('../server.js');
   assert.match(serverSrc, /\/api\/admin\/sales\/:id\/workshop-needs/);
@@ -286,4 +290,41 @@ test('iteration email send is Møte plus send gate', () => {
   assert.equal(iterationEmailShouldSend({}, next, {}), false);
   assert.equal(iterationEmailShouldSend({}, { format: 'sms-ring', dueAt: DUE, addToCalendar: true }, { send: true }), false);
   assert.equal(iterationEmailShouldSend({ confirmationSentAt: DUE, format: 'mote', dueAt: DUE }, next, { send: true }), false);
+});
+
+test('Admin Meet button joins as damian and never uses the sales Meet after workshop', () => {
+  const workshopLink = 'https://meet.google.com/ibp-qvyu-ccd';
+  const iterationLink = 'https://meet.google.com/aaa-bbbb-ccc';
+  const salesLink = 'https://meet.google.com/idf-xnpu-jna';
+  const booked = {
+    workshopAction: { format: 'mote', meetLink: workshopLink },
+    calendar: { meetLink: salesLink },
+  };
+  const workshopJoin = resolveAdminMeetJoin(booked);
+  assert.equal(workshopJoin.source, 'workshop');
+  assert.equal(workshopJoin.canOpen, true);
+  assert.equal(workshopJoin.meetLink, workshopLink);
+  assert.match(workshopJoin.joinUrl, /AccountChooser/);
+  assert.match(workshopJoin.joinUrl, /damian%40asoldi\.com/);
+  assert.equal(workshopJoin.joinUrl.includes('idf-xnpu-jna'), false);
+
+  const phone = resolveAdminMeetJoin({ workshopAction: { format: 'sms-ring', meetLink: workshopLink } });
+  assert.equal(phone.canOpen, false);
+  assert.equal(phone.joinUrl, '');
+
+  const held = {
+    workshopAction: { format: 'mote', meetLink: workshopLink },
+    calendar: { meetLink: salesLink },
+    workshop: {
+      heldAt: DUE,
+      summary: { intro: 'x' },
+      iterationMeeting: { format: 'mote', meetLink: iterationLink },
+    },
+  };
+  const iterationJoin = resolveAdminMeetJoin(held);
+  assert.equal(iterationJoin.source, 'iteration');
+  assert.equal(iterationJoin.meetLink, iterationLink);
+  assert.equal(iterationJoin.canOpen, true);
+  assert.equal(iterationJoin.joinUrl.includes('ibp-qvyu-ccd'), false);
+  assert.equal(iterationJoin.joinUrl.includes('idf-xnpu-jna'), false);
 });

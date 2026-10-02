@@ -7,6 +7,7 @@ import { ClientRouteGuard } from '../../components/client/ClientRouteGuard';
 import { useClientAuth } from '../../contexts/ClientAuthContext';
 import { layoutLabel, summarizeCatalogs } from '../../../lib/client-product-catalog.js';
 import { PRODUCT_ASSISTANT_GREETING } from '../../../lib/ai-assistant/chat.js';
+import { STEP_LABELS } from '../../../lib/ai-assistant/intake.js';
 
 type ChatMessage = { id: string; role: 'ai' | 'user'; text: string };
 
@@ -62,6 +63,8 @@ export const ClientAiAssistant = () => {
   const [makerLinked, setMakerLinked] = useState(false);
   const [previewUrl, setPreviewUrl] = useState('');
   const [dragOver, setDragOver] = useState(false);
+  const [stepLabel, setStepLabel] = useState(STEP_LABELS.products);
+  const [currentStep, setCurrentStep] = useState('products');
 
   function applyCatalog(catalogs: any[]) {
     const summary = summarizeCatalogs(catalogs);
@@ -83,6 +86,18 @@ export const ClientAiAssistant = () => {
         if (payload.summary?.productCount) applyCatalog(payload.profile?.clientDataBank?.productCatalogs || []);
         setMakerLinked(Boolean(payload.makerLinked || payload.profile?.clientDataBank?.makerLink?.bundleId));
         setPreviewUrl(String(payload.profile?.clientDataBank?.makerLink?.publicPreviewUrl || ''));
+        if (payload.currentStep) {
+          setCurrentStep(payload.currentStep);
+          setStepLabel(STEP_LABELS[payload.currentStep as keyof typeof STEP_LABELS] || STEP_LABELS.products);
+        }
+        if (payload.greeting) {
+          setMessages((prev) => (prev.some((row) => row.role === 'user')
+            ? prev
+            : [{ id: '1', role: 'ai', text: payload.greeting }]));
+        }
+        if (payload.redirectTo) {
+          window.setTimeout(() => window.location.assign(payload.redirectTo), 1200);
+        }
       })
       .catch(() => {});
   }, [token]);
@@ -120,6 +135,9 @@ export const ClientAiAssistant = () => {
                 : (payload.error || 'Klarte ikke å hente produktene. Prøv en annen URL eller last opp en fil.'),
             },
           ]);
+          if (payload.status === 'done' && payload.redirectTo) {
+            window.setTimeout(() => window.location.assign(payload.redirectTo), 900);
+          }
           break;
         }
         await new Promise((resolve) => setTimeout(resolve, 1200));
@@ -131,7 +149,25 @@ export const ClientAiAssistant = () => {
 
   function queueFiles(fileList: FileList | File[] | null) {
     const files = Array.from(fileList || []);
-    if (files.length) setPendingFiles((prev) => [...prev, ...files]);
+    if (!files.length) return files;
+    if (currentStep === 'media' || currentStep === 'logo') {
+      const allowed = currentStep === 'logo'
+        ? /\.(png|jpe?g|webp|gif|heic|avif|svg)$/i
+        : /\.(png|jpe?g|webp|gif|heic|avif|svg|mp4|mov|webm)$/i;
+      const media = files.filter((file) => allowed.test(file.name));
+      if (media.length < files.length) {
+        setMessages((prev) => [...prev, {
+          id: String(Date.now()),
+          role: 'ai',
+          text: currentStep === 'logo'
+            ? 'Logoen må være et bilde. Tekstfiler kan ikke brukes som logo.'
+            : 'Mediabiblioteket tar bilder og video. Tekstfiler ble ikke lagt til.',
+        }]);
+      }
+      if (media.length) setPendingFiles((prev) => [...prev, ...media]);
+      return media;
+    }
+    setPendingFiles((prev) => [...prev, ...files]);
     return files;
   }
 
@@ -182,9 +218,16 @@ export const ClientAiAssistant = () => {
         }
         return;
       }
+      if (payload.currentStep) {
+        setCurrentStep(payload.currentStep);
+        setStepLabel(STEP_LABELS[payload.currentStep as keyof typeof STEP_LABELS] || stepLabel);
+      }
       if (payload.nextAction === 'manual') {
         window.location.assign('/kunde/innstillinger#produkter');
         return;
+      }
+      if (payload.redirectTo) {
+        window.setTimeout(() => window.location.assign(payload.redirectTo), 900);
       }
       setMessages((prev) => [...prev, {
         id: String(Date.now() + 1),
@@ -219,7 +262,7 @@ export const ClientAiAssistant = () => {
 
         <main className="relative z-10 flex-1 w-full max-w-[1400px] mx-auto px-4 md:px-10 py-8 flex flex-col md:flex-row gap-8 overflow-hidden">
           <div className="w-full md:w-[380px] lg:w-[440px] bg-white rounded-2xl p-8 shadow-[0_8px_30px_rgba(0,0,0,0.04)] border border-gray-100 flex flex-col shrink-0 min-h-0 overflow-y-auto">
-            <span className="text-[11px] font-bold tracking-[0.2em] text-[#121212] mb-8 uppercase">Produktdata</span>
+            <span className="text-[11px] font-bold tracking-[0.2em] text-[#121212] mb-8 uppercase">{stepLabel}</span>
             <div className="flex flex-col gap-6">
               <div className="border-b border-gray-50 pb-5">
                 <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Produktsystem</span>
@@ -390,7 +433,11 @@ export const ClientAiAssistant = () => {
                 type="file"
                 multiple
                 className="hidden"
-                accept=".xlsx,.xls,.csv,.pdf,.docx,.odt,.txt,.md,.png,.jpg,.jpeg,.webp,.gif,.heic,.avif,.mp4,.mov,.webm"
+                accept={currentStep === 'logo'
+                  ? '.png,.jpg,.jpeg,.webp,.gif,.svg,.heic,.avif'
+                  : currentStep === 'media'
+                    ? '.png,.jpg,.jpeg,.webp,.gif,.svg,.heic,.avif,.mp4,.mov,.webm'
+                    : '.xlsx,.xls,.csv,.pdf,.docx,.odt,.txt,.md,.png,.jpg,.jpeg,.webp,.gif,.heic,.avif,.mp4,.mov,.webm'}
                 onChange={(e) => {
                   queueFiles(e.target.files);
                   e.target.value = '';

@@ -9,6 +9,7 @@ import {
   classifyAdminWorkshopBucket,
   clientMatchesAdminBoardFilters,
   filterAdminBoardClients,
+  getAdminNextActionDueAt,
   getWorkshopAction,
   groupAdminBoardClients,
   isAdminBoardCalendarQuery,
@@ -167,15 +168,16 @@ test('booking helper and Admin UI never treat startDate as a booking or copy Sal
   assert.equal(bookingSrc.includes('details.workshopAction'), false);
 
   const salesSrc = readNearby('../app/pages/Admin/sections/SalesClientsSection.tsx');
-  assert.match(salesSrc, /workshopCalendar=1/);
+  assert.match(salesSrc, /ownerId=\{calendarPreviewOwnerId\}/);
 
   const adminSrc = readNearby('../app/pages/Admin/sections/AdminBoardSection.tsx');
-  assert.match(adminSrc, /workshopCalendar=1/);
+  assert.match(adminSrc, /workshopCalendar/);
   assert.equal(adminSrc.includes('WorkshopNeedsPanel'), false);
   assert.match(adminSrc, /AdminRequestInbox/);
   assert.match(adminSrc, /data-admin-card-actions/);
   assert.match(adminSrc, /WorkshopAdminActionRow/);
   assert.match(adminSrc, /Search and filter/);
+  assert.match(adminSrc, /Kommende handlinger/);
   assert.match(adminSrc, /clientMatchesAdminBoardFilters/);
   assert.equal(adminSrc.includes('SalesGoalTimeline'), false);
   assert.equal(adminSrc.includes('meetingQuote.startDate'), false);
@@ -228,6 +230,57 @@ test('Admin board filters match today, format, and held separately from search',
   assert.equal(clientMatchesAdminBoardFilters(today, { status: 'held' }, NOW), false);
   assert.equal(clientMatchesAdminBoardFilters(today, { status: 'confirmed' }, NOW), true);
   assert.equal(clientMatchesAdminBoardFilters(sms, { status: 'draft' }, NOW), true);
-  assert.equal(clientMatchesAdminBoardFilters(held, { when: 'overdue' }, NOW), true);
+  assert.equal(clientMatchesAdminBoardFilters(held, { when: 'overdue' }, NOW), false);
+  assert.equal(classifyAdminWorkshopBucket(held, NOW), 'noTime');
   assert.equal(clientMatchesAdminBoardFilters(today, { bucket: 'upcoming' }, NOW), true);
+});
+
+test('Admin ranks the next action like Sales, not the finished workshop clock', () => {
+  const heldBase = {
+    id: 'held-rank',
+    status: 'active',
+    product: 'asoldi',
+    businessName: 'Held Rank AS',
+    workshopAction: {
+      name: 'Workshop',
+      format: 'mote',
+      dueAt: '2026-10-01T10:00:00.000Z',
+      meetLink: 'https://meet.google.com/old-work-shop',
+      status: 'confirmed',
+    },
+    workshop: { heldAt: '2026-10-01T10:30:00.000Z', summary: { intro: 'x' } },
+    calendar: { meetLink: 'https://meet.google.com/idf-xnpu-jna' },
+  };
+  assert.equal(classifyAdminWorkshopBucket(heldBase, NOW), 'noTime');
+  const withIteration = {
+    ...heldBase,
+    workshop: {
+      ...heldBase.workshop,
+      iterationMeeting: { format: 'mote', dueAt: DUE, meetLink: 'https://meet.google.com/aaa-bbbb-ccc' },
+    },
+  };
+  assert.equal(getAdminNextActionDueAt(withIteration), DUE);
+  assert.equal(classifyAdminWorkshopBucket(withIteration, NOW), 'upcoming');
+  const extraSoon = {
+    status: 'active',
+    product: 'asoldi',
+    workshopAction: { name: 'Workshop', format: 'mote', dueAt: DUE },
+    workshop: {
+      goalActions: [{ id: 'sms', goalKey: 'haWorkshop', dueAt: '2026-10-07T18:00:00.000Z', doneAt: '' }],
+    },
+  };
+  assert.equal(getAdminNextActionDueAt(extraSoon), '2026-10-07T18:00:00.000Z');
+  assert.equal(classifyAdminWorkshopBucket(extraSoon, NOW), 'upcoming');
+  const recent = {
+    status: 'active',
+    product: 'asoldi',
+    workshopAction: { name: 'Workshop', format: 'mote', dueAt: '2026-10-06T12:00:00.000Z' },
+  };
+  assert.equal(classifyAdminWorkshopBucket(recent, NOW), 'recentPastDue');
+  const old = {
+    status: 'active',
+    product: 'asoldi',
+    workshopAction: { name: 'Workshop', format: 'mote', dueAt: '2026-09-01T12:00:00.000Z' },
+  };
+  assert.equal(classifyAdminWorkshopBucket(old, NOW), 'pastDue');
 });

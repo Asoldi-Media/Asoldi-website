@@ -244,12 +244,14 @@ import {
   firefliesNotetakerEmail,
   getGoogleCalendarStatus,
   isRealGoogleMeetLink,
-  listCalendarEvents,
+  listConnectedAsoldiCalendarSources,
+  loadSalesCalendarWeek,
   prepareSalesCalendarEmbed,
   findConnectedCalendarAccountKeysByGoogleEmail,
   calendarIdForAccount,
   resolveCalendarSyncAccountKey,
   resolveSalesCalendarPreviewAccountKey,
+  resolveSalesCalendarWeekSources,
   shareGoogleCalendarToken,
   shouldForceCalendarRecreate,
   upsertMeetingEvent,
@@ -12140,24 +12142,8 @@ app.get('/api/admin/sales/google/status', salesAuth, async (req, res) => {
 
 app.get('/api/admin/sales/google/events', salesAuth, async (req, res) => {
   try {
-    const requestedOwner = sanitizeText(req.query?.ownerId);
-    const accountKey = resolveSalesCalendarPreviewAccountKey({
-      actorAccountKey: req.salesUser.accountKey,
-      isAdmin: Boolean(req.salesUser.isAdmin),
-      ownerId: requestedOwner,
-    });
-    if (
-      req.salesUser.isAdmin
-      && requestedOwner
-      && requestedOwner !== 'unassigned'
-      && accountKey === requestedOwner
-    ) {
-      const allowed = await resolveAssignableSalesOwnerId(requestedOwner, req.salesUser);
-      if (!allowed) {
-        return res.status(400).json({ message: 'Ugyldig selger for kalender.' });
-      }
-    }
-    const week = osloWeekRange(Date.now(), 0);
+    const weekOffset = Math.max(-8, Math.min(16, Number(req.query?.weekOffset) || 0));
+    const week = osloWeekRange(Date.now(), weekOffset);
     const timeMin = sanitizeText(req.query?.timeMin) || week.timeMin;
     const timeMax = sanitizeText(req.query?.timeMax) || week.timeMax;
     const minMs = Date.parse(timeMin);
@@ -12168,29 +12154,83 @@ app.get('/api/admin/sales/google/events', salesAuth, async (req, res) => {
     if (maxMs - minMs > 21 * 24 * 60 * 60 * 1000) {
       return res.status(400).json({ message: 'Kalenderperioden er for lang.' });
     }
-    const status = await ensureSharedCalendarTokens(accountKey);
-    const viewingOwn = accountKey === sanitizeText(req.salesUser.accountKey);
-    if (!status.connected) {
-      return res.json({
-        connected: false,
-        accountKey,
-        googleEmail: status.googleEmail,
-        googleName: status.googleName,
-        events: [],
-        timeMin,
-        timeMax,
-        message: viewingOwn
-          ? 'Koble Google Calendar for å se møtedetaljer her. Meeting bookers ser fortsatt bare opptatt.'
-          : 'Denne selgeren har ikke koblet Google Calendar ennå.',
+
+    let sources = [];
+    let viewingOwn = false;
+    let workshopCalendar = false;
+    let emptyMessage = '';
+
+    if (isAdminBoardCalendarQuery(req.query)) {
+      workshopCalendar = true;
+      const keys = findConnectedCalendarAccountKeysByGoogleEmail(DAMIAN_WORKSHOP_CALENDAR_EMAIL);
+      const accountKey = resolveAdminBoardCalendarAccountKey({
+        connectedKeys: keys,
+        viewerAccountKey: req.salesUser.accountKey,
       });
+      const viewerIsDamian = adminBoardViewerIsDamianMailbox({
+        accountKey: req.salesUser.accountKey,
+        username: req.salesUser.username,
+      });
+      viewingOwn = viewerIsDamian;
+      emptyMessage = 'damian@asoldi.com er ikke koblet til Google Calendar. Koble den kontoen for å se ukekalenderen. Innlogget selgers kalender brukes ikke her.';
+      if (!accountKey) {
+        return res.json({
+          connected: false,
+          accountKey: '',
+          googleEmail: DAMIAN_WORKSHOP_CALENDAR_EMAIL,
+          googleEmails: [],
+          events: [],
+          days: week.days,
+          weekOffset,
+          timeMin,
+          timeMax,
+          workshopCalendar: true,
+          isOwnCalendar: viewerIsDamian,
+          warnings: [],
+          message: emptyMessage,
+        });
+      }
+      await ensureSharedCalendarTokens(accountKey);
+      sources = [{ accountKey, googleEmail: DAMIAN_WORKSHOP_CALENDAR_EMAIL }];
+    } else {
+      const requestedOwner = sanitizeText(req.query?.ownerId);
+      if (
+        req.salesUser.isAdmin
+        && requestedOwner
+        && requestedOwner !== 'unassigned'
+      ) {
+        const allowed = await resolveAssignableSalesOwnerId(requestedOwner, req.salesUser);
+        if (!allowed) {
+          return res.status(400).json({ message: 'Ugyldig selger for kalender.' });
+        }
+      }
+      sources = resolveSalesCalendarWeekSources({
+        actorAccountKey: req.salesUser.accountKey,
+        isAdmin: Boolean(req.salesUser.isAdmin),
+        ownerId: requestedOwner,
+        connectedSources: listConnectedAsoldiCalendarSources(),
+      });
+      for (const source of sources) {
+        await ensureSharedCalendarTokens(source.accountKey);
+      }
+      viewingOwn = sources.length === 1
+        && sources[0]?.accountKey === sanitizeText(req.salesUser.accountKey);
+      emptyMessage = viewingOwn
+        ? 'Koble Google Calendar for å se møter og handlinger her. Bruk Koble Google Calendar i profilen.'
+        : 'Denne selgeren har ikke koblet Google Calendar ennå.';
     }
-    const listed = await listCalendarEvents(accountKey, { timeMin, timeMax });
+
+    const listed = await loadSalesCalendarWeek({ sources, timeMin, timeMax });
+    const timeoutWarning = (listed.warnings || []).find((row) => /lang tid/i.test(row)) || '';
     return res.json({
-      connected: true,
-      accountKey,
       ...listed,
+      days: week.days,
+      weekOffset,
       timeMin,
       timeMax,
+      workshopCalendar,
+      isOwnCalendar: viewingOwn,
+      message: listed.connected ? timeoutWarning : emptyMessage,
     });
   } catch (error) {
     return res.status(500).json({ message: error.message || 'Failed to load calendar events.' });

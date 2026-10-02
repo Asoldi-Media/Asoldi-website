@@ -234,10 +234,11 @@ test('Sales persist stays a draft; Admin Save is the send gate', () => {
   assert.equal(modalSrc.includes('Startdato for workshop'), false);
   assert.match(modalSrc, /SalesCalendarWeek/);
   assert.match(modalSrc, /damian@asoldi.com/);
+  assert.match(modalSrc, /workshopCalendar/);
   assert.equal(modalSrc.includes('confirmSend'), false);
 
   const salesSrc = readFileSync(new URL('../app/pages/Admin/sections/SalesClientsSection.tsx', import.meta.url), 'utf8');
-  assert.match(salesSrc, /workshopCalendar=1/);
+  assert.match(salesSrc, /ownerId=\{calendarPreviewOwnerId\}/);
   assert.equal(/workshop-action[\s\S]{0,400}confirmSend:\s*true/.test(salesSrc), false);
 
   const adminRowSrc = readFileSync(new URL('../app/pages/Admin/sections/WorkshopAdminActionRow.tsx', import.meta.url), 'utf8');

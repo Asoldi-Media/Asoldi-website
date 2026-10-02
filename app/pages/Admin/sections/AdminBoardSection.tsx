@@ -27,7 +27,7 @@ const OfferReviewSection = lazy(() =>
 
 const COMPACT_PREVIEW = 6;
 
-type BucketId = 'unbooked' | 'recentPastDue' | 'upcoming' | 'pastDue' | 'noTime';
+type BucketId = 'unbooked' | 'recentPastDue' | 'upcoming' | 'pastDue' | 'noTime' | 'done';
 type BucketTone = 'assign' | 'recent' | 'upcoming' | 'past' | 'none';
 
 const BUCKETS: { id: BucketId; title: string; hint: string; tone: BucketTone }[] = [
@@ -46,19 +46,25 @@ const BUCKETS: { id: BucketId; title: string; hint: string; tone: BucketTone }[]
   {
     id: 'upcoming',
     title: 'Neste handling',
-    hint: 'Kommende workshop, nærmeste først.',
+    hint: 'Kommende handlinger, nærmeste først.',
     tone: 'upcoming',
   },
   {
     id: 'pastDue',
     title: 'Forfalt',
-    hint: 'Mer enn 48 timer etter avtalt workshop.',
+    hint: 'Mer enn 48 timer etter avtalt handling.',
     tone: 'past',
   },
   {
     id: 'noTime',
     title: 'Tid ikke satt',
-    hint: 'Workshop er opprettet, men klokkeslett mangler.',
+    hint: 'Neste handling mangler klokkeslett.',
+    tone: 'none',
+  },
+  {
+    id: 'done',
+    title: 'Ferdig',
+    hint: 'Ha workshop og Iterert er merket.',
     tone: 'none',
   },
 ];
@@ -262,19 +268,10 @@ export function AdminBoardSection() {
   const [whenFilter, setWhenFilter] = useState('');
   const [onlyWithRequests, setOnlyWithRequests] = useState(false);
   const [threadMap, setThreadMap] = useState<Record<string, ThreadSummary>>({});
-  const [calendarLoading, setCalendarLoading] = useState(false);
-  const [calendarError, setCalendarError] = useState('');
   const [calendarConnecting, setCalendarConnecting] = useState(false);
+  const [calendarRefresh, setCalendarRefresh] = useState(0);
+  const [calendarError, setCalendarError] = useState('');
   const [viewer, setViewer] = useState({ accountKey: '', username: '' });
-  const [calendarWeek, setCalendarWeek] = useState({
-    connected: false,
-    embedUrl: '',
-    googleEmail: '',
-    accountKey: '',
-    message: '',
-    shareWarning: '',
-    isOwnCalendar: false,
-  });
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 60_000);
@@ -292,27 +289,6 @@ export function AdminBoardSection() {
       accountKey: String(calendar.loginAccountKey || ''),
       username: String(calendar.loginUsername || ''),
     });
-  }, []);
-
-  const loadCalendar = useCallback(async () => {
-    setCalendarLoading(true);
-    setCalendarError('');
-    try {
-      const data = await request('/admin/sales/google/embed?workshopCalendar=1');
-      setCalendarWeek({
-        connected: Boolean(data.connected),
-        embedUrl: String(data.embedUrl || ''),
-        googleEmail: String(data.googleEmail || DAMIAN_WORKSHOP_CALENDAR_EMAIL),
-        accountKey: String(data.accountKey || ''),
-        message: String(data.message || ''),
-        shareWarning: String(data.shareWarning || ''),
-        isOwnCalendar: Boolean(data.isOwnCalendar),
-      });
-    } catch (err) {
-      setCalendarError(err instanceof Error ? err.message : 'Kunne ikke hente kalender');
-    } finally {
-      setCalendarLoading(false);
-    }
   }, []);
 
   const loadThreads = useCallback(async () => {
@@ -352,12 +328,6 @@ export function AdminBoardSection() {
     };
   }, [loadClients, loadThreads]);
 
-  useEffect(() => {
-    if (!calendarOpen) return undefined;
-    void loadCalendar();
-    return undefined;
-  }, [calendarOpen, loadCalendar]);
-
   const searchQuery = normalizeClientSearchText(searchInput);
   const hasActiveFilters = Boolean(
     searchQuery || bucketFilter || formatFilter || statusFilter || whenFilter || onlyWithRequests
@@ -388,8 +358,7 @@ export function AdminBoardSection() {
     });
   }, [boardClients, onlyWithRequests, threadMap, searchQuery, bucketFilter, formatFilter, statusFilter, whenFilter, nowMs]);
   const groups = useMemo(() => groupAdminBoardClients(visibleClients, nowMs), [visibleClients, nowMs]);
-  const isOwnCalendar = calendarWeek.isOwnCalendar
-    || adminBoardViewerIsDamianMailbox(viewer);
+  const isOwnCalendar = adminBoardViewerIsDamianMailbox(viewer);
 
   function replaceClient(next: SalesClient) {
     setClients((prev) => prev.map((entry) => (entry.id === next.id ? next : entry)));
@@ -409,18 +378,10 @@ export function AdminBoardSection() {
       let tries = 0;
       const timer = window.setInterval(() => {
         tries += 1;
-        void request('/admin/sales/google/embed?workshopCalendar=1')
-          .then((embed) => {
-            const connected = Boolean(embed.connected);
-            setCalendarWeek({
-              connected,
-              embedUrl: String(embed.embedUrl || ''),
-              googleEmail: String(embed.googleEmail || DAMIAN_WORKSHOP_CALENDAR_EMAIL),
-              accountKey: String(embed.accountKey || ''),
-              message: String(embed.message || ''),
-              shareWarning: String(embed.shareWarning || ''),
-              isOwnCalendar: Boolean(embed.isOwnCalendar),
-            });
+        void request('/admin/sales/google/status')
+          .then((status) => {
+            const connected = Boolean(status.connected);
+            if (connected) setCalendarRefresh((value) => value + 1);
             if (connected || tries >= 30) {
               window.clearInterval(timer);
               setCalendarConnecting(false);
@@ -457,16 +418,17 @@ export function AdminBoardSection() {
         </button>
         {calendarOpen ? (
           <div className="border-t border-white/10">
+            {calendarError ? (
+              <p className="px-3 py-2 text-sm text-red-300">{calendarError}</p>
+            ) : null}
+            {calendarConnecting ? (
+              <p className="px-3 py-2 text-sm text-gray-300">Venter på Google-innlogging…</p>
+            ) : null}
             <SalesCalendarWeek
-              embedUrl={calendarWeek.embedUrl}
-              loading={calendarLoading || calendarConnecting}
-              connected={calendarWeek.connected}
-              googleEmail={calendarWeek.googleEmail || DAMIAN_WORKSHOP_CALENDAR_EMAIL}
+              workshopCalendar
               ownerLabel={DAMIAN_WORKSHOP_CALENDAR_EMAIL}
               isOwnCalendar={isOwnCalendar}
-              message={calendarWeek.message}
-              error={calendarError}
-              shareWarning={calendarWeek.shareWarning}
+              refreshKey={String(calendarRefresh)}
               onConnect={() => { void connectDamianCalendar(); }}
             />
           </div>
@@ -519,6 +481,7 @@ export function AdminBoardSection() {
             <option value="recentPastDue">Forfalt (siste 48 timer)</option>
             <option value="pastDue">Forfalt</option>
             <option value="noTime">Tid ikke satt</option>
+            <option value="done">Ferdig</option>
           </select>
           <select
             aria-label="Format"

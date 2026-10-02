@@ -17,10 +17,8 @@ import {
   shouldForceCalendarRecreate,
   presentCalendarEvent,
   resolveSalesCalendarPreviewAccountKey,
+  resolveSalesCalendarWeekSources,
   googleCalendarOauthScopes,
-  buildGoogleCalendarEmbedUrl,
-  isAsoldiCalendarSummary,
-  GOOGLE_CALENDAR_EMBED_HEIGHT_PX,
 } from '../lib/google-calendar.js';
 import {
   GOOGLE_CALENDAR_OAUTH_EVENT,
@@ -232,20 +230,56 @@ test('sales calendar oauth asks to read the whole calendar, not only events the 
   assert.equal(scopes.includes('https://www.googleapis.com/auth/gmail.readonly'), true);
 });
 
-test('sales calendar embed is Google week view for that account, not a custom grid', () => {
-  const url = buildGoogleCalendarEmbedUrl({
-    src: 'alexander@asoldi.com',
-    timeZone: 'Europe/Oslo',
-  });
-  assert.match(url, /^https:\/\/calendar\.google\.com\/calendar\/embed\?/);
-  assert.match(url, /src=alexander%40asoldi.com/);
-  assert.match(url, /mode=WEEK/);
-  assert.match(url, /ctz=Europe%2FOslo/);
-  assert.match(url, /showTabs=0/);
-  assert.match(url, new RegExp(`height=${GOOGLE_CALENDAR_EMBED_HEIGHT_PX}`));
-  assert.equal(buildGoogleCalendarEmbedUrl({ src: 'primary' }), '');
-  assert.equal(isAsoldiCalendarSummary('Asoldi · Online møte · Bakeri'), true);
-  assert.equal(isAsoldiCalendarSummary('Dentist'), false);
+test('admin week view uses the filtered rep, or every connected Asoldi mailbox', () => {
+  assert.deepEqual(
+    resolveSalesCalendarWeekSources({
+      actorAccountKey: 'admin:damian@asoldi.com',
+      isAdmin: true,
+      ownerId: 'sales:alexander',
+      connectedSources: [
+        { accountKey: 'admin:damian@asoldi.com', googleEmail: 'damian@asoldi.com' },
+        { accountKey: 'sales:alexander', googleEmail: 'alexander@asoldi.com' },
+      ],
+    }),
+    [{ accountKey: 'sales:alexander', googleEmail: 'alexander@asoldi.com' }]
+  );
+  assert.deepEqual(
+    resolveSalesCalendarWeekSources({
+      actorAccountKey: 'admin:damian@asoldi.com',
+      isAdmin: true,
+      ownerId: '',
+      connectedSources: [
+        { accountKey: 'admin:damian@asoldi.com', googleEmail: 'damian@asoldi.com' },
+        { accountKey: 'sales:alexander', googleEmail: 'alexander@asoldi.com' },
+      ],
+    }),
+    [
+      { accountKey: 'admin:damian@asoldi.com', googleEmail: 'damian@asoldi.com' },
+      { accountKey: 'sales:alexander', googleEmail: 'alexander@asoldi.com' },
+    ]
+  );
+  assert.deepEqual(
+    resolveSalesCalendarWeekSources({
+      actorAccountKey: 'sales:alexander',
+      isAdmin: false,
+      ownerId: 'sales:someone-else',
+      connectedSources: [
+        { accountKey: 'sales:alexander', googleEmail: 'alexander@asoldi.com' },
+        { accountKey: 'admin:damian@asoldi.com', googleEmail: 'damian@asoldi.com' },
+      ],
+    }),
+    [{ accountKey: 'sales:alexander', googleEmail: '' }]
+  );
+});
+
+test('sales calendar week on admin is an in-app grid from the events API, not a Google iframe', () => {
+  const weekSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../app/pages/Admin/sections/SalesCalendarWeek.tsx'), 'utf8');
+  assert.match(weekSrc, /admin\/sales\/google\/events/);
+  assert.doesNotMatch(weekSrc, /calendar\.google\.com\/calendar\/embed/);
+  assert.doesNotMatch(weekSrc, /<iframe/);
+  const googleSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../lib/google-calendar.js'), 'utf8');
+  assert.match(googleSrc, /primaryOnly: true/);
+  assert.match(googleSrc, /CALENDAR_EVENTS_TIMEOUT_MS/);
 });
 
 test('sales calendar embed does not wait on Google event visibility patches', () => {

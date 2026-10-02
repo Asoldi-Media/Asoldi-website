@@ -33,16 +33,6 @@ type WorkshopDraft = {
   addToCalendar: boolean;
 };
 
-type WorkshopCalendarEmbed = {
-  connected?: boolean;
-  embedUrl?: string;
-  googleEmail?: string;
-  message?: string;
-  shareWarning?: string;
-  isOwnCalendar?: boolean;
-  accountKey?: string;
-};
-
 type Props = {
   businessName: string;
   quote: unknown;
@@ -60,7 +50,6 @@ type Props = {
   onPersistWorkshop?: (payload: {
     workshopAction: { name: string; format: WorkshopDraft['format']; dueAt: string; addToCalendar: boolean };
   }) => Promise<void> | void;
-  onLoadWorkshopCalendar?: () => Promise<WorkshopCalendarEmbed>;
   onContinue: () => void;
   onFlushReady?: (flush: () => Promise<void>) => void;
 };
@@ -142,16 +131,12 @@ export function MeetingNotesModal({
   onClose,
   onPersist,
   onPersistWorkshop,
-  onLoadWorkshopCalendar,
   onContinue,
   onFlushReady,
 }: Props) {
   const [state, setState] = useState<MeetingQuoteState>(() => normalizeMeetingQuote(quote || emptyMeetingQuote()));
   const [workshop, setWorkshop] = useState<WorkshopDraft>(() => workshopDraftFromAction(workshopAction));
   const [availabilityOpen, setAvailabilityOpen] = useState(false);
-  const [calendarWeek, setCalendarWeek] = useState<WorkshopCalendarEmbed | null>(null);
-  const [availabilityLoading, setAvailabilityLoading] = useState(false);
-  const [availabilityError, setAvailabilityError] = useState('');
   const persistRef = useRef(onPersist);
   persistRef.current = onPersist;
   const persistWorkshopRef = useRef(onPersistWorkshop);
@@ -194,28 +179,6 @@ export function MeetingNotesModal({
     }, 700);
     return () => window.clearTimeout(timer);
   }, [workshop]);
-
-  useEffect(() => {
-    if (!availabilityOpen || !onLoadWorkshopCalendar) return;
-    let cancelled = false;
-    setAvailabilityLoading(true);
-    setAvailabilityError('');
-    void onLoadWorkshopCalendar()
-      .then((data) => {
-        if (cancelled) return;
-        setCalendarWeek(data || null);
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        setAvailabilityError(error instanceof Error ? error.message : 'Kunne ikke hente kalenderen.');
-      })
-      .finally(() => {
-        if (!cancelled) setAvailabilityLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [availabilityOpen, onLoadWorkshopCalendar]);
 
   const selected = useMemo(() => new Set<string>(state.selected), [state.selected]);
   const oneTimeAddOns = useMemo(() => new Set<string>(state.oneTimeAddOns), [state.oneTimeAddOns]);
@@ -581,22 +544,12 @@ export function MeetingNotesModal({
                       </button>
                     </div>
                     <div className="flex-1 overflow-auto">
-                      {availabilityError ? (
-                        <p className="px-4 py-3 text-sm text-red-300">{availabilityError}</p>
-                      ) : (
-                        <SalesCalendarWeek
-                          embedUrl={String(calendarWeek?.embedUrl || '')}
-                          loading={availabilityLoading}
-                          connected={Boolean(calendarWeek?.connected)}
-                          googleEmail={String(calendarWeek?.googleEmail || 'damian@asoldi.com')}
-                          ownerLabel="damian@asoldi.com"
-                          isOwnCalendar={Boolean(calendarWeek?.isOwnCalendar)}
-                          message={String(calendarWeek?.message || '')}
-                          error=""
-                          shareWarning={String(calendarWeek?.shareWarning || '')}
-                          onConnect={() => undefined}
-                        />
-                      )}
+                      <SalesCalendarWeek
+                        workshopCalendar
+                        ownerLabel="damian@asoldi.com"
+                        isOwnCalendar={false}
+                        onConnect={() => undefined}
+                      />
                     </div>
                     <div className="p-3 border-t border-white/10">
                       <button

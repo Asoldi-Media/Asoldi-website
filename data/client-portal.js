@@ -415,7 +415,16 @@ function defaultClientDataBank(seed = {}) {
     },
     openingHours: {
       googleBusinessSyncUrl: '',
+      status: '',
       days: DEFAULT_OPENING_DAYS.map((row) => ({ ...row })),
+    },
+    assistantIntake: {
+      products: '',
+      media: '',
+      logo: '',
+      staff: '',
+      hours: '',
+      affiliations: '',
     },
     affiliations: [],
     staff: [],
@@ -515,14 +524,22 @@ function normalizeClientDataBank(input = {}, fallback = {}) {
     },
   };
 
+  const openingStatus = sanitizeText(src.openingHours?.status || base.openingHours?.status);
   const openingHours = {
     googleBusinessSyncUrl: sanitizeText(
       src.openingHours?.googleBusinessSyncUrl
       || src.openingHours?.syncLink
       || base.openingHours.googleBusinessSyncUrl
     ),
+    status: ['set', 'always', 'not-relevant'].includes(openingStatus) ? openingStatus : '',
     days: normalizeOpeningHoursDays(src.openingHours?.days, base.openingHours.days),
   };
+  const intakeKeys = ['products', 'media', 'logo', 'staff', 'hours', 'affiliations'];
+  const assistantIntake = {};
+  for (const key of intakeKeys) {
+    const value = sanitizeText(src.assistantIntake?.[key] || base.assistantIntake?.[key]);
+    assistantIntake[key] = value === 'done' || value === 'skipped' ? value : '';
+  }
 
   const media = {
     mainHeroImages: normalizeMediaList(src.media?.mainHeroImages || src.media?.heroImages, base.media.mainHeroImages),
@@ -612,6 +629,7 @@ function normalizeClientDataBank(input = {}, fallback = {}) {
     generalInfo,
     brandIdentity,
     openingHours,
+    assistantIntake,
     affiliations: normalizeAffiliations(src.affiliations, base.affiliations),
     staff: normalizeStaff(src.staff, base.staff),
     domainSetup,

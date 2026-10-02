@@ -4,6 +4,7 @@ import {
   CheckCircle2,
   ChevronsDown,
   ChevronsUp,
+  ExternalLink,
   Loader2,
   Paperclip,
   Pencil,
@@ -33,6 +34,7 @@ import {
   getAdminRemainingGoalCount,
   getAdminVisibleGoalKeys,
   suggestedAdminActionDueAt,
+  resolveAdminMeetJoin,
   workshopGoalHeld,
   workshopGoalIterated,
 } from '../../../../lib/workshop-goal-timeline.js';
@@ -177,6 +179,7 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
     () => (currentGoal ? getAdminGoalActions(client, currentGoal) as WorkshopGoalAction[] : []),
     [client, currentGoal],
   );
+  const meetJoin = resolveAdminMeetJoin(client);
   const pendingApproval = Boolean(booking?.dueAt) && booking?.status !== 'confirmed';
   const showWorkshopRow = currentGoal === 'haWorkshop';
   const showIterationRow = currentGoal === 'iterated';
@@ -492,6 +495,26 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
             {showFutureGoals ? <ChevronsUp size={16} /> : <ChevronsDown size={16} />}
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => {
+            if (!meetJoin.canOpen) return;
+            window.open(meetJoin.joinUrl, '_blank', 'noopener,noreferrer');
+          }}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 ${
+            meetJoin.canOpen ? '' : 'opacity-60'
+          }`}
+          title={
+            meetJoin.canOpen
+              ? 'Åpner Meet som damian@asoldi.com'
+              : (meetJoin.format === 'sms' || meetJoin.format === 'ring' || meetJoin.format === 'sms-ring')
+                ? 'Telefon/SMS-møte har ingen Meet-lenke'
+                : 'Ingen Meet-lenke ennå'
+          }
+        >
+          <ExternalLink size={13} />
+          Meet link
+        </button>
       </div>
 
       {currentGoal ? (
