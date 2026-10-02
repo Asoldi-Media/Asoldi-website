@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 
 const ANSATT_CALENDAR_SOURCES = [
-  'daracha777@gmail.com',
   'damian@asoldi.com',
   'alexander@asoldi.com',
 ];

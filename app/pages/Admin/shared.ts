@@ -390,6 +390,7 @@ export type SalesCalendarMeta = {
   meetLink: string;
   calendarId: string;
   accountKey: string;
+  googleEmail?: string;
   syncedAt: string;
   guestInvitedAt?: string;
   firefliesInvitedAt?: string;

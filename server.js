@@ -120,8 +120,18 @@ import {
 import {
   generalSalesOwnerKeys,
   isGeneralSalesOwnerKey,
+  MYPHONER_ADMIN_OWNER_KEY,
   resolveMyphonerSalesOwnerId as pickMyphonerSalesOwnerId,
 } from './lib/myphoner-sales-owner.js';
+import {
+  calendarOwnerIdForSync,
+  calendarRecordIsOnBlockedMailbox,
+  isBlockedCalendarAccountKey,
+  isBlockedCalendarGoogleEmail,
+  salesClientNeedsCalendarMove,
+  sanitizeMyphonerDefaultOwnerKey,
+  shouldSyncSalesMeetingCalendar,
+} from './lib/sales-calendar-owner.js';
 import {
   fillProffUrlFromOrgNumber,
   mergeKeptSalesDetailLinks,
@@ -261,6 +271,7 @@ import {
   workshopEmailShouldSend,
   workshopIsConfirmed,
   maybeSyncWorkshopGoalActionCalendars,
+  pickDamianCalendarAccountKey,
 } from './lib/workshop-action.js';
 import {
   adminBoardViewerIsDamianMailbox,
@@ -463,8 +474,10 @@ const MYPHONER_WEBHOOK_SECRET = String(process.env.MYPHONER_WEBHOOK_SECRET || ''
 const MYPHONER_WEBHOOK_REPLAY_WINDOW_MS = Number(process.env.MYPHONER_WEBHOOK_REPLAY_WINDOW_MS || 120_000);
 const MYPHONER_WEBHOOK_RECONCILE_ENABLED = String(process.env.MYPHONER_WEBHOOK_RECONCILE_ENABLED || '1') !== '0';
 const MYPHONER_WEBHOOK_RECONCILE_MS = Number(process.env.MYPHONER_WEBHOOK_RECONCILE_MS || 10 * 60 * 1000);
-const MYPHONER_DEFAULT_SALES_OWNER_KEY =
-  sanitizeText(process.env.MYPHONER_DEFAULT_SALES_OWNER_KEY) || 'admin:daracha777@gmail.com';
+const MYPHONER_DEFAULT_SALES_OWNER_KEY = sanitizeMyphonerDefaultOwnerKey(
+  process.env.MYPHONER_DEFAULT_SALES_OWNER_KEY,
+  MYPHONER_ADMIN_OWNER_KEY
+);
 const MYPHONER_AUTO_LINK_ENRICH_ENABLED = String(process.env.MYPHONER_AUTO_LINK_ENRICH || '1') !== '0';
 const MYPHONER_AUTO_LINK_ENRICH_TIMEOUT_MS = Number(process.env.MYPHONER_AUTO_LINK_ENRICH_TIMEOUT_MS || 6000);
 const MYPHONER_AUTO_LINK_SEARCH_CACHE_MS = Number(process.env.MYPHONER_AUTO_LINK_SEARCH_CACHE_MS || 6 * 60 * 60 * 1000);
@@ -6039,21 +6052,29 @@ async function upsertSalesClientFromMyphonerLead({
     client = sales.createSalesClient(createPayload);
   }
   if (!client) throw makeHttpError(500, 'Failed creating/updating sales client from Myphoner.');
-  const syncResult = await maybeSyncCalendar(client, existing || null, {
-    notifyAttendees: false,
-    actorAccountKey: '',
-    fallbackAccountKeys: await resolveCalendarFallbackAccountKeys(client?.ownerId || '', ''),
-  });
-  const finalClient = syncResult.client || client;
+  let calendarWarnings = [];
+  let syncedClient = client;
+  if (shouldSyncSalesMeetingCalendar({
+    ownerId: client?.ownerId || '',
+    calendar: client?.calendar || existing?.calendar || {},
+  })) {
+    const syncResult = await maybeSyncCalendar(client, existing || null, {
+      notifyAttendees: false,
+      actorAccountKey: '',
+      fallbackAccountKeys: await resolveCalendarFallbackAccountKeys(client?.ownerId || '', ''),
+    });
+    syncedClient = syncResult.client || client;
+    calendarWarnings = syncResult.warnings || [];
+  }
   scheduleSalesClientLinkEnrichment({
-    clientId: sanitizeText(finalClient?.id),
+    clientId: sanitizeText(syncedClient?.id),
     lead: source,
     leadDataMap,
   });
   return {
-    client: finalClient,
+    client: syncedClient,
     created: !existing,
-    warnings: syncResult.warnings || [],
+    warnings: calendarWarnings,
   };
 }
 
@@ -7916,13 +7937,15 @@ async function ensureSharedCalendarTokens(accountKey = '') {
     for (const donor of findConnectedCalendarAccountKeysByGoogleEmail(email)) donors.add(donor);
     for (const donor of donors) {
       if (donor === key) continue;
-      if (!getGoogleCalendarStatus(donor).connected) continue;
+      const donorStatus = getGoogleCalendarStatus(donor);
+      if (!donorStatus.connected) continue;
+      if (isBlockedCalendarGoogleEmail(donorStatus.googleEmail) || isBlockedCalendarAccountKey(donor)) continue;
       shareGoogleCalendarToken(donor, [key]);
       status = getGoogleCalendarStatus(key);
       if (status.connected) break;
     }
   }
-  if (status.connected) {
+  if (status.connected && !isBlockedCalendarGoogleEmail(status.googleEmail) && !isBlockedCalendarAccountKey(key)) {
     const siblings = await resolveSiblingCalendarAccountKeys(key);
     if (siblings.length) shareGoogleCalendarToken(key, siblings);
   }
@@ -7974,21 +7997,39 @@ async function resolveSalesSenderForAccount(salesUser = {}) {
   });
 }
 
+async function preferredCalendarAccountKeysForOwner(ownerId = '') {
+  const syncOwner = calendarOwnerIdForSync(ownerId);
+  const email = await accountKeyToEmail(syncOwner);
+  if (!email || isBlockedCalendarGoogleEmail(email)) return [];
+  const connected = findConnectedCalendarAccountKeysByGoogleEmail(email)
+    .filter((key) => !isBlockedCalendarAccountKey(key));
+  if (email === DAMIAN_WORKSHOP_CALENDAR_EMAIL) {
+    const picked = pickDamianCalendarAccountKey(connected);
+    return picked ? [picked, ...connected.filter((key) => key !== picked)] : connected;
+  }
+  return connected;
+}
+
 async function resolveCalendarFallbackAccountKeys(ownerId = '', actorAccountKey = '') {
   const keys = new Set();
-  const owner = sanitizeText(ownerId);
+  const owner = calendarOwnerIdForSync(ownerId);
   const actor = sanitizeText(actorAccountKey);
-  if (actor) keys.add(actor);
+  if (actor && !isBlockedCalendarAccountKey(actor)) keys.add(actor);
   if (owner) {
-    for (const sibling of await resolveSiblingCalendarAccountKeys(owner)) keys.add(sibling);
+    for (const sibling of await resolveSiblingCalendarAccountKeys(owner)) {
+      if (!isBlockedCalendarAccountKey(sibling)) keys.add(sibling);
+    }
   }
-  if (actor) {
-    for (const sibling of await resolveSiblingCalendarAccountKeys(actor)) keys.add(sibling);
+  if (actor && !isBlockedCalendarAccountKey(actor)) {
+    for (const sibling of await resolveSiblingCalendarAccountKeys(actor)) {
+      if (!isBlockedCalendarAccountKey(sibling)) keys.add(sibling);
+    }
   }
-  const configuredOwner = sanitizeText(MYPHONER_DEFAULT_SALES_OWNER_KEY);
-  if (configuredOwner) keys.add(configuredOwner);
+  for (const preferred of await preferredCalendarAccountKeysForOwner(owner)) {
+    if (!isBlockedCalendarAccountKey(preferred)) keys.add(preferred);
+  }
   keys.delete(owner);
-  return [...keys];
+  return [...keys].filter((key) => !isBlockedCalendarAccountKey(key));
 }
 
 function buildClientGoogleOAuthState() {
@@ -8056,7 +8097,6 @@ async function finalizeClientGoogleSignIn(googleProfile) {
 }
 
 async function maybeSyncCalendar(client, previousClient = null, options = {}) {
-  const notifyAttendees = Boolean(options?.notifyAttendees);
   const requireMeetLink = Boolean(options?.requireMeetLink);
   const actorAccountKey = sanitizeText(options?.actorAccountKey);
   const forceGuestInvite = Boolean(options?.forceGuestInvite);
@@ -8064,27 +8104,45 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
   let nextClient = client;
   let calendarInviteSent = false;
 
+  if (!shouldSyncSalesMeetingCalendar({
+    ownerId: nextClient?.ownerId || '',
+    calendar: nextClient?.calendar || previousClient?.calendar || {},
+  })) {
+    return { client: nextClient, warnings, calendarInviteSent };
+  }
+
   const previousAccountKey = sanitizeText(
     previousClient?.calendar?.accountKey || nextClient?.calendar?.accountKey
   );
+  const movingOffBlocked = calendarRecordIsOnBlockedMailbox(
+    previousClient?.calendar || nextClient?.calendar || {}
+  );
+  // Moving an event off Gmail must never email the client or bump confirmation mail.
+  const notifyAttendees = movingOffBlocked ? false : Boolean(options?.notifyAttendees);
   const fallbackAccountKeys = Array.isArray(options?.fallbackAccountKeys)
-    ? options.fallbackAccountKeys
+    ? options.fallbackAccountKeys.filter((key) => !isBlockedCalendarAccountKey(key))
     : await resolveCalendarFallbackAccountKeys(nextClient?.ownerId || '', actorAccountKey);
+  const preferredAccountKeys = await preferredCalendarAccountKeysForOwner(nextClient?.ownerId || '');
 
   // Copy tokens onto the current owner/actor even if that key is not connected yet
   // (OAuth may live under a sibling sales:/admin: key for the same Google inbox).
-  for (const key of [actorAccountKey, nextClient?.ownerId, previousAccountKey, ...fallbackAccountKeys]) {
+  for (const key of [actorAccountKey, nextClient?.ownerId, previousAccountKey, ...preferredAccountKeys, ...fallbackAccountKeys]) {
     const candidate = sanitizeText(key);
-    if (!candidate) continue;
+    if (!candidate || isBlockedCalendarAccountKey(candidate)) continue;
     await ensureSharedCalendarTokens(candidate);
   }
 
   const accountKey = resolveCalendarSyncAccountKey({
-    ownerId: nextClient?.ownerId || '',
+    ownerId: calendarOwnerIdForSync(nextClient?.ownerId || ''),
     actorAccountKey,
     fallbackAccountKeys,
-    previousAccountKey,
+    previousAccountKey: isBlockedCalendarAccountKey(previousAccountKey) ? '' : previousAccountKey,
+    preferredAccountKeys,
   });
+  if (isBlockedCalendarAccountKey(accountKey) || isBlockedCalendarGoogleEmail(getGoogleCalendarStatus(accountKey).googleEmail)) {
+    warnings.push('Refusing to write this meeting onto the personal Gmail calendar.');
+    return { client: nextClient, warnings, calendarInviteSent };
+  }
   const deleteAccountKey = previousAccountKey || accountKey;
   const storedCalendarId = sanitizeText(
     previousClient?.calendar?.calendarId || nextClient?.calendar?.calendarId
@@ -8114,6 +8172,7 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
     try {
       const currentEventId = sanitizeText(previousClient?.calendar?.eventId || nextClient?.calendar?.eventId);
       const guestAlreadyInvited = Boolean(sanitizeText(nextClient?.calendar?.guestInvitedAt));
+      const firefliesAlreadyInvited = Boolean(sanitizeText(nextClient?.calendar?.firefliesInvitedAt));
       let eventIdForUpsert = currentEventId;
       const hasRealMeet = isRealGoogleMeetLink(nextClient?.calendar?.meetLink);
       // Recreate only when an online event exists but has no real Meet link.
@@ -8168,11 +8227,13 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
         {
           calendarId: eventIdForUpsert ? (storedCalendarId || targetCalendarId) : targetCalendarId,
           sendUpdates: notifyAttendees ? 'all' : 'none',
-          includeAttendees: notifyAttendees || (guestAlreadyInvited && Boolean(eventIdForUpsert)),
+          includeAttendees: notifyAttendees || guestAlreadyInvited,
           forceGuestInvite: notifyAttendees && (forceGuestInvite || !guestAlreadyInvited || !eventIdForUpsert || forceRecreate),
           // Fred only when the confirmation invite is actually sent. Silent
           // MyPhoner/unassigned creates must not save him without emailing him.
-          addFireflies: isOnline && notifyAttendees && !Boolean(nextClient?.progression?.meetingHeld),
+          // Silent moves keep him on the new event without emailing the client.
+          addFireflies: isOnline && !Boolean(nextClient?.progression?.meetingHeld) && (notifyAttendees || firefliesAlreadyInvited),
+          keepFireflies: firefliesAlreadyInvited,
           forceRecreate,
         }
       );
@@ -8184,12 +8245,14 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
           calendarMeta.firefliesInvitedAt = calendarMeta.guestInvitedAt;
         }
       } else if (sanitizeText(calendarMeta.eventId) !== currentEventId) {
-        calendarMeta.guestInvitedAt = '';
-        calendarMeta.inviteSequence = 0;
-        calendarMeta.firefliesInvitedAt = '';
-        calendarMeta.firefliesLiveJoinedAt = '';
-        calendarMeta.firefliesLiveJoinAttemptAt = '';
-        calendarMeta.firefliesLiveJoinError = '';
+        calendarMeta.guestInvitedAt = guestAlreadyInvited ? sanitizeText(nextClient?.calendar?.guestInvitedAt) : '';
+        calendarMeta.inviteSequence = guestAlreadyInvited ? (Number(nextClient?.calendar?.inviteSequence) || 0) : 0;
+        calendarMeta.firefliesInvitedAt = firefliesAlreadyInvited
+          ? sanitizeText(nextClient?.calendar?.firefliesInvitedAt)
+          : '';
+        calendarMeta.firefliesLiveJoinedAt = sanitizeText(nextClient?.calendar?.firefliesLiveJoinedAt);
+        calendarMeta.firefliesLiveJoinAttemptAt = sanitizeText(nextClient?.calendar?.firefliesLiveJoinAttemptAt);
+        calendarMeta.firefliesLiveJoinError = sanitizeText(nextClient?.calendar?.firefliesLiveJoinError);
       }
       if (
         !nextClient?.progression?.meetingHeld
@@ -8237,14 +8300,25 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
 async function maybeSyncNextActionCalendars(previousClient, nextClient, { actorAccountKey = '' } = {}) {
   const warnings = [];
   let client = nextClient;
+  if (!shouldSyncSalesMeetingCalendar({
+    ownerId: nextClient?.ownerId || '',
+    calendar: nextClient?.calendar || previousClient?.calendar || {},
+  })) {
+    return { client, warnings };
+  }
   const previousAccountKey = sanitizeText(previousClient?.calendar?.accountKey || nextClient?.calendar?.accountKey);
   const fallbackAccountKeys = await resolveCalendarFallbackAccountKeys(nextClient?.ownerId || '', actorAccountKey);
+  const preferredAccountKeys = await preferredCalendarAccountKeysForOwner(nextClient?.ownerId || '');
   const accountKey = resolveCalendarSyncAccountKey({
-    ownerId: nextClient?.ownerId || '',
+    ownerId: calendarOwnerIdForSync(nextClient?.ownerId || ''),
     actorAccountKey,
     fallbackAccountKeys,
-    previousAccountKey,
+    previousAccountKey: isBlockedCalendarAccountKey(previousAccountKey) ? '' : previousAccountKey,
+    preferredAccountKeys,
   });
+  if (isBlockedCalendarAccountKey(accountKey) || isBlockedCalendarGoogleEmail(getGoogleCalendarStatus(accountKey).googleEmail)) {
+    return { client, warnings };
+  }
   const calendarStatus = getGoogleCalendarStatus(accountKey);
   if (!calendarStatus.configured || !calendarStatus.connected) {
     return { client, warnings };
@@ -8307,6 +8381,60 @@ async function maybeSyncNextActionCalendars(previousClient, nextClient, { actorA
     if (updated) client = updated;
   }
   return { client, warnings };
+}
+
+let blockedCalendarMoveRunning = false;
+
+/** Move future Asoldi meetings off personal Gmail. Never emails the client. */
+async function migrateFutureMeetingsOffBlockedCalendar() {
+  if (blockedCalendarMoveRunning) return { skipped: true, reason: 'in-flight' };
+  blockedCalendarMoveRunning = true;
+  const summary = {
+    scanned: 0,
+    moved: 0,
+    skipped: 0,
+    failed: 0,
+    warnings: [],
+  };
+  try {
+    const now = Date.now();
+    const clients = sales.getSalesClients();
+    summary.scanned = clients.length;
+    for (const client of clients) {
+      if (!salesClientNeedsCalendarMove(client, now)) {
+        summary.skipped += 1;
+        continue;
+      }
+      try {
+        const syncResult = await maybeSyncCalendar(client, client, {
+          notifyAttendees: false,
+          actorAccountKey: calendarOwnerIdForSync(client.ownerId || ''),
+        });
+        const next = syncResult.client || client;
+        const stillBlocked = calendarRecordIsOnBlockedMailbox(next?.calendar || {});
+        if (stillBlocked) {
+          summary.failed += 1;
+          summary.warnings.push(`Could not move ${sanitizeText(client.businessName) || client.id} off Gmail.`);
+        } else {
+          summary.moved += 1;
+        }
+        for (const warning of syncResult.warnings || []) summary.warnings.push(warning);
+      } catch (error) {
+        summary.failed += 1;
+        summary.warnings.push(
+          `Move failed for ${sanitizeText(client.businessName) || client.id}: ${sanitizeText(error?.message) || error}`
+        );
+      }
+    }
+    if (summary.moved || summary.failed) {
+      console.log(
+        `[calendar] gmail-move future=${summary.moved} failed=${summary.failed} scanned=${summary.scanned}`
+      );
+    }
+    return summary;
+  } finally {
+    blockedCalendarMoveRunning = false;
+  }
 }
 
 async function backfillMissingSalesCalendarEvents({
@@ -18250,6 +18378,9 @@ ensureData().then(() => {
     });
     backfillSalesBookingFacts().catch((error) => {
       console.error('[sales booking] startup backfill crashed:', sanitizeText(error?.message) || error);
+    });
+    migrateFutureMeetingsOffBlockedCalendar().catch((error) => {
+      console.error('[calendar] gmail-move crashed:', sanitizeText(error?.message) || error);
     });
   });
   applyProxyKeepAlive(server);
