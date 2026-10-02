@@ -275,16 +275,35 @@ test('admin week view uses the filtered rep, or every connected Asoldi mailbox',
 test('sales calendar week on admin is an in-app grid from the events API, not a Google iframe', () => {
   const weekSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../app/pages/Admin/sections/SalesCalendarWeek.tsx'), 'utf8');
   assert.match(weekSrc, /admin\/sales\/google\/events/);
+  assert.match(weekSrc, /AbortSignal\.timeout\(8000\)/);
   assert.doesNotMatch(weekSrc, /calendar\.google\.com\/calendar\/embed/);
   assert.doesNotMatch(weekSrc, /<iframe/);
   const googleSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../lib/google-calendar.js'), 'utf8');
   assert.match(googleSrc, /primaryOnly: true/);
   assert.match(googleSrc, /CALENDAR_EVENTS_TIMEOUT_MS/);
+  assert.match(googleSrc, /CALENDAR_WEEK_TIMEOUT_MS/);
+  assert.match(googleSrc, /GOOGLE_CALENDAR_HTTP_TIMEOUT_MS/);
 });
 
-test('sales calendar embed does not wait on Google event visibility patches', () => {
+test('calendar embed and week reads never wait on Google ACL or visibility patches', () => {
   const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../lib/google-calendar.js'), 'utf8');
-  assert.match(src, /scheduleAsoldiEventVisibility/);
-  assert.match(src, /calendar-embed-timeout/);
+  const embedStart = src.indexOf('export async function prepareSalesCalendarEmbed');
+  assert.ok(embedStart >= 0);
+  const embedBody = src.slice(embedStart, embedStart + 450);
+  assert.match(embedBody, /embedPayloadFromStatus/);
+  assert.equal(embedBody.includes('getAuthorizedClient'), false);
+  assert.equal(embedBody.includes('ensureEmbedSharing'), false);
   assert.doesNotMatch(src, /await publishAsoldiEventVisibility/);
+});
+
+test('sales page load does not call Google Calendar', () => {
+  const workspace = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../app/pages/sales/SalesWorkspace.tsx'), 'utf8');
+  assert.match(workspace, /admin\/sales\/session/);
+  assert.doesNotMatch(workspace, /google\/status/);
+  const server = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../server.js'), 'utf8');
+  assert.match(server, /app\.get\('\/api\/health'/);
+  assert.match(server, /app\.get\('\/api\/admin\/sales\/session'/);
+  assert.equal(server.includes('migrateFutureMeetingsOffBlockedCalendar().catch'), false);
+  const salesList = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../app/pages/Admin/sections/SalesClientsSection.tsx'), 'utf8');
+  assert.match(salesList, /if \(!mapMounted\) return undefined;/);
 });

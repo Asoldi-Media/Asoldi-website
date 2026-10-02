@@ -401,6 +401,9 @@ app.post(
   express.raw({ type: 'application/json', limit: '8mb' }),
   handleFirefliesWebhook
 );
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, uptime: Math.round(process.uptime()) });
+});
 app.get('/api/webhooks/fireflies', (_req, res) => {
   const configured = isFirefliesWebhookConfigured();
   const apiKey = Boolean(readFirefliesWebhookConfig().apiKey);
@@ -1462,7 +1465,7 @@ function startSalesGeocodeWarmupLoop() {
   void warmSalesGeocodeCache();
   salesGeocodeWarmupInterval = setInterval(() => {
     void warmSalesGeocodeCache();
-  }, 1200);
+  }, 60_000);
 }
 
 function healStaleLocalMakerPort(value = '') {
@@ -12131,6 +12134,15 @@ async function resolveImportedSiteRoot(importDir, preferredSiteFolder) {
 }
 
 // --- Sales workflow (admin + sales role). Each principal scopes to their own calendar/clients.
+app.get('/api/admin/sales/session', salesAuth, (req, res) => {
+  res.json({
+    ok: true,
+    role: req.salesUser.role,
+    isAdmin: Boolean(req.salesUser.isAdmin),
+    accountKey: req.salesUser.accountKey,
+  });
+});
+
 app.get('/api/admin/sales/google/status', salesAuth, async (req, res) => {
   try {
     const status = await ensureSharedCalendarTokens(req.salesUser.accountKey);
@@ -12220,7 +12232,11 @@ app.get('/api/admin/sales/google/events', salesAuth, async (req, res) => {
         : 'Denne selgeren har ikke koblet Google Calendar ennå.';
     }
 
-    const listed = await loadSalesCalendarWeek({ sources, timeMin, timeMax });
+    const listed = await withDeadline(
+      loadSalesCalendarWeek({ sources, timeMin, timeMax }),
+      7000,
+      'calendar-events-timeout'
+    );
     const timeoutWarning = (listed.warnings || []).find((row) => /lang tid/i.test(row)) || '';
     return res.json({
       ...listed,
@@ -12233,7 +12249,12 @@ app.get('/api/admin/sales/google/events', salesAuth, async (req, res) => {
       message: listed.connected ? timeoutWarning : emptyMessage,
     });
   } catch (error) {
-    return res.status(500).json({ message: error.message || 'Failed to load calendar events.' });
+    return res.json({
+      connected: false,
+      events: [],
+      warnings: ['Kunne ikke hente kalenderen akkurat nå.'],
+      message: error.message || 'Failed to load calendar events.',
+    });
   }
 });
 
@@ -12347,10 +12368,14 @@ app.get('/api/admin/sales/google/workshop-availability', salesAuth, async (req, 
     }
     const accountKey = keys[0];
     await ensureSharedCalendarTokens(accountKey);
-    const listed = await queryWorkshopFreeBusy(accountKey, {
-      timeMin: week.timeMin,
-      timeMax: week.timeMax,
-    });
+    const listed = await withDeadline(
+      queryWorkshopFreeBusy(accountKey, {
+        timeMin: week.timeMin,
+        timeMax: week.timeMax,
+      }),
+      7000,
+      'calendar-freebusy-timeout'
+    );
     return res.json({
       connected: true,
       accountKey,
@@ -18474,11 +18499,6 @@ ensureData().then(() => {
     backfillSalesBookingFacts().catch((error) => {
       console.error('[sales booking] startup backfill crashed:', sanitizeText(error?.message) || error);
     });
-    setTimeout(() => {
-      migrateFutureMeetingsOffBlockedCalendar().catch((error) => {
-        console.error('[calendar] gmail-move crashed:', sanitizeText(error?.message) || error);
-      });
-    }, 180000);
   });
 }).catch((err) => {
   console.error('Failed to init admin:', err);

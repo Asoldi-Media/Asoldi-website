@@ -76,6 +76,7 @@ function eventTone(summary = '') {
 async function fetchWeek(query: URLSearchParams) {
   const response = await fetch(`${API}/admin/sales/google/events?${query.toString()}`, {
     headers: salesAuthHeaders(),
+    signal: AbortSignal.timeout(8000),
   });
   const data = await response.json().catch(() => ({} as Record<string, unknown>));
   if (!response.ok) {

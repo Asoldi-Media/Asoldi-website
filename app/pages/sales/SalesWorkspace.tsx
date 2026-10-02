@@ -18,8 +18,9 @@ export const SalesWorkspace = () => {
     let active = true;
     (async () => {
       try {
-        const response = await fetch(`${API}/admin/sales/google/status`, {
+        const response = await fetch(`${API}/admin/sales/session`, {
           headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(5000),
         });
         if (!active) return;
         if (response.status === 401 || response.status === 403) {

@@ -845,7 +845,6 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
       if (data.calendar) setCalendarStatus(data.calendar as CalendarStatus);
       setIsSalesAdmin(Boolean(data.isAdmin) || data?.calendar?.loginRole === 'admin');
       setSalesOwners(Array.isArray(data.owners) ? data.owners : []);
-      void loadMeetingMap();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load sales clients');
     } finally {
@@ -882,7 +881,6 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
   useEffect(() => {
     void loadSales({ showLoading: true });
     void loadOffers();
-    void loadCalendarStatus();
   }, []);
 
   useEffect(() => {
@@ -900,18 +898,23 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
 
   const hasPendingMapGeocodes = meetingMapPendingCount > 0;
   useEffect(() => {
-    if (!hasPendingMapGeocodes) return undefined;
+    if (!mapMounted || !hasPendingMapGeocodes) return undefined;
     const timer = window.setInterval(() => {
       void loadMeetingMap({ quiet: true });
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [hasPendingMapGeocodes]);
+  }, [hasPendingMapGeocodes, mapMounted]);
 
   useEffect(() => {
-    void loadMeetingMap({ quiet: true });
     setSelectedClientIds([]);
     setBulkAssignOwnerId('');
   }, [productBracket]);
+
+  useEffect(() => {
+    if (!mapMounted) return undefined;
+    void loadMeetingMap({ quiet: true });
+    return undefined;
+  }, [productBracket, mapMounted]);
 
   useEffect(() => {
     recordingBlobUrlsRef.current = recordingBlobUrlByClient;
