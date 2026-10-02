@@ -75,6 +75,14 @@ import * as resetTokens from './data/reset-tokens.js';
 import { getPersistentDataDir, pruneAllDataBackups } from './data/storage-path.js';
 import { applyPersistentProductionEnv } from './lib/persistent-env.js';
 import { applyProxyKeepAlive, describeProxyTimeouts, proxyHttpServerOptions } from './lib/http-server-timeouts.js';
+import {
+  cookieHeaderBytes,
+  cookieNamesToDrop,
+  expireCookieLine,
+  httpRequestSummary,
+  noteHttpRequest,
+  parseCookiePairs,
+} from './lib/http-request-log.js';
 import * as salesPreview from './lib/sales-preview-import.js';
 import {
   fillExportZipWithMakerAssets,
@@ -355,6 +363,28 @@ const __dirname = dirname(__filename);
 const app = express();
 // hcdn turns a 304 into ERR_HTTP2_PROTOCOL_ERROR. Refresh sends If-None-Match.
 app.set('etag', false);
+
+app.use((req, res, next) => {
+  const started = Date.now();
+  const cookie = req.headers.cookie || '';
+  const dropped = cookieNamesToDrop(cookie);
+  for (const name of dropped) {
+    const line = expireCookieLine(name);
+    if (line) res.append('Set-Cookie', line);
+  }
+  res.on('finish', () => {
+    noteHttpRequest({
+      method: req.method,
+      path: req.path,
+      status: res.statusCode,
+      ms: Date.now() - started,
+      cookieBytes: cookieHeaderBytes(cookie),
+      cookies: parseCookiePairs(cookie).map((pair) => ({ name: pair.name, bytes: pair.pairBytes })),
+      dropped,
+    });
+  });
+  next();
+});
 const PORT = process.env.PORT || 3000;
 const distPath = join(__dirname, 'dist');
 const publicPath = join(__dirname, 'public');
@@ -405,7 +435,20 @@ app.post(
   handleFirefliesWebhook
 );
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, uptime: Math.round(process.uptime()) });
+  res.json({ ok: true, uptime: Math.round(process.uptime()), http: httpRequestSummary() });
+});
+app.post('/api/diag/browser', express.json({ limit: '32kb' }), (req, res) => {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  noteHttpRequest({
+    method: 'BROWSER',
+    path: String(body.path || '').slice(0, 180),
+    status: 204,
+    ms: 0,
+    cookieBytes: Number(body.cookieBytes) || 0,
+    cookies: Array.isArray(body.cookies) ? body.cookies.slice(0, 24) : [],
+    dropped: [],
+  });
+  res.status(204).end();
 });
 app.get('/api/webhooks/fireflies', (_req, res) => {
   const configured = isFirefliesWebhookConfigured();

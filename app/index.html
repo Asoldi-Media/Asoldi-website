@@ -1,6 +1,42 @@
 <!doctype html>
 <html lang="nb">
   <head>
+    <script>
+      (function () {
+        try {
+          var raw = document.cookie || '';
+          var parts = raw ? raw.split(';') : [];
+          var total = raw.length;
+          for (var i = 0; i < parts.length; i++) {
+            var part = parts[i].replace(/^\s+/, '');
+            var eq = part.indexOf('=');
+            var name = eq === -1 ? part : part.slice(0, eq);
+            var value = eq === -1 ? '' : part.slice(eq + 1);
+            if (!name) continue;
+            var lower = name.toLowerCase();
+            if (lower.indexOf('sbjs') === 0 || lower.indexOf('twk') === 0 || value.length > 200 || total > 6000) {
+              if (name !== '__stripe_mid' && name !== '__stripe_sid') {
+                document.cookie = name + '=; Max-Age=0; Path=/';
+              }
+            }
+          }
+          if (navigator.sendBeacon) {
+            var report = [];
+            var left = document.cookie ? document.cookie.split(';') : [];
+            for (var j = 0; j < left.length; j++) {
+              var item = left[j].replace(/^\s+/, '');
+              var at = item.indexOf('=');
+              report.push({ name: at === -1 ? item : item.slice(0, at), bytes: item.length });
+            }
+            navigator.sendBeacon('/api/diag/browser', new Blob([JSON.stringify({
+              path: location.pathname,
+              cookieBytes: (document.cookie || '').length,
+              cookies: report
+            })], { type: 'application/json' }));
+          }
+        } catch (e) {}
+      })();
+    </script>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="Asoldi er et studentdrevet digitalt byrå i Trondheim. Vi hjelper bedrifter med nettsider, sosiale medier og markedsføring." />
