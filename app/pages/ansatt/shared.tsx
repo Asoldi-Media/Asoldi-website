@@ -1,7 +1,27 @@
 import React, { useState } from 'react';
 
-export const CALENDAR_EMBED =
-  'https://calendar.google.com/calendar/embed?src=daracha777%40gmail.com&ctz=Europe%2FOslo&mode=WEEK';
+const ANSATT_CALENDAR_SOURCES = [
+  'daracha777@gmail.com',
+  'damian@asoldi.com',
+  'alexander@asoldi.com',
+];
+
+export const CALENDAR_EMBED = (() => {
+  const params = new URLSearchParams({
+    ctz: 'Europe/Oslo',
+    mode: 'WEEK',
+    wkst: '2',
+    showTitle: '0',
+    showPrint: '0',
+    showCalendars: '1',
+    showTz: '0',
+    hl: 'no',
+  });
+  for (const src of ANSATT_CALENDAR_SOURCES) {
+    params.append('src', src);
+  }
+  return `https://calendar.google.com/calendar/embed?${params.toString()}`;
+})();
 
 export type StatItem = { value: string; label: string };
 export type ProductItem = { title: string; body: string };
