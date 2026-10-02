@@ -73,7 +73,7 @@ import * as offers from './data/offers.js';
 import * as resetTokens from './data/reset-tokens.js';
 import { getPersistentDataDir, pruneAllDataBackups } from './data/storage-path.js';
 import { applyPersistentProductionEnv } from './lib/persistent-env.js';
-import { applyProxyKeepAlive } from './lib/http-server-timeouts.js';
+import { applyProxyKeepAlive, describeProxyTimeouts } from './lib/http-server-timeouts.js';
 import * as salesPreview from './lib/sales-preview-import.js';
 import {
   fillExportZipWithMakerAssets,
@@ -18253,6 +18253,7 @@ ensureData().then(() => {
     });
   });
   applyProxyKeepAlive(server);
+  console.log(describeProxyTimeouts(server));
 }).catch((err) => {
   console.error('Failed to init admin:', err);
   process.exit(1);
