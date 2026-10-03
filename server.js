@@ -59,9 +59,7 @@ import {
   getJobForUser,
   handleAssistantChat,
   importProductFiles,
-  startProductScrape,
 } from './lib/ai-assistant/service.js';
-import { parsePublicHttpUrl } from './lib/ai-assistant/safe-url.js';
 import { googleMapsApiKey, searchPublicGoogleProfiles } from './lib/google-places-search.js';
 import {
   listSerpApiKeys,
@@ -10646,18 +10644,6 @@ app.post('/api/client/ai-assistant/chat', clientAuth, (req, res) => {
   });
 });
 
-app.post('/api/client/ai-assistant/products/scrape', clientAuth, async (req, res) => {
-  const user = await store.getUserById(req.client.userId);
-  if (!user || user.role !== 'client') return res.status(401).json({ message: 'Unauthorized' });
-  try {
-    parsePublicHttpUrl(req.body?.url);
-    const result = await startProductScrape(user.id, sanitizeText(req.body?.url));
-    return res.json(result);
-  } catch (err) {
-    return res.status(err.status || 400).json({ message: err.message || 'Ugyldig URL.' });
-  }
-});
-
 app.get('/api/client/ai-assistant/products/jobs/:jobId', clientAuth, async (req, res) => {
   const user = await store.getUserById(req.client.userId);
   if (!user || user.role !== 'client') return res.status(401).json({ message: 'Unauthorized' });
@@ -18872,29 +18858,30 @@ ensureData().then(() => {
   startMapsRankingLoop();
   sendDueSalesReminders().catch((error) => console.error('Initial sales reminder run failed:', error));
   sendDueFirefliesLiveJoins().catch((error) => console.error('[fireflies] initial live-join failed:', error));
-  const server = createServer(proxyHttpServerOptions(), app);
-  applyProxyKeepAlive(server);
-  server.on('error', (error) => {
-    console.error('[http] server error', error);
+  runStartupSalesRecordingBackfill().catch((error) => {
+    console.error('[sales] startup recording backfill crashed:', sanitizeText(error?.message) || error);
   });
-  server.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT}`);
-    console.log(describeProxyTimeouts(server));
-    console.log(`[audio] persistent=${MYPHONER_AUDIO_DIR} extra=${extraMyphonerAudioDirs().join('|') || '(none)'}`);
-    runStartupSalesRecordingBackfill().catch((error) => {
-      console.error('[sales] startup recording backfill crashed:', sanitizeText(error?.message) || error);
-    });
-    runStartupSalesLinkBackfill().catch((error) => {
-      console.error('[sales] startup links backfill crashed:', sanitizeText(error?.message) || error);
-    });
-    runStartupSsuWinsBackfill().catch((error) => {
-      console.error('[myphoner ssu-wins] startup backfill crashed:', sanitizeText(error?.message) || error);
-    });
-    backfillSalesBookingFacts().catch((error) => {
-      console.error('[sales booking] startup backfill crashed:', sanitizeText(error?.message) || error);
-    });
+  runStartupSalesLinkBackfill().catch((error) => {
+    console.error('[sales] startup links backfill crashed:', sanitizeText(error?.message) || error);
+  });
+  runStartupSsuWinsBackfill().catch((error) => {
+    console.error('[myphoner ssu-wins] startup backfill crashed:', sanitizeText(error?.message) || error);
+  });
+  backfillSalesBookingFacts().catch((error) => {
+    console.error('[sales booking] startup backfill crashed:', sanitizeText(error?.message) || error);
   });
 }).catch((err) => {
   console.error('Failed to init admin:', err);
   process.exit(1);
+});
+
+const server = createServer(proxyHttpServerOptions(), app);
+applyProxyKeepAlive(server);
+server.on('error', (error) => {
+  console.error('[http] server error', error);
+});
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on port ${PORT}`);
+  console.log(describeProxyTimeouts(server));
+  console.log(`[audio] persistent=${MYPHONER_AUDIO_DIR} extra=${extraMyphonerAudioDirs().join('|') || '(none)'}`);
 });

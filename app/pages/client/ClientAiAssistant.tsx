@@ -7,9 +7,10 @@ import { ClientRouteGuard } from '../../components/client/ClientRouteGuard';
 import { useClientAuth } from '../../contexts/ClientAuthContext';
 import { layoutLabel, summarizeCatalogs } from '../../../lib/client-product-catalog.js';
 import { PRODUCT_ASSISTANT_GREETING } from '../../../lib/ai-assistant/chat.js';
-import { STEP_LABELS } from '../../../lib/ai-assistant/intake.js';
+import { STEP_LABELS, personFirstName } from '../../../lib/ai-assistant/intake.js';
 
 type ChatMessage = { id: string; role: 'ai' | 'user'; text: string };
+type PendingFile = { id: string; file: File; url: string };
 
 type Progress = {
   layout: string | null;
@@ -18,6 +19,39 @@ type Progress = {
   productCount: number;
   categories: Array<{ id?: string; name: string; productCount: number }>;
 };
+
+const DOCUMENT_NAME = /\.(pdf|odt|ods|odp|docx|doc|rtf|xlsx|xls|csv|tsv|txt|md|html|htm|xml|json)$/i;
+const IMAGE_NAME = /\.(png|jpe?g|webp|gif|heic|avif|svg)$/i;
+const MEDIA_NAME = /\.(png|jpe?g|webp|gif|heic|avif|svg|mp4|mov|webm)$/i;
+
+function previewKind(file: File) {
+  const name = file.name.toLowerCase();
+  if (file.type.startsWith('image/') || IMAGE_NAME.test(name)) return 'image';
+  if (file.type.startsWith('video/') || /\.(mp4|mov|webm)$/i.test(name)) return 'video';
+  if (file.type === 'application/pdf' || name.endsWith('.pdf')) return 'pdf';
+  return 'document';
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+const FILE_ACCEPT = [
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.oasis.opendocument.text',
+  'application/vnd.oasis.opendocument.spreadsheet',
+  'text/plain',
+  'text/csv',
+  'application/rtf',
+  'application/json',
+  '.pdf,.doc,.docx,.xls,.xlsx,.ods,.odt,.rtf,.csv,.tsv,.txt,.md,.html,.htm,.xml,.json',
+  '.png,.jpg,.jpeg,.webp,.gif,.heic,.avif,.svg,.mp4,.mov,.webm',
+].join(',');
 
 const EMPTY_PROGRESS: Progress = {
   layout: null,
@@ -58,16 +92,22 @@ export const ClientAiAssistant = () => {
   const [busy, setBusy] = useState(false);
   const [jobId, setJobId] = useState('');
   const [progress, setProgress] = useState<Progress>(EMPTY_PROGRESS);
+  const [catalogs, setCatalogs] = useState<any[]>([]);
   const [statusLine, setStatusLine] = useState('');
-  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
+  const [removingProducts, setRemovingProducts] = useState(false);
+  const pendingRef = useRef<PendingFile[]>([]);
+  pendingRef.current = pendingFiles;
   const [makerLinked, setMakerLinked] = useState(false);
   const [previewUrl, setPreviewUrl] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const [stepLabel, setStepLabel] = useState(STEP_LABELS.products);
   const [currentStep, setCurrentStep] = useState('products');
 
-  function applyCatalog(catalogs: any[]) {
-    const summary = summarizeCatalogs(catalogs);
+  function applyCatalog(nextCatalogs: any[]) {
+    const list = Array.isArray(nextCatalogs) ? nextCatalogs : [];
+    setCatalogs(list);
+    const summary = summarizeCatalogs(list);
     setProgress({
       layout: summary.layout,
       layoutLabel: summary.layoutLabel,
@@ -83,7 +123,7 @@ export const ClientAiAssistant = () => {
       .then((res) => res.json())
       .then((payload) => {
         if (payload.profile) updateProfileState(payload.profile);
-        if (payload.summary?.productCount) applyCatalog(payload.profile?.clientDataBank?.productCatalogs || []);
+        applyCatalog(payload.profile?.clientDataBank?.productCatalogs || []);
         setMakerLinked(Boolean(payload.makerLinked || payload.profile?.clientDataBank?.makerLink?.bundleId));
         setPreviewUrl(String(payload.profile?.clientDataBank?.makerLink?.publicPreviewUrl || ''));
         if (payload.currentStep) {
@@ -107,6 +147,10 @@ export const ClientAiAssistant = () => {
       scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
     }
   }, [messages, statusLine]);
+
+  useEffect(() => () => {
+    pendingRef.current.forEach((item) => URL.revokeObjectURL(item.url));
+  }, []);
 
   useEffect(() => {
     if (!jobId || !token) return undefined;
@@ -132,7 +176,7 @@ export const ClientAiAssistant = () => {
               role: 'ai',
               text: payload.status === 'done'
                 ? (payload.assistantMessage || `Ferdig. Jeg har lagt inn ${payload.summary?.productCount || 0} produkter i ${payload.summary?.categoryCount || 0} kategorier.`)
-                : (payload.error || 'Klarte ikke å hente produktene. Prøv en annen URL eller last opp en fil.'),
+                : (payload.error || 'Klarte ikke å lese filene. Prøv et annet dokument, eller skriv produktene her.'),
             },
           ]);
           if (payload.status === 'done' && payload.redirectTo) {
@@ -150,32 +194,121 @@ export const ClientAiAssistant = () => {
   function queueFiles(fileList: FileList | File[] | null) {
     const files = Array.from(fileList || []);
     if (!files.length) return files;
-    if (currentStep === 'media' || currentStep === 'logo') {
-      const allowed = currentStep === 'logo'
-        ? /\.(png|jpe?g|webp|gif|heic|avif|svg)$/i
-        : /\.(png|jpe?g|webp|gif|heic|avif|svg|mp4|mov|webm)$/i;
-      const media = files.filter((file) => allowed.test(file.name));
-      if (media.length < files.length) {
-        setMessages((prev) => [...prev, {
-          id: String(Date.now()),
-          role: 'ai',
-          text: currentStep === 'logo'
-            ? 'Logoen må være et bilde. Tekstfiler kan ikke brukes som logo.'
-            : 'Mediabiblioteket tar bilder og video. Tekstfiler ble ikke lagt til.',
-        }]);
-      }
-      if (media.length) setPendingFiles((prev) => [...prev, ...media]);
-      return media;
+    const isDocument = (file: File) => DOCUMENT_NAME.test(file.name);
+    let kept = files;
+    if (currentStep === 'logo') {
+      kept = files.filter((file) => IMAGE_NAME.test(file.name) || isDocument(file));
+    } else if (currentStep === 'media') {
+      kept = files.filter((file) => MEDIA_NAME.test(file.name) || isDocument(file));
     }
-    setPendingFiles((prev) => [...prev, ...files]);
-    return files;
+    if (kept.length < files.length) {
+      setMessages((prev) => [...prev, {
+        id: String(Date.now()),
+        role: 'ai',
+        text: currentStep === 'logo'
+          ? 'Logoen må være et bilde. Dokumenter leser jeg som tekst, andre filer ble ikke lagt til.'
+          : 'Noen filer ble ikke lagt til. Jeg tar PDF, Word, Excel, tekst, bilder og video.',
+      }]);
+    }
+    if (kept.length) {
+      setPendingFiles((prev) => [
+        ...prev,
+        ...kept.map((file) => ({
+          id: `${file.name}-${file.size}-${file.lastModified}-${Math.random().toString(36).slice(2, 7)}`,
+          file,
+          url: URL.createObjectURL(file),
+        })),
+      ]);
+    }
+    return kept;
   }
 
-  async function sendToAssistant(text: string, files: File[] = []) {
+  function removePending(id: string) {
+    setPendingFiles((prev) => {
+      const hit = prev.find((item) => item.id === id);
+      if (hit) URL.revokeObjectURL(hit.url);
+      return prev.filter((item) => item.id !== id);
+    });
+  }
+
+  function productRows(source = catalogs) {
+    const rows: Array<{ key: string; title: string; category: string; catalogIndex: number; categoryIndex: number; productIndex: number }> = [];
+    source.forEach((catalog, catalogIndex) => {
+      (catalog.categories || []).forEach((category: any, categoryIndex: number) => {
+        (category.products || []).forEach((product: any, productIndex: number) => {
+          const title = String(product?.title || product?.name || '').trim();
+          if (!title) return;
+          rows.push({
+            key: `${catalogIndex}-${categoryIndex}-${productIndex}-${title}`,
+            title,
+            category: String(category?.name || ''),
+            catalogIndex,
+            categoryIndex,
+            productIndex,
+          });
+        });
+      });
+    });
+    return rows;
+  }
+
+  async function saveProductCatalogs(nextCatalogs: any[]) {
+    if (!token || removingProducts) return;
+    setRemovingProducts(true);
+    try {
+      const bank = profile?.clientDataBank || {};
+      const response = await fetch('/api/client/settings/client-data', {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          clientDataBank: {
+            ...bank,
+            productCatalogs: nextCatalogs,
+            assistantIntake: {
+              ...(bank.assistantIntake || {}),
+              ...(summarizeCatalogs(nextCatalogs).productCount ? {} : { products: '' }),
+            },
+          },
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.message || 'Kunne ikke fjerne produktet.');
+      if (payload.profile) updateProfileState(payload.profile);
+      applyCatalog(payload.profile?.clientDataBank?.productCatalogs || payload.clientDataBank?.productCatalogs || nextCatalogs);
+    } catch (error) {
+      setMessages((prev) => [...prev, {
+        id: String(Date.now()),
+        role: 'ai',
+        text: error instanceof Error ? error.message : 'Kunne ikke fjerne produktet.',
+      }]);
+    } finally {
+      setRemovingProducts(false);
+    }
+  }
+
+  function removeProduct(row: { catalogIndex: number; categoryIndex: number; productIndex: number }) {
+    const next = catalogs.map((catalog, catalogIndex) => ({
+      ...catalog,
+      categories: (catalog.categories || []).map((category: any, categoryIndex: number) => ({
+        ...category,
+        products: (category.products || []).filter((_: unknown, productIndex: number) => !(
+          catalogIndex === row.catalogIndex
+          && categoryIndex === row.categoryIndex
+          && productIndex === row.productIndex
+        )),
+      })),
+    }));
+    void saveProductCatalogs(next);
+  }
+
+  async function sendToAssistant(text: string) {
     const trimmed = text.trim();
-    const attached = files.length ? files : pendingFiles;
+    const attached = pendingFiles.map((item) => item.file);
     if (!trimmed && !attached.length) return;
-    const docs = attached.filter((file) => /\.(pdf|odt|ods|docx|doc|xlsx|xls|csv|txt|md)$/i.test(file.name));
+    const docs = attached.filter((file) => /\.(pdf|odt|ods|odp|docx|doc|rtf|xlsx|xls|csv|tsv|txt|md|html|htm|xml|json)$/i.test(file.name));
     const media = attached.filter((file) => /\.(png|jpe?g|webp|gif|heic|avif|mp4|mov|webm)$/i.test(file.name));
     const fileLabel = attached.length
       ? [
@@ -189,6 +322,7 @@ export const ClientAiAssistant = () => {
     setStatusLine(attached.length ? 'Leser filene…' : 'Jobber…');
     setMessages((prev) => [...prev, { id: String(Date.now()), role: 'user', text: [trimmed, fileLabel].filter(Boolean).join('\n') }]);
     setInputValue('');
+    pendingFiles.forEach((item) => URL.revokeObjectURL(item.url));
     setPendingFiles([]);
     let keepBusy = false;
     try {
@@ -248,7 +382,7 @@ export const ClientAiAssistant = () => {
     }
   }
 
-  const filled = Boolean(progress.layout || progress.categoryCount);
+  const helloName = personFirstName(profile || {});
 
   return (
     <ClientRouteGuard>
@@ -276,20 +410,46 @@ export const ClientAiAssistant = () => {
                   {progress.categoryCount ? <TypeLine text={`${progress.categoryCount} kategorier · ${progress.productCount} produkter`} /> : 'Antall kategorier'}
                 </p>
               </div>
+              {productRows().length ? (
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    disabled={removingProducts || busy}
+                    onClick={() => {
+                      if (window.confirm('Fjerne alle produktene fra katalogen?')) void saveProductCatalogs([]);
+                    }}
+                    className="text-[12px] text-gray-500 hover:text-red-600 disabled:opacity-40"
+                  >
+                    Fjern alle
+                  </button>
+                </div>
+              ) : null}
               <div className="flex flex-col gap-3">
-                {progress.categories.map((category, index) => (
+                {productRows().length ? productRows().map((row) => (
+                  <div key={row.key} className="rounded-xl border border-gray-100 bg-white px-4 py-3 flex items-center gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[14px] font-medium text-[#121212] truncate">{row.title}</p>
+                      <p className="text-[12px] mt-1 text-gray-500 truncate">{row.category || 'Produkt'}</p>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={removingProducts || busy}
+                      aria-label={`Fjern ${row.title}`}
+                      onClick={() => removeProduct(row)}
+                      className="shrink-0 text-[12px] text-gray-400 hover:text-red-600 disabled:opacity-40"
+                    >
+                      Fjern
+                    </button>
+                  </div>
+                )) : progress.categories.map((category, index) => (
                   <motion.div
                     key={`${category.name}-${index}`}
                     initial={{ opacity: 0, x: -8 }}
                     animate={{ opacity: 1, x: 0 }}
-                    className={`rounded-xl border px-4 py-3 ${filled && category.productCount ? 'border-gray-100 bg-white' : 'border-dashed border-gray-200 bg-gray-50/60'}`}
+                    className="rounded-xl border border-dashed border-gray-200 bg-gray-50/60 px-4 py-3"
                   >
-                    <p className={`text-[14px] font-medium ${category.productCount ? 'text-[#121212]' : 'text-gray-400'}`}>
-                      {category.productCount ? <TypeLine text={category.name} /> : category.name}
-                    </p>
-                    <p className={`text-[12px] mt-1 ${category.productCount ? 'text-gray-500' : 'text-gray-300'}`}>
-                      {category.productCount ? `${category.productCount} produkter` : 'Produkter fylles inn her'}
-                    </p>
+                    <p className="text-[14px] font-medium text-gray-400">{category.name}</p>
+                    <p className="text-[12px] mt-1 text-gray-300">Produkter fylles inn her</p>
                   </motion.div>
                 ))}
               </div>
@@ -329,8 +489,7 @@ export const ClientAiAssistant = () => {
             onDrop={(e) => {
               e.preventDefault();
               setDragOver(false);
-              const dropped = queueFiles(e.dataTransfer.files);
-              if (dropped.length && !busy) void sendToAssistant(inputValue, [...pendingFiles, ...dropped]);
+              if (!busy) queueFiles(e.dataTransfer.files);
             }}
           >
             <header className="w-full flex justify-between items-center shrink-0 pb-4">
@@ -355,7 +514,7 @@ export const ClientAiAssistant = () => {
                         <div className="flex items-start gap-4">
                           <div className="w-6 h-6 shrink-0 mt-0.5 text-[#FF5B00]">✦</div>
                           <div>
-                            {idx === 0 ? <span className="text-sm font-semibold text-gray-400 mb-2 block">Hei</span> : null}
+                            {idx === 0 ? <span className="text-sm font-semibold text-gray-400 mb-2 block">Hei{helloName ? ` ${helloName}` : ''}</span> : null}
                             {msg.text.split('\n').map((line, lineIdx) => (
                               <p key={lineIdx} className={`text-[15px] leading-relaxed ${lineIdx === 0 ? 'text-gray-600' : 'text-[#121212] font-semibold'}`}>{line}</p>
                             ))}
@@ -391,21 +550,34 @@ export const ClientAiAssistant = () => {
               className="shrink-0 pt-3"
               onSubmit={(e) => {
                 e.preventDefault();
-                if (!busy) void sendToAssistant(inputValue, pendingFiles);
+                if (!busy) void sendToAssistant(inputValue);
               }}
             >
               {pendingFiles.length ? (
-                <div className="flex flex-wrap gap-2 mb-2">
-                  {pendingFiles.map((file, index) => (
-                    <button
-                      key={`${file.name}-${index}`}
-                      type="button"
-                      onClick={() => setPendingFiles((prev) => prev.filter((_, current) => current !== index))}
-                      className="bg-white border border-gray-200 rounded-full px-3 py-1 text-[12px] text-[#121212]"
-                    >
-                      {file.name} ×
-                    </button>
-                  ))}
+                <div className="flex gap-2 overflow-x-auto pb-2">
+                  {pendingFiles.map((item) => {
+                    const kind = previewKind(item.file);
+                    return (
+                      <div key={item.id} className="relative shrink-0 w-[148px] bg-white border border-gray-200 rounded-xl overflow-hidden">
+                        <button
+                          type="button"
+                          aria-label={`Fjern ${item.file.name}`}
+                          onClick={() => removePending(item.id)}
+                          className="absolute top-1 right-1 z-10 w-5 h-5 rounded-full bg-white/90 border border-gray-200 text-[12px] leading-none text-[#121212]"
+                        >
+                          ×
+                        </button>
+                        <button type="button" onClick={() => window.open(item.url, '_blank', 'noopener')} className="block w-full text-left">
+                          {kind === 'image' ? <img src={item.url} alt="" className="h-24 w-full object-cover bg-gray-50" /> : null}
+                          {kind === 'video' ? <video src={item.url} className="h-24 w-full object-cover bg-black" muted /> : null}
+                          {kind === 'pdf' ? <iframe title={item.file.name} src={item.url} className="h-24 w-full pointer-events-none bg-gray-50" /> : null}
+                          {kind === 'document' ? <div className="h-24 flex items-center justify-center bg-gray-50 text-[12px] text-gray-400">Dokument</div> : null}
+                          <p className="px-2 pt-1 text-[11px] text-[#121212] truncate">{item.file.name}</p>
+                          <p className="px-2 pb-2 text-[10px] text-gray-400">{formatFileSize(item.file.size)}</p>
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : null}
               <div className={`relative flex items-center bg-white border rounded-[16px] shadow-[0_8px_30px_rgba(0,0,0,0.06)] overflow-hidden ${dragOver ? 'border-[#FF5B00] bg-[#FFF6F0]' : 'border-gray-100'}`}>
@@ -416,7 +588,7 @@ export const ClientAiAssistant = () => {
                   ref={composerRef}
                   value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
-                  placeholder={dragOver ? 'Slipp filer eller bilder her' : 'Skriv fritt — slipp bilder, menyer eller en nettside'}
+                  placeholder={dragOver ? 'Slipp dokumenter eller bilder her' : 'Skriv fritt, eller last opp et dokument'}
                   className="w-full bg-transparent px-4 py-4 outline-none text-[15px] text-[#121212] placeholder-gray-400"
                   disabled={busy}
                 />
@@ -433,22 +605,17 @@ export const ClientAiAssistant = () => {
                 type="file"
                 multiple
                 className="hidden"
-                accept={currentStep === 'logo'
-                  ? '.png,.jpg,.jpeg,.webp,.gif,.svg,.heic,.avif'
-                  : currentStep === 'media'
-                    ? '.png,.jpg,.jpeg,.webp,.gif,.svg,.heic,.avif,.mp4,.mov,.webm'
-                    : '.xlsx,.xls,.csv,.pdf,.docx,.odt,.txt,.md,.png,.jpg,.jpeg,.webp,.gif,.heic,.avif,.mp4,.mov,.webm'}
+                accept={FILE_ACCEPT}
                 onChange={(e) => {
                   queueFiles(e.target.files);
                   e.target.value = '';
                 }}
               />
               <p className="mt-2 text-[12px] text-gray-400">
-                Dra og slipp bilder, video eller menyer hit. cafeen.no er nok — du trenger ikke https://.
+                Dra og slipp PDF, Word, Excel, tekstfiler, bilder eller video. Jeg leser dokumentene som tekst.
               </p>
               <div className="flex flex-wrap gap-2 mt-3">
-                <button type="button" onClick={() => fileRef.current?.click()} className="bg-white/70 border border-gray-200 px-4 py-2 rounded-lg text-[13px] text-gray-600">Legg ved filer</button>
-                <button type="button" onClick={() => composerRef.current?.focus()} className="bg-white/70 border border-gray-200 px-4 py-2 rounded-lg text-[13px] text-gray-600">Skriv nettside</button>
+                <button type="button" onClick={() => fileRef.current?.click()} className="bg-white/70 border border-gray-200 px-4 py-2 rounded-lg text-[13px] text-gray-600">Last opp dokument</button>
                 <Link to="/kunde/innstillinger#produkter" className="bg-white/70 border border-gray-200 px-4 py-2 rounded-lg text-[13px] text-gray-600">Sett opp manuelt</Link>
               </div>
             </form>
