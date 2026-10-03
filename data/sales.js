@@ -21,7 +21,7 @@ import { filterCustomOtherLinks } from '../lib/sales-client-links.js';
 import { normalizeWorkshopAction, offerStartDateFromWorkshopDueAt } from '../lib/workshop-action.js';
 import { persistWorkshopRecord } from '../lib/workshop-record.js';
 import { mergeMakerRunPatch, normalizeDeveloperQa } from '../lib/developer-card.js';
-import { normalizeDeveloperHandoff } from '../lib/developer-assignment.js';
+import { canonicalDeveloperOwnerId, normalizeDeveloperHandoff, applyAdminDeveloperOwnerSeed, shouldSeedExistingDeveloperOwners } from '../lib/developer-assignment.js';
 import { normalizeDeveloperGoals } from '../lib/developer-goals.js';
 import { normalizeDueDate } from '../lib/website-due.js';
 
@@ -36,6 +36,7 @@ function persistWorkshopAction(raw) {
 }
 
 const SALES_PATH = getDataFilePath('sales-clients.json');
+const DEVELOPER_OWNER_SEED_PATH = getDataFilePath('developer-owner-seed.json');
 
 const PROGRESSION_KEYS = [
   'meetingHeld',
@@ -483,7 +484,7 @@ function normalizeSalesClient(raw = {}) {
   const client = {
     id: sanitizeText(raw.id) || makeId(),
     ownerId: sanitizeText(raw.ownerId),
-    developerOwnerId: sanitizeText(raw.developerOwnerId),
+    developerOwnerId: canonicalDeveloperOwnerId(raw.developerOwnerId),
     developerHandoff: normalizeDeveloperHandoff(raw.developerHandoff),
     product,
     businessName: sanitizeText(raw.businessName),
@@ -556,6 +557,31 @@ function readState() {
 
 function writeState(items) {
   writeSalesFile(items.map(normalizeSalesClient));
+}
+
+function readDeveloperOwnerSeedMeta() {
+  if (!existsSync(DEVELOPER_OWNER_SEED_PATH)) return {};
+  try {
+    const parsed = JSON.parse(readFileSync(DEVELOPER_OWNER_SEED_PATH, 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function seedExistingDeveloperOwnersToAdmin() {
+  const meta = readDeveloperOwnerSeedMeta();
+  if (!shouldSeedExistingDeveloperOwners(meta)) {
+    return { seeded: false, assignedCount: 0 };
+  }
+  const list = readState();
+  const applied = applyAdminDeveloperOwnerSeed(list);
+  if (applied.assignedCount) writeState(applied.clients);
+  writeDataJson(DEVELOPER_OWNER_SEED_PATH, {
+    existingAssignedToAdminAt: applied.seededAt,
+    assignedCount: applied.assignedCount,
+  });
+  return { seeded: true, assignedCount: applied.assignedCount };
 }
 
 export function deriveReminderSchedule({ agreedTime, meetingAt }, nowMs = Date.now()) {

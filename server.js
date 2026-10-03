@@ -270,6 +270,9 @@ import {
 import { loadWorkshopNeedsDocument, patchWorkshopNeedLine } from './lib/workshop-needs.js';
 import { flattenMakerUploadsForLibrary, makerProgressPatchFromHandoff, normalizeDeveloperQa } from './lib/developer-card.js';
 import {
+  ADMIN_DEVELOPER_OWNER_ID,
+  adminDeveloperOption,
+  canonicalDeveloperOwnerId,
   canAcceptDeveloperHandoff,
   canUploadDeveloperHandoff,
   canWorkDevelopmentClient,
@@ -7798,7 +7801,7 @@ function developmentAuth(req, res, next) {
     isAdmin: role === 'admin',
     userId,
     username,
-    accountKey: role === 'admin' ? `admin:${username || 'admin'}` : (userId ? `developer:${userId}` : ''),
+    accountKey: role === 'admin' ? ADMIN_DEVELOPER_OWNER_ID : (userId ? `developer:${userId}` : ''),
   };
   next();
 }
@@ -7924,9 +7927,8 @@ async function listDeveloperOwnerOptions(developmentUser = {}) {
       name: sanitizeText(name) || sanitizeText(username),
     });
   };
-  if (developmentUser?.isAdmin && developmentUser.accountKey) {
-    add(developmentUser.accountKey, developmentUser.username, developmentUser.username || 'Admin');
-  }
+  const adminOption = adminDeveloperOption();
+  add(adminOption.accountKey, adminOption.username, adminOption.name);
   try {
     const users = await store.getAllUsers();
     for (const user of Array.isArray(users) ? users : []) {
@@ -7942,7 +7944,7 @@ async function listDeveloperOwnerOptions(developmentUser = {}) {
 }
 
 async function resolveAssignableDeveloperOwnerId(ownerId = '', developmentUser = {}) {
-  const key = sanitizeText(ownerId);
+  const key = canonicalDeveloperOwnerId(ownerId);
   if (!key) return '';
   const options = await listDeveloperOwnerOptions(developmentUser);
   return options.some((entry) => entry.accountKey === key) ? key : '';
@@ -7998,9 +8000,21 @@ async function salesOrDevelopmentAuth(req, res, next) {
     }
     req.salesUser = principal;
     if (principal.role === 'admin') {
-      req.developmentUser = { role: 'admin', isAdmin: true, userId: principal.userId };
+      req.developmentUser = {
+        role: 'admin',
+        isAdmin: true,
+        userId: principal.userId,
+        username: principal.username,
+        accountKey: ADMIN_DEVELOPER_OWNER_ID,
+      };
     } else if (principal.role === 'developer') {
-      req.developmentUser = { role: 'developer', isAdmin: false, userId: principal.userId };
+      req.developmentUser = {
+        role: 'developer',
+        isAdmin: false,
+        userId: principal.userId,
+        username: principal.username,
+        accountKey: principal.accountKey,
+      };
     }
     next();
   } catch {
@@ -17300,6 +17314,7 @@ function resolveDevelopmentTarget(itemId) {
 
 app.get('/api/admin/development', developmentAuth, async (req, res) => {
   hub.reconcileDeliveryPhases(sales.getSalesClients());
+  sales.seedExistingDeveloperOwnersToAdmin();
   const caller = req.developmentUser || {};
   const items = listDeveloperBoard().filter((item) => developmentItemVisible(caller, item));
   const developers = caller.isAdmin ? await listDeveloperOwnerOptions(caller) : [];
@@ -18835,6 +18850,14 @@ async function ensureData() {
     console.log(
       `[sales] applied bundled contact corrections: updated=${correctionSummary.updated}, created=${correctionSummary.created}, matched=${correctionSummary.matched}`
     );
+  }
+  try {
+    const ownerSeed = sales.seedExistingDeveloperOwnersToAdmin();
+    if (ownerSeed?.seeded) {
+      console.log(`[developer] assigned existing clients to Admin: ${ownerSeed.assignedCount}`);
+    }
+  } catch (error) {
+    console.warn('[developer] owner seed failed:', error?.message || error);
   }
   await ensureMyphonerRecordingsDir().catch(() => {});
 }

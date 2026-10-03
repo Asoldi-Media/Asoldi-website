@@ -9,6 +9,7 @@ import {
 import {
   canUploadDeveloperHandoff,
   canWorkDevelopmentClient,
+  sameDeveloperOwner,
 } from '../../../../lib/developer-assignment.js';
 import { buildClientSearchHaystack, matchesClientSearchQuery, normalizeClientSearchText } from '../clientSearch';
 import { DEVELOPER_RECENT_OVERDUE_MS } from '../../../../lib/developer-goals.js';
@@ -193,7 +194,7 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
     (item: DevelopmentItem) => {
       if (!itemMatchesSearch(item)) return false;
       if (viewer.isAdmin && ownerFilter === 'unassigned' && item.developerOwnerId) return false;
-      if (viewer.isAdmin && ownerFilter && ownerFilter !== 'unassigned' && item.developerOwnerId !== ownerFilter) return false;
+      if (viewer.isAdmin && ownerFilter && ownerFilter !== 'unassigned' && !sameDeveloperOwner(item.developerOwnerId, ownerFilter)) return false;
       const hasRun = Boolean(String(item.makerRun?.runId || '').trim());
       if (runFilter === 'with-run' && !hasRun) return false;
       if (runFilter === 'without-run' && hasRun) return false;

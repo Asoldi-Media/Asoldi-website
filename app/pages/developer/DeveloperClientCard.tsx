@@ -39,6 +39,7 @@ import {
   resolveOpenInMakerUrl,
 } from '../sales/websiteMaker';
 import { showDeveloperDeployChips } from '../../../lib/developer-goals.js';
+import { developerOwnerDisplayName, sameDeveloperOwner } from '../../../lib/developer-assignment.js';
 
 const CARD_SELECTED = 'border-[#FF5B00] ring-2 ring-[#FF5B00]/25';
 
@@ -698,9 +699,7 @@ export function DeveloperClientCard({
           <h3 className="text-white font-semibold truncate">{item.businessName}</h3>
           {isAdmin && item.developerOwnerId ? (
             <span className="shrink-0 px-2 py-0.5 rounded text-[11px] border border-white/10 text-gray-300">
-              {developers.find((owner) => owner.accountKey === item.developerOwnerId)?.name
-                || developers.find((owner) => owner.accountKey === item.developerOwnerId)?.username
-                || 'Tildelt'}
+              {developerOwnerDisplayName(item.developerOwnerId, developers)}
             </span>
           ) : null}
           {requestLabel ? (
@@ -800,13 +799,13 @@ export function DeveloperClientCard({
           >
             <span className="text-[11px] uppercase tracking-wide text-gray-500">Make website</span>
             <p className="text-[11px] text-gray-400">Importer nytt eller velg eksisterende template</p>
-            {!canWork && item.developerHandoff?.status === 'waiting-upload' && item.developerHandoff.fromOwnerId === viewerAccountKey && (
+            {!canWork && item.developerHandoff?.status === 'waiting-upload' && sameDeveloperOwner(item.developerHandoff.fromOwnerId, viewerAccountKey) && (
               <p className="text-[11px] text-amber-200">Website Creator på denne maskinen sender prosjektet til den nye utvikleren.</p>
             )}
-            {!canWork && item.developerHandoff?.status === 'waiting-upload' && item.developerOwnerId === viewerAccountKey && (
+            {!canWork && item.developerHandoff?.status === 'waiting-upload' && sameDeveloperOwner(item.developerOwnerId, viewerAccountKey) && (
               <p className="text-[11px] text-amber-200">Venter på at forrige datamaskin sender prosjektet.</p>
             )}
-            {!canWork && item.developerHandoff?.status === 'ready' && item.developerOwnerId === viewerAccountKey && (
+            {!canWork && item.developerHandoff?.status === 'ready' && sameDeveloperOwner(item.developerOwnerId, viewerAccountKey) && (
               <button
                 type="button"
                 disabled={assignBusy}
@@ -817,7 +816,7 @@ export function DeveloperClientCard({
                 Ta imot prosjektet
               </button>
             )}
-            {!canWork && item.developerOwnerId && item.developerOwnerId !== viewerAccountKey && item.developerHandoff?.status !== 'waiting-upload' && (
+            {!canWork && item.developerOwnerId && !sameDeveloperOwner(item.developerOwnerId, viewerAccountKey) && item.developerHandoff?.status !== 'waiting-upload' && (
               <p className="text-[11px] text-gray-400">En annen utvikler jobber med denne kunden.</p>
             )}
             {isAdmin && (
