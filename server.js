@@ -269,6 +269,15 @@ import {
 } from './lib/google-calendar.js';
 import { loadWorkshopNeedsDocument, patchWorkshopNeedLine } from './lib/workshop-needs.js';
 import { flattenMakerUploadsForLibrary, makerProgressPatchFromHandoff, normalizeDeveloperQa } from './lib/developer-card.js';
+import {
+  canAcceptDeveloperHandoff,
+  canUploadDeveloperHandoff,
+  canWorkDevelopmentClient,
+  developmentItemVisible,
+  emptyDeveloperHandoff,
+  planDeveloperReassign,
+} from './lib/developer-assignment.js';
+import { deleteDevHandoff, devHandoffZipPath, ensureDevHandoffDir } from './lib/dev-handoff-store.js';
 import { applyDeveloperGoalToggle } from './lib/developer-goals.js';
 import { LOCAL_EDITOR_ORIGIN } from './lib/maker-editor-origin.js';
 import {
@@ -7778,16 +7787,43 @@ function developmentAuth(req, res, next) {
   const auth = req.headers.authorization;
   const token = auth && auth.startsWith('Bearer ') ? auth.slice(7) : null;
   const payload = token ? verifyToken(token) : null;
-  if (!payload || (payload.role !== 'admin' && payload.role !== 'developer')) {
+  const role = sanitizeText(payload?.role).toLowerCase();
+  if (!payload || (role !== 'admin' && role !== 'developer')) {
     return res.status(401).json({ message: 'Unauthorized' });
   }
+  const username = sanitizeText(payload.username);
+  const userId = sanitizeText(payload.userId);
   req.developmentUser = {
-    role: payload.role,
-    isAdmin: payload.role === 'admin',
-    userId: payload.userId,
-    username: payload.username,
+    role,
+    isAdmin: role === 'admin',
+    userId,
+    username,
+    accountKey: role === 'admin' ? `admin:${username || 'admin'}` : (userId ? `developer:${userId}` : ''),
   };
   next();
+}
+
+function assertDevelopmentVisible(req, res, client) {
+  if (!client || !developmentItemVisible(req.developmentUser, client)) {
+    res.status(404).json({ message: 'Development client not found.' });
+    return false;
+  }
+  return true;
+}
+
+function assertDevelopmentWork(req, res, client) {
+  if (!assertDevelopmentVisible(req, res, client)) return false;
+  if (!canWorkDevelopmentClient(req.developmentUser, client)) {
+    res.status(403).json({ message: 'This project is assigned to another developer.' });
+    return false;
+  }
+  return true;
+}
+
+function salesClientForMakerRun(runId = '') {
+  const id = sanitizeText(runId);
+  if (!id) return null;
+  return sales.getSalesClients().find((entry) => sanitizeText(entry?.makerRun?.runId) === id) || null;
 }
 
 async function developmentAuthorLabel(req) {
@@ -7873,6 +7909,43 @@ function jsonSalesClient(client) {
     ...client,
     meetings: presentClientMeetings(client),
   };
+}
+
+async function listDeveloperOwnerOptions(developmentUser = {}) {
+  const options = [];
+  const seen = new Set();
+  const add = (accountKey = '', username = '', name = '') => {
+    const key = sanitizeText(accountKey);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    options.push({
+      accountKey: key,
+      username: sanitizeText(username),
+      name: sanitizeText(name) || sanitizeText(username),
+    });
+  };
+  if (developmentUser?.isAdmin && developmentUser.accountKey) {
+    add(developmentUser.accountKey, developmentUser.username, developmentUser.username || 'Admin');
+  }
+  try {
+    const users = await store.getAllUsers();
+    for (const user of Array.isArray(users) ? users : []) {
+      if (sanitizeText(user?.role).toLowerCase() !== 'developer') continue;
+      const userId = sanitizeText(user?.id);
+      if (!userId) continue;
+      add(`developer:${userId}`, user?.username, user?.name);
+    }
+  } catch {
+    // Keep the admin option even if the user list cannot be read.
+  }
+  return options;
+}
+
+async function resolveAssignableDeveloperOwnerId(ownerId = '', developmentUser = {}) {
+  const key = sanitizeText(ownerId);
+  if (!key) return '';
+  const options = await listDeveloperOwnerOptions(developmentUser);
+  return options.some((entry) => entry.accountKey === key) ? key : '';
 }
 
 async function listSalesOwnerOptions(salesUser = {}) {
@@ -17225,9 +17298,128 @@ function resolveDevelopmentTarget(itemId) {
   return null;
 }
 
-app.get('/api/admin/development', developmentAuth, (_req, res) => {
+app.get('/api/admin/development', developmentAuth, async (req, res) => {
   hub.reconcileDeliveryPhases(sales.getSalesClients());
-  res.json(developmentBoardPayload());
+  const caller = req.developmentUser || {};
+  const items = listDeveloperBoard().filter((item) => developmentItemVisible(caller, item));
+  const developers = caller.isAdmin ? await listDeveloperOwnerOptions(caller) : [];
+  res.json({
+    ...developmentBoardPayload(),
+    items,
+    previewItems: items,
+    deploymentItems: items,
+    viewer: {
+      isAdmin: Boolean(caller.isAdmin),
+      accountKey: sanitizeText(caller.accountKey),
+      username: sanitizeText(caller.username),
+    },
+    developers,
+  });
+});
+
+app.post('/api/admin/development/:id/assign', developmentAuth, async (req, res) => {
+  if (!req.developmentUser?.isAdmin) {
+    return res.status(403).json({ message: 'Only admin can assign a developer.' });
+  }
+  const target = resolveDevelopmentTarget(req.params.id);
+  if (!target?.client) return res.status(404).json({ message: 'Development client not found.' });
+  const nextOwnerId = await resolveAssignableDeveloperOwnerId(req.body?.developerOwnerId, req.developmentUser);
+  if (!nextOwnerId) return res.status(400).json({ message: 'Choose a developer.' });
+  const plan = planDeveloperReassign({
+    client: target.client,
+    nextOwnerId,
+    now: new Date().toISOString(),
+  });
+  if (!plan.changed) {
+    return res.json({
+      ok: true,
+      client: target.client,
+      item: listDeveloperBoard().find((entry) => entry.salesClientId === target.client.id) || null,
+    });
+  }
+  if (plan.developerHandoff?.status === 'waiting-upload') {
+    deleteDevHandoff(target.client.id);
+  }
+  const updated = sales.updateSalesClient(target.client.id, {
+    developerOwnerId: plan.developerOwnerId,
+    developerHandoff: plan.developerHandoff || emptyDeveloperHandoff(),
+  });
+  if (!updated) return res.status(404).json({ message: 'Sales client not found.' });
+  return res.json({
+    ok: true,
+    client: updated,
+    item: listDeveloperBoard().find((entry) => entry.salesClientId === updated.id) || null,
+  });
+});
+
+const devHandoffUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      try {
+        cb(null, ensureDevHandoffDir());
+      } catch (error) {
+        cb(error);
+      }
+    },
+    filename: (req, _file, cb) => {
+      try {
+        const target = resolveDevelopmentTarget(req.params.id);
+        const salesId = sanitizeText(target?.client?.id);
+        if (!salesId) {
+          cb(new Error('Development client not found.'));
+          return;
+        }
+        cb(null, `${salesId}.zip`);
+      } catch (error) {
+        cb(error);
+      }
+    },
+  }),
+  limits: { fileSize: 250 * 1024 * 1024 },
+});
+
+app.post('/api/admin/development/:id/handoff', developmentAuth, (req, res) => {
+  devHandoffUpload.single('file')(req, res, (error) => {
+    if (error) return res.status(400).json({ message: error.message || 'Upload failed.' });
+    const target = resolveDevelopmentTarget(req.params.id);
+    if (!assertDevelopmentVisible(req, res, target?.client)) return;
+    if (!canUploadDeveloperHandoff(req.developmentUser, target.client)) {
+      return res.status(403).json({ message: 'This project is not waiting for your computer.' });
+    }
+    if (!req.file) return res.status(400).json({ message: 'Upload the project zip.' });
+    const handoff = {
+      ...(target.client.developerHandoff || emptyDeveloperHandoff()),
+      status: 'ready',
+      uploadedAt: new Date().toISOString(),
+      fileName: sanitizeText(req.file.filename),
+    };
+    const updated = sales.updateSalesClient(target.client.id, { developerHandoff: handoff });
+    return res.json({ ok: true, client: updated });
+  });
+});
+
+app.get('/api/admin/development/:id/handoff', developmentAuth, (req, res) => {
+  const target = resolveDevelopmentTarget(req.params.id);
+  if (!assertDevelopmentVisible(req, res, target?.client)) return;
+  if (!canAcceptDeveloperHandoff(req.developmentUser, target.client)) {
+    return res.status(403).json({ message: 'This project is not ready to accept.' });
+  }
+  const file = devHandoffZipPath(target.client.id);
+  if (!existsSync(file)) return res.status(404).json({ message: 'Project file is missing.' });
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="${sanitizeText(target.client.businessName) || 'project'}.zip"`);
+  return res.sendFile(file);
+});
+
+app.post('/api/admin/development/:id/handoff/accepted', developmentAuth, (req, res) => {
+  const target = resolveDevelopmentTarget(req.params.id);
+  if (!assertDevelopmentVisible(req, res, target?.client)) return;
+  if (!canAcceptDeveloperHandoff(req.developmentUser, target.client)) {
+    return res.status(403).json({ message: 'This project is not ready to accept.' });
+  }
+  deleteDevHandoff(target.client.id);
+  const updated = sales.updateSalesClient(target.client.id, { developerHandoff: emptyDeveloperHandoff() });
+  return res.json({ ok: true, client: updated });
 });
 
 app.patch('/api/admin/development/:id', developmentAuth, (req, res) => {
@@ -17238,6 +17430,7 @@ app.patch('/api/admin/development/:id', developmentAuth, (req, res) => {
   }
   const target = resolveDevelopmentTarget(req.params.id);
   if (!target) return res.status(404).json({ message: 'Development client not found.' });
+  if (!assertDevelopmentWork(req, res, target.client)) return;
 
   let client = target.client;
   let site = target.site;
@@ -17292,6 +17485,7 @@ app.patch('/api/admin/development/:id/goals', developmentAuth, (req, res) => {
   const key = sanitizeText(req.body?.key);
   const target = resolveDevelopmentTarget(req.params.id);
   if (!target?.client) return res.status(404).json({ message: 'Sales client not found.' });
+  if (!assertDevelopmentWork(req, res, target.client)) return;
   const applied = applyDeveloperGoalToggle(target.client.developerGoals, key);
   if (applied.error) return res.status(400).json({ message: applied.error });
   const updated = sales.setSalesDeveloperGoals(target.client.id, applied.goals);
@@ -17303,9 +17497,21 @@ app.patch('/api/admin/development/:id/goals', developmentAuth, (req, res) => {
   }));
 });
 
+app.post('/api/admin/development/:id/bundle', developmentAuth, (req, res) => {
+  const target = resolveDevelopmentTarget(req.params.id);
+  if (!target?.client) return res.status(404).json({ message: 'Sales client not found.' });
+  if (!assertDevelopmentWork(req, res, target.client)) return;
+  const clientBundleId = sanitizeText(req.body?.clientBundleId);
+  if (!clientBundleId) return res.status(400).json({ message: 'clientBundleId is required.' });
+  const updated = sales.setSalesMakerRun(target.client.id, { clientBundleId });
+  if (!updated) return res.status(404).json({ message: 'Sales client not found.' });
+  return res.json({ ok: true, client: updated });
+});
+
 app.post('/api/admin/development/:id/sync-maker-run', developmentAuth, (req, res) => {
   const target = resolveDevelopmentTarget(req.params.id);
   if (!target?.client) return res.status(404).json({ message: 'Sales client not found.' });
+  if (!assertDevelopmentVisible(req, res, target.client)) return;
   const runId = sanitizeText(req.body?.runId);
   if (!runId) return res.status(400).json({ message: 'Run ID is required.' });
   const patch = makerProgressPatchFromHandoff(req.body?.handoff || {});
@@ -17412,6 +17618,13 @@ app.post('/api/admin/development/maker-queue', developmentAuth, async (req, res)
       failures,
     });
   }
+  const blocked = linked.some((entry) => {
+    const client = entry.salesClientId ? sales.getSalesClientById(entry.salesClientId) : salesClientForMakerRun(entry.runId);
+    return !canWorkDevelopmentClient(req.developmentUser, client || {});
+  });
+  if (blocked) {
+    return res.status(403).json({ message: 'This project is assigned to another developer.', failures });
+  }
   if (developmentMakerPublicHostBlocked(req, res, { failures })) return;
   try {
     const data = await fetchMakerJson(base, '/api/pipeline-queue', {
@@ -17470,6 +17683,10 @@ app.post('/api/admin/development/maker-run/:runId/domain', developmentAuth, asyn
   const salesClientId = sanitizeText(req.body?.salesClientId);
   if (!runId) return res.status(400).json({ message: 'Run ID is required.' });
   const makerSaved = parseBoolean(req.body?.makerSaved, false);
+  const domainClient = salesClientId
+    ? sales.getSalesClientById(salesClientId)
+    : salesClientForMakerRun(runId);
+  if (!assertDevelopmentWork(req, res, domainClient)) return;
   if (!makerSaved && developmentMakerPublicHostBlocked(req, res)) return;
   try {
     let run = null;
@@ -17520,6 +17737,10 @@ app.all('/api/admin/development/maker-language/:runId', developmentAuth, async (
   const base = resolveDevelopmentMakerBase();
   const runId = sanitizeText(req.params.runId);
   if (!runId) return res.status(400).json({ message: 'Run ID is required.' });
+  const languageClient = salesClientForMakerRun(runId);
+  if (method === 'GET') {
+    if (!assertDevelopmentVisible(req, res, languageClient)) return;
+  } else if (!assertDevelopmentWork(req, res, languageClient)) return;
   if (developmentMakerPublicHostBlocked(req, res)) return;
   try {
     const data = await fetchMakerJson(base, `/api/runs/${encodeURIComponent(runId)}/language`, {
@@ -17537,6 +17758,7 @@ app.all('/api/admin/development/maker-language/:runId', developmentAuth, async (
 app.get('/api/admin/development/:id/workshop-needs', developmentAuth, async (req, res) => {
   const target = resolveDevelopmentTarget(req.params.id);
   if (!target?.client) return res.status(404).json({ message: 'Development client not found.' });
+  if (!assertDevelopmentVisible(req, res, target.client)) return;
   const base = resolveDevelopmentMakerBase();
   try {
     const document = await loadWorkshopNeedsDocument(target.client, {
@@ -17561,6 +17783,7 @@ app.get('/api/admin/development/:id/workshop-needs', developmentAuth, async (req
 app.patch('/api/admin/development/:id/developer-qa', developmentAuth, (req, res) => {
   const target = resolveDevelopmentTarget(req.params.id);
   if (!target?.client) return res.status(404).json({ message: 'Development client not found.' });
+  if (!assertDevelopmentWork(req, res, target.client)) return;
   const current = normalizeDeveloperQa(target.client.developerQa);
   const incoming = req.body && typeof req.body === 'object' ? req.body : {};
   const next = normalizeDeveloperQa({
@@ -17576,6 +17799,7 @@ app.patch('/api/admin/development/:id/developer-qa', developmentAuth, (req, res)
 app.get('/api/admin/development/:id/media', developmentAuth, async (req, res) => {
   const target = resolveDevelopmentTarget(req.params.id);
   if (!target?.client) return res.status(404).json({ message: 'Development client not found.' });
+  if (!assertDevelopmentVisible(req, res, target.client)) return;
   const fromClient = listClientUploadFiles(target.client.portalUserId).map((file) => ({
     ...file,
     source: 'client',
@@ -17619,6 +17843,7 @@ app.get('/api/admin/development/:id/media', developmentAuth, async (req, res) =>
 app.delete('/api/admin/development/:id/media/client/:fileName', developmentAuth, (req, res) => {
   const target = resolveDevelopmentTarget(req.params.id);
   if (!target?.client) return res.status(404).json({ message: 'Development client not found.' });
+  if (!assertDevelopmentWork(req, res, target.client)) return;
   const portalUserId = sanitizeText(target.client.portalUserId);
   const fileName = decodeURIComponent(req.params.fileName || '');
   if (!portalUserId || !deleteClientUploadFile(portalUserId, fileName)) {
@@ -17637,6 +17862,7 @@ app.delete('/api/admin/development/:id/media/client/:fileName', developmentAuth,
 app.delete('/api/admin/development/:id/media/maker', developmentAuth, async (req, res) => {
   const target = resolveDevelopmentTarget(req.params.id);
   if (!target?.client) return res.status(404).json({ message: 'Development client not found.' });
+  if (!assertDevelopmentWork(req, res, target.client)) return;
   const base = resolveDevelopmentMakerBase();
   const source = sanitizeText(req.body?.source) === 'bundle' ? 'bundle' : 'run';
   const field = sanitizeText(req.body?.field);
@@ -17676,6 +17902,7 @@ app.delete('/api/admin/development/:id/media/maker', developmentAuth, async (req
 app.get('/api/admin/development/:id/media/client/:fileName', developmentAuth, (req, res) => {
   const target = resolveDevelopmentTarget(req.params.id);
   if (!target?.client) return res.status(404).json({ message: 'Development client not found.' });
+  if (!assertDevelopmentVisible(req, res, target.client)) return;
   const portalUserId = sanitizeText(target.client.portalUserId);
   if (!portalUserId) return res.status(404).json({ message: 'Fant ikke filen.' });
   const stored = readClientMedia(portalUserId, decodeURIComponent(req.params.fileName || ''));
@@ -17693,6 +17920,7 @@ app.get('/api/admin/development/:id/media/client/:fileName', developmentAuth, (r
 app.get('/api/admin/development/:id/media/maker', developmentAuth, async (req, res) => {
   const target = resolveDevelopmentTarget(req.params.id);
   if (!target?.client) return res.status(404).json({ message: 'Development client not found.' });
+  if (!assertDevelopmentVisible(req, res, target.client)) return;
   const base = resolveDevelopmentMakerBase();
   const source = sanitizeText(req.query?.source) === 'bundle' ? 'bundle' : 'run';
   const field = sanitizeText(req.query?.field);

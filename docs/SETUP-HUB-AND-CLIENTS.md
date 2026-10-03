@@ -9,7 +9,7 @@ Canonical split (GitHub vs Hostinger disk vs Superadmin): [deployment-split.md](
 - **This site’s own `/admin`:** https://asoldi.com/admin  
   Features come from the hub row whose domain is `asoldi.com`.
 
-Do **not** Git-auto-deploy asoldi.com while Sales recordings live in the git tree. Hub deploy steps: [DEPLOYMENT.md](../DEPLOYMENT.md).
+Push to `main` deploys asoldi.com. Hostinger auto-deploys that branch. Do not zip-upload the hub. Steps: [DEPLOYMENT.md](../DEPLOYMENT.md).
 
 ---
 

@@ -14,12 +14,18 @@ import {
   developerMaterialsView,
   developerMediaLibraryView,
   developerSummaryView,
+  developerChipVisual,
   makerCustomEditPath,
   makerHandoffFromLiveRun,
+  makerHandoffNeedsPersist,
+  makerLatestPreviewPath,
   makerProgressPatchFromHandoff,
+  mergeDeveloperPipelineStatus,
   normalizeDeveloperQa,
   pipelineStatusFromMakerRun,
   resolveDeveloperProgressClick,
+  resolveLatestMakerPreviewStep,
+  scoreMakerRunProgress,
 } from '../lib/developer-card.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -243,10 +249,12 @@ test('handoff progress fields persist without treating sales domain as a fill', 
     cms: 'idle',
     customSite: { exists: true, previewPath: '/preview/run-abc/custom' },
     productionDomain: 'bakeri.no',
+    latestReadyStep: '2',
   });
   assert.equal(patch.language.confirmed, true);
   assert.equal(patch.customSite.exists, true);
   assert.equal(patch.productionDomain, 'bakeri.no');
+  assert.equal(patch.latestReadyStep, '2');
   const status = pipelineStatusFromMakerRun(patch);
   assert.equal(status.step1Ready, true);
   assert.equal(status.generateTextReady, true);
@@ -270,12 +278,106 @@ test('live Maker run nested steps become a persistable handoff', () => {
   assert.equal(handoff.steps['1'], 'ready');
   assert.equal(handoff.step2Substeps['generate-text'], 'ready');
   assert.equal(handoff.language.confirmed, true);
+  assert.equal(handoff.latestReadyStep, '2');
   const status = pipelineStatusFromMakerRun(makerProgressPatchFromHandoff(handoff));
   assert.equal(status.step1Ready, true);
   assert.equal(status.step15Ready, true);
   assert.equal(status.generateTextReady, true);
   assert.equal(status.injectMediaReady, false);
   assert.equal(status.languageLocked, true);
+});
+
+test('live Maker status on the developer card wins over a stale idle sales copy', () => {
+  const persisted = pipelineStatusFromMakerRun({
+    runId: 'run-1',
+    steps: { 1: 'idle', '1.5': 'idle', 2: 'idle', 3: 'idle' },
+  });
+  const live = pipelineStatusFromMakerRun({
+    runId: 'run-1',
+    steps: { 1: 'ready', '1.5': 'ready', 2: 'partial', 3: 'idle' },
+    step2Substeps: { 'generate-text': 'ready', 'inject-media': 'ready' },
+    language: { confirmed: true, code: 'nb' },
+  });
+  const merged = mergeDeveloperPipelineStatus(persisted, live);
+  assert.equal(persisted.step1Ready, false);
+  assert.equal(merged.step1Ready, true);
+  assert.equal(merged.step15Ready, true);
+  assert.equal(merged.generateTextReady, true);
+  assert.equal(merged.injectMediaReady, true);
+  assert.equal(merged.languageLocked, true);
+  const storedOnly = mergeDeveloperPipelineStatus(persisted, null);
+  assert.equal(storedOnly.step1Ready, false);
+});
+
+test('finished Maker steps stay ready on the card even without a language lock', () => {
+  const chip15 = DEVELOPER_PROGRESS_CHIPS.find((chip) => chip.id === '1.5');
+  const status = { step1Ready: true, step15Ready: true, languageLocked: false };
+  const click = resolveDeveloperProgressClick(chip15, status);
+  assert.equal(click.type, 'ready');
+  assert.equal(click.enqueue, false);
+  assert.equal(developerChipVisual(chip15, status, click), 'ready');
+});
+
+test('identical live Maker handoff is not persisted again', () => {
+  const stored = {
+    runId: 'run-1',
+    steps: { 1: 'ready', '1.5': 'ready', 2: 'partial', 3: 'idle' },
+    step2Substeps: {
+      'generate-text': 'ready',
+      'inject-media': 'idle',
+      'layout-colors-style': 'idle',
+      'maps-embed-sync': 'idle',
+    },
+    language: { confirmed: true, code: 'nb' },
+    latestReadyStep: '2',
+  };
+  const live = makerHandoffFromLiveRun({
+    steps: {
+      1: { status: 'ready' },
+      '1.5': { status: 'ready' },
+      2: { status: 'partial', substeps: { 'generate-text': { status: 'ready' } } },
+      3: { status: 'idle' },
+    },
+    metadata: { finalizedLanguage: { confirmed: true, code: 'nb' } },
+  });
+  assert.equal(makerHandoffNeedsPersist(stored, 'run-1', live), false);
+  assert.equal(makerHandoffNeedsPersist({ runId: 'run-1', steps: { 1: 'idle' } }, 'run-1', live), true);
+});
+
+test('Maker preview uses the latest completed step, never an empty Step 4', () => {
+  const idle = resolveLatestMakerPreviewStep({});
+  assert.equal(idle, '');
+  assert.equal(makerLatestPreviewPath('run-abc', idle), '');
+
+  const topspin = resolveLatestMakerPreviewStep({
+    step1Ready: true,
+    step15Ready: true,
+    languageLocked: true,
+    generateTextReady: true,
+    step2Ready: true,
+    injectMediaReady: false,
+    seoReady: false,
+  });
+  assert.equal(topspin, '2');
+  assert.equal(
+    makerLatestPreviewPath('3da8e039-4866-4f6f-945d-919edafcd513', topspin),
+    '/preview/3da8e039-4866-4f6f-945d-919edafcd513/step/2/view?route=/'
+  );
+
+  const custom = resolveLatestMakerPreviewStep({ customSiteExists: true, seoReady: true, step2Ready: true });
+  assert.equal(custom, 'custom');
+  assert.equal(makerLatestPreviewPath('run-abc', 'custom'), '/preview/run-abc/custom/view?route=/');
+
+  const idleDraftScore = scoreMakerRunProgress({
+    steps: { 1: 'idle', '1.5': 'idle', 2: 'idle' },
+    step2Substeps: { 'generate-text': 'idle' },
+  });
+  const progressedScore = scoreMakerRunProgress({
+    steps: { 1: 'ready', '1.5': 'ready', 2: 'partial' },
+    step2Substeps: { 'generate-text': 'ready' },
+    language: { confirmed: true },
+  });
+  assert.ok(progressedScore > idleDraftScore);
 });
 
 test('Maker error does not fake an empty client media library', () => {
@@ -309,7 +411,12 @@ test('progress chips stay in the locked order and enqueue only through T03', () 
   assert.match(card, /DeveloperGoalTimeline/);
   assert.match(card, /sync-maker-run/);
   assert.match(card, /findMakerRunBySalesClientId/);
+  assert.match(card, /Maker preview/);
+  assert.equal(card.includes('actionPage'), false);
+  assert.equal(card.includes('1 / 2'), false);
   assert.equal(card.includes('Open preview'), false);
+  const queueClient = readFileSync(join(here, '../app/pages/developer/makerQueue.ts'), 'utf8');
+  assert.match(queueClient, /poll=1&adopt=0/);
   const brief = readFileSync(join(here, '../app/pages/developer/DeveloperClientBrief.tsx'), 'utf8');
   assert.match(brief, /Fra kunden/);
   assert.match(brief, /Fra Website Maker/);
@@ -339,6 +446,12 @@ test('Development card still mounts one request thread and the queue bar', () =>
   assert.match(card, /developerCardTimeline/);
   const cardThreads = card.split('<DeveloperRequestThread').length - 1;
   assert.equal(cardThreads, 1);
+  assert.match(card, /if \(!detailsOpen \|\| !salesClientId\) return;/);
+  assert.match(card, /Vis tråd og filer/);
+  assert.equal(card.includes('if (!detailsOpen) return undefined;'), false);
+  assert.match(card, /async function syncMakerRun/);
+  assert.match(card, /visibilitychange/);
+  assert.match(section, /collapsedBuckets\[bucketId\] !== false/);
   const workspace = readFileSync(join(here, '../app/pages/developer/DeveloperWorkspace.tsx'), 'utf8');
   assert.match(workspace, /Klar for preview/);
   const manage = readFileSync(join(here, '../app/pages/Admin/sections/ManageClientsSection.tsx'), 'utf8');

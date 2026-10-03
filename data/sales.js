@@ -20,7 +20,8 @@ import { calendarDurationForMode } from '../lib/sales-meeting-duration.js';
 import { filterCustomOtherLinks } from '../lib/sales-client-links.js';
 import { normalizeWorkshopAction, offerStartDateFromWorkshopDueAt } from '../lib/workshop-action.js';
 import { persistWorkshopRecord } from '../lib/workshop-record.js';
-import { normalizeDeveloperQa } from '../lib/developer-card.js';
+import { mergeMakerRunPatch, normalizeDeveloperQa } from '../lib/developer-card.js';
+import { normalizeDeveloperHandoff } from '../lib/developer-assignment.js';
 import { normalizeDeveloperGoals } from '../lib/developer-goals.js';
 import { normalizeDueDate } from '../lib/website-due.js';
 
@@ -244,6 +245,7 @@ function normalizeMakerRun(value = {}) {
     fieldsSyncedAt: sanitizeText(input.fieldsSyncedAt),
     industry: sanitizeText(input.industry),
     createdAt: sanitizeText(input.createdAt),
+    clientBundleId: sanitizeText(input.clientBundleId),
   };
   if (!runId) return base;
   return {
@@ -481,6 +483,8 @@ function normalizeSalesClient(raw = {}) {
   const client = {
     id: sanitizeText(raw.id) || makeId(),
     ownerId: sanitizeText(raw.ownerId),
+    developerOwnerId: sanitizeText(raw.developerOwnerId),
+    developerHandoff: normalizeDeveloperHandoff(raw.developerHandoff),
     product,
     businessName: sanitizeText(raw.businessName),
     contactPerson: sanitizeText(raw.contactPerson),
@@ -1049,7 +1053,8 @@ export function setSalesWebsiteImport(id, importPatch = {}) {
 }
 
 export function setSalesMakerRun(id, makerPatch = {}) {
-  return updateSalesClient(id, { makerRun: makerPatch });
+  const current = getSalesClientById(id);
+  return updateSalesClient(id, { makerRun: mergeMakerRunPatch(current?.makerRun || {}, makerPatch) });
 }
 
 export function setSalesDeveloperQa(id, qaPatch = {}) {

@@ -371,6 +371,9 @@ export type DevelopmentItem = {
   developerGoals?: DeveloperGoals;
   portalUserId?: string;
   makerRun: SalesMakerRunMeta | null;
+  developerOwnerId?: string;
+  developerHandoff?: DeveloperHandoff | null;
+  publicPreviewUrl?: string;
   websiteImport: SalesWebsiteImportMeta | null;
   hubSite?: SalesClient['hubSite'] | null;
   siteKey: string;
@@ -448,6 +451,23 @@ export type SalesMakerRunMeta = {
   customSite?: { exists: boolean; previewPath: string };
   productionDomain?: string;
   websiteDomain?: string;
+  clientBundleId?: string;
+};
+
+export type DeveloperHandoff = {
+  status: '' | 'waiting-upload' | 'ready';
+  fromOwnerId: string;
+  toOwnerId: string;
+  runId: string;
+  requestedAt: string;
+  uploadedAt: string;
+  fileName: string;
+};
+
+export type DeveloperOwnerOption = {
+  accountKey: string;
+  username: string;
+  name: string;
 };
 
 export type SalesArchiveMeta = {

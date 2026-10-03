@@ -113,7 +113,7 @@ export async function fetchMakerRunStatus(
 ) {
   const id = String(runId || '').trim();
   if (!id) throw new Error('Run ID is required.');
-  const run = await fetchLocalMakerJson(`/api/runs/${encodeURIComponent(id)}?poll=1`);
+  const run = await fetchLocalMakerJson(`/api/runs/${encodeURIComponent(id)}?poll=1&adopt=0`);
   return {
     run,
     ...summarizeMakerRunForQueue({ ...run, id }),
@@ -125,12 +125,28 @@ export async function findMakerRunBySalesClientId(
   businessName = ''
 ) {
   const id = String(salesClientId || '').trim();
-  if (!id) return '';
+  if (!id) return null;
   const params = new URLSearchParams({ salesClientId: id });
   const name = String(businessName || '').trim();
   if (name) params.set('businessName', name);
-  const data = await fetchLocalMakerJson(`/api/runs?${params.toString()}`) as { runId?: string };
-  return String(data.runId || '').trim();
+  const data = await fetchLocalMakerJson(`/api/runs?${params.toString()}`) as {
+    runId?: string;
+    steps?: Record<string, unknown>;
+    intakeStatus?: string;
+    languageConfirmed?: boolean;
+    customSiteExists?: boolean;
+    progressScore?: number;
+  };
+  const runId = String(data.runId || '').trim();
+  if (!runId) return null;
+  return {
+    runId,
+    steps: data.steps && typeof data.steps === 'object' ? data.steps : {},
+    intakeStatus: String(data.intakeStatus || '').trim(),
+    languageConfirmed: Boolean(data.languageConfirmed),
+    customSiteExists: Boolean(data.customSiteExists),
+    progressScore: Number(data.progressScore) || 0,
+  };
 }
 
 export async function saveMakerRunDomain({
@@ -150,7 +166,7 @@ export async function saveMakerRunDomain({
     method: 'POST',
     body: { answers: { websiteDomain: String(websiteDomain || '').trim() } },
   });
-  const run = await fetchLocalMakerJson(`/api/runs/${encodeURIComponent(id)}?poll=1`);
+  const run = await fetchLocalMakerJson(`/api/runs/${encodeURIComponent(id)}?poll=1&adopt=0`);
   const summary = summarizeMakerRunForQueue({ ...run, id });
   const clientId = String(salesClientId || '').trim();
   if (!clientId) return { ok: true, run, ...summary };

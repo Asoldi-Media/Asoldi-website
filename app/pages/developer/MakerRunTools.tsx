@@ -15,6 +15,8 @@ import {
   resolveOpenInMakerUrl,
 } from '../sales/websiteMaker';
 import { LOCAL_EDITOR_ORIGIN } from '../../../lib/maker-editor-origin.js';
+import { fetchMakerRunStatus, findMakerRunBySalesClientId } from './makerQueue';
+import { makerHandoffFromLiveRun, pipelineStatusFromMakerRun, resolveLatestMakerPreviewStep } from '../../../lib/developer-card.js';
 
 type MakerClientLike = {
   id: string;
@@ -35,6 +37,7 @@ type Props = {
   allowCreate?: boolean;
   allowLink?: boolean;
   variant?: 'full' | 'tools' | 'create';
+  businessName?: string;
 };
 
 async function makerRequest(path: string, init: RequestInit, authHeaders: Record<string, string>) {
@@ -71,6 +74,7 @@ export function MakerRunTools({
   allowCreate = true,
   allowLink = true,
   variant = 'full',
+  businessName = '',
 }: Props) {
   const [creating, setCreating] = useState(false);
   const [localError, setLocalError] = useState('');
@@ -83,11 +87,14 @@ export function MakerRunTools({
     id: salesClientId,
     websiteImport: client.websiteImport,
   });
+  const previewStatus = pipelineStatusFromMakerRun(client.makerRun || {});
+  const latestPreviewStep = resolveLatestMakerPreviewStep(previewStatus);
   const makerPreviewUrl = resolveMakerPreviewUrl({
     baseUrl: websiteMakerBaseUrl,
     runId: makerRunId,
     storedPreviewUrl: String(client.makerRun?.previewUrl || ''),
-    latestReadyStep: String(client.makerRun?.latestReadyStep || ''),
+    latestReadyStep: latestPreviewStep === 'custom' ? 'custom' : (latestPreviewStep || String(client.makerRun?.latestReadyStep || '')),
+    customSiteExists: Boolean(previewStatus.customSiteExists),
   });
   const makerDashboardUrl = resolveOpenInMakerUrl({
     baseUrl: websiteMakerBaseUrl,
@@ -108,6 +115,38 @@ export function MakerRunTools({
       onError(message);
       return;
     }
+    const makerBase =
+      healStaleLocalMakerBase(websiteMakerBaseUrl) ||
+      normalizeHttpBaseUrl(websiteMakerBaseUrl) ||
+      LOCAL_EDITOR_ORIGIN;
+    if (makerBase !== websiteMakerBaseUrl) setWebsiteMakerBaseUrl?.(makerBase);
+
+    if (!forceNewRun) {
+      try {
+        const found = await findMakerRunBySalesClientId(salesClientId, businessName);
+        const foundId = String(found?.runId || '').trim();
+        if (foundId && Number(found?.progressScore || 0) > 0) {
+          setCreating(true);
+          setLocalError('');
+          onError('');
+          const live = await fetchMakerRunStatus(makerBase, foundId);
+          const handoff = makerHandoffFromLiveRun(live.run || {});
+          const data = await makerRequest(`/admin/development/${salesClientId}/sync-maker-run`, {
+            method: 'POST',
+            body: JSON.stringify({ runId: foundId, handoff }),
+          }, authHeaders);
+          if (data?.client && onClientUpdated) onClientUpdated(data.client as Record<string, unknown>);
+          else await onReload();
+          onNotice?.('Knyttet til eksisterende Website Maker-run.');
+          setCreating(false);
+          return;
+        }
+      } catch {
+        setCreating(false);
+        // Fall through and create a new draft when lookup fails.
+      }
+    }
+
     const popup = openMakerCreatePopup();
     if (!popup) {
       const message = 'Popup blocked. Allow popups for this site and try Create run again.';
@@ -119,11 +158,6 @@ export function MakerRunTools({
     setLocalError('');
     onError('');
     try {
-      const makerBase =
-        healStaleLocalMakerBase(websiteMakerBaseUrl) ||
-        normalizeHttpBaseUrl(websiteMakerBaseUrl) ||
-        LOCAL_EDITOR_ORIGIN;
-      if (makerBase !== websiteMakerBaseUrl) setWebsiteMakerBaseUrl?.(makerBase);
       let data = await makerRequest(`/admin/sales/${salesClientId}/create-maker-run`, {
         method: 'POST',
         body: JSON.stringify({ websiteMakerBaseUrl: makerBase, forceNewRun }),

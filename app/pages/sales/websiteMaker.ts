@@ -124,12 +124,17 @@ export function buildMakerRunUrl(
   baseUrl = '',
   runId = '',
   mode: 'dashboard' | 'preview' | 'intake' = 'dashboard',
-  previewStep = '3',
+  previewStep = '',
 ) {
   const base = healStaleLocalMakerBase(baseUrl) || normalizeHttpBaseUrl(baseUrl);
   const id = String(runId || '').trim();
   if (!base || !id) return '';
-  if (mode === 'preview') return `${base}/preview/${encodeURIComponent(id)}/step/${encodeURIComponent(previewStep || '3')}/view?route=/`;
+  if (mode === 'preview') {
+    const step = String(previewStep || '').trim();
+    if (!step) return '';
+    if (step === 'custom') return `${base}/preview/${encodeURIComponent(id)}/custom/view?route=/`;
+    return `${base}/preview/${encodeURIComponent(id)}/step/${encodeURIComponent(step)}/view?route=/`;
+  }
   if (mode === 'intake') return `${base}/run-v2?draftRunId=${encodeURIComponent(id)}`;
   return `${base}/run/${encodeURIComponent(id)}`;
 }
@@ -247,21 +252,27 @@ export function resolveMakerPreviewUrl({
   runId = '',
   storedPreviewUrl = '',
   latestReadyStep = '',
+  customSiteExists = false,
 }: {
   baseUrl?: string;
   runId?: string;
   storedPreviewUrl?: string;
   latestReadyStep?: string;
+  customSiteExists?: boolean;
 }) {
   const makerRunId = String(runId || '').trim();
-  const stored = String(storedPreviewUrl || '').trim();
-  if (storedMakerUrlBelongsToRun(stored, makerRunId)) {
-    return (
-      remapMakerUrlToBase(healStaleLocalMakerBase(baseUrl) || String(baseUrl || ''), stored) ||
-      buildMakerRunUrl(baseUrl, makerRunId, 'preview', String(latestReadyStep || '3'))
-    );
+  const base = healStaleLocalMakerBase(baseUrl) || normalizeHttpBaseUrl(baseUrl);
+  if (!base || !makerRunId) return '';
+  const step = String(latestReadyStep || '').trim();
+  if (customSiteExists || step === 'custom') {
+    return `${base}/preview/${encodeURIComponent(makerRunId)}/custom/view?route=/`;
   }
-  return buildMakerRunUrl(baseUrl, makerRunId, 'preview', String(latestReadyStep || '3'));
+  if (step) return buildMakerRunUrl(base, makerRunId, 'preview', step);
+  const stored = String(storedPreviewUrl || '').trim();
+  if (storedMakerUrlBelongsToRun(stored, makerRunId) && !/\/step\/3(?:\/|$)/i.test(stored)) {
+    return remapMakerUrlToBase(base, stored) || '';
+  }
+  return '';
 }
 
 export function openMakerCreatePopup(): Window | null {

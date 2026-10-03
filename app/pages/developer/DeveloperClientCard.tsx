@@ -3,6 +3,7 @@ import { CalendarClock, CheckCircle2, ExternalLink, FileText, Loader2, Pencil } 
 import {
   API,
   developmentAuthHeaders,
+  type DeveloperOwnerOption,
   type DevelopmentItem,
 } from '../Admin/shared';
 import { MakerRunTools } from './MakerRunTools';
@@ -13,15 +14,18 @@ import { enqueueMakerQueue, fetchMakerRunStatus, findMakerRunBySalesClientId, op
 import { summarizeMaterialDots } from '../../../lib/client-material-dots.js';
 import {
   DEVELOPER_PROGRESS_CHIPS,
-  chipStepReady,
   developerCardTimeline,
   developerMediaLibraryView,
   developerSummaryView,
   makerCustomEditUrl,
   makerCustomPreviewPath,
+  developerChipVisual,
   makerHandoffFromLiveRun,
+  makerHandoffNeedsPersist,
+  makerHandoffSignature,
   makerLatestPreviewPath,
   makerStepPreviewPath,
+  mergeDeveloperPipelineStatus,
   normalizeDeveloperQa,
   pipelineStatusFromMakerRun,
   resolveDeveloperProgressClick,
@@ -77,6 +81,13 @@ type Props = {
   onClientUpdated?: (client: Record<string, unknown> | null | undefined) => void;
   onError: (message: string) => void;
   onNotice?: (message: string) => void;
+  canWork?: boolean;
+  isAdmin?: boolean;
+  viewerAccountKey?: string;
+  developers?: DeveloperOwnerOption[];
+  assignBusy?: boolean;
+  onAssign?: (developerOwnerId: string) => void;
+  onAcceptHandoff?: () => void;
 };
 
 function chipClass(kind: 'grey' | 'disabled' | 'ready' | 'idle') {
@@ -104,6 +115,13 @@ export function DeveloperClientCard({
   onClientUpdated,
   onError,
   onNotice,
+  canWork = false,
+  isAdmin = false,
+  viewerAccountKey = '',
+  developers = [],
+  assignBusy = false,
+  onAssign,
+  onAcceptHandoff,
 }: Props) {
   const contact = [item.contactPerson, item.contactPhone, item.contactEmail].filter(Boolean).join(' · ');
   const salesClientId = String(item.salesClientId || '').trim();
@@ -135,7 +153,13 @@ export function DeveloperClientCard({
   const [domainDraft, setDomainDraft] = useState('');
   const [savingDomain, setSavingDomain] = useState(false);
   const [goalBusy, setGoalBusy] = useState('');
+  const [assignOwnerId, setAssignOwnerId] = useState('');
+  const [bundleBusy, setBundleBusy] = useState('');
   const lastSyncedHandoffRef = useRef('');
+  const makerRunRef = useRef(item.makerRun);
+  const onClientUpdatedRef = useRef(onClientUpdated);
+  makerRunRef.current = item.makerRun;
+  onClientUpdatedRef.current = onClientUpdated;
 
   useEffect(() => {
     setQa(normalizeDeveloperQa(item.developerQa));
@@ -149,19 +173,13 @@ export function DeveloperClientCard({
     () => pipelineStatusFromMakerRun(item.makerRun || {}),
     [item.makerRun]
   );
-  const status = {
-    step1Ready: Boolean(liveStatus?.step1Ready ?? persistedStatus.step1Ready),
-    step15Ready: Boolean(liveStatus?.step15Ready ?? persistedStatus.step15Ready),
-    step2Ready: Boolean(liveStatus?.step2Ready ?? persistedStatus.step2Ready),
-    languageLocked: Boolean(liveStatus?.languageLocked ?? persistedStatus.languageLocked),
-    generateTextReady: Boolean(liveStatus?.generateTextReady ?? persistedStatus.generateTextReady),
-    injectMediaReady: Boolean(liveStatus?.injectMediaReady ?? persistedStatus.injectMediaReady),
-    layoutReady: Boolean(liveStatus?.layoutReady ?? persistedStatus.layoutReady),
-    mapsReady: Boolean(liveStatus?.mapsReady ?? persistedStatus.mapsReady),
-    seoReady: Boolean(liveStatus?.seoReady ?? persistedStatus.seoReady),
-    hasDomain: Boolean(liveStatus?.hasDomain ?? persistedStatus.hasDomain),
-    customSiteExists: Boolean(liveStatus?.customSiteExists ?? persistedStatus.customSiteExists),
-  };
+  const status = mergeDeveloperPipelineStatus(persistedStatus, liveStatus);
+  const ownQueueSignature = useMemo(() => (
+    queueItems
+      .filter((row) => String(row.runId || '').trim() === makerRunId)
+      .map((row) => `${String(row.target || '')}:${String(row.status || '')}`)
+      .join('|')
+  ), [queueItems, makerRunId]);
 
   useEffect(() => {
     if (!detailsOpen || !salesClientId) return;
@@ -217,33 +235,30 @@ export function DeveloperClientCard({
   }, [detailsOpen, item.id, salesClientId, websiteMakerBaseUrl, makerRunId, mediaReload]);
 
   useEffect(() => {
-    if (!detailsOpen) return undefined;
     let cancelled = false;
     async function persistLiveRun(runId: string, data: Record<string, unknown>) {
       setLiveStatus(data);
       const handoff = makerHandoffFromLiveRun(data.run || {});
-      const signature = JSON.stringify({
-        runId,
-        steps: handoff.steps,
-        sub: handoff.step2Substeps,
-        language: handoff.language,
-        cms: handoff.cms,
-        domain: handoff.productionDomain || handoff.websiteDomain,
-        latestReadyStep: handoff.latestReadyStep,
-      });
+      const signature = makerHandoffSignature(runId, handoff);
       if (lastSyncedHandoffRef.current === signature) return;
-      lastSyncedHandoffRef.current = signature;
-      const response = await fetch(`${API}/admin/development/${encodeURIComponent(item.id)}/sync-maker-run`, {
-        method: 'POST',
-        headers: { ...developmentAuthHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ runId, handoff }),
-      });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(String(body.message || body.error || 'Kunne ikke lagre Maker-run på kunden.'));
+      if (!makerHandoffNeedsPersist(makerRunRef.current || {}, runId, handoff)) {
+        lastSyncedHandoffRef.current = signature;
+        return;
       }
-      if (!cancelled && body.client && onClientUpdated) {
-        onClientUpdated(body.client);
+      try {
+        const response = await fetch(`${API}/admin/development/${encodeURIComponent(item.id)}/sync-maker-run`, {
+          method: 'POST',
+          headers: { ...developmentAuthHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ runId, handoff }),
+        });
+        const body = await response.json().catch(() => ({}));
+        if (!response.ok) return;
+        lastSyncedHandoffRef.current = signature;
+        if (!cancelled && body.client && onClientUpdatedRef.current) {
+          onClientUpdatedRef.current(body.client);
+        }
+      } catch {
+        // Chips already show the live Maker run; sales persist retries on the next sync.
       }
     }
     async function syncMakerRun() {
@@ -252,7 +267,7 @@ export function DeveloperClientCard({
         : null;
       const foundId = String(found?.runId || '').trim();
       const foundScore = Number(found?.progressScore) || 0;
-      const linkedScore = scoreMakerRunProgress(item.makerRun || {});
+      const linkedScore = scoreMakerRunProgress(makerRunRef.current || {});
       let runId = makerRunId;
       if (foundId) {
         if (!runId) runId = foundId;
@@ -272,19 +287,22 @@ export function DeveloperClientCard({
             const data = await fetchMakerRunStatus(websiteMakerBaseUrl, foundId, developmentAuthHeaders());
             if (cancelled) return;
             await persistLiveRun(foundId, data as Record<string, unknown>);
-            return;
           } catch {
-            // Linked id is missing and the twin also failed.
+            // Keep the last live chips, or the stored sales copy if this was the first fetch.
           }
         }
-        if (!cancelled) setLiveStatus(null);
       }
     }
     void syncMakerRun();
+    function onVisible() {
+      if (document.visibilityState === 'visible') void syncMakerRun();
+    }
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       cancelled = true;
+      document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [detailsOpen, makerRunId, salesClientId, websiteMakerBaseUrl, item.id, item.businessName, queueItems]);
+  }, [makerRunId, salesClientId, websiteMakerBaseUrl, item.id, item.businessName, ownQueueSignature]);
 
   const editorBase = editorMakerOrigin(websiteMakerBaseUrl) || LOCAL_EDITOR_ORIGIN;
   const customEditUrl = makerCustomEditUrl(editorBase, liveRunId);
@@ -504,8 +522,8 @@ export function DeveloperClientCard({
         websiteDomain: domainDraft,
         salesClientId,
         authHeaders: developmentAuthHeaders(),
-      });
-      if (data?.client && onClientUpdated) onClientUpdated(data.client as Record<string, unknown>);
+      }) as { client?: Record<string, unknown>; hasDomain?: boolean; websiteDomain?: string };
+      if (data?.client && onClientUpdated) onClientUpdated(data.client);
       setLiveStatus((prev) => ({ ...(prev || {}), hasDomain: Boolean(data.hasDomain), websiteDomain: data.websiteDomain }));
       onNotice?.(data.hasDomain ? 'Domene lagret på Maker-runet.' : 'Domene fjernet fra Maker-runet.');
     } catch (error) {
@@ -515,7 +533,69 @@ export function DeveloperClientCard({
     }
   }
 
+  async function downloadBundle() {
+    const bundleId = String(item.makerRun?.clientBundleId || '').trim();
+    if (!bundleId) {
+      onError('Ingen kundepakke er knyttet til dette prosjektet på denne maskinen.');
+      return;
+    }
+    setBundleBusy('download');
+    onError('');
+    try {
+      const response = await fetch(`${LOCAL_EDITOR_ORIGIN}/api/client-bundles/${encodeURIComponent(bundleId)}/export`);
+      if (!response.ok) throw new Error('Website Creator fant ikke kundepakken.');
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${item.businessName || 'client'}-bundle.zip`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Kunne ikke laste ned kundepakken.');
+    } finally {
+      setBundleBusy('');
+    }
+  }
+
+  async function importBundle(file: File) {
+    setBundleBusy('import');
+    onError('');
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const response = await fetch(`${LOCAL_EDITOR_ORIGIN}/api/client-bundles/import`, { method: 'POST', body: form });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || data.message || 'Kunne ikke importere kundepakken.');
+      const bundleId = String(data.client?.id || '').trim();
+      if (!bundleId) throw new Error('Importen manglet en kundepakke.');
+      if (liveRunId) {
+        await fetch(`${LOCAL_EDITOR_ORIGIN}/api/runs/${encodeURIComponent(liveRunId)}/save-intake`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clientBundleId: bundleId }),
+        });
+      }
+      const synced = await fetch(`${API}/admin/development/${encodeURIComponent(item.id)}/bundle`, {
+        method: 'POST',
+        headers: { ...developmentAuthHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientBundleId: bundleId }),
+      });
+      if (!synced.ok) {
+        const body = await synced.json().catch(() => ({}));
+        throw new Error(body.message || 'Pakken ble importert, men ikke knyttet til kunden.');
+      }
+      onNotice?.('Kundepakken er importert.');
+      await onReload();
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Kunne ikke importere kundepakken.');
+    } finally {
+      setBundleBusy('');
+    }
+  }
+
   async function deleteMedia(file: BriefMediaFile) {
+    if (!canWork) return;
     if (!window.confirm(`Slette ${file.fileName || 'filen'}?`)) return;
     const key = `${file.source}-${file.field || ''}-${file.index ?? ''}-${file.fileName}`;
     setDeletingMedia(key);
@@ -546,9 +626,7 @@ export function DeveloperClientCard({
   }
 
   function chipVisual(chip: (typeof DEVELOPER_PROGRESS_CHIPS)[number], resolved: ReturnType<typeof resolveDeveloperProgressClick>) {
-    if (chip.kind === 'grey' || resolved.type === 'disabled' || resolved.type === 'noop') return 'grey';
-    if (chipStepReady(chip, status)) return 'ready';
-    return 'idle';
+    return developerChipVisual(chip, status, resolved);
   }
 
   function renderProgressChips() {
@@ -558,7 +636,8 @@ export function DeveloperClientCard({
           const resolved = resolveDeveloperProgressClick(chip, status);
           const visual = chipVisual(chip, resolved);
           const queued = Boolean(chip.target && chipQueued(chip.target));
-          const clickable = resolved.type === 'enqueue' || resolved.type === 'enqueue-until' || resolved.type === 'language' || resolved.type === 'ready';
+          const clickable = canWork && (resolved.type === 'enqueue' || resolved.type === 'enqueue-until' || resolved.type === 'language' || resolved.type === 'ready');
+          const visualClass = visual === 'ready' ? 'ready' : (clickable ? visual : 'grey');
           return (
             <div key={chip.id} className="relative">
               <button
@@ -566,7 +645,7 @@ export function DeveloperClientCard({
                 disabled={!clickable || enqueueBusy === chip.id}
                 title={resolved.reason || chip.label}
                 onClick={() => void onProgressClick(chip.id)}
-                className={chipClass(clickable ? visual : 'grey')}
+                className={chipClass(visualClass)}
               >
                 {enqueueBusy === chip.id || queued ? <Loader2 size={11} className="inline mr-1 animate-spin" /> : null}
                 {chip.label}
@@ -617,6 +696,13 @@ export function DeveloperClientCard({
             className="h-4 w-4 shrink-0 accent-[#FF5B00] cursor-pointer"
           />
           <h3 className="text-white font-semibold truncate">{item.businessName}</h3>
+          {isAdmin && item.developerOwnerId ? (
+            <span className="shrink-0 px-2 py-0.5 rounded text-[11px] border border-white/10 text-gray-300">
+              {developers.find((owner) => owner.accountKey === item.developerOwnerId)?.name
+                || developers.find((owner) => owner.accountKey === item.developerOwnerId)?.username
+                || 'Tildelt'}
+            </span>
+          ) : null}
           {requestLabel ? (
             <span className="shrink-0 px-2 py-0.5 rounded text-[11px] border bg-amber-900/30 border-amber-700/30 text-amber-300">
               {requestLabel}
@@ -684,8 +770,8 @@ export function DeveloperClientCard({
               <button
                 key={step.key}
                 type="button"
-                disabled={busyKey === `${item.id}:${step.key}`}
-                onClick={() => onToggleStep(item, step.key)}
+                disabled={!canWork || busyKey === `${item.id}:${step.key}`}
+                onClick={() => { if (canWork) onToggleStep(item, step.key); }}
                 className={`px-2 py-1 rounded-md text-[11px] border transition-colors hover:border-[#FF5B00]/40 disabled:opacity-60 ${
                   done
                     ? 'bg-green-900/40 border-green-600/40 text-green-300'
@@ -714,7 +800,53 @@ export function DeveloperClientCard({
           >
             <span className="text-[11px] uppercase tracking-wide text-gray-500">Make website</span>
             <p className="text-[11px] text-gray-400">Importer nytt eller velg eksisterende template</p>
+            {!canWork && item.developerHandoff?.status === 'waiting-upload' && item.developerHandoff.fromOwnerId === viewerAccountKey && (
+              <p className="text-[11px] text-amber-200">Website Creator på denne maskinen sender prosjektet til den nye utvikleren.</p>
+            )}
+            {!canWork && item.developerHandoff?.status === 'waiting-upload' && item.developerOwnerId === viewerAccountKey && (
+              <p className="text-[11px] text-amber-200">Venter på at forrige datamaskin sender prosjektet.</p>
+            )}
+            {!canWork && item.developerHandoff?.status === 'ready' && item.developerOwnerId === viewerAccountKey && (
+              <button
+                type="button"
+                disabled={assignBusy}
+                onClick={() => onAcceptHandoff?.()}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FF5B00] text-white text-xs hover:bg-[#e55200] disabled:opacity-50"
+              >
+                {assignBusy ? <Loader2 size={13} className="animate-spin" /> : null}
+                Ta imot prosjektet
+              </button>
+            )}
+            {!canWork && item.developerOwnerId && item.developerOwnerId !== viewerAccountKey && item.developerHandoff?.status !== 'waiting-upload' && (
+              <p className="text-[11px] text-gray-400">En annen utvikler jobber med denne kunden.</p>
+            )}
+            {isAdmin && (
+              <div className="flex flex-wrap items-center gap-2" onClick={(event) => event.stopPropagation()}>
+                <select
+                  value={assignOwnerId}
+                  disabled={assignBusy}
+                  onChange={(event) => setAssignOwnerId(event.target.value)}
+                  className="rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-xs px-2 py-1.5"
+                >
+                  <option value="">{item.developerOwnerId ? 'Bytt utvikler…' : 'Velg utvikler…'}</option>
+                  {developers.map((owner) => (
+                    <option key={owner.accountKey} value={owner.accountKey}>
+                      {owner.name || owner.username}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={assignBusy || !assignOwnerId}
+                  onClick={() => onAssign?.(assignOwnerId)}
+                  className="px-2 py-1.5 rounded-lg bg-[#FF5B00] text-white text-xs hover:bg-[#e55200] disabled:opacity-50"
+                >
+                  Tildel
+                </button>
+              </div>
+            )}
             <div className="flex flex-wrap items-center gap-2">
+              {canWork && (
               <MakerRunTools
                 salesClientId={salesClientId}
                 client={{ id: salesClientId, makerRun: item.makerRun, websiteImport: item.websiteImport }}
@@ -729,10 +861,11 @@ export function DeveloperClientCard({
                 variant="create"
                 businessName={item.businessName}
               />
+              )}
               <button
                 type="button"
                 onClick={() => void openInMaker()}
-                disabled={!liveRunId || openingMaker}
+                disabled={!canWork || !liveRunId || openingMaker}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs disabled:opacity-50 ${
                   liveRunId
                     ? 'bg-[#FF5B00] text-white hover:bg-[#e55200]'
@@ -745,12 +878,49 @@ export function DeveloperClientCard({
               <button
                 type="button"
                 onClick={() => makerPreviewHref && window.open(makerPreviewHref, '_blank')}
-                disabled={!liveRunId || !makerPreviewHref}
+                disabled={!canWork || !liveRunId || !makerPreviewHref}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
               >
                 <ExternalLink size={13} />
                 Maker preview
               </button>
+              {item.publicPreviewUrl ? (
+                <button
+                  type="button"
+                  onClick={() => window.open(item.publicPreviewUrl, '_blank')}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
+                >
+                  <ExternalLink size={13} />
+                  Live preview
+                </button>
+              ) : null}
+              {(canWork || isAdmin) && (
+                <button
+                  type="button"
+                  disabled={bundleBusy === 'download'}
+                  onClick={() => void downloadBundle()}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
+                >
+                  {bundleBusy === 'download' ? <Loader2 size={13} className="animate-spin" /> : null}
+                  Last ned kundepakke
+                </button>
+              )}
+              {canWork && (
+                <label className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 cursor-pointer">
+                  {bundleBusy === 'import' ? <Loader2 size={13} className="animate-spin" /> : null}
+                  Importer kundepakke
+                  <input
+                    type="file"
+                    accept=".zip,application/zip"
+                    className="hidden"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0];
+                      event.target.value = '';
+                      if (file) void importBundle(file);
+                    }}
+                  />
+                </label>
+              )}
             </div>
             {renderProgressChips()}
             <div className="flex flex-col sm:flex-row gap-2">
@@ -763,7 +933,7 @@ export function DeveloperClientCard({
               <button
                 type="button"
                 onClick={() => void saveDomain()}
-                disabled={!liveRunId || savingDomain}
+                disabled={!canWork || !liveRunId || savingDomain}
                 className="px-3 py-2 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
               >
                 {savingDomain ? <Loader2 size={13} className="inline animate-spin" /> : null}
@@ -865,15 +1035,15 @@ export function DeveloperClientCard({
               onClientUpdated={onClientUpdated}
               onError={onError}
               onNotice={onNotice}
-              allowCreate={Boolean(liveRunId)}
-              allowLink
+              allowCreate={canWork && Boolean(liveRunId)}
+              allowLink={canWork}
               variant="tools"
               businessName={item.businessName}
             />
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
-                disabled={!liveRunId || !customEditUrl}
+                disabled={!canWork || !liveRunId || !customEditUrl}
                 onClick={() => customEditUrl && window.open(customEditUrl, '_blank')}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
               >

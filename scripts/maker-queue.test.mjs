@@ -51,6 +51,8 @@ test('wizard status comes from Maker run substeps and language lock', () => {
   assert.equal(summary.step1Ready, true);
   assert.equal(summary.languageLocked, true);
   assert.equal(summary.generateTextReady, true);
+  assert.equal(summary.latestReadyStep, '2');
+  assert.equal(summary.step2Ready, true);
   const unlocked = summarizeMakerRunForQueue({
     id: 'run-b',
     metadata: {},

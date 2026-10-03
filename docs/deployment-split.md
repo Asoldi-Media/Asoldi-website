@@ -46,10 +46,11 @@ asoldi.com is **not** a Maker client site. It is Vite + Express. Sales CRM and c
 | Hub source + built SPA | GitHub `Damianhch/Asoldi-website` (code) / Hostinger `nodejs/dist` (running SPA) | Code yes |
 | Superadmin site list, flags, plans, keys | `~/.asoldi-website-data` | Yes — never in Git |
 | Sales clients, notes, connections | `~/.asoldi-website-data` | Yes |
-| Call recordings (wav) and hub marketing media | Hostinger `nodejs/public/myphoner-audio` and `nodejs/public/media` | Only if they are **not** deleted by a checkout. Keep a copy under `~/.asoldi-website-data/` before any overwrite deploy |
-| Hostinger Environment variables (Myphoner, SMTP, Stripe, Google, …) | hPanel env tab, plus `~/.asoldi-website-data/production.env` after first boot | Panel can be wiped by a Git deploy. Disconnect Git on asoldi.com. Disk backup survives archive deploys. |
+| Call recordings (wav) | `~/.asoldi-website-data/myphoner-audio` + `myphoner-recordings` | Yes — served at `/myphoner-audio/*`, `/myphoner-recordings/*` |
+| Hub media library (marketing videos, lydklipp, images uploaded in Admin) | `~/.asoldi-website-data/media` | Yes — served at `/media/<name>` ahead of the Git copy in `public/media` |
+| Hostinger Environment variables | hPanel + `~/.asoldi-website-data/production.env` snapshot | Yes — the app refills missing keys from the snapshot on boot |
 
-**Do not Git-deploy asoldi.com while `public/myphoner-audio` and large `public/media` are in the repo.** Hostinger clones a second copy next to the live files and fills the disk (0-line failed builds, Sep 2026). Hub deploys must be a **small archive** (source + `dist`, no wav/mp4) via the Hostinger API, then copy recordings back if the archive overwrite cleared `public/`.
+**asoldi.com deploys from GitHub (auto-deploy on push to `main`), since 2026-09-21.** Do not zip or archive-upload the hub. That upload collides with the Git build and fails with empty logs. Audio/video is not in Git (`.gitignore`: `public/media/**/*.{mp4,webm,mov,m4v,mp3,wav,m4a,ogg,flac}`, `public/myphoner-audio/*`). New media goes in via **Admin → Manage website → Media**.
 
 Proven green hub recipe: Express, Node 22, entry `server.js`, `npm run build` / postinstall Vite, Vite **not** copying `public/` into `dist/`.
 
