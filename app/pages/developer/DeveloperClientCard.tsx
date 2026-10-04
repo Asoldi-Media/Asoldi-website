@@ -41,7 +41,8 @@ import {
   normalizeMakerDashboardDraftUrl,
   resolveOpenInMakerUrl,
 } from '../sales/websiteMaker';
-import { showDeveloperDeployChips } from '../../../lib/developer-goals.js';
+import { DEVELOPER_PREVIEW_GOAL_KEYS, DEVELOPER_WIN_GOAL_KEYS } from '../../../lib/developer-goals.js';
+import { WebsiteDueField } from '../Admin/sections/WebsiteDueField';
 import { developerOwnerDisplayName, sameDeveloperOwner } from '../../../lib/developer-assignment.js';
 
 const CARD_SELECTED = 'border-[#FF5B00] ring-2 ring-[#FF5B00]/25';
@@ -127,6 +128,8 @@ export function DeveloperClientCard({
   onAssign,
   onAcceptHandoff,
 }: Props) {
+  const isDevelopmentList = kind === 'deployment';
+  const goalKeys = isDevelopmentList ? DEVELOPER_WIN_GOAL_KEYS : DEVELOPER_PREVIEW_GOAL_KEYS;
   const contact = [item.contactPerson, item.contactPhone, item.contactEmail].filter(Boolean).join(' · ');
   const salesClientId = String(item.salesClientId || '').trim();
   const makerRunId = String(item.makerRun?.runId || '').trim();
@@ -583,7 +586,7 @@ export function DeveloperClientCard({
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || 'Kunne ikke oppdatere målet.');
       if (data.client && onClientUpdated) onClientUpdated(data.client);
-      else await onReload();
+      await onReload();
     } catch (error) {
       onError(error instanceof Error ? error.message : 'Kunne ikke oppdatere målet.');
     } finally {
@@ -876,7 +879,7 @@ export function DeveloperClientCard({
       </div>
       </div>
 
-      {showDeveloperDeployChips(item.developerGoals) && (
+      {isDevelopmentList && (
         <div className="flex flex-wrap gap-1.5">
           {DEVELOPMENT_STEPS.map((step) => {
             const done = Boolean(item.development?.[step.key]);
@@ -904,6 +907,7 @@ export function DeveloperClientCard({
         <>
           <DeveloperGoalTimeline
             goals={item.developerGoals}
+            goalKeys={goalKeys}
             busyKey={goalBusy ? `goals:${item.id}:${goalBusy}` : null}
             itemId={item.id}
             onToggle={(key) => void toggleGoal(key)}
@@ -1088,34 +1092,49 @@ export function DeveloperClientCard({
               )}
             </div>
             {renderProgressChips()}
-            <div className="flex flex-col sm:flex-row gap-2">
-              <input
-                value={domainDraft}
-                onChange={(event) => setDomainDraft(event.target.value)}
-                placeholder="nettsted.no"
-                className="flex-1 px-3 py-2 rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm"
+            {isDevelopmentList && (
+              <>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    value={domainDraft}
+                    onChange={(event) => setDomainDraft(event.target.value)}
+                    placeholder="nettsted.no"
+                    className="flex-1 px-3 py-2 rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void saveDomain()}
+                    disabled={!canWork || !liveRunId || savingDomain}
+                    className="px-3 py-2 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
+                  >
+                    {savingDomain ? <Loader2 size={13} className="inline animate-spin" /> : null}
+                    Lagre domene
+                  </button>
+                </div>
+                <p className="text-[11px] text-gray-500">Steg 4 SEO er av til et domene er lagret på runet.</p>
+                {isAdmin && item.offerCustom ? (
+                  <WebsiteDueField
+                    salesClientId={salesClientId}
+                    authHeaders={developmentAuthHeaders()}
+                    clearLabel="Fjern dato"
+                    note="Skreddersydd tilbud har ingen automatisk frist. Sett datoen her."
+                    onSaved={() => { void onReload(); }}
+                  />
+                ) : null}
+              </>
+            )}
+          </div>
+          {isDevelopmentList ? (
+            <div onClick={(event) => event.stopPropagation()}>
+              <DeveloperRequestThread
+                salesClientId={salesClientId}
+                makerRunId={liveRunId}
+                websiteMakerBaseUrl={websiteMakerBaseUrl}
+                authHeaders={developmentAuthHeaders()}
+                extraMessages={iterationMessages}
               />
-              <button
-                type="button"
-                onClick={() => void saveDomain()}
-                disabled={!canWork || !liveRunId || savingDomain}
-                className="px-3 py-2 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
-              >
-                {savingDomain ? <Loader2 size={13} className="inline animate-spin" /> : null}
-                Lagre domene
-              </button>
             </div>
-            <p className="text-[11px] text-gray-500">Steg 4 SEO er av til et domene er lagret på runet.</p>
-          </div>
-          <div onClick={(event) => event.stopPropagation()}>
-            <DeveloperRequestThread
-              salesClientId={salesClientId}
-              makerRunId={liveRunId}
-              websiteMakerBaseUrl={websiteMakerBaseUrl}
-              authHeaders={developmentAuthHeaders()}
-              extraMessages={iterationMessages}
-            />
-          </div>
+          ) : null}
         </>
       ) : (
         <p className="text-xs text-gray-500">No sales client linked — maker tools need a sales client.</p>

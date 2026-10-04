@@ -164,4 +164,60 @@ test('developer board merges unsigned preview clients and signed contracts', () 
   assert.equal(board.some((item) => item.businessName === 'New Cafe'), true);
   assert.equal(board.some((item) => item.businessName === 'Byneset Bydelskafe'), true);
   assert.equal(board.every((item) => item.developerGoals && item.developerGoals.readyForPreview === false), true);
+  assert.equal(buildPreviewItems([unsigned, bynesetSales], [byneset]).some((item) => item.businessName === 'Byneset Bydelskafe'), false);
+  assert.equal(buildDevelopmentItems([unsigned, bynesetSales], [byneset]).some((item) => item.businessName === 'New Cafe'), false);
+});
+
+test('preview rank is the sales meeting clock, and Klar for preview clears it', () => {
+  const reminderFirst = {
+    ...bynesetSales,
+    id: 'sales-reminder',
+    businessName: 'Reminder Cafe',
+    status: 'active',
+    agreedTime: true,
+    meetingAt: '2026-10-20T10:00:00.000Z',
+    progression: { contractSigned: false },
+    development: { nettsideFerdig: false },
+    hubSite: {},
+    nextActions: [{ name: 'SMS', dueAt: '2026-10-05T08:00:00.000Z', presetKey: 'sms', doneAt: '' }],
+  };
+  assert.equal(previewTimelineAt(reminderFirst), '2026-10-20T10:00:00.000Z');
+  const ranked = buildPreviewItems([reminderFirst], []);
+  assert.equal(ranked[0].rankAt, '2026-10-20T10:00:00.000Z');
+  const ready = {
+    ...reminderFirst,
+    developerGoals: { readyForPreview: true },
+  };
+  assert.equal(previewTimelineAt(ready), '');
+  assert.equal(buildPreviewItems([ready], [])[0].rankAt, '');
+  assert.equal(buildDevelopmentItems([ready], []).length, 0);
+});
+
+test('a signed client ranks by tier weeks, and a custom offer without a date has no countdown', () => {
+  const tier2 = {
+    ...bynesetSales,
+    id: 'sales-tier2',
+    businessName: 'Tier Cafe',
+    contractSignedAt: '2026-10-01T08:00:00.000Z',
+    websiteDeliveryWeeks: 2,
+    meetingAt: '2026-09-01T10:00:00.000Z',
+    agreedTime: true,
+  };
+  const tierItem = buildDevelopmentItems([tier2], [])[0];
+  assert.equal(tierItem.rankAt.slice(0, 10), '2026-10-15');
+  assert.equal(tierItem.meetingAt, '2026-09-01T10:00:00.000Z');
+  const custom = {
+    ...bynesetSales,
+    id: 'sales-custom',
+    businessName: 'Custom Cafe',
+    contractSignedAt: '2026-10-01T08:00:00.000Z',
+    websiteDeliveryWeeks: 0,
+    offerCustom: true,
+    offerTierId: 'custom',
+  };
+  const customItem = buildDevelopmentItems([custom], [])[0];
+  assert.equal(customItem.rankAt, '');
+  assert.match(customItem.websiteDue.label, /sett leveringsfrist/);
+  assert.equal(customItem.offerCustom, true);
+  assert.equal(buildPreviewItems([tier2, custom], []).length, 0);
 });

@@ -37,6 +37,7 @@ import { SalesFlowSteps } from '../../sales/SalesFlowSteps';
 import { SalesScriptsDock } from '../../sales/SalesScriptsDock';
 import { offerMissingFields, offerReadinessMessage } from '../../../../lib/offer-readiness.js';
 import { SalesGoalTimeline } from './SalesGoalTimeline';
+import { SalesCalendarWeek } from './SalesCalendarWeek';
 import { WorkshopIterationLog } from './WorkshopIterationLog';
 import {
   clientIsSalesWin,
@@ -116,7 +117,7 @@ const DEFAULT_SALES_BUCKETS_COLLAPSED: Record<string, boolean> = {
   wins: true,
 };
 
-type SalesHeaderPanel = 'filter' | 'map' | null;
+type SalesHeaderPanel = 'filter' | 'calendar' | 'map' | null;
 
 type SalesListCache = {
   clients: SalesClient[];
@@ -504,6 +505,16 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
   const [peekCardIds, setPeekCardIds] = useState<Record<string, boolean>>({});
   const [mapMounted, setMapMounted] = useState(false);
   const [calendarPanelOpen, setCalendarPanelOpen] = useState(false);
+  const [calendarWeekLoading, setCalendarWeekLoading] = useState(false);
+  const [calendarWeekError, setCalendarWeekError] = useState('');
+  const [calendarWeekData, setCalendarWeekData] = useState<{
+    connected: boolean;
+    embedUrl?: string;
+    googleEmail?: string;
+    accountKey?: string;
+    message?: string;
+    shareWarning?: string;
+  } | null>(null);
   const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
   const [secondaryPicker, setSecondaryPicker] = useState<{
     clientIds: string[];
@@ -609,6 +620,12 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
       (a.name || a.username || a.accountKey).localeCompare(b.name || b.username || b.accountKey, 'nb-NO', { sensitivity: 'base' })
     );
   }, [salesOwners, productClients]);
+  const calendarPreviewOwnerId = isSalesAdmin && ownerFilter && ownerFilter !== 'unassigned' ? ownerFilter : '';
+  const calendarPreviewOwner = calendarPreviewOwnerId
+    ? ownerFilterOptions.find((owner) => owner.accountKey === calendarPreviewOwnerId) || null
+    : null;
+  const calendarPreviewIsOwn = !calendarPreviewOwnerId
+    || calendarPreviewOwnerId === String(calendarStatus?.loginAccountKey || '');
   const clientMatchesFilters = (client: SalesClient) => {
     if (!clientMatchesNameSearch(client)) return false;
     if (isSalesAdmin) {
@@ -964,6 +981,42 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    if (headerPanel !== 'calendar') return undefined;
+    let cancelled = false;
+    const params = new URLSearchParams();
+    if (isSalesAdmin && ownerFilter && ownerFilter !== 'unassigned') {
+      params.set('ownerId', ownerFilter);
+    }
+    const query = params.toString();
+    setCalendarWeekLoading(true);
+    setCalendarWeekError('');
+    void request(`/admin/sales/google/embed${query ? `?${query}` : ''}`, {
+      signal: AbortSignal.timeout(8000),
+    })
+      .then((data) => {
+        if (cancelled) return;
+        setCalendarWeekData({
+          connected: Boolean(data.connected),
+          embedUrl: String(data.embedUrl || ''),
+          googleEmail: String(data.googleEmail || ''),
+          accountKey: String(data.accountKey || ''),
+          message: String(data.message || ''),
+          shareWarning: String(data.shareWarning || ''),
+        });
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setCalendarWeekError(err instanceof Error ? err.message : 'Kunne ikke hente kalender');
+      })
+      .finally(() => {
+        if (!cancelled) setCalendarWeekLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [headerPanel, ownerFilter, isSalesAdmin, calendarStatus?.tokenUpdatedAt]);
+
   const hasPendingMapGeocodes = meetingMapPendingCount > 0;
   useEffect(() => {
     if (!mapMounted || !hasPendingMapGeocodes) return undefined;
@@ -1115,6 +1168,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
       closeHeaderMenus();
     };
     const onScroll = (event: Event) => {
+      if (headerPanel === 'calendar') return;
       const target = event.target as Node | null;
       if (target && headerShellRef.current?.contains(target)) return;
       closeHeaderMenus();
@@ -3018,6 +3072,18 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
             </button>
             <button
               type="button"
+              onClick={() => toggleHeaderPanel('calendar')}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs sm:text-sm ${
+                headerPanel === 'calendar' ? 'bg-[#FF5B00] text-white' : 'bg-white/10 text-white hover:bg-white/15'
+              }`}
+              aria-expanded={headerPanel === 'calendar'}
+            >
+              <Calendar size={14} />
+              <span className="hidden sm:inline">Calendar</span>
+              <ChevronDown size={12} className={`hidden sm:block transition-transform ${headerPanel === 'calendar' ? 'rotate-180' : ''}`} />
+            </button>
+            <button
+              type="button"
               onClick={() => toggleHeaderPanel('map')}
               className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs sm:text-sm ${
                 headerPanel === 'map' ? 'bg-[#FF5B00] text-white' : 'bg-white/10 text-white hover:bg-white/15'
@@ -3118,7 +3184,9 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
               {headerPanel && (
               <div className="flex items-center justify-between gap-2 mb-2">
                 <p className="text-[11px] text-gray-400">
-                  Lukk: klikk {headerPanel === 'filter' ? 'Filter' : 'Client map'} igjen, klikk under, eller scroll.
+                  {headerPanel === 'calendar'
+                    ? 'Lukk: klikk Calendar igjen, eller klikk utenfor. Scrolling holder kalenderen åpen.'
+                    : `Lukk: klikk ${headerPanel === 'filter' ? 'Filter' : 'Client map'} igjen, klikk under, eller scroll.`}
                 </p>
                 <button type="button" onClick={closeHeaderMenus} className="inline-flex items-center gap-1 text-xs text-gray-300 hover:text-white">
                   <X size={12} /> Lukk
@@ -3245,6 +3313,20 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                     )}
                   </div>
                 </form>
+              )}
+              {headerPanel === 'calendar' && (
+                <SalesCalendarWeek
+                  embedUrl={calendarWeekData?.embedUrl || ''}
+                  loading={calendarWeekLoading}
+                  connected={Boolean(calendarWeekData?.connected)}
+                  googleEmail={calendarWeekData?.googleEmail || ''}
+                  ownerLabel={calendarPreviewOwner ? ownerLabel(calendarPreviewOwner) : 'deg'}
+                  isOwnCalendar={calendarPreviewIsOwn}
+                  message={calendarWeekData?.message || ''}
+                  error={calendarWeekError}
+                  shareWarning={calendarWeekData?.shareWarning || ''}
+                  onConnect={() => { closeHeaderMenus(); setCalendarPanelOpen(true); }}
+                />
               )}
               {mapMounted && (
                 <div className={headerPanel === 'map' ? '' : 'hidden'} aria-hidden={headerPanel !== 'map'}>

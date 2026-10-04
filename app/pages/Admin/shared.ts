@@ -369,6 +369,8 @@ export type DevelopmentItem = {
   iterationTranscript?: string;
   developerQa?: DeveloperQa;
   developerGoals?: DeveloperGoals;
+  offerTierId?: string;
+  offerCustom?: boolean;
   portalUserId?: string;
   makerRun: SalesMakerRunMeta | null;
   developerOwnerId?: string;

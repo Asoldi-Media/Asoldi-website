@@ -432,7 +432,11 @@ test('Development card still mounts one request thread and the queue bar', () =>
   assert.match(section, /DeveloperRunQueueBar/);
   assert.match(section, /Forfalt \(siste 2 uker\)/);
   assert.match(section, /DEVELOPER_RECENT_OVERDUE_MS/);
-  assert.match(section, /kind="developer"/);
+  assert.match(section, />Development</);
+  assert.match(section, /Før signert kontrakt/);
+  assert.match(section, /renderGroupedCards\(developmentGroups, 'deployment'/);
+  assert.match(section, /renderGroupedCards\(previewGroups, 'preview'/);
+  assert.equal(section.includes('kind="developer"'), false);
   assert.equal(section.includes("chooseBoard('preview')"), false);
   assert.equal(section.includes("chooseBoard('deployment')"), false);
   assert.equal(section.includes('readStoredDevelopmentBoard'), false);
@@ -457,7 +461,7 @@ test('Development card still mounts one request thread and the queue bar', () =>
   assert.equal(card.includes('if (!detailsOpen) return undefined;'), false);
   assert.match(card, /async function syncMakerRun/);
   assert.match(card, /visibilitychange/);
-  assert.match(section, /collapsedBuckets\[bucketId\] !== false/);
+  assert.match(section, /collapsedBuckets\[storageKey\] !== false/);
   const workspace = readFileSync(join(here, '../app/pages/developer/DeveloperWorkspace.tsx'), 'utf8');
   assert.match(workspace, /Klar for preview/);
   const manage = readFileSync(join(here, '../app/pages/Admin/sections/ManageClientsSection.tsx'), 'utf8');
@@ -592,14 +596,23 @@ test('draft phase is green after inject, and pending intake blocks later steps',
   assert.equal(developerChipVisual(draftChip, { draftInjected: false }, { type: 'draft' }), 'idle');
 });
 
-test('preview cards show next meeting, deployment cards show website due', () => {
+test('preview cards show the meeting clock, deployment cards show website due', () => {
   const preview = developerCardTimeline({
-    nextActionAt: '2026-10-05T10:00:00.000Z',
-    nextActionName: 'Møte',
+    meetingAt: '2026-10-05T10:00:00.000Z',
+    nextActionAt: '2026-10-04T08:00:00.000Z',
+    nextActionName: 'SMS',
+    developerGoals: { readyForPreview: false },
     websiteDue: { label: 'Ingen frist ennå', started: false, dueAt: '' },
   }, 'preview', Date.parse('2026-10-01T10:00:00.000Z'));
-  assert.match(preview.label, /Møte/);
+  assert.match(preview.label, /12:00/);
+  assert.doesNotMatch(preview.label, /SMS/);
   assert.equal(preview.tone, 'live');
+  const cleared = developerCardTimeline({
+    meetingAt: '2026-10-05T10:00:00.000Z',
+    developerGoals: { readyForPreview: true },
+  }, 'preview', Date.parse('2026-10-01T10:00:00.000Z'));
+  assert.equal(cleared.label, '');
+  assert.equal(cleared.tone, 'none');
   const deployment = developerCardTimeline({
     rankAt: '2026-10-05T10:00:00.000Z',
     websiteDue: { label: 'Frist: 20. okt. 2026', started: true, dueAt: '2026-10-20T12:00:00.000Z' },

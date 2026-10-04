@@ -50,7 +50,7 @@ export function ManageClientsSection({
       <div>
         <h1 className="text-2xl font-bold text-white mb-2">Manage clients</h1>
         <p className="text-gray-400 text-sm">
-          Track live hub clients, websites in development, and sales prospects. Admin is the workshop desk for damian@asoldi.com. New sales clients appear under Development with four goal chips: Klar for preview, Klar for deployment, Iterasjon ferdig, Publish.
+          Track live hub clients, websites in development, and sales prospects. Admin is the workshop desk for damian@asoldi.com. Development is the sales-win list. The list under it is before the contract and only shows Klar for preview. Development shows Klar for deployment, Iterasjon ferdig, and Publish.
         </p>
       </div>
 

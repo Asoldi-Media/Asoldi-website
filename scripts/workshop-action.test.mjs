@@ -232,13 +232,12 @@ test('Sales persist stays a draft; Admin Save is the send gate', () => {
   const modalSrc = readFileSync(new URL('../app/pages/sales/MeetingNotesModal.tsx', import.meta.url), 'utf8');
   assert.equal(modalSrc.includes('timeFormatLocked'), false);
   assert.equal(modalSrc.includes('Startdato for workshop'), false);
-  assert.match(modalSrc, /SalesCalendarWeek/);
-  assert.match(modalSrc, /damian@asoldi.com/);
-  assert.match(modalSrc, /workshopCalendar/);
+  assert.equal(modalSrc.includes('SalesCalendarWeek'), false);
   assert.equal(modalSrc.includes('confirmSend'), false);
 
   const salesSrc = readFileSync(new URL('../app/pages/Admin/sections/SalesClientsSection.tsx', import.meta.url), 'utf8');
-  assert.match(salesSrc, /ownerId=\{calendarPreviewOwnerId\}/);
+  assert.match(salesSrc, /toggleHeaderPanel\('calendar'\)/);
+  assert.equal(salesSrc.includes('/google/events'), false);
   assert.equal(/workshop-action[\s\S]{0,400}confirmSend:\s*true/.test(salesSrc), false);
 
   const adminRowSrc = readFileSync(new URL('../app/pages/Admin/sections/WorkshopAdminActionRow.tsx', import.meta.url), 'utf8');
@@ -247,7 +246,7 @@ test('Sales persist stays a draft; Admin Save is the send gate', () => {
   assert.match(adminRowSrc, /WORKSHOP_FORMATS/);
 
   const adminSrc = readFileSync(new URL('../app/pages/Admin/sections/AdminBoardSection.tsx', import.meta.url), 'utf8');
-  assert.match(adminSrc, /const \[calendarOpen, setCalendarOpen\] = useState\(false\)/);
+  assert.equal(adminSrc.includes('SalesCalendarWeek'), false);
 
   const serverSrc = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
   assert.match(serverSrc, /confirmSend && !requireOfferAdmin/);

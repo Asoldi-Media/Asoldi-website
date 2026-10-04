@@ -5,6 +5,7 @@ import {
   deliveryWeeksForOffer,
   offerDeliveryPhraseNb,
   resolveWebsiteDue,
+  weeksForDeveloperBoard,
 } from '../lib/website-due.js';
 
 test('tier weeks stay 2, 2 and 3, and custom with no count is 4 weeks', () => {
@@ -16,6 +17,15 @@ test('tier weeks stay 2, 2 and 3, and custom with no count is 4 weeks', () => {
     tierId: 'custom',
     products: [{ kind: 'custom', deliveryWeeks: 6 }],
   }), 6);
+});
+
+test('the developer board does not start a 4-week clock for a custom offer', () => {
+  assert.equal(weeksForDeveloperBoard({ tierId: 'tier-1-standard' }), 2);
+  assert.equal(weeksForDeveloperBoard({ tierId: 'tier-2-seo' }), 2);
+  assert.equal(weeksForDeveloperBoard({ tierId: 'tier-3-ecommerce' }), 3);
+  assert.equal(weeksForDeveloperBoard({ tierId: 'custom' }), 0);
+  assert.equal(weeksForDeveloperBoard({ tierId: 'custom', dueOverride: '2026-11-02' }), 4);
+  assert.equal(deliveryWeeksForOffer({ tierId: 'custom' }), 4);
 });
 
 test('the clock starts at the signed contract, and an admin date replaces the tier weeks', () => {

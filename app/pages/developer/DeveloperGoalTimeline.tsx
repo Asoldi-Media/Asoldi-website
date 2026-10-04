@@ -17,17 +17,18 @@ type DeveloperGoals = {
 
 type Props = {
   goals?: DeveloperGoals | null;
+  goalKeys?: string[];
   busyKey?: string | null;
   itemId: string;
   onToggle: (key: string) => void;
 };
 
-export function DeveloperGoalTimeline({ goals, busyKey, itemId, onToggle }: Props) {
+export function DeveloperGoalTimeline({ goals, goalKeys, busyKey, itemId, onToggle }: Props) {
   const normalized = useMemo(() => normalizeDeveloperGoals(goals), [goals]);
   const [showFuture, setShowFuture] = useState(false);
-  const visible = getVisibleDeveloperGoalKeys(normalized, showFuture);
-  const remaining = getRemainingDeveloperGoalCount(normalized);
-  const current = getCurrentDeveloperGoalKey(normalized);
+  const visible = getVisibleDeveloperGoalKeys(normalized, showFuture, goalKeys);
+  const remaining = getRemainingDeveloperGoalCount(normalized, goalKeys);
+  const current = getCurrentDeveloperGoalKey(normalized, goalKeys);
 
   return (
     <div className="flex flex-wrap items-center gap-1.5" onClick={(event) => event.stopPropagation()}>

@@ -117,7 +117,7 @@ import {
   salesEmailMergeMap,
   buildSalesCalendarInvite,
 } from './lib/sales-email.js';
-import { assignmentStampForOwnerChange, confirmationSendGaps, confirmationShouldSendOnChange, meetingTimeHasPassed, normalizeSecondaryInterest, osloWeekRange, resolveMeetingAtOnMyphonerMerge, sameMeetingInstant } from './lib/sales-next-actions.js';
+import { assignmentStampForOwnerChange, clientIsSalesWin, confirmationSendGaps, confirmationShouldSendOnChange, meetingTimeHasPassed, normalizeSecondaryInterest, osloWeekRange, resolveMeetingAtOnMyphonerMerge, sameMeetingInstant } from './lib/sales-next-actions.js';
 import { normalizeStoredWebsiteEmail, resolveWebsiteEmail } from './lib/sales-website-email.js';
 import { extractBookingFromLead, salesBookingFacts } from './lib/sales-booking-facts.js';
 import {
@@ -181,7 +181,7 @@ import {
 import { buildOfferFromMeetingQuote } from './lib/offer-from-quote.js';
 import { clientWithOfferParty, offerMissingFields, offerReadinessMessage } from './lib/offer-readiness.js';
 import { buildContractPdf, contractFileName, contractInputsForOffer, offerContractIsAvailable } from './lib/offer-contract-pdf.js';
-import { deliveryWeeksForOffer, normalizeDueDate, offerDeliveryPhraseNb, resolveWebsiteDue } from './lib/website-due.js';
+import { deliveryWeeksForOffer, isCustomWebsiteOffer, normalizeDueDate, offerDeliveryPhraseNb, resolveWebsiteDue, weeksForDeveloperBoard } from './lib/website-due.js';
 import { contractHtmlForOffer } from './lib/offer-contract-html.js';
 import { extractOfferLetterBody } from './lib/offer-letter-html.js';
 import { isDeepseekConfigured } from './lib/deepseek.js';
@@ -221,7 +221,8 @@ import { clientWebsitePlans } from './lib/website-tiers.js';
 import { renderSalesEmailDocument } from './lib/sales-email-layout.js';
 import {
   DEVELOPMENT_KEYS,
-  buildDeveloperBoardItems,
+  buildDevelopmentItems,
+  buildPreviewItems,
   findLinkedSalesClient,
   parseDevelopmentItemId,
   siteMatchesSalesClient,
@@ -279,7 +280,7 @@ import {
   planDeveloperReassign,
 } from './lib/developer-assignment.js';
 import { deleteDevHandoff, devHandoffZipPath, ensureDevHandoffDir } from './lib/dev-handoff-store.js';
-import { applyDeveloperGoalToggle } from './lib/developer-goals.js';
+import { DEVELOPER_PREVIEW_GOAL_KEYS, DEVELOPER_WIN_GOAL_KEYS, applyDeveloperGoalToggle } from './lib/developer-goals.js';
 import { LOCAL_EDITOR_ORIGIN } from './lib/maker-editor-origin.js';
 import {
   DAMIAN_WORKSHOP_CALENDAR_EMAIL,
@@ -12428,16 +12429,10 @@ app.get('/api/admin/sales/google/events', salesAuth, async (req, res) => {
 
 app.get('/api/admin/sales/google/embed', salesAuth, async (req, res) => {
   try {
-    if (SALES_WEEK_CALENDAR_DISABLED) {
-      return res.json({
-        connected: false,
-        accountKey: '',
-        googleEmail: '',
-        embedUrl: '',
-        shareWarning: '',
-        message: 'Kalenderen er slått av midlertidig.',
-      });
-    }
+    // Local token file only. prepareSalesCalendarEmbed builds the iframe URL
+    // from the stored Google email. Do not list events, free-busy, ACLs, or
+    // patch visibility here — those Google calls hung Node and surfaced as
+    // ERR_HTTP2_PROTOCOL_ERROR on Admin and Sales.
     if (isAdminBoardCalendarQuery(req.query)) {
       const keys = findConnectedCalendarAccountKeysByGoogleEmail(DAMIAN_WORKSHOP_CALENDAR_EMAIL);
       const accountKey = resolveAdminBoardCalendarAccountKey({
@@ -17230,11 +17225,16 @@ function clientsWithWebsiteDue(clients = []) {
   return clients.map((client) => {
     const offer = offers.get(client.id) || null;
     const tierId = offer?.tierId || client.portalTierId || client.details?.meetingQuote?.tierId || '';
-    const weeks = deliveryWeeksForOffer({ tierId, products: offer?.products || [] });
+    const products = offer?.products || [];
+    const dueOverride = offer?.dueDate || client.websiteDueOverride || '';
+    const custom = isCustomWebsiteOffer({ tierId, products });
+    const weeks = weeksForDeveloperBoard({ tierId, products, dueOverride });
     return {
       ...client,
-      websiteDueOverride: offer?.dueDate || client.websiteDueOverride || '',
-      websiteDeliveryWeeks: weeks || client.websiteDeliveryWeeks || 0,
+      websiteDueOverride: dueOverride,
+      websiteDeliveryWeeks: custom ? weeks : (weeks || client.websiteDeliveryWeeks || 0),
+      offerTierId: tierId,
+      offerCustom: custom,
     };
   });
 }
@@ -17262,26 +17262,27 @@ function websiteDueView(client) {
   };
 }
 
-function listDeveloperBoard() {
+function listDeveloperBoardParts() {
   const salesClients = clientsWithWebsiteDue(sales.getSalesClients());
   const sites = hub.getAllSites();
-  return buildDeveloperBoardItems(salesClients, sites);
+  return {
+    developmentItems: buildDevelopmentItems(salesClients, sites),
+    previewItems: buildPreviewItems(salesClients, sites),
+  };
 }
 
-function listDevelopmentBoard() {
-  return listDeveloperBoard();
-}
-
-function listPreviewBoard() {
-  return listDeveloperBoard();
+function listDeveloperBoard() {
+  const parts = listDeveloperBoardParts();
+  return [...parts.developmentItems, ...parts.previewItems];
 }
 
 function developmentBoardPayload(extra = {}) {
-  const items = listDeveloperBoard();
+  const { developmentItems, previewItems } = listDeveloperBoardParts();
   return {
-    items,
-    previewItems: items,
-    deploymentItems: items,
+    items: [...developmentItems, ...previewItems],
+    developmentItems,
+    deploymentItems: developmentItems,
+    previewItems,
     ...extra,
   };
 }
@@ -17308,13 +17309,15 @@ app.get('/api/admin/development', developmentAuth, async (req, res) => {
   hub.reconcileDeliveryPhases(sales.getSalesClients());
   sales.seedExistingDeveloperOwnersToAdmin();
   const caller = req.developmentUser || {};
-  const items = listDeveloperBoard().filter((item) => developmentItemVisible(caller, item));
+  const parts = listDeveloperBoardParts();
+  const developmentItems = parts.developmentItems.filter((item) => developmentItemVisible(caller, item));
+  const previewItems = parts.previewItems.filter((item) => developmentItemVisible(caller, item));
   const developers = caller.isAdmin ? await listDeveloperOwnerOptions(caller) : [];
   res.json({
-    ...developmentBoardPayload(),
-    items,
-    previewItems: items,
-    deploymentItems: items,
+    items: [...developmentItems, ...previewItems],
+    developmentItems,
+    deploymentItems: developmentItems,
+    previewItems,
     viewer: {
       isAdmin: Boolean(caller.isAdmin),
       accountKey: sanitizeText(caller.accountKey),
@@ -17493,7 +17496,8 @@ app.patch('/api/admin/development/:id/goals', developmentAuth, (req, res) => {
   const target = resolveDevelopmentTarget(req.params.id);
   if (!target?.client) return res.status(404).json({ message: 'Sales client not found.' });
   if (!assertDevelopmentWork(req, res, target.client)) return;
-  const applied = applyDeveloperGoalToggle(target.client.developerGoals, key);
+  const goalKeys = clientIsSalesWin(target.client) ? DEVELOPER_WIN_GOAL_KEYS : DEVELOPER_PREVIEW_GOAL_KEYS;
+  const applied = applyDeveloperGoalToggle(target.client.developerGoals, key, goalKeys);
   if (applied.error) return res.status(400).json({ message: applied.error });
   const updated = sales.setSalesDeveloperGoals(target.client.id, applied.goals);
   if (!updated) return res.status(404).json({ message: 'Sales client not found.' });

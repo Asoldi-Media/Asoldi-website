@@ -54,13 +54,7 @@ const BUCKET_META: Record<BucketId, { title: string; hint: string; tone: BucketT
 const BUCKET_ORDER: BucketId[] = ['recentPastDue', 'upcoming', 'pastDue', 'noNextAction'];
 
 function itemRankMs(item: DevelopmentItem) {
-  const raw = String(
-    item.rankAt
-    || item.nextActionAt
-    || item.meetingAt
-    || item.websiteDue?.dueAt
-    || ''
-  ).trim();
+  const raw = String(item.rankAt || '').trim();
   if (!raw) return null;
   const ms = new Date(raw).getTime();
   return Number.isFinite(ms) ? ms : null;
@@ -99,7 +93,8 @@ function bucketToneClass(tone: BucketTone) {
 
 
 export function DevelopmentClientsSection({ hideHeader = false }: Props) {
-  const [items, setItems] = useState<DevelopmentItem[]>([]);
+  const [developmentItems, setDevelopmentItems] = useState<DevelopmentItem[]>([]);
+  const [previewItems, setPreviewItems] = useState<DevelopmentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -222,19 +217,45 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
     },
     [itemMatchesSearch, runFilter, stepFilter, dueFilter, nowMs, onlyWithRequests, threadMap, viewer.isAdmin, ownerFilter]
   );
-  const groups = useMemo(
+  const items = useMemo(
+    () => [...developmentItems, ...previewItems],
+    [developmentItems, previewItems]
+  );
+  const visibleDevelopmentItems = useMemo(
+    () => developmentItems.filter(itemVisible),
+    [developmentItems, itemVisible]
+  );
+  const visiblePreviewItems = useMemo(
+    () => previewItems.filter(itemVisible),
+    [previewItems, itemVisible]
+  );
+  const developmentGroups = useMemo(
     () => groupDevelopmentItems(
-      items.filter(itemVisible).filter((item) => !viewer.isAdmin || item.developerOwnerId),
+      visibleDevelopmentItems.filter((item) => !viewer.isAdmin || item.developerOwnerId),
       nowMs
     ),
-    [items, itemVisible, nowMs, viewer.isAdmin]
+    [visibleDevelopmentItems, nowMs, viewer.isAdmin]
   );
-  const unassignedItems = useMemo(
-    () => (viewer.isAdmin ? items.filter(itemVisible).filter((item) => !item.developerOwnerId) : []),
-    [items, itemVisible, viewer.isAdmin]
+  const previewGroups = useMemo(
+    () => groupDevelopmentItems(
+      visiblePreviewItems.filter((item) => !viewer.isAdmin || item.developerOwnerId),
+      nowMs
+    ),
+    [visiblePreviewItems, nowMs, viewer.isAdmin]
   );
-  const visibleCount = items.filter(itemVisible).length;
-  const visibleItems = useMemo(() => items.filter(itemVisible), [itemVisible, items]);
+  const developmentUnassigned = useMemo(
+    () => (viewer.isAdmin ? visibleDevelopmentItems.filter((item) => !item.developerOwnerId) : []),
+    [visibleDevelopmentItems, viewer.isAdmin]
+  );
+  const previewUnassigned = useMemo(
+    () => (viewer.isAdmin ? visiblePreviewItems.filter((item) => !item.developerOwnerId) : []),
+    [visiblePreviewItems, viewer.isAdmin]
+  );
+  const visibleCount = visibleDevelopmentItems.length + visiblePreviewItems.length;
+  const visibleItems = useMemo(
+    () => [...visibleDevelopmentItems, ...visiblePreviewItems],
+    [visibleDevelopmentItems, visiblePreviewItems]
+  );
   const visibleSelectableIds = visibleItems.map((item) => item.id);
   const allVisibleSelected = Boolean(visibleSelectableIds.length && visibleSelectableIds.every((id) => selectedIds.includes(id)));
   const selectedClients = visibleItems
@@ -267,18 +288,51 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
     toggleClientSelected(itemId);
   }
 
-  function renderGroupedCards(groups: Record<BucketId, DevelopmentItem[]>) {
+  function renderClientCard(item: DevelopmentItem, kind: 'preview' | 'deployment', canWork: boolean) {
+    return (
+      <DeveloperClientCard
+        item={item}
+        kind={kind}
+        busyKey={busyKey}
+        selected={selectedIds.includes(item.id)}
+        websiteMakerBaseUrl={websiteMakerBaseUrl}
+        queueItems={queueItems}
+        canWork={canWork}
+        isAdmin={viewer.isAdmin}
+        viewerAccountKey={viewer.accountKey}
+        developers={developers}
+        assignBusy={assignBusy}
+        onAssign={(ownerId) => void assignDeveloper(item, ownerId)}
+        onAcceptHandoff={() => void acceptHandoff(item)}
+        requestLabel={
+          threadMap[String(item.salesClientId || item.id || '')]?.lastKindLabel
+          || (threadMap[String(item.salesClientId || item.id || '')] ? 'Forespørsel' : '')
+        }
+        onToggleSelected={() => toggleClientSelected(item.id)}
+        onCardClick={(event) => handleClientCardClick(event, item.id)}
+        onToggleStep={(entry, stepKey) => void toggleStep(entry, stepKey)}
+        onReload={loadItems}
+        onClientUpdated={patchDevelopmentClient}
+        onError={setError}
+        onNotice={setNotice}
+      />
+    );
+  }
+
+  function renderGroupedCards(groups: Record<BucketId, DevelopmentItem[]>, kind: 'preview' | 'deployment', prefix: string) {
     return (
       <div className="space-y-3">
         {BUCKET_ORDER.map((bucketId) => {
           const bucketItems = groups[bucketId];
-          const collapsed = collapsedBuckets[bucketId] !== false;
+          if (!bucketItems.length) return null;
+          const storageKey = `${prefix}:${bucketId}`;
+          const collapsed = collapsedBuckets[storageKey] !== false;
           const meta = BUCKET_META[bucketId];
           return (
-            <div key={bucketId} className="space-y-3">
+            <div key={storageKey} className="space-y-3">
               <button
                 type="button"
-                onClick={() => toggleBucket(bucketId)}
+                onClick={() => toggleBucket(storageKey)}
                 className={`w-full rounded-xl border px-3 py-2.5 text-left ${bucketToneClass(meta.tone)}`}
               >
                 <span className="flex items-center justify-between gap-3">
@@ -296,32 +350,7 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start">
                   {bucketItems.map((item) => (
                     <React.Fragment key={item.id}>
-                      <DeveloperClientCard
-                        item={item}
-                        kind="developer"
-                        busyKey={busyKey}
-                        selected={selectedIds.includes(item.id)}
-                        websiteMakerBaseUrl={websiteMakerBaseUrl}
-                        queueItems={queueItems}
-                        canWork={canWorkDevelopmentClient(viewer, item)}
-                        isAdmin={viewer.isAdmin}
-                        viewerAccountKey={viewer.accountKey}
-                        developers={developers}
-                        assignBusy={assignBusy}
-                        onAssign={(ownerId) => void assignDeveloper(item, ownerId)}
-                        onAcceptHandoff={() => void acceptHandoff(item)}
-                        requestLabel={
-                          threadMap[String(item.salesClientId || item.id || '')]?.lastKindLabel
-                          || (threadMap[String(item.salesClientId || item.id || '')] ? 'Forespørsel' : '')
-                        }
-                        onToggleSelected={() => toggleClientSelected(item.id)}
-                        onCardClick={(event) => handleClientCardClick(event, item.id)}
-                        onToggleStep={(entry, stepKey) => void toggleStep(entry, stepKey)}
-                        onReload={loadItems}
-                        onClientUpdated={patchDevelopmentClient}
-                        onError={setError}
-                        onNotice={setNotice}
-                      />
+                      {renderClientCard(item, kind, canWorkDevelopmentClient(viewer, item))}
                     </React.Fragment>
                   ))}
                 </div>
@@ -336,20 +365,23 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
   const patchDevelopmentClient = useCallback((client) => {
     const salesClientId = String(client?.id || '').trim();
     if (!salesClientId) return;
-    setItems((current) => current.map((item) => (
-      String(item.salesClientId || '') === salesClientId
-        ? {
-            ...item,
-            makerRun: client.makerRun ?? item.makerRun,
-            developerOwnerId: client.developerOwnerId ?? item.developerOwnerId,
-            developerHandoff: client.developerHandoff ?? item.developerHandoff,
-            websiteImport: client.websiteImport ?? item.websiteImport,
-            developerQa: client.developerQa ?? item.developerQa,
-            developerGoals: client.developerGoals ?? item.developerGoals,
-            workshop: client.workshop ?? item.workshop,
-          }
-        : item
-    )));
+    const merge = (item: DevelopmentItem, clearRankWhenPreviewReady: boolean): DevelopmentItem => {
+      if (String(item.salesClientId || '') !== salesClientId) return item;
+      const developerGoals = client.developerGoals ?? item.developerGoals;
+      return {
+        ...item,
+        makerRun: client.makerRun ?? item.makerRun,
+        developerOwnerId: client.developerOwnerId ?? item.developerOwnerId,
+        developerHandoff: client.developerHandoff ?? item.developerHandoff,
+        websiteImport: client.websiteImport ?? item.websiteImport,
+        developerQa: client.developerQa ?? item.developerQa,
+        developerGoals,
+        workshop: client.workshop ?? item.workshop,
+        rankAt: clearRankWhenPreviewReady && developerGoals?.readyForPreview ? '' : item.rankAt,
+      };
+    };
+    setDevelopmentItems((current) => current.map((item) => merge(item, false)));
+    setPreviewItems((current) => current.map((item) => merge(item, true)));
   }, []);
 
   const loadItems = useCallback(async () => {
@@ -369,19 +401,21 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
         username: String(nextViewer.username || ''),
       });
       setDevelopers(Array.isArray(data.developers) ? data.developers : []);
-      const nextItems = Array.isArray(data.items) && data.items.length
-        ? data.items
-        : [
-            ...(Array.isArray(data.previewItems) ? data.previewItems : []),
-            ...(Array.isArray(data.deploymentItems) ? data.deploymentItems : []),
-          ];
-      const seen = new Set();
-      setItems(nextItems.filter((item) => {
-        const id = String(item?.id || '');
-        if (!id || seen.has(id)) return false;
-        seen.add(id);
-        return true;
-      }));
+      const dedupe = (list: DevelopmentItem[]) => {
+        const seen = new Set<string>();
+        return list.filter((item) => {
+          const id = String(item?.id || '');
+          if (!id || seen.has(id)) return false;
+          seen.add(id);
+          return true;
+        });
+      };
+      const nextDevelopment = Array.isArray(data.developmentItems)
+        ? data.developmentItems
+        : (Array.isArray(data.deploymentItems) ? data.deploymentItems : []);
+      const nextPreview = Array.isArray(data.previewItems) ? data.previewItems : [];
+      setDevelopmentItems(dedupe(nextDevelopment));
+      setPreviewItems(dedupe(nextPreview));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed loading development clients');
     } finally {
@@ -579,7 +613,7 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
         <div>
           <h2 className="text-lg font-semibold text-white">Utvikling</h2>
           <p className="text-gray-400 text-sm">
-            Én kundeliste. Marker Klar for preview, Klar for deployment, Iterasjon ferdig og Publish over handlingsboksen.
+            Development øverst er solgte kunder. Listen under er før kontrakt, med møtetid fra salg.
           </p>
         </div>
       )}
@@ -599,7 +633,7 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
             <ChevronDown size={12} className={`transition-transform ${headerPanel === 'filter' ? 'rotate-180' : ''}`} />
           </button>
           <p className="text-[11px] text-gray-400">
-            Sortert etter neste møte, handling eller leveringsfrist.
+            Development sorteres etter leveringsfrist. Listen under sorteres etter møtetid.
             {hasActiveFilters ? ` Viser ${visibleCount}.` : ''}
           </p>
         </div>
@@ -770,55 +804,74 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
           Ingen utviklerkunder ennå. Aktive salgskunder og signerte kontrakter vises her.
         </p>
       ) : (
-        <section className="space-y-3">
+        <div className="space-y-8">
           {visibleCount === 0 ? (
             <p className="text-sm text-gray-500">Ingen kunder matcher søket.</p>
           ) : (
             <>
-              {unassignedItems.length > 0 && (
-                <div className="space-y-3">
-                  <div className="rounded-xl border border-amber-300 bg-amber-50 text-amber-900 px-3 py-2.5">
-                    <span className="block text-sm font-semibold">Ikke tildelt</span>
-                    <span className="block text-[11px] opacity-80 mt-0.5">Tildel en utvikler før arbeidet starter.</span>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start">
-                    {unassignedItems.map((item) => (
-                      <React.Fragment key={item.id}>
-                      <DeveloperClientCard
-                        item={item}
-                        kind="developer"
-                        busyKey={busyKey}
-                        selected={selectedIds.includes(item.id)}
-                        websiteMakerBaseUrl={websiteMakerBaseUrl}
-                        queueItems={queueItems}
-                        canWork={false}
-                        isAdmin={viewer.isAdmin}
-                        viewerAccountKey={viewer.accountKey}
-                        developers={developers}
-                        assignBusy={assignBusy}
-                        onAssign={(ownerId) => void assignDeveloper(item, ownerId)}
-                        onAcceptHandoff={() => void acceptHandoff(item)}
-                        requestLabel={
-                          threadMap[String(item.salesClientId || item.id || '')]?.lastKindLabel
-                          || (threadMap[String(item.salesClientId || item.id || '')] ? 'Forespørsel' : '')
-                        }
-                        onToggleSelected={() => toggleClientSelected(item.id)}
-                        onCardClick={(event) => handleClientCardClick(event, item.id)}
-                        onToggleStep={(entry, stepKey) => void toggleStep(entry, stepKey)}
-                        onReload={loadItems}
-                        onClientUpdated={patchDevelopmentClient}
-                        onError={setError}
-                        onNotice={setNotice}
-                      />
-                      </React.Fragment>
-                    ))}
-                  </div>
+              <section className="space-y-3">
+                <div className="rounded-xl border border-white/10 bg-[#2a2a2a] px-3 py-2.5">
+                  <span className="block text-sm font-semibold text-white">Development</span>
+                  <span className="block text-[11px] text-gray-400 mt-0.5">
+                    Solgte kunder. Leveringsfrist fra tilbudets tier. Klar for preview ligger i listen under.
+                  </span>
                 </div>
-              )}
-              {renderGroupedCards(groups)}
+                {visibleDevelopmentItems.length === 0 ? (
+                  <p className="text-sm text-gray-500">Ingen solgte kunder her.</p>
+                ) : (
+                  <>
+                    {developmentUnassigned.length > 0 && (
+                      <div className="space-y-3">
+                        <div className="rounded-xl border border-amber-300 bg-amber-50 text-amber-900 px-3 py-2.5">
+                          <span className="block text-sm font-semibold">Ikke tildelt</span>
+                          <span className="block text-[11px] opacity-80 mt-0.5">Tildel en utvikler før arbeidet starter.</span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start">
+                          {developmentUnassigned.map((item) => (
+                            <React.Fragment key={item.id}>
+                              {renderClientCard(item, 'deployment', false)}
+                            </React.Fragment>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {renderGroupedCards(developmentGroups, 'deployment', 'development')}
+                  </>
+                )}
+              </section>
+              <section className="space-y-3">
+                <div className="rounded-xl border border-white/10 bg-[#2a2a2a] px-3 py-2.5">
+                  <span className="block text-sm font-semibold text-white">Før signert kontrakt</span>
+                  <span className="block text-[11px] text-gray-400 mt-0.5">
+                    Møtetid fra salg, med klokkeslett. Etter Klar for preview er det ingen frist.
+                  </span>
+                </div>
+                {visiblePreviewItems.length === 0 ? (
+                  <p className="text-sm text-gray-500">Ingen kunder før kontrakt.</p>
+                ) : (
+                  <>
+                    {previewUnassigned.length > 0 && (
+                      <div className="space-y-3">
+                        <div className="rounded-xl border border-amber-300 bg-amber-50 text-amber-900 px-3 py-2.5">
+                          <span className="block text-sm font-semibold">Ikke tildelt</span>
+                          <span className="block text-[11px] opacity-80 mt-0.5">Tildel en utvikler før arbeidet starter.</span>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start">
+                          {previewUnassigned.map((item) => (
+                            <React.Fragment key={item.id}>
+                              {renderClientCard(item, 'preview', false)}
+                            </React.Fragment>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {renderGroupedCards(previewGroups, 'preview', 'preview')}
+                  </>
+                )}
+              </section>
             </>
           )}
-        </section>
+        </div>
       )}
     </div>
   );

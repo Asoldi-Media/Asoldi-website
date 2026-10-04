@@ -272,12 +272,15 @@ test('admin week view uses the filtered rep, or every connected Asoldi mailbox',
   );
 });
 
-test('sales calendar week on admin is an in-app grid from the events API, not a Google iframe', () => {
+test('sales header calendar is a Google iframe and does not call the events API', () => {
   const weekSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../app/pages/Admin/sections/SalesCalendarWeek.tsx'), 'utf8');
-  assert.match(weekSrc, /admin\/sales\/google\/events/);
-  assert.match(weekSrc, /AbortSignal\.timeout\(8000\)/);
-  assert.doesNotMatch(weekSrc, /calendar\.google\.com\/calendar\/embed/);
-  assert.doesNotMatch(weekSrc, /<iframe/);
+  assert.match(weekSrc, /<iframe/);
+  assert.match(weekSrc, /scrolling="yes"/);
+  assert.doesNotMatch(weekSrc, /admin\/sales\/google\/events/);
+  const salesSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../app/pages/Admin/sections/SalesClientsSection.tsx'), 'utf8');
+  assert.match(salesSrc, /google\/embed/);
+  assert.match(salesSrc, /AbortSignal\.timeout\(8000\)/);
+  assert.doesNotMatch(salesSrc, /google\/events/);
   const googleSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../lib/google-calendar.js'), 'utf8');
   assert.match(googleSrc, /primaryOnly: true/);
   assert.match(googleSrc, /CALENDAR_EVENTS_TIMEOUT_MS/);

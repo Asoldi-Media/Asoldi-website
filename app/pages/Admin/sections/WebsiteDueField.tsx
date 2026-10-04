@@ -13,9 +13,12 @@ type DueView = {
 type Props = {
   salesClientId: string;
   authHeaders?: Record<string, string>;
+  note?: string;
+  clearLabel?: string;
+  onSaved?: () => void;
 };
 
-export function WebsiteDueField({ salesClientId, authHeaders }: Props) {
+export function WebsiteDueField({ salesClientId, authHeaders, note, clearLabel = 'Bruk pakke', onSaved }: Props) {
   const headers = authHeaders || defaultAuthHeaders();
   const [view, setView] = useState<DueView | null>(null);
   const [date, setDate] = useState('');
@@ -57,6 +60,7 @@ export function WebsiteDueField({ salesClientId, authHeaders }: Props) {
       if (!response.ok) throw new Error(data.message || 'Kunne ikke lagre fristen.');
       setView(data);
       setDate(String(data.dueDate || ''));
+      onSaved?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Kunne ikke lagre fristen.');
     } finally {
@@ -69,8 +73,12 @@ export function WebsiteDueField({ salesClientId, authHeaders }: Props) {
       <div className="text-sm font-medium text-white">Leveringsfrist</div>
       <p className="text-xs text-gray-300">{view?.label || view?.phrase || 'Leser fristen…'}</p>
       <p className="text-[11px] text-gray-500">
-        Tom dato bruker pakken: tier 1 og 2 er 2 uker, tier 3 er 3 uker, skreddersydd er 4 uker. Fristen starter når salg huker av signert kontrakt.
-        {view?.contractSigned ? ' Kontrakten er signert.' : ' Kontrakten er ikke signert ennå.'}
+        {note || (
+          <>
+            Tom dato bruker pakken: tier 1 og 2 er 2 uker, tier 3 er 3 uker, skreddersydd er 4 uker. Fristen starter når salg huker av signert kontrakt.
+            {view?.contractSigned ? ' Kontrakten er signert.' : ' Kontrakten er ikke signert ennå.'}
+          </>
+        )}
       </p>
       <label className="block text-[11px] text-gray-400">
         Egen dato
@@ -97,7 +105,7 @@ export function WebsiteDueField({ salesClientId, authHeaders }: Props) {
             onClick={() => void save('')}
             className="px-2 py-1 rounded bg-white/10 text-gray-200 text-xs disabled:opacity-50"
           >
-            Bruk pakke
+            {clearLabel}
           </button>
         ) : null}
       </div>
