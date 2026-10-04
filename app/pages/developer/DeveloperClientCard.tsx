@@ -10,7 +10,8 @@ import { MakerRunTools } from './MakerRunTools';
 import { DeveloperGoalTimeline } from './DeveloperGoalTimeline';
 import { DeveloperRequestThread } from './DeveloperRequestThread';
 import { DeveloperAuthImage, DeveloperClientBrief, DeveloperMediaLibrary, type BriefMediaFile, type MaterialDot } from './DeveloperClientBrief';
-import { enqueueMakerQueue, fetchMakerRunStatus, findMakerRunBySalesClientId, openLanguageLock, saveMakerRunDomain } from './makerQueue';
+import { enqueueMakerQueue, ensureLocalMaker, fetchMakerRunStatus, findMakerRunBySalesClientId, openLanguageLock, saveMakerRunDomain } from './makerQueue';
+import { createSalesMakerRun } from './MakerRunTools';
 import { summarizeMaterialDots } from '../../../lib/client-material-dots.js';
 import {
   DEVELOPER_PROGRESS_CHIPS,
@@ -20,6 +21,8 @@ import {
   makerCustomEditUrl,
   makerCustomPreviewPath,
   developerChipVisual,
+  chipLiveProgress,
+  draftPhaseView,
   makerHandoffFromLiveRun,
   makerHandoffNeedsPersist,
   makerHandoffSignature,
@@ -147,7 +150,6 @@ export function DeveloperClientCard({
   });
   const [enqueueBusy, setEnqueueBusy] = useState('');
   const [openingMaker, setOpeningMaker] = useState(false);
-  const [detailsOpen, setDetailsOpen] = useState(false);
   const [liveStatus, setLiveStatus] = useState<Record<string, unknown> | null>(null);
   const liveRunId = String(liveStatus?.runId || makerRunId).trim();
   const [chipMenu, setChipMenu] = useState('');
@@ -175,6 +177,18 @@ export function DeveloperClientCard({
     [item.makerRun]
   );
   const status = mergeDeveloperPipelineStatus(persistedStatus, liveStatus);
+  const draft = draftPhaseView({
+    makerRun: item.makerRun || {},
+    liveRun: (liveStatus?.run && typeof liveStatus.run === 'object' ? liveStatus.run : null) as Record<string, unknown> | null,
+  });
+  const chipStatus = { ...status, draftInjected: draft.injected };
+  const languageCode = String(
+    (liveStatus?.finalizedLanguage && typeof liveStatus.finalizedLanguage === 'object'
+      ? (liveStatus.finalizedLanguage as { code?: string }).code
+      : '')
+    || item.makerRun?.language?.code
+    || ''
+  ).trim();
   const ownQueueSignature = useMemo(() => (
     queueItems
       .filter((row) => String(row.runId || '').trim() === makerRunId)
@@ -183,7 +197,7 @@ export function DeveloperClientCard({
   ), [queueItems, makerRunId]);
 
   useEffect(() => {
-    if (!detailsOpen || !salesClientId) return;
+    if (!salesClientId) return;
     const url = new URL(
       `${API}/admin/development/${encodeURIComponent(item.id)}/workshop-needs`,
       window.location.origin
@@ -204,10 +218,10 @@ export function DeveloperClientCard({
       .catch(() => {
         setDots([]);
       });
-  }, [detailsOpen, item.id, salesClientId, websiteMakerBaseUrl]);
+  }, [item.id, salesClientId, websiteMakerBaseUrl]);
 
   useEffect(() => {
-    if (!detailsOpen || !salesClientId) return;
+    if (!salesClientId) return;
     const url = new URL(
       `${API}/admin/development/${encodeURIComponent(item.id)}/media`,
       window.location.origin
@@ -233,7 +247,7 @@ export function DeveloperClientCard({
           makerError: error instanceof Error ? error.message : 'Kunne ikke lese mediabiblioteket.',
         }));
       });
-  }, [detailsOpen, item.id, salesClientId, websiteMakerBaseUrl, makerRunId, mediaReload]);
+  }, [item.id, salesClientId, websiteMakerBaseUrl, makerRunId, mediaReload]);
 
   useEffect(() => {
     let cancelled = false;
@@ -298,10 +312,20 @@ export function DeveloperClientCard({
     function onVisible() {
       if (document.visibilityState === 'visible') void syncMakerRun();
     }
+    function onLanguage() {
+      void syncMakerRun();
+    }
+    const queueBusy = ownQueueSignature.includes(':running') || ownQueueSignature.includes(':queued');
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void syncMakerRun();
+    }, queueBusy ? 2000 : 8000);
     document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('asoldi-maker-language', onLanguage);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('asoldi-maker-language', onLanguage);
     };
   }, [makerRunId, salesClientId, websiteMakerBaseUrl, item.id, item.businessName, ownQueueSignature]);
 
@@ -366,12 +390,13 @@ export function DeveloperClientCard({
     })),
   ];
 
-  function chipQueued(target: string) {
-    return queueItems.some((entry) => (
-      String(entry.runId || '') === liveRunId
-      && String(entry.target || '') === target
-      && (entry.status === 'queued' || entry.status === 'running')
+  function chipQueueState(target: string) {
+    const rows = queueItems.filter((entry) => (
+      String(entry.runId || '') === liveRunId && String(entry.target || '') === target
     ));
+    if (rows.some((entry) => entry.status === 'running')) return 'running';
+    if (rows.some((entry) => entry.status === 'queued')) return 'queued';
+    return '';
   }
 
   async function patchQa(key: 'textOk' | 'mediaOk' | 'responsiveOk', value: boolean) {
@@ -424,15 +449,55 @@ export function DeveloperClientCard({
     }
   }
 
+  async function openDraftPhase() {
+    setEnqueueBusy('draft');
+    setChipMenu('');
+    onError('');
+    try {
+      await ensureLocalMaker();
+      let runId = liveRunId;
+      if (!runId) {
+        const created = await createSalesMakerRun({
+          salesClientId,
+          businessName: item.businessName,
+          websiteMakerBaseUrl: editorBase,
+          authHeaders: developmentAuthHeaders(),
+        });
+        runId = created.runId;
+        if (created.client && onClientUpdated) onClientUpdated(created.client);
+        else await onReload();
+      }
+      if (!runId) {
+        onError('Website Creator åpnet ikke et kjøringsutkast.');
+        return;
+      }
+      const url = buildMakerRunUrl(editorBase, runId, draft.injected ? 'dashboard' : 'intake');
+      if (!url) {
+        onError('Kunne ikke åpne Website Creator.');
+        return;
+      }
+      window.open(url, '_blank');
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Kunne ikke åpne Website Creator.');
+    } finally {
+      setEnqueueBusy('');
+    }
+  }
+
   async function enqueueTarget(chip: (typeof DEVELOPER_PROGRESS_CHIPS)[number], mode: 'until' | 'rerun') {
-    if (!liveRunId) {
-      onError('No Website Maker run is linked to this client yet.');
+    if (!chipStatus.draftInjected) {
+      onError('Fullfør draftfasen først. Velg mal og kundedata, og injiser i klientkjøringen.');
       return;
     }
     setEnqueueBusy(chip.id);
     setChipMenu('');
     onError('');
     try {
+      await ensureLocalMaker();
+      if (!liveRunId) {
+        onError('No Website Maker run is linked to this client yet.');
+        return;
+      }
       const data = await enqueueMakerQueue({
         websiteMakerBaseUrl,
         salesClientIds: [salesClientId],
@@ -459,7 +524,11 @@ export function DeveloperClientCard({
   async function onProgressClick(chipId: string) {
     const chip = DEVELOPER_PROGRESS_CHIPS.find((row) => row.id === chipId);
     if (!chip) return;
-    const resolved = resolveDeveloperProgressClick(chip, status);
+    const resolved = resolveDeveloperProgressClick(chip, chipStatus);
+    if (resolved.type === 'draft') {
+      await openDraftPhase();
+      return;
+    }
     if (!resolved.enqueue && resolved.type !== 'language' && resolved.type !== 'ready') {
       if (resolved.reason) onError(resolved.reason);
       return;
@@ -469,6 +538,12 @@ export function DeveloperClientCard({
       return;
     }
     if (resolved.type === 'language') {
+      try {
+        await ensureLocalMaker();
+      } catch (error) {
+        onError(error instanceof Error ? error.message : 'Kunne ikke starte Website Creator.');
+        return;
+      }
       openLanguageLock({
         runId: liveRunId,
         websiteMakerBaseUrl,
@@ -483,11 +558,17 @@ export function DeveloperClientCard({
     await enqueueTarget(chip, 'until');
   }
 
-  function openStepPreview(target: string) {
+  async function openStepPreview(target: string) {
     const path = makerStepPreviewPath(liveRunId, target);
     if (!path) return;
-    window.open(`${editorBase}${path}`, '_blank');
     setChipMenu('');
+    try {
+      await ensureLocalMaker();
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Kunne ikke starte Website Creator.');
+      return;
+    }
+    window.open(`${editorBase}${path}`, '_blank');
   }
 
   async function toggleGoal(key: string) {
@@ -627,35 +708,70 @@ export function DeveloperClientCard({
   }
 
   function chipVisual(chip: (typeof DEVELOPER_PROGRESS_CHIPS)[number], resolved: ReturnType<typeof resolveDeveloperProgressClick>) {
-    return developerChipVisual(chip, status, resolved);
+    return developerChipVisual(chip, chipStatus, resolved);
   }
 
   function renderProgressChips() {
+    const liveRun = liveStatus?.run && typeof liveStatus.run === 'object' ? liveStatus.run : null;
     return (
       <div className="flex flex-wrap gap-1.5">
         {DEVELOPER_PROGRESS_CHIPS.map((chip) => {
-          const resolved = resolveDeveloperProgressClick(chip, status);
+          const resolved = resolveDeveloperProgressClick(chip, chipStatus);
           const visual = chipVisual(chip, resolved);
-          const queued = Boolean(chip.target && chipQueued(chip.target));
-          const clickable = canWork && (resolved.type === 'enqueue' || resolved.type === 'enqueue-until' || resolved.type === 'language' || resolved.type === 'ready');
+          const queueState = chip.target ? chipQueueState(chip.target) : '';
+          const live = chipLiveProgress(chip, liveRun);
+          const starting = enqueueBusy === chip.id;
+          const active = starting || queueState === 'running' || queueState === 'queued' || live.running;
+          const clickable = canWork && (resolved.type === 'enqueue' || resolved.type === 'enqueue-until' || resolved.type === 'language' || resolved.type === 'ready' || resolved.type === 'draft');
           const visualClass = visual === 'ready' ? 'ready' : (clickable ? visual : 'grey');
+          const label = chip.id === 'lang' && languageCode
+            ? `Lang ${languageCode}`
+            : chip.label;
+          const title = starting
+            ? 'Starter Website Creator…'
+            : queueState === 'running' || live.running
+              ? 'Kjører'
+              : queueState === 'queued'
+                ? 'I kø'
+                : (resolved.reason || chip.label);
           return (
-            <div key={chip.id} className="relative">
+            <div key={chip.id} className="relative group">
               <button
                 type="button"
-                disabled={!clickable || enqueueBusy === chip.id}
-                title={resolved.reason || chip.label}
+                disabled={!clickable || starting}
+                title={chip.id === 'draft' ? 'Åpne Website Creator' : title}
                 onClick={() => void onProgressClick(chip.id)}
-                className={chipClass(visualClass)}
+                className={`${chipClass(visualClass)} relative overflow-hidden`}
               >
-                {enqueueBusy === chip.id || queued ? <Loader2 size={11} className="inline mr-1 animate-spin" /> : null}
-                {chip.label}
+                {active ? (
+                  <span className="pointer-events-none absolute inset-x-0 bottom-0 h-1 bg-black/20">
+                    <span
+                      className={`absolute inset-y-0 left-0 bg-[#FF5B00] ${live.pct == null ? 'asoldi-chip-slide w-1/3' : ''}`}
+                      style={live.pct == null ? undefined : { width: `${live.pct}%` }}
+                    />
+                  </span>
+                ) : null}
+                {active ? <Loader2 size={11} className="inline mr-1 animate-spin" /> : null}
+                {label}
               </button>
+              {chip.id === 'draft' ? (
+                <div className="hidden group-hover:block absolute z-30 mt-1 min-w-[210px] rounded-lg border border-white/10 bg-[#1a1a1a] p-2 shadow-lg">
+                  <p className="mb-1.5 text-[11px] text-gray-400">Draftfase</p>
+                  <p className="flex items-center gap-2 text-[11px] text-white">
+                    <span className={`h-2 w-2 rounded-full ${draft.templateLocked ? 'bg-green-500' : 'bg-red-500'}`} />
+                    Mal låst
+                  </p>
+                  <p className="mt-1 flex items-center gap-2 text-[11px] text-white">
+                    <span className={`h-2 w-2 rounded-full ${draft.clientDataReady ? 'bg-green-500' : 'bg-red-500'}`} />
+                    Quick Fill og media
+                  </p>
+                </div>
+              ) : null}
               {chipMenu === chip.id && resolved.type === 'ready' ? (
                 <div className="absolute z-20 mt-1 min-w-[120px] rounded-lg border border-white/10 bg-[#1a1a1a] p-1 shadow-lg">
                   <button
                     type="button"
-                    onClick={() => openStepPreview(chip.target)}
+                    onClick={() => void openStepPreview(chip.target)}
                     className="block w-full text-left px-2 py-1 rounded text-[11px] text-white hover:bg-white/10"
                   >
                     Preview
@@ -683,8 +799,7 @@ export function DeveloperClientCard({
         selected ? `hover:bg-[#323232] ${CARD_SELECTED}` : 'border-white/10 hover:bg-[#323232]'
       }`}
     >
-      <div className="flex flex-col xl:flex-row gap-4">
-        <div className="min-w-0 flex-1 space-y-3">
+      <div className="min-w-0 space-y-3">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
@@ -793,6 +908,57 @@ export function DeveloperClientCard({
             itemId={item.id}
             onToggle={(key) => void toggleGoal(key)}
           />
+          <div className="flex flex-wrap items-end gap-3" onClick={(event) => event.stopPropagation()}>
+            <button
+              type="button"
+              onClick={() => setBriefOpen(true)}
+              className="text-left"
+            >
+              <span className="block text-[11px] uppercase tracking-wide text-gray-500">Datapunkter</span>
+              <span className="text-sm text-white tabular-nums">
+                {dotSummary.total ? (
+                  <>
+                    <span className="text-green-300">{dotSummary.filled}</span>
+                    /{dotSummary.total}
+                  </>
+                ) : '–'}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setBriefOpen(true)}
+              className="text-left"
+            >
+              <span className="block text-[11px] uppercase tracking-wide text-gray-500">Mediefiler</span>
+              <span className="text-sm text-white tabular-nums">{libraryFiles.length}</span>
+            </button>
+            <div className="flex items-center gap-1.5">
+              {previewImages.map((file) => (
+                <button
+                  key={`${file.source}-${file.field || ''}-${file.fileName}`}
+                  type="button"
+                  onClick={() => setBriefOpen(true)}
+                  className="h-10 w-10 rounded-md overflow-hidden border border-white/10"
+                >
+                  <DeveloperAuthImage
+                    url={file.url}
+                    authHeaders={developmentAuthHeaders()}
+                    alt={file.fileName}
+                    className="h-full w-full object-cover"
+                  />
+                </button>
+              ))}
+              {hiddenImages > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setLibraryOpen(true)}
+                  className="text-xs text-gray-300 underline-offset-2 hover:underline"
+                >
+                  +{hiddenImages}
+                </button>
+              ) : null}
+            </div>
+          </div>
           <div
             className="rounded-xl bg-black/20 border border-white/10 p-4 min-h-[112px] space-y-3"
             onClick={(event) => event.stopPropagation()}
@@ -941,76 +1107,7 @@ export function DeveloperClientCard({
             </div>
             <p className="text-[11px] text-gray-500">Steg 4 SEO er av til et domene er lagret på runet.</p>
           </div>
-
-          <div className="flex flex-wrap items-end gap-3" onClick={(event) => event.stopPropagation()}>
-            <button
-              type="button"
-              onClick={() => setBriefOpen(true)}
-              className="text-left"
-            >
-              <span className="block text-[11px] uppercase tracking-wide text-gray-500">Datapunkter</span>
-              <span className="text-sm text-white tabular-nums">
-                {dotSummary.total ? (
-                  <>
-                    <span className="text-green-300">{dotSummary.filled}</span>
-                    /{dotSummary.total}
-                  </>
-                ) : '–'}
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setBriefOpen(true)}
-              className="text-left"
-            >
-              <span className="block text-[11px] uppercase tracking-wide text-gray-500">Mediefiler</span>
-              <span className="text-sm text-white tabular-nums">{libraryFiles.length}</span>
-            </button>
-            <div className="flex items-center gap-1.5">
-              {previewImages.map((file) => (
-                <button
-                  key={`${file.source}-${file.field || ''}-${file.fileName}`}
-                  type="button"
-                  onClick={() => setBriefOpen(true)}
-                  className="h-12 w-12 rounded-md overflow-hidden border border-white/10"
-                >
-                  <DeveloperAuthImage
-                    url={file.url}
-                    authHeaders={developmentAuthHeaders()}
-                    alt={file.fileName}
-                    className="h-full w-full object-cover"
-                  />
-                </button>
-              ))}
-              {hiddenImages > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => setLibraryOpen(true)}
-                  className="text-xs text-gray-300 underline-offset-2 hover:underline"
-                >
-                  vis {hiddenImages} mer
-                </button>
-              ) : null}
-            </div>
-          </div>
-        </>
-      ) : (
-        <p className="text-xs text-gray-500">No sales client linked — maker tools need a sales client.</p>
-      )}
-        </div>
-        {salesClientId && !detailsOpen ? (
-          <aside className="w-full xl:w-[340px] shrink-0" onClick={(event) => event.stopPropagation()}>
-            <button
-              type="button"
-              onClick={() => setDetailsOpen(true)}
-              className="w-full rounded-xl border border-white/10 bg-[#2a2a2a] px-3 py-3 text-left text-sm text-white hover:bg-white/10"
-            >
-              Vis tråd og filer
-            </button>
-          </aside>
-        ) : null}
-        {salesClientId && detailsOpen ? (
-          <aside className="w-full xl:w-[340px] shrink-0" onClick={(event) => event.stopPropagation()}>
+          <div onClick={(event) => event.stopPropagation()}>
             <DeveloperRequestThread
               salesClientId={salesClientId}
               makerRunId={liveRunId}
@@ -1018,8 +1115,11 @@ export function DeveloperClientCard({
               authHeaders={developmentAuthHeaders()}
               extraMessages={iterationMessages}
             />
-          </aside>
-        ) : null}
+          </div>
+        </>
+      ) : (
+        <p className="text-xs text-gray-500">No sales client linked — maker tools need a sales client.</p>
+      )}
       </div>
       {salesClientId ? (
         <details className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-gray-200" onClick={(event) => event.stopPropagation()}>

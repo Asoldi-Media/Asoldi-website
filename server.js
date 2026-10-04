@@ -12768,6 +12768,12 @@ app.post('/api/admin/sales/maker-status-callback', async (req, res) => {
     if (sanitizeText(fields.templateSetId)) {
       makerPatch.templateSetId = sanitizeText(fields.templateSetId);
     }
+    if (sanitizeText(fields.quickFillCompletedAt)) {
+      makerPatch.quickFillCompletedAt = sanitizeText(fields.quickFillCompletedAt);
+    }
+    if (sanitizeText(fields.mediaGatherCompletedAt)) {
+      makerPatch.mediaGatherCompletedAt = sanitizeText(fields.mediaGatherCompletedAt);
+    }
     const updated = sales.setSalesMakerRun(client.id, makerPatch);
     return res.json({ ok: true, event, client: updated, fieldsApplied: true });
   }
@@ -17599,6 +17605,82 @@ async function fetchMakerJson(base, pathname, { method = 'GET', body } = {}) {
   }
   return data;
 }
+
+const MAKER_DEV_ROOT = path.resolve(dirname(fileURLToPath(import.meta.url)), '..', 'website-maker');
+let makerEnsureJob = null;
+
+async function localMakerAnswers() {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 1500);
+  try {
+    const response = await fetch('http://127.0.0.1:3000/api/pipeline-queue', { signal: controller.signal });
+    return response.status < 500;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function startLocalMakerDocker() {
+  const composeFile = path.join(MAKER_DEV_ROOT, 'docker-compose.yml');
+  const devFile = path.join(MAKER_DEV_ROOT, 'docker-compose.dev.yml');
+  if (!existsSync(composeFile) || !existsSync(devFile)) {
+    return Promise.reject(new Error('Website Creator kjører ikke på port 3000. Start Docker Maker på denne maskinen.'));
+  }
+  return new Promise((resolve, reject) => {
+    const child = spawn('docker', [
+      'compose',
+      '-f', 'docker-compose.yml',
+      '-f', 'docker-compose.dev.yml',
+      'up',
+      '-d',
+    ], {
+      cwd: MAKER_DEV_ROOT,
+      windowsHide: true,
+    });
+    let stderr = '';
+    child.stderr?.on('data', (chunk) => {
+      stderr += String(chunk || '');
+      if (stderr.length > 2000) stderr = stderr.slice(-2000);
+    });
+    child.on('error', (error) => reject(error));
+    child.on('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(stderr.trim() || `docker compose avsluttet med kode ${code}.`));
+    });
+  });
+}
+
+async function ensureLocalMakerProcess() {
+  if (await localMakerAnswers()) return { ok: true, alreadyRunning: true };
+  if (!makerEnsureJob) {
+    makerEnsureJob = (async () => {
+      await startLocalMakerDocker();
+      const deadline = Date.now() + 90000;
+      while (Date.now() < deadline) {
+        if (await localMakerAnswers()) return { ok: true, started: true };
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+      throw new Error('Website Creator startet, men svarer ikke på port 3000 ennå.');
+    })().finally(() => {
+      makerEnsureJob = null;
+    });
+  }
+  return makerEnsureJob;
+}
+
+app.post('/api/admin/development/maker/ensure', developmentAuth, async (req, res) => {
+  try {
+    const result = await ensureLocalMakerProcess();
+    res.json(result);
+  } catch (error) {
+    res.status(502).json({
+      ok: false,
+      message: sanitizeText(error?.message) || 'Website Creator kunne ikke startes.',
+    });
+  }
+});
 
 app.get('/api/admin/development/maker-queue', developmentAuth, async (req, res) => {
   const base = resolveDevelopmentMakerBase();

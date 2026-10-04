@@ -1,4 +1,4 @@
-import { API } from '../Admin/shared';
+import { API, developmentAuthHeaders } from '../Admin/shared';
 import { LOCAL_EDITOR_ORIGIN } from '../../../lib/maker-editor-origin.js';
 import {
   CLICKABLE_QUEUE_TARGETS,
@@ -85,6 +85,31 @@ export async function enqueueMakerQueue({
     throw new Error('No Website Maker run is linked.');
   }
   return fetchLocalMakerJson('/api/pipeline-queue', { method: 'POST', body });
+}
+
+async function pingLocalMaker() {
+  try {
+    await fetchLocalMakerJson('/api/pipeline-queue');
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '';
+    if (/unreachable/i.test(message)) return false;
+    return true;
+  }
+}
+
+export async function ensureLocalMaker() {
+  if (await pingLocalMaker()) return { ok: true, alreadyRunning: true };
+  const response = await fetch(`${API}/admin/development/maker/ensure`, {
+    method: 'POST',
+    headers: { ...developmentAuthHeaders(), 'Content-Type': 'application/json' },
+  });
+  const data = await response.json().catch(() => ({} as { ok?: boolean; message?: string }));
+  if (!response.ok || data.ok === false) {
+    throw new Error(String(data.message || 'Website Creator kunne ikke startes.'));
+  }
+  if (await pingLocalMaker()) return { ok: true, started: true };
+  throw new Error('Website Creator startet, men svarer ikke på port 3000 ennå.');
 }
 
 export async function fetchMakerQueue(

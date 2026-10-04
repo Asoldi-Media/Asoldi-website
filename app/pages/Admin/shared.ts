@@ -452,6 +452,8 @@ export type SalesMakerRunMeta = {
   productionDomain?: string;
   websiteDomain?: string;
   clientBundleId?: string;
+  quickFillCompletedAt?: string;
+  mediaGatherCompletedAt?: string;
 };
 
 export type DeveloperHandoff = {

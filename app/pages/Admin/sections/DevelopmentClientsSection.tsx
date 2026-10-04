@@ -293,7 +293,7 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
                 </span>
               </button>
               {!collapsed && bucketItems.length > 0 && (
-                <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start">
                   {bucketItems.map((item) => (
                     <React.Fragment key={item.id}>
                       <DeveloperClientCard
@@ -781,7 +781,7 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
                     <span className="block text-sm font-semibold">Ikke tildelt</span>
                     <span className="block text-[11px] opacity-80 mt-0.5">Tildel en utvikler før arbeidet starter.</span>
                   </div>
-                  <div className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start">
                     {unassignedItems.map((item) => (
                       <React.Fragment key={item.id}>
                       <DeveloperClientCard

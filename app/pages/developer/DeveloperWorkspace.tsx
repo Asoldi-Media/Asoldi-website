@@ -72,7 +72,7 @@ export const DeveloperWorkspace = () => {
       </Helmet>
       <div className="staff-light min-h-screen bg-[#1a1a1a] text-white">
         <header className="border-b border-white/10 bg-[#222]">
-          <div className="max-w-[1200px] mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="w-full px-6 py-4 flex items-center justify-between">
             <div>
               <h1 className="text-lg font-semibold">Utvikling</h1>
               <p className="text-xs text-gray-400">
@@ -89,7 +89,7 @@ export const DeveloperWorkspace = () => {
             </button>
           </div>
         </header>
-        <main className="max-w-[1200px] mx-auto px-6 py-8">
+        <main className="w-full px-6 py-8">
           <DevelopmentClientsSection />
         </main>
       </div>

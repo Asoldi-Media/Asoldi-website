@@ -15,7 +15,7 @@ import {
   resolveOpenInMakerUrl,
 } from '../sales/websiteMaker';
 import { LOCAL_EDITOR_ORIGIN } from '../../../lib/maker-editor-origin.js';
-import { fetchMakerRunStatus, findMakerRunBySalesClientId } from './makerQueue';
+import { ensureLocalMaker, fetchMakerRunStatus, findMakerRunBySalesClientId } from './makerQueue';
 import { makerHandoffFromLiveRun, pipelineStatusFromMakerRun, resolveLatestMakerPreviewStep } from '../../../lib/developer-card.js';
 
 type MakerClientLike = {
@@ -59,6 +59,99 @@ async function makerRequest(path: string, init: RequestInit, authHeaders: Record
     throw new Error(message || `Request failed (${response.status})`);
   }
   return data;
+}
+
+export async function createSalesMakerRun({
+  salesClientId,
+  businessName = '',
+  websiteMakerBaseUrl,
+  authHeaders,
+  forceNewRun = false,
+}: {
+  salesClientId: string;
+  businessName?: string;
+  websiteMakerBaseUrl: string;
+  authHeaders: Record<string, string>;
+  forceNewRun?: boolean;
+}) {
+  if (!salesClientId) {
+    throw new Error('This client is not linked to a sales record, so a Maker run cannot be created.');
+  }
+  await ensureLocalMaker();
+  const makerBase =
+    healStaleLocalMakerBase(websiteMakerBaseUrl) ||
+    normalizeHttpBaseUrl(websiteMakerBaseUrl) ||
+    LOCAL_EDITOR_ORIGIN;
+  if (!forceNewRun) {
+    try {
+      const found = await findMakerRunBySalesClientId(salesClientId, businessName);
+      const foundId = String(found?.runId || '').trim();
+      if (foundId && Number(found?.progressScore || 0) > 0) {
+        const live = await fetchMakerRunStatus(makerBase, foundId);
+        const handoff = makerHandoffFromLiveRun(live.run || {});
+        const data = await makerRequest(`/admin/development/${salesClientId}/sync-maker-run`, {
+          method: 'POST',
+          body: JSON.stringify({ runId: foundId, handoff }),
+        }, authHeaders);
+        return {
+          runId: foundId,
+          client: data?.client as Record<string, unknown> | undefined,
+          linkedExisting: true,
+        };
+      }
+    } catch {
+      // Fall through and create a new draft when lookup fails.
+    }
+  }
+  const popup = openMakerCreatePopup();
+  if (!popup) {
+    throw new Error('Popup blocked. Allow popups for this site and try again.');
+  }
+  try {
+    let data = await makerRequest(`/admin/sales/${salesClientId}/create-maker-run`, {
+      method: 'POST',
+      body: JSON.stringify({ websiteMakerBaseUrl: makerBase, forceNewRun }),
+    }, authHeaders);
+    if (data?.browserHandoff) {
+      const created = await createRunViaMakerPopup(
+        String(data.websiteMakerBaseUrl || makerBase),
+        data.requestBody && typeof data.requestBody === 'object'
+          ? (data.requestBody as Record<string, unknown>)
+          : {},
+        popup
+      );
+      data = await makerRequest(`/admin/sales/${salesClientId}/create-maker-run`, {
+        method: 'POST',
+        body: JSON.stringify({
+          websiteMakerBaseUrl: makerBase,
+          forceNewRun,
+          browserCreated: created,
+        }),
+      }, authHeaders);
+    }
+    try {
+      if (!popup.closed) popup.close();
+    } catch {
+      // The Maker window may already have closed itself.
+    }
+    const runId = String(
+      (data?.client as { makerRun?: { runId?: string } } | undefined)?.makerRun?.runId
+      || (data?.handoff as { runId?: string } | undefined)?.runId
+      || ''
+    ).trim();
+    return {
+      runId,
+      client: data?.client as Record<string, unknown> | undefined,
+      linkedExisting: false,
+    };
+  } catch (error) {
+    try {
+      if (!popup.closed) popup.close();
+    } catch {
+      // Ignore a popup that is already gone.
+    }
+    throw error;
+  }
 }
 
 export function MakerRunTools({
@@ -109,94 +202,24 @@ export function MakerRunTools({
       const confirmed = window.confirm('Do you want to delete the other run request?');
       if (!confirmed) return;
     }
-    if (!salesClientId) {
-      const message = 'This client is not linked to a sales record, so a Maker run cannot be created.';
-      setLocalError(message);
-      onError(message);
-      return;
-    }
-    const makerBase =
-      healStaleLocalMakerBase(websiteMakerBaseUrl) ||
-      normalizeHttpBaseUrl(websiteMakerBaseUrl) ||
-      LOCAL_EDITOR_ORIGIN;
-    if (makerBase !== websiteMakerBaseUrl) setWebsiteMakerBaseUrl?.(makerBase);
-
-    if (!forceNewRun) {
-      try {
-        const found = await findMakerRunBySalesClientId(salesClientId, businessName);
-        const foundId = String(found?.runId || '').trim();
-        if (foundId && Number(found?.progressScore || 0) > 0) {
-          setCreating(true);
-          setLocalError('');
-          onError('');
-          const live = await fetchMakerRunStatus(makerBase, foundId);
-          const handoff = makerHandoffFromLiveRun(live.run || {});
-          const data = await makerRequest(`/admin/development/${salesClientId}/sync-maker-run`, {
-            method: 'POST',
-            body: JSON.stringify({ runId: foundId, handoff }),
-          }, authHeaders);
-          if (data?.client && onClientUpdated) onClientUpdated(data.client as Record<string, unknown>);
-          else await onReload();
-          onNotice?.('Knyttet til eksisterende Website Maker-run.');
-          setCreating(false);
-          return;
-        }
-      } catch {
-        setCreating(false);
-        // Fall through and create a new draft when lookup fails.
-      }
-    }
-
-    const popup = openMakerCreatePopup();
-    if (!popup) {
-      const message = 'Popup blocked. Allow popups for this site and try Create run again.';
-      setLocalError(message);
-      onError(message);
-      return;
-    }
     setCreating(true);
     setLocalError('');
     onError('');
     try {
-      let data = await makerRequest(`/admin/sales/${salesClientId}/create-maker-run`, {
-        method: 'POST',
-        body: JSON.stringify({ websiteMakerBaseUrl: makerBase, forceNewRun }),
-      }, authHeaders);
-      if (data?.browserHandoff) {
-        const created = await createRunViaMakerPopup(
-          String(data.websiteMakerBaseUrl || makerBase),
-          data.requestBody && typeof data.requestBody === 'object'
-            ? (data.requestBody as Record<string, unknown>)
-            : {},
-          popup
-        );
-        data = await makerRequest(`/admin/sales/${salesClientId}/create-maker-run`, {
-          method: 'POST',
-          body: JSON.stringify({
-            websiteMakerBaseUrl: makerBase,
-            forceNewRun,
-            browserCreated: created,
-          }),
-        }, authHeaders);
-      }
-      const resolvedBase = normalizeHttpBaseUrl(String(data?.websiteMakerBaseUrl || '')) || makerBase;
-      if (resolvedBase) setWebsiteMakerBaseUrl?.(resolvedBase);
-      try {
-        if (!popup.closed) popup.close();
-      } catch {
-        // The Maker window may already have closed itself.
-      }
-      if (data?.client && onClientUpdated) onClientUpdated(data.client as Record<string, unknown>);
+      const created = await createSalesMakerRun({
+        salesClientId,
+        businessName,
+        websiteMakerBaseUrl,
+        authHeaders,
+        forceNewRun,
+      });
+      if (created.client && onClientUpdated) onClientUpdated(created.client);
       else await onReload();
+      if (created.linkedExisting) onNotice?.('Knyttet til eksisterende Website Maker-run.');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed creating website run';
       setLocalError(message);
       onError(message);
-      try {
-        if (!popup.closed) popup.close();
-      } catch {
-        // Ignore a popup that is already gone.
-      }
     } finally {
       setCreating(false);
     }

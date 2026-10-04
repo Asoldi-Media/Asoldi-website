@@ -74,6 +74,7 @@ export function DeveloperLanguageLockPopup({
         },
       });
       await refresh();
+      window.dispatchEvent(new CustomEvent('asoldi-maker-language', { detail: { runId } }));
       onChanged?.();
     } catch (error) {
       setErr(error instanceof Error ? error.message : 'Failed to lock language.');
@@ -89,6 +90,7 @@ export function DeveloperLanguageLockPopup({
       await fetchLocalMakerJson(languagePath(runId), { method: 'DELETE' });
       setChoice('');
       await refresh();
+      window.dispatchEvent(new CustomEvent('asoldi-maker-language', { detail: { runId } }));
       onChanged?.();
     } catch (error) {
       setErr(error instanceof Error ? error.message : 'Failed to unlock language.');

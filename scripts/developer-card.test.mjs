@@ -15,6 +15,7 @@ import {
   developerMediaLibraryView,
   developerSummaryView,
   developerChipVisual,
+  draftPhaseView,
   makerCustomEditPath,
   makerHandoffFromLiveRun,
   makerHandoffNeedsPersist,
@@ -395,7 +396,7 @@ test('Maker error does not fake an empty client media library', () => {
 test('progress chips stay in the locked order and enqueue only through T03', () => {
   assert.deepEqual(
     DEVELOPER_PROGRESS_CHIPS.map((chip) => chip.id),
-    ['1', 'lang', '1.5', '2.1', '2.2', 'layout', 'maps', 'cms', 'seo']
+    ['draft', '1', 'lang', '1.5', '2.1', '2.2', 'layout', 'maps', 'cms', 'seo']
   );
   const card = readFileSync(join(here, '../app/pages/developer/DeveloperClientCard.tsx'), 'utf8');
   assert.match(card, /enqueueMakerQueue/);
@@ -446,8 +447,13 @@ test('Development card still mounts one request thread and the queue bar', () =>
   assert.match(card, /developerCardTimeline/);
   const cardThreads = card.split('<DeveloperRequestThread').length - 1;
   assert.equal(cardThreads, 1);
-  assert.match(card, /if \(!detailsOpen \|\| !salesClientId\) return;/);
-  assert.match(card, /Vis tråd og filer/);
+  assert.match(card, /if \(!salesClientId\) return;/);
+  assert.match(card, /Draftfase/);
+  assert.match(card, /Mal låst/);
+  assert.match(card, /Quick Fill og media/);
+  assert.match(card, /asoldi-chip-slide/);
+  assert.match(card, /ensureLocalMaker/);
+  assert.equal(card.includes('Vis tråd og filer'), false);
   assert.equal(card.includes('if (!detailsOpen) return undefined;'), false);
   assert.match(card, /async function syncMakerRun/);
   assert.match(card, /visibilitychange/);
@@ -538,6 +544,52 @@ test('material dots score Kundedata facts, partial staff and products, and revie
     }),
   });
   assert.equal(dot(fiveReviews, 'reviews').mark, 'green');
+});
+
+test('draft phase is green after inject, and pending intake blocks later steps', () => {
+  const draftChip = DEVELOPER_PROGRESS_CHIPS.find((chip) => chip.id === 'draft');
+  assert.equal(resolveDeveloperProgressClick(draftChip, {}).type, 'draft');
+  assert.equal(draftChip.kind, 'draft');
+  const pending = resolveDeveloperProgressClick(
+    DEVELOPER_PROGRESS_CHIPS.find((chip) => chip.id === '1'),
+    { draftInjected: false }
+  );
+  assert.equal(pending.type, 'disabled');
+  assert.equal(pending.enqueue, false);
+  const readyAnyway = resolveDeveloperProgressClick(
+    DEVELOPER_PROGRESS_CHIPS.find((chip) => chip.id === '1'),
+    { draftInjected: false, step1Ready: true }
+  );
+  assert.equal(readyAnyway.type, 'ready');
+  const gathering = draftPhaseView({
+    makerRun: { runId: 'run-1', intakeStatus: 'pending', templateSetId: 'tpl' },
+    liveRun: {
+      id: 'run-1',
+      metadata: {
+        intakeStatus: 'pending',
+        templateSetId: 'tpl',
+        quickFillCompletedAt: '2026-10-03T00:00:00.000Z',
+      },
+    },
+  });
+  assert.equal(gathering.templateLocked, true);
+  assert.equal(gathering.quickFillDone, true);
+  assert.equal(gathering.mediaGatherDone, false);
+  assert.equal(gathering.clientDataReady, false);
+  assert.equal(gathering.injected, false);
+  const injected = draftPhaseView({
+    makerRun: {
+      runId: 'run-1',
+      intakeStatus: 'configured',
+      templateSetId: 'tpl',
+      quickFillCompletedAt: 't',
+      mediaGatherCompletedAt: 't',
+    },
+  });
+  assert.equal(injected.injected, true);
+  assert.equal(injected.clientDataReady, true);
+  assert.equal(developerChipVisual(draftChip, { draftInjected: true }, { type: 'draft' }), 'ready');
+  assert.equal(developerChipVisual(draftChip, { draftInjected: false }, { type: 'draft' }), 'idle');
 });
 
 test('preview cards show next meeting, deployment cards show website due', () => {

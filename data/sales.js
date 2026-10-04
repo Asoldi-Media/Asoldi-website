@@ -247,6 +247,8 @@ function normalizeMakerRun(value = {}) {
     industry: sanitizeText(input.industry),
     createdAt: sanitizeText(input.createdAt),
     clientBundleId: sanitizeText(input.clientBundleId),
+    quickFillCompletedAt: sanitizeText(input.quickFillCompletedAt),
+    mediaGatherCompletedAt: sanitizeText(input.mediaGatherCompletedAt),
   };
   if (!runId) return base;
   return {
