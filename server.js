@@ -147,6 +147,7 @@ import {
   looksLikeEmailLink,
   websiteUrlFromDomain,
 } from './lib/sales-client-links.js';
+import { cityFromSalesClient, discoverSalesLinks, isUpcomingSalesClient, serpPayloadToResults } from './lib/sales-link-discovery.js';
 import {
   buildContractOnlyEmailForClient,
   buildOfferEmailForClient,
@@ -563,7 +564,7 @@ const SERPAPI_GL = sanitizeText(process.env.SERPAPI_GL || 'no') || 'no';
 const SERPAPI_MIN_INTERVAL_MS = Number(process.env.SERPAPI_MIN_INTERVAL_MS || 900);
 const SERPAPI_RETRY_LIMIT = Number(process.env.SERPAPI_RETRY_LIMIT || 3);
 const SERPAPI_RETRY_BACKOFF_MS = Number(process.env.SERPAPI_RETRY_BACKOFF_MS || 1200);
-const SOCIAL_BRAVE_FALLBACK_ENABLED = String(process.env.SOCIAL_BRAVE_FALLBACK_ENABLED || '1') !== '0';
+const SOCIAL_BRAVE_FALLBACK_ENABLED = String(process.env.SOCIAL_BRAVE_FALLBACK_ENABLED || '0') !== '0';
 const SOCIAL_BRAVE_TIMEOUT_MS = Number(process.env.SOCIAL_BRAVE_TIMEOUT_MS || 3500);
 const SOCIAL_BRAVE_MIN_INTERVAL_MS = Number(process.env.SOCIAL_BRAVE_MIN_INTERVAL_MS || 250);
 const SOCIAL_BRAVE_MAX_LINKS = Number(process.env.SOCIAL_BRAVE_MAX_LINKS || 80);
@@ -3399,16 +3400,7 @@ async function searchSerpApi(queryText = '') {
           console.warn(`[sales] SerpAPI key …${serpApiKeyLabel(apiKey)} is out of searches; continuing the same lookup on the next key.`);
           return { status: 'no-credits' };
         }
-        const rawResults = Array.isArray(payload?.organic_results) ? payload.organic_results : [];
-        const results = rawResults
-          .map((entry) => ({
-            url: coerceHttpUrl(entry?.link || entry?.redirect_link || ''),
-            title: sanitizeText(entry?.title || ''),
-            snippet: sanitizeText(entry?.snippet || entry?.snippet_highlighted_words?.join(' ') || ''),
-          }))
-          .filter((entry) => entry.url)
-          .slice(0, 20);
-        return { status: 'ok', value: results };
+        return { status: 'ok', value: serpPayloadToResults(payload) };
       } catch (error) {
         if (attempt < maxAttempts) {
           const baseBackoff = Math.max(200, Math.trunc(Number(SERPAPI_RETRY_BACKOFF_MS) || 0));
@@ -4393,7 +4385,7 @@ async function enrichSalesClientLinksFromMyphoner({
     pickMyphonerWebsiteDomainValue(source, map)
   );
   const resolvedBusinessName = sanitizeText(leadBusinessName || currentBusinessName);
-  const resolvedWebsiteDomain = hasLeadPayload
+  let resolvedWebsiteDomain = hasLeadPayload
     ? sanitizeSalesWebsiteDomain(leadWebsiteDomain)
     : currentWebsiteDomain;
   const resolvedMeetingPlace = currentMeetingPlace || leadMeetingPlace;
@@ -4488,204 +4480,36 @@ async function enrichSalesClientLinksFromMyphoner({
   };
   socialDiagnostics.proff = proffResolution;
 
-  const myphonerInstagramUrl = sanitizeText(canonicalizeInstagramProfileUrl(leadDetails.instagramUrl));
-  const myphonerFacebookUrl = sanitizeText(canonicalizeFacebookProfileUrl(leadDetails.facebookUrl));
-  const instagramSearchOptions = {
-    queries: buildSocialSearchQueries({
-      provider: 'instagram',
-      context: socialContext,
-    }),
-    context: socialContext,
-    normalizeUrl: canonicalizeInstagramProfileUrl,
-    minScore: Math.max(2, MYPHONER_SOCIAL_CONFIDENCE_MIN_SCORE),
-    minConfidenceMargin: Math.max(0, MYPHONER_SOCIAL_CONFIDENCE_MIN_MARGIN),
-    minBusinessTokenMatches: Math.max(1, MYPHONER_SOCIAL_CONFIDENCE_MIN_TOKEN_MATCHES),
-    strictConfidence: true,
-    requireIdentifierMatch: true,
-  };
-  const facebookSearchOptions = {
-    queries: buildSocialSearchQueries({
-      provider: 'facebook',
-      context: socialContext,
-    }),
-    context: socialContext,
-    normalizeUrl: canonicalizeFacebookProfileUrl,
-    minScore: Math.max(2, MYPHONER_SOCIAL_CONFIDENCE_MIN_SCORE),
-    minConfidenceMargin: Math.max(0, MYPHONER_SOCIAL_CONFIDENCE_MIN_MARGIN),
-    minBusinessTokenMatches: Math.max(1, MYPHONER_SOCIAL_CONFIDENCE_MIN_TOKEN_MATCHES),
-    strictConfidence: true,
-  };
-
-  let instagramResolution = {
-    url: sanitizeText(nextDetails.instagramUrl),
-    reason: sanitizeText(nextDetails.instagramUrl) ? 'already-present' : 'not-attempted',
-    queryCount: 0,
-    rawResultCount: 0,
-    uniqueCandidateCount: 0,
-    top: null,
-    runnerUp: null,
-  };
-  const existingInstagramUrl = sanitizeText(nextDetails.instagramUrl);
-  const instagramLooksUnverified =
-    Boolean(existingInstagramUrl) &&
-    !myphonerInstagramUrl &&
-    shouldRevalidateSocialProfileUrl(existingInstagramUrl, 'instagram', socialBusinessNameHint);
-  try {
-    if (!existingInstagramUrl || instagramLooksUnverified) {
-      instagramResolution = await resolveBestSearchCandidate(instagramSearchOptions);
-      if (instagramResolution.url) {
-        nextDetails.instagramUrl = instagramResolution.url;
-      } else if (existingInstagramUrl) {
-        nextDetails.instagramUrl = existingInstagramUrl;
-        instagramResolution = {
-          ...instagramResolution,
-          url: existingInstagramUrl,
-          reason: 'kept-existing',
-        };
-      }
-    } else if (myphonerInstagramUrl) {
-      instagramResolution.reason = 'myphoner-social-url';
-    }
-  } catch (error) {
+  const discovered = await discoverSalesLinks({
+    businessName: socialBusinessNameHint,
+    city: sanitizeText(searchContext.cityToken),
+    phone: sanitizeText(currentClient.contactPhone),
+    orgNumber: strictProffOrgnr,
+    address: sanitizeText(currentClient.businessAddress || resolvedMeetingPlace),
+    websiteDomain: resolvedWebsiteDomain,
+    instagramUrl: nextDetails.instagramUrl,
+    facebookUrl: nextDetails.facebookUrl,
+    googleBusinessProfile: nextDetails.googleBusinessProfile,
+  }, {
+    search: searchSerpApi,
+  }).catch((error) => {
     console.warn(
-      `[sales] Instagram lookup failed for ${targetClientId}; continuing with Facebook:`,
+      '[sales] link discovery failed for ' + targetClientId + ':',
       sanitizeText(error?.message) || error
     );
-    instagramResolution = {
-      ...instagramResolution,
-      reason: 'search-error-continuing',
-    };
-  }
-  socialDiagnostics.instagram = instagramResolution;
-  persistSalesClientLinkProgress({
-    clientId: targetClientId,
-    nextDetails,
-    currentDetails,
-    persist,
+    return null;
   });
-
-  let facebookResolution = {
-    url: sanitizeText(nextDetails.facebookUrl),
-    reason: sanitizeText(nextDetails.facebookUrl) ? 'already-present' : 'not-attempted',
-    queryCount: 0,
-    rawResultCount: 0,
-    uniqueCandidateCount: 0,
-    top: null,
-    runnerUp: null,
-  };
-  try {
-  const existingFacebookUrl = sanitizeText(nextDetails.facebookUrl);
-  const facebookLooksUnverified =
-    Boolean(existingFacebookUrl) &&
-    !myphonerFacebookUrl &&
-    shouldRevalidateSocialProfileUrl(existingFacebookUrl, 'facebook', socialBusinessNameHint);
-  if (!existingFacebookUrl || facebookLooksUnverified) {
-    facebookResolution = await resolveBestSearchCandidate(facebookSearchOptions);
-    if (facebookResolution.url) {
-      nextDetails.facebookUrl = facebookResolution.url;
-    } else if (existingFacebookUrl) {
-      nextDetails.facebookUrl = existingFacebookUrl;
-      facebookResolution = {
-        ...facebookResolution,
-        url: existingFacebookUrl,
-        reason: 'kept-existing',
-      };
-    }
-  } else if (myphonerFacebookUrl) {
-    facebookResolution.reason = 'myphoner-social-url';
+  if (discovered) {
+    nextDetails.instagramUrl = sanitizeText(discovered.instagramUrl);
+    nextDetails.facebookUrl = sanitizeText(discovered.facebookUrl);
+    nextDetails.googleBusinessProfile = sanitizeText(discovered.googleBusinessProfile);
+    resolvedWebsiteDomain = sanitizeSalesWebsiteDomain(discovered.websiteDomain);
+    socialDiagnostics.instagram = discovered.diagnostics?.instagram || {};
+    socialDiagnostics.facebook = discovered.diagnostics?.facebook || {};
+    socialDiagnostics.website = discovered.diagnostics?.website || {};
+    socialDiagnostics.maps = discovered.diagnostics?.maps || {};
+    socialDiagnostics.gemini = discovered.diagnostics?.gemini || {};
   }
-  socialDiagnostics.facebook = facebookResolution;
-
-  if (!nextDetails.instagramUrl && nextDetails.facebookUrl) {
-    const mirroredInstagram = await resolveSocialUrlFromOppositeHandle({
-      provider: 'instagram',
-      oppositeUrl: nextDetails.facebookUrl,
-      context: socialContext,
-    });
-    if (mirroredInstagram.url) {
-      nextDetails.instagramUrl = mirroredInstagram.url;
-      socialDiagnostics.instagram = {
-        ...mirroredInstagram,
-        reason: 'confirmed-facebook-handle',
-      };
-    } else {
-      socialDiagnostics.instagram = {
-        ...(socialDiagnostics.instagram || {}),
-        ...mirroredInstagram,
-        reason: sanitizeText(mirroredInstagram.reason) || 'mirror-unconfirmed',
-      };
-    }
-  }
-  if (!nextDetails.facebookUrl && nextDetails.instagramUrl) {
-    const mirroredFacebook = await resolveSocialUrlFromOppositeHandle({
-      provider: 'facebook',
-      oppositeUrl: nextDetails.instagramUrl,
-      context: socialContext,
-    });
-    if (mirroredFacebook.url) {
-      nextDetails.facebookUrl = mirroredFacebook.url;
-      socialDiagnostics.facebook = {
-        ...mirroredFacebook,
-        reason: 'confirmed-instagram-handle',
-      };
-    } else {
-      socialDiagnostics.facebook = {
-        ...(socialDiagnostics.facebook || {}),
-        ...mirroredFacebook,
-        reason: sanitizeText(mirroredFacebook.reason) || 'mirror-unconfirmed',
-      };
-    }
-  }
-
-  socialDiagnostics.facebook = facebookResolution;
-  persistSalesClientLinkProgress({
-    clientId: targetClientId,
-    nextDetails,
-    currentDetails,
-    persist,
-  });
-  } catch (error) {
-    console.warn(
-      `[sales] Facebook/social lookup failed after Instagram for ${targetClientId}:`,
-      sanitizeText(error?.message) || error
-    );
-    socialDiagnostics.facebook = {
-      ...facebookResolution,
-      reason: sanitizeText(facebookResolution?.reason) && facebookResolution.reason !== 'not-attempted'
-        ? facebookResolution.reason
-        : 'continued-after-instagram',
-    };
-  }
-
-  // Business-name slug invention stays opt-in and off by default.
-  if ((!nextDetails.instagramUrl || !nextDetails.facebookUrl) && MYPHONER_SOCIAL_FORCE_FILL_ENABLED) {
-    const fallbackSocial = inferFallbackSocialLinks({
-      businessName: baseBusinessName || currentClient.businessName,
-      instagramUrl: nextDetails.instagramUrl,
-      facebookUrl: nextDetails.facebookUrl,
-    });
-    if (!nextDetails.instagramUrl && fallbackSocial.instagramUrl) {
-      nextDetails.instagramUrl = fallbackSocial.instagramUrl;
-      socialDiagnostics.instagram = {
-        ...(socialDiagnostics.instagram || {}),
-        url: fallbackSocial.instagramUrl,
-        reason: 'force-fill-handle',
-        forced: true,
-        fallbackSource: sanitizeText(fallbackSocial.sources?.instagram),
-      };
-    }
-    if (!nextDetails.facebookUrl && fallbackSocial.facebookUrl) {
-      nextDetails.facebookUrl = fallbackSocial.facebookUrl;
-      socialDiagnostics.facebook = {
-        ...(socialDiagnostics.facebook || {}),
-        url: fallbackSocial.facebookUrl,
-        reason: 'force-fill-handle',
-        forced: true,
-        fallbackSource: sanitizeText(fallbackSocial.sources?.facebook),
-      };
-    }
-  }
-
   const normalizedNext = promoteGoogleBusinessFromOtherLinks(
     normalizeSalesDetailLinks(nextDetails, currentDetails),
     classifySalesLink
@@ -4694,6 +4518,7 @@ async function enrichSalesClientLinksFromMyphoner({
   const changedFields = ['instagramUrl', 'facebookUrl', 'proffUrl', 'googleBusinessProfile'].filter((field) => {
     const previous = sanitizeText(currentDetails[field]);
     const nextValue = sanitizeText(normalizedNext[field]);
+    if ((field === 'instagramUrl' || field === 'facebookUrl' || field === 'googleBusinessProfile') && previous !== nextValue) return true;
     if (nextValue && nextValue !== previous) return true;
     if (field === 'proffUrl' && previous && !nextValue && shouldResolveProffUrl(previous)) return true;
     return false;
@@ -13012,6 +12837,67 @@ function cachedSalesListRows() {
   };
   return rows;
 }
+
+app.post('/api/admin/sales/refresh-upcoming-links', salesAuth, async (req, res) => {
+  if (!req.salesUser?.isAdmin) {
+    return res.status(403).json({ message: 'Only admin can refresh sales links.' });
+  }
+  const requestedIds = new Set(
+    (Array.isArray(req.body?.clientIds) ? req.body.clientIds : [])
+      .map((entry) => sanitizeText(entry))
+      .filter(Boolean)
+  );
+  const targets = sales.getSalesClients().filter((client) => {
+    if (requestedIds.size && !requestedIds.has(sanitizeText(client.id))) return false;
+    return isUpcomingSalesClient(client);
+  });
+  const results = [];
+  for (const client of targets) {
+    try {
+      const discovered = await discoverSalesLinks({
+        businessName: client.businessName,
+        city: cityFromSalesClient(client),
+        phone: client.contactPhone,
+        orgNumber: client.orgNumber,
+        address: client.businessAddress || client.meetingPlace,
+        websiteDomain: client.websiteDomain,
+        instagramUrl: client.details?.instagramUrl,
+        facebookUrl: client.details?.facebookUrl,
+        googleBusinessProfile: client.details?.googleBusinessProfile,
+      }, { search: searchSerpApi });
+      const updated = sales.updateSalesClient(client.id, {
+        websiteDomain: sanitizeText(discovered.websiteDomain),
+        details: {
+          instagramUrl: sanitizeText(discovered.instagramUrl),
+          facebookUrl: sanitizeText(discovered.facebookUrl),
+          googleBusinessProfile: sanitizeText(discovered.googleBusinessProfile),
+        },
+      });
+      results.push({
+        id: client.id,
+        businessName: client.businessName,
+        instagramUrl: sanitizeText(updated?.details?.instagramUrl),
+        facebookUrl: sanitizeText(updated?.details?.facebookUrl),
+        websiteDomain: sanitizeText(updated?.websiteDomain),
+        googleBusinessProfile: sanitizeText(updated?.details?.googleBusinessProfile),
+        reasons: {
+          instagram: discovered.diagnostics?.instagram?.reason || '',
+          facebook: discovered.diagnostics?.facebook?.reason || '',
+          website: discovered.diagnostics?.website?.reason || '',
+          maps: discovered.diagnostics?.maps?.reason || '',
+          gemini: discovered.diagnostics?.gemini?.reason || '',
+        },
+      });
+    } catch (error) {
+      results.push({
+        id: client.id,
+        businessName: client.businessName,
+        error: sanitizeText(error?.message) || 'link refresh failed',
+      });
+    }
+  }
+  res.json({ ok: true, count: results.length, results });
+});
 
 app.get('/api/admin/sales', salesAuth, async (req, res) => {
   const all = cachedSalesListRows();

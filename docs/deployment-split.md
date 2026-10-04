@@ -29,7 +29,9 @@ Use this for every new `clientdomain.com`.
 | CMS uploads (images, video, audio the client adds in `/admin`) | Hostinger `~/.asoldi-cms-data/<siteKey>` (or that site’s upload dir) | Yes — **outside Git** |
 | Contact form posts | asoldi.com `/api/client-forms/:siteKey` | Yes |
 
-Maker **Publish to GitHub** writes the repo. It does **not** SFTP and does **not** create a Hostinger website via API (that blocks Node.js on that domain).
+Maker **Publish to GitHub** writes the website HTML, `cms.site.json` wiring, and a snapshot of CMS software. It does **not** SFTP and does **not** create a Hostinger website via API (that blocks Node.js on that domain).
+
+**CMS software updates for sites that are already live** are not a full Publish. Admin → Manage clients → **Clients** asks local Maker to replace only `vendor/client-cms` in selected `website---` repos (`docs/cms-contract.md`). That push must not rewrite `public/`, `cms.site.json`, or Hostinger `~/.asoldi-cms-data/<siteKey>`. Pushing `website-cms` to GitHub does not update clients until Admin chooses them.
 
 **Once per domain, human in hPanel:** Websites → Add Website → Node.js web app → Import that GitHub repo. Framework **express**, entry **`server.js`**, **empty build**, Node **22**. Later Maker publishes are `git push` only; Hostinger auto-deploys `main`.
 

@@ -2,6 +2,14 @@ import React from 'react';
 import { Edit2, Globe, Key, Plus, Trash2, UserRound } from 'lucide-react';
 import type { Site } from '../shared';
 import { WEBSITE_PLAN_OPTIONS } from '../shared';
+import {
+  CmsFleetToolbar,
+  cmsFleetJobBusy,
+  cmsFleetStatusLabel,
+  runningCmsVersion,
+  siteGithubRepo,
+  useCmsFleet,
+} from './CmsFleetSection';
 
 type Props = {
   sites: Site[];
@@ -48,6 +56,7 @@ export function ClientSitesSection({
   onIssueLocalBlogToken,
   hideHeader = false,
 }: Props) {
+  const fleet = useCmsFleet(sites);
   return (
     <div className="max-w-4xl">
       {!hideHeader && (
@@ -67,8 +76,17 @@ export function ClientSitesSection({
         </button>
       </div>
 
+      {sites.length > 0 ? <CmsFleetToolbar fleet={fleet} /> : null}
+
       <div className="space-y-4">
-        {sites.map((site) => (
+        {sites.map((site) => {
+          const repo = siteGithubRepo(site);
+          const running = runningCmsVersion(site);
+          const fleetItem = fleet.itemForSite(site);
+          const behind = Boolean(running && fleet.makerVersion && running !== fleet.makerVersion);
+          const pushingThis =
+            cmsFleetJobBusy(fleet.snapshot?.job) && ['queued', 'pushing'].includes(String(fleetItem?.status || ''));
+          return (
           <div key={site.id} className="rounded-xl bg-[#2a2a2a] border border-white/10 p-4 flex flex-wrap items-center gap-4">
             <div className="flex-1 min-w-0">
               <p className="font-medium text-white">{site.name || 'Unnamed'}</p>
@@ -82,13 +100,28 @@ export function ClientSitesSection({
                   {copyKey === site.site_key ? 'Copied!' : 'Copy'}
                 </button>
               </p>
-              {(site.cms?.packageVersion || site.cms?.lastSeenAt || site.cms?.githubRepo) && (
-                <p className="text-gray-500 text-xs mt-1">
-                  {site.cms?.packageVersion ? `CMS ${site.cms.packageVersion}` : 'CMS version unknown'}
-                  {site.cms?.lastSeenAt ? ` · seen ${formatSeen(site.cms.lastSeenAt)}` : ' · not seen yet'}
-                  {site.cms?.githubRepo ? ` · ${site.cms.githubRepo}` : ''}
+              <div className="mt-2 rounded-lg border border-white/10 bg-black/20 p-2 space-y-1.5">
+                <p className="text-white text-xs">
+                  CMS {running || 'unknown'}
+                  {behind ? <span className="text-amber-300"> · Maker {fleet.makerVersion} available</span> : null}
                 </p>
-              )}
+                <p className="text-gray-500 text-xs">
+                  {site.cms?.lastSeenAt ? `Seen ${formatSeen(site.cms.lastSeenAt)}` : 'No heartbeat yet'}
+                  {repo ? ` · ${repo}` : ' · no GitHub repo'}
+                  {fleetItem?.status ? ` · ${cmsFleetStatusLabel(fleetItem.status)}` : ''}
+                </p>
+                {fleetItem?.error ? <p className="text-red-400 text-xs">{fleetItem.error}</p> : null}
+                {repo ? (
+                  <label className="inline-flex items-center gap-2 text-gray-300 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(fleet.selected[site.id])}
+                      onChange={() => fleet.toggle(site.id)}
+                    />
+                    Select for CMS push
+                  </label>
+                ) : null}
+              </div>
               {site.cms?.adminUrl && (
                 <a href={site.cms.adminUrl} target="_blank" rel="noreferrer" className="text-xs text-[#FF5B00] hover:underline">
                   Open client admin
@@ -114,6 +147,14 @@ export function ClientSitesSection({
               {site.features?.general && <FeatureBadge label="General" color="gray" />}
             </div>
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={!repo || fleet.pushing || !fleet.snapshot || fleet.snapshot.githubConfigured === false}
+                onClick={() => fleet.pushSite(site)}
+                className="px-3 py-1.5 rounded-lg bg-[#FF5B00] text-white text-xs font-medium hover:bg-[#e55200] disabled:opacity-50"
+              >
+                {pushingThis ? 'Pushing CMS…' : 'Push CMS'}
+              </button>
               {onEditAdmin && (
                 <button type="button" onClick={() => onEditAdmin(site)} title="Client admin user" className="p-2 rounded-lg text-gray-400 hover:bg-white/10 hover:text-white">
                   <UserRound size={18} />
@@ -127,7 +168,8 @@ export function ClientSitesSection({
               </button>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
 
       {!loading && sites.length === 0 && (
