@@ -41,7 +41,6 @@ export function ProductsSection({ token, clientData, setClientData, onError, onP
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [previewImage, setPreviewImage] = useState('');
   const [busy, setBusy] = useState('');
-  const [sourceUrl, setSourceUrl] = useState('');
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const layout: LayoutId = (catalog?.layout || 'normal') as LayoutId;
 
@@ -70,51 +69,6 @@ export function ProductsSection({ token, clientData, setClientData, onError, onP
       return [{ ...existing, layout: nextLayout, label: layoutLabel(nextLayout) }];
     });
     setFlow('choose_upload');
-  }
-
-  async function importFromUrl() {
-    const url = sourceUrl.trim();
-    if (!url || !token) return;
-    setBusy('scrape');
-    try {
-      const response = await fetch('/api/client/ai-assistant/products/scrape', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ url }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(payload.message || 'Kunne ikke hente produkter.');
-      if (payload.jobId) {
-        await pollJob(payload.jobId);
-        return;
-      }
-      applyImported(payload);
-      setFlow('editor');
-    } catch (err) {
-      onError(err instanceof Error ? err.message : 'Kunne ikke hente produkter.');
-    } finally {
-      setBusy('');
-    }
-  }
-
-  async function pollJob(jobId: string) {
-    for (let i = 0; i < 40; i += 1) {
-      const response = await fetch(`/api/client/ai-assistant/products/jobs/${encodeURIComponent(jobId)}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (payload.status === 'done' || payload.catalogs?.length) {
-        applyImported(payload);
-        setFlow('editor');
-        return;
-      }
-      if (payload.status === 'failed') throw new Error(payload.error || 'Import feilet.');
-      await new Promise((resolve) => window.setTimeout(resolve, 1200));
-    }
-    throw new Error('Importen tok for lang tid.');
   }
 
   function applyImported(payload: any) {
@@ -488,30 +442,14 @@ export function ProductsSection({ token, clientData, setClientData, onError, onP
         {flow === 'choose_upload' ? (
           <Overlay onClose={() => setFlow(hasProducts || categories.length ? 'editor' : 'empty')}>
             <h2 className="text-[24px] font-bold text-[#121212] mb-4">Express produkt utsjekking</h2>
-            <p className="text-[15px] mb-8 max-w-[460px] text-center">Har du et dokument, excel, pdf eller en url med produkter kan du laste opp her</p>
+            <p className="text-[15px] mb-8 max-w-[460px] text-center">Last opp PDF, Word, Excel eller en tekstfil med produktene</p>
             <div className="w-full max-w-[440px] flex flex-col items-center">
-              <input
-                type="text"
-                value={sourceUrl}
-                onChange={(e) => setSourceUrl(e.target.value)}
-                placeholder="https://eksempel.com/produkt"
-                className="w-full bg-gray-100/80 rounded-xl px-5 py-4 text-[15px] outline-none text-center mb-4"
-                onKeyDown={(e) => e.key === 'Enter' && void importFromUrl()}
-              />
-              <button
-                type="button"
-                disabled={busy === 'scrape' || !sourceUrl.trim()}
-                onClick={() => void importFromUrl()}
-                className="w-full bg-[#FF5B00] text-white rounded-xl py-3 text-sm font-semibold disabled:opacity-50 mb-6"
-              >
-                {busy === 'scrape' ? 'Henter…' : 'Hent fra URL'}
-              </button>
               <label className="w-full border border-dashed border-gray-300 rounded-xl py-8 text-center cursor-pointer hover:bg-gray-50 mb-6">
                 {busy === 'import' ? <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" /> : <Upload className="w-6 h-6 text-gray-400 mx-auto mb-2" />}
-                <span className="text-[13px] text-gray-600">Last opp CSV, Excel eller PDF</span>
+                <span className="text-[13px] text-gray-600">Last opp CSV, Excel, PDF, Word eller tekst</span>
                 <input
                   type="file"
-                  accept=".csv,.xlsx,.xls,.pdf,.txt,.docx"
+                  accept=".csv,.tsv,.xlsx,.xls,.ods,.pdf,.txt,.md,.docx,.doc,.odt,.rtf,.html,.htm,.json"
                   className="hidden"
                   multiple
                   onChange={(e) => {

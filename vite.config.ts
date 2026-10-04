@@ -1,5 +1,6 @@
 import path from 'path';
 import { existsSync, rmSync } from 'fs';
+import { homedir } from 'os';
 import { defineConfig, loadEnv } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
@@ -26,6 +27,7 @@ export default defineConfig(({ command, mode }) => {
     // Dev serves /media from public/. Production Vite must not copy that
     // folder into dist (that filled the disk and produced 31k-line logs).
     publicDir: command === 'serve' ? path.resolve(__dirname, 'public') : false,
+    cacheDir: path.join(homedir(), 'Library', 'Caches', 'asoldi-website', 'vite'),
     plugins: [react(), tailwindcss(), stripLeftoverDistMedia()],
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),

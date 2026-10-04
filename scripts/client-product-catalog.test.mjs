@@ -27,7 +27,7 @@ import {
   formatWooStorePrice,
 } from '../lib/ai-assistant/products-scrape.js';
 import { isPrivateIp, parsePublicHttpUrl } from '../lib/ai-assistant/safe-url.js';
-import { extractUrlsFromText, shouldIngestSources } from '../lib/ai-assistant/products-ingest.js';
+import { extractIngestText, extractUrlsFromText, shouldIngestSources } from '../lib/ai-assistant/products-ingest.js';
 import { extractFirstUrl } from '../lib/ai-assistant/chat.js';
 
 test('legacy kundedata products migrate into a normal catalog', () => {
@@ -235,21 +235,42 @@ test('SSRF guard blocks private hosts and allows https shops', () => {
   assert.equal(ok.hostname, 'butikk.no');
 });
 
-test('chat extracts the first public URL', () => {
+test('chat keeps URL helpers but does not ingest a website from chat text', () => {
   assert.equal(extractFirstUrl('se https://butikk.no/produkter takk'), 'https://butikk.no/produkter');
 });
 
-test('natural chat finds a bare domain and does not ingest "pris" small talk', () => {
+test('natural chat does not scrape a bare domain and still ingests typed price lists', () => {
   const spoken = 'jeg har ingen filer, men sjekk ut asoldi.com for prisene på produkter';
   const urls = extractUrlsFromText(spoken);
   assert.equal(urls.length, 1);
   assert.match(urls[0], /^https:\/\/asoldi\.com\/?$/);
   assert.equal(extractFirstUrl(spoken), urls[0]);
-  assert.equal(shouldIngestSources({ text: spoken }), true);
+  assert.equal(shouldIngestSources({ text: spoken }), false);
+  assert.equal(shouldIngestSources({ urls: ['https://asoldi.com'] }), false);
   assert.equal(shouldIngestSources({ text: 'hva slags priser bruker dere egentlig?' }), false);
   assert.equal(shouldIngestSources({ text: 'Toast 89 kr\nKaffe 45 kr\nBolle 30 kr' }), true);
   assert.equal(extractUrlsFromText('skriv til hei@asoldi.com').length, 0);
   assert.match(extractFirstUrl('sjekk www.topspin.no/meny'), /topspin\.no\/meny/);
+});
+
+test('text documents extract readable product lines', async () => {
+  const html = await extractIngestText({
+    originalName: 'meny.html',
+    mimeType: 'text/html',
+    buffer: Buffer.from('<html><body><h1>Meny</h1><p>Bolle 40 kr</p></body></html>'),
+  });
+  assert.equal(html.kind, 'document');
+  assert.match(html.text, /Bolle 40 kr/);
+  assert.equal(html.text.includes('<p>'), false);
+
+  const rtf = await extractIngestText({
+    originalName: 'priser.rtf',
+    mimeType: 'application/rtf',
+    buffer: Buffer.from('{\\rtf1\\ansi Kaffe 45 kr\\par Toast 89 kr}'),
+  });
+  assert.equal(rtf.kind, 'document');
+  assert.match(rtf.text, /Kaffe 45 kr/);
+  assert.match(rtf.text, /Toast 89 kr/);
 });
 
 test('explicit cake catalog stays normal even when industry is restaurant', () => {

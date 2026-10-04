@@ -8,6 +8,7 @@ import {
   SETTINGS_PATH,
   alwaysOpenDays,
   businessLabel,
+  personFirstName,
   hasListedTeam,
   hoursLookCustom,
   isDecline,
@@ -169,6 +170,8 @@ test('questions stay the same for one business and change across businesses', ()
   assert.equal(questionFor('staff', 'Alpha Bakeri').includes('tonalitet'), false);
   assert.match(questionFor('done', 'Alpha Bakeri'), /bedriftsinformasjon/i);
   assert.equal(businessLabel({ businessCard: { companyName: 'Alpha Bakeri' } }), 'Alpha Bakeri');
+  assert.equal(personFirstName({ name: 'Kari Nord', businessName: 'Alpha Bakeri' }), 'Kari');
+  assert.equal(personFirstName({ businessName: 'Alpha Bakeri' }), '');
 });
 
 test('opening state follows the next missing bucket and redirects when finished', () => {
@@ -309,20 +312,35 @@ test('intake flags and opening-hour status survive a later settings save', () =>
   assert.equal(second.clientDataBank.businessCard.companyName, 'Testkafe AS');
 });
 
+test('a pasted website is not scraped; the assistant asks for a document', async () => {
+  portal.upsertClientProfile('url-chat-user', { businessName: 'Urlkafe' });
+  const reply = await handleAssistantChat('url-chat-user', { text: 'sjekk https://cafeen.no/meny' });
+  assert.equal(reply.jobId || '', '');
+  assert.equal(reply.nextAction, 'wait');
+  assert.match(reply.assistantMessage, /dokument|fil|PDF|Excel/i);
+  assert.doesNotMatch(reply.assistantMessage, /går gjennom hele/i);
+});
+
+test('a document uploaded on the media step is read as text', async () => {
+  portal.upsertClientProfile('media-doc-user', { businessName: 'Dokkafe' });
+  const skipped = await handleAssistantChat('media-doc-user', { text: 'nei' });
+  assert.equal(skipped.currentStep, 'media');
+  const txt = await handleAssistantChat('media-doc-user', {
+    text: '',
+    files: [{ originalName: 'meny.txt', mimeType: 'text/plain', buffer: Buffer.from('Bolle 40 kr') }],
+  });
+  assert.ok(txt.jobId);
+  assert.equal(txt.nextAction, 'ingest');
+  assert.match(txt.assistantMessage, /dokument/i);
+  assert.doesNotMatch(txt.assistantMessage, /hører ikke hjemme|bare bilder/i);
+});
+
 test('the assistant walks the missing buckets and writes each answer into kundedata', async () => {
   portal.upsertClientProfile('intake-chat-user', { businessName: 'Chatkafe' });
   const skipped = await handleAssistantChat('intake-chat-user', { text: 'nei' });
   assert.equal(skipped.currentStep, 'media');
   assert.match(skipped.assistantMessage, /bilde|video/i);
   assert.doesNotMatch(skipped.assistantMessage, /Normal —|Meny —|Tiers/);
-
-  const txt = await handleAssistantChat('intake-chat-user', {
-    text: 'her er teksten',
-    files: [{ originalName: 'meny.txt', mimeType: 'text/plain', buffer: Buffer.from('Bolle 40 kr') }],
-  });
-  assert.equal(txt.currentStep, 'media');
-  assert.match(txt.assistantMessage, /bilder og video/i);
-  assert.equal((portal.getClientProfileByUserId('intake-chat-user').clientDataBank.media.uncategorized || []).length, 0);
 
   const photo = await handleAssistantChat('intake-chat-user', {
     text: '',
