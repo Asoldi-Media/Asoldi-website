@@ -73,13 +73,13 @@ It looks at Kundedata and asks only the first empty bucket. The client can skip 
 
 | Step | Ask | If they say no | Where a yes is written | Today |
 |------|-----|----------------|------------------------|--------|
-| 1. Produkter | Products, services, or a menu. A site, a file, or a written list is enough. | Skip. | `productCatalogs` | This is the step that must be good. See below. |
-| 2. Media | Images or video they want on the site. | Skip. | Media library | Saved. See the media rule. |
-| 3. Logo | Logo image, only if one is not already there. | Skip. | `brandIdentity.logos.normal` and `media.logos` | First image only. Text files are refused. |
-| 4. Ansatte | «Lyst til å vise informasjon om deres ansatte på siden?» Then title, name, phone, email, one person per line. | Skip. | `staff`, appended. Image is left empty. | The signer from onboarding is ignored when deciding if this step is still needed. |
-| 5. Åpningstider | Monday–Sunday. Also accept «not relevant» or open 24/7. | «Not relevant» is a real answer, not a blank. | `openingHours.status` + `openingHours.days` | Default Mon–Fri 08–16 does **not** count as filled. `set`, `always`, and `not-relevant` do. |
-| 6. Partnere | Partners or affiliations to show on the site. Group them if the client groups them («Sponsorer: …»). | Skip. | `affiliations` (category + items) | Text only. |
-| Done | Short line that gathering is finished. | — | Stay on the assistant. The panel shows every step with what was saved. A link opens `/kunde/innstillinger` if they want to edit. | Happens when every step above is filled or flagged. The page does not leave the assistant on its own. |
+| 1. Produkter | Products, services, or a menu. A site, a file, or a written list is enough. | Skip. | `productCatalogs` | After a save, ask if there is more. «Det er alt» or nei moves on. |
+| 2. Media | Images or video they want on the site. | Skip. | Media library | Same follow-up as products. |
+| 3. Logo | Logo image, only if one is not already there. | Skip. | `brandIdentity.logos.normal` and `media.logos` | One image, then the next step. No «more logos?» question. |
+| 4. Ansatte | «Lyst til å vise informasjon om deres ansatte på siden?» Then title, name, phone, email, one person per line. | Skip. | `staff`, appended. Image is left empty. | After each person, ask if there are more. The signer from onboarding is ignored. |
+| 5. Åpningstider | Monday–Sunday. Also accept «not relevant» or open 24/7. | «Not relevant» is a real answer, not a blank. | `openingHours.status` + `openingHours.days` | One answer, then the next step. Do not ask if every day was filled. |
+| 6. Partnere | Partners or affiliations to show on the site. Group them if the client groups them («Sponsorer: …»). | Skip. | `affiliations` (category + items) | After a list, ask if there are more. |
+| Done | Short line that gathering is finished. | — | Stay on the assistant. The panel is the profile card. A link opens `/kunde/innstillinger`. | Happens when every step above is filled or flagged. |
 
 ### Do not ask these in the assistant
 
