@@ -16719,7 +16719,10 @@ app.post('/api/admin/sales/:id/create-maker-run', salesOrDevelopmentAuth, async 
   // Prefer the URL the operator typed in the Sales UI.
   // Only fall back to the Docker Maker host when no URL is configured.
   // normalizeHttpOrigin remaps legacy local :4000 → :3000.
-  const requestedBase = normalizeHttpOrigin(req.body?.websiteMakerBaseUrl || '');
+  const thisComputerBase = normalizeHttpOrigin(LOCAL_EDITOR_ORIGIN);
+  const requestedBase = parseBoolean(req.body?.makerOnThisComputer, false)
+    ? thisComputerBase
+    : normalizeHttpOrigin(req.body?.websiteMakerBaseUrl || '');
   const envBase = normalizeHttpOrigin(process.env.WEBSITE_MAKER_BASE_URL || '');
   const localBase = normalizeHttpOrigin(DEFAULT_MAKER_LOCAL_URL);
   const isLocalBase = (value = '') => /localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(String(value || ''));
@@ -16794,7 +16797,10 @@ app.post('/api/admin/sales/:id/create-maker-run', salesOrDevelopmentAuth, async 
     const browserCreated = req.body?.browserCreated && typeof req.body.browserCreated === 'object' ? req.body.browserCreated : null;
     const browserCreatedRunId = sanitizeText(browserCreated?.runId);
     if (browserCreatedRunId) {
-      const base = requestedBase || envBase || localBase;
+      const base = requestedBase
+        || (requestIsPublicInternetHost(req) ? thisComputerBase : '')
+        || envBase
+        || localBase;
       if (!base) {
         return res.status(400).json({ message: 'Website Maker URL is missing.' });
       }
@@ -16821,13 +16827,13 @@ app.post('/api/admin/sales/:id/create-maker-run', salesOrDevelopmentAuth, async 
       });
     }
 
-    // asoldi.com (Hostinger) cannot fetch a LAN Maker URL. The sales browser can,
-    // so return the payload and let the UI create the run at the pasted Maker URL.
-    if (requestedBase && isPrivateMakerUrl(requestedBase) && requestIsPublicInternetHost(req)) {
+    // asoldi.com cannot fetch Maker, and Hostinger WAF 403s a body with 127.0.0.1.
+    // The browser creates the run; do not require that address in the request.
+    if (requestIsPublicInternetHost(req) && (!requestedBase || isPrivateMakerUrl(requestedBase))) {
       return res.json({
         ok: true,
         browserHandoff: true,
-        websiteMakerBaseUrl: requestedBase,
+        websiteMakerBaseUrl: thisComputerBase,
         requestBody,
       });
     }
@@ -16875,11 +16881,11 @@ app.post('/api/admin/sales/:id/create-maker-run', salesOrDevelopmentAuth, async 
       }
     }
     if (!base || !runId) {
-      if (requestedBase && requestIsPublicInternetHost(req)) {
+      if (requestIsPublicInternetHost(req)) {
         return res.json({
           ok: true,
           browserHandoff: true,
-          websiteMakerBaseUrl: requestedBase,
+          websiteMakerBaseUrl: thisComputerBase,
           requestBody,
         });
       }

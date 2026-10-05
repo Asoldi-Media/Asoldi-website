@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { evaluateWorkshopNeeds } from '../lib/workshop-needs.js';
 import { scoreClientMaterials } from '../lib/client-material-dots.js';
-import { editorMakerOrigin, makerOriginsMatch, makerUnreachableIsLocal } from '../lib/maker-editor-origin.js';
+import { asoldiLocalMakerPayload, editorMakerOrigin, makerOriginsMatch, makerUnreachableIsLocal } from '../lib/maker-editor-origin.js';
 import {
   DEVELOPER_PROGRESS_CHIPS,
   DEVELOPER_QA_LABELS,
@@ -217,6 +217,18 @@ test('unfinished later chips enqueue until that step; ready chips offer preview'
 test('?panel=custom is the Custom edit path', () => {
   assert.equal(makerCustomEditPath('run-abc'), '/run/run-abc?panel=custom');
   assert.equal(makerCustomEditPath(''), '');
+});
+
+test('asoldi.com create-run POSTs never include 127.0.0.1', () => {
+  const body = JSON.stringify(asoldiLocalMakerPayload({ forceNewRun: false }));
+  assert.equal(body.includes('127.0.0.1'), false);
+  assert.equal(JSON.parse(body).makerOnThisComputer, true);
+  const tools = readFileSync(join(here, '../app/pages/developer/MakerRunTools.tsx'), 'utf8');
+  assert.match(tools, /asoldiLocalMakerPayload/);
+  assert.doesNotMatch(tools, /websiteMakerBaseUrl:\s*makerBase/);
+  const server = readFileSync(join(here, '../server.js'), 'utf8');
+  assert.match(server, /makerOnThisComputer/);
+  assert.match(server, /Hostinger WAF 403s a body with 127\.0\.0\.1/);
 });
 
 test('Custom edit opens Maker on this computer when the office address is stale', () => {

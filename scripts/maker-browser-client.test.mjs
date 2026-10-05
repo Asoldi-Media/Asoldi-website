@@ -64,6 +64,8 @@ test('Start run opens the Maker window on the click, same as preview', () => {
   const firstAwait = createFn.search(/\bawait\s+\w/);
   assert.ok(popupIdx >= 0 && firstAwait > popupIdx);
   assert.doesNotMatch(createFn, /ensureLocalMaker/);
+  assert.match(createFn, /asoldiLocalMakerPayload/);
+  assert.doesNotMatch(createFn, /websiteMakerBaseUrl:\s*makerBase/);
   const card = readFileSync(join(here, '../app/pages/developer/DeveloperClientCard.tsx'), 'utf8');
   const draft = card.slice(
     card.indexOf('async function openDraftPhase'),

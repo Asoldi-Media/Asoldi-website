@@ -14,7 +14,7 @@ import {
   resolveMakerPreviewUrl,
   resolveOpenInMakerUrl,
 } from '../sales/websiteMaker';
-import { LOCAL_EDITOR_ORIGIN } from '../../../lib/maker-editor-origin.js';
+import { asoldiLocalMakerPayload, LOCAL_EDITOR_ORIGIN } from '../../../lib/maker-editor-origin.js';
 import { asoldiPageIsOnThisComputer } from '../../../lib/maker-browser-client.js';
 import { fetchMakerRunStatus, findMakerRunBySalesClientId } from './makerQueue';
 import { makerHandoffFromLiveRun, pipelineStatusFromMakerRun, resolveLatestMakerPreviewStep } from '../../../lib/developer-card.js';
@@ -119,7 +119,7 @@ export async function createSalesMakerRun({
   try {
     let data = await makerRequest(`/admin/sales/${salesClientId}/create-maker-run`, {
       method: 'POST',
-      body: JSON.stringify({ websiteMakerBaseUrl: makerBase, forceNewRun }),
+      body: JSON.stringify(asoldiLocalMakerPayload({ forceNewRun })),
     }, authHeaders);
     if (data?.browserHandoff) {
       const created = await createRunViaMakerPopup(
@@ -131,11 +131,10 @@ export async function createSalesMakerRun({
       );
       data = await makerRequest(`/admin/sales/${salesClientId}/create-maker-run`, {
         method: 'POST',
-        body: JSON.stringify({
-          websiteMakerBaseUrl: makerBase,
+        body: JSON.stringify(asoldiLocalMakerPayload({
           forceNewRun,
           browserCreated: created,
-        }),
+        })),
       }, authHeaders);
     }
     try {
