@@ -6,10 +6,12 @@ import { fileURLToPath } from 'node:url';
 import {
   asoldiPageIsOnThisComputer,
   buildPipelineQueuePostBody,
+  canThisPageFetchLocalMaker,
   LOCAL_MAKER_ORIGIN,
   makerApiUrl,
   makerBrowserUnreachableMessage,
   makerHealthUrl,
+  makerPublicPageCannotFetchMessage,
 } from '../lib/maker-browser-client.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -23,6 +25,16 @@ test('Maker API URLs stay on this computer port 3000', () => {
   assert.equal(asoldiPageIsOnThisComputer('asoldi.com'), false);
   assert.equal(asoldiPageIsOnThisComputer('127.0.0.1'), true);
   assert.equal(asoldiPageIsOnThisComputer('localhost'), true);
+  assert.equal(canThisPageFetchLocalMaker('asoldi.com'), false);
+  assert.equal(canThisPageFetchLocalMaker('127.0.0.1'), true);
+  assert.match(makerPublicPageCannotFetchMessage(), /cannot fetch the Maker/i);
+  const clientSrc = readFileSync(join(here, '../lib/maker-browser-client.js'), 'utf8');
+  assert.match(clientSrc, /if \(!canThisPageFetchLocalMaker\(\)\) return false;/);
+  assert.match(clientSrc, /makerPublicPageCannotFetchMessage/);
+  assert.doesNotMatch(
+    clientSrc.slice(clientSrc.indexOf('export async function fetchLocalMakerJson')),
+    /if \(!canThisPageFetchLocalMaker\(\)\) \{\s*throw new Error\(makerBrowserUnreachableMessage/
+  );
 });
 
 test('queue POST sends run ids to Maker, not a host field', () => {
@@ -49,6 +61,14 @@ test('developer queue helpers call Maker from the browser', () => {
   assert.doesNotMatch(makerQueue, /skipped: true/);
   assert.match(makerQueue, /\/api\/health|makerBrowserUnreachableMessage/);
   assert.doesNotMatch(makerQueue, /admin\/development\/maker-queue/);
+  assert.match(makerQueue, /\/asoldi-queue/);
+  assert.match(makerQueue, /enqueueMakerQueueViaTab/);
+  const ensureFn = makerQueue.slice(
+    makerQueue.indexOf('export async function ensureLocalMaker'),
+    makerQueue.indexOf('export async function fetchMakerQueue')
+  );
+  assert.ok(ensureFn.indexOf('asoldiPageIsOnThisComputer') < ensureFn.indexOf('waitForLocalMaker'));
+  assert.doesNotMatch(ensureFn, /throw new Error\(makerBrowserUnreachableMessage\(\)\)/);
   const websiteMaker = readFileSync(join(here, '../app/pages/sales/websiteMaker.ts'), 'utf8');
   assert.match(websiteMaker, /export const LOCAL_MAKER_URL = LOCAL_EDITOR_ORIGIN/);
   assert.doesNotMatch(websiteMaker, /export const LOCAL_MAKER_URL = 'http:\/\/localhost:3000'/);

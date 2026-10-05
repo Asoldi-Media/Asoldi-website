@@ -26,5 +26,9 @@ test('client cards show running CMS version and push through local Maker', () =>
   assert.match(fleet, /Push CMS to all/);
   assert.match(fleet, /\/api\/cms-fleet/);
   assert.match(fleet, /fetchLocalMakerJson/);
+  assert.match(fleet, /asoldiPageIsOnThisComputer/);
+  assert.match(fleet, /CMS push runs from Website Creator on this computer/);
+  const loadFleet = fleet.slice(fleet.indexOf('const loadFleet = useCallback'), fleet.indexOf('void loadFleet()'));
+  assert.ok(loadFleet.indexOf('asoldiPageIsOnThisComputer') < loadFleet.indexOf('fetchLocalMakerJson'));
   assert.match(fleet, /cms\.site\.json/);
 });

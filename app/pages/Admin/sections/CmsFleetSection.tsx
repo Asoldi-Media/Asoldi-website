@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type { Site } from '../shared';
-import { fetchLocalMakerJson, makerBrowserUnreachableMessage } from '../../../../lib/maker-browser-client.js';
+import { asoldiPageIsOnThisComputer, fetchLocalMakerJson, makerBrowserUnreachableMessage } from '../../../../lib/maker-browser-client.js';
 
 export type CmsFleetItem = {
   id?: string;
@@ -56,6 +56,11 @@ export function useCmsFleet(sites: Site[]) {
   const [busy, setBusy] = useState(false);
 
   const loadFleet = useCallback(async () => {
+    if (typeof window !== 'undefined' && !asoldiPageIsOnThisComputer(window.location.hostname)) {
+      setSnapshot(null);
+      setMakerError('');
+      return null;
+    }
     try {
       const data = (await fetchLocalMakerJson('/api/cms-fleet')) as CmsFleetSnapshot;
       setSnapshot(data);
@@ -119,6 +124,9 @@ export function useCmsFleet(sites: Site[]) {
   }
 
   async function push(body: { repos?: string[]; all?: boolean }, confirmText: string) {
+    if (typeof window !== 'undefined' && !asoldiPageIsOnThisComputer(window.location.hostname)) {
+      return;
+    }
     if (!window.confirm(confirmText)) return;
     setBusy(true);
     try {
@@ -184,6 +192,13 @@ type ToolbarProps = {
 export function CmsFleetToolbar({ fleet }: ToolbarProps) {
   const { snapshot, makerError, makerVersion, pushing, selectedRepos, allSelected, toggleAll, pushSelected, pushAll } =
     fleet;
+  if (typeof window !== 'undefined' && !asoldiPageIsOnThisComputer(window.location.hostname)) {
+    return (
+      <p className="mb-4 text-gray-500 text-xs">
+        CMS push runs from Website Creator on this computer. Start Docker Maker, then use a local asoldi page.
+      </p>
+    );
+  }
   return (
     <div className="mb-4 space-y-2">
       <div className="flex flex-wrap items-center gap-2">

@@ -87,16 +87,63 @@ export async function enqueueMakerQueue({
   if (!body.runIds.length) {
     throw new Error('No Website Maker run is linked.');
   }
+  if (typeof window !== 'undefined' && !asoldiPageIsOnThisComputer(window.location.hostname)) {
+    return enqueueMakerQueueViaTab(body);
+  }
   return fetchLocalMakerJson('/api/pipeline-queue', { method: 'POST', body });
 }
 
-export async function ensureLocalMaker() {
-  if (await waitForLocalMaker({ attempts: 1, timeoutMs: 2500 })) {
-    return { ok: true, alreadyRunning: true };
+async function enqueueMakerQueueViaTab(body: ReturnType<typeof buildPipelineQueuePostBody>) {
+  const popupUrl = new URL('/asoldi-queue', DEVELOPER_MAKER_ORIGIN);
+  popupUrl.searchParams.set('returnOrigin', window.location.origin);
+  try {
+    const encoded = encodeURIComponent(JSON.stringify(body || {}));
+    if (encoded.length < 50000) popupUrl.hash = `p=${encoded}`;
+  } catch {
+    // postMessage fallback if the payload cannot be hashed.
   }
+  const popup = window.open(popupUrl.toString(), '_blank');
+  if (!popup) {
+    throw new Error('Popup blocked. Allow popups for this site and try again.');
+  }
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (handler: () => void) => {
+      if (settled) return;
+      settled = true;
+      window.removeEventListener('message', onMessage);
+      window.clearTimeout(timeoutId);
+      handler();
+    };
+    const timeoutId = window.setTimeout(() => {
+      finish(() => reject(new Error('Timed out talking to Website Creator. Leave the Maker tab open and try again.')));
+    }, 180_000);
+    const onMessage = (event: MessageEvent) => {
+      const payload = event.data && typeof event.data === 'object' ? event.data as Record<string, unknown> : null;
+      if (!payload) return;
+      if (payload.type === 'asoldi-queue-listening') {
+        popup.postMessage({ type: 'asoldi-queue', body }, event.origin);
+        return;
+      }
+      if (payload.type === 'asoldi-queue-error') {
+        finish(() => reject(new Error(String(payload.message || 'Could not queue the Maker step.'))));
+        return;
+      }
+      if (payload.type === 'asoldi-queue-ready') {
+        finish(() => resolve(payload.data && typeof payload.data === 'object' ? payload.data : { ok: true }));
+      }
+    };
+    window.addEventListener('message', onMessage);
+  });
+}
+
+export async function ensureLocalMaker() {
   const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
   if (!asoldiPageIsOnThisComputer(hostname)) {
-    throw new Error(makerBrowserUnreachableMessage());
+    return { ok: true, viaTab: true };
+  }
+  if (await waitForLocalMaker({ attempts: 1, timeoutMs: 2500 })) {
+    return { ok: true, alreadyRunning: true };
   }
   const response = await fetch(`${API}/admin/development/maker/ensure`, {
     method: 'POST',
