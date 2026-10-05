@@ -42,7 +42,6 @@ import {
   resolveOpenInMakerUrl,
 } from '../sales/websiteMaker';
 import { DEVELOPER_PREVIEW_GOAL_KEYS, DEVELOPER_WIN_GOAL_KEYS } from '../../../lib/developer-goals.js';
-import { WebsiteDueField } from '../Admin/sections/WebsiteDueField';
 import { developerOwnerDisplayName, sameDeveloperOwner } from '../../../lib/developer-assignment.js';
 
 const CARD_SELECTED = 'border-[#FF5B00] ring-2 ring-[#FF5B00]/25';
@@ -838,18 +837,6 @@ export function DeveloperClientCard({
             <CalendarClock size={12} />
             {timeline.label}
           </p>
-        ) : null}
-        {isAdmin && (salesClientId || item.siteId) ? (
-          <div className="mt-2">
-            <WebsiteDueField
-              salesClientId={salesClientId}
-              siteId={item.siteId}
-              variant="card"
-              authHeaders={developmentAuthHeaders()}
-              clearLabel="Fjern dato"
-              onSaved={() => { void onReload(); }}
-            />
-          </div>
         ) : null}
         {salesClientId ? (
           <button

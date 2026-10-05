@@ -120,13 +120,15 @@ test('admin client cards can edit the website due date for any client', () => {
   const root = join(dirname(fileURLToPath(import.meta.url)), '..');
   const adminBoard = readFileSync(join(root, 'app/pages/Admin/sections/AdminBoardSection.tsx'), 'utf8');
   const clients = readFileSync(join(root, 'app/pages/Admin/sections/ClientSitesSection.tsx'), 'utf8');
+  const offerReview = readFileSync(join(root, 'app/pages/Admin/sections/OfferReviewSection.tsx'), 'utf8');
   const developer = readFileSync(join(root, 'app/pages/developer/DeveloperClientCard.tsx'), 'utf8');
   const field = readFileSync(join(root, 'app/pages/Admin/sections/WebsiteDueField.tsx'), 'utf8');
   const inbox = readFileSync(join(root, 'app/pages/Admin/sections/AdminRequestInbox.tsx'), 'utf8');
   assert.match(adminBoard, /WebsiteDueField/);
   assert.match(clients, /WebsiteDueField/);
-  assert.match(developer, /WebsiteDueField/);
-  assert.match(developer, /isAdmin && \(salesClientId \|\| item\.siteId\)/);
+  assert.match(offerReview, /WebsiteDueField/);
+  assert.doesNotMatch(developer, /WebsiteDueField/);
+  assert.match(developer, /timeline\.label/);
   assert.doesNotMatch(developer, /item\.offerCustom \?/);
   assert.match(field, /siteId/);
   assert.match(field, /variant/);
