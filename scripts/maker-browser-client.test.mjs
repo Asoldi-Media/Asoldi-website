@@ -46,11 +46,29 @@ test('developer queue helpers call Maker from the browser', () => {
   assert.match(makerQueue, /\/api\/pipeline-queue/);
   assert.match(makerQueue, /waitForLocalMaker/);
   assert.match(makerQueue, /asoldiPageIsOnThisComputer/);
-  assert.match(makerQueue, /skipped: true/);
+  assert.doesNotMatch(makerQueue, /skipped: true/);
   assert.match(makerQueue, /\/api\/health|makerBrowserUnreachableMessage/);
   assert.doesNotMatch(makerQueue, /admin\/development\/maker-queue/);
-  assert.match(makerQueue, /Start run still opens a top-level Maker window/);
   const websiteMaker = readFileSync(join(here, '../app/pages/sales/websiteMaker.ts'), 'utf8');
   assert.match(websiteMaker, /export const LOCAL_MAKER_URL = LOCAL_EDITOR_ORIGIN/);
   assert.doesNotMatch(websiteMaker, /export const LOCAL_MAKER_URL = 'http:\/\/localhost:3000'/);
+});
+
+test('Start run opens the Maker window on the click, same as preview', () => {
+  const tools = readFileSync(join(here, '../app/pages/developer/MakerRunTools.tsx'), 'utf8');
+  const createFn = tools.slice(
+    tools.indexOf('export async function createSalesMakerRun'),
+    tools.indexOf('export function MakerRunTools')
+  );
+  const popupIdx = createFn.indexOf('const popup = openMakerCreatePopup()');
+  const firstAwait = createFn.search(/\bawait\s+\w/);
+  assert.ok(popupIdx >= 0 && firstAwait > popupIdx);
+  assert.doesNotMatch(createFn, /ensureLocalMaker/);
+  const card = readFileSync(join(here, '../app/pages/developer/DeveloperClientCard.tsx'), 'utf8');
+  const draft = card.slice(
+    card.indexOf('async function openDraftPhase'),
+    card.indexOf('async function enqueueTarget')
+  );
+  assert.doesNotMatch(draft, /ensureLocalMaker/);
+  assert.match(draft, /window\.open/);
 });

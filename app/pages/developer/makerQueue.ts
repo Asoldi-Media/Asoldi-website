@@ -96,9 +96,7 @@ export async function ensureLocalMaker() {
   }
   const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
   if (!asoldiPageIsOnThisComputer(hostname)) {
-    // https://asoldi.com cannot fetch 127.0.0.1 (Chrome local-network).
-    // Start run still opens a top-level Maker window on this PC.
-    return { ok: true, skipped: true };
+    throw new Error(makerBrowserUnreachableMessage());
   }
   const response = await fetch(`${API}/admin/development/maker/ensure`, {
     method: 'POST',

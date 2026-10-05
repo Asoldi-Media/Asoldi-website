@@ -452,37 +452,34 @@ export function DeveloperClientCard({
   }
 
   async function openDraftPhase() {
-    setEnqueueBusy('draft');
     setChipMenu('');
     onError('');
-    try {
-      try {
-        await ensureLocalMaker();
-      } catch {
-        // asoldi.com often cannot ping 127.0.0.1; create-run still opens Maker.
-      }
-      let runId = liveRunId;
-      if (!runId) {
-        const created = await createSalesMakerRun({
-          salesClientId,
-          businessName: item.businessName,
-          websiteMakerBaseUrl: editorBase,
-          authHeaders: developmentAuthHeaders(),
-        });
-        runId = created.runId;
-        if (created.client && onClientUpdated) onClientUpdated(created.client);
-        else await onReload();
-      }
-      if (!runId) {
-        onError('Website Creator åpnet ikke et kjøringsutkast.');
-        return;
-      }
-      const url = buildMakerRunUrl(editorBase, runId, draft.injected ? 'dashboard' : 'intake');
+    if (liveRunId) {
+      const url = buildMakerRunUrl(editorBase, liveRunId, draft.injected ? 'dashboard' : 'intake');
       if (!url) {
         onError('Kunne ikke åpne Website Creator.');
         return;
       }
       window.open(url, '_blank');
+      return;
+    }
+    setEnqueueBusy('draft');
+    try {
+      const created = await createSalesMakerRun({
+        salesClientId,
+        businessName: item.businessName,
+        websiteMakerBaseUrl: editorBase,
+        authHeaders: developmentAuthHeaders(),
+      });
+      const runId = created.runId;
+      if (created.client && onClientUpdated) onClientUpdated(created.client);
+      else await onReload();
+      if (!runId) {
+        onError('Website Creator åpnet ikke et kjøringsutkast.');
+        return;
+      }
+      const url = buildMakerRunUrl(editorBase, runId, draft.injected ? 'dashboard' : 'intake');
+      if (url) window.open(url, '_blank');
     } catch (error) {
       onError(error instanceof Error ? error.message : 'Kunne ikke åpne Website Creator.');
     } finally {

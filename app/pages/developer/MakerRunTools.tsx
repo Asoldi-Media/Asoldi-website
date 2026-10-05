@@ -15,7 +15,8 @@ import {
   resolveOpenInMakerUrl,
 } from '../sales/websiteMaker';
 import { LOCAL_EDITOR_ORIGIN } from '../../../lib/maker-editor-origin.js';
-import { ensureLocalMaker, fetchMakerRunStatus, findMakerRunBySalesClientId } from './makerQueue';
+import { asoldiPageIsOnThisComputer } from '../../../lib/maker-browser-client.js';
+import { fetchMakerRunStatus, findMakerRunBySalesClientId } from './makerQueue';
 import { makerHandoffFromLiveRun, pipelineStatusFromMakerRun, resolveLatestMakerPreviewStep } from '../../../lib/developer-card.js';
 
 type MakerClientLike = {
@@ -77,16 +78,19 @@ export async function createSalesMakerRun({
   if (!salesClientId) {
     throw new Error('This client is not linked to a sales record, so a Maker run cannot be created.');
   }
-  try {
-    await ensureLocalMaker();
-  } catch {
-    // Health ping from asoldi.com is often blocked. The Maker popup is the create path.
+  // Open the Maker window on the click, same as preview. A fetch to 127.0.0.1
+  // from asoldi.com is blocked, and delaying window.open loses the click gesture.
+  const popup = openMakerCreatePopup();
+  if (!popup) {
+    throw new Error('Popup blocked. Allow popups for this site and try again.');
   }
   const makerBase =
     healStaleLocalMakerBase(websiteMakerBaseUrl) ||
     normalizeHttpBaseUrl(websiteMakerBaseUrl) ||
     LOCAL_EDITOR_ORIGIN;
-  if (!forceNewRun) {
+  const canLookupMaker =
+    typeof window !== 'undefined' && asoldiPageIsOnThisComputer(window.location.hostname);
+  if (!forceNewRun && canLookupMaker) {
     try {
       const found = await findMakerRunBySalesClientId(salesClientId, businessName);
       const foundId = String(found?.runId || '').trim();
@@ -97,6 +101,11 @@ export async function createSalesMakerRun({
           method: 'POST',
           body: JSON.stringify({ runId: foundId, handoff }),
         }, authHeaders);
+        try {
+          if (!popup.closed) popup.close();
+        } catch {
+          // Lookup succeeded; the create window is not needed.
+        }
         return {
           runId: foundId,
           client: data?.client as Record<string, unknown> | undefined,
@@ -106,10 +115,6 @@ export async function createSalesMakerRun({
     } catch {
       // Fall through and create a new draft when lookup fails.
     }
-  }
-  const popup = openMakerCreatePopup();
-  if (!popup) {
-    throw new Error('Popup blocked. Allow popups for this site and try again.');
   }
   try {
     let data = await makerRequest(`/admin/sales/${salesClientId}/create-maker-run`, {
