@@ -275,17 +275,16 @@ export function resolveMakerPreviewUrl({
   return '';
 }
 
-export function openMakerCreatePopup(): Window | null {
-  const popupName = `asoldi-sales-create-run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const popup = window.open('about:blank', popupName, 'width=560,height=520');
-  if (!popup) return null;
+export function openMakerCreatePopup(makerBase = LOCAL_EDITOR_ORIGIN): Window | null {
+  const origin = normalizeHttpBaseUrl(makerBase) || LOCAL_EDITOR_ORIGIN;
+  const popupUrl = new URL('/sales-create-run', origin);
   try {
-    popup.document.title = 'Website Maker';
-    popup.document.body.textContent = 'Creating the website run…';
+    popupUrl.searchParams.set('returnOrigin', window.location.origin);
   } catch {
-    // about:blank is same-origin until it navigates to Maker.
+    // Open Maker anyway; the create page can still announce without a return origin.
   }
-  return popup;
+  // Same as preview: a normal tab. A sized popup is blocked on asoldi.com.
+  return window.open(popupUrl.toString(), '_blank');
 }
 
 export async function createRunViaMakerPopup(

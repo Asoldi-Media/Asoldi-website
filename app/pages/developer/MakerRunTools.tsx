@@ -78,16 +78,15 @@ export async function createSalesMakerRun({
   if (!salesClientId) {
     throw new Error('This client is not linked to a sales record, so a Maker run cannot be created.');
   }
-  // Open the Maker window on the click, same as preview. A fetch to 127.0.0.1
-  // from asoldi.com is blocked, and delaying window.open loses the click gesture.
-  const popup = openMakerCreatePopup();
-  if (!popup) {
-    throw new Error('Popup blocked. Allow popups for this site and try again.');
-  }
   const makerBase =
     healStaleLocalMakerBase(websiteMakerBaseUrl) ||
     normalizeHttpBaseUrl(websiteMakerBaseUrl) ||
     LOCAL_EDITOR_ORIGIN;
+  // Open Maker on the click, same as preview (a normal tab, not a sized popup).
+  const popup = openMakerCreatePopup(makerBase);
+  if (!popup) {
+    throw new Error('Popup blocked. Allow popups for this site and try again.');
+  }
   const canLookupMaker =
     typeof window !== 'undefined' && asoldiPageIsOnThisComputer(window.location.hostname);
   if (!forceNewRun && canLookupMaker) {

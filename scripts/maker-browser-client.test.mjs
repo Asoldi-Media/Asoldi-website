@@ -60,12 +60,15 @@ test('Start run opens the Maker window on the click, same as preview', () => {
     tools.indexOf('export async function createSalesMakerRun'),
     tools.indexOf('export function MakerRunTools')
   );
-  const popupIdx = createFn.indexOf('const popup = openMakerCreatePopup()');
+  const popupIdx = createFn.indexOf('const popup = openMakerCreatePopup(makerBase)');
   const firstAwait = createFn.search(/\bawait\s+\w/);
   assert.ok(popupIdx >= 0 && firstAwait > popupIdx);
   assert.doesNotMatch(createFn, /ensureLocalMaker/);
   assert.match(createFn, /asoldiLocalMakerPayload/);
   assert.doesNotMatch(createFn, /websiteMakerBaseUrl:\s*makerBase/);
+  const websiteMakerCreate = readFileSync(join(here, '../app/pages/sales/websiteMaker.ts'), 'utf8');
+  assert.match(websiteMakerCreate, /window\.open\(popupUrl\.toString\(\), '_blank'\)/);
+  assert.doesNotMatch(websiteMakerCreate, /width=560,height=520/);
   const card = readFileSync(join(here, '../app/pages/developer/DeveloperClientCard.tsx'), 'utf8');
   const draft = card.slice(
     card.indexOf('async function openDraftPhase'),
