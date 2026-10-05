@@ -4,7 +4,7 @@ import { editorMakerOrigin, LOCAL_EDITOR_ORIGIN, makerOriginsMatch } from '../..
 export const MAKER_BASE_URL_STORAGE_KEY = 'asoldi.sales.websiteMakerBaseUrl.v1';
 export const LAN_MAKER_URL = 'http://192.168.68.92:3000';
 export const PUBLIC_SALES_URL = 'https://asoldi.com';
-export const LOCAL_MAKER_URL = 'http://localhost:3000';
+export const LOCAL_MAKER_URL = LOCAL_EDITOR_ORIGIN;
 
 export function normalizeHttpBaseUrl(value = '') {
   const raw = String(value || '').trim();

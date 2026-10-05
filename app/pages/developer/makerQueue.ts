@@ -7,8 +7,11 @@ import {
   summarizeMakerRunForQueue,
 } from '../../../lib/maker-queue.js';
 import {
+  asoldiPageIsOnThisComputer,
   buildPipelineQueuePostBody,
   fetchLocalMakerJson,
+  makerBrowserUnreachableMessage,
+  waitForLocalMaker,
 } from '../../../lib/maker-browser-client.js';
 
 export { CLICKABLE_QUEUE_TARGETS, GREY_QUEUE_TARGETS, isClickableQueueTarget };
@@ -87,29 +90,22 @@ export async function enqueueMakerQueue({
   return fetchLocalMakerJson('/api/pipeline-queue', { method: 'POST', body });
 }
 
-async function pingLocalMaker() {
-  try {
-    await fetchLocalMakerJson('/api/pipeline-queue');
-    return true;
-  } catch (error) {
-    const message = error instanceof Error ? error.message : '';
-    if (/unreachable/i.test(message)) return false;
-    return true;
-  }
-}
-
 export async function ensureLocalMaker() {
-  if (await pingLocalMaker()) return { ok: true, alreadyRunning: true };
+  if (await waitForLocalMaker()) return { ok: true, alreadyRunning: true };
+  const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+  if (!asoldiPageIsOnThisComputer(hostname)) {
+    throw new Error(makerBrowserUnreachableMessage());
+  }
   const response = await fetch(`${API}/admin/development/maker/ensure`, {
     method: 'POST',
     headers: { ...developmentAuthHeaders(), 'Content-Type': 'application/json' },
   });
   const data = await response.json().catch(() => ({} as { ok?: boolean; message?: string }));
   if (!response.ok || data.ok === false) {
-    throw new Error(String(data.message || 'Website Creator kunne ikke startes.'));
+    throw new Error(String(data.message || makerBrowserUnreachableMessage()));
   }
-  if (await pingLocalMaker()) return { ok: true, started: true };
-  throw new Error('Website Creator startet, men svarer ikke på port 3000 ennå.');
+  if (await waitForLocalMaker({ attempts: 8, timeoutMs: 4000 })) return { ok: true, started: true };
+  throw new Error('Website Creator startet, men svarer ikke på http://127.0.0.1:3000 ennå.');
 }
 
 export async function fetchMakerQueue(

@@ -221,12 +221,17 @@ test('?panel=custom is the Custom edit path', () => {
 
 test('Custom edit opens Maker on this computer when the office address is stale', () => {
   assert.equal(editorMakerOrigin(''), 'http://127.0.0.1:3000');
+  assert.equal(editorMakerOrigin('http://localhost:3000'), 'http://127.0.0.1:3000');
   assert.equal(editorMakerOrigin('http://192.168.68.92:3000'), 'http://127.0.0.1:3000');
   assert.equal(editorMakerOrigin('https://maker.example.com'), 'https://maker.example.com');
   assert.equal(makerOriginsMatch('http://localhost:3000', 'http://127.0.0.1:3000'), true);
   assert.equal(makerOriginsMatch('http://localhost:3000', 'https://asoldi.com'), false);
   assert.equal(
     makerUnreachableIsLocal('Website Maker is unreachable at http://192.168.68.92:3000 from this host. Start the Maker tunnel, then retry.'),
+    true
+  );
+  assert.equal(
+    makerUnreachableIsLocal('Website Creator svarer ikke på http://127.0.0.1:3000. Start Docker Maker på denne PC-en.'),
     true
   );
   assert.equal(makerUnreachableIsLocal('Website Maker run lookup failed (404)'), false);

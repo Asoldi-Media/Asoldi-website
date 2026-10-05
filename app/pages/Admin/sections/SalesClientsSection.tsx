@@ -316,6 +316,11 @@ function parseDetails(details: Record<string, unknown> | undefined) {
 // proff.no company URLs carry the 9-digit org number as a path segment
 // (`/selskap/<slug>/<sted>/<bransje>/<orgnr>` or `/organisasjon/<orgnr>`), so the
 // Kontraktdata block can be pre-filled straight from the link the rep already pasted.
+function proffUrlFromOrgNumber(orgNumber = '') {
+  const digits = String(orgNumber || '').replace(/\D+/g, '');
+  return digits.length === 9 ? `https://www.proff.no/selskap/x/x/x/${digits}` : '';
+}
+
 function extractOrgNumberFromProffUrl(value = '') {
   const raw = String(value || '').trim();
   if (!raw) return '';
@@ -333,7 +338,12 @@ function extractOrgNumberFromProffUrl(value = '') {
   for (let i = segments.length - 1; i >= 0; i -= 1) {
     if (/^\d{9}$/.test(segments[i])) return segments[i];
   }
-  const queryOrg = String(parsed.searchParams.get('orgnr') || parsed.searchParams.get('organisasjonsnummer') || '').replace(/\D+/g, '');
+  const queryOrg = String(
+    parsed.searchParams.get('orgnr')
+    || parsed.searchParams.get('organisasjonsnummer')
+    || parsed.searchParams.get('q')
+    || ''
+  ).replace(/\D+/g, '');
   return queryOrg.length === 9 ? queryOrg : '';
 }
 
@@ -1368,7 +1378,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
       websiteEmail: client.websiteEmail || '',
       contactPhone: client.contactPhone || '',
       meetingPlace: client.meetingPlace || '',
-      orgNumber: client.orgNumber || '',
+      orgNumber: client.orgNumber || extractOrgNumberFromProffUrl(details.proffUrl),
       businessAddress: client.businessAddress || '',
       industry: client.industry || '',
       meetingMode: client.meetingMode === 'in-person' ? 'in-person' : 'online',
@@ -1376,7 +1386,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
       notes: clientNoteDraft(client),
       instagramUrl: details.instagramUrl,
       facebookUrl: details.facebookUrl,
-      proffUrl: details.proffUrl,
+      proffUrl: details.proffUrl || proffUrlFromOrgNumber(client.orgNumber),
       otherLinks: details.otherLinks,
       googleBusinessProfile: details.googleBusinessProfile,
     };
@@ -3838,7 +3848,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
               <div>
                 <Field label="proff.no URL" value={form.proffUrl} onChange={(value) => setForm((prev) => ({ ...prev, proffUrl: value }))} />
                 <p className="mt-1 text-[11px] text-gray-500">
-                  Org. nr hentes fra lenken når den er lagt inn{form.orgNumber ? `: ${form.orgNumber}` : ''}. Uten lenke hentes ingenting. Adressen er feltet «Business address (shown on map)».
+                  Org. nr kommer fra MyPhoner når kunden opprettes, og skrives inn i lenken som proff.no/selskap/x/x/x/orgnr. En ferdig Proff-lenke med ni siffer oppdaterer også feltet{form.orgNumber ? `: ${form.orgNumber}` : ''}.
                 </p>
               </div>
               <Field

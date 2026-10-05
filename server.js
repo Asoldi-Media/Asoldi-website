@@ -140,8 +140,12 @@ import {
   shouldSyncSalesMeetingCalendar,
 } from './lib/sales-calendar-owner.js';
 import {
+  buildDirectProffUrlFromOrgNumber,
+  extractOrganizationNumberFromLead,
+  extractOrganizationNumberFromText,
   fillProffUrlFromOrgNumber,
   mergeKeptSalesDetailLinks,
+  organizationNumberFromProffUrl,
   promoteGoogleBusinessFromOtherLinks,
   filterCustomOtherLinks,
   looksLikeEmailLink,
@@ -586,7 +590,7 @@ const MYPHONER_RECORDING_RETRY_DELAYS_MS = String(process.env.MYPHONER_RECORDING
 const MYPHONER_RECORDING_DOWNLOAD_ENABLED = String(process.env.MYPHONER_RECORDING_DOWNLOAD_ENABLED || '1') !== '0';
 const MYPHONER_RECORDING_PENDING_BATCH = Math.max(1, Number(process.env.MYPHONER_RECORDING_PENDING_BATCH || 20));
 const SALES_LINK_BACKFILL_ENABLED = String(process.env.SALES_LINK_BACKFILL_ENABLED || '1') !== '0';
-const SALES_LINK_BACKFILL_VERSION = sanitizeText(process.env.SALES_LINK_BACKFILL_VERSION || 'social-links-v6-retain-proff-maps');
+const SALES_LINK_BACKFILL_VERSION = sanitizeText(process.env.SALES_LINK_BACKFILL_VERSION || 'social-links-v7-proff-from-orgnr');
 const SALES_LINK_BACKFILL_LIMIT = Number(process.env.SALES_LINK_BACKFILL_LIMIT || 0);
 const SALES_MEETING_TIMEZONE = sanitizeText(process.env.GOOGLE_CALENDAR_TIMEZONE || 'Europe/Oslo') || 'Europe/Oslo';
 const MYPHONER_RECORDINGS_DIR = path.join(getPersistentDataDir(), 'myphoner-recordings');
@@ -2935,26 +2939,12 @@ function isProffOrganizationLookupUrl(value = '') {
 function shouldResolveProffUrl(value = '') {
   const normalized = coerceHttpUrl(value);
   if (!normalized) return true;
-  const canonical = canonicalizeProffCompanyUrl(normalized);
-  if (!canonical) return true;
-  return isProffSearchUrl(canonical) || isProffOrganizationLookupUrl(canonical);
+  if (isProffSearchUrl(normalized)) return true;
+  return !organizationNumberFromProffUrl(normalized);
 }
 
 function extractProffOrganizationNumberFromUrl(value = '') {
-  const canonical = canonicalizeProffCompanyUrl(value);
-  if (!canonical) return '';
-  try {
-    const parsed = new URL(canonical);
-    const segments = String(parsed.pathname || '')
-      .split('/')
-      .map((entry) => sanitizeText(entry))
-      .filter(Boolean);
-    if (!segments.length) return '';
-    const digits = sanitizeText(segments[segments.length - 1]).replace(/\D+/g, '');
-    return digits.length === 9 ? digits : '';
-  } catch {
-    return '';
-  }
+  return organizationNumberFromProffUrl(value);
 }
 
 function isLikelyMissingMyphonerValue(value = '') {
@@ -3085,17 +3075,44 @@ function parseMyphonerMeetingAtFromFreeText(text = '', fallbackYear = 0) {
   return '';
 }
 
+function flattenMyphonerLeadDataValue(value, depth = 0) {
+  if (depth > 5 || value == null || value === false) return [];
+  if (typeof value === 'string' || typeof value === 'number') return [value];
+  if (typeof value === 'boolean') return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((entry) => flattenMyphonerLeadDataValue(entry, depth + 1));
+  }
+  if (typeof value === 'object') {
+    if (Object.prototype.hasOwnProperty.call(value, 'value')) {
+      return flattenMyphonerLeadDataValue(value.value, depth + 1);
+    }
+    return Object.values(value).flatMap((entry) => flattenMyphonerLeadDataValue(entry, depth + 1));
+  }
+  return [];
+}
+
 function getLeadDataMap(lead = {}) {
   const source = lead && typeof lead === 'object' ? lead : {};
   const leadData = source.lead_data && typeof source.lead_data === 'object' ? source.lead_data : {};
-  const entries = Object.entries(leadData).map(([key, value]) => [
-    normalizeLooseKey(key),
-    sanitizeMyphonerFieldValue(value),
-  ]);
   const map = new Map();
-  for (const [key, value] of entries) {
-    if (!key || !value) continue;
-    if (!map.has(key)) map.set(key, value);
+  const remember = (key, value) => {
+    const normalizedKey = normalizeLooseKey(key);
+    const cleaned = sanitizeMyphonerFieldValue(value);
+    if (!normalizedKey || !cleaned || map.has(normalizedKey)) return;
+    map.set(normalizedKey, cleaned);
+  };
+  for (const [rawKey, rawValue] of Object.entries(leadData)) {
+    if (rawValue && typeof rawValue === 'object' && !Array.isArray(rawValue)) {
+      const nestedLabel = rawValue.name || rawValue.key || rawValue.label;
+      if (nestedLabel && Object.prototype.hasOwnProperty.call(rawValue, 'value')) {
+        remember(nestedLabel, rawValue.value);
+      }
+    }
+    const parts = flattenMyphonerLeadDataValue(rawValue)
+      .map((entry) => sanitizeMyphonerFieldValue(entry))
+      .filter(Boolean);
+    if (!parts.length) continue;
+    remember(rawKey, parts.join(' '));
   }
   return map;
 }
@@ -3513,10 +3530,8 @@ async function searchBraveHtml(queryText = '') {
 }
 
 function buildDirectProffLookupUrlFromOrganizationNumber(organizationNumber = '') {
-  const orgnr = sanitizeText(organizationNumber).replace(/\D+/g, '');
-  if (orgnr.length !== 9) return '';
-  // Proff resolves the company from the orgnr segment even when slug segments are placeholders.
-  return canonicalizeProffCompanyUrl(`https://www.proff.no/selskap/x/x/x/${encodeURIComponent(orgnr)}`);
+  const direct = buildDirectProffUrlFromOrgNumber(organizationNumber);
+  return canonicalizeProffCompanyUrl(direct) || direct;
 }
 
 async function searchProffInternalByOrganizationNumber(organizationNumber = '') {
@@ -4091,34 +4106,6 @@ function selectBestSearchUrl(results = [], options = {}) {
   return selectBestSearchCandidate(results, options).url;
 }
 
-function extractOrganizationNumberFromLead(lead = {}, leadDataMap = new Map()) {
-  const source = lead && typeof lead === 'object' ? lead : {};
-  const candidates = [
-    pickLeadDataValue(leadDataMap, [
-      'organisasjonsnummer',
-      'organization_number',
-      'organisation_number',
-      'orgnr',
-      'org_nr',
-      'org_number',
-      'brreg_number',
-    ]),
-    source.organisasjonsnummer,
-    source.organization_number,
-    source.organizationNumber,
-  ];
-  for (const value of leadDataMap.values()) {
-    if (typeof value === 'string' || typeof value === 'number') candidates.push(value);
-  }
-  for (const candidate of candidates) {
-    const match = String(candidate || '').match(/\b(\d{3}\s?\d{3}\s?\d{3})\b/);
-    if (!match?.[1]) continue;
-    const digits = match[1].replace(/\D+/g, '');
-    if (digits.length === 9) return digits;
-  }
-  return '';
-}
-
 function extractMyphonerLocationHint(lead = {}, leadDataMap = new Map()) {
   const source = lead && typeof lead === 'object' ? lead : {};
   return pickFirstNonEmpty([
@@ -4327,17 +4314,57 @@ function persistSalesClientLinkProgress({
   nextDetails = {},
   currentDetails = {},
   persist = true,
+  orgNumber = '',
 } = {}) {
   if (!persist || !sanitizeText(clientId)) return;
   const normalizedNext = promoteGoogleBusinessFromOtherLinks(
     normalizeSalesDetailLinks(nextDetails, currentDetails),
     classifySalesLink
   );
+  const patch = {};
   const changed = ['instagramUrl', 'facebookUrl', 'proffUrl', 'googleBusinessProfile'].some(
     (field) => sanitizeText(normalizedNext[field]) !== sanitizeText(currentDetails[field])
   );
-  if (!changed) return;
-  sales.updateSalesClient(clientId, { details: normalizedNext });
+  if (changed) patch.details = normalizedNext;
+  const nextOrg = sales.sanitizeOrgNumber(orgNumber);
+  if (nextOrg) {
+    const current = sales.getSalesClientById(clientId);
+    if (nextOrg !== sales.sanitizeOrgNumber(current?.orgNumber)) patch.orgNumber = nextOrg;
+  }
+  if (!Object.keys(patch).length) return;
+  sales.updateSalesClient(clientId, patch);
+}
+
+async function resolveOrgNumberForSalesClient({ client = {}, lead = {}, leadDataMap = new Map() } = {}) {
+  const fromLead = extractOrganizationNumberFromLead(lead, leadDataMap);
+  if (fromLead) return fromLead;
+  const fromClient = extractOrganizationNumberFromClientRecord(client);
+  if (fromClient) return fromClient;
+  const name = sanitizeText(client?.businessName || extractMyphonerLeadBusinessName(lead, leadDataMap));
+  if (!name) return '';
+  const candidates = await searchBrregBusinesses(name).catch(() => []);
+  const selected = selectBrregCandidateByBusinessName(
+    candidates,
+    name,
+    sanitizeText(client?.meetingPlace || client?.businessAddress || '')
+  );
+  return sales.sanitizeOrgNumber(selected?.organizationNumber) || '';
+}
+
+function applyOrgNumberAndProffToSalesClient(client, orgNumber) {
+  const orgnr = sales.sanitizeOrgNumber(orgNumber);
+  if (!client?.id || !orgnr) return client;
+  const details = normalizeSalesDetailLinks(client.details || {});
+  const proffUrl = fillProffUrlFromOrgNumber(details.proffUrl, orgnr, {
+    shouldResolve: shouldResolveProffUrl,
+    buildDirect: buildDirectProffLookupUrlFromOrganizationNumber,
+  });
+  const currentOrg = sales.sanitizeOrgNumber(client.orgNumber);
+  if (proffUrl === sanitizeText(details.proffUrl) && currentOrg === orgnr) return client;
+  return sales.updateSalesClient(client.id, {
+    orgNumber: orgnr,
+    details: { ...details, proffUrl },
+  }) || client;
 }
 
 async function enrichSalesClientLinksFromMyphoner({
@@ -4425,7 +4452,8 @@ async function enrichSalesClientLinksFromMyphoner({
       searchContext.locationHint || resolvedMeetingPlace
     );
     if (sanitizeText(selectedByName?.organizationNumber)) {
-      resolvedOrgnr = sanitizeText(selectedByName.organizationNumber);
+      resolvedOrgnr = sales.sanitizeOrgNumber(selectedByName.organizationNumber)
+        || sanitizeText(selectedByName.organizationNumber).replace(/\D+/g, '');
       brregEntity = selectedByName;
     }
   }
@@ -4458,25 +4486,33 @@ async function enrichSalesClientLinksFromMyphoner({
     businessName: baseBusinessName || searchContext.businessName,
   };
 
-  // Proff is orgnr-first: MyPhoner has no proff link, but its orgnr builds a
-  // deterministic proff.no/selskap/x/x/x/<orgnr> URL that Proff resolves itself.
+  // Proff is orgnr-first: MyPhoner has no proff link, but its orgnr (or Brreg
+  // lookup by name) builds a deterministic proff.no/selskap/x/x/x/<orgnr> URL.
   if (!nextDetails.proffUrl && leadDetails.proffUrl) nextDetails.proffUrl = leadDetails.proffUrl;
   const existingProffOrgnr = extractProffOrganizationNumberFromUrl(nextDetails.proffUrl);
+  const proffOrgnr = sales.sanitizeOrgNumber(resolvedOrgnr || strictProffOrgnr);
   const shouldRewriteProff = (url = '') =>
     shouldResolveProffUrl(url) || Boolean(
-      strictProffOrgnr &&
+      proffOrgnr &&
       sanitizeText(url) &&
-      extractProffOrganizationNumberFromUrl(url) !== strictProffOrgnr
+      extractProffOrganizationNumberFromUrl(url) !== proffOrgnr
     );
-  nextDetails.proffUrl = fillProffUrlFromOrgNumber(nextDetails.proffUrl, strictProffOrgnr, {
+  nextDetails.proffUrl = fillProffUrlFromOrgNumber(nextDetails.proffUrl, proffOrgnr, {
     shouldResolve: shouldRewriteProff,
     buildDirect: buildDirectProffLookupUrlFromOrganizationNumber,
   });
+  persistSalesClientLinkProgress({
+    clientId: targetClientId,
+    nextDetails,
+    currentDetails,
+    persist,
+    orgNumber: proffOrgnr,
+  });
   let proffResolution = {
     url: sanitizeText(nextDetails.proffUrl),
-    reason: !strictProffOrgnr
+    reason: !proffOrgnr
       ? (sanitizeText(nextDetails.proffUrl) ? 'already-present' : 'missing-orgnr')
-      : sanitizeText(existingProffOrgnr) && existingProffOrgnr === strictProffOrgnr && !shouldResolveProffUrl(nextDetails.proffUrl)
+      : sanitizeText(existingProffOrgnr) && existingProffOrgnr === proffOrgnr && !shouldResolveProffUrl(nextDetails.proffUrl)
         ? 'already-present'
         : (sanitizeText(nextDetails.proffUrl) ? 'proff-orgnr-direct' : 'missing-orgnr'),
   };
@@ -4486,7 +4522,7 @@ async function enrichSalesClientLinksFromMyphoner({
     businessName: socialBusinessNameHint,
     city: sanitizeText(searchContext.cityToken),
     phone: sanitizeText(currentClient.contactPhone),
-    orgNumber: strictProffOrgnr,
+    orgNumber: proffOrgnr,
     address: sanitizeText(currentClient.businessAddress || resolvedMeetingPlace),
     websiteDomain: resolvedWebsiteDomain,
     instagramUrl: nextDetails.instagramUrl,
@@ -4525,7 +4561,7 @@ async function enrichSalesClientLinksFromMyphoner({
     if (field === 'proffUrl' && previous && !nextValue && shouldResolveProffUrl(previous)) return true;
     return false;
   });
-  if (strictProffOrgnr && strictProffOrgnr !== currentOrgNumber) changedFields.push('orgNumber');
+  if (proffOrgnr && proffOrgnr !== currentOrgNumber) changedFields.push('orgNumber');
   if (!currentMeetingPlace && leadMeetingPlace) changedFields.push('meetingPlace');
   if (resolvedBusinessName && normalizeLooseKey(resolvedBusinessName) !== normalizeLooseKey(currentBusinessName)) {
     changedFields.push('businessName');
@@ -4570,8 +4606,8 @@ async function enrichSalesClientLinksFromMyphoner({
   if (resolvedWebsiteDomain !== currentWebsiteDomain) {
     updatePayload.websiteDomain = resolvedWebsiteDomain;
   }
-  if (strictProffOrgnr && strictProffOrgnr !== currentOrgNumber) {
-    updatePayload.orgNumber = strictProffOrgnr;
+  if (proffOrgnr && proffOrgnr !== currentOrgNumber) {
+    updatePayload.orgNumber = proffOrgnr;
   }
   const updated = sales.updateSalesClient(targetClientId, updatePayload);
   return {
@@ -4695,38 +4731,19 @@ function collectMyphonerLeadIdsFromClient(client = {}) {
   return [...new Set(leadIds)];
 }
 
-function extractOrganizationNumberFromText(value = '') {
-  const raw = String(value || '');
-  if (!raw) return '';
-  const match = raw.match(/\b(\d{3}\s?\d{3}\s?\d{3})\b/);
-  if (!match?.[1]) return '';
-  const digits = match[1].replace(/\D+/g, '');
-  return digits.length === 9 ? digits : '';
-}
-
 function extractOrganizationNumberFromClientRecord(client = {}) {
   const source = client && typeof client === 'object' ? client : {};
   const fromField = sales.sanitizeOrgNumber(source?.orgNumber);
   if (fromField) return fromField;
-  const proffUrl = coerceHttpUrl(source?.details?.proffUrl || '');
-  if (proffUrl) {
-    try {
-      const parsed = new URL(proffUrl);
-      const qDigits = extractOrganizationNumberFromText(parsed.searchParams.get('q') || '');
-      if (qDigits) return qDigits;
-      const pathDigits = extractOrganizationNumberFromText(parsed.pathname);
-      if (pathDigits) return pathDigits;
-    } catch {
-      // Ignore malformed proff URLs and continue with other candidates.
-    }
-  }
+  const fromProff = organizationNumberFromProffUrl(source?.details?.proffUrl || '');
+  if (fromProff) return fromProff;
   const candidates = [
     source?.myphoner?.winnerComment,
     source?.businessName,
     source?.contactPerson,
   ];
   for (const candidate of candidates) {
-    const digits = extractOrganizationNumberFromText(candidate);
+    const digits = extractOrganizationNumberFromText(candidate, { requireChecksum: true });
     if (digits) return digits;
   }
   return '';
@@ -5965,6 +5982,14 @@ async function upsertSalesClientFromMyphonerLead({
     });
     syncedClient = syncResult.client || client;
     calendarWarnings = syncResult.warnings || [];
+  }
+  const orgnrAtIngest = await resolveOrgNumberForSalesClient({
+    client: syncedClient,
+    lead: source,
+    leadDataMap,
+  });
+  if (orgnrAtIngest) {
+    syncedClient = applyOrgNumberAndProffToSalesClient(syncedClient, orgnrAtIngest) || syncedClient;
   }
   scheduleSalesClientLinkEnrichment({
     clientId: sanitizeText(syncedClient?.id),
@@ -17627,15 +17652,35 @@ async function fetchMakerJson(base, pathname, { method = 'GET', body } = {}) {
   return data;
 }
 
-const MAKER_DEV_ROOT = path.resolve(dirname(fileURLToPath(import.meta.url)), '..', 'website-maker');
+function resolveMakerDevRoot() {
+  const candidates = [
+    sanitizeText(process.env.WEBSITE_MAKER_DEV_ROOT),
+    path.resolve(dirname(fileURLToPath(import.meta.url)), '..', 'website-maker'),
+    path.resolve(process.cwd(), '..', 'website-maker'),
+    path.resolve(process.cwd(), 'website-maker'),
+  ].filter(Boolean);
+  for (const root of candidates) {
+    if (
+      existsSync(path.join(root, 'docker-compose.yml')) &&
+      existsSync(path.join(root, 'docker-compose.dev.yml'))
+    ) {
+      return root;
+    }
+  }
+  return '';
+}
+
+const MAKER_DEV_ROOT = resolveMakerDevRoot();
 let makerEnsureJob = null;
 
 async function localMakerAnswers() {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 1500);
+  const timer = setTimeout(() => controller.abort(), 2500);
   try {
-    const response = await fetch('http://127.0.0.1:3000/api/pipeline-queue', { signal: controller.signal });
-    return response.status < 500;
+    const response = await fetch('http://127.0.0.1:3000/api/health', { signal: controller.signal });
+    if (!response.ok) return false;
+    const data = await response.json().catch(() => ({}));
+    return data?.ok === true || response.status < 500;
   } catch {
     return false;
   } finally {
@@ -17644,10 +17689,17 @@ async function localMakerAnswers() {
 }
 
 function startLocalMakerDocker() {
+  if (!MAKER_DEV_ROOT) {
+    return Promise.reject(new Error(
+      'Denne Asoldi-prosessen kan ikke starte Docker Maker (website-maker-mappen finnes ikke her). På utvikler-PC-en: make dev-up i website-maker, og åpne http://127.0.0.1:3000 — ikke localhost:3000.'
+    ));
+  }
   const composeFile = path.join(MAKER_DEV_ROOT, 'docker-compose.yml');
   const devFile = path.join(MAKER_DEV_ROOT, 'docker-compose.dev.yml');
   if (!existsSync(composeFile) || !existsSync(devFile)) {
-    return Promise.reject(new Error('Website Creator kjører ikke på port 3000. Start Docker Maker på denne maskinen.'));
+    return Promise.reject(new Error(
+      'Denne Asoldi-prosessen kan ikke starte Docker Maker (website-maker-mappen finnes ikke her). På utvikler-PC-en: make dev-up i website-maker, og åpne http://127.0.0.1:3000 — ikke localhost:3000.'
+    ));
   }
   return new Promise((resolve, reject) => {
     const child = spawn('docker', [

@@ -1,8 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  buildDirectProffUrlFromOrgNumber,
+  extractOrganizationNumberFromLead,
+  extractOrganizationNumberFromText,
   fillProffUrlFromOrgNumber,
+  isValidNorwegianOrgNumber,
   mergeKeptSalesDetailLinks,
+  organizationNumberFromProffUrl,
   promoteGoogleBusinessFromOtherLinks,
   filterCustomOtherLinks,
   looksLikeEmailLink,
@@ -89,6 +94,59 @@ test('Proff URL is left empty without an org number', () => {
     buildDirect: () => 'https://www.proff.no/selskap/x/x/x/000000000',
   });
   assert.equal(url, '');
+});
+
+test('Norwegian org numbers extract from dots, hyphens, extra spaces, and NO prefix', () => {
+  assert.equal(isValidNorwegianOrgNumber('936585345'), true);
+  assert.equal(extractOrganizationNumberFromText('936.585.345'), '936585345');
+  assert.equal(extractOrganizationNumberFromText('936-585-345'), '936585345');
+  assert.equal(extractOrganizationNumberFromText('936  585  345'), '936585345');
+  assert.equal(extractOrganizationNumberFromText('NO 936 585 345'), '936585345');
+  assert.equal(extractOrganizationNumberFromText('Org.nr: 936585345'), '936585345');
+});
+
+test('MyPhoner Org. nummer and organisasjonsnr fields fill the org number', () => {
+  assert.equal(
+    extractOrganizationNumberFromLead({}, new Map([['orgnummer', '936.585.345']])),
+    '936585345'
+  );
+  assert.equal(
+    extractOrganizationNumberFromLead({}, new Map([['organisasjonsnr', '936 585 345']])),
+    '936585345'
+  );
+  assert.equal(
+    extractOrganizationNumberFromLead({ organizationNumber: '936585345' }, new Map()),
+    '936585345'
+  );
+});
+
+test('a checksum-valid org number in a random MyPhoner field is used', () => {
+  assert.equal(
+    extractOrganizationNumberFromLead(
+      {},
+      new Map([['notes', 'Se Brreg 936 585 345 Trondheim']])
+    ),
+    '936585345'
+  );
+});
+
+test('pretty Proff URLs without a 9-digit org are replaced from MyPhoner org number', () => {
+  const pretty = 'https://www.proff.no/selskap/byggmester-jan-overrein/trondheim/bygg-og-anleggsleverandorer/IFHM9VL0CVG';
+  assert.equal(organizationNumberFromProffUrl(pretty), '');
+  assert.equal(
+    fillProffUrlFromOrgNumber(pretty, '936585345'),
+    'https://www.proff.no/selskap/x/x/x/936585345'
+  );
+  assert.equal(
+    fillProffUrlFromOrgNumber('', '936585345'),
+    buildDirectProffUrlFromOrgNumber('936585345')
+  );
+});
+
+test('an existing Proff URL that already has the org number is kept', () => {
+  const current = 'https://www.proff.no/selskap/x/x/x/936585345';
+  assert.equal(organizationNumberFromProffUrl(current), '936585345');
+  assert.equal(fillProffUrlFromOrgNumber(current, '936585345'), current);
 });
 
 test('other links drop maps, emails, and copies of dedicated fields', () => {
