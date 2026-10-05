@@ -538,7 +538,7 @@ function normalizeClientDataBank(input = {}, fallback = {}) {
   const assistantIntake = {};
   for (const key of intakeKeys) {
     const value = sanitizeText(src.assistantIntake?.[key] || base.assistantIntake?.[key]);
-    assistantIntake[key] = value === 'done' || value === 'skipped' ? value : '';
+    assistantIntake[key] = value === 'done' || value === 'skipped' || value === 'more' ? value : '';
   }
 
   const media = {

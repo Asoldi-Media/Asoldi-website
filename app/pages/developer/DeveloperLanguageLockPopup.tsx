@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Loader2, X } from 'lucide-react';
 import { fetchLocalMakerJson } from '../../../lib/maker-browser-client.js';
 import type { MakerQueueAuthHeaders } from './makerQueue';
@@ -105,8 +106,8 @@ export function DeveloperLanguageLockPopup({
   const driftAfterLock =
     locked && detection?.candidate?.code && detection.candidate.code !== locked.code;
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+  return createPortal(
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
       <div
         className="w-full max-w-lg rounded-2xl bg-[#2a2a2a] border border-white/10 p-4 text-white shadow-xl"
         onClick={(event) => event.stopPropagation()}
@@ -194,6 +195,7 @@ export function DeveloperLanguageLockPopup({
           </div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

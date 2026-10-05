@@ -7,7 +7,8 @@ import { ClientRouteGuard } from '../../components/client/ClientRouteGuard';
 import { useClientAuth } from '../../contexts/ClientAuthContext';
 import { layoutLabel, summarizeCatalogs } from '../../../lib/client-product-catalog.js';
 import { PRODUCT_ASSISTANT_GREETING } from '../../../lib/ai-assistant/chat.js';
-import { STEP_LABELS, personFirstName } from '../../../lib/ai-assistant/intake.js';
+import { personFirstName } from '../../../lib/ai-assistant/intake.js';
+import { AssistantIntakePanel } from './AssistantIntakePanel';
 
 type ChatMessage = { id: string; role: 'ai' | 'user'; text: string };
 type PendingFile = { id: string; file: File; url: string };
@@ -64,22 +65,6 @@ const EMPTY_PROGRESS: Progress = {
   ],
 };
 
-function TypeLine({ text, className }: { text: string; className?: string }) {
-  const [shown, setShown] = useState('');
-  useEffect(() => {
-    setShown('');
-    if (!text) return undefined;
-    let index = 0;
-    const timer = window.setInterval(() => {
-      index += 1;
-      setShown(text.slice(0, index));
-      if (index >= text.length) window.clearInterval(timer);
-    }, 18);
-    return () => window.clearInterval(timer);
-  }, [text]);
-  return <span className={className}>{shown || text}</span>;
-}
-
 export const ClientAiAssistant = () => {
   const { token, profile, updateProfileState } = useClientAuth();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -101,7 +86,6 @@ export const ClientAiAssistant = () => {
   const [makerLinked, setMakerLinked] = useState(false);
   const [previewUrl, setPreviewUrl] = useState('');
   const [dragOver, setDragOver] = useState(false);
-  const [stepLabel, setStepLabel] = useState(STEP_LABELS.products);
   const [currentStep, setCurrentStep] = useState('products');
 
   function applyCatalog(nextCatalogs: any[]) {
@@ -126,17 +110,11 @@ export const ClientAiAssistant = () => {
         applyCatalog(payload.profile?.clientDataBank?.productCatalogs || []);
         setMakerLinked(Boolean(payload.makerLinked || payload.profile?.clientDataBank?.makerLink?.bundleId));
         setPreviewUrl(String(payload.profile?.clientDataBank?.makerLink?.publicPreviewUrl || ''));
-        if (payload.currentStep) {
-          setCurrentStep(payload.currentStep);
-          setStepLabel(STEP_LABELS[payload.currentStep as keyof typeof STEP_LABELS] || STEP_LABELS.products);
-        }
+        if (payload.currentStep) setCurrentStep(payload.currentStep);
         if (payload.greeting) {
           setMessages((prev) => (prev.some((row) => row.role === 'user')
             ? prev
             : [{ id: '1', role: 'ai', text: payload.greeting }]));
-        }
-        if (payload.redirectTo) {
-          window.setTimeout(() => window.location.assign(payload.redirectTo), 1200);
         }
       })
       .catch(() => {});
@@ -169,6 +147,7 @@ export const ClientAiAssistant = () => {
           setBusy(false);
           setJobId('');
           setStatusLine('');
+          if (payload.currentStep) setCurrentStep(payload.currentStep);
           setMessages((prev) => [
             ...prev,
             {
@@ -179,9 +158,6 @@ export const ClientAiAssistant = () => {
                 : (payload.error || 'Klarte ikke å lese filene. Prøv et annet dokument, eller skriv produktene her.'),
             },
           ]);
-          if (payload.status === 'done' && payload.redirectTo) {
-            window.setTimeout(() => window.location.assign(payload.redirectTo), 900);
-          }
           break;
         }
         await new Promise((resolve) => setTimeout(resolve, 1200));
@@ -352,16 +328,10 @@ export const ClientAiAssistant = () => {
         }
         return;
       }
-      if (payload.currentStep) {
-        setCurrentStep(payload.currentStep);
-        setStepLabel(STEP_LABELS[payload.currentStep as keyof typeof STEP_LABELS] || stepLabel);
-      }
+      if (payload.currentStep) setCurrentStep(payload.currentStep);
       if (payload.nextAction === 'manual') {
         window.location.assign('/kunde/innstillinger#produkter');
         return;
-      }
-      if (payload.redirectTo) {
-        window.setTimeout(() => window.location.assign(payload.redirectTo), 900);
       }
       setMessages((prev) => [...prev, {
         id: String(Date.now() + 1),
@@ -396,64 +366,19 @@ export const ClientAiAssistant = () => {
 
         <main className="relative z-10 flex-1 w-full max-w-[1400px] mx-auto px-4 md:px-10 py-8 flex flex-col md:flex-row gap-8 overflow-hidden">
           <div className="w-full md:w-[380px] lg:w-[440px] bg-white rounded-2xl p-8 shadow-[0_8px_30px_rgba(0,0,0,0.04)] border border-gray-100 flex flex-col shrink-0 min-h-0 overflow-y-auto">
-            <span className="text-[11px] font-bold tracking-[0.2em] text-[#121212] mb-8 uppercase">{stepLabel}</span>
-            <div className="flex flex-col gap-6">
-              <div className="border-b border-gray-50 pb-5">
-                <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Produktsystem</span>
-                <p className={`mt-2 text-[22px] font-semibold ${progress.layout ? 'text-[#121212]' : 'text-gray-300'}`}>
-                  {progress.layout ? <TypeLine text={progress.layoutLabel || layoutLabel(progress.layout)} /> : 'Normal / Meny / Tiers'}
-                </p>
-              </div>
-              <div className="border-b border-gray-50 pb-5">
-                <span className="text-[11px] font-bold text-gray-400 uppercase tracking-wider">Kategorier</span>
-                <p className={`mt-2 text-[18px] font-medium ${progress.categoryCount ? 'text-[#121212]' : 'text-gray-300'}`}>
-                  {progress.categoryCount ? <TypeLine text={`${progress.categoryCount} kategorier · ${progress.productCount} produkter`} /> : 'Antall kategorier'}
-                </p>
-              </div>
-              {productRows().length ? (
-                <div className="flex justify-end">
-                  <button
-                    type="button"
-                    disabled={removingProducts || busy}
-                    onClick={() => {
-                      if (window.confirm('Fjerne alle produktene fra katalogen?')) void saveProductCatalogs([]);
-                    }}
-                    className="text-[12px] text-gray-500 hover:text-red-600 disabled:opacity-40"
-                  >
-                    Fjern alle
-                  </button>
-                </div>
-              ) : null}
-              <div className="flex flex-col gap-3">
-                {productRows().length ? productRows().map((row) => (
-                  <div key={row.key} className="rounded-xl border border-gray-100 bg-white px-4 py-3 flex items-center gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[14px] font-medium text-[#121212] truncate">{row.title}</p>
-                      <p className="text-[12px] mt-1 text-gray-500 truncate">{row.category || 'Produkt'}</p>
-                    </div>
-                    <button
-                      type="button"
-                      disabled={removingProducts || busy}
-                      aria-label={`Fjern ${row.title}`}
-                      onClick={() => removeProduct(row)}
-                      className="shrink-0 text-[12px] text-gray-400 hover:text-red-600 disabled:opacity-40"
-                    >
-                      Fjern
-                    </button>
-                  </div>
-                )) : progress.categories.map((category, index) => (
-                  <motion.div
-                    key={`${category.name}-${index}`}
-                    initial={{ opacity: 0, x: -8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    className="rounded-xl border border-dashed border-gray-200 bg-gray-50/60 px-4 py-3"
-                  >
-                    <p className="text-[14px] font-medium text-gray-400">{category.name}</p>
-                    <p className="text-[12px] mt-1 text-gray-300">Produkter fylles inn her</p>
-                  </motion.div>
-                ))}
-              </div>
-            </div>
+            <AssistantIntakePanel
+              bank={profile?.clientDataBank || {}}
+              token={token || ''}
+              currentStep={currentStep}
+              productRows={productRows()}
+              layoutText={progress.layout ? (progress.layoutLabel || layoutLabel(progress.layout)) : ''}
+              removingProducts={removingProducts}
+              busy={busy}
+              onRemoveProduct={removeProduct}
+              onClearProducts={() => {
+                if (window.confirm('Fjerne alle produktene fra katalogen?')) void saveProductCatalogs([]);
+              }}
+            />
             {makerLinked ? (
               <p className="mt-6 text-[12px] text-gray-500">
                 Koblet til Website Maker

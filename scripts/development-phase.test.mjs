@@ -4,6 +4,8 @@ import {
   buildDevelopmentItems,
   buildDeveloperBoardItems,
   buildPreviewItems,
+  buildSsuBoardItems,
+  isSsuBoardClient,
   isLiveHubClient,
   isDevelopmentSalesClient,
   isDeveloperBoardClient,
@@ -220,4 +222,56 @@ test('a signed client ranks by tier weeks, and a custom offer without a date has
   assert.match(customItem.websiteDue.label, /sett leveringsfrist/);
   assert.equal(customItem.offerCustom, true);
   assert.equal(buildPreviewItems([tier2, custom], []).length, 0);
+});
+
+test('an admin due date ranks a signed client even when the offer has no weeks', () => {
+  const referral = {
+    ...bynesetSales,
+    id: 'sales-referral',
+    businessName: 'Referral Cafe',
+    contractSignedAt: '2026-10-01T08:00:00.000Z',
+    websiteDeliveryWeeks: 0,
+    websiteDueOverride: '2026-10-20',
+  };
+  const item = buildDevelopmentItems([referral], [])[0];
+  assert.equal(item.rankAt.slice(0, 10), '2026-10-20');
+  assert.equal(item.websiteDue.override, true);
+  assert.equal(item.websiteDue.started, true);
+});
+
+test('a hub site without a sales row uses the site due date', () => {
+  const site = {
+    ...byneset,
+    deliveryPhase: 'development',
+    websiteDueOverride: '2026-11-02',
+  };
+  const items = buildDevelopmentItems([], [site]);
+  assert.equal(items.length, 1);
+  assert.equal(items[0].websiteDue.dueAt.slice(0, 10), '2026-11-02');
+  assert.equal(items[0].websiteDue.started, true);
+});
+
+test('SSU clients stay off the website board and keep their own count list', () => {
+  const ssu = {
+    id: 'sales-ssu',
+    product: 'ssu',
+    status: 'active',
+    businessName: 'SSU Arkitekt',
+    industry: 'Arkitekt',
+    createdAt: '2026-09-02T10:00:00.000Z',
+    progression: { contractSigned: false },
+  };
+  const dropped = { ...ssu, id: 'sales-ssu-lost', status: 'not-sold' };
+  assert.equal(isSsuBoardClient(ssu), true);
+  assert.equal(isSsuBoardClient(dropped), false);
+  assert.equal(isSsuBoardClient(bynesetSales), false);
+  assert.equal(buildDevelopmentItems([ssu, bynesetSales], []).some((item) => item.businessName === 'SSU Arkitekt'), false);
+  assert.equal(buildPreviewItems([ssu], []).length, 0);
+  const ssuItems = buildSsuBoardItems([ssu, dropped, bynesetSales], []);
+  assert.equal(ssuItems.length, 1);
+  assert.equal(ssuItems[0].product, 'ssu');
+  assert.equal(ssuItems[0].industry, 'Arkitekt');
+  assert.equal(ssuItems[0].createdAt, '2026-09-02T10:00:00.000Z');
+  const website = buildDevelopmentItems([bynesetSales], []);
+  assert.equal(website[0].product, 'asoldi');
 });

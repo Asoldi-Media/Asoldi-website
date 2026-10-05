@@ -12,6 +12,8 @@ import {
   hasListedTeam,
   hoursLookCustom,
   isDecline,
+  isNoMore,
+  intakeReview,
   nextIntakeStep,
   parseAffiliationsAnswer,
   parseOpeningHoursAnswer,
@@ -63,6 +65,9 @@ function withProducts(extra = {}) {
 test('intake asks products first and skips buckets that are already filled', () => {
   assert.equal(nextIntakeStep(bank()), 'products');
   assert.equal(nextIntakeStep(withProducts()), 'media');
+  assert.equal(nextIntakeStep(withProducts({
+    assistantIntake: { products: 'more' },
+  })), 'products');
   assert.equal(nextIntakeStep(withProducts({
     media: { uncategorized: ['/foto.jpg'] },
   })), 'logo');
@@ -159,6 +164,9 @@ test('a short no is a decline, a no that includes a site is not', () => {
   assert.equal(isDecline('hopp over'), true);
   assert.equal(isDecline('nei, se cafeen.no'), false);
   assert.equal(isDecline('har ikke produkter, men https://firma.no/meny'), false);
+  assert.equal(isNoMore('det er alt'), true);
+  assert.equal(isNoMore('ikke mer'), true);
+  assert.equal(isNoMore('mandag til fredag 9-16'), false);
 });
 
 test('questions stay the same for one business and change across businesses', () => {
@@ -174,7 +182,7 @@ test('questions stay the same for one business and change across businesses', ()
   assert.equal(personFirstName({ businessName: 'Alpha Bakeri' }), '');
 });
 
-test('opening state follows the next missing bucket and redirects when finished', () => {
+test('opening state follows the next missing bucket and stays on the assistant when finished', () => {
   const open = buildOpeningState({ clientDataBank: bank(), businessName: 'Nordlys' });
   assert.equal(open.currentStep, 'products');
   assert.match(open.greeting, /Nordlys|tilbud|produkt|meny|prisliste/i);
@@ -190,8 +198,32 @@ test('opening state follows the next missing bucket and redirects when finished'
     }),
   });
   assert.equal(done.currentStep, 'done');
-  assert.equal(done.redirectTo, SETTINGS_PATH);
-  assert.match(done.greeting, /bedriftsinformasjon|ferdig/i);
+  assert.equal(done.redirectTo, '');
+  assert.match(done.greeting, /steg|bedriftsinformasjon|ferdig/i);
+});
+
+test('already gathered files stay on the matching step', () => {
+  const review = intakeReview(withProducts({
+    media: {
+      mainHeroImages: ['/hero.jpg'],
+      uncategorized: ['/extra.png'],
+      logos: ['/logo.png'],
+    },
+    brandIdentity: { logos: { normal: '/logo.png' } },
+    staff: [{ id: 'ansatt-2', name: 'Kari', title: 'Baker' }],
+    openingHours: { status: 'always', days: alwaysOpenDays() },
+    affiliations: [{ categoryName: 'Sponsorer', items: [{ title: 'Acme' }] }],
+  }));
+  const byStep = Object.fromEntries(review.steps.map((row) => [row.step, row]));
+  assert.equal(review.current, 'done');
+  assert.equal(byStep.products.status, 'filled');
+  assert.equal(byStep.media.status, 'filled');
+  assert.deepEqual(byStep.media.groups.map((group) => group.label), ['Hovedbilde', 'Logo', 'Annet']);
+  assert.equal(byStep.logo.url, '/logo.png');
+  assert.equal(byStep.logo.status, 'filled');
+  assert.equal(byStep.staff.people[0].name, 'Kari');
+  assert.equal(byStep.hours.summary, 'Døgnåpent');
+  assert.equal(byStep.affiliations.groups[0].items[0], 'Acme');
 });
 
 test('page text keeps headings and prices and ranks offering pages first', () => {
@@ -304,9 +336,10 @@ test('intake flags and opening-hour status survive a later settings save', () =>
 
   portal.setClientDataBank('intake-flag-user', {
     businessCard: { companyName: 'Testkafe AS' },
+    assistantIntake: { products: 'more' },
   });
   const second = portal.getClientProfileByUserId('intake-flag-user');
-  assert.equal(second.clientDataBank.assistantIntake.products, 'skipped');
+  assert.equal(second.clientDataBank.assistantIntake.products, 'more');
   assert.equal(second.clientDataBank.assistantIntake.hours, 'done');
   assert.equal(second.clientDataBank.openingHours.status, 'always');
   assert.equal(second.clientDataBank.businessCard.companyName, 'Testkafe AS');
@@ -350,11 +383,14 @@ test('the assistant walks the missing buckets and writes each answer into kunded
       buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     }],
   });
-  assert.equal(photo.currentStep, 'logo');
-  assert.match(photo.assistantMessage, /mediabiblioteket/i);
+  assert.equal(photo.currentStep, 'media');
+  assert.match(photo.assistantMessage, /flere|mer|nok|sikker/i);
   const afterMedia = portal.getClientProfileByUserId('intake-chat-user').clientDataBank;
   assert.equal(afterMedia.media.uncategorized.length, 1);
-  assert.equal(afterMedia.assistantIntake.media, 'done');
+  assert.equal(afterMedia.assistantIntake.media, 'more');
+
+  const mediaDone = await handleAssistantChat('intake-chat-user', { text: 'det er alt' });
+  assert.equal(mediaDone.currentStep, 'logo');
 
   const logo = await handleAssistantChat('intake-chat-user', {
     text: '',
@@ -377,9 +413,13 @@ test('the assistant walks the missing buckets and writes each answer into kunded
   const people = await handleAssistantChat('intake-chat-user', {
     text: 'Kari Nord, baker, 90011223, kari@firma.no',
   });
-  assert.equal(people.currentStep, 'hours');
+  assert.equal(people.currentStep, 'staff');
+  assert.match(people.assistantMessage, /flere|ansatte|nok|sikker/i);
   const staff = portal.getClientProfileByUserId('intake-chat-user').clientDataBank.staff;
   assert.equal(staff.some((row) => row.name === 'Kari Nord' && row.email === 'kari@firma.no'), true);
+
+  const staffDone = await handleAssistantChat('intake-chat-user', { text: 'nei' });
+  assert.equal(staffDone.currentStep, 'hours');
 
   const vague = await handleAssistantChat('intake-chat-user', { text: 'vi har vanligvis åpent' });
   assert.equal(vague.currentStep, 'hours');
@@ -387,12 +427,16 @@ test('the assistant walks the missing buckets and writes each answer into kunded
 
   const hours = await handleAssistantChat('intake-chat-user', { text: 'døgnåpent' });
   assert.equal(hours.currentStep, 'affiliations');
+  assert.doesNotMatch(hours.assistantMessage, /alle dagene|fylt ut alle/i);
   assert.equal(portal.getClientProfileByUserId('intake-chat-user').clientDataBank.openingHours.status, 'always');
 
   const done = await handleAssistantChat('intake-chat-user', { text: 'Sponsorer: Acme, Beta' });
-  assert.equal(done.currentStep, 'done');
-  assert.equal(done.nextAction, 'done');
-  assert.equal(done.redirectTo, '/kunde/innstillinger');
+  assert.equal(done.currentStep, 'affiliations');
+  assert.match(done.assistantMessage, /flere|partnere|nok|sikker/i);
+  const finished = await handleAssistantChat('intake-chat-user', { text: 'ikke mer' });
+  assert.equal(finished.currentStep, 'done');
+  assert.equal(finished.nextAction, 'done');
+  assert.equal(finished.redirectTo, '');
   const finalBank = portal.getClientProfileByUserId('intake-chat-user').clientDataBank;
   assert.equal(finalBank.affiliations[0].categoryName, 'Sponsorer');
   assert.deepEqual(finalBank.affiliations[0].items.map((item) => item.title), ['Acme', 'Beta']);

@@ -172,6 +172,7 @@ export type Site = {
   createdAt: string;
   deliveryPhase?: DeliveryPhase;
   development?: SalesDevelopment;
+  websiteDueOverride?: string;
 };
 
 export type ManageClientsView = 'clients' | 'development' | 'sales' | 'admin';
@@ -344,6 +345,8 @@ export type DevelopmentItem = {
   contactPhone: string;
   meetingPlace: string;
   industry?: string;
+  product?: 'asoldi' | 'ssu';
+  createdAt?: string;
   websiteDomain: string;
   notes: string;
   /** Agreed meeting time (ISO) when the sales client has one. */
@@ -693,6 +696,9 @@ export type SalesClient = {
     createdAt: string;
     liveUrl?: string;
   };
+  contractSignedAt?: string;
+  websiteDueOverride?: string;
+  websiteDeliveryWeeks?: number;
   status: 'active' | 'not-sold' | 'secondary';
   /** Saved when a rep marks Secondary: redesign, consulting, video, email, or social. */
   secondaryInterest?: string;

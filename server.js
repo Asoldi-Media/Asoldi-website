@@ -182,7 +182,7 @@ import {
 import { buildOfferFromMeetingQuote } from './lib/offer-from-quote.js';
 import { clientWithOfferParty, offerMissingFields, offerReadinessMessage } from './lib/offer-readiness.js';
 import { buildContractPdf, contractFileName, contractInputsForOffer, offerContractIsAvailable } from './lib/offer-contract-pdf.js';
-import { deliveryWeeksForOffer, isCustomWebsiteOffer, normalizeDueDate, offerDeliveryPhraseNb, resolveWebsiteDue, weeksForDeveloperBoard } from './lib/website-due.js';
+import { dueDateDay, isCustomWebsiteOffer, normalizeDueDate, offerDeliveryPhraseNb, resolveWebsiteDue, weeksForDeveloperBoard } from './lib/website-due.js';
 import { contractHtmlForOffer } from './lib/offer-contract-html.js';
 import { extractOfferLetterBody } from './lib/offer-letter-html.js';
 import { isDeepseekConfigured } from './lib/deepseek.js';
@@ -224,6 +224,7 @@ import {
   DEVELOPMENT_KEYS,
   buildDevelopmentItems,
   buildPreviewItems,
+  buildSsuBoardItems,
   findLinkedSalesClient,
   parseDevelopmentItemId,
   siteMatchesSalesClient,
@@ -293,6 +294,7 @@ import {
   syncWorkshopCalendar,
   tryBuildSalesWorkshopEmail,
   workshopEmailShouldSend,
+  workshopInviteHostOk,
   workshopIsConfirmed,
   maybeSyncWorkshopGoalActionCalendars,
   pickDamianCalendarAccountKey,
@@ -12098,6 +12100,28 @@ app.put('/api/hub/sites/:id', adminAuth, (req, res) => {
   res.json(result.site);
 });
 
+app.get('/api/hub/sites/:id/website-due', adminAuth, (req, res) => {
+  const site = hub.getSiteById(req.params.id);
+  if (!site) return res.status(404).json({ message: 'Site not found.' });
+  const client = findLinkedSalesClient(site, sales.getSalesClients());
+  res.json(websiteDueViewForTarget({ client, site }));
+});
+
+app.patch('/api/hub/sites/:id/website-due', adminAuth, (req, res) => {
+  if (typeof req.body?.dueDate !== 'string') return res.status(400).json({ message: 'Mangler dato.' });
+  const dueDate = normalizeDueDate(req.body.dueDate);
+  if (String(req.body.dueDate).trim() && !dueDate) return res.status(400).json({ message: 'Ugyldig dato.' });
+  const site = hub.getSiteById(req.params.id);
+  if (!site) return res.status(404).json({ message: 'Site not found.' });
+  const saved = persistWebsiteDue({
+    siteId: site.id,
+    dueDate,
+    actor: offerActor(req),
+  });
+  if (!saved.site && !saved.client) return res.status(404).json({ message: 'Site not found.' });
+  res.json(websiteDueViewForTarget(saved));
+});
+
 app.put('/api/hub/sites/:id/client-admin', adminAuth, async (req, res) => {
   const result = await hub.updateClientAdmin(req.params.id, req.body || {});
   if (!result.ok) return res.status(404).json({ message: result.error });
@@ -13785,7 +13809,8 @@ app.get('/api/admin/sales/:id/website-due', salesAuth, (req, res) => {
   if (!requireOfferAdmin(req, res)) return;
   const client = sales.getSalesClientById(req.params.id);
   if (!client) return res.status(404).json({ message: 'Client not found.' });
-  res.json(websiteDueView(client));
+  const site = client.hubSite?.id ? hub.getSiteById(client.hubSite.id) : null;
+  res.json(websiteDueViewForTarget({ client, site }));
 });
 
 app.patch('/api/admin/sales/:id/website-due', salesAuth, (req, res) => {
@@ -13793,28 +13818,15 @@ app.patch('/api/admin/sales/:id/website-due', salesAuth, (req, res) => {
   if (typeof req.body?.dueDate !== 'string') return res.status(400).json({ message: 'Mangler dato.' });
   const dueDate = normalizeDueDate(req.body.dueDate);
   if (String(req.body.dueDate).trim() && !dueDate) return res.status(400).json({ message: 'Ugyldig dato.' });
-  const client = sales.setClientWebsiteDue(req.params.id, dueDate);
-  if (!client) return res.status(404).json({ message: 'Client not found.' });
-  const offer = salesOffers.getOfferForClient(client.id);
-  if (offer) {
-    const patch = { dueDate };
-    if (offer.status !== 'sent') {
-      patch.email = {
-        html: replaceOfferDelivery(offer.email?.html || '', offer.products, { dueDate, tierId: offer.tierId }),
-      };
-      if (offer.status === 'verified') {
-        patch.status = 'review-requested';
-        patch.verifiedAt = '';
-        patch.verifiedBy = '';
-      }
-    }
-    salesOffers.updateSalesOffer(offer.id, patch, {
-      actor: offerActor(req),
-      action: 'due-date',
-      note: dueDate || 'cleared',
-    });
-  }
-  res.json(websiteDueView(sales.getSalesClientById(client.id)));
+  const existing = sales.getSalesClientById(req.params.id);
+  if (!existing) return res.status(404).json({ message: 'Client not found.' });
+  const saved = persistWebsiteDue({
+    salesClientId: existing.id,
+    dueDate,
+    actor: offerActor(req),
+  });
+  if (!saved.client) return res.status(404).json({ message: 'Client not found.' });
+  res.json(websiteDueViewForTarget(saved));
 });
 
 app.patch('/api/admin/sales/:id/progression', salesAuth, (req, res) => {
@@ -14060,10 +14072,9 @@ async function sendWorkshopBookingEmail(client, action, salesUser) {
     return { sent: false, warning: '' };
   }
   const synthetic = buildWorkshopSyntheticMeetingClient(client, action);
-  const organizer = emailLib.parseMailbox(built.from || sender.from || '');
   const invite = buildSalesCalendarInvite(synthetic, calendar, {
-    organizerEmail: organizer.address || sender.fromEmail || DAMIAN_WORKSHOP_CALENDAR_EMAIL,
-    organizerName: organizer.name || sender.name || 'Asoldi',
+    organizerEmail: DAMIAN_WORKSHOP_CALENDAR_EMAIL,
+    organizerName: 'Damian',
     durationMinutes: WORKSHOP_DURATION_MINUTES,
     summary: `Asoldi · ${sanitizeText(action.name) || 'Workshop'} · ${sanitizeText(client.businessName) || 'kunde'}`,
   });
@@ -14102,10 +14113,9 @@ async function sendIterationMeetingEmail(client, meeting, salesUser) {
     return { sent: false, warning: '' };
   }
   const synthetic = buildIterationSyntheticMeetingClient(client, meeting);
-  const organizer = emailLib.parseMailbox(built.from || sender.from || '');
   const invite = buildSalesCalendarInvite(synthetic, calendar, {
-    organizerEmail: organizer.address || sender.fromEmail || DAMIAN_WORKSHOP_CALENDAR_EMAIL,
-    organizerName: organizer.name || sender.name || 'Asoldi',
+    organizerEmail: DAMIAN_WORKSHOP_CALENDAR_EMAIL,
+    organizerName: 'Damian',
     durationMinutes: ITERATION_DURATION_MINUTES,
     summary: `Asoldi · ${ITERATION_DEFAULT_NAME} · ${sanitizeText(client.businessName) || 'kunde'}`,
   });
@@ -14164,27 +14174,60 @@ app.patch('/api/admin/sales/:id/workshop-action', salesAuth, async (req, res) =>
   try {
     let action = next;
     const warnings = [];
+    const record = getWorkshopRecord(existing);
+    const extras = Array.isArray(body.goalActions)
+      ? { workshop: mergeWorkshopRecord(record, { goalActions: body.goalActions }) }
+      : {};
     if (confirmSend) {
       const sync = await syncWorkshopCalendar({
         client: existing,
         previousAction: previous,
         nextAction: next,
       });
+      warnings.push(...(sync.warnings || []));
+      if (sync.error) {
+        action = normalizeWorkshopAction({
+          ...sync.action,
+          status: 'draft',
+          confirmationSentAt: previous.confirmationSentAt,
+        });
+        const updated = sales.setSalesWorkshopAction(existing.id, action, extras);
+        return res.status(409).json({
+          message: sync.error,
+          warnings,
+          client: jsonSalesClient(updated || existing),
+          emailSent: false,
+        });
+      }
       action = normalizeWorkshopAction({
         ...sync.action,
         status: 'confirmed',
         confirmationSentAt: next.confirmationSentAt,
       });
-      warnings.push(...(sync.warnings || []));
     }
-    const record = getWorkshopRecord(existing);
-    const extras = Array.isArray(body.goalActions)
-      ? { workshop: mergeWorkshopRecord(record, { goalActions: body.goalActions }) }
-      : {};
     const updated = sales.setSalesWorkshopAction(existing.id, action, extras);
     const client = updated || existing;
     let emailSent = false;
     if (workshopEmailShouldSend(previous, action, { confirmSend })) {
+      const hostOk = workshopInviteHostOk({
+        googleEmail: DAMIAN_WORKSHOP_CALENDAR_EMAIL,
+        organizerEmail: DAMIAN_WORKSHOP_CALENDAR_EMAIL,
+        meetLink: action.meetLink,
+        firefliesInvited: Boolean(action.firefliesInvitedAt),
+      });
+      if (!hostOk) {
+        const drafted = sales.setSalesWorkshopAction(client.id, {
+          ...action,
+          status: 'draft',
+          confirmationSentAt: previous.confirmationSentAt,
+        }, extras);
+        return res.status(409).json({
+          message: 'Google Meet ble ikke opprettet med damian@asoldi.com som eier. E-posten ble ikke sendt.',
+          warnings,
+          client: jsonSalesClient(drafted || client),
+          emailSent: false,
+        });
+      }
       try {
         const mailed = await sendWorkshopBookingEmail(client, action, req.salesUser);
         emailSent = Boolean(mailed.sent);
@@ -14195,8 +14238,10 @@ app.patch('/api/admin/sales/:id/workshop-action', salesAuth, async (req, res) =>
             confirmationSentAt: new Date().toISOString(),
             status: 'confirmed',
           });
+          const live = await maybeJoinFirefliesLiveDeskSlot(stamped || client, 'workshop');
+          warnings.push(...(live.warnings || []));
           return res.json({
-            client: jsonSalesClient(stamped || client),
+            client: jsonSalesClient(live.client || stamped || client),
             warnings,
             emailSent,
           });
@@ -14401,13 +14446,50 @@ app.post('/api/admin/sales/:id/workshop/iteration-meeting', salesAuth, async (re
       previousMeeting: record.iterationMeeting,
       nextMeeting,
     });
+    const warnings = [...(sync.warnings || [])];
+    if (sync.error) {
+      const meeting = {
+        ...sync.meeting,
+        confirmationSentAt: record.iterationMeeting.confirmationSentAt,
+        sentAt: '',
+      };
+      const updated = sales.setSalesWorkshop(existing.id, mergeWorkshopRecord(record, {
+        iterationMeeting: meeting,
+      }));
+      return res.status(409).json({
+        message: sync.error,
+        warnings,
+        client: jsonSalesClient(updated || existing),
+        emailSent: false,
+      });
+    }
     let meeting = {
       ...sync.meeting,
       confirmationSentAt: record.iterationMeeting.confirmationSentAt,
     };
-    const warnings = [...(sync.warnings || [])];
     let emailSent = false;
     if (iterationEmailShouldSend(record.iterationMeeting, meeting, { send }) && iterationInvitesClient(meeting)) {
+      const hostOk = workshopInviteHostOk({
+        googleEmail: DAMIAN_WORKSHOP_CALENDAR_EMAIL,
+        organizerEmail: DAMIAN_WORKSHOP_CALENDAR_EMAIL,
+        meetLink: meeting.meetLink,
+        firefliesInvited: Boolean(meeting.firefliesInvitedAt),
+      });
+      if (!hostOk) {
+        const updated = sales.setSalesWorkshop(existing.id, mergeWorkshopRecord(record, {
+          iterationMeeting: {
+            ...meeting,
+            confirmationSentAt: record.iterationMeeting.confirmationSentAt,
+            sentAt: '',
+          },
+        }));
+        return res.status(409).json({
+          message: 'Google Meet ble ikke opprettet med damian@asoldi.com som eier. E-posten ble ikke sendt.',
+          warnings,
+          client: jsonSalesClient(updated || existing),
+          emailSent: false,
+        });
+      }
       try {
         const mailed = await sendIterationMeetingEmail(existing, meeting, req.salesUser);
         emailSent = Boolean(mailed.sent);
@@ -14420,7 +14502,13 @@ app.post('/api/admin/sales/:id/workshop/iteration-meeting', salesAuth, async (re
     const updated = sales.setSalesWorkshop(existing.id, mergeWorkshopRecord(record, {
       iterationMeeting: meeting,
     }));
-    return res.json({ client: jsonSalesClient(updated), warnings, emailSent });
+    let client = updated || existing;
+    if (emailSent && iterationInvitesClient(meeting)) {
+      const live = await maybeJoinFirefliesLiveDeskSlot(client, 'iteration');
+      warnings.push(...(live.warnings || []));
+      client = live.client || client;
+    }
+    return res.json({ client: jsonSalesClient(client), warnings, emailSent });
   } catch (error) {
     return res.status(httpStatusFromError(error, 400)).json({
       message: sanitizeText(error?.message) || 'Kunne ikke sende iterasjonsmøtet.',
@@ -15840,6 +15928,10 @@ app.put('/api/admin/offers/:id', salesAuth, async (req, res) => {
   const updated = salesOffers.updateSalesOffer(current.id, patch, { actor: offerActor(req), action: contentChanged ? 'admin-edited' : '' });
   if (updated?.salesClientId && Object.prototype.hasOwnProperty.call(patch, 'dueDate')) {
     sales.setClientWebsiteDue(updated.salesClientId, updated.dueDate);
+    const linked = sales.getSalesClientById(updated.salesClientId);
+    if (linked?.hubSite?.id) {
+      hub.updateSite(linked.hubSite.id, { websiteDueOverride: updated.dueDate });
+    }
   }
   res.json({ offer: presentOffer(updated) });
 });
@@ -17110,12 +17202,48 @@ function clientsWithWebsiteDue(clients = []) {
   });
 }
 
+function persistWebsiteDue({ salesClientId = '', siteId = '', dueDate = '', actor = 'admin' } = {}) {
+  let client = salesClientId ? sales.getSalesClientById(salesClientId) : null;
+  let site = siteId ? hub.getSiteById(siteId) : null;
+  if (!client && site) client = findLinkedSalesClient(site, sales.getSalesClients());
+  if (!site && client?.hubSite?.id) site = hub.getSiteById(client.hubSite.id);
+
+  if (client) {
+    sales.setClientWebsiteDue(client.id, dueDate);
+    const offer = salesOffers.getOfferForClient(client.id);
+    if (offer) {
+      const patch = { dueDate };
+      if (offer.status !== 'sent') {
+        patch.email = {
+          html: replaceOfferDelivery(offer.email?.html || '', offer.products, { dueDate, tierId: offer.tierId }),
+        };
+        if (offer.status === 'verified') {
+          patch.status = 'review-requested';
+          patch.verifiedAt = '';
+          patch.verifiedBy = '';
+        }
+      }
+      salesOffers.updateSalesOffer(offer.id, patch, {
+        actor,
+        action: 'due-date',
+        note: dueDate || 'cleared',
+      });
+    }
+    client = sales.getSalesClientById(client.id);
+  }
+  if (site) {
+    hub.updateSite(site.id, { websiteDueOverride: dueDate });
+    site = hub.getSiteById(site.id);
+  }
+  return { client, site };
+}
+
 function websiteDueView(client) {
   const offer = salesOffers.getOfferForClient(client.id);
   const tierId = offer?.tierId || client.portalTierId || client.details?.meetingQuote?.tierId || '';
   const products = offer?.products || [];
-  const weeks = deliveryWeeksForOffer({ tierId, products }) || client.websiteDeliveryWeeks || 0;
   const dueOverride = offer?.dueDate || client.websiteDueOverride || '';
+  const weeks = weeksForDeveloperBoard({ tierId, products, dueOverride });
   const due = resolveWebsiteDue({
     contractSigned: client.progression?.contractSigned,
     contractSignedAt: client.contractSignedAt,
@@ -17124,10 +17252,35 @@ function websiteDueView(client) {
   });
   return {
     dueDate: normalizeDueDate(dueOverride),
+    effectiveDate: dueDateDay(due.dueAt),
+    override: Boolean(due.override),
     weeks,
     phrase: offerDeliveryPhraseNb({ tierId, products, dueDate: dueOverride }),
     contractSigned: Boolean(client.progression?.contractSigned),
     contractSignedAt: client.contractSignedAt || '',
+    started: due.started,
+    label: due.label,
+  };
+}
+
+function websiteDueViewForTarget({ client = null, site = null } = {}) {
+  if (client) {
+    const merged = {
+      ...client,
+      websiteDueOverride: client.websiteDueOverride || site?.websiteDueOverride || '',
+    };
+    return websiteDueView(clientsWithWebsiteDue([merged])[0]);
+  }
+  const dueOverride = normalizeDueDate(site?.websiteDueOverride);
+  const due = resolveWebsiteDue({ dueOverride });
+  return {
+    dueDate: dueOverride,
+    effectiveDate: dueDateDay(due.dueAt),
+    override: Boolean(due.override),
+    weeks: 0,
+    phrase: due.label,
+    contractSigned: false,
+    contractSignedAt: '',
     started: due.started,
     label: due.label,
   };
@@ -17139,6 +17292,7 @@ function listDeveloperBoardParts() {
   return {
     developmentItems: buildDevelopmentItems(salesClients, sites),
     previewItems: buildPreviewItems(salesClients, sites),
+    ssuItems: buildSsuBoardItems(salesClients, sites),
   };
 }
 
@@ -17183,12 +17337,18 @@ app.get('/api/admin/development', developmentAuth, async (req, res) => {
   const parts = listDeveloperBoardParts();
   const developmentItems = parts.developmentItems.filter((item) => developmentItemVisible(caller, item));
   const previewItems = parts.previewItems.filter((item) => developmentItemVisible(caller, item));
+  const ssuItems = (Array.isArray(parts.ssuItems) ? parts.ssuItems : []).filter((item) => developmentItemVisible(caller, item));
   const developers = caller.isAdmin ? await listDeveloperOwnerOptions(caller) : [];
   res.json({
     items: [...developmentItems, ...previewItems],
     developmentItems,
     deploymentItems: developmentItems,
     previewItems,
+    ssuItems,
+    productCounts: {
+      asoldi: developmentItems.length + previewItems.length,
+      ssu: ssuItems.length,
+    },
     viewer: {
       isAdmin: Boolean(caller.isAdmin),
       accountKey: sanitizeText(caller.accountKey),

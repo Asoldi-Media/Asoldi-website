@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { API, authHeaders as defaultAuthHeaders } from '../shared';
 import { RequestThreadPanel, type RequestAuthHeaders } from '../../developer/DeveloperRequestThread';
-import { WebsiteDueField } from './WebsiteDueField';
 
 type InboxRow = {
   salesClientId: string;
@@ -133,10 +132,6 @@ export function AdminRequestInbox({
             ))
           )}
         </div>
-      ) : null}
-
-      {openId ? (
-        <WebsiteDueField salesClientId={openId} authHeaders={resolvedHeaders} />
       ) : null}
 
       {openId ? (

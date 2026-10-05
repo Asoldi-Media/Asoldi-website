@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, Filter, Loader2, Search, Users, X } from 'lucide-react';
+import { ChevronDown, Filter, Loader2, LogOut, Search, UserRound, Users, X } from 'lucide-react';
 import {
   API,
   developmentAuthHeaders,
@@ -14,14 +14,19 @@ import {
 import { buildClientSearchHaystack, matchesClientSearchQuery, normalizeClientSearchText } from '../clientSearch';
 import { DEVELOPER_RECENT_OVERDUE_MS } from '../../../../lib/developer-goals.js';
 import { DeveloperClientCard } from '../../developer/DeveloperClientCard';
-import { pipelineStatusFromMakerRun } from '../../../../lib/developer-card.js';
+import { currentPipelineStage } from '../../../../lib/developer-card.js';
 import { DeveloperRunQueueBar } from '../../developer/DeveloperRunQueueBar';
 import { LOCAL_EDITOR_ORIGIN } from '../../../../lib/maker-editor-origin.js';
 import { fetchMakerQueue } from '../../developer/makerQueue';
 
 type Props = {
   hideHeader?: boolean;
+  onLogout?: () => void;
 };
+
+type ProductBracket = 'asoldi' | 'ssu';
+type PeriodPreset = '' | '7d' | '30d' | '90d';
+type DateField = 'created' | 'meeting' | 'due';
 
 type BucketId = 'recentPastDue' | 'upcoming' | 'pastDue' | 'noNextAction';
 type BucketTone = 'recent' | 'upcoming' | 'past' | 'none';
@@ -92,9 +97,46 @@ function bucketToneClass(tone: BucketTone) {
 }
 
 
-export function DevelopmentClientsSection({ hideHeader = false }: Props) {
+function itemDateIso(item: DevelopmentItem, field: DateField) {
+  if (field === 'meeting') return String(item.meetingAt || '');
+  if (field === 'due') return String(item.websiteDue?.dueAt || '');
+  return String(item.createdAt || '');
+}
+
+function matchesDateWindow(
+  item: DevelopmentItem,
+  field: DateField,
+  preset: PeriodPreset,
+  from: string,
+  to: string,
+  nowMs: number,
+) {
+  if (!preset && !from && !to) return true;
+  const ms = Date.parse(itemDateIso(item, field));
+  if (!Number.isFinite(ms)) return false;
+  if (from) {
+    const start = Date.parse(`${from}T00:00:00`);
+    if (Number.isFinite(start) && ms < start) return false;
+  }
+  if (to) {
+    const end = Date.parse(`${to}T23:59:59`);
+    if (Number.isFinite(end) && ms > end) return false;
+  }
+  if (preset) {
+    const days = preset === '7d' ? 7 : preset === '30d' ? 30 : 90;
+    if (ms < nowMs - days * 24 * 60 * 60 * 1000) return false;
+    if (ms > nowMs) return false;
+  }
+  return true;
+}
+
+export function DevelopmentClientsSection({ onLogout }: Props) {
   const [developmentItems, setDevelopmentItems] = useState<DevelopmentItem[]>([]);
   const [previewItems, setPreviewItems] = useState<DevelopmentItem[]>([]);
+  const [ssuItems, setSsuItems] = useState<DevelopmentItem[]>([]);
+  const [productBracket, setProductBracket] = useState<ProductBracket>('asoldi');
+  const [productMenuOpen, setProductMenuOpen] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -106,6 +148,11 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
   const [searchQuery, setSearchQuery] = useState('');
   const [runFilter, setRunFilter] = useState<'' | 'with-run' | 'without-run'>('');
   const [stepFilter, setStepFilter] = useState('');
+  const [industryFilter, setIndustryFilter] = useState('');
+  const [periodPreset, setPeriodPreset] = useState<PeriodPreset>('');
+  const [periodFrom, setPeriodFrom] = useState('');
+  const [periodTo, setPeriodTo] = useState('');
+  const [dateField, setDateField] = useState<DateField>('created');
   const [dueFilter, setDueFilter] = useState<'' | 'started' | 'waiting' | 'overdue' | 'upcoming'>('');
   const [onlyWithRequests, setOnlyWithRequests] = useState(false);
   const [ownerFilter, setOwnerFilter] = useState('');
@@ -161,12 +208,20 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
     setSearchQuery('');
     setRunFilter('');
     setStepFilter('');
+    setIndustryFilter('');
+    setPeriodPreset('');
+    setPeriodFrom('');
+    setPeriodTo('');
+    setDateField('created');
     setDueFilter('');
     setOnlyWithRequests(false);
     setOwnerFilter('');
   }
 
-  const hasActiveFilters = Boolean(searchQuery || runFilter || stepFilter || dueFilter || onlyWithRequests || ownerFilter);
+  const hasActiveFilters = Boolean(
+    searchQuery || runFilter || stepFilter || industryFilter || periodPreset || periodFrom || periodTo
+    || dueFilter || onlyWithRequests || ownerFilter
+  );
   const itemMatchesSearch = useCallback(
     (item: DevelopmentItem) => {
       if (!searchQuery) return true;
@@ -193,16 +248,11 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
       const hasRun = Boolean(String(item.makerRun?.runId || '').trim());
       if (runFilter === 'with-run' && !hasRun) return false;
       if (runFilter === 'without-run' && hasRun) return false;
-      if (stepFilter) {
-        const status = pipelineStatusFromMakerRun(item.makerRun || {});
-        const ready = stepFilter === '1' ? status.step1Ready
-          : stepFilter === 'lang' ? status.languageLocked
-            : stepFilter === '1.5' ? status.step15Ready
-              : stepFilter === '2.1' ? status.generateTextReady
-                : stepFilter === '2.2' ? status.injectMediaReady
-                  : false;
-        if (!ready) return false;
-      }
+      const industry = String(item.industry || '').trim();
+      if (industryFilter === '__none__' && industry) return false;
+      if (industryFilter && industryFilter !== '__none__' && industry.toLowerCase() !== industryFilter.toLowerCase()) return false;
+      if (stepFilter && currentPipelineStage(item.makerRun || {}) !== stepFilter) return false;
+      if (!matchesDateWindow(item, dateField, periodPreset, periodFrom, periodTo, nowMs)) return false;
       if (dueFilter) {
         const started = Boolean(item.websiteDue?.started && item.websiteDue?.dueAt);
         const dueMs = started ? Date.parse(String(item.websiteDue?.dueAt || '')) : NaN;
@@ -215,19 +265,36 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
       const id = String(item.salesClientId || item.id || '').trim();
       return Boolean(threadMap[id]);
     },
-    [itemMatchesSearch, runFilter, stepFilter, dueFilter, nowMs, onlyWithRequests, threadMap, viewer.isAdmin, ownerFilter]
+    [itemMatchesSearch, runFilter, stepFilter, industryFilter, dateField, periodPreset, periodFrom, periodTo, dueFilter, nowMs, onlyWithRequests, threadMap, viewer.isAdmin, ownerFilter]
   );
   const items = useMemo(
-    () => [...developmentItems, ...previewItems],
-    [developmentItems, previewItems]
+    () => [...developmentItems, ...previewItems, ...ssuItems],
+    [developmentItems, previewItems, ssuItems]
   );
+  const productCounts = useMemo(() => ({
+    asoldi: developmentItems.length + previewItems.length,
+    ssu: ssuItems.length,
+  }), [developmentItems.length, previewItems.length, ssuItems.length]);
+  const industryOptions = useMemo(() => {
+    const pool = productBracket === 'ssu' ? ssuItems : [...developmentItems, ...previewItems];
+    const names = new Set<string>();
+    for (const item of pool) {
+      const name = String(item.industry || '').trim();
+      if (name) names.add(name);
+    }
+    return [...names].sort((a, b) => a.localeCompare(b, 'nb'));
+  }, [productBracket, ssuItems, developmentItems, previewItems]);
   const visibleDevelopmentItems = useMemo(
-    () => developmentItems.filter(itemVisible),
-    [developmentItems, itemVisible]
+    () => (productBracket === 'asoldi' ? developmentItems.filter(itemVisible) : []),
+    [developmentItems, itemVisible, productBracket]
   );
   const visiblePreviewItems = useMemo(
-    () => previewItems.filter(itemVisible),
-    [previewItems, itemVisible]
+    () => (productBracket === 'asoldi' ? previewItems.filter(itemVisible) : []),
+    [previewItems, itemVisible, productBracket]
+  );
+  const visibleSsuItems = useMemo(
+    () => (productBracket === 'ssu' ? ssuItems.filter(itemVisible) : []),
+    [ssuItems, itemVisible, productBracket]
   );
   const developmentGroups = useMemo(
     () => groupDevelopmentItems(
@@ -251,10 +318,21 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
     () => (viewer.isAdmin ? visiblePreviewItems.filter((item) => !item.developerOwnerId) : []),
     [visiblePreviewItems, viewer.isAdmin]
   );
-  const visibleCount = visibleDevelopmentItems.length + visiblePreviewItems.length;
+  const ssuGroups = useMemo(
+    () => groupDevelopmentItems(
+      visibleSsuItems.filter((item) => !viewer.isAdmin || item.developerOwnerId),
+      nowMs
+    ),
+    [visibleSsuItems, nowMs, viewer.isAdmin]
+  );
+  const ssuUnassigned = useMemo(
+    () => (viewer.isAdmin ? visibleSsuItems.filter((item) => !item.developerOwnerId) : []),
+    [visibleSsuItems, viewer.isAdmin]
+  );
+  const visibleCount = visibleDevelopmentItems.length + visiblePreviewItems.length + visibleSsuItems.length;
   const visibleItems = useMemo(
-    () => [...visibleDevelopmentItems, ...visiblePreviewItems],
-    [visibleDevelopmentItems, visiblePreviewItems]
+    () => [...visibleDevelopmentItems, ...visiblePreviewItems, ...visibleSsuItems],
+    [visibleDevelopmentItems, visiblePreviewItems, visibleSsuItems]
   );
   const visibleSelectableIds = visibleItems.map((item) => item.id);
   const allVisibleSelected = Boolean(visibleSelectableIds.length && visibleSelectableIds.every((id) => selectedIds.includes(id)));
@@ -414,8 +492,10 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
         ? data.developmentItems
         : (Array.isArray(data.deploymentItems) ? data.deploymentItems : []);
       const nextPreview = Array.isArray(data.previewItems) ? data.previewItems : [];
+      const nextSsu = Array.isArray(data.ssuItems) ? data.ssuItems : [];
       setDevelopmentItems(dedupe(nextDevelopment));
       setPreviewItems(dedupe(nextPreview));
+      setSsuItems(dedupe(nextSsu));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed loading development clients');
     } finally {
@@ -452,16 +532,20 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
   }, [items]);
 
   useEffect(() => {
-    if (!headerPanel) return undefined;
+    if (!headerPanel && !productMenuOpen && !accountMenuOpen) return undefined;
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node | null;
       if (target && headerShellRef.current?.contains(target)) return;
       setHeaderPanel(null);
+      setProductMenuOpen(false);
+      setAccountMenuOpen(false);
     };
     const onScroll = (event: Event) => {
       const target = event.target as Node | null;
       if (target && headerShellRef.current?.contains(target)) return;
       setHeaderPanel(null);
+      setProductMenuOpen(false);
+      setAccountMenuOpen(false);
     };
     document.addEventListener('pointerdown', onPointerDown);
     window.addEventListener('scroll', onScroll, true);
@@ -469,7 +553,7 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
       document.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('scroll', onScroll, true);
     };
-  }, [headerPanel]);
+  }, [headerPanel, productMenuOpen, accountMenuOpen]);
 
   const pumpHandoffs = useCallback(async () => {
     const caller = viewer;
@@ -606,139 +690,382 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
   }
 
   const empty = !loading && items.length === 0;
+  const isSsuBracket = productBracket === 'ssu';
+  const runningJobs = queueItems.filter((item) => {
+    const status = String(item.status || '');
+    return status === 'running' || status === 'queued';
+  }).length;
+
+  function chooseProduct(next: ProductBracket) {
+    setProductBracket(next);
+    setProductMenuOpen(false);
+    setSelectedIds([]);
+    setIndustryFilter('');
+  }
 
   return (
-    <div className="space-y-6">
-      {!hideHeader && (
-        <div>
-          <h2 className="text-lg font-semibold text-white">Utvikling</h2>
-          <p className="text-gray-400 text-sm">
-            Development øverst er solgte kunder. Listen under er før kontrakt, med møtetid fra salg.
-          </p>
-        </div>
-      )}
-
-      <div ref={headerShellRef} className="rounded-2xl bg-[#2a2a2a] border border-white/10">
-        <div className="flex flex-wrap items-center gap-2 p-3">
-          <button
-            type="button"
-            onClick={() => setHeaderPanel((current) => (current === 'filter' ? null : 'filter'))}
-            className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm ${
-              headerPanel === 'filter' ? 'bg-[#FF5B00] text-white' : 'bg-white/10 text-white hover:bg-white/15'
-            }`}
-            aria-expanded={headerPanel === 'filter'}
-          >
-            <Filter size={14} />
-            Filter
-            <ChevronDown size={12} className={`transition-transform ${headerPanel === 'filter' ? 'rotate-180' : ''}`} />
-          </button>
-          <p className="text-[11px] text-gray-400">
-            Development sorteres etter leveringsfrist. Listen under sorteres etter møtetid.
-            {hasActiveFilters ? ` Viser ${visibleCount}.` : ''}
-          </p>
-        </div>
-        {headerPanel === 'filter' && (
-          <form onSubmit={applySearch} className="border-t border-white/10 bg-[#1a1a1a] p-3 space-y-2.5">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-[11px] text-gray-400">Lukk: klikk Filter igjen, klikk utenfor, eller scroll.</p>
-              <button type="button" onClick={() => setHeaderPanel(null)} className="inline-flex items-center gap-1 text-xs text-gray-300 hover:text-white">
-                <X size={12} /> Lukk
+    <div className="sales-clients-surface min-h-screen bg-[#1a1a1a] text-white">
+      <header ref={headerShellRef} className="sales-sticky-header sticky top-0 z-[70] border-b border-white/10 bg-[#161616] shadow-sm">
+        <div className="max-w-[1440px] mx-auto px-3 sm:px-5 py-2.5 flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink-0 relative z-[80]">
+            <img src="/media/Untitled-1.png" alt="Asoldi" className="h-8 sm:h-9 w-auto shrink-0" />
+            <div className="min-w-0 relative">
+              <h1 className="text-sm sm:text-base font-semibold leading-tight truncate">Utviklerterminal</h1>
+              <button
+                type="button"
+                onClick={() => {
+                  setHeaderPanel(null);
+                  setAccountMenuOpen(false);
+                  setProductMenuOpen((open) => !open);
+                }}
+                className="mt-0.5 inline-flex items-center gap-1 text-[11px] sm:text-xs text-gray-300 hover:text-white"
+                aria-expanded={productMenuOpen}
+              >
+                <span className="truncate">
+                  {isSsuBracket ? 'SSU' : 'Website'} ({isSsuBracket ? productCounts.ssu : productCounts.asoldi})
+                </span>
+                <ChevronDown size={12} className={`shrink-0 transition-transform ${productMenuOpen ? 'rotate-180' : ''}`} />
               </button>
-            </div>
-            <div className="flex flex-col sm:flex-row gap-2">
-              <div className="relative flex-1">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input
-                  value={searchInput}
-                  onChange={(e) => setSearchInput(e.target.value)}
-                  placeholder="Business, contact, domain, or area"
-                  className="w-full pl-9 pr-3 py-2 rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm"
-                />
-              </div>
-              <button type="submit" className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-[#FF5B00] text-white text-sm hover:bg-[#e55200]">
-                <Search size={14} />
-                Search
-              </button>
-              {hasActiveFilters && (
-                <button type="button" onClick={clearSearch} className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/15">
-                  <X size={14} />
-                  Clear
-                </button>
-              )}
-            </div>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
-              {viewer.isAdmin && (
-                <label className="text-[11px] text-gray-400 block">
-                  <span className="inline-flex items-center gap-1 mb-1"><Filter size={12} /> Utvikler</span>
-                  <select
-                    value={ownerFilter}
-                    onChange={(event) => setOwnerFilter(event.target.value)}
-                    className="w-full rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+              {productMenuOpen && (
+                <div className="absolute left-0 top-full mt-1 z-[90] min-w-[180px] rounded-xl border border-white/10 bg-[#1f1f1f] shadow-xl overflow-hidden">
+                  <button
+                    type="button"
+                    onClick={() => chooseProduct('asoldi')}
+                    className={`w-full text-left px-3 py-2 text-sm ${productBracket === 'asoldi' ? 'bg-[#FF5B00] text-white' : 'text-gray-200 hover:bg-white/10'}`}
                   >
-                    <option value="">Alle</option>
-                    <option value="unassigned">Ikke tildelt</option>
-                    {developers.map((owner) => (
-                      <option key={owner.accountKey} value={owner.accountKey}>
-                        {owner.name || owner.username}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                    Website ({productCounts.asoldi})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => chooseProduct('ssu')}
+                    className={`w-full text-left px-3 py-2 text-sm ${productBracket === 'ssu' ? 'bg-[#FF5B00] text-white' : 'text-gray-200 hover:bg-white/10'}`}
+                  >
+                    SSU ({productCounts.ssu})
+                  </button>
+                </div>
               )}
-              <label className="text-[11px] text-gray-400 block">
-                <span className="block mb-1">Run</span>
-                <select
-                  value={runFilter}
-                  onChange={(event) => setRunFilter(event.target.value as '' | 'with-run' | 'without-run')}
-                  className="w-full rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
-                >
-                  <option value="">Alle run</option>
-                  <option value="with-run">Har website-run</option>
-                  <option value="without-run">Ingen website-run</option>
-                </select>
-              </label>
-              <label className="text-[11px] text-gray-400 block">
-                <span className="block mb-1">Steg</span>
-                <select
-                  value={stepFilter}
-                  onChange={(event) => setStepFilter(event.target.value)}
-                  className="w-full rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
-                >
-                  <option value="">Alle steg</option>
-                  <option value="1">Steg 1 klar</option>
-                  <option value="lang">Språk låst</option>
-                  <option value="1.5">Steg 1.5 klar</option>
-                  <option value="2.1">Steg 2.1 klar</option>
-                  <option value="2.2">Steg 2.2 klar</option>
-                </select>
-              </label>
-              <label className="text-[11px] text-gray-400 block">
-                <span className="block mb-1">Frist</span>
-                <select
-                  value={dueFilter}
-                  onChange={(event) => setDueFilter(event.target.value as '' | 'started' | 'waiting' | 'overdue' | 'upcoming')}
-                  className="w-full rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
-                >
-                  <option value="">Alle frister</option>
-                  <option value="waiting">Venter på signert kontrakt</option>
-                  <option value="upcoming">Kommende frist</option>
-                  <option value="overdue">Forfalt frist</option>
-                  <option value="started">Har fristdato</option>
-                </select>
-              </label>
-              <label className="inline-flex items-center gap-2 rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2 cursor-pointer self-end">
-                <input
-                  type="checkbox"
-                  checked={onlyWithRequests}
-                  onChange={(event) => setOnlyWithRequests(event.target.checked)}
-                  className="h-4 w-4 accent-[#FF5B00]"
-                />
-                Med forespørsel
-              </label>
             </div>
-          </form>
+          </div>
+
+          <div className="ml-auto flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => {
+                setProductMenuOpen(false);
+                setAccountMenuOpen(false);
+                setHeaderPanel((current) => (current === 'filter' ? null : 'filter'));
+              }}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg text-xs sm:text-sm ${
+                headerPanel === 'filter' ? 'bg-[#FF5B00] text-white' : 'bg-white/10 text-white hover:bg-white/15'
+              }`}
+              aria-expanded={headerPanel === 'filter'}
+            >
+              <Filter size={14} />
+              <span className="hidden sm:inline">Filter</span>
+              {hasActiveFilters || selectedIds.length > 0 ? <span className="h-1.5 w-1.5 rounded-full bg-white sm:bg-orange-200" /> : null}
+              <ChevronDown size={12} className={`hidden sm:block transition-transform ${headerPanel === 'filter' ? 'rotate-180' : ''}`} />
+            </button>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setHeaderPanel(null);
+                  setProductMenuOpen(false);
+                  setAccountMenuOpen((open) => !open);
+                }}
+                className={`inline-flex items-center justify-center h-10 w-10 rounded-lg ${
+                  accountMenuOpen ? 'bg-[#FF5B00] text-white' : 'bg-white/10 text-white hover:bg-white/15'
+                }`}
+                title="Konto"
+                aria-expanded={accountMenuOpen}
+                aria-label="Konto"
+              >
+                <UserRound size={16} />
+              </button>
+              {accountMenuOpen && (
+                <div className="absolute right-0 top-full mt-1 z-[90] w-64 rounded-xl border border-white/10 bg-[#1f1f1f] shadow-xl p-3">
+                  <p className="text-[11px] text-gray-400">Innlogget som {viewer.username || 'utvikler'}</p>
+                  {onLogout && (
+                    <button
+                      type="button"
+                      onClick={() => onLogout()}
+                      className="mt-2 w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/15"
+                    >
+                      <LogOut size={14} />
+                      Logg ut
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {headerPanel === 'filter' && (
+          <div className="border-t border-white/10 bg-[#1a1a1a]">
+            <div className="max-w-[1440px] mx-auto px-3 sm:px-5 py-3">
+              <form onSubmit={applySearch} className="rounded-xl border border-white/10 bg-black/20 p-2.5 sm:p-3 space-y-2.5 max-h-[70vh] overflow-y-auto">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-[11px] text-gray-400">
+                    Lukk: klikk Filter igjen, klikk under, eller scroll.
+                    {hasActiveFilters ? ` Viser ${visibleCount}.` : ''}
+                  </p>
+                  <button type="button" onClick={() => setHeaderPanel(null)} className="inline-flex items-center gap-1 text-xs text-gray-300 hover:text-white">
+                    <X size={12} /> Lukk
+                  </button>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <div className="relative flex-1">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input
+                      value={searchInput}
+                      onChange={(e) => setSearchInput(e.target.value)}
+                      placeholder="Business, contact, domain, or area"
+                      className="w-full pl-9 pr-3 py-2 rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm"
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <button type="submit" className="inline-flex flex-1 sm:flex-none items-center justify-center gap-2 px-3 py-2 rounded-lg bg-[#FF5B00] text-white text-sm hover:bg-[#e55200]">
+                      <Search size={14} />
+                      Search
+                    </button>
+                    {hasActiveFilters && (
+                      <button type="button" onClick={clearSearch} className="inline-flex items-center justify-center gap-1 px-3 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/15">
+                        <X size={14} />
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                  <label className="text-[11px] text-gray-400 block">
+                    <span className="block mb-1">Bransje</span>
+                    <select
+                      value={industryFilter}
+                      onChange={(event) => setIndustryFilter(event.target.value)}
+                      className="w-full rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+                    >
+                      <option value="">Alle bransjer</option>
+                      <option value="__none__">Uten bransje</option>
+                      {industryOptions.map((name) => (
+                        <option key={name} value={name}>{name}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-[11px] text-gray-400 block">
+                    <span className="block mb-1">Nåværende steg (siste ferdig)</span>
+                    <select
+                      value={stepFilter}
+                      onChange={(event) => setStepFilter(event.target.value)}
+                      className="w-full rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+                    >
+                      <option value="">Alle steg</option>
+                      <option value="none">Ingen run</option>
+                      <option value="draft">Run uten ferdig steg</option>
+                      <option value="1">Steg 1</option>
+                      <option value="lang">Språk låst</option>
+                      <option value="1.5">Steg 1.5</option>
+                      <option value="2.1">Steg 2.1</option>
+                      <option value="2.2">Steg 2.2</option>
+                      <option value="layout">Layout</option>
+                      <option value="maps">Kart</option>
+                      <option value="cms">CMS</option>
+                      <option value="seo">Steg 4 SEO</option>
+                    </select>
+                  </label>
+                  <label className="text-[11px] text-gray-400 block">
+                    <span className="block mb-1">Datofelt</span>
+                    <select
+                      value={dateField}
+                      onChange={(event) => setDateField(event.target.value as DateField)}
+                      className="w-full rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+                    >
+                      <option value="created">Opprettet</option>
+                      <option value="meeting">Møte</option>
+                      <option value="due">Frist</option>
+                    </select>
+                  </label>
+                  {viewer.isAdmin && (
+                    <label className="text-[11px] text-gray-400 block">
+                      <span className="inline-flex items-center gap-1 mb-1"><Filter size={12} /> Utvikler</span>
+                      <select
+                        value={ownerFilter}
+                        onChange={(event) => setOwnerFilter(event.target.value)}
+                        className="w-full rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+                      >
+                        <option value="">Alle</option>
+                        <option value="unassigned">Ikke tildelt</option>
+                        {developers.map((owner) => (
+                          <option key={owner.accountKey} value={owner.accountKey}>
+                            {owner.name || owner.username}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  <label className="text-[11px] text-gray-400 block">
+                    <span className="block mb-1">Run</span>
+                    <select
+                      value={runFilter}
+                      onChange={(event) => setRunFilter(event.target.value as '' | 'with-run' | 'without-run')}
+                      className="w-full rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+                    >
+                      <option value="">Alle run</option>
+                      <option value="with-run">Har website-run</option>
+                      <option value="without-run">Ingen website-run</option>
+                    </select>
+                  </label>
+                  <label className="text-[11px] text-gray-400 block">
+                    <span className="block mb-1">Frist</span>
+                    <select
+                      value={dueFilter}
+                      onChange={(event) => setDueFilter(event.target.value as '' | 'started' | 'waiting' | 'overdue' | 'upcoming')}
+                      className="w-full rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+                    >
+                      <option value="">Alle frister</option>
+                      <option value="waiting">Venter på signert kontrakt</option>
+                      <option value="upcoming">Kommende frist</option>
+                      <option value="overdue">Forfalt frist</option>
+                      <option value="started">Har fristdato</option>
+                    </select>
+                  </label>
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {([
+                    ['7d', 'Siste uke'],
+                    ['30d', 'Siste måned'],
+                    ['90d', 'Siste 3 måneder'],
+                  ] as const).map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setPeriodPreset((current) => (current === id ? '' : id))}
+                      className={`px-2.5 py-1 rounded-lg text-xs border ${
+                        periodPreset === id
+                          ? 'bg-[#FF5B00] border-[#FF5B00] text-white'
+                          : 'bg-[#1a1a1a] border-white/10 text-gray-200 hover:bg-white/10'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <div className="grid sm:grid-cols-2 gap-2">
+                  <label className="text-[11px] text-gray-400 block">
+                    <span className="block mb-1">Fra</span>
+                    <input
+                      type="date"
+                      value={periodFrom}
+                      onChange={(event) => setPeriodFrom(event.target.value)}
+                      className="w-full rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+                    />
+                  </label>
+                  <label className="text-[11px] text-gray-400 block">
+                    <span className="block mb-1">Til</span>
+                    <input
+                      type="date"
+                      value={periodTo}
+                      onChange={(event) => setPeriodTo(event.target.value)}
+                      className="w-full rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+                    />
+                  </label>
+                </div>
+                <label className="inline-flex items-center gap-2 rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={onlyWithRequests}
+                    onChange={(event) => setOnlyWithRequests(event.target.checked)}
+                    className="h-4 w-4 accent-[#FF5B00]"
+                  />
+                  Med forespørsel
+                </label>
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-white/10">
+                  <label className="inline-flex items-center gap-2 text-sm text-gray-200 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={allVisibleSelected}
+                      disabled={!visibleSelectableIds.length || assignBusy}
+                      onChange={toggleSelectAllVisible}
+                      className="h-4 w-4 accent-[#FF5B00]"
+                    />
+                    Velg alle
+                    <span className="text-xs text-gray-400">
+                      {selectedIds.length ? `${selectedIds.length} valgt` : `${visibleSelectableIds.length} synlige`}
+                    </span>
+                  </label>
+                  {selectedIds.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedIds([])}
+                      disabled={assignBusy}
+                      className="text-xs text-gray-400 hover:text-white disabled:opacity-50"
+                    >
+                      Nullstill
+                    </button>
+                  )}
+                </div>
+                {viewer.isAdmin && selectedIds.length > 0 && developers.length > 0 && (
+                  <div className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-2 py-1.5 max-w-full">
+                    <Users size={14} className="text-[#FF5B00] shrink-0" />
+                    <select
+                      value={bulkAssignOwnerId}
+                      disabled={assignBusy}
+                      onChange={(event) => setBulkAssignOwnerId(event.target.value)}
+                      className="bg-transparent text-xs text-gray-200 outline-none disabled:opacity-50 min-w-0"
+                    >
+                      <option value="">Velg utvikler…</option>
+                      {developers.map((owner) => (
+                        <option key={owner.accountKey} value={owner.accountKey}>
+                          {owner.name || owner.username}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      disabled={assignBusy || !bulkAssignOwnerId}
+                      onClick={() => {
+                        const chosen = items.filter((item) => selectedIds.includes(item.id));
+                        for (const item of chosen) void assignDeveloper(item, bulkAssignOwnerId);
+                      }}
+                      className="px-2 py-1 rounded-md bg-[#FF5B00] text-white text-xs hover:bg-[#e55200] disabled:opacity-50"
+                    >
+                      Tildel
+                    </button>
+                  </div>
+                )}
+                <DeveloperRunQueueBar
+                  embedded
+                  hideSelection
+                  websiteMakerBaseUrl={websiteMakerBaseUrl}
+                  selectedClients={selectedClients}
+                  visibleCount={visibleSelectableIds.length}
+                  allVisibleSelected={allVisibleSelected}
+                  items={queueItems}
+                  memory={queueMemory}
+                  onRefreshQueue={refreshQueue}
+                  onToggleSelectAll={toggleSelectAllVisible}
+                  onClearSelection={() => setSelectedIds([])}
+                  onError={setError}
+                  onNotice={setNotice}
+                />
+              </form>
+            </div>
+          </div>
         )}
-      </div>
+      </header>
+
+      <div className="max-w-[1440px] mx-auto px-3 sm:px-6 py-4 space-y-4">
+      {headerPanel !== 'filter' && (selectedIds.length > 0 || runningJobs > 0) && (
+        <button
+          type="button"
+          onClick={() => setHeaderPanel('filter')}
+          className="w-full text-left rounded-xl border border-white/10 bg-[#2a2a2a] px-3 py-2 text-xs text-gray-300 hover:bg-white/10"
+        >
+          {selectedIds.length > 0 ? `${selectedIds.length} valgt. ` : ''}
+          {runningJobs > 0 ? `${runningJobs} i kø. ` : ''}
+          Åpne Filter for å kjøre steg.
+        </button>
+      )}
 
       {error && (
         <div className="rounded-xl border border-red-700/40 bg-red-900/20 px-3 py-2 text-sm text-red-200">
@@ -751,50 +1078,6 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
         </div>
       )}
 
-      {viewer.isAdmin && selectedIds.length > 0 && developers.length > 0 && (
-        <div className="inline-flex items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-2 py-1.5 max-w-full">
-          <Users size={14} className="text-[#FF5B00] shrink-0" />
-          <select
-            value={bulkAssignOwnerId}
-            disabled={assignBusy}
-            onChange={(event) => setBulkAssignOwnerId(event.target.value)}
-            className="bg-transparent text-xs text-gray-200 outline-none disabled:opacity-50 min-w-0"
-          >
-            <option value="">Velg utvikler…</option>
-            {developers.map((owner) => (
-              <option key={owner.accountKey} value={owner.accountKey}>
-                {owner.name || owner.username}
-              </option>
-            ))}
-          </select>
-          <button
-            type="button"
-            disabled={assignBusy || !bulkAssignOwnerId}
-            onClick={() => {
-              const chosen = items.filter((item) => selectedIds.includes(item.id));
-              for (const item of chosen) void assignDeveloper(item, bulkAssignOwnerId);
-            }}
-            className="px-2 py-1 rounded-md bg-[#FF5B00] text-white text-xs hover:bg-[#e55200] disabled:opacity-50"
-          >
-            Tildel
-          </button>
-        </div>
-      )}
-
-      <DeveloperRunQueueBar
-        websiteMakerBaseUrl={websiteMakerBaseUrl}
-        selectedClients={selectedClients}
-        visibleCount={visibleSelectableIds.length}
-        allVisibleSelected={allVisibleSelected}
-        items={queueItems}
-        memory={queueMemory}
-        onRefreshQueue={refreshQueue}
-        onToggleSelectAll={toggleSelectAllVisible}
-        onClearSelection={() => setSelectedIds([])}
-        onError={setError}
-        onNotice={setNotice}
-      />
-
       {loading ? (
         <div className="min-h-[160px] flex items-center justify-center text-gray-400">
           <Loader2 className="animate-spin mr-2" size={18} /> Loading development clients…
@@ -806,7 +1089,38 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
       ) : (
         <div className="space-y-8">
           {visibleCount === 0 ? (
-            <p className="text-sm text-gray-500">Ingen kunder matcher søket.</p>
+            <p className="text-sm text-gray-500">
+              {hasActiveFilters
+                ? 'Ingen kunder matcher filteret.'
+                : isSsuBracket
+                  ? 'Ingen SSU-kunder.'
+                  : 'Ingen kunder her.'}
+            </p>
+          ) : isSsuBracket ? (
+            <section className="space-y-3">
+              <div className="rounded-xl border border-white/10 bg-[#2a2a2a] px-3 py-2.5">
+                <span className="block text-sm font-semibold text-white">SSU</span>
+                <span className="block text-[11px] text-gray-400 mt-0.5">
+                  SSU-kunder. Nettstedskundene ligger under Website.
+                </span>
+              </div>
+              {ssuUnassigned.length > 0 && (
+                <div className="space-y-3">
+                  <div className="rounded-xl border border-amber-300 bg-amber-50 text-amber-900 px-3 py-2.5">
+                    <span className="block text-sm font-semibold">Ikke tildelt</span>
+                    <span className="block text-[11px] opacity-80 mt-0.5">Tildel en utvikler før arbeidet starter.</span>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start">
+                    {ssuUnassigned.map((item) => (
+                      <React.Fragment key={item.id}>
+                        {renderClientCard(item, 'preview', false)}
+                      </React.Fragment>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {renderGroupedCards(ssuGroups, 'preview', 'ssu')}
+            </section>
           ) : (
             <>
               <section className="space-y-3">
@@ -873,6 +1187,7 @@ export function DevelopmentClientsSection({ hideHeader = false }: Props) {
           )}
         </div>
       )}
+      </div>
     </div>
   );
 }

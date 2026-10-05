@@ -839,6 +839,18 @@ export function DeveloperClientCard({
             {timeline.label}
           </p>
         ) : null}
+        {isAdmin && (salesClientId || item.siteId) ? (
+          <div className="mt-2">
+            <WebsiteDueField
+              salesClientId={salesClientId}
+              siteId={item.siteId}
+              variant="card"
+              authHeaders={developmentAuthHeaders()}
+              clearLabel="Fjern dato"
+              onSaved={() => { void onReload(); }}
+            />
+          </div>
+        ) : null}
         {salesClientId ? (
           <button
             type="button"
@@ -1112,15 +1124,6 @@ export function DeveloperClientCard({
                   </button>
                 </div>
                 <p className="text-[11px] text-gray-500">Steg 4 SEO er av til et domene er lagret på runet.</p>
-                {isAdmin && item.offerCustom ? (
-                  <WebsiteDueField
-                    salesClientId={salesClientId}
-                    authHeaders={developmentAuthHeaders()}
-                    clearLabel="Fjern dato"
-                    note="Skreddersydd tilbud har ingen automatisk frist. Sett datoen her."
-                    onSaved={() => { void onReload(); }}
-                  />
-                ) : null}
               </>
             )}
           </div>

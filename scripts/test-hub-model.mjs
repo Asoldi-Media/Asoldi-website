@@ -44,4 +44,5 @@ test('normalizeSite fills new hub fields on old records', () => {
   assert.equal(site.features.ecommerce, true);
   assert.equal(site.ecommerceCatalogType, 'normal');
   assert.equal(site.cms.githubRepo, '');
+  assert.equal(site.websiteDueOverride, '');
 });

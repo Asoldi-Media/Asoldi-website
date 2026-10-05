@@ -92,6 +92,12 @@ export function getAllSites() {
   return readSites().map(publicSite);
 }
 
+export function getSiteById(id) {
+  const key = String(id || '').trim();
+  if (!key) return null;
+  return readSites().find((site) => site.id === key) || null;
+}
+
 export function findSiteByLocalBlogToken(token) {
   const value = String(token || '').trim();
   if (!value) return null;
@@ -226,6 +232,9 @@ export function updateSite(id, patch = {}) {
   }
   if (patch.development !== undefined) {
     current.development = normalizeDevelopment({ ...current.development, ...patch.development });
+  }
+  if (patch.websiteDueOverride !== undefined) {
+    current.websiteDueOverride = patch.websiteDueOverride;
   }
   sites[i] = normalizeSite(current);
   writeSites(sites);

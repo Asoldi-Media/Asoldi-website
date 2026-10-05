@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
-import { Loader2, LogOut } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { DevelopmentClientsSection } from '../Admin/sections/DevelopmentClientsSection';
 import { API, getDevelopmentToken } from '../Admin/shared';
 
@@ -45,7 +45,7 @@ export const DeveloperWorkspace = () => {
   if (status === 'checking') {
     return (
       <div className="staff-light min-h-screen bg-[#1a1a1a] flex items-center justify-center text-gray-300">
-        <Loader2 className="animate-spin mr-2" size={20} /> Laster utviklerarbeidsplass…
+        <Loader2 className="animate-spin mr-2" size={20} /> Laster utviklerterminal…
       </div>
     );
   }
@@ -67,31 +67,11 @@ export const DeveloperWorkspace = () => {
   return (
     <>
       <Helmet>
-        <title>Utvikling – Asoldi</title>
+        <title>Utviklerterminal – Asoldi</title>
         <meta name="robots" content="noindex,nofollow" />
       </Helmet>
       <div className="staff-light min-h-screen bg-[#1a1a1a] text-white">
-        <header className="border-b border-white/10 bg-[#222]">
-          <div className="w-full px-6 py-4 flex items-center justify-between">
-            <div>
-              <h1 className="text-lg font-semibold">Utvikling</h1>
-              <p className="text-xs text-gray-400">
-                Development øverst er solgte kunder. Listen under viser møtetid til Klar for preview.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={logout}
-              className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white/10 hover:bg-white/15 text-sm"
-            >
-              <LogOut size={15} />
-              Logg ut
-            </button>
-          </div>
-        </header>
-        <main className="w-full px-6 py-8">
-          <DevelopmentClientsSection />
-        </main>
+        <DevelopmentClientsSection onLogout={logout} />
       </div>
     </>
   );

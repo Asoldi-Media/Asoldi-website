@@ -44,6 +44,25 @@ test('calendar invite organizer matches the branded From address', () => {
   assert.match(invite.content, /SEQUENCE:0/);
 });
 
+test('workshop ICS organizer is always damian@asoldi.com, not the branded From', () => {
+  const previous = process.env.RESEND_FROM;
+  process.env.RESEND_FROM = 'Asoldi <contact@asoldi.com>';
+  const invite = buildSalesCalendarInvite(getSalesWorkshopPreviewClient(), {
+    meetLink: 'https://meet.google.com/aaa-bbbb-ccc',
+    htmlLink: 'https://calendar.google.com/event?eid=workshop',
+    eventId: 'evt-workshop',
+  }, {
+    organizerEmail: 'damian@asoldi.com',
+    organizerName: 'Damian',
+    durationMinutes: 30,
+  });
+  process.env.RESEND_FROM = previous;
+  assert.ok(invite);
+  assert.match(invite.content, /ORGANIZER;CN=Damian:mailto:damian@asoldi.com/);
+  assert.equal(invite.content.includes('mailto:contact@asoldi.com'), false);
+  assert.match(invite.content, /X-GOOGLE-CONFERENCE:https:\/\/meet\.google\.com\/aaa-bbbb-ccc/);
+});
+
 test('a resent confirmation keeps the same Meet link and bumps the invite sequence', () => {
   const invite = buildSalesCalendarInvite(getSalesEmailPreviewClient(), {
     meetLink: 'https://meet.google.com/aaa-bbbb-ccc',

@@ -52,6 +52,8 @@ type Props = {
   onClearSelection: () => void;
   onError: (message: string) => void;
   onNotice?: (message: string) => void;
+  embedded?: boolean;
+  hideSelection?: boolean;
 };
 
 const WAIT_REASON_LABEL: Record<string, string> = {
@@ -106,6 +108,8 @@ export function DeveloperRunQueueBar({
   onClearSelection,
   onError,
   onNotice,
+  embedded = false,
+  hideSelection = false,
 }: Props) {
   const [target, setTarget] = useState('1');
   const [busy, setBusy] = useState(false);
@@ -246,7 +250,7 @@ export function DeveloperRunQueueBar({
   const waitHint = memory?.waitReason ? WAIT_REASON_LABEL[String(memory.waitReason)] || String(memory.waitReason) : '';
 
   return (
-    <div className="rounded-2xl bg-[#2a2a2a] border border-white/10 p-4 space-y-3">
+    <div className={embedded ? 'space-y-3 pt-2 border-t border-white/10' : 'rounded-2xl bg-[#2a2a2a] border border-white/10 p-4 space-y-3'}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <div className="text-xs font-semibold text-gray-200 uppercase tracking-wide">Maker-kø</div>
@@ -259,20 +263,22 @@ export function DeveloperRunQueueBar({
             </p>
           ) : null}
         </div>
-        <label className="inline-flex items-center gap-2 text-sm text-gray-200 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={allVisibleSelected}
-            disabled={!visibleCount}
-            onChange={onToggleSelectAll}
-            className="h-4 w-4 accent-[#FF5B00]"
-          />
-          Velg alle
-          <span className="text-xs text-gray-400">
-            {selectedCount ? `${selectedCount} valgt` : `${visibleCount} synlige`}
-          </span>
-        </label>
-        {selectedCount > 0 && (
+        {!hideSelection && (
+          <label className="inline-flex items-center gap-2 text-sm text-gray-200 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={allVisibleSelected}
+              disabled={!visibleCount}
+              onChange={onToggleSelectAll}
+              className="h-4 w-4 accent-[#FF5B00]"
+            />
+            Velg alle
+            <span className="text-xs text-gray-400">
+              {selectedCount ? `${selectedCount} valgt` : `${visibleCount} synlige`}
+            </span>
+          </label>
+        )}
+        {!hideSelection && selectedCount > 0 && (
           <button type="button" onClick={onClearSelection} className="text-xs text-gray-400 hover:text-white">
             Nullstill
           </button>

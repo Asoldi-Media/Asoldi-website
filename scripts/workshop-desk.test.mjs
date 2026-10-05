@@ -141,6 +141,9 @@ test('iteration Møte is a 30-minute invite with Meet and Fireflies', () => {
   assert.equal(invite.includeMeet, true);
   assert.equal(invite.options.durationMinutes, 30);
   assert.equal(invite.options.addFireflies, true);
+  assert.equal(invite.options.calendarId, 'primary');
+  assert.equal(invite.options.forceGuestInvite, true);
+  assert.equal(invite.calendarId, 'primary');
   assert.equal(invite.client.meetingAt, DUE);
   assert.notEqual(invite.client.calendar?.eventId, 'sales-event');
   assert.equal(invite.client.meetingAt, DUE);
@@ -306,6 +309,7 @@ test('Admin Meet button joins as damian and never uses the sales Meet after work
   assert.equal(workshopJoin.meetLink, workshopLink);
   assert.match(workshopJoin.joinUrl, /AccountChooser/);
   assert.match(workshopJoin.joinUrl, /damian%40asoldi\.com/);
+  assert.match(workshopJoin.joinUrl, /hd=asoldi\.com/);
   assert.equal(workshopJoin.joinUrl.includes('idf-xnpu-jna'), false);
 
   const phone = resolveAdminMeetJoin({ workshopAction: { format: 'sms-ring', meetLink: workshopLink } });

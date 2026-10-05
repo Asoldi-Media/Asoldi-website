@@ -15,7 +15,7 @@ The assistant is a data intake, not a brand interview. It asks for missing bucke
 
 **Do not ask for something we already have.** If a bucket is filled, or the client already said it is not relevant, skip it. Wording can vary a little so it does not feel like the same form every time. The order does not vary.
 
-When the last missing bucket is done or skipped, tell them data gathering is finished and send them to bedriftsinformasjonen (`/kunde/innstillinger`).
+When the last missing bucket is done or skipped, tell them data gathering is finished and keep them on the assistant. The side panel shows each step with what is already saved. They can open bedriftsinformasjonen (`/kunde/innstillinger`) themselves when they want to edit.
 
 ## Where it is stored
 
@@ -79,7 +79,7 @@ It looks at Kundedata and asks only the first empty bucket. The client can skip 
 | 4. Ansatte | «Lyst til å vise informasjon om deres ansatte på siden?» Then title, name, phone, email, one person per line. | Skip. | `staff`, appended. Image is left empty. | The signer from onboarding is ignored when deciding if this step is still needed. |
 | 5. Åpningstider | Monday–Sunday. Also accept «not relevant» or open 24/7. | «Not relevant» is a real answer, not a blank. | `openingHours.status` + `openingHours.days` | Default Mon–Fri 08–16 does **not** count as filled. `set`, `always`, and `not-relevant` do. |
 | 6. Partnere | Partners or affiliations to show on the site. Group them if the client groups them («Sponsorer: …»). | Skip. | `affiliations` (category + items) | Text only. |
-| Done | Short line that gathering is finished. | — | Redirect to `/kunde/innstillinger`. | Happens when every step above is filled or flagged. |
+| Done | Short line that gathering is finished. | — | Stay on the assistant. The panel shows every step with what was saved. A link opens `/kunde/innstillinger` if they want to edit. | Happens when every step above is filled or flagged. The page does not leave the assistant on its own. |
 
 ### Do not ask these in the assistant
 
@@ -99,7 +99,11 @@ The client may mix sources in one go: a URL, several files, and typed text. Read
 - Text files and PDFs are documents, not images.
 - While it works, the client must see that it is working (status line / thinking), and the side panel fills in as categories and counts appear.
 
-Today: one ingest job reads files, URLs, and text together (`runUnifiedIngestJob`). Shopify and WooCommerce are detected and read through their public product feeds when those exist; other sites are read from the pages themselves (sitemap and offering pages). Layout is chosen from the content. A second import is merged into the catalogs already stored, then capped at 200. The side panel shows layout, category count, product count, and category names. The chat shows a status line while a job runs.
+Today: one ingest job reads files, URLs, and text together (`runUnifiedIngestJob`). Shopify and WooCommerce are detected and read through their public product feeds when those exist; other sites are read from the pages themselves (sitemap and offering pages). Layout is chosen from the content. A second import is merged into the catalogs already stored, then capped at 200. Saved products show under the Produkter step. The chat shows a status line while a job runs.
+
+The side panel shows one layout at a time and slides to the next. Produkter lists the catalog in the grey placeholder style. Media switches to a picture grid. From the logo step on, the panel is a small profile card: a grey logo mark at the top left, then `Ansatte —` and a count, the opening hours written out, and up to three partner bars. It does not paste the real logo file into that mark.
+
+Products, media, staff, and partners stay on that step after a save and ask if there is more. A no, or «det er alt», moves on. Opening hours and the logo are saved once and the assistant does not ask whether every day was filled.
 
 The assistant does **not** start from the website URL saved in onboarding. The client has to send that link again in the chat. Instagram, Facebook, and the Google profile are also not used as product sources here.
 
@@ -129,4 +133,5 @@ These are the gaps. The rest of the two flows above already matches the request.
 - `lib/ai-assistant/service.js` — chat, media, logo, and the product job
 - `lib/ai-assistant/products-ingest.js` and `products-scrape.js` — catalog reading
 - `app/pages/client/ClientAiAssistant.tsx` — chat UI
+- `app/pages/client/AssistantIntakePanel.tsx` — step panel for content already saved
 - `app/pages/client/ClientSettings.tsx` — Kundedata, where the client checks the result

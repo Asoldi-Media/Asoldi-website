@@ -1,7 +1,7 @@
 import React from 'react';
 import { Edit2, Globe, Key, Plus, Trash2, UserRound } from 'lucide-react';
 import type { Site } from '../shared';
-import { WEBSITE_PLAN_OPTIONS } from '../shared';
+import { WEBSITE_PLAN_OPTIONS, authHeaders } from '../shared';
 import {
   CmsFleetToolbar,
   cmsFleetJobBusy,
@@ -10,6 +10,7 @@ import {
   siteGithubRepo,
   useCmsFleet,
 } from './CmsFleetSection';
+import { WebsiteDueField } from './WebsiteDueField';
 
 type Props = {
   sites: Site[];
@@ -94,6 +95,13 @@ export function ClientSitesSection({
                 <Globe size={14} /> {site.domain || '—'}
               </p>
               <p className="text-gray-500 text-xs mt-1">{planLabel(site.websitePlan)}</p>
+              <div className="mt-2">
+                <WebsiteDueField
+                  siteId={site.id}
+                  variant="card"
+                  authHeaders={authHeaders()}
+                />
+              </div>
               <p className="text-gray-500 text-xs mt-1 flex items-center gap-1">
                 <Key size={12} /> <code className="bg-black/30 px-1 rounded">{site.site_key}</code>
                 <button type="button" onClick={() => onCopyKey(site.site_key)} className="text-[#FF5B00] hover:underline ml-1">

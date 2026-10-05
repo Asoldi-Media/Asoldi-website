@@ -23,6 +23,7 @@ import {
   makerProgressPatchFromHandoff,
   mergeDeveloperPipelineStatus,
   normalizeDeveloperQa,
+  currentPipelineStage,
   pipelineStatusFromMakerRun,
   resolveDeveloperProgressClick,
   resolveLatestMakerPreviewStep,
@@ -260,6 +261,14 @@ test('handoff progress fields persist without treating sales domain as a fill', 
   assert.equal(status.step1Ready, true);
   assert.equal(status.generateTextReady, true);
   assert.equal(status.injectMediaReady, false);
+  assert.equal(currentPipelineStage({ ...patch, runId: 'run-1' }), '2.1');
+  assert.equal(currentPipelineStage({
+    runId: 'run-2',
+    steps: { '1': 'ready', '1.5': 'ready' },
+    step2Substeps: {},
+    language: { confirmed: true },
+  }), '1.5');
+  assert.equal(currentPipelineStage({}), 'none');
 });
 
 test('live Maker run nested steps become a persistable handoff', () => {
@@ -463,7 +472,11 @@ test('Development card still mounts one request thread and the queue bar', () =>
   assert.match(card, /visibilitychange/);
   assert.match(section, /collapsedBuckets\[storageKey\] !== false/);
   const workspace = readFileSync(join(here, '../app/pages/developer/DeveloperWorkspace.tsx'), 'utf8');
-  assert.match(workspace, /Klar for preview/);
+  assert.match(workspace, /Utviklerterminal/);
+  assert.match(section, /Utviklerterminal/);
+  assert.match(section, /Siste måned/);
+  assert.match(section, /Nåværende steg/);
+  assert.match(section, /Velg alle/);
   const manage = readFileSync(join(here, '../app/pages/Admin/sections/ManageClientsSection.tsx'), 'utf8');
   assert.match(manage, /Klar for preview/);
   assert.match(manage, /Klar for deployment/);

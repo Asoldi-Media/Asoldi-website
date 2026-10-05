@@ -6,9 +6,11 @@ import {
   DAMIAN_WORKSHOP_CALENDAR_EMAIL,
   WORKSHOP_DURATION_MINUTES,
   WORKSHOP_FORMATS,
+  WORKSHOP_PRIMARY_CALENDAR_ID,
   buildWorkshopCalendarPlan,
   buildWorkshopInvitePayload,
   buildWorkshopPrivatePayload,
+  damianMeetJoinUrl,
   getWorkshopAction,
   normalizeWorkshopAction,
   offerStartDateFromWorkshopDueAt,
@@ -18,6 +20,9 @@ import {
   tryBuildSalesWorkshopEmail,
   workshopDeleteSendUpdates,
   workshopEmailShouldSend,
+  workshopInviteHostError,
+  workshopInviteHostOk,
+  workshopInviteShouldDeleteFailedEvent,
   workshopInvitesClient,
   workshopNeedsCalendarEvent,
 } from '../lib/workshop-action.js';
@@ -60,6 +65,9 @@ test('workshop Møte builds a 30-minute invite with the client, Fireflies, Meet,
   assert.equal(invite.includeMeet, true);
   assert.equal(invite.options.durationMinutes, WORKSHOP_DURATION_MINUTES);
   assert.equal(invite.options.addFireflies, true);
+  assert.equal(invite.options.calendarId, 'primary');
+  assert.equal(invite.options.forceGuestInvite, true);
+  assert.equal(invite.calendarId, 'primary');
   assert.match(invite.options.summary, /Workshop/);
   assert.equal(invite.client.meetingMode, 'online');
   assert.equal(invite.client.meetingAt, DUE);
@@ -255,6 +263,12 @@ test('Sales persist stays a draft; Admin Save is the send gate', () => {
   assert.match(serverSrc, /sendWorkshopBookingEmail/);
   assert.match(serverSrc, /icalEvent: invite \|\| undefined/);
   assert.match(serverSrc, /durationMinutes: WORKSHOP_DURATION_MINUTES/);
+  assert.match(serverSrc, /organizerEmail: DAMIAN_WORKSHOP_CALENDAR_EMAIL/);
+  assert.match(serverSrc, /if \(sync\.error\) \{/);
+  assert.match(serverSrc, /status\(409\)\.json/);
+  assert.match(serverSrc, /maybeJoinFirefliesLiveDeskSlot\(stamped \|\| client, 'workshop'\)/);
+  assert.match(serverSrc, /maybeJoinFirefliesLiveDeskSlot\(client, 'iteration'\)/);
+  assert.equal(WORKSHOP_PRIMARY_CALENDAR_ID, 'primary');
 
   const dataSrc = readFileSync(new URL('../data/sales.js', import.meta.url), 'utf8');
   assert.match(dataSrc, /offerStartDateFromWorkshopDueAt/);
@@ -283,4 +297,45 @@ test('T08 workshop email builder is used when it exists', async () => {
     assert.match(built.html, /Meet|telefon eller SMS/i);
     assert.equal(built.html.includes('envelope.png') || built.html.includes('asoldi-envelope'), false);
   }
+});
+
+test('workshop Meet host check requires Damian, a real Meet, and Fireflies', () => {
+  const ok = {
+    googleEmail: 'damian@asoldi.com',
+    organizerEmail: 'damian@asoldi.com',
+    meetLink: 'https://meet.google.com/aaa-bbbb-ccc',
+    firefliesInvited: true,
+  };
+  assert.equal(workshopInviteHostOk(ok), true);
+  assert.equal(workshopInviteHostError(ok), '');
+  assert.equal(workshopInviteShouldDeleteFailedEvent(ok), false);
+
+  assert.equal(workshopInviteHostOk({
+    ...ok,
+    organizerEmail: 'contact@asoldi.com',
+  }), false);
+  assert.equal(workshopInviteShouldDeleteFailedEvent({
+    ...ok,
+    organizerEmail: 'contact@asoldi.com',
+  }), true);
+
+  assert.equal(workshopInviteHostOk({ ...ok, meetLink: '' }), false);
+  assert.equal(workshopInviteShouldDeleteFailedEvent({ ...ok, meetLink: '' }), true);
+
+  assert.equal(workshopInviteHostOk({ ...ok, firefliesInvited: false }), false);
+  assert.equal(workshopInviteShouldDeleteFailedEvent({ ...ok, firefliesInvited: false }), false);
+
+  assert.equal(workshopInviteHostOk({
+    ...ok,
+    googleEmail: 'contact@asoldi.com',
+  }), false);
+});
+
+test('Admin Meet join URL forces damian@asoldi.com and the asoldi.com Google Workspace', () => {
+  const url = damianMeetJoinUrl('https://meet.google.com/aaa-bbbb-ccc');
+  assert.match(url, /^https:\/\/accounts\.google\.com\/AccountChooser\?/);
+  assert.match(url, /Email=damian%40asoldi\.com/);
+  assert.match(url, /hd=asoldi\.com/);
+  assert.match(url, /continue=https%3A%2F%2Fmeet\.google\.com%2Faaa-bbbb-ccc/);
+  assert.equal(damianMeetJoinUrl('https://example.com/not-meet'), '');
 });

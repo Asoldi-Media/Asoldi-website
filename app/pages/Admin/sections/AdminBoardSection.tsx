@@ -17,6 +17,7 @@ import {
 } from '../clientSearch';
 import { AdminRequestInbox } from './AdminRequestInbox';
 import { WorkshopAdminActionRow } from './WorkshopAdminActionRow';
+import { WebsiteDueField } from './WebsiteDueField';
 import { workshopGoalHeld } from '../../../../lib/workshop-goal-timeline.js';
 
 const OfferReviewSection = lazy(() =>
@@ -156,6 +157,12 @@ function AdminBoardCard({
           </p>
         ) : null}
       </div>
+
+      <WebsiteDueField
+        salesClientId={client.id}
+        variant="card"
+        authHeaders={salesAuthHeaders()}
+      />
 
       {thread?.lastKindLabel ? (
         <p className="text-[11px] text-amber-300">{thread.lastKindLabel}</p>
