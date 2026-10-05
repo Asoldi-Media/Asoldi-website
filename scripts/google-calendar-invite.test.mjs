@@ -230,7 +230,7 @@ test('sales calendar oauth asks to read the whole calendar, not only events the 
   assert.equal(scopes.includes('https://www.googleapis.com/auth/gmail.readonly'), true);
 });
 
-test('admin week view uses the filtered rep, or every connected Asoldi mailbox', () => {
+test('admin week view uses the filtered rep, or the logged-in admin mailbox', () => {
   assert.deepEqual(
     resolveSalesCalendarWeekSources({
       actorAccountKey: 'admin:damian@asoldi.com',
@@ -253,10 +253,7 @@ test('admin week view uses the filtered rep, or every connected Asoldi mailbox',
         { accountKey: 'sales:alexander', googleEmail: 'alexander@asoldi.com' },
       ],
     }),
-    [
-      { accountKey: 'admin:damian@asoldi.com', googleEmail: 'damian@asoldi.com' },
-      { accountKey: 'sales:alexander', googleEmail: 'alexander@asoldi.com' },
-    ]
+    [{ accountKey: 'admin:damian@asoldi.com', googleEmail: 'damian@asoldi.com' }]
   );
   assert.deepEqual(
     resolveSalesCalendarWeekSources({
@@ -268,24 +265,26 @@ test('admin week view uses the filtered rep, or every connected Asoldi mailbox',
         { accountKey: 'admin:damian@asoldi.com', googleEmail: 'damian@asoldi.com' },
       ],
     }),
-    [{ accountKey: 'sales:alexander', googleEmail: '' }]
+    [{ accountKey: 'sales:alexander', googleEmail: 'alexander@asoldi.com' }]
   );
 });
 
-test('sales header calendar is a Google iframe and does not call the events API', () => {
+test('sales header calendar is an on-site week grid and never iframes Google Calendar', () => {
   const weekSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../app/pages/Admin/sections/SalesCalendarWeek.tsx'), 'utf8');
-  assert.match(weekSrc, /<iframe/);
-  assert.match(weekSrc, /scrolling="yes"/);
-  assert.doesNotMatch(weekSrc, /admin\/sales\/google\/events/);
+  assert.match(weekSrc, /admin\/sales\/google\/events/);
+  assert.match(weekSrc, /CALENDAR_FETCH_TIMEOUT_MS = 8000/);
+  assert.equal(weekSrc.includes('<iframe'), false);
+  assert.equal(weekSrc.includes('calendar.google.com'), false);
   const salesSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../app/pages/Admin/sections/SalesClientsSection.tsx'), 'utf8');
-  assert.match(salesSrc, /google\/embed/);
-  assert.match(salesSrc, /AbortSignal\.timeout\(8000\)/);
+  assert.match(salesSrc, /<SalesCalendarWeek/);
+  assert.doesNotMatch(salesSrc, /google\/embed/);
   assert.doesNotMatch(salesSrc, /google\/events/);
   const googleSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../lib/google-calendar.js'), 'utf8');
   assert.match(googleSrc, /primaryOnly: true/);
   assert.match(googleSrc, /CALENDAR_EVENTS_TIMEOUT_MS/);
   assert.match(googleSrc, /CALENDAR_WEEK_TIMEOUT_MS/);
   assert.match(googleSrc, /GOOGLE_CALENDAR_HTTP_TIMEOUT_MS/);
+  assert.match(googleSrc, /\.slice\(0, 1\)/);
 });
 
 test('calendar embed and week reads never wait on Google ACL or visibility patches', () => {

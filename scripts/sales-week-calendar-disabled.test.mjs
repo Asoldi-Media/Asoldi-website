@@ -33,7 +33,7 @@ test('sales list reads offers once and does not stat a video per meeting', () =>
   assert.match(present, /meetingHasStoredVideo/);
 });
 
-test('week calendar Google calls stay off so Admin/Sales list cannot hang Node', () => {
+test('week calendar events load on open; free-busy stays off so Admin/Sales list cannot hang Node', () => {
   assert.equal(SALES_WEEK_CALENDAR_DISABLED, true);
   const server = readFileSync(join(root, 'server.js'), 'utf8');
   const salesGet = server.slice(
@@ -45,14 +45,16 @@ test('week calendar Google calls stay off so Admin/Sales list cannot hang Node',
 
   const salesUi = readFileSync(join(root, 'app/pages/Admin/sections/SalesClientsSection.tsx'), 'utf8');
   assert.match(salesUi, /toggleHeaderPanel\('calendar'\)/);
-  assert.match(salesUi, /\/admin\/sales\/google\/embed/);
-  assert.equal(salesUi.includes('/google/events'), false);
+  assert.match(salesUi, /<SalesCalendarWeek/);
   assert.match(salesUi, /if \(headerPanel === 'calendar'\) return;/);
+  assert.equal(salesUi.includes('/google/embed'), false);
+  assert.equal(salesUi.includes('google/events'), false);
 
   const calendarUi = readFileSync(join(root, 'app/pages/Admin/sections/SalesCalendarWeek.tsx'), 'utf8');
-  assert.match(calendarUi, /<iframe/);
-  assert.match(calendarUi, /scrolling="yes"/);
-  assert.equal(calendarUi.includes('/google/events'), false);
+  assert.match(calendarUi, /admin\/sales\/google\/events/);
+  assert.match(calendarUi, /CALENDAR_FETCH_TIMEOUT_MS = 8000/);
+  assert.equal(calendarUi.includes('<iframe'), false);
+  assert.equal(calendarUi.includes('calendar.google.com'), false);
 
   const embedRoute = server.slice(
     server.indexOf("app.get('/api/admin/sales/google/embed'"),
@@ -67,7 +69,16 @@ test('week calendar Google calls stay off so Admin/Sales list cannot hang Node',
     server.indexOf("app.get('/api/admin/sales/google/events'"),
     server.indexOf("app.get('/api/admin/sales/google/embed'")
   );
-  assert.match(eventsRoute, /SALES_WEEK_CALENDAR_DISABLED/);
+  assert.equal(eventsRoute.includes('SALES_WEEK_CALENDAR_DISABLED'), false);
+  assert.match(eventsRoute, /loadSalesCalendarWeek/);
+  assert.match(eventsRoute, /withDeadline/);
+  assert.match(eventsRoute, /\.slice\(0, 1\)/);
+
+  const freeBusyRoute = server.slice(
+    server.indexOf("app.get('/api/admin/sales/google/workshop-availability'"),
+    server.indexOf("app.get('/api/admin/sales/google/auth-url'")
+  );
+  assert.match(freeBusyRoute, /SALES_WEEK_CALENDAR_DISABLED/);
 
   const adminBoard = readFileSync(join(root, 'app/pages/Admin/sections/AdminBoardSection.tsx'), 'utf8');
   assert.equal(adminBoard.includes('SalesCalendarWeek'), false);

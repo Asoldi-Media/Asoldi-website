@@ -505,16 +505,6 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
   const [peekCardIds, setPeekCardIds] = useState<Record<string, boolean>>({});
   const [mapMounted, setMapMounted] = useState(false);
   const [calendarPanelOpen, setCalendarPanelOpen] = useState(false);
-  const [calendarWeekLoading, setCalendarWeekLoading] = useState(false);
-  const [calendarWeekError, setCalendarWeekError] = useState('');
-  const [calendarWeekData, setCalendarWeekData] = useState<{
-    connected: boolean;
-    embedUrl?: string;
-    googleEmail?: string;
-    accountKey?: string;
-    message?: string;
-    shareWarning?: string;
-  } | null>(null);
   const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
   const [secondaryPicker, setSecondaryPicker] = useState<{
     clientIds: string[];
@@ -980,42 +970,6 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
     const timer = window.setInterval(() => setMeetingNowMs(Date.now()), 60_000);
     return () => window.clearInterval(timer);
   }, []);
-
-  useEffect(() => {
-    if (headerPanel !== 'calendar') return undefined;
-    let cancelled = false;
-    const params = new URLSearchParams();
-    if (isSalesAdmin && ownerFilter && ownerFilter !== 'unassigned') {
-      params.set('ownerId', ownerFilter);
-    }
-    const query = params.toString();
-    setCalendarWeekLoading(true);
-    setCalendarWeekError('');
-    void request(`/admin/sales/google/embed${query ? `?${query}` : ''}`, {
-      signal: AbortSignal.timeout(8000),
-    })
-      .then((data) => {
-        if (cancelled) return;
-        setCalendarWeekData({
-          connected: Boolean(data.connected),
-          embedUrl: String(data.embedUrl || ''),
-          googleEmail: String(data.googleEmail || ''),
-          accountKey: String(data.accountKey || ''),
-          message: String(data.message || ''),
-          shareWarning: String(data.shareWarning || ''),
-        });
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        setCalendarWeekError(err instanceof Error ? err.message : 'Kunne ikke hente kalender');
-      })
-      .finally(() => {
-        if (!cancelled) setCalendarWeekLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [headerPanel, ownerFilter, isSalesAdmin, calendarStatus?.tokenUpdatedAt]);
 
   const hasPendingMapGeocodes = meetingMapPendingCount > 0;
   useEffect(() => {
@@ -3316,15 +3270,10 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
               )}
               {headerPanel === 'calendar' && (
                 <SalesCalendarWeek
-                  embedUrl={calendarWeekData?.embedUrl || ''}
-                  loading={calendarWeekLoading}
-                  connected={Boolean(calendarWeekData?.connected)}
-                  googleEmail={calendarWeekData?.googleEmail || ''}
+                  ownerId={calendarPreviewOwnerId}
                   ownerLabel={calendarPreviewOwner ? ownerLabel(calendarPreviewOwner) : 'deg'}
                   isOwnCalendar={calendarPreviewIsOwn}
-                  message={calendarWeekData?.message || ''}
-                  error={calendarWeekError}
-                  shareWarning={calendarWeekData?.shareWarning || ''}
+                  refreshKey={String(calendarStatus?.tokenUpdatedAt || '')}
                   onConnect={() => { closeHeaderMenus(); setCalendarPanelOpen(true); }}
                 />
               )}

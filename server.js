@@ -12135,21 +12135,6 @@ app.get('/api/admin/sales/google/events', salesAuth, async (req, res) => {
   try {
     const weekOffset = Math.max(-8, Math.min(16, Number(req.query?.weekOffset) || 0));
     const week = osloWeekRange(Date.now(), weekOffset);
-    if (SALES_WEEK_CALENDAR_DISABLED) {
-      return res.json({
-        connected: false,
-        accountKey: '',
-        googleEmail: '',
-        googleEmails: [],
-        events: [],
-        days: week.days,
-        weekOffset,
-        timeMin: week.timeMin,
-        timeMax: week.timeMax,
-        warnings: [],
-        message: 'Kalenderen er slått av midlertidig.',
-      });
-    }
     const timeMin = sanitizeText(req.query?.timeMin) || week.timeMin;
     const timeMax = sanitizeText(req.query?.timeMax) || week.timeMax;
     const minMs = Date.parse(timeMin);
@@ -12215,7 +12200,7 @@ app.get('/api/admin/sales/google/events', salesAuth, async (req, res) => {
         isAdmin: Boolean(req.salesUser.isAdmin),
         ownerId: requestedOwner,
         connectedSources: listConnectedAsoldiCalendarSources(),
-      });
+      }).slice(0, 1);
       for (const source of sources) {
         await ensureSharedCalendarTokens(source.accountKey);
       }

@@ -237,7 +237,7 @@ test('Sales persist stays a draft; Admin Save is the send gate', () => {
 
   const salesSrc = readFileSync(new URL('../app/pages/Admin/sections/SalesClientsSection.tsx', import.meta.url), 'utf8');
   assert.match(salesSrc, /toggleHeaderPanel\('calendar'\)/);
-  assert.equal(salesSrc.includes('/google/events'), false);
+  assert.equal(salesSrc.includes('/google/embed'), false);
   assert.equal(/workshop-action[\s\S]{0,400}confirmSend:\s*true/.test(salesSrc), false);
 
   const adminRowSrc = readFileSync(new URL('../app/pages/Admin/sections/WorkshopAdminActionRow.tsx', import.meta.url), 'utf8');
