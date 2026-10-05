@@ -77,7 +77,11 @@ export async function createSalesMakerRun({
   if (!salesClientId) {
     throw new Error('This client is not linked to a sales record, so a Maker run cannot be created.');
   }
-  await ensureLocalMaker();
+  try {
+    await ensureLocalMaker();
+  } catch {
+    // Health ping from asoldi.com is often blocked. The Maker popup is the create path.
+  }
   const makerBase =
     healStaleLocalMakerBase(websiteMakerBaseUrl) ||
     normalizeHttpBaseUrl(websiteMakerBaseUrl) ||

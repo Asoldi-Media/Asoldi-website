@@ -46,8 +46,10 @@ test('developer queue helpers call Maker from the browser', () => {
   assert.match(makerQueue, /\/api\/pipeline-queue/);
   assert.match(makerQueue, /waitForLocalMaker/);
   assert.match(makerQueue, /asoldiPageIsOnThisComputer/);
+  assert.match(makerQueue, /skipped: true/);
   assert.match(makerQueue, /\/api\/health|makerBrowserUnreachableMessage/);
   assert.doesNotMatch(makerQueue, /admin\/development\/maker-queue/);
+  assert.match(makerQueue, /Start run still opens a top-level Maker window/);
   const websiteMaker = readFileSync(join(here, '../app/pages/sales/websiteMaker.ts'), 'utf8');
   assert.match(websiteMaker, /export const LOCAL_MAKER_URL = LOCAL_EDITOR_ORIGIN/);
   assert.doesNotMatch(websiteMaker, /export const LOCAL_MAKER_URL = 'http:\/\/localhost:3000'/);

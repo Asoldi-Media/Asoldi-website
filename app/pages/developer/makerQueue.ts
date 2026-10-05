@@ -91,10 +91,14 @@ export async function enqueueMakerQueue({
 }
 
 export async function ensureLocalMaker() {
-  if (await waitForLocalMaker()) return { ok: true, alreadyRunning: true };
+  if (await waitForLocalMaker({ attempts: 1, timeoutMs: 2500 })) {
+    return { ok: true, alreadyRunning: true };
+  }
   const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
   if (!asoldiPageIsOnThisComputer(hostname)) {
-    throw new Error(makerBrowserUnreachableMessage());
+    // https://asoldi.com cannot fetch 127.0.0.1 (Chrome local-network).
+    // Start run still opens a top-level Maker window on this PC.
+    return { ok: true, skipped: true };
   }
   const response = await fetch(`${API}/admin/development/maker/ensure`, {
     method: 'POST',
@@ -104,7 +108,7 @@ export async function ensureLocalMaker() {
   if (!response.ok || data.ok === false) {
     throw new Error(String(data.message || makerBrowserUnreachableMessage()));
   }
-  if (await waitForLocalMaker({ attempts: 8, timeoutMs: 4000 })) return { ok: true, started: true };
+  if (await waitForLocalMaker({ attempts: 8, timeoutMs: 15000 })) return { ok: true, started: true };
   throw new Error('Website Creator startet, men svarer ikke på http://127.0.0.1:3000 ennå.');
 }
 

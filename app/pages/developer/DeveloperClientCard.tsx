@@ -456,7 +456,11 @@ export function DeveloperClientCard({
     setChipMenu('');
     onError('');
     try {
-      await ensureLocalMaker();
+      try {
+        await ensureLocalMaker();
+      } catch {
+        // asoldi.com often cannot ping 127.0.0.1; create-run still opens Maker.
+      }
       let runId = liveRunId;
       if (!runId) {
         const created = await createSalesMakerRun({
