@@ -119,7 +119,7 @@ import {
 } from './lib/sales-email.js';
 import { assignmentStampForOwnerChange, clientIsSalesWin, confirmationSendGaps, confirmationShouldSendOnChange, decorateNextActions, isRecordedSalesAction, meetingTimeHasPassed, normalizeSecondaryInterest, osloWeekRange, recordedSalesActions, resolveMeetingAtOnMyphonerMerge, sameMeetingInstant } from './lib/sales-next-actions.js';
 import { attachFirefliesToMatchingAction } from './lib/sales-activity-log.js';
-import { isPlaceholderMeetingId, meetingHasOfferTalk, seedOfferMeetingIds } from './lib/offer-meetings.js';
+import { isPlaceholderMeetingId, meetingHasOfferTalk, normalizeOfferMeetingIds, seedOfferMeetingIds } from './lib/offer-meetings.js';
 import { normalizeStoredWebsiteEmail, resolveWebsiteEmail } from './lib/sales-website-email.js';
 import { extractBookingFromLead, salesBookingFacts } from './lib/sales-booking-facts.js';
 import {
@@ -15889,6 +15889,21 @@ app.post('/api/admin/sales/:id/offer/use-meeting', salesAuth, async (req, res) =
   }
   const meetingId = sanitizeText(req.body?.meetingId);
   const pasted = sanitizeText(req.body?.title || req.body?.query || '');
+  if (Array.isArray(req.body?.meetingIds) && !pasted) {
+    const known = new Set((client.meetings || []).map((row) => sanitizeText(row.meetingId)));
+    const nextIds = normalizeOfferMeetingIds(req.body.meetingIds).filter((id) => known.has(id));
+    const updated = salesOffers.updateSalesOffer(current.id, {
+      meetingIds: nextIds,
+      meetingId: nextIds[0] || '',
+      meetingSource: 'manual',
+    }, { actor: offerActor(req), action: 'meeting-picked', note: 'Valgte opptak' });
+    const meeting = primaryMeetingForOffer(client, updated);
+    return res.json({
+      offer: presentOffer(updated),
+      meeting: presentMeetingForOffer(meeting, updated, client),
+      meetings: presentOfferMeetings(client, updated),
+    });
+  }
   let record = meetingId ? readStoredFirefliesMeeting(meetingId) : null;
   if (!record && meetingId) {
     record = (client.meetings || []).find((row) => row.meetingId === meetingId) || null;

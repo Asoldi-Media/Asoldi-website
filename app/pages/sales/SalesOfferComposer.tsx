@@ -96,7 +96,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
   const clientId = clientIdProp || params.get('clientId') || '';
 
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<'' | 'tier' | 'mva' | 'review-toggle' | 'fill' | 'review' | 'send' | 'contract' | 'new' | 'save' | 'meeting'>('');
+  const [busy, setBusy] = useState<'' | 'tier' | 'mva' | 'review-toggle' | 'fill' | 'review' | 'send' | 'contract' | 'new' | 'save' | 'meeting' | 'meeting-save'>('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [offer, setOffer] = useState<SalesOffer | null>(null);
@@ -107,6 +107,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
   const [meetingQuery, setMeetingQuery] = useState('');
   const [meetingMatches, setMeetingMatches] = useState<MeetingMatch[]>([]);
   const [meetings, setMeetings] = useState<MeetingMatch[]>([]);
+  const [draftMeetingIds, setDraftMeetingIds] = useState<string[] | null>(null);
   const [sender, setSender] = useState<SalesSender | null>(null);
   const [deepseek, setDeepseek] = useState(false);
   const [canSendEmail, setCanSendEmail] = useState(true);
@@ -125,7 +126,6 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
   const [htmlKey, setHtmlKey] = useState('');
   const [contractPdfUrl, setContractPdfUrl] = useState('');
   const dirtyRef = useRef(false);
-  const autoFillKeyRef = useRef('');
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const htmlRef = useRef(html);
   const subjectRef = useRef(subject);
@@ -182,6 +182,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
       setMergeFields(Array.isArray(data.mergeFields) ? data.mergeFields : []);
       setMeeting(data.meeting || null);
       setMeetings(Array.isArray(data.meetings) ? data.meetings : []);
+      setDraftMeetingIds(null);
       setSender(data.sender || null);
       setDeepseek(Boolean(data.deepseek));
       setCanSendEmail(data.canSendEmail !== false);
@@ -360,8 +361,9 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     }
   }
 
-  async function handlePickMeeting(payload: { title?: string; meetingId?: string; clear?: boolean }) {
-    setBusy('meeting');
+  async function handlePickMeeting(payload: { title?: string; meetingId?: string; meetingIds?: string[]; clear?: boolean }) {
+    const savingSelection = Array.isArray(payload.meetingIds);
+    setBusy(savingSelection ? 'meeting-save' : 'meeting');
     setError('');
     setNotice('');
     try {
@@ -378,18 +380,20 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
       }
       setMeetingMatches([]);
       if (payload.title) setMeetingQuery('');
-      autoFillKeyRef.current = '';
       if (Array.isArray(data.meetings)) setMeetings(data.meetings);
       if (data.meeting) setMeeting(data.meeting);
       if (data.offer) applyOffer(data.offer);
+      setDraftMeetingIds(null);
       const selectedCount = Array.isArray(data.meetings)
         ? data.meetings.filter((entry) => entry.selected).length
         : 0;
       setNotice(payload.clear
         ? 'Alle opptak med transkript er valgt igjen.'
-        : selectedCount
-          ? `${selectedCount} opptak valgt som grunnlag for tilbudet.`
-          : 'Opptakene er oppdatert.');
+        : savingSelection
+          ? (selectedCount ? `${selectedCount} opptak lagret. Trykk Generer på nytt for å bruke dem i e-posten.` : 'Ingen opptak valgt. Trykk Generer på nytt hvis e-posten skal skrives uten transkript.')
+          : selectedCount
+            ? `${selectedCount} opptak valgt som grunnlag for tilbudet.`
+            : 'Opptakene er oppdatert.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Kunne ikke hente møtet');
     } finally {
@@ -518,9 +522,6 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
       });
       setTo(resolveWebsiteEmail(client || {}));
       applyOffer(data.offer);
-      autoFillKeyRef.current = data.copied
-        ? `${data.offer.id}:${data.offer.meetingId || ''}`
-        : '';
       setNotice(data.copied
         ? 'Nytt utkast er en kopi av tilbudet som ble sendt. Kundeteksten er beholdt. Pakkelisten følger gjeldende katalog. Ikke trykk Generer på nytt med mindre du vil skrive e-posten på nytt fra transkriptet.'
         : 'Nytt tilbudsutkast opprettet.');
@@ -548,18 +549,29 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     return 'Møtet mangler transkript og sammendrag.';
   }, [deepseek, meeting, meetings, client?.hasProductNotes]);
 
-  const handleFillRef = useRef(handleFill);
-  handleFillRef.current = handleFill;
-  const meetingSelected = Boolean(meeting?.meetingId);
-  const openPlaceholders = (offer?.placeholders || []).length;
-  const alreadyAutoFilled = (offer?.history || []).some((entry) => entry.action === 'ai-filled');
-  useEffect(() => {
-    if (loading || locked || !offer?.id || !meetingSelected || fillDisabledReason || !openPlaceholders || alreadyAutoFilled) return;
-    const key = `${offer.id}:${meeting?.meetingId || ''}`;
-    if (autoFillKeyRef.current === key) return;
-    autoFillKeyRef.current = key;
-    void handleFillRef.current(false);
-  }, [loading, locked, fillDisabledReason, offer?.id, meeting?.meetingId, meetingSelected, openPlaceholders, alreadyAutoFilled]);
+  const serverSelectedIds = useMemo(
+    () => meetings.filter((entry) => entry.selected).map((entry) => entry.meetingId),
+    [meetings]
+  );
+  const pickerIds = draftMeetingIds ?? serverSelectedIds;
+  const pickerDirty = Boolean(
+    draftMeetingIds
+    && (draftMeetingIds.length !== serverSelectedIds.length
+      || draftMeetingIds.some((id) => !serverSelectedIds.includes(id)))
+  );
+  const pickerMeetings = useMemo(
+    () => meetings.map((entry) => ({ ...entry, selected: pickerIds.includes(entry.meetingId) })),
+    [meetings, pickerIds]
+  );
+
+  function toggleDraftMeeting(meetingId: string) {
+    setDraftMeetingIds((current) => {
+      const base = current ?? serverSelectedIds;
+      return base.includes(meetingId)
+        ? base.filter((id) => id !== meetingId)
+        : [...base, meetingId];
+    });
+  }
 
   const card = useMemo(() => clientCardParty(client || {}), [client]);
   const offerTo = (to || '').trim() || resolveWebsiteEmail(client || {});
@@ -760,8 +772,8 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                   <div className="rounded-lg border border-white/10 px-3 py-2 text-xs text-gray-400">
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                       <span>
-                        {meetings.filter((entry) => entry.selected).length
-                          ? `${meetings.filter((entry) => entry.selected).length} opptak valgt`
+                        {pickerMeetings.filter((entry) => entry.selected).length
+                          ? `${pickerMeetings.filter((entry) => entry.selected).length} opptak valgt${pickerDirty ? ' (ikke lagret)' : ''}`
                           : meeting
                             ? `${meeting.title || 'Møte'}${meeting.when ? ` · ${meeting.when}` : ''}${meeting.pendingTranscript ? ' · venter på transkript' : ''}`
                             : 'Ingen Fireflies-opptak valgt'}
@@ -777,11 +789,12 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                     </div>
                     {meetingsOpen && !locked && (
                       <div className="mt-2 space-y-3">
+                        <p className="text-[11px] text-gray-500">Huk av opptakene tilbudet skal bruke, og trykk Lagre. E-posten skrives ikke om før du trykker Generer på nytt.</p>
                         <div>
                           <div className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">Transkript fra denne kunden</div>
-                          {meetings.some((entry) => entry.hasTranscript) ? (
+                          {pickerMeetings.some((entry) => entry.hasTranscript) ? (
                             <div className="flex flex-wrap gap-2">
-                              {meetings.filter((entry) => entry.hasTranscript).map((entry) => (
+                              {pickerMeetings.filter((entry) => entry.hasTranscript).map((entry) => (
                                 <label
                                   key={entry.meetingId}
                                   className={`inline-flex items-center gap-2 px-2 py-1 rounded-md text-left cursor-pointer ${
@@ -793,8 +806,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                                   <input
                                     type="checkbox"
                                     checked={Boolean(entry.selected)}
-                                    disabled={busy === 'meeting'}
-                                    onChange={() => void handlePickMeeting({ meetingId: entry.meetingId })}
+                                    onChange={() => toggleDraftMeeting(entry.meetingId)}
                                   />
                                   <span>
                                     {meetingPurposeLabel(entry.purpose) ? `${meetingPurposeLabel(entry.purpose)} · ` : ''}
@@ -807,9 +819,9 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                             <p className="text-[11px] text-gray-500">Ingen transkript er knyttet til denne kunden ennå.</p>
                           )}
                         </div>
-                        {meetings.some((entry) => !entry.hasTranscript) && (
+                        {pickerMeetings.some((entry) => !entry.hasTranscript) && (
                           <div className="flex flex-wrap gap-2">
-                            {meetings.filter((entry) => !entry.hasTranscript).map((entry) => (
+                            {pickerMeetings.filter((entry) => !entry.hasTranscript).map((entry) => (
                               <label
                                 key={entry.meetingId}
                                 className={`inline-flex items-center gap-2 px-2 py-1 rounded-md text-left cursor-pointer ${
@@ -821,8 +833,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                                 <input
                                   type="checkbox"
                                   checked={Boolean(entry.selected)}
-                                  disabled={busy === 'meeting'}
-                                  onChange={() => void handlePickMeeting({ meetingId: entry.meetingId })}
+                                  onChange={() => toggleDraftMeeting(entry.meetingId)}
                                 />
                                 <span>
                                   {meetingPurposeLabel(entry.purpose) ? `${meetingPurposeLabel(entry.purpose)} · ` : ''}
@@ -832,6 +843,17 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                             ))}
                           </div>
                         )}
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={busy === 'meeting-save' || !pickerDirty}
+                            onClick={() => void handlePickMeeting({ meetingIds: pickerIds })}
+                            className="px-2 py-1.5 rounded-md bg-[#FF5B00] text-white text-xs hover:bg-[#ff7a33] disabled:opacity-50"
+                          >
+                            {busy === 'meeting-save' ? 'Lagrer…' : 'Lagre opptak'}
+                          </button>
+                          {pickerDirty && <span className="text-[11px] text-amber-200">Endringene brukes ikke i tilbudet før du lagrer.</span>}
+                        </div>
                         <div>
                           <div className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">Legg til Fireflies-lenke eller navn</div>
                           <div className="flex flex-wrap items-end gap-2">
