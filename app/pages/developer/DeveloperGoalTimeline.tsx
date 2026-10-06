@@ -42,6 +42,7 @@ export function DeveloperGoalTimeline({ goals, goalKeys, busyKey, itemId, onTogg
             type="button"
             disabled={busy || locked}
             onClick={() => onToggle(key)}
+            aria-pressed={done}
             title={
               locked
                 ? 'Fullfør nåværende mål først'

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarDays, Loader2, X } from 'lucide-react';
+import { CalendarDays, Loader2, Minus, Plus, X } from 'lucide-react';
 import {
   datetimeLocalOsloToIso,
   isoToDatetimeLocalOslo,
@@ -23,6 +23,12 @@ import {
   quotedMonthly,
   cappedOneTimeCharge,
   setupCost,
+  activeMeetingQuoteIndex,
+  activeMeetingQuotePackage,
+  addAltMeetingQuote,
+  hasAltMeetingQuote,
+  removeAltMeetingQuote,
+  withActiveMeetingQuotePackage,
 } from './websitePricing';
 
 type WorkshopDraft = {
@@ -178,38 +184,43 @@ export function MeetingNotesModal({
     return () => window.clearTimeout(timer);
   }, [workshop]);
 
-  const selected = useMemo(() => new Set<string>(state.selected), [state.selected]);
-  const oneTimeAddOns = useMemo(() => new Set<string>(state.oneTimeAddOns), [state.oneTimeAddOns]);
+  const pkg = useMemo(() => activeMeetingQuotePackage(state), [state]);
+  const selected = useMemo(() => new Set<string>(pkg.selected), [pkg.selected]);
+  const oneTimeAddOns = useMemo(() => new Set<string>(pkg.oneTimeAddOns), [pkg.oneTimeAddOns]);
   const hostForcesOneTime = oneTimeAddOns.has('thirdpartyhost');
-  const priced = hostForcesOneTime ? { ...state, oneTime: true } : state;
+  const priced = hostForcesOneTime ? { ...pkg, oneTime: true } : pkg;
   const monthly = quotedMonthly(priced);
   const setup = setupCost(priced);
   const capped = cappedOneTimeCharge(priced);
   const total = grandTotal(priced);
-  const tier = getTier(state.customMode ? 'custom' : state.tierId);
+  const tier = getTier(pkg.customMode ? 'custom' : pkg.tierId);
+  const activeIndex = activeMeetingQuoteIndex(state);
+  const hasAlt = hasAltMeetingQuote(state);
+
+  function patchPackage(patch: Partial<typeof pkg>) {
+    setState((prev) => withActiveMeetingQuotePackage(prev, patch));
+  }
 
   function setSelected(next: Set<string>) {
-    setState((prev) => ({ ...prev, selected: [...next] }));
+    patchPackage({ selected: [...next] });
   }
 
   function applyNamed(tierId: string) {
     const pages = getTier(tierId).pages || 5;
-    setState((prev) => ({
-      ...prev,
+    patchPackage({
       tierId,
       customMode: false,
       selected: presetIds(tierId),
       pages,
-    }));
+    });
   }
 
   function applyCustom() {
-    setState((prev) => ({
-      ...prev,
+    patchPackage({
       tierId: 'custom',
       customMode: true,
       selected: customBaselineIds(),
-    }));
+    });
   }
 
   function toggleService(id: string) {
@@ -224,16 +235,18 @@ export function MeetingNotesModal({
     if (next.has(id)) next.delete(id);
     else next.add(id);
     const hostOn = next.has('thirdpartyhost');
-    setState((prev) => ({
-      ...prev,
+    patchPackage({
       oneTimeAddOns: [...next],
-      oneTime: hostOn ? true : prev.oneTime,
-    }));
+      oneTime: hostOn ? true : pkg.oneTime,
+    });
   }
 
   function quoteToSave() {
     const startDate = offerStartDateFromWorkshopDueAt(datetimeLocalOsloToIso(workshop.dueAt));
-    return hostForcesOneTime ? { ...state, oneTime: true, startDate } : { ...state, startDate };
+    const forced = hostForcesOneTime
+      ? withActiveMeetingQuotePackage(state, { oneTime: true })
+      : state;
+    return { ...forced, startDate };
   }
 
   async function persistWorkshopNow() {
@@ -253,10 +266,10 @@ export function MeetingNotesModal({
       .then(() => onContinue());
   }
 
-  const includedPages = includedPagesFor(state.tierId, state.customMode);
+  const includedPages = includedPagesFor(pkg.tierId, pkg.customMode);
 
   function extraPages() {
-    return Math.max(0, state.pages - includedPages);
+    return Math.max(0, pkg.pages - includedPages);
   }
 
   function scalingLabel(item: { scalesWithPages?: boolean; price: number }, checked: boolean) {
@@ -282,17 +295,58 @@ export function MeetingNotesModal({
         )}
         <div className="grid grid-rows-2 lg:grid-rows-1 lg:grid-cols-2 min-h-0 flex-1 overflow-hidden">
           <div className="overflow-y-auto p-3 sm:p-5 space-y-4 text-sm text-[#374151] min-h-0">
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setState((prev) => ({ ...prev, activeOfferIndex: 0 }))}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium ${
+                  activeIndex === 0 ? 'bg-[#FF5B00] text-white' : 'bg-[#F3F4F6] text-[#111827] hover:bg-[#E5E7EB]'
+                }`}
+              >
+                Tilbud 1
+              </button>
+              {hasAlt ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setState((prev) => ({ ...prev, activeOfferIndex: 1 }))}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-medium ${
+                      activeIndex === 1 ? 'bg-[#FF5B00] text-white' : 'bg-[#F3F4F6] text-[#111827] hover:bg-[#E5E7EB]'
+                    }`}
+                  >
+                    Tilbud 2
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setState((prev) => removeAltMeetingQuote(prev))}
+                    className="p-1.5 rounded-lg bg-[#F3F4F6] text-[#111827] hover:bg-[#E5E7EB]"
+                    aria-label="Fjern tilbud 2"
+                  >
+                    <Minus size={14} />
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setState((prev) => addAltMeetingQuote(prev))}
+                  className="p-1.5 rounded-lg bg-[#F3F4F6] text-[#111827] hover:bg-[#E5E7EB]"
+                  aria-label="Legg til tilbud 2"
+                >
+                  <Plus size={14} />
+                </button>
+              )}
+            </div>
             <label className="block">
               <span className="text-xs text-[#6B7280]">Antall sider</span>
               <input
                 type="number"
                 min={1}
-                value={state.pages}
-                onChange={(e) => setState((prev) => ({ ...prev, pages: Math.max(1, Number(e.target.value) || 1) }))}
+                value={pkg.pages}
+                onChange={(e) => patchPackage({ pages: Math.max(1, Number(e.target.value) || 1) })}
                 className="mt-1 w-24 px-3 py-2 rounded-lg bg-white border border-[#E5E7EB] text-[#111827]"
               />
               <span className="ml-2 text-xs text-[#6B7280]">
-                {includedPages} inkludert i {state.customMode ? 'skreddersydd' : getTier(state.tierId).label}.
+                {includedPages} inkludert i {pkg.customMode ? 'skreddersydd' : getTier(pkg.tierId).label}.
                 {extraPages() > 0 ? ` ${extraPages()} ekstra.` : ' Ingen ekstra.'}
               </span>
             </label>
@@ -302,14 +356,14 @@ export function MeetingNotesModal({
               <div className="space-y-1.5">
                 {PRICING.tiers.map((entry) => {
                   const totalForTier = entry.id === 'custom'
-                    ? quotedMonthly({ ...state, customMode: true, tierId: 'custom', selected: state.customMode ? state.selected : customBaselineIds() })
-                    : namedPackageMonthly(entry.id, state.pages);
-                  const checked = entry.id === 'custom' ? state.customMode : (!state.customMode && state.tierId === entry.id);
+                    ? quotedMonthly({ ...pkg, customMode: true, tierId: 'custom', selected: pkg.customMode ? pkg.selected : customBaselineIds() })
+                    : namedPackageMonthly(entry.id, pkg.pages);
+                  const checked = entry.id === 'custom' ? pkg.customMode : (!pkg.customMode && pkg.tierId === entry.id);
                   return (
                     <label key={entry.id} className="flex items-start gap-2 cursor-pointer">
                       <input
                         type="radio"
-                        name="meeting-tier"
+                        name={`meeting-tier-${activeIndex}`}
                         checked={checked}
                         onChange={() => (entry.id === 'custom' ? applyCustom() : applyNamed(entry.id))}
                         className="mt-1"
@@ -337,11 +391,10 @@ export function MeetingNotesModal({
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
-                checked={state.oneTime || hostForcesOneTime}
-                onChange={(e) => setState((prev) => ({
-                  ...prev,
+                checked={pkg.oneTime || hostForcesOneTime}
+                onChange={(e) => patchPackage({
                   oneTime: hostForcesOneTime ? true : e.target.checked,
-                }))}
+                })}
               />
               Engangsbetaling (månedspris × 9)
               {hostForcesOneTime ? <span className="text-xs text-[#6B7280]">Tredjeparts host gjør dette til engangsbetaling.</span> : null}
@@ -368,8 +421,8 @@ export function MeetingNotesModal({
                   ))}
                   {allPaidRecurringServices().map((item) => {
                     const checked = selected.has(item.id);
-                    const inPackage = packageService(state, item.id);
-                    const p = adjustedPrice(item, state.pages, state.tierId, state.customMode);
+                    const inPackage = packageService(pkg, item.id);
+                    const p = adjustedPrice(item, pkg.pages, pkg.tierId, pkg.customMode);
                     return (
                       <tr key={item.id} className={`border-t border-[#E6E9EF] ${checked ? '' : 'text-[#9CA3AF]'}`}>
                         <td className="p-2">
@@ -397,7 +450,7 @@ export function MeetingNotesModal({
 
             <div className="rounded-xl border border-[#E6E9EF] bg-[#F8F9FB] p-4">
               <div className="text-xs text-[#6B7280]">
-                {priced.oneTime ? `Engangssum (${tier.label}, ${state.pages} sider)` : `Månedlig (${tier.label}, ${state.pages} sider)`}
+                {priced.oneTime ? `Engangssum (${tier.label}, ${pkg.pages} sider)` : `Månedlig (${tier.label}, ${pkg.pages} sider)`}
               </div>
               <div className="text-2xl font-semibold text-[#111827] mt-1">
                 {priced.oneTime ? fmtKr(total) : `${fmtKr(monthly)} / mnd`}
@@ -405,7 +458,7 @@ export function MeetingNotesModal({
               <div className="text-xs text-[#6B7280] mt-1">
                 {priced.oneTime
                   ? `= ${fmtKr(monthly)}/mnd × ${PRICING.oneTimeMultiplier}${capped ? ` + ${fmtKr(capped)} ubegrenset 6 mnd` : ''}${setup ? ` + ${fmtKr(setup)} oppsett` : ''}`
-                  : `${state.customMode ? 'Egne tjenester' : `Pakke ${fmtKr(PRICING.packagePrices[state.tierId] || 0)}`}${setup ? ` + ${fmtKr(setup)} engangs` : ''}`}
+                  : `${pkg.customMode ? 'Egne tjenester' : `Pakke ${fmtKr(PRICING.packagePrices[pkg.tierId] || 0)}`}${setup ? ` + ${fmtKr(setup)} engangs` : ''}`}
               </div>
             </div>
           </div>

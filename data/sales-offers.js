@@ -99,6 +99,75 @@ export function normalizeOfferProducts(list) {
   return list.map(normalizeOfferProduct).filter((item) => item.name || item.priceExMva || item.includes.length);
 }
 
+export function normalizeOfferFee(raw = {}) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const name = sanitizeText(source.name).slice(0, 160);
+  const price = Math.max(0, Math.round(toNumber(source.price, 0)));
+  if (!name || price <= 0) return null;
+  return { name, price };
+}
+
+export function normalizeOfferAlternative(raw = {}) {
+  const source = raw && typeof raw === 'object' ? raw : {};
+  const products = normalizeOfferProducts(source.products);
+  if (!products.length) return null;
+  const billing = source.billing === 'once' ? 'once' : 'month';
+  const oneTimeFees = Array.isArray(source.oneTimeFees)
+    ? source.oneTimeFees.map(normalizeOfferFee).filter(Boolean)
+    : [];
+  const fromProduct = products[0]?.kind === 'tier' ? products[0].tierId : CUSTOM_TIER_ID;
+  return {
+    products,
+    billing,
+    oneTimeFees,
+    tierId: normalizeOfferTierId(source.tierId) || fromProduct || '',
+  };
+}
+
+export function normalizeOfferAlternatives(list, fallback = {}) {
+  const raw = Array.isArray(list) ? list.map(normalizeOfferAlternative).filter(Boolean) : [];
+  if (raw.length >= 2) return raw.slice(0, 2);
+  if (raw.length === 1) return raw;
+  const products = normalizeOfferProducts(fallback.products);
+  if (!products.length) return [];
+  const billing = fallback.billing === 'once' ? 'once' : 'month';
+  const oneTimeFees = Array.isArray(fallback.oneTimeFees)
+    ? fallback.oneTimeFees.map(normalizeOfferFee).filter(Boolean)
+    : [];
+  return [{
+    products,
+    billing,
+    oneTimeFees,
+    tierId: normalizeOfferTierId(fallback.tierId) || products[0]?.tierId || '',
+  }];
+}
+
+export function offerHasDualAlternatives(offer = {}) {
+  return normalizeOfferAlternatives(offer?.alternatives, offer).length >= 2;
+}
+
+export function parseChosenOfferIndex(value, alternativeCount = 0) {
+  if (Number(alternativeCount) < 2) return { ok: true, index: null };
+  if (value === 0 || value === 1 || value === '0' || value === '1') {
+    return { ok: true, index: Number(value) };
+  }
+  return { ok: false, index: null, error: 'Velg Tilbud 1 eller Tilbud 2 før du aksepterer.' };
+}
+
+export function flattenOfferToChosen(offer = {}, index = 0) {
+  const alts = normalizeOfferAlternatives(offer?.alternatives, offer);
+  const chosen = alts[index];
+  if (!chosen) return null;
+  return {
+    chosenOfferIndex: index,
+    tierId: chosen.tierId,
+    products: chosen.products,
+    billing: chosen.billing,
+    oneTimeFees: chosen.oneTimeFees,
+    alternatives: alts,
+  };
+}
+
 export function normalizeContractSummary(raw) {
   if (!raw || typeof raw !== 'object') return null;
   const products = normalizeOfferProducts(raw.products);
@@ -192,6 +261,11 @@ export function normalizeSalesOffer(raw = {}) {
     /** Per-offer replacements for the contract block. Empty fields fall back to the client card. */
     party: normalizeOfferParty(raw.party),
     products: normalizeOfferProducts(raw.products),
+    alternatives: normalizeOfferAlternatives(raw.alternatives, raw),
+    chosenOfferIndex: (() => {
+      const parsed = parseChosenOfferIndex(raw.chosenOfferIndex, 2);
+      return parsed.ok && (parsed.index === 0 || parsed.index === 1) ? parsed.index : null;
+    })(),
     /** Content hash at the moment the rep approved the full preview; must match on send. */
     previewHash: sanitizeText(raw.previewHash),
     previewedAt: sanitizeText(raw.previewedAt),
@@ -415,7 +489,9 @@ export function deleteSalesOffer(id) {
 
 /** Whether this offer must be verified by an admin before a rep may send it. */
 export function offerNeedsVerification(offer = {}) {
-  return offer.tierId === CUSTOM_TIER_ID || Boolean(offer.reviewRequested);
+  if (Boolean(offer.reviewRequested)) return true;
+  if (offer.tierId === CUSTOM_TIER_ID) return true;
+  return normalizeOfferAlternatives(offer?.alternatives, offer).some((alt) => alt.tierId === CUSTOM_TIER_ID);
 }
 
 function partyOverrides(raw = {}) {
@@ -437,6 +513,9 @@ export function offerContentHash(offer = {}, { includeParty = true } = {}) {
     tierId: sanitizeText(offer?.tierId),
     summary: offer?.contract?.summary || null,
   };
+  const alternatives = normalizeOfferAlternatives(offer?.alternatives, { products: [] });
+  if (alternatives.length >= 2) payload.alternatives = alternatives;
+  if (offer?.chosenOfferIndex === 0 || offer?.chosenOfferIndex === 1) payload.chosenOfferIndex = offer.chosenOfferIndex;
   if (includeParty) payload.party = partyOverrides(offer?.party);
   return createHash('sha1').update(JSON.stringify(payload)).digest('hex');
 }

@@ -1,5 +1,5 @@
 import React from 'react';
-import type { OfferContractSummary, OfferProduct, SalesOffer, SalesOfferStatus } from '../Admin/shared';
+import type { OfferAlternative, OfferContractSummary, OfferProduct, SalesOffer, SalesOfferStatus } from '../Admin/shared';
 import { formatKr, withMva } from '../../../lib/website-tiers.js';
 import { offerTotals } from '../../../lib/offer-email.js';
 
@@ -32,14 +32,59 @@ export function OfferStatusChip({ status, className = '' }: { status: SalesOffer
 
 export function OfferProductsCard({
   products,
+  alternatives,
   title = 'Produkter i tilbudet',
   mvaIncluded = false,
   onRemove,
   onEdit,
 }: {
   products: OfferProduct[];
+  alternatives?: OfferAlternative[];
   title?: string;
   /** Listed prices are what the client pays incl. MVA (rep absorbed the VAT). */
+  mvaIncluded?: boolean;
+  onRemove?: (id: string) => void;
+  onEdit?: (product: OfferProduct) => void;
+}) {
+  const alts = Array.isArray(alternatives) && alternatives.length >= 2 ? alternatives : null;
+  if (alts) {
+    return (
+      <div className="space-y-2">
+        {alts.map((alt, index) => (
+          <div key={`alt-${index}`}>
+            {index > 0 ? (
+              <p className="py-1 text-center text-xs font-semibold uppercase tracking-wide text-gray-400">eller</p>
+            ) : null}
+            <OfferPackageList
+              products={alt.products}
+              title={`Tilbud ${index + 1}`}
+              mvaIncluded={mvaIncluded}
+            />
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return (
+    <OfferPackageList
+      products={products}
+      title={title}
+      mvaIncluded={mvaIncluded}
+      onRemove={onRemove}
+      onEdit={onEdit}
+    />
+  );
+}
+
+function OfferPackageList({
+  products,
+  title,
+  mvaIncluded = false,
+  onRemove,
+  onEdit,
+}: {
+  products: OfferProduct[];
+  title: string;
   mvaIncluded?: boolean;
   onRemove?: (id: string) => void;
   onEdit?: (product: OfferProduct) => void;

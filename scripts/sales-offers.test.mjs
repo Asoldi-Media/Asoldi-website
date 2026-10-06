@@ -773,3 +773,166 @@ test('client intent briefing uses transcript, notes and the selected plan', asyn
   const hashB = offerAi.clientIntentSourceHash({ notes: 'b', products: [] });
   assert.notEqual(hashA, hashB);
 });
+
+const STARTER_QUOTE = {
+  tierId: 'starter',
+  pages: 5,
+  selected: ['hosting', 'contact', 'changes', 'blog'],
+  oneTimeAddOns: [],
+};
+
+const SEO_QUOTE = {
+  tierId: 'seo',
+  pages: 7,
+  customMode: false,
+  oneTime: false,
+  selected: ['hosting', 'seo', 'blog'],
+  oneTimeAddOns: [],
+};
+
+test('dual meeting quote builds two alternatives without summing products', () => {
+  const dual = quoteOffer.buildOfferFromMeetingQuote({
+    ...STARTER_QUOTE,
+    altQuote: SEO_QUOTE,
+  });
+  assert.equal(dual.alternatives.length, 2);
+  assert.equal(dual.products.length, 1, 'products stay Tilbud 1, not both packages');
+  assert.equal(dual.tierId, dual.alternatives[0].tierId);
+  assert.equal(dual.products[0].priceExMva, 999);
+  assert.equal(dual.alternatives[1].products[0].priceExMva, 1499);
+  const productTotal = dual.products.reduce((sum, item) => sum + item.priceExMva, 0);
+  assert.ok(productTotal < 999 + 1499, 'composer products must not be a summed total');
+  assert.equal(quoteOffer.quoteBuiltIsCustom(dual), false);
+
+  const customAlt = quoteOffer.buildOfferFromMeetingQuote({
+    ...STARTER_QUOTE,
+    altQuote: { ...SEO_QUOTE, customMode: true, tierId: 'custom' },
+  });
+  assert.equal(quoteOffer.quoteBuiltIsCustom(customAlt), true);
+  const saved = store.createSalesOffer({
+    salesClientId: 'client-dual-custom',
+    ownerId: 'x',
+    ...customAlt,
+    reviewRequested: false,
+  });
+  assert.equal(store.offerNeedsVerification(saved), true, 'custom on either package needs admin review');
+});
+
+test('dual offer email uses Tilbud 1/2 headings, eller, and two Totalt/Leveringsdato blocks', () => {
+  const single = quoteOffer.buildOfferFromMeetingQuote(STARTER_QUOTE);
+  const dual = quoteOffer.buildOfferFromMeetingQuote({ ...STARTER_QUOTE, altQuote: SEO_QUOTE });
+  const singleHtml = offerEmail.buildOfferBodyHtml({
+    products: single.products,
+    alternatives: single.alternatives,
+    tierId: single.tierId,
+  });
+  assert.match(singleHtml, /<h2[^>]*>Hva er inkludert<\/h2>/);
+  assert.doesNotMatch(singleHtml, /Tilbud 1 – Hva er inkludert/);
+  assert.doesNotMatch(singleHtml, /data-offer-or/);
+  assert.equal((singleHtml.match(/Totalt:/g) || []).length, 1);
+  assert.equal((singleHtml.match(/Leveringsdato:/g) || []).length, 1);
+  assert.equal((singleHtml.match(/Hva som skjer fremover/g) || []).length, 1);
+
+  const html = offerEmail.buildOfferBodyHtml({
+    products: dual.products,
+    alternatives: dual.alternatives,
+    tierId: dual.tierId,
+  });
+  assert.match(html, /Tilbud 1 – Hva er inkludert/);
+  assert.match(html, /data-offer-or="1"/);
+  assert.match(html, />eller</);
+  assert.match(html, /Tilbud 2 – Hva er inkludert/);
+  assert.equal((html.match(/Totalt:/g) || []).length, 2);
+  assert.equal((html.match(/Leveringsdato:/g) || []).length, 2);
+  assert.doesNotMatch(html.split(/id="offer-products"/)[0], /<h2[^>]*>Hva er inkludert<\/h2>/);
+  assert.equal((html.match(/Hva som skjer fremover/g) || []).length, 1);
+  assert.equal((html.match(/data-offer-slot="benefits"/g) || []).length, 1);
+
+  const fromSingle = offerEmail.applyOfferProducts(singleHtml, dual.products, {
+    alternatives: dual.alternatives,
+    tierId: dual.tierId,
+  });
+  assert.match(fromSingle, /Tilbud 1 – Hva er inkludert/);
+  assert.match(fromSingle, /Tilbud 2 – Hva er inkludert/);
+  const back = offerEmail.applyOfferProducts(fromSingle, single.products, {
+    alternatives: single.alternatives,
+    tierId: single.tierId,
+  });
+  assert.match(back, /<h2[^>]*>Hva er inkludert<\/h2>/);
+  assert.doesNotMatch(back, /Tilbud 1 – Hva er inkludert/);
+});
+
+test('dual PDF and portal HTML list both scopes and Tilbud 1/2 checkboxes', async () => {
+  const dual = quoteOffer.buildOfferFromMeetingQuote({ ...STARTER_QUOTE, altQuote: SEO_QUOTE });
+  const { contractHtmlForOffer } = await import('../lib/offer-contract-html.js');
+  const html = contractHtmlForOffer(
+    { tierId: dual.tierId, alternatives: dual.alternatives, sentAt: '2026-09-28T08:00:00.000Z' },
+    CLIENT,
+  );
+  assert.match(html, /alternative service scopes/);
+  assert.match(html, /<strong>Tilbud 1<\/strong>/);
+  assert.match(html, /<strong>Tilbud 2<\/strong>/);
+  assert.match(html, /Chosen scope:<\/strong> Tilbud 1 or Tilbud 2/);
+  assert.doesNotMatch(html, /The Client has selected the following service tier/);
+
+  const article = contractPdf.contractArticleModel({
+    client: CLIENT,
+    tierId: dual.tierId,
+    alternatives: dual.alternatives,
+  });
+  assert.equal(article.alternativeScopes.length, 2);
+  assert.equal(article.chosenOfferIndex, null);
+
+  const inputs = contractPdf.contractInputsForOffer({
+    tierId: dual.tierId,
+    products: dual.products,
+    alternatives: dual.alternatives,
+    contract: { summary: null },
+  });
+  assert.equal(inputs.alternatives.length, 2);
+  assert.equal(contractPdf.offerContractIsAvailable({
+    tierId: dual.tierId,
+    products: dual.products,
+    alternatives: dual.alternatives,
+    contract: { summary: null },
+  }), true);
+
+  const buffer = await contractPdf.buildContractPdf({ client: CLIENT, ...inputs });
+  const { PDFParse } = await import('pdf-parse');
+  const parser = new PDFParse({ data: buffer });
+  const parsed = await parser.getText();
+  await parser.destroy();
+  const pdfText = parsed?.text || '';
+  assert.match(pdfText, /Tilbud 1/);
+  assert.match(pdfText, /Tilbud 2/);
+  assert.doesNotMatch(pdfText, /Custom scope \(Section 1\)/);
+});
+
+test('dual portal accept requires an index and flattens tilbud 2 onto tierId', () => {
+  const dual = quoteOffer.buildOfferFromMeetingQuote({ ...STARTER_QUOTE, altQuote: SEO_QUOTE });
+  const offer = store.createSalesOffer({
+    salesClientId: 'client-dual-accept',
+    ownerId: 'x',
+    ...dual,
+  });
+  assert.equal(store.offerHasDualAlternatives(offer), true);
+  assert.equal(store.parseChosenOfferIndex(undefined, 2).ok, false);
+  assert.equal(store.parseChosenOfferIndex(null, 2).ok, false);
+  assert.equal(store.parseChosenOfferIndex(1, 1).ok, true);
+  assert.equal(store.parseChosenOfferIndex(1, 1).index, null, 'single-offer accept does not require an index');
+  const picked = store.parseChosenOfferIndex(1, 2);
+  assert.equal(picked.ok, true);
+  assert.equal(picked.index, 1);
+  const flattened = store.flattenOfferToChosen(offer, 1);
+  assert.equal(flattened.tierId, dual.alternatives[1].tierId);
+  assert.equal(flattened.tierId, 'tier-2-seo');
+  assert.equal(flattened.products[0].priceExMva, 1499);
+  assert.equal(flattened.chosenOfferIndex, 1);
+  assert.equal(offer.products[0].priceExMva, 999);
+  const persisted = store.updateSalesOffer(offer.id, flattened, { actor: 'client', action: 'chosen-offer' });
+  assert.equal(persisted.tierId, 'tier-2-seo');
+  assert.equal(persisted.chosenOfferIndex, 1);
+  assert.equal(persisted.products[0].priceExMva, 1499);
+  assert.equal(store.offerHasDualAlternatives(persisted), true);
+});
+

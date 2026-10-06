@@ -51,6 +51,7 @@ function normalizeAcceptance(raw) {
   const screen = raw.screen && typeof raw.screen === 'object' ? raw.screen : {};
   return {
     acceptedAt,
+    chosenOfferIndex: raw.chosenOfferIndex === 0 || raw.chosenOfferIndex === 1 ? raw.chosenOfferIndex : null,
     userId: sanitizeText(raw.userId),
     email: sanitizeText(raw.email).toLowerCase(),
     ip: sanitizeText(raw.ip).slice(0, 80),
@@ -266,6 +267,9 @@ export function recordOfferAcceptance(id, evidence = {}) {
       timezone: evidence.timezone,
       platform: evidence.platform,
       screen: evidence.screen,
+      chosenOfferIndex: evidence.chosenOfferIndex === 0 || evidence.chosenOfferIndex === 1
+        ? evidence.chosenOfferIndex
+        : null,
     },
     targetUserId: sanitizeText(evidence.userId) || current.targetUserId,
     targetEmail: sanitizeText(evidence.email).toLowerCase() || current.targetEmail,

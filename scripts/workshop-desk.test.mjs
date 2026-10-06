@@ -287,6 +287,31 @@ test('extra goal-action create does not look like confirmSend', () => {
   assert.equal(/confirmSend: true,\s*goalActions/.test(rowSrc), false);
 });
 
+test('workshop extra-action time stays on dueAt even if a clock was typed into notes', () => {
+  const created = applyWorkshopGoalActionOp({ goalActions: [] }, {
+    op: 'create',
+    id: 'wga-ring-1',
+    goalKey: 'haWorkshop',
+    presetKey: 'custom',
+    name: 'Ring kunden',
+    format: 'ring',
+    dueAt: '',
+    note: '2026-10-06T10:00',
+    addToCalendar: false,
+  });
+  assert.equal(created.error, undefined);
+  assert.equal(created.goalActions[0].dueAt, '2026-10-06T08:00:00.000Z');
+  assert.equal(created.goalActions[0].note, '');
+  const updated = applyWorkshopGoalActionOp(created, {
+    op: 'update',
+    id: created.goalActions[0].id,
+    dueAt: '2026-10-07T11:00',
+    note: created.goalActions[0].note,
+  });
+  assert.equal(updated.goalActions[0].dueAt, '2026-10-07T09:00:00.000Z');
+  assert.equal(updated.goalActions[0].note, '');
+});
+
 test('iteration email send is Møte plus send gate', () => {
   const next = { format: 'mote', dueAt: DUE };
   assert.equal(iterationEmailShouldSend({}, next, { send: true }), true);

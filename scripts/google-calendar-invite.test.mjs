@@ -19,6 +19,7 @@ import {
   resolveSalesCalendarPreviewAccountKey,
   resolveSalesCalendarWeekSources,
   googleCalendarOauthScopes,
+  googleMailboxFromCalendarHtmlLink,
 } from '../lib/google-calendar.js';
 import {
   GOOGLE_CALENDAR_OAUTH_EVENT,
@@ -308,4 +309,9 @@ test('sales page load does not call Google Calendar', () => {
   assert.equal(server.includes('migrateFutureMeetingsOffBlockedCalendar().catch'), false);
   const salesList = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../app/pages/Admin/sections/SalesClientsSection.tsx'), 'utf8');
   assert.match(salesList, /if \(!mapMounted\) return undefined;/);
+});
+
+test('calendar htmlLink eid names the Google mailbox that owns the event', () => {
+  const htmlLink = 'https://www.google.com/calendar/event?eid=NTgwNnAyMzBlc2V2YW91aXVrZ25zcm44NDggYWxleGFuZGVyQGFzb2xkaS5jb20';
+  assert.equal(googleMailboxFromCalendarHtmlLink(htmlLink), 'alexander@asoldi.com');
 });

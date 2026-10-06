@@ -59,6 +59,7 @@ type Props = {
 const WAIT_REASON_LABEL: Record<string, string> = {
   'heap-budget': 'Venter: heap-budsjett',
   'os-memory': 'Venter: lite ledig minne',
+  'cpu': 'Venter: maskinen er opptatt',
   'run-busy': 'Venter: samme run kjører',
 };
 

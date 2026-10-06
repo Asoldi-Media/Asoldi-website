@@ -41,8 +41,13 @@ export const ClientOfferReview = () => {
   const [error, setError] = useState('');
   const [atBottom, setAtBottom] = useState(false);
   const [accepting, setAccepting] = useState(false);
+  const [chosenOfferIndex, setChosenOfferIndex] = useState<0 | 1 | null>(null);
 
   const letterHtml = useMemo(() => extractOfferLetterBody(offer?.letterHtml || ''), [offer?.letterHtml]);
+  const alternatives = Array.isArray(offer?.alternatives) && offer.alternatives.length >= 2
+    ? offer.alternatives
+    : [];
+  const needsChoice = alternatives.length >= 2 && !offer?.accepted;
 
   useEffect(() => {
     setError(loadError);
@@ -76,6 +81,7 @@ export const ClientOfferReview = () => {
 
   async function accept() {
     if (!offer || offer.accepted || !atBottom) return;
+    if (needsChoice && (chosenOfferIndex !== 0 && chosenOfferIndex !== 1)) return;
     setAccepting(true);
     setError('');
     try {
@@ -90,6 +96,7 @@ export const ClientOfferReview = () => {
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           platform: navigator.platform,
           screen: { width: window.screen.width, height: window.screen.height },
+          ...(needsChoice ? { chosenOfferIndex } : {}),
         }),
       });
       const payload = await response.json().catch(() => ({}));
@@ -102,7 +109,14 @@ export const ClientOfferReview = () => {
     }
   }
 
-  const canAccept = Boolean(offer && !offer.accepted && atBottom && !accepting && offer.contractHtml);
+  const canAccept = Boolean(
+    offer
+    && !offer.accepted
+    && atBottom
+    && !accepting
+    && offer.contractHtml
+    && (!needsChoice || chosenOfferIndex === 0 || chosenOfferIndex === 1)
+  );
 
   return (
     <ClientRouteGuard>
@@ -161,6 +175,34 @@ export const ClientOfferReview = () => {
                   </p>
                 ) : (
                   <>
+                    {needsChoice ? (
+                      <div className="mb-3 space-y-2">
+                        <p className="text-xs font-medium uppercase tracking-[0.12em] text-[#6B7280]">Velg tilbud</p>
+                        {alternatives.map((alt) => (
+                          <label
+                            key={alt.index}
+                            className={`flex cursor-pointer items-start gap-3 rounded-xl border px-3 py-2.5 text-sm ${
+                              chosenOfferIndex === alt.index
+                                ? 'border-[#FF5B00] bg-[#FFF4ED] text-[#111827]'
+                                : 'border-[#E5E7EB] bg-white text-[#1F2937]'
+                            }`}
+                          >
+                            <input
+                              type="radio"
+                              name="chosen-offer"
+                              className="mt-1"
+                              checked={chosenOfferIndex === alt.index}
+                              onChange={() => setChosenOfferIndex(alt.index === 1 ? 1 : 0)}
+                            />
+                            <span>
+                              <span className="font-semibold">{alt.label}</span>
+                              {alt.name ? <span> — {alt.name}</span> : null}
+                              {alt.price ? <span className="block text-xs text-[#6B7280]">{alt.price}</span> : null}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    ) : null}
                     <button
                       type="button"
                       disabled={!canAccept}
@@ -175,6 +217,8 @@ export const ClientOfferReview = () => {
                     </button>
                     {!atBottom ? (
                       <p className="mt-2 text-center text-xs text-[#9CA3AF]">Bla til bunnen av avtalen for å akseptere.</p>
+                    ) : needsChoice && chosenOfferIndex !== 0 && chosenOfferIndex !== 1 ? (
+                      <p className="mt-2 text-center text-xs text-[#9CA3AF]">Velg Tilbud 1 eller Tilbud 2 før du aksepterer.</p>
                     ) : null}
                   </>
                 )}

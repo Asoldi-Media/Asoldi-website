@@ -502,6 +502,15 @@ export type SalesClientDetails = {
     productNotes?: string;
     productGoal: string;
     identity: string;
+    altQuote?: {
+      tierId: string;
+      customMode: boolean;
+      oneTime: boolean;
+      pages: number;
+      selected: string[];
+      oneTimeAddOns: string[];
+    } | null;
+    activeOfferIndex?: 0 | 1;
   };
 };
 
@@ -566,6 +575,13 @@ export type OfferProduct = {
   deliveryWeeks: number;
 };
 
+export type OfferAlternative = {
+  products: OfferProduct[];
+  billing: 'once' | 'month';
+  oneTimeFees: { name: string; price: number }[];
+  tierId: string;
+};
+
 export type OfferContractSummary = {
   title: string;
   products: OfferProduct[];
@@ -597,6 +613,10 @@ export type SalesOffer = {
     contactEmail: string;
   };
   products: OfferProduct[];
+  /** Alternative packages (Tilbud 1 / Tilbud 2). Length 1 or 2. products/tierId stay Tilbud 1. */
+  alternatives?: OfferAlternative[];
+  /** Set after the client picks Tilbud 1 or 2 on the portal. */
+  chosenOfferIndex?: 0 | 1 | null;
   contract: { summary: OfferContractSummary | null; generatedAt: string; pdfPath: string };
   meetingId: string;
   meetingSource?: '' | 'manual';

@@ -933,7 +933,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                 </div>
 
                 <aside className="flex flex-col gap-4">
-                  <OfferProductsCard products={offer.products} mvaIncluded={mvaIncluded} />
+                  <OfferProductsCard products={offer.products} alternatives={offer.alternatives} mvaIncluded={mvaIncluded} />
                   <ContractSummaryCard summary={offer.contract.summary} mvaIncluded={mvaIncluded} />
                   <div className="rounded-xl border border-white/10 bg-[#161616] p-4 text-xs text-gray-300 space-y-2">
                     <div className="font-medium text-white text-sm">Kontraktdata for dette tilbudet</div>

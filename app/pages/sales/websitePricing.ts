@@ -8,18 +8,25 @@ export type PricingService = {
   oneTimeMonths?: number;
 };
 
-export type MeetingQuoteState = {
+export type MeetingQuotePackage = {
   tierId: string;
   customMode: boolean;
   oneTime: boolean;
   pages: number;
   selected: string[];
   oneTimeAddOns: string[];
+};
+
+export type MeetingQuoteState = MeetingQuotePackage & {
   customSections: string;
   startDate: string;
   productNotes: string;
   productGoal: string;
   identity: string;
+  /** Second alternative package. Absent/null = a single offer. */
+  altQuote?: MeetingQuotePackage | null;
+  /** Which package the notes calculator is editing. */
+  activeOfferIndex?: 0 | 1;
 };
 
 // Service ids each named package bundles in (prices and page counts come from lib/website-tiers.js).
@@ -78,7 +85,7 @@ export const PRICING = {
   ] as PricingService[],
 };
 
-export function emptyMeetingQuote(): MeetingQuoteState {
+export function emptyMeetingQuotePackage(): MeetingQuotePackage {
   return {
     tierId: 'starter',
     customMode: false,
@@ -86,36 +93,108 @@ export function emptyMeetingQuote(): MeetingQuoteState {
     pages: PRICING.pageScaling.includedPages,
     selected: presetIds('starter'),
     oneTimeAddOns: [],
+  };
+}
+
+export function emptyMeetingQuote(): MeetingQuoteState {
+  return {
+    ...emptyMeetingQuotePackage(),
     customSections: '',
     startDate: '',
     productNotes: '',
     productGoal: '',
     identity: '',
+    altQuote: null,
+    activeOfferIndex: 0,
   };
 }
 
-export function normalizeMeetingQuote(value: unknown): MeetingQuoteState {
+export function normalizeMeetingQuotePackage(value: unknown, fallback?: MeetingQuotePackage): MeetingQuotePackage {
+  const base = fallback || emptyMeetingQuotePackage();
   const input = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
-  const fallback = emptyMeetingQuote();
   const selected = Array.isArray(input.selected)
     ? input.selected.map((id) => String(id || '').trim()).filter(Boolean)
-    : fallback.selected;
+    : base.selected;
   const oneTimeAddOns = Array.isArray(input.oneTimeAddOns)
     ? input.oneTimeAddOns.map((id) => String(id || '').trim()).filter(Boolean)
     : [];
   const pages = Number(input.pages);
   return {
-    tierId: String(input.tierId || fallback.tierId),
+    tierId: String(input.tierId || base.tierId),
     customMode: Boolean(input.customMode),
     oneTime: Boolean(input.oneTime),
-    pages: Number.isFinite(pages) && pages >= 1 ? Math.round(pages) : fallback.pages,
+    pages: Number.isFinite(pages) && pages >= 1 ? Math.round(pages) : base.pages,
     selected,
     oneTimeAddOns,
+  };
+}
+
+export function cloneMeetingQuotePackage(source: MeetingQuotePackage): MeetingQuotePackage {
+  return {
+    ...source,
+    selected: [...source.selected],
+    oneTimeAddOns: [...source.oneTimeAddOns],
+  };
+}
+
+export function hasAltMeetingQuote(quote: Pick<MeetingQuoteState, 'altQuote'> | null | undefined) {
+  return Boolean(quote?.altQuote);
+}
+
+export function activeMeetingQuoteIndex(quote: Pick<MeetingQuoteState, 'altQuote' | 'activeOfferIndex'> | null | undefined): 0 | 1 {
+  return quote?.altQuote && quote.activeOfferIndex === 1 ? 1 : 0;
+}
+
+export function activeMeetingQuotePackage(quote: MeetingQuoteState): MeetingQuotePackage {
+  if (activeMeetingQuoteIndex(quote) === 1 && quote.altQuote) return quote.altQuote;
+  return {
+    tierId: quote.tierId,
+    customMode: quote.customMode,
+    oneTime: quote.oneTime,
+    pages: quote.pages,
+    selected: quote.selected,
+    oneTimeAddOns: quote.oneTimeAddOns,
+  };
+}
+
+export function withActiveMeetingQuotePackage(quote: MeetingQuoteState, patch: Partial<MeetingQuotePackage>): MeetingQuoteState {
+  if (activeMeetingQuoteIndex(quote) === 1 && quote.altQuote) {
+    return { ...quote, altQuote: { ...quote.altQuote, ...patch } };
+  }
+  return { ...quote, ...patch };
+}
+
+export function addAltMeetingQuote(quote: MeetingQuoteState): MeetingQuoteState {
+  if (quote.altQuote) return { ...quote, activeOfferIndex: 1 };
+  return {
+    ...quote,
+    altQuote: cloneMeetingQuotePackage(activeMeetingQuotePackage({ ...quote, activeOfferIndex: 0 })),
+    activeOfferIndex: 1,
+  };
+}
+
+export function removeAltMeetingQuote(quote: MeetingQuoteState): MeetingQuoteState {
+  return { ...quote, altQuote: null, activeOfferIndex: 0 };
+}
+
+export function normalizeMeetingQuote(value: unknown): MeetingQuoteState {
+  const input = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+  const fallback = emptyMeetingQuote();
+  const pkg = normalizeMeetingQuotePackage(input, fallback);
+  const altRaw = input.altQuote;
+  const altQuote = altRaw && typeof altRaw === 'object'
+    ? normalizeMeetingQuotePackage(altRaw, pkg)
+    : null;
+  const active = Number(input.activeOfferIndex);
+  return {
+    ...pkg,
     customSections: String(input.customSections || ''),
     startDate: String(input.startDate || ''),
     productNotes: String(input.productNotes || ''),
     productGoal: String(input.productGoal || ''),
     identity: String(input.identity || ''),
+    altQuote,
+    activeOfferIndex: altQuote && active === 1 ? 1 : 0,
   };
 }
 
@@ -174,7 +253,7 @@ function recurringUnit(item: PricingService, pages: number, oneTime: boolean, ti
   return adjustedPrice(item, pages, tierId, customMode).total;
 }
 
-export function quotedMonthly(quote: MeetingQuoteState) {
+export function quotedMonthly(quote: MeetingQuotePackage) {
   const selected = new Set(quote.selected);
   if (quote.customMode || quote.tierId === 'custom') {
     let monthly = 0;
@@ -193,14 +272,14 @@ export function quotedMonthly(quote: MeetingQuoteState) {
   return (PRICING.packagePrices[quote.tierId] || PRICING.minMonthly) + scale + addons;
 }
 
-export function setupCost(quote: MeetingQuoteState) {
+export function setupCost(quote: MeetingQuotePackage) {
   const picked = new Set(quote.oneTimeAddOns);
   return PRICING.oneTimeAddOns
     .filter((item) => picked.has(item.id))
     .reduce((sum, item) => sum + item.price, 0);
 }
 
-export function cappedOneTimeCharge(quote: MeetingQuoteState) {
+export function cappedOneTimeCharge(quote: MeetingQuotePackage) {
   if (!quote.oneTime) return 0;
   const selected = new Set(quote.selected);
   let sum = 0;
@@ -211,7 +290,7 @@ export function cappedOneTimeCharge(quote: MeetingQuoteState) {
   return sum;
 }
 
-export function grandTotal(quote: MeetingQuoteState) {
+export function grandTotal(quote: MeetingQuotePackage) {
   const monthly = quotedMonthly(quote);
   const setup = setupCost(quote);
   const capped = cappedOneTimeCharge(quote);
@@ -219,7 +298,7 @@ export function grandTotal(quote: MeetingQuoteState) {
   return monthly;
 }
 
-export function packageService(quote: MeetingQuoteState, itemId: string) {
+export function packageService(quote: MeetingQuotePackage, itemId: string) {
   if (quote.customMode || quote.tierId === 'custom') return false;
   if (PRICING.alwaysOn.some((item) => item.id === itemId)) return true;
   return packageIds(quote.tierId).has(itemId);

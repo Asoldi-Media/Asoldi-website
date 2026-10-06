@@ -41,7 +41,7 @@ import {
   normalizeMakerDashboardDraftUrl,
   resolveOpenInMakerUrl,
 } from '../sales/websiteMaker';
-import { DEVELOPER_PREVIEW_GOAL_KEYS, DEVELOPER_WIN_GOAL_KEYS } from '../../../lib/developer-goals.js';
+import { applyDeveloperGoalToggle, DEVELOPER_PREVIEW_GOAL_KEYS, DEVELOPER_WIN_GOAL_KEYS } from '../../../lib/developer-goals.js';
 import { developerOwnerDisplayName, sameDeveloperOwner } from '../../../lib/developer-assignment.js';
 
 const CARD_SELECTED = 'border-[#FF5B00] ring-2 ring-[#FF5B00]/25';
@@ -83,6 +83,7 @@ type Props = {
   onToggleStep: (item: DevelopmentItem, key: keyof DevelopmentItem['development']) => void;
   onReload: () => Promise<void> | void;
   onClientUpdated?: (client: Record<string, unknown> | null | undefined) => void;
+  onPreviewGoalReady?: () => void;
   onError: (message: string) => void;
   onNotice?: (message: string) => void;
   canWork?: boolean;
@@ -117,6 +118,7 @@ export function DeveloperClientCard({
   onToggleStep,
   onReload,
   onClientUpdated,
+  onPreviewGoalReady,
   onError,
   onNotice,
   canWork = false,
@@ -575,8 +577,17 @@ export function DeveloperClientCard({
   }
 
   async function toggleGoal(key: string) {
+    const applied = applyDeveloperGoalToggle(item.developerGoals, key, goalKeys);
+    if (applied.error) {
+      onError(applied.error);
+      return;
+    }
     setGoalBusy(key);
     onError('');
+    if (salesClientId && onClientUpdated) {
+      onClientUpdated({ id: salesClientId, developerGoals: applied.goals });
+    }
+    if (applied.goals?.readyForPreview) onPreviewGoalReady?.();
     try {
       const response = await fetch(`${API}/admin/development/${encodeURIComponent(item.id)}/goals`, {
         method: 'PATCH',
@@ -588,6 +599,7 @@ export function DeveloperClientCard({
       if (data.client && onClientUpdated) onClientUpdated(data.client);
       await onReload();
     } catch (error) {
+      await onReload();
       onError(error instanceof Error ? error.message : 'Kunne ikke oppdatere målet.');
     } finally {
       setGoalBusy('');

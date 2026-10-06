@@ -488,17 +488,65 @@ test('påminnelse stays 24 hours before the meeting when the meeting moves', () 
   assert.equal(Date.parse(sms.dueAt), Date.parse('2026-10-01T13:00:00.000Z') - 24 * HOUR_MS);
 });
 
-test('editing påminnelse time cannot unpin it from 24 hours before the meeting', () => {
+test('editing påminnelse time unpins it and ranks the client by the new clock', () => {
+  const row = { ...client(), nextActions: decorateNextActions(client()) };
+  const sms = row.nextActions.find((action) => action.presetKey === 'sms1h');
+  const customDue = '2026-09-19T10:00:00.000Z';
+  const moved = applyNextActionMutation(row, {
+    op: 'update',
+    id: sms.id,
+    name: sms.name,
+    note: sms.note,
+    dueAt: customDue,
+  });
+  const next = moved.nextActions.find((action) => action.presetKey === 'sms1h');
+  assert.equal(next.relativeToMeetingHours, null);
+  assert.equal(next.dueAt, customDue);
+  assert.equal(next.note, sms.note);
+  const ranked = { ...row, nextActions: moved.nextActions };
+  assert.equal(getActiveNextAction(ranked).dueAt, customDue);
+  assert.equal(getClientNextActionMs(ranked), Date.parse(customDue));
+});
+
+test('påminnelse stays 24 hours before the meeting until its own time is edited', () => {
+  const row = { ...client(), nextActions: decorateNextActions(client()) };
+  const sms = row.nextActions.find((action) => action.presetKey === 'sms1h');
+  const renamed = applyNextActionMutation(row, {
+    op: 'update',
+    id: sms.id,
+    name: 'Ring i morgen',
+    note: sms.note,
+  });
+  const stillRelative = renamed.nextActions.find((action) => action.presetKey === 'sms1h');
+  assert.equal(stillRelative.relativeToMeetingHours, 24);
+  assert.equal(Date.parse(stillRelative.dueAt), Date.parse(MEETING_AT) - 24 * HOUR_MS);
+  assert.equal(stillRelative.name, 'Ring i morgen');
+});
+
+test('a clock typed into notes is stored as dueAt, not as the note', () => {
   const row = { ...client(), nextActions: decorateNextActions(client()) };
   const sms = row.nextActions.find((action) => action.presetKey === 'sms1h');
   const moved = applyNextActionMutation(row, {
     op: 'update',
     id: sms.id,
-    dueAt: '2026-10-01T13:00:00.000Z',
+    name: sms.name,
+    dueAt: '',
+    note: '2026-10-06T10:00',
   });
   const next = moved.nextActions.find((action) => action.presetKey === 'sms1h');
-  assert.equal(next.relativeToMeetingHours, 24);
-  assert.equal(Date.parse(next.dueAt), Date.parse(MEETING_AT) - 24 * HOUR_MS);
+  assert.equal(next.dueAt, datetimeLocalOsloToIso('2026-10-06T10:00'));
+  assert.equal(next.note.includes('2026-10-06'), false);
+  assert.equal(next.relativeToMeetingHours, null);
+  const kept = applyNextActionMutation(row, {
+    op: 'update',
+    id: sms.id,
+    name: sms.name,
+    dueAt: sms.dueAt,
+    note: 'Avtalt møte kl 15.00 på torsdag 01.09',
+  });
+  const withNote = kept.nextActions.find((action) => action.presetKey === 'sms1h');
+  assert.equal(withNote.note, 'Avtalt møte kl 15.00 på torsdag 01.09');
+  assert.equal(Date.parse(withNote.dueAt), Date.parse(sms.dueAt));
 });
 
 test('oslo wall clock backfill targets are 15:00 local on 1 Oct and 7 Oct 2026', () => {

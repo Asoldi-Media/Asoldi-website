@@ -12,6 +12,8 @@ export type ClientPortalOffer = {
   contractHtml?: string;
   accepted?: boolean;
   acceptedAt?: string;
+  alternatives?: { index: number; label: string; name: string; price: string }[];
+  chosenOfferIndex?: 0 | 1 | null;
 };
 
 const POLL_MS = 3000;

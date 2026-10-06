@@ -183,7 +183,7 @@ import {
   workshopStartSentence,
   summarizeOfferProducts,
 } from './lib/offer-email.js';
-import { buildOfferFromMeetingQuote } from './lib/offer-from-quote.js';
+import { buildOfferFromMeetingQuote, quoteBuiltIsCustom } from './lib/offer-from-quote.js';
 import { clientWithOfferParty, offerMissingFields, offerReadinessMessage } from './lib/offer-readiness.js';
 import { buildContractPdf, contractFileName, contractInputsForOffer, offerContractIsAvailable } from './lib/offer-contract-pdf.js';
 import { dueDateDay, isCustomWebsiteOffer, normalizeDueDate, offerDeliveryPhraseNb, resolveWebsiteDue, weeksForDeveloperBoard } from './lib/website-due.js';
@@ -193,7 +193,7 @@ import { isDeepseekConfigured } from './lib/deepseek.js';
 import { clientIntentSourceHash, fillOfferFromTranscript, meetingContextIsTooThin, reflectContractFromEmail, summarizeClientIntent } from './lib/offer-ai.js';
 import { matchMeetingToClients, recordingMatchesSalesMeeting } from './lib/fireflies-client-match.js';
 import { describeFirefliesMedia, firefliesMediaFilePath, persistFirefliesMedia } from './lib/fireflies-media.js';
-import { CUSTOM_TIER_ID, WEBSITE_TIERS, resolveTier, tierById, toClientWebsitePlan } from './lib/website-tiers.js';
+import { CUSTOM_TIER_ID, WEBSITE_TIERS, formatKr, resolveTier, tierById, toClientWebsitePlan } from './lib/website-tiers.js';
 import { buildSalesSender, normalizeAsoldiFromEmail } from './lib/sales-sender.js';
 import {
   authorizeFathomWebhook,
@@ -280,6 +280,7 @@ import {
   canonicalDeveloperOwnerId,
   canAcceptDeveloperHandoff,
   canUploadDeveloperHandoff,
+  canToggleDeveloperGoals,
   canWorkDevelopmentClient,
   developmentItemVisible,
   emptyDeveloperHandoff,
@@ -11598,10 +11599,31 @@ function portalContractHtml(offer) {
   }
 }
 
+function presentPortalAlternatives(offer) {
+  if (!offer?.salesOfferId) return [];
+  const salesOffer = salesOffers.getSalesOfferById(offer.salesOfferId);
+  if (!salesOffers.offerHasDualAlternatives(salesOffer)) return [];
+  const alts = salesOffers.normalizeOfferAlternatives(salesOffer.alternatives, salesOffer);
+  return alts.map((alt, index) => {
+    const product = alt.products[0] || {};
+    const unit = alt.billing === 'once' ? 'engang' : '/mnd';
+    const price = Number(product.priceExMva) > 0
+      ? `${formatKr(product.priceExMva)} eks. mva ${unit}`
+      : '';
+    return {
+      index,
+      label: `Tilbud ${index + 1}`,
+      name: product.name || `Tilbud ${index + 1}`,
+      price,
+    };
+  });
+}
+
 function presentClientOffer(offer) {
   if (!offer) return null;
   const plan = findWebsitePlan(offer.planId);
   const acceptance = offer.acceptance || null;
+  const alternatives = presentPortalAlternatives(offer);
   return {
     id: offer.id,
     code: offer.code,
@@ -11614,6 +11636,10 @@ function presentClientOffer(offer) {
     contractHtml: portalContractHtml(offer),
     accepted: Boolean(acceptance?.acceptedAt),
     acceptedAt: acceptance?.acceptedAt || '',
+    alternatives,
+    chosenOfferIndex: acceptance?.chosenOfferIndex === 0 || acceptance?.chosenOfferIndex === 1
+      ? acceptance.chosenOfferIndex
+      : null,
   };
 }
 
@@ -11646,6 +11672,26 @@ app.post('/api/client/offer/accept', clientAuth, async (req, res) => {
   if (!user || user.role !== 'client') return res.status(401).json({ message: 'Unauthorized' });
   const offer = stampOfferBusiness(offers.getActiveOfferForUser(clientOfferLookup(user)), user);
   if (!offer) return res.status(404).json({ message: 'Fant ingen tilbud på denne kontoen.' });
+  const salesOffer = offer.salesOfferId ? salesOffers.getSalesOfferById(offer.salesOfferId) : null;
+  const dual = salesOffers.offerHasDualAlternatives(salesOffer);
+  const choice = salesOffers.parseChosenOfferIndex(req.body?.chosenOfferIndex, dual ? 2 : 1);
+  if (!choice.ok) return res.status(400).json({ message: choice.error });
+  if (dual && salesOffer) {
+    const flattened = salesOffers.flattenOfferToChosen(salesOffer, choice.index);
+    if (!flattened) return res.status(400).json({ message: choice.error });
+    salesOffers.updateSalesOffer(salesOffer.id, flattened, { actor: 'client', action: 'chosen-offer' });
+    const salesClient = offer.salesClientId ? sales.getSalesClientById(offer.salesClientId) : null;
+    const tier = chosenWebsiteTier(salesClient || {}, { ...salesOffer, ...flattened });
+    const plan = tier ? toClientWebsitePlan(tier) : null;
+    if (plan) {
+      offers.updateOffer(offer.id, {
+        planId: plan.id,
+        planName: plan.name,
+        price: plan.price,
+      });
+      applyOfferPlanToUser(user.id, { ...offer, planId: plan.id });
+    }
+  }
   const screen = req.body?.screen && typeof req.body.screen === 'object' ? req.body.screen : {};
   const saved = offers.recordOfferAcceptance(offer.id, {
     userId: user.id,
@@ -11656,6 +11702,7 @@ app.post('/api/client/offer/accept', clientAuth, async (req, res) => {
     timezone: req.body?.timezone,
     platform: req.body?.platform,
     screen: { width: screen.width, height: screen.height },
+    chosenOfferIndex: choice.index,
   });
   if (offer.salesClientId) {
     const salesClient = sales.getSalesClientById(offer.salesClientId);
@@ -15065,19 +15112,35 @@ function withResolvedOfferIdentity(email = {}, values = {}) {
   };
 }
 
+function alternativeFingerprint(built) {
+  const alts = Array.isArray(built?.alternatives) && built.alternatives.length
+    ? built.alternatives
+    : (built ? [{ products: built.products, billing: built.billing, oneTimeFees: built.oneTimeFees, tierId: built.tierId }] : []);
+  return JSON.stringify(alts.map((alt) => ({
+    tierId: sanitizeText(alt?.tierId),
+    billing: alt?.billing === 'once' ? 'once' : 'month',
+    fees: (Array.isArray(alt?.oneTimeFees) ? alt.oneTimeFees : []).map((fee) => `${sanitizeText(fee?.name)}:${Number(fee?.price) || 0}`),
+    products: (Array.isArray(alt?.products) ? alt.products : []).map((item) => ({
+      pages: Number(item?.pages) || 0,
+      price: Number(item?.priceExMva) || 0,
+      note: sanitizeText(item?.note),
+      includes: (Array.isArray(item?.includes) ? item.includes : []).map((line) => sanitizeText(line)),
+    })),
+  })));
+}
+
 function quoteMatchesOffer(offer, built, sentence) {
-  const product = Array.isArray(offer?.products) ? offer.products[0] : null;
-  const next = built?.products?.[0];
-  if (!product || !next || offer.tierId !== built.tierId) return false;
-  if (product.priceExMva !== next.priceExMva || product.pages !== next.pages) return false;
-  if (sanitizeText(product.note) !== sanitizeText(next.note)) return false;
-  const includesOf = (item) => (Array.isArray(item?.includes) ? item.includes : []).map((line) => sanitizeText(line)).join('\n');
-  if (includesOf(product) !== includesOf(next)) return false;
+  if (!offer || !built) return false;
+  if (sanitizeText(offer.tierId) !== sanitizeText(built.tierId)) return false;
+  if (alternativeFingerprint(offer) !== alternativeFingerprint(built)) return false;
   const html = offer.email?.html || '';
   if (!html.includes(sentence)) return false;
+  const dual = Array.isArray(built.alternatives) && built.alternatives.length >= 2;
+  if (dual && !/data-offer-or="1"|>(eller)</i.test(html)) return false;
+  if (!dual && /data-offer-or="1"/.test(html)) return false;
   const once = built.billing === 'once';
   if (once && !html.includes('data-billing="once"')) return false;
-  if (!once && html.includes('data-billing="once"')) return false;
+  if (!once && html.includes('data-billing="once"') && !dual) return false;
   return true;
 }
 
@@ -15092,12 +15155,21 @@ function applyMeetingQuoteToOffer(offer, client, { forceProducts = false } = {})
   const html = applyOfferProducts(
     ensureWorkshopSentence(offer.email?.html || '', sentence),
     built.products,
-    { mvaIncluded: Boolean(offer.mvaIncluded), billing: built.billing, oneTimeFees: built.oneTimeFees },
+    {
+      mvaIncluded: Boolean(offer.mvaIncluded),
+      billing: built.billing,
+      oneTimeFees: built.oneTimeFees,
+      alternatives: built.alternatives,
+      tierId: built.tierId,
+      dueDate: offer.dueDate || '',
+    },
   );
+  const custom = quoteBuiltIsCustom(built);
   return salesOffers.updateSalesOffer(offer.id, {
     tierId: built.tierId,
     products: built.products,
-    reviewRequested: built.tierId === CUSTOM_TIER_ID ? true : (offer.tierId === CUSTOM_TIER_ID ? false : offer.reviewRequested),
+    alternatives: built.alternatives,
+    reviewRequested: custom ? true : (salesOffers.offerNeedsVerification({ ...offer, reviewRequested: false }) ? false : offer.reviewRequested),
     email: { html },
   }, { actor: 'meeting-quote', action: '' }) || offer;
 }
@@ -15120,6 +15192,7 @@ async function ensureOfferDraft(client, req) {
   const email = withResolvedOfferIdentity(
     buildOfferEmailForClient(client, {
       products: built?.products || [],
+      alternatives: built?.alternatives || [],
       billing: built?.billing || 'month',
       oneTimeFees: built?.oneTimeFees || [],
       nuances: { workshop: sentence },
@@ -15132,8 +15205,9 @@ async function ensureOfferDraft(client, req) {
     ownerId: sanitizeText(client.ownerId) || sanitizeText(req.salesUser?.accountKey),
     email: { subject: email.subject, preheader: email.preheader, html: email.html },
     products: built?.products || [],
+    alternatives: built?.alternatives || [],
     tierId: built?.tierId || '',
-    reviewRequested: built?.tierId === CUSTOM_TIER_ID,
+    reviewRequested: quoteBuiltIsCustom(built),
     meetingId: salesMeetingRef(client)?.meetingId || '',
   }, { actor: offerActor(req) });
 }
@@ -15171,9 +15245,17 @@ function offerPatchFromBody(body = {}, current = {}) {
     if (products) patch.products = products;
     const html = typeof email.html === 'string' ? email.html : current.email?.html || '';
     const tierId = patch.tierId || current.tierId || '';
+    const alternatives = salesOffers.offerHasDualAlternatives(current)
+      ? salesOffers.normalizeOfferAlternatives(current.alternatives, current)
+      : [];
     patch.email = {
       ...(patch.email || {}),
-      html: applyOfferProducts(html, list, { mvaIncluded, dueDate, tierId }),
+      html: applyOfferProducts(html, list, {
+        mvaIncluded,
+        dueDate,
+        tierId,
+        alternatives,
+      }),
     };
   }
   if (body.party && typeof body.party === 'object') patch.party = body.party;
@@ -15466,6 +15548,7 @@ app.post('/api/admin/sales/:id/offer/new', salesAuth, async (req, res) => {
       ? previous.email
       : buildOfferEmailForClient(client, {
         products: built?.products || [],
+        alternatives: built?.alternatives || [],
         billing: built?.billing || 'month',
         oneTimeFees: built?.oneTimeFees || [],
         nuances: { workshop: workshopStartSentence(client?.details?.meetingQuote?.startDate) },
@@ -15478,10 +15561,11 @@ app.post('/api/admin/sales/:id/offer/new', salesAuth, async (req, res) => {
     ownerId: sanitizeText(client.ownerId) || sanitizeText(req.salesUser?.accountKey),
     email: { subject: email.subject, preheader: email.preheader, html: email.html },
     products: previous?.products?.length ? previous.products : (built?.products || []),
+    alternatives: previous?.alternatives?.length >= 2 ? previous.alternatives : (built?.alternatives || []),
     tierId: previous?.tierId || built?.tierId || '',
     mvaIncluded: Boolean(previous?.mvaIncluded),
     party: previous?.party || {},
-    reviewRequested: previous ? Boolean(previous.reviewRequested) : built?.tierId === CUSTOM_TIER_ID,
+    reviewRequested: previous ? Boolean(previous.reviewRequested) : quoteBuiltIsCustom(built),
     meetingId: previous?.meetingId || salesMeetingRef(client)?.meetingId || '',
     meetingSource: previous?.meetingSource || '',
     contract: previous?.contract?.summary
@@ -17557,7 +17641,10 @@ app.patch('/api/admin/development/:id/goals', developmentAuth, (req, res) => {
   const key = sanitizeText(req.body?.key);
   const target = resolveDevelopmentTarget(req.params.id);
   if (!target?.client) return res.status(404).json({ message: 'Sales client not found.' });
-  if (!assertDevelopmentWork(req, res, target.client)) return;
+  if (!assertDevelopmentVisible(req, res, target.client)) return;
+  if (!canToggleDeveloperGoals(req.developmentUser, target.client)) {
+    return res.status(403).json({ message: 'This project is assigned to another developer.' });
+  }
   const goalKeys = clientIsSalesWin(target.client) ? DEVELOPER_WIN_GOAL_KEYS : DEVELOPER_PREVIEW_GOAL_KEYS;
   const applied = applyDeveloperGoalToggle(target.client.developerGoals, key, goalKeys);
   if (applied.error) return res.status(400).json({ message: applied.error });

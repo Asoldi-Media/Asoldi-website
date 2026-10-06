@@ -5,6 +5,7 @@ import {
   applyAdminDeveloperOwnerSeed,
   canAcceptDeveloperHandoff,
   canUploadDeveloperHandoff,
+  canToggleDeveloperGoals,
   canWorkDevelopmentClient,
   canonicalDeveloperOwnerId,
   developerAccountKey,
@@ -40,6 +41,15 @@ test('admin can work clients assigned to Admin, and unassigned clients stay lock
   assert.equal(canWorkDevelopmentClient(admin, { developerOwnerId: 'admin:damian@asoldi.com' }), true);
   assert.equal(canWorkDevelopmentClient(admin, { developerOwnerId: '' }), false);
   assert.equal(canWorkDevelopmentClient(dev, { developerOwnerId: ADMIN_DEVELOPER_OWNER_ID }), false);
+});
+
+test('admin can tick developer goals on unassigned clients; Maker work stays locked', () => {
+  assert.equal(canToggleDeveloperGoals(admin, { developerOwnerId: '' }), true);
+  assert.equal(canWorkDevelopmentClient(admin, { developerOwnerId: '' }), false);
+  assert.equal(canToggleDeveloperGoals(admin, { developerOwnerId: 'developer:dev-1' }), true);
+  assert.equal(canWorkDevelopmentClient(admin, { developerOwnerId: 'developer:dev-1' }), false);
+  assert.equal(canToggleDeveloperGoals(dev, { developerOwnerId: '' }), false);
+  assert.equal(canToggleDeveloperGoals(dev, { developerOwnerId: 'developer:dev-1' }), true);
 });
 
 test('only the assignee can work, and a handoff locks both sides', () => {

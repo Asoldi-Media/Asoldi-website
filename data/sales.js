@@ -297,6 +297,8 @@ function normalizeCalendar(value = {}) {
     calendarId: sanitizeText(input.calendarId),
     accountKey: sanitizeText(input.accountKey),
     googleEmail: sanitizeText(input.googleEmail),
+    organizerEmail: sanitizeText(input.organizerEmail),
+    iCalUID: sanitizeText(input.iCalUID),
     syncedAt: sanitizeText(input.syncedAt),
     guestInvitedAt: sanitizeText(input.guestInvitedAt),
     firefliesInvitedAt: sanitizeText(input.firefliesInvitedAt),
@@ -323,27 +325,44 @@ function normalizeReminders(value = {}) {
   };
 }
 
-function normalizeMeetingQuote(value = {}) {
+function normalizeMeetingQuotePackage(value = {}, fallback = {}) {
   const input = value && typeof value === 'object' ? value : {};
   const selected = Array.isArray(input.selected)
     ? input.selected.map((entry) => sanitizeText(entry)).filter(Boolean)
-    : [];
+    : (Array.isArray(fallback.selected) ? fallback.selected : []);
   const oneTimeAddOns = Array.isArray(input.oneTimeAddOns)
     ? input.oneTimeAddOns.map((entry) => sanitizeText(entry)).filter(Boolean)
     : [];
   const pages = Number(input.pages);
+  const fallbackPages = Number(fallback.pages);
   return {
-    tierId: sanitizeText(input.tierId) || 'starter',
+    tierId: sanitizeText(input.tierId) || sanitizeText(fallback.tierId) || 'starter',
     customMode: Boolean(input.customMode),
     oneTime: Boolean(input.oneTime),
-    pages: Number.isFinite(pages) && pages >= 1 ? Math.round(pages) : 5,
+    pages: Number.isFinite(pages) && pages >= 1
+      ? Math.round(pages)
+      : (Number.isFinite(fallbackPages) && fallbackPages >= 1 ? Math.round(fallbackPages) : 5),
     selected,
     oneTimeAddOns,
+  };
+}
+
+function normalizeMeetingQuote(value = {}) {
+  const input = value && typeof value === 'object' ? value : {};
+  const pkg = normalizeMeetingQuotePackage(input);
+  const altQuote = input.altQuote && typeof input.altQuote === 'object'
+    ? normalizeMeetingQuotePackage(input.altQuote, pkg)
+    : null;
+  const active = Number(input.activeOfferIndex);
+  return {
+    ...pkg,
     customSections: sanitizeText(input.customSections).slice(0, MAX_SALES_NOTES_LENGTH),
     startDate: sanitizeText(input.startDate),
     productNotes: sanitizeText(input.productNotes).slice(0, MAX_SALES_NOTES_LENGTH),
     productGoal: sanitizeText(input.productGoal).slice(0, MAX_SALES_NOTES_LENGTH),
     identity: sanitizeText(input.identity).slice(0, MAX_SALES_NOTES_LENGTH),
+    altQuote,
+    activeOfferIndex: altQuote && active === 1 ? 1 : 0,
   };
 }
 
@@ -1182,6 +1201,8 @@ export function clearSalesMeetingScheduling(id) {
       calendarId: '',
       accountKey: '',
       googleEmail: '',
+      organizerEmail: '',
+      iCalUID: '',
       syncedAt: '',
       guestInvitedAt: '',
       firefliesInvitedAt: '',

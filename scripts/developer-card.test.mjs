@@ -508,6 +508,14 @@ test('Development card still mounts one request thread and the queue bar', () =>
   assert.match(server, /app\.post\('\/api\/admin\/development\/:id\/sync-maker-run', developmentAuth/);
   assert.match(server, /listClientUploadFiles/);
   assert.match(server, /loadWorkshopNeedsDocument/);
+  const goalsHandler = server.slice(
+    server.indexOf("app.patch('/api/admin/development/:id/goals'"),
+    server.indexOf("app.post('/api/admin/development/:id/bundle'"),
+  );
+  assert.match(goalsHandler, /canToggleDeveloperGoals/);
+  assert.equal(goalsHandler.includes('assertDevelopmentWork'), false);
+  assert.match(section, /preview:noNextAction/);
+  assert.match(card, /applyDeveloperGoalToggle/);
   assert.match(server, /app\.delete\('\/api\/admin\/development\/:id\/media\/client\/:fileName', developmentAuth/);
   assert.match(server, /app\.delete\('\/api\/admin\/development\/:id\/media\/maker', developmentAuth/);
 });

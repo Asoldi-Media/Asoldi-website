@@ -678,6 +678,7 @@ export function OfferReviewSection({ hideHeader = false }: { hideHeader?: boolea
                     />
                     <OfferProductsCard
                       products={offer.products}
+                      alternatives={offer.alternatives}
                       mvaIncluded={Boolean(offer.mvaIncluded)}
                       onRemove={locked ? undefined : removeProduct}
                       onEdit={locked ? undefined : (product) => (product.kind === 'custom' ? startCustomProduct(product) : undefined)}

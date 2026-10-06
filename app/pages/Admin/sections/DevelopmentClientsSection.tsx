@@ -198,6 +198,20 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
     });
   }
 
+  function revealPreviewReadyBucket() {
+    setCollapsedBuckets((prev) => {
+      const key = 'preview:noNextAction';
+      if (prev[key] === false) return prev;
+      const next = { ...prev, [key]: false };
+      try {
+        window.localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // Ignore storage issues — collapse state is a convenience only.
+      }
+      return next;
+    });
+  }
+
   function applySearch(e?: React.FormEvent) {
     if (e) e.preventDefault();
     setSearchQuery(normalizeClientSearchText(searchInput));
@@ -391,6 +405,7 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
         onToggleStep={(entry, stepKey) => void toggleStep(entry, stepKey)}
         onReload={loadItems}
         onClientUpdated={patchDevelopmentClient}
+        onPreviewGoalReady={revealPreviewReadyBucket}
         onError={setError}
         onNotice={setNotice}
       />

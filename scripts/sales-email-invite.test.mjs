@@ -25,19 +25,26 @@ import {
 } from '../lib/sales-email.js';
 import { renderResponsiveSalesEmailHtml } from '../lib/sales-email-layout.js';
 
-test('calendar invite organizer matches the branded From address', () => {
+test('sales ICS organizer is the Google calendar owner, never the branded From', () => {
   const previous = process.env.RESEND_FROM;
   process.env.RESEND_FROM = 'Asoldi <contact@asoldi.com>';
-  const invite = buildSalesCalendarInvite(getSalesEmailPreviewClient(), {
-    meetLink: 'https://meet.google.com/aaa-bbbb-ccc',
-    htmlLink: 'https://calendar.google.com/event?eid=test',
-    eventId: 'evt-1',
+  const client = getSalesEmailPreviewClient({
+    calendar: {
+      meetLink: 'https://meet.google.com/aaa-bbbb-ccc',
+      htmlLink: 'https://calendar.google.com/event?eid=test',
+      eventId: 'evt-1',
+      organizerEmail: 'alexander@asoldi.com',
+      googleEmail: 'alexander@asoldi.com',
+    },
   });
+  const invite = buildSalesCalendarInvite(client, client.calendar);
   process.env.RESEND_FROM = previous;
   assert.ok(invite);
   assert.equal(invite.method, 'REQUEST');
   assert.match(invite.content, /METHOD:REQUEST/);
-  assert.match(invite.content, /ORGANIZER;CN=Asoldi:mailto:contact@asoldi.com/);
+  assert.match(invite.content, /ORGANIZER;.*mailto:alexander@asoldi.com/);
+  assert.equal(invite.content.includes('mailto:contact@asoldi.com'), false);
+  assert.match(invite.content, /UID:evt-1@google.com/);
   assert.match(invite.content, /ATTENDEE;.*mailto:daracha777@gmail.com/);
   assert.match(invite.content, /LOCATION:https:\/\/meet\.google\.com\/aaa-bbbb-ccc/);
   assert.match(invite.content, /PARTSTAT=NEEDS-ACTION/);
@@ -203,13 +210,57 @@ test('reminders do not attach an ICS invite', () => {
   assert.equal(message.icalEvent, undefined);
 });
 
-test('ICS organizer matches the salesperson From address', () => {
+test('sales ICS is omitted when only the branded From would be organizer', () => {
+  const previous = process.env.RESEND_FROM;
+  process.env.RESEND_FROM = 'Asoldi <contact@asoldi.com>';
+  const invite = buildSalesCalendarInvite({
+    businessName: 'Byggmester',
+    contactPerson: 'Jan',
+    contactEmail: 'jan@example.com',
+    meetingMode: 'online',
+    meetingAt: '2026-09-16T12:00:00.000Z',
+    calendar: {},
+  }, {
+    meetLink: 'https://meet.google.com/aaa-bbbb-ccc',
+  });
+  process.env.RESEND_FROM = previous;
+  assert.equal(invite, null);
+});
+
+test('ICS organizer follows the sales rep Google calendar, not the mail From', () => {
   const sender = buildSalesSender({
     name: 'Damian',
     fromEmail: 'damian@asoldi.com',
   });
-  const invite = composeEmailForClient(getSalesEmailPreviewClient(), 'thank-you', null, { sender }).message.icalEvent;
-  assert.match(invite.content, /ORGANIZER;.*mailto:damian@asoldi.com/);
+  const client = getSalesEmailPreviewClient({
+    calendar: {
+      meetLink: 'https://meet.google.com/aaa-bbbb-ccc',
+      eventId: 'evt-alex',
+      organizerEmail: 'alexander@asoldi.com',
+      googleEmail: 'alexander@asoldi.com',
+    },
+  });
+  const invite = composeEmailForClient(client, 'thank-you', null, { sender }).message.icalEvent;
+  assert.match(invite.content, /ORGANIZER;.*mailto:alexander@asoldi.com/);
+  assert.equal(invite.content.includes('mailto:contact@asoldi.com'), false);
+  assert.match(invite.content, /UID:evt-alex@google.com/);
+});
+
+test('ICS organizer falls back to the salesperson mailbox when Google email was not stored', () => {
+  const sender = buildSalesSender({
+    name: 'Alexander',
+    username: 'alexander@asoldi.com',
+  });
+  const client = getSalesEmailPreviewClient({
+    calendar: {
+      meetLink: 'https://meet.google.com/aaa-bbbb-ccc',
+      eventId: 'evt-alex',
+      googleEmail: '',
+      organizerEmail: '',
+    },
+  });
+  const invite = composeEmailForClient(client, 'thank-you', null, { sender }).message.icalEvent;
+  assert.match(invite.content, /ORGANIZER;.*mailto:alexander@asoldi.com/);
 });
 
 test('sent email is one fluid layout with an 800px content column', () => {
