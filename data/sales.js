@@ -424,7 +424,7 @@ function normalizeMyphoner(value = {}) {
   };
 }
 
-const MAX_CLIENT_MEETINGS = 12;
+const MAX_CLIENT_MEETINGS = 24;
 
 /** Fireflies meetings linked to this client (compact refs; the full transcript lives in fireflies-meetings.json). */
 function normalizeMeetings(list) {

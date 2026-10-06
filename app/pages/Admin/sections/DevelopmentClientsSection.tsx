@@ -589,7 +589,7 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
           body: form,
         });
         if (!uploaded.ok) continue;
-        await fetch(`${LOCAL_EDITOR_ORIGIN}/api/runs/${encodeURIComponent(runId)}`, { method: 'DELETE' });
+        await fetch(`${LOCAL_EDITOR_ORIGIN}/api/runs/${encodeURIComponent(runId)}?force=1`, { method: 'DELETE' });
         setNotice('Prosjektet er sendt. Den nye utvikleren kan ta det imot.');
         await loadItems();
       } catch {

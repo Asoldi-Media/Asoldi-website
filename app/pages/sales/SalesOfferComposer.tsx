@@ -54,7 +54,23 @@ type MeetingInfo = {
   durationMinutes?: number | '';
 } | null;
 
-type MeetingMatch = { meetingId: string; title: string; when: string; durationMinutes?: number | ''; selected?: boolean; hasTranscript?: boolean; liveJoined?: boolean };
+type MeetingMatch = {
+  meetingId: string;
+  title: string;
+  when: string;
+  durationMinutes?: number | '';
+  selected?: boolean;
+  hasTranscript?: boolean;
+  liveJoined?: boolean;
+  purpose?: string;
+};
+
+function meetingPurposeLabel(purpose = '') {
+  if (purpose === 'sales') return 'Salgsmøte';
+  if (purpose === 'workshop') return 'Workshop';
+  if (purpose === 'iteration') return 'Iterasjon';
+  return '';
+}
 
 const AUTOSAVE_MS = 1500;
 
@@ -361,13 +377,19 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
         return;
       }
       setMeetingMatches([]);
-      setMeetingQuery('');
-      setMeetingsOpen(false);
+      if (payload.title) setMeetingQuery('');
       autoFillKeyRef.current = '';
       if (Array.isArray(data.meetings)) setMeetings(data.meetings);
       if (data.meeting) setMeeting(data.meeting);
       if (data.offer) applyOffer(data.offer);
-      setNotice(payload.clear ? 'Bruker det bookede salgsmøtet igjen.' : 'Møtet er valgt som grunnlag for tilbudet.');
+      const selectedCount = Array.isArray(data.meetings)
+        ? data.meetings.filter((entry) => entry.selected).length
+        : 0;
+      setNotice(payload.clear
+        ? 'Alle opptak med transkript er valgt igjen.'
+        : selectedCount
+          ? `${selectedCount} opptak valgt som grunnlag for tilbudet.`
+          : 'Opptakene er oppdatert.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Kunne ikke hente møtet');
     } finally {
@@ -512,12 +534,19 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
   const fillDisabledReason = useMemo(() => {
     if (!deepseek) return 'AI-utfylling er ikke aktivert på serveren enda. Du kan skrive feltene i editoren.';
     if (client?.hasProductNotes) return '';
-    if (!meeting) return 'Venter på Fireflies-transkript, eller skriv produktnotater på forrige side.';
-    if (meeting.pendingTranscript) return 'Fireflies var i Meet. Transkriptet er ikke klart ennå.';
-    if (!meeting.hasTranscript && !meeting.hasSummary) return 'Møtet mangler transkript og sammendrag.';
-    if (meeting.tooThin) return 'Opptaket har under 10 linjer, og produktnotatene er for korte.';
-    return '';
-  }, [deepseek, meeting, client?.hasProductNotes]);
+    const selectedReady = meetings.some((entry) => entry.selected && (entry.hasTranscript || entry.hasSummary));
+    if (selectedReady || meeting?.hasTranscript || meeting?.hasSummary) {
+      if (meeting?.tooThin && !selectedReady && !client?.hasProductNotes) {
+        return 'Opptaket har under 10 linjer, og produktnotatene er for korte.';
+      }
+      return '';
+    }
+    if (!meeting && !meetings.length) return 'Venter på Fireflies-transkript, eller skriv produktnotater på forrige side.';
+    if (meeting?.pendingTranscript || meetings.some((entry) => entry.selected && !entry.hasTranscript)) {
+      return 'Fireflies-transkriptet er ikke hentet hit ennå. Åpne tilbudet på nytt, eller lim inn Fireflies-lenken under Bytt opptak.';
+    }
+    return 'Møtet mangler transkript og sammendrag.';
+  }, [deepseek, meeting, meetings, client?.hasProductNotes]);
 
   const handleFillRef = useRef(handleFill);
   handleFillRef.current = handleFill;
@@ -731,9 +760,11 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                   <div className="rounded-lg border border-white/10 px-3 py-2 text-xs text-gray-400">
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                       <span>
-                        {meeting
-                          ? `${meeting.title || 'Møte'}${meeting.when ? ` · ${meeting.when}` : ''}${meeting.pendingTranscript ? ' · venter på transkript' : ''}`
-                          : 'Ingen Fireflies-opptak valgt'}
+                        {meetings.filter((entry) => entry.selected).length
+                          ? `${meetings.filter((entry) => entry.selected).length} opptak valgt`
+                          : meeting
+                            ? `${meeting.title || 'Møte'}${meeting.when ? ` · ${meeting.when}` : ''}${meeting.pendingTranscript ? ' · venter på transkript' : ''}`
+                            : 'Ingen Fireflies-opptak valgt'}
                       </span>
                       <a href={meeting?.firefliesUrl || 'https://app.fireflies.ai/'} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[#FF5B00] hover:underline">
                         <ExternalLink size={12} /> Fireflies
@@ -747,45 +778,57 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                     {meetingsOpen && !locked && (
                       <div className="mt-2 space-y-3">
                         <div>
-                          <div className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">Transkript fra kalenderøkten</div>
+                          <div className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">Transkript fra denne kunden</div>
                           {meetings.some((entry) => entry.hasTranscript) ? (
                             <div className="flex flex-wrap gap-2">
                               {meetings.filter((entry) => entry.hasTranscript).map((entry) => (
-                                <button
+                                <label
                                   key={entry.meetingId}
-                                  type="button"
-                                  disabled={busy === 'meeting'}
-                                  onClick={() => void handlePickMeeting({ meetingId: entry.meetingId })}
-                                  className={`px-2 py-1 rounded-md text-left ${
-                                    entry.selected || entry.meetingId === meeting?.meetingId
+                                  className={`inline-flex items-center gap-2 px-2 py-1 rounded-md text-left cursor-pointer ${
+                                    entry.selected
                                       ? 'bg-[#FF5B00]/20 text-white'
                                       : 'bg-white/10 text-white hover:bg-white/15'
                                   }`}
                                 >
-                                  {entry.title || 'Uten tittel'}{entry.when ? ` · ${entry.when}` : ''}
-                                </button>
+                                  <input
+                                    type="checkbox"
+                                    checked={Boolean(entry.selected)}
+                                    disabled={busy === 'meeting'}
+                                    onChange={() => void handlePickMeeting({ meetingId: entry.meetingId })}
+                                  />
+                                  <span>
+                                    {meetingPurposeLabel(entry.purpose) ? `${meetingPurposeLabel(entry.purpose)} · ` : ''}
+                                    {entry.title || 'Uten tittel'}{entry.when ? ` · ${entry.when}` : ''}
+                                  </span>
+                                </label>
                               ))}
                             </div>
                           ) : (
-                            <p className="text-[11px] text-gray-500">Ingen transkript er knyttet til denne kalenderøkten ennå.</p>
+                            <p className="text-[11px] text-gray-500">Ingen transkript er knyttet til denne kunden ennå.</p>
                           )}
                         </div>
                         {meetings.some((entry) => !entry.hasTranscript) && (
                           <div className="flex flex-wrap gap-2">
                             {meetings.filter((entry) => !entry.hasTranscript).map((entry) => (
-                              <button
+                              <label
                                 key={entry.meetingId}
-                                type="button"
-                                disabled={busy === 'meeting'}
-                                onClick={() => void handlePickMeeting({ meetingId: entry.meetingId })}
-                                className={`px-2 py-1 rounded-md text-left ${
-                                  entry.selected || entry.meetingId === meeting?.meetingId
+                                className={`inline-flex items-center gap-2 px-2 py-1 rounded-md text-left cursor-pointer ${
+                                  entry.selected
                                     ? 'bg-[#FF5B00]/20 text-white'
                                     : 'bg-white/10 text-gray-300 hover:bg-white/15'
                                 }`}
                               >
-                                {entry.title || 'Uten tittel'}{entry.when ? ` · ${entry.when}` : ''} · venter på transkript
-                              </button>
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(entry.selected)}
+                                  disabled={busy === 'meeting'}
+                                  onChange={() => void handlePickMeeting({ meetingId: entry.meetingId })}
+                                />
+                                <span>
+                                  {meetingPurposeLabel(entry.purpose) ? `${meetingPurposeLabel(entry.purpose)} · ` : ''}
+                                  {entry.title || 'Uten tittel'}{entry.when ? ` · ${entry.when}` : ''} · venter på transkript
+                                </span>
+                              </label>
                             ))}
                           </div>
                         )}

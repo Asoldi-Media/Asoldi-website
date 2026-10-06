@@ -1,10 +1,12 @@
 import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { CalendarDays, CheckCircle2, ChevronsDown, ChevronsUp, Loader2, Pencil, Pin, Plus, Trash2, X } from 'lucide-react';
+import { CalendarDays, CheckCircle2, ChevronsDown, ChevronsUp, GripVertical, History, Loader2, Pencil, Pin, Plus, Trash2, X } from 'lucide-react';
 import type { SalesClient, SalesGoalKey, SalesNextAction, SalesNextActionPreset } from '../shared';
 import {
   AFTER_SALE_GOAL,
   ACTION_FORMATS,
+  actionAnchorId,
   actionFollowsNeighbor,
+  canReorderAction,
   canStickAction,
   formatActionFormatLabel,
   formatGoalLabel,
@@ -21,12 +23,14 @@ import {
   datetimeLocalOsloToIso,
   defaultAddToCalendar,
   defaultFormatForPreset,
+  isRecordedSalesAction,
   presetNeedsMeeting,
   suggestedDueAtForPreset,
   SALES_ACTION_TIMEZONE,
 } from '../../../../lib/sales-next-actions.js';
 import type { SalesActionFormat } from '../shared';
 import { MeetingVideoHover } from './MeetingVideoHover';
+import { ClientActivityLogCover } from './ClientActivityLogCover';
 import { clientMeetingHover } from '../../../../lib/workshop-record.js';
 
 type DraftState = {
@@ -75,6 +79,21 @@ function formatWhen(value = '') {
   return date.toLocaleString('nb-NO', { timeZone: SALES_ACTION_TIMEZONE });
 }
 
+function clusterFreeId(action: SalesNextAction, actions: SalesNextAction[]) {
+  if (canReorderAction(action)) return action.id;
+  return actionAnchorId(action, actions) || action.id;
+}
+
+function moveFreeId(freeIds: string[], dragId: string, targetId: string, before: boolean) {
+  if (!dragId || !targetId || dragId === targetId) return freeIds;
+  const next = freeIds.filter((id) => id !== dragId);
+  let index = next.indexOf(targetId);
+  if (index < 0) return freeIds;
+  if (!before) index += 1;
+  next.splice(index, 0, dragId);
+  return next;
+}
+
 export function SalesGoalTimeline({
   client,
   progressBusyKey,
@@ -85,9 +104,12 @@ export function SalesGoalTimeline({
 }: Props) {
   const [draft, setDraft] = useState<DraftState | null>(null);
   const [edit, setEdit] = useState<EditState | null>(null);
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropHint, setDropHint] = useState<{ id: string; before: boolean } | null>(null);
   const actionListRef = useRef<HTMLDivElement | null>(null);
   const [actionListMaxPx, setActionListMaxPx] = useState<number | null>(null);
   const [showFutureGoals, setShowFutureGoals] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
   const isWin = variant === 'win';
   const currentGoal = (isWin ? AFTER_SALE_GOAL : getCurrentGoalKey(client)) as SalesGoalKey | 'afterSale' | '';
   const remainingCount = getRemainingGoalCount(client);
@@ -174,6 +196,17 @@ export function SalesGoalTimeline({
     setEdit(null);
   }
 
+  async function dropAction(target: SalesNextAction, before: boolean, dragId = draggingId) {
+    if (!dragId || !currentGoal) return;
+    const targetId = clusterFreeId(target, currentActions);
+    const freeIds = currentActions.filter((action) => canReorderAction(action)).map((action) => action.id);
+    const nextIds = moveFreeId(freeIds, dragId, targetId, before);
+    setDraggingId(null);
+    setDropHint(null);
+    if (nextIds.join('\0') === freeIds.join('\0')) return;
+    await onMutateAction({ op: 'reorder', goalKey: currentGoal, orderedIds: nextIds });
+  }
+
   function formatControls(
     value: {
       format: SalesActionFormat;
@@ -185,6 +218,15 @@ export function SalesGoalTimeline({
   ) {
     const calendarLocked = value.presetKey === 'meeting';
     const showMeetingMode = value.presetKey === 'meeting' && value.format === 'mote';
+    const recordedWhenOn = isRecordedSalesAction({
+      presetKey: value.presetKey,
+      format: value.format,
+      addToCalendar: true,
+      meetingMode: value.meetingMode,
+    });
+    const calendarTitle = recordedWhenOn
+      ? 'Google Kalender · Meet + Fireflies. Kunden får ikke e-post.'
+      : '15 min i Google Kalender';
     return (
       <div className="sm:col-span-2 flex flex-wrap items-center gap-2">
         <select
@@ -208,13 +250,13 @@ export function SalesGoalTimeline({
             <option value="in-person">IRL</option>
           </select>
         ) : null}
-        <span title="15 min i Google Kalender" className="shrink-0 text-gray-300">
+        <span title={calendarTitle} className="shrink-0 text-gray-300">
           <CalendarDays size={15} />
         </span>
         <button
           type="button"
           role="switch"
-          aria-label="15 min i Google Kalender"
+          aria-label={calendarTitle}
           aria-checked={value.addToCalendar}
           disabled={calendarLocked}
           onClick={() => onChange({ addToCalendar: !value.addToCalendar })}
@@ -276,10 +318,26 @@ export function SalesGoalTimeline({
 
       {currentGoal ? (
         <div className="rounded-xl border border-white/10 bg-black/20 p-2.5 space-y-2">
-          <div className="text-[11px] text-gray-400">
-            {isWin ? 'Neste handling' : (
-              <>Neste handling i <span className="text-gray-200">{formatGoalLabel(currentGoal)}</span></>
-            )}
+          <div className="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => setLogOpen(true)}
+              className="text-left text-[11px] text-gray-400 hover:text-gray-200"
+              title="Åpne logg over alle handlinger og opptak"
+            >
+              {isWin ? 'Neste handling' : (
+                <>Neste handling i <span className="text-gray-200">{formatGoalLabel(currentGoal)}</span></>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setLogOpen(true)}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-white/10 text-[10px] text-gray-200 hover:bg-white/15"
+              title="Åpne logg"
+            >
+              <History size={11} />
+              Logg
+            </button>
           </div>
 
           {currentActions.length > 0 && (
@@ -291,11 +349,33 @@ export function SalesGoalTimeline({
           >
           <div className={actionListMaxPx ? 'space-y-2 pb-6' : 'space-y-2'}>
           {currentActions.map((currentAction) => {
+            const clusterId = clusterFreeId(currentAction, currentActions);
+            const inDragCluster = Boolean(draggingId && (currentAction.id === draggingId || clusterId === draggingId));
+            const dropOnCluster = Boolean(dropHint && dropHint.id === clusterId);
             const row = (
             <div
               key={currentAction.id}
               data-action-row
+              onDragOver={(event) => {
+                if (!draggingId) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'move';
+                const rect = event.currentTarget.getBoundingClientRect();
+                const before = (event.clientY - rect.top) < rect.height / 2;
+                setDropHint((prev) => (prev?.id === clusterId && prev.before === before ? prev : { id: clusterId, before }));
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                const rect = event.currentTarget.getBoundingClientRect();
+                const before = (event.clientY - rect.top) < rect.height / 2;
+                const dragId = event.dataTransfer.getData('text/plain') || draggingId;
+                void dropAction(currentAction, before, dragId);
+              }}
               className={`rounded-lg border px-2 py-1.5 ${
+                inDragCluster ? 'opacity-60' : ''
+              } ${
+                dropOnCluster ? 'ring-1 ring-[#FF5B00]' : ''
+              } ${
                 currentAction.addToCalendar && currentAction.dueAt
                   ? 'border-sky-400/50 bg-black/30 shadow-[0_0_0_3px_rgba(56,189,248,0.08)] hover:bg-[#3a3a3a]'
                   : 'border-white/10 bg-black/30 hover:bg-[#3a3a3a]'
@@ -359,6 +439,31 @@ export function SalesGoalTimeline({
                 </div>
               ) : (
                 <div className="flex items-center gap-2 min-w-0">
+                  {canReorderAction(currentAction) ? (
+                    <button
+                      type="button"
+                      draggable
+                      aria-label="Flytt handling"
+                      disabled={actionBusy}
+                      onDragStart={(event) => {
+                        event.dataTransfer.effectAllowed = 'move';
+                        event.dataTransfer.setData('text/plain', currentAction.id);
+                        const rowEl = event.currentTarget.closest('[data-action-row]');
+                        if (rowEl instanceof HTMLElement) event.dataTransfer.setDragImage(rowEl, 16, 16);
+                        setDraggingId(currentAction.id);
+                      }}
+                      onDragEnd={() => {
+                        setDraggingId(null);
+                        setDropHint(null);
+                      }}
+                      className="shrink-0 p-0.5 rounded text-gray-500 hover:text-white cursor-grab active:cursor-grabbing disabled:opacity-40"
+                      title="Dra for å endre rekkefølge. Sticky-handlinger blir med."
+                    >
+                      <GripVertical size={12} />
+                    </button>
+                  ) : (
+                    <span className="shrink-0 w-4" aria-hidden="true" />
+                  )}
                   <div className="min-w-0 flex-1">
                     <div className="text-xs text-white truncate">
                       {currentAction.name}
@@ -558,6 +663,9 @@ export function SalesGoalTimeline({
             </div>
           )}
         </div>
+      ) : null}
+      {logOpen ? (
+        <ClientActivityLogCover client={client} onClose={() => setLogOpen(false)} />
       ) : null}
     </div>
   );

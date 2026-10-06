@@ -117,7 +117,9 @@ import {
   salesEmailMergeMap,
   buildSalesCalendarInvite,
 } from './lib/sales-email.js';
-import { assignmentStampForOwnerChange, clientIsSalesWin, confirmationSendGaps, confirmationShouldSendOnChange, meetingTimeHasPassed, normalizeSecondaryInterest, osloWeekRange, resolveMeetingAtOnMyphonerMerge, sameMeetingInstant } from './lib/sales-next-actions.js';
+import { assignmentStampForOwnerChange, clientIsSalesWin, confirmationSendGaps, confirmationShouldSendOnChange, decorateNextActions, isRecordedSalesAction, meetingTimeHasPassed, normalizeSecondaryInterest, osloWeekRange, recordedSalesActions, resolveMeetingAtOnMyphonerMerge, sameMeetingInstant } from './lib/sales-next-actions.js';
+import { attachFirefliesToMatchingAction } from './lib/sales-activity-log.js';
+import { isPlaceholderMeetingId, meetingHasOfferTalk, seedOfferMeetingIds } from './lib/offer-meetings.js';
 import { normalizeStoredWebsiteEmail, resolveWebsiteEmail } from './lib/sales-website-email.js';
 import { extractBookingFromLead, salesBookingFacts } from './lib/sales-booking-facts.js';
 import {
@@ -191,7 +193,7 @@ import { contractHtmlForOffer } from './lib/offer-contract-html.js';
 import { extractOfferLetterBody } from './lib/offer-letter-html.js';
 import { isDeepseekConfigured } from './lib/deepseek.js';
 import { clientIntentSourceHash, fillOfferFromTranscript, meetingContextIsTooThin, reflectContractFromEmail, summarizeClientIntent } from './lib/offer-ai.js';
-import { matchMeetingToClients, recordingMatchesSalesMeeting } from './lib/fireflies-client-match.js';
+import { businessNameMatchesMeetingTitle, matchMeetingToClients, recordingMatchesSalesMeeting } from './lib/fireflies-client-match.js';
 import { describeFirefliesMedia, firefliesMediaFilePath, persistFirefliesMedia } from './lib/fireflies-media.js';
 import { CUSTOM_TIER_ID, WEBSITE_TIERS, formatKr, resolveTier, tierById, toClientWebsitePlan } from './lib/website-tiers.js';
 import { buildSalesSender, normalizeAsoldiFromEmail } from './lib/sales-sender.js';
@@ -269,6 +271,7 @@ import {
   shareGoogleCalendarToken,
   shouldForceCalendarRecreate,
   upsertMeetingEvent,
+  upsertRecordedSalesActionEvent,
   upsertSalesReminderEvent,
   queryWorkshopFreeBusy,
 } from './lib/google-calendar.js';
@@ -8366,8 +8369,17 @@ async function maybeSyncNextActionCalendars(previousClient, nextClient, { actorA
   for (const action of patched) {
     if (!shouldSyncAction(action)) continue;
     try {
-      const meta = await upsertSalesReminderEvent(client, action, action.calendarEventId, accountKey);
-      action.calendarEventId = sanitizeText(meta.eventId);
+      if (isRecordedSalesAction(action, { includeDone: false })) {
+        const meta = await upsertRecordedSalesActionEvent(client, action, action.calendarEventId, accountKey);
+        action.calendarEventId = sanitizeText(meta.eventId);
+        action.meetLink = sanitizeText(meta.meetLink) || sanitizeText(action.meetLink);
+        if (meta.firefliesInvited) {
+          action.firefliesInvitedAt = sanitizeText(action.firefliesInvitedAt) || new Date().toISOString();
+        }
+      } else {
+        const meta = await upsertSalesReminderEvent(client, action, action.calendarEventId, accountKey);
+        action.calendarEventId = sanitizeText(meta.eventId);
+      }
     } catch (error) {
       warnings.push(`Could not sync calendar reminder (${sanitizeText(action.name) || 'handling'}): ${error.message}`);
     }
@@ -9043,6 +9055,90 @@ async function maybeJoinFirefliesLiveDeskSlot(client, kind) {
   }
 }
 
+function writeRecordedActionStamp(client, actionId, stamp = {}) {
+  const actions = decorateNextActions(client).map((action) => (
+    action.id === actionId ? { ...action, ...stamp } : action
+  ));
+  return sales.updateSalesClient(client.id, { nextActions: actions }) || sales.getSalesClientById(client.id) || client;
+}
+
+async function maybeJoinFirefliesLiveRecordedAction(client, action) {
+  const warnings = [];
+  if (!isRecordedSalesAction(action, { includeDone: false })) {
+    return { joined: false, reason: 'not-recorded', client, warnings };
+  }
+  if (sanitizeText(action.firefliesLiveJoinedAt)) {
+    return { joined: false, reason: 'already-joined', client, warnings };
+  }
+  if (!sanitizeText(action.firefliesInvitedAt)) {
+    return { joined: false, reason: 'not-invited', client, warnings };
+  }
+  const meetLink = sanitizeText(action.meetLink);
+  if (!isRealGoogleMeetLink(meetLink)) {
+    return { joined: false, reason: 'no-meet', client, warnings };
+  }
+  if (!firefliesLiveJoinWindow({ meetingAt: action.dueAt })) {
+    return { joined: false, reason: 'outside-window', client, warnings };
+  }
+  const lastError = sanitizeText(action.firefliesLiveJoinError);
+  if (
+    !firefliesLiveJoinErrorIsCodeBug(lastError)
+    && firefliesLiveJoinShouldWait({ attemptAt: action.firefliesLiveJoinAttemptAt })
+  ) {
+    return { joined: false, reason: 'retry-wait', client, warnings };
+  }
+  const config = readFirefliesWebhookConfig();
+  if (!config.apiKey) {
+    warnings.push('Fireflies API key is missing, so Fred cannot be sent into the Meet from Asoldi.');
+    return { joined: false, reason: 'no-api-key', client, warnings };
+  }
+  const attemptedAt = new Date().toISOString();
+  const title = `${firefliesLiveJoinTitle(client)} · ${sanitizeText(action.name) || 'Møte'}`;
+  try {
+    const result = await addFirefliesToLiveMeeting({
+      meetingLink: meetLink,
+      title,
+      apiKey: config.apiKey,
+    });
+    if (!result.ok) {
+      const message = result.message || 'Fireflies did not accept the live join.';
+      const next = writeRecordedActionStamp(client, action.id, {
+        firefliesLiveJoinAttemptAt: attemptedAt,
+        firefliesLiveJoinError: message,
+      });
+      warnings.push(message);
+      return { joined: false, reason: message, client: next, warnings };
+    }
+    const next = writeRecordedActionStamp(client, action.id, {
+      firefliesLiveJoinedAt: attemptedAt,
+      firefliesLiveJoinAttemptAt: attemptedAt,
+      firefliesLiveJoinError: '',
+    });
+    sales.linkMeetingToSalesClient(client.id, {
+      meetingId: sales.liveJoinMeetingId(`${client.id}:${action.id}`, action.dueAt),
+      title,
+      when: formatOfferMeetingWhen(action.dueAt || attemptedAt),
+      startedAt: sanitizeText(action.dueAt) || attemptedAt,
+      meetLink,
+      hasTranscript: false,
+      liveJoinedAt: attemptedAt,
+      source: 'live-join',
+      linkedBy: 'live-join',
+      purpose: sanitizeText(action.goalKey) === 'meetingHeld' ? 'sales' : '',
+      forSalesMeeting: false,
+    });
+    return { joined: true, reason: 'joined', client: sales.getSalesClientById(client.id) || next, warnings };
+  } catch (error) {
+    const message = sanitizeText(error?.message) || 'Fireflies live join failed.';
+    const next = writeRecordedActionStamp(client, action.id, {
+      firefliesLiveJoinAttemptAt: attemptedAt,
+      firefliesLiveJoinError: message,
+    });
+    warnings.push(message);
+    return { joined: false, reason: message, client: next, warnings };
+  }
+}
+
 async function sendDueFirefliesLiveJoins() {
   if (firefliesJoinLoopRunning) return;
   firefliesJoinLoopRunning = true;
@@ -9053,6 +9149,9 @@ async function sendDueFirefliesLiveJoins() {
       }
       await maybeJoinFirefliesLiveDeskSlot(client, 'workshop');
       await maybeJoinFirefliesLiveDeskSlot(client, 'iteration');
+      for (const action of recordedSalesActions(client, { includeDone: false })) {
+        await maybeJoinFirefliesLiveRecordedAction(client, action);
+      }
     }
   } catch (error) {
     console.error('[fireflies] live-join tick failed', error);
@@ -11436,7 +11535,12 @@ function linkFirefliesMeeting(clientId, ref) {
     forSalesMeeting: recordingMatchesSalesMeeting(client || {}, ref),
   });
   sales.linkMeetingToSalesClient(clientId, applied.ref);
+  const latestForAction = sales.getSalesClientById(clientId) || client;
+  const attached = attachFirefliesToMatchingAction(decorateNextActions(latestForAction || {}), applied.ref);
   const patch = {};
+  if (attached.actionId) {
+    patch.nextActions = attached.actions;
+  }
   if (applied.workshopAction) {
     const latest = sales.getSalesClientById(clientId);
     patch.workshopAction = {
@@ -14960,22 +15064,45 @@ function ensureOfferMeetingHistory(client) {
   });
 }
 
+function clientRecordedMeetLinks(client = {}) {
+  const links = [sanitizeText(client?.calendar?.meetLink)];
+  for (const action of recordedSalesActions(client)) {
+    links.push(sanitizeText(action.meetLink));
+  }
+  return [...new Set(links.filter((link) => isRealGoogleMeetLink(link)))];
+}
+
 async function attachRecentFirefliesByMeetLink(client) {
   const config = readFirefliesWebhookConfig();
-  const meetLink = sanitizeText(client?.calendar?.meetLink);
-  if (!config.apiKey || !isRealGoogleMeetLink(meetLink)) return client;
+  const meetLinks = clientRecordedMeetLinks(client);
+  if (!config.apiKey) return client;
   try {
-    const rows = await fetchRecentFirefliesTranscripts({ apiKey: config.apiKey, limit: 15 });
-    const wanted = meetLink.toLowerCase().replace(/[?#].*$/, '');
-    const business = sanitizeText(client.businessName).toLowerCase();
+    const rows = await fetchRecentFirefliesTranscripts({ apiKey: config.apiKey, limit: 30 });
+    const wanted = new Set(meetLinks.map((link) => link.toLowerCase().replace(/[?#].*$/, '')));
     for (const row of rows) {
-      const built = buildFirefliesMeetingRecord({ meeting_id: row?.id }, row);
-      if (!built?.meetingId) continue;
-      const rowLink = sanitizeText(row?.meeting_link || row?.meetingLink || built.meetingLink).toLowerCase().replace(/[?#].*$/, '');
-      const title = sanitizeText(built.title).toLowerCase();
-      if (rowLink !== wanted && !(business && title.includes(business))) continue;
+      const meetingId = sanitizeText(row?.id);
+      if (!meetingId) continue;
+      const rowLink = sanitizeText(row?.meeting_link || row?.meetingLink).toLowerCase().replace(/[?#].*$/, '');
+      const title = sanitizeText(row?.title);
+      const linkMatch = Boolean(rowLink && wanted.has(rowLink));
+      const nameMatch = businessNameMatchesMeetingTitle(client.businessName, title);
+      if (!linkMatch && !nameMatch) continue;
+      const existing = readStoredFirefliesMeeting(meetingId);
+      let built = buildFirefliesMeetingRecord({ meeting_id: meetingId }, row);
+      if (!sanitizeText(existing?.transcript) && !sanitizeText(existing?.summary)) {
+        try {
+          const transcript = await fetchFirefliesTranscript(meetingId, { apiKey: config.apiKey });
+          built = buildFirefliesMeetingRecord({ meeting_id: meetingId }, transcript);
+        } catch (error) {
+          console.warn(`[fireflies] recent-fetch ${meetingId} ${sanitizeText(error?.message) || error}`);
+        }
+      }
       storeFirefliesMeeting(built);
-      linkFirefliesMeeting(client.id, meetingRefForClient({ ...built, meetLink: built.meetingLink || meetLink }, {
+      const stored = readStoredFirefliesMeeting(meetingId) || built;
+      linkFirefliesMeeting(client.id, meetingRefForClient({
+        ...stored,
+        meetLink: stored.meetingLink || built.meetingLink || rowLink,
+      }, {
         clientId: client.id,
         linkedBy: 'meet-link',
         confidence: 'medium',
@@ -14990,32 +15117,116 @@ async function attachRecentFirefliesByMeetLink(client) {
 /** Transcripts already stored for this client's calendar Meet, so Bytt opptak can list them. */
 function linkCalendarSessionTranscripts(client) {
   if (!client?.id) return client;
-  const meetLink = sanitizeText(client?.calendar?.meetLink);
-  const stored = listStoredFirefliesMeetingsForMeetLink(meetLink);
   let current = client;
-  for (const row of stored) {
-    if (!row?.meetingId) continue;
-    const already = (current.meetings || []).some((item) => sanitizeText(item.meetingId) === sanitizeText(row.meetingId));
-    if (already) continue;
-    linkFirefliesMeeting(current.id, meetingRefForClient({ ...row, meetLink: row.meetingLink || meetLink }, {
-      clientId: current.id,
-      linkedBy: 'meet-link',
-      confidence: 'medium',
-    }));
-    current = sales.getSalesClientById(current.id) || current;
+  for (const meetLink of clientRecordedMeetLinks(current)) {
+    const stored = listStoredFirefliesMeetingsForMeetLink(meetLink);
+    for (const row of stored) {
+      if (!row?.meetingId) continue;
+      const already = (current.meetings || []).some((item) => sanitizeText(item.meetingId) === sanitizeText(row.meetingId));
+      if (already) continue;
+      linkFirefliesMeeting(current.id, meetingRefForClient({ ...row, meetLink: row.meetingLink || meetLink }, {
+        clientId: current.id,
+        linkedBy: 'meet-link',
+        confidence: 'medium',
+      }));
+      current = sales.getSalesClientById(current.id) || current;
+    }
   }
   return current;
 }
 
+function loadStoredOrClientMeeting(client, meetingId) {
+  const id = sanitizeText(meetingId);
+  if (!id) return null;
+  const stored = readStoredFirefliesMeeting(id);
+  const compact = (client.meetings || []).find((row) => row.meetingId === id) || null;
+  if (!stored && !compact) return null;
+  return {
+    ...(compact || {}),
+    ...(stored || {}),
+    meetingId: id,
+    transcript: sanitizeText(stored?.transcript) || sanitizeText(compact?.transcript),
+    summary: sanitizeText(stored?.summary) || sanitizeText(compact?.summary),
+    hasTranscript: Boolean(sanitizeText(stored?.transcript) || compact?.hasTranscript),
+    title: sanitizeText(stored?.title) || sanitizeText(compact?.title),
+    when: sanitizeText(stored?.when) || sanitizeText(compact?.when),
+    meetLink: sanitizeText(stored?.meetingLink || stored?.meetLink) || sanitizeText(compact?.meetLink),
+    transcriptUrl: sanitizeText(stored?.transcriptUrl) || sanitizeText(compact?.transcriptUrl),
+    purpose: sanitizeText(compact?.purpose) || sanitizeText(stored?.purpose),
+  };
+}
+
+async function persistFetchedFirefliesTranscript(meetingId, client) {
+  const id = sanitizeText(meetingId);
+  const config = readFirefliesWebhookConfig();
+  if (!id || isPlaceholderMeetingId(id) || !config.apiKey) return readStoredFirefliesMeeting(id);
+  const stored = readStoredFirefliesMeeting(id);
+  if (sanitizeText(stored?.transcript) || sanitizeText(stored?.summary)) return stored;
+  try {
+    const transcript = await fetchFirefliesTranscript(id, { apiKey: config.apiKey });
+    const built = buildFirefliesMeetingRecord({ meeting_id: id }, transcript);
+    storeFirefliesMeeting(built);
+    if (client?.id) {
+      linkFirefliesMeeting(client.id, meetingRefForClient({
+        ...built,
+        meetLink: built.meetingLink,
+      }, { clientId: client.id, linkedBy: 'offer-hydrate' }));
+    }
+    return readStoredFirefliesMeeting(id);
+  } catch (error) {
+    console.warn(`[fireflies] hydrate ${id} ${sanitizeText(error?.message) || error}`);
+    return stored;
+  }
+}
+
+async function hydrateOfferMeetings(client, offer) {
+  if (!client?.id) return client;
+  const ids = [
+    ...selectedOfferMeetingIds(client, offer),
+    ...(Array.isArray(client.meetings) ? client.meetings.map((row) => row.meetingId) : []),
+  ];
+  const seen = new Set();
+  let fetched = 0;
+  for (const rawId of ids) {
+    const id = sanitizeText(rawId);
+    if (!id || seen.has(id) || isPlaceholderMeetingId(id)) continue;
+    seen.add(id);
+    const stored = readStoredFirefliesMeeting(id);
+    if (sanitizeText(stored?.transcript) || sanitizeText(stored?.summary)) continue;
+    if (fetched >= 4) break;
+    await persistFetchedFirefliesTranscript(id, client);
+    fetched += 1;
+  }
+  return sales.getSalesClientById(client.id) || client;
+}
+
+function selectedOfferMeetingIds(client, offer) {
+  const ids = Array.isArray(offer?.meetingIds) ? offer.meetingIds.map((id) => sanitizeText(id)).filter(Boolean) : [];
+  if (ids.length) return [...new Set(ids)];
+  if (sanitizeText(offer?.meetingId)) return [sanitizeText(offer.meetingId)];
+  return seedOfferMeetingIds(offer || {}, client);
+}
+
+function meetingsForOffer(client, offer) {
+  return selectedOfferMeetingIds(client, offer)
+    .map((id) => loadStoredOrClientMeeting(client, id))
+    .filter(Boolean);
+}
+
+function primaryMeetingForOffer(client, offer) {
+  const selected = meetingsForOffer(client, offer);
+  return selected.find((row) => meetingHasOfferTalk(row)) || selected[0] || meetingForOffer(client, offer);
+}
+
 function meetingForOffer(client, offer) {
+  const selected = meetingsForOffer(client, offer);
+  if (selected[0]) return selected[0];
   if (sanitizeText(offer?.meetingSource) === 'manual' && sanitizeText(offer?.meetingId)) {
-    const chosen = readStoredFirefliesMeeting(offer.meetingId)
-      || (client.meetings || []).find((row) => row.meetingId === sanitizeText(offer.meetingId));
+    const chosen = loadStoredOrClientMeeting(client, offer.meetingId);
     if (chosen) return chosen;
   }
   if (client?.progression?.meetingHeld && sanitizeText(client.lockedOfferMeetingId)) {
-    const locked = readStoredFirefliesMeeting(client.lockedOfferMeetingId)
-      || (client.meetings || []).find((row) => row.meetingId === client.lockedOfferMeetingId);
+    const locked = loadStoredOrClientMeeting(client, client.lockedOfferMeetingId);
     if (locked) return locked;
   }
   const ref = salesMeetingRef(client);
@@ -15036,6 +15247,18 @@ function meetingForOffer(client, offer) {
     }
   }
   return (client.meetings || [])[0] || null;
+}
+
+function syncOfferMeetingSelection(offer, client) {
+  if (!offer) return offer;
+  const ids = seedOfferMeetingIds(offer, client);
+  const current = Array.isArray(offer.meetingIds) ? offer.meetingIds.map((id) => sanitizeText(id)).filter(Boolean) : [];
+  const same = ids.length === current.length && ids.every((id, index) => id === current[index]);
+  if (same && sanitizeText(offer.meetingId) === (ids[0] || '')) return offer;
+  return salesOffers.updateSalesOffer(offer.id, {
+    meetingIds: ids,
+    meetingId: ids[0] || '',
+  }, { actor: 'system', action: '' }) || { ...offer, meetingIds: ids, meetingId: ids[0] || '' };
 }
 
 function presentMeetingForOffer(meeting, offer, client = null) {
@@ -15081,20 +15304,20 @@ function presentMeetingForOffer(meeting, offer, client = null) {
 }
 
 function presentOfferMeetings(client, offer) {
-  const selected = sanitizeText(offer?.meetingId)
-    || (client?.progression?.meetingHeld ? sanitizeText(client?.lockedOfferMeetingId) : '')
-    || sanitizeText(salesMeetingRef(client)?.meetingId);
+  const selectedIds = new Set(selectedOfferMeetingIds(client, offer));
   return (Array.isArray(client?.meetings) ? client.meetings : []).map((row) => {
     const stored = readStoredFirefliesMeeting(row.meetingId);
     const hasTranscript = Boolean(row.hasTranscript) || Boolean(sanitizeText(stored?.transcript));
+    const purpose = sanitizeText(row.purpose);
     return {
       meetingId: row.meetingId,
       title: row.title || stored?.title || 'Fireflies-møte',
       when: row.when || formatOfferMeetingWhen(row.startedAt || stored?.startedAt),
       durationMinutes: row.durationMinutes === '' || row.durationMinutes == null ? '' : Number(row.durationMinutes),
       hasTranscript,
+      purpose,
       liveJoined: Boolean(row.liveJoinedAt) || String(row.meetingId || '').startsWith('live:'),
-      selected: Boolean(selected) && selected === row.meetingId,
+      selected: selectedIds.has(sanitizeText(row.meetingId)),
     };
   }).sort((a, b) => Number(b.hasTranscript) - Number(a.hasTranscript));
 }
@@ -15337,14 +15560,16 @@ function offerProductNotes(client) {
 async function persistClientIntent(offer, client, { force = false, actor = '' } = {}) {
   if (!offer || offer.status === 'sent') return offer;
   if (!force && offer.status !== 'review-requested' && offer.status !== 'verified') return offer;
-  const meeting = meetingForOffer(client, offer);
+  const meetings = meetingsForOffer(client, offer);
+  const meeting = primaryMeetingForOffer(client, offer);
   const quote = client?.details?.meetingQuote || {};
   const notes = offerProductNotes(client);
-  const sourceHash = clientIntentSourceHash({ meeting: meeting || {}, quote, products: offer.products, notes });
+  const sourceHash = clientIntentSourceHash({ meeting: meeting || {}, meetings, quote, products: offer.products, notes });
   if (!force && offer.clientIntent?.sourceHash === sourceHash && offer.clientIntent?.headline) return offer;
   const briefing = await summarizeClientIntent({
     client,
     meeting: meeting || {},
+    meetings,
     quote,
     products: offer.products,
     notes,
@@ -15362,11 +15587,14 @@ function workshopSentenceForClient(client) {
   return workshopStartSentence(sanitizeText(client?.details?.meetingQuote?.startDate));
 }
 
-function offerContextBlocker(client, meeting) {
+function offerContextBlocker(client, meeting, meetings = []) {
   const notes = offerProductNotes(client);
-  const hasTalk = Boolean(meeting && (sanitizeText(meeting.transcript) || sanitizeText(meeting.summary)));
+  const list = Array.isArray(meetings) && meetings.length ? meetings : (meeting ? [meeting] : []);
+  const hasTalk = list.some((row) => sanitizeText(row?.transcript) || sanitizeText(row?.summary));
   if (!hasTalk && notes.length < 15) return 'Ingen møtedata eller produktnotater å fylle tilbudet med.';
-  if (meetingContextIsTooThin(meeting || {}, { notes })) return 'Opptaket har under 10 linjer, og produktnotatene er for korte til å fylle tilbudet.';
+  if (meetingContextIsTooThin(meeting || list[0] || {}, { notes, meetings: list })) {
+    return 'Opptaket har under 10 linjer, og produktnotatene er for korte til å fylle tilbudet.';
+  }
   return '';
 }
 
@@ -15412,18 +15640,27 @@ async function fillOpenOfferSlotsFromSalesMeeting(offer, client, req) {
   const html = offer.email?.html || '';
   const open = ['need', 'project', 'terms', 'benefits'].some((slot) => offerSlotIsOpen(html, slot));
   if (!open) return offer;
-  const meeting = meetingForOffer(client, offer);
-  if (offerContextBlocker(client, meeting)) return offer;
+  const meetings = meetingsForOffer(client, offer);
+  const meeting = primaryMeetingForOffer(client, offer);
+  if (offerContextBlocker(client, meeting, meetings)) return offer;
   if (!isDeepseekConfigured()) return offer;
-  const nuances = await fillOfferFromTranscript({ client: clientForOfferFill(client), meeting: meeting || {}, products: offer.products, tierId: offer.tierId });
+  const nuances = await fillOfferFromTranscript({
+    client: clientForOfferFill(client),
+    meeting: meeting || {},
+    meetings,
+    products: offer.products,
+    tierId: offer.tierId,
+  });
   const filled = refreshOfferShell(fillOfferSlots(html, {
     ...nuances,
     workshop: workshopSentenceForClient(client),
   }, { onlyOpen: true }));
   if (filled === html) return offer;
+  const meetingIds = selectedOfferMeetingIds(client, offer);
   return salesOffers.updateSalesOffer(offer.id, {
     email: { html: filled },
-    meetingId: sanitizeText(meeting?.meetingId),
+    meetingIds,
+    meetingId: meetingIds[0] || sanitizeText(meeting?.meetingId),
   }, { actor: offerActor(req), action: 'ai-filled', note: sanitizeText(meeting?.title) }) || offer;
 }
 
@@ -15485,8 +15722,10 @@ app.get('/api/admin/sales/:id/offer', salesAuth, async (req, res) => {
   client = await attachRecentFirefliesByMeetLink(client);
   client = linkCalendarSessionTranscripts(client);
   let offer = await ensureOfferDraft(client, req);
+  client = await hydrateOfferMeetings(client, offer);
+  offer = syncOfferMeetingSelection(offer, client);
   const sender = await resolveSalesSenderForAccount(req.salesUser);
-  const meeting = meetingForOffer(client, offer);
+  const meeting = primaryMeetingForOffer(client, offer);
   const portalAccount = await portalAccountForClient(client);
   res.json({
     offer: presentOffer(offer),
@@ -15508,9 +15747,12 @@ app.get('/api/admin/sales/:id/offer/meeting', salesAuth, async (req, res) => {
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
   client = ensureOfferMeetingHistory(client);
+  client = await attachRecentFirefliesByMeetLink(client);
   client = linkCalendarSessionTranscripts(client);
-  const offer = salesOffers.getOfferForClient(client.id);
-  const meeting = meetingForOffer(client, offer);
+  let offer = salesOffers.getOfferForClient(client.id);
+  client = await hydrateOfferMeetings(client, offer);
+  offer = syncOfferMeetingSelection(offer, client);
+  const meeting = primaryMeetingForOffer(client, offer);
   return res.json({
     meeting: presentMeetingForOffer(meeting, offer, client),
     meetings: presentOfferMeetings(client, offer),
@@ -15566,7 +15808,10 @@ app.post('/api/admin/sales/:id/offer/new', salesAuth, async (req, res) => {
     mvaIncluded: Boolean(previous?.mvaIncluded),
     party: previous?.party || {},
     reviewRequested: previous ? Boolean(previous.reviewRequested) : quoteBuiltIsCustom(built),
-    meetingId: previous?.meetingId || salesMeetingRef(client)?.meetingId || '',
+    meetingIds: previous?.meetingIds?.length
+      ? previous.meetingIds
+      : seedOfferMeetingIds({ status: 'draft', meetingId: previous?.meetingId || '' }, client),
+    meetingId: previous?.meetingId || '',
     meetingSource: previous?.meetingSource || '',
     contract: previous?.contract?.summary
       ? { summary: previous.contract.summary, generatedAt: previous.contract.generatedAt || '' }
@@ -15579,28 +15824,39 @@ app.post('/api/admin/sales/:id/offer/new', salesAuth, async (req, res) => {
 });
 
 app.post('/api/admin/sales/:id/offer/fill', salesAuth, async (req, res) => {
-  const client = sales.getSalesClientById(req.params.id);
+  let client = sales.getSalesClientById(req.params.id);
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
   if (!isDeepseekConfigured()) return res.status(503).json({ message: 'DeepSeek er ikke konfigurert (DEEPSEEK_API_KEY mangler).' });
-  const current = await ensureOfferDraft(client, req);
+  let current = await ensureOfferDraft(client, req);
   if (salesOffers.offerContentIsLocked(current)) {
     return res.status(409).json({ message: 'Tilbudet er låst. Innholdet kan ikke skrives om fra transkriptet.' });
   }
-  const meeting = meetingForOffer(client, current);
-  const contextBlocker = offerContextBlocker(client, meeting);
+  client = await hydrateOfferMeetings(client, current);
+  current = syncOfferMeetingSelection(current, client);
+  const meetings = meetingsForOffer(client, current);
+  const meeting = primaryMeetingForOffer(client, current);
+  const contextBlocker = offerContextBlocker(client, meeting, meetings);
   if (contextBlocker) return res.status(400).json({ message: contextBlocker });
   try {
     const force = Boolean(req.body?.force);
     const html = typeof req.body?.html === 'string' && !force ? req.body.html : current.email.html;
-    const nuances = await fillOfferFromTranscript({ client: clientForOfferFill(client), meeting: meeting || {}, products: current.products, tierId: current.tierId });
+    const nuances = await fillOfferFromTranscript({
+      client: clientForOfferFill(client),
+      meeting: meeting || {},
+      meetings,
+      products: current.products,
+      tierId: current.tierId,
+    });
     const filled = refreshOfferShell(fillOfferSlots(html, {
       ...nuances,
       workshop: workshopSentenceForClient(client),
     }, { onlyOpen: !force }));
+    const meetingIds = selectedOfferMeetingIds(client, current);
     const updated = salesOffers.updateSalesOffer(current.id, {
       email: { html: filled },
-      meetingId: sanitizeText(meeting?.meetingId),
+      meetingIds,
+      meetingId: meetingIds[0] || sanitizeText(meeting?.meetingId),
     }, { actor: offerActor(req), action: 'ai-filled', note: sanitizeText(meeting?.title) });
     res.json({ offer: presentOffer(updated), nuances });
   } catch (error) {
@@ -15618,13 +15874,18 @@ app.post('/api/admin/sales/:id/offer/use-meeting', salesAuth, async (req, res) =
     return res.status(409).json({ message: 'Tilbudet er låst. Møtegrunnlaget kan ikke byttes.' });
   }
   if (req.body?.clear) {
-    const auto = salesMeetingRef(client);
+    const ids = seedOfferMeetingIds({ ...current, meetingIds: [], meetingId: '', status: 'draft' }, client);
     const updated = salesOffers.updateSalesOffer(current.id, {
-      meetingId: auto?.meetingId || '',
+      meetingIds: ids,
+      meetingId: ids[0] || '',
       meetingSource: '',
     }, { actor: offerActor(req), action: 'meeting-auto', note: '' });
-    const meeting = meetingForOffer(client, updated);
-    return res.json({ offer: presentOffer(updated), meeting: presentMeetingForOffer(meeting, updated, client) });
+    const meeting = primaryMeetingForOffer(client, updated);
+    return res.json({
+      offer: presentOffer(updated),
+      meeting: presentMeetingForOffer(meeting, updated, client),
+      meetings: presentOfferMeetings(client, updated),
+    });
   }
   const meetingId = sanitizeText(req.body?.meetingId);
   const pasted = sanitizeText(req.body?.title || req.body?.query || '');
@@ -15672,6 +15933,11 @@ app.post('/api/admin/sales/:id/offer/use-meeting', salesAuth, async (req, res) =
     record = matches[0];
   }
   if (!record) return res.status(404).json({ message: 'Fant ikke møtet.' });
+  if (!isPlaceholderMeetingId(record.meetingId || meetingId)) {
+    const hydrated = await persistFetchedFirefliesTranscript(record.meetingId || meetingId, client);
+    if (hydrated) record = hydrated;
+    client = sales.getSalesClientById(client.id) || client;
+  }
   linkFirefliesMeeting(client.id, meetingRefForClient(record, {
     clientId: client.id,
     businessName: client.businessName,
@@ -15680,12 +15946,22 @@ app.post('/api/admin/sales/:id/offer/use-meeting', salesAuth, async (req, res) =
     reasons: ['Valgt på tilbudet'],
     linkedBy: 'manual',
   }, { linkedBy: 'manual' }));
+  const nextIds = req.body?.replace
+    ? [record.meetingId]
+    : (() => {
+      const currentIds = selectedOfferMeetingIds(client, current);
+      if (currentIds.includes(record.meetingId)) {
+        return currentIds.filter((id) => id !== record.meetingId);
+      }
+      return [...currentIds, record.meetingId];
+    })();
   const picked = salesOffers.updateSalesOffer(current.id, {
-    meetingId: record.meetingId,
+    meetingIds: nextIds,
+    meetingId: nextIds[0] || '',
     meetingSource: 'manual',
   }, { actor: offerActor(req), action: 'meeting-picked', note: sanitizeText(record.title) });
   const fresh = sales.getSalesClientById(client.id) || client;
-  const meeting = meetingForOffer(fresh, picked);
+  const meeting = primaryMeetingForOffer(fresh, picked);
   res.json({
     offer: presentOffer(picked),
     meeting: presentMeetingForOffer(meeting, picked, fresh),
@@ -16992,7 +17268,9 @@ app.post('/api/admin/sales/:id/create-maker-run', salesOrDevelopmentAuth, async 
     let replacedRunDeleted = false;
     if (replacedRunId && replacedRunId !== runId) {
       try {
-        const deleteRes = await fetch(`${base}/api/runs/${encodeURIComponent(replacedRunId)}`, {
+        const deleteRes = await fetch(
+          `${base}/api/runs/${encodeURIComponent(replacedRunId)}?replacedBy=${encodeURIComponent(runId)}`,
+          {
           method: 'DELETE',
           headers: {
             ...(apiKey ? { 'x-api-key': apiKey } : {}),

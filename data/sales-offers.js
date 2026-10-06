@@ -3,6 +3,7 @@ import { createHash } from 'crypto';
 import { getDataFilePath, ensurePersistentDataDir, writeDataJson } from './storage-path.js';
 import { CUSTOM_TIER_ID, tierById } from '../lib/website-tiers.js';
 import { normalizeDueDate } from '../lib/website-due.js';
+import { normalizeOfferMeetingIds } from '../lib/offer-meetings.js';
 
 /**
  * Offer (tilbud) drafts: the offer email + product blocks + contract summary for one sales client.
@@ -274,7 +275,8 @@ export function normalizeSalesOffer(raw = {}) {
       generatedAt: sanitizeText(contract.generatedAt),
       pdfPath: sanitizeText(contract.pdfPath),
     },
-    meetingId: sanitizeText(raw.meetingId),
+    meetingIds: normalizeOfferMeetingIds(raw.meetingIds, raw.meetingId),
+    meetingId: normalizeOfferMeetingIds(raw.meetingIds, raw.meetingId)[0] || '',
     meetingSource: sanitizeText(raw.meetingSource) === 'manual' ? 'manual' : '',
     adminNote: sanitizeText(raw.adminNote).slice(0, 2000),
     clientIntent: normalizeClientIntent(raw.clientIntent),

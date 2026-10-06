@@ -1,0 +1,16 @@
+---
+description: Always add Damian as Co-authored-by on git commits
+alwaysApply: true
+---
+
+# Git commits always include Damian as co-author
+
+When the user asks to commit (or amend) files, every commit message must end with a blank line and this trailer:
+
+```
+Co-authored-by: Damianhch <daracha777@gmail.com>
+```
+
+Do this on every repo. Do not skip it because the author is already Cursor Agent. Do not use a different name or email unless the user names a new identity.
+
+This is in addition to the existing commit protocol: only commit when asked, never update git config, never add AI attribution such as `Co-Authored-By: Claude`.

@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   ACTION_FORMATS,
   FORMAT_LABELS,
@@ -46,6 +49,9 @@ import {
   NEW_SALES_ASSIGNMENT_MS,
   MEETING_TIME_BACKFILL_TARGETS,
   canStickAction,
+  canReorderAction,
+  getGoalActions,
+  isRecordedSalesAction,
   salesProgressBlockedReason,
   suggestedDueAtForPreset,
   clientMatchesMeetingModeFilter,
@@ -256,7 +262,7 @@ test('creating a next action requires name, time, and confirm payload', () => {
   assert.match(missingTime.error, /Tid/);
 });
 
-test('creating a next action replaces the previous one and ranks by the new time', () => {
+test('creating a next action sits at the top and ranks the client by that row', () => {
   const now = Date.parse('2026-09-19T10:00:00.000Z');
   const pastMeeting = client({
     meetingAt: '2026-09-10T10:00:00.000Z',
@@ -278,8 +284,10 @@ test('creating a next action replaces the previous one and ranks by the new time
   assert.equal(replaced.nextActions.some((action) => action.name === 'Ring' && !action.doneAt), true);
   assert.equal(replaced.nextActions.some((action) => action.presetKey === 'meeting' && !action.doneAt), true);
   const ranked = { ...pastMeeting, nextActions: replaced.nextActions };
-  assert.equal(getActiveNextAction(ranked).presetKey, 'sms1h');
-  assert.equal(classifyNextActionBucket(ranked, now), 'pastDue');
+  const live = getGoalActions(ranked, 'meetingHeld');
+  assert.equal(live[0].name, 'Ring');
+  assert.equal(getActiveNextAction(ranked).name, 'Ring');
+  assert.equal(classifyNextActionBucket(ranked, now), 'upcoming');
 });
 
 test('sold website clients are wins, not action-list rows', () => {
@@ -625,7 +633,7 @@ test('sticky action keeps its gap when the action below moves', () => {
   assert.equal(Date.parse(movedSms.dueAt), Date.parse('2026-09-26T12:00:00.000Z') - HOUR_MS);
 });
 
-test('without sticky, changing an action time can reorder the list', () => {
+test('without sticky, changing an action time keeps list order', () => {
   const sold = client({
     progression: { meetingHeld: true, offerSent: true, contractSigned: true },
   });
@@ -650,8 +658,72 @@ test('without sticky, changing an action time can reorder the list', () => {
     { op: 'update', id: stickyOff.id, dueAt: '2026-09-25T13:00:00.000Z' }
   );
   const live = later.nextActions.filter((action) => !action.doneAt && action.presetKey !== 'oppfolging1mnd');
-  assert.equal(live[0].presetKey, 'oppfolging');
-  assert.equal(live[1].name, 'Send sms');
+  assert.equal(live[0].name, 'Send sms');
+  assert.equal(live[1].presetKey, 'oppfolging');
+});
+
+test('reorder moves a free action and ranks by the new top row', () => {
+  const created = applyNextActionMutation(client(), {
+    op: 'create',
+    goalKey: 'meetingHeld',
+    presetKey: 'custom',
+    name: 'Ring',
+    dueAt: '2026-09-22T09:00:00.000Z',
+  });
+  const ring = created.nextActions.find((action) => action.name === 'Ring');
+  const meeting = created.nextActions.find((action) => action.presetKey === 'meeting');
+  const sms = created.nextActions.find((action) => action.presetKey === 'sms1h');
+  assert.equal(getGoalActions({ ...client(), nextActions: created.nextActions }, 'meetingHeld')[0].name, 'Ring');
+  assert.equal(getActiveNextAction({ ...client(), nextActions: created.nextActions }).name, 'Ring');
+  const moved = applyNextActionMutation(
+    { ...client(), nextActions: created.nextActions },
+    { op: 'reorder', goalKey: 'meetingHeld', orderedIds: [meeting.id, ring.id] }
+  );
+  assert.equal(moved.error, undefined);
+  const live = getGoalActions({ ...client(), nextActions: moved.nextActions }, 'meetingHeld');
+  assert.equal(live[0].presetKey, 'sms1h');
+  assert.equal(live[1].id, meeting.id);
+  assert.equal(live[2].id, ring.id);
+  assert.equal(getActiveNextAction({ ...client(), nextActions: moved.nextActions }).presetKey, 'sms1h');
+  const blocked = applyNextActionMutation(
+    { ...client(), nextActions: moved.nextActions },
+    { op: 'reorder', goalKey: 'meetingHeld', orderedIds: [sms.id, meeting.id, ring.id] }
+  );
+  assert.match(blocked.error, /sticky/i);
+});
+
+test('påminnelse cannot be dragged; moving the meeting keeps it packed above', () => {
+  const row = client();
+  const sms = decorateNextActions(row).find((action) => action.presetKey === 'sms1h');
+  const meeting = decorateNextActions(row).find((action) => action.presetKey === 'meeting');
+  assert.equal(canReorderAction(sms), false);
+  assert.equal(canReorderAction(meeting), true);
+  const created = applyNextActionMutation(row, {
+    op: 'create',
+    goalKey: 'meetingHeld',
+    presetKey: 'custom',
+    name: 'Ring',
+    dueAt: '2026-09-22T09:00:00.000Z',
+  });
+  const ring = created.nextActions.find((action) => action.name === 'Ring');
+  const meetingId = created.nextActions.find((action) => action.presetKey === 'meeting').id;
+  const packed = applyNextActionMutation(
+    { ...row, nextActions: created.nextActions },
+    { op: 'reorder', goalKey: 'meetingHeld', orderedIds: [meetingId, ring.id] }
+  );
+  const live = getGoalActions({ ...row, nextActions: packed.nextActions }, 'meetingHeld');
+  const smsIndex = live.findIndex((action) => action.presetKey === 'sms1h');
+  const meetingIndex = live.findIndex((action) => action.presetKey === 'meeting');
+  assert.equal(smsIndex, meetingIndex - 1);
+  assert.equal(live[live.length - 1].name, 'Ring');
+});
+
+test('Sales goal rows expose a drag handle only for free actions', () => {
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../app/pages/Admin/sections/SalesGoalTimeline.tsx'), 'utf8');
+  assert.match(src, /GripVertical/);
+  assert.match(src, /canReorderAction/);
+  assert.match(src, /op: 'reorder'/);
+  assert.match(src, /orderedIds/);
 });
 
 test('checkmark removes one action and leaves the others', () => {
@@ -1008,4 +1080,49 @@ test('other sales Møte rows can still turn the calendar switch off', () => {
   const row = updated.nextActions.find((action) => action.id === 'na-custom-mote');
   assert.equal(row.format, 'mote');
   assert.equal(row.addToCalendar, false);
+});
+
+test('møtet hatt keeps completed actions instead of deleting them', () => {
+  const now = Date.parse('2026-09-28T14:00:00.000Z');
+  const result = applyProgressionChange(client(), 'meetingHeld', true, { nowMs: now });
+  assert.equal(result.error, undefined);
+  const meeting = result.nextActions.find((action) => action.presetKey === 'meeting');
+  const sms = result.nextActions.find((action) => action.presetKey === 'sms1h');
+  assert.ok(meeting);
+  assert.ok(sms);
+  assert.ok(meeting.doneAt);
+  assert.ok(sms.doneAt);
+  assert.equal(meeting.completedByGoal, true);
+  const after = { ...client(), progression: result.progression, nextActions: result.nextActions };
+  assert.equal(getGoalActions(after, 'meetingHeld').length, 0);
+  assert.equal(getCurrentGoalKey(after), 'offerSent');
+});
+
+test('extra Møte plus calendar is a recorded sales action', () => {
+  assert.equal(isRecordedSalesAction({
+    presetKey: 'custom',
+    format: 'mote',
+    addToCalendar: true,
+  }), true);
+  assert.equal(isRecordedSalesAction({
+    presetKey: 'meeting',
+    format: 'mote',
+    addToCalendar: true,
+  }), false);
+  assert.equal(isRecordedSalesAction({
+    presetKey: 'custom',
+    format: 'mote',
+    addToCalendar: false,
+  }), false);
+  assert.equal(isRecordedSalesAction({
+    presetKey: 'sms1h',
+    format: 'sms',
+    addToCalendar: true,
+  }), false);
+  assert.equal(isRecordedSalesAction({
+    presetKey: 'custom',
+    format: 'mote',
+    addToCalendar: true,
+    meetingMode: 'in-person',
+  }), false);
 });

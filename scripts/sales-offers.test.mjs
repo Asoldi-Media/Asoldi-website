@@ -299,6 +299,10 @@ test('fireflies matcher: attendee email wins, then host+time, then fuzzy name', 
   const nothing = matcher.matchMeetingToClients({ title: 'Internt møte', attendeeEmails: [], hostEmail: 'x@y.z' }, clients, { ownerEmailById });
   assert.equal(nothing.best, null);
   assert.deepEqual(nothing.candidates, []);
+
+  assert.equal(matcher.businessNameMatchesMeetingTitle('Muldvarpen AS', 'Asoldi · Online møte · Muldvarpen Entreprenør'), true);
+  assert.equal(matcher.businessNameMatchesMeetingTitle('Muldvarpen AS', 'MULDVARPEN ENTREPRENØR AS'), true);
+  assert.equal(matcher.businessNameMatchesMeetingTitle('Muldvarpen AS', 'Internt ukesmøte'), false);
 });
 
 test('offer AI: transcript fill and contract reflection go through the injected chat', async () => {
@@ -772,6 +776,19 @@ test('client intent briefing uses transcript, notes and the selected plan', asyn
   const hashA = offerAi.clientIntentSourceHash({ notes: 'a', products: [] });
   const hashB = offerAi.clientIntentSourceHash({ notes: 'b', products: [] });
   assert.notEqual(hashA, hashB);
+});
+
+test('offer AI concatenates selected meetings and hashes all of them', () => {
+  const first = { meetingId: 'a', title: 'Salgsmøte', when: '1. okt', transcript: 'Vi trenger meny og booking.' };
+  const second = { meetingId: 'b', title: 'Planlegging', when: '6. okt', transcript: 'Neste gang går vi gjennom tilbudet.' };
+  const described = offerAi.describeMeetings([first, second]);
+  assert.match(described, /Møte 1 · Salgsmøte/);
+  assert.match(described, /Møte 2 · Planlegging/);
+  assert.match(described, /meny/);
+  assert.match(described, /tilbudet/);
+  const both = offerAi.clientIntentSourceHash({ meetings: [first, second], notes: 'x', products: [] });
+  const one = offerAi.clientIntentSourceHash({ meetings: [first], notes: 'x', products: [] });
+  assert.notEqual(both, one);
 });
 
 const STARTER_QUOTE = {

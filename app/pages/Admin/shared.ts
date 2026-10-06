@@ -319,8 +319,16 @@ export type SalesNextAction = {
     sticky?: boolean;
     stickyAnchorId?: string;
     stickyOffsetMs?: number | null;
+    sortIndex?: number | null;
     addToCalendar: boolean;
   calendarEventId: string;
+  meetLink?: string;
+  firefliesMeetingId?: string;
+  firefliesInvitedAt?: string;
+  firefliesLiveJoinedAt?: string;
+  firefliesLiveJoinAttemptAt?: string;
+  firefliesLiveJoinError?: string;
+  completedByGoal?: boolean;
 };
 
 export type SalesProgression = {
@@ -619,6 +627,7 @@ export type SalesOffer = {
   chosenOfferIndex?: 0 | 1 | null;
   contract: { summary: OfferContractSummary | null; generatedAt: string; pdfPath: string };
   meetingId: string;
+  meetingIds?: string[];
   meetingSource?: '' | 'manual';
   adminNote: string;
   clientIntent?: {

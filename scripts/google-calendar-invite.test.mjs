@@ -16,6 +16,8 @@ import {
   calendarEventStartMatches,
   shouldForceCalendarRecreate,
   presentCalendarEvent,
+  recordedSalesActionCalendarPlan,
+  resolveSalesReminderDurationMinutes,
   resolveSalesCalendarPreviewAccountKey,
   resolveSalesCalendarWeekSources,
   googleCalendarOauthScopes,
@@ -81,6 +83,19 @@ test('silent calendar creates do not add Fred until the invite is actually sent'
     sendUpdates: 'all',
     alreadyOnEvent: false,
   }), false);
+});
+
+test('recorded extra Møte plans Meet plus Fireflies and no client email', () => {
+  const plan = recordedSalesActionCalendarPlan();
+  assert.equal(plan.includeClient, false);
+  assert.equal(plan.includeFireflies, true);
+  assert.equal(plan.createMeet, true);
+  assert.equal(plan.sendUpdates, 'all');
+  assert.equal(plan.durationMinutes, 60);
+  const guests = buildMeetingAttendees(client, { includeAttendees: plan.includeClient, includeFireflies: plan.includeFireflies });
+  assert.equal(guests.length, 1);
+  assert.equal(guests[0].email, firefliesNotetakerEmail());
+  assert.equal(resolveSalesReminderDurationMinutes(), 15);
 });
 
 test('silent updates keep Fred after he was already invited', () => {
