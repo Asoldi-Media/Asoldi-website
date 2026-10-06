@@ -1,0 +1,18 @@
+---
+description: Never spawn extra GitHub login or account-picker windows
+alwaysApply: true
+---
+
+# One GitHub network call, then stop
+
+After the remotes moved to the **Asoldi-Media** GitHub org, Git Credential Manager shows an account picker if more than one `git fetch` / `pull` / `push` runs at once, or if a hung one is retried.
+
+**Hard limits**
+
+- Never start a second `git fetch`, `git pull`, or `git push` against github.com while another is still running.
+- Never run those commands on two repos in parallel.
+- If a GitHub git command hangs, is rejected, times out, or a login / “Select an account” window appears: **stop**. Kill leftover `git`, `git-remote-https`, and `git-credential-manager` processes. Tell the user. Do not retry in the same turn.
+- Do not call ConnectScm, `gh auth login`, `origin auth login`, or any other GitHub sign-in flow unless the user explicitly asked for that login.
+- Do not set `GIT_TERMINAL_PROMPT` retries or loop push/pull. One attempt per user request.
+
+asoldi-website (`Asoldi-Media/Asoldi-website`) and website-maker (`Asoldi-Media/Website-creator`) use the same GitHub org. Treat them as one credential. If the first push already opened a picker, wait for the user — do not open another.
