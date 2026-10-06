@@ -206,7 +206,7 @@ test('a signed client ranks by tier weeks, and a custom offer without a date has
     agreedTime: true,
   };
   const tierItem = buildDevelopmentItems([tier2], [])[0];
-  assert.equal(tierItem.rankAt.slice(0, 10), '2026-10-15');
+  assert.equal(tierItem.rankAt.slice(0, 10), '2026-10-21');
   assert.equal(tierItem.meetingAt, '2026-09-01T10:00:00.000Z');
   const custom = {
     ...bynesetSales,

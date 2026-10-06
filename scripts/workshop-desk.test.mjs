@@ -220,14 +220,24 @@ test('hover uses that meeting id, never meetings[0]', () => {
   assert.notEqual(iteration.meetingId, 'latest-other');
 });
 
-test('T06 mounts T02 and T07 in the actions slot; T01 needs stay off Admin', () => {
+test('T06 mounts T01 needs, T02 inbox, and T07 actions; Forespørsler is a header dropdown', () => {
   const adminSrc = readNearby('../app/pages/Admin/sections/AdminBoardSection.tsx');
-  assert.equal(adminSrc.includes('WorkshopNeedsPanel'), false);
+  assert.match(adminSrc, /WorkshopNeedsPanel/);
   assert.match(adminSrc, /AdminRequestInbox/);
   assert.match(adminSrc, /data-admin-card-actions/);
   assert.match(adminSrc, /WorkshopAdminActionRow/);
   assert.match(adminSrc, /Details & tools/);
-  assert.match(adminSrc, /Search and filter/);
+  assert.match(adminSrc, /Adminterminal/);
+  assert.match(adminSrc, /Forespørsler/);
+  assert.match(adminSrc, /Vis e-posthandlinger/);
+  assert.match(adminSrc, /SalesCalendarWeek/);
+  assert.match(adminSrc, /workshopCalendar/);
+  assert.match(adminSrc, /h-\[1em\] w-\[1\.1em\]/);
+  assert.match(adminSrc, /bg-neutral-500/);
+  const salesSrc = readNearby('../app/pages/Admin/sections/SalesClientsSection.tsx');
+  assert.match(salesSrc, /h-\[1em\] w-\[1\.1em\]/);
+  assert.match(salesSrc, /bg-neutral-500/);
+  assert.equal(adminSrc.includes('Search and filter'), false);
   assert.equal(adminSrc.includes('ManageClientsView'), false);
   assert.equal(adminSrc.includes('SalesGoalTimeline'), false);
 
@@ -249,22 +259,37 @@ test('T06 mounts T02 and T07 in the actions slot; T01 needs stay off Admin', () 
   assert.match(serverSrc, /\/api\/admin\/sales\/:id\/workshop\/goal-actions/);
   assert.match(serverSrc, /\/api\/admin\/sales\/preview-send-emails/);
   assert.match(serverSrc, /\/api\/admin\/sales\/:id\/workshop\/summary/);
+  assert.match(serverSrc, /\/api\/admin\/sales\/:id\/workshop\/informasjon/);
+  assert.match(serverSrc, /\/api\/admin\/sales\/:id\/workshop\/desk-email/);
+  const dueFn = serverSrc.slice(
+    serverSrc.indexOf('async function sendDueWorkshopDeskEmails'),
+    serverSrc.indexOf('async function sendIterationMeetingEmail'),
+  );
+  assert.ok(dueFn.includes('workshop-reminder-3d'));
+  assert.equal(dueFn.includes('data-innsamling'), false);
+  assert.equal(dueFn.includes('dataInnsamlingScheduleAt'), false);
+  assert.equal(adminSrc.includes('Datainnsamling sendes manuelt'), true);
   assert.equal(serverSrc.includes('summarizeClientIntent({'), true);
 
   const developerSrc = readNearby('../app/pages/Admin/sections/DevelopmentClientsSection.tsx');
   assert.match(developerSrc, /DeveloperRunQueueBar/);
+  assert.match(developerSrc, /flex-1 overflow-x-auto/);
   const cardSrc = readNearby('../app/pages/developer/DeveloperClientCard.tsx');
   assert.match(cardSrc, /DeveloperRequestThread/);
+  assert.match(cardSrc, /Få tilbakemelding/);
   assert.equal(developerSrc.includes('DeveloperRequestThread'), false);
 });
 
-test('Admin goal chips hide Iterert until Ha workshop is done', () => {
+test('Admin goal chips hide Informasjon and Iterasjon until the previous goal is done', () => {
   const open = { workshop: { heldAt: '', summary: null } };
   assert.equal(getAdminCurrentGoalKey(open), 'haWorkshop');
   assert.deepEqual(getAdminVisibleGoalKeys(open), ['haWorkshop']);
   const held = { workshop: { heldAt: DUE, summary: { intro: 'x', voice: 'x', whatTheyWant: 'x', functionality: 'x' } } };
-  assert.equal(getAdminCurrentGoalKey(held), 'iterated');
-  assert.deepEqual(getAdminVisibleGoalKeys(held), ['haWorkshop', 'iterated']);
+  assert.equal(getAdminCurrentGoalKey(held), 'informasjon');
+  assert.deepEqual(getAdminVisibleGoalKeys(held), ['haWorkshop', 'informasjon']);
+  const info = { workshop: { ...held.workshop, informasjonAt: DUE } };
+  assert.equal(getAdminCurrentGoalKey(info), 'iterated');
+  assert.deepEqual(getAdminVisibleGoalKeys(info), ['haWorkshop', 'informasjon', 'iterated']);
 });
 
 test('extra goal-action create does not look like confirmSend', () => {
@@ -350,7 +375,17 @@ test('Admin Meet button joins as damian and never uses the sales Meet after work
       iterationMeeting: { format: 'mote', meetLink: iterationLink },
     },
   };
-  const iterationJoin = resolveAdminMeetJoin(held);
+  const afterWorkshop = resolveAdminMeetJoin(held);
+  assert.equal(afterWorkshop.source, 'workshop');
+  assert.equal(afterWorkshop.canOpen, false);
+  assert.equal(afterWorkshop.joinUrl.includes('ibp-qvyu-ccd'), false);
+  assert.equal(afterWorkshop.joinUrl.includes('idf-xnpu-jna'), false);
+
+  const infoDone = {
+    ...held,
+    workshop: { ...held.workshop, informasjonAt: DUE },
+  };
+  const iterationJoin = resolveAdminMeetJoin(infoDone);
   assert.equal(iterationJoin.source, 'iteration');
   assert.equal(iterationJoin.meetLink, iterationLink);
   assert.equal(iterationJoin.canOpen, true);

@@ -97,7 +97,7 @@ export const Vilkar = () => {
             'Opptil fire (4) mindre innholdsendringer per måned (for eksempel priser, bilder eller tekst). Ingen tillegg eller fjerning av seksjoner.',
             'Ett veiledningsmøte om CMS, holdt én gang.',
             'Inneholder ikke SEO-program, bloggskriving, internlenkenettverk, nettbutikk, analyseside i CMS eller rangerings- og resultatrapportering.',
-            'Leveringstid: 2 uker fra prosjektstart.',
+            'Leveringstid: 14 arbeidsdager fra prosjektstart.',
           ]}
         />
 
@@ -113,7 +113,7 @@ export const Vilkar = () => {
             'Innsamling og lagring av e-postlister. Veiledningsmøtet dekker også hvor listene finnes og hvordan de brukes.',
             'Analyseside i CMS med kundens egne søkeordsrangeringer, trafikk, avvisningsrate og konvertering.',
             'Bi-ukentlig grunrapport (hver 14. dag) i analysesiden: rangering og et sammendrag av perioden. En separat PDF inngår ikke med mindre det er avtalt skriftlig.',
-            'Leveringstid: 2 uker fra prosjektstart.',
+            'Leveringstid: 14 arbeidsdager fra prosjektstart.',
           ]}
         />
 
@@ -125,7 +125,7 @@ export const Vilkar = () => {
             'Flerspråklig nettside og butikk.',
             'Ukentlig avansert rapport (hver 7. dag) i analysesiden: rangering, dypere sammendrag enn nivå 2, og nettbutikk-nøkkeltall (kjøp, konverteringsrate, gjennomsnittlig ordreverdi).',
             'Veiledningsmøtet dekker også nettbutikk: legge inn produkter, legge til kunder og koble til betalingsløsning, pluss analysesiden.',
-            'Leveringstid: 3 uker fra prosjektstart.',
+            'Leveringstid: 21 arbeidsdager fra prosjektstart.',
           ]}
         />
 

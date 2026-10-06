@@ -49,7 +49,7 @@ const CARD_SELECTED = 'border-[#FF5B00] ring-2 ring-[#FF5B00]/25';
 const DEVELOPMENT_STEPS: { key: keyof DevelopmentItem['development']; label: string }[] = [
   { key: 'hostingerEnvironmentSetup', label: 'Hostinger environment sat opp' },
   { key: 'githubRepoPushed', label: 'GitHub repo pushed' },
-  { key: 'v1Ferdig', label: 'V1 ferdig' },
+  { key: 'v1Ferdig', label: 'Få tilbakemelding' },
   { key: 'nettsideFerdig', label: 'Nettside ferdig' },
 ];
 

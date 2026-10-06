@@ -18,7 +18,10 @@ import {
   parseAffiliationsAnswer,
   parseOpeningHoursAnswer,
   parseStaffAnswer,
+  promptFor,
+  navigationTarget,
   questionFor,
+  sideWrite,
 } from '../lib/ai-assistant/intake.js';
 import { publicJobView, updateAssistantJob, createAssistantJob } from '../lib/ai-assistant/jobs.js';
 
@@ -176,7 +179,8 @@ test('questions stay the same for one business and change across businesses', ()
     .map((name) => questionFor('products', name));
   assert.ok(new Set(variants).size > 1);
   assert.equal(questionFor('staff', 'Alpha Bakeri').includes('tonalitet'), false);
-  assert.match(questionFor('done', 'Alpha Bakeri'), /bedriftsinformasjon/i);
+  assert.match(questionFor('done', 'Alpha Bakeri'), /steg|ferdig|skrive|velg/i);
+  assert.doesNotMatch(questionFor('done', 'Alpha Bakeri'), /bedriftsinformasjon/i);
   assert.equal(businessLabel({ businessCard: { companyName: 'Alpha Bakeri' } }), 'Alpha Bakeri');
   assert.equal(personFirstName({ name: 'Kari Nord', businessName: 'Alpha Bakeri' }), 'Kari');
   assert.equal(personFirstName({ businessName: 'Alpha Bakeri' }), '');
@@ -414,7 +418,7 @@ test('the assistant walks the missing buckets and writes each answer into kunded
     text: 'Kari Nord, baker, 90011223, kari@firma.no',
   });
   assert.equal(people.currentStep, 'staff');
-  assert.match(people.assistantMessage, /flere|ansatte|nok|sikker/i);
+  assert.match(people.assistantMessage, /legge til mer|ansatt/i);
   const staff = portal.getClientProfileByUserId('intake-chat-user').clientDataBank.staff;
   assert.equal(staff.some((row) => row.name === 'Kari Nord' && row.email === 'kari@firma.no'), true);
 
@@ -423,7 +427,7 @@ test('the assistant walks the missing buckets and writes each answer into kunded
 
   const vague = await handleAssistantChat('intake-chat-user', { text: 'vi har vanligvis åpent' });
   assert.equal(vague.currentStep, 'hours');
-  assert.match(vague.assistantMessage, /24\/7|ikke relevant/i);
+  assert.match(vague.assistantMessage, /feltene under|ikke er relevant|chatten/i);
 
   const hours = await handleAssistantChat('intake-chat-user', { text: 'døgnåpent' });
   assert.equal(hours.currentStep, 'affiliations');
@@ -432,7 +436,7 @@ test('the assistant walks the missing buckets and writes each answer into kunded
 
   const done = await handleAssistantChat('intake-chat-user', { text: 'Sponsorer: Acme, Beta' });
   assert.equal(done.currentStep, 'affiliations');
-  assert.match(done.assistantMessage, /flere|partnere|nok|sikker/i);
+  assert.match(done.assistantMessage, /legge til mer|partner/i);
   const finished = await handleAssistantChat('intake-chat-user', { text: 'ikke mer' });
   assert.equal(finished.currentStep, 'done');
   assert.equal(finished.nextAction, 'done');
@@ -442,4 +446,67 @@ test('the assistant walks the missing buckets and writes each answer into kunded
   assert.deepEqual(finalBank.affiliations[0].items.map((item) => item.title), ['Acme', 'Beta']);
   assert.equal(finalBank.assistantIntake.products, 'skipped');
   assert.equal(finalBank.assistantIntake.logo, 'done');
+});
+
+test('add-more is only asked when that chapter already has something', () => {
+  assert.doesNotMatch(promptFor('logo', 'Nordlys', bank()), /legge til mer/i);
+  assert.match(promptFor('logo', 'Nordlys', bank()), /logo/i);
+  assert.doesNotMatch(promptFor('products', 'Nordlys', bank({ assistantIntake: { products: 'more' } })), /legge til mer/i);
+  assert.match(promptFor('media', 'Nordlys', withProducts({
+    media: { uncategorized: ['/a.jpg'] },
+    assistantIntake: { media: 'more' },
+  })), /legge til mer i mediabiblioteket/i);
+  assert.match(promptFor('products', 'Nordlys', withProducts(), { revisit: true }), /legge til mer i produktinformasjonen/i);
+  assert.equal(parseOpeningHoursAnswer('Åpent hele tiden').status, 'always');
+  assert.equal(navigationTarget('gå til logo'), 'logo');
+  assert.equal(navigationTarget('gå til åpningstider'), 'hours');
+  assert.equal(navigationTarget('Åpningstidene er mandag til fredag 9-17'), '');
+  assert.equal(sideWrite('Åpningstidene er mandag til fredag 9-17', 'products')?.kind, 'hours');
+});
+
+test('a named chapter opens there, and a written fact is saved from another step', async () => {
+  portal.upsertClientProfile('nav-user', { businessName: 'Navkafe' });
+  const logo = await handleAssistantChat('nav-user', { text: 'gå til logo' });
+  assert.equal(logo.currentStep, 'logo');
+  assert.match(logo.assistantMessage, /logo/i);
+  assert.doesNotMatch(logo.assistantMessage, /legge til mer/i);
+  assert.equal(logo.profile.clientDataBank.assistantIntake.focus, 'logo');
+
+  const hours = await handleAssistantChat('nav-user', {
+    text: 'Åpningstidene er mandag til fredag 9-17, lørdag stengt, søndag stengt',
+  });
+  assert.equal(portal.getClientProfileByUserId('nav-user').clientDataBank.openingHours.days[0].opensAt, '09:00');
+  assert.match(hours.assistantMessage, /Åpningstidene er lagret/);
+
+  const opened = await handleAssistantChat('nav-user', { text: '', focusStep: 'products' });
+  assert.equal(opened.currentStep, 'products');
+  assert.doesNotMatch(opened.assistantMessage, /legge til mer/i);
+});
+
+test('a finished client can still change hours and open a chapter that already has data', async () => {
+  portal.upsertClientProfile('done-user', { businessName: 'Ferdig' });
+  portal.setClientDataBank('done-user', {
+    businessCard: { companyName: 'Ferdig' },
+    productCatalogs: [{ categories: [{ name: 'Varer', products: [{ title: 'Lampe' }] }] }],
+    media: { uncategorized: ['/a.jpg'] },
+    brandIdentity: { logos: { normal: '/logo.png' } },
+    staff: [{ id: 'ansatt-2', name: 'Kari', title: 'Baker' }],
+    openingHours: { status: 'set', days: alwaysOpenDays() },
+    affiliations: [{ categoryName: 'Partnere', items: [{ title: 'Acme' }] }],
+    assistantIntake: {
+      products: 'done',
+      media: 'done',
+      logo: 'done',
+      staff: 'done',
+      hours: 'done',
+      affiliations: 'done',
+    },
+  });
+  const changed = await handleAssistantChat('done-user', { text: 'endre åpningstidene til åpent hele tiden' });
+  assert.equal(portal.getClientProfileByUserId('done-user').clientDataBank.openingHours.status, 'always');
+  assert.match(changed.assistantMessage, /hele tiden/i);
+
+  const staff = await handleAssistantChat('done-user', { text: 'gå til ansatte' });
+  assert.equal(staff.currentStep, 'staff');
+  assert.match(staff.assistantMessage, /legge til mer i ansattinformasjonen/i);
 });

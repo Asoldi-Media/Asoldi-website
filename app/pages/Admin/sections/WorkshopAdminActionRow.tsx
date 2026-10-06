@@ -36,6 +36,7 @@ import {
   suggestedAdminActionDueAt,
   resolveAdminMeetJoin,
   workshopGoalHeld,
+  workshopGoalInformasjon,
   workshopGoalIterated,
 } from '../../../../lib/workshop-goal-timeline.js';
 import { MeetingVideoHover } from './MeetingVideoHover';
@@ -63,6 +64,7 @@ type EditState = {
   format: WorkshopActionFormat;
   dueAt: string;
   addToCalendar: boolean;
+  allowEmptyDue?: boolean;
 };
 
 const CHIP = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50';
@@ -151,6 +153,7 @@ function formatControls(
 export function WorkshopAdminActionRow({ client, onClient }: Props) {
   const workshop = client.workshop;
   const held = workshopGoalHeld(client);
+  const informasjon = workshopGoalInformasjon(client);
   const iterated = workshopGoalIterated(client);
   const booking = client.workshopAction;
   const iteration = workshop?.iterationMeeting;
@@ -171,9 +174,9 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
   const actionListRef = useRef<HTMLDivElement | null>(null);
   const [actionListMaxPx, setActionListMaxPx] = useState<number | null>(null);
 
-  const currentGoal = getAdminCurrentGoalKey(client) as 'haWorkshop' | 'iterated' | '';
+  const currentGoal = getAdminCurrentGoalKey(client) as 'haWorkshop' | 'informasjon' | 'iterated' | '';
   const remainingCount = getAdminRemainingGoalCount(client);
-  const visibleGoals = getAdminVisibleGoalKeys(client, showFutureGoals) as Array<'haWorkshop' | 'iterated'>;
+  const visibleGoals = getAdminVisibleGoalKeys(client, showFutureGoals) as Array<'haWorkshop' | 'informasjon' | 'iterated'>;
   const futureGoalSet = new Set(getAdminFutureGoalKeys(client));
   const extras = useMemo(
     () => (currentGoal ? getAdminGoalActions(client, currentGoal) as WorkshopGoalAction[] : []),
@@ -338,6 +341,7 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
   function actionEditor(state: EditState, onChange: (patch: Partial<EditState>) => void, onSave: () => void) {
     const lockCalendar = state.kind !== 'extra' && state.format === 'mote';
     const meetingTime = state.kind === 'workshop' || state.kind === 'iteration';
+    const allowEmptyDue = state.kind === 'extra' && (state.allowEmptyDue || false);
     return (
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <label className="text-[10px] text-gray-400 uppercase tracking-wide">
@@ -376,7 +380,7 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
         <div className="sm:col-span-2 flex gap-2">
           <button
             type="button"
-            disabled={Boolean(busy) || !state.name.trim() || !state.dueAt}
+            disabled={Boolean(busy) || !state.name.trim() || (!state.dueAt && !allowEmptyDue)}
             onClick={onSave}
             className="px-2 py-1 rounded-md bg-[#FF5B00] text-white text-[11px] disabled:opacity-50"
           >
@@ -456,9 +460,9 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
     <div className="space-y-2" onClick={(event) => event.stopPropagation()}>
       <div className="flex flex-wrap items-center gap-1.5">
         {visibleGoals.map((key) => {
-          const done = key === 'haWorkshop' ? held : iterated;
+          const done = key === 'haWorkshop' ? held : key === 'informasjon' ? informasjon : iterated;
           const isFuture = futureGoalSet.has(key);
-          const keyBusy = key === 'haWorkshop' ? busy === 'summary' : busy === 'iterated';
+          const keyBusy = key === 'haWorkshop' ? busy === 'summary' : key === 'informasjon' ? busy === 'informasjon' : busy === 'iterated';
           return (
             <button
               key={key}
@@ -466,7 +470,11 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
               disabled={keyBusy || isFuture}
               onClick={() => {
                 if (key === 'haWorkshop') confirmSummary();
-                else {
+                else if (key === 'informasjon') {
+                  void run('informasjon', async () => {
+                    await patchJson(`/admin/sales/${encodeURIComponent(client.id)}/workshop/informasjon`, { informasjon: !informasjon });
+                  });
+                } else {
                   void run('iterated', async () => {
                     await patchJson(`/admin/sales/${encodeURIComponent(client.id)}/workshop/iterated`, { iterated: !iterated });
                   });
@@ -616,6 +624,7 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
                         format: row.format,
                         dueAt: isoToDatetimeLocalOslo(row.dueAt),
                         addToCalendar: Boolean(row.addToCalendar),
+                        allowEmptyDue: row.presetKey === 'feedback' || row.presetKey === 'informasjon',
                       }),
                       {
                         onComplete: () => void mutateExtra({ op: 'complete', id: row.id }),
@@ -663,7 +672,7 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
               <div className="sm:col-span-2 flex gap-2">
                 <button
                   type="button"
-                  disabled={Boolean(busy) || !draft.name.trim() || !draft.dueAt}
+                  disabled={Boolean(busy) || !draft.name.trim() || (!draft.dueAt && draft.presetKey !== 'informasjon' && draft.presetKey !== 'feedback')}
                   onClick={() => void mutateExtra({
                     op: 'create',
                     goalKey: currentGoal,

@@ -188,12 +188,12 @@ import {
 import { buildOfferFromMeetingQuote, quoteBuiltIsCustom } from './lib/offer-from-quote.js';
 import { clientWithOfferParty, offerMissingFields, offerReadinessMessage } from './lib/offer-readiness.js';
 import { buildContractPdf, contractFileName, contractInputsForOffer, offerContractIsAvailable } from './lib/offer-contract-pdf.js';
-import { dueDateDay, isCustomWebsiteOffer, normalizeDueDate, offerDeliveryPhraseNb, resolveWebsiteDue, weeksForDeveloperBoard } from './lib/website-due.js';
+import { dueDateDay, isCustomWebsiteOffer, normalizeDueDate, offerDeliveryPhraseNb, resolveWebsiteDue, weekendDueDateMessage, weeksForDeveloperBoard, workDaysForDeveloperBoard } from './lib/website-due.js';
 import { contractHtmlForOffer } from './lib/offer-contract-html.js';
 import { extractOfferLetterBody } from './lib/offer-letter-html.js';
 import { isDeepseekConfigured } from './lib/deepseek.js';
 import { clientIntentSourceHash, fillOfferFromTranscript, meetingContextIsTooThin, reflectContractFromEmail, summarizeClientIntent } from './lib/offer-ai.js';
-import { businessNameMatchesMeetingTitle, matchMeetingToClients, recordingMatchesSalesMeeting } from './lib/fireflies-client-match.js';
+import { clientOwnedMeetLinks, matchMeetingToClients, planFirefliesMeetLinkBackfill, recordingMatchesSalesMeeting } from './lib/fireflies-client-match.js';
 import { describeFirefliesMedia, firefliesMediaFilePath, persistFirefliesMedia } from './lib/fireflies-media.js';
 import { CUSTOM_TIER_ID, WEBSITE_TIERS, formatKr, resolveTier, tierById, toClientWebsitePlan } from './lib/website-tiers.js';
 import { buildSalesSender, normalizeAsoldiFromEmail } from './lib/sales-sender.js';
@@ -275,7 +275,7 @@ import {
   upsertSalesReminderEvent,
   queryWorkshopFreeBusy,
 } from './lib/google-calendar.js';
-import { loadWorkshopNeedsDocument, patchWorkshopNeedLine } from './lib/workshop-needs.js';
+import { loadWorkshopNeedsDocument, patchWorkshopNeedLine, openNeedLines } from './lib/workshop-needs.js';
 import { flattenMakerUploadsForLibrary, makerProgressPatchFromHandoff, normalizeDeveloperQa } from './lib/developer-card.js';
 import {
   ADMIN_DEVELOPER_OWNER_ID,
@@ -319,6 +319,16 @@ import {
   ITERATION_DEFAULT_NAME,
 } from './lib/workshop-record.js';
 import { applyWorkshopGoalActionOp } from './lib/workshop-goal-timeline.js';
+import {
+  rejectActionAfterDueDate,
+} from './lib/workshop-desk-actions.js';
+import {
+  stampWorkshopDeskEmail,
+  workshopDeskEmailAutosendEnabled,
+  workshopDeskEmailIsDue,
+  workshopDeskEmailKindAutosends,
+  workshopReminderScheduleAt,
+} from './lib/workshop-desk-emails.js';
 import {
   generateWorkshopSummaryWithDeepSeek,
 } from './lib/workshop-summary.js';
@@ -531,6 +541,7 @@ const CLOUDFLARED_WINDOWS_CANDIDATES = [
 const LOCAL_RECORDING_EXTENSIONS = new Set(['.wav', '.mp3', '.m4a', '.ogg', '.flac']);
 let salesReminderLoopRunning = false;
 let salesReminderInterval = null;
+let workshopDeskEmailInterval = null;
 let firefliesJoinLoopRunning = false;
 let firefliesJoinInterval = null;
 let makerTunnelProcess = null;
@@ -9168,6 +9179,13 @@ function startSalesReminderLoop() {
   }, SALES_REMINDER_POLL_MS);
 }
 
+function startWorkshopDeskEmailLoop() {
+  if (workshopDeskEmailInterval) return;
+  workshopDeskEmailInterval = setInterval(() => {
+    sendDueWorkshopDeskEmails().catch((error) => console.error('Workshop desk email tick failed:', error));
+  }, SALES_REMINDER_POLL_MS);
+}
+
 function startFirefliesLiveJoinLoop() {
   if (firefliesJoinInterval) return;
   firefliesJoinInterval = setInterval(() => {
@@ -10589,6 +10607,7 @@ app.post('/api/client/ai-assistant/chat', clientAuth, (req, res) => {
         text: sanitizeText(req.body?.text),
         messages,
         files,
+        focusStep: sanitizeText(req.body?.focusStep),
       });
       return res.json(result);
     } catch (err) {
@@ -11484,9 +11503,16 @@ async function handleFirefliesWebhook(req, res) {
     console.log(
       `[fireflies] webhook via=${auth.via} sent=${result.sent} reason=${result.reason || ''} id=${result.meetingId || ''} to=${result.to || ''} client=${result.match?.clientId || '-'} (${result.match?.confidence || 'unmatched'})`
     );
-    if (result.meetingId && result.reason !== 'ignored-event' && result.reason !== 'already-notified') {
-      // Copy video/audio/transcript to the data dir in the background so the signed URLs can expire safely.
-      void persistFirefliesMediaInBackground(result.meetingId);
+    if (result.meetingId && result.reason !== 'ignored-event') {
+      if (result.reason !== 'already-notified') {
+        // Copy video/audio/transcript to the data dir in the background so the signed URLs can expire safely.
+        void persistFirefliesMediaInBackground(result.meetingId);
+      }
+      try {
+        ensureFirefliesMeetLinkBackfill({ force: true });
+      } catch (error) {
+        console.warn(`[fireflies] meet-link backfill ${sanitizeText(error?.message) || error}`);
+      }
     }
     return res.json({ ok: true, ...result });
   } catch (error) {
@@ -12287,6 +12313,8 @@ app.patch('/api/hub/sites/:id/website-due', adminAuth, (req, res) => {
   if (typeof req.body?.dueDate !== 'string') return res.status(400).json({ message: 'Mangler dato.' });
   const dueDate = normalizeDueDate(req.body.dueDate);
   if (String(req.body.dueDate).trim() && !dueDate) return res.status(400).json({ message: 'Ugyldig dato.' });
+  const weekendMessage = weekendDueDateMessage(dueDate);
+  if (weekendMessage) return res.status(400).json({ message: weekendMessage });
   const site = hub.getSiteById(req.params.id);
   if (!site) return res.status(404).json({ message: 'Site not found.' });
   const saved = persistWebsiteDue({
@@ -13511,9 +13539,10 @@ app.get('/api/admin/sales/meeting-map', salesAuth, async (req, res) => {
 });
 
 app.get('/api/admin/sales/:id', salesAuth, (req, res) => {
-  const client = sales.getSalesClientById(req.params.id);
+  let client = sales.getSalesClientById(req.params.id);
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
+  client = clientAfterFirefliesBackfill(client);
   res.json({ client: jsonSalesClient(client) });
 });
 
@@ -13994,6 +14023,8 @@ app.patch('/api/admin/sales/:id/website-due', salesAuth, (req, res) => {
   if (typeof req.body?.dueDate !== 'string') return res.status(400).json({ message: 'Mangler dato.' });
   const dueDate = normalizeDueDate(req.body.dueDate);
   if (String(req.body.dueDate).trim() && !dueDate) return res.status(400).json({ message: 'Ugyldig dato.' });
+  const weekendMessage = weekendDueDateMessage(dueDate);
+  if (weekendMessage) return res.status(400).json({ message: weekendMessage });
   const existing = sales.getSalesClientById(req.params.id);
   if (!existing) return res.status(404).json({ message: 'Client not found.' });
   const saved = persistWebsiteDue({
@@ -14268,6 +14299,64 @@ async function sendWorkshopBookingEmail(client, action, salesUser) {
   return { sent: true };
 }
 
+async function sendWorkshopDeskEmailNow(client, kind = '', { salesUser = null, needLines = [] } = {}) {
+  const recipient = sanitizeText(client?.contactEmail);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
+    return { sent: false, reason: 'missing-email', client };
+  }
+  if (!emailLib.canSendEmail()) {
+    return { sent: false, reason: 'smtp-not-configured', client };
+  }
+  const sender = await resolveSalesSenderForAccount(salesUser);
+  const composed = composeEmailForClient(client, kind, null, {
+    sender,
+    attachInvite: false,
+    needLines,
+  }).message;
+  await emailLib.sendEmail({
+    to: recipient,
+    from: composed.from,
+    replyTo: composed.replyTo,
+    bcc: salesEmailCopyBcc(recipient),
+    subject: composed.subject,
+    text: composed.text,
+    html: composed.html,
+    attachments: composed.attachments,
+    icalEvent: composed.icalEvent,
+  });
+  const stampKey = kind === 'workshop-reminder-3d' ? 'reminder3dSentAt'
+    : kind === 'workshop-reminder-24h' ? 'reminder24hSentAt'
+      : kind === 'data-innsamling-2' ? 'data2SentAt'
+        : 'data1SentAt';
+  const record = getWorkshopRecord(client);
+  const updated = sales.setSalesWorkshop(client.id, mergeWorkshopRecord(record, stampWorkshopDeskEmail(record, stampKey)));
+  return { sent: true, client: updated || client, kind };
+}
+
+async function sendDueWorkshopDeskEmails() {
+  if (!workshopDeskEmailAutosendEnabled()) return;
+  if (!emailLib.canSendEmail()) return;
+  const nowMs = Date.now();
+  for (const client of sales.getSalesClients()) {
+    if (sanitizeText(client.status) !== 'active') continue;
+    const action = getWorkshopAction(client);
+    const record = getWorkshopRecord(client);
+    try {
+      if (action?.dueAt && workshopDeskEmailKindAutosends('workshop-reminder-3d') && workshopDeskEmailIsDue(workshopReminderScheduleAt('3d', action.dueAt), record.deskEmails?.reminder3dSentAt, nowMs)) {
+        await sendWorkshopDeskEmailNow(client, 'workshop-reminder-3d');
+      }
+      const live = sales.getSalesClientById(client.id) || client;
+      const liveAction = getWorkshopAction(live);
+      const liveRecord = getWorkshopRecord(live);
+      if (liveAction?.dueAt && workshopDeskEmailKindAutosends('workshop-reminder-24h') && workshopDeskEmailIsDue(workshopReminderScheduleAt('24h', liveAction.dueAt), liveRecord.deskEmails?.reminder24hSentAt, nowMs)) {
+        await sendWorkshopDeskEmailNow(live, 'workshop-reminder-24h');
+      }
+    } catch (error) {
+      console.error('Workshop desk email failed:', client.id, error);
+    }
+  }
+}
+
 async function sendIterationMeetingEmail(client, meeting, salesUser) {
   const recipient = sanitizeText(client?.contactEmail);
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
@@ -14347,6 +14436,8 @@ app.patch('/api/admin/sales/:id/workshop-action', salesAuth, async (req, res) =>
       : (workshopIsConfirmed(previous) && !fieldsChanged ? 'confirmed' : 'draft'),
     confirmationSentAt: previous.confirmationSentAt,
   });
+  const late = rejectActionAfterDueDate(next.dueAt, existing);
+  if (late) return res.status(400).json({ message: late });
   try {
     let action = next;
     const warnings = [];
@@ -14441,6 +14532,9 @@ app.patch('/api/admin/sales/:id/workshop/goal-actions', salesAuth, async (req, r
   const record = getWorkshopRecord(existing);
   const applied = applyWorkshopGoalActionOp(record, req.body || {});
   if (applied.error) return res.status(400).json({ message: applied.error });
+  const dueAt = sanitizeText(req.body?.dueAt);
+  const late = dueAt ? rejectActionAfterDueDate(dueAt, existing) : '';
+  if (late) return res.status(400).json({ message: late });
   try {
     const sync = await maybeSyncWorkshopGoalActionCalendars(existing, record, {
       ...record,
@@ -14502,6 +14596,56 @@ app.post('/api/admin/sales/:id/workshop/summary', salesAuth, async (req, res) =>
   } catch (error) {
     return res.status(httpStatusFromError(error, 502)).json({
       message: sanitizeText(error?.message) || 'Kunne ikke lage workshop-sammendraget.',
+    });
+  }
+});
+
+app.patch('/api/admin/sales/:id/workshop/informasjon', salesAuth, (req, res) => {
+  if (!requireOfferAdmin(req, res)) return;
+  const existing = sales.getSalesClientById(req.params.id);
+  if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
+  const record = getWorkshopRecord(existing);
+  const on = Boolean(req.body?.informasjon);
+  const updated = sales.setSalesWorkshop(existing.id, mergeWorkshopRecord(record, {
+    informasjonAt: on ? (record.informasjonAt || new Date().toISOString()) : '',
+  }));
+  return res.json({ client: jsonSalesClient(updated) });
+});
+
+app.post('/api/admin/sales/:id/workshop/desk-email', salesAuth, async (req, res) => {
+  if (!requireOfferAdmin(req, res)) return;
+  const existing = sales.getSalesClientById(req.params.id);
+  if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
+  const kind = sanitizeText(req.body?.kind).toLowerCase();
+  const allowed = new Set([
+    'workshop-reminder-3d',
+    'workshop-reminder-24h',
+    'data-innsamling-1',
+    'data-innsamling-2',
+  ]);
+  if (!allowed.has(kind)) return res.status(400).json({ message: 'Ukjent e-postmal.' });
+  try {
+    let needLines = [];
+    if (kind.startsWith('data-innsamling')) {
+      const document = await loadWorkshopNeedsDocument(existing, {
+        fetchMakerRun: await workshopNeedsMakerFetch(existing),
+      });
+      needLines = openNeedLines(document);
+    }
+    const mailed = await sendWorkshopDeskEmailNow(existing, kind, {
+      salesUser: req.salesUser,
+      needLines,
+    });
+    if (!mailed.sent) {
+      return res.status(400).json({
+        message: salesEmailFailureMessage(mailed.reason),
+        client: jsonSalesClient(existing),
+      });
+    }
+    return res.json({ client: jsonSalesClient(mailed.client), sent: true, kind });
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 400)).json({
+      message: sanitizeText(error?.message) || 'Kunne ikke sende e-posten.',
     });
   }
 });
@@ -14610,6 +14754,8 @@ app.post('/api/admin/sales/:id/workshop/iteration-meeting', salesAuth, async (re
   if (send && !nextMeeting.dueAt) {
     return res.status(400).json({ message: 'Sett tid før du sender iterasjonsmøtet.' });
   }
+  const late = rejectActionAfterDueDate(nextMeeting.dueAt, existing);
+  if (late) return res.status(400).json({ message: late });
   if (!send) {
     const updated = sales.setSalesWorkshop(existing.id, mergeWorkshopRecord(record, {
       iterationMeeting: nextMeeting,
@@ -15064,71 +15210,158 @@ function ensureOfferMeetingHistory(client) {
   });
 }
 
-function clientRecordedMeetLinks(client = {}) {
-  const links = [sanitizeText(client?.calendar?.meetLink)];
-  for (const action of recordedSalesActions(client)) {
-    links.push(sanitizeText(action.meetLink));
-  }
-  return [...new Set(links.filter((link) => isRealGoogleMeetLink(link)))];
+function stripMeetingFromClientOffer(clientId, meetingId) {
+  const offer = salesOffers.getOfferForClient(clientId);
+  if (!offer || salesOffers.offerContentIsLocked(offer)) return;
+  const currentIds = normalizeOfferMeetingIds(offer.meetingIds, offer.meetingId);
+  const ids = currentIds.filter((id) => id !== sanitizeText(meetingId));
+  if (ids.length === currentIds.length && sanitizeText(offer.meetingId) !== sanitizeText(meetingId)) return;
+  salesOffers.updateSalesOffer(offer.id, {
+    meetingIds: ids,
+    meetingId: ids[0] || '',
+  }, { actor: 'system', action: '' });
 }
 
-async function attachRecentFirefliesByMeetLink(client) {
+function clearFirefliesIdFromClientSlots(clientId, meetingId) {
+  const client = sales.getSalesClientById(clientId);
+  const wanted = sanitizeText(meetingId);
+  if (!client || !wanted) return;
+  const patch = {};
+  if (Array.isArray(client.nextActions) && client.nextActions.some((action) => sanitizeText(action.firefliesMeetingId) === wanted)) {
+    patch.nextActions = client.nextActions.map((action) => (
+      sanitizeText(action.firefliesMeetingId) === wanted ? { ...action, firefliesMeetingId: '' } : action
+    ));
+  }
+  if (sanitizeText(client.workshopAction?.firefliesMeetingId) === wanted) {
+    patch.workshopAction = { ...client.workshopAction, firefliesMeetingId: '' };
+  }
+  const iteration = client.workshop?.iterationMeeting;
+  if (sanitizeText(iteration?.firefliesMeetingId) === wanted) {
+    patch.workshop = {
+      ...client.workshop,
+      iterationMeeting: { ...iteration, firefliesMeetingId: '' },
+    };
+  }
+  if (Object.keys(patch).length) sales.updateSalesClient(clientId, patch);
+}
+
+function applyFirefliesMeetLinkBackfill() {
+  const clients = sales.getSalesClients();
+  const meetings = listStoredFirefliesMeetings();
+  const plan = planFirefliesMeetLinkBackfill({ clients, meetings });
+  const moving = new Set(plan.moves.map((row) => sanitizeText(row.meetingId)));
+  for (const row of plan.unlinks) {
+    sales.unlinkMeetingFromSalesClient(row.fromClientId, row.meetingId);
+    stripMeetingFromClientOffer(row.fromClientId, row.meetingId);
+    clearFirefliesIdFromClientSlots(row.fromClientId, row.meetingId);
+    const stored = readStoredFirefliesMeeting(row.meetingId);
+    if (
+      !moving.has(sanitizeText(row.meetingId))
+      && sanitizeText(stored?.match?.clientId) === sanitizeText(row.fromClientId)
+    ) {
+      updateStoredFirefliesMeeting(row.meetingId, { match: null });
+    }
+  }
+  for (const row of plan.moves) {
+    const stored = readStoredFirefliesMeeting(row.meetingId);
+    const client = sales.getSalesClientById(row.toClientId);
+    if (!client) continue;
+    const record = stored?.meetingId
+      ? { ...stored, meetLink: stored.meetingLink || row.meetLink }
+      : { meetingId: row.meetingId, meetLink: row.meetLink, title: 'Fireflies-møte' };
+    linkFirefliesMeeting(client.id, meetingRefForClient(record, {
+      clientId: client.id,
+      businessName: client.businessName,
+      confidence: 'high',
+      reasons: ['Google Meet-lenken matcher kundens møte'],
+      linkedBy: 'meet-link',
+    }, { linkedBy: 'meet-link' }));
+    if (stored?.meetingId) {
+      updateStoredFirefliesMeeting(row.meetingId, {
+        match: {
+          clientId: client.id,
+          businessName: client.businessName,
+          confidence: 'high',
+          reasons: ['Google Meet-lenken matcher kundens møte'],
+          linkedBy: 'meet-link',
+          linkedAt: new Date().toISOString(),
+        },
+      });
+    }
+  }
+  return plan;
+}
+
+let firefliesMeetLinkBackfillAt = 0;
+let firefliesMeetLinkBackfillSummary = { scanned: 0, linked: 0, detached: 0 };
+
+function ensureFirefliesMeetLinkBackfill({ force = false } = {}) {
+  const now = Date.now();
+  if (!force && now - firefliesMeetLinkBackfillAt < 15_000) return firefliesMeetLinkBackfillSummary;
+  firefliesMeetLinkBackfillAt = now;
+  const plan = applyFirefliesMeetLinkBackfill();
+  firefliesMeetLinkBackfillSummary = {
+    scanned: plan.scanned,
+    linked: plan.linked,
+    detached: plan.detached,
+  };
+  if (plan.linked || plan.detached) {
+    console.log(`[fireflies] meet-link backfill scanned=${plan.scanned} linked=${plan.linked} detached=${plan.detached}`);
+  }
+  return firefliesMeetLinkBackfillSummary;
+}
+
+function clientAfterFirefliesBackfill(client, { force = false } = {}) {
+  ensureFirefliesMeetLinkBackfill({ force });
+  return sales.getSalesClientById(client?.id) || client;
+}
+
+function dropUnknownOfferMeetings(offer, client) {
+  if (!offer || salesOffers.offerContentIsLocked(offer)) return offer;
+  const known = new Set((Array.isArray(client?.meetings) ? client.meetings : []).map((row) => sanitizeText(row.meetingId)));
+  const currentIds = normalizeOfferMeetingIds(offer.meetingIds, offer.meetingId);
+  const ids = currentIds.filter((id) => known.has(id));
+  if (ids.length === currentIds.length && sanitizeText(offer.meetingId) === (ids[0] || '')) return offer;
+  return salesOffers.updateSalesOffer(offer.id, {
+    meetingIds: ids,
+    meetingId: ids[0] || '',
+  }, { actor: 'system', action: '' }) || { ...offer, meetingIds: ids, meetingId: ids[0] || '' };
+}
+
+async function ingestRecentFirefliesMeetLinks() {
   const config = readFirefliesWebhookConfig();
-  const meetLinks = clientRecordedMeetLinks(client);
-  if (!config.apiKey) return client;
+  if (!config.apiKey) return;
   try {
     const rows = await fetchRecentFirefliesTranscripts({ apiKey: config.apiKey, limit: 30 });
-    const wanted = new Set(meetLinks.map((link) => link.toLowerCase().replace(/[?#].*$/, '')));
     for (const row of rows) {
       const meetingId = sanitizeText(row?.id);
       if (!meetingId) continue;
-      const rowLink = sanitizeText(row?.meeting_link || row?.meetingLink).toLowerCase().replace(/[?#].*$/, '');
-      const title = sanitizeText(row?.title);
-      const linkMatch = Boolean(rowLink && wanted.has(rowLink));
-      const nameMatch = businessNameMatchesMeetingTitle(client.businessName, title);
-      if (!linkMatch && !nameMatch) continue;
-      const existing = readStoredFirefliesMeeting(meetingId);
-      let built = buildFirefliesMeetingRecord({ meeting_id: meetingId }, row);
-      if (!sanitizeText(existing?.transcript) && !sanitizeText(existing?.summary)) {
-        try {
-          const transcript = await fetchFirefliesTranscript(meetingId, { apiKey: config.apiKey });
-          built = buildFirefliesMeetingRecord({ meeting_id: meetingId }, transcript);
-        } catch (error) {
-          console.warn(`[fireflies] recent-fetch ${meetingId} ${sanitizeText(error?.message) || error}`);
-        }
-      }
-      storeFirefliesMeeting(built);
-      const stored = readStoredFirefliesMeeting(meetingId) || built;
-      linkFirefliesMeeting(client.id, meetingRefForClient({
-        ...stored,
-        meetLink: stored.meetingLink || built.meetingLink || rowLink,
-      }, {
-        clientId: client.id,
-        linkedBy: 'meet-link',
-        confidence: 'medium',
-      }));
+      storeFirefliesMeeting(buildFirefliesMeetingRecord({ meeting_id: meetingId }, row));
     }
   } catch (error) {
     console.warn(`[fireflies] recent-transcripts ${sanitizeText(error?.message) || error}`);
   }
-  return sales.getSalesClientById(client.id) || client;
 }
 
-/** Transcripts already stored for this client's calendar Meet, so Bytt opptak can list them. */
+/** Transcripts already stored for this client's booked Meet, so Bytt opptak can list them. */
 function linkCalendarSessionTranscripts(client) {
   if (!client?.id) return client;
   let current = client;
-  for (const meetLink of clientRecordedMeetLinks(current)) {
+  const all = sales.getSalesClients();
+  for (const meetLink of clientOwnedMeetLinks(current)) {
     const stored = listStoredFirefliesMeetingsForMeetLink(meetLink);
     for (const row of stored) {
       if (!row?.meetingId) continue;
+      const match = matchMeetingToClients(row, all);
+      if (match.best?.clientId !== sanitizeText(current.id)) continue;
       const already = (current.meetings || []).some((item) => sanitizeText(item.meetingId) === sanitizeText(row.meetingId));
       if (already) continue;
       linkFirefliesMeeting(current.id, meetingRefForClient({ ...row, meetLink: row.meetingLink || meetLink }, {
         clientId: current.id,
         linkedBy: 'meet-link',
-        confidence: 'medium',
-      }));
+        confidence: 'high',
+        reasons: ['Google Meet-lenken matcher kundens møte'],
+      }, { linkedBy: 'meet-link' }));
       current = sales.getSalesClientById(current.id) || current;
     }
   }
@@ -15156,7 +15389,7 @@ function loadStoredOrClientMeeting(client, meetingId) {
   };
 }
 
-async function persistFetchedFirefliesTranscript(meetingId, client) {
+async function persistFetchedFirefliesTranscript(meetingId) {
   const id = sanitizeText(meetingId);
   const config = readFirefliesWebhookConfig();
   if (!id || isPlaceholderMeetingId(id) || !config.apiKey) return readStoredFirefliesMeeting(id);
@@ -15166,11 +15399,19 @@ async function persistFetchedFirefliesTranscript(meetingId, client) {
     const transcript = await fetchFirefliesTranscript(id, { apiKey: config.apiKey });
     const built = buildFirefliesMeetingRecord({ meeting_id: id }, transcript);
     storeFirefliesMeeting(built);
-    if (client?.id) {
-      linkFirefliesMeeting(client.id, meetingRefForClient({
+    const match = matchMeetingToClients(built, sales.getSalesClients());
+    const ownerId = sanitizeText(match.best?.clientId);
+    if (ownerId) {
+      linkFirefliesMeeting(ownerId, meetingRefForClient({
         ...built,
         meetLink: built.meetingLink,
-      }, { clientId: client.id, linkedBy: 'offer-hydrate' }));
+      }, {
+        clientId: ownerId,
+        businessName: match.best.businessName,
+        confidence: 'high',
+        reasons: match.best.reasons || ['Google Meet-lenken matcher kundens møte'],
+        linkedBy: 'meet-link',
+      }, { linkedBy: 'meet-link' }));
     }
     return readStoredFirefliesMeeting(id);
   } catch (error) {
@@ -15194,7 +15435,7 @@ async function hydrateOfferMeetings(client, offer) {
     const stored = readStoredFirefliesMeeting(id);
     if (sanitizeText(stored?.transcript) || sanitizeText(stored?.summary)) continue;
     if (fetched >= 4) break;
-    await persistFetchedFirefliesTranscript(id, client);
+    await persistFetchedFirefliesTranscript(id);
     fetched += 1;
   }
   return sales.getSalesClientById(client.id) || client;
@@ -15233,13 +15474,13 @@ function meetingForOffer(client, offer) {
   if (ref?.meetingId) return readStoredFirefliesMeeting(ref.meetingId) || { ...ref, transcript: '' };
   const byLink = findStoredFirefliesMeetingForMeetLink(client?.calendar?.meetLink);
   if (byLink?.meetingId) {
-    const linkedTo = sanitizeText(byLink.match?.clientId);
-    if (!linkedTo || linkedTo === sanitizeText(client?.id)) {
+    const match = matchMeetingToClients(byLink, sales.getSalesClients());
+    if (match.best?.clientId === sanitizeText(client?.id)) {
       try {
         linkFirefliesMeeting(client.id, meetingRefForClient(byLink, byLink.match || {
           clientId: client.id,
           linkedBy: 'meet-link',
-        }));
+        }, { linkedBy: 'meet-link' }));
       } catch {
         // Display still works if the persist fails.
       }
@@ -15719,10 +15960,14 @@ app.get('/api/admin/sales/:id/offer', salesAuth, async (req, res) => {
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
   client = ensureOfferMeetingHistory(client);
-  client = await attachRecentFirefliesByMeetLink(client);
+  await ingestRecentFirefliesMeetLinks();
+  client = clientAfterFirefliesBackfill(client, { force: true });
   client = linkCalendarSessionTranscripts(client);
   let offer = await ensureOfferDraft(client, req);
+  offer = dropUnknownOfferMeetings(offer, client);
   client = await hydrateOfferMeetings(client, offer);
+  client = sales.getSalesClientById(client.id) || client;
+  offer = dropUnknownOfferMeetings(salesOffers.getOfferForClient(client.id) || offer, client);
   offer = syncOfferMeetingSelection(offer, client);
   const sender = await resolveSalesSenderForAccount(req.salesUser);
   const meeting = primaryMeetingForOffer(client, offer);
@@ -15747,10 +15992,13 @@ app.get('/api/admin/sales/:id/offer/meeting', salesAuth, async (req, res) => {
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
   client = ensureOfferMeetingHistory(client);
-  client = await attachRecentFirefliesByMeetLink(client);
+  client = clientAfterFirefliesBackfill(client);
   client = linkCalendarSessionTranscripts(client);
   let offer = salesOffers.getOfferForClient(client.id);
+  offer = dropUnknownOfferMeetings(offer, client);
   client = await hydrateOfferMeetings(client, offer);
+  client = sales.getSalesClientById(client.id) || client;
+  offer = dropUnknownOfferMeetings(salesOffers.getOfferForClient(client.id) || offer, client);
   offer = syncOfferMeetingSelection(offer, client);
   const meeting = primaryMeetingForOffer(client, offer);
   return res.json({
@@ -15832,7 +16080,11 @@ app.post('/api/admin/sales/:id/offer/fill', salesAuth, async (req, res) => {
   if (salesOffers.offerContentIsLocked(current)) {
     return res.status(409).json({ message: 'Tilbudet er låst. Innholdet kan ikke skrives om fra transkriptet.' });
   }
+  client = clientAfterFirefliesBackfill(client);
+  current = dropUnknownOfferMeetings(current, client);
   client = await hydrateOfferMeetings(client, current);
+  client = sales.getSalesClientById(client.id) || client;
+  current = dropUnknownOfferMeetings(salesOffers.getOfferForClient(client.id) || current, client);
   current = syncOfferMeetingSelection(current, client);
   const meetings = meetingsForOffer(client, current);
   const meeting = primaryMeetingForOffer(client, current);
@@ -15948,19 +16200,34 @@ app.post('/api/admin/sales/:id/offer/use-meeting', salesAuth, async (req, res) =
     record = matches[0];
   }
   if (!record) return res.status(404).json({ message: 'Fant ikke møtet.' });
-  if (!isPlaceholderMeetingId(record.meetingId || meetingId)) {
-    const hydrated = await persistFetchedFirefliesTranscript(record.meetingId || meetingId, client);
-    if (hydrated) record = hydrated;
+  const alreadyOnClient = (client.meetings || []).some(
+    (row) => sanitizeText(row.meetingId) === sanitizeText(record.meetingId || meetingId)
+  );
+  if (!alreadyOnClient) {
+    if (!isPlaceholderMeetingId(record.meetingId || meetingId)) {
+      const hydrated = await persistFetchedFirefliesTranscript(record.meetingId || meetingId);
+      if (hydrated) record = hydrated;
+      client = sales.getSalesClientById(client.id) || client;
+    }
+    const ownerId = sanitizeText(matchMeetingToClients(record, sales.getSalesClients()).best?.clientId);
+    if (ownerId && ownerId !== sanitizeText(client.id)) {
+      const owner = sales.getSalesClientById(ownerId);
+      return res.status(409).json({
+        message: owner?.businessName
+          ? `Dette opptaket tilhører Meet-rommet til ${owner.businessName}.`
+          : 'Dette opptaket tilhører en annen kundes Meet.',
+      });
+    }
+    linkFirefliesMeeting(client.id, meetingRefForClient(record, {
+      clientId: client.id,
+      businessName: client.businessName,
+      confidence: 'manual',
+      score: 100,
+      reasons: ['Valgt på tilbudet'],
+      linkedBy: 'manual',
+    }, { linkedBy: 'manual' }));
     client = sales.getSalesClientById(client.id) || client;
   }
-  linkFirefliesMeeting(client.id, meetingRefForClient(record, {
-    clientId: client.id,
-    businessName: client.businessName,
-    confidence: 'manual',
-    score: 100,
-    reasons: ['Valgt på tilbudet'],
-    linkedBy: 'manual',
-  }, { linkedBy: 'manual' }));
   const nextIds = req.body?.replace
     ? [record.meetingId]
     : (() => {
@@ -17600,11 +17867,13 @@ function clientsWithWebsiteDue(clients = []) {
     const products = offer?.products || [];
     const dueOverride = offer?.dueDate || client.websiteDueOverride || '';
     const custom = isCustomWebsiteOffer({ tierId, products });
+    const workDays = workDaysForDeveloperBoard({ tierId, products, dueOverride });
     const weeks = weeksForDeveloperBoard({ tierId, products, dueOverride });
     return {
       ...client,
       websiteDueOverride: dueOverride,
       websiteDeliveryWeeks: custom ? weeks : (weeks || client.websiteDeliveryWeeks || 0),
+      websiteDeliveryWorkDays: workDays,
       offerTierId: tierId,
       offerCustom: custom,
     };
@@ -19406,6 +19675,7 @@ async function ensureData() {
 
 ensureData().then(() => {
   startSalesReminderLoop();
+  startWorkshopDeskEmailLoop();
   startFirefliesLiveJoinLoop();
   startMyphonerWebhookReconcileLoop();
   startMyphonerRecordingRetryLoop();
@@ -19413,6 +19683,7 @@ ensureData().then(() => {
   startLanPreviewAutoPublishLoop();
   startMapsRankingLoop();
   sendDueSalesReminders().catch((error) => console.error('Initial sales reminder run failed:', error));
+  sendDueWorkshopDeskEmails().catch((error) => console.error('Initial workshop desk email run failed:', error));
   sendDueFirefliesLiveJoins().catch((error) => console.error('[fireflies] initial live-join failed:', error));
   runStartupSalesRecordingBackfill().catch((error) => {
     console.error('[sales] startup recording backfill crashed:', sanitizeText(error?.message) || error);
@@ -19426,6 +19697,12 @@ ensureData().then(() => {
   backfillSalesBookingFacts().catch((error) => {
     console.error('[sales booking] startup backfill crashed:', sanitizeText(error?.message) || error);
   });
+  try {
+    const summary = ensureFirefliesMeetLinkBackfill({ force: true });
+    console.log(`[fireflies] startup meet-link backfill scanned=${summary.scanned} linked=${summary.linked} detached=${summary.detached}`);
+  } catch (error) {
+    console.error('[fireflies] startup meet-link backfill failed:', sanitizeText(error?.message) || error);
+  }
 }).catch((err) => {
   console.error('Failed to init admin:', err);
   process.exit(1);

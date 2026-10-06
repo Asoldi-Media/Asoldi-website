@@ -276,33 +276,124 @@ test('contract terms: statutory late interest, six-month liability, permanent ow
   assert.match(blob, /Sections 6 and 7 do not apply/);
 });
 
-test('fireflies matcher: attendee email wins, then host+time, then fuzzy name', () => {
-  const clients = [
-    CLIENT,
-    { id: 'client-2', ownerId: 'sales-bob', businessName: 'Trondheim Tannlege', contactEmail: 'post@tannlege.no', meetingAt: '2026-09-18T12:00:00.000Z' },
-  ];
-  const ownerEmailById = { 'sales-anna': 'anna@asoldi.com', 'sales-bob': 'bob@asoldi.com' };
+test('fireflies matcher: only the booked Google Meet owns the recording', () => {
+  const janMeet = 'https://meet.google.com/aaa-bbbb-ccc';
+  const khanaMeet = 'https://meet.google.com/xxx-yyyy-zzz';
+  const jan = {
+    id: '1788440525558-7amjs3',
+    businessName: 'Byggmester Jan Overrein',
+    contactEmail: 'jan@example.com',
+    calendar: { meetLink: janMeet },
+    meetings: [{
+      meetingId: 'khana-rec',
+      title: 'Asoldi · Online møte · Khana Khajana',
+      linkedBy: 'title',
+    }],
+  };
+  const khana = {
+    id: 'khana-1',
+    businessName: 'Khana Khajana',
+    contactEmail: 'khana@example.com',
+    calendar: { meetLink: khanaMeet },
+    meetings: [],
+  };
+  const clients = [jan, khana];
 
-  const byEmail = matcher.matchMeetingToClients({
-    title: 'Møte', attendeeEmails: ['kari@byneset-kafe.no'], hostEmail: 'anna@asoldi.com', startedAt: '2026-09-18T10:05:00.000Z',
-  }, clients, { ownerEmailById });
-  assert.equal(byEmail.best?.clientId, 'client-1');
-  assert.equal(byEmail.best?.confidence, 'high');
+  assert.equal(matcher.matchMeetingToClients({
+    title: 'Asoldi · Online møte · Khana Khajana',
+    attendeeEmails: ['jan@example.com', 'khana@example.com'],
+    hostEmail: 'anna@asoldi.com',
+  }, clients).best, null);
 
-  // No attendee email match: host + agreed meeting time + business name in the title → medium/high for client-2
-  const byName = matcher.matchMeetingToClients({
-    title: 'Asoldi x Trondheim Tannlege', attendeeEmails: ['someone@gmail.com'], hostEmail: 'bob@asoldi.com', startedAt: '2026-09-18T12:02:00.000Z',
-  }, clients.map((client) => ({ ...client, agreedTime: true })), { ownerEmailById });
-  assert.equal(byName.best?.clientId, 'client-2');
-  assert.ok(byName.best.score >= 40);
+  assert.equal(matcher.matchMeetingToClients({
+    title: 'Asoldi · Online møte · Byggmester Jan Overrein',
+    meetingLink: khanaMeet,
+  }, clients).best?.clientId, 'khana-1');
 
-  const nothing = matcher.matchMeetingToClients({ title: 'Internt møte', attendeeEmails: [], hostEmail: 'x@y.z' }, clients, { ownerEmailById });
-  assert.equal(nothing.best, null);
-  assert.deepEqual(nothing.candidates, []);
+  assert.equal(matcher.matchMeetingToClients({
+    title: 'Khana Khajana',
+    meetingLink: janMeet,
+  }, clients).best?.clientId, jan.id);
 
-  assert.equal(matcher.businessNameMatchesMeetingTitle('Muldvarpen AS', 'Asoldi · Online møte · Muldvarpen Entreprenør'), true);
-  assert.equal(matcher.businessNameMatchesMeetingTitle('Muldvarpen AS', 'MULDVARPEN ENTREPRENØR AS'), true);
-  assert.equal(matcher.businessNameMatchesMeetingTitle('Muldvarpen AS', 'Internt ukesmøte'), false);
+  const workshop = matcher.matchMeetingToClients({
+    meetingLink: 'https://meet.google.com/wrk-shop-meet',
+  }, [{
+    id: 'w1',
+    businessName: 'Workshop Client',
+    workshopAction: { meetLink: 'https://meet.google.com/wrk-shop-meet' },
+  }]);
+  assert.equal(workshop.best?.clientId, 'w1');
+
+  const ambiguous = matcher.matchMeetingToClients({ meetingLink: janMeet }, [
+    jan,
+    { ...khana, calendar: { meetLink: janMeet } },
+  ]);
+  assert.equal(ambiguous.best, null);
+  assert.equal(ambiguous.candidates.length, 2);
+
+  const plan = matcher.planFirefliesMeetLinkBackfill({
+    clients,
+    meetings: [{
+      meetingId: 'khana-rec',
+      title: 'Asoldi · Online møte · Khana Khajana',
+      meetingLink: khanaMeet,
+    }],
+  });
+  assert.equal(plan.moves.length, 1);
+  assert.equal(plan.moves[0].toClientId, 'khana-1');
+  assert.deepEqual(plan.unlinks.map((row) => row.fromClientId), [jan.id]);
+
+  const fromListedLink = matcher.planFirefliesMeetLinkBackfill({
+    clients: [{
+      ...jan,
+      meetings: [{ meetingId: 'listed-rec', meetLink: khanaMeet, linkedBy: 'title' }],
+    }, khana],
+    meetings: [],
+  });
+  assert.equal(fromListedLink.moves.length, 0);
+  assert.equal(fromListedLink.unlinks[0]?.fromClientId, jan.id);
+
+  const afterReschedule = matcher.matchMeetingToClients(
+    { meetingLink: khanaMeet },
+    [{
+      ...khana,
+      calendar: { meetLink: 'https://meet.google.com/new-neww-new' },
+      recordedMeetLinks: [khanaMeet],
+    }],
+  );
+  assert.equal(afterReschedule.best?.clientId, 'khana-1');
+
+  const keepHistorical = matcher.planFirefliesMeetLinkBackfill({
+    clients: [{
+      id: 'k1',
+      businessName: 'Kept',
+      meetings: [{ meetingId: 'old-ws', linkedBy: 'meet-link' }],
+    }],
+    meetings: [{ meetingId: 'old-ws', meetingLink: 'https://meet.google.com/old-work-shp' }],
+  });
+  assert.equal(keepHistorical.unlinks.length, 0);
+  assert.equal(keepHistorical.moves.length, 0);
+
+  const titleOnly = matcher.planFirefliesMeetLinkBackfill({
+    clients: [{
+      ...jan,
+      meetings: [{ meetingId: 'stolen', title: 'Khana Khajana', linkedBy: 'title' }],
+    }, khana],
+    meetings: [{ meetingId: 'stolen', title: 'Asoldi · Online møte · Khana Khajana' }],
+  });
+  assert.equal(titleOnly.moves.length, 0);
+  assert.equal(titleOnly.unlinks[0]?.fromClientId, jan.id);
+
+  const keptManual = matcher.planFirefliesMeetLinkBackfill({
+    clients: [{
+      id: 'm1',
+      businessName: 'Manual',
+      meetings: [{ meetingId: 'x', linkedBy: 'manual' }],
+    }],
+    meetings: [{ meetingId: 'x', title: 'Unknown room' }],
+  });
+  assert.equal(keptManual.unlinks.length, 0);
+  assert.equal(keptManual.moves.length, 0);
 });
 
 test('offer AI: transcript fill and contract reflection go through the injected chat', async () => {

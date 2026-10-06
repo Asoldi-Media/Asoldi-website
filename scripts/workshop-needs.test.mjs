@@ -399,5 +399,5 @@ test('need-list files never write Kundedata, Maker, hub media, or other booking 
   assert.equal(salesSrc.includes('WorkshopNeedsPanel'), false);
   assert.equal(devSrc.includes('WorkshopNeedsPanel'), false);
   assert.equal(manageSrc.includes('WorkshopNeedsPanel'), false);
-  assert.equal(adminSrc.includes('WorkshopNeedsPanel'), false);
+  assert.equal(adminSrc.includes('WorkshopNeedsPanel'), true);
 });

@@ -9,7 +9,14 @@ import { findWebsitePlan } from '../../data/clientWebsitePlans';
 import { analyticsLevelForPlan, ANALYTICS_LEVEL_NONE } from '../../../lib/website-tiers.js';
 import { useClientOffer } from './useClientOffer';
 
-type DashboardTodo = { id: string; title: string; description: string; actionLabel: string; route: string };
+type DashboardTodo = {
+  id: string;
+  title: string;
+  description: string;
+  actionLabel: string;
+  route: string;
+  estimate?: string;
+};
 
 type DashboardResponse = {
   profile: any;
@@ -178,8 +185,13 @@ export const ClientHome = () => {
                         disabled={isDone}
                         className="flex-1 min-w-0 text-left disabled:cursor-default"
                       >
-                        <p className={`text-sm font-semibold ${isDone ? 'text-[#9CA3AF] line-through' : 'text-[#111827]'}`}>
-                          {todo.title}
+                        <p className={`flex flex-wrap items-center gap-2 text-sm font-semibold ${isDone ? 'text-[#9CA3AF] line-through' : 'text-[#111827]'}`}>
+                          <span>{todo.title}</span>
+                          {todo.estimate && !isDone ? (
+                            <span className="rounded-full bg-[#F2F4F7] px-2 py-0.5 text-[11px] font-medium text-[#6B7280] no-underline">
+                              {todo.estimate}
+                            </span>
+                          ) : null}
                         </p>
                         <p className={`mt-0.5 text-xs ${isDone ? 'text-[#B6BBC4] line-through' : 'text-[#6B7280]'}`}>
                           {todo.description}

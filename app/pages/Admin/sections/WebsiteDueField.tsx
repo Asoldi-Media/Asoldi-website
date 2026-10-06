@@ -109,7 +109,7 @@ export function WebsiteDueField({
         ? 'Sett eller endre fristen. Fjern dato bruker pakken når kontrakten er signert.'
         : (
           <>
-            Tom dato bruker pakken: tier 1 og 2 er 2 uker, tier 3 er 3 uker. Skreddersydd og henvisninger uten kontrakt trenger en dato her.
+            Tom dato bruker pakken: tier 1 og 2 er 14 arbeidsdager, tier 3 er 21 arbeidsdager. Datoen lander aldri på lørdag eller søndag. Skreddersydd og henvisninger uten kontrakt trenger en dato her.
             {view?.contractSigned ? ' Kontrakten er signert.' : ' Kontrakten er ikke signert ennå.'}
           </>
         )

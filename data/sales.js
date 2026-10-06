@@ -22,6 +22,8 @@ import { calendarDurationForMode } from '../lib/sales-meeting-duration.js';
 import { filterCustomOtherLinks } from '../lib/sales-client-links.js';
 import { normalizeWorkshopAction, offerStartDateFromWorkshopDueAt } from '../lib/workshop-action.js';
 import { persistWorkshopRecord } from '../lib/workshop-record.js';
+import { collectRecordedMeetLinks } from '../lib/fireflies-client-match.js';
+import { clampClientActionsToDueDate, ensureFeedbackAction, ensureInformasjonAction } from '../lib/workshop-desk-actions.js';
 import { mergeMakerRunPatch, normalizeDeveloperQa } from '../lib/developer-card.js';
 import { canonicalDeveloperOwnerId, normalizeDeveloperHandoff, applyAdminDeveloperOwnerSeed, shouldSeedExistingDeveloperOwners } from '../lib/developer-assignment.js';
 import { normalizeDeveloperGoals } from '../lib/developer-goals.js';
@@ -426,7 +428,7 @@ function normalizeMyphoner(value = {}) {
   };
 }
 
-const MAX_CLIENT_MEETINGS = 24;
+const MAX_CLIENT_MEETINGS = 200;
 
 /** Fireflies meetings linked to this client (compact refs; the full transcript lives in fireflies-meetings.json). */
 function normalizeMeetings(list) {
@@ -549,6 +551,7 @@ function normalizeSalesClient(raw = {}) {
     development: product === 'ssu' ? normalizeDevelopment() : normalizeDevelopment(raw.development),
     reminders: normalizeReminders(raw.reminders || emptyReminders()),
     calendar: normalizeCalendar(raw.calendar),
+    recordedMeetLinks: collectRecordedMeetLinks(raw),
     meetings: normalizeMeetings(raw.meetings),
     lockedOfferMeetingId: sanitizeText(raw.lockedOfferMeetingId),
     websiteImport: product === 'ssu' ? normalizeWebsiteImport() : normalizeWebsiteImport(raw.websiteImport),
@@ -920,19 +923,38 @@ export function setSalesProgress(id, key, value, { fastTrack = false } = {}) {
     : '';
   const turningOn = mapped === 'contractSigned' && Boolean(value) && !current.progression?.contractSigned;
   const turningOff = mapped === 'contractSigned' && !value;
-  return updateSalesClient(id, {
+  let next = {
+    ...current,
     progression: applied.progression,
     nextActions: applied.nextActions,
     lockedOfferMeetingId: lockId,
     ...(turningOn ? { contractSignedAt: new Date().toISOString() } : {}),
     ...(turningOff ? { contractSignedAt: '' } : {}),
+  };
+  if (turningOn) next = ensureInformasjonAction(next);
+  next = clampClientActionsToDueDate(next);
+  return updateSalesClient(id, {
+    progression: next.progression,
+    nextActions: next.nextActions,
+    lockedOfferMeetingId: lockId,
+    contractSignedAt: next.contractSignedAt,
+    workshop: next.workshop,
+    workshopAction: next.workshopAction,
   });
 }
 
 export function setClientWebsiteDue(id, dueOverride = '') {
   const current = getSalesClientById(id);
   if (!current) return null;
-  return updateSalesClient(id, { websiteDueOverride: normalizeDueDate(dueOverride) });
+  const next = clampClientActionsToDueDate({
+    ...current,
+    websiteDueOverride: normalizeDueDate(dueOverride),
+  });
+  return updateSalesClient(id, {
+    websiteDueOverride: next.websiteDueOverride,
+    workshop: next.workshop,
+    workshopAction: next.workshopAction,
+  });
 }
 
 export function liveJoinMeetingId(clientId, meetingAt = '') {
@@ -972,10 +994,22 @@ export function setSalesDevelopment(id, key, value) {
   if (!DEVELOPMENT_KEYS.includes(key)) return null;
   const current = getSalesClientById(id);
   if (!current || isSsuSalesProduct(current.product)) return null;
+  const turningOn = key === 'v1Ferdig' && Boolean(value) && !current.development?.v1Ferdig;
+  let next = {
+    ...current,
+    development: {
+      ...(current.development || {}),
+      [key]: Boolean(value),
+    },
+  };
+  if (turningOn) next = ensureFeedbackAction(next);
+  next = clampClientActionsToDueDate(next);
   return updateSalesClient(id, {
     development: {
       [key]: Boolean(value),
     },
+    workshop: next.workshop,
+    workshopAction: next.workshopAction,
   });
 }
 

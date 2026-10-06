@@ -76,6 +76,7 @@ const EMPTY_CUSTOM: Omit<OfferProduct, 'id'> = {
   note: '',
   priceExMva: 0,
   deliveryWeeks: 0,
+  deliveryWorkDays: 0,
 };
 
 function linesToList(value: string) {
@@ -357,7 +358,8 @@ export function OfferReviewSection({ hideHeader = false }: { hideHeader?: boolea
       includes: linesToList(customDraft.includesText),
       note: customDraft.note.trim(),
       priceExMva: Number(customDraft.priceExMva) || 0,
-      deliveryWeeks: Number(customDraft.deliveryWeeks) || 0,
+      deliveryWeeks: Number(customDraft.deliveryWorkDays || customDraft.deliveryWeeks) || 0,
+      deliveryWorkDays: Number(customDraft.deliveryWorkDays || customDraft.deliveryWeeks) || 0,
     };
     const next = customDraft.id
       ? offer.products.map((item) => (item.id === customDraft.id ? product : item))
@@ -723,8 +725,11 @@ export function OfferReviewSection({ hideHeader = false }: { hideHeader?: boolea
                                 <input type="number" value={customDraft.pages || ''} onChange={(e) => setCustomDraft({ ...customDraft, pages: Number(e.target.value) })} className="mt-0.5 w-full px-2 py-1 rounded bg-[#111] border border-white/15 text-white text-xs" />
                               </label>
                               <label className="text-[10px] text-gray-400">
-                                Uker
-                                <input type="number" value={customDraft.deliveryWeeks || ''} onChange={(e) => setCustomDraft({ ...customDraft, deliveryWeeks: Number(e.target.value) })} className="mt-0.5 w-full px-2 py-1 rounded bg-[#111] border border-white/15 text-white text-xs" />
+                                Arbeidsdager
+                                <input type="number" value={customDraft.deliveryWorkDays || customDraft.deliveryWeeks || ''} onChange={(e) => {
+                                  const days = Number(e.target.value);
+                                  setCustomDraft({ ...customDraft, deliveryWorkDays: days, deliveryWeeks: days });
+                                }} className="mt-0.5 w-full px-2 py-1 rounded bg-[#111] border border-white/15 text-white text-xs" />
                               </label>
                             </div>
                             <textarea value={customDraft.includesText} onChange={(e) => setCustomDraft({ ...customDraft, includesText: e.target.value })} rows={4} placeholder="Inkluderer – ett punkt per linje" className="w-full px-2 py-1.5 rounded bg-[#111] border border-white/15 text-white text-xs" />
@@ -825,8 +830,8 @@ export function OfferReviewSection({ hideHeader = false }: { hideHeader?: boolea
                           Tilleggsvilkår (ett per linje)
                           <textarea value={contractDraft.extraTerms.join('\n')} onChange={(e) => setContractDraft({ ...contractDraft, extraTerms: e.target.value.split('\n') })} rows={3} disabled={locked} className="mt-1 w-full px-3 py-2 rounded-lg bg-[#111] border border-white/15 text-white text-sm disabled:opacity-50" />
                         </label>
-                        <label className="block text-xs text-gray-400 w-40">
-                          Leveringstid (uker)
+                        <label className="block text-xs text-gray-400 w-48">
+                          Leveringstid (arbeidsdager)
                           <input type="number" value={contractDraft.deliveryWeeks || ''} onChange={(e) => setContractDraft({ ...contractDraft, deliveryWeeks: Number(e.target.value) })} disabled={locked} className="mt-1 w-full px-3 py-2 rounded-lg bg-[#111] border border-white/15 text-white text-sm disabled:opacity-50" />
                         </label>
                         <div className="flex gap-2">

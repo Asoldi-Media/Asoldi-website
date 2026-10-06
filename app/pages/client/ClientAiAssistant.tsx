@@ -65,6 +65,110 @@ const EMPTY_PROGRESS: Progress = {
   ],
 };
 
+const HOUR_DAYS = ['Mandag', 'Tirsdag', 'Onsdag', 'Torsdag', 'Fredag', 'Lørdag', 'Søndag'];
+
+type HourDay = { day: string; opensAt: string; closesAt: string; closed: boolean };
+
+function hoursFromBank(bank: any): HourDay[] {
+  const saved = Array.isArray(bank?.openingHours?.days) ? bank.openingHours.days : [];
+  const known = Boolean(bank?.openingHours?.status) && saved.length > 0;
+  return HOUR_DAYS.map((day, index) => {
+    const row = saved[index] || {};
+    return {
+      day,
+      opensAt: String(row.opensAt || (index < 5 ? '09:00' : '10:00')),
+      closesAt: String(row.closesAt || (index < 5 ? '17:00' : '14:00')),
+      closed: known ? Boolean(row.closed) : index >= 5,
+    };
+  });
+}
+
+function HoursComposer({
+  bank,
+  disabled,
+  onSubmit,
+}: {
+  bank: any;
+  disabled: boolean;
+  onSubmit: (text: string) => void;
+}) {
+  const [always, setAlways] = useState(false);
+  const [days, setDays] = useState<HourDay[]>(() => hoursFromBank(bank));
+
+  function updateDay(index: number, patch: Partial<HourDay>) {
+    setDays((prev) => prev.map((day, dayIndex) => (dayIndex === index ? { ...day, ...patch } : day)));
+  }
+
+  return (
+    <div className="mb-3 rounded-2xl border border-gray-100 bg-white p-4 shadow-[0_4px_20px_rgba(0,0,0,0.03)]">
+      <label className="flex items-center gap-2 text-[14px] text-[#121212]">
+        <input
+          type="checkbox"
+          checked={always}
+          onChange={(event) => setAlways(event.target.checked)}
+          disabled={disabled}
+        />
+        Åpent hele tiden
+      </label>
+      <div className={`mt-3 flex flex-col gap-2 ${always ? 'opacity-40' : ''}`}>
+        {days.map((day, index) => (
+          <div key={day.day} className="flex items-center gap-2">
+            <span className="w-20 text-[13px] text-[#121212]">{day.day}</span>
+            {day.closed || always ? (
+              <span className="text-[13px] text-gray-400 flex-1">{always ? 'Hele døgnet' : 'Stengt'}</span>
+            ) : (
+              <>
+                <input
+                  type="time"
+                  value={day.opensAt}
+                  disabled={disabled || always}
+                  onChange={(event) => updateDay(index, { opensAt: event.target.value })}
+                  className="bg-gray-50 border border-gray-200 rounded px-2 py-1 text-[13px]"
+                />
+                <span className="text-gray-400">–</span>
+                <input
+                  type="time"
+                  value={day.closesAt}
+                  disabled={disabled || always}
+                  onChange={(event) => updateDay(index, { closesAt: event.target.value })}
+                  className="bg-gray-50 border border-gray-200 rounded px-2 py-1 text-[13px]"
+                />
+              </>
+            )}
+            {!always ? (
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() => updateDay(index, { closed: !day.closed })}
+                className="text-[12px] text-gray-400 hover:text-[#121212]"
+              >
+                {day.closed ? 'Åpne' : 'Stengt'}
+              </button>
+            ) : null}
+          </div>
+        ))}
+      </div>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => {
+          if (always) {
+            onSubmit('Åpent hele tiden');
+            return;
+          }
+          onSubmit(days.map((day) => (
+            day.closed ? `${day.day} stengt` : `${day.day} ${day.opensAt}-${day.closesAt}`
+          )).join(', '));
+        }}
+        className="mt-4 bg-[#121212] text-white text-[13px] rounded-lg px-4 py-2 disabled:opacity-40"
+      >
+        Lagre åpningstider
+      </button>
+      <p className="mt-2 text-[12px] text-gray-400">Du kan også skrive fritt i chatten under.</p>
+    </div>
+  );
+}
+
 export const ClientAiAssistant = () => {
   const { token, profile, updateProfileState } = useClientAuth();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -87,6 +191,7 @@ export const ClientAiAssistant = () => {
   const [previewUrl, setPreviewUrl] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const [currentStep, setCurrentStep] = useState('products');
+  const [viewStep, setViewStep] = useState('products');
 
   function applyCatalog(nextCatalogs: any[]) {
     const list = Array.isArray(nextCatalogs) ? nextCatalogs : [];
@@ -110,7 +215,10 @@ export const ClientAiAssistant = () => {
         applyCatalog(payload.profile?.clientDataBank?.productCatalogs || []);
         setMakerLinked(Boolean(payload.makerLinked || payload.profile?.clientDataBank?.makerLink?.bundleId));
         setPreviewUrl(String(payload.profile?.clientDataBank?.makerLink?.publicPreviewUrl || ''));
-        if (payload.currentStep) setCurrentStep(payload.currentStep);
+        if (payload.currentStep) {
+          setCurrentStep(payload.currentStep);
+          setViewStep(payload.currentStep);
+        }
         if (payload.greeting) {
           setMessages((prev) => (prev.some((row) => row.role === 'user')
             ? prev
@@ -147,7 +255,10 @@ export const ClientAiAssistant = () => {
           setBusy(false);
           setJobId('');
           setStatusLine('');
-          if (payload.currentStep) setCurrentStep(payload.currentStep);
+          if (payload.currentStep) {
+            setCurrentStep(payload.currentStep);
+            setViewStep(payload.currentStep);
+          }
           setMessages((prev) => [
             ...prev,
             {
@@ -328,7 +439,10 @@ export const ClientAiAssistant = () => {
         }
         return;
       }
-      if (payload.currentStep) setCurrentStep(payload.currentStep);
+      if (payload.currentStep) {
+        setCurrentStep(payload.currentStep);
+        setViewStep(payload.currentStep);
+      }
       if (payload.nextAction === 'manual') {
         window.location.assign('/kunde/innstillinger#produkter');
         return;
@@ -349,6 +463,46 @@ export const ClientAiAssistant = () => {
         setBusy(false);
         setStatusLine('');
       }
+    }
+  }
+
+  async function openChapter(step: string) {
+    setViewStep(step);
+    if (!token || busy || step === currentStep) return;
+    setBusy(true);
+    setStatusLine('');
+    try {
+      const body = new FormData();
+      body.append('text', '');
+      body.append('focusStep', step);
+      body.append('messages', JSON.stringify(messages));
+      const response = await fetch('/api/client/ai-assistant/chat', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+        body,
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.message || 'AI-assistenten svarte ikke.');
+      if (payload.profile) updateProfileState(payload.profile);
+      if (payload.currentStep) {
+        setCurrentStep(payload.currentStep);
+        setViewStep(payload.currentStep);
+      }
+      if (payload.assistantMessage) {
+        setMessages((prev) => [...prev, {
+          id: String(Date.now() + 1),
+          role: 'ai',
+          text: payload.assistantMessage,
+        }]);
+      }
+    } catch (error) {
+      setMessages((prev) => [...prev, {
+        id: String(Date.now() + 2),
+        role: 'ai',
+        text: error instanceof Error ? error.message : 'Noe gikk galt.',
+      }]);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -374,6 +528,8 @@ export const ClientAiAssistant = () => {
               layoutText={progress.layout ? (progress.layoutLabel || layoutLabel(progress.layout)) : ''}
               removingProducts={removingProducts}
               busy={busy}
+              viewStep={viewStep}
+              onSelectStep={(step) => { void openChapter(step); }}
               onRemoveProduct={removeProduct}
               onClearProducts={() => {
                 if (window.confirm('Fjerne alle produktene fra katalogen?')) void saveProductCatalogs([]);
@@ -478,6 +634,14 @@ export const ClientAiAssistant = () => {
                 if (!busy) void sendToAssistant(inputValue);
               }}
             >
+              {currentStep === 'hours' ? (
+                <HoursComposer
+                  key={profile?.clientDataBank?.openingHours?.status || 'hours'}
+                  bank={profile?.clientDataBank}
+                  disabled={busy}
+                  onSubmit={(text) => { if (!busy) void sendToAssistant(text); }}
+                />
+              ) : null}
               {pendingFiles.length ? (
                 <div className="flex gap-2 overflow-x-auto pb-2">
                   {pendingFiles.map((item) => {

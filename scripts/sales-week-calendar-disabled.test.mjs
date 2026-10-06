@@ -81,8 +81,8 @@ test('week calendar events load on open; free-busy stays off so Admin/Sales list
   assert.match(freeBusyRoute, /SALES_WEEK_CALENDAR_DISABLED/);
 
   const adminBoard = readFileSync(join(root, 'app/pages/Admin/sections/AdminBoardSection.tsx'), 'utf8');
-  assert.equal(adminBoard.includes('SalesCalendarWeek'), false);
-  assert.equal(adminBoard.includes('Kalender for'), false);
+  assert.match(adminBoard, /SalesCalendarWeek/);
+  assert.match(adminBoard, /workshopCalendar/);
 
   const notes = readFileSync(join(root, 'app/pages/sales/MeetingNotesModal.tsx'), 'utf8');
   assert.equal(notes.includes('SalesCalendarWeek'), false);

@@ -4,12 +4,19 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  addWorkDays,
+  clampIsoToDueDate,
   contractDeliverySentence,
   deliveryWeeksForOffer,
+  deliveryWorkDaysForOffer,
   dueDateDay,
+  isIsoAfterDueDate,
+  isWeekendDueDate,
   offerDeliveryPhraseNb,
   resolveWebsiteDue,
+  weekendDueDateMessage,
   weeksForDeveloperBoard,
+  workDaysForDeveloperBoard,
 } from '../lib/website-due.js';
 
 test('tier weeks stay 2, 2 and 3, and custom with no count is 4 weeks', () => {
@@ -23,23 +30,48 @@ test('tier weeks stay 2, 2 and 3, and custom with no count is 4 weeks', () => {
   }), 6);
 });
 
-test('the developer board does not start a 4-week clock for a custom offer', () => {
-  assert.equal(weeksForDeveloperBoard({ tierId: 'tier-1-standard' }), 2);
-  assert.equal(weeksForDeveloperBoard({ tierId: 'tier-2-seo' }), 2);
-  assert.equal(weeksForDeveloperBoard({ tierId: 'tier-3-ecommerce' }), 3);
-  assert.equal(weeksForDeveloperBoard({ tierId: 'custom' }), 0);
-  assert.equal(weeksForDeveloperBoard({ tierId: 'custom', dueOverride: '2026-11-02' }), 4);
+test('tier clocks are 14 and 21 work days, and custom 2/3/4 weeks become work days', () => {
+  assert.equal(deliveryWorkDaysForOffer({ tierId: 'tier-1-standard' }), 14);
+  assert.equal(deliveryWorkDaysForOffer({ tierId: 'tier-2-seo' }), 14);
+  assert.equal(deliveryWorkDaysForOffer({ tierId: 'tier-3-ecommerce' }), 21);
+  assert.equal(deliveryWorkDaysForOffer({ tierId: 'custom' }), 20);
+  assert.equal(deliveryWorkDaysForOffer({
+    tierId: 'custom',
+    products: [{ kind: 'custom', deliveryWeeks: 4 }],
+  }), 20);
+  assert.equal(deliveryWorkDaysForOffer({
+    tierId: 'custom',
+    products: [{ kind: 'custom', deliveryWorkDays: 12 }],
+  }), 12);
+});
+
+test('the developer board does not start a custom clock until a date exists', () => {
+  assert.equal(workDaysForDeveloperBoard({ tierId: 'tier-1-standard' }), 14);
+  assert.equal(workDaysForDeveloperBoard({ tierId: 'tier-2-seo' }), 14);
+  assert.equal(workDaysForDeveloperBoard({ tierId: 'tier-3-ecommerce' }), 21);
+  assert.equal(workDaysForDeveloperBoard({ tierId: 'custom' }), 0);
+  assert.equal(workDaysForDeveloperBoard({ tierId: 'custom', dueOverride: '2026-11-02' }), 20);
+  assert.equal(weeksForDeveloperBoard({ tierId: 'tier-1-standard' }), 14);
   assert.equal(deliveryWeeksForOffer({ tierId: 'custom' }), 4);
 });
 
-test('the clock starts at the signed contract, and an admin date replaces the tier weeks', () => {
+test('14 work days skip Saturday and Sunday and do not count the signed day', () => {
+  assert.equal(addWorkDays('2026-10-01T08:00:00.000Z', 14).slice(0, 10), '2026-10-21');
+  assert.equal(isWeekendDueDate('2026-10-21'), false);
+  assert.equal(isWeekendDueDate('2026-10-17'), true);
+  assert.equal(isWeekendDueDate('2026-10-18'), true);
+  assert.match(weekendDueDateMessage('2026-10-17'), /lørdag eller søndag/);
+  assert.equal(weekendDueDateMessage('2026-10-21'), '');
+});
+
+test('the clock starts at the signed contract, and an admin date replaces the package', () => {
   const waiting = resolveWebsiteDue({
     contractSigned: false,
     weeks: 2,
   });
   assert.equal(waiting.started, false);
   assert.equal(waiting.dueAt, '');
-  assert.equal(waiting.label, 'Frist: 2 uker fra signert kontrakt');
+  assert.equal(waiting.label, 'Frist: 14 arbeidsdager fra signert kontrakt');
 
   const started = resolveWebsiteDue({
     contractSigned: true,
@@ -47,8 +79,8 @@ test('the clock starts at the signed contract, and an admin date replaces the ti
     weeks: 2,
   });
   assert.equal(started.started, true);
-  assert.equal(started.dueAt.slice(0, 10), '2026-10-15');
-  assert.match(started.label, /15\. okt\. 2026/);
+  assert.equal(started.dueAt.slice(0, 10), '2026-10-21');
+  assert.match(started.label, /21\. okt\. 2026/);
 
   const custom = resolveWebsiteDue({
     contractSigned: true,
@@ -73,15 +105,19 @@ test('an admin date starts the clock even without a signed contract', () => {
   assert.doesNotMatch(referral.label, /Planlagt/);
 });
 
-test('offer and contract mention the date or the weeks from the signed contract', () => {
+test('offer and contract mention arbeidsdager / working days', () => {
   assert.equal(
     offerDeliveryPhraseNb({ tierId: 'tier-3-ecommerce' }),
-    '3 uker fra signert kontrakt',
+    '21 arbeidsdager fra signert kontrakt',
+  );
+  assert.equal(
+    offerDeliveryPhraseNb({ tierId: 'tier-1-standard' }),
+    '14 arbeidsdager fra signert kontrakt',
   );
   assert.match(offerDeliveryPhraseNb({ dueDate: '2026-11-02', tierId: 'tier-1-standard' }), /2\. nov\. 2026/);
   assert.equal(
     contractDeliverySentence({ weeks: 2 }),
-    'Delivery time: 2 weeks from the signed contract.',
+    'Delivery time: 14 working days from the signed contract.',
   );
   assert.equal(
     contractDeliverySentence({ dueDate: '2026-11-02' }),
@@ -95,7 +131,7 @@ test('the date picker uses the effective developer deadline, not only a stored o
     contractSignedAt: '2026-10-01T08:00:00.000Z',
     weeks: weeksForDeveloperBoard({ tierId: 'tier-1-standard' }),
   });
-  assert.equal(dueDateDay(signedTier1.dueAt), '2026-10-15');
+  assert.equal(dueDateDay(signedTier1.dueAt), '2026-10-21');
   assert.equal(signedTier1.override, false);
 
   const overridden = resolveWebsiteDue({
@@ -114,6 +150,15 @@ test('the date picker uses the effective developer deadline, not only a stored o
   });
   assert.equal(dueDateDay(custom.dueAt), '');
   assert.equal(custom.started, false);
+});
+
+test('actions after the due date clamp onto that weekday and keep clock time', () => {
+  const due = '2026-10-21';
+  assert.equal(isIsoAfterDueDate('2026-10-22T10:00:00.000Z', due), true);
+  assert.equal(isIsoAfterDueDate('2026-10-21T18:00:00.000Z', due), false);
+  const clamped = clampIsoToDueDate('2026-10-23T13:30:00.000Z', due);
+  assert.equal(dueDateDay(clamped), '2026-10-21');
+  assert.equal(isIsoAfterDueDate(clamped, due), false);
 });
 
 test('admin client cards can edit the website due date for any client', () => {
@@ -145,5 +190,6 @@ test('admin client cards can edit the website due date for any client', () => {
   assert.match(server, /effectiveDate: dueDateDay\(due\.dueAt\)/);
   assert.match(server, /override: Boolean\(due\.override\)/);
   assert.match(server, /phrase: offerDeliveryPhraseNb/);
+  assert.match(server, /weekendDueDateMessage/);
   assert.doesNotMatch(adminBoard, /onSaved=\{\(\) => onClient\(client\)\}/);
 });

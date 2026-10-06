@@ -92,6 +92,7 @@ export function normalizeOfferProduct(raw = {}) {
     note: sanitizeText(source.note).slice(0, 1200),
     priceExMva: Math.max(0, Math.round(toNumber(source.priceExMva, 0))),
     deliveryWeeks: Math.max(0, Math.round(toNumber(source.deliveryWeeks, 0))),
+    deliveryWorkDays: Math.max(0, Math.round(toNumber(source.deliveryWorkDays, 0))),
   };
 }
 

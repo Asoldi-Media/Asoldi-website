@@ -362,7 +362,7 @@ function SalesGoalProgressIcon({ filled }: { filled: number }) {
   const count = Math.max(0, Math.min(3, filled));
   return (
     <span
-      className="inline-flex flex-col justify-center gap-[3px] shrink-0"
+      className="inline-flex h-[1em] w-[1.1em] flex-col justify-center gap-px shrink-0 self-center text-sm"
       title={`${count} av 3`}
       aria-label={`${count} av 3 mål`}
     >
@@ -371,15 +371,10 @@ function SalesGoalProgressIcon({ filled }: { filled: number }) {
         return (
           <span
             key={level}
-            className={`relative block h-[5px] w-[26px] overflow-hidden rounded-full border ${
-              on ? 'border-[#FF5B00]' : 'border-white/80'
+            className={`block min-h-0 flex-1 rounded-full ${
+              on ? 'bg-[#FF5B00]' : 'bg-neutral-500'
             }`}
-          >
-            <span
-              className="absolute inset-y-0 left-0 bg-[#FF5B00] transition-all duration-700 ease-out"
-              style={{ width: on ? '100%' : '0%' }}
-            />
-          </span>
+          />
         );
       })}
     </span>
@@ -2275,7 +2270,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                         Bekreftelse sendes ikke. Mangler {confirmationGaps.join(', ')}.
                       </div>
                     )}
-                    {(client.contactPerson || client.contactPhone) ? (
+                    {(client.contactPerson || client.contactPhone || client.contactEmail) ? (
                       <div className={`${showCompact ? 'mt-0.5' : 'mt-1'} flex items-center gap-1.5 text-xs text-gray-400 min-w-0`}>
                         <UserRound size={12} className="shrink-0" />
                         <span className="truncate">{client.contactPerson || 'No contact person'}</span>
@@ -2289,6 +2284,12 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                             <Phone size={11} />
                             {client.contactPhone}
                           </a>
+                        ) : null}
+                        {client.contactEmail ? (
+                          <span className="truncate min-w-0">
+                            <span aria-hidden="true"> · </span>
+                            {client.contactEmail}
+                          </span>
                         ) : null}
                       </div>
                     ) : null}

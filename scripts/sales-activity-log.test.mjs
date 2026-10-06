@@ -123,6 +123,21 @@ test('open offers seed every transcript and toggle membership', () => {
   assert.deepEqual(toggleOfferMeetingId({ meetingIds: ['ff-sales'] }, 'ff-plan'), ['ff-sales', 'ff-plan']);
 });
 
+test('saved offer selection is not refilled with every transcript', () => {
+  const row = client();
+  assert.deepEqual(seedOfferMeetingIds({
+    status: 'draft',
+    meetingSource: 'manual',
+    meetingIds: ['ff-sales'],
+    meetingId: 'ff-sales',
+  }, row), ['ff-sales']);
+  assert.deepEqual(seedOfferMeetingIds({
+    status: 'draft',
+    meetingSource: 'manual',
+    meetingIds: [],
+  }, row), []);
+});
+
 test('open offers drop live-join stubs once a real transcript exists', () => {
   const row = client();
   const seeded = seedOfferMeetingIds({

@@ -1,15 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { findConnectedCalendarAccountKeysByGoogleEmail } from '../lib/google-calendar.js';
 import {
+  ADMIN_BOARD_RANKED_BUCKET,
   ADMIN_BOARD_UNBOOKED_BUCKET,
+  ADMIN_BOARD_UNLISTED_BUCKET,
   adminBoardViewerIsDamianMailbox,
   classifyAdminWorkshopBucket,
   clientMatchesAdminBoardFilters,
   filterAdminBoardClients,
   getAdminNextActionDueAt,
+  getAdminRankMs,
   getWorkshopAction,
   groupAdminBoardClients,
   isAdminBoardCalendarQuery,
@@ -84,7 +86,7 @@ test('getWorkshopAction ignores startDate, nextActions, and details.workshopActi
     workshop: { action: { name: 'Held', format: 'mote', dueAt: DUE } },
   };
   assert.equal(getWorkshopAction(decoys), null);
-  assert.equal(classifyAdminWorkshopBucket({ status: 'active', product: 'asoldi', ...decoys }, NOW), ADMIN_BOARD_UNBOOKED_BUCKET);
+  assert.equal(classifyAdminWorkshopBucket({ status: 'active', product: 'asoldi', ...decoys }), ADMIN_BOARD_UNLISTED_BUCKET);
   const booked = getWorkshopAction({
     ...decoys,
     workshopAction: { name: 'Workshop', format: 'sms-ring', dueAt: DUE, addToCalendar: true },
@@ -97,23 +99,82 @@ test('getWorkshopAction ignores startDate, nextActions, and details.workshopActi
       product: 'asoldi',
       workshopAction: { name: 'Workshop', format: 'mote', dueAt: DUE },
       details: { meetingQuote: { startDate: '2026-01-01' } },
-    }, NOW),
-    'upcoming',
+    }),
+    ADMIN_BOARD_RANKED_BUCKET,
   );
 });
 
-test('no workshopAction sits in Ingen workshop avtalt; action without dueAt is Tid ikke satt', () => {
-  const unbooked = { id: 'a', status: 'active', product: 'asoldi', businessName: 'Zulu' };
-  const namedNoTime = {
+test('unsigned without workshop sits at the bottom; signed without Tid is Ingen workshop avtalt', () => {
+  const unlisted = { id: 'a', status: 'active', product: 'asoldi', businessName: 'Zulu' };
+  const signedNoTime = {
     id: 'b',
     status: 'active',
     product: 'asoldi',
     businessName: 'Alpha',
+    progression: { contractSigned: true },
+    contractSignedAt: '2026-09-01T10:00:00.000Z',
     workshopAction: { name: 'Workshop', format: 'sms-ring', dueAt: '' },
   };
-  const groups = groupAdminBoardClients([namedNoTime, unbooked], NOW);
-  assert.deepEqual(groups.unbooked.map((client) => client.id), ['a']);
-  assert.deepEqual(groups.noTime.map((client) => client.id), ['b']);
+  const unsignedWithTid = {
+    id: 'c',
+    status: 'active',
+    product: 'asoldi',
+    businessName: 'Bravo',
+    workshopAction: { name: 'Workshop', format: 'mote', dueAt: DUE },
+  };
+  const groups = groupAdminBoardClients([unsignedWithTid, signedNoTime, unlisted], NOW);
+  assert.deepEqual(groups.unbooked.map((client) => client.id), ['b']);
+  assert.deepEqual(groups.ranked.map((client) => client.id), ['c']);
+  assert.deepEqual(groups.unlisted.map((client) => client.id), ['a']);
+});
+
+test('unsigned with workshop Tid ranks in the due-date list, not the top bucket', () => {
+  assert.equal(classifyAdminWorkshopBucket({
+    status: 'active',
+    product: 'asoldi',
+    workshopAction: { name: 'Workshop', format: 'mote', dueAt: DUE },
+  }), ADMIN_BOARD_RANKED_BUCKET);
+  assert.equal(classifyAdminWorkshopBucket({
+    status: 'active',
+    product: 'asoldi',
+    progression: { contractSigned: true },
+  }), ADMIN_BOARD_UNBOOKED_BUCKET);
+});
+
+test('ranked list uses the sooner of due date and next action; untimed sits below', () => {
+  const dueSoon = {
+    id: 'due-soon',
+    status: 'active',
+    product: 'asoldi',
+    businessName: 'Due Soon',
+    progression: { contractSigned: true },
+    contractSignedAt: '2026-10-01T08:00:00.000Z',
+    websiteDeliveryWeeks: 2,
+    workshopAction: { name: 'Workshop', format: 'mote', dueAt: '2026-11-01T10:00:00.000Z' },
+  };
+  const actionSoon = {
+    id: 'action-soon',
+    status: 'active',
+    product: 'asoldi',
+    businessName: 'Action Soon',
+    workshopAction: { name: 'Workshop', format: 'mote', dueAt: DUE },
+  };
+  const untimed = {
+    id: 'untimed',
+    status: 'active',
+    product: 'asoldi',
+    businessName: 'Untimed',
+    workshopAction: { name: 'Workshop', format: 'mote', dueAt: '2026-10-08T12:00:00.000Z' },
+    workshop: {
+      heldAt: '2026-10-08T12:30:00.000Z',
+      summary: { intro: 'x' },
+      iteratedAt: '2026-10-09T12:00:00.000Z',
+    },
+  };
+  const groups = groupAdminBoardClients([untimed, dueSoon, actionSoon], NOW);
+  assert.deepEqual(groups.ranked.map((client) => client.id), ['action-soon', 'due-soon', 'untimed']);
+  assert.ok(getAdminRankMs(actionSoon) < getAdminRankMs(dueSoon));
+  assert.equal(getAdminRankMs(untimed), Number.MAX_SAFE_INTEGER);
 });
 
 test('Damian calendar resolver prefers admin:damian@asoldi.com and never falls back to the viewer', () => {
@@ -171,13 +232,11 @@ test('booking helper and Admin UI never treat startDate as a booking or copy Sal
   assert.match(salesSrc, /ownerId=\{calendarPreviewOwnerId\}/);
 
   const adminSrc = readNearby('../app/pages/Admin/sections/AdminBoardSection.tsx');
-  assert.match(adminSrc, /workshopCalendar/);
-  assert.equal(adminSrc.includes('WorkshopNeedsPanel'), false);
+  assert.match(adminSrc, /Ingen workshop avtalt/);
+  assert.match(adminSrc, /Ikke listet ennå/);
   assert.match(adminSrc, /AdminRequestInbox/);
   assert.match(adminSrc, /data-admin-card-actions/);
   assert.match(adminSrc, /WorkshopAdminActionRow/);
-  assert.match(adminSrc, /Search and filter/);
-  assert.match(adminSrc, /Kommende handlinger/);
   assert.match(adminSrc, /clientMatchesAdminBoardFilters/);
   assert.equal(adminSrc.includes('SalesGoalTimeline'), false);
   assert.equal(adminSrc.includes('meetingQuote.startDate'), false);
@@ -230,12 +289,11 @@ test('Admin board filters match today, format, and held separately from search',
   assert.equal(clientMatchesAdminBoardFilters(today, { status: 'held' }, NOW), false);
   assert.equal(clientMatchesAdminBoardFilters(today, { status: 'confirmed' }, NOW), true);
   assert.equal(clientMatchesAdminBoardFilters(sms, { status: 'draft' }, NOW), true);
-  assert.equal(clientMatchesAdminBoardFilters(held, { when: 'overdue' }, NOW), false);
-  assert.equal(classifyAdminWorkshopBucket(held, NOW), 'noTime');
-  assert.equal(clientMatchesAdminBoardFilters(today, { bucket: 'upcoming' }, NOW), true);
+  assert.equal(clientMatchesAdminBoardFilters(today, { bucket: 'ranked' }, NOW), true);
+  assert.equal(classifyAdminWorkshopBucket(held), ADMIN_BOARD_RANKED_BUCKET);
 });
 
-test('Admin ranks the next action like Sales, not the finished workshop clock', () => {
+test('Admin ranks the next action, not only the workshop clock', () => {
   const heldBase = {
     id: 'held-rank',
     status: 'active',
@@ -251,7 +309,7 @@ test('Admin ranks the next action like Sales, not the finished workshop clock', 
     workshop: { heldAt: '2026-10-01T10:30:00.000Z', summary: { intro: 'x' } },
     calendar: { meetLink: 'https://meet.google.com/idf-xnpu-jna' },
   };
-  assert.equal(classifyAdminWorkshopBucket(heldBase, NOW), 'noTime');
+  assert.equal(classifyAdminWorkshopBucket(heldBase), ADMIN_BOARD_RANKED_BUCKET);
   const withIteration = {
     ...heldBase,
     workshop: {
@@ -260,7 +318,6 @@ test('Admin ranks the next action like Sales, not the finished workshop clock', 
     },
   };
   assert.equal(getAdminNextActionDueAt(withIteration), DUE);
-  assert.equal(classifyAdminWorkshopBucket(withIteration, NOW), 'upcoming');
   const extraSoon = {
     status: 'active',
     product: 'asoldi',
@@ -270,17 +327,4 @@ test('Admin ranks the next action like Sales, not the finished workshop clock', 
     },
   };
   assert.equal(getAdminNextActionDueAt(extraSoon), '2026-10-07T18:00:00.000Z');
-  assert.equal(classifyAdminWorkshopBucket(extraSoon, NOW), 'upcoming');
-  const recent = {
-    status: 'active',
-    product: 'asoldi',
-    workshopAction: { name: 'Workshop', format: 'mote', dueAt: '2026-10-06T12:00:00.000Z' },
-  };
-  assert.equal(classifyAdminWorkshopBucket(recent, NOW), 'recentPastDue');
-  const old = {
-    status: 'active',
-    product: 'asoldi',
-    workshopAction: { name: 'Workshop', format: 'mote', dueAt: '2026-09-01T12:00:00.000Z' },
-  };
-  assert.equal(classifyAdminWorkshopBucket(old, NOW), 'pastDue');
 });

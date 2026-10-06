@@ -425,6 +425,7 @@ function defaultClientDataBank(seed = {}) {
       staff: '',
       hours: '',
       affiliations: '',
+      focus: '',
     },
     affiliations: [],
     staff: [],
@@ -540,6 +541,8 @@ function normalizeClientDataBank(input = {}, fallback = {}) {
     const value = sanitizeText(src.assistantIntake?.[key] || base.assistantIntake?.[key]);
     assistantIntake[key] = value === 'done' || value === 'skipped' || value === 'more' ? value : '';
   }
+  const focus = sanitizeText(src.assistantIntake?.focus ?? base.assistantIntake?.focus);
+  assistantIntake.focus = ['products', 'media', 'logo', 'staff', 'hours', 'affiliations'].includes(focus) ? focus : '';
 
   const media = {
     mainHeroImages: normalizeMediaList(src.media?.mainHeroImages || src.media?.heroImages, base.media.mainHeroImages),
@@ -833,8 +836,9 @@ function defaultTodoList(selectedPlanName = '', existingCode = '') {
   return [
     {
       id: 'setup-website',
-      title: 'Steg 1: Sett opp nettsiden din',
-      description: 'Inkluderer SEO-optimalisering, kontaktskjema, hosting og vedlikehold.',
+      title: 'Innhold til nettsiden',
+      description: 'Produkter, bilder, logo, ansatte, åpningstider og partnere. Ett kapittel om gangen.',
+      estimate: 'ca. 10 min',
       actionLabel: 'Start',
       actionPath: '/kunde/ai-assistant',
       completed: false,
@@ -1209,8 +1213,9 @@ export function getClientDashboardData(profile) {
     todoList: [
       {
         id: 'setup-website',
-        title: 'Sett opp din nettside',
-        description: 'Kom i gang med nettsiden din – velg plan, design og innhold.',
+        title: 'Innhold til nettsiden',
+        description: 'Produkter, bilder, logo, ansatte, åpningstider og partnere. Ett kapittel om gangen.',
+        estimate: 'ca. 10 min',
         actionLabel: 'Start her',
         route: '/kunde/ai-assistant',
       },

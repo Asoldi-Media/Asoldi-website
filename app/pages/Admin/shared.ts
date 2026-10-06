@@ -272,14 +272,22 @@ export type WorkshopGoalAction = {
   format: WorkshopActionFormat;
   dueAt: string;
   addToCalendar: boolean;
-  goalKey?: 'haWorkshop' | 'iterated';
+  goalKey?: 'haWorkshop' | 'informasjon' | 'iterated';
   presetKey?: string;
   doneAt?: string;
   calendarEventId?: string;
 };
 
+export type WorkshopDeskEmails = {
+  reminder3dSentAt?: string;
+  reminder24hSentAt?: string;
+  data1SentAt?: string;
+  data2SentAt?: string;
+};
+
 export type WorkshopRecord = {
   heldAt: string;
+  informasjonAt?: string;
   iteratedAt: string;
   summary: WorkshopSummary | null;
   summaryHistory: WorkshopSummary[];
@@ -288,6 +296,7 @@ export type WorkshopRecord = {
   iterationMeeting: WorkshopIterationMeeting;
   heardFacts: WorkshopHeardFact[];
   goalActions?: WorkshopGoalAction[];
+  deskEmails?: WorkshopDeskEmails;
 };
 
 export type DeveloperGoalKey = 'readyForPreview' | 'readyForDeployment' | 'iterationDone' | 'publish';
@@ -581,6 +590,7 @@ export type OfferProduct = {
   note: string;
   priceExMva: number;
   deliveryWeeks: number;
+  deliveryWorkDays?: number;
 };
 
 export type OfferAlternative = {

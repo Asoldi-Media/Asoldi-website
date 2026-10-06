@@ -9,13 +9,15 @@ This is only the client’s own data gathering. It is not the sales card, the wo
 Two steps, one store.
 
 1. **Onboarding** (`/kunde/onboarding`) collects who the person is, which legal company they belong to, how to reach them, and optional public profiles. It is a short form. It does not build the product catalog or the media library.
-2. **The AI assistant** (`/kunde/ai-assistant`) collects the heavy content and writes it into **Kundedata** (Innstillinger → Kundedata, `/kunde/innstillinger`). The client opens it from Hjem → «Steg 1: Sett opp nettsiden din».
+2. **The AI assistant** (`/kunde/ai-assistant`) collects the heavy content and writes it into **Kundedata** (Innstillinger → Kundedata, `/kunde/innstillinger`). The client opens it from Hjem → «Innhold til nettsiden» (about 10 minutes).
 
 The assistant is a data intake, not a brand interview. It asks for missing buckets, in a fixed order, and files each answer into the matching Kundedata field. It does not ask what kind of business they are, or whether the tone should be formal or casual.
 
 **Do not ask for something we already have.** If a bucket is filled, or the client already said it is not relevant, skip it. Wording can vary a little so it does not feel like the same form every time. The order does not vary.
 
-When the last missing bucket is done or skipped, tell them data gathering is finished and keep them on the assistant. The side panel shows each step with what is already saved. They can open bedriftsinformasjonen (`/kunde/innstillinger`) themselves when they want to edit.
+When the last missing bucket is done or skipped, tell them data gathering is finished and keep them on the assistant. The side panel lists every chapter above the illustration: the name, then a small arrow. Chapters are grey until selected. Selecting one shows only that chapter. There is no link from the assistant to the full Kundedata page.
+
+The client can move between chapters in the panel or by asking («gå til ansatte», «legg inn åpningstider»). A chapter that already has data is asked as «Lyst til å legge til mer i …?». An empty chapter is asked for the missing thing itself, in the fixed order. Logo is asked when it is missing. Writing a fact saves it even if another chapter is open, and even after gathering is marked finished.
 
 ## Where it is stored
 
@@ -79,7 +81,7 @@ It looks at Kundedata and asks only the first empty bucket. The client can skip 
 | 4. Ansatte | «Lyst til å vise informasjon om deres ansatte på siden?» Then title, name, phone, email, one person per line. | Skip. | `staff`, appended. Image is left empty. | After each person, ask if there are more. The signer from onboarding is ignored. |
 | 5. Åpningstider | Monday–Sunday. Also accept «not relevant» or open 24/7. | «Not relevant» is a real answer, not a blank. | `openingHours.status` + `openingHours.days` | One answer, then the next step. Do not ask if every day was filled. |
 | 6. Partnere | Partners or affiliations to show on the site. Group them if the client groups them («Sponsorer: …»). | Skip. | `affiliations` (category + items) | After a list, ask if there are more. |
-| Done | Short line that gathering is finished. | — | Stay on the assistant. The panel is the profile card. A link opens `/kunde/innstillinger`. | Happens when every step above is filled or flagged. |
+| Done | Short line that gathering is finished. They can still write a change or open a chapter. | — | Stay on the assistant. No link to the full Kundedata page. | Happens when every step above is filled or flagged. A later message is still filed. |
 
 ### Do not ask these in the assistant
 
@@ -101,7 +103,11 @@ The client may mix sources in one go: a URL, several files, and typed text. Read
 
 Today: one ingest job reads files, URLs, and text together (`runUnifiedIngestJob`). Shopify and WooCommerce are detected and read through their public product feeds when those exist; other sites are read from the pages themselves (sitemap and offering pages). Layout is chosen from the content. A second import is merged into the catalogs already stored, then capped at 200. Saved products show under the Produkter step. The chat shows a status line while a job runs.
 
-The side panel shows one layout at a time and slides to the next. Produkter lists the catalog in the grey placeholder style. Media switches to a picture grid. From the logo step on, the panel is a small profile card: a grey logo mark at the top left, then `Ansatte —` and a count, the opening hours written out, and up to three partner bars. It does not paste the real logo file into that mark.
+### Åpningstider in the chat
+
+When the assistant is asking for opening hours, the chat shows a week form: time fields, a closed toggle, and a checkbox for «Åpent hele tiden». The message says the ordinary chat works too. Either path writes `openingHours`.
+
+The side panel lists a chapter only after the one before it is finished or skipped. Names stay grey until selected. The open chapter is the only illustration: products, media, the logo mark, staff, hours, or partners.
 
 Products, media, staff, and partners stay on that step after a save and ask if there is more. A no, or «det er alt», moves on. Opening hours and the logo are saved once and the assistant does not ask whether every day was filled.
 

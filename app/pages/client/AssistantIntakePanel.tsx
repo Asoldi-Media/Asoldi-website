@@ -1,7 +1,7 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
 import { AnimatePresence, motion } from 'motion/react';
-import { intakeReview, STEP_LABELS } from '../../../lib/ai-assistant/intake.js';
+import { ChevronRight } from 'lucide-react';
+import { INTAKE_STEPS, intakeReview, STEP_LABELS } from '../../../lib/ai-assistant/intake.js';
 import { clientMediaSrc } from '../../components/client/settings/clientDataTypes';
 
 type ProductRow = {
@@ -32,6 +32,8 @@ type Props = {
   layoutText: string;
   removingProducts: boolean;
   busy: boolean;
+  viewStep: string;
+  onSelectStep: (step: string) => void;
   onRemoveProduct: (row: ProductRow) => void;
   onClearProducts: () => void;
 };
@@ -41,7 +43,12 @@ const EASE = [0.22, 1, 0.36, 1] as const;
 function sceneFor(step: string) {
   if (step === 'media') return 'media';
   if (step === 'products') return 'products';
-  return 'card';
+  if (step === 'logo') return 'logo';
+  if (step === 'staff') return 'staff';
+  if (step === 'hours') return 'hours';
+  if (step === 'affiliations') return 'affiliations';
+  if (step === 'done') return 'done';
+  return 'products';
 }
 
 function isVideo(url: string) {
@@ -73,36 +80,55 @@ export function AssistantIntakePanel({
   layoutText,
   removingProducts,
   busy,
+  viewStep,
+  onSelectStep,
   onRemoveProduct,
   onClearProducts,
 }: Props) {
-  const review = intakeReview(bank || {}) as { steps: ReviewStep[] };
+  const review = intakeReview(bank || {}) as { steps: ReviewStep[]; current?: string };
   const byStep = Object.fromEntries(review.steps.map((step) => [step.step, step]));
-  const scene = sceneFor(currentStep);
-  const heading = currentStep === 'done'
-    ? 'Profil'
-    : (STEP_LABELS[currentStep as keyof typeof STEP_LABELS] || STEP_LABELS.products);
   const mediaUrls = (byStep.media?.groups || []).flatMap((group) => group.urls || []);
-  const staffCount = byStep.staff?.people?.length || 0;
+  const people = byStep.staff?.people || [];
   const hourLines = byStep.hours?.status === 'filled' ? (byStep.hours.lines || []) : [];
-  const partnerCount = (byStep.affiliations?.groups || []).reduce((sum, group) => sum + (group.items?.length || 0), 0);
-  const partnerMarks = Math.min(partnerCount, 3);
+  const partnerGroups = byStep.affiliations?.groups || [];
   const hasLogo = Boolean(byStep.logo?.url);
+
+  const ordered = INTAKE_STEPS.map((step) => byStep[step]).filter(Boolean);
+  const released = (chapter: ReviewStep) => {
+    const flag = String((bank as { assistantIntake?: Record<string, string> })?.assistantIntake?.[chapter.step] || '');
+    if (flag === 'more') return false;
+    return chapter.status === 'filled' || chapter.status === 'skipped' || flag === 'done' || flag === 'skipped';
+  };
+  const frontier = ordered.findIndex((chapter) => !released(chapter));
+  const chapters = frontier === -1 ? ordered : ordered.slice(0, frontier + 1);
+  const preferred = viewStep || currentStep;
+  const shownStep = chapters.some((chapter) => chapter.step === preferred)
+    ? preferred
+    : (chapters[chapters.length - 1]?.step || 'products');
+  const scene = sceneFor(shownStep);
 
   return (
     <div className="flex flex-col gap-6">
-      <AnimatePresence mode="wait" initial={false}>
-        <motion.span
-          key={heading}
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -8 }}
-          transition={{ duration: 0.28, ease: EASE }}
-          className="text-[11px] font-bold tracking-[0.2em] text-[#121212] uppercase"
-        >
-          {heading}
-        </motion.span>
-      </AnimatePresence>
+      <div className="flex flex-col gap-1">
+        {chapters.map((chapter) => {
+          const selected = chapter.step === shownStep;
+          return (
+            <button
+              key={chapter.step}
+              type="button"
+              aria-pressed={selected}
+              disabled={busy}
+              onClick={() => onSelectStep(chapter.step)}
+              className={`flex items-center gap-1.5 w-fit text-left text-[14px] disabled:opacity-60 ${
+                selected ? 'text-[#121212] font-medium' : 'text-gray-400 hover:text-gray-500'
+              }`}
+            >
+              <span>{chapter.label || STEP_LABELS[chapter.step as keyof typeof STEP_LABELS]}</span>
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          );
+        })}
+      </div>
 
       <AnimatePresence mode="wait" initial={false}>
         {scene === 'products' ? (
@@ -207,109 +233,99 @@ export function AssistantIntakePanel({
           </motion.div>
         ) : null}
 
-        {scene === 'card' ? (
+        {scene === 'logo' ? (
           <motion.div
-            key="card"
+            key="logo"
             initial={{ opacity: 0, y: 18 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -14 }}
             transition={{ duration: 0.4, ease: EASE }}
           >
-            <motion.div layout className="rounded-2xl border border-gray-100 bg-[#F6F6F4] p-5">
-              <div className="flex items-start gap-3">
-                <motion.div
-                  layout
-                  animate={{ backgroundColor: hasLogo ? '#E4E4E1' : '#F3F3F1' }}
-                  transition={{ duration: 0.35, ease: EASE }}
-                  className={`h-14 w-14 shrink-0 rounded-xl border flex items-center justify-center ${
-                    hasLogo ? 'border-gray-200' : 'border-dashed border-gray-300'
-                  }`}
-                >
-                  <motion.div
-                    animate={{ scale: hasLogo ? 1 : 0.86, opacity: hasLogo ? 1 : 0.55 }}
-                    transition={{ type: 'spring', stiffness: 260, damping: 22 }}
-                    className="h-7 w-7 rounded-md bg-gray-300"
-                  />
-                </motion.div>
-                <div className="flex-1 pt-2">
-                  <div className="h-2.5 w-24 rounded-full bg-gray-200" />
-                  <div className="mt-2 h-2 w-16 rounded-full bg-gray-200/70" />
-                </div>
-              </div>
-
-              <AnimatePresence initial={false}>
-                {staffCount > 0 ? (
-                  <motion.p
-                    key="staff"
-                    layout
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -6 }}
-                    transition={{ duration: 0.32, ease: EASE }}
-                    className="mt-6 text-[15px] text-gray-500"
-                  >
-                    Ansatte —{' '}
-                    <motion.span
-                      key={staffCount}
-                      initial={{ opacity: 0, y: 6 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      className="inline-block text-gray-600"
-                    >
-                      {staffCount}
-                    </motion.span>
-                  </motion.p>
-                ) : null}
-              </AnimatePresence>
-
-              <AnimatePresence initial={false}>
-                {hourLines.length ? (
-                  <motion.ul
-                    key="hours"
-                    layout
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0 }}
-                    transition={{ duration: 0.32, ease: EASE }}
-                    className="mt-5 flex flex-col gap-1"
-                  >
-                    {hourLines.map((line) => (
-                      <li key={line} className="text-[13px] text-gray-500">{line}</li>
-                    ))}
-                  </motion.ul>
-                ) : null}
-              </AnimatePresence>
-
-              <AnimatePresence initial={false}>
-                {partnerMarks > 0 ? (
-                  <motion.div
-                    key="partners"
-                    layout
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    className="mt-5 flex flex-col gap-2"
-                  >
-                    {Array.from({ length: partnerMarks }).map((_, index) => (
-                      <motion.div
-                        key={index}
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.28, delay: index * 0.06, ease: EASE }}
-                        className="h-8 rounded-lg border border-gray-200 bg-gray-200/50"
-                      />
-                    ))}
-                  </motion.div>
-                ) : null}
-              </AnimatePresence>
-            </motion.div>
+            <div className={`h-16 w-16 rounded-xl border flex items-center justify-center ${
+              hasLogo ? 'border-gray-200 bg-[#E4E4E1]' : 'border-dashed border-gray-300 bg-gray-50/80'
+            }`}>
+              <div className={`h-7 w-7 rounded-md bg-gray-300 ${hasLogo ? 'opacity-100' : 'opacity-50'}`} />
+            </div>
+            <p className="mt-3 text-[13px] text-gray-400">{hasLogo ? 'Logo lagret' : 'Ingen logo ennå'}</p>
           </motion.div>
         ) : null}
-      </AnimatePresence>
 
-      {currentStep === 'done' ? (
-        <Link to="/kunde/innstillinger" className="text-[12px] text-gray-400 underline">
-          Åpne bedriftsinformasjon
-        </Link>
-      ) : null}
+        {scene === 'staff' ? (
+          <motion.div
+            key="staff"
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -14 }}
+            transition={{ duration: 0.4, ease: EASE }}
+            className="flex flex-col gap-3"
+          >
+            {people.length ? people.map((person) => (
+              <div key={`${person.name}-${person.title}`} className="rounded-xl border border-gray-100 bg-white px-4 py-3">
+                <p className="text-[14px] font-medium text-[#121212]">{person.name || 'Ansatt'}</p>
+                <p className="text-[12px] mt-1 text-gray-500">{person.title || 'Stilling'}</p>
+              </div>
+            )) : (
+              <GreySlot label="Ansatt" />
+            )}
+          </motion.div>
+        ) : null}
+
+        {scene === 'hours' ? (
+          <motion.div
+            key="hours"
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -14 }}
+            transition={{ duration: 0.4, ease: EASE }}
+          >
+            {hourLines.length ? (
+              <ul className="flex flex-col gap-1">
+                {hourLines.map((line) => (
+                  <li key={line} className="text-[13px] text-gray-500">{line}</li>
+                ))}
+              </ul>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <GreySlot label="Mandag" />
+                <GreySlot label="Tirsdag" />
+              </div>
+            )}
+          </motion.div>
+        ) : null}
+
+        {scene === 'affiliations' ? (
+          <motion.div
+            key="affiliations"
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -14 }}
+            transition={{ duration: 0.4, ease: EASE }}
+            className="flex flex-col gap-3"
+          >
+            {partnerGroups.length ? partnerGroups.map((group) => (
+              <div key={group.label} className="rounded-xl border border-gray-100 bg-white px-4 py-3">
+                <p className="text-[12px] text-gray-400">{group.label}</p>
+                <p className="text-[14px] text-[#121212] mt-1">{(group.items || []).join(', ')}</p>
+              </div>
+            )) : (
+              <GreySlot label="Partnere" />
+            )}
+          </motion.div>
+        ) : null}
+
+        {scene === 'done' ? (
+          <motion.p
+            key="done"
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -14 }}
+            transition={{ duration: 0.4, ease: EASE }}
+            className="text-[13px] text-gray-400"
+          >
+            Velg et steg over for å se eller legge til mer.
+          </motion.p>
+        ) : null}
+      </AnimatePresence>
     </div>
   );
 }

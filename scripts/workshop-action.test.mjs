@@ -254,7 +254,8 @@ test('Sales persist stays a draft; Admin Save is the send gate', () => {
   assert.match(adminRowSrc, /WORKSHOP_FORMATS/);
 
   const adminSrc = readFileSync(new URL('../app/pages/Admin/sections/AdminBoardSection.tsx', import.meta.url), 'utf8');
-  assert.equal(adminSrc.includes('SalesCalendarWeek'), false);
+  assert.match(adminSrc, /SalesCalendarWeek/);
+  assert.match(adminSrc, /workshopCalendar/);
 
   const serverSrc = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
   assert.match(serverSrc, /confirmSend && !requireOfferAdmin/);
