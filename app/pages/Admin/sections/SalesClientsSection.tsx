@@ -3,8 +3,6 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   ArchiveX,
   Calendar,
-  CalendarCheck2,
-  CalendarClock,
   ChevronDown,
   Copy,
   ExternalLink,
@@ -43,10 +41,11 @@ import {
   clientIsSalesWin,
   classifySalesPipelineState,
   countSalesPipelineStates,
+  formatActionFormatLabel,
   getActiveNextAction,
   getCalendarNextAction,
-  clientMeetingAtIso,
   getClientNextActionMs,
+  salesGoalFilledCount,
   groupSalesClientsByNextAction,
   confirmationSendGaps,
   clientNeedsConfirmationSend,
@@ -359,11 +358,32 @@ function durationForMode(mode: 'online' | 'in-person') {
   return calendarDurationForMode(mode);
 }
 
-function formatMeetingHeadline(value = '') {
-  if (!value) return 'Ingen møtetid satt';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString('nb-NO', { timeZone: 'Europe/Oslo' });
+function SalesGoalProgressIcon({ filled }: { filled: number }) {
+  const count = Math.max(0, Math.min(3, filled));
+  return (
+    <span
+      className="inline-flex flex-col justify-center gap-[3px] shrink-0"
+      title={`${count} av 3`}
+      aria-label={`${count} av 3 mål`}
+    >
+      {[2, 1, 0].map((level) => {
+        const on = count > level;
+        return (
+          <span
+            key={level}
+            className={`relative block h-[5px] w-[26px] overflow-hidden rounded-full border ${
+              on ? 'border-[#FF5B00]' : 'border-white/80'
+            }`}
+          >
+            <span
+              className="absolute inset-y-0 left-0 bg-[#FF5B00] transition-all duration-700 ease-out"
+              style={{ width: on ? '100%' : '0%' }}
+            />
+          </span>
+        );
+      })}
+    </span>
+  );
 }
 
 function formatWhen(value = '') {
@@ -2162,16 +2182,10 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
             const clientOffers = offers.filter((entry) => entry.salesClientId === client.id);
             const expanded = expandedId === client.id;
             const showMailActions = expanded && showMailActionsId === client.id;
-            const meetingHeld = Boolean(client.progression?.meetingHeld);
             const nextAction = getActiveNextAction(client);
             // Important contact point: any action on the calendar, even if a reminder sits above it.
             const calendarAction = getCalendarNextAction(client);
-            const meetingAtIso = clientMeetingAtIso(client);
-            const meetingOnCalendar = Boolean(
-              meetingAtIso
-              && !client.progression?.meetingHeld
-              && (calendarAction?.presetKey === 'meeting' || calendarAction?.presetKey === 'meetingBooked')
-            );
+            const goalFilled = salesGoalFilledCount(client);
             const websiteSold = Boolean(client.progression?.contractSigned);
             const canMarkSold = Boolean(client.progression?.contractSigned);
             const clientSelected = selectedClientIds.includes(client.id);
@@ -2233,27 +2247,28 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                         <span className={`shrink-0 px-2 py-0.5 rounded text-[11px] bg-amber-500/15 border border-amber-500/40 text-amber-200 truncate ${showCompact ? 'max-w-[52%]' : 'max-w-[46%]'}`}>
                           Bekreftelse ikke sendt
                         </span>
-                      ) : !showCompact && nextAction?.name ? (
-                        <span className="shrink-0 max-w-[40%] px-2 py-0.5 rounded text-[11px] bg-black/20 border border-white/10 text-gray-200 truncate">
-                          {nextAction.name}
-                        </span>
                       ) : null}
                     </div>
-                    <div className={`flex items-center gap-1.5 text-xs min-w-0 ${showCompact ? 'mt-0.5' : 'mt-1'} ${meetingOnCalendar ? 'text-sky-300' : 'text-gray-400'}`}>
-                      {meetingOnCalendar ? (
-                        <CalendarCheck2 size={12} className="shrink-0" aria-label="På kalenderen" />
+                    <div className={`flex items-center gap-2 min-w-0 ${showCompact ? 'mt-1' : 'mt-1.5'}`}>
+                      <SalesGoalProgressIcon filled={goalFilled} />
+                      {nextAction?.name ? (
+                        <>
+                          <span className="truncate text-sm text-gray-100">{nextAction.name}</span>
+                          {formatActionFormatLabel(nextAction.format) ? (
+                            <span className="shrink-0 text-sm text-gray-300">{formatActionFormatLabel(nextAction.format)}</span>
+                          ) : null}
+                          {nextAction.addToCalendar ? (
+                            <span
+                              className="sales-chip-calendar shrink-0 px-1.5 py-px rounded border border-sky-400/30 bg-sky-400/10 text-[11px] uppercase tracking-wide font-semibold text-sky-200"
+                              title="Ligger på kalenderen"
+                            >
+                              Kalender
+                            </span>
+                          ) : null}
+                        </>
                       ) : (
-                        <CalendarClock size={12} className="shrink-0" />
+                        <span className="text-sm text-red-400">sett neste handling</span>
                       )}
-                      <span className="truncate">{formatMeetingHeadline(meetingAtIso)}</span>
-                      {meetingOnCalendar ? (
-                        <span
-                          className="sales-chip-calendar shrink-0 px-1.5 py-px rounded border border-sky-400/30 bg-sky-400/10 text-[10px] uppercase tracking-wide font-semibold text-sky-200"
-                          title="Møtet ligger på kalenderen"
-                        >
-                          Kalender
-                        </span>
-                      ) : null}
                     </div>
                     {(!showCompact && confirmationGaps.length > 0) && (
                       <div className="mt-2 rounded-lg border border-red-500/40 bg-red-500/10 px-2.5 py-1.5 text-[11px] leading-snug text-red-200">
@@ -2335,15 +2350,6 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
 
                 {showCompact ? null : (
                 <>
-                <ClientNotesField
-                  label="Notater"
-                  value={clientNoteDraft(client)}
-                  saving={savingNoteId === client.id}
-                  dirty={clientNoteDraft(client).trim() !== String(client.notes || '').trim()}
-                  onChange={(value) => setNoteDrafts((prev) => ({ ...prev, [client.id]: value }))}
-                  onSave={() => void saveClientNotes(client)}
-                />
-
                 <SalesGoalTimeline
                   client={client}
                   progressBusyKey={progressBusyKey}
@@ -2351,6 +2357,14 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                   onToggleGoal={(key, extra) => void toggleProgress(client, key, extra)}
                   onMutateAction={(body) => mutateNextAction(client, body)}
                   variant={isWin ? 'win' : 'active'}
+                />
+                <ClientNotesField
+                  label="Notater"
+                  value={clientNoteDraft(client)}
+                  saving={savingNoteId === client.id}
+                  dirty={clientNoteDraft(client).trim() !== String(client.notes || '').trim()}
+                  onChange={(value) => setNoteDrafts((prev) => ({ ...prev, [client.id]: value }))}
+                  onSave={() => void saveClientNotes(client)}
                 />
                 <WorkshopIterationLog
                   client={client}

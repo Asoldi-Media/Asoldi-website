@@ -84,8 +84,8 @@ function client(overrides = {}) {
 test('activity log groups reminders and recordings under sales goal headers', () => {
   const log = buildClientActivityLog(client());
   assert.deepEqual(log.sections.map((section) => section.key), ['meetingHeld', 'offerSent']);
-  assert.equal(log.sections[0].label, 'Møtet hatt');
-  assert.equal(log.sections[1].label, 'Sendt tilbud');
+  assert.equal(log.sections[0].label, 'Møte');
+  assert.equal(log.sections[1].label, 'Tilbud');
   const heldNames = log.sections[0].rows.map((row) => row.name);
   assert.ok(heldNames.includes('Påminnelse'));
   assert.ok(heldNames.includes('Møte'));

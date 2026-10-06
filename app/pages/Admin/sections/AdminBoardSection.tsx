@@ -18,6 +18,7 @@ import {
 import { AdminRequestInbox } from './AdminRequestInbox';
 import { WorkshopAdminActionRow } from './WorkshopAdminActionRow';
 import { WebsiteDueField } from './WebsiteDueField';
+import { CalendarSection } from '../../ansatt/shared';
 import { workshopGoalHeld } from '../../../../lib/workshop-goal-timeline.js';
 
 const OfferReviewSection = lazy(() =>
@@ -363,6 +364,7 @@ export function AdminBoardSection() {
 
   return (
     <div className="space-y-6">
+      <CalendarSection />
       <form
         onSubmit={(event) => event.preventDefault()}
         className="rounded-2xl bg-[#2a2a2a] border border-white/10 p-4 space-y-3"

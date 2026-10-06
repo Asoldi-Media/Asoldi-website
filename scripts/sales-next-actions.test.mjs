@@ -53,6 +53,10 @@ import {
   getGoalActions,
   isRecordedSalesAction,
   salesProgressBlockedReason,
+  salesGoalFilledCount,
+  applyOfferSentFromDelivery,
+  ensureContractCheckupAction,
+  CONTRACT_CHECKUP_NAME,
   suggestedDueAtForPreset,
   clientMatchesMeetingModeFilter,
   clientNextActionInDateRange,
@@ -1125,4 +1129,46 @@ test('extra Møte plus calendar is a recorded sales action', () => {
     addToCalendar: true,
     meetingMode: 'in-person',
   }), false);
+});
+
+test('sending an offer checks møte and tilbud', () => {
+  const sent = applyOfferSentFromDelivery(client({ progression: { meetingHeld: false, offerSent: false } }));
+  assert.equal(sent.changed, true);
+  assert.equal(sent.progression.meetingHeld, true);
+  assert.equal(sent.progression.offerSent, true);
+  assert.equal(salesGoalFilledCount({ progression: sent.progression }), 2);
+  const again = applyOfferSentFromDelivery({ ...client(), progression: sent.progression, nextActions: sent.nextActions });
+  assert.equal(again.changed, false);
+});
+
+test('kontrakt checkup is 24h after the contract send, sms/ring, no calendar', () => {
+  const sentAt = '2026-10-06T10:00:00.000Z';
+  const unsigned = ensureContractCheckupAction([], client({ contractSentAt: sentAt, progression: { contractSigned: false } }));
+  assert.equal(unsigned.length, 0);
+  const signed = client({
+    contractSentAt: sentAt,
+    progression: { meetingHeld: true, offerSent: true, contractSigned: true },
+  });
+  const withCheckup = ensureContractCheckupAction([], signed);
+  const checkup = withCheckup.find((action) => action.presetKey === 'contractCheckup');
+  assert.ok(checkup);
+  assert.equal(checkup.name, CONTRACT_CHECKUP_NAME);
+  assert.equal(checkup.format, 'sms-ring');
+  assert.equal(checkup.addToCalendar, false);
+  assert.equal(checkup.sticky, false);
+  assert.equal(checkup.goalKey, 'afterSale');
+  assert.equal(Date.parse(checkup.dueAt) - Date.parse(sentAt), 24 * HOUR_MS);
+  const checked = applyProgressionChange(
+    client({
+      contractSentAt: sentAt,
+      progression: { meetingHeld: true, offerSent: true, contractSigned: false },
+    }),
+    'contractSigned',
+    true,
+  );
+  assert.equal(checked.error, undefined);
+  const created = checked.nextActions.find((action) => action.presetKey === 'contractCheckup' && !action.doneAt);
+  assert.ok(created);
+  assert.equal(getActiveNextAction({ ...signed, nextActions: checked.nextActions })?.presetKey, 'contractCheckup');
+  assert.equal(salesGoalFilledCount(signed), 3);
 });

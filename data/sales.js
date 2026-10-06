@@ -4,8 +4,10 @@ import { DEVELOPMENT_KEYS, normalizeDevelopment } from '../lib/development-phase
 import { normalizeStoredWebsiteEmail } from '../lib/sales-website-email.js';
 import {
   applyNextActionMutation,
+  applyOfferSentFromDelivery,
   applyProgressionChange,
   applyMeetingHeldOrphanReset,
+  ensureContractCheckupAction,
   clientIsSalesWin,
   decorateNextActions,
   getSalesGoalKeys,
@@ -541,6 +543,7 @@ function normalizeSalesClient(raw = {}) {
     developerQa: normalizeDeveloperQa(raw.developerQa),
     developerGoals: normalizeDeveloperGoals(raw.developerGoals),
     contractSignedAt: nextProgression.contractSigned ? sanitizeText(raw.contractSignedAt) : '',
+    contractSentAt: sanitizeText(raw.contractSentAt),
     websiteDueOverride: normalizeDueDate(raw.websiteDueOverride),
     websiteDeliveryWeeks: Math.max(0, Math.round(Number(raw.websiteDeliveryWeeks) || 0)),
     development: product === 'ssu' ? normalizeDevelopment() : normalizeDevelopment(raw.development),
@@ -859,6 +862,37 @@ export function setSalesNotes(id, notes, meetingQuote) {
 
 export function salesProgressBlockedReason(client, key, options = {}) {
   return nextActionProgressBlockedReason(client, key, options);
+}
+
+export function markOfferDelivered(id) {
+  const current = getSalesClientById(id);
+  if (!current || current.progression?.offerSent) return current;
+  const applied = applyOfferSentFromDelivery(current);
+  if (applied.error) {
+    const error = new Error(applied.error);
+    error.code = 'PROGRESSION_BLOCKED';
+    throw error;
+  }
+  const held = Boolean(applied.progression?.meetingHeld);
+  const lockId = held
+    ? (sanitizeText(current.lockedOfferMeetingId) || pickLockedOfferMeetingId(current))
+    : '';
+  return updateSalesClient(id, {
+    progression: applied.progression,
+    nextActions: applied.nextActions,
+    lockedOfferMeetingId: lockId,
+  });
+}
+
+export function recordContractSent(id, sentAt = '') {
+  const current = getSalesClientById(id);
+  if (!current) return null;
+  const contractSentAt = sanitizeText(current.contractSentAt) || sanitizeText(sentAt) || new Date().toISOString();
+  const stamped = { ...current, contractSentAt };
+  const nextActions = stamped.progression?.contractSigned
+    ? ensureContractCheckupAction(stamped.nextActions, stamped)
+    : stamped.nextActions;
+  return updateSalesClient(id, { contractSentAt, nextActions });
 }
 
 export function setSalesProgress(id, key, value, { fastTrack = false } = {}) {

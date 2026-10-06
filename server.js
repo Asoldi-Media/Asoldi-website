@@ -16124,10 +16124,11 @@ async function attachWebsiteCodeToSentOffer(salesClient, offer, { letterHtml = '
   });
 }
 
-function markOfferSentProgress(client) {
-  if (client?.progression?.meetingHeld && !client.progression?.offerSent) {
-    try { sales.setSalesProgress(client.id, 'offerSent', true); } catch { /* checklist can stay manual */ }
-  }
+function markOfferSentProgress(client, { contractOnly = false } = {}) {
+  try {
+    sales.recordContractSent(client.id);
+    if (!contractOnly) sales.markOfferDelivered(client.id);
+  } catch { /* checklist can stay manual */ }
 }
 
 app.post('/api/admin/sales/:id/offer/send', salesAuth, async (req, res) => {
@@ -16186,7 +16187,7 @@ app.post('/api/admin/sales/:id/offer/send', salesAuth, async (req, res) => {
     const sent = salesOffers.markSalesOfferSent(offer.id, { actor: offerActor(req), to, delivery, sentContent: contentMode });
     const portalOffer = await attachWebsiteCodeToSentOffer(client, sent, { letterHtml: composed.html, to });
     const account = await portalAccountForClient(client, to);
-    markOfferSentProgress(client);
+    markOfferSentProgress(client, { contractOnly });
     return res.json({
       ok: true,
       offer: presentOffer(sent),

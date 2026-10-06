@@ -179,7 +179,7 @@ export type ManageClientsView = 'clients' | 'development' | 'sales' | 'admin';
 
 export type SalesGoalKey = 'meetingHeld' | 'offerSent' | 'contractSigned' | 'paymentReceived';
 
-export type SalesNextActionPreset = 'meeting' | 'meetingBooked' | 'findMeetingTime' | 'sms24h' | 'sms1h' | 'call2h' | 'sendOffer' | 'checkIn' | 'upsell' | 'oppgrader' | 'oppfolging' | 'oppfolging1mnd' | 'custom';
+export type SalesNextActionPreset = 'meeting' | 'meetingBooked' | 'findMeetingTime' | 'sms24h' | 'sms1h' | 'call2h' | 'sendOffer' | 'checkIn' | 'upsell' | 'oppgrader' | 'oppfolging' | 'oppfolging1mnd' | 'contractCheckup' | 'custom';
 
 export type SalesActionFormat = 'email' | 'sms' | 'ring' | 'mote' | 'sms-ring';
 
@@ -726,6 +726,8 @@ export type SalesClient = {
     liveUrl?: string;
   };
   contractSignedAt?: string;
+  /** When the contract PDF was sent. Checkup is due 24h after this, once Kontrakt is checked. */
+  contractSentAt?: string;
   websiteDueOverride?: string;
   websiteDeliveryWeeks?: number;
   status: 'active' | 'not-sold' | 'secondary';
