@@ -892,7 +892,7 @@ export function recordContractSent(id, sentAt = '') {
   if (!current) return null;
   const contractSentAt = sanitizeText(current.contractSentAt) || sanitizeText(sentAt) || new Date().toISOString();
   const stamped = { ...current, contractSentAt };
-  const nextActions = stamped.progression?.contractSigned
+  const nextActions = stamped.progression?.offerSent
     ? ensureContractCheckupAction(stamped.nextActions, stamped)
     : stamped.nextActions;
   return updateSalesClient(id, { contractSentAt, nextActions });

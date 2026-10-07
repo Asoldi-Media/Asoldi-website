@@ -56,6 +56,7 @@ import {
   secondaryInterestLabel,
   clientMatchesMeetingModeFilter,
   clientNextActionInDateRange,
+  SALES_ACTION_TIMEZONE,
 } from '../../../../lib/sales-next-actions.js';
 import { salesBookingFacts } from '../../../../lib/sales-booking-facts.js';
 import { calendarDurationForMode } from '../../../../lib/sales-meeting-duration.js';
@@ -386,6 +387,19 @@ function formatWhen(value = '') {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString('nb-NO');
+}
+
+function formatNextActionWhen(value = '') {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('nb-NO', {
+    timeZone: SALES_ACTION_TIMEZONE,
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
 }
 
 function formatBookingWhen(value = '') {
@@ -2178,6 +2192,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
             const expanded = expandedId === client.id;
             const showMailActions = expanded && showMailActionsId === client.id;
             const nextAction = getActiveNextAction(client);
+            const nextActionWhen = formatNextActionWhen(nextAction?.dueAt);
             // Important contact point: any action on the calendar, even if a reminder sits above it.
             const calendarAction = getCalendarNextAction(client);
             const goalFilled = salesGoalFilledCount(client);
@@ -2251,6 +2266,9 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                           <span className="truncate text-sm text-gray-100">{nextAction.name}</span>
                           {formatActionFormatLabel(nextAction.format) ? (
                             <span className="shrink-0 text-sm text-gray-300">{formatActionFormatLabel(nextAction.format)}</span>
+                          ) : null}
+                          {nextActionWhen ? (
+                            <span className="shrink-0 text-sm text-gray-300">{nextActionWhen}</span>
                           ) : null}
                           {nextAction.addToCalendar ? (
                             <span

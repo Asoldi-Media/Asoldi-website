@@ -5,15 +5,14 @@ import {
   AFTER_SALE_GOAL,
   ACTION_FORMATS,
   actionAnchorId,
-  actionFollowsNeighbor,
   canReorderAction,
   canStickAction,
+  getVisibleNextActions,
   formatActionFormatLabel,
   formatGoalLabel,
   formatPresetLabel,
   getCurrentGoalKey,
   getFutureGoalKeys,
-  getGoalActions,
   getRemainingGoalCount,
   getSalesGoalKeys,
   getVisibleGoalKeys,
@@ -51,6 +50,7 @@ type EditState = {
   format: SalesActionFormat;
   dueAt: string;
   addToCalendar: boolean;
+  sticky: boolean;
   meetingMode: 'online' | 'in-person';
 };
 
@@ -118,8 +118,8 @@ export function SalesGoalTimeline({
     : getVisibleGoalKeys(client)) as SalesGoalKey[];
   const futureGoalSet = new Set(getFutureGoalKeys(client) as SalesGoalKey[]);
   const currentActions = useMemo(
-    () => (currentGoal ? getGoalActions(client, currentGoal) as SalesNextAction[] : []),
-    [client, currentGoal]
+    () => getVisibleNextActions(client) as SalesNextAction[],
+    [client]
   );
   const salesHover = clientMeetingHover(client, 'sales');
   const presets = currentGoal ? (GOAL_PRESETS[currentGoal] || []) : [];
@@ -191,6 +191,7 @@ export function SalesGoalTimeline({
       format: edit.format,
       dueAt: toIsoDateTime(edit.dueAt),
       addToCalendar: edit.addToCalendar,
+      sticky: edit.sticky,
       ...(meeting?.presetKey === 'meeting' ? { meetingMode: edit.meetingMode } : {}),
     });
     setEdit(null);
@@ -199,7 +200,9 @@ export function SalesGoalTimeline({
   async function dropAction(target: SalesNextAction, before: boolean, dragId = draggingId) {
     if (!dragId || !currentGoal) return;
     const targetId = clusterFreeId(target, currentActions);
-    const freeIds = currentActions.filter((action) => canReorderAction(action)).map((action) => action.id);
+    const freeIds = currentActions
+      .filter((action) => action.goalKey === currentGoal && canReorderAction(action))
+      .map((action) => action.id);
     const nextIds = moveFreeId(freeIds, dragId, targetId, before);
     setDraggingId(null);
     setDropHint(null);
@@ -213,8 +216,9 @@ export function SalesGoalTimeline({
       addToCalendar: boolean;
       presetKey?: string;
       meetingMode?: 'online' | 'in-person';
+      sticky?: boolean;
     },
-    onChange: (patch: Partial<Pick<DraftState, 'format' | 'addToCalendar' | 'meetingMode'>>) => void,
+    onChange: (patch: Partial<Pick<DraftState, 'format' | 'addToCalendar' | 'meetingMode' | 'sticky'>>) => void,
   ) {
     const calendarLocked = value.presetKey === 'meeting';
     const showMeetingMode = value.presetKey === 'meeting' && value.format === 'mote';
@@ -266,6 +270,14 @@ export function SalesGoalTimeline({
         >
           <span className={`inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform ${value.addToCalendar ? 'ml-4' : 'ml-1'}`} />
         </button>
+        <label className="inline-flex items-center gap-1.5 text-[11px] text-gray-300">
+          <input
+            type="checkbox"
+            checked={Boolean(value.sticky)}
+            onChange={(event) => onChange({ sticky: event.target.checked })}
+          />
+          Sticky
+        </label>
       </div>
     );
   }
@@ -416,6 +428,7 @@ export function SalesGoalTimeline({
                       addToCalendar: edit.addToCalendar,
                       presetKey: currentAction.presetKey,
                       meetingMode: edit.meetingMode,
+                      sticky: edit.sticky,
                     },
                     (patch) => setEdit((prev) => prev ? { ...prev, ...patch } : prev),
                   )}
@@ -439,7 +452,7 @@ export function SalesGoalTimeline({
                 </div>
               ) : (
                 <div className="flex items-center gap-2 min-w-0">
-                  {canReorderAction(currentAction) ? (
+                  {canReorderAction(currentAction) && currentAction.goalKey === currentGoal ? (
                     <button
                       type="button"
                       draggable
@@ -503,23 +516,25 @@ export function SalesGoalTimeline({
                     <button
                       type="button"
                       role="checkbox"
-                      aria-checked={actionFollowsNeighbor(currentAction)}
+                      aria-checked={Boolean(currentAction.sticky)}
+                      aria-label="Sticky"
                       disabled={actionBusy}
                       onClick={() => void onMutateAction({
                         op: 'update',
                         id: currentAction.id,
-                        sticky: !actionFollowsNeighbor(currentAction),
+                        sticky: !currentAction.sticky,
                       })}
-                      className={`shrink-0 p-1 rounded ${
-                        actionFollowsNeighbor(currentAction)
-                          ? 'text-sky-300 hover:text-sky-200'
-                          : 'text-gray-500 hover:text-white'
+                      className={`shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] ${
+                        currentAction.sticky
+                          ? 'border-sky-400/60 text-sky-200 bg-sky-400/10'
+                          : 'border-white/15 text-gray-300 hover:text-white hover:border-white/30'
                       }`}
-                      title={actionFollowsNeighbor(currentAction)
+                      title={currentAction.sticky
                         ? 'Sticky: følger handlingen under. Klikk for å løsne.'
                         : 'Sticky: behold avstanden til handlingen under når den flyttes'}
                     >
-                      <Pin size={12} fill={actionFollowsNeighbor(currentAction) ? 'currentColor' : 'none'} />
+                      <Pin size={11} fill={currentAction.sticky ? 'currentColor' : 'none'} />
+                      Sticky
                     </button>
                   ) : null}
                   <button
@@ -531,6 +546,7 @@ export function SalesGoalTimeline({
                       format: (currentAction.format || defaultFormatForPreset(currentAction.presetKey)) as SalesActionFormat,
                       dueAt: toDateTimeLocal(currentAction.dueAt),
                       addToCalendar: Boolean(currentAction.addToCalendar) || currentAction.presetKey === 'meeting',
+                      sticky: Boolean(currentAction.sticky),
                       meetingMode: client.meetingMode === 'in-person' ? 'in-person' : 'online',
                     })}
                     className="shrink-0 p-1 rounded text-gray-400 hover:text-white"
@@ -612,17 +628,10 @@ export function SalesGoalTimeline({
                   addToCalendar: draft.addToCalendar,
                   presetKey: draft.presetKey,
                   meetingMode: draft.meetingMode,
+                  sticky: draft.sticky,
                 },
                 (patch) => setDraft((prev) => prev ? { ...prev, ...patch } : prev),
               )}
-              <label className="sm:col-span-2 inline-flex items-center gap-2 text-[11px] text-gray-300">
-                <input
-                  type="checkbox"
-                  checked={draft.sticky}
-                  onChange={(event) => setDraft((prev) => prev ? { ...prev, sticky: event.target.checked } : prev)}
-                />
-                Sticky — behold avstanden til handlingen under
-              </label>
               <div className="sm:col-span-2 flex gap-2">
                 <button
                   type="button"

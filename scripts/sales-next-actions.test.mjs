@@ -568,9 +568,13 @@ test('oslo wall clock backfill targets are 15:00 local on 1 Oct and 7 Oct 2026',
   assert.equal(MEETING_TIME_BACKFILL_TARGETS[1].match({ contactPerson: 'Deles Are Terjesen' }), true);
 });
 
-test('påminnelse cannot be unpinned from the meeting', () => {
+test('påminnelse can be set sticky, and starts off', () => {
   const sms = decorateNextActions(client()).find((action) => action.presetKey === 'sms1h');
-  assert.equal(canStickAction(sms), false);
+  assert.equal(canStickAction(sms), true);
+  assert.equal(sms.sticky, false);
+  const meeting = decorateNextActions(client()).find((action) => action.presetKey === 'meeting');
+  assert.equal(canStickAction(meeting), true);
+  assert.equal(meeting.sticky, false);
 });
 
 test('every booked client gets an SMS reminder 24 hours before the meeting', () => {
@@ -1141,34 +1145,69 @@ test('sending an offer checks møte and tilbud', () => {
   assert.equal(again.changed, false);
 });
 
-test('kontrakt checkup is 24h after the contract send, sms/ring, no calendar', () => {
-  const sentAt = '2026-10-06T10:00:00.000Z';
-  const unsigned = ensureContractCheckupAction([], client({ contractSentAt: sentAt, progression: { contractSigned: false } }));
-  assert.equal(unsigned.length, 0);
-  const signed = client({
-    contractSentAt: sentAt,
-    progression: { meetingHeld: true, offerSent: true, contractSigned: true },
+test('meeting can be sticky and keeps its gap when the action below moves', () => {
+  const row = client();
+  const meeting = decorateNextActions(row).find((action) => action.presetKey === 'meeting');
+  const laterAt = new Date(Date.parse(MEETING_AT) + 2 * HOUR_MS).toISOString();
+  const created = applyNextActionMutation(row, {
+    op: 'create',
+    goalKey: 'meetingHeld',
+    presetKey: 'custom',
+    name: 'Etter møtet',
+    dueAt: laterAt,
   });
-  const withCheckup = ensureContractCheckupAction([], signed);
-  const checkup = withCheckup.find((action) => action.presetKey === 'contractCheckup');
+  const stuck = applyNextActionMutation(
+    { ...row, nextActions: created.nextActions },
+    { op: 'update', id: meeting.id, sticky: true },
+  );
+  assert.equal(stuck.error, undefined);
+  const stickyMeeting = stuck.nextActions.find((action) => action.presetKey === 'meeting');
+  const anchor = stuck.nextActions.find((action) => action.name === 'Etter møtet');
+  assert.equal(stickyMeeting.sticky, true);
+  assert.equal(stickyMeeting.stickyAnchorId, anchor.id);
+  assert.equal(canReorderAction(stickyMeeting), false);
+  const gap = Date.parse(anchor.dueAt) - Date.parse(stickyMeeting.dueAt);
+  const movedAnchorAt = new Date(Date.parse(anchor.dueAt) + 3 * HOUR_MS).toISOString();
+  const moved = applyNextActionMutation(
+    { ...row, meetingAt: stuck.meetingAt || row.meetingAt, nextActions: stuck.nextActions },
+    { op: 'update', id: anchor.id, dueAt: movedAnchorAt },
+  );
+  const movedMeeting = moved.nextActions.find((action) => action.id === meeting.id);
+  const movedAnchor = moved.nextActions.find((action) => action.id === anchor.id);
+  assert.equal(Date.parse(movedAnchor.dueAt) - Date.parse(movedMeeting.dueAt), gap);
+  assert.equal(moved.meetingAt, movedMeeting.dueAt);
+});
+
+test('tilbud checkup is 24h after the offer send, sms/ring, no calendar, not sticky', () => {
+  const sentAt = '2026-10-06T10:00:00.000Z';
+  const unsigned = ensureContractCheckupAction([], client({ contractSentAt: sentAt, progression: { offerSent: false } }));
+  assert.equal(unsigned.length, 0);
+  const delivered = applyOfferSentFromDelivery(client({
+    contractSentAt: sentAt,
+    progression: { meetingHeld: false, offerSent: false },
+  }), Date.parse('2026-10-06T11:00:00.000Z'));
+  const checkup = delivered.nextActions.find((action) => action.presetKey === 'contractCheckup' && !action.doneAt);
   assert.ok(checkup);
   assert.equal(checkup.name, CONTRACT_CHECKUP_NAME);
   assert.equal(checkup.format, 'sms-ring');
   assert.equal(checkup.addToCalendar, false);
   assert.equal(checkup.sticky, false);
-  assert.equal(checkup.goalKey, 'afterSale');
+  assert.equal(checkup.goalKey, 'offerSent');
   assert.equal(Date.parse(checkup.dueAt) - Date.parse(sentAt), 24 * HOUR_MS);
+  const afterSend = { ...client({ contractSentAt: sentAt }), progression: delivered.progression, nextActions: delivered.nextActions };
+  assert.equal(getCurrentGoalKey(afterSend), 'contractSigned');
+  assert.equal(getActiveNextAction(afterSend)?.presetKey, 'contractCheckup');
   const checked = applyProgressionChange(
     client({
       contractSentAt: sentAt,
-      progression: { meetingHeld: true, offerSent: true, contractSigned: false },
+      progression: { meetingHeld: true, offerSent: false, contractSigned: false },
     }),
-    'contractSigned',
+    'offerSent',
     true,
+    { nowMs: Date.parse(sentAt) },
   );
   assert.equal(checked.error, undefined);
   const created = checked.nextActions.find((action) => action.presetKey === 'contractCheckup' && !action.doneAt);
   assert.ok(created);
-  assert.equal(getActiveNextAction({ ...signed, nextActions: checked.nextActions })?.presetKey, 'contractCheckup');
-  assert.equal(salesGoalFilledCount(signed), 3);
+  assert.equal(salesGoalFilledCount({ progression: delivered.progression }), 2);
 });
