@@ -1180,6 +1180,38 @@ export function setSalesMakerRun(id, makerPatch = {}) {
   return updateSalesClient(id, { makerRun: mergeMakerRunPatch(current?.makerRun || {}, makerPatch) });
 }
 
+/** Replace makerRun instead of merging, so a client can be unlinked for a new run. */
+export function replaceSalesMakerRun(id, makerRun = {}) {
+  const state = readState();
+  const index = state.findIndex((entry) => entry.id === id);
+  if (index === -1) return null;
+  const current = state[index];
+  const next = normalizeSalesClient({
+    ...current,
+    makerRun: makerRun && typeof makerRun === 'object' ? makerRun : {},
+    updatedAt: nowIso(),
+  });
+  state[index] = next;
+  writeState(state);
+  return next;
+}
+
+/** Replace websiteImport instead of merging, so a preview link can be moved or cleared. */
+export function replaceSalesWebsiteImport(id, websiteImport = {}) {
+  const state = readState();
+  const index = state.findIndex((entry) => entry.id === id);
+  if (index === -1) return null;
+  const current = state[index];
+  const next = normalizeSalesClient({
+    ...current,
+    websiteImport: websiteImport && typeof websiteImport === 'object' ? websiteImport : {},
+    updatedAt: nowIso(),
+  });
+  state[index] = next;
+  writeState(state);
+  return next;
+}
+
 export function setSalesDeveloperQa(id, qaPatch = {}) {
   return updateSalesClient(id, { developerQa: qaPatch });
 }

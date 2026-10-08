@@ -17469,12 +17469,28 @@ app.post('/api/admin/sales/:id/set-maker-run', salesAuth, async (req, res) => {
   if (sales.isSsuSalesProduct(client.product)) {
     return res.status(400).json({ message: 'SSU clients do not use Website Maker runs.' });
   }
+  if (parseBoolean(req.body?.clear, false)) {
+    let updated = sales.replaceSalesMakerRun(client.id, {});
+    if (!updated) return res.status(404).json({ message: 'Sales client not found.' });
+    if (parseBoolean(req.body?.clearPreview, true)) {
+      updated = sales.replaceSalesWebsiteImport(client.id, {}) || updated;
+    }
+    return res.json({
+      ok: true,
+      cleared: true,
+      client: updated,
+      lanOnlyPreview: false,
+    });
+  }
   const makerPatch = req.body?.makerRun && typeof req.body.makerRun === 'object' ? req.body.makerRun : req.body || {};
   const runId = sanitizeText(makerPatch.runId);
   if (!runId) {
     return res.status(400).json({ message: 'makerRun.runId is required.' });
   }
-  const updated = sales.setSalesMakerRun(client.id, makerPatch);
+  let updated = sales.setSalesMakerRun(client.id, makerPatch);
+  if (req.body?.websiteImport && typeof req.body.websiteImport === 'object') {
+    updated = sales.replaceSalesWebsiteImport(client.id, req.body.websiteImport) || updated;
+  }
   if (!updated) return res.status(404).json({ message: 'Sales client not found.' });
   const previewUrl = sanitizeText(updated.makerRun?.previewUrl);
   const dashboardUrl = sanitizeText(updated.makerRun?.dashboardUrl);
