@@ -11,6 +11,7 @@ import {
   buildPipelineQueuePostBody,
   fetchLocalMakerJson,
   makerBrowserUnreachableMessage,
+  queueTabFallbackNeeded,
   waitForLocalMaker,
 } from '../../../lib/maker-browser-client.js';
 
@@ -87,10 +88,20 @@ export async function enqueueMakerQueue({
   if (!body.runIds.length) {
     throw new Error('No Website Maker run is linked.');
   }
-  if (typeof window !== 'undefined' && !asoldiPageIsOnThisComputer(window.location.hostname)) {
+  const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+  const onThisComputer = asoldiPageIsOnThisComputer(hostname);
+  try {
+    return await fetchLocalMakerJson('/api/pipeline-queue', {
+      method: 'POST',
+      body,
+      allowPublicOrigin: !onThisComputer,
+    });
+  } catch (error) {
+    if (typeof window === 'undefined' || !queueTabFallbackNeeded(hostname, error)) {
+      throw error;
+    }
     return enqueueMakerQueueViaTab(body);
   }
-  return fetchLocalMakerJson('/api/pipeline-queue', { method: 'POST', body });
 }
 
 async function enqueueMakerQueueViaTab(body: ReturnType<typeof buildPipelineQueuePostBody>) {
@@ -161,7 +172,7 @@ export async function fetchMakerQueue(
   _websiteMakerBaseUrl = DEVELOPER_MAKER_ORIGIN,
   _authHeaders?: MakerQueueAuthHeaders
 ) {
-  return fetchLocalMakerJson('/api/pipeline-queue');
+  return fetchLocalMakerJson('/api/pipeline-queue', { allowPublicOrigin: true });
 }
 
 export async function cancelMakerQueueItem(
@@ -173,6 +184,7 @@ export async function cancelMakerQueueItem(
   if (!id) throw new Error('itemId is required.');
   return fetchLocalMakerJson(`/api/pipeline-queue?itemId=${encodeURIComponent(id)}`, {
     method: 'DELETE',
+    allowPublicOrigin: true,
   });
 }
 
@@ -183,7 +195,9 @@ export async function fetchMakerRunStatus(
 ) {
   const id = String(runId || '').trim();
   if (!id) throw new Error('Run ID is required.');
-  const run = await fetchLocalMakerJson(`/api/runs/${encodeURIComponent(id)}?poll=1&adopt=0`);
+  const run = await fetchLocalMakerJson(`/api/runs/${encodeURIComponent(id)}?poll=1&adopt=0`, {
+    allowPublicOrigin: true,
+  });
   return {
     run,
     ...summarizeMakerRunForQueue({ ...run, id }),
@@ -199,7 +213,9 @@ export async function findMakerRunBySalesClientId(
   const params = new URLSearchParams({ salesClientId: id });
   const name = String(businessName || '').trim();
   if (name) params.set('businessName', name);
-  const data = await fetchLocalMakerJson(`/api/runs?${params.toString()}`) as {
+  const data = await fetchLocalMakerJson(`/api/runs?${params.toString()}`, {
+    allowPublicOrigin: true,
+  }) as {
     runId?: string;
     steps?: Record<string, unknown>;
     intakeStatus?: string;
@@ -234,9 +250,12 @@ export async function saveMakerRunDomain({
   if (!id) throw new Error('Run ID is required.');
   await fetchLocalMakerJson(`/api/runs/${encodeURIComponent(id)}/save-intake`, {
     method: 'POST',
+    allowPublicOrigin: true,
     body: { answers: { websiteDomain: String(websiteDomain || '').trim() } },
   });
-  const run = await fetchLocalMakerJson(`/api/runs/${encodeURIComponent(id)}?poll=1&adopt=0`);
+  const run = await fetchLocalMakerJson(`/api/runs/${encodeURIComponent(id)}?poll=1&adopt=0`, {
+    allowPublicOrigin: true,
+  });
   const summary = summarizeMakerRunForQueue({ ...run, id });
   const clientId = String(salesClientId || '').trim();
   if (!clientId) return { ok: true, run, ...summary };

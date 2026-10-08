@@ -9,8 +9,10 @@ import {
 import { MakerRunTools } from './MakerRunTools';
 import { DeveloperGoalTimeline } from './DeveloperGoalTimeline';
 import { DeveloperRequestThread } from './DeveloperRequestThread';
+import { DeveloperLanguageLockPopup } from './DeveloperLanguageLockPopup';
+import { DeveloperPagesPopup } from './DeveloperPagesPopup';
 import { DeveloperAuthImage, DeveloperClientBrief, DeveloperMediaLibrary, type BriefMediaFile, type MaterialDot } from './DeveloperClientBrief';
-import { enqueueMakerQueue, ensureLocalMaker, fetchMakerRunStatus, findMakerRunBySalesClientId, openLanguageLock, saveMakerRunDomain } from './makerQueue';
+import { enqueueMakerQueue, ensureLocalMaker, fetchMakerRunStatus, findMakerRunBySalesClientId, saveMakerRunDomain } from './makerQueue';
 import { createSalesMakerRun } from './MakerRunTools';
 import { summarizeMaterialDots } from '../../../lib/client-material-dots.js';
 import {
@@ -198,6 +200,8 @@ export function DeveloperClientCard({
   const [liveStatus, setLiveStatus] = useState<Record<string, unknown> | null>(null);
   const liveRunId = String(liveStatus?.runId || makerRunId).trim();
   const [chipMenu, setChipMenu] = useState('');
+  const [langOpen, setLangOpen] = useState(false);
+  const [pagesOpen, setPagesOpen] = useState(false);
   const [domainDraft, setDomainDraft] = useState('');
   const [savingDomain, setSavingDomain] = useState(false);
   const [goalBusy, setGoalBusy] = useState('');
@@ -584,17 +588,11 @@ export function DeveloperClientCard({
       return;
     }
     if (resolved.type === 'language') {
-      try {
-        await ensureLocalMaker();
-      } catch (error) {
-        onError(error instanceof Error ? error.message : 'Kunne ikke starte Website Creator.');
-        return;
-      }
-      openLanguageLock({
-        runId: liveRunId,
-        websiteMakerBaseUrl,
-        businessName: item.businessName,
-      });
+      setLangOpen(true);
+      return;
+    }
+    if (resolved.type === 'pages') {
+      setPagesOpen(true);
       return;
     }
     if (resolved.type === 'ready') {
@@ -780,9 +778,17 @@ export function DeveloperClientCard({
           const active = starting || queueState === 'running' || queueState === 'queued' || live.running;
           const clickable = canWork && (resolved.type === 'enqueue' || resolved.type === 'enqueue-until' || resolved.type === 'language' || resolved.type === 'ready' || resolved.type === 'draft');
           const visualClass = visual === 'ready' ? 'ready' : (clickable ? visual : 'grey');
+          const pageCatalog = Array.isArray((liveStatus?.run as { metadata?: { pageCatalog?: unknown[] } } | undefined)?.metadata?.pageCatalog)
+            ? ((liveStatus?.run as { metadata?: { pageCatalog?: unknown[] } }).metadata?.pageCatalog || [])
+            : [];
+          const includedCount = Array.isArray((liveStatus?.run as { metadata?: { includedPageRoutes?: unknown[] } } | undefined)?.metadata?.includedPageRoutes)
+            ? ((liveStatus?.run as { metadata?: { includedPageRoutes?: unknown[] } }).metadata?.includedPageRoutes || []).length
+            : 0;
           const label = chip.id === 'lang' && languageCode
             ? `Lang ${languageCode}`
-            : chip.label;
+            : chip.id === 'pages'
+              ? (includedCount ? `Sider ${includedCount}` : pageCatalog.length ? `Sider ${pageCatalog.length}` : chip.label)
+              : chip.label;
           const title = starting
             ? 'Starter Website Creator…'
             : queueState === 'running' || live.running
@@ -1321,6 +1327,31 @@ export function DeveloperClientCard({
         deletingKey={deletingMedia}
         onDelete={(file) => void deleteMedia(file)}
       />
+      {langOpen && liveRunId ? (
+        <DeveloperLanguageLockPopup
+          runId={liveRunId}
+          websiteMakerBaseUrl={websiteMakerBaseUrl}
+          businessName={item.businessName}
+          authHeaders={developmentAuthHeaders()}
+          onClose={() => setLangOpen(false)}
+          onChanged={() => {
+            window.dispatchEvent(new CustomEvent('asoldi-maker-language', { detail: { runId: liveRunId } }));
+          }}
+        />
+      ) : null}
+      {pagesOpen && liveRunId ? (
+        <DeveloperPagesPopup
+          runId={liveRunId}
+          businessName={item.businessName}
+          pages={Array.isArray((liveStatus?.run as { metadata?: { pageCatalog?: unknown[] } } | undefined)?.metadata?.pageCatalog)
+            ? ((liveStatus?.run as { metadata?: { pageCatalog?: Array<{ routePath?: string; sourceRoutePath?: string; pageTitle?: string; pageType?: string }> } }).metadata?.pageCatalog || [])
+            : []}
+          includedPageRoutes={Array.isArray((liveStatus?.run as { metadata?: { includedPageRoutes?: string[] | null } } | undefined)?.metadata?.includedPageRoutes)
+            ? (liveStatus?.run as { metadata?: { includedPageRoutes?: string[] | null } }).metadata?.includedPageRoutes || null
+            : null}
+          onClose={() => setPagesOpen(false)}
+        />
+      ) : null}
     </div>
   );
 }

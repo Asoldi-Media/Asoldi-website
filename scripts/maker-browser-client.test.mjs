@@ -8,8 +8,9 @@ import {
   buildPipelineQueuePostBody,
   canThisPageFetchLocalMaker,
   LOCAL_MAKER_ORIGIN,
-  makerApiUrl,
   makerBrowserUnreachableMessage,
+  queueTabFallbackNeeded,
+  makerApiUrl,
   makerHealthUrl,
   makerPublicPageCannotFetchMessage,
 } from '../lib/maker-browser-client.js';
@@ -50,6 +51,22 @@ test('queue POST sends run ids to Maker, not a host field', () => {
       untilTarget: 'layout-colors-style',
     }
   );
+});
+
+test('Run posts to Maker before opening a Website Creator tab', () => {
+  const blocked = makerBrowserUnreachableMessage();
+  assert.equal(queueTabFallbackNeeded('asoldi.com', blocked), true);
+  assert.equal(queueTabFallbackNeeded('asoldi.com', 'Website Maker error (409).'), false);
+  assert.equal(queueTabFallbackNeeded('asoldi.com', { reachedMaker: true, message: 'Already queued.' }), false);
+  assert.equal(queueTabFallbackNeeded('127.0.0.1', blocked), false);
+  const makerQueue = readFileSync(join(here, '../app/pages/developer/makerQueue.ts'), 'utf8');
+  const enqueueFn = makerQueue.slice(
+    makerQueue.indexOf('export async function enqueueMakerQueue'),
+    makerQueue.indexOf('async function enqueueMakerQueueViaTab')
+  );
+  assert.match(enqueueFn, /allowPublicOrigin: !onThisComputer/);
+  assert.ok(enqueueFn.indexOf('fetchLocalMakerJson') < enqueueFn.indexOf('enqueueMakerQueueViaTab'));
+  assert.match(makerQueue, /allowPublicOrigin: true/);
 });
 
 test('developer queue helpers call Maker from the browser', () => {

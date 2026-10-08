@@ -422,11 +422,12 @@ test('Maker error does not fake an empty client media library', () => {
 test('progress chips stay in the locked order and enqueue only through T03', () => {
   assert.deepEqual(
     DEVELOPER_PROGRESS_CHIPS.map((chip) => chip.id),
-    ['draft', '1', 'lang', '1.5', '2.1', '2.2', 'layout', 'maps', 'cms', 'seo']
+    ['draft', '1', 'lang', 'pages', '1.5', '2.1', '2.2', 'layout', 'maps', 'cms', 'seo']
   );
   const card = readFileSync(join(here, '../app/pages/developer/DeveloperClientCard.tsx'), 'utf8');
   assert.match(card, /enqueueMakerQueue/);
-  assert.match(card, /openLanguageLock/);
+  assert.match(card, /DeveloperLanguageLockPopup/);
+  assert.match(card, /DeveloperPagesPopup/);
   assert.match(card, /Custom edit/);
   assert.match(card, /Tools & details/);
   assert.match(card, /variant="tools"/);

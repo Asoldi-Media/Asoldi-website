@@ -50,7 +50,7 @@ export function DeveloperLanguageLockPopup({
 
   const refresh = useCallback(async () => {
     if (!runId) return;
-    const data = await fetchLocalMakerJson(languagePath(runId)) as LanguageInfo;
+    const data = await fetchLocalMakerJson(languagePath(runId), { allowPublicOrigin: true }) as LanguageInfo;
     setInfo(data);
     setChoice((prev) => prev || String(data?.detection?.candidate?.code || ''));
     setErr('');
@@ -68,6 +68,7 @@ export function DeveloperLanguageLockPopup({
       const overridden = Boolean(detected) && choice !== detected;
       await fetchLocalMakerJson(languagePath(runId), {
         method: 'POST',
+        allowPublicOrigin: true,
         body: {
           code: choice,
           source: overridden ? 'override' : info?.detection?.source || 'explicit',
@@ -88,7 +89,7 @@ export function DeveloperLanguageLockPopup({
     setBusy(true);
     setErr('');
     try {
-      await fetchLocalMakerJson(languagePath(runId), { method: 'DELETE' });
+      await fetchLocalMakerJson(languagePath(runId), { method: 'DELETE', allowPublicOrigin: true });
       setChoice('');
       await refresh();
       window.dispatchEvent(new CustomEvent('asoldi-maker-language', { detail: { runId } }));
