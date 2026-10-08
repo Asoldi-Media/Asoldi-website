@@ -133,6 +133,13 @@ test('pasted Fireflies title finds the stored meeting', async () => {
     hooks.firefliesIdsFromPaste('https://app.fireflies.ai/view/sales-meeting::01M39D9CR6WJ5C5BQHKWV3YE6D'),
     ['sales-meeting::01M39D9CR6WJ5C5BQHKWV3YE6D', '01M39D9CR6WJ5C5BQHKWV3YE6D']
   );
+  assert.deepEqual(
+    hooks.firefliesGraphqlIdsFromPaste('https://app.fireflies.ai/view/sales-meeting::01M39D9CR6WJ5C5BQHKWV3YE6D'),
+    ['01M39D9CR6WJ5C5BQHKWV3YE6D']
+  );
+  assert.equal(hooks.storedMeetingHasTalk({ transcript: 'Kunde: hei' }), true);
+  assert.equal(hooks.storedMeetingHasTalk({ summary: 'Kort' }), true);
+  assert.equal(hooks.storedMeetingHasTalk({ title: 'Møte' }), false);
 });
 
 test('fireflies matcher: only the booked sales meeting counts, not a later calendar reminder', () => {
@@ -274,6 +281,63 @@ test('contract terms: statutory late interest, six-month liability, permanent ow
   assert.match(blob, /Domain access/);
   assert.match(blob, /inspiration materials/);
   assert.match(blob, /Sections 6 and 7 do not apply/);
+});
+
+test('opening Tilbud does not wait for Fireflies GraphQL', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { dirname, join } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const server = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'server.js'), 'utf8');
+  const offerGet = server.slice(
+    server.indexOf("app.get('/api/admin/sales/:id/offer', salesAuth"),
+    server.indexOf("app.get('/api/admin/sales/:id/offer/meeting'")
+  );
+  const meetingGet = server.slice(
+    server.indexOf("app.get('/api/admin/sales/:id/offer/meeting'"),
+    server.indexOf("app.put('/api/admin/sales/:id/offer'")
+  );
+  assert.match(offerGet, /scheduleFirefliesTranscriptIngest/);
+  assert.equal(offerGet.includes('await ingestRecentFirefliesMeetLinks'), false);
+  assert.equal(offerGet.includes('await hydrateOfferMeetings'), false);
+  assert.equal(meetingGet.includes('await hydrateOfferMeetings'), false);
+  assert.match(meetingGet, /refreshOfferClientMeetings/);
+});
+
+test('client card meetings show stored transcript text and hide live stubs', async () => {
+  const hooks = await import('../lib/fireflies-webhook.js');
+  const workshop = await import('../lib/workshop-meetings.js');
+  hooks.storeFirefliesMeeting({
+    meetingId: 'ff-card',
+    title: 'Salgsmøte',
+    transcript: 'Kunde: vi vil ha ny nettside.',
+    meetingLink: 'https://meet.google.com/aaa-bbbb-ccc',
+  });
+  const shown = workshop.presentClientMeetings({
+    id: 'c-card',
+    agreedTime: true,
+    meetingAt: '2026-09-18T10:00:00.000Z',
+    meetings: [
+      {
+        meetingId: 'live:c-card:open',
+        title: 'Fireflies ble sendt inn',
+        meetLink: 'https://meet.google.com/aaa-bbbb-ccc',
+        hasTranscript: false,
+        linkedBy: 'live-join',
+        forSalesMeeting: true,
+        purpose: 'sales',
+      },
+      {
+        meetingId: 'ff-card',
+        title: 'Salgsmøte',
+        meetLink: 'https://meet.google.com/aaa-bbbb-ccc',
+        hasTranscript: false,
+        linkedBy: 'meet-link',
+        purpose: 'sales',
+      },
+    ],
+  });
+  assert.equal(shown.some((row) => String(row.meetingId).startsWith('live:')), false);
+  assert.equal(shown.find((row) => row.meetingId === 'ff-card')?.hasTranscript, true);
 });
 
 test('fireflies matcher: only the booked Google Meet owns the recording', () => {

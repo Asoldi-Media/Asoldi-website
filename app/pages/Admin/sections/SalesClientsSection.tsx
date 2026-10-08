@@ -347,7 +347,10 @@ function extractOrgNumberFromProffUrl(value = '') {
   return queryOrg.length === 9 ? queryOrg : '';
 }
 
-function salesMeetLink(client: { meetingMode?: string; calendar?: { meetLink?: string } | null }) {
+function salesMeetLink(client: {
+  meetingMode?: string;
+  calendar?: { meetLink?: string; organizerEmail?: string; googleEmail?: string } | null;
+}) {
   if (client?.meetingMode !== 'online') return '';
   const link = String(client?.calendar?.meetLink || '').trim();
   if (!/^https:\/\/meet\.google\.com\/[a-z0-9]{3}-[a-z0-9]{4}-[a-z0-9]{3}/i.test(link)
@@ -509,6 +512,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkAssignOwnerId, setBulkAssignOwnerId] = useState('');
   const [sendingMailKey, setSendingMailKey] = useState<string | null>(null);
+  const [meetOpeningId, setMeetOpeningId] = useState('');
   const [loading, setLoading] = useState(() => !cachedList);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -845,6 +849,35 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
     const allowedIds = new Set(productClients.map((client) => client.id));
     return meetingMapPins.filter((pin) => allowedIds.has(pin.clientId));
   }, [meetingMapPins, productClients]);
+
+  async function openOwnedMeet(client: { id: string }) {
+    setMeetOpeningId(client.id);
+    setError('');
+    try {
+      const data = await request(`/admin/sales/${client.id}/open-meet`, { method: 'POST', body: '{}' }) as {
+        openUrl?: string;
+        meetLink?: string;
+        replaced?: boolean;
+        clientNotified?: boolean;
+        hostEmail?: string;
+        client?: { id: string };
+      };
+      if (data.client?.id) {
+        setClients((prev) => prev.map((entry) => (entry.id === data.client?.id ? { ...entry, ...data.client } : entry)));
+      }
+      const url = String(data.openUrl || data.meetLink || '').trim();
+      if (!url) throw new Error('No Meet link');
+      window.open(url, '_blank', 'noopener,noreferrer');
+      if (data.replaced && data.clientNotified) {
+        const host = data.hostEmail ? ` (${data.hostEmail})` : '';
+        setNotice(`Nytt Meet-rom${host}. Kunden fikk den oppdaterte kalenderinvitasjonen.`);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not open the meeting.');
+    } finally {
+      setMeetOpeningId('');
+    }
+  }
 
   async function request(path: string, init?: RequestInit) {
     expireFatCookies();
@@ -2416,11 +2449,12 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                   {salesMeetLink(client) && (
                     <button
                       type="button"
-                      onClick={() => window.open(salesMeetLink(client), '_blank')}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
-                      title="Åpner Meet-rommet. Fireflies sendes inn ved kalendertid via API — slipp ham inn under Deltakere hvis Meet ber om det."
+                      onClick={() => void openOwnedMeet(client)}
+                      disabled={meetOpeningId === client.id}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
+                      title="Sjekker at selgeren som eier kunden er vert, og åpner det rommet. Kunden har samme lenke. Byttes rommet, får kunden en oppdatert invitasjon."
                     >
-                      <ExternalLink size={13} />
+                      {meetOpeningId === client.id ? <Loader2 size={13} className="animate-spin" /> : <ExternalLink size={13} />}
                       Meet link
                     </button>
                   )}

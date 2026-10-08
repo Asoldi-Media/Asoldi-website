@@ -106,6 +106,7 @@ test('unsigned active asoldi client appears on the preview board', () => {
   const preview = buildPreviewItems([unsigned], [mong]);
   assert.equal(preview.length, 1);
   assert.equal(preview[0].businessName, 'New Cafe');
+  assert.equal(preview[0].contractSigned, false);
   assert.equal(buildDevelopmentItems([unsigned], [mong]).length, 0);
 });
 
@@ -208,6 +209,8 @@ test('a signed client ranks by tier weeks, and a custom offer without a date has
   const tierItem = buildDevelopmentItems([tier2], [])[0];
   assert.equal(tierItem.rankAt.slice(0, 10), '2026-10-21');
   assert.equal(tierItem.meetingAt, '2026-09-01T10:00:00.000Z');
+  assert.equal(tierItem.contractSigned, true);
+  assert.equal(typeof tierItem.salesGoalFilled, 'number');
   const custom = {
     ...bynesetSales,
     id: 'sales-custom',

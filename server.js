@@ -132,12 +132,17 @@ import {
   MYPHONER_ADMIN_OWNER_KEY,
   resolveMyphonerSalesOwnerId as pickMyphonerSalesOwnerId,
 } from './lib/myphoner-sales-owner.js';
+import { calendarDurationForMode } from './lib/sales-meeting-duration.js';
 import {
   calendarOwnerIdForSync,
   calendarRecordIsOnBlockedMailbox,
   isBlockedCalendarAccountKey,
   isBlockedCalendarGoogleEmail,
+  isUnacceptableMeetingHostEmail,
   salesClientNeedsCalendarMove,
+  salesMeetHostIsVerified,
+  salesMeetJoinUrl,
+  salesMeetingIsInProgress,
   sanitizeMyphonerDefaultOwnerKey,
   shouldSyncSalesMeetingCalendar,
 } from './lib/sales-calendar-owner.js';
@@ -193,7 +198,7 @@ import { contractHtmlForOffer } from './lib/offer-contract-html.js';
 import { extractOfferLetterBody } from './lib/offer-letter-html.js';
 import { isDeepseekConfigured } from './lib/deepseek.js';
 import { clientIntentSourceHash, fillOfferFromTranscript, meetingContextIsTooThin, reflectContractFromEmail, summarizeClientIntent } from './lib/offer-ai.js';
-import { clientOwnedMeetLinks, matchMeetingToClients, planFirefliesMeetLinkBackfill, recordingMatchesSalesMeeting } from './lib/fireflies-client-match.js';
+import { clientOwnedMeetLinks, matchMeetingToClients, normalizeFirefliesMeetLink, planFirefliesMeetLinkBackfill, recordingMatchesSalesMeeting } from './lib/fireflies-client-match.js';
 import { describeFirefliesMedia, firefliesMediaFilePath, persistFirefliesMedia } from './lib/fireflies-media.js';
 import { CUSTOM_TIER_ID, WEBSITE_TIERS, formatKr, resolveTier, tierById, toClientWebsitePlan } from './lib/website-tiers.js';
 import { buildSalesSender, normalizeAsoldiFromEmail } from './lib/sales-sender.js';
@@ -211,16 +216,18 @@ import {
   isFirefliesWebhookConfigured,
   buildFirefliesMeetingRecord,
   fetchFirefliesTranscript,
-  firefliesIdsFromPaste,
+  firefliesGraphqlIdsFromPaste,
   findStoredFirefliesMeetingForMeetLink,
   listStoredFirefliesMeetings,
   listStoredFirefliesMeetingsForMeetLink,
   meetingRefForClient,
   rankMeetingsByTitle,
   storeFirefliesMeeting,
+  storedMeetingHasTalk,
   notifyFirefliesRecording,
   readFirefliesWebhookConfig,
   readStoredFirefliesMeeting,
+  readStoredFirefliesMeetingMap,
   refreshFirefliesMeeting,
   updateStoredFirefliesMeeting,
 } from './lib/fireflies-webhook.js';
@@ -7772,11 +7779,11 @@ function canAccessSalesClient(req, client) {
   return salesUserOwnerKeys(req.salesUser).has(ownerId);
 }
 
-function jsonSalesClient(client) {
+function jsonSalesClient(client, storedMap = null) {
   if (!client) return client;
   return {
     ...client,
-    meetings: presentClientMeetings(client),
+    meetings: presentClientMeetings(client, storedMap),
   };
 }
 
@@ -8115,6 +8122,7 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
   const requireMeetLink = Boolean(options?.requireMeetLink);
   const actorAccountKey = sanitizeText(options?.actorAccountKey);
   const forceGuestInvite = Boolean(options?.forceGuestInvite);
+  const forceOwnerMeet = Boolean(options?.forceOwnerMeet);
   const warnings = [];
   let nextClient = client;
   let calendarInviteSent = false;
@@ -8154,15 +8162,21 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
     previousAccountKey: isBlockedCalendarAccountKey(previousAccountKey) ? '' : previousAccountKey,
     preferredAccountKeys,
   });
-  if (isBlockedCalendarAccountKey(accountKey) || isBlockedCalendarGoogleEmail(getGoogleCalendarStatus(accountKey).googleEmail)) {
+  const syncCalendarStatus = getGoogleCalendarStatus(accountKey);
+  if (isBlockedCalendarAccountKey(accountKey) || isBlockedCalendarGoogleEmail(syncCalendarStatus.googleEmail)) {
     warnings.push('Refusing to write this meeting onto the personal Gmail calendar.');
+    return { client: nextClient, warnings, calendarInviteSent };
+  }
+  if (isUnacceptableMeetingHostEmail(syncCalendarStatus.googleEmail)) {
+    warnings.push('Refusing to host this meeting on a shared mailbox. Connect the sales rep’s own Google Calendar.');
     return { client: nextClient, warnings, calendarInviteSent };
   }
   const deleteAccountKey = previousAccountKey || accountKey;
   const storedCalendarId = sanitizeText(
     previousClient?.calendar?.calendarId || nextClient?.calendar?.calendarId
   );
-  const targetCalendarId = calendarIdForAccount(accountKey);
+  const configuredCalendarId = calendarIdForAccount(accountKey);
+  const targetCalendarId = isUnacceptableMeetingHostEmail(configuredCalendarId) ? 'primary' : configuredCalendarId;
   const isOnline = normalizeMeetingMode(nextClient?.meetingMode) === 'online';
   const deleteEvent = (eventId, key = deleteAccountKey) =>
     deleteMeetingEvent(eventId, key, storedCalendarId ? { calendarId: storedCalendarId } : {});
@@ -8184,6 +8198,17 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
 
   const calendarStatus = getGoogleCalendarStatus(accountKey);
   if (calendarStatus.configured && calendarStatus.connected) {
+    const ownerEmail = (await accountKeyToEmail(calendarOwnerIdForSync(nextClient?.ownerId || ''))).toLowerCase();
+    const tokenEmail = sanitizeText(calendarStatus.googleEmail).toLowerCase();
+    const expectedOwnerEmail = ownerEmail && !isUnacceptableMeetingHostEmail(ownerEmail)
+      ? ownerEmail
+      : tokenEmail;
+    if (expectedOwnerEmail && tokenEmail && tokenEmail !== expectedOwnerEmail) {
+      warnings.push(
+        `This meeting must be hosted by ${expectedOwnerEmail}. The connected Google account is ${tokenEmail}.`
+      );
+      return { client: nextClient, warnings, calendarInviteSent };
+    }
     try {
       const currentEventId = sanitizeText(previousClient?.calendar?.eventId || nextClient?.calendar?.eventId);
       const guestAlreadyInvited = Boolean(sanitizeText(nextClient?.calendar?.guestInvitedAt));
@@ -8235,14 +8260,19 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
           `[calendar] recreate id=${sanitizeText(nextClient?.id)} event=${eventIdForUpsert} from=${sanitizeText(previousClient?.meetingAt)} to=${sanitizeText(nextClient?.meetingAt)} mode=${sanitizeText(previousClient?.meetingMode)}->${sanitizeText(nextClient?.meetingMode)}`
         );
       }
+      const upsertCalendarId = eventIdForUpsert
+        ? ((storedCalendarId && !isUnacceptableMeetingHostEmail(storedCalendarId)) ? storedCalendarId : targetCalendarId)
+        : targetCalendarId;
       const calendarMeta = await upsertMeetingEvent(
         nextClient,
         eventIdForUpsert,
         accountKey,
         {
-          calendarId: eventIdForUpsert ? (storedCalendarId || targetCalendarId) : targetCalendarId,
+          calendarId: upsertCalendarId,
           sendUpdates: notifyAttendees ? 'all' : 'none',
-          includeAttendees: notifyAttendees || guestAlreadyInvited,
+          includeAttendees: notifyAttendees || guestAlreadyInvited || (
+            forceOwnerMeet && Boolean(sanitizeText(nextClient?.reminders?.thankYouSentAt))
+          ),
           forceGuestInvite: notifyAttendees && (forceGuestInvite || !guestAlreadyInvited || !eventIdForUpsert || forceRecreate),
           // Fred only when the confirmation invite is actually sent. Silent
           // MyPhoner/unassigned creates must not save him without emailing him.
@@ -8250,9 +8280,22 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
           addFireflies: isOnline && !Boolean(nextClient?.progression?.meetingHeld) && (notifyAttendees || firefliesAlreadyInvited),
           keepFireflies: firefliesAlreadyInvited,
           forceRecreate,
+          expectedOwnerEmail,
+          verifiedHostEmail: sanitizeText(nextClient?.calendar?.meetHostVerifiedEmail),
+          preserveForeignMeet: forceOwnerMeet
+            ? false
+            : salesMeetingIsInProgress(
+              nextClient?.meetingAt,
+              calendarDurationForMode(nextClient?.meetingMode)
+            ),
         }
       );
-      if (notifyAttendees) {
+      if (calendarMeta.foreignMeetKept) {
+        warnings.push(
+          'This Meet room is still hosted by another Google account. It stays up through this meeting so nobody is dropped. The next sync after the meeting puts the sales rep in charge.'
+        );
+      }
+      if (notifyAttendees || calendarMeta.replacedForeignMeet) {
         const previousSequence = Number(nextClient?.calendar?.inviteSequence) || 0;
         calendarMeta.inviteSequence = previousSequence + 1;
         calendarMeta.guestInvitedAt = new Date().toISOString();
@@ -8553,6 +8596,7 @@ async function syncCalendarInviteForThankYou(client, { actorAccountKey = '', req
     forceGuestInvite: true,
     requireMeetLink,
     actorAccountKey,
+    forceOwnerMeet: true,
   });
   const nextClient = syncResult.client || client;
   const warnings = Array.isArray(syncResult.warnings) ? [...syncResult.warnings] : [];
@@ -8701,6 +8745,17 @@ async function sendSalesThankYou(client, { force = false, actorAccountKey = '', 
   if (isOnline && !isRealGoogleMeetLink(client?.calendar?.meetLink)) {
     return { sent: false, reason: 'missing-meet-link', client, warnings: syncResult.warnings || [] };
   }
+  if (isOnline && !salesMeetHostIsVerified(client?.calendar?.organizerEmail, client?.calendar?.meetHostVerifiedEmail)) {
+    return {
+      sent: false,
+      reason: 'meet-host',
+      client,
+      warnings: [
+        ...(syncResult.warnings || []),
+        'The Meet room is not hosted by the sales rep who owns this client. Confirmation was not sent.',
+      ],
+    };
+  }
 
   const sender = await resolveSalesSenderForAccount(
     salesUser || salesUserFromAccountKey(actorAccountKey || client?.ownerId || client?.calendar?.accountKey)
@@ -8816,6 +8871,9 @@ function salesEmailFailureMessage(reason = '') {
   }
   if (reason === 'missing-meet-link') {
     return 'Online meeting has no real Google Meet link yet. Connect Google Calendar on Sales, then send again.';
+  }
+  if (reason === 'meet-host') {
+    return 'The Meet room is not hosted by the sales rep who owns this client. Connect that rep’s Google Calendar and send again. The email was not sent.';
   }
   return 'Could not send email.';
 }
@@ -11554,6 +11612,21 @@ async function salesOwnerEmailMap() {
   return map;
 }
 
+function dropLiveJoinStubsForMeetLink(clientId, meetLink, keepMeetingId = '') {
+  const client = sales.getSalesClientById(clientId);
+  const wanted = normalizeFirefliesMeetLink(meetLink);
+  if (!client || !wanted) return client;
+  const keep = sanitizeText(keepMeetingId);
+  for (const row of client.meetings || []) {
+    if (!isPlaceholderMeetingId(row.meetingId) || (keep && sanitizeText(row.meetingId) === keep)) continue;
+    if (normalizeFirefliesMeetLink(row.meetLink) !== wanted) continue;
+    sales.unlinkMeetingFromSalesClient(clientId, row.meetingId);
+    stripMeetingFromClientOffer(clientId, row.meetingId);
+    clearFirefliesIdFromClientSlots(clientId, row.meetingId);
+  }
+  return sales.getSalesClientById(clientId) || client;
+}
+
 function linkFirefliesMeeting(clientId, ref) {
   const client = sales.getSalesClientById(clientId);
   const applied = applyFirefliesPurpose(client || {}, {
@@ -11561,6 +11634,9 @@ function linkFirefliesMeeting(clientId, ref) {
     forSalesMeeting: recordingMatchesSalesMeeting(client || {}, ref),
   });
   sales.linkMeetingToSalesClient(clientId, applied.ref);
+  if (!isPlaceholderMeetingId(applied.ref.meetingId)) {
+    dropLiveJoinStubsForMeetLink(clientId, applied.ref.meetLink, applied.ref.meetingId);
+  }
   const latestForAction = sales.getSalesClientById(clientId) || client;
   const attached = attachFirefliesToMatchingAction(decorateNextActions(latestForAction || {}), applied.ref);
   const patch = {};
@@ -13040,9 +13116,10 @@ function cachedSalesListRows() {
   const key = `${sales.salesDataRevision()}:${salesOffers.offersDataRevision()}`;
   if (salesListCache.key === key && Array.isArray(salesListCache.rows)) return salesListCache.rows;
   const offersByClient = salesOffers.latestOffersByClient();
+  const storedMap = readStoredFirefliesMeetingMap();
   const rows = sales.getSalesClients().map((client) => {
     const offer = offersByClient.get(sanitizeText(client.id)) || null;
-    return { ...jsonSalesClient(client), offerStatus: offer ? offer.status : '' };
+    return { ...jsonSalesClient(client, storedMap), offerStatus: offer ? offer.status : '' };
   });
   salesListCache = {
     key: `${sales.salesDataRevision()}:${salesOffers.offersDataRevision()}`,
@@ -15003,7 +15080,7 @@ app.post('/api/admin/sales/:id/send-composed-email', salesAuth, async (req, res)
     let calendarWarnings = [];
     if (isThankYou) {
       const syncResult = await syncCalendarInviteForThankYou(client, {
-        actorAccountKey: req.salesUser.accountKey,
+        actorAccountKey: thankYouSendActor(client, req.salesUser).actorAccountKey,
         requireMeetLink: isOnline,
       });
       client = syncResult.client || client;
@@ -15343,6 +15420,65 @@ async function ingestRecentFirefliesMeetLinks() {
   }
 }
 
+async function hydratePendingClientTranscripts({ max = 6 } = {}) {
+  const ids = [];
+  const seen = new Set();
+  for (const client of sales.getSalesClients()) {
+    for (const row of client.meetings || []) {
+      const id = sanitizeText(row.meetingId);
+      if (!id || seen.has(id) || isPlaceholderMeetingId(id)) continue;
+      if (row.hasTranscript || storedMeetingHasTalk(readStoredFirefliesMeeting(id))) {
+        if (!row.hasTranscript && storedMeetingHasTalk(readStoredFirefliesMeeting(id))) {
+          linkStoredTranscriptToClient(readStoredFirefliesMeeting(id), {
+            clientId: client.id,
+            linkedBy: row.linkedBy,
+            reasons: row.reasons || ['Transkriptet lå allerede i Fireflies-arkivet'],
+          });
+        }
+        continue;
+      }
+      seen.add(id);
+      ids.push(id);
+    }
+  }
+  let fetched = 0;
+  for (const id of ids) {
+    if (fetched >= max) break;
+    await persistFetchedFirefliesTranscript(id);
+    fetched += 1;
+  }
+}
+
+let firefliesIngestAt = 0;
+let firefliesIngestInFlight = null;
+let firefliesIngestInterval = null;
+
+function scheduleFirefliesTranscriptIngest({ force = false } = {}) {
+  const now = Date.now();
+  if (firefliesIngestInFlight) return firefliesIngestInFlight;
+  if (!force && now - firefliesIngestAt < 20_000) return null;
+  firefliesIngestAt = now;
+  firefliesIngestInFlight = (async () => {
+    try {
+      await ingestRecentFirefliesMeetLinks();
+      ensureFirefliesMeetLinkBackfill({ force: true });
+      await hydratePendingClientTranscripts({ max: 6 });
+    } catch (error) {
+      console.warn(`[fireflies] transcript ingest ${sanitizeText(error?.message) || error}`);
+    } finally {
+      firefliesIngestInFlight = null;
+    }
+  })();
+  return firefliesIngestInFlight;
+}
+
+function startFirefliesTranscriptIngestLoop() {
+  if (firefliesIngestInterval) return;
+  firefliesIngestInterval = setInterval(() => {
+    void scheduleFirefliesTranscriptIngest();
+  }, SALES_REMINDER_POLL_MS);
+}
+
 /** Transcripts already stored for this client's booked Meet, so Bytt opptak can list them. */
 function linkCalendarSessionTranscripts(client) {
   if (!client?.id) return client;
@@ -15389,31 +15525,81 @@ function loadStoredOrClientMeeting(client, meetingId) {
   };
 }
 
+function linkStoredTranscriptToClient(record, { clientId = '', linkedBy = '', reasons = [] } = {}) {
+  const id = sanitizeText(record?.meetingId);
+  const targetId = sanitizeText(clientId);
+  if (!id || !targetId) return null;
+  const client = sales.getSalesClientById(targetId);
+  const existing = (client?.meetings || []).find((row) => sanitizeText(row.meetingId) === id);
+  return linkFirefliesMeeting(targetId, meetingRefForClient({
+    ...record,
+    meetLink: record.meetingLink || record.meetLink || existing?.meetLink,
+  }, {
+    clientId: targetId,
+    businessName: client?.businessName,
+    confidence: sanitizeText(existing?.confidence) || 'high',
+    reasons: reasons.length ? reasons : (existing?.reasons || ['Fireflies-transkriptet er hentet']),
+    linkedBy: sanitizeText(linkedBy) || existing?.linkedBy || 'meet-link',
+  }, { linkedBy: sanitizeText(linkedBy) || existing?.linkedBy || 'meet-link' }));
+}
+
+function syncClientTranscriptFlagsFromStore(client) {
+  if (!client?.id) return client;
+  let current = client;
+  for (const row of current.meetings || []) {
+    const id = sanitizeText(row.meetingId);
+    if (!id || isPlaceholderMeetingId(id) || row.hasTranscript) continue;
+    const stored = readStoredFirefliesMeeting(id);
+    if (!storedMeetingHasTalk(stored)) continue;
+    current = linkStoredTranscriptToClient(stored, {
+      clientId: current.id,
+      linkedBy: row.linkedBy,
+      reasons: row.reasons || ['Transkriptet lå allerede i Fireflies-arkivet'],
+    }) || current;
+  }
+  return sales.getSalesClientById(client.id) || current;
+}
+
+function refreshOfferClientMeetings(client, { force = false } = {}) {
+  if (!client?.id) return client;
+  let current = ensureOfferMeetingHistory(client);
+  current = clientAfterFirefliesBackfill(current, { force });
+  current = linkCalendarSessionTranscripts(current);
+  return syncClientTranscriptFlagsFromStore(current);
+}
+
 async function persistFetchedFirefliesTranscript(meetingId) {
   const id = sanitizeText(meetingId);
   const config = readFirefliesWebhookConfig();
   if (!id || isPlaceholderMeetingId(id) || !config.apiKey) return readStoredFirefliesMeeting(id);
   const stored = readStoredFirefliesMeeting(id);
-  if (sanitizeText(stored?.transcript) || sanitizeText(stored?.summary)) return stored;
+  if (storedMeetingHasTalk(stored)) {
+    const match = matchMeetingToClients(stored, sales.getSalesClients());
+    const ownerId = sanitizeText(match.best?.clientId) || sanitizeText(sales.findSalesClientByMeetingId(id)?.id);
+    if (ownerId) {
+      linkStoredTranscriptToClient(stored, {
+        clientId: ownerId,
+        linkedBy: match.best ? 'meet-link' : '',
+        reasons: match.best?.reasons || [],
+      });
+    }
+    return stored;
+  }
   try {
     const transcript = await fetchFirefliesTranscript(id, { apiKey: config.apiKey });
     const built = buildFirefliesMeetingRecord({ meeting_id: id }, transcript);
     storeFirefliesMeeting(built);
-    const match = matchMeetingToClients(built, sales.getSalesClients());
-    const ownerId = sanitizeText(match.best?.clientId);
+    const fresh = readStoredFirefliesMeeting(id) || built;
+    const match = matchMeetingToClients(fresh, sales.getSalesClients());
+    const ownerId = sanitizeText(match.best?.clientId) || sanitizeText(sales.findSalesClientByMeetingId(id)?.id);
     if (ownerId) {
-      linkFirefliesMeeting(ownerId, meetingRefForClient({
-        ...built,
-        meetLink: built.meetingLink,
-      }, {
+      linkStoredTranscriptToClient(fresh, {
         clientId: ownerId,
-        businessName: match.best.businessName,
-        confidence: 'high',
-        reasons: match.best.reasons || ['Google Meet-lenken matcher kundens møte'],
-        linkedBy: 'meet-link',
-      }, { linkedBy: 'meet-link' }));
+        linkedBy: match.best ? 'meet-link' : '',
+        reasons: match.best?.reasons || [],
+      });
     }
-    return readStoredFirefliesMeeting(id);
+    return fresh;
   } catch (error) {
     console.warn(`[fireflies] hydrate ${id} ${sanitizeText(error?.message) || error}`);
     return stored;
@@ -15959,13 +16145,10 @@ app.get('/api/admin/sales/:id/offer', salesAuth, async (req, res) => {
   let client = sales.getSalesClientById(req.params.id);
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
-  client = ensureOfferMeetingHistory(client);
-  await ingestRecentFirefliesMeetLinks();
-  client = clientAfterFirefliesBackfill(client, { force: true });
-  client = linkCalendarSessionTranscripts(client);
+  void scheduleFirefliesTranscriptIngest();
+  client = refreshOfferClientMeetings(client, { force: true });
   let offer = await ensureOfferDraft(client, req);
   offer = dropUnknownOfferMeetings(offer, client);
-  client = await hydrateOfferMeetings(client, offer);
   client = sales.getSalesClientById(client.id) || client;
   offer = dropUnknownOfferMeetings(salesOffers.getOfferForClient(client.id) || offer, client);
   offer = syncOfferMeetingSelection(offer, client);
@@ -15991,12 +16174,10 @@ app.get('/api/admin/sales/:id/offer/meeting', salesAuth, async (req, res) => {
   let client = sales.getSalesClientById(req.params.id);
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
-  client = ensureOfferMeetingHistory(client);
-  client = clientAfterFirefliesBackfill(client);
-  client = linkCalendarSessionTranscripts(client);
+  void scheduleFirefliesTranscriptIngest();
+  client = refreshOfferClientMeetings(client);
   let offer = salesOffers.getOfferForClient(client.id);
   offer = dropUnknownOfferMeetings(offer, client);
-  client = await hydrateOfferMeetings(client, offer);
   client = sales.getSalesClientById(client.id) || client;
   offer = dropUnknownOfferMeetings(salesOffers.getOfferForClient(client.id) || offer, client);
   offer = syncOfferMeetingSelection(offer, client);
@@ -16165,9 +16346,9 @@ app.post('/api/admin/sales/:id/offer/use-meeting', salesAuth, async (req, res) =
     let matches = rankMeetingsByTitle(stored, pasted);
     if (!matches.length) {
       const config = readFirefliesWebhookConfig();
-      for (const id of firefliesIdsFromPaste(pasted)) {
+      for (const id of firefliesGraphqlIdsFromPaste(pasted)) {
         const known = readStoredFirefliesMeeting(id);
-        if (known) {
+        if (storedMeetingHasTalk(known)) {
           matches = [known];
           break;
         }
@@ -16181,7 +16362,7 @@ app.post('/api/admin/sales/:id/offer/use-meeting', salesAuth, async (req, res) =
             break;
           }
         } catch {
-          // Try the next id form (full slug, then the part after ::).
+          // Try the next GraphQL id if Fireflies rejected this form.
         }
       }
     }
@@ -16200,15 +16381,15 @@ app.post('/api/admin/sales/:id/offer/use-meeting', salesAuth, async (req, res) =
     record = matches[0];
   }
   if (!record) return res.status(404).json({ message: 'Fant ikke møtet.' });
+  if (!isPlaceholderMeetingId(record.meetingId || meetingId) && !storedMeetingHasTalk(record)) {
+    const hydrated = await persistFetchedFirefliesTranscript(record.meetingId || meetingId);
+    if (hydrated) record = hydrated;
+    client = sales.getSalesClientById(client.id) || client;
+  }
   const alreadyOnClient = (client.meetings || []).some(
     (row) => sanitizeText(row.meetingId) === sanitizeText(record.meetingId || meetingId)
   );
   if (!alreadyOnClient) {
-    if (!isPlaceholderMeetingId(record.meetingId || meetingId)) {
-      const hydrated = await persistFetchedFirefliesTranscript(record.meetingId || meetingId);
-      if (hydrated) record = hydrated;
-      client = sales.getSalesClientById(client.id) || client;
-    }
     const ownerId = sanitizeText(matchMeetingToClients(record, sales.getSalesClients()).best?.clientId);
     if (ownerId && ownerId !== sanitizeText(client.id)) {
       const owner = sales.getSalesClientById(ownerId);
@@ -16226,6 +16407,13 @@ app.post('/api/admin/sales/:id/offer/use-meeting', salesAuth, async (req, res) =
       reasons: ['Valgt på tilbudet'],
       linkedBy: 'manual',
     }, { linkedBy: 'manual' }));
+    client = sales.getSalesClientById(client.id) || client;
+  } else if (storedMeetingHasTalk(record)) {
+    linkStoredTranscriptToClient(record, {
+      clientId: client.id,
+      linkedBy: 'manual',
+      reasons: ['Valgt på tilbudet'],
+    });
     client = sales.getSalesClientById(client.id) || client;
   }
   const nextIds = req.body?.replace
@@ -16770,6 +16958,57 @@ app.get('/api/admin/fireflies/meetings/:meetingId/media/:kind', (req, res, next)
   res.setHeader('Content-Type', kind === 'video' ? 'video/mp4' : kind === 'audio' ? 'audio/mpeg' : 'text/plain; charset=utf-8');
   if (kind === 'transcript') res.setHeader('Content-Disposition', `inline; filename="fireflies-transcript-${encodeURIComponent(record.meetingId)}.txt"`);
   return res.sendFile(filePath);
+});
+
+app.post('/api/admin/sales/:id/open-meet', salesAuth, async (req, res) => {
+  try {
+    let client = sales.getSalesClientById(req.params.id);
+    if (!client) return res.status(404).json({ message: 'Sales client not found.' });
+    if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
+    if (normalizeMeetingMode(client.meetingMode) !== 'online') {
+      return res.status(400).json({ message: 'This meeting is not online.' });
+    }
+    const actor = thankYouSendActor(client, req.salesUser);
+    const previousLink = sanitizeText(client?.calendar?.meetLink);
+    const syncResult = await maybeSyncCalendar(client, client, {
+      notifyAttendees: false,
+      requireMeetLink: true,
+      actorAccountKey: actor.actorAccountKey,
+      forceOwnerMeet: true,
+    });
+    client = syncResult.client || client;
+    const meetLink = sanitizeText(client?.calendar?.meetLink);
+    const warnings = Array.isArray(syncResult.warnings) ? syncResult.warnings : [];
+    if (!isRealGoogleMeetLink(meetLink)) {
+      return res.status(409).json({
+        message: warnings.join(' ') || 'Google Calendar did not return a Meet link on the sales rep’s account.',
+        client,
+        warnings,
+      });
+    }
+    const hostEmail = sanitizeText(client?.calendar?.meetHostVerifiedEmail);
+    if (!salesMeetHostIsVerified(client?.calendar?.organizerEmail, hostEmail)) {
+      return res.status(409).json({
+        message: warnings.join(' ') || 'This Meet is not hosted by the sales rep who owns the client. It was not opened.',
+        client,
+        warnings,
+      });
+    }
+    const replaced = Boolean(previousLink) && previousLink !== meetLink;
+    const clientNotified = replaced && Boolean(sanitizeText(client?.reminders?.thankYouSentAt));
+    return res.json({
+      ok: true,
+      meetLink,
+      openUrl: salesMeetJoinUrl(meetLink, hostEmail) || meetLink,
+      hostEmail,
+      replaced,
+      clientNotified,
+      client,
+      warnings,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: sanitizeText(error?.message) || 'Could not open the meeting.' });
+  }
 });
 
 app.post('/api/admin/sales/:id/send-welcome-email', salesAuth, async (req, res) => {
@@ -19677,6 +19916,7 @@ ensureData().then(() => {
   startSalesReminderLoop();
   startWorkshopDeskEmailLoop();
   startFirefliesLiveJoinLoop();
+  startFirefliesTranscriptIngestLoop();
   startMyphonerWebhookReconcileLoop();
   startMyphonerRecordingRetryLoop();
   startSalesGeocodeWarmupLoop();
@@ -19703,6 +19943,7 @@ ensureData().then(() => {
   } catch (error) {
     console.error('[fireflies] startup meet-link backfill failed:', sanitizeText(error?.message) || error);
   }
+  void scheduleFirefliesTranscriptIngest({ force: true });
 }).catch((err) => {
   console.error('Failed to init admin:', err);
   process.exit(1);

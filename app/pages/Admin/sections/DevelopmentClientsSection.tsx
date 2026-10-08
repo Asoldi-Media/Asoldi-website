@@ -57,6 +57,7 @@ const BUCKET_META: Record<BucketId, { title: string; hint: string; tone: BucketT
 };
 
 const BUCKET_ORDER: BucketId[] = ['recentPastDue', 'upcoming', 'pastDue', 'noNextAction'];
+const BOARD_PREVIEW = 6;
 
 function itemRankMs(item: DevelopmentItem) {
   const raw = String(item.rankAt || '').trim();
@@ -171,6 +172,7 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
   const [threadMap, setThreadMap] = useState<Record<string, { lastKindLabel: string }>>({});
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [peekCardIds, setPeekCardIds] = useState<Record<string, boolean>>({});
   const [collapsedBuckets, setCollapsedBuckets] = useState<Record<string, boolean>>(() => {
     try {
       const raw = window.localStorage.getItem(COLLAPSED_STORAGE_KEY);
@@ -198,9 +200,8 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
     });
   }
 
-  function revealPreviewReadyBucket() {
+  function revealBucket(key: string) {
     setCollapsedBuckets((prev) => {
-      const key = 'preview:noNextAction';
       if (prev[key] === false) return prev;
       const next = { ...prev, [key]: false };
       try {
@@ -210,6 +211,10 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
       }
       return next;
     });
+  }
+
+  function togglePeekCard(itemId: string) {
+    setPeekCardIds((prev) => ({ ...prev, [itemId]: !prev[itemId] }));
   }
 
   function applySearch(e?: React.FormEvent) {
@@ -310,27 +315,24 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
     () => (productBracket === 'ssu' ? ssuItems.filter(itemVisible) : []),
     [ssuItems, itemVisible, productBracket]
   );
-  const developmentGroups = useMemo(
+  const websiteItems = useMemo(
+    () => [...visibleDevelopmentItems, ...visiblePreviewItems],
+    [visibleDevelopmentItems, visiblePreviewItems]
+  );
+  const developmentIds = useMemo(
+    () => new Set(visibleDevelopmentItems.map((item) => item.id)),
+    [visibleDevelopmentItems]
+  );
+  const websiteUnassigned = useMemo(
+    () => (viewer.isAdmin ? websiteItems.filter((item) => !item.developerOwnerId) : []),
+    [websiteItems, viewer.isAdmin]
+  );
+  const websiteGroups = useMemo(
     () => groupDevelopmentItems(
-      visibleDevelopmentItems.filter((item) => !viewer.isAdmin || item.developerOwnerId),
+      websiteItems.filter((item) => !viewer.isAdmin || item.developerOwnerId),
       nowMs
     ),
-    [visibleDevelopmentItems, nowMs, viewer.isAdmin]
-  );
-  const previewGroups = useMemo(
-    () => groupDevelopmentItems(
-      visiblePreviewItems.filter((item) => !viewer.isAdmin || item.developerOwnerId),
-      nowMs
-    ),
-    [visiblePreviewItems, nowMs, viewer.isAdmin]
-  );
-  const developmentUnassigned = useMemo(
-    () => (viewer.isAdmin ? visibleDevelopmentItems.filter((item) => !item.developerOwnerId) : []),
-    [visibleDevelopmentItems, viewer.isAdmin]
-  );
-  const previewUnassigned = useMemo(
-    () => (viewer.isAdmin ? visiblePreviewItems.filter((item) => !item.developerOwnerId) : []),
-    [visiblePreviewItems, viewer.isAdmin]
+    [websiteItems, nowMs, viewer.isAdmin]
   );
   const ssuGroups = useMemo(
     () => groupDevelopmentItems(
@@ -380,7 +382,7 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
     toggleClientSelected(itemId);
   }
 
-  function renderClientCard(item: DevelopmentItem, kind: 'preview' | 'deployment', canWork: boolean) {
+  function renderClientCard(item: DevelopmentItem, kind: 'preview' | 'deployment', canWork: boolean, prefix: string) {
     return (
       <DeveloperClientCard
         item={item}
@@ -394,6 +396,9 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
         viewerAccountKey={viewer.accountKey}
         developers={developers}
         assignBusy={assignBusy}
+        compact
+        peeked={Boolean(peekCardIds[item.id])}
+        onPeek={() => togglePeekCard(item.id)}
         onAssign={(ownerId) => void assignDeveloper(item, ownerId)}
         onAcceptHandoff={() => void acceptHandoff(item)}
         requestLabel={
@@ -405,50 +410,87 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
         onToggleStep={(entry, stepKey) => void toggleStep(entry, stepKey)}
         onReload={loadItems}
         onClientUpdated={patchDevelopmentClient}
-        onPreviewGoalReady={revealPreviewReadyBucket}
+        onPreviewGoalReady={() => revealBucket(`${prefix}:noNextAction`)}
         onError={setError}
         onNotice={setNotice}
       />
     );
   }
 
-  function renderGroupedCards(groups: Record<BucketId, DevelopmentItem[]>, kind: 'preview' | 'deployment', prefix: string) {
+  function renderTimeline(
+    unassigned: DevelopmentItem[],
+    groups: Record<BucketId, DevelopmentItem[]>,
+    prefix: string,
+    kindFor: (item: DevelopmentItem) => 'preview' | 'deployment',
+  ) {
+    const sections: Array<{ id: string; title: string; hint: string; tone: BucketTone | 'assign'; items: DevelopmentItem[] }> = [];
+    if (unassigned.length) {
+      sections.push({
+        id: `${prefix}:unassigned`,
+        title: 'Ikke tildelt',
+        hint: 'Tildel en utvikler før arbeidet starter.',
+        tone: 'assign',
+        items: unassigned,
+      });
+    }
+    for (const bucketId of BUCKET_ORDER) {
+      const bucketItems = groups[bucketId];
+      if (!bucketItems.length) continue;
+      const meta = BUCKET_META[bucketId];
+      sections.push({
+        id: `${prefix}:${bucketId}`,
+        title: meta.title,
+        hint: meta.hint,
+        tone: meta.tone,
+        items: bucketItems,
+      });
+    }
+    if (!sections.length) return null;
     return (
-      <div className="space-y-3">
-        {BUCKET_ORDER.map((bucketId) => {
-          const bucketItems = groups[bucketId];
-          if (!bucketItems.length) return null;
-          const storageKey = `${prefix}:${bucketId}`;
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start">
+        {sections.map((section, index) => {
+          const storageKey = section.id;
           const collapsed = collapsedBuckets[storageKey] !== false;
-          const meta = BUCKET_META[bucketId];
+          const visible = collapsed ? section.items.slice(0, BOARD_PREVIEW) : section.items;
+          const toneClass = section.tone === 'assign'
+            ? 'border-amber-300 bg-amber-50 text-amber-900'
+            : bucketToneClass(section.tone);
           return (
-            <div key={storageKey} className="space-y-3">
+            <React.Fragment key={storageKey}>
+              {index > 0 ? (
+                <div
+                  className="md:col-span-2 xl:col-span-3 h-px bg-gradient-to-r from-transparent via-neutral-400/70 to-transparent"
+                  aria-hidden="true"
+                />
+              ) : null}
               <button
                 type="button"
                 onClick={() => toggleBucket(storageKey)}
-                className={`w-full rounded-xl border px-3 py-2.5 text-left ${bucketToneClass(meta.tone)}`}
+                className={`md:col-span-2 xl:col-span-3 rounded-xl border px-3 py-2.5 text-left ${toneClass}`}
+                aria-expanded={!collapsed}
               >
                 <span className="flex items-center justify-between gap-3">
                   <span>
-                    <span className="block text-sm font-semibold">{meta.title}</span>
-                    <span className="block text-[11px] opacity-80 mt-0.5">{meta.hint}</span>
+                    <span className="block text-sm font-semibold">{section.title}</span>
+                    <span className="block text-[11px] opacity-80 mt-0.5">{section.hint}</span>
                   </span>
                   <span className="inline-flex items-center gap-2 shrink-0">
-                    <span className="text-sm font-semibold tabular-nums">{bucketItems.length}</span>
+                    <span className="text-sm font-semibold tabular-nums">{section.items.length}</span>
+                    {section.items.length > BOARD_PREVIEW ? (
+                      <span className="text-xs font-medium opacity-80">
+                        {collapsed ? 'Vis alle' : 'Vis færre'}
+                      </span>
+                    ) : null}
                     <ChevronDown size={16} className={`transition-transform ${collapsed ? '-rotate-90' : ''}`} />
                   </span>
                 </span>
               </button>
-              {!collapsed && bucketItems.length > 0 && (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start">
-                  {bucketItems.map((item) => (
-                    <React.Fragment key={item.id}>
-                      {renderClientCard(item, kind, canWorkDevelopmentClient(viewer, item))}
-                    </React.Fragment>
-                  ))}
-                </div>
-              )}
-            </div>
+              {visible.map((item) => (
+                <React.Fragment key={item.id}>
+                  {renderClientCard(item, kindFor(item), canWorkDevelopmentClient(viewer, item), prefix)}
+                </React.Fragment>
+              ))}
+            </React.Fragment>
           );
         })}
       </div>
@@ -1115,93 +1157,14 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
                   : 'Ingen kunder her.'}
             </p>
           ) : isSsuBracket ? (
-            <section className="space-y-3">
-              <div className="rounded-xl border border-white/10 bg-[#2a2a2a] px-3 py-2.5">
-                <span className="block text-sm font-semibold text-white">SSU</span>
-                <span className="block text-[11px] text-gray-400 mt-0.5">
-                  SSU-kunder. Nettstedskundene ligger under Website.
-                </span>
-              </div>
-              {ssuUnassigned.length > 0 && (
-                <div className="space-y-3">
-                  <div className="rounded-xl border border-amber-300 bg-amber-50 text-amber-900 px-3 py-2.5">
-                    <span className="block text-sm font-semibold">Ikke tildelt</span>
-                    <span className="block text-[11px] opacity-80 mt-0.5">Tildel en utvikler før arbeidet starter.</span>
-                  </div>
-                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start">
-                    {ssuUnassigned.map((item) => (
-                      <React.Fragment key={item.id}>
-                        {renderClientCard(item, 'preview', false)}
-                      </React.Fragment>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {renderGroupedCards(ssuGroups, 'preview', 'ssu')}
-            </section>
+            renderTimeline(ssuUnassigned, ssuGroups, 'ssu', () => 'preview')
           ) : (
-            <>
-              <section className="space-y-3">
-                <div className="rounded-xl border border-white/10 bg-[#2a2a2a] px-3 py-2.5">
-                  <span className="block text-sm font-semibold text-white">Development</span>
-                  <span className="block text-[11px] text-gray-400 mt-0.5">
-                    Solgte kunder. Leveringsfrist fra tilbudets tier. Klar for preview ligger i listen under.
-                  </span>
-                </div>
-                {visibleDevelopmentItems.length === 0 ? (
-                  <p className="text-sm text-gray-500">Ingen solgte kunder her.</p>
-                ) : (
-                  <>
-                    {developmentUnassigned.length > 0 && (
-                      <div className="space-y-3">
-                        <div className="rounded-xl border border-amber-300 bg-amber-50 text-amber-900 px-3 py-2.5">
-                          <span className="block text-sm font-semibold">Ikke tildelt</span>
-                          <span className="block text-[11px] opacity-80 mt-0.5">Tildel en utvikler før arbeidet starter.</span>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start">
-                          {developmentUnassigned.map((item) => (
-                            <React.Fragment key={item.id}>
-                              {renderClientCard(item, 'deployment', false)}
-                            </React.Fragment>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {renderGroupedCards(developmentGroups, 'deployment', 'development')}
-                  </>
-                )}
-              </section>
-              <section className="space-y-3">
-                <div className="rounded-xl border border-white/10 bg-[#2a2a2a] px-3 py-2.5">
-                  <span className="block text-sm font-semibold text-white">Før signert kontrakt</span>
-                  <span className="block text-[11px] text-gray-400 mt-0.5">
-                    Møtetid fra salg, med klokkeslett. Etter Klar for preview er det ingen frist.
-                  </span>
-                </div>
-                {visiblePreviewItems.length === 0 ? (
-                  <p className="text-sm text-gray-500">Ingen kunder før kontrakt.</p>
-                ) : (
-                  <>
-                    {previewUnassigned.length > 0 && (
-                      <div className="space-y-3">
-                        <div className="rounded-xl border border-amber-300 bg-amber-50 text-amber-900 px-3 py-2.5">
-                          <span className="block text-sm font-semibold">Ikke tildelt</span>
-                          <span className="block text-[11px] opacity-80 mt-0.5">Tildel en utvikler før arbeidet starter.</span>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start">
-                          {previewUnassigned.map((item) => (
-                            <React.Fragment key={item.id}>
-                              {renderClientCard(item, 'preview', false)}
-                            </React.Fragment>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                    {renderGroupedCards(previewGroups, 'preview', 'preview')}
-                  </>
-                )}
-              </section>
-            </>
+            renderTimeline(
+              websiteUnassigned,
+              websiteGroups,
+              'website',
+              (item) => (developmentIds.has(item.id) ? 'deployment' : 'preview'),
+            )
           )}
         </div>
       )}

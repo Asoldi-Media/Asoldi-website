@@ -368,9 +368,13 @@ export type DevelopmentItem = {
   notes: string;
   /** Agreed meeting time (ISO) when the sales client has one. */
   meetingAt?: string;
-  /** Active next action due time / name from the sales card. */
+  /** Active next action from the sales card, shown on the compact developer card. */
   nextActionAt?: string;
   nextActionName?: string;
+  nextActionFormat?: string;
+  nextActionAddToCalendar?: boolean;
+  salesGoalFilled?: number;
+  contractSigned?: boolean;
   /** Time used for ranking: website due date after the contract is signed. */
   rankAt?: string;
   websiteDue?: {

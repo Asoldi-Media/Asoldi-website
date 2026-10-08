@@ -458,10 +458,11 @@ test('Development card still mounts one request thread and the queue bar', () =>
   assert.match(section, /DeveloperRunQueueBar/);
   assert.match(section, /Forfalt \(siste 2 uker\)/);
   assert.match(section, /DEVELOPER_RECENT_OVERDUE_MS/);
-  assert.match(section, />Development</);
-  assert.match(section, /Før signert kontrakt/);
-  assert.match(section, /renderGroupedCards\(developmentGroups, 'deployment'/);
-  assert.match(section, /renderGroupedCards\(previewGroups, 'preview'/);
+  assert.match(section, /title: 'Neste'/);
+  assert.match(section, /renderTimeline\(/);
+  assert.equal(section.includes('>Development<'), false);
+  assert.equal(section.includes('Før signert kontrakt'), false);
+  assert.equal(section.includes('renderGroupedCards('), false);
   assert.equal(section.includes('kind="developer"'), false);
   assert.equal(section.includes("chooseBoard('preview')"), false);
   assert.equal(section.includes("chooseBoard('deployment')"), false);
@@ -514,7 +515,11 @@ test('Development card still mounts one request thread and the queue bar', () =>
   );
   assert.match(goalsHandler, /canToggleDeveloperGoals/);
   assert.equal(goalsHandler.includes('assertDevelopmentWork'), false);
-  assert.match(section, /preview:noNextAction/);
+  assert.match(section, /revealBucket\(`\$\{prefix\}:noNextAction`\)/);
+  assert.match(section, /'website'/);
+  assert.match(card, /showFoldDueDate/);
+  assert.match(card, /sett neste handling/);
+  assert.match(card, /Vis mer på dette kortet/);
   assert.match(card, /applyDeveloperGoalToggle/);
   assert.match(server, /app\.delete\('\/api\/admin\/development\/:id\/media\/client\/:fileName', developmentAuth/);
   assert.match(server, /app\.delete\('\/api\/admin\/development\/:id\/media\/maker', developmentAuth/);

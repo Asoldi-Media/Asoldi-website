@@ -652,9 +652,9 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
           {error && <p className="text-red-300 text-sm">{error}</p>}
           {notice && <p className="text-emerald-200 text-sm">{notice}</p>}
 
-          {loading || !offer ? (
+          {loading ? (
             <div className="flex items-center gap-2 text-gray-400"><Loader2 className="animate-spin" size={18} /> Åpner tilbudet…</div>
-          ) : (
+          ) : offer ? (
             <>
               {(sender && !sender.phone) && (
                 <div className="flex items-start gap-3 rounded-xl border border-amber-400/30 bg-amber-900/20 px-4 py-3 text-sm text-amber-200">
@@ -860,6 +860,12 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                             <input
                               value={meetingQuery}
                               onChange={(event) => setMeetingQuery(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' && meetingQuery.trim().length >= 3 && busy !== 'meeting') {
+                                  event.preventDefault();
+                                  void handlePickMeeting({ title: meetingQuery.trim() });
+                                }
+                              }}
                               placeholder="https://app.fireflies.ai/view/… eller møtenavn"
                               className="flex-1 min-w-[180px] px-2 py-1.5 rounded-md bg-[#111] border border-white/15 text-white text-xs"
                             />
@@ -1048,7 +1054,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                 </aside>
               </div>
             </>
-          )}
+          ) : null}
         </main>
       </div>
       {contractPdfUrl && (

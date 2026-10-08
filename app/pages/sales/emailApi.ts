@@ -15,18 +15,34 @@ export type EmailTemplate = {
 
 export type MergeField = { token: string; label: string; sample?: string };
 
-async function emailRequest(path: string, init?: RequestInit) {
+async function emailRequest(path: string, init?: RequestInit & { timeoutMs?: number }) {
+  const { timeoutMs, ...rest } = init || {};
   const headers: Record<string, string> = {
     ...salesAuthHeaders(),
-    ...(init?.headers as Record<string, string> || {}),
+    ...(rest.headers as Record<string, string> || {}),
   };
-  if (init?.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
-  const response = await fetch(`${API}${path}`, { ...init, headers });
-  const data = await response.json().catch(() => ({} as Record<string, unknown>));
-  if (!response.ok) {
-    throw new Error(String((data as { message?: string }).message || `Request failed (${response.status})`));
+  if (rest.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+  const controller = Number(timeoutMs) > 0 ? new AbortController() : null;
+  const timer = controller ? window.setTimeout(() => controller.abort(), Number(timeoutMs)) : 0;
+  try {
+    const response = await fetch(`${API}${path}`, {
+      ...rest,
+      headers,
+      signal: controller?.signal || rest.signal,
+    });
+    const data = await response.json().catch(() => ({} as Record<string, unknown>));
+    if (!response.ok) {
+      throw new Error(String((data as { message?: string }).message || `Request failed (${response.status})`));
+    }
+    return data;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error('Forespørselen tok for lang tid. Prøv igjen, eller lim inn Fireflies-lenken på nytt.');
+    }
+    throw error;
+  } finally {
+    if (timer) window.clearTimeout(timer);
   }
-  return data;
 }
 
 export function listEmailTemplates() {
@@ -92,11 +108,11 @@ export type OfferTier = {
 export type OfferReadiness = { ready: boolean; missing: { key: string; label: string }[]; message: string };
 
 export function getClientOffer(clientId: string) {
-  return emailRequest(`/admin/sales/${encodeURIComponent(clientId)}/offer`);
+  return emailRequest(`/admin/sales/${encodeURIComponent(clientId)}/offer`, { timeoutMs: 20_000 });
 }
 
 export function getClientOfferMeeting(clientId: string) {
-  return emailRequest(`/admin/sales/${encodeURIComponent(clientId)}/offer/meeting`);
+  return emailRequest(`/admin/sales/${encodeURIComponent(clientId)}/offer/meeting`, { timeoutMs: 12_000 });
 }
 
 export function saveClientOffer(clientId: string, payload: Record<string, unknown>) {
@@ -108,7 +124,11 @@ export function startNewClientOffer(clientId: string) {
 }
 
 export function useClientOfferMeeting(clientId: string, payload: { title?: string; meetingId?: string; meetingIds?: string[]; clear?: boolean }) {
-  return emailRequest(`/admin/sales/${encodeURIComponent(clientId)}/offer/use-meeting`, { method: 'POST', body: JSON.stringify(payload) });
+  return emailRequest(`/admin/sales/${encodeURIComponent(clientId)}/offer/use-meeting`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+    timeoutMs: 20_000,
+  });
 }
 
 export function saveClientWorkshopStart(clientId: string, startDate: string) {

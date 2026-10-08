@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarClock, CheckCircle2, ExternalLink, FileText, Loader2, Pencil } from 'lucide-react';
+import { CalendarClock, CheckCircle2, ChevronDown, ExternalLink, FileText, Loader2, Pencil } from 'lucide-react';
 import {
   API,
   developmentAuthHeaders,
@@ -43,6 +43,7 @@ import {
 } from '../sales/websiteMaker';
 import { applyDeveloperGoalToggle, DEVELOPER_PREVIEW_GOAL_KEYS, DEVELOPER_WIN_GOAL_KEYS } from '../../../lib/developer-goals.js';
 import { developerOwnerDisplayName, sameDeveloperOwner } from '../../../lib/developer-assignment.js';
+import { formatActionFormatLabel, SALES_ACTION_TIMEZONE } from '../../../lib/sales-next-actions.js';
 
 const CARD_SELECTED = 'border-[#FF5B00] ring-2 ring-[#FF5B00]/25';
 
@@ -93,7 +94,44 @@ type Props = {
   assignBusy?: boolean;
   onAssign?: (developerOwnerId: string) => void;
   onAcceptHandoff?: () => void;
+  compact?: boolean;
+  peeked?: boolean;
+  onPeek?: () => void;
 };
+
+function GoalProgressIcon({ filled }: { filled: number }) {
+  const count = Math.max(0, Math.min(3, filled));
+  return (
+    <span
+      className="inline-flex h-[1em] w-[1.1em] flex-col justify-center gap-px shrink-0 self-center text-sm"
+      title={`${count} av 3`}
+      aria-label={`${count} av 3 mål`}
+    >
+      {[2, 1, 0].map((level) => {
+        const on = count > level;
+        return (
+          <span
+            key={level}
+            className={`block min-h-0 flex-1 rounded-full ${on ? 'bg-[#FF5B00]' : 'bg-neutral-500'}`}
+          />
+        );
+      })}
+    </span>
+  );
+}
+
+function formatNextActionWhen(value = '') {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('nb-NO', {
+    timeZone: SALES_ACTION_TIMEZONE,
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
 
 function chipClass(kind: 'grey' | 'disabled' | 'ready' | 'idle') {
   if (kind === 'grey' || kind === 'disabled') {
@@ -128,6 +166,9 @@ export function DeveloperClientCard({
   assignBusy = false,
   onAssign,
   onAcceptHandoff,
+  compact = false,
+  peeked = false,
+  onPeek,
 }: Props) {
   const isDevelopmentList = kind === 'deployment';
   const goalKeys = isDevelopmentList ? DEVELOPER_WIN_GOAL_KEYS : DEVELOPER_PREVIEW_GOAL_KEYS;
@@ -807,16 +848,28 @@ export function DeveloperClientCard({
     );
   }
 
+  const showCompact = compact && !peeked;
+  const showFoldDueDate = Boolean(
+    item.contractSigned
+    && String(item.developerOwnerId || '').trim()
+    && String(item.websiteDue?.dueAt || '').trim()
+  );
+  const dueLabel = String(item.websiteDue?.label || '').trim();
+  const dueOverdue = showFoldDueDate && timeline.tone === 'overdue';
+  const nextActionName = String(item.nextActionName || '').trim();
+  const nextActionWhen = formatNextActionWhen(String(item.nextActionAt || ''));
+  const nextActionFormat = formatActionFormatLabel(String(item.nextActionFormat || ''));
+
   return (
     <div
       onClick={onCardClick}
-      className={`rounded-2xl bg-[#2a2a2a] border p-4 flex flex-col gap-3 cursor-pointer ${
+      className={`rounded-2xl bg-[#2a2a2a] border flex flex-col cursor-pointer min-w-0 ${
+        showCompact ? 'p-2.5 gap-1' : 'p-3 sm:p-4 gap-3'
+      } ${
         selected ? `hover:bg-[#323232] ${CARD_SELECTED}` : 'border-white/10 hover:bg-[#323232]'
       }`}
     >
-      <div className="min-w-0 space-y-3">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-        <div className="min-w-0">
+      <div className="min-w-0">
         <div className="flex flex-wrap items-center gap-2">
           <input
             type="checkbox"
@@ -826,24 +879,69 @@ export function DeveloperClientCard({
             aria-label={`Select ${item.businessName || 'client'}`}
             className="h-4 w-4 shrink-0 accent-[#FF5B00] cursor-pointer"
           />
-          <h3 className="text-white font-semibold truncate">{item.businessName}</h3>
-          {isAdmin && item.developerOwnerId ? (
+          <h3 className="text-white font-semibold truncate min-w-0 flex-1 text-sm sm:text-base">{item.businessName}</h3>
+          {!showCompact && isAdmin && item.developerOwnerId ? (
             <span className="shrink-0 px-2 py-0.5 rounded text-[11px] border border-white/10 text-gray-300">
               {developerOwnerDisplayName(item.developerOwnerId, developers)}
             </span>
           ) : null}
-          {requestLabel ? (
+          {!showCompact && requestLabel ? (
             <span className="shrink-0 px-2 py-0.5 rounded text-[11px] border bg-amber-900/30 border-amber-700/30 text-amber-300">
               {requestLabel}
             </span>
           ) : null}
         </div>
-        {contact && <p className="mt-1 text-xs text-gray-400 truncate">{contact}</p>}
-        {shortDescription ? (
-          <p className="mt-1 text-xs text-gray-400 line-clamp-2">{shortDescription}</p>
+        {showFoldDueDate && dueLabel ? (
+          <p className={`text-left text-xs ${showCompact ? 'mt-1' : 'mt-1.5'} ${dueOverdue ? 'text-red-300' : 'text-gray-300'}`}>
+            {dueLabel}
+          </p>
         ) : null}
-        {timeline.label ? (
-          <p className={`mt-1 text-xs flex items-center gap-1.5 ${
+        <div className={`flex items-center gap-2 min-w-0 ${showCompact ? 'mt-1' : 'mt-1.5'}`}>
+          <GoalProgressIcon filled={Number(item.salesGoalFilled) || 0} />
+          {nextActionName ? (
+            <>
+              <span className="truncate text-sm text-gray-100">{nextActionName}</span>
+              {nextActionFormat ? (
+                <span className="shrink-0 text-sm text-gray-300">{nextActionFormat}</span>
+              ) : null}
+              {nextActionWhen ? (
+                <span className="shrink-0 text-sm text-gray-300">{nextActionWhen}</span>
+              ) : null}
+              {item.nextActionAddToCalendar ? (
+                <span className="shrink-0 px-1.5 py-px rounded border border-sky-400/30 bg-sky-400/10 text-[11px] uppercase tracking-wide font-semibold text-sky-200">
+                  Kalender
+                </span>
+              ) : null}
+            </>
+          ) : (
+            <span className="text-sm text-red-400">sett neste handling</span>
+          )}
+        </div>
+        {showCompact ? (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onPeek?.();
+            }}
+            className="mt-0.5 mx-auto p-0.5 rounded text-gray-400 hover:text-white block"
+            title="Vis mer på dette kortet"
+            aria-label="Vis mer på dette kortet"
+          >
+            <ChevronDown size={14} />
+          </button>
+        ) : null}
+      </div>
+
+      {showCompact ? null : (
+      <>
+      <div className="min-w-0 space-y-3">
+        {contact ? <p className="text-xs text-gray-400 truncate">{contact}</p> : null}
+        {shortDescription ? (
+          <p className="text-xs text-gray-400 line-clamp-2">{shortDescription}</p>
+        ) : null}
+        {timeline.label && !showFoldDueDate ? (
+          <p className={`text-xs flex items-center gap-1.5 ${
             timeline.tone === 'overdue' ? 'text-red-300' : timeline.tone === 'live' ? 'text-sky-300' : 'text-gray-400'
           }`}
           >
@@ -858,13 +956,13 @@ export function DeveloperClientCard({
               event.stopPropagation();
               setBriefOpen(true);
             }}
-            className="mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
           >
             <FileText size={13} />
             Prosjektdokument
           </button>
         ) : null}
-        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           <span
             className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-[11px] border ${
               domainView.present
@@ -888,8 +986,6 @@ export function DeveloperClientCard({
             <span className="text-[11px] text-gray-500">{item.industry}</span>
           ) : null}
         </div>
-      </div>
-      </div>
 
       {isDevelopmentList && (
         <div className="flex flex-wrap gap-1.5">
@@ -1185,6 +1281,22 @@ export function DeveloperClientCard({
           </div>
         </details>
       ) : null}
+      {compact && peeked ? (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onPeek?.();
+          }}
+          className="self-center mt-1 p-1 rounded-full bg-white/10 text-gray-300 hover:text-white"
+          title="Vis mindre"
+          aria-label="Vis mindre"
+        >
+          <ChevronDown size={16} className="rotate-180" />
+        </button>
+      ) : null}
+      </>
+      )}
       <DeveloperClientBrief
         open={briefOpen}
         onClose={() => setBriefOpen(false)}

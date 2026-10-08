@@ -138,6 +138,38 @@ test('saved offer selection is not refilled with every transcript', () => {
   }, row), []);
 });
 
+test('activity log prefers the real transcript over a live-join stub', () => {
+  const log = buildClientActivityLog(client({
+    meetings: [
+      {
+        meetingId: 'live:c-log:open',
+        title: 'Fireflies ble sendt inn',
+        meetLink: 'https://meet.google.com/sales-meet-abc',
+        startedAt: MEETING_AT,
+        hasTranscript: false,
+        linkedBy: 'live-join',
+        forSalesMeeting: true,
+      },
+      {
+        meetingId: 'ff-sales',
+        title: 'Salgsmøte Test AS',
+        when: '02.10.2026, 14:00',
+        startedAt: MEETING_AT,
+        meetLink: 'https://meet.google.com/sales-meet-abc',
+        transcriptUrl: 'https://app.fireflies.ai/view/ff-sales',
+        hasTranscript: true,
+        purpose: 'sales',
+        forSalesMeeting: true,
+      },
+    ],
+  }));
+  const meetingRow = log.sections[0].rows.find((row) => row.name === 'Møte');
+  assert.equal(meetingRow.meeting.meetingId, 'ff-sales');
+  assert.equal(meetingRow.meeting.hasTranscript, true);
+  const waiting = log.sections.flatMap((section) => section.rows).filter((row) => row.meeting && !row.meeting.hasTranscript);
+  assert.equal(waiting.length, 0);
+});
+
 test('open offers drop live-join stubs once a real transcript exists', () => {
   const row = client();
   const seeded = seedOfferMeetingIds({

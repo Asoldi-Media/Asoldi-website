@@ -140,6 +140,28 @@ test('GraphQL fetch asks Fireflies for video and transcript fields', async () =>
   assert.equal(transcript.title, 'Asoldi møte med Testbedrift');
 });
 
+test('already-notified webhook updates the client when the transcript arrives later', async () => {
+  const linked = [];
+  const payload = { meeting_id: 'late-talk', event: 'meeting.transcribed' };
+  const config = { token: 'team-token', secrets: [], apiKey: 'ff-key', notifyEmail: 'ansatte@asoldi.com' };
+  const match = { best: { clientId: 'c-late', businessName: 'Late AS' }, candidates: [] };
+  await notifyFirefliesRecording(payload, config, {
+    fetchTranscript: async () => ({ id: 'late-talk', title: 'Møte', sentences: [] }),
+    sendEmail: async () => {},
+    matchClients: async () => match,
+    linkMeeting: async (clientId, ref) => { linked.push({ clientId, hasTranscript: Boolean(ref.hasTranscript) }); },
+  });
+  await notifyFirefliesRecording({ meeting_id: 'late-talk', event: 'meeting.summarized' }, config, {
+    fetchTranscript: async () => TRANSCRIPT,
+    sendEmail: async () => {},
+    matchClients: async () => match,
+    linkMeeting: async (clientId, ref) => { linked.push({ clientId, hasTranscript: Boolean(ref.hasTranscript) }); },
+  });
+  assert.equal(linked[0].hasTranscript, false);
+  assert.equal(linked.at(-1).clientId, 'c-late');
+  assert.equal(linked.at(-1).hasTranscript, true);
+});
+
 test('notify emails once and returns video + transcript for downstream scripts', async () => {
   const sent = [];
   const payload = { meeting_id: 'ASxwZxCstx', event: 'meeting.summarized' };
