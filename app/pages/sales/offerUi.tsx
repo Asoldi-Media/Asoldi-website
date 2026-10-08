@@ -1,6 +1,6 @@
 import React from 'react';
 import type { OfferAlternative, OfferContractSummary, OfferProduct, SalesOffer, SalesOfferStatus } from '../Admin/shared';
-import { formatKr, withMva } from '../../../lib/website-tiers.js';
+import { deliveryWorkDaysPhrase, formatKr, withMva } from '../../../lib/website-tiers.js';
 import { offerTotals } from '../../../lib/offer-email.js';
 
 export const OFFER_STATUS_LABEL: Record<SalesOfferStatus, string> = {
@@ -102,13 +102,15 @@ function OfferPackageList({
         <p className="text-xs text-gray-500">Ingen produkter enda – velg en nettside-tier.</p>
       ) : (
         <ul className="space-y-2">
-          {products.map((item) => (
+          {products.map((item) => {
+            const delivery = deliveryWorkDaysPhrase(item.deliveryWeeks, item.deliveryWorkDays);
+            return (
             <li key={item.id} className="rounded-lg bg-black/30 px-3 py-2">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
                   <div className="text-white font-medium truncate">{item.name}</div>
                   <div className="text-xs text-gray-400">
-                    {item.pages ? `Opp til ${item.pages} sider · ` : ''}{item.includes.length} punkter{item.deliveryWeeks ? ` · ${item.deliveryWeeks} uker` : ''}
+                    {item.pages ? `Opp til ${item.pages} sider · ` : ''}{item.includes.length} punkter{delivery ? ` · ${delivery}` : ''}
                     {item.kind === 'tier' ? ' · pakke' : ' · skreddersydd'}
                   </div>
                   {item.note && <div className="text-xs text-gray-400 mt-1 italic">{item.note}</div>}
@@ -129,14 +131,15 @@ function OfferPackageList({
                 </div>
               </div>
             </li>
-          ))}
+            );
+          })}
         </ul>
       )}
       <div className="mt-3 border-t border-white/10 pt-2 text-xs text-gray-300 space-y-0.5">
         <div className="flex justify-between"><span>Eks. mva</span><span>{formatKr(totals.exMva)} {unit}</span></div>
         <div className="flex justify-between"><span>{mvaIncluded ? 'Herav MVA 25 %' : 'MVA 25 %'}</span><span>{formatKr(totals.mva)}</span></div>
         <div className="flex justify-between text-white font-semibold"><span>Inkl. mva</span><span>{formatKr(totals.inclMva)} {unit}</span></div>
-        <div className="flex justify-between text-gray-500"><span>Leveringstid</span><span>{totals.deliveryWeeks} uker</span></div>
+        <div className="flex justify-between text-gray-500"><span>Leveringstid</span><span>{deliveryWorkDaysPhrase(totals.deliveryWeeks, totals.deliveryWorkDays) || '—'}</span></div>
       </div>
     </div>
   );
@@ -171,9 +174,9 @@ export function ContractSummaryCard({ summary, mvaIncluded = false }: { summary:
       </ul>
       <div className="text-xs text-gray-300">
         {mvaIncluded ? (
-          <>Månedspris: <span className="text-white">{formatKr(summary.monthlyExMva)}</span> inkl. mva ({formatKr(Math.round(summary.monthlyExMva / 1.25))} eks.) · Levering {summary.deliveryWeeks} uker</>
+          <>Månedspris: <span className="text-white">{formatKr(summary.monthlyExMva)}</span> inkl. mva ({formatKr(Math.round(summary.monthlyExMva / 1.25))} eks.) · Levering {deliveryWorkDaysPhrase(summary.deliveryWeeks, summary.deliveryWorkDays)}</>
         ) : (
-          <>Månedspris: <span className="text-white">{formatKr(summary.monthlyExMva)}</span> eks. mva ({formatKr(withMva(summary.monthlyExMva))} inkl.) · Levering {summary.deliveryWeeks} uker</>
+          <>Månedspris: <span className="text-white">{formatKr(summary.monthlyExMva)}</span> eks. mva ({formatKr(withMva(summary.monthlyExMva))} inkl.) · Levering {deliveryWorkDaysPhrase(summary.deliveryWeeks, summary.deliveryWorkDays)}</>
         )}
       </div>
       {summary.extraTerms.length > 0 && (

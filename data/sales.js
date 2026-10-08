@@ -889,6 +889,12 @@ export function markOfferDelivered(id) {
   });
 }
 
+/** Any tilbud/contract send: stamp contractSentAt, then check Møte + Tilbud. */
+export function markOfferSentOnDelivery(id, sentAt = '') {
+  recordContractSent(id, sentAt);
+  return markOfferDelivered(id);
+}
+
 export function recordContractSent(id, sentAt = '') {
   const current = getSalesClientById(id);
   if (!current) return null;

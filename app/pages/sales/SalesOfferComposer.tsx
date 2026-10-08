@@ -16,7 +16,7 @@ import {
   type MergeField,
   type OfferReadiness,
 } from './emailApi';
-import { getSalesToken, type SalesOffer, type SalesSender } from '../Admin/shared';
+import { getSalesToken, type SalesClient, type SalesOffer, type SalesSender } from '../Admin/shared';
 import { ContractSummaryCard, HtmlPreview, OfferProductsCard, OfferStatusChip } from './offerUi';
 import { SalesFlowSteps } from './SalesFlowSteps';
 import { clientCardParty, offerMissingFields, offerReadinessMessage } from '../../../lib/offer-readiness.js';
@@ -88,9 +88,10 @@ function formatWorkshopDate(value = '') {
 type ComposerProps = {
   embedded?: boolean;
   clientId?: string;
+  onSent?: (client: SalesClient) => void;
 };
 
-export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = '' }: ComposerProps = {}) {
+export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = '', onSent }: ComposerProps = {}) {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const clientId = clientIdProp || params.get('clientId') || '';
@@ -473,6 +474,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
       const payload = { to: (to || '').trim() || resolveWebsiteEmail(client || {}), party: partyPayload(), channels, content: sendContent };
       const data = await sendClientOffer(clientId, payload) as {
         offer: SalesOffer;
+        client?: SalesClient;
         copyTo?: string;
         contractFileName?: string;
         delivery?: string;
@@ -483,6 +485,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
         websiteCode?: string;
       };
       applyOffer(data.offer);
+      if (data.client?.id) onSent?.(data.client);
       const code = data.websiteCode || data.offer?.websiteCode || '';
       const codeNote = code ? ` Nettsidekode: ${code} — lim inn på asoldi.com for å aktivere nettsiden.` : '';
       const sentChannels = data.channels?.length ? data.channels : (data.delivery === 'both' ? ['email', 'portal'] : [data.delivery || 'email']);

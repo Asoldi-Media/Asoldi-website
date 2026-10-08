@@ -96,7 +96,7 @@ const pricingData: Record<string, any[]> = {
         "Hosting og vedlikehold",
         "Kontaktskjema & standard seksjoner",
         "Opptil 4 innholdsendringer/mnd",
-        "Leveringstid: 2 uker"
+        "Leveringstid: 14 arbeidsdager"
       ],
       notIncludedFeatures: [
         "SEO optimalisering",
@@ -121,7 +121,7 @@ const pricingData: Record<string, any[]> = {
         "Anmeldelser & sosiale medier synk",
         "E-postliste innsamling",
         "Innledende veiledningsmøte",
-        "Leveringstid: 2 uker"
+        "Leveringstid: 14 arbeidsdager"
       ],
       notIncludedFeatures: [
         "Nettbutikk-funksjonalitet",
@@ -145,7 +145,7 @@ const pricingData: Record<string, any[]> = {
         "Nettbutikk-funksjonalitet",
         "Analyse-dashbord",
         "Gjennomgangsmøte",
-        "Leveringstid: 3 uker"
+        "Leveringstid: 21 arbeidsdager"
       ],
       notIncludedFeatures: []
     },

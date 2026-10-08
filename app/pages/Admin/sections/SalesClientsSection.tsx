@@ -950,6 +950,10 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
           const data = await request('/admin/sales');
           if (gen !== salesListGenRef.current) return;
           const nextClients = Array.isArray(data.clients) ? data.clients : [];
+          if (!nextClients.length && clientsLenRef.current > 0) {
+            lastErr = null;
+            break;
+          }
           setClients(nextClients);
           const nextIds = new Set(nextClients.map((client: SalesClient) => client.id));
           setSelectedClientIds((prev) => prev.filter((id) => nextIds.has(id)));
@@ -1032,11 +1036,12 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
 
   useEffect(() => {
     if (isSalesAdmin) return undefined;
+    if (inClientFlow && flowStep === 3) return undefined;
     const timer = window.setInterval(() => {
       void loadSales({ clearMessages: false, showLoading: false });
     }, 20_000);
     return () => window.clearInterval(timer);
-  }, [isSalesAdmin]);
+  }, [isSalesAdmin, inClientFlow, flowStep]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setMeetingNowMs(Date.now()), 60_000);
@@ -1308,9 +1313,8 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
     salesListGenRef.current += 1;
     setClients((prev) => {
       const index = prev.findIndex((entry) => entry.id === saved.id);
-      if (index === -1) return [saved, ...prev];
-      const next = prev.slice();
-      next[index] = saved;
+      const next = index === -1 ? [saved, ...prev] : prev.map((entry, i) => (i === index ? saved : entry));
+      writeSalesListCache(next, productCounts);
       return next;
     });
     setNoteDrafts((prev) => {
@@ -3999,7 +4003,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
               />
             )}
             {inClientFlow && flowStep === 3 && flowClient && (
-              <SalesOfferComposer embedded clientId={flowClient.id} />
+              <SalesOfferComposer embedded clientId={flowClient.id} onSent={applySavedClient} />
             )}
           </div>
           {inClientFlow && (

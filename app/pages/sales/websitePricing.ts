@@ -1,4 +1,4 @@
-import { WEBSITE_TIERS } from '../../../lib/website-tiers.js';
+import { WEBSITE_TIERS, deliveryWorkDaysPhrase } from '../../../lib/website-tiers.js';
 
 export type PricingService = {
   id: string;
@@ -58,7 +58,7 @@ export const PRICING = {
     ...WEBSITE_TIERS.map((tier) => ({
       id: tier.marketingId,
       label: tier.shortName,
-      delivery: `${tier.deliveryWeeks} uker`,
+      delivery: deliveryWorkDaysPhrase(tier.deliveryWeeks),
       pages: tier.pages,
       includes: TIER_SERVICE_IDS[tier.marketingId] || [],
     })),

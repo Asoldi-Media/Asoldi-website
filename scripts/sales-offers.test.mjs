@@ -41,6 +41,8 @@ test('website tiers: 5/7/10 pages, SEO tier has Google/Maps/AI, only e-commerce 
   assert.ok(has(t3, /ukentlig avansert rapport/i), 'tier 3 lists weekly advanced report');
   assert.ok(!has(t1, /rapport/i) && !has(t1, /analyse-dashbord/i), 'tier 1 has no analytics reporting');
   assert.ok(has(t1, /koble til eget domene/i) && has(t1, /veiledningsmøte/i), 'tier 1 includes domain + guidance');
+  assert.ok(has(t1, /14 arbeidsdager/) && has(t2, /14 arbeidsdager/) && has(t3, /21 arbeidsdager/));
+  assert.ok(!has(t1, /2 uker/) && !has(t2, /2 uker/) && !has(t3, /3 uker/), 'pricing copy uses arbeidsdager, not weeks');
   assert.ok(!has(t1, /skreddersydde web/i) && !has(t2, /api-integrasjon/i) && !has(t3, /dedikert server/i));
   assert.equal(tiers.analyticsLevelForPlan(t2.id), 'basic');
   assert.equal(tiers.reportingIntervalDaysForLevel('basic'), 14);
@@ -990,7 +992,7 @@ test('dual meeting quote builds two alternatives without summing products', () =
   assert.equal(store.offerNeedsVerification(saved), true, 'custom on either package needs admin review');
 });
 
-test('dual offer email uses Tilbud 1/2 headings, eller, and two Totalt/Leveringsdato blocks', () => {
+test('dual offer email uses Tilbud 1/2 headings, eller, and two Totalt/Leveringstid blocks', () => {
   const single = quoteOffer.buildOfferFromMeetingQuote(STARTER_QUOTE);
   const dual = quoteOffer.buildOfferFromMeetingQuote({ ...STARTER_QUOTE, altQuote: SEO_QUOTE });
   const singleHtml = offerEmail.buildOfferBodyHtml({
@@ -1002,7 +1004,10 @@ test('dual offer email uses Tilbud 1/2 headings, eller, and two Totalt/Leverings
   assert.doesNotMatch(singleHtml, /Tilbud 1 – Hva er inkludert/);
   assert.doesNotMatch(singleHtml, /data-offer-or/);
   assert.equal((singleHtml.match(/Totalt:/g) || []).length, 1);
-  assert.equal((singleHtml.match(/Leveringsdato:/g) || []).length, 1);
+  assert.equal((singleHtml.match(/Leveringstid:/g) || []).length, 1);
+  assert.match(singleHtml, /14 arbeidsdager fra signert kontrakt/);
+  assert.doesNotMatch(singleHtml, /Leveringsdato:/);
+  assert.doesNotMatch(singleHtml, /uker fra oppstart/);
   assert.equal((singleHtml.match(/Hva som skjer fremover/g) || []).length, 1);
 
   const html = offerEmail.buildOfferBodyHtml({
@@ -1015,7 +1020,8 @@ test('dual offer email uses Tilbud 1/2 headings, eller, and two Totalt/Leverings
   assert.match(html, />eller</);
   assert.match(html, /Tilbud 2 – Hva er inkludert/);
   assert.equal((html.match(/Totalt:/g) || []).length, 2);
-  assert.equal((html.match(/Leveringsdato:/g) || []).length, 2);
+  assert.equal((html.match(/Leveringstid:/g) || []).length, 2);
+  assert.doesNotMatch(html, /Leveringsdato:/);
   assert.doesNotMatch(html.split(/id="offer-products"/)[0], /<h2[^>]*>Hva er inkludert<\/h2>/);
   assert.equal((html.match(/Hva som skjer fremover/g) || []).length, 1);
   assert.equal((html.match(/data-offer-slot="benefits"/g) || []).length, 1);
@@ -1034,6 +1040,29 @@ test('dual offer email uses Tilbud 1/2 headings, eller, and two Totalt/Leverings
   assert.doesNotMatch(back, /Tilbud 1 – Hva er inkludert/);
 });
 
+test('offer email keeps one Leveringstid line and drops leftover Leveringsdato / 2 uker', () => {
+  const leftover = [
+    '<p style="margin:0 0 14px;"><strong>Leveringsdato:</strong> <span data-offer-slot="delivery">14 arbeidsdager fra signert kontrakt</span></p>',
+    '<p>Leveringsdato: 2 uker fra oppstart</p>',
+    '<div id="offer-products"></div><div id="offer-products-end"></div>',
+  ].join('');
+  const refreshed = offerEmail.refreshOfferShell(leftover);
+  assert.equal((refreshed.match(/Leveringstid:/g) || []).length, 1);
+  assert.doesNotMatch(refreshed, /Leveringsdato:/);
+  assert.doesNotMatch(refreshed, /2 uker fra oppstart/);
+  assert.match(refreshed, /14 arbeidsdager fra signert kontrakt/);
+
+  const applied = offerEmail.applyOfferProducts(
+    leftover,
+    offerEmail.productsWithTier([], tiers.WEBSITE_TIERS[0].id),
+    { tierId: tiers.WEBSITE_TIERS[0].id },
+  );
+  assert.equal((applied.match(/Leveringstid:/g) || []).length, 1);
+  assert.doesNotMatch(applied, /Leveringsdato:/);
+  assert.doesNotMatch(applied, /uker fra oppstart/);
+  assert.match(applied, /14 arbeidsdager fra signert kontrakt/);
+});
+
 test('dual PDF and portal HTML list both scopes and Tilbud 1/2 checkboxes', async () => {
   const dual = quoteOffer.buildOfferFromMeetingQuote({ ...STARTER_QUOTE, altQuote: SEO_QUOTE });
   const { contractHtmlForOffer } = await import('../lib/offer-contract-html.js');
@@ -1046,6 +1075,8 @@ test('dual PDF and portal HTML list both scopes and Tilbud 1/2 checkboxes', asyn
   assert.match(html, /<strong>Tilbud 2<\/strong>/);
   assert.match(html, /Chosen scope:<\/strong> Tilbud 1 or Tilbud 2/);
   assert.doesNotMatch(html, /The Client has selected the following service tier/);
+  assert.match(html, /14 working days from the signed contract/);
+  assert.doesNotMatch(html, /\b14 days from\b/);
 
   const article = contractPdf.contractArticleModel({
     client: CLIENT,
@@ -1106,5 +1137,21 @@ test('dual portal accept requires an index and flattens tilbud 2 onto tierId', (
   assert.equal(persisted.chosenOfferIndex, 1);
   assert.equal(persisted.products[0].priceExMva, 1499);
   assert.equal(store.offerHasDualAlternatives(persisted), true);
+});
+
+test('sending tilbud or kun kontrakt checks Møte and Tilbud without a page reload', async () => {
+  const salesClients = await import('../data/sales.js');
+  const row = salesClients.createSalesClient({
+    id: 'client-offer-progress',
+    businessName: 'Tilbud Test AS',
+    ownerId: 'x',
+    progression: { meetingHeld: false, offerSent: false, contractSigned: false },
+  });
+  assert.equal(row.progression.offerSent, false);
+  const afterContract = salesClients.markOfferSentOnDelivery(row.id);
+  assert.equal(afterContract.progression.meetingHeld, true);
+  assert.equal(afterContract.progression.offerSent, true);
+  const again = salesClients.markOfferSentOnDelivery(row.id);
+  assert.equal(again.progression.offerSent, true);
 });
 

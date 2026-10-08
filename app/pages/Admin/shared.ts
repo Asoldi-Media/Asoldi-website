@@ -609,6 +609,7 @@ export type OfferContractSummary = {
   products: OfferProduct[];
   monthlyExMva: number;
   deliveryWeeks: number;
+  deliveryWorkDays?: number;
   extraTerms: string[];
   scopeSummary: string;
 };

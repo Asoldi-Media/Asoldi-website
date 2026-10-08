@@ -120,6 +120,15 @@ test('offer and contract mention arbeidsdager / working days', () => {
     'Delivery time: 14 working days from the signed contract.',
   );
   assert.equal(
+    contractDeliverySentence({ workDays: 14 }),
+    'Delivery time: 14 working days from the signed contract.',
+  );
+  assert.equal(
+    contractDeliverySentence({ tierId: 'tier-1-standard' }),
+    'Delivery time: 14 working days from the signed contract.',
+  );
+  assert.doesNotMatch(contractDeliverySentence({ weeks: 2 }), /\b14 days\b/);
+  assert.equal(
     contractDeliverySentence({ dueDate: '2026-11-02' }),
     'Delivery date: 2 November 2026.',
   );

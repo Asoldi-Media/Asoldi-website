@@ -186,6 +186,7 @@ import {
   productsWithTier,
   replaceOfferDelivery,
   refreshOfferShell,
+  syncOfferDeliveryLines,
   resolveOfferIdentityTags,
   workshopStartSentence,
   summarizeOfferProducts,
@@ -15202,7 +15203,15 @@ function presentOffer(offer) {
  */
 function refreshStoredOfferShell(offer, req) {
   if (!offer || salesOffers.offerContentIsLocked(offer)) return offer;
-  const html = refreshOfferShell(offer.email?.html || '');
+  let html = refreshOfferShell(offer.email?.html || '');
+  const products = Array.isArray(offer.products) ? offer.products : [];
+  if (products.length || offer.tierId) {
+    html = syncOfferDeliveryLines(html, products, {
+      tierId: offer.tierId || '',
+      dueDate: offer.dueDate || '',
+      alternatives: offer.alternatives,
+    });
+  }
   if (html === (offer.email?.html || '')) return offer;
   return salesOffers.updateSalesOffer(offer.id, { email: { html } }, { actor: offerActor(req), action: '' }) || offer;
 }
@@ -16594,11 +16603,13 @@ async function attachWebsiteCodeToSentOffer(salesClient, offer, { letterHtml = '
   });
 }
 
-function markOfferSentProgress(client, { contractOnly = false } = {}) {
+function markOfferSentProgress(client) {
   try {
-    sales.recordContractSent(client.id);
-    if (!contractOnly) sales.markOfferDelivered(client.id);
-  } catch { /* checklist can stay manual */ }
+    return sales.markOfferSentOnDelivery(client.id);
+  } catch (error) {
+    console.error('[sales] tilbud send did not check Tilbud', client?.id, error);
+    return sales.getSalesClientById(client.id);
+  }
 }
 
 app.post('/api/admin/sales/:id/offer/send', salesAuth, async (req, res) => {
@@ -16657,10 +16668,11 @@ app.post('/api/admin/sales/:id/offer/send', salesAuth, async (req, res) => {
     const sent = salesOffers.markSalesOfferSent(offer.id, { actor: offerActor(req), to, delivery, sentContent: contentMode });
     const portalOffer = await attachWebsiteCodeToSentOffer(client, sent, { letterHtml: composed.html, to });
     const account = await portalAccountForClient(client, to);
-    markOfferSentProgress(client, { contractOnly });
+    const progressed = markOfferSentProgress(client);
     return res.json({
       ok: true,
       offer: presentOffer(sent),
+      client: jsonSalesClient(progressed || sales.getSalesClientById(client.id)),
       channels,
       content: contentMode,
       delivery,
