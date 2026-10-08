@@ -1098,29 +1098,34 @@ export function DeveloperClientCard({
               <p className="text-[11px] text-gray-400">En annen utvikler jobber med denne kunden.</p>
             )}
             {isAdmin && (
-              <div className="flex flex-wrap items-center gap-2" onClick={(event) => event.stopPropagation()}>
-                <select
-                  value={assignOwnerId}
-                  disabled={assignBusy}
-                  onChange={(event) => setAssignOwnerId(event.target.value)}
-                  className="rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-xs px-2 py-1.5"
-                >
-                  <option value="">{item.developerOwnerId ? 'Bytt utvikler…' : 'Velg utvikler…'}</option>
-                  {developers.map((owner) => (
-                    <option key={owner.accountKey} value={owner.accountKey}>
-                      {owner.name || owner.username}
-                    </option>
-                  ))}
-                </select>
-                <button
-                  type="button"
-                  disabled={assignBusy || !assignOwnerId}
-                  onClick={() => onAssign?.(assignOwnerId)}
-                  className="px-2 py-1.5 rounded-lg bg-[#FF5B00] text-white text-xs hover:bg-[#e55200] disabled:opacity-50"
-                >
-                  Tildel
-                </button>
-              </div>
+              <details className="rounded-lg border border-white/10 bg-black/20" onClick={(event) => event.stopPropagation()}>
+                <summary className="cursor-pointer list-none px-2.5 py-1.5 text-xs text-gray-200 [&::-webkit-details-marker]:hidden">
+                  Tildel utvikler
+                </summary>
+                <div className="flex flex-wrap items-center gap-2 px-2.5 pb-2">
+                  <select
+                    value={assignOwnerId}
+                    disabled={assignBusy}
+                    onChange={(event) => setAssignOwnerId(event.target.value)}
+                    className="rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-xs px-2 py-1.5"
+                  >
+                    <option value="">{item.developerOwnerId ? 'Bytt utvikler…' : 'Velg utvikler…'}</option>
+                    {developers.map((owner) => (
+                      <option key={owner.accountKey} value={owner.accountKey}>
+                        {owner.name || owner.username}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    disabled={assignBusy || !assignOwnerId}
+                    onClick={() => onAssign?.(assignOwnerId)}
+                    className="px-2 py-1.5 rounded-lg bg-[#FF5B00] text-white text-xs hover:bg-[#e55200] disabled:opacity-50"
+                  >
+                    Tildel
+                  </button>
+                </div>
+              </details>
             )}
             <div className="flex flex-wrap items-center gap-2">
               {canWork && (

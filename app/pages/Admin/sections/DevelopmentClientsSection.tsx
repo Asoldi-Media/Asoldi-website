@@ -187,17 +187,28 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
     return () => window.clearInterval(timer);
   }, []);
 
+  function writeBuckets(next: Record<string, boolean>) {
+    try {
+      window.localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+      // Ignore storage issues — collapse state is a convenience only.
+    }
+    return next;
+  }
+
   function toggleBucket(id: string) {
     setCollapsedBuckets((prev) => {
       const currentlyCollapsed = prev[id] !== false;
-      const next = { ...prev, [id]: currentlyCollapsed ? false : true };
-      try {
-        window.localStorage.setItem(COLLAPSED_STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        // Ignore storage issues — collapse state is a convenience only.
-      }
-      return next;
+      return writeBuckets({ ...prev, [id]: currentlyCollapsed ? false : true });
     });
+  }
+
+  function setUnassignedOpen(storageKey: string, open: boolean) {
+    setCollapsedBuckets((prev) => writeBuckets({
+      ...prev,
+      [`${storageKey}:open`]: open,
+      ...(open ? { [storageKey]: true } : {}),
+    }));
   }
 
   function revealBucket(key: string) {
@@ -450,10 +461,15 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start">
         {sections.map((section, index) => {
           const storageKey = section.id;
+          const isUnassigned = section.tone === 'assign';
+          const sectionOpen = isUnassigned ? collapsedBuckets[`${storageKey}:open`] === true : true;
           const collapsed = collapsedBuckets[storageKey] !== false;
-          const visible = collapsed ? section.items.slice(0, BOARD_PREVIEW) : section.items;
+          const visible = !sectionOpen
+            ? []
+            : (collapsed ? section.items.slice(0, BOARD_PREVIEW) : section.items);
+          const showListToggle = sectionOpen && section.items.length > BOARD_PREVIEW;
           const toneClass = section.tone === 'assign'
-            ? 'border-amber-300 bg-amber-50 text-amber-900'
+            ? 'border-orange-300 bg-orange-50 text-orange-950'
             : bucketToneClass(section.tone);
           return (
             <React.Fragment key={storageKey}>
@@ -463,33 +479,56 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
                   aria-hidden="true"
                 />
               ) : null}
-              <button
-                type="button"
-                onClick={() => toggleBucket(storageKey)}
-                className={`md:col-span-2 xl:col-span-3 rounded-xl border px-3 py-2.5 text-left ${toneClass}`}
-                aria-expanded={!collapsed}
-              >
-                <span className="flex items-center justify-between gap-3">
-                  <span>
-                    <span className="block text-sm font-semibold">{section.title}</span>
-                    <span className="block text-[11px] opacity-80 mt-0.5">{section.hint}</span>
-                  </span>
-                  <span className="inline-flex items-center gap-2 shrink-0">
-                    <span className="text-sm font-semibold tabular-nums">{section.items.length}</span>
-                    {section.items.length > BOARD_PREVIEW ? (
-                      <span className="text-xs font-medium opacity-80">
-                        {collapsed ? 'Vis alle' : 'Vis færre'}
-                      </span>
-                    ) : null}
-                    <ChevronDown size={16} className={`transition-transform ${collapsed ? '-rotate-90' : ''}`} />
-                  </span>
+              <div className={`md:col-span-2 xl:col-span-3 flex items-center justify-between gap-3 rounded-lg border px-3 py-1.5 ${toneClass}`}>
+                <button
+                  type="button"
+                  onClick={() => (isUnassigned ? setUnassignedOpen(storageKey, !sectionOpen) : toggleBucket(storageKey))}
+                  className="min-w-0 flex-1 text-left text-sm font-semibold truncate"
+                  aria-expanded={isUnassigned ? sectionOpen : !collapsed}
+                >
+                  {section.title}
+                </button>
+                <span className="inline-flex items-center gap-2 shrink-0">
+                  <span className="text-sm font-semibold tabular-nums">{section.items.length}</span>
+                  {showListToggle ? (
+                    <button
+                      type="button"
+                      onClick={() => toggleBucket(storageKey)}
+                      className="text-xs font-medium opacity-80"
+                    >
+                      {collapsed ? 'Vis alle' : 'Vis færre'}
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => (isUnassigned ? setUnassignedOpen(storageKey, !sectionOpen) : toggleBucket(storageKey))}
+                    className="inline-flex"
+                    aria-label={sectionOpen ? 'Lukk seksjon' : 'Åpne seksjon'}
+                  >
+                    <ChevronDown
+                      size={16}
+                      className={`transition-transform ${(isUnassigned ? sectionOpen : !collapsed) ? 'rotate-180' : ''}`}
+                    />
+                  </button>
                 </span>
-              </button>
+              </div>
               {visible.map((item) => (
                 <React.Fragment key={item.id}>
                   {renderClientCard(item, kindFor(item), canWorkDevelopmentClient(viewer, item), prefix)}
                 </React.Fragment>
               ))}
+              {showListToggle ? (
+                <div className="md:col-span-2 xl:col-span-3">
+                  <button
+                    type="button"
+                    onClick={() => toggleBucket(storageKey)}
+                    className="inline-flex w-full items-center justify-center gap-1 py-1.5 text-sm text-gray-300 hover:text-white"
+                  >
+                    <span>{collapsed ? `Vis alle ${section.items.length}` : 'Vis færre'}</span>
+                    <ChevronDown size={16} className={`shrink-0 transition-transform ${collapsed ? '' : 'rotate-180'}`} />
+                  </button>
+                </div>
+              ) : null}
             </React.Fragment>
           );
         })}
