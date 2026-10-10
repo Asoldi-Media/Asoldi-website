@@ -781,9 +781,13 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                             ? `${meeting.title || 'Møte'}${meeting.when ? ` · ${meeting.when}` : ''}${meeting.pendingTranscript ? ' · venter på transkript' : ''}`
                             : 'Ingen Fireflies-opptak valgt'}
                       </span>
-                      <a href={meeting?.firefliesUrl || 'https://app.fireflies.ai/'} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[#FF5B00] hover:underline">
+                      {/^https:\/\/app\.fireflies\.ai\/view\//i.test(meeting?.firefliesUrl || '') ? (
+                      <a href={meeting.firefliesUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[#FF5B00] hover:underline">
                         <ExternalLink size={12} /> Fireflies
                       </a>
+                      ) : meeting?.pendingTranscript || meeting?.liveJoined ? (
+                        <span>Fireflies er i møtet. Transkriptet kommer hit når opptaket er ferdig.</span>
+                      ) : null}
                       {!locked && (
                         <button type="button" onClick={() => setMeetingsOpen((open) => !open)} className="text-[#FF5B00] hover:underline">
                           {meetingsOpen ? 'Skjul' : 'Bytt opptak'}

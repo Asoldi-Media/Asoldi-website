@@ -85,6 +85,15 @@ test('silent calendar creates do not add Fred until the invite is actually sent'
   }), false);
 });
 
+test('calendar upsert keeps an in-progress room when preserveForeignMeet is set', () => {
+  const src = readFileSync(new URL('../lib/google-calendar.js', import.meta.url), 'utf8');
+  assert.match(src, /options\?\.preserveForeignMeet/);
+  assert.match(src, /salesMeetLooksOwnerHosted/);
+  assert.match(src, /liveHangout \|\| existingMeetLink/);
+  assert.match(src, /lockedMeetLink/);
+  assert.match(src, /Google Meet: \$\{meet\}/);
+});
+
 test('recorded extra Møte plans Meet plus Fireflies and no client email', () => {
   const plan = recordedSalesActionCalendarPlan();
   assert.equal(plan.includeClient, false);
@@ -329,4 +338,25 @@ test('sales page load does not call Google Calendar', () => {
 test('calendar htmlLink eid names the Google mailbox that owns the event', () => {
   const htmlLink = 'https://www.google.com/calendar/event?eid=NTgwNnAyMzBlc2V2YW91aXVrZ25zcm44NDggYWxleGFuZGVyQGFzb2xkaS5jb20';
   assert.equal(googleMailboxFromCalendarHtmlLink(htmlLink), 'alexander@asoldi.com');
+});
+
+test('after confirmation the sales Meet button does not mint a second room', () => {
+  const server = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../server.js'), 'utf8');
+  const openMeet = server.slice(server.indexOf("app.post('/api/admin/sales/:id/open-meet'"));
+  const openBody = openMeet.slice(0, openMeet.indexOf('app.post', 10));
+  assert.match(openBody, /salesInboxMeetLink/);
+  assert.equal(openBody.includes('forceOwnerMeet: true'), false);
+  assert.match(openBody, /syncResult\.calendarInviteSent/);
+  assert.match(server, /preserveEmailedMeetOnSync\(/);
+  const thankYouSync = server.slice(server.indexOf('async function syncCalendarInviteForThankYou'));
+  assert.match(thankYouSync.slice(0, 1200), /salesInboxMeetLink\(client\)/);
+  assert.match(thankYouSync.slice(0, 1200), /forceOwnerMeet:/);
+  assert.equal(thankYouSync.slice(0, 1200).includes('forceOwnerMeet: true'), false);
+  const liveJoin = server.slice(server.indexOf('async function maybeJoinFirefliesLive'));
+  assert.match(liveJoin.slice(0, 1400), /salesInboxMeetLink\(client\)/);
+  assert.match(server, /shouldRescheduleSalesReminders\(/);
+  assert.match(server, /salesReminderCatchUpIsDue\('24h'/);
+  assert.match(server, /overlaySalesInboxMeetOnEvents\(/);
+  const jsonClient = server.slice(server.indexOf('function jsonSalesClient'));
+  assert.match(jsonClient.slice(0, 800), /salesInboxMeetLink\(client\)/);
 });

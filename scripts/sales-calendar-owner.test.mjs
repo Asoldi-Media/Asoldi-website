@@ -10,8 +10,14 @@ import {
   isUnacceptableMeetingHostEmail,
   pickCalendarSyncAccountKey,
   salesClientNeedsCalendarMove,
+  overlaySalesInboxMeetOnEvents,
+  preserveEmailedMeetOnSync,
+  planConfirmedMeetBackfill,
+  salesConfirmedMeetLink,
+  salesInboxMeetLink,
   salesMeetHostIsVerified,
   salesMeetJoinUrl,
+  salesMeetLooksOwnerHosted,
   salesMeetNeedsFreshConference,
   salesMeetingIsInProgress,
   sanitizeMyphonerDefaultOwnerKey,
@@ -130,13 +136,19 @@ test('a shared mailbox cannot host a sales meeting', () => {
   assert.equal(salesMeetHostIsVerified('alexander@asoldi.com', 'alexander@asoldi.com'), true);
   assert.equal(salesMeetHostIsVerified('alexander@asoldi.com', ''), false);
   assert.equal(salesMeetHostIsVerified('alexander@asoldi.com', 'contact@asoldi.com'), false);
+  assert.equal(salesMeetLooksOwnerHosted({
+    expectedOwnerEmail: 'alexander@asoldi.com',
+    organizerEmail: 'alexander@asoldi.com',
+    creatorEmail: 'alexander@asoldi.com',
+    hangoutLink: meet,
+  }), true);
   assert.equal(salesMeetNeedsFreshConference({
     expectedOwnerEmail: 'alexander@asoldi.com',
     verifiedHostEmail: '',
     organizerEmail: 'alexander@asoldi.com',
     creatorEmail: 'alexander@asoldi.com',
     hangoutLink: meet,
-  }), true);
+  }), false);
   assert.equal(salesMeetNeedsFreshConference({
     expectedOwnerEmail: 'alexander@asoldi.com',
     verifiedHostEmail: 'alexander@asoldi.com',
@@ -169,6 +181,91 @@ test('a shared mailbox cannot host a sales meeting', () => {
   const during = new Date('2026-10-07T13:10:00.000Z').getTime();
   assert.equal(salesMeetingIsInProgress('2026-10-07T13:00:00.000Z', 60, during), true);
   assert.equal(salesMeetingIsInProgress('2026-10-08T12:00:00.000Z', 60, during), false);
+});
+
+test('confirmed Meet is the emailed URL, not a later calendar swap', () => {
+  const oldMeet = 'https://meet.google.com/old-oldd-old';
+  const newMeet = 'https://meet.google.com/new-neww-new';
+  assert.equal(salesConfirmedMeetLink({ confirmedMeetLink: oldMeet, meetLink: newMeet }), oldMeet);
+  assert.equal(salesConfirmedMeetLink({ meetLink: newMeet }), newMeet);
+  assert.equal(preserveEmailedMeetOnSync({
+    forceOwnerMeet: true,
+    thankYouSentAt: '2026-10-02T11:28:34.966Z',
+  }), false);
+  assert.equal(preserveEmailedMeetOnSync({
+    forceOwnerMeet: false,
+    thankYouSentAt: '2026-10-02T11:28:34.966Z',
+    meetingAt: '2026-10-20T12:00:00.000Z',
+    nowMs: Date.parse('2026-10-10T12:00:00.000Z'),
+  }), true);
+  assert.equal(preserveEmailedMeetOnSync({
+    forceOwnerMeet: false,
+    thankYouSentAt: '',
+    meetingAt: '2026-10-20T12:00:00.000Z',
+    nowMs: Date.parse('2026-10-10T12:00:00.000Z'),
+  }), false);
+  assert.equal(preserveEmailedMeetOnSync({
+    forceOwnerMeet: false,
+    thankYouSentAt: '',
+    meetLink: oldMeet,
+    meetingAt: '2026-10-20T12:00:00.000Z',
+    nowMs: Date.parse('2026-10-10T12:00:00.000Z'),
+  }), true);
+});
+
+test('already-sent clients keep the inbox Meet, unassigned keep the existing room', () => {
+  const emailed = 'https://meet.google.com/tjm-nrpr-xpw';
+  const swapped = 'https://meet.google.com/nxn-gmfc-roz';
+  const kaperdal = {
+    reminders: { thankYouSentAt: '2026-10-02T11:28:34.966Z' },
+    calendar: { meetLink: swapped },
+    recordedMeetLinks: [emailed, swapped],
+  };
+  assert.equal(salesInboxMeetLink(kaperdal), emailed);
+  assert.deepEqual(planConfirmedMeetBackfill(kaperdal), {
+    meetLink: emailed,
+    confirmedMeetLink: emailed,
+  });
+  const alreadyStamped = {
+    ...kaperdal,
+    calendar: { meetLink: emailed, confirmedMeetLink: emailed },
+  };
+  assert.equal(planConfirmedMeetBackfill(alreadyStamped), null);
+  const unassigned = {
+    ownerId: '',
+    reminders: { thankYouSentAt: '' },
+    calendar: { meetLink: emailed },
+    recordedMeetLinks: [emailed],
+  };
+  assert.equal(salesInboxMeetLink(unassigned), emailed);
+  assert.deepEqual(planConfirmedMeetBackfill(unassigned), {
+    meetLink: emailed,
+    confirmedMeetLink: emailed,
+  });
+  const workshopOnly = {
+    calendar: { meetLink: swapped },
+    recordedMeetLinks: [emailed, swapped],
+    workshopAction: { meetLink: emailed },
+  };
+  assert.equal(salesInboxMeetLink(workshopOnly), swapped);
+  const overlay = overlaySalesInboxMeetOnEvents(
+    [{
+      id: 'evt-kaperdal',
+      meetLink: swapped,
+      location: swapped,
+      summary: 'Asoldi · Kaperdal',
+    }, {
+      id: 'evt-other',
+      meetLink: 'https://meet.google.com/oth-othr-oth',
+    }],
+    [{
+      ...kaperdal,
+      calendar: { eventId: 'evt-kaperdal', meetLink: swapped },
+    }]
+  );
+  assert.equal(overlay[0].meetLink, emailed);
+  assert.equal(overlay[0].location, emailed);
+  assert.equal(overlay[1].meetLink, 'https://meet.google.com/oth-othr-oth');
 });
 
 test('a usable token cannot be the blocked Gmail mailbox', () => {

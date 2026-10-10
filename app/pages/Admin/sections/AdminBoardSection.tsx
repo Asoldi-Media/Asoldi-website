@@ -24,6 +24,7 @@ import { AdminRequestInbox } from './AdminRequestInbox';
 import { WorkshopAdminActionRow } from './WorkshopAdminActionRow';
 import { WebsiteDueField } from './WebsiteDueField';
 import { WorkshopNeedsPanel } from './WorkshopNeedsPanel';
+import { InboxBotPanel } from './InboxBotPanel';
 import { SalesCalendarWeek } from './SalesCalendarWeek';
 
 const OfferReviewSection = lazy(() =>
@@ -211,6 +212,9 @@ function AdminBoardCard({
         {thread?.unreadForAdmin ? (
           <p className="mt-0.5 text-[11px] text-amber-300">{thread.lastKindLabel || 'Åpen forespørsel'}</p>
         ) : null}
+        {(client.inboxBot?.pendingContracts || 0) > 0 ? (
+          <p className="mt-0.5 text-[11px] text-amber-300">Kontrakt mottatt</p>
+        ) : null}
         {showCompact ? (
           <button
             type="button"
@@ -261,6 +265,7 @@ function AdminBoardCard({
                 variant="card"
                 authHeaders={salesAuthHeaders()}
               />
+              <InboxBotPanel client={client} />
               <WorkshopNeedsPanel clientId={client.id} />
               <div className="flex flex-wrap items-center gap-2">
                 <button
@@ -363,6 +368,7 @@ export function AdminBoardSection() {
   const [whenFilter, setWhenFilter] = useState('');
   const [onlyWithRequests, setOnlyWithRequests] = useState(false);
   const [threadMap, setThreadMap] = useState<Record<string, ThreadSummary>>({});
+  const [inboxPendingContracts, setInboxPendingContracts] = useState(0);
   const [headerPanel, setHeaderPanel] = useState<HeaderPanel>(null);
   const [peekCardIds, setPeekCardIds] = useState<Record<string, boolean>>({});
   const headerShellRef = useRef<HTMLDivElement | null>(null);
@@ -386,6 +392,7 @@ export function AdminBoardSection() {
     const data = await request('/admin/sales');
     const next = Array.isArray(data.clients) ? data.clients as SalesClient[] : [];
     setClients(next);
+    setInboxPendingContracts(Number(data.inboxPendingContracts) || next.reduce((sum, client) => sum + (client.inboxBot?.pendingContracts || 0), 0));
   }, []);
 
   const loadThreads = useCallback(async () => {
@@ -477,7 +484,12 @@ export function AdminBoardSection() {
             <img src="/media/Untitled-1.png" alt="Asoldi" className="h-8 sm:h-9 w-auto shrink-0" />
             <div className="min-w-0">
               <h1 className="text-sm sm:text-base font-semibold leading-tight truncate">Adminterminal</h1>
-              <p className="mt-0.5 text-[11px] sm:text-xs text-gray-300">Website ({boardClients.length})</p>
+              <p className="mt-0.5 text-[11px] sm:text-xs text-gray-300">
+                Website ({boardClients.length})
+                {inboxPendingContracts ? (
+                  <span className="text-amber-300"> · Kontrakt ({inboxPendingContracts})</span>
+                ) : null}
+              </p>
             </div>
           </div>
 

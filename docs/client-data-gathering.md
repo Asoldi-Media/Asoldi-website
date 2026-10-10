@@ -119,7 +119,7 @@ For now, do not invent a category for every file. Put uploads in the media libra
 
 Exception the product owner still wants: if the client says what a file is for («this first image should be the main image»), put that file in that bucket (Hovedbilde → `mainHeroImages`, and the same idea for Om oss, Ansatte, Lokasjon, and the other buckets). Text files never go in the media library.
 
-Today every assistant media upload goes to `media.uncategorized` only. A sentence like «use this as the hero» is not read. Logo is the only image with its own slot, and only in the logo step.
+Today `persistMediaFiles` still defaults to `media.uncategorized`. If the client (or the inbox bot) names a role — logo, hovedbilde, ansatte, lokasjon, and the other buckets — that file lands in that bucket. A lone logo also fills `brandIdentity.logos.normal` when it is empty.
 
 ## What is still not what he asked for
 
@@ -127,7 +127,7 @@ These are the gaps. The rest of the two flows above already matches the request.
 
 1. **Product intake quality.** Sources must be read as one catalog, categories must follow the source’s own grouping, and a later file must be allowed to reshape that grouping. The machinery is there. The result is still the part he does not trust.
 2. **Onboarding links are not reused.** Website, Instagram, Facebook, and Google profile are saved, then the assistant asks for a product source as if they were not.
-3. **Media role.** Uploads always land in Annet. A stated role (hero and the other buckets) is ignored.
+3. **Media role.** Default is still Annet when nobody says what the file is. A stated role (hero, logo, and the other buckets) is applied in the assistant chat and by the inbox bot.
 4. **BRREG address** is shown when they pick the company and then dropped on save.
 5. **Google profile search** can still return the wrong businesses. The saved Place ID is only as good as the row they click.
 

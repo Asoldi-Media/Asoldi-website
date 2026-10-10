@@ -299,6 +299,7 @@ test('opening Tilbud does not wait for Fireflies GraphQL', async () => {
     server.indexOf("app.put('/api/admin/sales/:id/offer'")
   );
   assert.match(offerGet, /scheduleFirefliesTranscriptIngest/);
+  assert.match(server, /hydrateRecentStoredTranscripts/);
   assert.equal(offerGet.includes('await ingestRecentFirefliesMeetLinks'), false);
   assert.equal(offerGet.includes('await hydrateOfferMeetings'), false);
   assert.equal(meetingGet.includes('await hydrateOfferMeetings'), false);
@@ -340,6 +341,39 @@ test('client card meetings show stored transcript text and hide live stubs', asy
   });
   assert.equal(shown.some((row) => String(row.meetingId).startsWith('live:')), false);
   assert.equal(shown.find((row) => row.meetingId === 'ff-card')?.hasTranscript, true);
+});
+
+test('client card hides a live stub when the transcript is on another owned Meet', async () => {
+  const { presentClientMeetings } = await import('../lib/workshop-meetings.js');
+  const shown = presentClientMeetings({
+    id: 'c-swap',
+    agreedTime: true,
+    meetingAt: '2026-10-08T14:00:00.000Z',
+    calendar: { meetLink: 'https://meet.google.com/uss-ynky-nfw' },
+    recordedMeetLinks: [
+      'https://meet.google.com/idy-uiyh-efh',
+      'https://meet.google.com/uss-ynky-nfw',
+    ],
+    meetings: [
+      {
+        meetingId: 'live:c-swap:open',
+        meetLink: 'https://meet.google.com/idy-uiyh-efh',
+        hasTranscript: false,
+        linkedBy: 'live-join',
+        forSalesMeeting: true,
+        purpose: 'sales',
+      },
+      {
+        meetingId: 'ff-swap',
+        meetLink: 'https://meet.google.com/uss-ynky-nfw',
+        hasTranscript: true,
+        linkedBy: 'meet-link',
+        purpose: 'sales',
+      },
+    ],
+  });
+  assert.equal(shown.some((row) => String(row.meetingId).startsWith('live:')), false);
+  assert.equal(shown.find((row) => row.meetingId === 'ff-swap')?.hasTranscript, true);
 });
 
 test('fireflies matcher: only the booked Google Meet owns the recording', () => {

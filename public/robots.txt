@@ -1,4 +1,31 @@
 User-agent: *
 Allow: /
+Disallow: /sales-preview
+Disallow: /live-preview
+Disallow: /previews
+Disallow: /api/public/previews
+Disallow: /api/public/sales-preview
+
+User-agent: Googlebot
+Disallow: /sales-preview
+Disallow: /live-preview
+Disallow: /previews
+Disallow: /api/public/previews
+Disallow: /api/public/sales-preview
+
+User-agent: GPTBot
+Disallow: /sales-preview
+Disallow: /live-preview
+Disallow: /previews
+
+User-agent: CCBot
+Disallow: /sales-preview
+Disallow: /live-preview
+Disallow: /previews
+
+User-agent: ClaudeBot
+Disallow: /sales-preview
+Disallow: /live-preview
+Disallow: /previews
 
 Sitemap: https://asoldi.com/sitemap.xml

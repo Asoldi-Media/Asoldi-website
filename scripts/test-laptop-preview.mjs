@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   LAN_ASOLDI_ORIGIN,
   PUBLIC_SALES_ORIGIN,
@@ -9,6 +10,11 @@ import {
   buildSalesPreviewPath,
   clientNeedsPublicPreviewSnapshot,
   injectPreviewBaseHref,
+  injectPreviewRobotsMeta,
+  injectSalesPreviewContractWidget,
+  isPreviewCrawler,
+  isPreviewProtectedPath,
+  PREVIEW_ROBOTS_TAG,
   isAllowedPreviewBridgeExportUrl,
   isAllowedPreviewBundleUploadUrl,
   isPrivateMakerUrl,
@@ -116,6 +122,26 @@ assert.equal(
   '<html><head><base href="/sales-preview/client-1/"><title>x</title></head></html>'
 );
 
+const withBody = injectSalesPreviewContractWidget(
+  '<html><body><p>site</p></body></html>',
+  'client-1'
+);
+assert.match(withBody, /src="\/sales-preview-contract\.js"/);
+assert.match(withBody, /data-sales-client-id="client-1"/);
+assert.equal(
+  withBody,
+  '<html><body><p>site</p><script src="/sales-preview-contract.js" data-sales-client-id="client-1" charset="utf-8" defer></script></body></html>'
+);
+assert.equal(
+  injectSalesPreviewContractWidget(withBody, 'client-1'),
+  withBody
+);
+assert.equal(
+  injectSalesPreviewContractWidget('<p>no body</p>', 'client-1'),
+  '<p>no body</p><script src="/sales-preview-contract.js" data-sales-client-id="client-1" charset="utf-8" defer></script>'
+);
+assert.equal(injectSalesPreviewContractWidget('<p>x</p>', ''), '<p>x</p>');
+
 // Root-absolute assets must be pulled back inside the preview folder.
 assert.equal(
   rewritePreviewAssetPaths('<link rel="stylesheet" href="/css/style.css">', 'client-1'),
@@ -176,5 +202,24 @@ assert.equal(
   ),
   '<script src="/sales-preview/client-1/assets/gsap.js"></script>'
 );
+
+assert.equal(isPreviewCrawler('Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'), true);
+assert.equal(isPreviewCrawler('Mozilla/5.0 AppleWebKit GPTBot/1.0'), true);
+assert.equal(isPreviewCrawler('Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/129.0.0.0'), false);
+assert.equal(isPreviewProtectedPath('/sales-preview/abc/'), true);
+assert.equal(isPreviewProtectedPath('/previews'), true);
+assert.equal(isPreviewProtectedPath('/pricing'), false);
+
+const withMeta = injectPreviewRobotsMeta('<html><head><meta name="robots" content="index,follow"><title>x</title></head></html>');
+assert.match(withMeta, /noindex,nofollow,noarchive,nosnippet,noimageindex/);
+assert.match(withMeta, /name="referrer" content="no-referrer"/);
+assert.equal(withMeta.includes('index,follow'), false);
+assert.equal(PREVIEW_ROBOTS_TAG.includes('noindex'), true);
+
+const robotsTxt = readFileSync(new URL('../public/robots.txt', import.meta.url), 'utf8');
+assert.match(robotsTxt, /Disallow: \/sales-preview/);
+assert.match(robotsTxt, /Disallow: \/live-preview/);
+assert.match(robotsTxt, /Disallow: \/previews/);
+assert.match(robotsTxt, /User-agent: Googlebot/);
 
 console.log('laptop-preview tests passed');

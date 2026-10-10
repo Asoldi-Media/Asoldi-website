@@ -254,6 +254,27 @@ test('a hub site without a sales row uses the site due date', () => {
   assert.equal(items[0].websiteDue.started, true);
 });
 
+test('development items carry sales Kundekort page 1 fields', () => {
+  const sales = [{
+    ...bynesetSales,
+    industry: 'kafé',
+    contactEmail: 'hei@byneset.no',
+    notes: 'Salgsnotat',
+    details: {
+      instagramUrl: 'https://instagram.com/byneset',
+      facebookUrl: '',
+      proffUrl: '',
+      googleBusinessProfile: '',
+      otherLinks: '',
+    },
+  }];
+  const items = buildDevelopmentItems(sales, []);
+  assert.equal(items[0].kundekort.industry, 'kafé');
+  assert.equal(items[0].kundekort.instagramUrl, 'https://instagram.com/byneset');
+  assert.equal(items[0].kundekort.notes, 'Salgsnotat');
+  assert.equal(items[0].clientBrief.ready, false);
+});
+
 test('SSU clients stay off the website board and keep their own count list', () => {
   const ssu = {
     id: 'sales-ssu',

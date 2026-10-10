@@ -8,7 +8,7 @@ import {
   listEmailTemplates,
   shouldAttachCalendarInvite,
 } from '../lib/email-templates-store.js';
-import { deriveReminderSchedule, salesReminderIsDue } from '../data/sales.js';
+import { deriveReminderSchedule, salesReminderCatchUpIsDue, salesReminderIsDue, shouldRescheduleSalesReminders } from '../data/sales.js';
 import { buildSalesSender } from '../lib/sales-sender.js';
 import {
   buildSalesCalendarInvite,
@@ -190,6 +190,32 @@ test('3-day reminder is only scheduled when the meeting is more than 3 days away
   assert.ok(soon.reminder1hAt);
 });
 
+test('calendar sync without a time change does not reschedule reminders', () => {
+  const client = { meetingAt: '2026-10-09T12:00:00.000Z', agreedTime: true };
+  assert.equal(shouldRescheduleSalesReminders(client, client), false);
+  assert.equal(shouldRescheduleSalesReminders(null, client), true);
+  assert.equal(shouldRescheduleSalesReminders(client, { ...client, meetingAt: '2026-10-10T12:00:00.000Z' }), true);
+});
+
+test('wiped 24h stamp still catch-up-sends when confirmation was more than 24h before the meeting', () => {
+  const meetingAt = '2026-10-09T12:00:00.000Z';
+  const client = {
+    meetingAt,
+    reminders: { thankYouSentAt: '2026-10-02T11:28:34.966Z', reminder24hAt: '', reminder24hSentAt: '' },
+  };
+  assert.equal(salesReminderCatchUpIsDue('24h', client, Date.parse('2026-10-08T12:00:00.000Z')), true);
+  assert.equal(salesReminderCatchUpIsDue('24h', client, Date.parse('2026-10-07T11:00:00.000Z')), false);
+  assert.equal(salesReminderCatchUpIsDue('24h', {
+    ...client,
+    reminders: { ...client.reminders, reminder24hSentAt: '2026-10-08T12:01:00.000Z' },
+  }, Date.parse('2026-10-08T13:00:00.000Z')), false);
+  assert.equal(salesReminderCatchUpIsDue('24h', client, Date.parse('2026-10-09T13:00:00.000Z')), false);
+  assert.equal(salesReminderCatchUpIsDue('1h', {
+    meetingAt,
+    reminders: { thankYouSentAt: '2026-10-02T11:28:34.966Z', reminder1hSentAt: '' },
+  }, Date.parse('2026-10-09T11:30:00.000Z')), true);
+});
+
 test('due reminders still send after the old 6-hour catch-up window, until the meeting starts', () => {
   const now = Date.parse('2026-09-19T14:00:00.000Z');
   const meetingAt = '2026-09-20T12:00:00.000Z';
@@ -203,6 +229,24 @@ test('due reminders still send after the old 6-hour catch-up window, until the m
 test('thank-you attaches an ICS invite by default', () => {
   const message = composeEmailForClient(getSalesEmailPreviewClient(), 'thank-you').message;
   assert.equal(message.icalEvent?.filename, 'asoldi-online-mote.ics');
+});
+
+test('confirmation ICS uses the emailed Meet when a later room is on the calendar', () => {
+  const client = getSalesEmailPreviewClient({
+    calendar: {
+      meetLink: 'https://meet.google.com/new-neww-new',
+      confirmedMeetLink: 'https://meet.google.com/old-oldd-old',
+      htmlLink: 'https://calendar.google.com/event?eid=test',
+      eventId: 'evt-1',
+      organizerEmail: 'alexander@asoldi.com',
+    },
+  });
+  const invite = buildSalesCalendarInvite(client, client.calendar);
+  assert.match(invite.content, /LOCATION:https:\/\/meet\.google\.com\/old-oldd-old/);
+  assert.equal(invite.content.includes('new-neww-new'), false);
+  const reminder = composeEmailForClient(client, 'reminder-24h').message;
+  assert.match(reminder.html, /old-oldd-old/);
+  assert.equal(reminder.html.includes('new-neww-new'), false);
 });
 
 test('reminders do not attach an ICS invite', () => {

@@ -362,6 +362,33 @@ export type DevelopmentItem = {
   contactPhone: string;
   meetingPlace: string;
   industry?: string;
+  kundekort?: {
+    product: 'asoldi' | 'ssu';
+    productLabel: string;
+    businessName: string;
+    contactPerson: string;
+    contactEmail: string;
+    websiteEmail: string;
+    contactPhone: string;
+    industry: string;
+    websiteDomain: string;
+    orgNumber: string;
+    meetingPlace: string;
+    businessAddress: string;
+    instagramUrl: string;
+    facebookUrl: string;
+    proffUrl: string;
+    googleBusinessProfile: string;
+    otherLinks: string[];
+    notes: string;
+  };
+  clientBrief?: {
+    short: string;
+    full: string;
+    generatedAt: string;
+    source: string;
+    ready: boolean;
+  };
   product?: 'asoldi' | 'ssu';
   createdAt?: string;
   websiteDomain: string;
@@ -431,6 +458,7 @@ export type SalesCalendarMeta = {
   eventId: string;
   htmlLink: string;
   meetLink: string;
+  confirmedMeetLink?: string;
   calendarId: string;
   accountKey: string;
   googleEmail?: string;
@@ -715,6 +743,13 @@ export type SalesClient = {
   websiteDomain: string;
   notes: string;
   details: SalesClientDetails;
+  /** Later AI identity text. Short on the developer card, full in Prosjektdokument. */
+  clientBrief?: {
+    short: string;
+    full: string;
+    generatedAt: string;
+    source: string;
+  } | null;
   myphoner: SalesMyphonerMeta;
   progression: SalesProgression;
   salesMigrations?: { meetingHeldOrphansV1?: boolean };
@@ -743,6 +778,22 @@ export type SalesClient = {
   contractSignedAt?: string;
   /** When the contract PDF was sent. Checkup is due 24h after this, once Kontrakt is checked. */
   contractSentAt?: string;
+  inboxBot?: {
+    pendingContracts: number;
+    stagedElements: number;
+    contracts: {
+      id: string;
+      fileName: string;
+      receivedAt: string;
+      summary: string;
+      from: string;
+      subject: string;
+      status: string;
+      signedVerdict?: string;
+      signedScore?: number;
+      signedReasons?: string[];
+    }[];
+  };
   websiteDueOverride?: string;
   websiteDeliveryWeeks?: number;
   status: 'active' | 'not-sold' | 'secondary';

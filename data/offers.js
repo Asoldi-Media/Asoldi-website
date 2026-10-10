@@ -225,6 +225,12 @@ export function deleteOffer(id) {
   return true;
 }
 
+export function getActiveOfferForSalesClient(salesClientId) {
+  const clientId = sanitizeText(salesClientId);
+  if (!clientId) return null;
+  return listOffers().find((entry) => entry.salesClientId === clientId) || null;
+}
+
 export function findPortalOfferForSales({ salesOfferId = '', salesClientId = '' } = {}) {
   const offerId = sanitizeText(salesOfferId);
   const clientId = sanitizeText(salesClientId);

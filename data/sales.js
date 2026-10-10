@@ -20,9 +20,11 @@ import {
 } from '../lib/sales-next-actions.js';
 import { calendarDurationForMode } from '../lib/sales-meeting-duration.js';
 import { filterCustomOtherLinks } from '../lib/sales-client-links.js';
+import { persistClientBrief } from '../lib/sales-kundekort.js';
 import { normalizeWorkshopAction, offerStartDateFromWorkshopDueAt } from '../lib/workshop-action.js';
 import { persistWorkshopRecord } from '../lib/workshop-record.js';
-import { collectRecordedMeetLinks } from '../lib/fireflies-client-match.js';
+import { collectRecordedMeetLinks, firefliesMeetLinksDiffer } from '../lib/fireflies-client-match.js';
+import { planConfirmedMeetBackfill } from '../lib/sales-calendar-owner.js';
 import { clampClientActionsToDueDate, ensureFeedbackAction, ensureInformasjonAction } from '../lib/workshop-desk-actions.js';
 import { mergeMakerRunPatch, normalizeDeveloperQa } from '../lib/developer-card.js';
 import { canonicalDeveloperOwnerId, normalizeDeveloperHandoff, applyAdminDeveloperOwnerSeed, shouldSeedExistingDeveloperOwners } from '../lib/developer-assignment.js';
@@ -298,6 +300,7 @@ function normalizeCalendar(value = {}) {
     eventId: sanitizeText(input.eventId),
     htmlLink: sanitizeText(input.htmlLink),
     meetLink: sanitizeText(input.meetLink),
+    confirmedMeetLink: sanitizeText(input.confirmedMeetLink),
     calendarId: sanitizeText(input.calendarId),
     accountKey: sanitizeText(input.accountKey),
     googleEmail: sanitizeText(input.googleEmail),
@@ -311,6 +314,7 @@ function normalizeCalendar(value = {}) {
     firefliesLiveJoinedAt: sanitizeText(input.firefliesLiveJoinedAt),
     firefliesLiveJoinAttemptAt: sanitizeText(input.firefliesLiveJoinAttemptAt),
     firefliesLiveJoinError: sanitizeText(input.firefliesLiveJoinError),
+    firefliesLiveJoinedMeetLink: sanitizeText(input.firefliesLiveJoinedMeetLink),
     inviteSequence: Number.isFinite(Number(input.inviteSequence)) && Number(input.inviteSequence) > 0
       ? Math.trunc(Number(input.inviteSequence))
       : 0,
@@ -482,6 +486,23 @@ export function formatOrgNumber(value = '') {
   return digits ? `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}` : '';
 }
 
+function normalizeSentContractFingerprint(raw = {}) {
+  if (!raw || typeof raw !== 'object') return null;
+  const byteLength = Math.max(0, Math.round(Number(raw.byteLength) || 0));
+  const sha256 = sanitizeText(raw.sha256).slice(0, 64);
+  if (!byteLength && !sha256) return null;
+  return {
+    byteLength,
+    pageCount: Math.max(0, Math.round(Number(raw.pageCount) || 0)),
+    imageCount: Math.max(0, Math.round(Number(raw.imageCount) || 0)),
+    eofCount: Math.max(0, Math.round(Number(raw.eofCount) || 0)),
+    sha256,
+    fileName: sanitizeText(raw.fileName).slice(0, 180),
+    sentAt: sanitizeText(raw.sentAt),
+    source: 'sent',
+  };
+}
+
 function normalizeSalesClient(raw = {}) {
   const meetingMode = normalizeMeetingMode(raw.meetingMode);
   const agreedTime = Boolean(raw.agreedTime);
@@ -538,6 +559,7 @@ function normalizeSalesClient(raw = {}) {
     websiteDomain: product === 'ssu' ? '' : normalizeWebsiteDomain(raw.websiteDomain),
     notes: sanitizeSalesNotes(raw.notes),
     details: normalizeSalesDetails(raw.details),
+    clientBrief: persistClientBrief(raw.clientBrief),
     myphoner,
     progression: nextProgression,
     salesMigrations: reset.salesMigrations,
@@ -548,6 +570,7 @@ function normalizeSalesClient(raw = {}) {
     developerGoals: normalizeDeveloperGoals(raw.developerGoals),
     contractSignedAt: nextProgression.contractSigned ? sanitizeText(raw.contractSignedAt) : '',
     contractSentAt: sanitizeText(raw.contractSentAt),
+    sentContractFingerprint: normalizeSentContractFingerprint(raw.sentContractFingerprint),
     websiteDueOverride: normalizeDueDate(raw.websiteDueOverride),
     websiteDeliveryWeeks: Math.max(0, Math.round(Number(raw.websiteDeliveryWeeks) || 0)),
     development: product === 'ssu' ? normalizeDevelopment() : normalizeDevelopment(raw.development),
@@ -565,6 +588,8 @@ function normalizeSalesClient(raw = {}) {
     createdAt,
     updatedAt,
   };
+  const inboxPatch = planConfirmedMeetBackfill(client);
+  if (inboxPatch) client.calendar = { ...client.calendar, ...inboxPatch };
   client.nextActions = decorateNextActions(client);
   return client;
 }
@@ -578,7 +603,13 @@ function readState() {
     const stored = Array.isArray(raw?.nextActions) ? raw.nextActions : [];
     return !stored.some((action) => action?.presetKey === 'oppfolging1mnd');
   });
-  if (previous.length && (needsOrphanWrite || needsFollowUpWrite)) {
+  const needsInboxMeetWrite = previous.some((raw, index) => {
+    const before = raw?.calendar || {};
+    const after = list[index]?.calendar || {};
+    return firefliesMeetLinksDiffer(before.confirmedMeetLink, after.confirmedMeetLink)
+      || firefliesMeetLinksDiffer(before.meetLink, after.meetLink);
+  });
+  if (previous.length && (needsOrphanWrite || needsFollowUpWrite || needsInboxMeetWrite)) {
     writeSalesFile(list);
   }
   return list;
@@ -645,6 +676,33 @@ export function salesReminderIsDue(atIso, sentAt, { nowMs = Date.now(), meetingA
   const meetingMs = meetingAt ? new Date(meetingAt).getTime() : 0;
   if (Number.isFinite(meetingMs) && meetingMs > 0 && meetingMs <= nowMs) return false;
   return true;
+}
+
+export function shouldRescheduleSalesReminders(previousClient, nextClient) {
+  if (!nextClient) return false;
+  if (!previousClient) return true;
+  return sanitizeText(previousClient.meetingAt) !== sanitizeText(nextClient.meetingAt)
+    || Boolean(previousClient.agreedTime) !== Boolean(nextClient.agreedTime);
+}
+
+const REMINDER_CATCHUP_MS = {
+  '1h': 60 * 60 * 1000,
+  '24h': 24 * 60 * 60 * 1000,
+};
+
+/** 24h/1h still send if calendar sync wiped the due stamp, as long as confirmation was far enough before the meeting. */
+export function salesReminderCatchUpIsDue(kind, client = {}, nowMs = Date.now()) {
+  const windowMs = REMINDER_CATCHUP_MS[kind];
+  if (!windowMs) return false;
+  const sentAt = kind === '24h'
+    ? sanitizeText(client?.reminders?.reminder24hSentAt)
+    : sanitizeText(client?.reminders?.reminder1hSentAt);
+  if (sentAt) return false;
+  const meetingMs = new Date(client?.meetingAt).getTime();
+  if (!Number.isFinite(meetingMs) || meetingMs <= nowMs) return false;
+  const thankYouMs = new Date(client?.reminders?.thankYouSentAt).getTime();
+  if (!Number.isFinite(thankYouMs) || meetingMs - thankYouMs <= windowMs) return false;
+  return nowMs >= meetingMs - windowMs;
 }
 
 export function getSalesClients() {
@@ -904,6 +962,18 @@ export function recordContractSent(id, sentAt = '') {
     ? ensureContractCheckupAction(stamped.nextActions, stamped)
     : stamped.nextActions;
   return updateSalesClient(id, { contractSentAt, nextActions });
+}
+
+/** Byte size / page / hash of the PDF we actually emailed, so inbound copies can be compared. */
+export function recordSentContractFingerprint(id, fingerprint = {}) {
+  const current = getSalesClientById(id);
+  if (!current) return null;
+  const next = normalizeSentContractFingerprint({
+    ...fingerprint,
+    sentAt: sanitizeText(fingerprint?.sentAt) || nowIso(),
+  });
+  if (!next) return current;
+  return updateSalesClient(id, { sentContractFingerprint: next });
 }
 
 export function setSalesProgress(id, key, value, { fastTrack = false } = {}) {
@@ -1306,6 +1376,7 @@ export function clearSalesMeetingScheduling(id) {
       eventId: '',
       htmlLink: '',
       meetLink: '',
+      confirmedMeetLink: '',
       calendarId: '',
       accountKey: '',
       googleEmail: '',
@@ -1319,6 +1390,7 @@ export function clearSalesMeetingScheduling(id) {
       firefliesLiveJoinedAt: '',
       firefliesLiveJoinAttemptAt: '',
       firefliesLiveJoinError: '',
+      firefliesLiveJoinedMeetLink: '',
       inviteSequence: 0,
     },
   });

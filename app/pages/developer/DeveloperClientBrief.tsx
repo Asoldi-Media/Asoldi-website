@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { DEVELOPER_QA_LABELS } from '../../../lib/developer-card.js';
+import { DeveloperClientIdentityFull, DeveloperKundedata } from './DeveloperKundedata';
 
 export type MaterialDot = {
   id: string;
@@ -188,6 +189,7 @@ export function DeveloperClientBrief({
   authHeaders,
   dots,
   onOpenLibrary,
+  kundekortSource = {},
 }: {
   open: boolean;
   onClose: () => void;
@@ -198,6 +200,7 @@ export function DeveloperClientBrief({
   authHeaders: AuthHeaders;
   dots: MaterialDot[];
   onOpenLibrary: () => void;
+  kundekortSource?: Record<string, unknown>;
 }) {
   if (!open) return null;
   const images = files.filter((file) => isImageFile(file) && file.url);
@@ -216,7 +219,7 @@ export function DeveloperClientBrief({
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-white/10 px-4 py-4 sm:px-6">
           <div>
             <h2 className="text-lg font-semibold text-white">Prosjektdokument</h2>
-            <p className="text-xs text-gray-400 mt-1">Sammendrag, det vi mangler, og kundens mediefiler.</p>
+            <p className="text-xs text-gray-400 mt-1">Kundekort, sammendrag, det vi mangler, og kundens mediefiler.</p>
           </div>
           <button
             type="button"
@@ -230,6 +233,8 @@ export function DeveloperClientBrief({
 
         <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(360px,42%)]">
           <div className="min-h-0 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5 space-y-6">
+            <DeveloperKundedata source={kundekortSource} />
+            <DeveloperClientIdentityFull source={kundekortSource} />
             <section className="space-y-3">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-300">Sammendrag</h3>
               {summary.ready ? (

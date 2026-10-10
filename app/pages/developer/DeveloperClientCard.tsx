@@ -12,6 +12,7 @@ import { DeveloperRequestThread } from './DeveloperRequestThread';
 import { DeveloperLanguageLockPopup } from './DeveloperLanguageLockPopup';
 import { DeveloperPagesPopup } from './DeveloperPagesPopup';
 import { DeveloperAuthImage, DeveloperClientBrief, DeveloperMediaLibrary, type BriefMediaFile, type MaterialDot } from './DeveloperClientBrief';
+import { DeveloperClientIdentityLine } from './DeveloperKundedata';
 import { enqueueMakerQueue, ensureLocalMaker, fetchMakerRunStatus, findMakerRunBySalesClientId, saveMakerRunDomain } from './makerQueue';
 import { createSalesMakerRun } from './MakerRunTools';
 import { summarizeMaterialDots } from '../../../lib/client-material-dots.js';
@@ -216,6 +217,12 @@ export function DeveloperClientCard({
   useEffect(() => {
     setQa(normalizeDeveloperQa(item.developerQa));
   }, [item.developerQa]);
+
+  useEffect(() => {
+    if (!briefOpen) return undefined;
+    void onReload();
+    return undefined;
+  }, [briefOpen, onReload]);
 
   useEffect(() => {
     lastSyncedHandoffRef.current = '';
@@ -988,9 +995,13 @@ export function DeveloperClientCard({
           >
             {workshopHeld ? 'Workshop holdt' : 'Workshop ikke holdt'}
           </span>
-          {item.industry ? (
-            <span className="text-[11px] text-gray-500">{item.industry}</span>
-          ) : null}
+          <DeveloperClientIdentityLine
+            source={{
+              industry: item.industry,
+              clientBrief: item.clientBrief,
+              kundekort: item.kundekort,
+            }}
+          />
         </div>
 
       {isDevelopmentList && (
@@ -1318,6 +1329,13 @@ export function DeveloperClientCard({
         authHeaders={developmentAuthHeaders()}
         dots={dots}
         onOpenLibrary={() => setLibraryOpen(true)}
+        kundekortSource={{
+          ...item,
+          clientBrief: item.clientBrief,
+          kundekort: item.kundekort,
+          notes: item.notes,
+          industry: item.industry,
+        }}
       />
       <DeveloperMediaLibrary
         open={libraryOpen}

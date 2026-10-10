@@ -18,6 +18,7 @@ import { currentPipelineStage } from '../../../../lib/developer-card.js';
 import { DeveloperRunQueueBar } from '../../developer/DeveloperRunQueueBar';
 import { LOCAL_EDITOR_ORIGIN } from '../../../../lib/maker-editor-origin.js';
 import { fetchMakerQueue } from '../../developer/makerQueue';
+import { clientIdentityBrief, salesKundekortView } from '../../../../lib/sales-kundekort.js';
 
 type Props = {
   hideHeader?: boolean;
@@ -265,6 +266,11 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
         item.siteKey,
         item.industry,
         item.notes,
+        item.kundekort?.orgNumber,
+        item.kundekort?.websiteEmail,
+        item.kundekort?.instagramUrl,
+        item.kundekort?.facebookUrl,
+        item.kundekort?.proffUrl,
       ]);
       return matchesClientSearchQuery(haystack, searchQuery);
     },
@@ -544,6 +550,18 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
       const developerGoals = client.developerGoals ?? item.developerGoals;
       return {
         ...item,
+        businessName: String(client.businessName || item.businessName),
+        contactPerson: String(client.contactPerson || item.contactPerson || ''),
+        contactEmail: String(client.contactEmail || item.contactEmail || ''),
+        contactPhone: String(client.contactPhone || item.contactPhone || ''),
+        meetingPlace: String(client.meetingPlace || item.meetingPlace || ''),
+        industry: String(client.industry || item.industry || ''),
+        notes: typeof client.notes === 'string' ? client.notes : item.notes,
+        websiteDomain: String(client.websiteDomain || item.websiteDomain || ''),
+        kundekort: client.details || client.businessName
+          ? salesKundekortView({ ...item, ...client, kundekort: undefined })
+          : item.kundekort,
+        clientBrief: client.clientBrief ? clientIdentityBrief(client) : item.clientBrief,
         makerRun: client.makerRun ?? item.makerRun,
         developerOwnerId: client.developerOwnerId ?? item.developerOwnerId,
         developerHandoff: client.developerHandoff ?? item.developerHandoff,
@@ -621,6 +639,10 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
   useEffect(() => {
     void loadItems();
     void loadThreads();
+    const timer = window.setInterval(() => {
+      void loadItems();
+    }, 20000);
+    return () => window.clearInterval(timer);
   }, [loadItems, loadThreads]);
 
   useEffect(() => {

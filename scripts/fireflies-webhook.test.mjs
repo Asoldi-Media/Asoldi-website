@@ -25,8 +25,15 @@ const {
   notifyFirefliesRecording,
   readStoredFirefliesMeeting,
   storeFirefliesMeeting,
+  storedMeetingsNeedingHydration,
   verifyFirefliesSignature,
 } = await import('../lib/fireflies-webhook.js');
+import {
+  firefliesJoinedCurrentMeet,
+  firefliesMeetLinksDiffer,
+  shouldDropLiveJoinStub,
+} from '../lib/fireflies-client-match.js';
+import { readFileSync } from 'node:fs';
 
 const TRANSCRIPT = {
   id: 'ASxwZxCstx',
@@ -197,15 +204,107 @@ test('bot-joined events are ignored', async () => {
   });
 });
 
-test('live-join window is 3 minutes before through 15 minutes after start', () => {
+test('live-join window is 3 minutes before through 2 hours after start', () => {
   const meetingAt = '2026-09-26T10:00:00.000Z';
   const start = Date.parse(meetingAt);
   assert.equal(firefliesLiveJoinWindow({ meetingAt, nowMs: start - (3 * 60 * 1000) }), true);
   assert.equal(firefliesLiveJoinWindow({ meetingAt, nowMs: start - (3 * 60 * 1000) - 1 }), false);
   assert.equal(firefliesLiveJoinWindow({ meetingAt, nowMs: start }), true);
-  assert.equal(firefliesLiveJoinWindow({ meetingAt, nowMs: start + (15 * 60 * 1000) }), true);
-  assert.equal(firefliesLiveJoinWindow({ meetingAt, nowMs: start + (15 * 60 * 1000) + 1 }), false);
+  assert.equal(firefliesLiveJoinWindow({ meetingAt, nowMs: start + (90 * 60 * 1000) }), true);
+  assert.equal(firefliesLiveJoinWindow({ meetingAt, nowMs: start + (2 * 60 * 60 * 1000) }), true);
+  assert.equal(firefliesLiveJoinWindow({ meetingAt, nowMs: start + (2 * 60 * 60 * 1000) + 1 }), false);
   assert.equal(firefliesLiveJoinWindow({ meetingAt: 'not-a-date', nowMs: start }), false);
+});
+
+test('live-join is per Meet URL so a later room swap joins again', () => {
+  const oldMeet = 'https://meet.google.com/eue-pfvs-zot';
+  const newMeet = 'https://meet.google.com/ssy-ndai-cpy';
+  assert.equal(firefliesJoinedCurrentMeet({
+    joinedAt: '2026-10-08T12:57:35.071Z',
+    joinedMeetLink: oldMeet,
+    meetLink: oldMeet,
+  }), true);
+  assert.equal(firefliesJoinedCurrentMeet({
+    joinedAt: '2026-10-08T12:57:35.071Z',
+    joinedMeetLink: oldMeet,
+    meetLink: newMeet,
+  }), false);
+  assert.equal(firefliesJoinedCurrentMeet({
+    joinedAt: '',
+    joinedMeetLink: '',
+    meetLink: newMeet,
+  }), false);
+  assert.equal(firefliesJoinedCurrentMeet({
+    joinedAt: '2026-10-08T13:57:35.114Z',
+    joinedMeetLink: '',
+    meetLink: newMeet,
+  }), false);
+  assert.equal(firefliesMeetLinksDiffer(oldMeet, newMeet), true);
+  assert.equal(firefliesMeetLinksDiffer(oldMeet, `${oldMeet}?authuser=0`), false);
+  const serverSrc = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  assert.match(serverSrc, /firefliesJoinedCurrentMeet\(/);
+  assert.match(serverSrc, /firefliesLiveJoinedMeetLink/);
+  assert.match(serverSrc, /meetLinkChanged \|\| calendarMeta\.replacedForeignMeet/);
+});
+
+test('live stubs drop when the real recording is on any owned Meet', () => {
+  const oldMeet = 'https://meet.google.com/idy-uiyh-efh';
+  const newMeet = 'https://meet.google.com/uss-ynky-nfw';
+  const stub = {
+    meetingId: 'live:gx1r5f:open',
+    meetLink: oldMeet,
+    linkedBy: 'live-join',
+    forSalesMeeting: true,
+    purpose: 'sales',
+  };
+  assert.equal(shouldDropLiveJoinStub({
+    stub,
+    recordingMeetLink: newMeet,
+    ownedMeetLinks: [oldMeet, newMeet],
+    recordingPurpose: 'sales',
+  }), true);
+  assert.equal(shouldDropLiveJoinStub({
+    stub: { ...stub, purpose: 'workshop', forSalesMeeting: false },
+    recordingMeetLink: newMeet,
+    ownedMeetLinks: [oldMeet, newMeet],
+    recordingPurpose: 'sales',
+  }), false);
+  assert.equal(shouldDropLiveJoinStub({
+    stub,
+    recordingMeetLink: newMeet,
+    ownedMeetLinks: [oldMeet, newMeet],
+    keepMeetingId: stub.meetingId,
+    recordingPurpose: 'sales',
+  }), false);
+});
+
+test('recent Fireflies rows without a Meet link still need a full fetch', () => {
+  const now = Date.parse('2026-10-09T12:30:00.000Z');
+  const rows = storedMeetingsNeedingHydration([
+    {
+      meetingId: 'ff-new',
+      title: 'Kaperdal',
+      startedAt: '2026-10-09T12:05:00.000Z',
+      meetingLink: '',
+      transcript: '',
+    },
+    {
+      meetingId: 'live:skip',
+      startedAt: '2026-10-09T12:05:00.000Z',
+    },
+    {
+      meetingId: 'ff-old',
+      startedAt: '2026-10-01T12:05:00.000Z',
+      meetingLink: '',
+    },
+    {
+      meetingId: 'ff-ready',
+      startedAt: '2026-10-09T11:00:00.000Z',
+      meetingLink: 'https://meet.google.com/nxn-gmfc-roz',
+      transcript: 'Kunde: hei',
+    },
+  ], { nowMs: now });
+  assert.deepEqual(rows.map((row) => row.meetingId), ['ff-new']);
 });
 
 test('live-join retries wait 6 minutes after an attempt', () => {

@@ -349,10 +349,15 @@ function extractOrgNumberFromProffUrl(value = '') {
 
 function salesMeetLink(client: {
   meetingMode?: string;
-  calendar?: { meetLink?: string; organizerEmail?: string; googleEmail?: string } | null;
+  calendar?: {
+    meetLink?: string;
+    confirmedMeetLink?: string;
+    organizerEmail?: string;
+    googleEmail?: string;
+  } | null;
 }) {
   if (client?.meetingMode !== 'online') return '';
-  const link = String(client?.calendar?.meetLink || '').trim();
+  const link = String(client?.calendar?.confirmedMeetLink || client?.calendar?.meetLink || '').trim();
   if (!/^https:\/\/meet\.google\.com\/[a-z0-9]{3}-[a-z0-9]{4}-[a-z0-9]{3}/i.test(link)
     && !/^https:\/\/meet\.google\.com\/[a-z0-9-]{10,}/i.test(link)) return '';
   return link;
