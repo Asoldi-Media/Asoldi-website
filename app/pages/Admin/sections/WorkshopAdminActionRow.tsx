@@ -34,6 +34,7 @@ import {
   getAdminRemainingGoalCount,
   getAdminVisibleGoalKeys,
   suggestedAdminActionDueAt,
+  splitAdminGoalActionsAroundMeeting,
   resolveAdminMeetJoin,
   workshopGoalHeld,
   workshopGoalInformasjon,
@@ -181,6 +182,15 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
   const extras = useMemo(
     () => (currentGoal ? getAdminGoalActions(client, currentGoal) as WorkshopGoalAction[] : []),
     [client, currentGoal],
+  );
+  const meetingDueAt = currentGoal === 'haWorkshop'
+    ? (booking?.dueAt || '')
+    : currentGoal === 'iterated'
+      ? (iteration?.dueAt || '')
+      : '';
+  const extrasAround = useMemo(
+    () => splitAdminGoalActionsAroundMeeting(extras, meetingDueAt),
+    [extras, meetingDueAt],
   );
   const meetJoin = resolveAdminMeetJoin(client);
   const pendingApproval = Boolean(booking?.dueAt) && booking?.status !== 'confirmed';
@@ -454,6 +464,57 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
     );
   }
 
+  function extraBlock(row: WorkshopGoalAction) {
+    return (
+      <div
+        key={row.id}
+        data-action-row
+        className={`rounded-lg border px-2 py-1.5 ${
+          row.addToCalendar && row.dueAt
+            ? 'border-sky-400/50 bg-black/30 shadow-[0_0_0_3px_rgba(56,189,248,0.08)]'
+            : 'border-white/10 bg-black/30'
+        }`}
+      >
+        {edit?.kind === 'extra' && edit.actionId === row.id ? actionEditor(
+          edit,
+          (patch) => setEdit((prev) => (prev ? { ...prev, ...patch } : prev)),
+          () => {
+            if (!edit) return;
+            void mutateExtra({
+              op: 'update',
+              id: row.id,
+              name: edit.name,
+              note: edit.note,
+              format: edit.format,
+              dueAt: datetimeLocalOsloToIso(edit.dueAt),
+              addToCalendar: edit.addToCalendar,
+            });
+          },
+        ) : readRow(
+          row.name,
+          row.format,
+          row.dueAt,
+          row.note || '',
+          Boolean(row.addToCalendar),
+          () => setEdit({
+            kind: 'extra',
+            actionId: row.id,
+            name: row.name,
+            note: row.note || '',
+            format: row.format,
+            dueAt: isoToDatetimeLocalOslo(row.dueAt),
+            addToCalendar: Boolean(row.addToCalendar),
+            allowEmptyDue: row.presetKey === 'feedback' || row.presetKey === 'informasjon',
+          }),
+          {
+            onComplete: () => void mutateExtra({ op: 'complete', id: row.id }),
+            onDelete: () => void mutateExtra({ op: 'delete', id: row.id }),
+          },
+        )}
+      </div>
+    );
+  }
+
   const presets = currentGoal ? (ADMIN_GOAL_PRESETS[currentGoal] || []) : [];
 
   return (
@@ -538,6 +599,7 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
               className={actionListMaxPx ? 'sales-action-scroll overflow-y-auto overscroll-contain pr-1.5' : undefined}
             >
               <div className={actionListMaxPx ? 'space-y-2 pb-6' : 'space-y-2'}>
+                {extrasAround.before.map((row) => extraBlock(row))}
                 {showWorkshopRow ? (
                   <MeetingVideoHover meetingId={workshopHover.meetingId} hasVideo={workshopHover.hasVideo}>
                     <div
@@ -585,54 +647,7 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
                   </MeetingVideoHover>
                 ) : null}
 
-                {extras.map((row) => (
-                  <div
-                    key={row.id}
-                    data-action-row
-                    className={`rounded-lg border px-2 py-1.5 ${
-                      row.addToCalendar && row.dueAt
-                        ? 'border-sky-400/50 bg-black/30 shadow-[0_0_0_3px_rgba(56,189,248,0.08)]'
-                        : 'border-white/10 bg-black/30'
-                    }`}
-                  >
-                    {edit?.kind === 'extra' && edit.actionId === row.id ? actionEditor(
-                      edit,
-                      (patch) => setEdit((prev) => (prev ? { ...prev, ...patch } : prev)),
-                      () => {
-                        if (!edit) return;
-                        void mutateExtra({
-                          op: 'update',
-                          id: row.id,
-                          name: edit.name,
-                          note: edit.note,
-                          format: edit.format,
-                          dueAt: datetimeLocalOsloToIso(edit.dueAt),
-                          addToCalendar: edit.addToCalendar,
-                        });
-                      },
-                    ) : readRow(
-                      row.name,
-                      row.format,
-                      row.dueAt,
-                      row.note || '',
-                      Boolean(row.addToCalendar),
-                      () => setEdit({
-                        kind: 'extra',
-                        actionId: row.id,
-                        name: row.name,
-                        note: row.note || '',
-                        format: row.format,
-                        dueAt: isoToDatetimeLocalOslo(row.dueAt),
-                        addToCalendar: Boolean(row.addToCalendar),
-                        allowEmptyDue: row.presetKey === 'feedback' || row.presetKey === 'informasjon',
-                      }),
-                      {
-                        onComplete: () => void mutateExtra({ op: 'complete', id: row.id }),
-                        onDelete: () => void mutateExtra({ op: 'delete', id: row.id }),
-                      },
-                    )}
-                  </div>
-                ))}
+                {extrasAround.after.map((row) => extraBlock(row))}
               </div>
             </div>
           </div>

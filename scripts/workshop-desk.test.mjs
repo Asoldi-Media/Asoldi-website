@@ -26,6 +26,7 @@ import {
   getAdminCurrentGoalKey,
   getAdminVisibleGoalKeys,
   resolveAdminMeetJoin,
+  splitAdminGoalActionsAroundMeeting,
 } from '../lib/workshop-goal-timeline.js';
 import { getWorkshopAction } from '../lib/workshop-action.js';
 import {
@@ -248,6 +249,7 @@ test('T06 mounts T01 needs, T02 inbox, and T07 actions; Forespørsler is a heade
   assert.match(rowSrc, /currentGoal === 'iterated'/);
   assert.match(rowSrc, /Møtetid/);
   assert.match(rowSrc, /workshopDraft/);
+  assert.match(rowSrc, /extrasAround\.before/);
   assert.match(rowSrc, /Meet link/);
   assert.match(rowSrc, /resolveAdminMeetJoin/);
   assert.match(rowSrc, /damian@asoldi\.com/);
@@ -290,6 +292,16 @@ test('Admin goal chips hide Informasjon and Iterasjon until the previous goal is
   const info = { workshop: { ...held.workshop, informasjonAt: DUE } };
   assert.equal(getAdminCurrentGoalKey(info), 'iterated');
   assert.deepEqual(getAdminVisibleGoalKeys(info), ['haWorkshop', 'informasjon', 'iterated']);
+});
+
+test('extras due sooner than the workshop clock sit above it', () => {
+  const split = splitAdminGoalActionsAroundMeeting([
+    { id: 'later', name: 'Etter', dueAt: '2026-10-20T10:00:00.000Z' },
+    { id: 'sooner', name: 'Ring om 3 dager', dueAt: '2026-10-13T07:00:00.000Z' },
+    { id: 'open', name: 'Uten tid', dueAt: '' },
+  ], '2026-10-15T10:00:00.000Z');
+  assert.deepEqual(split.before.map((row) => row.id), ['open', 'sooner']);
+  assert.deepEqual(split.after.map((row) => row.id), ['later']);
 });
 
 test('extra goal-action create does not look like confirmSend', () => {

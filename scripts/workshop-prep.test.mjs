@@ -222,6 +222,13 @@ test('day hint and call phrasing parse without inventing a clock', () => {
   ]), false);
   const intent = classifyInboxWrite('onsdag passer bra', { progression: { contractSigned: true } }, { now });
   assert.equal(intent.intent, 'workshop_propose');
+  const inThree = parseDayHint('ring meg om 3 dager og sjekk opp', { now });
+  assert.equal(inThree.ymd, '2026-10-13');
+  const callSoon = classifyInboxWrite('Kan dere ringe meg om 3 dager for å sjekke opp', {
+    progression: { contractSigned: true },
+  }, { now });
+  assert.equal(callSoon.intent, 'workshop_call');
+  assert.equal(callSoon.day.ymd, '2026-10-13');
 });
 
 test('sales meeting clock that is busy on the rep calendar proposes other times', async () => {
