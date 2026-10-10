@@ -332,6 +332,7 @@ import {
   maybeSyncWorkshopGoalActionCalendars,
   pickDamianCalendarAccountKey,
 } from './lib/workshop-action.js';
+import { sendPreWorkshopAfterContractSigned } from './lib/workshop-prep-send.js';
 import {
   adminBoardViewerIsDamianMailbox,
   isAdminBoardCalendarQuery,
@@ -12018,7 +12019,12 @@ function acceptPortalOfferForUser(offer, user, req) {
     const salesClient = sales.getSalesClientById(working.salesClientId);
     if (salesClient?.progression?.meetingHeld && salesClient?.progression?.offerSent && !salesClient.progression.contractSigned) {
       try {
-        sales.setSalesProgress(salesClient.id, 'contractSigned', true);
+        const signed = sales.setSalesProgress(salesClient.id, 'contractSigned', true);
+        if (signed) {
+          sendPreWorkshopAfterContractSigned(signed, { previousSigned: false }).catch((error) => {
+            console.error('Pre-workshop email after portal accept failed:', salesClient.id, error);
+          });
+        }
       } catch {
         // Acceptance is stored even if the sales checklist cannot move yet.
       }
@@ -14231,7 +14237,7 @@ app.patch('/api/admin/sales/:id/website-due', salesAuth, (req, res) => {
   res.json(websiteDueViewForTarget(saved));
 });
 
-app.patch('/api/admin/sales/:id/progression', salesAuth, (req, res) => {
+app.patch('/api/admin/sales/:id/progression', salesAuth, async (req, res) => {
   const key = sanitizeText(req.body?.key);
   const value = parseBoolean(req.body?.value, false);
   const fastTrack = parseBoolean(req.body?.fastTrack, false);
@@ -14240,9 +14246,23 @@ app.patch('/api/admin/sales/:id/progression', salesAuth, (req, res) => {
   if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, existing)) return res.status(403).json({ message: 'Not your sales client.' });
   try {
+    const previousSigned = Boolean(existing.progression?.contractSigned);
     const updated = sales.setSalesProgress(req.params.id, key, value, { fastTrack });
     if (!updated) return res.status(404).json({ message: 'Sales client not found.' });
-    res.json({ client: updated });
+    let client = updated;
+    const warnings = [];
+    if (key === 'contractSigned' && value === true) {
+      try {
+        const sender = await resolveSalesSenderForAccount(req.salesUser);
+        const mailed = await sendPreWorkshopAfterContractSigned(client, { previousSigned, sender });
+        if (mailed?.client) client = mailed.client;
+        if (mailed?.warning) warnings.push(mailed.warning);
+        if (Array.isArray(mailed?.warnings)) warnings.push(...mailed.warnings.filter(Boolean));
+      } catch (error) {
+        warnings.push(`Workshop-e-post etter kontrakt feilet: ${error.message}`);
+      }
+    }
+    res.json({ client, warnings });
   } catch (error) {
     const message = sanitizeText(error?.message) || 'Failed updating progression.';
     res.status(400).json({ message });

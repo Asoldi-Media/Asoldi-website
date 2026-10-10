@@ -5,6 +5,7 @@ import {
   isThankYouEmailTemplate,
   isWorkshopEmailTemplate,
   isIterationEmailTemplate,
+  isPreWorkshopEmailTemplate,
   listEmailTemplates,
   shouldAttachCalendarInvite,
 } from '../lib/email-templates-store.js';
@@ -14,6 +15,7 @@ import {
   buildSalesCalendarInvite,
   buildSalesThankYouEmail,
   buildSalesWorkshopEmail,
+  buildPreWorkshopEmail,
   buildSalesIterationEmail,
   embedInlineEmailAssets,
   getSalesEmailPreviewClient,
@@ -499,8 +501,43 @@ test('Admin email presets include both workshop variants', () => {
   const keys = listEmailTemplates().map((row) => row.key);
   assert.equal(keys.includes('workshop'), true);
   assert.equal(keys.includes('workshop-sms-ring'), true);
+  assert.equal(keys.includes('pre-workshop'), true);
+  assert.equal(keys.includes('pre-workshop-timed'), true);
   assert.equal(keys.includes('iteration'), true);
   assert.equal(keys.includes('thank-you'), true);
+});
+
+test('untimed pre-workshop mail asks for a slot and lists needs, with no Meet or ICS', () => {
+  const client = getSalesEmailPreviewClient();
+  const needLines = [{ title: 'Logo', detail: 'Logo i høy oppløsning' }];
+  const built = buildPreWorkshopEmail(client, {}, { hasTime: false, needLines });
+  assert.match(built.subject, /^Før workshopen: dette trenger vi/);
+  assert.match(built.html, /Før workshopen/);
+  assert.match(built.html, /Logo/);
+  assert.match(built.html, /Svar med når dere har tid/);
+  assert.equal(built.html.includes('envelope.png'), false);
+  assert.equal(built.html.includes('Åpne Google Meet'), false);
+  assert.equal(isPreWorkshopEmailTemplate('pre-workshop'), true);
+  assert.equal(shouldAttachCalendarInvite('pre-workshop'), false);
+  const composed = composeEmailForClient(client, 'pre-workshop').message;
+  assert.equal(composed.icalEvent, undefined);
+});
+
+test('timed pre-workshop mail is Variant B: T08 confirmation plus the need list', () => {
+  const client = getSalesWorkshopPreviewClient();
+  const needLines = [{ title: 'Logo', detail: 'Logo i høy oppløsning' }];
+  const built = buildPreWorkshopEmail(client, { meetLink: client.workshopAction.meetLink }, {
+    hasTime: true,
+    needLines,
+    workshop: client.workshopAction,
+  });
+  assert.match(built.subject, /^Bekreftet: workshop /);
+  assert.match(built.html, /Workshop bekreftet/);
+  assert.match(built.html, /Prøv å samle så mye som mulig/);
+  assert.match(built.html, /Logo/);
+  assert.match(built.html, /Åpne Google Meet/);
+  assert.equal(built.html.includes('envelope.png'), false);
+  assert.equal(shouldAttachCalendarInvite('pre-workshop-timed'), false);
 });
 
 test('iteration mail hides the envelope and uses the approved copy', () => {
