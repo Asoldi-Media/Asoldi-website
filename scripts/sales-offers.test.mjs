@@ -1039,7 +1039,8 @@ test('dual offer email uses Tilbud 1/2 headings, eller, and two Totalt/Leverings
   assert.doesNotMatch(singleHtml, /data-offer-or/);
   assert.equal((singleHtml.match(/Totalt:/g) || []).length, 1);
   assert.equal((singleHtml.match(/Leveringstid:/g) || []).length, 1);
-  assert.match(singleHtml, /14 arbeidsdager fra signert kontrakt/);
+  assert.match(singleHtml, /14 arbeidsdager etter prosjektstart/);
+  assert.match(singleHtml, /starter fristen ved signert kontrakt/);
   assert.doesNotMatch(singleHtml, /Leveringsdato:/);
   assert.doesNotMatch(singleHtml, /uker fra oppstart/);
   assert.equal((singleHtml.match(/Hva som skjer fremover/g) || []).length, 1);
@@ -1094,7 +1095,25 @@ test('offer email keeps one Leveringstid line and drops leftover Leveringsdato /
   assert.equal((applied.match(/Leveringstid:/g) || []).length, 1);
   assert.doesNotMatch(applied, /Leveringsdato:/);
   assert.doesNotMatch(applied, /uker fra oppstart/);
-  assert.match(applied, /14 arbeidsdager fra signert kontrakt/);
+  assert.match(applied, /14 arbeidsdager etter prosjektstart/);
+});
+
+test('rewrite keeps a single Leveringstid row when the editor has already stacked copies', () => {
+  const products = offerEmail.productsWithTier([], tiers.WEBSITE_TIERS[0].id);
+  const stacked = [
+    '<p><span><strong>Leveringstid</strong>: 14 arbeidsdager fra signert kontrakt</span></p>',
+    '<p style="margin:0 0 14px;"><strong>Leveringstid:</strong> <span data-offer-slot="delivery">14 arbeidsdager fra signert kontrakt</span></p>',
+    '<p><strong>Leveringstid:</strong> 14 arbeidsdager fra signert kontrakt</p>',
+    '<p><strong>Leveringstid:</strong> 14 arbeidsdager fra signert kontrakt</p>',
+    '<div id="offer-products"></div><div id="offer-products-end"></div>',
+  ].join('');
+  const refreshed = offerEmail.refreshOfferShell(stacked);
+  assert.equal((refreshed.match(/Leveringstid/g) || []).length, 1);
+  const once = offerEmail.syncOfferDeliveryLines(stacked, products, { tierId: tiers.WEBSITE_TIERS[0].id });
+  const twice = offerEmail.syncOfferDeliveryLines(once, products, { tierId: tiers.WEBSITE_TIERS[0].id });
+  assert.equal((once.match(/Leveringstid/g) || []).length, 1);
+  assert.equal((twice.match(/Leveringstid/g) || []).length, 1);
+  assert.match(twice, /data-offer-slot="delivery"/);
 });
 
 test('dual PDF and portal HTML list both scopes and Tilbud 1/2 checkboxes', async () => {
@@ -1109,7 +1128,8 @@ test('dual PDF and portal HTML list both scopes and Tilbud 1/2 checkboxes', asyn
   assert.match(html, /<strong>Tilbud 2<\/strong>/);
   assert.match(html, /Chosen scope:<\/strong> Tilbud 1 or Tilbud 2/);
   assert.doesNotMatch(html, /The Client has selected the following service tier/);
-  assert.match(html, /14 working days from the signed contract/);
+  assert.match(html, /14 working days after project start/);
+  assert.match(html, /the period starts when the contract is signed/);
   assert.doesNotMatch(html, /\b14 days from\b/);
 
   const article = contractPdf.contractArticleModel({

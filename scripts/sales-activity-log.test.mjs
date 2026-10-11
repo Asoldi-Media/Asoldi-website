@@ -6,7 +6,7 @@ import {
   firefliesUrlForMeeting,
   meetingMatchesAction,
 } from '../lib/sales-activity-log.js';
-import { seedOfferMeetingIds, toggleOfferMeetingId } from '../lib/offer-meetings.js';
+import { seedOfferMeetingIds, selectOfferMeetingId, toggleOfferMeetingId } from '../lib/offer-meetings.js';
 
 const MEETING_AT = '2026-10-02T12:00:00.000Z';
 const PLANNING_AT = '2026-10-06T09:00:00.000Z';
@@ -121,6 +121,8 @@ test('open offers seed every transcript and toggle membership', () => {
   assert.deepEqual(locked, ['ff-sales']);
   assert.deepEqual(toggleOfferMeetingId({ meetingIds: ['ff-sales', 'ff-plan'] }, 'ff-plan'), ['ff-sales']);
   assert.deepEqual(toggleOfferMeetingId({ meetingIds: ['ff-sales'] }, 'ff-plan'), ['ff-sales', 'ff-plan']);
+  assert.deepEqual(selectOfferMeetingId(['ff-sales', 'ff-plan'], 'ff-plan'), ['ff-sales', 'ff-plan']);
+  assert.deepEqual(selectOfferMeetingId(['ff-sales'], 'ff-plan'), ['ff-sales', 'ff-plan']);
 });
 
 test('saved offer selection is not refilled with every transcript', () => {

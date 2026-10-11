@@ -20,6 +20,8 @@ export type MeetingQuotePackage = {
 export type MeetingQuoteState = MeetingQuotePackage & {
   customSections: string;
   startDate: string;
+  projectStartMode: '' | 'date' | 'open' | 'undecided';
+  projectStartDate: string;
   productNotes: string;
   productGoal: string;
   identity: string;
@@ -101,6 +103,8 @@ export function emptyMeetingQuote(): MeetingQuoteState {
     ...emptyMeetingQuotePackage(),
     customSections: '',
     startDate: '',
+    projectStartMode: '',
+    projectStartDate: '',
     productNotes: '',
     productGoal: '',
     identity: '',
@@ -190,6 +194,12 @@ export function normalizeMeetingQuote(value: unknown): MeetingQuoteState {
     ...pkg,
     customSections: String(input.customSections || ''),
     startDate: String(input.startDate || ''),
+    projectStartMode: input.projectStartMode === 'date' || input.projectStartMode === 'open' || input.projectStartMode === 'undecided'
+      ? input.projectStartMode
+      : '',
+    projectStartDate: input.projectStartMode === 'date' && /^\d{4}-\d{2}-\d{2}$/.test(String(input.projectStartDate || ''))
+      ? String(input.projectStartDate)
+      : '',
     productNotes: String(input.productNotes || ''),
     productGoal: String(input.productGoal || ''),
     identity: String(input.identity || ''),

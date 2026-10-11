@@ -118,7 +118,7 @@ import {
 } from './lib/sales-email.js';
 import { assignmentStampForOwnerChange, clientIsSalesWin, confirmationSendGaps, confirmationShouldSendOnChange, decorateNextActions, isRecordedSalesAction, meetingTimeHasPassed, normalizeSecondaryInterest, osloWeekRange, recordedSalesActions, resolveMeetingAtOnMyphonerMerge, sameMeetingInstant } from './lib/sales-next-actions.js';
 import { attachFirefliesToMatchingAction } from './lib/sales-activity-log.js';
-import { isPlaceholderMeetingId, meetingHasOfferTalk, normalizeOfferMeetingIds, seedOfferMeetingIds } from './lib/offer-meetings.js';
+import { isPlaceholderMeetingId, meetingHasOfferTalk, normalizeOfferMeetingIds, seedOfferMeetingIds, selectOfferMeetingId } from './lib/offer-meetings.js';
 import { normalizeStoredWebsiteEmail, resolveWebsiteEmail } from './lib/sales-website-email.js';
 import { extractBookingFromLead, salesBookingFacts } from './lib/sales-booking-facts.js';
 import {
@@ -169,9 +169,11 @@ import {
   getEmailDraft,
   getEmailTemplateById,
   importEmailTemplate,
+  isDataInnsamlingEmailTemplate,
   isThankYouEmailTemplate,
   isWorkshopEmailTemplate,
   listEmailTemplates,
+  shouldMarkSalesReminderSent,
   mergeFieldsMeta,
   saveEmailDraft,
   saveEmailTemplate,
@@ -196,7 +198,7 @@ import {
 import { buildOfferFromMeetingQuote, quoteBuiltIsCustom } from './lib/offer-from-quote.js';
 import { clientWithOfferParty, offerMissingFields, offerReadinessMessage } from './lib/offer-readiness.js';
 import { buildContractPdf, contractFileName, contractInputsForOffer, offerContractIsAvailable } from './lib/offer-contract-pdf.js';
-import { dueDateDay, isCustomWebsiteOffer, normalizeDueDate, offerDeliveryPhraseNb, resolveWebsiteDue, weekendDueDateMessage, weeksForDeveloperBoard, workDaysForDeveloperBoard } from './lib/website-due.js';
+import { dueDateDay, isCustomWebsiteOffer, normalizeDueDate, offerDeliveryPhraseNb, projectStartFromQuote, resolveWebsiteDue, weekendDueDateMessage, weeksForDeveloperBoard, workDaysForDeveloperBoard } from './lib/website-due.js';
 import { contractHtmlForOffer } from './lib/offer-contract-html.js';
 import { extractOfferLetterBody } from './lib/offer-letter-html.js';
 import { isDeepseekConfigured } from './lib/deepseek.js';
@@ -353,6 +355,7 @@ import {
   workshopDeskEmailAutosendEnabled,
   workshopDeskEmailIsDue,
   workshopDeskEmailKindAutosends,
+  workshopDeskEmailStampKey,
   workshopReminderScheduleAt,
 } from './lib/workshop-desk-emails.js';
 import {
@@ -13760,6 +13763,18 @@ async function workshopNeedsMakerFetch(client) {
   };
 }
 
+async function loadDeskNeedLines(client, templateKey = '') {
+  if (!isDataInnsamlingEmailTemplate(templateKey)) return [];
+  try {
+    const document = await loadWorkshopNeedsDocument(client, {
+      fetchMakerRun: await workshopNeedsMakerFetch(client),
+    });
+    return openNeedLines(document);
+  } catch {
+    return [];
+  }
+}
+
 app.get('/api/admin/sales/:id/workshop-needs', salesAuth, async (req, res) => {
   if (!req.salesUser?.isAdmin) {
     return res.status(403).json({ message: 'Only admin can open the workshop need-list.' });
@@ -14554,10 +14569,7 @@ async function sendWorkshopDeskEmailNow(client, kind = '', { salesUser = null, n
     attachments: composed.attachments,
     icalEvent: composed.icalEvent,
   });
-  const stampKey = kind === 'workshop-reminder-3d' ? 'reminder3dSentAt'
-    : kind === 'workshop-reminder-24h' ? 'reminder24hSentAt'
-      : kind === 'data-innsamling-2' ? 'data2SentAt'
-        : 'data1SentAt';
+  const stampKey = workshopDeskEmailStampKey(kind) || 'data1SentAt';
   const record = getWorkshopRecord(client);
   const updated = sales.setSalesWorkshop(client.id, mergeWorkshopRecord(record, stampWorkshopDeskEmail(record, stampKey)));
   return { sent: true, client: updated || client, kind };
@@ -14856,13 +14868,7 @@ app.post('/api/admin/sales/:id/workshop/desk-email', salesAuth, async (req, res)
   ]);
   if (!allowed.has(kind)) return res.status(400).json({ message: 'Ukjent e-postmal.' });
   try {
-    let needLines = [];
-    if (kind.startsWith('data-innsamling')) {
-      const document = await loadWorkshopNeedsDocument(existing, {
-        fetchMakerRun: await workshopNeedsMakerFetch(existing),
-      });
-      needLines = openNeedLines(document);
-    }
+    const needLines = await loadDeskNeedLines(existing, kind);
     const mailed = await sendWorkshopDeskEmailNow(existing, kind, {
       salesUser: req.salesUser,
       needLines,
@@ -15203,7 +15209,8 @@ app.get('/api/admin/sales/:id/compose-email', salesAuth, async (req, res) => {
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
   const templateKey = sanitizeText(req.query?.template) || 'thank-you';
   const sender = await resolveSalesSenderForAccount(req.salesUser);
-  const composed = composeEmailForClient(client, templateKey, null, { sender });
+  const needLines = await loadDeskNeedLines(client, templateKey);
+  const composed = composeEmailForClient(client, templateKey, null, { sender, needLines });
   res.json({
     client: {
       id: client.id,
@@ -15231,6 +15238,7 @@ app.post('/api/admin/sales/:id/send-composed-email', salesAuth, async (req, res)
     const isOnline = normalizeMeetingMode(client?.meetingMode) === 'online';
     const isWorkshop = isWorkshopEmailTemplate(templateKey);
     const isThankYou = isThankYouEmailTemplate(templateKey);
+    const deskStampKey = workshopDeskEmailStampKey(templateKey);
     let calendarWarnings = [];
     if (isThankYou) {
       const syncResult = await syncCalendarInviteForThankYou(client, {
@@ -15247,6 +15255,7 @@ app.post('/api/admin/sales/:id/send-composed-email', salesAuth, async (req, res)
     const sender = await resolveSalesSenderForAccount(
       thankYouSendActor(client, req.salesUser).salesUser || req.salesUser
     );
+    const needLines = await loadDeskNeedLines(client, templateKey);
     const composed = composeEmailForClient(client, templateKey, {
       html: req.body?.html,
       subject: req.body?.subject,
@@ -15254,6 +15263,7 @@ app.post('/api/admin/sales/:id/send-composed-email', salesAuth, async (req, res)
     }, {
       sender,
       attachInvite: isThankYou,
+      needLines,
     }).message;
     const subject = composed.subject;
     await emailLib.sendEmail({
@@ -15275,15 +15285,22 @@ app.post('/api/admin/sales/:id/send-composed-email', salesAuth, async (req, res)
         : markAs.includes('reminder') || markAs === '24h'
           ? '24h'
           : 'thankYou';
-    const updated = isWorkshop ? client : sales.markSalesReminderSent(client.id, reminderKey);
+    let updated = client;
+    if (deskStampKey) {
+      const record = getWorkshopRecord(client);
+      updated = sales.setSalesWorkshop(client.id, mergeWorkshopRecord(record, stampWorkshopDeskEmail(record, deskStampKey))) || client;
+    } else if (shouldMarkSalesReminderSent(templateKey)) {
+      updated = sales.markSalesReminderSent(client.id, reminderKey) || client;
+    }
+    const skipSalesMeet = isWorkshop || Boolean(deskStampKey);
     return res.json({
       ok: true,
       sent: true,
-      meetLink: isWorkshop ? '' : (salesInboxMeetLink(client) || client?.calendar?.meetLink || ''),
+      meetLink: skipSalesMeet ? '' : (salesInboxMeetLink(client) || client?.calendar?.meetLink || ''),
       copyTo: salesEmailCopyBcc(to),
       client: updated || client,
       warnings: calendarWarnings,
-      calendarInvite: isWorkshop ? false : Boolean(client?.calendar?.eventId),
+      calendarInvite: skipSalesMeet ? false : Boolean(client?.calendar?.eventId),
     });
   } catch (error) {
     return res.status(500).json({ message: formatSmtpSendError(error) });
@@ -15354,15 +15371,17 @@ function presentOffer(offer) {
  * Stored drafts keep the shell they were created with. Non-sent offers are brought up to the current
  * template (no envelope icon, left-aligned heading) on read so the fix shows up without a "Nytt tilbud".
  */
-function refreshStoredOfferShell(offer, req) {
+function refreshStoredOfferShell(offer, req, client = null) {
   if (!offer || salesOffers.offerContentIsLocked(offer)) return offer;
   let html = refreshOfferShell(offer.email?.html || '');
   const products = Array.isArray(offer.products) ? offer.products : [];
+  const start = projectStartFromQuote(client?.details?.meetingQuote || {});
   if (products.length || offer.tierId) {
     html = syncOfferDeliveryLines(html, products, {
       tierId: offer.tierId || '',
       dueDate: offer.dueDate || '',
       alternatives: offer.alternatives,
+      ...start,
     });
   }
   if (html === (offer.email?.html || '')) return offer;
@@ -15995,6 +16014,7 @@ function applyMeetingQuoteToOffer(offer, client, { forceProducts = false } = {})
       alternatives: built.alternatives,
       tierId: built.tierId,
       dueDate: offer.dueDate || '',
+      ...projectStartFromQuote(client?.details?.meetingQuote || {}),
     },
   );
   const custom = quoteBuiltIsCustom(built);
@@ -16011,7 +16031,7 @@ async function ensureOfferDraft(client, req) {
   const existing = salesOffers.getOfferForClient(client.id);
   if (existing) {
     if (salesOffers.offerContentIsLocked(existing) || salesOffers.offerPreviewIsCurrent(existing)) return existing;
-    const refreshed = refreshStoredOfferShell(existing, req);
+    const refreshed = refreshStoredOfferShell(existing, req, client);
     const values = await offerIdentityValues(client, req);
     const email = withResolvedOfferIdentity(refreshed?.email || {}, values);
     const withIdentity = email.subject === (refreshed?.email?.subject || '') && email.html === (refreshed?.email?.html || '')
@@ -16151,7 +16171,7 @@ async function notifyOfferVerified(offer, client, req) {
 }
 
 async function offerContractBuffer(offer, client, { to = '' } = {}) {
-  const inputs = contractInputsForOffer(offer);
+  const inputs = contractInputsForOffer(offer, client);
   if (!offerContractIsAvailable(offer)) {
     throw new Error(offer.tierId === CUSTOM_TIER_ID
       ? 'Kontrakten for skreddersydd tilbud lages av admin (Speil e-post i kontrakt) før verifisering.'
@@ -16601,13 +16621,7 @@ app.post('/api/admin/sales/:id/offer/use-meeting', salesAuth, async (req, res) =
   }
   const nextIds = req.body?.replace
     ? [record.meetingId]
-    : (() => {
-      const currentIds = selectedOfferMeetingIds(client, current);
-      if (currentIds.includes(record.meetingId)) {
-        return currentIds.filter((id) => id !== record.meetingId);
-      }
-      return [...currentIds, record.meetingId];
-    })();
+    : selectOfferMeetingId(selectedOfferMeetingIds(client, current), record.meetingId);
   const picked = salesOffers.updateSalesOffer(current.id, {
     meetingIds: nextIds,
     meetingId: nextIds[0] || '',
@@ -16918,8 +16932,8 @@ app.get('/api/admin/offers/:id', salesAuth, async (req, res) => {
   if (!requireOfferAdmin(req, res)) return;
   const stored = salesOffers.getSalesOfferById(req.params.id);
   if (!stored) return res.status(404).json({ message: 'Offer not found.' });
-  let offer = refreshStoredOfferShell(stored, req);
-  const client = sales.getSalesClientById(offer.salesClientId);
+  const client = sales.getSalesClientById(stored.salesClientId);
+  let offer = refreshStoredOfferShell(stored, req, client);
   if (client && !offer.products?.length && !salesOffers.offerContentIsLocked(offer)) {
     offer = applyMeetingQuoteToOffer(offer, client, { forceProducts: true });
   }
@@ -18370,18 +18384,20 @@ function websiteDueView(client) {
   const products = offer?.products || [];
   const dueOverride = offer?.dueDate || client.websiteDueOverride || '';
   const weeks = weeksForDeveloperBoard({ tierId, products, dueOverride });
+  const start = projectStartFromQuote(client.details?.meetingQuote || {});
   const due = resolveWebsiteDue({
     contractSigned: client.progression?.contractSigned,
     contractSignedAt: client.contractSignedAt,
     dueOverride,
     weeks,
+    ...start,
   });
   return {
     dueDate: normalizeDueDate(dueOverride),
     effectiveDate: dueDateDay(due.dueAt),
     override: Boolean(due.override),
     weeks,
-    phrase: offerDeliveryPhraseNb({ tierId, products, dueDate: dueOverride }),
+    phrase: offerDeliveryPhraseNb({ tierId, products, dueDate: dueOverride, ...start }),
     contractSigned: Boolean(client.progression?.contractSigned),
     contractSignedAt: client.contractSignedAt || '',
     started: due.started,

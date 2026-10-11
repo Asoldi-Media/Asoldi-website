@@ -489,6 +489,50 @@ export function MeetingNotesModal({
                 ))}
               </ol>
               <div className="rounded-xl border border-[#E6E9EF] bg-white p-3 space-y-3">
+                <div className="text-xs font-medium text-[#111827]">Prosjekt oppstarts tid</div>
+                <label className="block">
+                  <span className="text-xs text-[#6B7280]">Oppstart</span>
+                  <select
+                    value={state.projectStartMode || ''}
+                    onChange={(e) => {
+                      const projectStartMode = e.target.value === 'date' || e.target.value === 'open' || e.target.value === 'undecided'
+                        ? e.target.value
+                        : '';
+                      setState((prev) => ({
+                        ...prev,
+                        projectStartMode,
+                        projectStartDate: projectStartMode === 'date' ? prev.projectStartDate : '',
+                      }));
+                    }}
+                    className="mt-1 w-full px-3 py-2 rounded-lg bg-white border border-[#E5E7EB] text-sm text-[#111827]"
+                  >
+                    <option value="">Etter signert kontrakt</option>
+                    <option value="date">Avtalt dato</option>
+                    <option value="open">Åpen — siste melding om at prosjektet er startet</option>
+                    <option value="undecided">Oppstarts tid ikke avtalt enda</option>
+                  </select>
+                </label>
+                {state.projectStartMode === 'date' ? (
+                  <label className="block">
+                    <span className="text-xs text-[#6B7280]">Dato</span>
+                    <input
+                      type="date"
+                      value={state.projectStartDate || ''}
+                      onChange={(e) => setState((prev) => ({ ...prev, projectStartDate: e.target.value }))}
+                      className="mt-1 w-full px-3 py-2 rounded-lg bg-white border border-[#E5E7EB] text-sm text-[#111827]"
+                    />
+                  </label>
+                ) : (
+                  <p className="text-[11px] text-[#6B7280]">
+                    {state.projectStartMode === 'open'
+                      ? 'Leveringstiden løper fra den siste meldingen mellom kunden og Asoldi som sier at prosjektet er startet.'
+                      : state.projectStartMode === 'undecided'
+                        ? 'Ingen dato er satt. Hvis dere ikke avtaler en oppstart, starter fristen ved signert kontrakt.'
+                        : 'Hvis ingen egen oppstart avtales, starter fristen automatisk ved signert kontrakt.'}
+                  </p>
+                )}
+              </div>
+              <div className="rounded-xl border border-[#E6E9EF] bg-white p-3 space-y-3">
                 <div className="text-xs font-medium text-[#111827]">Workshop-handling</div>
                 <label className="block">
                   <span className="text-xs text-[#6B7280]">Navn</span>

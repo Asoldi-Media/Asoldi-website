@@ -44,8 +44,7 @@
         cursor: default;
         opacity: .72;
       }
-      .btn[data-status="ready"]:hover,
-      .btn[data-status="ready"]:focus-visible {
+      .btn[data-status="ready"] {
         min-width: 188px;
         background: #fff;
         color: #111;
@@ -60,8 +59,7 @@
         letter-spacing: .02em;
         transition: max-width .25s ease, opacity .2s ease, margin .25s ease;
       }
-      .btn[data-status="ready"]:hover .btn-label,
-      .btn[data-status="ready"]:focus-visible .btn-label {
+      .btn[data-status="ready"] .btn-label {
         max-width: 160px;
         margin-left: 8px;
         opacity: 1;
@@ -84,7 +82,7 @@
       .panel {
         display: flex;
         flex-direction: column;
-        width: min(720px, 100%);
+        width: min(1020px, 100%);
         max-height: min(92vh, 920px);
         overflow: hidden;
         border-radius: 16px;
@@ -139,6 +137,7 @@
       .alt { display: flex; gap: 10px; padding: 10px 12px; border: 1px solid #E5E7EB; border-radius: 12px; cursor: pointer; font-size: 14px; }
       .alt input { margin-top: 3px; }
       .fields { display: grid; gap: 8px; margin-bottom: 10px; }
+      .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
       label.field { display: grid; gap: 4px; font-size: 12px; color: #6B7280; }
       input[type="text"], input[type="email"], input[type="password"] {
         width: 100%; height: 40px; padding: 0 12px; border: 1px solid #E5E7EB; border-radius: 10px;
@@ -150,13 +149,13 @@
         width: 100%; height: 46px; border: 0; border-radius: 12px;
         background: #FF5B00; color: #fff; font-size: 14px; font-weight: 650; cursor: pointer;
       }
-      .go:disabled { background: #E5E7EB; color: #9CA3AF; cursor: not-allowed; }
+      .go.wait { background: #E5E7EB; color: #9CA3AF; }
       .hint, .err { margin: 8px 0 0; text-align: center; font-size: 12px; }
       .hint { color: #9CA3AF; }
       .err { color: #DC2626; }
       @media (max-width: 640px) {
         .paper { padding: 28px 20px; }
-        .offer-contract-parties, .offer-contract-sign { grid-template-columns: 1fr; }
+        .offer-contract-parties, .offer-contract-sign, .pair { grid-template-columns: 1fr; }
       }
     </style>
     <button class="btn" type="button" data-status="idle" aria-label="Kontrakt">
@@ -208,22 +207,19 @@
     refreshSubmit();
   }
 
+  function blockReason() {
+    const password = String(shadow.querySelector('[name="password"]')?.value || '');
+    const needsChoice = Array.isArray(state.alternatives) && state.alternatives.length >= 2;
+    if (!atBottom) return 'scroll';
+    if (needsChoice && chosen !== 0 && chosen !== 1) return 'choice';
+    if (password.length < 8) return 'password';
+    return '';
+  }
+
   function refreshSubmit() {
     const submit = shadow.querySelector('.go');
-    const hint = shadow.querySelector('.hint');
     if (!submit) return;
-    const password = String(shadow.querySelector('[name="password"]')?.value || '');
-    const accepted = Boolean(shadow.querySelector('[name="accepted"]')?.checked);
-    const needsChoice = Array.isArray(state.alternatives) && state.alternatives.length >= 2;
-    const can = atBottom && accepted && password.length >= 8 && (!needsChoice || chosen === 0 || chosen === 1);
-    submit.disabled = !can || busy;
-    if (hint) {
-      hint.textContent = !atBottom
-        ? 'Bla til bunnen av avtalen for \u00e5 akseptere.'
-        : needsChoice && chosen !== 0 && chosen !== 1
-          ? 'Velg Tilbud 1 eller Tilbud 2 f\u00f8r du aksepterer.'
-          : '';
-    }
+    submit.classList.toggle('wait', Boolean(blockReason()) || busy);
   }
 
   function renderFooter() {
@@ -239,19 +235,17 @@
         <label class="field">Navn
           <input name="name" type="text" value="${escapeAttr(state.name)}" ${nameLocked ? 'readonly' : ''} autocomplete="name">
         </label>
-        <label class="field">E-post
-          <input name="email" type="email" value="${escapeAttr(state.email)}" readonly autocomplete="email">
-        </label>
-        <label class="field">Passord
-          <input name="password" type="password" minlength="8" autocomplete="new-password">
-        </label>
+        <div class="pair">
+          <label class="field">E-post
+            <input name="email" type="email" value="${escapeAttr(state.email)}" readonly autocomplete="email">
+          </label>
+          <label class="field">Passord
+            <input name="password" type="password" minlength="8" autocomplete="new-password">
+          </label>
+        </div>
       </div>
-      <label class="accept">
-        <input name="accepted" type="checkbox">
-        <span>Jeg aksepterer denne kontrakten</span>
-      </label>
-      <button class="go" type="button" disabled>Fortsett</button>
-      <p class="hint"></p>
+      <button class="go wait" type="button">Jeg har lest og aksepterer avtalen</button>
+      <p class="hint">Dette l\u00e5ser deg ikke fast til et samarbeid med oss, men gj\u00f8r det lettere \u00e5 starte arbeidsforholdet.</p>
       <p class="err" hidden></p>
     `;
     foot.querySelectorAll('[name="chosen"]').forEach((input) => {
@@ -261,8 +255,24 @@
       });
     });
     foot.querySelector('[name="password"]')?.addEventListener('input', refreshSubmit);
-    foot.querySelector('[name="accepted"]')?.addEventListener('change', refreshSubmit);
-    foot.querySelector('.go')?.addEventListener('click', () => { void submitAccept(); });
+    foot.querySelector('.go')?.addEventListener('click', () => {
+      const reason = blockReason();
+      const err = shadow.querySelector('.err');
+      if (reason) {
+        const message = reason === 'scroll'
+          ? 'Du m\u00e5 lese hele kontrakten f\u00f8rst.'
+          : reason === 'choice'
+            ? 'Velg Tilbud 1 eller Tilbud 2 f\u00f8r du aksepterer.'
+            : 'Passord m\u00e5 v\u00e6re minst 8 tegn.';
+        if (err) {
+          err.hidden = false;
+          err.textContent = message;
+        }
+        return;
+      }
+      if (err) { err.hidden = true; err.textContent = ''; }
+      void submitAccept();
+    });
     refreshSubmit();
   }
 

@@ -368,6 +368,13 @@ function normalizeMeetingQuote(value = {}) {
     ...pkg,
     customSections: sanitizeText(input.customSections).slice(0, MAX_SALES_NOTES_LENGTH),
     startDate: sanitizeText(input.startDate),
+    projectStartMode: ['date', 'open', 'undecided'].includes(sanitizeText(input.projectStartMode))
+      ? sanitizeText(input.projectStartMode)
+      : '',
+    projectStartDate: /^\d{4}-\d{2}-\d{2}$/.test(sanitizeText(input.projectStartDate))
+      && sanitizeText(input.projectStartMode) === 'date'
+      ? sanitizeText(input.projectStartDate)
+      : '',
     productNotes: sanitizeText(input.productNotes).slice(0, MAX_SALES_NOTES_LENGTH),
     productGoal: sanitizeText(input.productGoal).slice(0, MAX_SALES_NOTES_LENGTH),
     identity: sanitizeText(input.identity).slice(0, MAX_SALES_NOTES_LENGTH),

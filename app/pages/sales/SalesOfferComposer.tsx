@@ -61,6 +61,7 @@ type MeetingMatch = {
   durationMinutes?: number | '';
   selected?: boolean;
   hasTranscript?: boolean;
+  hasSummary?: boolean;
   liveJoined?: boolean;
   purpose?: string;
 };
@@ -362,7 +363,28 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     }
   }
 
-  async function handlePickMeeting(payload: { title?: string; meetingId?: string; meetingIds?: string[]; clear?: boolean }) {
+  async function writeOfferFromSelection() {
+    setBusy('fill');
+    setFillPhase('running');
+    setFillMessage('Fyller ut e-posten…');
+    setError('');
+    try {
+      await flushSave();
+      const data = await fillClientOffer(clientId, { meetingId: meeting?.meetingId || '', force: true }) as { offer: SalesOffer };
+      applyOffer(data.offer);
+      setFillPhase('done');
+      setFillMessage('E-posten er skrevet fra transkriptet.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'AI-utfylling feilet';
+      setFillPhase('error');
+      setFillMessage(message);
+      setError(message);
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function handlePickMeeting(payload: { title?: string; meetingId?: string; meetingIds?: string[]; clear?: boolean; write?: boolean }) {
     const savingSelection = Array.isArray(payload.meetingIds);
     setBusy(savingSelection ? 'meeting-save' : 'meeting');
     setError('');
@@ -385,13 +407,21 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
       if (data.meeting) setMeeting(data.meeting);
       if (data.offer) applyOffer(data.offer);
       setDraftMeetingIds(null);
+      const selectedReady = Array.isArray(data.meetings)
+        ? data.meetings.some((entry) => entry.selected && (entry.hasTranscript || entry.hasSummary))
+        : Boolean(data.meeting?.hasTranscript || data.meeting?.hasSummary);
+      const shouldWrite = !payload.clear && selectedReady && Boolean(payload.write || payload.title || payload.meetingId);
+      if (shouldWrite) {
+        await writeOfferFromSelection();
+        return;
+      }
       const selectedCount = Array.isArray(data.meetings)
         ? data.meetings.filter((entry) => entry.selected).length
         : 0;
       setNotice(payload.clear
         ? 'Alle opptak med transkript er valgt igjen.'
         : savingSelection
-          ? (selectedCount ? `${selectedCount} opptak lagret. Trykk Generer på nytt for å bruke dem i e-posten.` : 'Ingen opptak valgt. Trykk Generer på nytt hvis e-posten skal skrives uten transkript.')
+          ? (selectedCount ? `${selectedCount} opptak lagret.` : 'Ingen opptak valgt.')
           : selectedCount
             ? `${selectedCount} opptak valgt som grunnlag for tilbudet.`
             : 'Opptakene er oppdatert.');
@@ -566,6 +596,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     () => meetings.map((entry) => ({ ...entry, selected: pickerIds.includes(entry.meetingId) })),
     [meetings, pickerIds]
   );
+  const pickerHasTranscript = pickerMeetings.some((entry) => entry.selected && (entry.hasTranscript || entry.hasSummary));
 
   function toggleDraftMeeting(meetingId: string) {
     setDraftMeetingIds((current) => {
@@ -796,7 +827,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                     </div>
                     {meetingsOpen && !locked && (
                       <div className="mt-2 space-y-3">
-                        <p className="text-[11px] text-gray-500">Huk av opptakene tilbudet skal bruke, og trykk Lagre. E-posten skrives ikke om før du trykker Generer på nytt.</p>
+                        <p className="text-[11px] text-gray-500">Huk av opptaket og trykk Lagre. Det lagrer valget og skriver e-posten. Er det allerede huket av, starter Lagre skrivingen.</p>
                         <div>
                           <div className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">Transkript fra denne kunden</div>
                           {pickerMeetings.some((entry) => entry.hasTranscript) ? (
@@ -853,11 +884,14 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                         <div className="flex flex-wrap items-center gap-2">
                           <button
                             type="button"
-                            disabled={busy === 'meeting-save' || !pickerDirty}
-                            onClick={() => void handlePickMeeting({ meetingIds: pickerIds })}
+                            disabled={busy === 'meeting-save' || busy === 'meeting' || busy === 'fill' || (!pickerDirty && !pickerHasTranscript)}
+                            onClick={() => {
+                              if (pickerDirty) void handlePickMeeting({ meetingIds: pickerIds, write: true });
+                              else void writeOfferFromSelection();
+                            }}
                             className="px-2 py-1.5 rounded-md bg-[#FF5B00] text-white text-xs hover:bg-[#ff7a33] disabled:opacity-50"
                           >
-                            {busy === 'meeting-save' ? 'Lagrer…' : 'Lagre opptak'}
+                            {busy === 'meeting-save' ? 'Lagrer…' : busy === 'fill' ? 'Skriver…' : 'Lagre opptak'}
                           </button>
                           {pickerDirty && <span className="text-[11px] text-amber-200">Endringene brukes ikke i tilbudet før du lagrer.</span>}
                         </div>
@@ -878,9 +912,10 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                             />
                             <button
                               type="button"
-                              disabled={busy === 'meeting' || meetingQuery.trim().length < 3}
+                              disabled={busy === 'meeting' || busy === 'fill' || meetingQuery.trim().length < 3}
+                              title={busy === 'meeting' ? 'Henter transkriptet fra Fireflies…' : meetingQuery.trim().length < 3 ? 'Lim inn Fireflies-lenken i feltet først' : 'Hent dette opptaket inn på tilbudet'}
                               onClick={() => void handlePickMeeting({ title: meetingQuery.trim() })}
-                              className="px-2 py-1.5 rounded-md bg-white/10 text-xs hover:bg-white/15 disabled:opacity-50"
+                              className="px-2 py-1.5 rounded-md bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
                             >
                               {busy === 'meeting' ? 'Henter…' : 'Legg til'}
                             </button>

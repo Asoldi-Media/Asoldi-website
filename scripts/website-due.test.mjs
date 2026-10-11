@@ -71,7 +71,7 @@ test('the clock starts at the signed contract, and an admin date replaces the pa
   });
   assert.equal(waiting.started, false);
   assert.equal(waiting.dueAt, '');
-  assert.equal(waiting.label, 'Frist: 14 arbeidsdager fra signert kontrakt');
+  assert.equal(waiting.label, 'Frist: 14 arbeidsdager etter prosjektstart. Hvis ingen egen oppstartstid er avtalt, starter fristen ved signert kontrakt');
 
   const started = resolveWebsiteDue({
     contractSigned: true,
@@ -108,24 +108,27 @@ test('an admin date starts the clock even without a signed contract', () => {
 test('offer and contract mention arbeidsdager / working days', () => {
   assert.equal(
     offerDeliveryPhraseNb({ tierId: 'tier-3-ecommerce' }),
-    '21 arbeidsdager fra signert kontrakt',
+    '21 arbeidsdager etter prosjektstart. Hvis ingen egen oppstartstid er avtalt, starter fristen ved signert kontrakt',
   );
   assert.equal(
     offerDeliveryPhraseNb({ tierId: 'tier-1-standard' }),
-    '14 arbeidsdager fra signert kontrakt',
+    '14 arbeidsdager etter prosjektstart. Hvis ingen egen oppstartstid er avtalt, starter fristen ved signert kontrakt',
   );
   assert.match(offerDeliveryPhraseNb({ dueDate: '2026-11-02', tierId: 'tier-1-standard' }), /2\. nov\. 2026/);
+  assert.match(offerDeliveryPhraseNb({ tierId: 'tier-1-standard', projectStartMode: 'date', projectStartDate: '2026-11-02' }), /2\. nov\. 2026/);
+  assert.match(offerDeliveryPhraseNb({ tierId: 'tier-1-standard', projectStartMode: 'open' }), /siste melding/);
+  assert.match(offerDeliveryPhraseNb({ tierId: 'tier-1-standard', projectStartMode: 'undecided' }), /ikke avtalt enda/);
   assert.equal(
     contractDeliverySentence({ weeks: 2 }),
-    'Delivery time: 14 working days from the signed contract.',
+    'Delivery time: 14 working days after project start. If no other start time is agreed, the period starts when the contract is signed.',
   );
   assert.equal(
     contractDeliverySentence({ workDays: 14 }),
-    'Delivery time: 14 working days from the signed contract.',
+    'Delivery time: 14 working days after project start. If no other start time is agreed, the period starts when the contract is signed.',
   );
   assert.equal(
     contractDeliverySentence({ tierId: 'tier-1-standard' }),
-    'Delivery time: 14 working days from the signed contract.',
+    'Delivery time: 14 working days after project start. If no other start time is agreed, the period starts when the contract is signed.',
   );
   assert.doesNotMatch(contractDeliverySentence({ weeks: 2 }), /\b14 days\b/);
   assert.equal(

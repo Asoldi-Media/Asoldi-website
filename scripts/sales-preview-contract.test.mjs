@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'fs';
+import { mkdtempSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -100,6 +100,13 @@ test('preview signer creates a client, then accepts; second accept stays signed'
   });
   assert.equal(presented.status, 'signed');
   assert.equal(presented.contractHtml, '');
+});
+
+test('sent preview contract button shows Signer kontrakt without a hover', () => {
+  const src = readFileSync(new URL('../public/sales-preview-contract.js', import.meta.url), 'utf8');
+  assert.match(src, /\.btn\[data-status="ready"\] \{[^}]*min-width:\s*188px/);
+  assert.match(src, /\.btn\[data-status="ready"\] \.btn-label \{[^}]*opacity:\s*1/);
+  assert.doesNotMatch(src, /\.btn\[data-status="ready"\]:hover \.btn-label/);
 });
 
 test('preview accept is rate-limited per key', () => {
