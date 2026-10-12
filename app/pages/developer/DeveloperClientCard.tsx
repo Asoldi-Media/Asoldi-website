@@ -21,6 +21,7 @@ import {
   developerCardTimeline,
   developerMediaLibraryView,
   developerSummaryView,
+  primaryDeveloperDocument,
   makerCustomEditUrl,
   makerCustomPreviewPath,
   developerChipVisual,
@@ -32,7 +33,6 @@ import {
   makerLatestPreviewPath,
   makerStepPreviewPath,
   mergeDeveloperPipelineStatus,
-  normalizeDeveloperQa,
   pipelineStatusFromMakerRun,
   resolveDeveloperProgressClick,
   resolveLatestMakerPreviewStep,
@@ -180,7 +180,6 @@ export function DeveloperClientCard({
   const makerRunId = String(item.makerRun?.runId || '').trim();
   const timeline = developerCardTimeline(item, kind);
   const summary = developerSummaryView(item.workshop);
-  const [qa, setQa] = useState(() => normalizeDeveloperQa(item.developerQa));
   const [dots, setDots] = useState<MaterialDot[]>([]);
   const [domainCard, setDomainCard] = useState<{ hostname: string; statusLabel: string; present: boolean }>({
     hostname: '',
@@ -188,6 +187,8 @@ export function DeveloperClientCard({
     present: false,
   });
   const [briefOpen, setBriefOpen] = useState(false);
+  const [briefMode, setBriefMode] = useState<'preview' | 'project'>('project');
+  const documentButtons = primaryDeveloperDocument(Boolean(item.contractSigned));
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [mediaReload, setMediaReload] = useState(0);
   const [deletingMedia, setDeletingMedia] = useState('');
@@ -213,10 +214,6 @@ export function DeveloperClientCard({
   const onClientUpdatedRef = useRef(onClientUpdated);
   makerRunRef.current = item.makerRun;
   onClientUpdatedRef.current = onClientUpdated;
-
-  useEffect(() => {
-    setQa(normalizeDeveloperQa(item.developerQa));
-  }, [item.developerQa]);
 
   useEffect(() => {
     if (!briefOpen) return undefined;
@@ -455,21 +452,23 @@ export function DeveloperClientCard({
     return '';
   }
 
-  async function patchQa(key: 'textOk' | 'mediaOk' | 'responsiveOk', value: boolean) {
-    const next = { ...qa, [key]: value };
-    setQa(next);
+  function openBrief(mode: 'preview' | 'project') {
+    setBriefMode(mode);
+    setBriefOpen(true);
+  }
+
+  async function patchTodo(todoId: string, done: boolean) {
     try {
-      const response = await fetch(`${API}/admin/development/${encodeURIComponent(item.id)}/developer-qa`, {
+      const response = await fetch(`${API}/admin/development/${encodeURIComponent(item.id)}/project-todos`, {
         method: 'PATCH',
         headers: { ...developmentAuthHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify(next),
+        body: JSON.stringify({ todoId, done }),
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(data.message || 'Kunne ikke lagre sjekklisten.');
+      if (!response.ok) throw new Error(data.message || 'Kunne ikke lagre oppgaven.');
       if (data.client && onClientUpdated) onClientUpdated(data.client as Record<string, unknown>);
     } catch (error) {
-      setQa(normalizeDeveloperQa(item.developerQa));
-      onError(error instanceof Error ? error.message : 'Kunne ikke lagre sjekklisten.');
+      onError(error instanceof Error ? error.message : 'Kunne ikke lagre oppgaven.');
     }
   }
 
@@ -967,12 +966,12 @@ export function DeveloperClientCard({
             type="button"
             onClick={(event) => {
               event.stopPropagation();
-              setBriefOpen(true);
+              openBrief(documentButtons.primary);
             }}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
           >
             <FileText size={13} />
-            Prosjektdokument
+            {documentButtons.primaryLabel}
           </button>
         ) : null}
         <div className="flex flex-wrap items-center gap-1.5">
@@ -1040,7 +1039,7 @@ export function DeveloperClientCard({
           <div className="flex flex-wrap items-end gap-3" onClick={(event) => event.stopPropagation()}>
             <button
               type="button"
-              onClick={() => setBriefOpen(true)}
+              onClick={() => openBrief(documentButtons.primary)}
               className="text-left"
             >
               <span className="block text-[11px] uppercase tracking-wide text-gray-500">Datapunkter</span>
@@ -1055,7 +1054,7 @@ export function DeveloperClientCard({
             </button>
             <button
               type="button"
-              onClick={() => setBriefOpen(true)}
+              onClick={() => openBrief(documentButtons.primary)}
               className="text-left"
             >
               <span className="block text-[11px] uppercase tracking-wide text-gray-500">Mediefiler</span>
@@ -1066,7 +1065,7 @@ export function DeveloperClientCard({
                 <button
                   key={`${file.source}-${file.field || ''}-${file.fileName}`}
                   type="button"
-                  onClick={() => setBriefOpen(true)}
+                  onClick={() => openBrief(documentButtons.primary)}
                   className="h-10 w-10 rounded-md overflow-hidden border border-white/10"
                 >
                   <DeveloperAuthImage
@@ -1265,6 +1264,14 @@ export function DeveloperClientCard({
         <details className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-gray-200" onClick={(event) => event.stopPropagation()}>
           <summary className="cursor-pointer text-white font-medium">Tools & details</summary>
           <div className="mt-3">
+            <button
+              type="button"
+              onClick={() => openBrief(documentButtons.secondary)}
+              className="mb-3 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
+            >
+              <FileText size={13} />
+              {documentButtons.secondaryLabel}
+            </button>
             <MakerRunTools
               salesClientId={salesClientId}
               client={{ id: salesClientId, makerRun: item.makerRun, websiteImport: item.websiteImport }}
@@ -1322,9 +1329,11 @@ export function DeveloperClientCard({
       <DeveloperClientBrief
         open={briefOpen}
         onClose={() => setBriefOpen(false)}
+        mode={briefMode}
         summary={summary}
-        qa={qa}
-        onToggleQa={(key, value) => void patchQa(key, value)}
+        previewDocument={item.previewDocument || null}
+        projectDocument={item.workshop?.projectDocument || null}
+        onToggleTodo={(todoId, done) => void patchTodo(todoId, done)}
         files={libraryFiles}
         authHeaders={developmentAuthHeaders()}
         dots={dots}

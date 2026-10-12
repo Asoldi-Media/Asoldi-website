@@ -285,6 +285,44 @@ export type WorkshopDeskEmails = {
   data2SentAt?: string;
 };
 
+export type WorkshopProjectTodo = {
+  id: string;
+  category: string;
+  title: string;
+  detail: string;
+  done: boolean;
+};
+
+export type WorkshopProjectDocument = {
+  meetingId: string;
+  goalExplanation: string;
+  clientDocumentation: string;
+  todos: WorkshopProjectTodo[];
+  generatedAt: string;
+  source: 'ai' | 'fallback';
+};
+
+export type WorkshopTranscriptEval = {
+  meetingId: string;
+  valid: boolean;
+  reason: string;
+  durationMinutes: number;
+  sentenceCount: number;
+  evaluatedAt: string;
+  source: 'ai' | 'hard-gate';
+};
+
+export type PreviewDocument = {
+  callId: string;
+  recordingUrl: string;
+  status: 'transcribing' | 'ready' | 'needs-key' | 'failed' | string;
+  transcriptChat: string;
+  summary: string;
+  generatedAt: string;
+  source: string;
+  error?: string;
+};
+
 export type WorkshopRecord = {
   heldAt: string;
   informasjonAt?: string;
@@ -297,6 +335,8 @@ export type WorkshopRecord = {
   heardFacts: WorkshopHeardFact[];
   goalActions?: WorkshopGoalAction[];
   deskEmails?: WorkshopDeskEmails;
+  projectDocument?: WorkshopProjectDocument | null;
+  transcriptEval?: WorkshopTranscriptEval | null;
 };
 
 export type DeveloperGoalKey = 'readyForPreview' | 'readyForDeployment' | 'iterationDone' | 'publish';
@@ -418,6 +458,7 @@ export type DevelopmentItem = {
   iterationMeeting?: WorkshopIterationMeeting | null;
   hasIterationMeeting?: boolean;
   iterationTranscript?: string;
+  previewDocument?: PreviewDocument | null;
   developerQa?: DeveloperQa;
   developerGoals?: DeveloperGoals;
   offerTierId?: string;
@@ -758,6 +799,7 @@ export type SalesClient = {
   workshopAction?: WorkshopAction | null;
   /** Held workshop, notes, developer summary, iteration. Not the booking. */
   workshop?: WorkshopRecord | null;
+  previewDocument?: PreviewDocument | null;
   developerQa?: DeveloperQa;
   developerGoals?: DeveloperGoals;
   development?: SalesDevelopment;

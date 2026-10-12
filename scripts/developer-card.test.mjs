@@ -431,7 +431,10 @@ test('progress chips stay in the locked order and enqueue only through T03', () 
   assert.match(card, /Custom edit/);
   assert.match(card, /Tools & details/);
   assert.match(card, /variant="tools"/);
-  assert.match(card, /Prosjektdokument/);
+  assert.match(card, /primaryDeveloperDocument/);
+  const labels = readFileSync(join(here, '../lib/developer-card.js'), 'utf8');
+  assert.match(labels, /Prosjektdokument/);
+  assert.match(labels, /Forhåndsdokument/);
   assert.match(card, /Start run|variant="create"/);
   assert.match(card, /Importer nytt eller velg eksisterende template/);
   assert.match(card, /Lagre domene/);
@@ -448,7 +451,9 @@ test('progress chips stay in the locked order and enqueue only through T03', () 
   const brief = readFileSync(join(here, '../app/pages/developer/DeveloperClientBrief.tsx'), 'utf8');
   assert.match(brief, /Fra kunden/);
   assert.match(brief, /Fra Website Maker/);
-  assert.match(brief, /Checklist/);
+  assert.match(brief, /Oppgaver/);
+  assert.match(brief, /Klientdokumentasjon/);
+  assert.equal(brief.includes('Checklist'), false);
   assert.match(brief, /flex flex-wrap items-start/);
   assert.equal(brief.includes('Å gjøre'), false);
   assert.equal(card.includes('/step/3'), false);

@@ -363,6 +363,19 @@ import {
   generateWorkshopSummaryWithDeepSeek,
 } from './lib/workshop-summary.js';
 import {
+  enqueueDeepgramJob,
+  isDeepgramConfigured,
+  mimeFromRecordingName,
+  transcribePrerecordedBuffer,
+} from './lib/deepgram-transcribe.js';
+import {
+  generateBookerPreviewSummaryWithDeepSeek,
+  shouldEnqueueBookerPreview,
+} from './lib/booker-preview-document.js';
+import {
+  applyWorkshopTranscriptToRecord,
+} from './lib/workshop-project-document.js';
+import {
   ITERATION_DURATION_MINUTES,
   buildIterationSyntheticMeetingClient,
   iterationEmailShouldSend,
@@ -6294,6 +6307,118 @@ function findSalesClientForRecordingMeta(recordingMeta = {}, leadId = '') {
   return null;
 }
 
+function localRecordingFilePath(recordingUrl = '') {
+  const raw = sanitizeText(recordingUrl);
+  const match = raw.match(/\/(myphoner-recordings|myphoner-audio)\/([^/?#]+)/i);
+  if (!match) return '';
+  let name = match[2] || '';
+  try {
+    name = decodeURIComponent(name);
+  } catch {
+    // keep raw
+  }
+  name = path.basename(name);
+  if (!name || name.includes('..')) return '';
+  const dirs = match[1] === 'myphoner-audio'
+    ? [MYPHONER_AUDIO_DIR, ...extraMyphonerAudioDirs()]
+    : [MYPHONER_RECORDINGS_DIR, MYPHONER_AUDIO_DIR, ...extraMyphonerAudioDirs()];
+  for (const dir of dirs) {
+    const full = path.join(dir, name);
+    if (existsSync(full)) return full;
+  }
+  return '';
+}
+
+function scheduleBookerPreview(client) {
+  if (!client?.id) return;
+  if (!shouldEnqueueBookerPreview(client, client.myphoner?.latestCallId)) return;
+  void enqueueDeepgramJob(() => runBookerPreviewJob(client.id)).catch((error) => {
+    console.error('[booker-preview]', sanitizeText(error?.message) || error);
+  });
+}
+
+async function runBookerPreviewJob(clientId) {
+  const client = sales.getSalesClientById(clientId);
+  if (!client) return;
+  if (!shouldEnqueueBookerPreview(client, client.myphoner?.latestCallId)) return;
+  const callId = sanitizeText(client.myphoner?.latestCallId);
+  const recordingUrl = sanitizeText(client.myphoner?.latestRecordingUrl);
+  const filePath = localRecordingFilePath(recordingUrl);
+  const baseDoc = {
+    callId,
+    recordingUrl,
+    transcriptChat: client.previewDocument?.transcriptChat || '',
+    summary: client.previewDocument?.summary || '',
+  };
+  if (!isDeepgramConfigured()) {
+    sales.setSalesPreviewDocument(clientId, { ...baseDoc, status: 'needs-key', error: 'DEEPGRAM_API_KEY mangler.' });
+    return;
+  }
+  sales.setSalesPreviewDocument(clientId, { ...baseDoc, status: 'transcribing', error: '' });
+  if (!filePath) {
+    sales.setSalesPreviewDocument(clientId, { ...baseDoc, status: 'failed', error: 'Fant ikke lydfilen.' });
+    return;
+  }
+  const buffer = await fs.readFile(filePath);
+  const result = await transcribePrerecordedBuffer({
+    buffer,
+    mime: mimeFromRecordingName(filePath),
+  });
+  if (!result.ok) {
+    sales.setSalesPreviewDocument(clientId, {
+      ...baseDoc,
+      status: result.status || 'failed',
+      error: result.error || 'Deepgram-feil.',
+    });
+    return;
+  }
+  let summary = result.transcriptChat.slice(0, 1200);
+  let source = 'deepgram';
+  try {
+    const written = await generateBookerPreviewSummaryWithDeepSeek({
+      client: sales.getSalesClientById(clientId) || client,
+      transcriptChat: result.transcriptChat,
+    });
+    summary = written.summary;
+    source = written.source === 'ai' ? 'deepgram+deepseek' : 'deepgram';
+  } catch {
+    source = 'deepgram';
+  }
+  sales.setSalesPreviewDocument(clientId, {
+    callId,
+    recordingUrl,
+    status: 'ready',
+    transcriptChat: result.transcriptChat,
+    summary,
+    source,
+    error: '',
+  });
+}
+
+function scheduleWorkshopProjectDocument(clientId, { force = false } = {}) {
+  void applyWorkshopProjectDocumentJob(clientId, { force }).catch((error) => {
+    console.error('[workshop-document]', sanitizeText(error?.message) || error);
+  });
+}
+
+async function applyWorkshopProjectDocumentJob(clientId, { force = false } = {}) {
+  const client = sales.getSalesClientById(clientId);
+  if (!client) return null;
+  const { salesMeeting, workshopMeeting } = loadWorkshopSummaryMeetings(client);
+  if (!force && !storedMeetingHasTalk(workshopMeeting)) return null;
+  const offer = salesOffers.getOfferForClient(client.id);
+  const result = await applyWorkshopTranscriptToRecord({
+    client,
+    salesMeeting,
+    workshopMeeting,
+    offer: offer || {},
+    force,
+    generateSummary: generateWorkshopSummaryWithDeepSeek,
+  });
+  if (!result?.workshop) return result;
+  return sales.setSalesWorkshop(client.id, result.workshop);
+}
+
 function applyRecordingMetaToSalesClient(client, recordingMeta = {}, syncReason = 'recording-url-synced') {
   if (!client?.id) return null;
   const meta = recordingMeta && typeof recordingMeta === 'object' ? recordingMeta : {};
@@ -6307,7 +6432,7 @@ function applyRecordingMetaToSalesClient(client, recordingMeta = {}, syncReason 
     },
     eventType: 'recording',
   });
-  return sales.updateSalesClient(client.id, {
+  const updated = sales.updateSalesClient(client.id, {
     myphoner: {
       ...(client.myphoner || {}),
       ...patch,
@@ -6326,6 +6451,10 @@ function applyRecordingMetaToSalesClient(client, recordingMeta = {}, syncReason 
       ),
     },
   });
+  if (updated && isLocalOrManagedRecordingUrl(updated.myphoner?.latestRecordingUrl)) {
+    scheduleBookerPreview(updated);
+  }
+  return updated;
 }
 
 function cacheRecordingMetaEverywhere(recordingMeta = {}, leadId = '') {
@@ -6354,6 +6483,7 @@ async function attachCachedOrPendingRecordingToClient(client = {}, options = {})
   const current = client && typeof client === 'object' ? client : null;
   if (!current?.id) return { attached: false, reason: 'missing-client' };
   if (sanitizeText(current?.myphoner?.latestRecordingUrl) && !options.force) {
+    scheduleBookerPreview(current);
     return { attached: false, reason: 'already-has-recording', client: current };
   }
   let cached = resolveCachedRecordingForClient(current);
@@ -11785,7 +11915,11 @@ function linkFirefliesMeeting(clientId, ref) {
   if (Object.keys(patch).length) {
     sales.updateSalesClient(clientId, patch);
   }
-  return sales.getSalesClientById(clientId);
+  const latest = sales.getSalesClientById(clientId);
+  if (applied.ref?.purpose === 'workshop') {
+    scheduleWorkshopProjectDocument(clientId);
+  }
+  return latest;
 }
 
 function firefliesClientDeps() {
@@ -14824,19 +14958,22 @@ app.post('/api/admin/sales/:id/workshop/summary', salesAuth, async (req, res) =>
   const offer = salesOffers.getOfferForClient(existing.id);
   const { salesMeeting, workshopMeeting } = loadWorkshopSummaryMeetings(existing);
   try {
-    const summary = await generateWorkshopSummaryWithDeepSeek({
+    const result = await applyWorkshopTranscriptToRecord({
       client: existing,
       salesMeeting,
       workshopMeeting,
       offer: offer || {},
+      force: true,
+      generateSummary: generateWorkshopSummaryWithDeepSeek,
     });
-    const history = record.summary ? [...record.summaryHistory, record.summary] : record.summaryHistory;
-    const updated = sales.setSalesWorkshop(existing.id, mergeWorkshopRecord(record, {
-      heldAt: record.heldAt || new Date().toISOString(),
-      summary,
-      summaryHistory: history,
-    }));
-    return res.json({ client: jsonSalesClient(updated), summary });
+    const updated = result?.workshop
+      ? sales.setSalesWorkshop(existing.id, result.workshop)
+      : existing;
+    return res.json({
+      client: jsonSalesClient(updated),
+      summary: updated?.workshop?.summary || record.summary,
+      projectDocument: updated?.workshop?.projectDocument || null,
+    });
   } catch (error) {
     return res.status(httpStatusFromError(error, 502)).json({
       message: sanitizeText(error?.message) || 'Kunne ikke lage workshop-sammendraget.',
@@ -19069,6 +19206,34 @@ app.get('/api/admin/development/:id/workshop-needs', developmentAuth, async (req
   } catch (error) {
     return res.status(error.status || 500).json({ message: error.message || 'Failed to load workshop needs.' });
   }
+});
+
+app.post('/api/admin/development/:id/booker-preview', developmentAuth, (req, res) => {
+  const target = resolveDevelopmentTarget(req.params.id);
+  if (!target?.client) return res.status(404).json({ message: 'Development client not found.' });
+  if (!assertDevelopmentWork(req, res, target.client)) return;
+  const recordingUrl = sanitizeText(target.client.myphoner?.latestRecordingUrl);
+  if (!recordingUrl) return res.status(409).json({ message: 'Ingen booker-opptak.' });
+  const queued = shouldEnqueueBookerPreview(target.client, target.client.myphoner?.latestCallId);
+  if (queued) scheduleBookerPreview(target.client);
+  return res.json({
+    ok: true,
+    businessName: sanitizeText(target.client.businessName),
+    queued,
+    status: sanitizeText(target.client.previewDocument?.status) || (queued ? 'queued' : ''),
+  });
+});
+
+app.patch('/api/admin/development/:id/project-todos', developmentAuth, (req, res) => {
+  const target = resolveDevelopmentTarget(req.params.id);
+  if (!target?.client) return res.status(404).json({ message: 'Development client not found.' });
+  if (!assertDevelopmentWork(req, res, target.client)) return;
+  const incoming = req.body && typeof req.body === 'object' ? req.body : {};
+  const todoId = sanitizeText(incoming.todoId);
+  if (!todoId) return res.status(400).json({ message: 'Mangler oppgave.' });
+  const updated = sales.setSalesProjectTodoDone(target.client.id, todoId, Boolean(incoming.done));
+  if (!updated) return res.status(404).json({ message: 'Sales client not found.' });
+  return res.json({ ok: true, client: updated, projectDocument: updated.workshop?.projectDocument || null });
 });
 
 app.patch('/api/admin/development/:id/developer-qa', developmentAuth, (req, res) => {

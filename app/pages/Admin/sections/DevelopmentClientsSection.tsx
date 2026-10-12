@@ -567,6 +567,7 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
         developerHandoff: client.developerHandoff ?? item.developerHandoff,
         websiteImport: client.websiteImport ?? item.websiteImport,
         developerQa: client.developerQa ?? item.developerQa,
+        previewDocument: client.previewDocument ?? item.previewDocument,
         developerGoals,
         workshop: client.workshop ?? item.workshop,
         rankAt: clearRankWhenPreviewReady && developerGoals?.readyForPreview ? '' : item.rankAt,

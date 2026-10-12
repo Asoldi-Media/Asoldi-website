@@ -1,7 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
-import { DEVELOPER_QA_LABELS } from '../../../lib/developer-card.js';
+import { DOCUMENT_LABELS } from '../../../lib/developer-card.js';
 import { DeveloperClientIdentityFull, DeveloperKundedata } from './DeveloperKundedata';
+
+const TODO_CATEGORIES = [
+  'Sider og innhold',
+  'Funksjon og flyt',
+  'Design og merkevare',
+  'Media og materiell',
+  'Integrasjoner',
+  'Åpne beslutninger',
+  'Utenfor scope',
+];
 
 export type MaterialDot = {
   id: string;
@@ -30,10 +40,25 @@ type SummaryView = {
   functionality: string;
 };
 
-type QaState = {
-  textOk: boolean;
-  mediaOk: boolean;
-  responsiveOk: boolean;
+type PreviewDoc = {
+  status?: string;
+  summary?: string;
+  transcriptChat?: string;
+  error?: string;
+};
+
+type ProjectTodo = {
+  id: string;
+  category: string;
+  title: string;
+  detail: string;
+  done: boolean;
+};
+
+type ProjectDoc = {
+  goalExplanation?: string;
+  clientDocumentation?: string;
+  todos?: ProjectTodo[];
 };
 
 type AuthHeaders = Record<string, string>;
@@ -179,12 +204,23 @@ export function DeveloperMediaLibrary({
   );
 }
 
+function previewStatusMessage(doc: PreviewDoc | null | undefined) {
+  const status = String(doc?.status || '');
+  if (status === 'transcribing') return 'Booker-samtalen transkriberes…';
+  if (status === 'needs-key') return 'Transkripsjon venter på DEEPGRAM_API_KEY på serveren.';
+  if (status === 'failed') return doc?.error || 'Klarte ikke å transkribere booker-samtalen.';
+  if (doc?.summary) return '';
+  return 'Venter på booker-opptak.';
+}
+
 export function DeveloperClientBrief({
   open,
   onClose,
+  mode = 'project',
   summary,
-  qa,
-  onToggleQa,
+  previewDocument = null,
+  projectDocument = null,
+  onToggleTodo,
   files,
   authHeaders,
   dots,
@@ -193,9 +229,11 @@ export function DeveloperClientBrief({
 }: {
   open: boolean;
   onClose: () => void;
+  mode?: 'preview' | 'project';
   summary: SummaryView;
-  qa: QaState;
-  onToggleQa: (key: 'textOk' | 'mediaOk' | 'responsiveOk', value: boolean) => void;
+  previewDocument?: PreviewDoc | null;
+  projectDocument?: ProjectDoc | null;
+  onToggleTodo?: (todoId: string, done: boolean) => void;
   files: BriefMediaFile[];
   authHeaders: AuthHeaders;
   dots: MaterialDot[];
@@ -206,6 +244,13 @@ export function DeveloperClientBrief({
   const images = files.filter((file) => isImageFile(file) && file.url);
   const preview = images.slice(0, 6);
   const hidden = Math.max(0, images.length - preview.length);
+  const isPreview = mode === 'preview';
+  const title = isPreview ? DOCUMENT_LABELS.preview : DOCUMENT_LABELS.project;
+  const todos = Array.isArray(projectDocument?.todos) ? projectDocument.todos : [];
+  const groupedTodos = TODO_CATEGORIES
+    .map((category) => ({ category, rows: todos.filter((row) => row.category === category) }))
+    .filter((group) => group.rows.length);
+  const previewNote = previewStatusMessage(previewDocument);
 
   return (
     <div
@@ -218,8 +263,12 @@ export function DeveloperClientBrief({
       >
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-white/10 px-4 py-4 sm:px-6">
           <div>
-            <h2 className="text-lg font-semibold text-white">Prosjektdokument</h2>
-            <p className="text-xs text-gray-400 mt-1">Kundekort, sammendrag, det vi mangler, og kundens mediefiler.</p>
+            <h2 className="text-lg font-semibold text-white">{title}</h2>
+            <p className="text-xs text-gray-400 mt-1">
+              {isPreview
+                ? 'Kundekort og sammendrag av booker-samtalen.'
+                : 'Kundekort, sammendrag, det vi mangler, og workshop-oppgaver.'}
+            </p>
           </div>
           <button
             type="button"
@@ -321,30 +370,70 @@ export function DeveloperClientBrief({
           </div>
 
           <section className="min-h-0 overflow-y-auto border-t border-white/10 bg-black/20 px-4 py-4 sm:px-6 sm:py-5 lg:border-l lg:border-t-0">
-            <h3 className="text-sm font-semibold text-white">Checklist</h3>
-            <ul className="mt-4 space-y-2">
-              {(['textOk', 'mediaOk', 'responsiveOk'] as const).map((key) => (
-                <li key={key}>
-                  <label className="flex cursor-pointer items-center gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm text-gray-200">
-                    <input
-                      type="checkbox"
-                      checked={Boolean(qa[key])}
-                      onChange={(event) => onToggleQa(key, event.target.checked)}
-                      className="h-5 w-5 shrink-0 accent-[#FF5B00]"
-                    />
-                    <span>{DEVELOPER_QA_LABELS[key]}</span>
-                  </label>
-                </li>
-              ))}
-            </ul>
-            <div className="mt-8">
-              <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-300">Funksjon</h4>
-              <p className="mt-2 whitespace-pre-wrap text-sm text-gray-200">
-                {summary.ready && summary.functionality
-                  ? summary.functionality
-                  : 'Funksjonen skrives når workshopen er holdt.'}
-              </p>
-            </div>
+            {isPreview ? (
+              <>
+                <h3 className="text-sm font-semibold text-white">Booker-samtale</h3>
+                {previewNote ? (
+                  <p className="mt-3 text-sm text-gray-400">{previewNote}</p>
+                ) : null}
+                {previewDocument?.summary ? (
+                  <p className="mt-3 whitespace-pre-wrap text-sm text-gray-200">{previewDocument.summary}</p>
+                ) : null}
+                {previewDocument?.transcriptChat ? (
+                  <details className="mt-6 rounded-xl border border-white/10 bg-black/30 p-3">
+                    <summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-gray-300">
+                      Fullt transkript
+                    </summary>
+                    <pre className="mt-3 whitespace-pre-wrap text-sm text-gray-200 font-sans">
+                      {previewDocument.transcriptChat}
+                    </pre>
+                  </details>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <h3 className="text-sm font-semibold text-white">Mål</h3>
+                <p className="mt-2 whitespace-pre-wrap text-sm text-gray-200">
+                  {projectDocument?.goalExplanation || 'Målet skrives når en gyldig workshop er transkribert.'}
+                </p>
+                <h4 className="mt-8 text-xs font-semibold uppercase tracking-wide text-gray-300">Klientdokumentasjon</h4>
+                <p className="mt-2 whitespace-pre-wrap text-sm text-gray-200">
+                  {projectDocument?.clientDocumentation || 'Klientdokumentasjon skrives når workshopen er holdt.'}
+                </p>
+                <h4 className="mt-8 text-xs font-semibold uppercase tracking-wide text-gray-300">Oppgaver</h4>
+                {groupedTodos.length ? (
+                  <div className="mt-3 space-y-5">
+                    {groupedTodos.map((group) => (
+                      <div key={group.category}>
+                        <h5 className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">{group.category}</h5>
+                        <ul className="mt-2 space-y-2">
+                          {group.rows.map((todo) => (
+                            <li key={todo.id}>
+                              <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-3 text-sm text-gray-200">
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(todo.done)}
+                                  onChange={(event) => onToggleTodo?.(todo.id, event.target.checked)}
+                                  className="mt-0.5 h-5 w-5 shrink-0 accent-[#FF5B00]"
+                                />
+                                <span>
+                                  <span className="block font-medium text-white">{todo.title}</span>
+                                  {todo.detail ? (
+                                    <span className="mt-1 block text-xs text-gray-400 whitespace-pre-wrap">{todo.detail}</span>
+                                  ) : null}
+                                </span>
+                              </label>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-2 text-sm text-gray-400">Oppgavelisten skrives når workshopen er holdt.</p>
+                )}
+              </>
+            )}
           </section>
         </div>
       </div>

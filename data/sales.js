@@ -24,8 +24,9 @@ import {
 import { calendarDurationForMode } from '../lib/sales-meeting-duration.js';
 import { filterCustomOtherLinks } from '../lib/sales-client-links.js';
 import { persistClientBrief } from '../lib/sales-kundekort.js';
+import { persistPreviewDocument } from '../lib/booker-preview-document.js';
 import { normalizeWorkshopAction, offerStartDateFromWorkshopDueAt } from '../lib/workshop-action.js';
-import { persistWorkshopRecord } from '../lib/workshop-record.js';
+import { getWorkshopRecord, markProjectTodoDone, persistWorkshopRecord } from '../lib/workshop-record.js';
 import { collectRecordedMeetLinks, firefliesMeetLinksDiffer } from '../lib/fireflies-client-match.js';
 import { planConfirmedMeetBackfill } from '../lib/sales-calendar-owner.js';
 import { clampClientActionsToDueDate, ensureFeedbackAction, ensureInformasjonAction } from '../lib/workshop-desk-actions.js';
@@ -570,6 +571,7 @@ function normalizeSalesClient(raw = {}) {
     notes: sanitizeSalesNotes(raw.notes),
     details: normalizeSalesDetails(raw.details),
     clientBrief: persistClientBrief(raw.clientBrief),
+    previewDocument: persistPreviewDocument(raw.previewDocument),
     myphoner,
     progression: nextProgression,
     salesMigrations: reset.salesMigrations,
@@ -1331,6 +1333,24 @@ export function replaceSalesWebsiteImport(id, websiteImport = {}) {
 
 export function setSalesDeveloperQa(id, qaPatch = {}) {
   return updateSalesClient(id, { developerQa: qaPatch });
+}
+
+export function setSalesPreviewDocument(id, previewDocument) {
+  return updateSalesClient(id, { previewDocument: persistPreviewDocument(previewDocument) });
+}
+
+export function setSalesProjectTodoDone(id, todoId, done) {
+  const current = getSalesClientById(id);
+  if (!current) return null;
+  const record = getWorkshopRecord(current);
+  const nextDoc = markProjectTodoDone(record.projectDocument, todoId, done);
+  if (!nextDoc) return current;
+  return updateSalesClient(id, {
+    workshop: persistWorkshopRecord({
+      ...record,
+      projectDocument: nextDoc,
+    }),
+  });
 }
 
 export function setSalesDeveloperGoals(id, goalsPatch = {}) {
