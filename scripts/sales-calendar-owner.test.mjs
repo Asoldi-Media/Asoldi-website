@@ -209,6 +209,13 @@ test('confirmed Meet is the emailed URL, not a later calendar swap', () => {
     thankYouSentAt: '2026-10-02T11:28:34.966Z',
     meetLink: oldMeet,
     meetingAt: '2026-10-07T13:00:00.000Z',
+    nowMs: Date.parse('2026-10-07T12:55:00.000Z'),
+  }), false);
+  assert.equal(preserveEmailedMeetOnSync({
+    forceOwnerMeet: false,
+    thankYouSentAt: '2026-10-02T11:28:34.966Z',
+    meetLink: oldMeet,
+    meetingAt: '2026-10-07T13:00:00.000Z',
     nowMs: Date.parse('2026-10-07T13:10:00.000Z'),
   }), true);
   assert.equal(preserveEmailedMeetOnSync({

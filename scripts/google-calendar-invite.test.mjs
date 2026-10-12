@@ -354,8 +354,7 @@ test('after confirmation the sales Meet button does not force a second room at c
   assert.match(server, /preserveEmailedMeetOnSync\(/);
   assert.match(server, /calendarMeta\.foreignMeetKept/);
   const thankYouSync = server.slice(server.indexOf('async function syncCalendarInviteForThankYou'));
-  assert.match(thankYouSync.slice(0, 1200), /forceOwnerMeet: false/);
-  assert.equal(thankYouSync.slice(0, 1200).includes('forceOwnerMeet: true'), false);
+  assert.match(thankYouSync.slice(0, 1200), /forceOwnerMeet: true/);
   const liveJoin = server.slice(server.indexOf('async function maybeJoinFirefliesLive'));
   assert.match(liveJoin.slice(0, 1400), /salesInboxMeetLink\(client\)/);
   assert.match(server, /shouldRescheduleSalesReminders\(/);

@@ -8457,11 +8457,12 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
           expectedOwnerEmail,
           verifiedHostEmail: sanitizeText(nextClient?.calendar?.meetHostVerifiedEmail),
           lockedMeetLink: salesInboxMeetLink(nextClient),
-          preserveForeignMeet: preserveEmailedMeetOnSync({
-            forceOwnerMeet,
-            meetingAt: nextClient?.meetingAt,
-            durationMinutes: calendarDurationForMode(nextClient?.meetingMode),
-          }),
+          preserveForeignMeet: sameCalendarInstant(previousClient?.meetingAt, nextClient?.meetingAt)
+            && preserveEmailedMeetOnSync({
+              forceOwnerMeet,
+              meetingAt: nextClient?.meetingAt,
+              durationMinutes: calendarDurationForMode(nextClient?.meetingMode),
+            }),
         }
       );
       if (calendarMeta.foreignMeetKept) {
@@ -8808,14 +8809,14 @@ async function backfillMissingSalesCalendarEvents({
 async function syncCalendarInviteForThankYou(client, { actorAccountKey = '', requireMeetLink = false } = {}) {
   // Always email Google guests on a confirmation send. Skipping here does a
   // silent events.update (sendUpdates=none) that cancels the invite we just queued.
-  // A future meeting still hosted by another account is replaced here; an
-  // in-progress or finished room stays so nobody is dropped.
+  // Confirmation mints the Meet on the assigned rep and uses that same URL in
+  // the mail. Do not keep a leftover room from another account.
   const syncResult = await maybeSyncCalendar(client, client, {
     notifyAttendees: true,
     forceGuestInvite: true,
     requireMeetLink,
     actorAccountKey,
-    forceOwnerMeet: false,
+    forceOwnerMeet: true,
   });
   const nextClient = syncResult.client || client;
   const warnings = Array.isArray(syncResult.warnings) ? [...syncResult.warnings] : [];
@@ -8956,10 +8957,6 @@ async function sendSalesThankYou(client, { force = false, actorAccountKey = '', 
   if (!emailLib.canSendEmail()) return { sent: false, reason: 'smtp-not-configured' };
 
   const isOnline = normalizeMeetingMode(client?.meetingMode) === 'online';
-  const meetingLive = salesMeetingIsInProgress(
-    client?.meetingAt,
-    calendarDurationForMode(client?.meetingMode),
-  );
   const syncResult = await syncCalendarInviteForThankYou(client, {
     actorAccountKey,
     requireMeetLink: isOnline,
@@ -8973,7 +8970,6 @@ async function sendSalesThankYou(client, { force = false, actorAccountKey = '', 
   ).toLowerCase();
   if (
     isOnline
-    && !meetingLive
     && !salesMeetHostIsVerified(expectedHost, client?.calendar?.meetHostVerifiedEmail)
   ) {
     return {
