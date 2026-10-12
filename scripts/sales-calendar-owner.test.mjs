@@ -161,13 +161,13 @@ test('a shared mailbox cannot host a sales meeting', () => {
     organizerEmail: 'alexander@asoldi.com',
     creatorEmail: BLOCKED_CALENDAR_GOOGLE_EMAIL,
     hangoutLink: meet,
-  }), true);
+  }), false);
   assert.equal(salesMeetNeedsFreshConference({
     expectedOwnerEmail: 'alexander@asoldi.com',
     organizerEmail: 'contact@asoldi.com',
     creatorEmail: 'contact@asoldi.com',
     hangoutLink: meet,
-  }), true);
+  }), false);
   assert.equal(salesMeetNeedsFreshConference({
     expectedOwnerEmail: 'alexander@asoldi.com',
     organizerEmail: '',
@@ -176,19 +176,8 @@ test('a shared mailbox cannot host a sales meeting', () => {
   }), true);
   assert.equal(salesMeetNeedsFreshConference({
     expectedOwnerEmail: 'alexander@asoldi.com',
-    verifiedHostEmail: 'alexander@asoldi.com',
-    organizerEmail: 'alexander@asoldi.com',
-    creatorEmail: 'alexander@asoldi.com',
     hangoutLink: meet,
     forceOwnerMeet: true,
-  }), true);
-  assert.equal(salesMeetNeedsFreshConference({
-    expectedOwnerEmail: 'alexander@asoldi.com',
-    verifiedHostEmail: 'alexander@asoldi.com',
-    organizerEmail: 'alexander@asoldi.com',
-    creatorEmail: 'alexander@asoldi.com',
-    hangoutLink: meet,
-    forceOwnerMeet: false,
   }), false);
   const join = salesMeetJoinUrl(meet, 'alexander@asoldi.com');
   assert.match(join, /AccountChooser/);

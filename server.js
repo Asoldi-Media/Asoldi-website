@@ -8427,8 +8427,7 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
         previousClient?.meetingAt,
         nextClient?.meetingAt,
         eventIdForUpsert
-      ) || (meetingModeChanged && Boolean(eventIdForUpsert))
-        || (forceOwnerMeet && isOnline && Boolean(eventIdForUpsert));
+      ) || (meetingModeChanged && Boolean(eventIdForUpsert));
       if (forceRecreate) {
         console.log(
           `[calendar] recreate id=${sanitizeText(nextClient?.id)} event=${eventIdForUpsert} from=${sanitizeText(previousClient?.meetingAt)} to=${sanitizeText(nextClient?.meetingAt)} mode=${sanitizeText(previousClient?.meetingMode)}->${sanitizeText(nextClient?.meetingMode)}`
@@ -8458,7 +8457,7 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
           forceOwnerMeet,
           expectedOwnerEmail,
           verifiedHostEmail: sanitizeText(nextClient?.calendar?.meetHostVerifiedEmail),
-          lockedMeetLink: forceOwnerMeet ? '' : salesInboxMeetLink(nextClient),
+          lockedMeetLink: salesInboxMeetLink(nextClient),
           preserveForeignMeet: sameCalendarInstant(previousClient?.meetingAt, nextClient?.meetingAt)
             && preserveEmailedMeetOnSync({
               forceOwnerMeet,
@@ -8966,23 +8965,6 @@ async function sendSalesThankYou(client, { force = false, actorAccountKey = '', 
   client = syncResult.client || client;
   if (isOnline && !isRealGoogleMeetLink(client?.calendar?.meetLink)) {
     return { sent: false, reason: 'missing-meet-link', client, warnings: syncResult.warnings || [] };
-  }
-  const expectedHost = sanitizeText(
-    client?.calendar?.googleEmail || client?.calendar?.organizerEmail,
-  ).toLowerCase();
-  if (
-    isOnline
-    && !salesMeetHostIsVerified(expectedHost, client?.calendar?.meetHostVerifiedEmail)
-  ) {
-    return {
-      sent: false,
-      reason: 'meet-host',
-      client,
-      warnings: [
-        ...(syncResult.warnings || []),
-        'The Meet room is not hosted by the sales rep who owns this client. Confirmation was not sent.',
-      ],
-    };
   }
 
   const sender = await resolveSalesSenderForAccount(

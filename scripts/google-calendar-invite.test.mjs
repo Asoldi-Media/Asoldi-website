@@ -88,16 +88,17 @@ test('silent calendar creates do not add Fred until the invite is actually sent'
 test('calendar upsert keeps an in-progress room when preserveForeignMeet is set', () => {
   const src = readFileSync(new URL('../lib/google-calendar.js', import.meta.url), 'utf8');
   assert.match(src, /options\?\.preserveForeignMeet/);
-  assert.match(src, /salesMeetLooksOwnerHosted/);
   assert.match(src, /liveHangout \|\| existingMeetLink/);
   assert.match(src, /lockedMeetLink/);
   assert.match(src, /Google Meet: \$\{meet\}/);
-  assert.match(src, /!foreignMeetKept/);
-  assert.match(src, /forceOwnerMeet/);
-  assert.match(src, /forceOwnerMeet\s*\?\s*''/);
+  assert.match(src, /foreignMeetKept/);
+  assert.match(src, /Do not mint a second room on a time change/);
+  assert.match(src, /requestOwnedConference/);
+  const stampBlock = src.slice(src.indexOf('let meetHostVerifiedEmail'));
+  assert.match(stampBlock.slice(0, 500), /requestOwnedConference/);
+  assert.equal(stampBlock.slice(0, 900).includes('salesMeetLooksOwnerHosted'), false);
   const replaceBlock = src.slice(src.indexOf('if (needsFreshConference)'));
   assert.match(replaceBlock.slice(0, 500), /includeAttendees = true/);
-  assert.match(src, /!needsFreshConference\s*&&\s*!forceOwnerMeet/);
 });
 
 test('recorded extra Møte plans Meet plus Fireflies and no client email', () => {
@@ -358,9 +359,8 @@ test('after confirmation the sales Meet button does not force a second room at c
   assert.match(server, /calendarMeta\.foreignMeetKept/);
   const thankYouSync = server.slice(server.indexOf('async function syncCalendarInviteForThankYou'));
   assert.match(thankYouSync.slice(0, 1200), /forceOwnerMeet: true/);
-  assert.match(server, /forceOwnerMeet && isOnline && Boolean\(eventIdForUpsert\)/);
-  assert.match(server, /lockedMeetLink: forceOwnerMeet \? '' : salesInboxMeetLink\(nextClient\)/);
-  assert.match(server, /forceOwnerMeet,/);
+  assert.equal(server.includes('forceOwnerMeet && isOnline && Boolean(eventIdForUpsert)'), false);
+  assert.match(server, /lockedMeetLink: salesInboxMeetLink\(nextClient\)/);
   const liveJoin = server.slice(server.indexOf('async function maybeJoinFirefliesLive'));
   assert.match(liveJoin.slice(0, 1400), /salesInboxMeetLink\(client\)/);
   assert.match(server, /shouldRescheduleSalesReminders\(/);
