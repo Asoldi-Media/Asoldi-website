@@ -47,6 +47,9 @@ import {
   assignmentStampForOwnerChange,
   clientIsNewlyAssigned,
   NEW_SALES_ASSIGNMENT_MS,
+  NEW_SALES_ASSIGNMENT_BACKFILL_MS,
+  NY_ASSIGNMENT_BACKFILL_KEY,
+  planNyAssignmentBackfill,
   MEETING_TIME_BACKFILL_TARGETS,
   canStickAction,
   canReorderAction,
@@ -1025,14 +1028,63 @@ test('MyPhoner can still fill a meeting time when the client is on admin and nev
   assert.equal(merged.meetingAtSource, 'myphoner');
 });
 
-test('Ny lasts twelve hours after admin assigns a sales rep', () => {
+test('Ny lasts 24 hours after admin assigns a sales rep', () => {
   const assigned = assignmentStampForOwnerChange('', 'sales:kari', '2026-09-30T08:00:00.000Z');
   assert.equal(assigned.assignedToRepAt, '2026-09-30T08:00:00.000Z');
   const row = { ownerId: 'sales:kari', assignedToRepAt: assigned.assignedToRepAt };
   const start = Date.parse('2026-09-30T08:00:00.000Z');
+  assert.equal(NEW_SALES_ASSIGNMENT_MS, 24 * 60 * 60 * 1000);
   assert.equal(clientIsNewlyAssigned(row, start + NEW_SALES_ASSIGNMENT_MS - 1), true);
   assert.equal(clientIsNewlyAssigned(row, start + NEW_SALES_ASSIGNMENT_MS), false);
+  assert.equal(clientIsNewlyAssigned(row, start + (12 * 60 * 60 * 1000)), true);
   assert.deepEqual(assignmentStampForOwnerChange('sales:kari', 'sales:kari'), {});
+  assert.deepEqual(assignmentStampForOwnerChange('', 'admin:damian@asoldi.com'), {});
+});
+
+test('Ny backfill restamps assigned-within-72h clients that are not already new', () => {
+  const nowMs = Date.parse('2026-10-12T10:00:00.000Z');
+  const nowIso = '2026-10-12T10:00:00.000Z';
+  const fortyEightHoursAgo = '2026-10-10T10:00:00.000Z';
+  const fourDaysAgo = '2026-10-08T10:00:00.000Z';
+  const twoHoursAgo = '2026-10-12T08:00:00.000Z';
+
+  const catchUp = planNyAssignmentBackfill({
+    ownerId: 'sales:kari',
+    assignedToRepAt: fortyEightHoursAgo,
+    createdAt: fortyEightHoursAgo,
+  }, nowMs);
+  assert.equal(catchUp.assignedToRepAt, nowIso);
+  assert.equal(catchUp.salesMigrations[NY_ASSIGNMENT_BACKFILL_KEY], true);
+  assert.equal(clientIsNewlyAssigned({ ownerId: 'sales:kari', assignedToRepAt: catchUp.assignedToRepAt }, nowMs), true);
+
+  const missingStamp = planNyAssignmentBackfill({
+    ownerId: 'sales:kari',
+    createdAt: fortyEightHoursAgo,
+  }, nowMs);
+  assert.equal(missingStamp.assignedToRepAt, nowIso);
+
+  const alreadyNew = planNyAssignmentBackfill({
+    ownerId: 'sales:kari',
+    assignedToRepAt: twoHoursAgo,
+    createdAt: twoHoursAgo,
+  }, nowMs);
+  assert.equal(alreadyNew.assignedToRepAt, undefined);
+  assert.equal(alreadyNew.salesMigrations[NY_ASSIGNMENT_BACKFILL_KEY], true);
+
+  const tooOld = planNyAssignmentBackfill({
+    ownerId: 'sales:kari',
+    assignedToRepAt: fourDaysAgo,
+    createdAt: fourDaysAgo,
+  }, nowMs);
+  assert.equal(tooOld.assignedToRepAt, undefined);
+  assert.equal(NEW_SALES_ASSIGNMENT_BACKFILL_MS, 72 * 60 * 60 * 1000);
+
+  const once = planNyAssignmentBackfill({
+    ownerId: 'sales:kari',
+    assignedToRepAt: fortyEightHoursAgo,
+    salesMigrations: { [NY_ASSIGNMENT_BACKFILL_KEY]: true },
+  }, nowMs);
+  assert.equal(once, null);
 });
 
 test('meeting format filter matches IRL vs online', () => {

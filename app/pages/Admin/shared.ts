@@ -800,7 +800,7 @@ export type SalesClient = {
   /** Saved when a rep marks Secondary: redesign, consulting, video, email, or social. */
   secondaryInterest?: string;
   ownerId?: string;
-  /** Set when admin assigns the card to a sales: owner. "Ny" shows for 12 hours. */
+  /** Set when admin assigns the card to a sales: owner. "Ny" shows for 24 hours. */
   assignedToRepAt?: string;
   archive: SalesArchiveMeta;
   createdAt: string;

@@ -7,9 +7,12 @@ import {
   applyOfferSentFromDelivery,
   applyProgressionChange,
   applyMeetingHeldOrphanReset,
+  assignmentStampForOwnerChange,
   ensureContractCheckupAction,
   clientIsSalesWin,
   decorateNextActions,
+  NY_ASSIGNMENT_BACKFILL_KEY,
+  planNyAssignmentBackfill,
   getSalesGoalKeys,
   inferMeetingHeld,
   MEETING_TIME_BACKFILL_TARGETS,
@@ -597,6 +600,11 @@ function normalizeSalesClient(raw = {}) {
   };
   const inboxPatch = planConfirmedMeetBackfill(client);
   if (inboxPatch) client.calendar = { ...client.calendar, ...inboxPatch };
+  const nyBackfill = planNyAssignmentBackfill(client);
+  if (nyBackfill) {
+    if (nyBackfill.assignedToRepAt) client.assignedToRepAt = nyBackfill.assignedToRepAt;
+    client.salesMigrations = nyBackfill.salesMigrations || client.salesMigrations;
+  }
   client.nextActions = decorateNextActions(client);
   return client;
 }
@@ -616,7 +624,16 @@ function readState() {
     return firefliesMeetLinksDiffer(before.confirmedMeetLink, after.confirmedMeetLink)
       || firefliesMeetLinksDiffer(before.meetLink, after.meetLink);
   });
-  if (previous.length && (needsOrphanWrite || needsFollowUpWrite || needsInboxMeetWrite)) {
+  const needsNyWrite = previous.some((raw, index) => {
+    const after = list[index];
+    if (!after) return false;
+    const beforeFlag = Boolean(raw?.salesMigrations?.[NY_ASSIGNMENT_BACKFILL_KEY]);
+    const afterFlag = Boolean(after.salesMigrations?.[NY_ASSIGNMENT_BACKFILL_KEY]);
+    const beforeStamp = sanitizeText(raw?.assignedToRepAt);
+    const afterStamp = sanitizeText(after.assignedToRepAt);
+    return (afterFlag && !beforeFlag) || (afterStamp && afterStamp !== beforeStamp);
+  });
+  if (previous.length && (needsOrphanWrite || needsFollowUpWrite || needsInboxMeetWrite || needsNyWrite)) {
     writeSalesFile(list);
   }
   return list;
@@ -737,6 +754,7 @@ export function createSalesClient(input = {}) {
   const now = nowIso();
   const client = normalizeSalesClient({
     ...input,
+    ...(sanitizeText(input.assignedToRepAt) ? {} : assignmentStampForOwnerChange('', input.ownerId, now)),
     id: input.id || makeId(),
     createdAt: now,
     updatedAt: now,
@@ -755,9 +773,13 @@ export function updateSalesClient(id, updates = {}) {
   const mergedDetails = updates.details && typeof updates.details === 'object'
     ? { ...(current.details || {}), ...updates.details }
     : current.details;
+  const ownerStamp = Object.prototype.hasOwnProperty.call(updates, 'ownerId')
+    ? assignmentStampForOwnerChange(current.ownerId, updates.ownerId)
+    : {};
   const next = normalizeSalesClient({
     ...current,
     ...updates,
+    ...ownerStamp,
     details: mergedDetails,
     progression: updates.progression
       ? { ...current.progression, ...updates.progression }
@@ -826,9 +848,13 @@ export function patchSalesClientsById(entries = []) {
     const patch = byId.get(client.id);
     if (!patch) return client;
     updated += 1;
+    const ownerStamp = Object.prototype.hasOwnProperty.call(patch, 'ownerId')
+      ? assignmentStampForOwnerChange(client.ownerId, patch.ownerId)
+      : {};
     return normalizeSalesClient({
       ...client,
       ...patch,
+      ...ownerStamp,
       myphoner: patch.myphoner ? { ...(client.myphoner || {}), ...patch.myphoner } : client.myphoner,
       salesMigrations: patch.salesMigrations
         ? { ...(client.salesMigrations || {}), ...patch.salesMigrations }
