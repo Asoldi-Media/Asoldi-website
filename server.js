@@ -20205,7 +20205,7 @@ async function ensureData() {
   await ensureMyphonerRecordingsDir().catch(() => {});
 }
 
-ensureData().then(() => {
+function startBackgroundJobs() {
   startSalesReminderLoop();
   startWorkshopDeskEmailLoop();
   startFirefliesLiveJoinLoop();
@@ -20231,17 +20231,24 @@ ensureData().then(() => {
   backfillSalesBookingFacts().catch((error) => {
     console.error('[sales booking] startup backfill crashed:', sanitizeText(error?.message) || error);
   });
-  try {
-    const summary = ensureFirefliesMeetLinkBackfill({ force: true });
-    console.log(`[fireflies] startup meet-link backfill scanned=${summary.scanned} linked=${summary.linked} detached=${summary.detached}`);
-  } catch (error) {
-    console.error('[fireflies] startup meet-link backfill failed:', sanitizeText(error?.message) || error);
-  }
-  void scheduleFirefliesTranscriptIngest({ force: true });
-}).catch((err) => {
-  console.error('Failed to init admin:', err);
-  process.exit(1);
-});
+  setImmediate(() => {
+    try {
+      const summary = ensureFirefliesMeetLinkBackfill({ force: true });
+      console.log(`[fireflies] startup meet-link backfill scanned=${summary.scanned} linked=${summary.linked} detached=${summary.detached}`);
+    } catch (error) {
+      console.error('[fireflies] startup meet-link backfill failed:', sanitizeText(error?.message) || error);
+    }
+    try {
+      const ny = sales.applyNyAssignmentBackfillOnce();
+      if (!ny?.skipped) {
+        console.log(`[sales] ny assignment backfill updated=${Number(ny?.updated || 0)}`);
+      }
+    } catch (error) {
+      console.error('[sales] ny assignment backfill failed:', sanitizeText(error?.message) || error);
+    }
+    void scheduleFirefliesTranscriptIngest({ force: true });
+  });
+}
 
 const server = createServer(proxyHttpServerOptions(), app);
 applyProxyKeepAlive(server);
@@ -20252,4 +20259,11 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
   console.log(describeProxyTimeouts(server));
   console.log(`[audio] persistent=${MYPHONER_AUDIO_DIR} extra=${extraMyphonerAudioDirs().join('|') || '(none)'}`);
+  setImmediate(() => {
+    ensureData().then(() => {
+      startBackgroundJobs();
+    }).catch((err) => {
+      console.error('Failed to init admin:', err);
+    });
+  });
 });

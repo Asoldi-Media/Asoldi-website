@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { getDataFilePath, ensurePersistentDataDir, writeDataJson } from './storage-path.js';
 import { DEVELOPMENT_KEYS, normalizeDevelopment } from '../lib/development-phase.js';
 import { normalizeStoredWebsiteEmail } from '../lib/sales-website-email.js';
@@ -600,11 +600,6 @@ function normalizeSalesClient(raw = {}) {
   };
   const inboxPatch = planConfirmedMeetBackfill(client);
   if (inboxPatch) client.calendar = { ...client.calendar, ...inboxPatch };
-  const nyBackfill = planNyAssignmentBackfill(client);
-  if (nyBackfill) {
-    if (nyBackfill.assignedToRepAt) client.assignedToRepAt = nyBackfill.assignedToRepAt;
-    client.salesMigrations = nyBackfill.salesMigrations || client.salesMigrations;
-  }
   client.nextActions = decorateNextActions(client);
   return client;
 }
@@ -624,16 +619,7 @@ function readState() {
     return firefliesMeetLinksDiffer(before.confirmedMeetLink, after.confirmedMeetLink)
       || firefliesMeetLinksDiffer(before.meetLink, after.meetLink);
   });
-  const needsNyWrite = previous.some((raw, index) => {
-    const after = list[index];
-    if (!after) return false;
-    const beforeFlag = Boolean(raw?.salesMigrations?.[NY_ASSIGNMENT_BACKFILL_KEY]);
-    const afterFlag = Boolean(after.salesMigrations?.[NY_ASSIGNMENT_BACKFILL_KEY]);
-    const beforeStamp = sanitizeText(raw?.assignedToRepAt);
-    const afterStamp = sanitizeText(after.assignedToRepAt);
-    return (afterFlag && !beforeFlag) || (afterStamp && afterStamp !== beforeStamp);
-  });
-  if (previous.length && (needsOrphanWrite || needsFollowUpWrite || needsInboxMeetWrite || needsNyWrite)) {
+  if (previous.length && (needsOrphanWrite || needsFollowUpWrite || needsInboxMeetWrite)) {
     writeSalesFile(list);
   }
   return list;
@@ -864,6 +850,34 @@ export function patchSalesClientsById(entries = []) {
   });
   if (updated) writeState(next);
   return { total: state.length, updated };
+}
+
+/** After listen: restamp recent assignments. Sidecar flag so boot never rewrites the whole sales file. */
+export function applyNyAssignmentBackfillOnce(nowMs = Date.now()) {
+  const flagPath = getDataFilePath(`${NY_ASSIGNMENT_BACKFILL_KEY}.json`);
+  if (existsSync(flagPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(flagPath, 'utf8'));
+      if (parsed?.done) return { skipped: true, updated: 0 };
+    } catch {
+      // Flag unreadable — run once more.
+    }
+  }
+  const nowIso = new Date(nowMs).toISOString();
+  const patches = [];
+  for (const client of readState()) {
+    const id = sanitizeText(client?.id);
+    const patch = planNyAssignmentBackfill(client, nowMs);
+    if (!id || !patch?.assignedToRepAt) continue;
+    patches.push({ id, patch: { assignedToRepAt: patch.assignedToRepAt } });
+  }
+  const result = patches.length ? patchSalesClientsById(patches) : { updated: 0 };
+  writeFileSync(flagPath, JSON.stringify({
+    done: true,
+    at: nowIso,
+    updated: Number(result.updated || 0),
+  }, null, 2));
+  return { skipped: false, updated: Number(result.updated || 0) };
 }
 
 export function deleteSalesClient(id) {

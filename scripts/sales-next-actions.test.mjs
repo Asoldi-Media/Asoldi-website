@@ -48,7 +48,6 @@ import {
   clientIsNewlyAssigned,
   NEW_SALES_ASSIGNMENT_MS,
   NEW_SALES_ASSIGNMENT_BACKFILL_MS,
-  NY_ASSIGNMENT_BACKFILL_KEY,
   planNyAssignmentBackfill,
   MEETING_TIME_BACKFILL_TARGETS,
   canStickAction,
@@ -1054,7 +1053,6 @@ test('Ny backfill restamps assigned-within-72h clients that are not already new'
     createdAt: fortyEightHoursAgo,
   }, nowMs);
   assert.equal(catchUp.assignedToRepAt, nowIso);
-  assert.equal(catchUp.salesMigrations[NY_ASSIGNMENT_BACKFILL_KEY], true);
   assert.equal(clientIsNewlyAssigned({ ownerId: 'sales:kari', assignedToRepAt: catchUp.assignedToRepAt }, nowMs), true);
 
   const missingStamp = planNyAssignmentBackfill({
@@ -1068,23 +1066,15 @@ test('Ny backfill restamps assigned-within-72h clients that are not already new'
     assignedToRepAt: twoHoursAgo,
     createdAt: twoHoursAgo,
   }, nowMs);
-  assert.equal(alreadyNew.assignedToRepAt, undefined);
-  assert.equal(alreadyNew.salesMigrations[NY_ASSIGNMENT_BACKFILL_KEY], true);
+  assert.equal(alreadyNew, null);
 
   const tooOld = planNyAssignmentBackfill({
     ownerId: 'sales:kari',
     assignedToRepAt: fourDaysAgo,
     createdAt: fourDaysAgo,
   }, nowMs);
-  assert.equal(tooOld.assignedToRepAt, undefined);
+  assert.equal(tooOld, null);
   assert.equal(NEW_SALES_ASSIGNMENT_BACKFILL_MS, 72 * 60 * 60 * 1000);
-
-  const once = planNyAssignmentBackfill({
-    ownerId: 'sales:kari',
-    assignedToRepAt: fortyEightHoursAgo,
-    salesMigrations: { [NY_ASSIGNMENT_BACKFILL_KEY]: true },
-  }, nowMs);
-  assert.equal(once, null);
 });
 
 test('meeting format filter matches IRL vs online', () => {
