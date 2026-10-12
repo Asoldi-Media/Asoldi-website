@@ -372,7 +372,7 @@ export function DeveloperClientBrief({
           <section className="min-h-0 overflow-y-auto border-t border-white/10 bg-black/20 px-4 py-4 sm:px-6 sm:py-5 lg:border-l lg:border-t-0">
             {isPreview ? (
               <>
-                <h3 className="text-sm font-semibold text-white">Booker-samtale</h3>
+                <h3 className="text-sm font-semibold text-white">Utgangspunkt for preview</h3>
                 {previewNote ? (
                   <p className="mt-3 text-sm text-gray-400">{previewNote}</p>
                 ) : null}

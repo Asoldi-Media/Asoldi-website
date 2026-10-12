@@ -6372,7 +6372,7 @@ async function runBookerPreviewJob(clientId, { force = false } = {}) {
     });
     return;
   }
-  let summary = result.transcriptChat.slice(0, 1200);
+  let summary = 'Fant ikke noe i samtalen om hva som bør med på previewen.';
   const deepgramSource = result.language ? `deepgram:${result.language}` : 'deepgram';
   let source = deepgramSource;
   try {

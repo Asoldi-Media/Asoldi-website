@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deepgramListenQuery, formatDeepgramChat, transcribePrerecordedBuffer } from '../lib/deepgram-transcribe.js';
-import { persistPreviewDocument, shouldEnqueueBookerPreview } from '../lib/booker-preview-document.js';
+import { buildBookerPreviewUserPrompt, persistPreviewDocument, PREVIEW_SYSTEM, shouldEnqueueBookerPreview } from '../lib/booker-preview-document.js';
 import { hardGateWorkshopTranscript } from '../lib/workshop-transcript-eval.js';
 import { applyWorkshopTranscriptToRecord } from '../lib/workshop-project-document.js';
 import { markProjectTodoDone, persistProjectDocument } from '../lib/workshop-record.js';
@@ -156,6 +156,18 @@ test('developer can tick a project todo without regenerating', () => {
   const next = markProjectTodoDone(doc, 'todo-1', true);
   assert.equal(next.todos[0].done, true);
   assert.equal(next.goalExplanation, 'Mål');
+});
+
+test('booker preview context is about the preview, not who called', () => {
+  const user = buildBookerPreviewUserPrompt({
+    client: { businessName: 'Stolt Leveranse AS', contactPerson: 'Hein' },
+    transcriptChat: 'Taler 0: Vi mangler nettside og vil ha booking.',
+  });
+  assert.equal(user.includes('Stolt'), false);
+  assert.equal(user.includes('Hein'), false);
+  assert.match(user, /booking/);
+  assert.match(PREVIEW_SYSTEM, /preview/);
+  assert.match(PREVIEW_SYSTEM, /Ikke ta med hvem som ringte/);
 });
 
 test('booker preview enqueue skips a finished call', () => {
