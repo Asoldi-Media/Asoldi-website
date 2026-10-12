@@ -585,6 +585,14 @@ test('sales offers store: draft → review → verify → send lifecycle with lo
   assert.equal(sent.sentTo, CLIENT.contactEmail);
   assert.ok(sent.history.some((entry) => entry.action === 'sent'));
 
+  const firstSentAt = sent.sentAt;
+  assert.equal(store.markSalesOfferResent(created.id, { actor: 'anna', to: CLIENT.contactEmail }).status, 'sent');
+  const resent = store.getSalesOfferById(created.id);
+  assert.equal(resent.sentAt, firstSentAt, 'resend keeps the original sentAt');
+  assert.equal(resent.sentTo, CLIENT.contactEmail);
+  assert.ok(resent.history.some((entry) => entry.action === 'resent'));
+  assert.equal(store.markSalesOfferResent('missing-id'), null);
+
   // A standard tier without review flag can be sent directly
   const standard = store.createSalesOffer({ salesClientId: 'client-9', ownerId: 'x', tierId: tiers.WEBSITE_TIERS[0].id, products: offerEmail.productsWithTier([], tiers.WEBSITE_TIERS[0].id) });
   assert.equal(store.offerNeedsVerification(standard), false);

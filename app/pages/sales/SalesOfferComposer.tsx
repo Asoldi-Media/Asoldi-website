@@ -540,6 +540,26 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     }
   }
 
+  async function handleResend() {
+    setBusy('send');
+    setError('');
+    setNotice('');
+    try {
+      const data = await sendClientOffer(clientId, { resend: true }) as {
+        offer: SalesOffer;
+        copyTo?: string;
+        contractFileName?: string;
+      };
+      applyOffer(data.offer);
+      const dest = data.offer?.sentTo || to;
+      setNotice(`Sendt på nytt til ${dest}${data.contractFileName ? ` med ${data.contractFileName}` : ''}${data.copyTo ? ` · Kopi: ${data.copyTo}` : ''}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Sending feilet');
+    } finally {
+      setBusy('');
+    }
+  }
+
   async function handleNewOffer() {
     setBusy('new');
     setError('');
@@ -635,6 +655,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     return '';
   }, [offer, canSendEmail, readiness, offerTo, status, needsReview, placeholders.length, sendEmail, sendPortal, sendContent]);
 
+  const lastResentAt = [...(offer?.history || [])].reverse().find((entry) => entry.action === 'resent')?.at || '';
   const showSendButton = status !== 'sent' && (!needsReview || status === 'verified');
   const contractSend = sendContent === 'contract';
   const sendButtonLabel = contractSend
@@ -721,10 +742,22 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                       {offer.sentContent === 'contract' ? 'Kontrakt sendt' : 'Sendt'}
                       {' '}{offer.sentAt ? new Date(offer.sentAt).toLocaleString('nb-NO') : ''} til {offer.sentTo}
                       {offer.sentContent === 'contract' ? '. Uten møtetekst fra transkriptet.' : '.'}
+                      {lastResentAt ? ` Sendt på nytt ${new Date(lastResentAt).toLocaleString('nb-NO')}.` : ''}
                     </span>
-                    <button type="button" onClick={() => void handleNewOffer()} disabled={busy === 'new'} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 text-xs hover:bg-white/15 disabled:opacity-50">
-                      {busy === 'new' ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Nytt tilbud
-                    </button>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => void handleResend()}
+                        disabled={busy === 'send' || !canSendEmail}
+                        title={!canSendEmail ? 'E-post er ikke satt opp.' : 'Sender samme e-post og kontrakt på nytt, så den havner øverst i innboksen.'}
+                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#FF5B00] text-white text-xs hover:opacity-90 disabled:opacity-50"
+                      >
+                        {busy === 'send' ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />} Send e-post på nytt
+                      </button>
+                      <button type="button" onClick={() => void handleNewOffer()} disabled={busy === 'new'} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 text-xs hover:bg-white/15 disabled:opacity-50">
+                        {busy === 'new' ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Nytt tilbud
+                      </button>
+                    </div>
                   </div>
                   {offer.websiteCode && (
                     <div className="flex flex-wrap items-center gap-3 rounded-xl border border-white/10 bg-[#161616] px-4 py-3 text-sm">
@@ -1088,7 +1121,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                       <div className="font-medium text-white text-sm mb-1">Historikk</div>
                       {offer.history.slice(-6).reverse().map((entry, index) => (
                         <div key={`${entry.at}-${index}`}>
-                          {new Date(entry.at).toLocaleString('nb-NO', { dateStyle: 'short', timeStyle: 'short' })} · {entry.action}{entry.note ? ` · ${entry.note}` : ''}
+                          {new Date(entry.at).toLocaleString('nb-NO', { dateStyle: 'short', timeStyle: 'short' })} · {offerHistoryLabel(entry.action)}{entry.note ? ` · ${entry.note}` : ''}
                         </div>
                       ))}
                     </div>
@@ -1106,6 +1139,12 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
       )}
     </>
   );
+}
+
+function offerHistoryLabel(action: string) {
+  if (action === 'resent') return 'Sendt på nytt';
+  if (action === 'sent') return 'Sendt';
+  return action;
 }
 
 function samePartyValue(value: string, cardValue: string) {

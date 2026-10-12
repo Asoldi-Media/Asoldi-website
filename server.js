@@ -16945,26 +16945,39 @@ app.post('/api/admin/sales/:id/offer/send', salesAuth, async (req, res) => {
   const client = sales.getSalesClientById(req.params.id);
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
-  const channels = salesOffers.normalizeOfferChannels(req.body || {});
+
+  let offer = await ensureOfferDraft(client, req);
+  const resend = Boolean(req.body?.resend);
+  if (offer.status === 'sent' && !resend) {
+    return res.status(409).json({ message: 'Tilbudet er allerede sendt.', offer: presentOffer(offer) });
+  }
+  if (resend && offer.status !== 'sent') {
+    return res.status(400).json({ message: 'Tilbudet er ikke sendt ennå.', offer: presentOffer(offer) });
+  }
+  const channels = resend ? ['email'] : salesOffers.normalizeOfferChannels(req.body || {});
   const sendEmail = channels.includes('email');
   const sendPortal = channels.includes('portal');
   if (sendEmail && !emailLib.canSendEmail()) {
     return res.status(400).json({ message: salesEmailFailureMessage('smtp-not-configured') });
   }
 
-  let offer = await ensureOfferDraft(client, req);
-  if (offer.status === 'sent') return res.status(409).json({ message: 'Tilbudet er allerede sendt.', offer: presentOffer(offer) });
-  const contentMode = offerSendContentMode(req.body?.content);
+  const contentMode = resend
+    ? (offer.sentContent === 'contract' ? 'contract' : 'full')
+    : offerSendContentMode(req.body?.content);
   const contractOnly = contentMode === 'contract';
-  const to = offerSendToEmail(client, req.body?.to);
-  const readiness = offerReadiness(client, offer, { to });
-  if (!readiness.ready) return res.status(400).json({ message: readiness.message, readiness });
-  const blocker = offerSendBlocker(offer, { contractOnly });
-  if (blocker) {
-    const waiting = offer.status === 'review-requested' || (salesOffers.offerNeedsVerification(offer) && offer.status !== 'verified');
-    return res.status(waiting ? 409 : 400).json({ message: blocker, offer: presentOffer(offer) });
+  const to = resend
+    ? (normalizeEmail(offer.sentTo) || offerSendToEmail(client, req.body?.to))
+    : offerSendToEmail(client, req.body?.to);
+  if (!resend) {
+    const readiness = offerReadiness(client, offer, { to });
+    if (!readiness.ready) return res.status(400).json({ message: readiness.message, readiness });
+    const blocker = offerSendBlocker(offer, { contractOnly });
+    if (blocker) {
+      const waiting = offer.status === 'review-requested' || (salesOffers.offerNeedsVerification(offer) && offer.status !== 'verified');
+      return res.status(waiting ? 409 : 400).json({ message: blocker, offer: presentOffer(offer) });
+    }
+    offer = persistOfferDraft(offer, client, req.body, req, { content: false });
   }
-  offer = persistOfferDraft(offer, client, req.body, req, { content: false });
   if (!to || !isValidEmail(to)) return res.status(400).json({ message: salesEmailFailureMessage('missing-email') });
   const delivery = sendEmail && sendPortal ? 'both' : (sendPortal ? 'portal' : 'email');
   try {
@@ -16980,7 +16993,7 @@ app.post('/api/admin/sales/:id/offer/send', salesAuth, async (req, res) => {
     if (sendEmail) {
       const packed = await offerContractBuffer(offer, client, { to });
       contractFileName = packed.fileName;
-      sales.recordSentContractFingerprint(client.id, fingerprintPdfBuffer(packed.buffer, packed.fileName));
+      if (!resend) sales.recordSentContractFingerprint(client.id, fingerprintPdfBuffer(packed.buffer, packed.fileName));
       await emailLib.sendEmail({
         to,
         from: composed.from,
@@ -16995,20 +17008,24 @@ app.post('/api/admin/sales/:id/offer/send', salesAuth, async (req, res) => {
         ],
       });
     }
-    const sent = salesOffers.markSalesOfferSent(offer.id, { actor: offerActor(req), to, delivery, sentContent: contentMode });
-    const portalOffer = await attachWebsiteCodeToSentOffer(client, sent, { letterHtml: composed.html, to });
+    const sent = resend
+      ? (salesOffers.markSalesOfferResent(offer.id, { actor: offerActor(req), to }) || offer)
+      : salesOffers.markSalesOfferSent(offer.id, { actor: offerActor(req), to, delivery, sentContent: contentMode });
+    const portalOffer = resend ? null : await attachWebsiteCodeToSentOffer(client, sent, { letterHtml: composed.html, to });
+    const presented = presentOffer(sent);
     const account = await portalAccountForClient(client, to);
-    const progressed = markOfferSentProgress(client);
+    const progressed = resend ? client : markOfferSentProgress(client);
     return res.json({
       ok: true,
-      offer: presentOffer(sent),
+      resent: resend,
+      offer: presented,
       client: jsonSalesClient(progressed || sales.getSalesClientById(client.id)),
       channels,
       content: contentMode,
-      delivery,
+      delivery: resend ? 'email' : delivery,
       copyTo: sendEmail ? salesEmailCopyBcc(to) : '',
       contractFileName,
-      websiteCode: portalOffer?.code || '',
+      websiteCode: portalOffer?.code || presented.websiteCode || '',
       accountFound: account.found,
       portalEmail: account.email,
     });

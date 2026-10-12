@@ -482,6 +482,18 @@ export function markSalesOfferSent(id, { actor = '', to = '', pdfPath = '', deli
   }, { actor, action: 'sent', note: `${channel}${content ? `:${content}` : ''}:${sanitizeText(to)}` });
 }
 
+/** Re-mail a sent offer. Keeps first sentAt / Checkup / contractSentAt; only appends history. */
+export function markSalesOfferResent(id, { actor = '', to = '' } = {}) {
+  const current = getSalesOfferById(id);
+  if (!current || current.status !== 'sent') return null;
+  const recipient = sanitizeText(to) || current.sentTo;
+  return updateSalesOffer(id, {}, {
+    actor,
+    action: 'resent',
+    note: `${current.delivery || 'email'}${current.sentContent ? `:${current.sentContent}` : ''}:${recipient}`,
+  });
+}
+
 export function deleteSalesOffer(id) {
   const list = readAll();
   const next = list.filter((offer) => offer.id !== sanitizeText(id));
