@@ -160,7 +160,8 @@ import {
   looksLikeEmailLink,
   websiteUrlFromDomain,
 } from './lib/sales-client-links.js';
-import { cityFromSalesClient, discoverSalesLinks, isUpcomingSalesClient, serpPayloadToResults } from './lib/sales-link-discovery.js';
+import { isUpcomingSalesClient, serpPayloadToResults } from './lib/sales-link-discovery.js';
+import { applyInfokortResult, isInfokortAgentConfigured, runInfokortAgent } from './lib/infokort-agent.js';
 import {
   buildContractOnlyEmailForClient,
   buildOfferEmailForClient,
@@ -4549,35 +4550,45 @@ async function enrichSalesClientLinksFromMyphoner({
   };
   socialDiagnostics.proff = proffResolution;
 
-  const discovered = await discoverSalesLinks({
-    businessName: socialBusinessNameHint,
-    city: sanitizeText(searchContext.cityToken),
-    phone: sanitizeText(currentClient.contactPhone),
-    orgNumber: proffOrgnr,
-    address: sanitizeText(currentClient.businessAddress || resolvedMeetingPlace),
-    websiteDomain: resolvedWebsiteDomain,
-    instagramUrl: nextDetails.instagramUrl,
-    facebookUrl: nextDetails.facebookUrl,
-    googleBusinessProfile: nextDetails.googleBusinessProfile,
-  }, {
-    search: searchSerpApi,
-  }).catch((error) => {
-    console.warn(
-      '[sales] link discovery failed for ' + targetClientId + ':',
-      sanitizeText(error?.message) || error
-    );
-    return null;
-  });
-  if (discovered) {
-    nextDetails.instagramUrl = sanitizeText(discovered.instagramUrl);
-    nextDetails.facebookUrl = sanitizeText(discovered.facebookUrl);
-    nextDetails.googleBusinessProfile = sanitizeText(discovered.googleBusinessProfile);
-    resolvedWebsiteDomain = sanitizeSalesWebsiteDomain(discovered.websiteDomain);
-    socialDiagnostics.instagram = discovered.diagnostics?.instagram || {};
-    socialDiagnostics.facebook = discovered.diagnostics?.facebook || {};
-    socialDiagnostics.website = discovered.diagnostics?.website || {};
-    socialDiagnostics.maps = discovered.diagnostics?.maps || {};
-    socialDiagnostics.gemini = discovered.diagnostics?.gemini || {};
+  let agentIndustry = sanitizeText(currentClient.industry);
+  let agentMeetingPlace = resolvedMeetingPlace;
+  let agentOrgNumber = proffOrgnr || sales.sanitizeOrgNumber(currentClient.orgNumber);
+  let agentBrief = currentClient.clientBrief || null;
+  if (isInfokortAgentConfigured()) {
+    try {
+      const agent = await runInfokortAgent({
+        ...currentClient,
+        businessName: socialBusinessNameHint || currentClient.businessName,
+        orgNumber: agentOrgNumber,
+        meetingPlace: resolvedMeetingPlace,
+        websiteDomain: resolvedWebsiteDomain,
+        details: nextDetails,
+      }, { search: searchSerpApi });
+      if (agent?.ok && agent.submission) {
+        const sub = agent.submission;
+        nextDetails.instagramUrl = sanitizeText(sub.details?.instagramUrl);
+        nextDetails.facebookUrl = sanitizeText(sub.details?.facebookUrl);
+        nextDetails.googleBusinessProfile = sanitizeText(sub.details?.googleBusinessProfile);
+        nextDetails.otherLinks = sanitizeText(sub.details?.otherLinks);
+        if (sanitizeText(sub.details?.proffUrl)) nextDetails.proffUrl = sanitizeText(sub.details.proffUrl);
+        resolvedWebsiteDomain = sanitizeSalesWebsiteDomain(sub.websiteDomain);
+        agentIndustry = sanitizeText(sub.industry);
+        if (sanitizeText(sub.meetingPlace)) agentMeetingPlace = sanitizeText(sub.meetingPlace);
+        if (sales.sanitizeOrgNumber(sub.orgNumber)) agentOrgNumber = sales.sanitizeOrgNumber(sub.orgNumber);
+        agentBrief = sub.clientBrief || agentBrief;
+        socialDiagnostics.infokort = { rounds: agent.rounds, proof: sub.proof || [] };
+      } else {
+        socialDiagnostics.infokort = { skipped: sanitizeText(agent?.skipped) || 'no-submit' };
+      }
+    } catch (error) {
+      console.warn(
+        '[sales] infokort agent failed for ' + targetClientId + ':',
+        sanitizeText(error?.message) || error
+      );
+      socialDiagnostics.infokort = { error: sanitizeText(error?.message) || 'agent-failed' };
+    }
+  } else {
+    socialDiagnostics.infokort = { skipped: 'not-configured' };
   }
   const normalizedNext = promoteGoogleBusinessFromOtherLinks(
     normalizeSalesDetailLinks(nextDetails, currentDetails),
@@ -4592,8 +4603,12 @@ async function enrichSalesClientLinksFromMyphoner({
     if (field === 'proffUrl' && previous && !nextValue && shouldResolveProffUrl(previous)) return true;
     return false;
   });
-  if (proffOrgnr && proffOrgnr !== currentOrgNumber) changedFields.push('orgNumber');
-  if (!currentMeetingPlace && leadMeetingPlace) changedFields.push('meetingPlace');
+  if ((agentOrgNumber || proffOrgnr) && (agentOrgNumber || proffOrgnr) !== currentOrgNumber) changedFields.push('orgNumber');
+  if (agentMeetingPlace && agentMeetingPlace !== currentMeetingPlace) changedFields.push('meetingPlace');
+  if (agentIndustry && agentIndustry !== sanitizeText(currentClient.industry)) changedFields.push('industry');
+  if (agentBrief && JSON.stringify(agentBrief) !== JSON.stringify(currentClient.clientBrief || null)) {
+    changedFields.push('clientBrief');
+  }
   if (resolvedBusinessName && normalizeLooseKey(resolvedBusinessName) !== normalizeLooseKey(currentBusinessName)) {
     changedFields.push('businessName');
   }
@@ -4628,16 +4643,23 @@ async function enrichSalesClientLinksFromMyphoner({
   const updatePayload = {
     details: normalizedNext,
   };
-  if (!currentMeetingPlace && leadMeetingPlace) {
+  if (agentMeetingPlace && agentMeetingPlace !== currentMeetingPlace) {
+    updatePayload.meetingPlace = agentMeetingPlace;
+    updatePayload.businessAddress = agentMeetingPlace;
+  } else if (!currentMeetingPlace && leadMeetingPlace) {
     updatePayload.meetingPlace = leadMeetingPlace;
   }
+  if (agentIndustry) updatePayload.industry = agentIndustry;
+  if (agentBrief) updatePayload.clientBrief = agentBrief;
   if (resolvedBusinessName && normalizeLooseKey(resolvedBusinessName) !== normalizeLooseKey(currentBusinessName)) {
     updatePayload.businessName = resolvedBusinessName;
   }
   if (resolvedWebsiteDomain !== currentWebsiteDomain) {
     updatePayload.websiteDomain = resolvedWebsiteDomain;
   }
-  if (proffOrgnr && proffOrgnr !== currentOrgNumber) {
+  if (agentOrgNumber && agentOrgNumber !== currentOrgNumber) {
+    updatePayload.orgNumber = agentOrgNumber;
+  } else if (proffOrgnr && proffOrgnr !== currentOrgNumber) {
     updatePayload.orgNumber = proffOrgnr;
   }
   const updated = sales.updateSalesClient(targetClientId, updatePayload);
@@ -13266,29 +13288,14 @@ app.post('/api/admin/sales/refresh-upcoming-links', salesAuth, async (req, res) 
   const targets = sales.getSalesClients().filter((client) => {
     if (requestedIds.size && !requestedIds.has(sanitizeText(client.id))) return false;
     return isUpcomingSalesClient(client);
-  });
+  }).slice(0, requestedIds.size ? 20 : 5);
   const results = [];
   for (const client of targets) {
     try {
-      const discovered = await discoverSalesLinks({
-        businessName: client.businessName,
-        city: cityFromSalesClient(client),
-        phone: client.contactPhone,
-        orgNumber: client.orgNumber,
-        address: client.businessAddress || client.meetingPlace,
-        websiteDomain: client.websiteDomain,
-        instagramUrl: client.details?.instagramUrl,
-        facebookUrl: client.details?.facebookUrl,
-        googleBusinessProfile: client.details?.googleBusinessProfile,
-      }, { search: searchSerpApi });
-      const updated = sales.updateSalesClient(client.id, {
-        websiteDomain: sanitizeText(discovered.websiteDomain),
-        details: {
-          instagramUrl: sanitizeText(discovered.instagramUrl),
-          facebookUrl: sanitizeText(discovered.facebookUrl),
-          googleBusinessProfile: sanitizeText(discovered.googleBusinessProfile),
-        },
-      });
+      const agent = await runInfokortAgent(client, { search: searchSerpApi });
+      const updated = agent?.ok && agent.submission
+        ? applyInfokortResult(client.id, agent.submission)
+        : client;
       results.push({
         id: client.id,
         businessName: client.businessName,
@@ -13296,12 +13303,9 @@ app.post('/api/admin/sales/refresh-upcoming-links', salesAuth, async (req, res) 
         facebookUrl: sanitizeText(updated?.details?.facebookUrl),
         websiteDomain: sanitizeText(updated?.websiteDomain),
         googleBusinessProfile: sanitizeText(updated?.details?.googleBusinessProfile),
+        industry: sanitizeText(updated?.industry),
         reasons: {
-          instagram: discovered.diagnostics?.instagram?.reason || '',
-          facebook: discovered.diagnostics?.facebook?.reason || '',
-          website: discovered.diagnostics?.website?.reason || '',
-          maps: discovered.diagnostics?.maps?.reason || '',
-          gemini: discovered.diagnostics?.gemini?.reason || '',
+          infokort: agent?.ok ? `rounds-${agent.rounds}` : sanitizeText(agent?.skipped) || 'no-submit',
         },
       });
     } catch (error) {
@@ -14156,6 +14160,7 @@ app.post('/api/admin/sales', salesAuth, async (req, res) => {
 
     const thankYou = await autoSendThankYouFromOwner(client);
     if (thankYou?.client) client = thankYou.client;
+    scheduleSalesClientLinkEnrichment({ clientId: sanitizeText(client?.id) });
 
     res.status(201).json({
       client,
