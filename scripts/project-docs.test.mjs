@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { formatDeepgramChat, transcribePrerecordedBuffer } from '../lib/deepgram-transcribe.js';
+import { deepgramListenQuery, formatDeepgramChat, transcribePrerecordedBuffer } from '../lib/deepgram-transcribe.js';
 import { persistPreviewDocument, shouldEnqueueBookerPreview } from '../lib/booker-preview-document.js';
 import { hardGateWorkshopTranscript } from '../lib/workshop-transcript-eval.js';
 import { applyWorkshopTranscriptToRecord } from '../lib/workshop-project-document.js';
@@ -21,6 +21,12 @@ test('unsigned cards open Forhåndsdokument first', () => {
   const signed = primaryDeveloperDocument(true);
   assert.equal(signed.primary, 'project');
   assert.equal(signed.secondary, 'preview');
+});
+
+test('booker transcription uses Norwegian, not multilingual mode', () => {
+  const query = deepgramListenQuery();
+  assert.match(query, /(?:^|&)language=no(?:&|$)/);
+  assert.equal(query.includes('language=multi'), false);
 });
 
 test('Deepgram speaker ints become chat lines', () => {

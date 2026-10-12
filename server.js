@@ -6329,18 +6329,18 @@ function localRecordingFilePath(recordingUrl = '') {
   return '';
 }
 
-function scheduleBookerPreview(client) {
+function scheduleBookerPreview(client, { force = false } = {}) {
   if (!client?.id) return;
-  if (!shouldEnqueueBookerPreview(client, client.myphoner?.latestCallId)) return;
-  void enqueueDeepgramJob(() => runBookerPreviewJob(client.id)).catch((error) => {
+  if (!force && !shouldEnqueueBookerPreview(client, client.myphoner?.latestCallId)) return;
+  void enqueueDeepgramJob(() => runBookerPreviewJob(client.id, { force })).catch((error) => {
     console.error('[booker-preview]', sanitizeText(error?.message) || error);
   });
 }
 
-async function runBookerPreviewJob(clientId) {
+async function runBookerPreviewJob(clientId, { force = false } = {}) {
   const client = sales.getSalesClientById(clientId);
   if (!client) return;
-  if (!shouldEnqueueBookerPreview(client, client.myphoner?.latestCallId)) return;
+  if (!force && !shouldEnqueueBookerPreview(client, client.myphoner?.latestCallId)) return;
   const callId = sanitizeText(client.myphoner?.latestCallId);
   const recordingUrl = sanitizeText(client.myphoner?.latestRecordingUrl);
   const filePath = localRecordingFilePath(recordingUrl);
@@ -19214,8 +19214,9 @@ app.post('/api/admin/development/:id/booker-preview', developmentAuth, (req, res
   if (!assertDevelopmentWork(req, res, target.client)) return;
   const recordingUrl = sanitizeText(target.client.myphoner?.latestRecordingUrl);
   if (!recordingUrl) return res.status(409).json({ message: 'Ingen booker-opptak.' });
-  const queued = shouldEnqueueBookerPreview(target.client, target.client.myphoner?.latestCallId);
-  if (queued) scheduleBookerPreview(target.client);
+  const force = Boolean(req.body?.force);
+  const queued = force || shouldEnqueueBookerPreview(target.client, target.client.myphoner?.latestCallId);
+  if (queued) scheduleBookerPreview(target.client, { force });
   return res.json({
     ok: true,
     businessName: sanitizeText(target.client.businessName),
