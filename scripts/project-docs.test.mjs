@@ -23,10 +23,12 @@ test('unsigned cards open Forhåndsdokument first', () => {
   assert.equal(signed.secondary, 'preview');
 });
 
-test('booker transcription uses Norwegian, not multilingual mode', () => {
+test('booker transcription detects the call language on Nova-3', () => {
   const query = deepgramListenQuery();
-  assert.match(query, /(?:^|&)language=no(?:&|$)/);
+  assert.match(query, /(?:^|&)model=nova-3(?:&|$)/);
+  assert.match(query, /(?:^|&)detect_language=true(?:&|$)/);
   assert.equal(query.includes('language=multi'), false);
+  assert.equal(query.includes('language=no'), false);
 });
 
 test('Deepgram speaker ints become chat lines', () => {

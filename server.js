@@ -6373,16 +6373,17 @@ async function runBookerPreviewJob(clientId, { force = false } = {}) {
     return;
   }
   let summary = result.transcriptChat.slice(0, 1200);
-  let source = 'deepgram';
+  const deepgramSource = result.language ? `deepgram:${result.language}` : 'deepgram';
+  let source = deepgramSource;
   try {
     const written = await generateBookerPreviewSummaryWithDeepSeek({
       client: sales.getSalesClientById(clientId) || client,
       transcriptChat: result.transcriptChat,
     });
     summary = written.summary;
-    source = written.source === 'ai' ? 'deepgram+deepseek' : 'deepgram';
+    source = written.source === 'ai' ? `${deepgramSource}+deepseek` : deepgramSource;
   } catch {
-    source = 'deepgram';
+    source = deepgramSource;
   }
   sales.setSalesPreviewDocument(clientId, {
     callId,
