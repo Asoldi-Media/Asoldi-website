@@ -160,7 +160,7 @@ import {
   looksLikeEmailLink,
   websiteUrlFromDomain,
 } from './lib/sales-client-links.js';
-import { isUpcomingSalesClient, serpPayloadToResults } from './lib/sales-link-discovery.js';
+import { isUpcomingSalesClient, searchGoogle, serpPayloadToResults } from './lib/sales-link-discovery.js';
 import { applyInfokortResult, isInfokortAgentConfigured, runInfokortAgent } from './lib/infokort-agent.js';
 import {
   buildContractOnlyEmailForClient,
@@ -3375,11 +3375,7 @@ async function searchSerpApi(queryText = '') {
   const query = sanitizeText(queryText);
   if (!query) return [];
   if (!listSerpApiKeys().length) {
-    if (!serpApiMissingKeyWarned) {
-      serpApiMissingKeyWarned = true;
-      console.warn('[sales] SERPAPI_API_KEY missing: social link enrichment search is disabled.');
-    }
-    return [];
+    return searchGoogle(query);
   }
 
   const nowMs = Date.now();
@@ -3473,7 +3469,7 @@ async function searchSerpApi(queryText = '') {
     });
     return failover.value;
   }
-  return [];
+  return searchGoogle(query);
 }
 
 function decodeHtmlEntities(value = '') {
@@ -4563,7 +4559,7 @@ async function enrichSalesClientLinksFromMyphoner({
         meetingPlace: resolvedMeetingPlace,
         websiteDomain: resolvedWebsiteDomain,
         details: nextDetails,
-      }, { search: searchSerpApi });
+      });
       if (agent?.ok && agent.submission) {
         const sub = agent.submission;
         nextDetails.instagramUrl = sanitizeText(sub.details?.instagramUrl);
@@ -13292,7 +13288,7 @@ app.post('/api/admin/sales/refresh-upcoming-links', salesAuth, async (req, res) 
   const results = [];
   for (const client of targets) {
     try {
-      const agent = await runInfokortAgent(client, { search: searchSerpApi });
+      const agent = await runInfokortAgent(client);
       const updated = agent?.ok && agent.submission
         ? applyInfokortResult(client.id, agent.submission)
         : client;

@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  dataForSeoMapsToPlaces,
   dataForSeoOrganicToResults,
+  searchGoogle,
   discoverSalesLinks,
   distinctiveNameTokens,
   isUpcomingSalesClient,
@@ -80,6 +82,55 @@ test('DataForSEO organic and local pack become the same result rows', () => {
   assert.equal(rows.some((row) => row.url.includes('instagram.com/bynesetcafe')), true);
   assert.equal(rows.some((row) => row.url.includes('cid=9')), true);
   assert.equal(rows.some((row) => row.url.includes('bynesetcafe.no')), true);
+});
+
+test('searchGoogle uses DataForSEO first when auth is set', async () => {
+  const previous = process.env.DATAFORSEO_AUTH;
+  process.env.DATAFORSEO_AUTH = Buffer.from('x:y').toString('base64');
+  try {
+    const rows = await searchGoogle('tass instagram', {
+      fetchImpl: async (url) => {
+        assert.match(String(url), /dataforseo\.com/);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            tasks: [{
+              status_code: 20000,
+              cost: 0,
+              result: [{
+                items: [
+                  { type: 'organic', url: 'https://www.instagram.com/tass.norge/', title: 'TASS Norge', description: 'tass.no', rank_group: 1 },
+                ],
+              }],
+            }],
+          }),
+        };
+      },
+    });
+    assert.equal(rows[0].url, 'https://www.instagram.com/tass.norge/');
+  } finally {
+    if (previous == null) delete process.env.DATAFORSEO_AUTH;
+    else process.env.DATAFORSEO_AUTH = previous;
+  }
+});
+
+test('DataForSEO Maps items become cid places', () => {
+  const rows = dataForSeoMapsToPlaces({
+    tasks: [{
+      result: [{
+        items: [{
+          title: 'TASS',
+          address: 'Vasøyveien 103, 7167 Vallersund',
+          phone: '47 13 13 80',
+          cid: '5208062932965149043',
+          url: 'https://tass.no',
+        }],
+      }],
+    }],
+  });
+  assert.equal(rows[0].mapsUrl, 'https://maps.google.com/?cid=5208062932965149043');
+  assert.equal(rows[0].title, 'TASS');
 });
 
 test('two equal name matches are left empty', () => {
