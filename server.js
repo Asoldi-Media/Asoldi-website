@@ -4575,15 +4575,17 @@ async function enrichSalesClientLinksFromMyphoner({
       });
       if (agent?.ok && agent.submission) {
         const sub = agent.submission;
-        nextDetails.instagramUrl = sanitizeText(sub.details?.instagramUrl);
-        nextDetails.facebookUrl = sanitizeText(sub.details?.facebookUrl);
-        nextDetails.googleBusinessProfile = sanitizeText(sub.details?.googleBusinessProfile);
-        nextDetails.otherLinks = sanitizeText(sub.details?.otherLinks);
+        nextDetails.instagramUrl = sanitizeText(sub.details?.instagramUrl) || sanitizeText(nextDetails.instagramUrl);
+        nextDetails.facebookUrl = sanitizeText(sub.details?.facebookUrl) || sanitizeText(nextDetails.facebookUrl);
+        nextDetails.googleBusinessProfile = sanitizeText(sub.details?.googleBusinessProfile)
+          || sanitizeText(nextDetails.googleBusinessProfile);
+        nextDetails.otherLinks = sanitizeText(sub.details?.otherLinks) || sanitizeText(nextDetails.otherLinks);
         if (sanitizeText(sub.details?.proffUrl)) nextDetails.proffUrl = sanitizeText(sub.details.proffUrl);
-        resolvedWebsiteDomain = sanitizeSalesWebsiteDomain(sub.websiteDomain);
-        agentIndustry = sanitizeText(sub.industry);
+        resolvedWebsiteDomain = sanitizeSalesWebsiteDomain(sub.websiteDomain) || resolvedWebsiteDomain;
+        agentIndustry = sanitizeText(sub.industry) || agentIndustry;
         if (sanitizeText(sub.meetingPlace)) agentMeetingPlace = sanitizeText(sub.meetingPlace);
-        if (sales.sanitizeOrgNumber(sub.orgNumber)) agentOrgNumber = sales.sanitizeOrgNumber(sub.orgNumber);
+        const submittedOrg = sales.sanitizeOrgNumber(sub.orgNumber);
+        if (submittedOrg && !sales.sanitizeOrgNumber(currentClient.orgNumber)) agentOrgNumber = submittedOrg;
         agentBrief = sub.clientBrief || agentBrief;
         socialDiagnostics.infokort = { rounds: agent.rounds, proof: sub.proof || [] };
       } else {
@@ -13419,15 +13421,15 @@ app.post('/api/admin/sales/refresh-upcoming-links', salesAuth, async (req, res) 
   const targets = sales.getSalesClients().filter((client) => {
     if (requestedIds.size && !requestedIds.has(sanitizeText(client.id))) return false;
     return isUpcomingSalesClient(client);
-  }).slice(0, requestedIds.size ? 20 : 5);
+  }).slice(0, requestedIds.size ? 32 : 5);
   const results = [];
-  for (const client of targets) {
+  const fillOne = async (client) => {
     try {
       const agent = await runInfokortAgent(client);
       const updated = agent?.ok && agent.submission
-        ? applyInfokortResult(client.id, agent.submission)
+        ? applyInfokortResult(client.id, agent.submission, { current: client })
         : client;
-      results.push({
+      return {
         id: client.id,
         businessName: client.businessName,
         instagramUrl: sanitizeText(updated?.details?.instagramUrl),
@@ -13435,17 +13437,21 @@ app.post('/api/admin/sales/refresh-upcoming-links', salesAuth, async (req, res) 
         websiteDomain: sanitizeText(updated?.websiteDomain),
         googleBusinessProfile: sanitizeText(updated?.details?.googleBusinessProfile),
         industry: sanitizeText(updated?.industry),
+        brief: sanitizeText(updated?.clientBrief?.short),
         reasons: {
           infokort: agent?.ok ? `rounds-${agent.rounds}` : sanitizeText(agent?.skipped) || 'no-submit',
         },
-      });
+      };
     } catch (error) {
-      results.push({
+      return {
         id: client.id,
         businessName: client.businessName,
         error: sanitizeText(error?.message) || 'link refresh failed',
-      });
+      };
     }
+  };
+  for (let i = 0; i < targets.length; i += 4) {
+    results.push(...await Promise.all(targets.slice(i, i + 4).map(fillOne)));
   }
   res.json({ ok: true, count: results.length, results });
 });

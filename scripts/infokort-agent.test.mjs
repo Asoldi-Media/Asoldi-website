@@ -3,11 +3,49 @@ import assert from 'node:assert/strict';
 import {
   applyInfokortResult,
   attachRegistryDefaults,
+  composeIdentityBrief,
   fillProvenPublicLinks,
+  isRegistryBrief,
   normalizeInfokortSubmission,
   runInfokortAgent,
   scoreInfokortMatch,
 } from '../lib/infokort-agent.js';
+
+test('registry dump is replaced by industry + what they do', () => {
+  assert.equal(isRegistryBrief('et enkeltpersonforetak registrert i Brønnøysundregistrene med org.nr. 937366221'), true);
+  const brief = composeIdentityBrief({
+    businessName: 'BAKKES BILPLEIE',
+    industry: 'bilpleie',
+    meetingPlace: 'Bråvann platå 64, 4624 KRISTIANSAND S',
+    extra: 'Bakkes Bilpleie er et enkeltpersonforetak registrert i Brønnøysundregistrene.',
+  });
+  assert.match(brief.short, /bilpleie/i);
+  assert.match(brief.short, /Kristiansand/i);
+  assert.equal(isRegistryBrief(brief.short), false);
+});
+
+test('applyInfokortResult keeps an existing Maps CID when the agent leaves Maps empty', () => {
+  const applied = applyInfokortResult(
+    'client-1',
+    {
+      industry: 'bilpleie',
+      meetingPlace: 'Bråvann platå 64, 4624 KRISTIANSAND S',
+      orgNumber: '937366221',
+      websiteDomain: '',
+      details: { instagramUrl: '', facebookUrl: '', googleBusinessProfile: '' },
+      clientBrief: { short: 'Bakkes Bilpleie er bilpleie i Kristiansand.' },
+    },
+    {
+      persist: false,
+      current: {
+        orgNumber: '937366221',
+        details: { googleBusinessProfile: 'https://maps.google.com/?cid=4582029138078882824' },
+      },
+    }
+  );
+  assert.equal(applied.details.googleBusinessProfile, 'https://maps.google.com/?cid=4582029138078882824');
+  assert.equal(applied.orgNumber, '937366221');
+});
 
 test('normalizeInfokortSubmission stores host-only website, cid maps, and brief', () => {
   const submission = normalizeInfokortSubmission({
