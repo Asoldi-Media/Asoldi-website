@@ -145,6 +145,7 @@ import {
   salesInboxMeetLink,
   salesMeetHostIsVerified,
   salesMeetJoinUrl,
+  salesMeetingIsInProgress,
   sanitizeMyphonerDefaultOwnerKey,
   shouldSyncSalesMeetingCalendar,
 } from './lib/sales-calendar-owner.js';
@@ -8458,11 +8459,8 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
           lockedMeetLink: salesInboxMeetLink(nextClient),
           preserveForeignMeet: preserveEmailedMeetOnSync({
             forceOwnerMeet,
-            thankYouSentAt: nextClient?.reminders?.thankYouSentAt,
             meetingAt: nextClient?.meetingAt,
             durationMinutes: calendarDurationForMode(nextClient?.meetingMode),
-            meetLink: salesInboxMeetLink(nextClient) || sanitizeText(nextClient?.calendar?.meetLink),
-            confirmedMeetLink: sanitizeText(nextClient?.calendar?.confirmedMeetLink),
           }),
         }
       );
@@ -8492,13 +8490,23 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
       let nextMeetLink = sanitizeText(calendarMeta.meetLink);
       const lockedMeet = salesInboxMeetLink(nextClient) || salesConfirmedMeetLink(nextClient?.calendar);
       if (
-        !forceOwnerMeet
+        calendarMeta.foreignMeetKept
         && isRealGoogleMeetLink(lockedMeet)
         && firefliesMeetLinksDiffer(lockedMeet, nextMeetLink)
       ) {
         calendarMeta.meetLink = lockedMeet;
-        calendarMeta.replacedForeignMeet = false;
         nextMeetLink = lockedMeet;
+      } else if (
+        isRealGoogleMeetLink(nextMeetLink)
+        && (
+          calendarMeta.replacedForeignMeet
+          || (
+            salesMeetHostIsVerified(expectedOwnerEmail, calendarMeta.meetHostVerifiedEmail)
+            && firefliesMeetLinksDiffer(lockedMeet, nextMeetLink)
+          )
+        )
+      ) {
+        calendarMeta.confirmedMeetLink = nextMeetLink;
       }
       const meetLinkChanged = firefliesMeetLinksDiffer(previousMeetLink, nextMeetLink);
       Object.assign(calendarMeta, {
@@ -8506,7 +8514,9 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
         firefliesLiveJoinAttemptAt: sanitizeText(nextClient?.calendar?.firefliesLiveJoinAttemptAt),
         firefliesLiveJoinError: sanitizeText(nextClient?.calendar?.firefliesLiveJoinError),
         firefliesLiveJoinedMeetLink: sanitizeText(nextClient?.calendar?.firefliesLiveJoinedMeetLink),
-        confirmedMeetLink: sanitizeText(nextClient?.calendar?.confirmedMeetLink),
+        confirmedMeetLink: isRealGoogleMeetLink(calendarMeta.confirmedMeetLink)
+          ? calendarMeta.confirmedMeetLink
+          : sanitizeText(nextClient?.calendar?.confirmedMeetLink),
       });
       if (
         !nextClient?.progression?.meetingHeld
@@ -8525,7 +8535,7 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
         if (live.client) nextClient = live.client;
         warnings.push(...(live.warnings || []));
       }
-      calendarInviteSent = notifyAttendees;
+      calendarInviteSent = notifyAttendees || Boolean(calendarMeta.replacedForeignMeet);
       const organizerEmail = sanitizeText(getGoogleCalendarStatus(accountKey).googleEmail);
       console.log(
         `[calendar] upsert id=${sanitizeText(nextClient?.id)} event=${sanitizeText(nextClient?.calendar?.eventId)} meet=${sanitizeText(nextClient?.calendar?.meetLink)} sendUpdates=${notifyAttendees ? 'all' : 'none'} notify=${notifyAttendees} fireflies=${calendarMeta.firefliesInvited ? 'invited' : (sanitizeText(nextClient?.calendar?.firefliesInvitedAt) ? 'kept' : 'skipped')} organizer=${organizerEmail || accountKey}`
@@ -8798,14 +8808,14 @@ async function backfillMissingSalesCalendarEvents({
 async function syncCalendarInviteForThankYou(client, { actorAccountKey = '', requireMeetLink = false } = {}) {
   // Always email Google guests on a confirmation send. Skipping here does a
   // silent events.update (sendUpdates=none) that cancels the invite we just queued.
-  // Keep an existing room (already emailed, or minted before assign) so we do
-  // not mail a second Meet URL.
+  // A future meeting still hosted by another account is replaced here; an
+  // in-progress or finished room stays so nobody is dropped.
   const syncResult = await maybeSyncCalendar(client, client, {
     notifyAttendees: true,
     forceGuestInvite: true,
     requireMeetLink,
     actorAccountKey,
-    forceOwnerMeet: !isRealGoogleMeetLink(salesInboxMeetLink(client)),
+    forceOwnerMeet: false,
   });
   const nextClient = syncResult.client || client;
   const warnings = Array.isArray(syncResult.warnings) ? [...syncResult.warnings] : [];
@@ -8946,7 +8956,10 @@ async function sendSalesThankYou(client, { force = false, actorAccountKey = '', 
   if (!emailLib.canSendEmail()) return { sent: false, reason: 'smtp-not-configured' };
 
   const isOnline = normalizeMeetingMode(client?.meetingMode) === 'online';
-  const keepExistingMeet = isRealGoogleMeetLink(salesInboxMeetLink(client));
+  const meetingLive = salesMeetingIsInProgress(
+    client?.meetingAt,
+    calendarDurationForMode(client?.meetingMode),
+  );
   const syncResult = await syncCalendarInviteForThankYou(client, {
     actorAccountKey,
     requireMeetLink: isOnline,
@@ -8955,10 +8968,13 @@ async function sendSalesThankYou(client, { force = false, actorAccountKey = '', 
   if (isOnline && !isRealGoogleMeetLink(client?.calendar?.meetLink)) {
     return { sent: false, reason: 'missing-meet-link', client, warnings: syncResult.warnings || [] };
   }
+  const expectedHost = sanitizeText(
+    client?.calendar?.googleEmail || client?.calendar?.organizerEmail,
+  ).toLowerCase();
   if (
     isOnline
-    && !keepExistingMeet
-    && !salesMeetHostIsVerified(client?.calendar?.organizerEmail, client?.calendar?.meetHostVerifiedEmail)
+    && !meetingLive
+    && !salesMeetHostIsVerified(expectedHost, client?.calendar?.meetHostVerifiedEmail)
   ) {
     return {
       sent: false,
@@ -17335,9 +17351,21 @@ app.post('/api/admin/sales/:id/open-meet', salesAuth, async (req, res) => {
         warnings,
       });
     }
-    const hostEmail = sanitizeText(client?.calendar?.meetHostVerifiedEmail);
+    const hostEmail = sanitizeText(
+      client?.calendar?.meetHostVerifiedEmail
+      || client?.calendar?.googleEmail
+      || client?.calendar?.organizerEmail,
+    );
+    const expectedHost = sanitizeText(
+      client?.calendar?.googleEmail || client?.calendar?.organizerEmail,
+    ).toLowerCase();
+    const meetingLive = salesMeetingIsInProgress(
+      client?.meetingAt,
+      calendarDurationForMode(client?.meetingMode),
+    );
     if (
-      !salesMeetHostIsVerified(client?.calendar?.organizerEmail, hostEmail)
+      !meetingLive
+      && !salesMeetHostIsVerified(expectedHost, hostEmail)
       && !isRealGoogleMeetLink(previousLink)
     ) {
       return res.status(409).json({

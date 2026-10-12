@@ -92,6 +92,9 @@ test('calendar upsert keeps an in-progress room when preserveForeignMeet is set'
   assert.match(src, /liveHangout \|\| existingMeetLink/);
   assert.match(src, /lockedMeetLink/);
   assert.match(src, /Google Meet: \$\{meet\}/);
+  assert.match(src, /!foreignMeetKept/);
+  const replaceBlock = src.slice(src.indexOf('if (needsFreshConference)'));
+  assert.match(replaceBlock.slice(0, 500), /includeAttendees = true/);
 });
 
 test('recorded extra Møte plans Meet plus Fireflies and no client email', () => {
@@ -340,17 +343,18 @@ test('calendar htmlLink eid names the Google mailbox that owns the event', () =>
   assert.equal(googleMailboxFromCalendarHtmlLink(htmlLink), 'alexander@asoldi.com');
 });
 
-test('after confirmation the sales Meet button does not mint a second room', () => {
+test('after confirmation the sales Meet button does not force a second room at click', () => {
   const server = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../server.js'), 'utf8');
   const openMeet = server.slice(server.indexOf("app.post('/api/admin/sales/:id/open-meet'"));
   const openBody = openMeet.slice(0, openMeet.indexOf('app.post', 10));
   assert.match(openBody, /salesInboxMeetLink/);
   assert.equal(openBody.includes('forceOwnerMeet: true'), false);
+  assert.match(openBody, /salesMeetingIsInProgress/);
   assert.match(openBody, /syncResult\.calendarInviteSent/);
   assert.match(server, /preserveEmailedMeetOnSync\(/);
+  assert.match(server, /calendarMeta\.foreignMeetKept/);
   const thankYouSync = server.slice(server.indexOf('async function syncCalendarInviteForThankYou'));
-  assert.match(thankYouSync.slice(0, 1200), /salesInboxMeetLink\(client\)/);
-  assert.match(thankYouSync.slice(0, 1200), /forceOwnerMeet:/);
+  assert.match(thankYouSync.slice(0, 1200), /forceOwnerMeet: false/);
   assert.equal(thankYouSync.slice(0, 1200).includes('forceOwnerMeet: true'), false);
   const liveJoin = server.slice(server.indexOf('async function maybeJoinFirefliesLive'));
   assert.match(liveJoin.slice(0, 1400), /salesInboxMeetLink\(client\)/);

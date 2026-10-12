@@ -197,7 +197,7 @@ test('confirmed Meet is the emailed URL, not a later calendar swap', () => {
     thankYouSentAt: '2026-10-02T11:28:34.966Z',
     meetingAt: '2026-10-20T12:00:00.000Z',
     nowMs: Date.parse('2026-10-10T12:00:00.000Z'),
-  }), true);
+  }), false);
   assert.equal(preserveEmailedMeetOnSync({
     forceOwnerMeet: false,
     thankYouSentAt: '',
@@ -206,10 +206,17 @@ test('confirmed Meet is the emailed URL, not a later calendar swap', () => {
   }), false);
   assert.equal(preserveEmailedMeetOnSync({
     forceOwnerMeet: false,
-    thankYouSentAt: '',
+    thankYouSentAt: '2026-10-02T11:28:34.966Z',
     meetLink: oldMeet,
-    meetingAt: '2026-10-20T12:00:00.000Z',
-    nowMs: Date.parse('2026-10-10T12:00:00.000Z'),
+    meetingAt: '2026-10-07T13:00:00.000Z',
+    nowMs: Date.parse('2026-10-07T13:10:00.000Z'),
+  }), true);
+  assert.equal(preserveEmailedMeetOnSync({
+    forceOwnerMeet: false,
+    thankYouSentAt: '2026-10-02T11:28:34.966Z',
+    meetLink: oldMeet,
+    meetingAt: '2026-10-07T13:00:00.000Z',
+    nowMs: Date.parse('2026-10-07T16:00:00.000Z'),
   }), true);
 });
 
