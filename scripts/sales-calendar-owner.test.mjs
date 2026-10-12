@@ -174,6 +174,22 @@ test('a shared mailbox cannot host a sales meeting', () => {
     creatorEmail: '',
     hangoutLink: '',
   }), true);
+  assert.equal(salesMeetNeedsFreshConference({
+    expectedOwnerEmail: 'alexander@asoldi.com',
+    verifiedHostEmail: 'alexander@asoldi.com',
+    organizerEmail: 'alexander@asoldi.com',
+    creatorEmail: 'alexander@asoldi.com',
+    hangoutLink: meet,
+    forceOwnerMeet: true,
+  }), true);
+  assert.equal(salesMeetNeedsFreshConference({
+    expectedOwnerEmail: 'alexander@asoldi.com',
+    verifiedHostEmail: 'alexander@asoldi.com',
+    organizerEmail: 'alexander@asoldi.com',
+    creatorEmail: 'alexander@asoldi.com',
+    hangoutLink: meet,
+    forceOwnerMeet: false,
+  }), false);
   const join = salesMeetJoinUrl(meet, 'alexander@asoldi.com');
   assert.match(join, /AccountChooser/);
   assert.match(join, /Email=alexander%40asoldi\.com/);

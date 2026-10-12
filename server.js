@@ -8427,7 +8427,8 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
         previousClient?.meetingAt,
         nextClient?.meetingAt,
         eventIdForUpsert
-      ) || (meetingModeChanged && Boolean(eventIdForUpsert));
+      ) || (meetingModeChanged && Boolean(eventIdForUpsert))
+        || (forceOwnerMeet && isOnline && Boolean(eventIdForUpsert));
       if (forceRecreate) {
         console.log(
           `[calendar] recreate id=${sanitizeText(nextClient?.id)} event=${eventIdForUpsert} from=${sanitizeText(previousClient?.meetingAt)} to=${sanitizeText(nextClient?.meetingAt)} mode=${sanitizeText(previousClient?.meetingMode)}->${sanitizeText(nextClient?.meetingMode)}`
@@ -8454,9 +8455,10 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
           addFireflies: isOnline && !Boolean(nextClient?.progression?.meetingHeld) && (notifyAttendees || firefliesAlreadyInvited),
           keepFireflies: firefliesAlreadyInvited,
           forceRecreate,
+          forceOwnerMeet,
           expectedOwnerEmail,
           verifiedHostEmail: sanitizeText(nextClient?.calendar?.meetHostVerifiedEmail),
-          lockedMeetLink: salesInboxMeetLink(nextClient),
+          lockedMeetLink: forceOwnerMeet ? '' : salesInboxMeetLink(nextClient),
           preserveForeignMeet: sameCalendarInstant(previousClient?.meetingAt, nextClient?.meetingAt)
             && preserveEmailedMeetOnSync({
               forceOwnerMeet,
