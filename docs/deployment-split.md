@@ -45,7 +45,7 @@ asoldi.com is **not** a Maker client site. It is Vite + Express. Sales CRM and c
 
 | What | Where | Survives a deploy? |
 |---|---|---|
-| Hub source + built SPA | GitHub `Damianhch/Asoldi-website` (code) / Hostinger `nodejs/dist` (running SPA) | Code yes |
+| Hub source + built SPA | GitHub `Asoldi-Media/Asoldi-website` (code) / Hostinger `nodejs/dist` (running SPA) | Code yes |
 | Superadmin site list, flags, plans, keys | `~/.asoldi-website-data` | Yes — never in Git |
 | Sales clients, notes, connections | `~/.asoldi-website-data` | Yes |
 | Call recordings (wav) | `~/.asoldi-website-data/myphoner-audio` + `myphoner-recordings` | Yes — served at `/myphoner-audio/*`, `/myphoner-recordings/*` |
@@ -61,4 +61,4 @@ Proven green hub recipe: Express, Node 22, entry `server.js`, `npm run build` / 
 - Client live: `https://{domain}/api/cms/config` → real **name**, not `"Site"`, plus plan/catalog/features from superadmin.
 - Client `/admin` → CMS (modules from hub flags). Users/products still there after a Git deploy.
 - Hub: `https://asoldi.com/superadmin` → add/edit site with flags, plan, catalog type, site key, GitHub repo. Not client products.
-- After Maker Publish: hub site has `githubRepo` like `Damianhch/website---{slug}`.
+- After Maker Publish: hub site has `githubRepo` like `Asoldi-Media/website---{slug}`.

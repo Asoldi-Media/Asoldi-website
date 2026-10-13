@@ -4,7 +4,7 @@ The product split (hub vs client Git vs Hostinger disk) is in [docs/deployment-s
 
 ## Hub (this repo)
 
-**Deploy by pushing `main`.** Hostinger is connected to this GitHub repo and auto-deploys that branch to asoldi.com. That has been the method since 2026-09-21.
+**Deploy by pushing `main` to `Asoldi-Media/Asoldi-website`.** Hostinger is connected to that org repo and auto-deploys the branch to asoldi.com. That has been the method since 2026-09-21. Do not push `Damianhch/Asoldi-website`.
 
 Do **not** zip or archive-upload asoldi.com. Do **not** run `scripts/hostinger-asoldi-archive-deploy.mjs` (in the website-maker repo). An archive build beside the Git build fails with empty logs. Notes that say "disconnect the repository" or "archive-only" are obsolete.
 
