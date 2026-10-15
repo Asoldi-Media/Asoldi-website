@@ -77,6 +77,8 @@ export const Vilkar = () => {
             'Innsamling og lagring av e-postlister til markedsføring (når det inngår).',
             'Analyse og rapportering i kunde-CMS: Nivå 1 har verken analyseside eller rapportering. Nivå 2 får analyseside og en bi-ukentlig grunrapport (hver 14. dag). Nivå 3 får dypere innsikt og en ukentlig avansert rapport (hver 7. dag), inkludert nettbutikk-nøkkeltall når det inngår. Rapportene leveres i CMS, ikke som separat PDF med mindre det er avtalt skriftlig.',
             'Nettbutikk (når det inngår): Butikkoppsett, produktsider, utsjekk og kunderegistrering, inkludert nettbutikk-nøkkeltall som kjøp, konvertering og gjennomsnittlig ordreverdi.',
+            'Kassasystem-oppkobling (når det inngår i den signerte kontraktens punkt 1): Engangsarbeid som kobler nettsiden (vanligvis nettbutikkens katalog, lager og/eller ordrer) til kundens eksisterende kassasystem, via leverandørens dokumenterte API eller offisielle integrasjon. Asoldi selger, lisensierer, hoster eller supporterer ikke kassasystemet eller kassahardware. Kunden må allerede ha et kassasystem med en brukbar integrasjonsvei, og gi Asoldi nødvendig tilgang (API-nøkler, admininnlogging eller leverandørkontakt) innen rimelig tid etter signering. Løpende avgift til kassaleverandøren betales av kunden. Arbeidet er selve oppkoblingen slik leverandørens integrasjon tillater. Egenutvikling, hardware eller arbeid utenfor den integrasjonen inngår ikke og avtales særskilt.',
+            'Tredjeparts host og domenekobling (når det inngår): Engangsoppsett som peker kundens eget domene og eksisterende tredjepartshosting mot nettsiden, i stedet for Asoldis inkluderte hosting. Kunden betaler vert og domeneregistrator selv.',
             'Flerspråklig nettside og butikk (nivå 3).',
             'Support i avtalt tid, se punkt 8.',
           ]}
@@ -143,7 +145,7 @@ export const Vilkar = () => {
             'Første måned faktureres forholdsmessig: månedspris ÷ antall dager i måneden × antall gjenværende dager etter levering.',
             'Faktura for første måned forfaller innen 7 dager etter levering av produktet. Påfølgende fakturaer forfaller innen 7 dager etter utstedelse.',
             'Godkjente betalingsmetoder: bankoverføring og Stripe.',
-            'Det er ingen etableringsavgift for å starte abonnementet.',
+            'Det er ingen etableringsavgift for å starte månedsabonnementet. Engangstillegg som står i den signerte kontraktens punkt 1, hvis noen, faktureres én gang på første faktura etter levering (ekskl. mva med mindre tilbudet sier at mva er inkludert).',
             'Ved forsinket betaling påløper forsinkelsesrente og gebyrer etter gjeldende norsk lov. Ved fortsatt manglende betaling kan tjenesten suspenderes og avtalen sies opp, se punkt 13.',
           ]}
         />
@@ -227,6 +229,8 @@ export const Vilkar = () => {
             'Logo(er).',
             'Bilder og/eller videoer som trengs til siden.',
             'Domenetilgang slik at Asoldi kan koble domenet til hosting.',
+            'Tilgang til kundens kassasystem (API-nøkler, admininnlogging eller leverandørkontakt) når kassasystem-oppkobling inngår i den signerte kontraktens punkt 1.',
+            'Tilgang til eksisterende vert og domeneregistrator når tredjeparts hosting inngår i den signerte kontraktens punkt 1.',
             'Annet materiale som er nødvendig for å bygge og lansere siden.',
           ]}
         />

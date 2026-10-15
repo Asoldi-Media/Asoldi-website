@@ -906,6 +906,49 @@ test('portal letter strips email chrome and keeps greeting plus product specs', 
   assert.doesNotMatch(fromShell, /email-hero|email-footer|Tilbud fra Asoldi/);
 });
 
+test('contract includes POS one-time add-on in Section 1 and defines it', async () => {
+  const built = quoteOffer.buildOfferFromMeetingQuote({
+    tierId: 'nettbutikk',
+    pages: 10,
+    selected: [],
+    oneTimeAddOns: ['pos'],
+  });
+  assert.deepEqual(built.oneTimeFees, [{ name: 'Koble opp til kassasystem', price: 6000 }]);
+  const offer = {
+    tierId: built.tierId,
+    products: built.products,
+    alternatives: built.alternatives,
+    oneTimeFees: built.oneTimeFees,
+    contract: { summary: null },
+  };
+  const inputs = contractPdf.contractInputsForOffer(offer);
+  assert.equal(inputs.oneTimeFees[0].price, 6000);
+  const article = contractPdf.contractArticleModel({ client: CLIENT, ...inputs });
+  const scopeBlob = JSON.stringify(article.scope);
+  assert.match(scopeBlob, /POS \/ cash-register connection \(kassasystem\)/);
+  assert.match(scopeBlob, /6 000 kr excl\. VAT, billed once/);
+  const blob = JSON.stringify(article);
+  assert.match(blob, /existing point-of-sale \/ cash-register system/);
+  assert.match(blob, /does not sell, license, host or support the POS/);
+  assert.match(blob, /One-time add-ons listed in Section 1, if any/);
+  const html = (await import('../lib/offer-contract-html.js')).contractHtmlForOffer(offer, CLIENT);
+  assert.match(html, /POS \/ cash-register connection \(kassasystem\)/);
+  assert.match(html, /billed once and are not part of the monthly price/);
+  const storedOnly = contractPdf.contractInputsForOffer({
+    tierId: built.tierId,
+    products: built.products,
+    alternatives: built.alternatives,
+    contract: { summary: null },
+  });
+  assert.equal(storedOnly.oneTimeFees[0].price, 6000);
+  const plainScope = JSON.stringify(contractPdf.contractArticleModel({
+    client: CLIENT,
+    tierId: tiers.WEBSITE_TIERS[2].id,
+  }).scope);
+  assert.doesNotMatch(plainScope, /kassasystem/);
+  assert.doesNotMatch(plainScope, /billed once/);
+});
+
 test('portal contract html uses a document header, party columns, and numbered sections', async () => {
   const { existsSync } = await import('node:fs');
   const { dirname, join } = await import('node:path');
