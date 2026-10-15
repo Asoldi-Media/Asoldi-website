@@ -273,6 +273,14 @@ import {
 } from './lib/laptop-preview.js';
 import { allowPreviewAcceptAttempt, ensurePreviewSigner, presentPreviewContract } from './lib/sales-preview-contract.js';
 import {
+  embedSrcFromRequest,
+  listSalesPreviewPagesCached,
+  previewBaseFromRequestPath,
+  previewWantsEmbed,
+  renderSalesPreviewChrome,
+  routeFromPreviewRelativePath,
+} from './lib/sales-preview-pages.js';
+import {
   buildEventSummary,
   createGoogleCalendarAuthUrl,
   deleteMeetingEvent,
@@ -19831,9 +19839,34 @@ async function sendSalesPreviewFile(req, res, relativePath = '') {
       const ext = path.extname(filePath).toLowerCase();
       const looksHtml = ext === '.html' || ext === '.htm' || !ext;
       if (looksHtml) {
+        const sendChrome = async () => {
+          const previewBase = previewBaseFromRequestPath(req.path, client.id);
+          const pages = await listSalesPreviewPagesCached(root, {
+            clientId: client.id,
+            extraPrefixes: [previewBase],
+          });
+          res.setHeader('Content-Type', 'text/html; charset=utf-8');
+          res.send(
+            renderSalesPreviewChrome({
+              previewBase,
+              pages,
+              currentRoute: routeFromPreviewRelativePath(cleaned),
+              iframeSrc: embedSrcFromRequest(req),
+              title: sanitizeText(client.businessName) || 'Forhåndsvisning',
+            })
+          );
+        };
+        if ((ext === '.html' || ext === '.htm') && !previewWantsEmbed(req)) {
+          await sendChrome();
+          return true;
+        }
         const raw = await fs.readFile(filePath);
         const text = raw.toString('utf8');
         if (ext === '.html' || ext === '.htm' || /^\s*</.test(text)) {
+          if (!previewWantsEmbed(req)) {
+            await sendChrome();
+            return true;
+          }
           res.setHeader('Content-Type', 'text/html; charset=utf-8');
           res.send(
             injectSalesPreviewContractWidget(
