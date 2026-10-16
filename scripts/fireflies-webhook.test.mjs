@@ -31,6 +31,7 @@ const {
 import {
   firefliesJoinedCurrentMeet,
   firefliesMeetLinksDiffer,
+  firefliesNeedsFreshMeetOnReschedule,
   shouldDropLiveJoinStub,
 } from '../lib/fireflies-client-match.js';
 import { readFileSync } from 'node:fs';
@@ -245,6 +246,33 @@ test('live-join is per Meet URL so a later room swap joins again', () => {
   assert.match(serverSrc, /firefliesJoinedCurrentMeet\(/);
   assert.match(serverSrc, /firefliesLiveJoinedMeetLink/);
   assert.match(serverSrc, /meetLinkChanged \|\| calendarMeta\.replacedForeignMeet/);
+  assert.match(serverSrc, /firefliesNeedsFreshMeetOnReschedule\(/);
+  assert.equal(serverSrc.includes('sanitizeText(previousClient?.meetingAt) !== sanitizeText(nextClient?.meetingAt)'), false);
+});
+
+test('a later start after Fred entered this Meet needs a new room', () => {
+  const meet = 'https://meet.google.com/bru-bphr-ekz';
+  const joined = {
+    joinedAt: '2026-10-15T14:57:10.901Z',
+    joinedMeetLink: meet,
+    meetLink: meet,
+    previousMeetingAt: '2026-10-15T15:00:00.000Z',
+    nextMeetingAt: '2026-10-15T15:30:00.000Z',
+  };
+  assert.equal(firefliesNeedsFreshMeetOnReschedule(joined), true);
+  assert.equal(firefliesNeedsFreshMeetOnReschedule({
+    ...joined,
+    joinedAt: '',
+    joinedMeetLink: '',
+  }), false);
+  assert.equal(firefliesNeedsFreshMeetOnReschedule({
+    ...joined,
+    nextMeetingAt: joined.previousMeetingAt,
+  }), false);
+  assert.equal(firefliesNeedsFreshMeetOnReschedule({
+    ...joined,
+    meetLink: 'https://meet.google.com/ssy-ndai-cpy',
+  }), false);
 });
 
 test('live stubs drop when the real recording is on any owned Meet', () => {

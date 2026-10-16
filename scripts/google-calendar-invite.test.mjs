@@ -93,6 +93,7 @@ test('calendar upsert keeps an in-progress room when preserveForeignMeet is set'
   assert.match(src, /Google Meet: \$\{meet\}/);
   assert.match(src, /foreignMeetKept/);
   assert.match(src, /Do not mint a second room on a time change/);
+  assert.match(src, /forceNewMeet/);
   assert.match(src, /requestOwnedConference/);
   const stampBlock = src.slice(src.indexOf('let meetHostVerifiedEmail'));
   assert.match(stampBlock.slice(0, 500), /requestOwnedConference/);
@@ -360,7 +361,7 @@ test('after confirmation the sales Meet button does not force a second room at c
   const thankYouSync = server.slice(server.indexOf('async function syncCalendarInviteForThankYou'));
   assert.match(thankYouSync.slice(0, 1200), /forceOwnerMeet: true/);
   assert.equal(server.includes('forceOwnerMeet && isOnline && Boolean(eventIdForUpsert)'), false);
-  assert.match(server, /lockedMeetLink: salesInboxMeetLink\(nextClient\)/);
+  assert.match(server, /lockedMeetLink: forceNewMeet \? '' : salesInboxMeetLink\(nextClient\)/);
   const liveJoin = server.slice(server.indexOf('async function maybeJoinFirefliesLive'));
   assert.match(liveJoin.slice(0, 1400), /salesInboxMeetLink\(client\)/);
   assert.match(server, /shouldRescheduleSalesReminders\(/);

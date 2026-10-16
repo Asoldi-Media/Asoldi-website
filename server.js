@@ -205,7 +205,7 @@ import { contractHtmlForOffer } from './lib/offer-contract-html.js';
 import { extractOfferLetterBody } from './lib/offer-letter-html.js';
 import { isDeepseekConfigured } from './lib/deepseek.js';
 import { clientIntentSourceHash, fillOfferFromTranscript, meetingContextIsTooThin, reflectContractFromEmail, summarizeClientIntent } from './lib/offer-ai.js';
-import { clientOwnedMeetLinks, emptyFirefliesLiveJoinStamp, firefliesJoinedCurrentMeet, firefliesMeetLinksDiffer, matchMeetingToClients, normalizeFirefliesMeetLink, planFirefliesMeetLinkBackfill, recordingMatchesSalesMeeting, shouldDropLiveJoinStub } from './lib/fireflies-client-match.js';
+import { clientOwnedMeetLinks, emptyFirefliesLiveJoinStamp, firefliesJoinedCurrentMeet, firefliesMeetLinksDiffer, firefliesNeedsFreshMeetOnReschedule, matchMeetingToClients, normalizeFirefliesMeetLink, planFirefliesMeetLinkBackfill, recordingMatchesSalesMeeting, shouldDropLiveJoinStub } from './lib/fireflies-client-match.js';
 import { describeFirefliesMedia, firefliesMediaFilePath, persistFirefliesMedia } from './lib/fireflies-media.js';
 import { CUSTOM_TIER_ID, WEBSITE_TIERS, formatKr, resolveTier, tierById, toClientWebsitePlan } from './lib/website-tiers.js';
 import { buildSalesSender, normalizeAsoldiFromEmail } from './lib/sales-sender.js';
@@ -307,7 +307,9 @@ import {
 import { loadWorkshopNeedsDocument, patchWorkshopNeedLine, openNeedLines } from './lib/workshop-needs.js';
 import {
   fingerprintPdfBuffer,
+  peekInboxMailbox,
   pendingContractCount,
+  presentInboxBotStatus,
   presentInboxForClient,
   replayStagedElements,
   resolveInboxContractPath,
@@ -8445,28 +8447,37 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
         ? ((storedCalendarId && !isUnacceptableMeetingHostEmail(storedCalendarId)) ? storedCalendarId : targetCalendarId)
         : targetCalendarId;
       const previousMeetLink = sanitizeText(previousClient?.calendar?.meetLink || nextClient?.calendar?.meetLink);
+      const forceNewMeet = firefliesNeedsFreshMeetOnReschedule({
+        joinedAt: nextClient?.calendar?.firefliesLiveJoinedAt,
+        joinedMeetLink: nextClient?.calendar?.firefliesLiveJoinedMeetLink || previousMeetLink,
+        meetLink: previousMeetLink,
+        previousMeetingAt: previousClient?.meetingAt,
+        nextMeetingAt: nextClient?.meetingAt,
+      });
       const calendarMeta = await upsertMeetingEvent(
         nextClient,
         eventIdForUpsert,
         accountKey,
         {
           calendarId: upsertCalendarId,
-          sendUpdates: notifyAttendees ? 'all' : 'none',
-          includeAttendees: notifyAttendees || guestAlreadyInvited || (
+          sendUpdates: notifyAttendees || forceNewMeet ? 'all' : 'none',
+          includeAttendees: notifyAttendees || forceNewMeet || guestAlreadyInvited || (
             forceOwnerMeet && Boolean(sanitizeText(nextClient?.reminders?.thankYouSentAt))
           ),
           forceGuestInvite: notifyAttendees && (forceGuestInvite || !guestAlreadyInvited || !eventIdForUpsert || forceRecreate),
           // Fred only when the confirmation invite is actually sent. Silent
           // MyPhoner/unassigned creates must not save him without emailing him.
           // Silent moves keep him on the new event without emailing the client.
-          addFireflies: isOnline && !Boolean(nextClient?.progression?.meetingHeld) && (notifyAttendees || firefliesAlreadyInvited),
-          keepFireflies: firefliesAlreadyInvited,
-          forceRecreate,
+          addFireflies: isOnline && !Boolean(nextClient?.progression?.meetingHeld) && (notifyAttendees || forceNewMeet || firefliesAlreadyInvited),
+          keepFireflies: firefliesAlreadyInvited && !forceNewMeet,
+          forceRecreate: forceRecreate || forceNewMeet,
+          forceNewMeet,
           forceOwnerMeet,
           expectedOwnerEmail,
           verifiedHostEmail: sanitizeText(nextClient?.calendar?.meetHostVerifiedEmail),
-          lockedMeetLink: salesInboxMeetLink(nextClient),
-          preserveForeignMeet: sameCalendarInstant(previousClient?.meetingAt, nextClient?.meetingAt)
+          lockedMeetLink: forceNewMeet ? '' : salesInboxMeetLink(nextClient),
+          preserveForeignMeet: !forceNewMeet
+            && sameCalendarInstant(previousClient?.meetingAt, nextClient?.meetingAt)
             && preserveEmailedMeetOnSync({
               forceOwnerMeet,
               meetingAt: nextClient?.meetingAt,
@@ -8530,13 +8541,14 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
       });
       if (
         !nextClient?.progression?.meetingHeld
-        && (
-          sanitizeText(previousClient?.meetingAt) !== sanitizeText(nextClient?.meetingAt)
-          || meetLinkChanged
-          || calendarMeta.replacedForeignMeet
-        )
+        && (meetLinkChanged || calendarMeta.replacedForeignMeet)
       ) {
         Object.assign(calendarMeta, emptyFirefliesLiveJoinStamp());
+      }
+      if (forceNewMeet && !meetLinkChanged) {
+        warnings.push(
+          'Fireflies already entered this Meet. A new room could not be created, so the transcriber was not sent in again.'
+        );
       }
       const withCalendar = sales.setSalesCalendar(nextClient.id, calendarMeta);
       if (withCalendar) nextClient = withCalendar;
@@ -8545,7 +8557,7 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
         if (live.client) nextClient = live.client;
         warnings.push(...(live.warnings || []));
       }
-      calendarInviteSent = notifyAttendees || Boolean(calendarMeta.replacedForeignMeet);
+      calendarInviteSent = notifyAttendees || forceNewMeet || Boolean(calendarMeta.replacedForeignMeet);
       const organizerEmail = sanitizeText(getGoogleCalendarStatus(accountKey).googleEmail);
       console.log(
         `[calendar] upsert id=${sanitizeText(nextClient?.id)} event=${sanitizeText(nextClient?.calendar?.eventId)} meet=${sanitizeText(nextClient?.calendar?.meetLink)} sendUpdates=${notifyAttendees ? 'all' : 'none'} notify=${notifyAttendees} fireflies=${calendarMeta.firefliesInvited ? 'invited' : (sanitizeText(nextClient?.calendar?.firefliesInvitedAt) ? 'kept' : 'skipped')} organizer=${organizerEmail || accountKey}`
@@ -8608,6 +8620,7 @@ async function maybeSyncNextActionCalendars(previousClient, nextClient, { actorA
   const previousActions = Array.isArray(previousClient?.nextActions) ? previousClient.nextActions : [];
   const nextActions = Array.isArray(nextClient?.nextActions) ? nextClient.nextActions : [];
   const nextById = new Map(nextActions.map((action) => [sanitizeText(action.id), action]));
+  const previousActionById = new Map(previousActions.map((action) => [sanitizeText(action.id), action]));
   const patched = nextActions.map((action) => ({ ...action }));
   const patchedById = new Map(patched.map((action) => [sanitizeText(action.id), action]));
 
@@ -8648,6 +8661,26 @@ async function maybeSyncNextActionCalendars(previousClient, nextClient, { actorA
     try {
       if (isRecordedSalesAction(action, { includeDone: false })) {
         const previousMeet = sanitizeText(action.meetLink);
+        const previousAction = previousActionById.get(sanitizeText(action.id)) || {};
+        const forceNewMeet = firefliesNeedsFreshMeetOnReschedule({
+          joinedAt: action.firefliesLiveJoinedAt,
+          joinedMeetLink: action.firefliesLiveJoinedMeetLink || previousMeet,
+          meetLink: previousMeet,
+          previousMeetingAt: previousAction.dueAt,
+          nextMeetingAt: action.dueAt,
+        });
+        if (forceNewMeet) {
+          const eventId = sanitizeText(action.calendarEventId);
+          if (eventId) {
+            try {
+              await deleteMeetingEvent(eventId, accountKey);
+            } catch {
+              // Insert below still mints a new Meet.
+            }
+            action.calendarEventId = '';
+          }
+          action.meetLink = '';
+        }
         const meta = await upsertRecordedSalesActionEvent(client, action, action.calendarEventId, accountKey);
         action.calendarEventId = sanitizeText(meta.eventId);
         action.meetLink = sanitizeText(meta.meetLink) || previousMeet;
@@ -8656,6 +8689,10 @@ async function maybeSyncNextActionCalendars(previousClient, nextClient, { actorA
         }
         if (firefliesMeetLinksDiffer(previousMeet, action.meetLink)) {
           Object.assign(action, emptyFirefliesLiveJoinStamp());
+        } else if (forceNewMeet) {
+          warnings.push(
+            'Fireflies already entered this Meet. A new room could not be created, so the transcriber was not sent in again.'
+          );
         }
       } else {
         const meta = await upsertSalesReminderEvent(client, action, action.calendarEventId, accountKey);
@@ -14553,6 +14590,30 @@ app.get('/api/admin/sales/:id/inbox-contracts/:fileName', salesAuth, (req, res) 
   if (!filePath) return res.status(404).json({ message: 'Kontrakten ble ikke funnet.' });
   res.type('pdf');
   return res.sendFile(filePath, { etag: false, lastModified: false });
+});
+
+app.get('/api/admin/inbox-bot/status', adminAuth, async (_req, res) => {
+  try {
+    const payload = await presentInboxBotStatus();
+    res.json(payload);
+  } catch (error) {
+    console.error('[inbox-bot] status failed', error?.message || error);
+    res.status(500).json({ message: 'Kunne ikke sjekke innboksen.' });
+  }
+});
+
+app.get('/api/admin/inbox-bot/peek', adminAuth, async (req, res) => {
+  const mailbox = String(req.query.mailbox || 'alexander@asoldi.com').trim().toLowerCase();
+  try {
+    const payload = await peekInboxMailbox(mailbox);
+    if (payload.reason === 'mailbox-not-allowed') {
+      return res.status(400).json({ message: 'Mailbox is not allowed.', ...payload });
+    }
+    res.json(payload);
+  } catch (error) {
+    console.error('[inbox-bot] peek failed', error?.message || error);
+    res.status(500).json({ message: 'Kunne ikke lese innboksen.' });
+  }
 });
 
 app.post('/api/admin/sales/:id/change-client-login', salesAuth, async (req, res) => {
