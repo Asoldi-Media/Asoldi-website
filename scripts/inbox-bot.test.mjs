@@ -15,13 +15,14 @@ const { matchSalesClient, parseEmailAddress } = await import('../lib/inbox-bot/m
 const { pdfLooksLikeAsoldiContract } = await import('../lib/inbox-bot/pdf-text.js');
 const { fingerprintPdfBuffer, scoreContractSigning, inspectInboundContract } = await import('../lib/inbox-bot/inspect-contract.js');
 const { resolveMailboxSource } = await import('../lib/inbox-bot/mail.js');
-const { ingestInboxMessage, presentInboxForClient } = await import('../lib/inbox-bot/index.js');
+const { ingestInboxMessage, peekInboxMailbox, presentInboxBotStatus, presentInboxForClient, stripSecrets } = await import('../lib/inbox-bot/index.js');
 const { buildContractPdf } = await import('../lib/offer-contract-pdf.js');
 const { appendMediaToBank } = await import('../lib/client-media-store.js');
 const { persistMediaFiles } = await import('../lib/ai-assistant/service.js');
 const { normalizeNote } = await import('../lib/ai-assistant/gather.js');
 const { extractAttachmentNames, collectGmailAttachmentParts, presentGmailMessage } = await import('../lib/gmail-readonly.js');
-const { parseRfc822 } = await import('../lib/inbox-bot/mail-imap.js');
+const { FETCH_TIMEOUT_MS, LOGIN_TIMEOUT_MS, imapCredsPresent, parseRfc822 } = await import('../lib/inbox-bot/mail-imap.js');
+const inboxStore = await import('../lib/inbox-bot/store.js');
 
 const PORTAL_USER = 'portal-inbox-1';
 
@@ -250,6 +251,10 @@ test('elements ingest files a logo into Kundedata when portal is connected', asy
   assert.ok((bank.media?.logos || []).length >= 1);
   assert.ok(String(bank.brandIdentity?.logos?.normal || '').includes('/client-media/'));
   assert.equal(Boolean(sales.getSalesClientById(client.id).progression?.contractSigned), false);
+  const presented = presentInboxForClient(client.id);
+  assert.equal(presented.elements.length, 1);
+  assert.equal(presented.elements[0].status, 'filed');
+  assert.ok(presented.elements[0].buckets.includes('logos'));
 });
 
 test('persistMediaFiles honors an explicit bucket map', async () => {
@@ -317,4 +322,105 @@ test('RFC822 parser reads a text part and a base64 attachment', () => {
   assert.match(parsed.text, /logoen/i);
   assert.equal(parsed.attachments[0].filename, 'logo.png');
   assert.ok(parsed.attachments[0].buffer.length > 0);
+});
+
+test('missing IMAP pass is not configured', () => {
+  const prev = process.env.INBOX_IMAP_DAMIAN_PASS;
+  delete process.env.INBOX_IMAP_DAMIAN_PASS;
+  try {
+    assert.equal(imapCredsPresent('damian@asoldi.com'), false);
+  } finally {
+    if (prev) process.env.INBOX_IMAP_DAMIAN_PASS = prev;
+  }
+});
+
+test('LOGIN timeout stays short and FETCH is longer', () => {
+  assert.equal(LOGIN_TIMEOUT_MS, 8000);
+  assert.ok(FETCH_TIMEOUT_MS > LOGIN_TIMEOUT_MS);
+});
+
+test('status reports configured without leaking the password', async () => {
+  process.env.INBOX_IMAP_DAMIAN_PASS = 'super-secret-pass';
+  process.env.INBOX_IMAP_ALEXANDER_PASS = 'other-secret';
+  try {
+    const payload = await presentInboxBotStatus({
+      probeLogin: async (mailbox) => ({ mailbox, configured: true, ok: true, reason: '', source: 'imap' }),
+    });
+    const raw = JSON.stringify(payload);
+    assert.equal(raw.includes('super-secret-pass'), false);
+    assert.equal(raw.includes('other-secret'), false);
+    assert.equal(payload.mailboxes.length, 2);
+    assert.equal(payload.mailboxes[0].ok, true);
+    assert.equal(Object.hasOwn(payload.mailboxes[0], 'pass'), false);
+    assert.deepEqual(
+      stripSecrets({ INBOX_IMAP_DAMIAN_PASS: 'super-secret-pass', mailbox: 'damian@asoldi.com' }),
+      { mailbox: 'damian@asoldi.com' }
+    );
+  } finally {
+    delete process.env.INBOX_IMAP_DAMIAN_PASS;
+    delete process.env.INBOX_IMAP_ALEXANDER_PASS;
+  }
+});
+
+test('peek classifies Alexander mail without marking processed or sending', async () => {
+  const client = seedClient({
+    id: 'sale-peek-1',
+    contactEmail: 'eier@nordlys.no',
+    portalUserId: PORTAL_USER,
+  });
+  clientPortal.upsertClientProfile(PORTAL_USER, { businessName: 'Cafe Nordlys' });
+  let sendCalled = false;
+  const peeked = await peekInboxMailbox('alexander@asoldi.com', {
+    clients: [client],
+    categorize: categorizeEmailHeuristic,
+    listImap: async () => ({
+      skipped: false,
+      messages: [{
+        id: 'imap-peek-1',
+        mailbox: 'alexander@asoldi.com',
+        from: 'Eier <eier@nordlys.no>',
+        subject: 'Logo',
+        text: 'Her er logoen',
+        mailAt: '2026-10-16T10:00:00.000Z',
+        attachmentNames: ['logo-dark.png'],
+        attachments: [{ filename: 'logo-dark.png', mimeType: 'image/png', buffer: Buffer.from('x') }],
+      }],
+    }),
+  });
+  assert.equal(peeked.skipped, false);
+  assert.equal(peeked.messages[0].kind, 'client_elements');
+  assert.equal(peeked.messages[0].destination, 'kundedata:logos');
+  assert.equal(peeked.messages[0].salesClientId, client.id);
+  assert.equal(inboxStore.isProcessed('alexander@asoldi.com', 'imap-peek-1'), false);
+  assert.equal(sendCalled, false);
+  assert.equal(JSON.stringify(peeked).includes('"buffer"'), false);
+});
+
+test('peek proposes a sales auto-reply for a clock time without filing', async () => {
+  const client = seedClient({
+    id: 'sale-peek-time',
+    contactEmail: 'tid@nordlys.no',
+  });
+  const peeked = await peekInboxMailbox('alexander@asoldi.com', {
+    clients: [client],
+    categorize: categorizeEmailHeuristic,
+    now: new Date('2026-10-13T08:00:00.000Z'),
+    listImap: async () => ({
+      skipped: false,
+      messages: [{
+        id: 'imap-peek-time',
+        mailbox: 'alexander@asoldi.com',
+        from: 'tid@nordlys.no',
+        subject: 'Møte',
+        text: 'Kan vi ta møtet tirsdag kl 14?',
+        mailAt: '2026-10-13T10:00:00.000Z',
+        attachmentNames: [],
+        attachments: [],
+      }],
+    }),
+  });
+  assert.equal(peeked.messages[0].kind, 'workshop_time');
+  assert.equal(peeked.messages[0].intent, 'sales_book');
+  assert.equal(peeked.messages[0].destination, 'auto-reply:sales_book');
+  assert.equal(inboxStore.isProcessed('alexander@asoldi.com', 'imap-peek-time'), false);
 });
