@@ -61,6 +61,7 @@ import {
   getJobForUser,
   handleAssistantChat,
   importProductFiles,
+  categorizeClientUpload,
 } from './lib/ai-assistant/service.js';
 import { googleMapsApiKey, searchPublicGoogleProfiles } from './lib/google-places-search.js';
 import {
@@ -10927,6 +10928,8 @@ function clientMediaMime(fileName = '') {
     gif: 'image/gif',
     svg: 'image/svg+xml',
     avif: 'image/avif',
+    ico: 'image/x-icon',
+    bmp: 'image/bmp',
     pdf: 'application/pdf',
   };
   return map[ext] || 'application/octet-stream';
@@ -11031,7 +11034,14 @@ app.post('/api/client/media', clientAuth, (req, res) => {
         buffer: file.buffer,
         originalName: file.originalname,
       });
-      return res.status(201).json(saved);
+      if (req.query?.categorize !== '1') return res.status(201).json(saved);
+      const categorized = await categorizeClientUpload(user.id, {
+        url: saved.url,
+        buffer: file.buffer,
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+      }).catch(() => null);
+      return res.status(201).json({ ...saved, ...(categorized || {}) });
     } catch (err) {
       return res.status(err.status || 500).json({ message: err.message || 'Kunne ikke lagre filen.' });
     }

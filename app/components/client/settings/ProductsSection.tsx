@@ -449,7 +449,7 @@ export function ProductsSection({ token, clientData, setClientData, onError, onP
                 <span className="text-[13px] text-gray-600">Last opp CSV, Excel, PDF, Word eller tekst</span>
                 <input
                   type="file"
-                  accept=".csv,.tsv,.xlsx,.xls,.ods,.pdf,.txt,.md,.docx,.doc,.odt,.rtf,.html,.htm,.json"
+                  accept=".csv,.tsv,.xlsx,.xls,.ods,.numbers,.pdf,.txt,.md,.docx,.doc,.odt,.rtf,.pages,.pptx,.odp,.key,.html,.htm,.json,.zip"
                   className="hidden"
                   multiple
                   onChange={(e) => {

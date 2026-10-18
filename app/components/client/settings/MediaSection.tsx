@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { Edit, Image as ImageIcon, Plus, Upload, X } from 'lucide-react';
 import type { ClientDataBank, MediaBucketKey } from './clientDataTypes';
 import { MEDIA_BUCKETS, clientMediaSrc, randomId } from './clientDataTypes';
-import { uploadClientMediaFiles } from './uploadClientMedia';
+import { uploadClientMediaCategorized } from './uploadClientMedia';
 
 type MediaItem = {
   id: string;
@@ -66,12 +66,30 @@ export function MediaSection({ token, clientData, setClientData, onError }: Prop
     if (!files.length) return;
     setUploading(true);
     try {
-      const urls = await uploadClientMediaFiles(token, files);
+      const uploads = [];
+      for (const file of files) uploads.push(await uploadClientMediaCategorized(token, file));
+      const isBucket = (key?: string): key is MediaBucketKey => MEDIA_BUCKETS.some((entry) => entry.key === key);
       const next = [
         ...items,
-        ...urls.map((url) => ({ id: randomId('media'), url, bucket })),
+        ...uploads.map((upload) => {
+          const suggested = upload.placement?.bucket;
+          return {
+            id: randomId('media'),
+            url: upload.url,
+            bucket: bucket === 'uncategorized' && isBucket(suggested) ? suggested : bucket,
+          };
+        }),
       ];
-      commit(next);
+      const briefs = uploads.map((upload) => upload.brief).filter((brief): brief is Record<string, unknown> => Boolean(brief));
+      const catalogs = uploads.map((upload) => upload.productCatalogs).filter(Array.isArray).pop();
+      setClientData((prev) => ({
+        ...prev,
+        ...(catalogs ? { productCatalogs: catalogs as ClientDataBank['productCatalogs'] } : {}),
+        media: writeMedia(next, [
+          ...(prev.media.briefs || []).filter((row) => !briefs.some((brief) => brief.url === row.url)),
+          ...briefs,
+        ]),
+      }));
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Kunne ikke laste opp media.');
     } finally {

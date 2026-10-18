@@ -179,7 +179,7 @@ test('call-followup after Kontrakt acks and adds an Admin ring action, not a cal
     confirmWorkshop: async () => ({ sent: true }),
   });
   assert.equal(result.kind, 'workshop_call');
-  assert.match(sent[0].text, /Den er grei/);
+  assert.match(sent[0].text, /helt i orden/i);
   const actions = sales.getSalesClientById(client.id).workshop?.goalActions || [];
   const row = actions.find((item) => /tid for workshop/i.test(item.name));
   assert.ok(row);
@@ -269,7 +269,7 @@ test('uncertain scheduling text does not write a workshop time', async () => {
     subject: 'Workshop',
     text: 'Kanskje neste uke, vi hører',
     mailAt: '2026-10-10T12:00:00.000Z',
-  });
-  assert.equal(result.kind, 'other');
+  }, { sendEmail: async () => {}, queryBusy: async () => ({ busy: [] }), decideAi: async () => ({}) });
+  assert.equal(/_book$/.test(result.kind || ''), false);
   assert.equal(getWorkshopAction(sales.getSalesClientById(client.id))?.dueAt || '', '');
 });

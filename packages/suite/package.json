@@ -1,0 +1,6 @@
+{
+  "name": "@asoldi/suite",
+  "private": true,
+  "type": "module",
+  "description": "General tool-suite core (media brief, mail, documents, facts, inbox pipeline) plus the Asoldi harness. Edit here only; scripts/sync-suite.mjs vendors it into website-maker/lib/suite."
+}

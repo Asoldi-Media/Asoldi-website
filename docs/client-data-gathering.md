@@ -137,6 +137,8 @@ These are the gaps. The rest of the two flows above already matches the request.
 - `data/client-portal.js` — `applyIntakeSourcesToBank`, signer employee, bank shape
 - `lib/ai-assistant/intake.js` — order, skip, hours, staff, partners
 - `lib/ai-assistant/service.js` — chat, media, logo, and the product job
+- `lib/ai-assistant/media-transcript.js` — thin adapter over `packages/suite` (same categorizer as website-maker)
+- `packages/suite/` — shared core + Asoldi harness. Edit here, then `node scripts/sync-suite.mjs`. See `docs/tool-suite.md`
 - `lib/ai-assistant/products-ingest.js` and `products-scrape.js` — catalog reading
 - `app/pages/client/ClientAiAssistant.tsx` — chat UI
 - `app/pages/client/AssistantIntakePanel.tsx` — step panel for content already saved

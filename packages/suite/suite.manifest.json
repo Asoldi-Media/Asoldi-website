@@ -1,0 +1,27 @@
+{
+  "source": "asoldi-website/packages/suite",
+  "syncedAt": "2026-10-18T20:59:47.373Z",
+  "files": {
+    "core/documents/kind.js": "2d619597ae6c457698c539b3b7ecd6923709e868922e5afd9a1eceb4b98ae109",
+    "core/documents/text.js": "1bfd544013c84f6872c11e129d36d3a914df6c0ffb68c4ec321506bed8b9b7e0",
+    "core/facts/merge.js": "d0a56882945c47f8f2d2a59b2996df3f9cebe2c8fb954ced7af40be85089ae09",
+    "core/facts/prompt.js": "5b7a877625e4791f6612f0aeeffe451ea941d4823169bbfe48b5a000e150cf8e",
+    "core/inbox/pipeline.js": "40ab0366a85943bd9b58c7104c195d0f1236ac7e1989aa06cfe1d06824c0fcf4",
+    "core/mail/imap.js": "34b48cd78eccf2c77c511d2f645d39891344628d6fc5ddac629f28e9c49bb4e1",
+    "core/mail/mime.js": "8a2d874d9a3dacd2f91090990cc07abc4e92f7d28d9a07d23f6c97c22dfec236",
+    "core/mail/thread.js": "a4d2a9730f499e0f13b05f03ca03ef272b8988c43fcdff289c16f938fa3b0e15",
+    "core/mail/unpack.js": "a118aa9112481b12f03031b84bbf420c5a5a75e2300f3f877b44fb01bc74ef93",
+    "core/media/describe.js": "b4a48884f4db6935a53264b92b429d80e47cbae9dba01be3840f81e84d2b31e5",
+    "core/media/formats.js": "c535d2e146be512f4ad6881280df9488d86afe1af3b9ae540be5c90227158250",
+    "core/media/gemini.js": "aa1fa7ac35b2975059442495e4994381aba57dc1138a0d6879f29828a14b92d0",
+    "core/media/index.js": "4b6536788d41fe6f2f230f92439acdf207d97996a88d1f687b1293c9c1e870bd",
+    "core/media/measure.js": "fa5b2bca53a2d9aaf603c04c05f14852ff13f293d6d9382898dfae5ad39dbf09",
+    "core/media/normalize.js": "874e871e9d01874ebe0765b7061778dceeb0f0310395f20edac4428bb34a4ef0",
+    "core/media/prompt.js": "4cc1d72ccd56131bb597ada1cdc52ccdeda6b0d635ae9e67fe872d616d9a5bcd",
+    "harness/asoldi/facts.js": "fd1b16312ddd0ebe3b13bbb4789ca861331b8c166e5e672501192da05afc8b8e",
+    "harness/asoldi/inbox.js": "5b96380c7f9c96459a2ef522668e7be37ba836e3def3422bac84c3d27276a157",
+    "harness/asoldi/media.js": "0bc842f2f529dcb7ad0b74ea41b75212687fda74fb234ebd31ecef81ed4df45e",
+    "manifest.js": "0399aad6d846d886f9f6c8bb8adb9d53a85b042ef7e9963fd9dbff13b1c165ec",
+    "package.json": "5980ad0b5ad23fa532ba6b180b4b28da9fb1f22ef6bb56b48b20a8471983526a"
+  }
+}

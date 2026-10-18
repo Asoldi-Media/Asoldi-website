@@ -507,8 +507,8 @@ test('cancel proposes new times, adds Ny møtetid, and only the newest mail from
   });
   assert.equal(first.kind, 'sales_propose');
   assert.equal(sent.length, 1);
-  assert.match(sent[0].text, /stryker vi den tiden/i);
-  assert.match(sent[0].text, /30 minutter/);
+  assert.match(sent[0].text, /helt i orden/i);
+  assert.equal(/30 minutt/i.test(sent[0].text), false);
   assert.equal(skip.reason, 'older-same-thread');
   const live = sales.getSalesClientById(client.id);
   assert.ok((live.nextActions || []).some((row) => /ny møtetid|finn møtetid/i.test(row.name || '') && !row.doneAt));
@@ -522,8 +522,9 @@ test('failed send stamps the card; changing the email clears it', () => {
   assert.equal(sales.getSalesClientById(client.id).contactEmailError, null);
 });
 
-test('walk-away parks a 1-week checkup instead of proposing slots', async () => {
-  const { mergeWriteDecision } = await import('../lib/inbox-bot/decide.js');
+test('walk-away asks why, offers a chat, and a second no closes politely', async () => {
+  const { mergeWriteDecision, polishInboxReply } = await import('../lib/inbox-bot/decide.js');
+  assert.equal(polishInboxReply('Helt i orden. Møtet er 30 minutter. Vi tar den av.'), 'Helt i orden. Vi tar den av.');
   const merged = mergeWriteDecision(
     { intent: 'sales_propose', cancel: true, _fresh: 'Avlys det hele' },
     { intent: 'walk_away', reply: 'Skjønner, synd det ikke passer. Hva er grunnen? Vi tar en sjekk om en uke.', checkupFormat: 'sms' },
@@ -539,27 +540,269 @@ test('walk-away parks a 1-week checkup instead of proposing slots', async () => 
     mailbox: 'alexander@asoldi.com',
     from: 'drop@example.com',
     subject: 'Re: møte',
-    text: 'Avlys det hele, vi er ikke interessert.',
+    text: 'Vi dropper hele greia, ikke interessert.',
     mailAt: '2026-10-15T12:00:00.000Z',
   }, {
     now: new Date('2026-10-15T12:00:00.000Z'),
     sendEmail: async (mail) => { sent.push(mail); },
     queryBusy: async () => ({ busy: [] }),
-    decideAi: async () => ({
-      intent: 'walk_away',
-      reply: 'Skjønner. Synd det ikke passer nå. Hva er grunnen, om du vil si det? Vi tar en sjekk om en uke.',
-      checkupFormat: 'email',
-    }),
+    decideAi: async () => ({ intent: 'walk_away', checkupFormat: 'email' }),
   });
   assert.equal(result.kind, 'walk_away');
   assert.equal(sent.length, 1);
-  assert.match(sent[0].text, /synd/i);
-  assert.equal(sent[0].text.includes('10:00'), false);
+  assert.match(sent[0].text, /hva som gjorde at det ikke ble aktuelt/i);
+  assert.match(sent[0].text, /uforpliktende prat/i);
+  assert.match(sent[0].text, /passer noe av dette: .*\d{2}:\d{2}/i);
+  assert.equal(/tar vi den av kalenderen|om en uke|30 minutt/i.test(sent[0].text), false);
   const live = sales.getSalesClientById(client.id);
   const checkup = (live.nextActions || []).find((row) => /oppsjekk/i.test(row.name || ''));
   assert.ok(checkup);
   assert.equal(checkup.format, 'email');
   assert.equal(checkup.dueAt, '2026-10-22T07:00:00.000Z');
+
+  const again = await ingestInboxMessage({
+    id: 'imap-walkaway-2',
+    mailbox: 'alexander@asoldi.com',
+    from: 'drop@example.com',
+    subject: 'Re: møte',
+    text: 'Nei takk, ikke interessert.',
+    mailAt: '2026-10-15T14:00:00.000Z',
+  }, {
+    now: new Date('2026-10-15T14:00:00.000Z'),
+    sendEmail: async (mail) => { sent.push(mail); },
+    queryBusy: async () => ({ busy: [] }),
+    decideAi: async () => ({}),
+  });
+  assert.equal(again.kind, 'walk_away_final');
+  assert.equal(/passer noe av dette|\d{2}:\d{2}/i.test(sent[1].text), false);
+  assert.match(sent[1].text, /aktuelt senere/i);
+});
+
+test('client who cannot know yet gets a follow-up action, not a meeting time', async () => {
+  const client = seedClient({ id: 'sale-unsure-1', contactEmail: 'usikker@example.com' });
+  const sent = [];
+  const result = await ingestInboxMessage({
+    id: 'imap-unsure-1',
+    mailbox: 'alexander@asoldi.com',
+    from: 'usikker@example.com',
+    subject: 'Re: møte',
+    text: 'Vet ikke helt ennå hva som passer. Kan du sende en sms om tre dager?',
+    mailAt: '2026-10-15T12:00:00.000Z',
+  }, {
+    now: new Date('2026-10-15T12:00:00.000Z'),
+    sendEmail: async (mail) => { sent.push(mail); },
+    queryBusy: async () => ({ busy: [] }),
+    decideAi: async () => ({ intent: 'walk_away' }),
+  });
+  assert.equal(result.kind, 'sales_call');
+  assert.equal(sent[0].text, 'Helt greit. Da sender jeg deg en melding på mandag, så tar vi det derfra.');
+  const live = sales.getSalesClientById(client.id);
+  const checkup = (live.nextActions || []).find((row) => /oppsjekk/i.test(row.name || '') && !row.doneAt);
+  assert.ok(checkup);
+  assert.equal(checkup.format, 'sms');
+  assert.equal(checkup.dueAt, '2026-10-19T07:00:00.000Z');
+  assert.match(checkup.note, /^Bot: Kunden kan ikke avtale møtetid nå\. Bot lovet å ta kontakt på mandag\.\nKunden skrev: «Vet ikke helt ennå/);
+  assert.equal(Boolean(live.agreedTime), false);
+
+  const { classifyInboxWrite } = await import('../lib/inbox-bot/write.js');
+  const later = classifyInboxWrite('Ikke aktuelt akkurat nå, ta kontakt om en måned', {}, { now: new Date('2026-10-15T12:00:00.000Z') });
+  assert.equal(later.intent, 'sales_call');
+  assert.equal(later.day.ymd, '2026-11-09');
+  const withReason = classifyInboxWrite('Vi er på ferie, ta kontakt om en måned', {}, { now: new Date('2026-10-15T12:00:00.000Z') });
+  assert.equal(withReason.day.ymd, '2026-11-14');
+  assert.equal(classifyInboxWrite('Vi dropper hele greia, ikke interessert', {}).intent, 'walk_away');
+});
+
+test('first mailbox read only sets the baseline; older mail is never answered', async () => {
+  const { listNewMailboxMessages } = await import('../lib/inbox-bot/mail.js');
+  const processed = new Set();
+  let baseline = '';
+  const deps = (messages, now) => ({
+    listImap: async () => ({ skipped: false, messages }),
+    isProcessed: (_mailbox, id) => processed.has(id),
+    markProcessed: (_mailbox, id) => processed.add(id),
+    getBaseline: () => baseline,
+    setBaseline: (_mailbox, at, ids) => { baseline = at; ids.forEach((id) => processed.add(id)); },
+    now: () => new Date(now),
+  });
+  process.env.INBOX_IMAP_ALEXANDER_PASS = 'test-only';
+  try {
+    const old = [{ id: 'imap:a:uid:1', mailAt: 'Thu, 15 Oct 2026 10:00:00 +0200' }];
+    const first = await listNewMailboxMessages('alexander@asoldi.com', deps(old, '2026-10-15T12:00:00.000Z'));
+    assert.equal(first.reason, 'baseline');
+    assert.equal(first.messages.length, 0);
+
+    const late = { id: 'imap:a:uid:2', mailAt: 'Thu, 15 Oct 2026 11:00:00 +0200' };
+    const fresh = { id: 'imap:a:uid:3', mailAt: 'Thu, 15 Oct 2026 15:00:00 +0200' };
+    const second = await listNewMailboxMessages('alexander@asoldi.com', deps([...old, late, fresh], '2026-10-15T14:00:00.000Z'));
+    assert.deepEqual(second.messages.map((row) => row.id), ['imap:a:uid:3']);
+    assert.equal(processed.has('imap:a:uid:2'), true);
+  } finally {
+    delete process.env.INBOX_IMAP_ALEXANDER_PASS;
+  }
+});
+
+test('real-mail fixes: "kl 1400", busy window, only offered times, a question is not a call', async () => {
+  const { parseWorkshopTimeHeuristic } = await import('../lib/workshop-time-parse.js');
+  const { clientBusyBlocks, replyTimesMatch } = await import('../lib/inbox-bot/write.js');
+  const { mergeWriteDecision } = await import('../lib/inbox-bot/decide.js');
+  const tue = parseWorkshopTimeHeuristic('Kan vi utsette til nezte tirsdag kl 1400?', { now: new Date('2026-10-13T10:00:00.000Z') });
+  assert.equal(tue.dueAt, '2026-10-20T12:00:00.000Z');
+  assert.deepEqual(clientBusyBlocks('Er opptatt fra ca 11-14. Ellers ledig.', { ymd: '2026-10-16' }), [
+    { start: '2026-10-16T09:00:00.000Z', end: '2026-10-16T12:00:00.000Z' },
+  ]);
+  const slots = ['2026-10-16T07:00:00.000Z', '2026-10-16T08:00:00.000Z'];
+  assert.equal(replyTimesMatch('Fredag passer — kl. 09:00 eller 10:00?', slots), true);
+  assert.equal(replyTimesMatch('Vi tar det tirsdag kl. 14 – passer det?', slots), false);
+  const merged = mergeWriteDecision({ intent: 'none', _fresh: 'Hei, hva gjelder dette?' }, { intent: 'sales_call', reply: 'Det gjelder et kort online møte om nettsiden.' });
+  assert.equal(merged.intent, 'gather');
+});
+
+test('every client mail goes past the Kundedata filer; only mail with facts is kept until the portal is connected', async () => {
+  const seen = [];
+  const interpretNote = async (text) => {
+    seen.push(text);
+    return /åpent/.test(text) ? normalizeNote({ hoursText: 'mandag-fredag 10:00-18:00' }) : null;
+  };
+  const client = seedClient({ id: 'sale-facts-1', contactEmail: 'fakta@example.com' });
+  const deps = {
+    now: new Date('2026-10-15T12:00:00.000Z'),
+    sendEmail: async () => {},
+    queryBusy: async () => ({ busy: [] }),
+    decideAi: async () => ({}),
+    interpretNote,
+  };
+  await ingestInboxMessage({
+    id: 'imap-facts-1',
+    mailbox: 'alexander@asoldi.com',
+    from: 'fakta@example.com',
+    subject: 'Re: møte',
+    text: 'Torsdag passer. Vi har åpent man-fre 10-18. > Hei, her er Asoldi sin invitasjon',
+    mailAt: '2026-10-15T12:00:00.000Z',
+  }, deps);
+  await ingestInboxMessage({
+    id: 'imap-facts-2',
+    mailbox: 'alexander@asoldi.com',
+    from: 'fakta@example.com',
+    subject: 'Re: møte',
+    text: 'Takk, vi snakkes på torsdag.',
+    mailAt: '2026-10-15T13:00:00.000Z',
+  }, deps);
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0].includes('Asoldi sin invitasjon'), false);
+  const staged = inboxStore.listInboxItems({ salesClientId: client.id, status: 'staged' });
+  assert.equal(staged.length, 1);
+  assert.match(staged[0].text, /åpent man-fre 10-18/);
+  assert.deepEqual(staged[0].found, ['opening-hours']);
+});
+
+test('every attachment format reaches the Kundedata filer as text', async () => {
+  const AdmZip = (await import('adm-zip')).default;
+  const xlsx = await import('xlsx');
+  const PDFDocument = (await import('pdfkit')).default;
+  const { fileClientElements } = await import('../lib/inbox-bot/apply-elements.js');
+  const zip = (entries) => {
+    const archive = new AdmZip();
+    for (const [name, body] of Object.entries(entries)) archive.addFile(name, Buffer.from(body));
+    return archive.toBuffer();
+  };
+  const pdf = await new Promise((resolve) => {
+    const doc = new PDFDocument();
+    const chunks = [];
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.text('Markpdf: vi holder til i Storgata 12, og har en lang tekst her slik at den leses.');
+    doc.end();
+  });
+  const sheet = xlsx.utils.book_new();
+  xlsx.utils.book_append_sheet(sheet, xlsx.utils.aoa_to_sheet([['Markxlsx', 'Pizza', '149 kr']]), 'Meny');
+  const wordBinary = Buffer.concat([Buffer.alloc(512, 0), Buffer.from('Markdoc vi selger sykler i Oslo', 'utf16le'), Buffer.alloc(256, 0)]);
+  const files = [
+    { originalName: 'info.txt', buffer: Buffer.from('Marktxt åpent man-fre') },
+    { originalName: 'meny.csv', buffer: Buffer.from('Markcsv,Pizza,149 kr') },
+    { originalName: 'om-oss.docx', buffer: zip({ '[Content_Types].xml': '<Types/>', 'word/document.xml': '<w:p><w:t>Markdocx historien vår</w:t></w:p>' }) },
+    { originalName: 'om-oss.odt', buffer: zip({ mimetype: 'application/vnd.oasis.opendocument.text', 'content.xml': '<text:p>Markodt teksten</text:p>' }) },
+    { originalName: 'pitch.pptx', buffer: zip({ '[Content_Types].xml': '<Types/>', 'ppt/slides/slide1.xml': '<a:t>Markpptx lysbilde</a:t>' }) },
+    { originalName: 'gammel.doc', buffer: wordBinary },
+    { originalName: 'notat.rtf', buffer: Buffer.from('{\\rtf1\\ansi Markrtf notat}') },
+    { originalName: 'side.html', buffer: Buffer.from('<html><body><p>Markhtml side</p></body></html>') },
+    { originalName: 'priser.xlsx', buffer: xlsx.write(sheet, { type: 'buffer', bookType: 'xlsx' }) },
+    { originalName: 'brosjyre.pdf', buffer: pdf },
+  ];
+  let read = '';
+  const row = await fileClientElements({
+    salesClient: { id: 'sale-formats-1' },
+    mailbox: 'alexander@asoldi.com',
+    messageId: 'imap-formats-1',
+    text: 'Her er alt vi har.',
+    files,
+    elements: [],
+    interpret: async (text) => {
+      read = text;
+      return normalizeNote({ fields: { companyAddress: 'Storgata 12, Oslo' } });
+    },
+  });
+  for (const mark of ['Marktxt', 'Markcsv', 'Markdocx', 'Markodt', 'Markpptx', 'Markdoc ', 'Markrtf', 'Markhtml', 'Markxlsx', 'Markpdf']) {
+    assert.ok(read.includes(mark), `${mark} missing from what the filer read`);
+  }
+  assert.equal(row.status, 'staged');
+  assert.equal(row.stagedFiles.length, files.length);
+  assert.deepEqual(row.found, ['address']);
+});
+
+test('signature images and calendar invites are not client files; real attachments and photos are', () => {
+  const categorize = categorizeEmailHeuristic;
+  const part = (headers, body) => [...headers, '', body];
+  const raw = [
+    'From: Kari <kari@example.no>',
+    'Subject: Re: møte',
+    'Content-Type: multipart/mixed; boundary="b1"',
+    '',
+    '--b1', ...part(['Content-Type: text/plain'], 'Takk!'),
+    '--b1', ...part(['Content-Type: image/png; name="image001.png"', 'Content-Disposition: inline; filename="image001.png"', 'Content-ID: <image001@x>', 'Content-Transfer-Encoding: base64'], Buffer.alloc(2000, 1).toString('base64')),
+    '--b1', ...part(['Content-Type: image/jpeg; name="IMG_1234.jpg"', 'Content-Disposition: inline; filename="IMG_1234.jpg"', 'Content-ID: <photo@x>', 'Content-Transfer-Encoding: base64'], Buffer.alloc(60_000, 1).toString('base64')),
+    '--b1', ...part(['Content-Type: text/calendar; method=REPLY; name="invite.ics"', 'Content-Disposition: attachment; filename="invite.ics"'], 'BEGIN:VCALENDAR'),
+    '--b1', ...part(['Content-Type: application/msword; name="meny.doc"', 'Content-Disposition: attachment; filename="meny.doc"', 'Content-Transfer-Encoding: base64'], Buffer.from('x').toString('base64')),
+    '--b1--',
+    '',
+  ].join('\r\n');
+  assert.deepEqual(parseRfc822(raw).attachmentNames, ['IMG_1234.jpg', 'meny.doc']);
+  for (const name of ['meny.doc', 'pitch.pptx', 'om-oss.odt', 'notat.rtf', 'video.mov']) {
+    assert.equal(categorize({ subject: 'Fil', text: 'Her', attachmentNames: [name] }).kind, 'client_elements', name);
+  }
+  assert.equal(categorize({ subject: 'Re', text: 'Takk', attachmentNames: ['invite.ics'] }).kind, 'other');
+});
+
+test('a time that has passed is never booked and bot actions never land in the past', async () => {
+  const { futureDue, botNote } = await import('../lib/inbox-bot/write.js');
+  assert.equal(futureDue('2026-10-01T07:00:00.000Z', new Date('2026-10-15T12:00:00.000Z')), '2026-10-16T07:00:00.000Z');
+  assert.equal(botNote('Kunden avlyste.', { summary: 'Kunden lurte på hva møtet gjaldt, og ba oss ringe.', clientText: 'Ring meg' }),
+    'Bot: Kunden lurte på hva møtet gjaldt, og ba oss ringe.\nKunden skrev: «Ring meg»');
+  const client = seedClient({ id: 'sale-past-1', contactEmail: 'gammel@example.com' });
+  const sent = [];
+  const result = await ingestInboxMessage({
+    id: 'imap-past-1',
+    mailbox: 'alexander@asoldi.com',
+    from: 'gammel@example.com',
+    subject: 'Re: møte',
+    text: 'Kan vi ta det 2.10 kl 14?',
+    mailAt: '2026-10-15T12:00:00.000Z',
+  }, {
+    now: new Date('2026-10-15T12:00:00.000Z'),
+    sendEmail: async (mail) => { sent.push(mail); },
+    queryBusy: async () => ({ busy: [] }),
+    upsert: async () => { throw new Error('must not book'); },
+    decideAi: async () => ({}),
+  });
+  assert.equal(result.write?.kind || result.kind, 'sales_propose');
+  assert.equal(Boolean(sales.getSalesClientById(client.id).agreedTime), false);
+  assert.match(sent[0].text, /passer noe av dette/i);
+});
+
+test('UID FETCH bodies keep their stable UID', async () => {
+  const { parseFetchBodies } = await import('../lib/inbox-bot/mail-imap.js');
+  const block = Buffer.from('* 4 FETCH (UID 812 RFC822 {5}\r\nhello)\r\n* 5 FETCH (UID 813 RFC822 {2}\r\nhi)\r\nA1 OK\r\n', 'latin1');
+  assert.deepEqual(parseFetchBodies(block), [{ uid: '812', raw: 'hello' }, { uid: '813', raw: 'hi' }]);
 });
 
 test('weekday slot picker skips the weekend', async () => {
@@ -576,4 +819,10 @@ test('weekday slot picker skips the weekend', async () => {
     const day = new Date(iso).getUTCDay();
     return day !== 0 && day !== 6;
   }));
+  const soon = pickFreeSlotsAhead({
+    now: new Date('2026-10-19T08:00:00.000Z'),
+    durationMin: 60,
+    busy: [{ start: '2026-10-21T07:00:00.000Z', end: '2026-10-21T09:00:00.000Z' }],
+  });
+  assert.deepEqual(soon, ['2026-10-21T09:00:00.000Z', '2026-10-22T07:00:00.000Z', '2026-10-23T07:00:00.000Z']);
 });

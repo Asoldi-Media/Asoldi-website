@@ -174,6 +174,37 @@ test('empty clientEmail skips Gmail instead of searching contactEmail', () => {
   assert.equal(byId(result, 'unknown.gmail'), undefined);
 });
 
+test('inbox-bot mail shows on the developer page and staged items are not asked for again', async () => {
+  const { coverDotsFromInbox, openNeedLines } = await import('../lib/workshop-needs.js');
+  const { scoreClientMaterials } = await import('../lib/client-material-dots.js');
+  const { mergePrepNeedLines } = await import('../lib/workshop-prep-needs.js');
+  const inboxItems = [
+    {
+      id: 'inbox-a',
+      status: 'staged',
+      receivedAt: '2026-10-15T12:00:00.000Z',
+      text: 'Her er logoen, domenet er bakeri.no og vi har åpent 10-18.',
+      stagedFiles: [{ originalName: 'logo.png' }],
+      found: ['logo', 'domain', 'opening-hours'],
+    },
+    { id: 'inbox-b', status: 'filed', receivedAt: '2026-10-14T12:00:00.000Z', text: 'Adressen er Storgata 12', found: ['address'] },
+  ];
+  const result = evaluateWorkshopNeeds({ client: baseClient(), bank: emptyBank(), inboxItems });
+  assert.equal(byId(result, 'need.logo').status, 'received');
+  assert.equal(byId(result, 'need.logo').source, 'inbox-bot');
+  assert.deepEqual(byId(result, 'need.logo').attachmentNames, ['logo.png']);
+  assert.equal(byId(result, 'need.domain').status, 'received');
+  assert.equal(byId(result, 'inbox.inbox-a').title, 'Fra e-post (bot): Logo, Domene, Åpningstider');
+  assert.match(byId(result, 'inbox.inbox-a').detail, /Venter på portal-kobling/);
+  assert.match(byId(result, 'inbox.inbox-b').detail, /Lagt i Kundedata/);
+  const dots = coverDotsFromInbox(scoreClientMaterials({ client: baseClient(), bank: emptyBank() }), inboxItems);
+  assert.equal(dots.find((dot) => dot.id === 'logo').mark, 'green');
+  assert.equal(dots.find((dot) => dot.id === 'opening-hours').mark, 'green');
+  assert.equal(dots.find((dot) => dot.id === 'address').mark, 'red');
+  const asked = mergePrepNeedLines({ t01Lines: openNeedLines(result), dots }).map((row) => row.id);
+  assert.equal(asked.some((id) => ['need.logo', 'need.domain', 'logo', 'opening-hours'].includes(id)), false);
+});
+
 test('logo empty is a need; favicon alone does not count', () => {
   const bank = emptyBank({
     brandIdentity: { logos: { normal: '', favicon: '/client-media/favicon.ico' } },
