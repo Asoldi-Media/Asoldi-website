@@ -6,6 +6,7 @@ import {
   ChevronDown,
   Copy,
   ExternalLink,
+  FileText,
   Filter,
   Gift,
   Loader2,
@@ -61,7 +62,14 @@ import {
   SALES_ACTION_TIMEZONE,
 } from '../../../../lib/sales-next-actions.js';
 import { salesBookingFacts } from '../../../../lib/sales-booking-facts.js';
-import { clientHasProductNotes } from '../../../../lib/sales-playbook.js';
+import {
+  clientHasProductNotes,
+  defaultSalesFocusCategory,
+  groupSalesFocusQueues,
+  normalizeSalesFocusCategory,
+  salesFocusCategoriesFor,
+  salesFocusEntries,
+} from '../../../../lib/sales-playbook.js';
 import { calendarDurationForMode } from '../../../../lib/sales-meeting-duration.js';
 import { GOOGLE_CALENDAR_OAUTH_EVENT } from '../../../../lib/google-calendar-oauth-ui.js';
 import { expireFatCookies } from '../../../lib/expire-fat-cookies';
@@ -595,6 +603,8 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
   const headerShellRef = useRef<HTMLDivElement | null>(null);
   const [headerBarPx, setHeaderBarPx] = useState(64);
   const [showAllClients, setShowAllClients] = useState(false);
+  /** null = follow the board category; '' = every client; a category id = that group only. */
+  const [listCategoryOverride, setListCategoryOverride] = useState<string | null>(null);
   useEffect(() => {
     const bar = headerShellRef.current?.firstElementChild;
     if (!(bar instanceof HTMLElement)) return undefined;
@@ -680,6 +690,35 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
   const calendarCombined = Boolean(isSalesAdmin) && !calendarPreviewOwnerId;
   const calendarPreviewIsOwn = !calendarPreviewOwnerId
     || calendarPreviewOwnerId === String(calendarStatus?.loginAccountKey || '');
+  /** Focus board ignores the Alle kunder search/filters; admin is scoped by the rep filter only. */
+  const focusBoardClients = useMemo(
+    () => (isSsuBracket ? [] : productClients.filter((client) => {
+      if (client.status === 'not-sold') return false;
+      if (!isSalesAdmin) return true;
+      if (ownerFilter === 'unassigned') return !String(client.ownerId || '').trim();
+      return !ownerFilter || String(client.ownerId || '') === ownerFilter;
+    })),
+    [productClients, isSsuBracket, isSalesAdmin, ownerFilter]
+  );
+  const focusQueues = useMemo(
+    () => groupSalesFocusQueues(focusBoardClients, meetingNowMs, { isAdmin: isSalesAdmin }),
+    [focusBoardClients, meetingNowMs, isSalesAdmin]
+  );
+  const boardCategories = useMemo(
+    () => salesFocusCategoriesFor({ isAdmin: isSalesAdmin }) as Array<{ id: string; label: string }>,
+    [isSalesAdmin]
+  );
+  const activeFocusCategory = (
+    normalizeSalesFocusCategory(focusCategory, { isAdmin: isSalesAdmin })
+    || defaultSalesFocusCategory(focusQueues, { isAdmin: isSalesAdmin })
+    || boardCategories[0]?.id
+    || 'confirm'
+  ) as SalesFocusCategoryId;
+  const effectiveListCategory = listCategoryOverride === null ? activeFocusCategory : listCategoryOverride;
+  const categoryFilterTouched = listCategoryOverride !== null;
+  const listPreviewCount = !isSsuBracket && effectiveListCategory
+    ? (focusQueues[effectiveListCategory] || []).length
+    : productClients.length;
   const clientMatchesFilters = (client: SalesClient) => {
     if (!clientMatchesNameSearch(client)) return false;
     if (isSalesAdmin) {
@@ -689,6 +728,10 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
     if (pipelineFilter && classifySalesPipelineState(client, meetingNowMs) !== pipelineFilter) return false;
     if (!clientMatchesMeetingModeFilter(client, meetingModeFilter)) return false;
     if (!clientNextActionInDateRange(client, nextActionFromDate, nextActionToDate)) return false;
+    if (!isSsuBracket && effectiveListCategory) {
+      const hits = salesFocusEntries(client, meetingNowMs, { isAdmin: isSalesAdmin });
+      if (!hits.some((row) => row.category === effectiveListCategory)) return false;
+    }
     return true;
   };
   const hasActiveFilters = Boolean(
@@ -707,7 +750,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
       && !clientIsSalesWin(client)
       && clientMatchesFilters(client)
     )),
-    [productClients, normalizedClientSearchQuery, ownerFilter, pipelineFilter, meetingModeFilter, nextActionFromDate, nextActionToDate, meetingNowMs, isSalesAdmin]
+    [productClients, normalizedClientSearchQuery, ownerFilter, pipelineFilter, meetingModeFilter, nextActionFromDate, nextActionToDate, meetingNowMs, isSalesAdmin, effectiveListCategory]
   );
   const salesRepOptions = useMemo(
     () => salesOwners.filter((owner) => String(owner.accountKey || '').startsWith('sales:')),
@@ -745,7 +788,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
   }, [productClients]);
   const archivedClients = useMemo(
     () => productClients.filter((client) => client.status === 'not-sold' && clientMatchesFilters(client)),
-    [productClients, normalizedClientSearchQuery, ownerFilter, pipelineFilter, meetingModeFilter, nextActionFromDate, nextActionToDate, meetingNowMs, isSalesAdmin]
+    [productClients, normalizedClientSearchQuery, ownerFilter, pipelineFilter, meetingModeFilter, nextActionFromDate, nextActionToDate, meetingNowMs, isSalesAdmin, effectiveListCategory]
   );
   const winClients = useMemo(
     () => productClients
@@ -760,7 +803,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
         if (bMs == null) return -1;
         return aMs - bMs;
       }),
-    [productClients, normalizedClientSearchQuery, ownerFilter, pipelineFilter, meetingModeFilter, nextActionFromDate, nextActionToDate, meetingNowMs, isSalesAdmin]
+    [productClients, normalizedClientSearchQuery, ownerFilter, pipelineFilter, meetingModeFilter, nextActionFromDate, nextActionToDate, meetingNowMs, isSalesAdmin, effectiveListCategory]
   );
   const pipelineScopeClients = useMemo(
     () => productClients.filter((client) => {
@@ -779,16 +822,6 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
   const pipelineCounts = useMemo(
     () => countSalesPipelineStates(pipelineScopeClients, meetingNowMs),
     [pipelineScopeClients, meetingNowMs]
-  );
-  /** Focus board ignores the Alle kunder search/filters; admin is scoped by the rep filter only. */
-  const focusBoardClients = useMemo(
-    () => (isSsuBracket ? [] : productClients.filter((client) => {
-      if (client.status === 'not-sold') return false;
-      if (!isSalesAdmin) return true;
-      if (ownerFilter === 'unassigned') return !String(client.ownerId || '').trim();
-      return !ownerFilter || String(client.ownerId || '') === ownerFilter;
-    })),
-    [productClients, isSsuBracket, isSalesAdmin, ownerFilter]
   );
   const activeMeetingGroups = useMemo(
     () => groupSalesClientsByNextAction(assignedTimelineClients, meetingNowMs),
@@ -1225,25 +1258,25 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
   }, [mapOpen]);
 
   useEffect(() => {
-    if (!headerPanel && !productMenuOpen && !accountMenuOpen) return undefined;
+    if (!productMenuOpen && !accountMenuOpen) return undefined;
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node | null;
       if (target && headerShellRef.current?.contains(target)) return;
-      closeHeaderMenus();
-    };
-    const onScroll = (event: Event) => {
-      if (headerPanel === 'calendar') return;
-      const target = event.target as Node | null;
-      if (target && headerShellRef.current?.contains(target)) return;
-      closeHeaderMenus();
+      setProductMenuOpen(false);
+      setAccountMenuOpen(false);
     };
     document.addEventListener('pointerdown', onPointerDown);
-    window.addEventListener('scroll', onScroll, true);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      window.removeEventListener('scroll', onScroll, true);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [productMenuOpen, accountMenuOpen]);
+
+  useEffect(() => {
+    if (!headerPanel) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeHeaderMenus();
     };
-  }, [headerPanel, productMenuOpen, accountMenuOpen]);
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [headerPanel]);
 
   useEffect(
     () => () => {
@@ -1521,6 +1554,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
     const next = new URLSearchParams(searchParams);
     next.set('kategori', id);
     setSearchParams(next, { replace: true });
+    setListCategoryOverride(null);
   }
 
   async function setReadUp(client: SalesClient, done: boolean) {
@@ -2290,17 +2324,428 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
     setMeetingModeFilter('');
     setNextActionFromDate('');
     setNextActionToDate('');
+    setListCategoryOverride(null);
   }
 
   const showCalendarConnect = calendarStatus?.configured !== false;
   const loggedInAs = calendarStatus?.loginUsername || 'this Sales login';
+
+  function renderSalesClientDetails(client: SalesClient) {
+    const clientIsSsu = isSsuClient(client);
+    const publicPreviewUrl = getPublicClientPreviewUrl(client);
+    const clientOffers = offers.filter((entry) => entry.salesClientId === client.id);
+    const showMailActions = showMailActionsId === client.id;
+    const booking = salesBookingFacts(client);
+    const bookingRows = [
+      ['Booket av', booking.booker],
+      ['Booket', formatBookingWhen(booking.bookedAt)],
+      ['Booket for', formatBookingWhen(booking.meetingFor)],
+      ['Liste', booking.listName],
+    ];
+    const meetLink = salesMeetLink(client);
+    const reminderStamp = (iso?: string) => (iso ? formatWhen(iso) : 'Venter / hoppet over');
+    return (
+    <div className="space-y-3 pt-2">
+      <p className="text-[11px] text-gray-500">
+        Lenker, adresse, bransje og opptak ligger på Kundekort (side 1). Dette er booking, e-post og kalender for kunden — samme uansett fane.
+      </p>
+      <div className="rounded-xl bg-black/20 border border-white/10 p-3">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-2">Booking</div>
+        <ul className="space-y-1 text-xs">
+          {bookingRows.map(([label, value]) => (
+            <li key={label} className="flex gap-2">
+              <span className="text-gray-500 shrink-0">{label}</span>
+              {value
+                ? <span className="text-gray-200 min-w-0">{value}</span>
+                : <span className="text-red-300">Mangler</span>}
+            </li>
+          ))}
+        </ul>
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <button
+          type="button"
+          onClick={() => setShowMailActionsId((current) => (current === client.id ? null : client.id))}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs ${
+            showMailActions ? 'bg-[#FF5B00] text-white' : 'bg-white/10 text-white hover:bg-white/15'
+          }`}
+        >
+          <Mail size={13} />
+          {showMailActions ? 'Skjul e-posthandlinger' : 'Vis e-posthandlinger'}
+        </button>
+        <button
+          type="button"
+          onClick={() => openClientFlow(client, 1)}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
+          title="Åpne Kundekort side 1: lenker, adresse, bransje og booker-opptak"
+        >
+          <FileText size={13} />
+          Kundekort
+        </button>
+        {!clientIsSsu && (
+          <>
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => openPublicPreview(client)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
+              >
+                <ExternalLink size={13} />
+                Åpne preview
+              </button>
+              {previewMissingToastId === client.id && (
+                <div
+                  role="status"
+                  className="absolute left-0 bottom-full mb-1 z-20 whitespace-nowrap rounded-md border border-amber-700/40 bg-amber-950/95 px-2.5 py-1.5 text-[11px] text-amber-100 shadow-lg"
+                >
+                  Not on asoldi.com yet
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => void navigator.clipboard.writeText(publicPreviewUrl).then(
+                () => setNotice(`Copied ${publicPreviewUrl}`),
+                () => setError('Could not copy preview URL')
+              )}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
+              title={publicPreviewUrl}
+            >
+              <Copy size={13} />
+              Kopier preview
+            </button>
+          </>
+        )}
+        {meetLink ? (
+          <button
+            type="button"
+            onClick={() => void openOwnedMeet(client)}
+            disabled={meetOpeningId === client.id}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
+          >
+            {meetOpeningId === client.id ? <Loader2 size={13} className="animate-spin" /> : <ExternalLink size={13} />}
+            Møtelenke
+          </button>
+        ) : null}
+        {!clientIsSsu && isValidClientEmail(client.clientEmail) && (
+          <button
+            type="button"
+            onClick={() => void connectPortalUser(client)}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#FF5B00] text-white text-xs hover:bg-[#e55200]"
+            title={client.portalConnectedAt ? 'Koble nettsiden til kundekontoen på nytt' : 'Finn kundekontoen og koble valgt tier'}
+          >
+            <Users size={13} />
+            {client.portalUserId ? 'Koblet' : 'Connect'}
+          </button>
+        )}
+      </div>
+      {showMailActions && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl bg-black/20 border border-white/10 p-3">
+          {([
+            ['thank-you', 'Bekreftelse'],
+            ['3d', '3 dager'],
+            ['24h', '24 timer'],
+            ['1h', '1 time'],
+          ] as const).map(([kind, label]) => (
+            <button
+              key={kind}
+              type="button"
+              onClick={() => void sendClientMail(client, kind)}
+              disabled={Boolean(sendingMailKey)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
+            >
+              {sendingMailKey === `${client.id}:${kind}` ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />}
+              {label}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => openMailComposer(client, 'thank-you')}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
+            title="Åpne malen, bytt mottaker og send"
+          >
+            Rediger først
+          </button>
+        </div>
+      )}
+      <div className="rounded-xl bg-black/20 border border-white/10 p-3 space-y-2">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Kundekonto</div>
+        <label className="block text-xs text-gray-400">
+          E-post på asoldi.com
+          <input
+            key={`${client.id}:${client.clientEmail || ''}`}
+            type="email"
+            defaultValue={client.clientEmail || ''}
+            placeholder="Kontoen kunden oppretter på asoldi.com"
+            onBlur={(event) => void saveClientEmail(client, event.target.value).catch((err) => {
+              setError(err instanceof Error ? err.message : 'Kunne ikke lagre klient-e-post');
+            })}
+            className="mt-1 w-full rounded-md bg-black/30 border border-white/10 text-white text-xs px-2 py-1.5"
+          />
+        </label>
+        {client.portalConnectedAt ? (
+          <p className="text-[11px] text-emerald-300">Koblet {formatWhen(client.portalConnectedAt)}</p>
+        ) : (
+          <p className="text-[11px] text-gray-500">Ikke koblet til en kundekonto ennå.</p>
+        )}
+      </div>
+      <div className="rounded-xl bg-black/20 border border-white/10 p-3">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-2">Kalender & utsendelser</div>
+        <ul className="space-y-1 text-xs text-gray-300">
+          <li>
+            Varighet: {durationForMode(client.meetingMode)} min
+            {client.meetingMode === 'online' ? ' i kalenderen (kunden ser 30)' : ''}
+          </li>
+          {client.calendar?.eventId ? <li>Kalender-event: {client.calendar.eventId}</li> : null}
+          {client.calendar?.accountKey ? <li>Kalenderkonto: {client.calendar.accountKey}</li> : null}
+          <li>
+            Fireflies: {client.calendar?.firefliesInvitedAt
+              ? `invitert ${formatWhen(client.calendar.firefliesInvitedAt)}`
+              : 'ikke invitert — send bekreftelse på nytt'}
+            {client.calendar?.firefliesLiveJoinedAt
+              ? ` · sendt inn i Meet ${formatWhen(client.calendar.firefliesLiveJoinedAt)}`
+              : client.calendar?.firefliesLiveJoinError
+                ? ` · live-join: ${client.calendar.firefliesLiveJoinError}`
+                : client.reminders?.thankYouSentAt
+                  ? ' · sendes inn i Meet ved start'
+                  : ''}
+          </li>
+          <li>
+            Bekreftelse: {client.reminders?.thankYouSentAt ? formatWhen(client.reminders.thankYouSentAt) : 'Ikke sendt'}
+            {showMailActions && (
+              <button
+                type="button"
+                onClick={() => void sendClientMail(client, 'thank-you')}
+                disabled={Boolean(sendingMailKey)}
+                className="ml-2 text-[#FF5B00] hover:underline disabled:opacity-50"
+              >
+                {sendingMailKey === `${client.id}:thank-you`
+                  ? 'Sender…'
+                  : client.reminders?.thankYouSentAt
+                    ? 'Send på nytt'
+                    : 'Send nå'}
+              </button>
+            )}
+          </li>
+          <li>3 dager: {reminderStamp(client.reminders?.reminder3dSentAt)}</li>
+          <li>24 timer: {reminderStamp(client.reminders?.reminder24hSentAt)}</li>
+          <li>1 time: {reminderStamp(client.reminders?.reminder1hSentAt)}</li>
+          {showMailActions ? (
+            <li>
+              Send påminnelse:
+              <button type="button" onClick={() => void sendClientMail(client, '3d')} disabled={Boolean(sendingMailKey)} className="ml-2 text-[#FF5B00] hover:underline disabled:opacity-50">3 dager</button>
+              <button type="button" onClick={() => void sendClientMail(client, '24h')} disabled={Boolean(sendingMailKey)} className="ml-2 text-[#FF5B00] hover:underline disabled:opacity-50">24 timer</button>
+              <button type="button" onClick={() => void sendClientMail(client, '1h')} disabled={Boolean(sendingMailKey)} className="ml-2 text-[#FF5B00] hover:underline disabled:opacity-50">1 time</button>
+              <button type="button" onClick={() => openMailComposer(client, '24h')} className="ml-2 text-gray-400 hover:underline">Rediger</button>
+            </li>
+          ) : (
+            <li className="text-gray-500">Påminnelser sendes automatisk.</li>
+          )}
+        </ul>
+      </div>
+      <details className="rounded-xl bg-black/20 border border-white/10 p-3 text-xs text-gray-200">
+        <summary className="cursor-pointer text-[10px] font-semibold uppercase tracking-wide text-gray-400">MyPhoner</summary>
+        <ul className="mt-2 space-y-1 text-gray-300">
+          <li>Lead ID: {client.myphoner?.leadId || '—'}</li>
+          <li>Liste: {client.myphoner?.listName || client.myphoner?.listId || '—'}</li>
+          <li>Kategori: {client.myphoner?.winnerCategory || '—'}</li>
+          <li>Siste vinner-sync: {client.myphoner?.lastWinnerWebhookAt ? formatWhen(client.myphoner.lastWinnerWebhookAt) : '—'}</li>
+          <li>Siste opptak-sync: {client.myphoner?.lastRecordingWebhookAt ? formatWhen(client.myphoner.lastRecordingWebhookAt) : '—'}</li>
+          <li>Opptak-status: {client.myphoner?.latestRecordingSyncReason || '—'}</li>
+          <li>Call ID: {client.myphoner?.latestCallId || '—'}</li>
+          <li>Samtale startet: {client.myphoner?.latestCallStartedAt ? formatWhen(client.myphoner.latestCallStartedAt) : '—'}</li>
+        </ul>
+        <p className="mt-2 text-[11px] text-gray-500">
+          {client.myphoner?.latestRecordingUrl
+            ? 'Lytt til opptaket på Kundekort (Les deg opp).'
+            : 'Ingen booker-opptak synket ennå.'}
+        </p>
+      </details>
+
+      {!clientIsSsu && (
+      <>
+      <div className="rounded-xl bg-black/20 border border-white/10 p-3 space-y-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-sm text-white font-medium">
+            <Tag size={14} className="text-[#FF5B00]" />
+            Tilbud (nettsidekode)
+          </div>
+          <button
+            type="button"
+            onClick={() => openOfferPanel(client)}
+            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#FF5B00] text-white text-xs hover:bg-[#e55200]"
+          >
+            <Gift size={13} />
+            {offerOpenId === client.id ? 'Lukk' : 'Gi tilbud'}
+          </button>
+        </div>
+
+        {clientOffers.length > 0 && (
+          <div className="space-y-2">
+            {clientOffers.map((offer) => (
+              <div
+                key={offer.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[#1a1a1a] border border-white/10 px-3 py-2"
+              >
+                <div className="flex items-center gap-3 text-sm">
+                  <span className="px-2 py-1 rounded bg-[#FF5B00]/20 text-[#ff8a4d] font-mono tracking-widest text-base">{offer.code}</span>
+                  <span className="text-gray-200">{offer.planName}</span>
+                  <span className="text-gray-500">{offer.price}</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-gray-400">{offer.targetEmail || 'Ikke tildelt'}</span>
+                  <span className={`px-2 py-0.5 rounded ${offer.claimed ? 'bg-green-900/40 text-green-300' : 'bg-amber-900/30 text-amber-300'}`}>
+                    {offer.claimed ? 'Innløst' : 'Aktiv'}
+                  </span>
+                  {offer.previewUrl && (
+                    <button
+                      type="button"
+                      onClick={() => window.open(offer.previewUrl, '_blank')}
+                      className="inline-flex items-center gap-1 text-gray-300 hover:text-white"
+                    >
+                      <ExternalLink size={12} />
+                      Forhåndsvis
+                    </button>
+                  )}
+                  <button type="button" onClick={() => void deleteOffer(offer.id)} className="text-gray-400 hover:text-red-400" aria-label="Slett tilbud">
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {offerOpenId === client.id && (
+          <div className="rounded-lg bg-[#1a1a1a] border border-white/10 p-4 space-y-4">
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Velg tier (anbefalt plan)</label>
+              <div className="grid sm:grid-cols-3 gap-2">
+                {OFFER_TIERS.map((tier) => (
+                  <button
+                    key={tier.id}
+                    type="button"
+                    onClick={() => setOfferPlanId(tier.id)}
+                    className={`text-left rounded-lg border px-3 py-2 transition-colors ${
+                      offerPlanId === tier.id ? 'border-[#FF5B00] bg-[#FF5B00]/10' : 'border-white/10 bg-black/20 hover:border-white/20'
+                    }`}
+                  >
+                    <div className="text-sm text-white">{tier.name}</div>
+                    <div className="text-xs text-gray-400">{tier.price}</div>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Søk etter bruker (e-post, navn eller bedrift)</label>
+              {offerSelectedUser ? (
+                <div className="flex items-center justify-between rounded-lg border border-white/10 bg-black/30 px-3 py-2">
+                  <div className="text-sm">
+                    <div className="text-white">{offerSelectedUser.name || offerSelectedUser.email}</div>
+                    <div className="text-xs text-gray-400">
+                      {offerSelectedUser.email}
+                      {offerSelectedUser.businessName ? ` · ${offerSelectedUser.businessName}` : ''}
+                    </div>
+                  </div>
+                  <button type="button" onClick={() => setOfferSelectedUser(null)} className="text-gray-400 hover:text-white" aria-label="Fjern valgt bruker">
+                    <X size={15} />
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <div className="relative">
+                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                    <input
+                      value={offerSearch}
+                      onChange={(e) => setOfferSearch(e.target.value)}
+                      placeholder="Søk på e-post, navn eller bedrift…"
+                      className="w-full pl-9 pr-9 py-2 rounded-lg bg-black/30 border border-white/10 text-white text-sm"
+                    />
+                    {offerSearching && (
+                      <Loader2 size={14} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-gray-400" />
+                    )}
+                  </div>
+                  {offerResults.length > 0 ? (
+                    <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-white/10 divide-y divide-white/5">
+                      {offerResults.map((result) => (
+                        <button
+                          key={result.userId}
+                          type="button"
+                          onClick={() => {
+                            setOfferSelectedUser(result);
+                            setOfferResults([]);
+                          }}
+                          className="w-full text-left px-3 py-2 hover:bg-white/5"
+                        >
+                          <div className="text-sm text-white">{result.name || result.email}</div>
+                          <div className="text-xs text-gray-400">
+                            {result.email}
+                            {result.businessName ? ` · ${result.businessName}` : ''}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  ) : !offerSearching ? (
+                    <p className="mt-2 text-xs text-gray-500">
+                      {offerSearch.trim()
+                        ? 'Ingen klientbrukere matcher søket.'
+                        : 'Ingen klientbrukere funnet ennå.'}
+                    </p>
+                  ) : null}
+                  <p className="mt-1 text-[11px] text-gray-500">
+                    Kun brukere med klient-innlogging vises her. Velg en bruker for å sende tilbudet rett i to-do-listen deres. Uten valgt bruker kan kunden løse inn tilbudet med nettsidekoden.
+                  </p>
+                </>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Notat (valgfritt)</label>
+              <textarea
+                rows={2}
+                value={offerNote}
+                onChange={(e) => setOfferNote(e.target.value)}
+                className="w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-white text-sm resize-y"
+              />
+            </div>
+
+            {client.websiteImport?.previewUrl ? (
+              <p className="text-[11px] text-gray-400">Forhåndsvisning av importert nettside legges automatisk ved tilbudet.</p>
+            ) : (
+              <p className="text-[11px] text-gray-500">Tips: utvikler publiserer preview slik at tilbudet får offentlig forhåndsvisning.</p>
+            )}
+
+            {lastCreatedCode && (
+              <div className="rounded-lg border border-green-600/40 bg-green-900/20 px-3 py-2 text-sm text-green-200">
+                Tilbud opprettet. Nettsidekode:{' '}
+                <span className="font-mono tracking-widest text-base text-white">{lastCreatedCode}</span>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => void createOffer(client)}
+              disabled={creatingOffer}
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#FF5B00] text-white text-sm hover:bg-[#e55200] disabled:opacity-50"
+            >
+              {creatingOffer ? <Loader2 size={14} className="animate-spin" /> : <Gift size={14} />}
+              Opprett tilbud
+            </button>
+          </div>
+        )}
+      </div>
+      </>
+      )}
+    </div>
+    );
+  }
 
   function renderSalesClientCard(client: SalesClient, isWin = false, compact = false) {
             const clientIsSsu = isSsuClient(client);
             const publicPreviewUrl = getPublicClientPreviewUrl(client);
             const clientOffers = offers.filter((entry) => entry.salesClientId === client.id);
             const expanded = expandedId === client.id;
-            const showMailActions = expanded && showMailActionsId === client.id;
             const nextAction = getActiveNextAction(client);
             const nextActionWhen = formatNextActionWhen(nextAction?.dueAt);
             // Important contact point: any action on the calendar, even if a reminder sits above it.
@@ -2313,13 +2758,6 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
             const interestLabel = secondaryInterestLabel(client.secondaryInterest);
             const peeked = Boolean(peekCardIds[client.id]);
             const showCompact = compact && !peeked;
-            const booking = salesBookingFacts(client);
-            const bookingRows = [
-              ['Booket av', booking.booker],
-              ['Booket', formatBookingWhen(booking.bookedAt)],
-              ['Booket for', formatBookingWhen(booking.meetingFor)],
-              ['Liste', booking.listName],
-            ];
             return (
               <React.Fragment key={client.id}>
                 <div
@@ -2643,445 +3081,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                   </button>
                 </div>
 
-                {expanded && (
-                  <div className="space-y-4 border-t border-white/10 pt-3">
-                    <div className="rounded-xl bg-black/20 border border-white/10 p-4">
-                      <div className="text-sm text-white font-medium mb-2">Booking</div>
-                      <ul className="space-y-1 text-sm">
-                        {bookingRows.map(([label, value]) => (
-                          <li key={label}>
-                            <span className="text-gray-400">{label}: </span>
-                            {value
-                              ? <span className="text-gray-200">{value}</span>
-                              : <span className="text-red-300">Mangler</span>}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setShowMailActionsId((current) => (current === client.id ? null : client.id))}
-                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs ${
-                          showMailActions ? 'bg-[#FF5B00] text-white' : 'bg-white/10 text-white hover:bg-white/15'
-                        }`}
-                      >
-                        <Mail size={13} />
-                        {showMailActions ? 'Skjul e-posthandlinger' : 'Vis e-posthandlinger'}
-                      </button>
-                    </div>
-                    {showMailActions && (
-                      <div className="flex flex-wrap items-center gap-2 rounded-xl bg-black/20 border border-white/10 p-3">
-                        {([
-                          ['thank-you', 'Bekreftelse'],
-                          ['3d', '3 dager'],
-                          ['24h', '24 timer'],
-                          ['1h', '1 time'],
-                        ] as const).map(([kind, label]) => (
-                          <button
-                            key={kind}
-                            type="button"
-                            onClick={() => void sendClientMail(client, kind)}
-                            disabled={Boolean(sendingMailKey)}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
-                          >
-                            {sendingMailKey === `${client.id}:${kind}` ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />}
-                            {label}
-                          </button>
-                        ))}
-                        <button
-                          type="button"
-                          onClick={() => openMailComposer(client, 'thank-you')}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
-                          title="Åpne malen, bytt mottaker og send"
-                        >
-                          Rediger først
-                        </button>
-                      </div>
-                    )}
-                    <div className="grid sm:grid-cols-2 gap-4 rounded-xl bg-black/20 border border-white/10 p-4">
-                      <details open className="text-sm text-gray-200">
-                        <summary className="cursor-pointer text-white font-medium mb-2">Contact & meeting</summary>
-                        <ul className="space-y-1 text-gray-300">
-                          <li>Contact email: {client.contactEmail || '—'}</li>
-                          <li>
-                            <label className="block">
-                              Client email
-                              <input
-                                key={`${client.id}:${client.clientEmail || ''}`}
-                                type="email"
-                                defaultValue={client.clientEmail || ''}
-                                placeholder="Kontoen kunden oppretter på asoldi.com"
-                                onBlur={(event) => void saveClientEmail(client, event.target.value).catch((err) => {
-                                  setError(err instanceof Error ? err.message : 'Kunne ikke lagre klient-e-post');
-                                })}
-                                className="mt-1 w-full rounded-md bg-black/30 border border-white/10 text-white text-xs px-2 py-1.5"
-                              />
-                            </label>
-                            {client.portalConnectedAt ? (
-                              <span className="text-[11px] text-emerald-300">Koblet {formatWhen(client.portalConnectedAt)}</span>
-                            ) : null}
-                          </li>
-                          <li>
-                            Website email:{' '}
-                            {client.websiteEmail
-                              || (client.contactEmail ? `${client.contactEmail} (from contact)` : '—')}
-                          </li>
-                          <li>Phone: {client.contactPhone || '—'}</li>
-                          <li>Meeting: {client.meetingMode === 'in-person' ? 'In person' : 'Online (Google Meet)'}</li>
-                          <li>Address: {client.meetingPlace || '—'}</li>
-                          <li>Industry: {client.industry || '—'}</li>
-                          <li>
-                            Duration: {durationForMode(client.meetingMode)} min
-                            {client.meetingMode === 'online' ? ' in calendar (client sees 30)' : ''}
-                          </li>
-                        </ul>
-                      </details>
-                      <details open className="text-sm text-gray-200">
-                        <summary className="cursor-pointer text-white font-medium mb-2">Calendar & reminders</summary>
-                        <ul className="space-y-1 text-gray-300">
-                          {!clientIsSsu && <li>Website domain: {client.websiteDomain || '—'}</li>}
-                          {!clientIsSsu && <li>Public preview: {publicPreviewUrl || '—'}</li>}
-                          <li>Calendar event: {client.calendar?.eventId || '—'}</li>
-                          <li>Calendar account: {client.calendar?.accountKey || '—'}</li>
-                          <li>Meet link: {salesMeetLink(client) || '—'}</li>
-                          <li>
-                            Fireflies: {client.calendar?.firefliesInvitedAt
-                              ? `invitert ${formatWhen(client.calendar.firefliesInvitedAt)}`
-                              : 'ikke invitert på Google-eventet — send bekreftelse på nytt'}
-                            {client.calendar?.firefliesLiveJoinedAt
-                              ? ` · sendt inn i Meet ${formatWhen(client.calendar.firefliesLiveJoinedAt)}`
-                              : client.calendar?.firefliesLiveJoinError
-                                ? ` · live-join: ${client.calendar.firefliesLiveJoinError}`
-                                : client.reminders?.thankYouSentAt
-                                  ? ' · sendes inn i Meet ved start (uavhengig av Fireflies Upcoming)'
-                                  : ''}
-                          </li>
-                          <li>
-                            Thank-you sent: {client.reminders?.thankYouSentAt ? formatWhen(client.reminders.thankYouSentAt) : 'No'}
-                            {showMailActions && (
-                            <button
-                              type="button"
-                              onClick={() => void sendClientMail(client, 'thank-you')}
-                              disabled={Boolean(sendingMailKey)}
-                              className="ml-2 text-[#FF5B00] hover:underline disabled:opacity-50"
-                            >
-                              {sendingMailKey === `${client.id}:thank-you`
-                                ? 'Sender…'
-                                : client.reminders?.thankYouSentAt
-                                  ? 'Send på nytt'
-                                  : 'Send nå'}
-                            </button>
-                            )}
-                          </li>
-                          <li>
-                            Reminders:{' '}
-                            {showMailActions ? (
-                              <>
-                                <button type="button" onClick={() => void sendClientMail(client, '3d')} disabled={Boolean(sendingMailKey)} className="ml-2 text-[#FF5B00] hover:underline disabled:opacity-50">3 dager</button>
-                                <button type="button" onClick={() => void sendClientMail(client, '24h')} disabled={Boolean(sendingMailKey)} className="ml-2 text-[#FF5B00] hover:underline disabled:opacity-50">24 timer</button>
-                                <button type="button" onClick={() => void sendClientMail(client, '1h')} disabled={Boolean(sendingMailKey)} className="ml-2 text-[#FF5B00] hover:underline disabled:opacity-50">1 time</button>
-                                <button type="button" onClick={() => openMailComposer(client, '24h')} className="ml-2 text-gray-400 hover:underline">Rediger</button>
-                              </>
-                            ) : (
-                              <span className="text-gray-500">sendes automatisk</span>
-                            )}
-                          </li>
-                          <li>3-day reminder: {client.reminders?.reminder3dSentAt ? formatWhen(client.reminders.reminder3dSentAt) : 'Pending/Skipped'}</li>
-                          <li>24h reminder: {client.reminders?.reminder24hSentAt ? formatWhen(client.reminders.reminder24hSentAt) : 'Pending/Skipped'}</li>
-                          <li>1h reminder: {client.reminders?.reminder1hSentAt ? formatWhen(client.reminders.reminder1hSentAt) : 'Pending/Skipped'}</li>
-                        </ul>
-                      </details>
-                      <details open className="sm:col-span-2 text-sm text-gray-200">
-                        <summary className="cursor-pointer text-white font-medium mb-2">Myphoner intake</summary>
-                        <ul className="space-y-1 text-gray-300">
-                          <li>Lead ID: {client.myphoner?.leadId || '—'}</li>
-                          <li>List: {client.myphoner?.listName || client.myphoner?.listId || '—'}</li>
-                          <li>Winner category: {client.myphoner?.winnerCategory || '—'}</li>
-                          <li>Last winner sync: {client.myphoner?.lastWinnerWebhookAt ? formatWhen(client.myphoner.lastWinnerWebhookAt) : '—'}</li>
-                          <li>Last recording sync: {client.myphoner?.lastRecordingWebhookAt ? formatWhen(client.myphoner.lastRecordingWebhookAt) : '—'}</li>
-                          <li>Recording sync status: {client.myphoner?.latestRecordingSyncReason || '—'}</li>
-                          <li>Call ID: {client.myphoner?.latestCallId || '—'}</li>
-                          <li>Call started: {client.myphoner?.latestCallStartedAt ? formatWhen(client.myphoner.latestCallStartedAt) : '—'}</li>
-                        </ul>
-                        {client.myphoner?.latestRecordingUrl ? (
-                          <div className="mt-3 space-y-2">
-                            <button
-                              type="button"
-                              onClick={() => void toggleInlineRecording(client)}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
-                            >
-                              {recordingLoadingClientId === client.id ? <Loader2 size={13} className="animate-spin" /> : <Volume2 size={13} />}
-                              {recordingOpenClientId === client.id ? 'Hide inline audio' : 'Listen in Sales UI'}
-                            </button>
-                            {recordingOpenClientId === client.id ? (
-                              recordingBlobUrlByClient[client.id] ? (
-                                <audio controls preload="metadata" src={recordingBlobUrlByClient[client.id]} className="w-full" />
-                              ) : (
-                                <p className="text-xs text-amber-300">
-                                  {recordingErrorByClient[client.id] || 'Could not load inline audio. Open source URL instead.'}
-                                </p>
-                              )
-                            ) : null}
-                            <button
-                              type="button"
-                              onClick={() => window.open(client.myphoner.latestRecordingUrl, '_blank')}
-                              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
-                            >
-                              <ExternalLink size={12} />
-                              Open source URL
-                            </button>
-                          </div>
-                        ) : (
-                          <p className="mt-2 text-xs text-gray-500">
-                            No call recording synced yet for this lead.
-                            {client.myphoner?.latestRecordingSyncReason ? ` Last sync status: ${client.myphoner.latestRecordingSyncReason}.` : ''}
-                          </p>
-                        )}
-                      </details>
-                      <details open className="sm:col-span-2 text-sm text-gray-200">
-                        <summary className="cursor-pointer text-white font-medium mb-2">QuickFill links</summary>
-                        <div className="grid sm:grid-cols-2 gap-3 text-gray-300">
-                          <div>
-                            <div className="text-xs text-gray-500 uppercase mb-1">Instagram</div>
-                            <p>{String(client.details?.instagramUrl || '—')}</p>
-                          </div>
-                          <div>
-                            <div className="text-xs text-gray-500 uppercase mb-1">Facebook</div>
-                            <p>{String(client.details?.facebookUrl || '—')}</p>
-                          </div>
-                          <div>
-                            <div className="text-xs text-gray-500 uppercase mb-1">proff.no</div>
-                            <p>{String(client.details?.proffUrl || '—')}</p>
-                            <p className="mt-1">Org. nr: {client.orgNumber || '—'}</p>
-                          </div>
-                          <div>
-                            <div className="text-xs text-gray-500 uppercase mb-1">Google business profile</div>
-                            <p>{String(client.details?.googleBusinessProfile || '—')}</p>
-                          </div>
-                          <div className="sm:col-span-2">
-                            <div className="text-xs text-gray-500 uppercase mb-1">Other links</div>
-                            <p style={{ whiteSpace: 'pre-wrap' }}>{String(client.details?.otherLinks || '—')}</p>
-                          </div>
-                        </div>
-                      </details>
-                    </div>
-
-                    {!clientIsSsu && (
-                    <>
-                    <div className="rounded-xl bg-black/20 border border-white/10 p-4 space-y-3">
-                      <div className="text-sm text-white font-medium">Public preview</div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <div className="relative">
-                          <button
-                            type="button"
-                            onClick={() => openPublicPreview(client)}
-                            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/15"
-                          >
-                            <ExternalLink size={14} />
-                            Open preview
-                          </button>
-                          {previewMissingToastId === client.id && (
-                            <div
-                              role="status"
-                              className="absolute left-0 bottom-full mb-1 z-20 whitespace-nowrap rounded-md border border-amber-700/40 bg-amber-950/95 px-2.5 py-1.5 text-[11px] text-amber-100 shadow-lg"
-                            >
-                              Not on asoldi.com yet
-                            </div>
-                          )}
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => void navigator.clipboard.writeText(publicPreviewUrl).then(
-                            () => setNotice(`Copied ${publicPreviewUrl}`),
-                            () => setError('Could not copy preview URL')
-                          )}
-                          className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-white/10 text-white text-sm hover:bg-white/15"
-                        >
-                          <Copy size={14} />
-                          Copy public URL
-                        </button>
-                      </div>
-                      <p className="text-[11px] text-gray-400 break-all">
-                        Internet URL: <span className="text-white">{publicPreviewUrl}</span>
-                      </p>
-                    </div>
-
-                    <div className="rounded-xl bg-black/20 border border-white/10 p-4 space-y-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 text-sm text-white font-medium">
-                          <Tag size={14} className="text-[#FF5B00]" />
-                          Tilbud (nettsidekode)
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => openOfferPanel(client)}
-                          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#FF5B00] text-white text-xs hover:bg-[#e55200]"
-                        >
-                          <Gift size={13} />
-                          {offerOpenId === client.id ? 'Lukk' : 'Gi tilbud'}
-                        </button>
-                      </div>
-
-                      {clientOffers.length > 0 && (
-                        <div className="space-y-2">
-                          {clientOffers.map((offer) => (
-                            <div
-                              key={offer.id}
-                              className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-[#1a1a1a] border border-white/10 px-3 py-2"
-                            >
-                              <div className="flex items-center gap-3 text-sm">
-                                <span className="px-2 py-1 rounded bg-[#FF5B00]/20 text-[#ff8a4d] font-mono tracking-widest text-base">{offer.code}</span>
-                                <span className="text-gray-200">{offer.planName}</span>
-                                <span className="text-gray-500">{offer.price}</span>
-                              </div>
-                              <div className="flex items-center gap-2 text-xs">
-                                <span className="text-gray-400">{offer.targetEmail || 'Ikke tildelt'}</span>
-                                <span className={`px-2 py-0.5 rounded ${offer.claimed ? 'bg-green-900/40 text-green-300' : 'bg-amber-900/30 text-amber-300'}`}>
-                                  {offer.claimed ? 'Innløst' : 'Aktiv'}
-                                </span>
-                                {offer.previewUrl && (
-                                  <button
-                                    type="button"
-                                    onClick={() => window.open(offer.previewUrl, '_blank')}
-                                    className="inline-flex items-center gap-1 text-gray-300 hover:text-white"
-                                  >
-                                    <ExternalLink size={12} />
-                                    Forhåndsvis
-                                  </button>
-                                )}
-                                <button type="button" onClick={() => void deleteOffer(offer.id)} className="text-gray-400 hover:text-red-400" aria-label="Slett tilbud">
-                                  <Trash2 size={13} />
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      {offerOpenId === client.id && (
-                        <div className="rounded-lg bg-[#1a1a1a] border border-white/10 p-4 space-y-4">
-                          <div>
-                            <label className="block text-xs text-gray-400 mb-1">Velg tier (anbefalt plan)</label>
-                            <div className="grid sm:grid-cols-3 gap-2">
-                              {OFFER_TIERS.map((tier) => (
-                                <button
-                                  key={tier.id}
-                                  type="button"
-                                  onClick={() => setOfferPlanId(tier.id)}
-                                  className={`text-left rounded-lg border px-3 py-2 transition-colors ${
-                                    offerPlanId === tier.id ? 'border-[#FF5B00] bg-[#FF5B00]/10' : 'border-white/10 bg-black/20 hover:border-white/20'
-                                  }`}
-                                >
-                                  <div className="text-sm text-white">{tier.name}</div>
-                                  <div className="text-xs text-gray-400">{tier.price}</div>
-                                </button>
-                              ))}
-                            </div>
-                          </div>
-
-                          <div>
-                            <label className="block text-xs text-gray-400 mb-1">Søk etter bruker (e-post, navn eller bedrift)</label>
-                            {offerSelectedUser ? (
-                              <div className="flex items-center justify-between rounded-lg border border-white/10 bg-black/30 px-3 py-2">
-                                <div className="text-sm">
-                                  <div className="text-white">{offerSelectedUser.name || offerSelectedUser.email}</div>
-                                  <div className="text-xs text-gray-400">
-                                    {offerSelectedUser.email}
-                                    {offerSelectedUser.businessName ? ` · ${offerSelectedUser.businessName}` : ''}
-                                  </div>
-                                </div>
-                                <button type="button" onClick={() => setOfferSelectedUser(null)} className="text-gray-400 hover:text-white" aria-label="Fjern valgt bruker">
-                                  <X size={15} />
-                                </button>
-                              </div>
-                            ) : (
-                              <>
-                                <div className="relative">
-                                  <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                                  <input
-                                    value={offerSearch}
-                                    onChange={(e) => setOfferSearch(e.target.value)}
-                                    placeholder="Søk på e-post, navn eller bedrift…"
-                                    className="w-full pl-9 pr-9 py-2 rounded-lg bg-black/30 border border-white/10 text-white text-sm"
-                                  />
-                                  {offerSearching && (
-                                    <Loader2 size={14} className="absolute right-3 top-1/2 -translate-y-1/2 animate-spin text-gray-400" />
-                                  )}
-                                </div>
-                                {offerResults.length > 0 ? (
-                                  <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-white/10 divide-y divide-white/5">
-                                    {offerResults.map((result) => (
-                                      <button
-                                        key={result.userId}
-                                        type="button"
-                                        onClick={() => {
-                                          setOfferSelectedUser(result);
-                                          setOfferResults([]);
-                                        }}
-                                        className="w-full text-left px-3 py-2 hover:bg-white/5"
-                                      >
-                                        <div className="text-sm text-white">{result.name || result.email}</div>
-                                        <div className="text-xs text-gray-400">
-                                          {result.email}
-                                          {result.businessName ? ` · ${result.businessName}` : ''}
-                                        </div>
-                                      </button>
-                                    ))}
-                                  </div>
-                                ) : !offerSearching ? (
-                                  <p className="mt-2 text-xs text-gray-500">
-                                    {offerSearch.trim()
-                                      ? 'Ingen klientbrukere matcher søket.'
-                                      : 'Ingen klientbrukere funnet ennå.'}
-                                  </p>
-                                ) : null}
-                                <p className="mt-1 text-[11px] text-gray-500">
-                                  Kun brukere med klient-innlogging vises her. Velg en bruker for å sende tilbudet rett i to-do-listen deres. Uten valgt bruker kan kunden løse inn tilbudet med nettsidekoden.
-                                </p>
-                              </>
-                            )}
-                          </div>
-
-                          <div>
-                            <label className="block text-xs text-gray-400 mb-1">Notat (valgfritt)</label>
-                            <textarea
-                              rows={2}
-                              value={offerNote}
-                              onChange={(e) => setOfferNote(e.target.value)}
-                              className="w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-white text-sm resize-y"
-                            />
-                          </div>
-
-                          {client.websiteImport?.previewUrl ? (
-                            <p className="text-[11px] text-gray-400">Forhåndsvisning av importert nettside legges automatisk ved tilbudet.</p>
-                          ) : (
-                            <p className="text-[11px] text-gray-500">Tips: utvikler publiserer preview slik at tilbudet får offentlig forhåndsvisning.</p>
-                          )}
-
-                          {lastCreatedCode && (
-                            <div className="rounded-lg border border-green-600/40 bg-green-900/20 px-3 py-2 text-sm text-green-200">
-                              Tilbud opprettet. Nettsidekode:{' '}
-                              <span className="font-mono tracking-widest text-base text-white">{lastCreatedCode}</span>
-                            </div>
-                          )}
-
-                          <button
-                            type="button"
-                            onClick={() => void createOffer(client)}
-                            disabled={creatingOffer}
-                            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#FF5B00] text-white text-sm hover:bg-[#e55200] disabled:opacity-50"
-                          >
-                            {creatingOffer ? <Loader2 size={14} className="animate-spin" /> : <Gift size={14} />}
-                            Opprett tilbud
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                    </>
-                    )}
-                  </div>
-                )}
+                {expanded && renderSalesClientDetails(client)}
                 {compact && peeked ? (
                   <button
                     type="button"
@@ -3105,7 +3105,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
 
   return (
     <div className="sales-clients-surface min-h-screen bg-[#1a1a1a] text-white">
-      <header ref={headerShellRef} className="sales-sticky-header sticky top-0 z-[70] border-b border-white/10 bg-[#161616] shadow-sm">
+      <header ref={headerShellRef} className="sales-sticky-header sticky top-0 z-[90] border-b border-white/10 bg-[#161616] shadow-sm">
         <div className="max-w-[1440px] mx-auto px-3 sm:px-5 py-2.5 flex items-center gap-2 sm:gap-3">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink-0 relative z-[80]">
             <img src="/media/Untitled-1.png" alt="Asoldi" className="h-8 sm:h-9 w-auto shrink-0" />
@@ -3158,7 +3158,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
             >
               <Filter size={14} />
               <span className="hidden sm:inline">Filter</span>
-              {hasActiveFilters ? <span className="h-1.5 w-1.5 rounded-full bg-white sm:bg-orange-200" /> : null}
+              {hasActiveFilters || categoryFilterTouched ? <span className="h-1.5 w-1.5 rounded-full bg-white sm:bg-orange-200" /> : null}
               <ChevronDown size={12} className={`hidden sm:block transition-transform ${headerPanel === 'filter' ? 'rotate-180' : ''}`} />
             </button>
             <button
@@ -3270,14 +3270,35 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
         </div>
 
         {(headerPanel || mapMounted) && (
-          <div className={headerPanel ? 'border-t border-white/10 bg-[#1a1a1a]' : 'hidden'}>
-            <div className="max-w-[1440px] mx-auto px-3 sm:px-5 py-3">
+          <div
+            className={headerPanel ? 'fixed inset-x-0 bottom-0 z-[80] flex items-start justify-center px-3 sm:px-6 pb-6 pt-3' : 'hidden'}
+            style={{ top: headerBarPx }}
+          >
+            {headerPanel ? (
+              <button
+                type="button"
+                className="absolute inset-0 bg-black/45"
+                aria-label="Lukk"
+                onClick={closeHeaderMenus}
+              />
+            ) : null}
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label={headerPanel === 'calendar' ? 'Calendar' : headerPanel === 'map' ? 'Client map' : 'Filter'}
+              className={`relative z-10 w-full overflow-hidden rounded-2xl border border-white/10 bg-[#1f1f1f] shadow-2xl ${
+                headerPanel === 'calendar' || headerPanel === 'map' ? 'max-w-[1100px]' : 'max-w-3xl'
+              }`}
+            >
+            <div className="max-h-[min(80dvh,44rem)] overflow-y-auto overscroll-contain px-3 sm:px-5 py-3">
               {headerPanel && (
               <div className="flex items-center justify-between gap-2 mb-2">
                 <p className="text-[11px] text-gray-400">
                   {headerPanel === 'calendar'
-                    ? 'Lukk: klikk Calendar igjen, eller klikk utenfor. Scrolling holder kalenderen åpen.'
-                    : `Lukk: klikk ${headerPanel === 'filter' ? 'Filter' : 'Client map'} igjen, klikk under, eller scroll.`}
+                    ? 'Kalenderen ligger over tavla. Lukk med Calendar, utenfor, eller Escape.'
+                    : headerPanel === 'map'
+                      ? 'Kartet ligger over tavla. Lukk med Client map, utenfor, eller Escape.'
+                      : 'Filter ligger over tavla. Lukk med Filter, utenfor, eller Escape.'}
                 </p>
                 <button type="button" onClick={closeHeaderMenus} className="inline-flex items-center gap-1 text-xs text-gray-300 hover:text-white">
                   <X size={12} /> Lukk
@@ -3304,7 +3325,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                         <Search size={14} />
                         Search
                       </button>
-                      {hasActiveFilters && (
+                      {(hasActiveFilters || categoryFilterTouched) && (
                         <button
                           type="button"
                           onClick={clearClientNameSearch}
@@ -3332,6 +3353,23 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                         {ownerFilterOptions.map((owner) => (
                           <option key={owner.accountKey} value={owner.accountKey}>
                             {ownerLabel(owner)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {!isSsuBracket && (
+                    <label className="text-[11px] text-gray-400 block">
+                      <span className="block mb-1">Kategori</span>
+                      <select
+                        value={effectiveListCategory}
+                        onChange={(event) => setListCategoryOverride(event.target.value)}
+                        className="w-full rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+                      >
+                        <option value="">Alle kategorier</option>
+                        {boardCategories.map((category) => (
+                          <option key={category.id} value={category.id}>
+                            {category.label} ({(focusQueues[category.id] || []).length})
                           </option>
                         ))}
                       </select>
@@ -3444,7 +3482,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                       {meetingMapError}
                     </div>
                   )}
-                  <div className="mt-3 h-[220px] sm:h-[340px] rounded-xl border border-white/10 overflow-hidden relative z-0 isolate">
+                  <div className="mt-3 h-[280px] sm:h-[420px] rounded-xl border border-white/10 overflow-hidden relative z-0 isolate">
                     <div ref={meetingMapContainerRef} className="h-full w-full relative z-0" />
                     {meetingMapLoading && (
                       <div className="absolute inset-0 bg-black/55 flex items-center justify-center text-gray-200 text-sm">
@@ -3455,6 +3493,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                   </div>
                 </div>
               )}
+            </div>
             </div>
           </div>
         )}
@@ -3534,6 +3573,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
           onAssign={(client, ownerId) => void assignClientOwner(client, ownerId)}
           onSecondary={(client) => openSecondaryPicker([client])}
           onNotSold={(client) => void markNotSold(client)}
+          renderDetails={renderSalesClientDetails}
           renderRecording={(client) => (
             <BookerRecordingPlayer
               latestRecordingUrl={client.myphoner?.latestRecordingUrl || ''}
@@ -3555,13 +3595,20 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
         <div className="mt-auto flex justify-center pt-1">
           <button
             type="button"
-            onClick={() => setShowAllClients((open) => !open)}
+            onClick={() => {
+              if (allClientsOpen) {
+                setShowAllClients(false);
+                return;
+              }
+              setShowAllClients(true);
+              setListCategoryOverride(null);
+            }}
             disabled={hasActiveFilters}
             aria-expanded={allClientsOpen}
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-white/10 text-sm text-white hover:bg-white/15 disabled:opacity-60"
             title={hasActiveFilters ? 'Listen er åpen fordi søk eller filter er på' : undefined}
           >
-            {allClientsOpen ? 'Skjul alle kunder' : `Vis alle kunder (${productClients.length})`}
+            {allClientsOpen ? 'Skjul alle kunder' : `Vis alle kunder (${listPreviewCount})`}
             <ChevronDown size={15} className={`transition-transform ${allClientsOpen ? 'rotate-180' : ''}`} />
           </button>
         </div>
@@ -3682,7 +3729,11 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
         <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
           <div>
             <h2 className="text-sm font-semibold text-white">Alle kunder</h2>
-            <p className="text-[11px] text-gray-400">Hele listen. Søk og filtrer med Filter øverst.</p>
+            <p className="text-[11px] text-gray-400">
+              {effectiveListCategory
+                ? `${boardCategories.find((category) => category.id === effectiveListCategory)?.label || 'Kategori'} · ${listPreviewCount} kunder. Fjern kategorifilteret i Filter for å se alle.`
+                : 'Hele listen. Søk og filtrer med Filter øverst.'}
+            </p>
           </div>
           <button
             type="button"

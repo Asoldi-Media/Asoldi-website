@@ -388,13 +388,56 @@ test('after the call, ring again 10:00 two days later; a new meeting time or a h
   assert.equal(salesMissedMeeting(held, at('2026-10-22T09:00:00.000Z')), null);
 });
 
-test('the 72-hour rule leaves meetings before 17 Oct 2026 alone', () => {
+test('the 72-hour auto mark leaves meetings before 17 Oct 2026 alone; they still wait for a new time', () => {
   const old = client({ meetingAt: '2026-10-16T10:00:00.000Z' });
   assert.equal(salesMissedMeeting(old, at('2026-10-21T10:00:00.000Z')), null);
-  assert.deepEqual(categories(old, '2026-10-21T10:00:00.000Z'), []);
+  assert.deepEqual(categories(old, '2026-10-21T10:00:00.000Z'), ['confirm:holdMeeting:overdue']);
   const oldSkipped = client({
     meetingAt: '2026-10-16T10:00:00.000Z',
     salesPlaybook: { readUpAt: '', missedKind: 'skipped', missedAt: '2026-10-17T08:00:00.000Z', missedMeetingAt: '2026-10-16T10:00:00.000Z', missedCalledAt: '' },
   });
   assert.equal(salesMissedMeeting(oldSkipped, at('2026-10-21T10:00:00.000Z')).kind, 'skipped');
+  assert.deepEqual(categories(oldSkipped, '2026-10-21T10:00:00.000Z'), ['confirm:missedCall:overdue']);
+});
+
+test('Venter møtebekreftelse lists tid ikke satt first, then the newest past-due, then new bookers', () => {
+  const now = at('2026-10-21T10:00:00.000Z');
+  const noTimeOld = client({
+    id: 'no-time-old',
+    businessName: 'AAA Ingen tid gammel',
+    agreedTime: false,
+    meetingAt: '',
+    myphoner: { bookedAt: '2026-10-01T08:00:00.000Z' },
+  });
+  const noTimeNew = client({
+    id: 'no-time-new',
+    businessName: 'BBB Ingen tid ny',
+    agreedTime: false,
+    meetingAt: '',
+    myphoner: { bookedAt: '2026-10-20T08:00:00.000Z' },
+  });
+  const pastOlder = client({
+    id: 'past-old',
+    businessName: 'CCC Gammel forfalt',
+    meetingAt: '2026-10-10T10:00:00.000Z',
+  });
+  const pastNewer = client({
+    id: 'past-new',
+    businessName: 'DDD Ny forfalt',
+    meetingAt: '2026-10-16T10:00:00.000Z',
+  });
+  const booker = client({
+    id: 'booker',
+    businessName: 'EEE Nybooket',
+    reminders: {},
+    myphoner: { bookedAt: '2026-10-21T09:00:00.000Z' },
+  });
+  const queues = groupSalesFocusQueues([booker, pastOlder, noTimeNew, pastNewer, noTimeOld], now);
+  assert.deepEqual(queues.confirm.map((row) => row.client.id), [
+    'no-time-old',
+    'no-time-new',
+    'past-new',
+    'past-old',
+    'booker',
+  ]);
 });

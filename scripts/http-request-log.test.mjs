@@ -40,10 +40,14 @@ test('a cookie header over 6KB drops the largest pairs', () => {
 
 test('admin cards do not fetch a thread per client until details are opened', () => {
   const board = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../app/pages/Admin/sections/AdminBoardSection.tsx'), 'utf8');
-  const card = board.slice(board.indexOf('function AdminBoardCard'), board.indexOf('export function AdminBoardSection'));
+  const details = board.slice(board.indexOf('function AdminCardDetails'), board.indexOf('function NextActionLine'));
+  assert.match(details, /\{showRequests \? <AdminRequestInbox/);
+  const card = board.slice(board.indexOf('function AdminBoardCard'), board.indexOf('function AdminFocusCard'));
   const expandedAt = card.indexOf('{expanded ? (');
-  const inboxAt = card.indexOf('<AdminRequestInbox');
-  assert.ok(expandedAt > 0 && inboxAt > expandedAt);
+  const detailsAt = card.indexOf('<AdminCardDetails');
+  assert.ok(expandedAt > 0 && detailsAt > expandedAt);
+  const focus = board.slice(board.indexOf('function AdminFocusCard'), board.indexOf('export function AdminBoardSection'));
+  assert.equal(focus.includes('<AdminRequestInbox'), false);
 });
 
 test('every response can expire oversized cookies and /api/health shows the sizes', () => {

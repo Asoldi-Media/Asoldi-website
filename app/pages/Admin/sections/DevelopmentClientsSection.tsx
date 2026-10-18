@@ -9,6 +9,7 @@ import {
 import {
   canUploadDeveloperHandoff,
   canWorkDevelopmentClient,
+  developerOwnerDisplayName,
   sameDeveloperOwner,
 } from '../../../../lib/developer-assignment.js';
 import { buildClientSearchHaystack, matchesClientSearchQuery, normalizeClientSearchText } from '../clientSearch';
@@ -19,6 +20,54 @@ import { DeveloperRunQueueBar } from '../../developer/DeveloperRunQueueBar';
 import { LOCAL_EDITOR_ORIGIN } from '../../../../lib/maker-editor-origin.js';
 import { fetchMakerQueue } from '../../developer/makerQueue';
 import { clientIdentityBrief, salesKundekortView } from '../../../../lib/sales-kundekort.js';
+import { useSearchParams } from 'react-router-dom';
+import {
+  defaultDeveloperFocusCategory,
+  developerFocusCategoriesFor,
+  groupDeveloperFocusQueues,
+  normalizeDeveloperFocusCategory,
+} from '../../../../lib/developer-focus-board.js';
+import {
+  FocusBoardShell,
+  FocusHeaderPopup,
+  focusSince,
+  focusWhen,
+  useHeaderBarHeight,
+  type FocusRequest,
+  type FocusShellCategory,
+  type FocusStatus,
+} from './FocusBoardShell';
+
+type DeveloperFocusEntry = {
+  id: string;
+  name: string;
+  item: DevelopmentItem;
+  kind: 'preview' | 'deployment';
+  category: string;
+  dueAt: string;
+  overdue: boolean;
+  previewReady: boolean;
+};
+
+const FOCUS_EMPTY_TEXT: Record<string, string> = {
+  unassigned: 'Alle kunder har en utvikler.',
+  preview: 'Ingen previews å lage.',
+  readyForDeployment: 'Ingen venter på deployment.',
+  iterationDone: 'Ingen iterasjoner å jobbe med.',
+  publish: 'Ingen venter på publisering.',
+  done: 'Ingen publiserte kunder venter.',
+};
+
+function developerStatus(entry: DeveloperFocusEntry, nowMs: number): FocusStatus {
+  if (entry.category === 'unassigned') return { text: 'Mangler utvikler', tone: 'warn' };
+  if (entry.category === 'done') return { text: 'Publisert', tone: 'green' };
+  if (entry.previewReady) return { text: 'Preview klar · venter på salg', tone: 'green' };
+  const label = entry.kind === 'preview' ? 'Møte' : 'Frist';
+  if (!entry.dueAt) return { text: entry.kind === 'preview' ? 'Ingen møtetid' : 'Ingen frist', tone: 'muted' };
+  if (entry.overdue) return { text: `${label} forfalt · ${focusSince(entry.dueAt, nowMs) || 'nå'}`, tone: 'red' };
+  const whenText = focusWhen(entry.dueAt, nowMs);
+  return { text: `${label} ${whenText}`, tone: whenText.startsWith('i dag') ? 'green' : 'muted' };
+}
 
 type Props = {
   hideHeader?: boolean;
@@ -167,10 +216,17 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
   const [developers, setDevelopers] = useState<DeveloperOwnerOption[]>([]);
   const [bulkAssignOwnerId, setBulkAssignOwnerId] = useState('');
   const [assignBusy, setAssignBusy] = useState(false);
-  const headerShellRef = useRef<HTMLDivElement | null>(null);
+  const headerShellRef = useRef<HTMLElement | null>(null);
+  const headerBarPx = useHeaderBarHeight(headerShellRef);
+  const [searchParams, setSearchParams] = useSearchParams();
+  /** null = follow the board tab; '' = every client; a tab id = that tab only. */
+  const [listCategoryOverride, setListCategoryOverride] = useState<string | null>(null);
+  const [showAllClients, setShowAllClients] = useState(false);
+  const [focusRequest, setFocusRequest] = useState<FocusRequest>(null);
+  const autoCategoryRef = useRef('');
   const itemsRef = useRef<DevelopmentItem[]>([]);
   const uploadingHandoffRef = useRef<Set<string>>(new Set());
-  const [threadMap, setThreadMap] = useState<Record<string, { lastKindLabel: string }>>({});
+  const [threadMap, setThreadMap] = useState<Record<string, { lastKindLabel: string; unread: number }>>({});
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [peekCardIds, setPeekCardIds] = useState<Record<string, boolean>>({});
@@ -247,9 +303,10 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
     setDueFilter('');
     setOnlyWithRequests(false);
     setOwnerFilter('');
+    setListCategoryOverride(null);
   }
 
-  const hasActiveFilters = Boolean(
+  const hasFieldFilters = Boolean(
     searchQuery || runFilter || stepFilter || industryFilter || periodPreset || periodFrom || periodTo
     || dueFilter || onlyWithRequests || ownerFilter
   );
@@ -320,37 +377,52 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
     }
     return [...names].sort((a, b) => a.localeCompare(b, 'nb'));
   }, [productBracket, ssuItems, developmentItems, previewItems]);
-  const visibleDevelopmentItems = useMemo(
-    () => (productBracket === 'asoldi' ? developmentItems.filter(itemVisible) : []),
-    [developmentItems, itemVisible, productBracket]
-  );
-  const visiblePreviewItems = useMemo(
-    () => (productBracket === 'asoldi' ? previewItems.filter(itemVisible) : []),
-    [previewItems, itemVisible, productBracket]
-  );
   const visibleSsuItems = useMemo(
     () => (productBracket === 'ssu' ? ssuItems.filter(itemVisible) : []),
     [ssuItems, itemVisible, productBracket]
   );
-  const websiteItems = useMemo(
-    () => [...visibleDevelopmentItems, ...visiblePreviewItems],
-    [visibleDevelopmentItems, visiblePreviewItems]
+  const focusOptions = useMemo(() => ({ isAdmin: Boolean(viewer.isAdmin) }), [viewer.isAdmin]);
+  const focusCategories = useMemo(
+    () => developerFocusCategoriesFor(focusOptions) as FocusShellCategory[],
+    [focusOptions]
   );
-  const developmentIds = useMemo(
-    () => new Set(visibleDevelopmentItems.map((item) => item.id)),
-    [visibleDevelopmentItems]
+  const focusQueues = useMemo(
+    () => groupDeveloperFocusQueues({ previewItems, developmentItems }, nowMs, focusOptions) as Record<string, DeveloperFocusEntry[]>,
+    [previewItems, developmentItems, nowMs, focusOptions]
   );
-  const websiteUnassigned = useMemo(
-    () => (viewer.isAdmin ? websiteItems.filter((item) => !item.developerOwnerId) : []),
-    [websiteItems, viewer.isAdmin]
-  );
-  const websiteGroups = useMemo(
-    () => groupDevelopmentItems(
-      websiteItems.filter((item) => !viewer.isAdmin || item.developerOwnerId),
-      nowMs
-    ),
-    [websiteItems, nowMs, viewer.isAdmin]
-  );
+  if (!autoCategoryRef.current && previewItems.length + developmentItems.length) {
+    autoCategoryRef.current = defaultDeveloperFocusCategory(focusQueues, focusOptions);
+  }
+  const activeCategory = normalizeDeveloperFocusCategory(searchParams.get('kategori'), focusOptions)
+    || normalizeDeveloperFocusCategory(autoCategoryRef.current, focusOptions)
+    || focusCategories[0]?.id
+    || 'preview';
+  const effectiveListCategory = listCategoryOverride ?? activeCategory;
+  const categoryFilterTouched = productBracket === 'asoldi' && listCategoryOverride !== null && listCategoryOverride !== activeCategory;
+  const hasActiveFilters = hasFieldFilters || categoryFilterTouched;
+  const listOpen = showAllClients || hasActiveFilters;
+
+  const setCategory = useCallback((id: string) => {
+    setListCategoryOverride(null);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (id) next.set('kategori', id);
+      else next.delete('kategori');
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  function showOnBoard(itemId: string) {
+    setFocusRequest({ id: itemId, nonce: Date.now() });
+    setHeaderPanel(null);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  const websiteListEntries = useMemo(() => {
+    if (productBracket !== 'asoldi') return [];
+    const ids = effectiveListCategory ? [effectiveListCategory] : focusCategories.map((row) => row.id);
+    return ids.flatMap((id) => focusQueues[id] || []).filter((entry) => itemVisible(entry.item));
+  }, [productBracket, effectiveListCategory, focusCategories, focusQueues, itemVisible]);
   const ssuGroups = useMemo(
     () => groupDevelopmentItems(
       visibleSsuItems.filter((item) => !viewer.isAdmin || item.developerOwnerId),
@@ -362,11 +434,11 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
     () => (viewer.isAdmin ? visibleSsuItems.filter((item) => !item.developerOwnerId) : []),
     [visibleSsuItems, viewer.isAdmin]
   );
-  const visibleCount = visibleDevelopmentItems.length + visiblePreviewItems.length + visibleSsuItems.length;
   const visibleItems = useMemo(
-    () => [...visibleDevelopmentItems, ...visiblePreviewItems, ...visibleSsuItems],
-    [visibleDevelopmentItems, visiblePreviewItems, visibleSsuItems]
+    () => (productBracket === 'ssu' ? visibleSsuItems : websiteListEntries.map((entry) => entry.item)),
+    [productBracket, visibleSsuItems, websiteListEntries]
   );
+  const visibleCount = visibleItems.length;
   const visibleSelectableIds = visibleItems.map((item) => item.id);
   const allVisibleSelected = Boolean(visibleSelectableIds.length && visibleSelectableIds.every((id) => selectedIds.includes(id)));
   const selectedClients = visibleItems
@@ -399,11 +471,21 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
     toggleClientSelected(itemId);
   }
 
-  function renderClientCard(item: DevelopmentItem, kind: 'preview' | 'deployment', canWork: boolean, prefix: string) {
+  function renderClientCard(
+    item: DevelopmentItem,
+    kind: 'preview' | 'deployment',
+    canWork: boolean,
+    prefix: string,
+    focus?: { pager: React.ReactNode },
+  ) {
+    const threadKey = String(item.salesClientId || item.id || '');
     return (
       <DeveloperClientCard
         item={item}
         kind={kind}
+        layout={focus ? 'focus' : 'card'}
+        pager={focus?.pager}
+        unreadRequests={threadMap[threadKey]?.unread || 0}
         busyKey={busyKey}
         selected={selectedIds.includes(item.id)}
         websiteMakerBaseUrl={websiteMakerBaseUrl}
@@ -413,21 +495,18 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
         viewerAccountKey={viewer.accountKey}
         developers={developers}
         assignBusy={assignBusy}
-        compact
+        compact={!focus}
         peeked={Boolean(peekCardIds[item.id])}
         onPeek={() => togglePeekCard(item.id)}
         onAssign={(ownerId) => void assignDeveloper(item, ownerId)}
         onAcceptHandoff={() => void acceptHandoff(item)}
-        requestLabel={
-          threadMap[String(item.salesClientId || item.id || '')]?.lastKindLabel
-          || (threadMap[String(item.salesClientId || item.id || '')] ? 'Forespørsel' : '')
-        }
+        requestLabel={threadMap[threadKey]?.lastKindLabel || (threadMap[threadKey] ? 'Forespørsel' : '')}
         onToggleSelected={() => toggleClientSelected(item.id)}
-        onCardClick={(event) => handleClientCardClick(event, item.id)}
+        onCardClick={(event) => (focus ? undefined : handleClientCardClick(event, item.id))}
         onToggleStep={(entry, stepKey) => void toggleStep(entry, stepKey)}
         onReload={loadItems}
         onClientUpdated={patchDevelopmentClient}
-        onPreviewGoalReady={() => revealBucket(`${prefix}:noNextAction`)}
+        onPreviewGoalReady={() => (prefix === 'ssu' ? revealBucket(`${prefix}:noNextAction`) : undefined)}
         onError={setError}
         onNotice={setNotice}
       />
@@ -625,17 +704,20 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) return;
-      const next: Record<string, { lastKindLabel: string }> = {};
+      const next: Record<string, { lastKindLabel: string; unread: number }> = {};
       for (const row of Array.isArray(data.threads) ? data.threads : []) {
         const id = String(row.salesClientId || '').trim();
         if (!id) continue;
-        next[id] = { lastKindLabel: String(row.lastKindLabel || '') };
+        next[id] = {
+          lastKindLabel: String(row.lastKindLabel || ''),
+          unread: Number(viewer.isAdmin ? row.unreadForAdmin : row.unreadForDeveloper) || 0,
+        };
       }
       setThreadMap(next);
     } catch {
       // Keep the development list even if request threads fail.
     }
-  }, []);
+  }, [viewer.isAdmin]);
 
   useEffect(() => {
     void loadItems();
@@ -651,27 +733,27 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
   }, [items]);
 
   useEffect(() => {
-    if (!headerPanel && !productMenuOpen && !accountMenuOpen) return undefined;
+    if (!productMenuOpen && !accountMenuOpen) return undefined;
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node | null;
       if (target && headerShellRef.current?.contains(target)) return;
-      setHeaderPanel(null);
-      setProductMenuOpen(false);
-      setAccountMenuOpen(false);
-    };
-    const onScroll = (event: Event) => {
-      const target = event.target as Node | null;
-      if (target && headerShellRef.current?.contains(target)) return;
-      setHeaderPanel(null);
       setProductMenuOpen(false);
       setAccountMenuOpen(false);
     };
     document.addEventListener('pointerdown', onPointerDown);
-    window.addEventListener('scroll', onScroll, true);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      window.removeEventListener('scroll', onScroll, true);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [productMenuOpen, accountMenuOpen]);
+
+  useEffect(() => {
+    if (!headerPanel && !productMenuOpen && !accountMenuOpen) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      setHeaderPanel(null);
+      setProductMenuOpen(false);
+      setAccountMenuOpen(false);
     };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, [headerPanel, productMenuOpen, accountMenuOpen]);
 
   const pumpHandoffs = useCallback(async () => {
@@ -824,7 +906,7 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
 
   return (
     <div className="sales-clients-surface min-h-screen bg-[#1a1a1a] text-white">
-      <header ref={headerShellRef} className="sales-sticky-header sticky top-0 z-[70] border-b border-white/10 bg-[#161616] shadow-sm">
+      <header ref={headerShellRef} className="sales-sticky-header sticky top-0 z-[90] border-b border-white/10 bg-[#161616] shadow-sm">
         <div className="max-w-[1440px] mx-auto px-3 sm:px-5 py-2.5 flex items-center gap-2 sm:gap-3">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink-0 relative z-[80]">
             <img src="/media/Untitled-1.png" alt="Asoldi" className="h-8 sm:h-9 w-auto shrink-0" />
@@ -923,19 +1005,32 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
           </div>
         </div>
 
-        {headerPanel === 'filter' && (
-          <div className="border-t border-white/10 bg-[#1a1a1a]">
-            <div className="max-w-[1440px] mx-auto px-3 sm:px-5 py-3">
-              <form onSubmit={applySearch} className="rounded-xl border border-white/10 bg-black/20 p-2.5 sm:p-3 space-y-2.5 max-h-[70vh] overflow-y-auto">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-[11px] text-gray-400">
-                    Lukk: klikk Filter igjen, klikk under, eller scroll.
-                    {hasActiveFilters ? ` Viser ${visibleCount}.` : ''}
-                  </p>
-                  <button type="button" onClick={() => setHeaderPanel(null)} className="inline-flex items-center gap-1 text-xs text-gray-300 hover:text-white">
-                    <X size={12} /> Lukk
-                  </button>
-                </div>
+      </header>
+
+      <FocusHeaderPopup
+        open={headerPanel === 'filter'}
+        top={headerBarPx}
+        label="Filter"
+        hint={`Filter ligger over tavla og styrer ${isSsuBracket ? 'SSU-listen' : 'Alle kunder'}. Lukk med Filter, utenfor, eller Escape.${hasActiveFilters ? ` Viser ${visibleCount}.` : ''}`}
+        onClose={() => setHeaderPanel(null)}
+      >
+              <form onSubmit={applySearch} className="rounded-xl border border-white/10 bg-black/20 p-2.5 sm:p-3 space-y-2.5">
+                {!isSsuBracket ? (
+                  <label className="text-[11px] text-gray-400 block">
+                    <span className="block mb-1">Kategori</span>
+                    <select
+                      aria-label="Kategori"
+                      value={effectiveListCategory}
+                      onChange={(event) => setListCategoryOverride(event.target.value)}
+                      className="w-full rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+                    >
+                      <option value="">Alle kategorier</option>
+                      {focusCategories.map((meta) => (
+                        <option key={meta.id} value={meta.id}>{meta.label} ({(focusQueues[meta.id] || []).length})</option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
                 <div className="flex flex-col sm:flex-row gap-2">
                   <div className="relative flex-1">
                     <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -1171,10 +1266,7 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
                   onNotice={setNotice}
                 />
               </form>
-            </div>
-          </div>
-        )}
-      </header>
+      </FocusHeaderPopup>
 
       <div className="max-w-[1440px] mx-auto px-3 sm:px-6 py-4 space-y-4">
       {headerPanel !== 'filter' && (selectedIds.length > 0 || runningJobs > 0) && (
@@ -1208,27 +1300,113 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
         <p className="text-gray-400 text-center py-8">
           Ingen utviklerkunder ennå. Aktive salgskunder og signerte kontrakter vises her.
         </p>
-      ) : (
+      ) : isSsuBracket ? (
         <div className="space-y-8">
           {visibleCount === 0 ? (
             <p className="text-sm text-gray-500">
-              {hasActiveFilters
-                ? 'Ingen kunder matcher filteret.'
-                : isSsuBracket
-                  ? 'Ingen SSU-kunder.'
-                  : 'Ingen kunder her.'}
+              {hasActiveFilters ? 'Ingen kunder matcher filteret.' : 'Ingen SSU-kunder.'}
             </p>
-          ) : isSsuBracket ? (
-            renderTimeline(ssuUnassigned, ssuGroups, 'ssu', () => 'preview')
           ) : (
-            renderTimeline(
-              websiteUnassigned,
-              websiteGroups,
-              'website',
-              (item) => (developmentIds.has(item.id) ? 'deployment' : 'preview'),
-            )
+            renderTimeline(ssuUnassigned, ssuGroups, 'ssu', () => 'preview')
           )}
         </div>
+      ) : (
+        <>
+          <div className="flex flex-col gap-3" style={{ minHeight: `calc(100dvh - ${headerBarPx}px - 2rem)` }}>
+            <FocusBoardShell<DeveloperFocusEntry>
+              ariaLabel="Utviklertavle"
+              categories={focusCategories}
+              queues={focusQueues}
+              active={activeCategory}
+              onCategory={setCategory}
+              nowMs={nowMs}
+              statusFor={(entry) => developerStatus(entry, nowMs)}
+              detailFor={(entry) => (
+                <>
+                  <span>{entry.kind === 'preview' ? 'Preview' : 'Signert'}</span>
+                  {viewer.isAdmin && entry.item.developerOwnerId ? (
+                    <span>{developerOwnerDisplayName(entry.item.developerOwnerId, developers)}</span>
+                  ) : null}
+                  {threadMap[String(entry.item.salesClientId || entry.id)]?.unread ? (
+                    <span className="text-amber-300">Forespørsel</span>
+                  ) : null}
+                </>
+              )}
+              emptyText={(id) => FOCUS_EMPTY_TEXT[id] || 'Ingen kunder her.'}
+              focusRequest={focusRequest}
+              renderCard={(entry, pager) => renderClientCard(
+                entry.item,
+                entry.kind,
+                canWorkDevelopmentClient(viewer, entry.item),
+                'website',
+                { pager },
+              )}
+            />
+            <div className="mt-auto flex justify-center pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  if (listOpen) {
+                    setShowAllClients(false);
+                    return;
+                  }
+                  setShowAllClients(true);
+                  setListCategoryOverride(null);
+                }}
+                disabled={hasActiveFilters}
+                aria-expanded={listOpen}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-white/10 text-sm text-white hover:bg-white/15 disabled:opacity-60"
+                title={hasActiveFilters ? 'Listen er åpen fordi søk eller filter er på' : undefined}
+              >
+                {listOpen ? 'Skjul alle kunder' : `Vis alle kunder (${visibleCount})`}
+                <ChevronDown size={15} className={`transition-transform ${listOpen ? 'rotate-180' : ''}`} />
+              </button>
+            </div>
+          </div>
+
+          {listOpen ? (
+            <section className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+                <div>
+                  <h2 className="text-sm font-semibold text-white">Alle kunder</h2>
+                  <p className="text-[11px] text-gray-400">
+                    {effectiveListCategory
+                      ? `${focusCategories.find((meta) => meta.id === effectiveListCategory)?.label || 'Kategori'} · ${visibleCount} kunder. Fjern kategorifilteret i Filter for å se alle.`
+                      : 'Hele listen. Søk, filtrer og velg kunder for steg i Filter øverst.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setHeaderPanel('filter')}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs ${
+                    hasActiveFilters ? 'bg-[#FF5B00] text-white' : 'bg-white/10 text-white hover:bg-white/15'
+                  }`}
+                >
+                  <Search size={13} />
+                  {hasActiveFilters ? 'Filter er på' : 'Søk og filter'}
+                </button>
+              </div>
+              {websiteListEntries.length === 0 ? (
+                <p className="text-sm text-gray-500 text-center py-6">Ingen kunder matcher filteret.</p>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 items-start">
+                  {websiteListEntries.map((entry) => (
+                    <div key={entry.id} className="space-y-1">
+                      {renderClientCard(entry.item, entry.kind, canWorkDevelopmentClient(viewer, entry.item), 'website')}
+                      <button
+                        type="button"
+                        onClick={() => showOnBoard(entry.id)}
+                        className="text-[11px] text-gray-400 hover:text-white px-1"
+                      >
+                        Vis på tavla
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          ) : null}
+        </>
       )}
       </div>
     </div>

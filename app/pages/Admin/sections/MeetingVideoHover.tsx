@@ -9,8 +9,6 @@ type Props = {
   className?: string;
 };
 
-const VIDEO_MISSING = 'Videoen er ikke på disk ennå.';
-
 export function MeetingVideoHover({
   meetingId = '',
   hasVideo = false,
@@ -55,26 +53,22 @@ export function MeetingVideoHover({
         onClick={onClick}
       >
         {children}
-        {hovered ? (
+        {hovered && meetingId && hasVideo ? (
           <div
             className="absolute left-0 top-full z-40 mt-1 w-64 rounded-lg border border-white/15 bg-[#161616] p-2 shadow-xl"
             onMouseEnter={onEnter}
             onMouseLeave={onLeave}
             onClick={(event) => event.stopPropagation()}
           >
-            {meetingId && hasVideo ? (
-              <video
-                autoPlay
-                muted
-                playsInline
-                controls
-                preload="metadata"
-                src={firefliesMediaUrl(meetingId, 'video')}
-                className="w-full rounded-md bg-black max-h-[180px]"
-              />
-            ) : (
-              <p className="text-[11px] text-gray-300">{VIDEO_MISSING}</p>
-            )}
+            <video
+              autoPlay
+              muted
+              playsInline
+              controls
+              preload="metadata"
+              src={firefliesMediaUrl(meetingId, 'video')}
+              className="w-full rounded-md bg-black max-h-[180px]"
+            />
           </div>
         ) : null}
       </div>

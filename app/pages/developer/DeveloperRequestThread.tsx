@@ -42,11 +42,15 @@ type ThreadPayload = {
   messages: ThreadMessage[];
 };
 
-type ExtraMessage = {
+export type ThreadFeedGroup = 'iteration' | 'workshop' | 'log';
+export type ThreadKindFilter = 'all' | 'request' | ThreadFeedGroup;
+
+export type ExtraMessage = {
   id: string;
   at: string;
   authorLabel: string;
   text: string;
+  group?: ThreadFeedGroup;
 };
 
 type PanelProps = {
@@ -57,6 +61,10 @@ type PanelProps = {
   allowCommit?: boolean;
   layout?: 'panel' | 'side';
   extraMessages?: ExtraMessage[];
+  /** Show only requests, or only one group of extra messages. */
+  kindFilter?: ThreadKindFilter;
+  /** Replaces the default heading; an empty string hides it. */
+  heading?: string;
 };
 
 function formatWhen(value = '') {
@@ -113,6 +121,8 @@ export function RequestThreadPanel({
   allowCommit = false,
   layout = 'panel',
   extraMessages = [],
+  kindFilter = 'all',
+  heading,
 }: PanelProps) {
   const [thread, setThread] = useState<ThreadPayload | null>(null);
   const [text, setText] = useState('');
@@ -295,18 +305,25 @@ export function RequestThreadPanel({
   }
 
   const side = layout === 'side';
+  const atMs = (value: string) => {
+    const ms = new Date(value).getTime();
+    return Number.isFinite(ms) ? ms : 0;
+  };
   const timeline = [
-    ...(thread?.messages || []).map((message) => ({ ...message, source: 'request' as const })),
-    ...extraMessages.map((message) => ({
-      id: message.id,
-      at: message.at,
-      authorRole: 'developer' as const,
-      authorLabel: message.authorLabel,
-      text: message.text,
-      files: [] as ThreadFile[],
-      source: 'note' as const,
-    })),
-  ].sort((a, b) => new Date(a.at).getTime() - new Date(b.at).getTime());
+    ...(kindFilter === 'all' || kindFilter === 'request' ? thread?.messages || [] : [])
+      .map((message) => ({ ...message, source: 'request' as const })),
+    ...extraMessages
+      .filter((message) => kindFilter === 'all' || (kindFilter !== 'request' && (message.group || 'iteration') === kindFilter))
+      .map((message) => ({
+        id: message.id,
+        at: message.at,
+        authorRole: 'developer' as const,
+        authorLabel: message.authorLabel,
+        text: message.text,
+        files: [] as ThreadFile[],
+        source: 'note' as const,
+      })),
+  ].sort((a, b) => atMs(a.at) - atMs(b.at));
 
   const committedLabel = (file: ThreadFile) => {
     if (!file.committed) return '';
@@ -316,16 +333,18 @@ export function RequestThreadPanel({
 
   return (
     <div className={`rounded-2xl bg-black/20 border border-white/10 p-3 space-y-3 ${side ? 'h-full flex flex-col' : ''}`}>
-      <div>
-        <h4 className="text-xs font-semibold text-gray-200 uppercase tracking-wide">
-          {side ? 'Iterasjon' : 'Forespørsel'}
-        </h4>
-        {side ? null : (
-          <p className="text-[11px] text-gray-500 mt-0.5">
-            Meldinger og filer mellom kunde, admin og utvikler. Filer ligger her til noen legger dem inn.
-          </p>
-        )}
-      </div>
+      {heading === '' ? null : (
+        <div>
+          <h4 className="text-xs font-semibold text-gray-200 uppercase tracking-wide">
+            {heading || (side ? 'Iterasjon' : 'Forespørsel')}
+          </h4>
+          {side || heading ? null : (
+            <p className="text-[11px] text-gray-500 mt-0.5">
+              Meldinger og filer mellom kunde, admin og utvikler. Filer ligger her til noen legger dem inn.
+            </p>
+          )}
+        </div>
+      )}
 
       <div ref={listRef} className={`${side ? 'max-h-[420px] flex-1' : 'max-h-64'} overflow-y-auto space-y-2 pr-1`}>
         {timeline.length === 0 ? (

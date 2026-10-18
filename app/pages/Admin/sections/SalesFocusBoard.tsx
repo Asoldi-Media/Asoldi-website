@@ -95,13 +95,15 @@ type Props = {
   onNotSold: (client: SalesClient) => void;
   renderRecording: (client: SalesClient) => React.ReactNode;
   renderNotes: (client: SalesClient) => React.ReactNode;
+  /** Sales ops overflow: booking, mail, portal email, calendar/Fireflies, MyPhoner, preview, offer codes. Kundekort page 1 holds links and contact fields. */
+  renderDetails: (client: SalesClient) => React.ReactNode;
 };
 
 const HOUR_MS = 60 * 60 * 1000;
 
 const EMPTY_TEXT: Record<SalesFocusCategoryId, string> = {
   assign: 'Alle kunder har en selger.',
-  confirm: 'Alle møter er bekreftet.',
+  confirm: 'Ingen som trenger møtetid.',
   reminders: 'Ingen påminnelser å sende nå. Kunder med møte i morgen dukker opp her fra midnatt.',
   meetingsToday: 'Ingen møter i dag.',
   offer: 'Ingen kunder venter på tilbud.',
@@ -221,6 +223,9 @@ function entryStatus(entry: FocusEntry, nowMs: number): { text: string; tone: ke
     if (!hasTime) {
       if (state === 'overdue') return { text: `Tid ikke satt · ${since(dueAt, nowMs)}`, tone: 'red' };
       return { text: 'Tid ikke satt', tone: 'warn' };
+    }
+    if (entry.category === 'confirm') {
+      return { text: `Møte forfalt · sett ny tid · ${since(dueAt, nowMs)}`, tone: 'red' };
     }
     if (state === 'overdue') return { text: `Marker møtet holdt · ${when(dueAt, nowMs)}`, tone: 'red' };
     if (state === 'due') return { text: 'Møtet pågår', tone: 'green' };
@@ -627,8 +632,10 @@ function FocusCard(props: FocusCardProps) {
     onSecondary,
     onNotSold,
     renderNotes,
+    renderDetails,
   } = props;
   const { client } = entry;
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const isAssign = entry.category === 'assign';
   const isWon = entry.category === 'won';
   const meetingAt = (getSalesPlaybook(client, nowMs) as { meetingAt: string }).meetingAt;
@@ -938,6 +945,19 @@ function FocusCard(props: FocusCardProps) {
             />
           </div>
         )}
+
+        <div className="rounded-xl border border-white/10 bg-black/20 p-2.5">
+          <button
+            type="button"
+            onClick={() => setDetailsOpen((open) => !open)}
+            aria-expanded={detailsOpen}
+            className="w-full flex items-center justify-between gap-2 text-[10px] font-semibold uppercase tracking-wide text-gray-400 hover:text-white"
+          >
+            Details & tools
+            <ChevronDown size={14} className={`transition-transform ${detailsOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {detailsOpen ? <div className="mt-2">{renderDetails(client)}</div> : null}
+        </div>
       </div>
 
       <div className="space-y-3 min-w-0">

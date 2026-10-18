@@ -9,6 +9,7 @@ import {
 import { MakerRunTools } from './MakerRunTools';
 import { DeveloperGoalTimeline } from './DeveloperGoalTimeline';
 import { DeveloperRequestThread } from './DeveloperRequestThread';
+import { ClientNotesFeed, clientFeedMessages } from '../Admin/sections/ClientNotesFeed';
 import { DeveloperLanguageLockPopup } from './DeveloperLanguageLockPopup';
 import { DeveloperPagesPopup } from './DeveloperPagesPopup';
 import { DeveloperAuthImage, DeveloperClientBrief, DeveloperMediaLibrary, type BriefMediaFile, type MaterialDot } from './DeveloperClientBrief';
@@ -100,6 +101,10 @@ type Props = {
   compact?: boolean;
   peeked?: boolean;
   onPeek?: () => void;
+  /** focus = full card on the focus board, with requests and notes in a right-hand feed. */
+  layout?: 'card' | 'focus';
+  pager?: React.ReactNode;
+  unreadRequests?: number;
 };
 
 function GoalProgressIcon({ filled }: { filled: number }) {
@@ -172,7 +177,11 @@ export function DeveloperClientCard({
   compact = false,
   peeked = false,
   onPeek,
+  layout = 'card',
+  pager = null,
+  unreadRequests = 0,
 }: Props) {
+  const isFocus = layout === 'focus';
   const isDevelopmentList = kind === 'deployment';
   const goalKeys = isDevelopmentList ? DEVELOPER_WIN_GOAL_KEYS : DEVELOPER_PREVIEW_GOAL_KEYS;
   const contact = [item.contactPerson, item.contactPhone, item.contactEmail].filter(Boolean).join(' · ');
@@ -442,6 +451,15 @@ export function DeveloperClientCard({
       text: entry.text || '',
     })),
   ];
+  const feedMessages = useMemo(() => {
+    if (!isFocus) return [];
+    const workshop = item.workshop || null;
+    const iterationLog = workshop?.iterationLog?.length ? workshop.iterationLog : item.iterationLog || [];
+    return clientFeedMessages(
+      { ...item, workshop: workshop ? { ...workshop, iterationLog } : { iterationLog } } as unknown as Record<string, unknown>,
+      item.iterationTranscript ? { text: item.iterationTranscript, at: item.workshopHeldAt || item.rankAt || '' } : undefined,
+    );
+  }, [isFocus, item]);
 
   function chipQueueState(target: string) {
     const rows = queueItems.filter((entry) => (
@@ -860,7 +878,7 @@ export function DeveloperClientCard({
     );
   }
 
-  const showCompact = compact && !peeked;
+  const showCompact = compact && !peeked && !isFocus;
   const showFoldDueDate = Boolean(
     item.contractSigned
     && String(item.developerOwnerId || '').trim()
@@ -872,13 +890,13 @@ export function DeveloperClientCard({
   const nextActionWhen = formatNextActionWhen(String(item.nextActionAt || ''));
   const nextActionFormat = formatActionFormatLabel(String(item.nextActionFormat || ''));
 
-  return (
+  const card = (
     <div
-      onClick={onCardClick}
-      className={`rounded-2xl bg-[#2a2a2a] border flex flex-col cursor-pointer min-w-0 ${
-        showCompact ? 'p-2.5 gap-1' : 'p-3 sm:p-4 gap-3'
+      onClick={isFocus ? undefined : onCardClick}
+      className={`rounded-2xl border flex flex-col min-w-0 ${
+        isFocus ? 'bg-black/20 p-3 gap-3' : `bg-[#2a2a2a] cursor-pointer ${showCompact ? 'p-2.5 gap-1' : 'p-3 sm:p-4 gap-3'}`
       } ${
-        selected ? `hover:bg-[#323232] ${CARD_SELECTED}` : 'border-white/10 hover:bg-[#323232]'
+        selected ? `${isFocus ? '' : 'hover:bg-[#323232] '}${CARD_SELECTED}` : `border-white/10 ${isFocus ? '' : 'hover:bg-[#323232]'}`
       }`}
     >
       <div className="min-w-0">
@@ -891,7 +909,7 @@ export function DeveloperClientCard({
             aria-label={`Select ${item.businessName || 'client'}`}
             className="h-4 w-4 shrink-0 accent-[#FF5B00] cursor-pointer"
           />
-          <h3 className="text-white font-semibold truncate min-w-0 flex-1 text-sm sm:text-base">{item.businessName}</h3>
+          <h3 className={`text-white font-semibold truncate min-w-0 flex-1 ${isFocus ? 'text-lg sm:text-xl' : 'text-sm sm:text-base'}`}>{item.businessName}</h3>
           {!showCompact && isAdmin && item.developerOwnerId ? (
             <span className="shrink-0 px-2 py-0.5 rounded text-[11px] border border-white/10 text-gray-300">
               {developerOwnerDisplayName(item.developerOwnerId, developers)}
@@ -902,6 +920,7 @@ export function DeveloperClientCard({
               {requestLabel}
             </span>
           ) : null}
+          {pager ? <div className="ml-auto shrink-0">{pager}</div> : null}
         </div>
         {showFoldDueDate && dueLabel ? (
           <p className={`text-left text-xs ${showCompact ? 'mt-1' : 'mt-1.5'} ${dueOverdue ? 'text-red-300' : 'text-gray-300'}`}>
@@ -1244,7 +1263,7 @@ export function DeveloperClientCard({
               </>
             )}
           </div>
-          {isDevelopmentList ? (
+          {isDevelopmentList && !isFocus ? (
             <div onClick={(event) => event.stopPropagation()}>
               <DeveloperRequestThread
                 salesClientId={salesClientId}
@@ -1381,6 +1400,28 @@ export function DeveloperClientCard({
           onClose={() => setPagesOpen(false)}
         />
       ) : null}
+    </div>
+  );
+
+  if (!isFocus) return card;
+  return (
+    <div className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+      {card}
+      <div className="min-w-0">
+        {salesClientId ? (
+          <ClientNotesFeed
+            salesClientId={salesClientId}
+            authHeaders={developmentAuthHeaders()}
+            messages={feedMessages}
+            unread={unreadRequests}
+            makerRunId={liveRunId}
+            websiteMakerBaseUrl={websiteMakerBaseUrl}
+            allowCommit
+          />
+        ) : (
+          <p className="text-xs text-gray-500">Ingen salgskunde koblet — forespørsler trenger en salgskunde.</p>
+        )}
+      </div>
     </div>
   );
 }

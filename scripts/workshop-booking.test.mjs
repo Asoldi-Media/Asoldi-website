@@ -232,8 +232,10 @@ test('booking helper and Admin UI never treat startDate as a booking or copy Sal
   assert.match(salesSrc, /ownerId=\{calendarPreviewOwnerId\}/);
 
   const adminSrc = readNearby('../app/pages/Admin/sections/AdminBoardSection.tsx');
-  assert.match(adminSrc, /Ingen workshop avtalt/);
-  assert.match(adminSrc, /Ikke listet ennå/);
+  assert.match(adminSrc, /ADMIN_FOCUS_CATEGORIES/);
+  const focusSrc = readNearby('../lib/admin-focus-board.js');
+  assert.match(focusSrc, /Ingen workshop avtalt/);
+  assert.match(focusSrc, /Ikke listet ennå/);
   assert.match(adminSrc, /AdminRequestInbox/);
   assert.match(adminSrc, /data-admin-card-actions/);
   assert.match(adminSrc, /WorkshopAdminActionRow/);

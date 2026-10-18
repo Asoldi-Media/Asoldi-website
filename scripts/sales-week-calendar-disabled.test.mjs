@@ -47,7 +47,7 @@ test('week calendar events load on open; free-busy stays off so Admin/Sales list
   assert.match(salesUi, /toggleHeaderPanel\('calendar'\)/);
   assert.match(salesUi, /<SalesCalendarWeek/);
   assert.match(salesUi, /calendarCombined/);
-  assert.match(salesUi, /if \(headerPanel === 'calendar'\) return;/);
+  assert.equal(salesUi.includes("addEventListener('scroll'"), false);
   assert.equal(salesUi.includes('/google/embed'), false);
   assert.equal(salesUi.includes('google/events'), false);
 
@@ -112,4 +112,23 @@ test('Admin Sales tab keeps the list mounted and retries the client fetch', () =
   assert.match(salesUi, /expireFatCookies/);
   assert.match(salesUi, /asoldi-sales-list-v1/);
   assert.equal(salesUi.includes('AbortSignal.timeout(12_000)'), false);
+});
+
+test('sales Details & tools keeps ops tools and skips Kundekort page 1 links', () => {
+  const salesUi = readFileSync(join(root, 'app/pages/Admin/sections/SalesClientsSection.tsx'), 'utf8');
+  const start = salesUi.indexOf('function renderSalesClientDetails');
+  const end = salesUi.indexOf('function renderSalesClientCard');
+  assert.ok(start > 0 && end > start);
+  const details = salesUi.slice(start, end);
+  assert.match(details, /Booket av/);
+  assert.match(details, /Vis e-posthandlinger/);
+  assert.match(details, /E-post på asoldi\.com/);
+  assert.match(details, /Fireflies/);
+  assert.match(details, /Gi tilbud/);
+  assert.match(details, /openClientFlow\(client, 1\)/);
+  assert.equal(details.includes('QuickFill links'), false);
+  assert.equal(details.includes('instagramUrl'), false);
+  assert.equal(details.includes('facebookUrl'), false);
+  assert.equal(details.includes('googleBusinessProfile'), false);
+  assert.equal(details.includes('Listen in Sales UI'), false);
 });
