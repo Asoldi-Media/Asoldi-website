@@ -1,4 +1,5 @@
 import React from 'react';
+import { CallTimesSection } from './CallTimesSection';
 import {
   AboutUsSection,
   CalendarSection,
@@ -100,10 +101,16 @@ const PRODUCT_SECTIONS = [
   },
 ] as const;
 
-export function AnsattAsoldiContent() {
+export function AnsattAsoldiContent({
+  identity = null,
+}: {
+  identity?: { name?: string; username?: string; fromEmail?: string } | null;
+}) {
   return (
     <>
       <WelcomeSection title="Velkommen som telefonselger hos Asoldi" />
+
+      <CallTimesSection identity={identity} />
 
       <CalendarSection />
 

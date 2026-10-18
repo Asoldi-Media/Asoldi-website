@@ -21,6 +21,12 @@ export const Ansatt = () => {
   const navigate = useNavigate();
   const [allowed, setAllowed] = useState<boolean | null>(null);
   const [employeeProduct, setEmployeeProduct] = useState<EmployeeProduct>('asoldi');
+  const [staffRole, setStaffRole] = useState<string>('employee');
+  const [identity, setIdentity] = useState<{
+    name?: string;
+    username?: string;
+    fromEmail?: string;
+  } | null>(null);
 
   useEffect(() => {
     const t = getEmployeeToken();
@@ -39,14 +45,16 @@ export const Ansatt = () => {
         }
         if (res.ok) {
           const data = await res.json();
-          if (data.user?.role === 'sales') {
-            navigate('/sales', { replace: true });
-            return;
-          }
           if (data.user?.role === 'developer') {
             navigate('/developer', { replace: true });
             return;
           }
+          setStaffRole(data.user?.role || 'employee');
+          setIdentity({
+            name: data.user?.name,
+            username: data.user?.username,
+            fromEmail: data.user?.fromEmail,
+          });
           setEmployeeProduct(data.user?.employeeProduct === 'ssu' ? 'ssu' : 'asoldi');
           setAllowed(true);
         } else {
@@ -147,17 +155,24 @@ export const Ansatt = () => {
             <span className="text-gray-400">|</span>
             <span>Ansatt</span>
           </Link>
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg text-gray-400 hover:bg-white/10 hover:text-white"
-          >
-            <LogOut size={18} /> Logg ut
-          </button>
+          <div className="flex items-center gap-2">
+            {staffRole === 'sales' ? (
+              <Link to="/sales" className="px-3 py-2 rounded-lg text-gray-400 hover:bg-white/10 hover:text-white text-sm">
+                Salgstavle
+              </Link>
+            ) : null}
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-gray-400 hover:bg-white/10 hover:text-white"
+            >
+              <LogOut size={18} /> Logg ut
+            </button>
+          </div>
         </header>
 
         <main className="max-w-5xl mx-auto px-4 py-8 pb-24">
-          {employeeProduct === 'ssu' ? <AnsattSsuContent /> : <AnsattAsoldiContent />}
+          {employeeProduct === 'ssu' ? <AnsattSsuContent /> : <AnsattAsoldiContent identity={identity} />}
         </main>
       </div>
 

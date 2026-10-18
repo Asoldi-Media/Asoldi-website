@@ -12513,12 +12513,15 @@ app.get('/api/auth/me', async (req, res) => {
   if (!['employee', 'sales', 'developer'].includes(liveRole)) {
     return res.status(403).json({ message: 'Access denied. Staff role required.' });
   }
+  const publicUser = store.toPublicUser(user);
   res.json({
     user: {
       id: user.id,
       username: user.username,
+      name: publicUser.name,
+      fromEmail: publicUser.fromEmail,
       role: liveRole,
-      employeeProduct: liveRole === 'employee' ? store.toPublicUser(user).employeeProduct : undefined,
+      employeeProduct: liveRole === 'employee' ? publicUser.employeeProduct : undefined,
     },
   });
 });
