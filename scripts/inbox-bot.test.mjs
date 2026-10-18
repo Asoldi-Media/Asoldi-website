@@ -15,13 +15,13 @@ const { matchSalesClient, parseEmailAddress } = await import('../lib/inbox-bot/m
 const { pdfLooksLikeAsoldiContract } = await import('../lib/inbox-bot/pdf-text.js');
 const { fingerprintPdfBuffer, scoreContractSigning, inspectInboundContract } = await import('../lib/inbox-bot/inspect-contract.js');
 const { resolveMailboxSource } = await import('../lib/inbox-bot/mail.js');
-const { ingestInboxMessage, peekInboxMailbox, presentInboxBotStatus, presentInboxForClient, stripSecrets } = await import('../lib/inbox-bot/index.js');
+const { ingestInboxMessage, markOlderSchedulingDuplicates, peekInboxMailbox, presentInboxBotStatus, presentInboxForClient, stripSecrets } = await import('../lib/inbox-bot/index.js');
 const { buildContractPdf } = await import('../lib/offer-contract-pdf.js');
 const { appendMediaToBank } = await import('../lib/client-media-store.js');
 const { persistMediaFiles } = await import('../lib/ai-assistant/service.js');
 const { normalizeNote } = await import('../lib/ai-assistant/gather.js');
 const { extractAttachmentNames, collectGmailAttachmentParts, presentGmailMessage } = await import('../lib/gmail-readonly.js');
-const { FETCH_TIMEOUT_MS, LOGIN_TIMEOUT_MS, imapCredsPresent, parseRfc822 } = await import('../lib/inbox-bot/mail-imap.js');
+const { FETCH_TIMEOUT_MS, LOGIN_TIMEOUT_MS, imapCredsPresent, indexOfImapNeedle, parseRfc822 } = await import('../lib/inbox-bot/mail-imap.js');
 const inboxStore = await import('../lib/inbox-bot/store.js');
 
 const PORTAL_USER = 'portal-inbox-1';
@@ -207,10 +207,10 @@ test('scan-sized PDF with extra pages and images scores likely signed', () => {
 });
 
 test('Hostinger IMAP is used before Gmail when IMAP passwords exist', async () => {
-  process.env.INBOX_IMAP_DAMIAN_PASS = 'test-pass';
+  process.env.INBOX_IMAP_ALEXANDER_PASS = 'test-pass';
   let probedGmail = false;
   try {
-    const source = await resolveMailboxSource('damian@asoldi.com', {
+    const source = await resolveMailboxSource('alexander@asoldi.com', {
       listImap: async () => ({ skipped: false, messages: [{ id: '1' }] }),
       probeGmail: async () => {
         probedGmail = true;
@@ -221,7 +221,7 @@ test('Hostinger IMAP is used before Gmail when IMAP passwords exist', async () =
     assert.equal(source, 'imap');
     assert.equal(probedGmail, false);
   } finally {
-    delete process.env.INBOX_IMAP_DAMIAN_PASS;
+    delete process.env.INBOX_IMAP_ALEXANDER_PASS;
   }
 });
 
@@ -324,14 +324,64 @@ test('RFC822 parser reads a text part and a base64 attachment', () => {
   assert.ok(parsed.attachments[0].buffer.length > 0);
 });
 
+test('RFC822 parser decodes encoded subjects, names, and UTF-8 quoted-printable bodies', () => {
+  const raw = [
+    'From: =?UTF-8?Q?Bjarte_=C3=98grey?= <bjarte@example.no>',
+    'Subject: =?utf-8?Q?Re:_P=C3=A5minnelse:_Online_m=C3=B8te?= =?utf-8?Q?_om_24_timer?=',
+    'Content-Type: text/plain; charset="utf-8"',
+    'Content-Transfer-Encoding: quoted-printable',
+    '',
+    'Det passer fint, vi sees p=C3=A5 m=C3=B8tet.',
+    '',
+  ].join('\r\n');
+  const parsed = parseRfc822(raw);
+  assert.equal(parsed.subject, 'Re: Påminnelse: Online møte om 24 timer');
+  assert.equal(parsed.from, 'Bjarte Øgrey <bjarte@example.no>');
+  assert.equal(parsed.text, 'Det passer fint, vi sees på møtet.');
+});
+
+test('replies are read without the quoted thread: cancels never book, a moved time books the new time', async () => {
+  const { classifyInboxWrite, freshReplyText } = await import('../lib/inbox-bot/write.js');
+  const client = { progression: {} };
+  const cancelToday = 'Blir mailene mine mottatt? Jeg kan ikke idag likevel Kari Founder Tel.+47 92 80 78 81 ons. 14. okt. 2026 kl. 15:47 skrev Kari <kari@example.no>: > Hei igjen';
+  assert.equal(freshReplyText(cancelToday).includes('15:47'), false);
+  assert.equal(classifyInboxWrite(freshReplyText(cancelToday), client, { now: new Date('2026-10-14T14:00:00Z') }).cancel, true);
+
+  const cancelTomorrow = 'Hei! Jeg har svart deg flere ganger at jeg må avlyse møtet i morgen. Mvh Marie 15. okt. 2026 kl. 12:00 skrev Alexander fra Asoldi <alexander@asoldi.com>: Påminnelse: Online møte';
+  const cancelled = classifyInboxWrite(freshReplyText(cancelTomorrow), client, { now: new Date('2026-10-15T12:30:00Z') });
+  assert.equal(cancelled.intent, 'sales_propose');
+  assert.equal(cancelled.cancel, true);
+  assert.equal(cancelled.day, null);
+
+  const moved = 'Hei, Kan vi flytte møtet til onsdag neste uke istedet? Gjerne kl. 15. Med vennlig hilsen Ali ________________________________ Fra: Alexander (Google Kalender) <calendar-notification@google.com> Sendt: fredag 16. oktober 2026 13:59';
+  const booked = classifyInboxWrite(freshReplyText(moved), client, { now: new Date('2026-10-16T12:00:00Z') });
+  assert.equal(booked.intent, 'sales_book');
+  assert.equal(booked.dueAt, '2026-10-21T13:00:00.000Z');
+
+  const drop = classifyInboxWrite('Avlys det hele, vi er ikke interessert', client);
+  assert.equal(drop.intent, 'walk_away');
+});
+
+test('HTML mail drops style blocks and decodes entities', async () => {
+  const { htmlToText } = await import('../lib/inbox-bot/mail-imap.js');
+  const text = htmlToText('<head><style>.x{color:red}</style></head><p>Hei&nbsp;der &lt;a@b.no&gt;</p>').replace(/\s+/g, ' ').trim();
+  assert.equal(text, 'Hei der <a@b.no>');
+});
+
 test('missing IMAP pass is not configured', () => {
-  const prev = process.env.INBOX_IMAP_DAMIAN_PASS;
-  delete process.env.INBOX_IMAP_DAMIAN_PASS;
-  try {
-    assert.equal(imapCredsPresent('damian@asoldi.com'), false);
-  } finally {
-    if (prev) process.env.INBOX_IMAP_DAMIAN_PASS = prev;
-  }
+  assert.equal(imapCredsPresent('alexander@asoldi.com', {}), false);
+});
+
+test('only Alexander is read for now, even if a Damian pass exists', () => {
+  assert.equal(imapCredsPresent('damian@asoldi.com', { INBOX_IMAP_DAMIAN_PASS: 'x' }), false);
+  assert.equal(imapCredsPresent('alexander@asoldi.com', { INBOX_IMAP_ALEXANDER_PASS: 'x' }), true);
+});
+
+test('a one-line tagged LOGIN reply is found at the start of the buffer', () => {
+  const find = (text) => indexOfImapNeedle(Buffer.from(text), Buffer.from('ASX1 '), true);
+  assert.equal(find('ASX1 OK [CAPABILITY IMAP4rev1] Logged in\r\n'), 0);
+  assert.equal(find('* FLAGS (\\Seen)\r\nASX1 OK done\r\n'), 17);
+  assert.equal(find('body mentions XASX1 here\r\n'), -1);
 });
 
 test('LOGIN timeout stays short and FETCH is longer', () => {
@@ -340,16 +390,15 @@ test('LOGIN timeout stays short and FETCH is longer', () => {
 });
 
 test('status reports configured without leaking the password', async () => {
-  process.env.INBOX_IMAP_DAMIAN_PASS = 'super-secret-pass';
-  process.env.INBOX_IMAP_ALEXANDER_PASS = 'other-secret';
+  process.env.INBOX_IMAP_ALEXANDER_PASS = 'super-secret-pass';
   try {
     const payload = await presentInboxBotStatus({
       probeLogin: async (mailbox) => ({ mailbox, configured: true, ok: true, reason: '', source: 'imap' }),
     });
     const raw = JSON.stringify(payload);
     assert.equal(raw.includes('super-secret-pass'), false);
-    assert.equal(raw.includes('other-secret'), false);
-    assert.equal(payload.mailboxes.length, 2);
+    assert.equal(payload.mailboxes.length, 1);
+    assert.equal(payload.mailboxes[0].mailbox, 'alexander@asoldi.com');
     assert.equal(payload.mailboxes[0].ok, true);
     assert.equal(Object.hasOwn(payload.mailboxes[0], 'pass'), false);
     assert.deepEqual(
@@ -357,7 +406,6 @@ test('status reports configured without leaking the password', async () => {
       { mailbox: 'damian@asoldi.com' }
     );
   } finally {
-    delete process.env.INBOX_IMAP_DAMIAN_PASS;
     delete process.env.INBOX_IMAP_ALEXANDER_PASS;
   }
 });
@@ -423,4 +471,109 @@ test('peek proposes a sales auto-reply for a clock time without filing', async (
   assert.equal(peeked.messages[0].intent, 'sales_book');
   assert.equal(peeked.messages[0].destination, 'auto-reply:sales_book');
   assert.equal(inboxStore.isProcessed('alexander@asoldi.com', 'imap-peek-time'), false);
+});
+
+test('cancel proposes new times, adds Ny møtetid, and only the newest mail from that sender gets a reply', async () => {
+  const client = seedClient({ id: 'sale-cancel-1', contactEmail: 'marie@example.com' });
+  const now = new Date('2026-10-15T12:30:00.000Z');
+  const sent = [];
+  const older = {
+    id: 'imap-cancel-old',
+    mailbox: 'alexander@asoldi.com',
+    from: 'marie@example.com',
+    subject: 'Re: Påminnelse',
+    text: 'Jeg må avlyse møtet i morgen.',
+    mailAt: '2026-10-15T10:00:00.000Z',
+  };
+  const newer = {
+    ...older,
+    id: 'imap-cancel-new',
+    text: 'Jeg har svart deg flere ganger at jeg må avlyse møtet i morgen. Mvh Marie',
+    mailAt: '2026-10-15T12:00:00.000Z',
+  };
+  const queued = markOlderSchedulingDuplicates([older, newer], { now });
+  assert.equal(queued.find((row) => row.id === 'imap-cancel-old').skipWrite, true);
+  assert.equal(Boolean(queued.find((row) => row.id === 'imap-cancel-new').skipWrite), false);
+
+  const first = await ingestInboxMessage(queued.find((row) => row.id === 'imap-cancel-new'), {
+    now,
+    sendEmail: async (mail) => { sent.push(mail); },
+    queryBusy: async () => ({ busy: [] }),
+  });
+  const skip = await ingestInboxMessage(queued.find((row) => row.id === 'imap-cancel-old'), {
+    now,
+    sendEmail: async (mail) => { sent.push(mail); },
+    queryBusy: async () => ({ busy: [] }),
+  });
+  assert.equal(first.kind, 'sales_propose');
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].text, /stryker vi den tiden/i);
+  assert.match(sent[0].text, /30 minutter/);
+  assert.equal(skip.reason, 'older-same-thread');
+  const live = sales.getSalesClientById(client.id);
+  assert.ok((live.nextActions || []).some((row) => /ny møtetid|finn møtetid/i.test(row.name || '') && !row.doneAt));
+});
+
+test('failed send stamps the card; changing the email clears it', () => {
+  const client = seedClient({ id: 'sale-bounce-1', contactEmail: 'bad@example.no' });
+  sales.noteSalesContactEmailSend({ to: 'bad@example.no', ok: false, error: '550 unknown recipient' });
+  assert.match(sales.getSalesClientById(client.id).contactEmailError.message, /550/);
+  sales.updateSalesClient(client.id, { contactEmail: 'good@example.com' });
+  assert.equal(sales.getSalesClientById(client.id).contactEmailError, null);
+});
+
+test('walk-away parks a 1-week checkup instead of proposing slots', async () => {
+  const { mergeWriteDecision } = await import('../lib/inbox-bot/decide.js');
+  const merged = mergeWriteDecision(
+    { intent: 'sales_propose', cancel: true, _fresh: 'Avlys det hele' },
+    { intent: 'walk_away', reply: 'Skjønner, synd det ikke passer. Hva er grunnen? Vi tar en sjekk om en uke.', checkupFormat: 'sms' },
+    { client: {} },
+  );
+  assert.equal(merged.intent, 'walk_away');
+  assert.equal(merged.checkupFormat, 'sms');
+
+  const client = seedClient({ id: 'sale-walkaway-1', contactEmail: 'drop@example.com' });
+  const sent = [];
+  const result = await ingestInboxMessage({
+    id: 'imap-walkaway-1',
+    mailbox: 'alexander@asoldi.com',
+    from: 'drop@example.com',
+    subject: 'Re: møte',
+    text: 'Avlys det hele, vi er ikke interessert.',
+    mailAt: '2026-10-15T12:00:00.000Z',
+  }, {
+    now: new Date('2026-10-15T12:00:00.000Z'),
+    sendEmail: async (mail) => { sent.push(mail); },
+    queryBusy: async () => ({ busy: [] }),
+    decideAi: async () => ({
+      intent: 'walk_away',
+      reply: 'Skjønner. Synd det ikke passer nå. Hva er grunnen, om du vil si det? Vi tar en sjekk om en uke.',
+      checkupFormat: 'email',
+    }),
+  });
+  assert.equal(result.kind, 'walk_away');
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].text, /synd/i);
+  assert.equal(sent[0].text.includes('10:00'), false);
+  const live = sales.getSalesClientById(client.id);
+  const checkup = (live.nextActions || []).find((row) => /oppsjekk/i.test(row.name || ''));
+  assert.ok(checkup);
+  assert.equal(checkup.format, 'email');
+  assert.equal(checkup.dueAt, '2026-10-22T07:00:00.000Z');
+});
+
+test('weekday slot picker skips the weekend', async () => {
+  const { pickFreeSlotsAhead } = await import('../lib/inbox-bot/slots.js');
+  const slots = pickFreeSlotsAhead({
+    now: new Date('2026-10-16T16:00:00.000Z'),
+    durationMin: 60,
+    busy: [],
+    count: 2,
+    days: 5,
+  });
+  assert.ok(slots.length >= 2);
+  assert.ok(slots.every((iso) => {
+    const day = new Date(iso).getUTCDay();
+    return day !== 0 && day !== 6;
+  }));
 });

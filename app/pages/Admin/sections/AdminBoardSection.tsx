@@ -115,6 +115,27 @@ type ThreadSummary = {
   unreadForAdmin: number;
 };
 
+type InboxMailboxStatus = {
+  mailbox: string;
+  configured: boolean;
+  ok: boolean;
+  reason: string;
+};
+
+function inboxMailboxLabel(mailbox = '') {
+  const email = String(mailbox || '').toLowerCase();
+  if (email.startsWith('damian@')) return 'Damian';
+  if (email.startsWith('alexander@')) return 'Alexander';
+  return email;
+}
+
+function inboxMailboxLine(row: InboxMailboxStatus) {
+  const name = inboxMailboxLabel(row.mailbox);
+  if (!row.configured) return `${name} IMAP mangler`;
+  if (row.ok) return `${name} IMAP OK`;
+  return `${name} IMAP ${row.reason || 'feil'}`;
+}
+
 function AdminBoardCard({
   client,
   compact,
@@ -164,20 +185,8 @@ function AdminBoardCard({
     }
   }
 
-  async function sendDeskMail(kind: string) {
-    setBusy(kind);
-    setError('');
-    try {
-      const data = await request(`/admin/sales/${encodeURIComponent(client.id)}/workshop/desk-email`, {
-        method: 'POST',
-        body: JSON.stringify({ kind }),
-      });
-      if ((data as { client?: SalesClient }).client) onClient((data as { client: SalesClient }).client);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Kunne ikke sende e-posten.');
-    } finally {
-      setBusy('');
-    }
+  function openDeskEmail(template: string) {
+    navigate(`/sales/email?clientId=${encodeURIComponent(client.id)}&template=${encodeURIComponent(template)}&from=admin`);
   }
 
   return (
@@ -293,7 +302,7 @@ function AdminBoardCard({
                   {showWorkshopMail ? (
                     <button
                       type="button"
-                      onClick={() => navigate(`/sales/email?clientId=${encodeURIComponent(client.id)}&template=workshop`)}
+                      onClick={() => openDeskEmail('workshop')}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
                     >
                       Workshop-e-post
@@ -302,7 +311,7 @@ function AdminBoardCard({
                   {showIterationMail ? (
                     <button
                       type="button"
-                      onClick={() => navigate(`/sales/email?clientId=${encodeURIComponent(client.id)}&template=iteration`)}
+                      onClick={() => openDeskEmail('iteration')}
                       className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
                     >
                       Iterasjonsmøte-e-post
@@ -317,11 +326,10 @@ function AdminBoardCard({
                     <button
                       key={kind}
                       type="button"
-                      disabled={Boolean(busy)}
-                      onClick={() => void sendDeskMail(kind)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
+                      onClick={() => openDeskEmail(kind)}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
                     >
-                      {busy === kind ? <Loader2 size={13} className="animate-spin" /> : <Mail size={13} />}
+                      <Mail size={13} />
                       {label}
                     </button>
                   ))}
@@ -369,6 +377,7 @@ export function AdminBoardSection() {
   const [onlyWithRequests, setOnlyWithRequests] = useState(false);
   const [threadMap, setThreadMap] = useState<Record<string, ThreadSummary>>({});
   const [inboxPendingContracts, setInboxPendingContracts] = useState(0);
+  const [inboxMailboxes, setInboxMailboxes] = useState<InboxMailboxStatus[]>([]);
   const [headerPanel, setHeaderPanel] = useState<HeaderPanel>(null);
   const [peekCardIds, setPeekCardIds] = useState<Record<string, boolean>>({});
   const headerShellRef = useRef<HTMLDivElement | null>(null);
@@ -395,6 +404,20 @@ export function AdminBoardSection() {
     setInboxPendingContracts(Number(data.inboxPendingContracts) || next.reduce((sum, client) => sum + (client.inboxBot?.pendingContracts || 0), 0));
   }, []);
 
+  const loadInboxStatus = useCallback(async () => {
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), 10000);
+    try {
+      const data = await request('/admin/inbox-bot/status', { signal: controller.signal });
+      const list = Array.isArray(data.mailboxes) ? (data.mailboxes as InboxMailboxStatus[]) : [];
+      setInboxMailboxes(list);
+    } catch {
+      // Board still loads without IMAP status.
+    } finally {
+      window.clearTimeout(timer);
+    }
+  }, []);
+
   const loadThreads = useCallback(async () => {
     try {
       const response = await fetch(`${API}/admin/dev-requests`, { headers: authHeaders() });
@@ -416,6 +439,10 @@ export function AdminBoardSection() {
       // Keep the board even if the request list is unavailable.
     }
   }, []);
+
+  useEffect(() => {
+    void loadInboxStatus();
+  }, [loadInboxStatus]);
 
   useEffect(() => {
     let active = true;
@@ -488,6 +515,11 @@ export function AdminBoardSection() {
                 Website ({boardClients.length})
                 {inboxPendingContracts ? (
                   <span className="text-amber-300"> · Kontrakt ({inboxPendingContracts})</span>
+                ) : null}
+                {inboxMailboxes.length ? (
+                  <span className={inboxMailboxes.every((row) => row.ok) ? 'text-gray-300' : 'text-amber-300'}>
+                    {' · '}Innboks: {inboxMailboxes.map(inboxMailboxLine).join(' · ')}
+                  </span>
                 ) : null}
               </p>
             </div>
@@ -613,8 +645,8 @@ export function AdminBoardSection() {
           <div className="border-t border-white/10 bg-[#1a1a1a]">
             <div className="max-w-[1440px] mx-auto px-3 sm:px-5 py-3">
               <SalesCalendarWeek
-                workshopCalendar
-                ownerLabel="Damian"
+                combined
+                ownerLabel="alle selgere"
                 isOwnCalendar
                 onConnect={() => {}}
               />

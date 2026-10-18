@@ -18,6 +18,7 @@ import {
   MEETING_TIME_BACKFILL_TARGETS,
   normalizeMeetingAtSource,
   normalizeSecondaryInterest,
+  clientMeetingAtIso,
   sameMeetingInstant,
   salesProgressBlockedReason as nextActionProgressBlockedReason,
 } from '../lib/sales-next-actions.js';
@@ -87,6 +88,22 @@ export function sanitizeSalesNotes(value = '') {
     .replace(/\u0000/g, '')
     .trim()
     .slice(0, MAX_SALES_NOTES_LENGTH);
+}
+
+function normalizeContactEmailError(raw = null, contactEmail = '') {
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw)
+    ? raw
+    : (raw ? { message: String(raw) } : null);
+  const message = sanitizeText(source?.message).slice(0, 200);
+  if (!message) return null;
+  const to = sanitizeText(source?.to).toLowerCase();
+  const email = sanitizeText(contactEmail).toLowerCase();
+  if (to && email && to !== email) return null;
+  return {
+    message,
+    at: sanitizeText(source?.at),
+    to: to || email,
+  };
 }
 
 function normalizeWebsiteDomain(value = '') {
@@ -514,6 +531,24 @@ function normalizeSentContractFingerprint(raw = {}) {
   };
 }
 
+const SALES_MISSED_KINDS = ['noShow', 'skipped', 'auto'];
+
+/** Checklist steps that have no next-action row of their own. */
+function normalizeSalesPlaybook(raw) {
+  const iso = (value) => {
+    const textValue = sanitizeText(value);
+    return Number.isFinite(Date.parse(textValue)) ? textValue : '';
+  };
+  const missedKind = SALES_MISSED_KINDS.includes(sanitizeText(raw?.missedKind)) ? sanitizeText(raw?.missedKind) : '';
+  return {
+    readUpAt: iso(raw?.readUpAt),
+    missedKind,
+    missedAt: iso(raw?.missedAt),
+    missedMeetingAt: iso(raw?.missedMeetingAt),
+    missedCalledAt: iso(raw?.missedCalledAt),
+  };
+}
+
 function normalizeSalesClient(raw = {}) {
   const meetingMode = normalizeMeetingMode(raw.meetingMode);
   const agreedTime = Boolean(raw.agreedTime);
@@ -549,6 +584,7 @@ function normalizeSalesClient(raw = {}) {
     businessName: sanitizeText(raw.businessName),
     contactPerson: sanitizeText(raw.contactPerson),
     contactEmail: sanitizeText(raw.contactEmail),
+    contactEmailError: normalizeContactEmailError(raw.contactEmailError, raw.contactEmail),
     websiteEmail: normalizeStoredWebsiteEmail(raw.websiteEmail, raw.contactEmail),
     clientEmail: sanitizeText(raw.clientEmail).toLowerCase(),
     portalUserId: sanitizeText(raw.portalUserId),
@@ -572,6 +608,7 @@ function normalizeSalesClient(raw = {}) {
     details: normalizeSalesDetails(raw.details),
     clientBrief: persistClientBrief(raw.clientBrief),
     previewDocument: persistPreviewDocument(raw.previewDocument),
+    salesPlaybook: normalizeSalesPlaybook(raw.salesPlaybook),
     myphoner,
     progression: nextProgression,
     salesMigrations: reset.salesMigrations,
@@ -821,6 +858,33 @@ export function updateSalesClient(id, updates = {}) {
   return next;
 }
 
+/** Stamp or clear the card error when a send to contactEmail fails or succeeds. Not the inbox bot. */
+export function noteSalesContactEmailSend({ to = '', ok = false, error = '' } = {}) {
+  const rawTo = Array.isArray(to) ? to[0] : String(to || '').split(',')[0];
+  const address = sanitizeText(rawTo).replace(/^.*<([^>]+)>.*$/, '$1').trim().toLowerCase();
+  if (!/@/.test(address)) return 0;
+  let n = 0;
+  for (const client of getSalesClients()) {
+    if (sanitizeText(client.contactEmail).toLowerCase() !== address) continue;
+    if (ok) {
+      if (client.contactEmailError) {
+        updateSalesClient(client.id, { contactEmailError: null });
+        n += 1;
+      }
+      continue;
+    }
+    updateSalesClient(client.id, {
+      contactEmailError: {
+        message: sanitizeText(error).slice(0, 200) || 'E-post kom ikke fram',
+        at: nowIso(),
+        to: address,
+      },
+    });
+    n += 1;
+  }
+  return n;
+}
+
 /** One write for many client patches. Myphoner and migration objects are merged. */
 export function patchSalesClientsById(entries = []) {
   const byId = new Map();
@@ -970,6 +1034,51 @@ export function setSalesNotes(id, notes, meetingQuote) {
   }
   if (!Object.keys(updates).length) return current;
   return updateSalesClient(id, updates);
+}
+
+/** readUp = Les deg opp. noShow / skip move the client to Venter møtebekreftelse; missedCall = Ring for ny møtetid. */
+export const SALES_PLAYBOOK_STEPS = ['readUp', 'noShow', 'skip', 'missedCall'];
+
+function playbookStepError(message) {
+  const error = new Error(message);
+  error.code = 'PLAYBOOK_STEP';
+  return error;
+}
+
+export function setSalesPlaybookStep(id, step, done) {
+  const current = getSalesClientById(id);
+  if (!current) return null;
+  if (!SALES_PLAYBOOK_STEPS.includes(step)) throw playbookStepError('Ukjent steg.');
+  const previous = current.salesPlaybook || {};
+  if (step === 'readUp') {
+    return updateSalesClient(id, {
+      salesPlaybook: { ...previous, readUpAt: done ? (previous.readUpAt || nowIso()) : '' },
+    });
+  }
+  const meetingAt = clientMeetingAtIso(current);
+  const forThisMeeting = Boolean(previous.missedMeetingAt) && sameMeetingInstant(previous.missedMeetingAt, meetingAt);
+  const cleared = { missedKind: '', missedAt: '', missedMeetingAt: '', missedCalledAt: '' };
+  if (step === 'missedCall') {
+    if (!meetingAt) throw playbookStepError('Kunden har ingen møtetid.');
+    const kept = forThisMeeting ? previous : { ...previous, ...cleared, missedKind: 'auto', missedMeetingAt: meetingAt };
+    return updateSalesClient(id, {
+      salesPlaybook: { ...kept, missedCalledAt: done ? nowIso() : '' },
+    });
+  }
+  if (!done) return updateSalesClient(id, { salesPlaybook: { ...previous, ...cleared } });
+  if (current.progression?.meetingHeld || current.progression?.offerSent) {
+    throw playbookStepError('Møtet er allerede markert som holdt.');
+  }
+  if (!meetingAt) throw playbookStepError('Kunden har ingen møtetid.');
+  return updateSalesClient(id, {
+    salesPlaybook: {
+      ...previous,
+      missedKind: step === 'noShow' ? 'noShow' : 'skipped',
+      missedAt: nowIso(),
+      missedMeetingAt: meetingAt,
+      missedCalledAt: '',
+    },
+  });
 }
 
 export function salesProgressBlockedReason(client, key, options = {}) {
@@ -1185,7 +1294,7 @@ export function backfillSmsRemindersToMeeting() {
       after
       && before
       && sanitizeText(before.dueAt) === sanitizeText(after.dueAt)
-      && Number(before.relativeToMeetingHours) === 24
+      && (before.relativeToMeetingHours ?? null) === (after.relativeToMeetingHours ?? null)
     ) {
       return client;
     }

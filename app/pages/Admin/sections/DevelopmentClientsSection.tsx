@@ -992,7 +992,7 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
                       <option value="layout">Layout</option>
                       <option value="maps">Kart</option>
                       <option value="cms">CMS</option>
-                      <option value="seo">Steg 4 SEO</option>
+                      <option value="seo">Steg 5 SEO</option>
                     </select>
                   </label>
                   <label className="text-[11px] text-gray-400 block">

@@ -1,5 +1,5 @@
 import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { CalendarDays, CheckCircle2, ChevronsDown, ChevronsUp, GripVertical, History, Loader2, Pencil, Pin, Plus, Trash2, X } from 'lucide-react';
+import { AlertTriangle, CalendarDays, CheckCircle2, ChevronsDown, ChevronsUp, Circle, GripVertical, History, Loader2, Pencil, Pin, Plus, Trash2, X } from 'lucide-react';
 import type { SalesClient, SalesGoalKey, SalesNextAction, SalesNextActionPreset } from '../shared';
 import {
   AFTER_SALE_GOAL,
@@ -7,6 +7,7 @@ import {
   actionAnchorId,
   canReorderAction,
   canStickAction,
+  decorateNextActions,
   getVisibleNextActions,
   formatActionFormatLabel,
   formatGoalLabel,
@@ -28,9 +29,85 @@ import {
   SALES_ACTION_TIMEZONE,
 } from '../../../../lib/sales-next-actions.js';
 import type { SalesActionFormat } from '../shared';
+import { ActionDateTimeInput } from './ActionDateTimeInput';
 import { MeetingVideoHover } from './MeetingVideoHover';
 import { ClientActivityLogCover } from './ClientActivityLogCover';
 import { clientMeetingHover } from '../../../../lib/workshop-record.js';
+import { boardRowGoalKey, salesGoalRowCounts } from '../../../../lib/sales-playbook.js';
+
+/** A playbook step with no stored row (Bekreftelse, Les deg opp, Kontrakt signert…). */
+export type SalesFixedRow = {
+  id: string;
+  stepId: string;
+  goalKey: string;
+  label: string;
+  done: boolean;
+  doneAt?: string;
+  dueAt?: string;
+  state: string;
+  detail?: string;
+  placement: 'start' | 'beforeMeeting' | 'end';
+  /** Next row even when rows above it are still open (Ring for ny møtetid under an unheld Møte). */
+  lead?: boolean;
+  /** Status icon click. Omit when the row can't be checked by hand. */
+  onToggle?: () => void;
+  toggleTitle?: string;
+  busy?: boolean;
+  extras?: React.ReactNode;
+};
+
+type RowStatus = 'done' | 'overdue' | 'next' | 'later';
+
+/** Board list ends above the screen bottom, leaving room for the preset row and "Vis alle kunder". */
+const BOARD_LIST_BOTTOM_RESERVE_PX = 150;
+const BOARD_LIST_MIN_PX = 160;
+const BOARD_LIST_PEEK_PX = 24;
+const NEXT_ROW = 'border-[#FF5B00]/40 bg-[#FF5B00]/[0.07]';
+
+type ListItem =
+  | { kind: 'action'; action: SalesNextAction; done: boolean }
+  | { kind: 'fixed'; row: SalesFixedRow };
+
+const STATUS_TITLE: Record<RowStatus, string> = {
+  done: 'Ferdig',
+  overdue: 'Forfalt',
+  next: 'Neste',
+  later: 'Senere',
+};
+
+function RowStatusIcon({ status }: { status: RowStatus }) {
+  if (status === 'done') return <CheckCircle2 size={16} className="text-green-400" />;
+  if (status === 'overdue') return <AlertTriangle size={16} className="text-red-300" />;
+  return <Circle size={16} className={status === 'next' ? 'text-[#FF5B00]/70' : 'text-gray-500'} />;
+}
+
+function StatusToggle({ status, busy, disabled, title, onClick }: {
+  status: RowStatus;
+  busy?: boolean;
+  disabled?: boolean;
+  title?: string;
+  onClick?: () => void;
+}) {
+  const label = title || STATUS_TITLE[status];
+  const icon = busy ? <Loader2 size={16} className="animate-spin text-gray-400" /> : <RowStatusIcon status={status} />;
+  if (!onClick) {
+    return <span className="shrink-0 inline-flex p-0.5" title={label} aria-label={label}>{icon}</span>;
+  }
+  return (
+    <button
+      type="button"
+      role="checkbox"
+      aria-checked={status === 'done'}
+      aria-label={label}
+      title={label}
+      disabled={disabled || busy}
+      onClick={onClick}
+      className="shrink-0 inline-flex p-0.5 rounded-full cursor-pointer hover:bg-white/10 disabled:cursor-default disabled:opacity-50"
+    >
+      {icon}
+    </button>
+  );
+}
 
 type DraftState = {
   presetKey: SalesNextActionPreset;
@@ -62,6 +139,16 @@ type Props = {
   onMutateAction: (body: Record<string, unknown>) => Promise<void>;
   /** Sold clients: actions only, no møte/tilbud/kontrakt checkpoints. */
   variant?: 'active' | 'win';
+  /**
+   * Focus board: playbook steps listed with the stored rows. Passing this also shows the current
+   * goal's done rows, done/total on the goal chips, and the full list without the scroll cap.
+   */
+  fixedRows?: SalesFixedRow[];
+  /** Extra buttons under a stored row (Møtelenke / Åpne preview on the Møte row). */
+  renderRowExtras?: (action: SalesNextAction) => React.ReactNode;
+  /** Row the selected focus category points to. */
+  focusRowId?: string;
+  nowMs?: number;
 };
 
 function toDateTimeLocal(value = '') {
@@ -101,6 +188,10 @@ export function SalesGoalTimeline({
   onToggleGoal,
   onMutateAction,
   variant = 'active',
+  fixedRows,
+  renderRowExtras,
+  focusRowId = '',
+  nowMs = Date.now(),
 }: Props) {
   const [draft, setDraft] = useState<DraftState | null>(null);
   const [edit, setEdit] = useState<EditState | null>(null);
@@ -108,6 +199,8 @@ export function SalesGoalTimeline({
   const [dropHint, setDropHint] = useState<{ id: string; before: boolean } | null>(null);
   const actionListRef = useRef<HTMLDivElement | null>(null);
   const [actionListMaxPx, setActionListMaxPx] = useState<number | null>(null);
+  const [boardOverflow, setBoardOverflow] = useState(false);
+  const [boardMaxPx, setBoardMaxPx] = useState<number | null>(null);
   const [showFutureGoals, setShowFutureGoals] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
   const isWin = variant === 'win';
@@ -117,14 +210,99 @@ export function SalesGoalTimeline({
     ? getSalesGoalKeys(client.product)
     : getVisibleGoalKeys(client)) as SalesGoalKey[];
   const futureGoalSet = new Set(getFutureGoalKeys(client) as SalesGoalKey[]);
-  const currentActions = useMemo(
-    () => getVisibleNextActions(client) as SalesNextAction[],
-    [client]
+  const boardMode = Array.isArray(fixedRows);
+  const currentActions = useMemo(() => getVisibleNextActions(client) as SalesNextAction[], [client]);
+  const listItems = useMemo<ListItem[]>(() => {
+    const open: ListItem[] = currentActions.map((action) => ({ kind: 'action', action, done: false }));
+    if (!boardMode || !currentGoal) return open;
+    const goalFixed = (fixedRows || []).filter((row) => row.goalKey === currentGoal);
+    const fixedAt = (placement: SalesFixedRow['placement']): ListItem[] => goalFixed
+      .filter((row) => row.placement === placement)
+      .map((row) => ({ kind: 'fixed', row }));
+    const done: ListItem[] = (decorateNextActions(client) as SalesNextAction[])
+      .filter((action) => action.doneAt && action.presetKey !== 'sendOffer' && boardRowGoalKey(action) === currentGoal)
+      .sort((a, b) => String(a.doneAt).localeCompare(String(b.doneAt)))
+      .map((action) => ({ kind: 'action', action, done: true }));
+    const beforeMeeting = fixedAt('beforeMeeting');
+    const meetingIndex = open.findIndex((item) => item.kind === 'action' && item.action.presetKey === 'meeting');
+    const middle = meetingIndex < 0
+      ? [...open, ...beforeMeeting]
+      : [...open.slice(0, meetingIndex), ...beforeMeeting, ...open.slice(meetingIndex)];
+    return [...fixedAt('start'), ...done, ...middle, ...fixedAt('end')];
+  }, [boardMode, client, currentActions, currentGoal, fixedRows]);
+  const goalCounts = useMemo(
+    () => (boardMode ? salesGoalRowCounts(client, nowMs) as Record<string, { done: number; total: number }> : {}),
+    [boardMode, client, nowMs],
   );
+  const nextItemKey = (() => {
+    const noTimeMeeting = listItems.find((entry) => (
+      entry.kind === 'action'
+      && entry.action.presetKey === 'meeting'
+      && !entry.done
+      && !entry.action.dueAt
+    ));
+    if (noTimeMeeting) return noTimeMeeting.action.id;
+    const item = listItems.find((entry) => entry.kind === 'fixed' && entry.row.lead && !entry.row.done)
+      || listItems.find((entry) => (entry.kind === 'fixed' ? !entry.row.done : !entry.done));
+    if (!item) return '';
+    return item.kind === 'fixed' ? item.row.id : item.action.id;
+  })();
   const salesHover = clientMeetingHover(client, 'sales');
   const presets = currentGoal ? (GOAL_PRESETS[currentGoal] || []) : [];
   const hasMeeting = Boolean(client.agreedTime && client.meetingAt);
-  const capActionList = currentActions.length > 1 && !edit;
+  const capActionList = !boardMode && currentActions.length > 1 && !edit;
+
+  function actionStatus(action: SalesNextAction, done: boolean): RowStatus {
+    if (done) return 'done';
+    const dueMs = Date.parse(action.dueAt || '');
+    if (Number.isFinite(dueMs) && dueMs < nowMs) return 'overdue';
+    return action.id === nextItemKey ? 'next' : 'later';
+  }
+
+  function fixedStatus(row: SalesFixedRow): RowStatus {
+    if (row.done) return 'done';
+    if (row.state === 'overdue') return 'overdue';
+    return row.id === nextItemKey ? 'next' : 'later';
+  }
+
+  const isNextRow = (id: string) => Boolean(nextItemKey) && id === nextItemKey;
+
+  const listCapped = boardMode ? boardOverflow : Boolean(actionListMaxPx);
+
+  const scrollTargetId = boardMode ? nextItemKey : '';
+
+  useLayoutEffect(() => {
+    const root = actionListRef.current;
+    if (!root || !boardMode) {
+      setBoardOverflow(false);
+      return;
+    }
+    const measure = () => {
+      const pageTop = root.getBoundingClientRect().top + window.scrollY;
+      const max = Math.max(BOARD_LIST_MIN_PX, Math.floor(window.innerHeight - pageTop - BOARD_LIST_BOTTOM_RESERVE_PX));
+      setBoardMaxPx((prev) => (prev === max ? prev : max));
+      setBoardOverflow(root.scrollHeight > Math.min(max, root.clientHeight) + 1);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(root);
+    observer.observe(document.body);
+    if (root.firstElementChild) observer.observe(root.firstElementChild);
+    window.addEventListener('resize', measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', measure);
+    };
+  }, [boardMode, listItems.length]);
+
+  /** Long lists scroll inside the box; the next action sits at the top with a peek of the row above. */
+  useLayoutEffect(() => {
+    const root = actionListRef.current;
+    if (!root || !scrollTargetId) return;
+    const row = root.querySelector<HTMLElement>(`[data-row-id="${CSS.escape(scrollTargetId)}"]`);
+    if (!row) return;
+    root.scrollTop += row.getBoundingClientRect().top - root.getBoundingClientRect().top - BOARD_LIST_PEEK_PX;
+  }, [scrollTargetId, listItems.length, boardMaxPx]);
 
   useLayoutEffect(() => {
     const root = actionListRef.current;
@@ -311,6 +489,9 @@ export function SalesGoalTimeline({
             >
               {busy ? <Loader2 size={11} className="inline mr-1 animate-spin" /> : done ? <CheckCircle2 size={11} className="inline mr-1" /> : null}
               {formatGoalLabel(key)}
+              {goalCounts[key]?.total ? (
+                <span className="ml-1 tabular-nums opacity-80">{goalCounts[key].done}/{goalCounts[key].total}</span>
+              ) : null}
             </button>
           );
         })}
@@ -337,8 +518,8 @@ export function SalesGoalTimeline({
               className="text-left text-[11px] text-gray-400 hover:text-gray-200"
               title="Åpne logg over alle handlinger og opptak"
             >
-              {isWin ? 'Neste handling' : (
-                <>Neste handling i <span className="text-gray-200">{formatGoalLabel(currentGoal)}</span></>
+              {isWin ? (boardMode ? 'Etter salg' : 'Neste handling') : (
+                <>{boardMode ? 'Handlinger i' : 'Neste handling i'} <span className="text-gray-200">{formatGoalLabel(currentGoal)}</span></>
               )}
             </button>
             <button
@@ -352,15 +533,67 @@ export function SalesGoalTimeline({
             </button>
           </div>
 
-          {currentActions.length > 0 && (
+          {listItems.length > 0 && (
           <div className="relative">
           <div
             ref={actionListRef}
-            style={actionListMaxPx ? { maxHeight: actionListMaxPx } : undefined}
-            className={actionListMaxPx ? 'sales-action-scroll overflow-y-auto overscroll-contain pr-1.5' : undefined}
+            style={boardMode ? (boardMaxPx ? { maxHeight: boardMaxPx } : undefined) : actionListMaxPx ? { maxHeight: actionListMaxPx } : undefined}
+            className={boardMode || actionListMaxPx ? 'sales-action-scroll overflow-y-auto overscroll-contain pr-1.5' : undefined}
           >
-          <div className={actionListMaxPx ? 'space-y-2 pb-6' : 'space-y-2'}>
-          {currentActions.map((currentAction) => {
+          <div className={listCapped ? 'space-y-2 pb-6' : 'space-y-2'}>
+          {listItems.map((item) => {
+            if (item.kind === 'fixed') {
+              const fixed = item.row;
+              const status = fixedStatus(fixed);
+              const sub = fixed.detail || (!fixed.done && fixed.dueAt ? formatWhen(fixed.dueAt) : fixed.doneAt ? `Ferdig ${formatWhen(fixed.doneAt)}` : '');
+              return (
+                <div
+                  key={fixed.id}
+                  data-action-row
+                  data-row-id={fixed.id}
+                  className={`rounded-lg border px-2 py-1.5 ${
+                    fixed.done ? 'border-white/5 bg-black/10' : isNextRow(fixed.id) ? NEXT_ROW : 'border-white/10 bg-black/30'
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <StatusToggle
+                      status={status}
+                      busy={fixed.busy}
+                      title={fixed.toggleTitle}
+                      onClick={fixed.onToggle}
+                    />
+                    <span className="shrink-0 w-4" aria-hidden="true" />
+                    <div className="min-w-0 flex-1">
+                      <div className={`text-xs truncate ${fixed.done ? 'text-gray-400 line-through decoration-white/20' : 'text-white'}`}>{fixed.label}</div>
+                      {sub ? <div className={`text-[11px] truncate ${status === 'overdue' ? 'text-red-300' : 'text-gray-400'}`}>{sub}</div> : null}
+                    </div>
+                    {fixed.extras ? <div className="shrink-0 flex flex-wrap justify-end gap-1.5">{fixed.extras}</div> : null}
+                  </div>
+                </div>
+              );
+            }
+            const currentAction = item.action;
+            if (item.done) {
+              return (
+                <div key={currentAction.id} data-action-row data-row-id={currentAction.id} className="rounded-lg border border-white/5 bg-black/10 px-2 py-1.5">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <StatusToggle
+                      status="done"
+                      disabled={actionBusy}
+                      title="Ferdig. Klikk for å angre."
+                      onClick={() => void onMutateAction({ op: 'uncomplete', id: currentAction.id })}
+                    />
+                    <span className="shrink-0 w-4" aria-hidden="true" />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs text-gray-400 truncate line-through decoration-white/20">{currentAction.name}</div>
+                      <div className="text-[11px] text-gray-500 truncate">Ferdig {formatWhen(currentAction.doneAt || '')}</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            }
+            const status = actionStatus(currentAction, false);
+            const extras = renderRowExtras ? renderRowExtras(currentAction) : null;
             const clusterId = clusterFreeId(currentAction, currentActions);
             const inDragCluster = Boolean(draggingId && (currentAction.id === draggingId || clusterId === draggingId));
             const dropOnCluster = Boolean(dropHint && dropHint.id === clusterId);
@@ -368,6 +601,7 @@ export function SalesGoalTimeline({
             <div
               key={currentAction.id}
               data-action-row
+              data-row-id={currentAction.id}
               onDragOver={(event) => {
                 if (!draggingId) return;
                 event.preventDefault();
@@ -388,9 +622,11 @@ export function SalesGoalTimeline({
               } ${
                 dropOnCluster ? 'ring-1 ring-[#FF5B00]' : ''
               } ${
-                currentAction.addToCalendar && currentAction.dueAt
-                  ? 'border-sky-400/50 bg-black/30 shadow-[0_0_0_3px_rgba(56,189,248,0.08)] hover:bg-[#3a3a3a]'
-                  : 'border-white/10 bg-black/30 hover:bg-[#3a3a3a]'
+                isNextRow(currentAction.id)
+                  ? `${NEXT_ROW} hover:bg-[#FF5B00]/10`
+                  : currentAction.addToCalendar && currentAction.dueAt
+                    ? 'border-sky-400/50 bg-black/30 shadow-[0_0_0_3px_rgba(56,189,248,0.08)] hover:bg-[#3a3a3a]'
+                    : 'border-white/10 bg-black/30 hover:bg-[#3a3a3a]'
               }`}
             >
               {edit?.actionId === currentAction.id ? (
@@ -405,11 +641,11 @@ export function SalesGoalTimeline({
                   </label>
                   <label className="text-[10px] text-gray-400 uppercase tracking-wide">
                     {currentAction.presetKey === 'meeting' ? 'Møtetid' : 'Tid for neste handling'}
-                    <input
-                      type="datetime-local"
+                    <ActionDateTimeInput
                       value={edit.dueAt}
-                      onChange={(event) => setEdit((prev) => prev ? { ...prev, dueAt: event.target.value } : prev)}
-                      className="mt-1 w-full rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
+                      nowMs={nowMs}
+                      ariaLabel={currentAction.presetKey === 'meeting' ? 'Møtetid' : 'Tid for neste handling'}
+                      onChange={(dueAt) => setEdit((prev) => prev ? { ...prev, dueAt } : prev)}
                     />
                   </label>
                   <label className="sm:col-span-2 text-[10px] text-gray-400 uppercase tracking-wide">
@@ -451,7 +687,14 @@ export function SalesGoalTimeline({
                   </div>
                 </div>
               ) : (
+                <>
                 <div className="flex items-center gap-2 min-w-0">
+                  <StatusToggle
+                    status={status}
+                    disabled={actionBusy}
+                    title={currentAction.presetKey === 'meeting' ? 'Marker møtet som holdt' : 'Marker som ferdig'}
+                    onClick={() => void onMutateAction({ op: 'complete', id: currentAction.id })}
+                  />
                   {canReorderAction(currentAction) && currentAction.goalKey === currentGoal ? (
                     <button
                       type="button"
@@ -554,15 +797,6 @@ export function SalesGoalTimeline({
                   >
                     <Pencil size={12} />
                   </button>
-                  <button
-                    type="button"
-                    disabled={actionBusy}
-                    onClick={() => void onMutateAction({ op: 'complete', id: currentAction.id })}
-                    className="shrink-0 p-1 rounded text-gray-400 hover:text-green-300"
-                    title={currentAction.presetKey === 'meeting' ? 'Møtet er hatt' : 'Fullfør handling'}
-                  >
-                    <CheckCircle2 size={12} />
-                  </button>
                   {currentAction.presetKey !== 'meeting' && (
                     <button
                       type="button"
@@ -575,6 +809,8 @@ export function SalesGoalTimeline({
                     </button>
                   )}
                 </div>
+                {extras ? <div className="mt-1.5 ml-12 flex flex-wrap gap-1.5">{extras}</div> : null}
+                </>
               )}
             </div>
             );
@@ -586,7 +822,7 @@ export function SalesGoalTimeline({
           })}
           </div>
           </div>
-          {actionListMaxPx ? (
+          {listCapped ? (
             <div className="pointer-events-none absolute bottom-0 left-0 right-2 h-4 bg-gradient-to-t from-[#f3f4f6] to-transparent" />
           ) : null}
           </div>
@@ -605,11 +841,11 @@ export function SalesGoalTimeline({
               </label>
               <label className="text-[10px] text-gray-400 uppercase tracking-wide">
                 Tid for neste handling
-                <input
-                  type="datetime-local"
+                <ActionDateTimeInput
                   value={draft.dueAt}
-                  onChange={(event) => setDraft((prev) => prev ? { ...prev, dueAt: event.target.value } : prev)}
-                  className="mt-1 w-full rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
+                  nowMs={nowMs}
+                  ariaLabel="Tid for neste handling"
+                  onChange={(dueAt) => setDraft((prev) => prev ? { ...prev, dueAt } : prev)}
                 />
               </label>
               <label className="sm:col-span-2 text-[10px] text-gray-400 uppercase tracking-wide">

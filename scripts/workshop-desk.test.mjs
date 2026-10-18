@@ -232,7 +232,8 @@ test('T06 mounts T01 needs, T02 inbox, and T07 actions; Forespørsler is a heade
   assert.match(adminSrc, /Forespørsler/);
   assert.match(adminSrc, /Vis e-posthandlinger/);
   assert.match(adminSrc, /SalesCalendarWeek/);
-  assert.match(adminSrc, /workshopCalendar/);
+  assert.match(adminSrc, /combined/);
+  assert.equal(adminSrc.includes('workshopCalendar'), false);
   assert.match(adminSrc, /h-\[1em\] w-\[1\.1em\]/);
   assert.match(adminSrc, /bg-neutral-500/);
   const salesSrc = readNearby('../app/pages/Admin/sections/SalesClientsSection.tsx');
@@ -271,6 +272,17 @@ test('T06 mounts T01 needs, T02 inbox, and T07 actions; Forespørsler is a heade
   assert.equal(dueFn.includes('data-innsamling'), false);
   assert.equal(dueFn.includes('dataInnsamlingScheduleAt'), false);
   assert.equal(adminSrc.includes('Datainnsamling sendes manuelt'), true);
+  assert.match(adminSrc, /openDeskEmail/);
+  assert.match(adminSrc, /from=admin/);
+  assert.match(adminSrc, /data-innsamling-2/);
+  assert.equal(adminSrc.includes('workshop/desk-email'), false);
+  const composerSrc = readNearby('../app/pages/sales/SalesEmailComposer.tsx');
+  assert.match(composerSrc, /data-innsamling-2/);
+  assert.match(composerSrc, /workshop-reminder-3d/);
+  assert.match(composerSrc, /fromAdmin/);
+  assert.match(serverSrc, /loadDeskNeedLines/);
+  assert.match(serverSrc, /workshopDeskEmailStampKey/);
+  assert.match(serverSrc, /shouldMarkSalesReminderSent/);
   assert.equal(serverSrc.includes('summarizeClientIntent({'), true);
 
   const developerSrc = readNearby('../app/pages/Admin/sections/DevelopmentClientsSection.tsx');

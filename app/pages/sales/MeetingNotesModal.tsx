@@ -4,6 +4,7 @@ import {
   datetimeLocalOsloToIso,
   isoToDatetimeLocalOslo,
 } from '../../../lib/sales-next-actions.js';
+import { ActionDateTimeInput } from '../Admin/sections/ActionDateTimeInput';
 import { WORKSHOP_FORMATS, offerStartDateFromWorkshopDueAt } from '../../../lib/workshop-action-shared.js';
 import {
   PRICING,
@@ -545,11 +546,11 @@ export function MeetingNotesModal({
                 </label>
                 <label className="block">
                   <span className="text-xs text-[#6B7280]">Tid</span>
-                  <input
-                    type="datetime-local"
+                  <ActionDateTimeInput
                     value={workshop.dueAt}
-                    onChange={(e) => setWorkshop((prev) => ({ ...prev, dueAt: e.target.value }))}
+                    ariaLabel="Workshop-tid"
                     className="mt-1 w-full px-3 py-2 rounded-lg bg-white border border-[#E5E7EB] text-sm text-[#111827]"
+                    onChange={(dueAt) => setWorkshop((prev) => ({ ...prev, dueAt }))}
                   />
                 </label>
                 <div className="flex flex-wrap items-center gap-2">

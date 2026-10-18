@@ -12,12 +12,13 @@ type Props = {
 
 export function InboxBotPanel({ client }: Props) {
   const contracts = client.inboxBot?.contracts || [];
+  const elements = client.inboxBot?.elements || [];
   const staged = Number(client.inboxBot?.stagedElements) || 0;
   const [previewUrl, setPreviewUrl] = useState('');
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
 
-  if (!contracts.length && !staged) return null;
+  if (!contracts.length && !elements.length && !staged) return null;
 
   async function openPdf(fileName: string) {
     setBusy(fileName);
@@ -70,7 +71,14 @@ export function InboxBotPanel({ client }: Props) {
           ) : null}
         </div>
       ))}
-      {staged ? (
+      {elements.map((row) => (
+        <p key={row.id} className="text-[11px] text-gray-400 truncate">
+          {row.status === 'filed' ? 'Lagt i kundedata' : row.status === 'staged' ? 'Venter på Connect' : 'Vedlegg'}
+          {row.buckets?.length ? ` · ${row.buckets.join(', ')}` : ''}
+          {row.summary ? ` · ${row.summary}` : ''}
+        </p>
+      ))}
+      {staged && !elements.length ? (
         <p className="text-[11px] text-amber-200">
           {staged === 1 ? '1 vedlegg venter på portal-Connect.' : `${staged} vedlegg venter på portal-Connect.`}
         </p>

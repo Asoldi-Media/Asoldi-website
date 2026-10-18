@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BarChart3, ChevronDown, FileSignature, FileText, FolderCog, Globe, Image as ImageIcon, LogOut, Mail, Newspaper, Share2, ShoppingBag, Users, UserPlus } from 'lucide-react';
+import { BarChart3, Briefcase, ChevronDown, Code2, FileSignature, FileText, FolderCog, Globe, Image as ImageIcon, LayoutDashboard, LogOut, Mail, Newspaper, Share2, ShoppingBag, Users, UserPlus } from 'lucide-react';
 import { Helmet } from 'react-helmet-async';
 import { ManageClientsSection } from './sections/ManageClientsSection';
 import { PagesSection } from './sections/PagesSection';
@@ -19,6 +19,7 @@ import {
   type EmployeeRoleOption,
   fromEmployeeRoleOption,
   type Features,
+  type ManageClientsView,
   type Site,
   type Tab,
   type WebsitePlanId,
@@ -44,6 +45,8 @@ export const Admin = () => {
   const [loginError, setLoginError] = useState('');
   const [tab, setTab] = useState<Tab>('clients');
   const [websiteNavOpen, setWebsiteNavOpen] = useState(true);
+  const [clientsNavOpen, setClientsNavOpen] = useState(true);
+  const [clientsView, setClientsView] = useState<ManageClientsView>('clients');
   const [pendingOffers, setPendingOffers] = useState(0);
   const [features, setFeatures] = useState<Features>(DEFAULT_FEATURES);
   const [siteName, setSiteName] = useState('');
@@ -60,6 +63,11 @@ export const Admin = () => {
   const [savingUserId, setSavingUserId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const noticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function openClientsView(view: ManageClientsView) {
+    setTab('clients');
+    setClientsView(view);
+  }
 
   function flashNotice(kind: 'ok' | 'err', text: string) {
     setNotice({ kind, text });
@@ -533,7 +541,29 @@ export const Admin = () => {
             <p className="text-xs text-gray-400 mt-1">Client CMS</p>
           </div>
           <nav className="flex-1 p-2 space-y-1">
-            <SidebarButton active={tab === 'clients'} onClick={() => setTab('clients')} icon={<Globe size={18} />} label="Manage clients" />
+            <div>
+              <button
+                type="button"
+                onClick={() => setClientsNavOpen((open) => !open)}
+                className={`w-full flex items-center justify-between px-3 py-2 rounded-lg text-left text-xs font-semibold uppercase tracking-wide ${
+                  tab === 'clients' ? 'text-white' : 'text-gray-400 hover:text-gray-200'
+                }`}
+              >
+                <span className="inline-flex items-center gap-2">
+                  <Globe size={16} />
+                  Manage clients
+                </span>
+                <ChevronDown size={14} className={`transition-transform ${clientsNavOpen ? '' : '-rotate-90'}`} />
+              </button>
+              {clientsNavOpen && (
+                <div className="ml-3 mt-1 space-y-1">
+                  <SidebarButton active={tab === 'clients' && clientsView === 'clients'} onClick={() => openClientsView('clients')} icon={<Users size={18} />} label="Clients" />
+                  <SidebarButton active={tab === 'clients' && clientsView === 'development'} onClick={() => openClientsView('development')} icon={<Code2 size={18} />} label="Development" />
+                  <SidebarButton active={tab === 'clients' && clientsView === 'sales'} onClick={() => openClientsView('sales')} icon={<Briefcase size={18} />} label="Sales" />
+                  <SidebarButton active={tab === 'clients' && clientsView === 'admin'} onClick={() => openClientsView('admin')} icon={<LayoutDashboard size={18} />} label="Admin" />
+                </div>
+              )}
+            </div>
             <div className="pt-1">
               <button
                 type="button"
@@ -577,7 +607,7 @@ export const Admin = () => {
           </div>
         </aside>
 
-        <main className="flex-1 ml-60 p-8">
+        <main className={`flex-1 ml-60 min-w-0 ${tab === 'clients' && clientsView === 'sales' ? '' : 'p-8'}`}>
           {notice && (
             <div
               role="status"
@@ -592,6 +622,7 @@ export const Admin = () => {
           )}
           {tab === 'clients' && (
             <ManageClientsSection
+              view={clientsView}
               sites={sites}
               loading={loading}
               copyKey={copyKey}

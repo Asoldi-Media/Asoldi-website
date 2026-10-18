@@ -35,7 +35,9 @@ import { SalesFlowSteps } from '../../sales/SalesFlowSteps';
 import { SalesScriptsDock } from '../../sales/SalesScriptsDock';
 import { offerMissingFields, offerReadinessMessage } from '../../../../lib/offer-readiness.js';
 import { SalesGoalTimeline } from './SalesGoalTimeline';
+import { SalesFocusBoard, type SalesFocusCategoryId } from './SalesFocusBoard';
 import { SalesCalendarWeek } from './SalesCalendarWeek';
+import { BookerRecordingPlayer } from '../../developer/DeveloperKundedata';
 import { WorkshopIterationLog } from './WorkshopIterationLog';
 import {
   clientIsSalesWin,
@@ -59,6 +61,7 @@ import {
   SALES_ACTION_TIMEZONE,
 } from '../../../../lib/sales-next-actions.js';
 import { salesBookingFacts } from '../../../../lib/sales-booking-facts.js';
+import { clientHasProductNotes } from '../../../../lib/sales-playbook.js';
 import { calendarDurationForMode } from '../../../../lib/sales-meeting-duration.js';
 import { GOOGLE_CALENDAR_OAUTH_EVENT } from '../../../../lib/google-calendar-oauth-ui.js';
 import { expireFatCookies } from '../../../lib/expire-fat-cookies';
@@ -222,7 +225,6 @@ type MeetingMapPin = {
 };
 
 type Props = {
-  onMovedToDevelopment?: () => void;
   onLogout?: () => void;
   showScriptsDock?: boolean;
   /** When false the section is hidden but kept mounted. Retry a failed load when it becomes true. */
@@ -496,12 +498,13 @@ function isValidClientEmail(value = '') {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
 }
 
-export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScriptsDock = false, active = true }: Props) {
+export function SalesClientsSection({ onLogout, showScriptsDock = false, active = true }: Props) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const flowClientId = searchParams.get('flow') || '';
   const flowStepNumber = Number(searchParams.get('step') || '1');
   const flowStep: 1 | 2 | 3 = flowStepNumber === 2 || flowStepNumber === 3 ? flowStepNumber : 1;
+  const focusCategory = searchParams.get('kategori') || '';
   const cachedList = readSalesListCache();
   const [clients, setClients] = useState<SalesClient[]>(() => cachedList?.clients || []);
   const [productCounts, setProductCounts] = useState<{ asoldi: number; ssu: number }>(() => (
@@ -538,6 +541,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
   const [deletingArchivedId, setDeletingArchivedId] = useState<string | null>(null);
   const [progressBusyKey, setProgressBusyKey] = useState<string | null>(null);
   const [nextActionBusyId, setNextActionBusyId] = useState<string | null>(null);
+  const [readUpBusyId, setReadUpBusyId] = useState<string | null>(null);
   const [collapsedBuckets, setCollapsedBuckets] = useState<Record<string, boolean>>(() => {
     try {
       const raw = window.localStorage.getItem(SALES_BUCKETS_STORAGE_KEY);
@@ -589,6 +593,17 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
   const previewMissingTimerRef = useRef<number | null>(null);
   const calendarConnectStopRef = useRef<null | (() => void)>(null);
   const headerShellRef = useRef<HTMLDivElement | null>(null);
+  const [headerBarPx, setHeaderBarPx] = useState(64);
+  const [showAllClients, setShowAllClients] = useState(false);
+  useEffect(() => {
+    const bar = headerShellRef.current?.firstElementChild;
+    if (!(bar instanceof HTMLElement)) return undefined;
+    const measure = () => setHeaderBarPx(bar.getBoundingClientRect().height || 64);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(bar);
+    return () => observer.disconnect();
+  }, []);
 
   // Website offers (tier + nettsidekode given to a client).
   const [offers, setOffers] = useState<WebsiteOffer[]>([]);
@@ -662,6 +677,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
   const calendarPreviewOwner = calendarPreviewOwnerId
     ? ownerFilterOptions.find((owner) => owner.accountKey === calendarPreviewOwnerId) || null
     : null;
+  const calendarCombined = Boolean(isSalesAdmin) && !calendarPreviewOwnerId;
   const calendarPreviewIsOwn = !calendarPreviewOwnerId
     || calendarPreviewOwnerId === String(calendarStatus?.loginAccountKey || '');
   const clientMatchesFilters = (client: SalesClient) => {
@@ -683,6 +699,8 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
     || nextActionFromDate
     || nextActionToDate
   );
+  /** Website: the board covers the screen and the full list opens on demand or when filtering. */
+  const allClientsOpen = isSsuBracket || showAllClients || hasActiveFilters;
   const timelineClients = useMemo(
     () => productClients.filter((client) => (
       client.status !== 'not-sold'
@@ -761,6 +779,16 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
   const pipelineCounts = useMemo(
     () => countSalesPipelineStates(pipelineScopeClients, meetingNowMs),
     [pipelineScopeClients, meetingNowMs]
+  );
+  /** Focus board ignores the Alle kunder search/filters; admin is scoped by the rep filter only. */
+  const focusBoardClients = useMemo(
+    () => (isSsuBracket ? [] : productClients.filter((client) => {
+      if (client.status === 'not-sold') return false;
+      if (!isSalesAdmin) return true;
+      if (ownerFilter === 'unassigned') return !String(client.ownerId || '').trim();
+      return !ownerFilter || String(client.ownerId || '') === ownerFilter;
+    })),
+    [productClients, isSsuBracket, isSalesAdmin, ownerFilter]
   );
   const activeMeetingGroups = useMemo(
     () => groupSalesClientsByNextAction(assignedTimelineClients, meetingNowMs),
@@ -1477,6 +1505,46 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
     next.set('step', '1');
     setSearchParams(next, { replace: true });
     setShowForm(false);
+  }
+
+  function openClientFlow(client: SalesClient, step: 1 | 2 | 3) {
+    fillEditForm(client);
+    const next = new URLSearchParams(searchParams);
+    next.delete('notes');
+    next.set('flow', client.id);
+    next.set('step', String(step));
+    setSearchParams(next, { replace: true });
+    setShowForm(false);
+  }
+
+  function setFocusCategory(id: SalesFocusCategoryId) {
+    const next = new URLSearchParams(searchParams);
+    next.set('kategori', id);
+    setSearchParams(next, { replace: true });
+  }
+
+  async function setReadUp(client: SalesClient, done: boolean) {
+    if (Boolean(client.salesPlaybook?.readUpAt) === done) return;
+    await setPlaybookStep(client, 'readUp', done);
+  }
+
+  /** readUp, noShow, skip and missedCall; one busy id per client. */
+  async function setPlaybookStep(client: SalesClient, step: 'readUp' | 'noShow' | 'skip' | 'missedCall', done: boolean) {
+    if (readUpBusyId === client.id) return;
+    setReadUpBusyId(client.id);
+    setError('');
+    try {
+      const data = await request(`/admin/sales/${client.id}/playbook`, {
+        method: 'POST',
+        body: JSON.stringify({ step, done }),
+      });
+      const saved = data?.client as SalesClient | undefined;
+      if (saved?.id) applySavedClient(saved);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Kunne ikke lagre steget.');
+    } finally {
+      setReadUpBusyId(null);
+    }
   }
 
   function openVerifiedOffer(client: SalesClient) {
@@ -2239,7 +2307,6 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
             const calendarAction = getCalendarNextAction(client);
             const goalFilled = salesGoalFilledCount(client);
             const websiteSold = Boolean(client.progression?.contractSigned);
-            const canMarkSold = Boolean(client.progression?.contractSigned);
             const clientSelected = selectedClientIds.includes(client.id);
             const confirmationGaps = client.reminders?.thankYouSentAt ? [] : confirmationSendGaps(client);
             const needsConfirmation = clientNeedsConfirmationSend(client);
@@ -2349,6 +2416,11 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                           <span className="truncate min-w-0">
                             <span aria-hidden="true"> · </span>
                             {client.contactEmail}
+                            {client.contactEmailError?.message ? (
+                              <span className="ml-1 text-red-400" title={client.contactEmailError.message}>
+                                kom ikke fram
+                              </span>
+                            ) : null}
                           </span>
                         ) : null}
                       </div>
@@ -2521,27 +2593,6 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                 )}
 
                 <div className="flex flex-wrap items-center gap-2">
-                  {!clientIsSsu && (
-                    <button
-                      type="button"
-                      disabled={!canMarkSold}
-                      onClick={() => {
-                        if (!canMarkSold) return;
-                        onMovedToDevelopment?.();
-                        setNotice(`${client.businessName || 'Kunden'} er solgt og ligger under Utvikling.`);
-                      }}
-                      title={canMarkSold
-                        ? 'Kontrakt signert. Åpner Utvikling.'
-                        : 'Solgt nettside kan bare klikkes når kontrakt er signert.'}
-                      className={`inline-flex items-center gap-1.5 px-3 py-2 sm:py-1.5 min-h-[40px] sm:min-h-0 rounded-lg text-xs disabled:opacity-40 ${
-                        websiteSold
-                          ? 'bg-emerald-900/40 border border-emerald-700/40 text-emerald-200'
-                          : 'bg-white/10 text-gray-400'
-                      }`}
-                    >
-                      Solgt nettside
-                    </button>
-                  )}
                   <button
                     type="button"
                     onClick={() => void markNotSold(client)}
@@ -3286,7 +3337,22 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
                       </select>
                     </label>
                   )}
-                  <div className="grid sm:grid-cols-3 gap-2">
+                  <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                    <label className="text-[11px] text-gray-400 block">
+                      <span className="block mb-1">Status</span>
+                      <select
+                        value={pipelineFilter}
+                        onChange={(event) => setPipelineFilter(event.target.value)}
+                        className="w-full rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
+                      >
+                        <option value="">Alle</option>
+                        {SALES_PIPELINE_STATES.map((state) => (
+                          <option key={state.id} value={state.id}>
+                            {state.label} ({pipelineCounts[state.id as keyof typeof pipelineCounts] || 0})
+                          </option>
+                        ))}
+                      </select>
+                    </label>
                     <label className="text-[11px] text-gray-400 block">
                       <span className="block mb-1">Møteform</span>
                       <select
@@ -3357,7 +3423,8 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
               {headerPanel === 'calendar' && (
                 <SalesCalendarWeek
                   ownerId={calendarPreviewOwnerId}
-                  ownerLabel={calendarPreviewOwner ? ownerLabel(calendarPreviewOwner) : 'deg'}
+                  combined={calendarCombined}
+                  ownerLabel={calendarPreviewOwner ? ownerLabel(calendarPreviewOwner) : (calendarCombined ? 'alle selgere' : 'deg')}
                   isOwnCalendar={calendarPreviewIsOwn}
                   refreshKey={String(calendarStatus?.tokenUpdatedAt || '')}
                   onConnect={() => { closeHeaderMenus(); setCalendarPanelOpen(true); }}
@@ -3427,7 +3494,83 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
         </div>
       )}
 
+      {(error || notice) && (
+        <div className="space-y-2">
+          {error && <div className="rounded-xl border border-red-500/20 bg-red-500/10 text-red-300 px-3 py-2.5 sm:px-4 sm:py-3 text-sm shadow-lg shadow-black/30">{error}</div>}
+          {notice && <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-200 px-3 py-2.5 sm:px-4 sm:py-3 text-sm shadow-lg shadow-black/30">{notice}</div>}
+        </div>
+      )}
+
+      {!isSsuBracket && !(loading && clients.length === 0) && (
+        <div className="flex flex-col gap-3" style={{ minHeight: `calc(100dvh - ${headerBarPx}px - 2rem)` }}>
+        <SalesFocusBoard
+          clients={focusBoardClients}
+          nowMs={meetingNowMs}
+          category={focusCategory}
+          onCategory={setFocusCategory}
+          isAdmin={isSalesAdmin}
+          salesReps={salesRepOptions.map((owner) => ({ id: owner.accountKey, label: ownerLabel(owner) }))}
+          assigningId={assigningOwnerId}
+          progressBusyKey={progressBusyKey}
+          actionBusyId={nextActionBusyId}
+          sendingMailKey={sendingMailKey}
+          meetOpeningId={meetOpeningId}
+          readUpBusyId={readUpBusyId}
+          statusBusyId={statusBusyId}
+          meetLinkFor={salesMeetLink}
+          previewAvailable={clientHasPublicPreviewSnapshot}
+          onEdit={openEdit}
+          onOpenFlow={openClientFlow}
+          onReadUp={(client, done) => void setReadUp(client, done)}
+          onMissedStep={(client, step, done) => void setPlaybookStep(client, step, done)}
+          onToggleGoal={(client, key, extra) => void toggleProgress(client, key, extra)}
+          onMutateAction={mutateNextAction}
+          onSendConfirmation={(client) => void sendClientMail(client, 'thank-you')}
+          onOpenMeet={(client) => void openOwnedMeet(client)}
+          onOpenPreview={(client) => {
+            if (clientHasPublicPreviewSnapshot(client)) openPublicPreview(client);
+            else setNotice(`${client.businessName || 'Kunden'} har ingen preview ennå.`);
+          }}
+          onAssign={(client, ownerId) => void assignClientOwner(client, ownerId)}
+          onSecondary={(client) => openSecondaryPicker([client])}
+          onNotSold={(client) => void markNotSold(client)}
+          renderRecording={(client) => (
+            <BookerRecordingPlayer
+              latestRecordingUrl={client.myphoner?.latestRecordingUrl || ''}
+              authHeaders={salesAuthHeaders()}
+              recordingEndpoint={buildRecordingProxyUrl(client.id)}
+            />
+          )}
+          renderNotes={(client) => (
+            <ClientNotesField
+              label="Notater"
+              value={clientNoteDraft(client)}
+              saving={savingNoteId === client.id}
+              dirty={clientNoteDraft(client).trim() !== String(client.notes || '').trim()}
+              onChange={(value) => setNoteDrafts((prev) => ({ ...prev, [client.id]: value }))}
+              onSave={() => void saveClientNotes(client)}
+            />
+          )}
+        />
+        <div className="mt-auto flex justify-center pt-1">
+          <button
+            type="button"
+            onClick={() => setShowAllClients((open) => !open)}
+            disabled={hasActiveFilters}
+            aria-expanded={allClientsOpen}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-white/10 text-sm text-white hover:bg-white/15 disabled:opacity-60"
+            title={hasActiveFilters ? 'Listen er åpen fordi søk eller filter er på' : undefined}
+          >
+            {allClientsOpen ? 'Skjul alle kunder' : `Vis alle kunder (${productClients.length})`}
+            <ChevronDown size={15} className={`transition-transform ${allClientsOpen ? 'rotate-180' : ''}`} />
+          </button>
+        </div>
+        </div>
+      )}
+
+      {(isSsuBracket || selectedCount > 0) && (
       <div className="rounded-2xl bg-[#2a2a2a] border border-white/10 p-3 sm:p-4 space-y-3">
+        {isSsuBracket && (
         <div className="space-y-2">
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
             {SALES_PIPELINE_STATES.map((state) => {
@@ -3455,6 +3598,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
             })}
           </div>
         </div>
+        )}
 
         {selectedCount > 0 && (
           <div className="flex flex-wrap items-center gap-2">
@@ -3531,14 +3675,31 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
           </div>
         )}
       </div>
-
-      {(error || notice) && (
-        <div className="space-y-2">
-          {error && <div className="rounded-xl border border-red-500/20 bg-red-500/10 text-red-300 px-3 py-2.5 sm:px-4 sm:py-3 text-sm shadow-lg shadow-black/30">{error}</div>}
-          {notice && <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 text-emerald-200 px-3 py-2.5 sm:px-4 sm:py-3 text-sm shadow-lg shadow-black/30">{notice}</div>}
-        </div>
       )}
 
+      {allClientsOpen && (<>
+      {!isSsuBracket && (
+        <div className="flex flex-wrap items-center justify-between gap-2 pt-2">
+          <div>
+            <h2 className="text-sm font-semibold text-white">Alle kunder</h2>
+            <p className="text-[11px] text-gray-400">Hele listen. Søk og filtrer med Filter øverst.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setProductMenuOpen(false);
+              setAccountMenuOpen(false);
+              setHeaderPanel('filter');
+            }}
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs ${
+              hasActiveFilters ? 'bg-[#FF5B00] text-white' : 'bg-white/10 text-white hover:bg-white/15'
+            }`}
+          >
+            <Search size={13} />
+            {hasActiveFilters ? 'Filter er på' : 'Søk og filter'}
+          </button>
+        </div>
+      )}
 
       {loading && clients.length === 0 ? (
         <div className="min-h-[180px] flex items-center justify-center text-gray-400">
@@ -3825,6 +3986,7 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
           {renderCategoryMore('archived', archivedClients.length)}
         </div>
       )}
+      </>)}
 
       </div>
 
@@ -3855,7 +4017,16 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
               </div>
               {error ? <p className="px-3 sm:px-5 pt-2 text-xs text-red-600">{error}</p> : null}
               <div className="px-3 sm:px-5 py-0 sm:py-3">
-                <SalesFlowSteps step={flowStep} onStep={(step) => void goFlowStep(step)} />
+                <SalesFlowSteps
+                  step={flowStep}
+                  onStep={(step) => void goFlowStep(step)}
+                  showGoals
+                  done={flowClient ? {
+                    1: Boolean(flowClient.salesPlaybook?.readUpAt),
+                    2: clientHasProductNotes(flowClient),
+                    3: Boolean(flowClient.progression?.offerSent),
+                  } : {}}
+                />
               </div>
             </div>
           )}
@@ -3865,6 +4036,15 @@ export function SalesClientsSection({ onMovedToDevelopment, onLogout, showScript
             {(!inClientFlow || flowStep === 1) && (
             <div className={inClientFlow ? 'max-w-3xl mx-auto p-3 sm:p-6' : ''}>
             <h3 className="text-lg sm:text-xl font-semibold text-white mb-4">{editingId ? 'Kundekort' : 'Add sales client'}</h3>
+            {inClientFlow && flowClient ? (
+              <div className="mb-4 rounded-xl border border-white/10 bg-black/20 p-3">
+                <BookerRecordingPlayer
+                  latestRecordingUrl={flowClient.myphoner?.latestRecordingUrl || ''}
+                  authHeaders={salesAuthHeaders()}
+                  recordingEndpoint={buildRecordingProxyUrl(flowClient.id)}
+                />
+              </div>
+            ) : null}
             {inClientFlow && contractMissing.length > 0 && (
               <div className="mb-4 rounded-xl border border-amber-400/40 bg-amber-950/40 px-4 py-3 text-sm text-amber-100">
                 <div className="font-medium">Kontrakten mangler data</div>

@@ -226,6 +226,8 @@ export function DeveloperClientBrief({
   dots,
   onOpenLibrary,
   kundekortSource = {},
+  itemId = '',
+  latestRecordingUrl = '',
 }: {
   open: boolean;
   onClose: () => void;
@@ -239,6 +241,8 @@ export function DeveloperClientBrief({
   dots: MaterialDot[];
   onOpenLibrary: () => void;
   kundekortSource?: Record<string, unknown>;
+  itemId?: string;
+  latestRecordingUrl?: string;
 }) {
   if (!open) return null;
   const images = files.filter((file) => isImageFile(file) && file.url);
@@ -282,7 +286,12 @@ export function DeveloperClientBrief({
 
         <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(360px,42%)]">
           <div className="min-h-0 overflow-y-auto px-4 py-4 sm:px-6 sm:py-5 space-y-6">
-            <DeveloperKundedata source={kundekortSource} />
+            <DeveloperKundedata
+              source={kundekortSource}
+              itemId={itemId}
+              latestRecordingUrl={latestRecordingUrl}
+              authHeaders={authHeaders}
+            />
             <DeveloperClientIdentityFull source={kundekortSource} />
             <section className="space-y-3">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-300">Sammendrag</h3>

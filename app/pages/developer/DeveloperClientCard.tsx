@@ -1240,7 +1240,7 @@ export function DeveloperClientCard({
                     Lagre domene
                   </button>
                 </div>
-                <p className="text-[11px] text-gray-500">Steg 4 SEO er av til et domene er lagret på runet.</p>
+                <p className="text-[11px] text-gray-500">Steg 5 SEO er av til et domene er lagret på runet.</p>
               </>
             )}
           </div>
@@ -1338,6 +1338,8 @@ export function DeveloperClientCard({
         authHeaders={developmentAuthHeaders()}
         dots={dots}
         onOpenLibrary={() => setLibraryOpen(true)}
+        itemId={item.id}
+        latestRecordingUrl={item.latestRecordingUrl || ''}
         kundekortSource={{
           ...item,
           clientBrief: item.clientBrief,

@@ -299,3 +299,38 @@ test('SSU clients stay off the website board and keep their own count list', () 
   const website = buildDevelopmentItems([bynesetSales], []);
   assert.equal(website[0].product, 'asoldi');
 });
+
+test('developer board copies booker recording URL from MyPhoner, else previewDocument', () => {
+  assert.equal(buildDeveloperBoardItems([bynesetSales], [])[0].latestRecordingUrl, '');
+  const fromMyphoner = {
+    ...bynesetSales,
+    id: 'sales-audio-1',
+    myphoner: { latestRecordingUrl: 'https://asoldi.com/myphoner-audio/a.wav' },
+    previewDocument: { recordingUrl: 'https://asoldi.com/myphoner-audio/old.wav' },
+  };
+  assert.equal(
+    buildDeveloperBoardItems([fromMyphoner], [])[0].latestRecordingUrl,
+    'https://asoldi.com/myphoner-audio/a.wav',
+  );
+  const fromPreview = {
+    ...bynesetSales,
+    id: 'sales-audio-2',
+    previewDocument: { recordingUrl: 'https://asoldi.com/myphoner-audio/b.wav' },
+  };
+  assert.equal(
+    buildDeveloperBoardItems([fromPreview], [])[0].latestRecordingUrl,
+    'https://asoldi.com/myphoner-audio/b.wav',
+  );
+  const unsigned = {
+    ...bynesetSales,
+    id: 'sales-audio-3',
+    status: 'active',
+    progression: { contractSigned: false },
+    hubSite: {},
+    myphoner: { latestRecordingUrl: 'https://asoldi.com/myphoner-audio/c.wav' },
+  };
+  assert.equal(
+    buildPreviewItems([unsigned], [])[0].latestRecordingUrl,
+    'https://asoldi.com/myphoner-audio/c.wav',
+  );
+});

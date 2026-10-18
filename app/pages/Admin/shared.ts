@@ -179,7 +179,7 @@ export type ManageClientsView = 'clients' | 'development' | 'sales' | 'admin';
 
 export type SalesGoalKey = 'meetingHeld' | 'offerSent' | 'contractSigned' | 'paymentReceived';
 
-export type SalesNextActionPreset = 'meeting' | 'meetingBooked' | 'findMeetingTime' | 'sms24h' | 'sms1h' | 'call2h' | 'sendOffer' | 'checkIn' | 'upsell' | 'oppgrader' | 'oppfolging' | 'oppfolging1mnd' | 'contractCheckup' | 'custom';
+export type SalesNextActionPreset = 'meeting' | 'meetingBooked' | 'findMeetingTime' | 'sms24h' | 'sms1h' | 'call2h' | 'sendOffer' | 'checkIn' | 'upsell' | 'oppgrader' | 'oppfolging' | 'oppfolging1mnd' | 'contractCheckup' | 'signatureFollowUp' | 'checkup3mnd' | 'custom';
 
 export type SalesActionFormat = 'email' | 'sms' | 'ring' | 'mote' | 'sms-ring';
 
@@ -459,6 +459,8 @@ export type DevelopmentItem = {
   hasIterationMeeting?: boolean;
   iterationTranscript?: string;
   previewDocument?: PreviewDocument | null;
+  /** MyPhoner booker wav, else previewDocument.recordingUrl. Played in Kundedata. */
+  latestRecordingUrl?: string;
   developerQa?: DeveloperQa;
   developerGoals?: DeveloperGoals;
   offerTierId?: string;
@@ -758,6 +760,7 @@ export type SalesClient = {
   businessName: string;
   contactPerson: string;
   contactEmail: string;
+  contactEmailError?: { message: string; at?: string; to?: string } | null;
   /** Account email on asoldi.com. Separate from the contact email used for meeting mail. */
   clientEmail?: string;
   portalUserId?: string;
@@ -791,6 +794,17 @@ export type SalesClient = {
     generatedAt: string;
     source: string;
   } | null;
+  /**
+   * Checklist steps without a next-action row. readUpAt = "Les deg opp på kunden" done.
+   * missed* = Møtte ikke opp / Skip for the meeting at missedMeetingAt; missedCalledAt = Ring for ny møtetid done.
+   */
+  salesPlaybook?: {
+    readUpAt: string;
+    missedKind?: '' | 'noShow' | 'skipped' | 'auto';
+    missedAt?: string;
+    missedMeetingAt?: string;
+    missedCalledAt?: string;
+  };
   myphoner: SalesMyphonerMeta;
   progression: SalesProgression;
   salesMigrations?: { meetingHeldOrphansV1?: boolean };
@@ -834,6 +848,15 @@ export type SalesClient = {
       signedVerdict?: string;
       signedScore?: number;
       signedReasons?: string[];
+    }[];
+    elements?: {
+      id: string;
+      receivedAt: string;
+      summary: string;
+      from: string;
+      subject: string;
+      status: string;
+      buckets: string[];
     }[];
   };
   websiteDueOverride?: string;

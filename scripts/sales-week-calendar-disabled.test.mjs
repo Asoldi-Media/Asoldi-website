@@ -46,6 +46,7 @@ test('week calendar events load on open; free-busy stays off so Admin/Sales list
   const salesUi = readFileSync(join(root, 'app/pages/Admin/sections/SalesClientsSection.tsx'), 'utf8');
   assert.match(salesUi, /toggleHeaderPanel\('calendar'\)/);
   assert.match(salesUi, /<SalesCalendarWeek/);
+  assert.match(salesUi, /calendarCombined/);
   assert.match(salesUi, /if \(headerPanel === 'calendar'\) return;/);
   assert.equal(salesUi.includes('/google/embed'), false);
   assert.equal(salesUi.includes('google/events'), false);
@@ -72,7 +73,8 @@ test('week calendar events load on open; free-busy stays off so Admin/Sales list
   assert.equal(eventsRoute.includes('SALES_WEEK_CALENDAR_DISABLED'), false);
   assert.match(eventsRoute, /loadSalesCalendarWeek/);
   assert.match(eventsRoute, /withDeadline/);
-  assert.match(eventsRoute, /\.slice\(0, 1\)/);
+  assert.equal(eventsRoute.includes('.slice(0, 1)'), false);
+  assert.match(eventsRoute, /Ingen selger har koblet Google Calendar/);
 
   const freeBusyRoute = server.slice(
     server.indexOf("app.get('/api/admin/sales/google/workshop-availability'"),
@@ -82,7 +84,8 @@ test('week calendar events load on open; free-busy stays off so Admin/Sales list
 
   const adminBoard = readFileSync(join(root, 'app/pages/Admin/sections/AdminBoardSection.tsx'), 'utf8');
   assert.match(adminBoard, /SalesCalendarWeek/);
-  assert.match(adminBoard, /workshopCalendar/);
+  assert.match(adminBoard, /combined/);
+  assert.equal(adminBoard.includes('workshopCalendar'), false);
 
   const notes = readFileSync(join(root, 'app/pages/sales/MeetingNotesModal.tsx'), 'utf8');
   assert.equal(notes.includes('SalesCalendarWeek'), false);

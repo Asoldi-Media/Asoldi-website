@@ -14,6 +14,7 @@ import {
   X,
 } from 'lucide-react';
 import { API, salesAuthHeaders, type SalesClient, type WorkshopActionFormat, type WorkshopGoalAction } from '../shared';
+import { ActionDateTimeInput } from './ActionDateTimeInput';
 import {
   formatActionFormatLabel,
   isoToDatetimeLocalOslo,
@@ -364,12 +365,10 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
         </label>
         <label className={`text-[10px] text-gray-400 uppercase tracking-wide ${meetingTime ? 'sm:col-span-2' : ''}`}>
           {meetingTime ? 'Møtetid' : 'Tid for neste handling'}
-          <input
-            type="datetime-local"
-            aria-label={meetingTime ? 'Møtetid' : 'Tid for neste handling'}
+          <ActionDateTimeInput
             value={state.dueAt}
-            onChange={(event) => onChange({ dueAt: event.target.value })}
-            className="mt-1 w-full rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
+            ariaLabel={meetingTime ? 'Møtetid' : 'Tid for neste handling'}
+            onChange={(dueAt) => onChange({ dueAt })}
           />
         </label>
         {state.kind === 'extra' ? (
@@ -664,11 +663,10 @@ export function WorkshopAdminActionRow({ client, onClient }: Props) {
               </label>
               <label className="text-[10px] text-gray-400 uppercase tracking-wide">
                 Tid for neste handling
-                <input
-                  type="datetime-local"
+                <ActionDateTimeInput
                   value={draft.dueAt}
-                  onChange={(event) => setDraft((prev) => (prev ? { ...prev, dueAt: event.target.value } : prev))}
-                  className="mt-1 w-full rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
+                  ariaLabel="Tid for neste handling"
+                  onChange={(dueAt) => setDraft((prev) => (prev ? { ...prev, dueAt } : prev))}
                 />
               </label>
               <label className="sm:col-span-2 text-[10px] text-gray-400 uppercase tracking-wide">

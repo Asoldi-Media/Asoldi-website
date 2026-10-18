@@ -8,6 +8,7 @@ import {
   isPreWorkshopEmailTemplate,
   listEmailTemplates,
   shouldAttachCalendarInvite,
+  shouldMarkSalesReminderSent,
 } from '../lib/email-templates-store.js';
 import { deriveReminderSchedule, salesReminderCatchUpIsDue, salesReminderIsDue, shouldRescheduleSalesReminders } from '../data/sales.js';
 import { buildSalesSender } from '../lib/sales-sender.js';
@@ -505,6 +506,29 @@ test('Admin email presets include both workshop variants', () => {
   assert.equal(keys.includes('pre-workshop-timed'), true);
   assert.equal(keys.includes('iteration'), true);
   assert.equal(keys.includes('thank-you'), true);
+  assert.equal(keys.includes('workshop-reminder-3d'), true);
+  assert.equal(keys.includes('workshop-reminder-24h'), true);
+  assert.equal(keys.includes('data-innsamling-1'), true);
+  assert.equal(keys.includes('data-innsamling-2'), true);
+});
+
+test('datainnsamling påminnelse lists open need lines and does not stamp sales reminders', () => {
+  const needLines = [{ title: 'Logo', detail: 'Logo i høy oppløsning' }];
+  const composed = composeEmailForClient(
+    { contactPerson: 'Damian', businessName: 'Test Bakeri', contactEmail: 'daracha777@gmail.com' },
+    'data-innsamling-2',
+    null,
+    { needLines },
+  );
+  assert.match(composed.merged.subject, /Påminnelse: innhold til Test Bakeri/);
+  assert.match(composed.merged.html, /Påminnelse: vi trenger innhold/);
+  assert.match(composed.merged.html, /Logo/);
+  assert.match(composed.merged.html, /Logo i høy oppløsning/);
+  assert.equal(composed.merged.html.includes('envelope.png'), false);
+  assert.equal(shouldMarkSalesReminderSent('data-innsamling-2'), false);
+  assert.equal(shouldMarkSalesReminderSent('workshop-reminder-3d'), false);
+  assert.equal(shouldMarkSalesReminderSent('thank-you'), true);
+  assert.equal(shouldMarkSalesReminderSent('reminder-24h'), true);
 });
 
 test('untimed pre-workshop mail asks for a slot and lists needs, with no Meet or ICS', () => {

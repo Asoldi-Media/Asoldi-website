@@ -11,13 +11,15 @@ import {
   rejectActionAfterDueDate,
 } from '../lib/workshop-desk-actions.js';
 import {
+  stampWorkshopDeskEmail,
   workshopDeskEmailAutosendEnabled,
   workshopDeskEmailKindAutosends,
+  workshopDeskEmailStampKey,
   workshopReminderScheduleAt,
 } from '../lib/workshop-desk-emails.js';
 import { getAdminCurrentGoalKey } from '../lib/workshop-goal-timeline.js';
 import { buildWorkshopReminderEmail, buildDataInnsamlingEmail } from '../lib/sales-email.js';
-import { composeEmailForClient } from '../lib/email-templates-store.js';
+import { composeEmailForClient, shouldMarkSalesReminderSent } from '../lib/email-templates-store.js';
 
 test('informasjon rings 7 calendar days after signed, weekend to next Monday 09:00 Oslo', () => {
   const thursday = informasjonDueAtFromSignedAt('2026-10-01T12:00:00.000Z');
@@ -123,6 +125,20 @@ test('desk email autosend is off unless WORKSHOP_DESK_EMAIL_AUTOSEND=1', () => {
   assert.equal(workshopDeskEmailKindAutosends('workshop-reminder-24h'), true);
   assert.equal(workshopDeskEmailKindAutosends('data-innsamling-1'), false);
   assert.equal(workshopDeskEmailKindAutosends('data-innsamling-2'), false);
+});
+
+test('composed desk send stamps deskEmails, not sales reminders', () => {
+  assert.equal(workshopDeskEmailStampKey('workshop-reminder-3d'), 'reminder3dSentAt');
+  assert.equal(workshopDeskEmailStampKey('workshop-reminder-24h'), 'reminder24hSentAt');
+  assert.equal(workshopDeskEmailStampKey('data-innsamling-1'), 'data1SentAt');
+  assert.equal(workshopDeskEmailStampKey('data-innsamling-2'), 'data2SentAt');
+  assert.equal(workshopDeskEmailStampKey('thank-you'), '');
+  assert.equal(shouldMarkSalesReminderSent('workshop-reminder-3d'), false);
+  assert.equal(shouldMarkSalesReminderSent('data-innsamling-2'), false);
+  const stamped = stampWorkshopDeskEmail({}, 'data2SentAt', '2026-10-10T12:00:00.000Z');
+  assert.equal(stamped.deskEmails.data2SentAt, '2026-10-10T12:00:00.000Z');
+  const reminder = stampWorkshopDeskEmail({}, workshopDeskEmailStampKey('workshop-reminder-3d'), '2026-10-10T12:00:00.000Z');
+  assert.equal(reminder.deskEmails.reminder3dSentAt, '2026-10-10T12:00:00.000Z');
 });
 
 test('compose keeps workshop-reminder ICS', () => {

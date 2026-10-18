@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deepgramListenQuery, formatDeepgramChat, transcribePrerecordedBuffer } from '../lib/deepgram-transcribe.js';
 import { buildBookerPreviewUserPrompt, persistPreviewDocument, PREVIEW_SYSTEM, shouldEnqueueBookerPreview } from '../lib/booker-preview-document.js';
+import { clientRecordingUrl, prepareRecordingStream } from '../lib/sales-recording-stream.js';
 import { hardGateWorkshopTranscript } from '../lib/workshop-transcript-eval.js';
 import { applyWorkshopTranscriptToRecord } from '../lib/workshop-project-document.js';
 import { markProjectTodoDone, persistProjectDocument } from '../lib/workshop-record.js';
@@ -188,4 +189,51 @@ test('developer UI does not import Deepgram', () => {
   assert.equal(brief.includes('deepgram-transcribe'), false);
   assert.equal(card.includes('deepgram-transcribe'), false);
   assert.equal(brief.includes('DEVELOPER_QA_LABELS'), false);
+});
+
+test('booker recording URL prefers MyPhoner over previewDocument', () => {
+  assert.equal(clientRecordingUrl(null), '');
+  assert.equal(clientRecordingUrl({
+    myphoner: { latestRecordingUrl: 'https://asoldi.com/myphoner-audio/a.wav' },
+    previewDocument: { recordingUrl: 'https://asoldi.com/myphoner-audio/old.wav' },
+  }), 'https://asoldi.com/myphoner-audio/a.wav');
+  assert.equal(clientRecordingUrl({
+    previewDocument: { recordingUrl: 'https://asoldi.com/myphoner-audio/b.wav' },
+  }), 'https://asoldi.com/myphoner-audio/b.wav');
+});
+
+test('recording proxy refuses loops and missing URLs, allows app and CDN hosts', () => {
+  assert.equal(prepareRecordingStream({ rawUrl: '' }).status, 404);
+  assert.equal(prepareRecordingStream({
+    rawUrl: 'https://asoldi.com/api/admin/sales/abc/recording',
+  }).status, 400);
+  assert.equal(prepareRecordingStream({
+    rawUrl: 'https://asoldi.com/api/admin/development/sales%3Aabc/recording',
+  }).status, 400);
+  const app = prepareRecordingStream({
+    rawUrl: 'https://asoldi.com/myphoner-audio/a.wav',
+    appHost: 'asoldi.com',
+  });
+  assert.equal(app.ok, true);
+  assert.equal(app.isAppHost, true);
+  const cdn = prepareRecordingStream({
+    rawUrl: 'https://cdn.example.com/calls/a.wav',
+  });
+  assert.equal(cdn.ok, true);
+  assert.equal(cdn.isAppHost, false);
+  assert.equal(cdn.isMyphonerHost, false);
+});
+
+test('both developer documents mount booker audio in Kundedata', () => {
+  const kundedata = readFileSync(join(here, '../app/pages/developer/DeveloperKundedata.tsx'), 'utf8');
+  const brief = readFileSync(join(here, '../app/pages/developer/DeveloperClientBrief.tsx'), 'utf8');
+  const card = readFileSync(join(here, '../app/pages/developer/DeveloperClientCard.tsx'), 'utf8');
+  const server = readFileSync(join(here, '../server.js'), 'utf8');
+  assert.match(kundedata, /Møtebooker-opptak/);
+  assert.match(kundedata, /Lytt her/);
+  assert.match(brief, /latestRecordingUrl/);
+  assert.match(brief, /DeveloperKundedata/);
+  assert.match(card, /latestRecordingUrl=\{item\.latestRecordingUrl/);
+  assert.match(server, /\/api\/admin\/development\/:id\/recording/);
+  assert.match(server, /developmentAuth/);
 });

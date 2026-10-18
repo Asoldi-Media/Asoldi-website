@@ -251,6 +251,7 @@ import {
   parseDevelopmentItemId,
   siteMatchesSalesClient,
 } from './lib/development-phase.js';
+import { clientRecordingUrl, prepareRecordingStream } from './lib/sales-recording-stream.js';
 import {
   PUBLIC_SALES_ORIGIN,
   buildLaptopPreviewEntry,
@@ -12827,15 +12828,19 @@ app.get('/api/admin/sales/google/events', salesAuth, async (req, res) => {
         isAdmin: Boolean(req.salesUser.isAdmin),
         ownerId: requestedOwner,
         connectedSources: listConnectedAsoldiCalendarSources(),
-      }).slice(0, 1);
+      });
       for (const source of sources) {
         await ensureSharedCalendarTokens(source.accountKey);
       }
       viewingOwn = sources.length === 1
         && sources[0]?.accountKey === sanitizeText(req.salesUser.accountKey);
-      emptyMessage = viewingOwn
-        ? 'Koble Google Calendar for å se møter og handlinger her. Bruk Koble Google Calendar i profilen.'
-        : 'Denne selgeren har ikke koblet Google Calendar ennå.';
+      const combinedTeam = Boolean(req.salesUser.isAdmin)
+        && (!requestedOwner || requestedOwner === 'unassigned');
+      emptyMessage = combinedTeam
+        ? 'Ingen selger har koblet Google Calendar ennå. Hver selger kobler sin egen Google-konto i profilen.'
+        : viewingOwn
+          ? 'Koble Google Calendar for å se møter og handlinger her. Bruk Koble Google Calendar i profilen.'
+          : 'Denne selgeren har ikke koblet Google Calendar ennå.';
     }
 
     const listed = await withDeadline(
@@ -14063,31 +14068,19 @@ async function resolveLocalRecordingAsset(targetPathname = '') {
   return '';
 }
 
-// Streams the latest synced call recording through this backend so the Sales UI
-// can play audio inline without relying on direct third-party CORS/browser auth.
-app.get('/api/admin/sales/:id/recording', salesAuth, async (req, res) => {
-  const client = sales.getSalesClientById(req.params.id);
-  if (!client) return res.status(404).json({ message: 'Sales client not found.' });
-  if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
-  const rawUrl = sanitizeText(client.myphoner?.latestRecordingUrl);
-  const recordingUrl = normalizeAbsoluteHttpUrl(rawUrl);
-  if (!recordingUrl) {
-    return res.status(404).json({
-      message: 'No recording URL is synced for this client.',
-      reason: sanitizeText(client.myphoner?.latestRecordingSyncReason || ''),
-    });
+function recordingUrlForStream(rawUrl = '', req) {
+  const raw = sanitizeText(rawUrl);
+  if (!raw) return '';
+  const absolute = normalizeAbsoluteHttpUrl(raw);
+  if (absolute) return absolute;
+  if (/^\/(myphoner-audio|myphoner-recordings)\//i.test(raw)) {
+    const appBase = normalizeHttpBaseUrl(process.env.APP_URL || `${req.protocol}://${req.get('host')}`);
+    return appBase ? `${appBase}${raw}` : '';
   }
+  return raw;
+}
 
-  let target;
-  try {
-    target = new URL(recordingUrl);
-  } catch {
-    return res.status(400).json({ message: 'Recording URL is invalid.' });
-  }
-  if (target.protocol !== 'http:' && target.protocol !== 'https:') {
-    return res.status(400).json({ message: 'Recording URL must use http(s).' });
-  }
-
+async function streamClientRecording(req, res, client) {
   const myphonerConfig = myphonerApi.getMyPhonerConfig();
   const myphonerHost = sanitizeText(myphonerConfig?.subdomain)
     ? `${sanitizeText(myphonerConfig.subdomain).toLowerCase()}.myphoner.com`
@@ -14099,21 +14092,21 @@ app.get('/api/admin/sales/:id/recording', salesAuth, async (req, res) => {
   } catch {
     appHost = '';
   }
-  const requestHost = sanitizeText(req.get('host')).toLowerCase();
-  const allowedHosts = new Set([myphonerHost, appHost, requestHost].map((entry) => sanitizeText(entry).toLowerCase()).filter(Boolean));
-
-  const targetHost = String(target.host || '').toLowerCase();
-  const isMyphonerHost = Boolean(myphonerHost && targetHost === myphonerHost);
-  const isAppHost = Boolean(allowedHosts.has(targetHost));
-  // App host + Myphoner host are preferred. External CDN URLs are also allowed
-  // because Myphoner often serves recordings from signed third-party storage.
-  if (!isAppHost && !isMyphonerHost && !/^https?:$/i.test(target.protocol)) {
-    return res.status(403).json({ message: 'Recording host is not allowed.' });
+  const prepared = prepareRecordingStream({
+    rawUrl: recordingUrlForStream(clientRecordingUrl(client), req),
+    myphonerHost,
+    appHost,
+    requestHost: sanitizeText(req.get('host')).toLowerCase(),
+  });
+  if (!prepared.ok) {
+    const payload = { message: prepared.message };
+    if (prepared.status === 404) {
+      payload.reason = sanitizeText(client?.myphoner?.latestRecordingSyncReason || '');
+    }
+    return res.status(prepared.status).json(payload);
   }
-  if (/^\/api\/admin\/sales\/[^/]+\/recording$/i.test(target.pathname)) {
-    return res.status(400).json({ message: 'Recording URL points to this proxy endpoint.' });
-  }
 
+  const { recordingUrl, target, isMyphonerHost } = prepared;
   const localAssetPath = await resolveLocalRecordingAsset(target.pathname);
   if (localAssetPath) {
     res.setHeader('Cache-Control', 'no-store');
@@ -14121,9 +14114,7 @@ app.get('/api/admin/sales/:id/recording', salesAuth, async (req, res) => {
     return res.sendFile(localAssetPath);
   }
 
-  const headers = {
-    Accept: '*/*',
-  };
+  const headers = { Accept: '*/*' };
   if (isMyphonerHost) {
     if (!myphonerApi.isMyPhonerConfigured(myphonerConfig)) {
       return res.status(503).json({ message: 'Myphoner integration is not configured.' });
@@ -14165,6 +14156,15 @@ app.get('/api/admin/sales/:id/recording', salesAuth, async (req, res) => {
       message: sanitizeText(error?.message) || 'Failed streaming recording.',
     });
   }
+}
+
+// Streams the latest synced call recording through this backend so the Sales UI
+// can play audio inline without relying on direct third-party CORS/browser auth.
+app.get('/api/admin/sales/:id/recording', salesAuth, async (req, res) => {
+  const client = sales.getSalesClientById(req.params.id);
+  if (!client) return res.status(404).json({ message: 'Sales client not found.' });
+  if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
+  return streamClientRecording(req, res, client);
 });
 
 async function deleteSalesClientWithCleanup(existing, actorAccountKey = '') {
@@ -14507,6 +14507,18 @@ app.patch('/api/admin/sales/:id/next-actions', salesAuth, async (req, res) => {
   } catch (error) {
     const message = sanitizeText(error?.message) || 'Failed updating next action.';
     res.status(400).json({ message });
+  }
+});
+
+app.post('/api/admin/sales/:id/playbook', salesAuth, (req, res) => {
+  const existing = sales.getSalesClientById(req.params.id);
+  if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
+  if (!canAccessSalesClient(req, existing)) return res.status(403).json({ message: 'Not your sales client.' });
+  try {
+    const updated = sales.setSalesPlaybookStep(req.params.id, sanitizeText(req.body?.step), req.body?.done !== false);
+    res.json({ client: jsonSalesClient(updated) });
+  } catch (error) {
+    res.status(400).json({ message: sanitizeText(error?.message) || 'Kunne ikke lagre steget.' });
   }
 });
 
@@ -19311,6 +19323,13 @@ app.get('/api/admin/development/:id/workshop-needs', developmentAuth, async (req
   } catch (error) {
     return res.status(error.status || 500).json({ message: error.message || 'Failed to load workshop needs.' });
   }
+});
+
+app.get('/api/admin/development/:id/recording', developmentAuth, async (req, res) => {
+  const target = resolveDevelopmentTarget(req.params.id);
+  if (!target?.client) return res.status(404).json({ message: 'Development client not found.' });
+  if (!assertDevelopmentVisible(req, res, target.client)) return;
+  return streamClientRecording(req, res, target.client);
 });
 
 app.post('/api/admin/development/:id/booker-preview', developmentAuth, (req, res) => {

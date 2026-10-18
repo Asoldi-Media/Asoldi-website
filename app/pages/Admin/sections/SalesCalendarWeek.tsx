@@ -30,6 +30,7 @@ export type SalesCalendarWeekEvent = {
 type Props = {
   ownerId?: string;
   workshopCalendar?: boolean;
+  combined?: boolean;
   ownerLabel: string;
   isOwnCalendar: boolean;
   refreshKey?: string;
@@ -111,6 +112,7 @@ async function fetchWeek(query: URLSearchParams, signal: AbortSignal) {
 export function SalesCalendarWeek({
   ownerId = '',
   workshopCalendar = false,
+  combined = false,
   ownerLabel,
   isOwnCalendar,
   refreshKey = '',
@@ -172,11 +174,13 @@ export function SalesCalendarWeek({
     return rows;
   }, [span.endHour, span.startHour]);
   const grouped = useMemo(() => groupCalendarEventsByOsloDay(events, days), [days, events]);
-  const showOwner = googleEmails.length > 1;
+  const showOwner = combined || googleEmails.length > 1;
   const emailsLabel = googleEmails.length ? googleEmails.join(', ') : googleEmail;
-  const title = isOwnCalendar && !ownerId && !workshopCalendar
-    ? 'Din kalender'
-    : `Kalender for ${ownerLabel}`;
+  const title = combined
+    ? 'Alle selgere'
+    : isOwnCalendar && !ownerId && !workshopCalendar
+      ? 'Din kalender'
+      : `Kalender for ${ownerLabel}`;
   const selected = events.find((event, index) => `${event.ownerAccountKey || ''}:${event.id || index}` === selectedKey) || null;
 
   return (

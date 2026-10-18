@@ -179,7 +179,7 @@ export function DeveloperRunQueueBar({
   const seoDisabledReason = !selectedWithRun.length
     ? ''
     : !hasDomain
-      ? 'Set a website domain before Step 4 SEO'
+      ? 'Set a website domain before Step 5 SEO'
       : '';
 
   function clickableDisabled(clickTarget: string) {

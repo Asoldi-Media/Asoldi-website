@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
-import { Check, Copy, ExternalLink } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Check, Copy, ExternalLink, Loader2, Volume2 } from 'lucide-react';
+import { API } from '../Admin/shared';
 import {
   clientIdentityBrief,
   compactClientIdentityLine,
@@ -111,7 +112,123 @@ export function DeveloperClientIdentityFull({ source }: { source: Source }) {
   );
 }
 
-export function DeveloperKundedata({ source }: { source: Source }) {
+export function BookerRecordingPlayer({
+  itemId = '',
+  latestRecordingUrl = '',
+  authHeaders = {},
+  recordingEndpoint = '',
+}: {
+  itemId?: string;
+  latestRecordingUrl?: string;
+  authHeaders?: Record<string, string>;
+  recordingEndpoint?: string;
+}) {
+  const endpoint = recordingEndpoint
+    || (itemId ? `${API}/admin/development/${encodeURIComponent(itemId)}/recording` : '');
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [blobUrl, setBlobUrl] = useState('');
+  const [error, setError] = useState('');
+  const authKey = String(authHeaders?.Authorization || '');
+
+  useEffect(() => () => {
+    if (blobUrl) URL.revokeObjectURL(blobUrl);
+  }, [blobUrl]);
+
+  useEffect(() => {
+    setOpen(false);
+    setLoading(false);
+    setError('');
+    setBlobUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return '';
+    });
+  }, [endpoint, latestRecordingUrl, authKey]);
+
+  async function toggle() {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    if (blobUrl) {
+      setOpen(true);
+      return;
+    }
+    if (!endpoint) {
+      setError('Mangler utvikler-id for opptaket.');
+      setOpen(true);
+      return;
+    }
+    setLoading(true);
+    setError('');
+    try {
+      const response = await fetch(endpoint, { method: 'GET', headers: authHeaders });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload.message || 'Klarte ikke å laste booker-opptaket.');
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      setBlobUrl(url);
+      setOpen(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Klarte ikke å laste booker-opptaket.');
+      setOpen(true);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="text-[10px] uppercase tracking-wide text-gray-500">Møtebooker-opptak</div>
+      {!latestRecordingUrl ? (
+        <p className="text-sm text-gray-600">—</p>
+      ) : (
+        <>
+          <button
+            type="button"
+            onClick={() => void toggle()}
+            disabled={loading}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50"
+            title="Last og spill booker-samtalen her"
+          >
+            {loading ? <Loader2 size={13} className="animate-spin" /> : <Volume2 size={13} />}
+            {open ? 'Skjul lyd' : 'Lytt her'}
+          </button>
+          {open ? (
+            <div className="rounded-xl border border-white/10 bg-black/20 p-3 space-y-2">
+              {blobUrl ? (
+                <audio controls preload="metadata" src={blobUrl} className="w-full" />
+              ) : (
+                <div className="text-xs text-amber-300">
+                  {error || 'Klarte ikke å laste booker-opptaket.'}
+                </div>
+              )}
+            </div>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
+export function DeveloperKundedata({
+  source,
+  itemId = '',
+  latestRecordingUrl = '',
+  authHeaders = {},
+  recordingEndpoint = '',
+  note = 'Fra salgskundekortet. Kun visning — endres på Sales.',
+}: {
+  source: Source;
+  itemId?: string;
+  latestRecordingUrl?: string;
+  authHeaders?: Record<string, string>;
+  /** Overrides the developer recording route (Sales uses /admin/sales/:id/recording). */
+  recordingEndpoint?: string;
+  note?: string;
+}) {
   const card = salesKundekortView(source);
   const address = card.meetingPlace || card.businessAddress;
   const extraLinks = card.otherLinks.filter(Boolean);
@@ -120,7 +237,7 @@ export function DeveloperKundedata({ source }: { source: Source }) {
     <section className="space-y-4">
       <div>
         <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-300">Kundedata</h3>
-        <p className="mt-1 text-[11px] text-gray-500">Fra salgskundekortet. Kun visning — endres på Sales.</p>
+        <p className="mt-1 text-[11px] text-gray-500">{note}</p>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -186,6 +303,13 @@ export function DeveloperKundedata({ source }: { source: Source }) {
           <p className="text-sm text-gray-600">—</p>
         )}
       </div>
+
+      <BookerRecordingPlayer
+        itemId={itemId}
+        latestRecordingUrl={latestRecordingUrl}
+        authHeaders={authHeaders}
+        recordingEndpoint={recordingEndpoint}
+      />
 
       <div className="rounded-xl border border-white/10 bg-black/20 px-3 py-3">
         <div className="flex items-center justify-between gap-2">

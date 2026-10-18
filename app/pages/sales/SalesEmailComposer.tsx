@@ -11,6 +11,7 @@ export function SalesEmailComposer() {
   const [params] = useSearchParams();
   const clientId = params.get('clientId') || '';
   const templateKey = params.get('template') || 'thank-you';
+  const fromAdmin = params.get('from') === 'admin';
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState('');
@@ -34,8 +35,23 @@ export function SalesEmailComposer() {
     { key: 'reminder-24h-in-person', label: 'Påminnelse 24 timer — fysisk' },
     { key: 'reminder-1h', label: 'Påminnelse 1 time — online' },
     { key: 'reminder-1h-in-person', label: 'Påminnelse 1 time — fysisk' },
+    { key: 'workshop', label: 'Workshop — Meet' },
+    { key: 'workshop-sms-ring', label: 'Workshop — SMS/ring' },
+    { key: 'iteration', label: 'Iterasjonsmøte — Meet' },
+    { key: 'workshop-reminder-3d', label: 'Workshop 3 dager' },
+    { key: 'workshop-reminder-24h', label: 'Workshop 24 timer' },
+    { key: 'data-innsamling-1', label: 'Datainnsamling' },
+    { key: 'data-innsamling-2', label: 'Datainnsamling påminnelse' },
     { key: 'offer', label: 'Tilbud + kontrakt' },
   ];
+
+  function composerHref(nextTemplate: string) {
+    const next = new URLSearchParams();
+    next.set('clientId', clientId);
+    next.set('template', nextTemplate);
+    if (fromAdmin) next.set('from', 'admin');
+    return `/sales/email?${next.toString()}`;
+  }
 
   useEffect(() => {
     const token = getSalesToken();
@@ -75,6 +91,10 @@ export function SalesEmailComposer() {
   }, [clientId, templateKey, navigate]);
 
   const title = useMemo(() => {
+    if (templateKey.startsWith('data-innsamling')) return 'Send datainnsamling';
+    if (templateKey.startsWith('workshop-reminder')) return 'Send workshop-påminnelse';
+    if (templateKey === 'workshop' || templateKey.startsWith('workshop-')) return 'Send workshop-e-post';
+    if (templateKey.startsWith('iteration')) return 'Send iterasjonsmøte';
     if (templateKey.startsWith('reminder')) return 'Send påminnelse';
     return 'Send velkomstmail';
   }, [templateKey]);
@@ -143,7 +163,9 @@ export function SalesEmailComposer() {
             </div>
             <div className="flex items-center gap-2">
               <Link to="/sales/email/templates" className="px-3 py-2 rounded-lg bg-white/10 text-sm hover:bg-white/15">Maler</Link>
-              <Link to="/sales" className="px-3 py-2 rounded-lg bg-white/10 text-sm hover:bg-white/15">Tilbake</Link>
+              <Link to={fromAdmin ? '/admin' : '/sales'} className="px-3 py-2 rounded-lg bg-white/10 text-sm hover:bg-white/15">
+                {fromAdmin ? 'Tilbake til Admin' : 'Tilbake'}
+              </Link>
             </div>
           </div>
         </header>
@@ -159,7 +181,7 @@ export function SalesEmailComposer() {
                   Mal
                   <select
                     value={templateKey}
-                    onChange={(event) => navigate(`/sales/email?clientId=${encodeURIComponent(clientId)}&template=${encodeURIComponent(event.target.value)}`)}
+                    onChange={(event) => navigate(composerHref(event.target.value))}
                     className="mt-1 w-full px-3 py-2 rounded-lg bg-[#111] border border-white/15 text-white text-sm"
                   >
                     {templates.map((row) => (

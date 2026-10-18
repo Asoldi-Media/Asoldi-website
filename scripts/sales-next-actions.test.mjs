@@ -28,6 +28,7 @@ import {
   inferMeetingHeld,
   isAutoOfferCheckIn,
   nextDayAtNineAmIso,
+  dayBeforeAtNineIso,
   normalizeSecondaryInterest,
   OFFER_CHECKIN_NAME,
   secondaryInterestLabel,
@@ -66,6 +67,8 @@ import {
 
 const HOUR_MS = 60 * 60 * 1000;
 const MEETING_AT = '2026-09-20T14:00:00.000Z';
+/** 09:00 Oslo (CEST) the day before MEETING_AT. */
+const REMINDER_AT = '2026-09-19T07:00:00.000Z';
 
 function client(overrides = {}) {
   return {
@@ -160,7 +163,7 @@ test('next action ranks the client, not raw meeting time', () => {
   const ranked = client();
   const active = getActiveNextAction(ranked);
   assert.equal(active.presetKey, 'sms1h');
-  assert.equal(getClientNextActionMs(ranked), Date.parse(MEETING_AT) - 24 * HOUR_MS);
+  assert.equal(getClientNextActionMs(ranked), Date.parse(REMINDER_AT));
 });
 
 test('recent overdue stays above upcoming for 48 hours, then drops to past due', () => {
@@ -168,7 +171,7 @@ test('recent overdue stays above upcoming for 48 hours, then drops to past due',
   const upcomingClient = client({
     id: 'up',
     businessName: 'Upcoming',
-    meetingAt: '2026-09-18T12:00:00.000Z',
+    meetingAt: '2026-09-19T12:00:00.000Z',
   });
   const recentClient = client({
     id: 'recent',
@@ -489,7 +492,7 @@ test('already-assigned clients without thank-you still need a confirmation send'
   assert.equal(clientNeedsConfirmationSend(client({ ownerId: 'admin:damian' })), false);
 });
 
-test('påminnelse stays 24 hours before the meeting when the meeting moves', () => {
+test('påminnelse moves to 09:00 the day before when the meeting moves', () => {
   const start = client({ meetingAt: '2026-09-20T14:00:00.000Z' });
   const meeting = decorateNextActions(start).find((action) => action.presetKey === 'meeting');
   const moved = applyNextActionMutation(
@@ -499,7 +502,7 @@ test('påminnelse stays 24 hours before the meeting when the meeting moves', () 
   assert.equal(moved.meetingAt, '2026-10-01T13:00:00.000Z');
   const sms = moved.nextActions.find((action) => action.presetKey === 'sms1h');
   assert.equal(sms.relativeToMeetingHours, 24);
-  assert.equal(Date.parse(sms.dueAt), Date.parse('2026-10-01T13:00:00.000Z') - 24 * HOUR_MS);
+  assert.equal(sms.dueAt, '2026-09-30T07:00:00.000Z');
 });
 
 test('editing påminnelse time unpins it and ranks the client by the new clock', () => {
@@ -522,7 +525,7 @@ test('editing påminnelse time unpins it and ranks the client by the new clock',
   assert.equal(getClientNextActionMs(ranked), Date.parse(customDue));
 });
 
-test('påminnelse stays 24 hours before the meeting until its own time is edited', () => {
+test('påminnelse follows the meeting until its own time is edited', () => {
   const row = { ...client(), nextActions: decorateNextActions(client()) };
   const sms = row.nextActions.find((action) => action.presetKey === 'sms1h');
   const renamed = applyNextActionMutation(row, {
@@ -533,7 +536,7 @@ test('påminnelse stays 24 hours before the meeting until its own time is edited
   });
   const stillRelative = renamed.nextActions.find((action) => action.presetKey === 'sms1h');
   assert.equal(stillRelative.relativeToMeetingHours, 24);
-  assert.equal(Date.parse(stillRelative.dueAt), Date.parse(MEETING_AT) - 24 * HOUR_MS);
+  assert.equal(stillRelative.dueAt, REMINDER_AT);
   assert.equal(stillRelative.name, 'Ring i morgen');
 });
 
@@ -579,7 +582,7 @@ test('påminnelse can be set sticky, and starts off', () => {
   assert.equal(meeting.sticky, false);
 });
 
-test('every booked client gets an SMS reminder 24 hours before the meeting', () => {
+test('every booked client gets an SMS reminder at 09:00 the day before the meeting', () => {
   const actions = decorateNextActions(client());
   const sms = actions.find((action) => action.presetKey === 'sms1h');
   const meeting = actions.find((action) => action.presetKey === 'meeting');
@@ -587,10 +590,22 @@ test('every booked client gets an SMS reminder 24 hours before the meeting', () 
   assert.equal(sms.format, 'sms');
   assert.equal(sms.addToCalendar, false);
   assert.equal(sms.note, 'send sms for å sjekke om kunde fortsatt kan møtes');
-  assert.equal(Date.parse(sms.dueAt), Date.parse(MEETING_AT) - 24 * HOUR_MS);
+  assert.equal(sms.dueAt, REMINDER_AT);
   assert.ok(Date.parse(sms.dueAt) < Date.parse(meeting.dueAt));
   assert.equal(getActiveNextAction(client()).presetKey, 'sms1h');
   assert.equal(actionFollowsNeighbor(sms), true);
+});
+
+test('påminnelse uses Oslo wall clock across the October DST change', () => {
+  assert.equal(dayBeforeAtNineIso(Date.parse('2026-10-26T09:00:00.000Z')), '2026-10-25T08:00:00.000Z');
+  assert.equal(dayBeforeAtNineIso(Date.parse('2026-10-25T09:00:00.000Z')), '2026-10-24T07:00:00.000Z');
+});
+
+test('an early-morning meeting still gets the reminder at 09:00 the day before', () => {
+  const early = client({ meetingAt: '2026-09-21T06:00:00.000Z' });
+  const sms = decorateNextActions(early).find((action) => action.presetKey === 'sms1h');
+  assert.equal(sms.dueAt, '2026-09-20T07:00:00.000Z');
+  assert.equal(suggestedDueAtForPreset('sms1h', early), '2026-09-20T07:00:00.000Z');
 });
 
 test('meeting time lives on the meeting action even before a time is set', () => {

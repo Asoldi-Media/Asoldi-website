@@ -20,6 +20,7 @@ import {
   resolveSalesReminderDurationMinutes,
   resolveSalesCalendarPreviewAccountKey,
   resolveSalesCalendarWeekSources,
+  MAX_CALENDAR_WEEK_SOURCES,
   googleCalendarOauthScopes,
   googleMailboxFromCalendarHtmlLink,
 } from '../lib/google-calendar.js';
@@ -263,16 +264,18 @@ test('sales calendar oauth asks to read the whole calendar, not only events the 
   assert.equal(scopes.includes('https://www.googleapis.com/auth/gmail.readonly'), true);
 });
 
-test('admin week view uses the filtered rep, or the logged-in admin mailbox', () => {
+test('admin week view uses the filtered rep, or every connected sales mailbox', () => {
+  const connected = [
+    { accountKey: 'admin:damian@asoldi.com', googleEmail: 'damian@asoldi.com' },
+    { accountKey: 'sales:alexander', googleEmail: 'alexander@asoldi.com' },
+    { accountKey: 'sales:future', googleEmail: 'future@asoldi.com' },
+  ];
   assert.deepEqual(
     resolveSalesCalendarWeekSources({
       actorAccountKey: 'admin:damian@asoldi.com',
       isAdmin: true,
       ownerId: 'sales:alexander',
-      connectedSources: [
-        { accountKey: 'admin:damian@asoldi.com', googleEmail: 'damian@asoldi.com' },
-        { accountKey: 'sales:alexander', googleEmail: 'alexander@asoldi.com' },
-      ],
+      connectedSources: connected,
     }),
     [{ accountKey: 'sales:alexander', googleEmail: 'alexander@asoldi.com' }]
   );
@@ -281,25 +284,20 @@ test('admin week view uses the filtered rep, or the logged-in admin mailbox', ()
       actorAccountKey: 'admin:damian@asoldi.com',
       isAdmin: true,
       ownerId: '',
-      connectedSources: [
-        { accountKey: 'admin:damian@asoldi.com', googleEmail: 'damian@asoldi.com' },
-        { accountKey: 'sales:alexander', googleEmail: 'alexander@asoldi.com' },
-      ],
+      connectedSources: connected,
     }),
-    [{ accountKey: 'admin:damian@asoldi.com', googleEmail: 'damian@asoldi.com' }]
+    connected
   );
   assert.deepEqual(
     resolveSalesCalendarWeekSources({
       actorAccountKey: 'sales:alexander',
       isAdmin: false,
       ownerId: 'sales:someone-else',
-      connectedSources: [
-        { accountKey: 'sales:alexander', googleEmail: 'alexander@asoldi.com' },
-        { accountKey: 'admin:damian@asoldi.com', googleEmail: 'damian@asoldi.com' },
-      ],
+      connectedSources: connected,
     }),
     [{ accountKey: 'sales:alexander', googleEmail: 'alexander@asoldi.com' }]
   );
+  assert.equal(MAX_CALENDAR_WEEK_SOURCES, 8);
 });
 
 test('sales header calendar is an on-site week grid and never iframes Google Calendar', () => {
@@ -317,7 +315,8 @@ test('sales header calendar is an on-site week grid and never iframes Google Cal
   assert.match(googleSrc, /CALENDAR_EVENTS_TIMEOUT_MS/);
   assert.match(googleSrc, /CALENDAR_WEEK_TIMEOUT_MS/);
   assert.match(googleSrc, /GOOGLE_CALENDAR_HTTP_TIMEOUT_MS/);
-  assert.match(googleSrc, /\.slice\(0, 1\)/);
+  assert.match(googleSrc, /MAX_CALENDAR_WEEK_SOURCES/);
+  assert.match(googleSrc, /\.slice\(0, MAX_CALENDAR_WEEK_SOURCES\)/);
 });
 
 test('calendar embed and week reads never wait on Google ACL or visibility patches', () => {

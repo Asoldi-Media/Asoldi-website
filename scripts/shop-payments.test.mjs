@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
@@ -20,7 +20,13 @@ const calls = [];
 const accounts = new Map();
 const sessions = new Map();
 
-function fakeStripe() {
+const platformAccounts = {
+  sk_live_fake_platform_key: { id: 'acct_billing', settings: { dashboard: { display_name: 'ASOLDI.com' } }, controller: { type: 'application' } },
+  sk_live_connect_key: { id: 'acct_platform', settings: { dashboard: { display_name: 'asoldi' } }, controller: { type: 'account' } },
+};
+const deletedWebhooks = [];
+
+function fakeStripe(key) {
   return {
     accounts: {
       async create(params) {
@@ -30,6 +36,7 @@ function fakeStripe() {
         return account;
       },
       async retrieve(id) {
+        if (!id) return platformAccounts[key];
         const account = accounts.get(id);
         if (!account) throw Object.assign(new Error('No such account'), { code: 'account_invalid' });
         return account;
@@ -62,10 +69,11 @@ function fakeStripe() {
     },
     webhookEndpoints: {
       async create(params) {
-        calls.push(['webhookEndpoints.create', params]);
-        return { id: 'we_1', secret: 'whsec_test_secret' };
+        calls.push(['webhookEndpoints.create', params, key]);
+        return { id: `we_${calls.length}`, secret: 'whsec_test_secret' };
       },
-      async del() {
+      async del(id) {
+        deletedWebhooks.push([key, id]);
         return {};
       },
     },
@@ -105,7 +113,7 @@ async function fakePaypalFetch(url, init = {}) {
   return json(404, {});
 }
 
-shop.setShopPaymentDeps({ stripeFactory: () => fakeStripe(), fetch: fakePaypalFetch });
+shop.setShopPaymentDeps({ stripeFactory: (key) => fakeStripe(key), fetch: fakePaypalFetch });
 
 const site = hub.createSite({ name: 'Kafe Test', domain: 'kafe.no', websitePlan: 'tier-3-ecommerce' });
 const other = hub.createSite({ name: 'Other', domain: 'other.no' });
@@ -142,6 +150,32 @@ test.after(() => {
 test('unknown site keys are rejected', async () => {
   assert.equal((await call('GET', '/api/hub/shop/status', null, 'nope')).status, 401);
   assert.equal((await call('GET', '/api/hub/shop/status', null, '')).status, 401);
+});
+
+test('connect never uses the billing key; saving the connect key moves the webhook to that account', async () => {
+  writeFileSync(join(dataDir, 'shop-payments-platform.json'), JSON.stringify({ stripe: { webhooks: { live: { id: 'we_old', secret: 'whsec_old', url: 'x' } } } }));
+  const status = await call('GET', '/api/hub/shop/status');
+  assert.equal(status.data.stripe.available, false, 'STRIPE_SECRET_KEY alone does not enable Connect');
+  const blocked = await call('POST', '/api/hub/shop/stripe/connect', { returnUrl: 'https://kafe.no/admin' });
+  assert.equal(blocked.data.code, 'stripe_not_configured');
+
+  const billing = await call('PUT', '/api/hub/payments-platform', { stripe: { liveSecretKey: 'sk_live_fake_platform_key' } }, '');
+  assert.match(billing.data.webhookError, /ASOLDI\.com \(acct_billing\) is connected to another platform/);
+  assert.deepEqual(deletedWebhooks.at(-1), ['sk_live_fake_platform_key', 'we_old'], 'old webhook removed from the billing account');
+
+  const bad = await call('PUT', '/api/hub/payments-platform', { stripe: { liveSecretKey: 'sk_test_wrong' } }, '');
+  assert.equal(bad.status, 400);
+
+  const saved = await call('PUT', '/api/hub/payments-platform', { stripe: { liveSecretKey: 'sk_live_connect_key' } }, '');
+  assert.equal(saved.status, 200, JSON.stringify(saved.data));
+  assert.equal(saved.data.webhook.account, 'asoldi (acct_platform)');
+  assert.equal(calls.filter(([name]) => name === 'webhookEndpoints.create').at(-1)[2], 'sk_live_connect_key');
+  assert.equal(saved.data.platform.stripe.webhooks.live.configured, true);
+  assert.equal(JSON.stringify(saved.data).includes('sk_live_connect_key'), false, 'key is masked');
+
+  const check = await call('GET', '/api/hub/payments-platform?check=1', null, '');
+  assert.equal(check.data.check.stripe.ok, true);
+  assert.match(check.data.check.stripe.message, /asoldi \(acct_platform\)/);
 });
 
 test('stripe onboarding creates one standard account and refuses foreign return urls', async () => {
@@ -224,7 +258,7 @@ test('paypal: email fallback before partner approval, login flow after, capture 
   const unconfigured = await call('POST', '/api/hub/shop/paypal/connect', { email: 'seller@example.com' });
   assert.equal(unconfigured.status, 503);
 
-  shop.savePlatformSettings({ paypal: { mode: 'sandbox', clientId: 'cid', clientSecret: 'csecret' } });
+  await shop.savePlatformSettings({ paypal: { mode: 'sandbox', clientId: 'cid', clientSecret: 'csecret' } });
   const pub = shop.publicPlatform();
   assert.equal(pub.paypal.clientSecretSet, true);
   assert.equal(JSON.stringify(pub).includes('csecret'), false, 'secret never leaves the hub');
@@ -263,7 +297,7 @@ test('paypal: email fallback before partner approval, login flow after, capture 
   const foreign = await call('POST', '/api/hub/shop/paypal/capture', { orderId: order.data.id }, other.site_key);
   assert.equal(foreign.status, 404);
 
-  shop.savePlatformSettings({ paypal: { partnerMerchantId: 'ASOLDIPARTNER' } });
+  await shop.savePlatformSettings({ paypal: { partnerMerchantId: 'ASOLDIPARTNER' } });
   const referral = await call('POST', '/api/hub/shop/paypal/connect', { returnUrl: 'https://kafe.no/admin?payments=paypal' });
   assert.equal(referral.data.url, 'https://www.sandbox.paypal.test/onboard');
   status = await call('GET', '/api/hub/shop/status');
