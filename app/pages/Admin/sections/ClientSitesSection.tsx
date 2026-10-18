@@ -38,6 +38,20 @@ function catalogLabel(type?: string | null) {
   return '';
 }
 
+/** One-time admin login into the client CMS (link lives 60 s, single use). */
+async function openCmsAsAsoldi(site: Site) {
+  const win = window.open('', '_blank');
+  const res = await fetch(`/api/hub/sites/${encodeURIComponent(site.id)}/cms-sso`, { method: 'POST', headers: authHeaders() });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || !json.url) {
+    win?.close();
+    window.alert(json.message || 'Could not open the CMS.');
+    return;
+  }
+  if (win) win.location.href = json.url;
+  else window.location.href = json.url;
+}
+
 function formatSeen(value?: string) {
   if (!value) return '';
   const date = new Date(value);
@@ -136,6 +150,11 @@ export function ClientSitesSection({
                 <a href={site.cms.adminUrl} target="_blank" rel="noreferrer" className="text-xs text-[#FF5B00] hover:underline">
                   Open client admin
                 </a>
+              )}
+              {(site.cms?.adminUrl || site.domain) && (
+                <button type="button" onClick={() => void openCmsAsAsoldi(site)} className="ml-3 text-xs text-[#FF5B00] hover:underline">
+                  Open CMS as Asoldi
+                </button>
               )}
               {site.features?.blog && (
                 <LocalBlogEnv
