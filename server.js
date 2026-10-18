@@ -28,6 +28,7 @@ import {
   updateHubMediaMeta,
 } from './lib/hub-media-library.js';
 import * as hub from './data/hub.js';
+import { registerShopPaymentsRoutes, registerShopPaymentsWebhook } from './lib/shop-payments-routes.js';
 import * as employees from './data/employees.js';
 import * as sales from './data/sales.js';
 import { SALES_CONTACT_CORRECTIONS } from './data/sales-contact-corrections.js';
@@ -509,6 +510,7 @@ async function ensureAdminExists() {
 // Stripe webhook needs the raw, unparsed body to verify the signature, so it is
 // registered before the global JSON body parser below.
 app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), handleStripeWebhook);
+registerShopPaymentsWebhook(app);
 app.post(
   '/api/webhooks/fathom',
   express.raw({ type: 'application/json', limit: '8mb' }),
@@ -12575,6 +12577,8 @@ app.patch('/api/client-portal/state', clientAuthV2, async (req, res) => {
   const state = clientPortal.updateClientPortalState(req.clientUser.userId, patch);
   res.json({ state });
 });
+
+registerShopPaymentsRoutes(app, { adminAuth });
 
 // --- Hub API (public: site config for client CMS)
 app.get('/api/hub/site-config', (req, res) => {

@@ -11,6 +11,7 @@ import {
   useCmsFleet,
 } from './CmsFleetSection';
 import { WebsiteDueField } from './WebsiteDueField';
+import { ShopPaymentsPlatformCard } from './ShopPaymentsPlatformCard';
 
 type Props = {
   sites: Site[];
@@ -77,6 +78,7 @@ export function ClientSitesSection({
         </button>
       </div>
 
+      <ShopPaymentsPlatformCard />
       {sites.length > 0 ? <CmsFleetToolbar fleet={fleet} /> : null}
 
       <div className="space-y-4">
