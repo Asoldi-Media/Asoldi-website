@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
@@ -152,26 +152,29 @@ test('unknown site keys are rejected', async () => {
   assert.equal((await call('GET', '/api/hub/shop/status', null, '')).status, 401);
 });
 
-test('connect never uses the billing key; saving the connect key moves the webhook to that account', async () => {
+test('connect key comes from env only; billing account is refused; webhook moves off the billing account', async () => {
   writeFileSync(join(dataDir, 'shop-payments-platform.json'), JSON.stringify({ stripe: { webhooks: { live: { id: 'we_old', secret: 'whsec_old', url: 'x' } } } }));
   const status = await call('GET', '/api/hub/shop/status');
   assert.equal(status.data.stripe.available, false, 'STRIPE_SECRET_KEY alone does not enable Connect');
   const blocked = await call('POST', '/api/hub/shop/stripe/connect', { returnUrl: 'https://kafe.no/admin' });
   assert.equal(blocked.data.code, 'stripe_not_configured');
+  assert.match(blocked.data.message, /STRIPE_CONNECT_SECRET_KEY/);
 
-  const billing = await call('PUT', '/api/hub/payments-platform', { stripe: { liveSecretKey: 'sk_live_fake_platform_key' } }, '');
-  assert.match(billing.data.webhookError, /ASOLDI\.com \(acct_billing\) is connected to another platform/);
-  assert.deepEqual(deletedWebhooks.at(-1), ['sk_live_fake_platform_key', 'we_old'], 'old webhook removed from the billing account');
+  process.env.STRIPE_CONNECT_SECRET_KEY = 'sk_live_fake_platform_key';
+  const billing = await call('POST', '/api/hub/payments-platform/stripe-webhook', {}, '');
+  assert.equal(billing.status, 409);
+  assert.match(billing.data.message, /ASOLDI\.com \(acct_billing\) is connected to another platform/);
 
-  const bad = await call('PUT', '/api/hub/payments-platform', { stripe: { liveSecretKey: 'sk_test_wrong' } }, '');
-  assert.equal(bad.status, 400);
-
-  const saved = await call('PUT', '/api/hub/payments-platform', { stripe: { liveSecretKey: 'sk_live_connect_key' } }, '');
-  assert.equal(saved.status, 200, JSON.stringify(saved.data));
-  assert.equal(saved.data.webhook.account, 'asoldi (acct_platform)');
+  process.env.STRIPE_CONNECT_SECRET_KEY = 'sk_live_connect_key';
+  const created = await call('POST', '/api/hub/payments-platform/stripe-webhook', {}, '');
+  assert.equal(created.status, 200, JSON.stringify(created.data));
+  assert.equal(created.data.account, 'asoldi (acct_platform)');
   assert.equal(calls.filter(([name]) => name === 'webhookEndpoints.create').at(-1)[2], 'sk_live_connect_key');
-  assert.equal(saved.data.platform.stripe.webhooks.live.configured, true);
-  assert.equal(JSON.stringify(saved.data).includes('sk_live_connect_key'), false, 'key is masked');
+  assert.deepEqual(deletedWebhooks.at(-1), ['sk_live_fake_platform_key', 'we_old'], 'old webhook removed from the billing account');
+  assert.equal(readFileSync(join(dataDir, 'shop-payments-platform.json'), 'utf8').includes('sk_live'), false, 'live key never written to disk');
+  const pub = await call('GET', '/api/hub/payments-platform', null, '');
+  assert.equal(JSON.stringify(pub.data).includes('sk_live_connect_key'), false, 'key is masked');
+  assert.equal(pub.data.platform.stripe.webhooks.live.configured, true);
 
   const check = await call('GET', '/api/hub/payments-platform?check=1', null, '');
   assert.equal(check.data.check.stripe.ok, true);

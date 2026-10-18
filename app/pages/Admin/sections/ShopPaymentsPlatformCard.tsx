@@ -37,7 +37,7 @@ export function ShopPaymentsPlatformCard() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
-  const [form, setForm] = useState({ clientId: '', clientSecret: '', partnerMerchantId: '', bnCode: '', paypalMode: 'sandbox', testSecretKey: '', liveSecretKey: '' });
+  const [form, setForm] = useState({ clientId: '', clientSecret: '', partnerMerchantId: '', bnCode: '', paypalMode: 'sandbox', testSecretKey: '' });
 
   const load = useCallback(async (check = false) => {
     const res = await fetch(`/api/hub/payments-platform${check ? '?check=1' : ''}`, { headers: authHeaders() });
@@ -55,7 +55,6 @@ export function ShopPaymentsPlatformCard() {
       paypalMode: body.platform.paypal.mode,
       clientSecret: '',
       testSecretKey: '',
-      liveSecretKey: '',
     }));
   }, []);
 
@@ -112,26 +111,9 @@ export function ShopPaymentsPlatformCard() {
                   {check?.stripe.message || 'Not checked'}
                 </p>
                 <p className="text-xs text-gray-500">
-                  Connect live key: {p.stripe.liveKeyPresent ? p.stripe.liveKeyMasked : 'not saved'} · Test key:{' '}
+                  Live key (hPanel env STRIPE_CONNECT_SECRET_KEY): {p.stripe.liveKeyPresent ? p.stripe.liveKeyMasked : 'missing'} · Test key:{' '}
                   {p.stripe.testKeyPresent ? p.stripe.testKeyMasked : 'not saved'} · Plan billing keeps using STRIPE_SECRET_KEY.
                 </p>
-                <div className="flex flex-wrap gap-2">
-                  <input
-                    className={`${input} flex-1 min-w-[240px]`}
-                    type="password"
-                    placeholder="LIVE secret key (sk_live_…) of the Stripe account that has Connect"
-                    value={form.liveSecretKey}
-                    onChange={(e) => setForm((f) => ({ ...f, liveSecretKey: e.target.value }))}
-                  />
-                  <button
-                    type="button"
-                    disabled={busy || !form.liveSecretKey.trim()}
-                    onClick={() => void send('PUT', '/api/hub/payments-platform', { stripe: { liveSecretKey: form.liveSecretKey } }, 'Live Connect key saved.')}
-                    className="px-3 py-2 rounded-lg bg-white/10 text-white text-sm disabled:opacity-50"
-                  >
-                    Save live key
-                  </button>
-                </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <label className="text-sm text-gray-300">Mode</label>
                   <select
