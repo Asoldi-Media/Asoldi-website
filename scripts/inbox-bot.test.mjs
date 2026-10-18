@@ -15,7 +15,17 @@ const { matchSalesClient, parseEmailAddress } = await import('../lib/inbox-bot/m
 const { pdfLooksLikeAsoldiContract } = await import('../lib/inbox-bot/pdf-text.js');
 const { fingerprintPdfBuffer, scoreContractSigning, inspectInboundContract } = await import('../lib/inbox-bot/inspect-contract.js');
 const { resolveMailboxSource } = await import('../lib/inbox-bot/mail.js');
-const { ingestInboxMessage, markOlderSchedulingDuplicates, peekInboxMailbox, presentInboxBotStatus, presentInboxForClient, stripSecrets } = await import('../lib/inbox-bot/index.js');
+const {
+  backfillInboxReplies,
+  inboxAlreadyAnswered,
+  ingestInboxMessage,
+  markOlderSameSenderDuplicates,
+  markOlderSchedulingDuplicates,
+  peekInboxMailbox,
+  presentInboxBotStatus,
+  presentInboxForClient,
+  stripSecrets,
+} = await import('../lib/inbox-bot/index.js');
 const { buildContractPdf } = await import('../lib/offer-contract-pdf.js');
 const { appendMediaToBank } = await import('../lib/client-media-store.js');
 const { persistMediaFiles } = await import('../lib/ai-assistant/service.js');
@@ -825,4 +835,77 @@ test('weekday slot picker skips the weekend', async () => {
     busy: [{ start: '2026-10-21T07:00:00.000Z', end: '2026-10-21T09:00:00.000Z' }],
   });
   assert.deepEqual(soon, ['2026-10-21T09:00:00.000Z', '2026-10-22T07:00:00.000Z', '2026-10-23T07:00:00.000Z']);
+});
+
+test('backfill skips older same-sender, already-wrote, and outbound-after, then force-replies the rest', async () => {
+  const client = seedClient({ id: 'sale-backfill-1', contactEmail: 'marie-backfill@example.com' });
+  const now = new Date('2026-10-16T12:00:00.000Z');
+  const older = {
+    id: 'imap-backfill-old',
+    mailbox: 'alexander@asoldi.com',
+    from: 'marie-backfill@example.com',
+    subject: 'Avlys',
+    text: 'Jeg må avlyse møtet i morgen.',
+    mailAt: '2026-10-15T10:00:00.000Z',
+  };
+  const newer = {
+    ...older,
+    id: 'imap-backfill-new',
+    text: 'Jeg må avlyse møtet i morgen. Mvh Marie',
+    mailAt: '2026-10-16T09:00:00.000Z',
+  };
+  const other = {
+    id: 'imap-backfill-other',
+    mailbox: 'alexander@asoldi.com',
+    from: 'marie-backfill@example.com',
+    subject: 'Logo',
+    text: 'Her er logoen',
+    mailAt: '2026-10-14T09:00:00.000Z',
+  };
+  const queued = markOlderSameSenderDuplicates(markOlderSchedulingDuplicates([older, newer, other], { now }));
+  assert.equal(queued.find((row) => row.id === 'imap-backfill-old').skipWrite, true);
+  assert.equal(queued.find((row) => row.id === 'imap-backfill-other').skipWrite, true);
+  assert.equal(Boolean(queued.find((row) => row.id === 'imap-backfill-new').skipWrite), false);
+
+  inboxStore.appendInboxItem({
+    kind: 'sales_propose',
+    mailbox: 'alexander@asoldi.com',
+    messageId: 'imap-already-wrote:write',
+    salesClientId: client.id,
+    from: 'marie-backfill@example.com',
+    status: 'applied',
+  });
+  assert.equal(inboxAlreadyAnswered({
+    id: 'imap-already-wrote',
+    from: 'marie-backfill@example.com',
+    mailAt: '2026-10-14T08:00:00.000Z',
+  }, { items: inboxStore.listInboxItems(), sent: [], client }).reason, 'already-wrote');
+  assert.equal(inboxAlreadyAnswered({
+    id: 'imap-sent-after',
+    from: 'marie-backfill@example.com',
+    mailAt: '2026-10-14T08:00:00.000Z',
+  }, {
+    items: [],
+    sent: [{ to: 'marie-backfill@example.com', mailAt: '2026-10-15T08:00:00.000Z' }],
+    client,
+  }).reason, 'outbound-after');
+
+  inboxStore.markProcessed('alexander@asoldi.com', newer.id);
+  const sent = [];
+  const out = await backfillInboxReplies({
+    apply: true,
+    now,
+    clients: [client],
+    items: inboxStore.listInboxItems(),
+    listImap: async () => ({ skipped: false, messages: [older, newer, other] }),
+    listSent: async () => [],
+    categorize: categorizeEmailHeuristic,
+    sendEmail: async (mail) => { sent.push(mail); },
+    queryBusy: async () => ({ busy: [] }),
+  });
+  assert.equal(out.results.find((row) => row.id === 'imap-backfill-old').reason, 'older-same-thread');
+  assert.equal(out.results.find((row) => row.id === 'imap-backfill-other').reason, 'older-same-thread');
+  assert.equal(sent.length, 1);
+  assert.equal(out.results.find((row) => row.id === 'imap-backfill-new').wrote, true);
+  assert.ok((sales.getSalesClientById(client.id).nextActions || []).some((row) => /Bot:/.test(row.note || '')));
 });

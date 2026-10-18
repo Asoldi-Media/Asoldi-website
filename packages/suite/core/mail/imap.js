@@ -135,14 +135,23 @@ export async function probeImap(creds) {
 }
 
 /** The newest messages of the last `days` days, parsed. Ids use UIDs, which stay stable when mail moves. */
-export async function listImapMessages(creds, { maxResults = 8, days = 2 } = {}) {
+export async function listImapMessages(creds, {
+  maxResults = 8,
+  days = 2,
+  folder = 'INBOX',
+  headersOnly = false,
+  timeoutMs,
+} = {}) {
   const messages = [];
+  const box = String(folder || 'INBOX').replace(/[\r\n"\\]/g, '') || 'INBOX';
+  const waitMs = Number(timeoutMs) > 0 ? Number(timeoutMs) : FETCH_TIMEOUT_MS;
   await imapSession(creds, async ({ tagged }) => {
-    await tagged('SELECT INBOX');
+    await tagged(`SELECT ${/^[A-Za-z0-9._-]+$/.test(box) ? box : quoteImap(box)}`);
     const search = await tagged(`UID SEARCH SINCE ${imapSinceDate(days)}`);
     const ids = parseSearchIds(search).slice(-Math.max(1, Number(maxResults) || 8));
     if (!ids.length) return;
-    const fetched = await tagged(`UID FETCH ${ids.join(',')} (UID RFC822)`);
+    const spec = headersOnly ? '(UID RFC822.HEADER)' : '(UID RFC822)';
+    const fetched = await tagged(`UID FETCH ${ids.join(',')} ${spec}`);
     parseFetchBodies(fetched).forEach(({ uid, raw }, index) => {
       const parsed = parseRfc822(raw);
       const id = uid || ids[index] || `imap-${index}`;
@@ -154,11 +163,15 @@ export async function listImapMessages(creds, { maxResults = 8, days = 2 } = {})
         from: parsed.from,
         to: parsed.to,
         subject: parsed.subject,
-        text: parsed.text,
-        attachmentNames: parsed.attachmentNames,
-        attachments: parsed.attachments.map((part) => ({ filename: part.filename, mimeType: part.mimeType, buffer: part.buffer })),
+        text: headersOnly ? '' : parsed.text,
+        attachmentNames: headersOnly ? [] : parsed.attachmentNames,
+        attachments: headersOnly ? [] : parsed.attachments.map((part) => ({
+          filename: part.filename,
+          mimeType: part.mimeType,
+          buffer: part.buffer,
+        })),
       });
     });
-  }, { timeoutMs: FETCH_TIMEOUT_MS });
+  }, { timeoutMs: waitMs });
   return messages;
 }

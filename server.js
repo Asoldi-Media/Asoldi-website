@@ -310,6 +310,7 @@ import {
 } from './lib/google-calendar.js';
 import { loadWorkshopNeedsDocument, patchWorkshopNeedLine, openNeedLines } from './lib/workshop-needs.js';
 import {
+  backfillInboxReplies,
   fingerprintPdfBuffer,
   peekInboxMailbox,
   pendingContractCount,
@@ -14646,6 +14647,29 @@ app.get('/api/admin/inbox-bot/peek', adminAuth, async (req, res) => {
     res.status(500).json({ message: 'Kunne ikke lese innboksen.' });
   }
 });
+
+app.post('/api/admin/inbox-bot/backfill', adminAuth, async (req, res) => {
+  const apply = Boolean(req.body?.apply);
+  if (apply && String(req.body?.confirm || '') !== 'backfill-once') {
+    return res.status(400).json({ message: 'Confirm backfill-once to send.' });
+  }
+  try {
+    const payload = await backfillInboxReplies({
+      mailbox: String(req.body?.mailbox || 'alexander@asoldi.com').trim().toLowerCase(),
+      days: Number(req.body?.days) || 14,
+      maxResults: Math.min(40, Number(req.body?.maxResults) || 24),
+      apply,
+    });
+    if (payload.reason === 'mailbox-not-allowed') {
+      return res.status(400).json({ message: 'Mailbox is not allowed.', ...payload });
+    }
+    res.json(payload);
+  } catch (error) {
+    console.error('[inbox-bot] backfill failed', error?.message || error);
+    res.status(500).json({ message: 'Kunne ikke kjøre innboks-backfill.' });
+  }
+});
+
 
 app.post('/api/admin/sales/:id/change-client-login', salesAuth, async (req, res) => {
   if (!req.salesUser?.isAdmin) {
