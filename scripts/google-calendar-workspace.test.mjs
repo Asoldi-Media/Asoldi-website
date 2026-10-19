@@ -89,6 +89,8 @@ test('service account json may be pretty-printed or wrapped in extra quotes', ()
   assert.equal(workspaceServiceAccountConfigured(), true);
   process.env.GOOGLE_WORKSPACE_SERVICE_ACCOUNT_JSON = JSON.stringify(JSON.parse(FAKE_SA), null, 2);
   assert.equal(workspaceServiceAccountConfigured(), true);
+  process.env.GOOGLE_WORKSPACE_SERVICE_ACCOUNT_JSON = `"${FAKE_SA}"`;
+  assert.equal(workspaceServiceAccountConfigured(), true);
   delete process.env.GOOGLE_WORKSPACE_SERVICE_ACCOUNT_JSON;
 });
 
