@@ -307,6 +307,8 @@ import {
   upsertRecordedSalesActionEvent,
   upsertSalesReminderEvent,
   queryWorkshopFreeBusy,
+  rememberCalendarAccountEmail,
+  setCalendarAccountEmailLookup,
 } from './lib/google-calendar.js';
 import { loadWorkshopNeedsDocument, patchWorkshopNeedLine, openNeedLines } from './lib/workshop-needs.js';
 import {
@@ -8113,6 +8115,8 @@ async function accountKeyToEmail(accountKey = '') {
   return '';
 }
 
+setCalendarAccountEmailLookup(accountKeyToEmail);
+
 /** Admin + sales account keys that belong to the same email inbox. */
 async function resolveSiblingCalendarAccountKeys(accountKey = '') {
   const key = sanitizeText(accountKey);
@@ -8154,6 +8158,8 @@ async function resolveSiblingCalendarAccountKeys(accountKey = '') {
 async function ensureSharedCalendarTokens(accountKey = '') {
   const key = sanitizeText(accountKey);
   if (!key) return getGoogleCalendarStatus(key);
+  const mailbox = await accountKeyToEmail(key);
+  if (mailbox) rememberCalendarAccountEmail(key, mailbox);
   let status = getGoogleCalendarStatus(key);
   if (!status.connected) {
     const donors = new Set(await resolveSiblingCalendarAccountKeys(key));
@@ -20575,7 +20581,19 @@ async function ensureData() {
     console.warn('[data] backup prune failed:', error?.message || error);
   }
   await ensureAdminExists();
-  employees.ensureWorkersForUsers(await store.getAllUsers());
+  const allUsers = await store.getAllUsers();
+  employees.ensureWorkersForUsers(allUsers);
+  for (const user of Array.isArray(allUsers) ? allUsers : []) {
+    const email = normalizeEmail(user?.username);
+    if (!email) continue;
+    const userId = sanitizeText(user?.id);
+    const username = sanitizeText(user?.username);
+    if (userId) {
+      rememberCalendarAccountEmail(`sales:${userId}`, email);
+      rememberCalendarAccountEmail(`developer:${userId}`, email);
+    }
+    if (username) rememberCalendarAccountEmail(`sales:${username}`, email);
+  }
   ensureHubDefaultSite();
   const delivery = hub.reconcileDeliveryPhases(sales.getSalesClients());
   if (delivery.changed) {
