@@ -524,6 +524,35 @@ test('cancel proposes new times, adds Ny møtetid, and only the newest mail from
   assert.ok((live.nextActions || []).some((row) => /ny møtetid|finn møtetid/i.test(row.name || '') && !row.doneAt));
 });
 
+test('calendar accept/decline is not a client email, so it gets no reply', async () => {
+  const { isCalendarRsvp } = await import('../lib/inbox-bot/write.js');
+  assert.equal(isCalendarRsvp({
+    subject: 'Godkjent: Asoldi · Online møte · SPIRERIET AS @ tor. 15. okt 2026 10am - 11am (CEST) (alexander@asoldi.com)',
+  }), true);
+  assert.equal(isCalendarRsvp({ subject: 'Godtatt: SUNHOV LANDHANDLERI AS · Online møte med Asoldi' }), true);
+  assert.equal(isCalendarRsvp({
+    subject: 'Asoldi · Online møte',
+    attachments: [{ filename: 'invite.ics', mimeType: 'text/calendar', buffer: Buffer.from('BEGIN:VCALENDAR\nMETHOD:REPLY\nEND:VCALENDAR\n') }],
+  }), true);
+  assert.equal(isCalendarRsvp({ subject: 'Re: Påminnelse: Online møte med Asoldi om 24 timer' }), false);
+
+  const client = seedClient({ id: 'sale-rsvp-1', contactEmail: 'eier@spireriet.no' });
+  const sent = [];
+  await ingestInboxMessage({
+    id: 'imap-rsvp-ok',
+    mailbox: 'alexander@asoldi.com',
+    from: 'Spireriet <eier@spireriet.no>',
+    subject: 'Godkjent: Asoldi · Online møte · SPIRERIET AS @ tor. 15. okt 2026 10am - 11am (CEST) (alexander@asoldi.com)',
+    text: '',
+    mailAt: '2026-10-10T16:21:34.000Z',
+  }, {
+    sendEmail: async (mail) => { sent.push(mail); },
+    queryBusy: async () => ({ busy: [] }),
+  });
+  assert.equal(sent.length, 0);
+  assert.equal((sales.getSalesClientById(client.id).nextActions || []).some((row) => /Bot:/.test(row.note || '')), false);
+});
+
 test('failed send stamps the card; changing the email clears it', () => {
   const client = seedClient({ id: 'sale-bounce-1', contactEmail: 'bad@example.no' });
   sales.noteSalesContactEmailSend({ to: 'bad@example.no', ok: false, error: '550 unknown recipient' });
