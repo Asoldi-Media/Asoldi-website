@@ -547,6 +547,12 @@ test('a reminder that only repeats the card meeting is skipped; an older real ti
   };
   const echoed = classifyInboxWrite(reminder.text, liveClient(), { now });
   assert.equal(echoed.echo, true);
+  const sameClockNextWeek = classifyInboxWrite(
+    'tirsdag kl. 14:00',
+    { meetingAt: '2026-10-13T12:00:00.000Z' },
+    { now: new Date('2026-10-13T11:39:07.000Z') },
+  );
+  assert.equal(sameClockNextWeek.echo, true);
   const booked = classifyInboxWrite(flytt.text, liveClient(), { now: new Date(flytt.mailAt) });
   assert.equal(booked.intent, 'sales_book');
   assert.equal(booked.dueAt, '2026-10-21T13:00:00.000Z');
