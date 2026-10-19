@@ -524,6 +524,59 @@ test('cancel proposes new times, adds Ny møtetid, and only the newest mail from
   assert.ok((live.nextActions || []).some((row) => /ny møtetid|finn møtetid/i.test(row.name || '') && !row.doneAt));
 });
 
+test('a reminder that only repeats the card meeting is skipped; an older real time still books', async () => {
+  const { classifyInboxWrite } = await import('../lib/inbox-bot/write.js');
+  const client = seedClient({ id: 'sale-echo-1', contactEmail: 'ali-echo@example.com' });
+  sales.updateSalesClient(client.id, { meetingAt: '2026-10-19T13:00:00.000Z', agreedTime: true });
+  const liveClient = () => sales.getSalesClientById(client.id);
+  const now = new Date('2026-10-18T20:00:00.000Z');
+  const reminder = {
+    id: 'imap-echo-new',
+    mailbox: 'alexander@asoldi.com',
+    from: 'ali-echo@example.com',
+    subject: 'Re: Påminnelse: Online møte med Asoldi om 24 timer',
+    text: 'When: mandag 19. oktober 2026 15:00 – 16:00\nJoin with Google Meet',
+    mailAt: '2026-10-18T20:44:00.000Z',
+  };
+  const flytt = {
+    ...reminder,
+    id: 'imap-echo-old',
+    subject: 'Sv: Invitasjon',
+    text: 'Hei, Kan vi flytte møtet til onsdag neste uke istedet? Gjerne kl. 15. Med vennlig hilsen Ali',
+    mailAt: '2026-10-17T06:43:00.000Z',
+  };
+  const echoed = classifyInboxWrite(reminder.text, liveClient(), { now });
+  assert.equal(echoed.echo, true);
+  const booked = classifyInboxWrite(flytt.text, liveClient(), { now: new Date(flytt.mailAt) });
+  assert.equal(booked.intent, 'sales_book');
+  assert.equal(booked.dueAt, '2026-10-21T13:00:00.000Z');
+
+  const clients = [liveClient()];
+  const queued = markOlderSameSenderDuplicates(
+    markOlderSchedulingDuplicates([flytt, reminder], { now, clients }),
+    { now, clients },
+  );
+  assert.equal(Boolean(queued.find((row) => row.id === 'imap-echo-old').skipWrite), false);
+
+  const sent = [];
+  const out = await backfillInboxReplies({
+    apply: true,
+    now,
+    clients,
+    items: inboxStore.listInboxItems(),
+    listImap: async () => ({ skipped: false, messages: [flytt, reminder] }),
+    listSent: async () => [],
+    categorize: categorizeEmailHeuristic,
+    sendEmail: async (mail) => { sent.push(mail); },
+    queryBusy: async () => ({ busy: [] }),
+  });
+  assert.equal(out.results.find((row) => row.id === 'imap-echo-new').reason, 'meeting-echo');
+  assert.equal(out.results.find((row) => row.id === 'imap-echo-old').wrote, true);
+  assert.equal(sent.length, 1);
+  assert.equal(liveClient().meetingAt, '2026-10-21T13:00:00.000Z');
+  assert.ok((liveClient().nextActions || []).some((row) => /Bot:/.test(row.note || '') || row.presetKey === 'meeting'));
+});
+
 test('machine mail is skipped from MIME/headers, not from the subject line', async () => {
   const { isAutomatedMail } = await import('../lib/inbox-bot/write.js');
   const rsvpRaw = [
