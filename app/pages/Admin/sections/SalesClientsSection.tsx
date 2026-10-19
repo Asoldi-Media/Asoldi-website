@@ -4556,9 +4556,9 @@ function ClientNotesField({
   }, [showEditor]);
 
   return (
-    <div className="rounded-xl border border-amber-700/25 bg-amber-950/20 p-2.5 space-y-2">
+    <div className="rounded-xl border border-white/10 bg-black/20 p-2.5 space-y-2">
       <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-amber-300">
+        <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
           <StickyNote size={12} />
           {label}
         </div>
@@ -4570,7 +4570,7 @@ function ClientNotesField({
             onMouseDown={(e) => e.preventDefault()}
             onClick={onSave}
             disabled={saving || !dirty}
-            className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-amber-700/40 text-amber-100 text-[11px] hover:bg-amber-700/55 disabled:opacity-50"
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-[#FF5B00] text-white text-[11px] hover:bg-[#e55200] disabled:opacity-50"
           >
             {saving ? <Loader2 size={11} className="animate-spin" /> : null}
             {saving ? 'Saving…' : 'Save note'}
@@ -4597,13 +4597,13 @@ function ClientNotesField({
               setEditing(false);
             }
           }}
-          className="w-full px-2.5 py-2 rounded-lg bg-black/30 border border-white/10 text-sm text-gray-100 placeholder:text-gray-500 resize-y whitespace-pre-wrap"
+          className="w-full px-2.5 py-2 rounded-lg bg-[#1a1a1a] border border-white/10 text-sm text-gray-200 placeholder:text-gray-500 resize-y whitespace-pre-wrap"
         />
       ) : hasNote ? (
         <button
           type="button"
           onClick={() => setEditing(true)}
-          className="w-full text-left text-sm text-amber-50/90 whitespace-pre-wrap break-words max-h-32 overflow-y-auto"
+          className="w-full text-left text-sm text-gray-200 whitespace-pre-wrap break-words max-h-32 overflow-y-auto"
           title="Click to edit note"
         >
           {value}

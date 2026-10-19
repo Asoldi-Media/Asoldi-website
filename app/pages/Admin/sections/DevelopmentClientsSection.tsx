@@ -51,7 +51,8 @@ type DeveloperFocusEntry = {
 
 const FOCUS_EMPTY_TEXT: Record<string, string> = {
   unassigned: 'Alle kunder har en utvikler.',
-  preview: 'Ingen previews å lage.',
+  previewOverdue: 'Ingen forfalte previews.',
+  previewNext: 'Ingen kommende previews.',
   readyForDeployment: 'Ingen venter på deployment.',
   iterationDone: 'Ingen iterasjoner å jobbe med.',
   publish: 'Ingen venter på publisering.',
@@ -476,7 +477,7 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
     kind: 'preview' | 'deployment',
     canWork: boolean,
     prefix: string,
-    focus?: { pager: React.ReactNode },
+    focus?: { pager: React.ReactNode; showAssign?: boolean },
   ) {
     const threadKey = String(item.salesClientId || item.id || '');
     return (
@@ -498,6 +499,7 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
         compact={!focus}
         peeked={Boolean(peekCardIds[item.id])}
         onPeek={() => togglePeekCard(item.id)}
+        showAssign={Boolean(focus?.showAssign)}
         onAssign={(ownerId) => void assignDeveloper(item, ownerId)}
         onAcceptHandoff={() => void acceptHandoff(item)}
         requestLabel={threadMap[threadKey]?.lastKindLabel || (threadMap[threadKey] ? 'Forespørsel' : '')}
@@ -1341,7 +1343,7 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
                 entry.kind,
                 canWorkDevelopmentClient(viewer, entry.item),
                 'website',
-                { pager },
+                { pager, showAssign: entry.category === 'unassigned' },
               )}
             />
             <div className="mt-auto flex justify-center pt-1">

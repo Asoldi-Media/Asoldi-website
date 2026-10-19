@@ -37,7 +37,7 @@ test('deployment items follow the first unticked win goal; preview stays in Prev
   assert.deepEqual(queues.publish.map((row) => row.id), ['publish']);
   assert.deepEqual(queues.done.map((row) => row.id), ['done']);
   assert.deepEqual(queues.unassigned.map((row) => row.id), ['free']);
-  assert.deepEqual(queues.preview.map((row) => row.id), ['prev']);
+  assert.deepEqual(queues.previewNext.map((row) => row.id), ['prev']);
 });
 
 test('Preview ranks the next meeting first, then newer overdue, then no time; ready previews last', () => {
@@ -50,7 +50,8 @@ test('Preview ranks the next meeting first, then newer overdue, then no time; re
       item('ready', { rankAt: iso(NOW - DAY), developerGoals: { readyForPreview: true } }),
     ],
   }, NOW, { isAdmin: false });
-  assert.deepEqual(queues.preview.map((row) => row.id), ['soon', 'recent-late', 'old-late', 'none', 'ready']);
-  assert.equal(defaultDeveloperFocusCategory(queues, { isAdmin: false }), 'preview');
+  assert.deepEqual(queues.previewOverdue.map((row) => row.id), ['recent-late', 'old-late']);
+  assert.deepEqual(queues.previewNext.map((row) => row.id), ['soon', 'none', 'ready']);
+  assert.equal(defaultDeveloperFocusCategory(queues, { isAdmin: false }), 'previewOverdue');
   assert.equal(developerFocusCategoriesFor({ isAdmin: true })[0].label, 'Tildel utvikler');
 });

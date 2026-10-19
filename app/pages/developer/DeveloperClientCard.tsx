@@ -47,7 +47,6 @@ import {
 } from '../sales/websiteMaker';
 import { applyDeveloperGoalToggle, DEVELOPER_PREVIEW_GOAL_KEYS, DEVELOPER_WIN_GOAL_KEYS } from '../../../lib/developer-goals.js';
 import { developerOwnerDisplayName, sameDeveloperOwner } from '../../../lib/developer-assignment.js';
-import { formatActionFormatLabel, SALES_ACTION_TIMEZONE } from '../../../lib/sales-next-actions.js';
 
 const CARD_SELECTED = 'border-[#FF5B00] ring-2 ring-[#FF5B00]/25';
 
@@ -97,6 +96,8 @@ type Props = {
   developers?: DeveloperOwnerOption[];
   assignBusy?: boolean;
   onAssign?: (developerOwnerId: string) => void;
+  /** Own assign section, only on the Tildel utvikler tab. */
+  showAssign?: boolean;
   onAcceptHandoff?: () => void;
   compact?: boolean;
   peeked?: boolean;
@@ -106,40 +107,6 @@ type Props = {
   pager?: React.ReactNode;
   unreadRequests?: number;
 };
-
-function GoalProgressIcon({ filled }: { filled: number }) {
-  const count = Math.max(0, Math.min(3, filled));
-  return (
-    <span
-      className="inline-flex h-[1em] w-[1.1em] flex-col justify-center gap-px shrink-0 self-center text-sm"
-      title={`${count} av 3`}
-      aria-label={`${count} av 3 mål`}
-    >
-      {[2, 1, 0].map((level) => {
-        const on = count > level;
-        return (
-          <span
-            key={level}
-            className={`block min-h-0 flex-1 rounded-full ${on ? 'bg-[#FF5B00]' : 'bg-neutral-500'}`}
-          />
-        );
-      })}
-    </span>
-  );
-}
-
-function formatNextActionWhen(value = '') {
-  if (!value) return '';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '';
-  return new Intl.DateTimeFormat('nb-NO', {
-    timeZone: SALES_ACTION_TIMEZONE,
-    day: 'numeric',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date);
-}
 
 function chipClass(kind: 'grey' | 'disabled' | 'ready' | 'idle') {
   if (kind === 'grey' || kind === 'disabled') {
@@ -173,6 +140,7 @@ export function DeveloperClientCard({
   developers = [],
   assignBusy = false,
   onAssign,
+  showAssign = false,
   onAcceptHandoff,
   compact = false,
   peeked = false,
@@ -217,6 +185,10 @@ export function DeveloperClientCard({
   const [savingDomain, setSavingDomain] = useState(false);
   const [goalBusy, setGoalBusy] = useState('');
   const [assignOwnerId, setAssignOwnerId] = useState('');
+  useEffect(() => {
+    const match = (developers || []).find((owner) => sameDeveloperOwner(owner.accountKey, item.developerOwnerId));
+    setAssignOwnerId(match?.accountKey || '');
+  }, [item.developerOwnerId, developers]);
   const [bundleBusy, setBundleBusy] = useState('');
   const lastSyncedHandoffRef = useRef('');
   const makerRunRef = useRef(item.makerRun);
@@ -886,20 +858,19 @@ export function DeveloperClientCard({
   );
   const dueLabel = String(item.websiteDue?.label || '').trim();
   const dueOverdue = showFoldDueDate && timeline.tone === 'overdue';
-  const nextActionName = String(item.nextActionName || '').trim();
-  const nextActionWhen = formatNextActionWhen(String(item.nextActionAt || ''));
-  const nextActionFormat = formatActionFormatLabel(String(item.nextActionFormat || ''));
 
   const card = (
     <div
       onClick={isFocus ? undefined : onCardClick}
-      className={`rounded-2xl border flex flex-col min-w-0 ${
-        isFocus ? 'bg-black/20 p-3 gap-3' : `bg-[#2a2a2a] cursor-pointer ${showCompact ? 'p-2.5 gap-1' : 'p-3 sm:p-4 gap-3'}`
+      className={`flex flex-col min-w-0 ${
+        isFocus
+          ? 'gap-3 border-0 bg-transparent p-0'
+          : `rounded-2xl border bg-[#2a2a2a] cursor-pointer ${showCompact ? 'p-2.5 gap-1' : 'p-3 sm:p-4 gap-3'}`
       } ${
-        selected ? `${isFocus ? '' : 'hover:bg-[#323232] '}${CARD_SELECTED}` : `border-white/10 ${isFocus ? '' : 'hover:bg-[#323232]'}`
+        selected ? `${isFocus ? '' : 'hover:bg-[#323232] '}${CARD_SELECTED}` : `${isFocus ? '' : 'border-white/10 hover:bg-[#323232]'}`
       }`}
     >
-      <div className="min-w-0">
+      <div className={isFocus ? 'min-w-0 rounded-xl border border-white/10 bg-black/20 p-3 space-y-3' : 'min-w-0'}>
         <div className="flex flex-wrap items-center gap-2">
           <input
             type="checkbox"
@@ -927,27 +898,6 @@ export function DeveloperClientCard({
             {dueLabel}
           </p>
         ) : null}
-        <div className={`flex items-center gap-2 min-w-0 ${showCompact ? 'mt-1' : 'mt-1.5'}`}>
-          <GoalProgressIcon filled={Number(item.salesGoalFilled) || 0} />
-          {nextActionName ? (
-            <>
-              <span className="truncate text-sm text-gray-100">{nextActionName}</span>
-              {nextActionFormat ? (
-                <span className="shrink-0 text-sm text-gray-300">{nextActionFormat}</span>
-              ) : null}
-              {nextActionWhen ? (
-                <span className="shrink-0 text-sm text-gray-300">{nextActionWhen}</span>
-              ) : null}
-              {item.nextActionAddToCalendar ? (
-                <span className="shrink-0 px-1.5 py-px rounded border border-sky-400/30 bg-sky-400/10 text-[11px] uppercase tracking-wide font-semibold text-sky-200">
-                  Kalender
-                </span>
-              ) : null}
-            </>
-          ) : (
-            <span className="text-sm text-red-400">sett neste handling</span>
-          )}
-        </div>
         {showCompact ? (
           <button
             type="button"
@@ -962,11 +912,9 @@ export function DeveloperClientCard({
             <ChevronDown size={14} />
           </button>
         ) : null}
-      </div>
 
       {showCompact ? null : (
       <>
-      <div className="min-w-0 space-y-3">
         {contact ? <p className="text-xs text-gray-400 truncate">{contact}</p> : null}
         {shortDescription ? (
           <p className="text-xs text-gray-400 line-clamp-2">{shortDescription}</p>
@@ -1021,40 +969,7 @@ export function DeveloperClientCard({
             }}
           />
         </div>
-
-      {isDevelopmentList && (
-        <div className="flex flex-wrap gap-1.5">
-          {DEVELOPMENT_STEPS.map((step) => {
-            const done = Boolean(item.development?.[step.key]);
-            return (
-              <button
-                key={step.key}
-                type="button"
-                disabled={!canWork || busyKey === `${item.id}:${step.key}`}
-                onClick={() => { if (canWork) onToggleStep(item, step.key); }}
-                className={`px-2 py-1 rounded-md text-[11px] border transition-colors hover:border-[#FF5B00]/40 disabled:opacity-60 ${
-                  done
-                    ? 'bg-green-900/40 border-green-600/40 text-green-300'
-                    : 'bg-black/20 border-white/10 text-gray-400'
-                }`}
-              >
-                {done ? <CheckCircle2 size={11} className="inline mr-1" /> : null}
-                {step.label}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {salesClientId ? (
-        <>
-          <DeveloperGoalTimeline
-            goals={item.developerGoals}
-            goalKeys={goalKeys}
-            busyKey={goalBusy ? `goals:${item.id}:${goalBusy}` : null}
-            itemId={item.id}
-            onToggle={(key) => void toggleGoal(key)}
-          />
+        {salesClientId ? (
           <div className="flex flex-wrap items-end gap-3" onClick={(event) => event.stopPropagation()}>
             <button
               type="button"
@@ -1106,6 +1021,70 @@ export function DeveloperClientCard({
               ) : null}
             </div>
           </div>
+        ) : null}
+      </>
+      )}
+      </div>
+      {showCompact ? null : (
+      <>
+      {showAssign && isAdmin ? (
+        <div className="rounded-xl border border-[#FF5B00]/50 bg-[#FF5B00]/5 p-3 space-y-3" onClick={(event) => event.stopPropagation()}>
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-[#ff8a4d]">Tildel utvikler</div>
+          <select
+            aria-label="Utvikler"
+            value={assignOwnerId}
+            disabled={assignBusy}
+            onChange={(event) => {
+              const ownerId = event.target.value;
+              setAssignOwnerId(ownerId);
+              if (ownerId) onAssign?.(ownerId);
+            }}
+            className="w-full rounded-lg bg-[#161616] border border-white/10 text-white text-sm px-2.5 py-2 disabled:opacity-50"
+          >
+            <option value="">{assignBusy ? 'Tildeler…' : 'Velg utvikler…'}</option>
+            {(developers || []).map((owner) => (
+              <option key={owner.accountKey} value={owner.accountKey}>
+                {owner.name || owner.username}
+              </option>
+            ))}
+          </select>
+        </div>
+      ) : null}
+      <div className={isFocus ? 'rounded-xl border border-white/10 bg-black/20 p-3 space-y-3' : 'min-w-0 space-y-3'}>
+
+      {isDevelopmentList && (
+        <div className="flex flex-wrap gap-1.5">
+          {DEVELOPMENT_STEPS.map((step) => {
+            const done = Boolean(item.development?.[step.key]);
+            return (
+              <button
+                key={step.key}
+                type="button"
+                disabled={!canWork || busyKey === `${item.id}:${step.key}`}
+                onClick={() => { if (canWork) onToggleStep(item, step.key); }}
+                className={`px-2 py-1 rounded-md text-[11px] border transition-colors hover:border-[#FF5B00]/40 disabled:opacity-60 ${
+                  done
+                    ? 'bg-green-900/40 border-green-600/40 text-green-300'
+                    : 'bg-black/20 border-white/10 text-gray-400'
+                }`}
+              >
+                {done ? <CheckCircle2 size={11} className="inline mr-1" /> : null}
+                {step.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {salesClientId ? (
+        <>
+          <DeveloperGoalTimeline
+            goals={item.developerGoals}
+            goalKeys={goalKeys}
+            busyKey={goalBusy ? `goals:${item.id}:${goalBusy}` : null}
+            itemId={item.id}
+            onToggle={(key) => void toggleGoal(key)}
+          />
           <div
             className="rounded-xl bg-black/20 border border-white/10 p-4 min-h-[112px] space-y-3"
             onClick={(event) => event.stopPropagation()}
@@ -1131,36 +1110,6 @@ export function DeveloperClientCard({
             )}
             {!canWork && item.developerOwnerId && !sameDeveloperOwner(item.developerOwnerId, viewerAccountKey) && item.developerHandoff?.status !== 'waiting-upload' && (
               <p className="text-[11px] text-gray-400">En annen utvikler jobber med denne kunden.</p>
-            )}
-            {isAdmin && (
-              <details className="rounded-lg border border-white/10 bg-black/20" onClick={(event) => event.stopPropagation()}>
-                <summary className="cursor-pointer list-none px-2.5 py-1.5 text-xs text-gray-200 [&::-webkit-details-marker]:hidden">
-                  Tildel utvikler
-                </summary>
-                <div className="flex flex-wrap items-center gap-2 px-2.5 pb-2">
-                  <select
-                    value={assignOwnerId}
-                    disabled={assignBusy}
-                    onChange={(event) => setAssignOwnerId(event.target.value)}
-                    className="rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-xs px-2 py-1.5"
-                  >
-                    <option value="">{item.developerOwnerId ? 'Bytt utvikler…' : 'Velg utvikler…'}</option>
-                    {developers.map((owner) => (
-                      <option key={owner.accountKey} value={owner.accountKey}>
-                        {owner.name || owner.username}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    type="button"
-                    disabled={assignBusy || !assignOwnerId}
-                    onClick={() => onAssign?.(assignOwnerId)}
-                    className="px-2 py-1.5 rounded-lg bg-[#FF5B00] text-white text-xs hover:bg-[#e55200] disabled:opacity-50"
-                  >
-                    Tildel
-                  </button>
-                </div>
-              </details>
             )}
             <div className="flex flex-wrap items-center gap-2">
               {canWork && (
@@ -1281,7 +1230,7 @@ export function DeveloperClientCard({
       </div>
       {salesClientId ? (
         <details className="rounded-xl border border-white/10 bg-black/20 p-3 text-sm text-gray-200" onClick={(event) => event.stopPropagation()}>
-          <summary className="cursor-pointer text-white font-medium">Tools & details</summary>
+          <summary className="cursor-pointer text-[10px] font-semibold uppercase tracking-wide text-gray-400">Details & tools</summary>
           <div className="mt-3">
             <button
               type="button"
