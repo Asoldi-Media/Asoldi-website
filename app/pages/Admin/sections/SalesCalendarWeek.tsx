@@ -12,7 +12,7 @@ import { expireFatCookies } from '../../../lib/expire-fat-cookies';
 
 const HOUR_HEIGHT = 42;
 const WEEKDAY_LABELS = ['Man.', 'Tir.', 'Ons.', 'Tor.', 'Fre.', 'Lør.', 'Søn.'];
-const CALENDAR_FETCH_TIMEOUT_MS = 8000;
+const CALENDAR_FETCH_TIMEOUT_MS = 12000;
 
 export type SalesCalendarWeekEvent = {
   id: string;

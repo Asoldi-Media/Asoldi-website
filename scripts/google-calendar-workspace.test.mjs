@@ -14,6 +14,9 @@ const {
   getAuthorizedClient,
   getGoogleCalendarStatus,
   googleWorkspaceCalendarScopes,
+  listConnectedAsoldiCalendarSources,
+  loadSalesCalendarWeek,
+  persistGoogleMailboxToken,
   rememberCalendarAccountEmail,
   resolveCalendarSyncAccountKey,
   shareGoogleCalendarToken,
@@ -82,6 +85,50 @@ test('oauth token for the same mailbox is copied onto the sales key', () => {
   assert.equal(shared.shared, true);
   assert.equal(getGoogleCalendarStatus('sales:rep-1').connected, true);
   assert.equal(getGoogleCalendarStatus('sales:rep-1').googleEmail, 'alexander@asoldi.com');
+});
+
+test('sales login reuses the admin oauth token for that mailbox without Connect', () => {
+  writeFileSync(join(dataDir, 'google-calendar-tokens.json'), JSON.stringify({
+    'admin:asoldi.com': {
+      refresh_token: 'rt-alex',
+      access_token: 'at-alex',
+      googleEmail: 'alexander@asoldi.com',
+    },
+  }));
+  rememberCalendarAccountEmail('sales:1789355644760', 'alexander@asoldi.com');
+  const status = getGoogleCalendarStatus('sales:1789355644760');
+  assert.equal(status.connected, true);
+  assert.equal(status.googleEmail, 'alexander@asoldi.com');
+  assert.equal(resolveCalendarSyncAccountKey({ ownerId: 'sales:1789355644760' }), 'sales:1789355644760');
+});
+
+test('connecting a second mailbox keeps the first mailbox token', () => {
+  writeFileSync(join(dataDir, 'google-calendar-tokens.json'), JSON.stringify({
+    'admin:asoldi.com': {
+      refresh_token: 'rt-alex',
+      access_token: 'at-alex',
+      googleEmail: 'alexander@asoldi.com',
+    },
+  }));
+  persistGoogleMailboxToken('admin:asoldi.com', {
+    refresh_token: 'rt-damian',
+    access_token: 'at-damian',
+    googleEmail: 'damian@asoldi.com',
+  });
+  assert.equal(getGoogleCalendarStatus('admin:alexander@asoldi.com').googleEmail, 'alexander@asoldi.com');
+  assert.equal(getGoogleCalendarStatus('admin:damian@asoldi.com').googleEmail, 'damian@asoldi.com');
+  const emails = listConnectedAsoldiCalendarSources().map((row) => row.googleEmail).sort();
+  assert.deepEqual(emails, ['alexander@asoldi.com', 'damian@asoldi.com']);
+});
+
+test('two week reads at once are not rejected as busy', async () => {
+  const range = { timeMin: '2026-10-19T00:00:00.000Z', timeMax: '2026-10-26T00:00:00.000Z' };
+  const [first, second] = await Promise.all([
+    loadSalesCalendarWeek({ sources: [], ...range }),
+    loadSalesCalendarWeek({ sources: [], ...range }),
+  ]);
+  assert.equal((first.warnings || []).join('').includes('opptatt'), false);
+  assert.equal((second.warnings || []).join('').includes('opptatt'), false);
 });
 
 test('service account json may be pretty-printed or wrapped in extra quotes', () => {

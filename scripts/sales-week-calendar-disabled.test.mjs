@@ -53,7 +53,7 @@ test('week calendar events load on open; free-busy stays off so Admin/Sales list
 
   const calendarUi = readFileSync(join(root, 'app/pages/Admin/sections/SalesCalendarWeek.tsx'), 'utf8');
   assert.match(calendarUi, /admin\/sales\/google\/events/);
-  assert.match(calendarUi, /CALENDAR_FETCH_TIMEOUT_MS = 8000/);
+  assert.match(calendarUi, /CALENDAR_FETCH_TIMEOUT_MS = 12000/);
   assert.equal(calendarUi.includes('<iframe'), false);
   assert.equal(calendarUi.includes('calendar.google.com'), false);
 

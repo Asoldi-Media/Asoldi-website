@@ -13088,6 +13088,12 @@ app.get('/api/admin/sales/google/oauth/callback', async (req, res) => {
   try {
     const siblings = await resolveSiblingCalendarAccountKeys(accountKey);
     const status = await exchangeGoogleCalendarCode(code, accountKey, siblings);
+    const mailbox = sanitizeText(status?.googleEmail).toLowerCase();
+    if (mailbox.endsWith('@asoldi.com')) {
+      rememberCalendarAccountEmail(accountKey, mailbox);
+      const mailboxSiblings = await resolveSiblingCalendarAccountKeys(`admin:${mailbox}`);
+      if (mailboxSiblings.length) shareGoogleCalendarToken(`admin:${mailbox}`, mailboxSiblings);
+    }
     return res.send(renderGoogleCalendarOAuthResultHtml({
       ok: true,
       googleEmail: sanitizeText(status?.googleEmail),
@@ -18816,11 +18822,14 @@ app.get('/api/admin/development', developmentAuth, async (req, res) => {
   }
   sales.seedExistingDeveloperOwnersToAdmin();
   const caller = req.developmentUser || {};
+  const developerOptions = await listDeveloperOwnerOptions(caller);
+  const onlyAdmin = !developerOptions.some((row) => sanitizeText(row.accountKey).startsWith('developer:'));
+  if (onlyAdmin) sales.assignOpenDeveloperClientsToAdmin();
+  const developers = caller.isAdmin ? developerOptions : [];
   const parts = listDeveloperBoardParts();
   const developmentItems = parts.developmentItems.filter((item) => developmentItemVisible(caller, item));
   const previewItems = parts.previewItems.filter((item) => developmentItemVisible(caller, item));
   const ssuItems = (Array.isArray(parts.ssuItems) ? parts.ssuItems : []).filter((item) => developmentItemVisible(caller, item));
-  const developers = caller.isAdmin ? await listDeveloperOwnerOptions(caller) : [];
   res.json({
     items: [...developmentItems, ...previewItems],
     developmentItems,

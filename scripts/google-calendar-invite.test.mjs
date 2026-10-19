@@ -303,7 +303,7 @@ test('admin week view uses the filtered rep, or every connected sales mailbox', 
 test('sales header calendar is an on-site week grid and never iframes Google Calendar', () => {
   const weekSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../app/pages/Admin/sections/SalesCalendarWeek.tsx'), 'utf8');
   assert.match(weekSrc, /admin\/sales\/google\/events/);
-  assert.match(weekSrc, /CALENDAR_FETCH_TIMEOUT_MS = 8000/);
+  assert.match(weekSrc, /CALENDAR_FETCH_TIMEOUT_MS = 12000/);
   assert.equal(weekSrc.includes('<iframe'), false);
   assert.equal(weekSrc.includes('calendar.google.com'), false);
   const salesSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../app/pages/Admin/sections/SalesClientsSection.tsx'), 'utf8');
@@ -317,6 +317,11 @@ test('sales header calendar is an on-site week grid and never iframes Google Cal
   assert.match(googleSrc, /GOOGLE_CALENDAR_HTTP_TIMEOUT_MS/);
   assert.match(googleSrc, /MAX_CALENDAR_WEEK_SOURCES/);
   assert.match(googleSrc, /\.slice\(0, MAX_CALENDAR_WEEK_SOURCES\)/);
+  assert.equal(googleSrc.includes('MAX_CALENDAR_WEEK_READS'), false);
+  assert.match(
+    readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../server.js'), 'utf8'),
+    /resolveSiblingCalendarAccountKeys\(`admin:\$\{mailbox\}`\)/
+  );
 });
 
 test('calendar embed and week reads never wait on Google ACL or visibility patches', () => {
