@@ -143,6 +143,7 @@ import {
   isUnacceptableMeetingHostEmail,
   salesClientNeedsCalendarMove,
   overlaySalesInboxMeetOnEvents,
+  overlaySalesMeetingsOnEvents,
   preserveEmailedMeetOnSync,
   salesConfirmedMeetLink,
   salesInboxMeetLink,
@@ -8803,12 +8804,21 @@ async function migrateFutureMeetingsOffBlockedCalendar() {
   }
 }
 
+function salesMeetingInCalendarRepairWindow(client, nowMs = Date.now()) {
+  const startMs = Date.parse(client?.meetingAt || '');
+  if (!Number.isFinite(startMs)) return false;
+  return startMs >= nowMs - 12 * 60 * 60 * 1000
+    && startMs <= nowMs + 21 * 24 * 60 * 60 * 1000;
+}
+
 async function backfillMissingSalesCalendarEvents({
   dryRun = true,
   limit = 0,
   actorAccountKey = '',
   productFilter = '',
   notifyAttendees = false,
+  repairUpcoming = false,
+  sendMissingConfirmations = false,
 } = {}) {
   const allClients = sales.getSalesClients();
   const productScoped = productFilter
@@ -8828,6 +8838,12 @@ async function backfillMissingSalesCalendarEvents({
     warningReasons: {},
     skippedHasEvent: 0,
     skippedNoSchedule: 0,
+    skippedUnassigned: 0,
+    repaired: 0,
+    wouldRepair: 0,
+    mailed: 0,
+    wouldMail: 0,
+    alreadyConfirmed: 0,
   };
   const details = [];
   const registerWarningReason = (warning = '') => {
@@ -8843,40 +8859,74 @@ async function backfillMissingSalesCalendarEvents({
       continue;
     }
     summary.scheduled += 1;
-    const hasEvent = Boolean(sanitizeText(client?.calendar?.eventId));
-    if (hasEvent) {
-      summary.skippedHasEvent += 1;
+    const assigned = isSalesRepAccountKey(client?.ownerId);
+    if (!assigned) {
+      summary.skippedUnassigned += 1;
       continue;
     }
-    summary.missingEvent += 1;
+    const hasEvent = Boolean(sanitizeText(client?.calendar?.eventId));
+    const thankYouSent = Boolean(sanitizeText(client?.reminders?.thankYouSentAt));
+    const inWindow = salesMeetingInCalendarRepairWindow(client);
+    const needsCreate = !hasEvent;
+    const needsRepair = repairUpcoming && hasEvent && inWindow;
+    const needsMail = sendMissingConfirmations && !thankYouSent && !meetingTimeHasPassed(client);
+    if (!needsCreate && !needsRepair && !needsMail) {
+      if (hasEvent) summary.skippedHasEvent += 1;
+      if (thankYouSent) summary.alreadyConfirmed += 1;
+      continue;
+    }
+    if (thankYouSent) summary.alreadyConfirmed += 1;
+    if (needsCreate) summary.missingEvent += 1;
     if (dryRun) {
-      summary.wouldUpdate += 1;
+      if (needsCreate) summary.wouldUpdate += 1;
+      if (needsRepair) summary.wouldRepair += 1;
+      if (needsMail) summary.wouldMail += 1;
       details.push({
         clientId: sanitizeText(client?.id),
         businessName: sanitizeText(client?.businessName),
         meetingAt: sanitizeText(client?.meetingAt),
-        status: 'would-sync',
+        status: needsMail ? 'would-confirm' : needsRepair ? 'would-repair' : 'would-sync',
+        thankYouSent,
       });
       continue;
     }
 
-    const syncResult = await maybeSyncCalendar(client, client, {
-      notifyAttendees: Boolean(notifyAttendees),
-      actorAccountKey,
-      fallbackAccountKeys: await resolveCalendarFallbackAccountKeys(client?.ownerId || '', actorAccountKey),
-    });
-    const syncedClient = syncResult.client || client;
-    const warnings = Array.isArray(syncResult.warnings) ? syncResult.warnings : [];
+    let live = client;
+    const warnings = [];
+    let mailed = null;
+    if (needsMail) {
+      mailed = await autoSendThankYouFromOwner(live, { existing: live, ownerJustAssigned: true });
+      live = mailed.client || live;
+      if (mailed.sent) summary.mailed += 1;
+      if (Array.isArray(mailed.warnings)) warnings.push(...mailed.warnings);
+      if (mailed.reason && !mailed.sent) warnings.push(mailed.reason);
+    }
+    const alreadySyncedByMail = Boolean(mailed?.sent && sanitizeText(live?.calendar?.eventId));
+    if ((needsCreate || needsRepair) && !alreadySyncedByMail) {
+      const syncResult = await maybeSyncCalendar(live, client, {
+        notifyAttendees: thankYouSent ? false : Boolean(notifyAttendees),
+        actorAccountKey,
+        fallbackAccountKeys: await resolveCalendarFallbackAccountKeys(client?.ownerId || '', actorAccountKey),
+      });
+      live = syncResult.client || live;
+      if (Array.isArray(syncResult.warnings)) warnings.push(...syncResult.warnings);
+    }
     summary.warnings += warnings.length;
     for (const warning of warnings) registerWarningReason(warning);
-    const hasSyncedEvent = Boolean(sanitizeText(syncedClient?.calendar?.eventId));
-    if (hasSyncedEvent) summary.updated += 1;
-    else summary.unresolved += 1;
+    const hasSyncedEvent = Boolean(sanitizeText(live?.calendar?.eventId));
+    if (hasSyncedEvent && needsRepair) summary.repaired += 1;
+    else if (hasSyncedEvent && needsCreate) summary.updated += 1;
+    else if (needsCreate || needsRepair) summary.unresolved += 1;
     details.push({
       clientId: sanitizeText(client?.id),
       businessName: sanitizeText(client?.businessName),
       meetingAt: sanitizeText(client?.meetingAt),
-      status: hasSyncedEvent ? 'synced' : 'unresolved',
+      status: mailed?.sent
+        ? 'confirmed'
+        : hasSyncedEvent
+          ? (needsRepair ? 'repaired' : 'synced')
+          : (mailed?.reason || 'unresolved'),
+      thankYouSent: Boolean(sanitizeText(live?.reminders?.thankYouSentAt)),
       warnings,
     });
   }
@@ -12821,6 +12871,7 @@ app.get('/api/admin/sales/google/events', salesAuth, async (req, res) => {
     let viewingOwn = false;
     let workshopCalendar = false;
     let emptyMessage = '';
+    let ownerFilter = '';
 
     if (isAdminBoardCalendarQuery(req.query)) {
       workshopCalendar = true;
@@ -12856,6 +12907,7 @@ app.get('/api/admin/sales/google/events', salesAuth, async (req, res) => {
       sources = [{ accountKey, googleEmail: DAMIAN_WORKSHOP_CALENDAR_EMAIL }];
     } else {
       const requestedOwner = sanitizeText(req.query?.ownerId);
+      ownerFilter = requestedOwner;
       if (
         req.salesUser.isAdmin
         && requestedOwner
@@ -12886,13 +12938,29 @@ app.get('/api/admin/sales/google/events', salesAuth, async (req, res) => {
           : 'Denne selgeren har ikke koblet Google Calendar ennå.';
     }
 
-    const listed = await withDeadline(
-      loadSalesCalendarWeek({ sources, timeMin, timeMax }),
-      7000,
-      'calendar-events-timeout'
-    );
-    if (!workshopCalendar && Array.isArray(listed?.events)) {
-      listed.events = overlaySalesInboxMeetOnEvents(listed.events, sales.getSalesClients());
+    let listed;
+    try {
+      listed = await withDeadline(
+        loadSalesCalendarWeek({ sources, timeMin, timeMax }),
+        7000,
+        'calendar-events-timeout'
+      );
+    } catch {
+      listed = {
+        connected: false,
+        events: [],
+        warnings: ['Kunne ikke hente kalenderen akkurat nå.'],
+      };
+    }
+    if (!workshopCalendar) {
+      if (!req.salesUser.isAdmin) ownerFilter = sanitizeText(req.salesUser.accountKey);
+      const clients = sales.getSalesClients();
+      listed.events = overlaySalesMeetingsOnEvents(
+        overlaySalesInboxMeetOnEvents(listed.events || [], clients),
+        clients,
+        { timeMin, timeMax, ownerId: ownerFilter }
+      );
+      if ((listed.events || []).length) listed.connected = true;
     }
     const timeoutWarning = (listed.warnings || []).find((row) => /lang tid/i.test(row)) || '';
     return res.json({
@@ -13754,12 +13822,16 @@ app.post('/api/admin/sales/backfill-calendar', salesAuth, async (req, res) => {
     const productFilter = sanitizeText(req.body?.product).toLowerCase();
     const actorAccountKey = sanitizeText(req.salesUser.accountKey);
     const notifyAttendees = parseBoolean(req.body?.notifyAttendees, false);
+    const repairUpcoming = parseBoolean(req.body?.repairUpcoming, true);
+    const sendMissingConfirmations = parseBoolean(req.body?.sendMissingConfirmations, true);
     const result = await backfillMissingSalesCalendarEvents({
       dryRun,
       limit,
       actorAccountKey,
       productFilter: productFilter === 'asoldi' || productFilter === 'ssu' ? productFilter : '',
       notifyAttendees,
+      repairUpcoming,
+      sendMissingConfirmations,
     });
     return res.json({
       ok: true,

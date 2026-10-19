@@ -11,6 +11,7 @@ import {
   pickCalendarSyncAccountKey,
   salesClientNeedsCalendarMove,
   overlaySalesInboxMeetOnEvents,
+  overlaySalesMeetingsOnEvents,
   preserveEmailedMeetOnSync,
   planConfirmedMeetBackfill,
   salesConfirmedMeetLink,
@@ -285,6 +286,54 @@ test('already-sent clients keep the inbox Meet, unassigned keep the existing roo
   assert.equal(overlay[0].meetLink, emailed);
   assert.equal(overlay[0].location, emailed);
   assert.equal(overlay[1].meetLink, 'https://meet.google.com/oth-othr-oth');
+});
+
+test('week grid injects booked sales meetings Google omitted', () => {
+  const week = {
+    timeMin: '2026-10-19T22:00:00.000Z',
+    timeMax: '2026-10-26T23:00:00.000Z',
+  };
+  const norr = {
+    id: 'norr-1',
+    businessName: 'Norr',
+    ownerId: alexanderSales,
+    status: 'active',
+    agreedTime: true,
+    meetingAt: '2026-10-21T13:00:00.000Z',
+    meetingMode: 'online',
+    calendar: { eventId: 'gone-from-google', meetLink: 'https://meet.google.com/vwj-ttis-suo' },
+  };
+  const unassigned = {
+    id: 'no-owner',
+    businessName: 'No Owner',
+    ownerId: '',
+    agreedTime: true,
+    meetingAt: '2026-10-21T10:00:00.000Z',
+    meetingMode: 'online',
+  };
+  const otherWeek = {
+    id: 'later',
+    businessName: 'Later',
+    ownerId: alexanderSales,
+    agreedTime: true,
+    meetingAt: '2026-11-04T13:00:00.000Z',
+    meetingMode: 'online',
+  };
+  const listed = overlaySalesMeetingsOnEvents(
+    [{
+      id: 'other-evt',
+      summary: 'Asoldi · Online møte · Other',
+      start: '2026-10-20T08:00:00.000Z',
+    }],
+    [norr, unassigned, otherWeek],
+    { ...week, ownerId: alexanderSales }
+  );
+  assert.equal(listed.some((event) => event.id === 'gone-from-google'), true);
+  assert.equal(listed.some((event) => /Norr/.test(event.summary || '')), true);
+  assert.equal(listed.some((event) => /No Owner/.test(event.summary || '')), false);
+  assert.equal(listed.some((event) => /Later/.test(event.summary || '')), false);
+  const again = overlaySalesMeetingsOnEvents(listed, [norr], { ...week, ownerId: alexanderSales });
+  assert.equal(again.filter((event) => event.id === 'gone-from-google').length, 1);
 });
 
 test('a usable token cannot be the blocked Gmail mailbox', () => {

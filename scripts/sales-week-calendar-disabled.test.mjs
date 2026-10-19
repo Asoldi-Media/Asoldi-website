@@ -72,6 +72,7 @@ test('week calendar events load on open; free-busy stays off so Admin/Sales list
   );
   assert.equal(eventsRoute.includes('SALES_WEEK_CALENDAR_DISABLED'), false);
   assert.match(eventsRoute, /loadSalesCalendarWeek/);
+  assert.match(eventsRoute, /overlaySalesMeetingsOnEvents/);
   assert.match(eventsRoute, /withDeadline/);
   assert.equal(eventsRoute.includes('.slice(0, 1)'), false);
   assert.match(eventsRoute, /Ingen selger har koblet Google Calendar/);

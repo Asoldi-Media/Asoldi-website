@@ -942,6 +942,41 @@ test('a time that has passed is never booked and bot actions never land in the p
   assert.match(sent[0].text, /passer noe av dette/i);
 });
 
+test('a book writes the assigned sales calendar with guest updates', async () => {
+  const client = seedClient({ id: 'sale-cal-upsert', contactEmail: 'cal-up@example.com' });
+  sales.updateSalesClient(client.id, { ownerId: 'sales:alexander-id' });
+  const upserts = [];
+  const sent = [];
+  const result = await ingestInboxMessage({
+    id: 'imap-cal-upsert',
+    mailbox: 'alexander@asoldi.com',
+    from: 'cal-up@example.com',
+    subject: 'Møte',
+    text: 'Kan vi ta onsdag kl 15?',
+    mailAt: '2026-10-18T10:00:00.000Z',
+  }, {
+    now: new Date('2026-10-18T10:00:00.000Z'),
+    sendEmail: async (mail) => { sent.push(mail); },
+    queryBusy: async () => ({ busy: [] }),
+    decideAi: async () => ({}),
+    upsert: async (live, eventId, accountKey, options) => {
+      upserts.push({ id: live.id, eventId, accountKey, options });
+      return {
+        id: 'evt-bot-1',
+        hangoutLink: 'https://meet.google.com/abc-defg-hij',
+        htmlLink: 'https://calendar.google.com/event?eid=1',
+      };
+    },
+  });
+  assert.equal(result.write?.kind || result.kind, 'sales_book');
+  assert.equal(upserts.length, 1);
+  assert.equal(upserts[0].accountKey, 'sales:alexander-id');
+  assert.equal(upserts[0].options.sendUpdates, 'all');
+  assert.equal(upserts[0].options.includeAttendees, true);
+  assert.equal(sales.getSalesClientById(client.id).calendar?.eventId, 'evt-bot-1');
+  assert.equal(sent.length, 1);
+});
+
 test('a book still lands if Google calendar is disconnected', async () => {
   const client = seedClient({ id: 'sale-cal-off', contactEmail: 'cal-off@example.com' });
   const sent = [];
