@@ -82,8 +82,8 @@ type Props = {
   onEdit: (client: SalesClient) => void;
   onOpenFlow: (client: SalesClient, step: 1 | 2 | 3) => void;
   onReadUp: (client: SalesClient, done: boolean) => void;
-  /** noShow / skip move the client to Venter møtebekreftelse; missedCall = Ring for ny møtetid. */
-  onMissedStep: (client: SalesClient, step: 'noShow' | 'skip' | 'missedCall', done: boolean) => void;
+  /** noShow / skip move the client to Venter møtebekreftelse; missedCall = Ring for ny møtetid. note is appended to Notater. */
+  onMissedStep: (client: SalesClient, step: 'noShow' | 'skip' | 'missedCall', done: boolean, note?: string) => void;
   onToggleGoal: (client: SalesClient, key: SalesGoalKey, extra?: { fastTrack?: boolean }) => void;
   onMutateAction: (client: SalesClient, body: Record<string, unknown>) => Promise<void>;
   onSendConfirmation: (client: SalesClient) => void;
@@ -671,9 +671,21 @@ function FocusCard(props: FocusCardProps) {
   const missedBusy = readUpBusyId === client.id;
   const meetingOpen = !missed && (entry.category === 'reminders' || entry.category === 'meetingsToday');
 
+  const meetingStarted = Number.isFinite(Date.parse(meetingAt || '')) && nowMs >= Date.parse(meetingAt || '');
+
   const markNoShow = () => {
-    const ok = window.confirm(`Marker at ${name} ikke møtte opp? Kunden flyttes til Venter møtebekreftelse og får en ringeoppgave i morgen kl 10.`);
-    if (ok) onMissedStep(client, 'noShow', true);
+    onMissedStep(client, 'noShow', true, 'Møtte ikke opp');
+  };
+
+  const markSkip = () => {
+    const written = window.prompt('Skriv i Notater hvorfor møtet hoppes over.', '');
+    if (written == null) return;
+    const line = written.trim();
+    if (!line) {
+      window.alert('Skriv noe i Notater før du hopper over.');
+      return;
+    }
+    onMissedStep(client, 'skip', true, line);
   };
 
   const toggleGoal = (key: SalesGoalKey) => {
@@ -780,16 +792,8 @@ function FocusCard(props: FocusCardProps) {
 
   function rowExtras(action: SalesNextAction) {
     if (action.presetKey === 'meeting') {
-      const meetingMs = Date.parse(meetingAt || '');
-      const canMarkNoShow = entry.category === 'meetingsToday' && !missed && Number.isFinite(meetingMs) && nowMs >= meetingMs;
       return (
         <>
-          {canMarkNoShow ? (
-            <button type="button" onClick={markNoShow} disabled={missedBusy} className={ROW_BUTTON} title="Kunden kom ikke. Flytt til Venter møtebekreftelse med en ringeoppgave i morgen kl 10.">
-              <UserX size={11} />
-              Møtte ikke opp
-            </button>
-          ) : null}
           {missed ? null : irl ? (
             mapHref ? (
               <a href={mapHref} target="_blank" rel="noreferrer" className={ROW_BUTTON}>
@@ -918,13 +922,25 @@ function FocusCard(props: FocusCardProps) {
                   {statusBusyId === `not-sold:${client.id}` ? <Loader2 size={13} className="animate-spin" /> : <Archive size={13} />}
                   Ikke solgt
                 </button>
+                {meetingOpen && meetingStarted ? (
+                  <button
+                    type="button"
+                    onClick={markNoShow}
+                    disabled={missedBusy}
+                    className={HEADER_BUTTON}
+                    title="Kunden kom ikke. Skriver «Møtte ikke opp» i Notater og flytter til Venter møtebekreftelse."
+                  >
+                    {missedBusy ? <Loader2 size={13} className="animate-spin" /> : <UserX size={13} />}
+                    Møtte ikke opp
+                  </button>
+                ) : null}
                 {meetingOpen ? (
                   <button
                     type="button"
-                    onClick={() => onMissedStep(client, 'skip', true)}
+                    onClick={markSkip}
                     disabled={missedBusy}
                     className={HEADER_BUTTON}
-                    title="Hopp over møtet. Kunden flyttes til Venter møtebekreftelse med en ringeoppgave i morgen kl 10. Skriv grunnen i Notater."
+                    title="Hopp over møtet. Du skriver grunnen i Notater, også om det allerede står noe der."
                   >
                     {missedBusy ? <Loader2 size={13} className="animate-spin" /> : <SkipForward size={13} />}
                     Skip

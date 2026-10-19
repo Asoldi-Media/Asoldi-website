@@ -169,6 +169,8 @@ test('Tildel selger assigns on select, stays on the tab, and does not toast', ()
   assert.match(readFileSync(join(root, 'app/pages/Admin/sections/DevelopmentClientsSection.tsx'), 'utf8'), /stayOnLeave=\{activeCategory === 'unassigned'\}/);
   assert.match(board, /isAssign \? <AssignPanel \{\.\.\.props\} \/> : null/);
   assert.match(board, /<SalesGoalTimeline/);
+  assert.match(board, /Møtte ikke opp/);
+  assert.match(board, /Skriv i Notater hvorfor møtet hoppes over/);
   assert.match(salesUi, /fixed inset-0 z-\[100\]/);
   assert.match(salesUi, /if \(event\.key !== 'Escape'\) return;/);
   assert.match(salesUi, /ignoreCreateClickUntilRef/);

@@ -1564,12 +1564,25 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
     await setPlaybookStep(client, 'readUp', done);
   }
 
+  async function appendClientNote(client: SalesClient, line: string) {
+    const prev = String(client.notes || '').trim();
+    const notes = prev ? `${prev}\n${line}` : line;
+    const data = await request(`/admin/sales/${client.id}/notes`, {
+      method: 'PATCH',
+      body: JSON.stringify({ notes }),
+    });
+    const saved = data?.client as SalesClient | undefined;
+    if (saved?.id) applySavedClient(saved);
+    return saved;
+  }
+
   /** readUp, noShow, skip and missedCall; one busy id per client. */
-  async function setPlaybookStep(client: SalesClient, step: 'readUp' | 'noShow' | 'skip' | 'missedCall', done: boolean) {
+  async function setPlaybookStep(client: SalesClient, step: 'readUp' | 'noShow' | 'skip' | 'missedCall', done: boolean, note?: string) {
     if (readUpBusyId === client.id) return;
     setReadUpBusyId(client.id);
     setError('');
     try {
+      if (done && note?.trim()) await appendClientNote(client, note.trim());
       const data = await request(`/admin/sales/${client.id}/playbook`, {
         method: 'POST',
         body: JSON.stringify({ step, done }),
@@ -3573,7 +3586,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
           onEdit={openEdit}
           onOpenFlow={openClientFlow}
           onReadUp={(client, done) => void setReadUp(client, done)}
-          onMissedStep={(client, step, done) => void setPlaybookStep(client, step, done)}
+          onMissedStep={(client, step, done, note) => void setPlaybookStep(client, step, done, note)}
           onToggleGoal={(client, key, extra) => void toggleProgress(client, key, extra)}
           onMutateAction={mutateNextAction}
           onSendConfirmation={(client) => void sendClientMail(client, 'thank-you')}

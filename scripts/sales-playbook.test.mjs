@@ -176,6 +176,26 @@ test('Tildel selger is admin only and the client moves on once a seller is set',
   assert.equal(normalizeSalesFocusCategory('assign', { isAdmin: true }), 'assign');
 });
 
+test('Møter shows the next meeting before a past one that was not marked', () => {
+  const now = at('2026-10-22T13:00:00.000Z');
+  const past = client({ id: 'past', businessName: 'Marie', meetingAt: '2026-10-22T08:00:00.000Z' });
+  const next = client({ id: 'next', businessName: 'Zorba', meetingAt: '2026-10-22T16:00:00.000Z' });
+  const queues = groupSalesFocusQueues([past, next], now);
+  assert.equal(queues.meetingsToday[0].client.id, 'next');
+  assert.equal(queues.meetingsToday[1].client.id, 'past');
+});
+
+test('a client without email still sits in Møter and Påminnelser', () => {
+  const noMail = client({
+    contactEmail: '',
+    reminders: {},
+    myphoner: { bookedAt: '2026-10-20T10:00:00.000Z' },
+  });
+  assert.deepEqual(categories(noMail, '2026-10-21T07:10:00.000Z'), ['reminders:reminder:due', UPCOMING_MEETING]);
+  const withMail = client({ reminders: {}, myphoner: { bookedAt: '2026-10-20T10:00:00.000Z' } });
+  assert.deepEqual(categories(withMail, '2026-10-21T07:10:00.000Z'), ['confirm:confirmation:overdue']);
+});
+
 test('Møter and Påminnelser wait until confirmation is sent; assign is what sends it', () => {
   const booked = client({ reminders: {}, myphoner: { bookedAt: '2026-10-20T10:00:00.000Z' } });
   assert.deepEqual(categories(booked, '2026-10-20T10:30:00.000Z'), ['confirm:confirmation:due']);
