@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import Stripe from 'stripe';
 
@@ -590,4 +591,22 @@ test('disconnect forgets the provider for that site only', async () => {
   const admin = await call('GET', '/api/hub/payments-platform', null, '');
   assert.equal(admin.status, 200);
   assert.equal(JSON.stringify(admin.data).includes('whsec_'), false);
+});
+
+test('Connect test key comes from env, not Superadmin save', async () => {
+  process.env.STRIPE_CONNECT_TEST_SECRET_KEY = 'sk_test_connect_from_env';
+  const saved = await call('PUT', '/api/hub/payments-platform', { stripe: { testSecretKey: 'sk_test_should_not_save' } }, '');
+  assert.equal(saved.status, 200);
+  assert.equal(readFileSync(join(dataDir, 'shop-payments-platform.json'), 'utf8').includes('sk_test_'), false);
+  const pub = await call('GET', '/api/hub/payments-platform', null, '');
+  assert.equal(pub.data.platform.stripe.testKeyPresent, true);
+  assert.equal(JSON.stringify(pub.data).includes('sk_test_connect_from_env'), false);
+  delete process.env.STRIPE_CONNECT_TEST_SECRET_KEY;
+});
+
+test('Shop payments has no Superadmin test-key field', () => {
+  const card = readFileSync(join(fileURLToPath(new URL('../app/pages/Admin/sections/ShopPaymentsPlatformCard.tsx', import.meta.url))), 'utf8');
+  assert.equal(card.includes('Save test key'), false);
+  assert.equal(card.includes('testSecretKey'), false);
+  assert.match(card, /STRIPE_CONNECT_TEST_SECRET_KEY/);
 });
