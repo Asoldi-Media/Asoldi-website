@@ -962,6 +962,36 @@ test('a book still lands if Google calendar is disconnected', async () => {
   assert.equal(sales.getSalesClientById(client.id).meetingAt, '2026-10-21T13:00:00.000Z');
 });
 
+test('backfill parses neste uke from the mail date, not from today', async () => {
+  const client = seedClient({ id: 'sale-bf-week', contactEmail: 'week-bf@example.com' });
+  sales.updateSalesClient(client.id, { meetingAt: '2026-10-19T13:00:00.000Z', agreedTime: true });
+  const sent = [];
+  const out = await backfillInboxReplies({
+    apply: true,
+    now: new Date('2026-10-19T08:00:00.000Z'),
+    clients: [sales.getSalesClientById(client.id)],
+    items: [],
+    listImap: async () => ({
+      skipped: false,
+      messages: [{
+        id: 'imap-bf-week',
+        mailbox: 'alexander@asoldi.com',
+        from: 'week-bf@example.com',
+        subject: 'Sv: Invitasjon',
+        text: 'Kan vi flytte møtet til onsdag neste uke istedet? Gjerne kl. 15.',
+        mailAt: '2026-10-18T20:44:00.000Z',
+      }],
+    }),
+    listSent: async () => [],
+    categorize: categorizeEmailHeuristic,
+    sendEmail: async (mail) => { sent.push(mail); },
+    queryBusy: async () => ({ busy: [] }),
+  });
+  assert.equal(out.results[0].wrote, true);
+  assert.equal(sales.getSalesClientById(client.id).meetingAt, '2026-10-21T13:00:00.000Z');
+  assert.equal(sent.length, 1);
+});
+
 test('backfill apply records a thrown ingest and continues', async () => {
   const client = seedClient({ id: 'sale-bf-err', contactEmail: 'err-bf@example.com' });
   const msg = {
