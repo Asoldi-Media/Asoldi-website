@@ -8591,6 +8591,9 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
           'Fireflies already entered this Meet. A new room could not be created, so the transcriber was not sent in again.'
         );
       }
+      if (sameMailbox && isSalesRepAccountKey(nextClient?.ownerId)) {
+        calendarMeta.accountKey = sanitizeText(nextClient.ownerId);
+      }
       const withCalendar = sales.setSalesCalendar(nextClient.id, calendarMeta);
       if (withCalendar) nextClient = withCalendar;
       if (isOnline && (meetLinkChanged || calendarMeta.replacedForeignMeet)) {

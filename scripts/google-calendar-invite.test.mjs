@@ -37,6 +37,13 @@ const client = {
   meetingAt: '2026-09-21T08:00:00.000Z',
 };
 
+test('calendar upsert restores cancelled events onto the organizer calendar', () => {
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../lib/google-calendar.js'), 'utf8');
+  const upsert = src.slice(src.indexOf('export async function upsertMeetingEvent'));
+  assert.match(upsert.slice(0, 9000), /status\)\.toLowerCase\(\) === 'cancelled'/);
+  assert.match(upsert.slice(0, 12000), /status: 'confirmed'/);
+});
+
 test('silent calendar creates do not include the guest', () => {
   assert.deepEqual(buildMeetingAttendees(client, { includeAttendees: false }), []);
 });
