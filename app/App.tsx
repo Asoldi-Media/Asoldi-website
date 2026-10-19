@@ -7,6 +7,7 @@ import { PageLoader } from './components/PageLoader';
 import { EmployeeAuthProvider } from './contexts/EmployeeAuthContext';
 import { ClientAuthProvider } from './contexts/ClientAuthContext';
 import { expireFatCookies } from './lib/expire-fat-cookies';
+import { BOOKER_PATH, isBookerPath } from './pages/ansatt/path';
 
 const Home = lazy(() => import('./pages/Home').then((m) => ({ default: m.Home })));
 const Pricing = lazy(() => import('./pages/Pricing').then((m) => ({ default: m.Pricing })));
@@ -51,12 +52,13 @@ const ClientAnalytics = lazy(() => import('./pages/client/ClientAnalytics').then
 
 function AppLayout() {
   const location = useLocation();
-  const hideShell = /^\/(admin|superadmin|ansatt|sales|developer|previews|login|kunde|client)(\/|$)/.test(location.pathname);
-  const useLightShell = /^\/(login|kunde|client)(\/|$)/.test(location.pathname);
+  const path = decodeURIComponent(location.pathname);
+  const hideShell = /^\/(admin|superadmin|ansatt|møte-booker|mote-booker|sales|developer|previews|login|kunde|client)(\/|$)/.test(path);
+  const useLightShell = /^\/(login|kunde|client|ansatt|møte-booker|mote-booker)(\/|$)/.test(path);
 
   useEffect(() => {
     expireFatCookies();
-    if (location.pathname === '/ansatt') return;
+    if (isBookerPath(location.pathname)) return;
     const ids = ['tawk-script', 'tawkchat-container', 'tawkchat', 'tawkchat-minified-wrapper', 'tawkchat-minified-container'];
     ids.forEach((id) => {
       const el = document.getElementById(id);
@@ -107,7 +109,9 @@ function AppLayout() {
           <Route path="/login/reset-password" element={<LoginResetPassword />} />
           <Route path="/admin" element={<Admin />} />
           <Route path="/superadmin" element={<Admin />} />
-          <Route path="/ansatt" element={<Ansatt />} />
+          <Route path="/ansatt" element={<Navigate to={BOOKER_PATH} replace />} />
+          <Route path="/mote-booker" element={<Navigate to={BOOKER_PATH} replace />} />
+          <Route path="/møte-booker" element={<Ansatt />} />
           <Route path="/sales" element={<SalesWorkspace />} />
           <Route path="/sales/email" element={<SalesEmailComposer />} />
           <Route path="/sales/offer" element={<SalesOfferComposer />} />

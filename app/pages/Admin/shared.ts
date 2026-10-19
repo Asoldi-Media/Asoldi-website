@@ -922,7 +922,7 @@ export const SITE_PAGES = [
   { path: '/1000kr', label: '1000kr' },
   { path: '/bli-ansatt', label: 'Bli ansatt' },
   { path: '/login', label: 'Login' },
-  { path: '/ansatt', label: 'Ansatt' },
+  { path: '/møte-booker', label: 'Møte booker' },
 ];
 
 export type EmployeeChecklist = {

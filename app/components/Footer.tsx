@@ -4,6 +4,7 @@ import { motion } from 'motion/react';
 import { Twitter, Youtube, Instagram, Facebook, Github, Mail, Phone, MapPin } from 'lucide-react';
 import { useLocation, Link } from 'react-router-dom';
 import { useEmployeeAuth } from '../contexts/EmployeeAuthContext';
+import { BOOKER_PATH } from '../pages/ansatt/path';
 
 export const Footer = () => {
   const currentYear = new Date().getFullYear();
@@ -76,7 +77,7 @@ export const Footer = () => {
                     <li><Link to="/pricing" className="hover:text-[#FF5B00] transition-colors block w-fit">Priser</Link></li>
                     <li><Link to="/about" className="hover:text-[#FF5B00] transition-colors block w-fit">Om oss</Link></li>
                     {isEmployee === true && (
-                      <li><Link to="/ansatt" className="hover:text-[#FF5B00] transition-colors block w-fit text-[#FF5B00]">Ansatt</Link></li>
+                      <li><Link to={BOOKER_PATH} className="hover:text-[#FF5B00] transition-colors block w-fit text-[#FF5B00]">Møte booker</Link></li>
                     )}
                 </ul>
             </div>

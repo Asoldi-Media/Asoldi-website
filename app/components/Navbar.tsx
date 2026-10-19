@@ -5,6 +5,7 @@ import { Menu, X, ChevronDown } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useEmployeeAuth } from '../contexts/EmployeeAuthContext';
 import { useClientAuth } from '../contexts/ClientAuthContext';
+import { BOOKER_PATH } from '../pages/ansatt/path';
 
 export const Navbar = () => {
   const { isEmployee } = useEmployeeAuth();
@@ -93,8 +94,8 @@ export const Navbar = () => {
             Kundecaser
           </Link>
           {isEmployee === true && (
-            <Link to="/ansatt" className="text-sm font-medium text-[#FF5B00] hover:text-[#ff7b2e] transition-colors">
-              Ansatt
+            <Link to={BOOKER_PATH} className="text-sm font-medium text-[#FF5B00] hover:text-[#ff7b2e] transition-colors">
+              Møte booker
             </Link>
           )}
         </div>
@@ -153,7 +154,7 @@ export const Navbar = () => {
 
               <Link to="/clients" className="text-2xl font-medium text-white" onClick={() => setIsMobileMenuOpen(false)}>Kundecaser</Link>
               {isEmployee === true && (
-                <Link to="/ansatt" className="text-2xl font-medium text-[#FF5B00]" onClick={() => setIsMobileMenuOpen(false)}>Ansatt</Link>
+                <Link to={BOOKER_PATH} className="text-2xl font-medium text-[#FF5B00]" onClick={() => setIsMobileMenuOpen(false)}>Møte booker</Link>
               )}
               {isClient ? (
                 <Link to="/kunde/hjem" className="text-xl font-medium text-white" onClick={() => setIsMobileMenuOpen(false)}>Kundeportal</Link>

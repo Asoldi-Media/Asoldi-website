@@ -8,6 +8,7 @@ import {
   ProductSections,
   StatsRow,
   WelcomeSection,
+  partnerCardClass,
 } from './shared';
 
 const STATS = [
@@ -69,13 +70,9 @@ const SSU_SPONSORER = [
   'Hegra Sparebank',
 ] as const;
 
-export function AnsattSsuContent() {
+export function SsuIntroPanel() {
   return (
     <>
-      <WelcomeSection title="Velkommen som telefonselger for SSU" />
-
-      <CalendarSection />
-
       <AboutUsSection>
         <p>
           Vi forebygger utenforskap, rus, ungdomskriminalitet, ensomhet og manglende tilhørighet gjennom foredrag,
@@ -90,7 +87,7 @@ export function AnsattSsuContent() {
           Som partner får bedriften mer eksponering på SSU-kanaler og initiativer, samt status som SSU-partner med mange
           fordeler.
         </p>
-        <p className="text-white font-medium">Nøkkelbudskap</p>
+          <p className="text-gray-900 font-medium">Nøkkelbudskap</p>
         <p>
           Når en bedrift blir SSU-partner, går bidraget direkte til at ungdom og skoler i bedriftens nærområde får
           tilgang til forebyggende arbeid som ellers ofte er vanskelig å finansiere.
@@ -124,32 +121,49 @@ export function AnsattSsuContent() {
           </>
         }
       />
+    </>
+  );
+}
 
-      <LydklippSection />
+export function SsuLydklippPanel() {
+  return <LydklippSection />;
+}
+
+export function AnsattSsuContent() {
+  return (
+    <>
+      <WelcomeSection title="Velkommen som telefonselger for SSU" />
+
+      <CalendarSection />
 
       <ProductSections sections={PRODUCT_SECTIONS} />
 
       <StatsRow stats={STATS} />
+    </>
+  );
+}
 
+export function SsuPartnersPanel() {
+  return (
       <PartnersSection>
-        <div className="rounded-2xl bg-[#1a1a1a] border border-white/10 p-6">
-          <p className="text-gray-300 text-sm leading-relaxed mb-4">
+        <div className={partnerCardClass}>
+          <p className="text-gray-700 text-sm leading-relaxed mb-4">
             SSU har vært gjennomført eller omtalt ved flere videregående skoler. I Follo og Indre Østfold startet
             Askim, Mysen og Ski videregående skoler programmet høsten 2024. Prosjektet ble finansiert av
             Sparebankstiftelsen Askim, Askim &amp; Spydeberg Sparebank og Eidsberg Sparebank.
           </p>
-          <p className="text-gray-300 text-sm leading-relaxed">
+          <p className="text-gray-700 text-sm leading-relaxed">
             I Røros er programmet finansiert av RørosBanken og Haltdalen Sparebank, og omtales som et felles løft
             mellom elever, ansatte, foreldre og lokalsamfunnet.
           </p>
         </div>
 
-        <div className="rounded-2xl bg-[#1a1a1a] border border-white/10 p-6">
-          <h3 className="text-lg font-semibold text-white mb-4">Noen skoler i programmet</h3>
+        <div className={partnerCardClass}>
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Noen skoler i programmet</h3>
           <div className="rounded-xl bg-white px-4 py-5">
             <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-4">
               {SSU_SKOLER.map((skole) => (
-                <span key={skole} className="text-[#050505] text-sm font-medium text-center">
+                <span key={skole} className="text-gray-900 text-sm font-medium text-center">
                   {skole}
                 </span>
               ))}
@@ -157,12 +171,12 @@ export function AnsattSsuContent() {
           </div>
         </div>
 
-        <div className="rounded-2xl bg-[#1a1a1a] border border-white/10 p-6">
-          <h3 className="text-lg font-semibold text-white mb-4">Noen av våre sponsorer</h3>
+        <div className={partnerCardClass}>
+          <h3 className="text-lg font-semibold text-gray-900 mb-4">Noen av våre sponsorer</h3>
           <div className="rounded-xl bg-white px-4 py-5">
             <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-4">
               {SSU_SPONSORER.map((sponsor) => (
-                <span key={sponsor} className="text-[#050505] text-sm font-medium text-center">
+                <span key={sponsor} className="text-gray-900 text-sm font-medium text-center">
                   {sponsor}
                 </span>
               ))}
@@ -170,6 +184,5 @@ export function AnsattSsuContent() {
           </div>
         </div>
       </PartnersSection>
-    </>
   );
 }

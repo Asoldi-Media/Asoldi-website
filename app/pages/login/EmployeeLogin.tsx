@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { ArrowLeft, Lock, Mail } from 'lucide-react';
+import { BOOKER_PATH } from '../ansatt/path';
 
 function safeNextPath(value = '') {
   const raw = String(value || '').trim();
@@ -37,7 +38,7 @@ export const EmployeeLogin = () => {
       window.dispatchEvent(new Event('employee-auth-changed'));
       const next = safeNextPath(searchParams.get('next') || '');
       const defaultPath =
-        data?.user?.role === 'sales' ? '/sales' : data?.user?.role === 'developer' ? '/developer' : '/ansatt';
+        data?.user?.role === 'sales' ? '/sales' : data?.user?.role === 'developer' ? '/developer' : BOOKER_PATH;
       navigate(next || defaultPath, { replace: true });
     } catch {
       setError('Noe gikk galt. Prøv igjen.');

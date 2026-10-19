@@ -9,6 +9,8 @@ import {
   ProductSections,
   StatsRow,
   WelcomeSection,
+  partnerCardClass,
+  partnerInsetClass,
 } from './shared';
 
 const LYDKLIPP = [
@@ -101,19 +103,9 @@ const PRODUCT_SECTIONS = [
   },
 ] as const;
 
-export function AnsattAsoldiContent({
-  identity = null,
-}: {
-  identity?: { name?: string; username?: string; fromEmail?: string } | null;
-}) {
+export function AsoldiIntroPanel() {
   return (
     <>
-      <WelcomeSection title="Velkommen som telefonselger hos Asoldi" />
-
-      <CallTimesSection identity={identity} />
-
-      <CalendarSection />
-
       <AboutUsSection>
         <p>
           Vi er et 2 år gammelt nyoppstartet markedsføringsbyrå som tilbyr markedsføringsløsninger i form av
@@ -130,7 +122,6 @@ export function AnsattAsoldiContent({
           satt seg ut i, i form av våre tjenester.
         </p>
       </AboutUsSection>
-
       <InfoCards
         targetAudience={
           <>
@@ -147,19 +138,44 @@ export function AnsattAsoldiContent({
           </>
         }
       />
+    </>
+  );
+}
 
-      <LydklippSection clips={LYDKLIPP} />
+export function AsoldiLydklippPanel() {
+  return <LydklippSection clips={LYDKLIPP} />;
+}
+
+export function AsoldiStatsPanel({
+  identity = null,
+}: {
+  identity?: { name?: string; username?: string; fromEmail?: string } | null;
+}) {
+  return <CallTimesSection identity={identity} />;
+}
+
+export function AnsattAsoldiContent() {
+  return (
+    <>
+      <WelcomeSection title="Velkommen som telefonselger hos Asoldi" />
+
+      <CalendarSection />
 
       <ProductSections sections={PRODUCT_SECTIONS} />
 
       <StatsRow stats={STATS} />
+    </>
+  );
+}
 
+export function AsoldiPartnersPanel() {
+  return (
       <PartnersSection>
-        <div className="rounded-2xl bg-[#1a1a1a] border border-white/10 p-6">
+        <div className={partnerCardClass}>
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
-              <h3 className="text-lg font-semibold text-white">Superhero burger og pizza</h3>
-              <p className="text-gray-400 text-sm">Restaurant</p>
+              <h3 className="text-lg font-semibold text-gray-900">Superhero burger og pizza</h3>
+              <p className="text-gray-500 text-sm">Restaurant</p>
             </div>
             <img
               src="https://asoldi.com/wp-content/uploads/2025/12/logo.webp"
@@ -169,15 +185,15 @@ export function AnsattAsoldiContent({
             />
           </div>
           <div className="mt-5">
-            <p className="text-white font-semibold mb-3">Resultater:</p>
+            <p className="text-gray-900 font-semibold mb-3">Resultater:</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="rounded-xl bg-black/20 border border-white/10 p-4">
-                <p className="text-white font-medium">Lagde en simpel nettside</p>
-                <p className="text-gray-400 text-sm">SEO/maps ranking, synced SoMe posts</p>
+              <div className={partnerInsetClass}>
+                <p className="text-gray-900 font-medium">Lagde en simpel nettside</p>
+                <p className="text-gray-600 text-sm">SEO/maps ranking, synced SoMe posts</p>
               </div>
-              <div className="rounded-xl bg-black/20 border border-white/10 p-4">
-                <p className="text-white font-medium">Analystikk</p>
-                <p className="text-gray-400 text-sm">
+              <div className={partnerInsetClass}>
+                <p className="text-gray-900 font-medium">Analystikk</p>
+                <p className="text-gray-600 text-sm">
                   Vi kan se over 10 000 nye månedlige besøkende og når de bouncer
                 </p>
               </div>
@@ -185,11 +201,11 @@ export function AnsattAsoldiContent({
           </div>
         </div>
 
-        <div className="rounded-2xl bg-[#1a1a1a] border border-white/10 p-6">
+        <div className={partnerCardClass}>
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
-              <h3 className="text-lg font-semibold text-white">S&apos;wich restaurant</h3>
-              <p className="text-gray-400 text-sm">Restaurant</p>
+              <h3 className="text-lg font-semibold text-gray-900">S&apos;wich restaurant</h3>
+              <p className="text-gray-500 text-sm">Restaurant</p>
             </div>
             <img
               src="https://asoldi.com/wp-content/uploads/2025/12/images.png"
@@ -199,15 +215,15 @@ export function AnsattAsoldiContent({
             />
           </div>
           <div className="mt-5">
-            <p className="text-white font-semibold mb-3">Resultater:</p>
+            <p className="text-gray-900 font-semibold mb-3">Resultater:</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="rounded-xl bg-black/20 border border-white/10 p-4">
-                <p className="text-white font-medium">Lagde en simpel nettside</p>
-                <p className="text-gray-400 text-sm">SEO/maps ranking, synced reviews/SoMe posts</p>
+              <div className={partnerInsetClass}>
+                <p className="text-gray-900 font-medium">Lagde en simpel nettside</p>
+                <p className="text-gray-600 text-sm">SEO/maps ranking, synced reviews/SoMe posts</p>
               </div>
-              <div className="rounded-xl bg-black/20 border border-white/10 p-4">
-                <p className="text-white font-medium">Google maps ranking</p>
-                <p className="text-gray-400 text-sm">
+              <div className={partnerInsetClass}>
+                <p className="text-gray-900 font-medium">Google maps ranking</p>
+                <p className="text-gray-600 text-sm">
                   Gikk fra nr 10 til nr 6 på ranking for “restaurant” i Trondheim
                 </p>
               </div>
@@ -215,11 +231,11 @@ export function AnsattAsoldiContent({
           </div>
         </div>
 
-        <div className="rounded-2xl bg-[#1a1a1a] border border-white/10 p-6">
+        <div className={partnerCardClass}>
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
-              <h3 className="text-lg font-semibold text-white">Svelstad gård</h3>
-              <p className="text-gray-400 text-sm">Gård</p>
+              <h3 className="text-lg font-semibold text-gray-900">Svelstad gård</h3>
+              <p className="text-gray-500 text-sm">Gård</p>
             </div>
             <img
               src="https://asoldi.com/wp-content/uploads/2025/12/Uten-navn-1000-x-500-px3.png"
@@ -229,15 +245,15 @@ export function AnsattAsoldiContent({
             />
           </div>
           <div className="mt-5">
-            <p className="text-white font-semibold mb-3">Resultater:</p>
+            <p className="text-gray-900 font-semibold mb-3">Resultater:</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="rounded-xl bg-black/20 border border-white/10 p-4">
-                <p className="text-white font-medium">Lagde en simpel nettside</p>
-                <p className="text-gray-400 text-sm">Branded med 1 Kontakt skjema</p>
+              <div className={partnerInsetClass}>
+                <p className="text-gray-900 font-medium">Lagde en simpel nettside</p>
+                <p className="text-gray-600 text-sm">Branded med 1 Kontakt skjema</p>
               </div>
-              <div className="rounded-xl bg-black/20 border border-white/10 p-4">
-                <p className="text-white font-medium">Kontakt skjema</p>
-                <p className="text-gray-400 text-sm">
+              <div className={partnerInsetClass}>
+                <p className="text-gray-900 font-medium">Kontakt skjema</p>
+                <p className="text-gray-600 text-sm">
                   10 nye bestillinger gjennom kontakt skjema, og 400 nye besøkende første uka
                 </p>
               </div>
@@ -245,6 +261,5 @@ export function AnsattAsoldiContent({
           </div>
         </div>
       </PartnersSection>
-    </>
   );
 }

@@ -28,20 +28,14 @@ export type ProductSection = { title: string; items: readonly ProductItem[] };
 export type LydklippClip = { file: string; isNew: boolean };
 
 const LYDKLIPP_VISIBLE = 5;
+const CARD = 'rounded-2xl bg-white border border-gray-200';
+const INSET = 'rounded-xl bg-gray-50 border border-gray-200';
 
 export function WelcomeSection({ title }: { title: string }) {
   return (
     <section className="mb-10">
-      <h1 className="text-2xl font-bold text-white mb-2">{title}</h1>
-      <p className="text-gray-400 mb-6">Under finner du all informasjon du trenger for å booke møter</p>
-      <a
-        href="https://asoldi.myphoner.com/work"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex items-center justify-center px-5 py-2.5 rounded-lg bg-[#FF5B00] text-white font-medium hover:bg-[#e55200] transition-colors"
-      >
-        Gå til ringesystem
-      </a>
+      <h1 className="text-2xl font-bold text-gray-900 mb-2">{title}</h1>
+      <p className="text-gray-600">Under finner du all informasjon du trenger for å booke møter</p>
     </section>
   );
 }
@@ -49,8 +43,8 @@ export function WelcomeSection({ title }: { title: string }) {
 export function CalendarSection() {
   return (
     <section className="mb-10">
-      <h2 className="text-xl font-semibold text-white mb-4">Booking informasjon</h2>
-      <div className="rounded-2xl overflow-hidden border border-white/10 bg-[#1a1a1a]">
+      <h2 className="text-xl font-semibold text-gray-900 mb-4">Booking informasjon</h2>
+      <div className={`overflow-hidden ${CARD}`}>
         <iframe
           title="Kalender"
           src={CALENDAR_EMBED}
@@ -66,9 +60,9 @@ export function CalendarSection() {
 export function AboutUsSection({ children }: { children: React.ReactNode }) {
   return (
     <section className="mb-10">
-      <h2 className="text-2xl md:text-3xl font-bold text-white mb-6">Hvem er vi</h2>
-      <div className="rounded-2xl bg-[#1a1a1a] border border-white/10 p-6 md:p-8">
-        <div className="space-y-4 text-gray-300 text-base md:text-lg leading-relaxed">{children}</div>
+      <h2 className="text-2xl md:text-3xl font-bold text-gray-900 mb-6">Hvem er vi</h2>
+      <div className={`${CARD} p-6 md:p-8`}>
+        <div className="space-y-4 text-gray-700 text-base md:text-lg leading-relaxed">{children}</div>
       </div>
     </section>
   );
@@ -82,15 +76,15 @@ export function InfoCards({
   goal: React.ReactNode;
 }) {
   return (
-    <section className="mb-10">
+    <section className="mb-10 last:mb-0">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="rounded-xl bg-[#1a1a1a] border border-white/10 p-6">
-          <h3 className="text-lg font-semibold text-white mb-3">Målgruppe</h3>
-          <div className="text-gray-400 text-sm leading-relaxed">{targetAudience}</div>
+        <div className={`${INSET} p-6`}>
+          <h3 className="text-lg font-semibold text-gray-900 mb-3">Målgruppe</h3>
+          <div className="text-gray-600 text-sm leading-relaxed">{targetAudience}</div>
         </div>
-        <div className="rounded-xl bg-[#1a1a1a] border border-white/10 p-6">
-          <h3 className="text-lg font-semibold text-white mb-3">Mål</h3>
-          <div className="text-gray-400 text-sm leading-relaxed">{goal}</div>
+        <div className={`${INSET} p-6`}>
+          <h3 className="text-lg font-semibold text-gray-900 mb-3">Mål</h3>
+          <div className="text-gray-600 text-sm leading-relaxed">{goal}</div>
         </div>
       </div>
     </section>
@@ -100,7 +94,7 @@ export function InfoCards({
 function LydklippPlayer({ file, isNew }: LydklippClip) {
   const src = `/media/${encodeURIComponent(file)}`;
   return (
-    <div className="relative rounded-xl bg-[#1a1a1a] border border-white/10 p-4">
+    <div className={`relative ${INSET} p-4`}>
       {isNew && (
         <span className="absolute top-3 right-3 z-10 rounded-full bg-[#FF5B00] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white shadow-sm">
           New
@@ -119,11 +113,11 @@ export function LydklippSection({ clips = [] }: { clips?: readonly LydklippClip[
   const hasClips = clips.length > 0;
 
   return (
-    <section className="mb-10">
-      <h2 className="text-xl font-semibold text-white mb-4">Lydklipp</h2>
+    <section>
+      <h2 className="text-xl font-semibold text-gray-900 mb-4">Lydklipp</h2>
       {!hasClips ? (
-        <div className="rounded-xl bg-[#1a1a1a] border border-white/10 p-6 text-center">
-          <p className="text-gray-400 text-sm">Ingen lydklipp tilgjengelig ennå.</p>
+        <div className={`${INSET} p-6 text-center`}>
+          <p className="text-gray-600 text-sm">Ingen lydklipp tilgjengelig ennå.</p>
         </div>
       ) : (
         <div className="space-y-4">
@@ -135,7 +129,7 @@ export function LydklippSection({ clips = [] }: { clips?: readonly LydklippClip[
               <button
                 type="button"
                 onClick={() => setExpanded((open) => !open)}
-                className="w-full text-left text-sm font-medium text-[#FF5B00] hover:text-[#ff7b2e] transition-colors py-1"
+                className="w-full text-left text-sm font-medium text-[#FF5B00] hover:text-[#e55200] transition-colors py-1"
                 aria-expanded={expanded}
               >
                 {expanded
@@ -162,12 +156,12 @@ export function ProductSections({ sections }: { sections: readonly ProductSectio
     <>
       {sections.map((section) => (
         <section key={section.title} className="mb-10">
-          <h2 className="text-xl font-semibold text-white mb-4">{section.title}</h2>
+          <h2 className="text-xl font-semibold text-gray-900 mb-4">{section.title}</h2>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {section.items.map((item) => (
-              <div key={item.title} className="rounded-xl bg-[#1a1a1a] border border-white/10 p-6">
-                <h3 className="text-lg font-semibold text-white mb-2">{item.title}</h3>
-                <p className="text-gray-400 text-sm">{item.body}</p>
+              <div key={item.title} className={`${INSET} p-6`}>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">{item.title}</h3>
+                <p className="text-gray-600 text-sm">{item.body}</p>
               </div>
             ))}
           </div>
@@ -182,12 +176,9 @@ export function StatsRow({ stats }: { stats: readonly StatItem[] }) {
     <section className="mb-10">
       <div className={`grid gap-4 grid-cols-2 ${stats.length >= 5 ? 'lg:grid-cols-5' : 'lg:grid-cols-4'}`}>
         {stats.map((stat) => (
-          <div
-            key={stat.label}
-            className="rounded-xl bg-[#1a1a1a] border border-white/10 p-5 text-center"
-          >
+          <div key={stat.label} className={`${INSET} p-5 text-center`}>
             <p className="text-2xl md:text-3xl font-bold text-[#FF5B00] mb-2">{stat.value}</p>
-            <p className="text-gray-400 text-sm leading-snug">{stat.label}</p>
+            <p className="text-gray-600 text-sm leading-snug">{stat.label}</p>
           </div>
         ))}
       </div>
@@ -197,9 +188,12 @@ export function StatsRow({ stats }: { stats: readonly StatItem[] }) {
 
 export function PartnersSection({ children }: { children: React.ReactNode }) {
   return (
-    <section className="mb-8">
-      <h2 className="text-xl font-semibold text-white mb-4">Partnere og resultater</h2>
+    <section>
+      <h2 className="text-xl font-semibold text-gray-900 mb-4">Partnere og resultater</h2>
       <div className="space-y-6">{children}</div>
     </section>
   );
 }
+
+export const partnerCardClass = `${CARD} p-6`;
+export const partnerInsetClass = `${INSET} p-4`;
