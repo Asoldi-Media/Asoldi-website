@@ -45,6 +45,7 @@ import {
   salesCalendarHourSpan,
   layoutTimedCalendarEvents,
   resolveMeetingAtOnMyphonerMerge,
+  resolveMeetingModeOnMyphonerMerge,
   assignmentStampForOwnerChange,
   clientIsNewlyAssigned,
   NEW_SALES_ASSIGNMENT_MS,
@@ -1026,6 +1027,12 @@ test('a sales-written meeting time stays after MyPhoner sends the old booking ag
     nextActions: moved.nextActions,
   });
   assert.equal(decorated.find((action) => action.presetKey === 'meeting').dueAt, '2026-10-01T13:00:00.000Z');
+});
+
+test('a saved Online/IRL stays when MyPhoner or the contact list sends the other mode', () => {
+  assert.equal(resolveMeetingModeOnMyphonerMerge({ meetingMode: 'online' }, 'in-person'), 'online');
+  assert.equal(resolveMeetingModeOnMyphonerMerge({ meetingMode: 'in-person' }, 'online'), 'in-person');
+  assert.equal(resolveMeetingModeOnMyphonerMerge({ meetingMode: '' }, 'in-person'), 'in-person');
 });
 
 test('MyPhoner can still fill a meeting time when the client is on admin and never written by sales', () => {

@@ -48,12 +48,13 @@ test('MyPhoner empty payload keeps saved social, Proff and Maps URLs', () => {
   assert.equal(merged.otherLinks, 'https://kafeen.no');
 });
 
-test('incoming MyPhoner URLs still replace saved ones', () => {
+test('a saved URL stays when MyPhoner sends a different one; an empty field is filled', () => {
   const merged = mergeKeptSalesDetailLinks(
-    { instagramUrl: 'https://www.instagram.com/newhandle/' },
+    { instagramUrl: 'https://www.instagram.com/newhandle/', facebookUrl: 'https://www.facebook.com/new/' },
     { instagramUrl: 'https://www.instagram.com/oldhandle/' }
   );
-  assert.equal(merged.instagramUrl, 'https://www.instagram.com/newhandle/');
+  assert.equal(merged.instagramUrl, 'https://www.instagram.com/oldhandle/');
+  assert.equal(merged.facebookUrl, 'https://www.facebook.com/new/');
 });
 
 test('Maps URL in other links moves into the Google field', () => {

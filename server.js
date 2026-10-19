@@ -119,7 +119,7 @@ import {
   salesEmailMergeMap,
   buildSalesCalendarInvite,
 } from './lib/sales-email.js';
-import { assignmentStampForOwnerChange, clientIsSalesWin, confirmationSendGaps, confirmationShouldSendOnChange, decorateNextActions, isRecordedSalesAction, meetingTimeHasPassed, normalizeSecondaryInterest, osloWeekRange, recordedSalesActions, resolveMeetingAtOnMyphonerMerge, sameMeetingInstant } from './lib/sales-next-actions.js';
+import { assignmentStampForOwnerChange, clientIsSalesWin, confirmationSendGaps, confirmationShouldSendOnChange, decorateNextActions, isRecordedSalesAction, meetingTimeHasPassed, normalizeSecondaryInterest, osloWeekRange, recordedSalesActions, resolveMeetingAtOnMyphonerMerge, resolveMeetingModeOnMyphonerMerge, sameMeetingInstant } from './lib/sales-next-actions.js';
 import { attachFirefliesToMatchingAction } from './lib/sales-activity-log.js';
 import { isPlaceholderMeetingId, meetingHasOfferTalk, normalizeOfferMeetingIds, seedOfferMeetingIds, selectOfferMeetingId } from './lib/offer-meetings.js';
 import { normalizeStoredWebsiteEmail, resolveWebsiteEmail } from './lib/sales-website-email.js';
@@ -2422,7 +2422,11 @@ function applyConfiguredSalesContactCorrections({ createMissing = true } = {}) {
     if (correctionPlace && (parseBoolean(correction.forceMeetingPlace, false) || !sanitizeText(existing.meetingPlace))) {
       patch.meetingPlace = correctionPlace;
     }
-    if (correctionMode && correctionMode !== normalizeMeetingMode(existing.meetingMode)) {
+    if (
+      correctionMode
+      && parseBoolean(correction.forceMeetingMode, false)
+      && correctionMode !== normalizeMeetingMode(existing.meetingMode)
+    ) {
       patch.meetingMode = correctionMode;
     }
     if (
@@ -2451,15 +2455,6 @@ function applyConfiguredSalesContactCorrections({ createMissing = true } = {}) {
       const saved = sales.updateSalesClient(existing.id, patch);
       if (saved) {
         next = saved;
-        changed = true;
-      }
-    }
-    if (correctionTargetStatus && correctionTargetStatus !== next.status) {
-      const moved = sales.setSalesStatus(next.id, correctionTargetStatus, {
-        reason: correctionStatusReason,
-      });
-      if (moved) {
-        next = moved;
         changed = true;
       }
     }
@@ -5730,22 +5725,28 @@ function mergeMyphonerSalesInput(existing = {}, incoming = {}) {
     current,
     incomingHasMeeting ? next.meetingAt : ''
   );
-  const mergedMeetingMode = normalizeMeetingMode(next.meetingMode || current.meetingMode || 'online');
+  const mergedMeetingMode = resolveMeetingModeOnMyphonerMerge(current, next.meetingMode);
   const nextEmail = sanitizeText(next.contactEmail);
   const currentEmail = sanitizeText(current.contactEmail);
-  const mergedEmail = nextEmail || (isSyntheticMyphonerFallbackEmail(currentEmail) || isMissingEmailPlaceholder(currentEmail) ? '' : currentEmail);
+  const currentEmailIsReal = Boolean(currentEmail)
+    && !isSyntheticMyphonerFallbackEmail(currentEmail)
+    && !isMissingEmailPlaceholder(currentEmail);
+  const mergedEmail = currentEmailIsReal
+    ? currentEmail
+    : (nextEmail || (isSyntheticMyphonerFallbackEmail(currentEmail) || isMissingEmailPlaceholder(currentEmail) ? '' : currentEmail));
+  const keep = (stored, incoming) => sanitizeText(stored) || sanitizeText(incoming);
   const merged = buildSalesInput(
     {
-      businessName: next.businessName || current.businessName,
-      contactPerson: next.contactPerson || current.contactPerson || next.businessName,
+      businessName: keep(current.businessName, next.businessName),
+      contactPerson: keep(current.contactPerson, next.contactPerson) || keep(current.businessName, next.businessName),
       contactEmail: mergedEmail,
-      contactPhone: next.contactPhone || current.contactPhone,
-      industry: next.industry || current.industry,
-      websiteDomain: sanitizeSalesWebsiteDomain(next.websiteDomain),
-      orgNumber: next.orgNumber || current.orgNumber,
+      contactPhone: keep(current.contactPhone, next.contactPhone),
+      industry: keep(current.industry, next.industry),
+      websiteDomain: sanitizeSalesWebsiteDomain(keep(current.websiteDomain, next.websiteDomain)),
+      orgNumber: keep(current.orgNumber, next.orgNumber),
       details: mergeKeptSalesDetailLinks(next.details || {}, current.details || {}),
       meetingMode: mergedMeetingMode,
-      meetingPlace: next.meetingPlace || current.meetingPlace,
+      meetingPlace: keep(current.meetingPlace, next.meetingPlace),
       agreedTime: meeting.agreedTime,
       meetingAt: meeting.meetingAt,
     },
