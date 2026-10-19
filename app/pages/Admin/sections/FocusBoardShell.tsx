@@ -184,11 +184,13 @@ type Props<T extends FocusShellEntry> = {
   emptyText: (categoryId: string) => string;
   /** Show this client wherever it is (request popup, full list). */
   focusRequest?: FocusRequest;
+  /** Assign tabs stay put and show the next client. Do not follow or toast. */
+  stayOnLeave?: boolean;
 };
 
 /** Sales-style board: tabs with count + clock, Neste kunder popup, one focused client with a pager. */
 export function FocusBoardShell<T extends FocusShellEntry>(props: Props<T>) {
-  const { ariaLabel, categories, queues, active, onCategory, nowMs, statusFor, detailFor, renderCard, emptyText, focusRequest } = props;
+  const { ariaLabel, categories, queues, active, onCategory, nowMs, statusFor, detailFor, renderCard, emptyText, focusRequest, stayOnLeave } = props;
   const [focus, setFocus] = useState<Record<string, { id: string; index: number }>>({});
   const [menuOpen, setMenuOpen] = useState(false);
   /** The client stays on screen after leaving the tab, so the tick can be seen and undone. */
@@ -265,7 +267,9 @@ export function FocusBoardShell<T extends FocusShellEntry>(props: Props<T>) {
     if (last && last.category === active && !queue.some((row) => row.id === last.id)) {
       const moved = findAnywhere(last.id);
       const movedLabel = moved ? categories.find((meta) => meta.id === moved.category)?.label || '' : '';
-      if (moved && movedLabel) {
+      if (stayOnLeave) {
+        // Stay on this tab and show the next client. Do not follow or toast.
+      } else if (moved && movedLabel) {
         setHeld({ category: active, id: last.id, note: `${last.name} er flyttet til ${movedLabel}.` });
       } else {
         setNote(`${last.name} er ferdig i ${activeMeta?.label || 'denne fanen'}.${entry ? ` Neste: ${entry.name || 'kunde'}.` : ''}`);

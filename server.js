@@ -8010,6 +8010,9 @@ async function resolveAssignableDeveloperOwnerId(ownerId = '', developmentUser =
   return options.some((entry) => entry.accountKey === key) ? key : '';
 }
 
+let salesOwnerOptionsCache = { at: 0, rows: null };
+const SALES_OWNER_OPTIONS_TTL_MS = 15_000;
+
 async function listSalesOwnerOptions(salesUser = {}) {
   const options = [];
   const seen = new Set();
@@ -8028,16 +8031,28 @@ async function listSalesOwnerOptions(salesUser = {}) {
     add(salesUser.accountKey, salesUser.username, 'Admin');
   }
 
-  try {
-    const users = await store.getAllUsers();
-    for (const user of Array.isArray(users) ? users : []) {
-      if (sanitizeText(user?.role).toLowerCase() !== 'sales') continue;
-      const userId = sanitizeText(user?.id);
-      if (!userId) continue;
-      add(`sales:${userId}`, user?.username, user?.name);
+  const now = Date.now();
+  if (!Array.isArray(salesOwnerOptionsCache.rows) || now - salesOwnerOptionsCache.at > SALES_OWNER_OPTIONS_TTL_MS) {
+    try {
+      const users = await store.getAllUsers();
+      const rows = [];
+      for (const user of Array.isArray(users) ? users : []) {
+        if (sanitizeText(user?.role).toLowerCase() !== 'sales') continue;
+        const userId = sanitizeText(user?.id);
+        if (!userId) continue;
+        rows.push({
+          accountKey: `sales:${userId}`,
+          username: sanitizeText(user?.username),
+          name: sanitizeText(user?.name),
+        });
+      }
+      salesOwnerOptionsCache = { at: now, rows };
+    } catch {
+      if (!Array.isArray(salesOwnerOptionsCache.rows)) salesOwnerOptionsCache.rows = [];
     }
-  } catch {
-    // Keep the admin option even if the user list cannot be read.
+  }
+  for (const row of salesOwnerOptionsCache.rows || []) {
+    add(row.accountKey, row.username, row.name);
   }
   return options;
 }
@@ -8599,6 +8614,15 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
 async function maybeSyncNextActionCalendars(previousClient, nextClient, { actorAccountKey = '' } = {}) {
   const warnings = [];
   let client = nextClient;
+  const previousActions = Array.isArray(previousClient?.nextActions) ? previousClient.nextActions : [];
+  const nextActions = Array.isArray(nextClient?.nextActions) ? nextClient.nextActions : [];
+  const needsCalendar = previousActions.some((action) => sanitizeText(action?.calendarEventId))
+    || nextActions.some((action) => (
+      Boolean(action?.addToCalendar)
+      && !sanitizeText(action?.doneAt)
+      && sanitizeText(action?.dueAt)
+    ));
+  if (!needsCalendar) return { client, warnings };
   if (!shouldSyncSalesMeetingCalendar({
     ownerId: nextClient?.ownerId || '',
     calendar: nextClient?.calendar || previousClient?.calendar || {},
@@ -8623,8 +8647,6 @@ async function maybeSyncNextActionCalendars(previousClient, nextClient, { actorA
     return { client, warnings };
   }
 
-  const previousActions = Array.isArray(previousClient?.nextActions) ? previousClient.nextActions : [];
-  const nextActions = Array.isArray(nextClient?.nextActions) ? nextClient.nextActions : [];
   const nextById = new Map(nextActions.map((action) => [sanitizeText(action.id), action]));
   const previousActionById = new Map(previousActions.map((action) => [sanitizeText(action.id), action]));
   const patched = nextActions.map((action) => ({ ...action }));
@@ -10830,11 +10852,9 @@ app.get('/api/client/settings', clientAuth, async (req, res) => {
   const user = await loadClientUser(req, res);
   if (!user) return;
   const session = clientPortal.presentClientSession(user);
-  const billing = await buildClientBillingOverview(session.profile);
   return res.json({
     ...session,
     clientDataBank: session.profile?.clientDataBank || null,
-    billing,
     members: clientBusinesses.getMembershipsForBusiness(session.activeBusinessId).map(clientBusinesses.publicMembership),
   });
 });
@@ -14320,29 +14340,31 @@ app.post('/api/admin/sales/:id/owner', salesAuth, async (req, res) => {
   if (!ownerId) {
     return res.status(400).json({ message: 'Choose a Sales user or keep the client on admin.' });
   }
-  let client = sales.updateSalesClient(req.params.id, {
+  const client = sales.updateSalesClient(req.params.id, {
     ownerId,
     ...assignmentStampForOwnerChange(existing.ownerId, ownerId),
   });
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
-  const syncResult = await maybeSyncCalendar(client, existing, {
-    notifyAttendees: false,
-    actorAccountKey: client.ownerId,
-  });
-  client = syncResult.client || client;
-  const thankYou = await autoSendThankYouFromOwner(client, {
-    existing,
-    ownerJustAssigned: true,
-  });
-  if (thankYou?.client) client = thankYou.client;
   res.json({
     client,
-    thankYouSent: Boolean(thankYou?.sent),
-    thankYouReason: thankYou?.reason || '',
-    confirmationGaps: thankYou?.gaps || confirmationSendGaps(client),
-    from: thankYou?.from || '',
-    warnings: [...(syncResult.warnings || []), ...(thankYou?.warnings || [])],
+    thankYouSent: false,
+    thankYouReason: 'queued',
+    confirmationGaps: confirmationSendGaps(client),
+    from: '',
+    warnings: [],
   });
+  try {
+    const syncResult = await maybeSyncCalendar(client, existing, {
+      notifyAttendees: false,
+      actorAccountKey: client.ownerId,
+    });
+    await autoSendThankYouFromOwner(syncResult.client || client, {
+      existing,
+      ownerJustAssigned: true,
+    });
+  } catch (error) {
+    console.error('[sales] owner follow-up failed', error?.message || error);
+  }
 });
 
 app.post('/api/admin/sales', salesAuth, async (req, res) => {
@@ -18766,8 +18788,15 @@ function resolveDevelopmentTarget(itemId) {
   return null;
 }
 
+let lastDeliveryReconcileAt = 0;
+const DEVELOPMENT_RECONCILE_MS = 20_000;
+
 app.get('/api/admin/development', developmentAuth, async (req, res) => {
-  hub.reconcileDeliveryPhases(sales.getSalesClients());
+  const now = Date.now();
+  if (now - lastDeliveryReconcileAt >= DEVELOPMENT_RECONCILE_MS) {
+    lastDeliveryReconcileAt = now;
+    hub.reconcileDeliveryPhases(sales.getSalesClients());
+  }
   sales.seedExistingDeveloperOwnersToAdmin();
   const caller = req.developmentUser || {};
   const parts = listDeveloperBoardParts();

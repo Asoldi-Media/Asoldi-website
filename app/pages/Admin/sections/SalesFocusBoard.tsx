@@ -20,7 +20,6 @@ import {
   SkipForward,
   Undo2,
   UserX,
-  UserPlus,
   UserRound,
 } from 'lucide-react';
 import type { SalesClient, SalesGoalKey, SalesNextAction } from '../shared';
@@ -119,7 +118,6 @@ const TONE_CLASS = {
 };
 
 const BUTTON = 'inline-flex items-center justify-center gap-1.5 px-3 py-2 min-h-[40px] sm:min-h-0 rounded-lg text-sm disabled:opacity-50';
-const BUTTON_PRIMARY = `${BUTTON} bg-[#FF5B00] text-white font-medium hover:bg-[#e55200]`;
 const HEADER_BUTTON = 'shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1.5 min-h-[36px] sm:min-h-0 rounded-lg bg-white/10 text-xs text-white hover:bg-white/15 disabled:opacity-50';
 const ROW_BUTTON = 'shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md bg-white/10 text-[11px] text-gray-100 hover:bg-white/15 disabled:opacity-50';
 
@@ -191,19 +189,24 @@ function clockLabel(value: CategoryClock, nowMs: number) {
   return dayWord(iso, nowMs) === 'i dag' ? `kl ${clock(iso)}` : when(iso, nowMs);
 }
 
-function entryStatus(entry: FocusEntry, nowMs: number): { text: string; tone: keyof typeof TONE_CLASS } {
+function meetingModeLabel(client: SalesClient) {
+  return client.meetingMode === 'in-person' ? 'IRL' : 'Online';
+}
+
+/** Status next to the name. Skip chips that only repeat the open category. */
+function entryStatus(entry: FocusEntry, nowMs: number): { text: string; tone: keyof typeof TONE_CLASS } | null {
   const { stepId, state, dueAt } = entry;
   if (!stepId && state === 'done') return { text: 'Ferdig her', tone: 'muted' };
-  if (stepId === 'assign') return { text: 'Mangler selger', tone: 'warn' };
+  if (stepId === 'assign') return null;
   if (stepId === 'confirmation') {
-    if (state === 'overdue') return { text: `Bekreftelse ikke sendt · ${since(dueAt, nowMs)}`, tone: 'red' };
-    return { text: 'Bekreftelse ikke sendt', tone: 'warn' };
+    if (state === 'overdue') return { text: `Ikke sendt · ${since(dueAt, nowMs)}`, tone: 'red' };
+    return null;
   }
   if (stepId === 'reminder') {
-    if (state === 'sendNow') return { text: 'Send påminnelse nå', tone: 'warn' };
-    if (state === 'overdue') return { text: `Påminnelse ikke sendt · ${since(dueAt, nowMs)}`, tone: 'red' };
-    if (state === 'due') return { text: 'Påminnelse ikke sendt', tone: 'warn' };
-    return { text: `Påminnelse kl ${clock(dueAt)}`, tone: 'muted' };
+    if (state === 'sendNow') return { text: 'Send nå', tone: 'warn' };
+    if (state === 'overdue') return { text: `Ikke sendt · ${since(dueAt, nowMs)}`, tone: 'red' };
+    if (state === 'due') return null;
+    return dueAt ? { text: `kl ${clock(dueAt)}`, tone: 'muted' } : null;
   }
   const today = dayWord(dueAt, nowMs) === 'i dag';
   if (stepId === 'readUp') {
@@ -233,8 +236,8 @@ function entryStatus(entry: FocusEntry, nowMs: number): { text: string; tone: ke
   }
   if (stepId === 'sendOffer') {
     const late = dueAt ? since(dueAt, nowMs) : '';
-    if (state === 'overdue') return { text: late ? `Klargjør tilbud · forfalt ${late}` : 'Klargjør tilbud · forfalt', tone: 'red' };
-    return { text: dueAt ? `Klargjør tilbud · frist ${when(dueAt, nowMs)}` : 'Klargjør tilbud', tone: 'warn' };
+    if (state === 'overdue') return { text: late ? `Forfalt ${late}` : 'Forfalt', tone: 'red' };
+    return dueAt ? { text: `Frist ${when(dueAt, nowMs)}`, tone: 'warn' } : null;
   }
   if (stepId === 'signatureFollowUp') {
     if (state === 'overdue') return { text: `Oppfølging forfalt · ${since(dueAt, nowMs)}`, tone: 'red' };
@@ -252,15 +255,27 @@ function entryStatus(entry: FocusEntry, nowMs: number): { text: string; tone: ke
     if (state === 'due') return { text: `${name} i dag`, tone: 'warn' };
     return { text: `${name} ${when(dueAt, nowMs)}`.trim(), tone: 'muted' };
   }
-  return { text: 'Venter på signatur', tone: 'muted' };
+  return null;
 }
 
 function phoneDigits(client: SalesClient) {
   return String(client.contactPhone || '').replace(/[^\d+]/g, '');
 }
 
+function ModeChip({ client }: { client: SalesClient }) {
+  const irl = client.meetingMode === 'in-person';
+  return (
+    <span className={`inline-flex shrink-0 items-center px-2 py-0.5 rounded border text-[11px] ${
+      irl ? 'border-sky-400/40 bg-sky-500/10 text-sky-100' : 'border-white/15 text-gray-300'
+    }`}>
+      {meetingModeLabel(client)}
+    </span>
+  );
+}
+
 function StatusChip({ entry, nowMs }: { entry: FocusEntry; nowMs: number }) {
   const status = entryStatus(entry, nowMs);
+  if (!status) return null;
   return (
     <span className={`inline-flex shrink-0 items-center px-2 py-0.5 rounded border text-[11px] ${TONE_CLASS[status.tone]}`}>
       {status.text}
@@ -372,7 +387,9 @@ export function SalesFocusBoard(props: Props) {
         : movedTo.length ? `er flyttet til ${movedTo.join(' og ')}` : `er ferdig i ${activeMeta.label}`;
       const missedNow = Boolean(moved && (salesMissedMeeting(moved, nowMs) as MissedMeeting | null)?.undoable);
       const missedUndone = last.missed && !missedNow;
-      if ((active === 'meetingsToday' && moved?.progression?.meetingHeld) || missedNow || missedUndone || parked) {
+      if (active === 'assign') {
+        // Stay on Tildel selger and show the next unassigned client. Do not follow or toast.
+      } else if ((active === 'meetingsToday' && moved?.progression?.meetingHeld) || missedNow || missedUndone || parked) {
         setNote(`${last.name} ${where}.${entry ? ` Neste: ${entry.client.businessName || 'kunde'}.` : ''}`);
       } else {
         setHeld({ category: active, id: last.id, note: `${last.name} ${where}.` });
@@ -536,6 +553,7 @@ export function SalesFocusBoard(props: Props) {
                           {row.client.businessName || 'Uten navn'}
                         </span>
                         <span className="flex items-center gap-2">
+                          <ModeChip client={row.client} />
                           <StatusChip entry={row} nowMs={nowMs} />
                           {current ? null : <ChevronRight size={14} className="text-gray-500" />}
                         </span>
@@ -836,7 +854,10 @@ function FocusCard(props: FocusCardProps) {
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-lg sm:text-xl font-semibold text-white truncate">{client.businessName || 'Uten navn'}</h2>
-                <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[11px] ${TONE_CLASS[status.tone]}`}>{status.text}</span>
+                <ModeChip client={client} />
+                {status ? (
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[11px] ${TONE_CLASS[status.tone]}`}>{status.text}</span>
+                ) : null}
                 {client.status === 'secondary' ? (
                   <span className="inline-flex items-center px-2 py-0.5 rounded border text-[11px] border-white/15 text-gray-300">Sekundær</span>
                 ) : null}
@@ -969,7 +990,6 @@ function FocusCard(props: FocusCardProps) {
 
 function AssignPanel({ entry, salesReps, assigningId, onAssign, renderRecording }: FocusCardProps) {
   const { client } = entry;
-  const [ownerId, setOwnerId] = useState('');
   const busy = assigningId === client.id;
   return (
     <div className="rounded-xl border border-[#FF5B00]/50 bg-[#FF5B00]/5 p-3 space-y-3">
@@ -978,24 +998,19 @@ function AssignPanel({ entry, salesReps, assigningId, onAssign, renderRecording 
       <div className="flex flex-wrap items-center gap-2">
         <select
           aria-label="Selger"
-          value={ownerId}
-          onChange={(event) => setOwnerId(event.target.value)}
-          className="min-w-0 flex-1 rounded-lg bg-[#161616] border border-white/10 text-white text-sm px-2.5 py-2"
+          defaultValue=""
+          disabled={busy}
+          onChange={(event) => {
+            const ownerId = event.target.value;
+            if (ownerId) onAssign(client, ownerId);
+          }}
+          className="min-w-0 flex-1 rounded-lg bg-[#161616] border border-white/10 text-white text-sm px-2.5 py-2 disabled:opacity-50"
         >
-          <option value="">Velg selger…</option>
+          <option value="">{busy ? 'Tildeler…' : 'Velg selger…'}</option>
           {salesReps.map((rep) => (
             <option key={rep.id} value={rep.id}>{rep.label}</option>
           ))}
         </select>
-        <button
-          type="button"
-          disabled={!ownerId || busy}
-          onClick={() => onAssign(client, ownerId)}
-          className={BUTTON_PRIMARY}
-        >
-          {busy ? <Loader2 size={14} className="animate-spin" /> : <UserPlus size={14} />}
-          Tildel
-        </button>
       </div>
       {!salesReps.length ? <p className="text-xs text-gray-400">Ingen selgere å velge. Legg til en selger under Admin først.</p> : null}
     </div>

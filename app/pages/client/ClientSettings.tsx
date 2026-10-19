@@ -192,9 +192,14 @@ export const ClientSettings = () => {
       if (!token) return;
       setError('');
       try {
-        const response = await fetch('/api/client/settings', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const [response, billingRes] = await Promise.all([
+          fetch('/api/client/settings', {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+          fetch('/api/client/billing/overview', {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+        ]);
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(payload.message || 'Kunne ikke laste innstillinger.');
         if (!active) return;
@@ -202,7 +207,10 @@ export const ClientSettings = () => {
         if (Array.isArray(payload.members)) setMembers(payload.members);
         setLoginEmail((prev) => prev || payload.user?.email || user?.email || '');
         setClientData(ensureClientDataBank(payload.clientDataBank || payload.profile?.clientDataBank, payload.profile || profile));
-        setBilling((payload.billing || null) as BillingOverview | null);
+        if (billingRes.ok) {
+          const billingPayload = await billingRes.json().catch(() => ({}));
+          setBilling((billingPayload.billing || null) as BillingOverview | null);
+        }
       } catch (err) {
         if (!active) return;
         setError(err instanceof Error ? err.message : 'Kunne ikke laste innstillinger.');

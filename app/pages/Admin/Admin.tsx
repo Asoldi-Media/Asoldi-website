@@ -557,10 +557,10 @@ export const Admin = () => {
               </button>
               {clientsNavOpen && (
                 <div className="ml-3 mt-1 space-y-1">
-                  <SidebarButton active={tab === 'clients' && clientsView === 'clients'} onClick={() => openClientsView('clients')} icon={<Users size={18} />} label="Clients" />
-                  <SidebarButton active={tab === 'clients' && clientsView === 'development'} onClick={() => openClientsView('development')} icon={<Code2 size={18} />} label="Development" />
-                  <SidebarButton active={tab === 'clients' && clientsView === 'sales'} onClick={() => openClientsView('sales')} icon={<Briefcase size={18} />} label="Sales" />
                   <SidebarButton active={tab === 'clients' && clientsView === 'admin'} onClick={() => openClientsView('admin')} icon={<LayoutDashboard size={18} />} label="Admin" />
+                  <SidebarButton active={tab === 'clients' && clientsView === 'sales'} onClick={() => openClientsView('sales')} icon={<Briefcase size={18} />} label="Sales" />
+                  <SidebarButton active={tab === 'clients' && clientsView === 'development'} onClick={() => openClientsView('development')} icon={<Code2 size={18} />} label="Development" />
+                  <SidebarButton active={tab === 'clients' && clientsView === 'clients'} onClick={() => openClientsView('clients')} icon={<Users size={18} />} label="Clients" />
                 </div>
               )}
             </div>

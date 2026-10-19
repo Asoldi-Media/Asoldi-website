@@ -1942,6 +1942,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
     if (!isSalesAdmin || ownerId === (client.ownerId || '')) return;
     setAssigningOwnerId(client.id);
     setError('');
+    applySavedClient({ ...client, ownerId });
     try {
       const data = await request(`/admin/sales/${client.id}/owner`, {
         method: 'POST',
@@ -1949,20 +1950,12 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
       });
       const saved = data?.client as SalesClient | undefined;
       if (saved) applySavedClient(saved);
-      else await loadSales({ clearMessages: false, showLoading: false });
       const gaps = Array.isArray(data?.confirmationGaps) ? data.confirmationGaps.filter(Boolean) : [];
       const warnings = Array.isArray(data?.warnings) ? data.warnings.filter(Boolean) : [];
-      if (data?.thankYouSent) {
-        setNotice(`Tildelt. Bekreftelse sendt${data.from ? ` fra ${data.from}` : ''}.`);
-      } else if (gaps.length) {
-        setError(`Tildelt, men bekreftelse ble ikke sendt. Mangler ${gaps.join(', ')}.`);
-      } else if (data?.thankYouReason === 'meeting-passed') {
-        setNotice('Tildelt. Bekreftelse sendes når selgeren setter en ny møtetid frem i tid.');
-      } else {
-        setNotice('Tildelt. Bekreftelse sendes fra selgeren når alle møtefeltene er fylt inn.');
-      }
-      if (warnings.length) setError(warnings.join(' | '));
+      if (gaps.length) setError(`Tildelt, men bekreftelse ble ikke sendt. Mangler ${gaps.join(', ')}.`);
+      else if (warnings.length) setError(warnings.join(' | '));
     } catch (err) {
+      applySavedClient(client);
       setError(err instanceof Error ? err.message : 'Failed assigning sales owner');
     } finally {
       setAssigningOwnerId(null);

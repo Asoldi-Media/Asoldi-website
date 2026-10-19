@@ -132,3 +132,36 @@ test('sales Details & tools keeps ops tools and skips Kundekort page 1 links', (
   assert.equal(details.includes('googleBusinessProfile'), false);
   assert.equal(details.includes('Listen in Sales UI'), false);
 });
+
+test('sales focus chips show IRL/Online and skip category-restating labels', () => {
+  const board = readFileSync(join(root, 'app/pages/Admin/sections/SalesFocusBoard.tsx'), 'utf8');
+  assert.match(board, /function meetingModeLabel/);
+  assert.match(board, /<ModeChip client=\{row\.client\} \/>/);
+  assert.match(board, /<ModeChip client=\{client\} \/>/);
+  assert.equal(board.includes('Mangler selger'), false);
+  assert.equal(board.includes('Bekreftelse ikke sendt'), false);
+  assert.equal(board.includes("'Klargjør tilbud'"), false);
+  assert.equal(board.includes('Venter på signatur'), false);
+  assert.match(board, /if \(stepId === 'assign'\) return null;/);
+});
+
+test('Tildel selger assigns on select, stays on the tab, and does not toast', () => {
+  const board = readFileSync(join(root, 'app/pages/Admin/sections/SalesFocusBoard.tsx'), 'utf8');
+  const salesUi = readFileSync(join(root, 'app/pages/Admin/sections/SalesClientsSection.tsx'), 'utf8');
+  const server = readFileSync(join(root, 'server.js'), 'utf8');
+  const shell = readFileSync(join(root, 'app/pages/Admin/sections/FocusBoardShell.tsx'), 'utf8');
+  const panel = board.slice(board.indexOf('function AssignPanel'));
+  assert.match(panel, /if \(ownerId\) onAssign\(client, ownerId\)/);
+  assert.equal(panel.includes('onClick={() => onAssign'), false);
+  assert.match(board, /if \(active === 'assign'\) \{/);
+  const ownerFn = salesUi.slice(salesUi.indexOf('async function assignClientOwner'), salesUi.indexOf('function salesMailTemplate'));
+  assert.equal(ownerFn.includes('Tildelt. Bekreftelse sendt'), false);
+  assert.match(ownerFn, /applySavedClient\(\{ \.\.\.client, ownerId \}\)/);
+  const ownerStart = server.indexOf("app.post('/api/admin/sales/:id/owner'");
+  const ownerRoute = server.slice(ownerStart, server.indexOf("app.post('/api/admin/sales',", ownerStart + 1));
+  assert.match(ownerRoute, /thankYouReason: 'queued'/);
+  assert.ok(ownerRoute.indexOf('res.json') < ownerRoute.indexOf('autoSendThankYouFromOwner'));
+  assert.match(server, /const needsCalendar = previousActions\.some/);
+  assert.match(shell, /stayOnLeave\?: boolean/);
+  assert.match(readFileSync(join(root, 'app/pages/Admin/sections/DevelopmentClientsSection.tsx'), 'utf8'), /stayOnLeave=\{activeCategory === 'unassigned'\}/);
+});

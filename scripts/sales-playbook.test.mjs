@@ -268,6 +268,51 @@ test('Møter lists every upcoming meeting; Klargjør tilbud is due 24 hours afte
   assert.equal(salesFocusEntries(held, at('2026-10-23T12:30:00.000Z'))[0].state, 'overdue');
 });
 
+test('Tilbud and Venter signering rank the next upcoming action first, not old overdue backlog', () => {
+  const now = at('2026-10-22T12:00:00.000Z');
+  const freshOffer = client({
+    id: 'fresh-offer',
+    businessName: 'Nett møtt',
+    meetingAt: '2026-10-22T11:00:00.000Z',
+    progression: { meetingHeld: true },
+  });
+  const oldOffer = client({
+    id: 'old-offer',
+    businessName: 'Gammel rest',
+    meetingAt: '2026-09-01T10:00:00.000Z',
+    progression: { meetingHeld: true },
+  });
+  const freshSign = client({
+    id: 'fresh-sign',
+    businessName: 'Nytt tilbud',
+    contractSentAt: '2026-10-22T11:30:00.000Z',
+    progression: { meetingHeld: true, offerSent: true },
+    nextActions: [{
+      id: 'chk-fresh',
+      goalKey: 'offerSent',
+      presetKey: 'contractCheckup',
+      dueAt: '2026-10-23T11:30:00.000Z',
+    }],
+  });
+  const oldSign = client({
+    id: 'old-sign',
+    businessName: 'Gammel signering',
+    contractSentAt: '2026-09-01T10:00:00.000Z',
+    progression: { meetingHeld: true, offerSent: true },
+    nextActions: [{
+      id: 'chk-old',
+      goalKey: 'offerSent',
+      presetKey: 'contractCheckup',
+      dueAt: '2026-09-02T10:00:00.000Z',
+    }],
+  });
+  const queues = groupSalesFocusQueues([oldOffer, freshOffer, oldSign, freshSign], now);
+  assert.equal(queues.offer[0].client.id, 'fresh-offer');
+  assert.equal(queues.offer[1].client.id, 'old-offer');
+  assert.equal(queues.signature[0].client.id, 'fresh-sign');
+  assert.equal(queues.signature[1].client.id, 'old-sign');
+});
+
 test('queues put red first, then the soonest', () => {
   const now = at('2026-10-21T08:00:00.000Z');
   const tomorrowLate = client({ id: 'late', businessName: 'Sen', meetingAt: '2026-10-22T15:00:00.000Z' });

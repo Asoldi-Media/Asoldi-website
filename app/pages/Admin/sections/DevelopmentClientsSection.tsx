@@ -797,6 +797,9 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
   async function assignDeveloper(item: DevelopmentItem, developerOwnerId: string) {
     const ownerId = String(developerOwnerId || '').trim();
     if (!ownerId) return;
+    const salesId = String(item.salesClientId || item.id || '').trim();
+    const previous = item.developerOwnerId;
+    if (salesId) patchDevelopmentClient({ id: salesId, developerOwnerId: ownerId });
     setAssignBusy(true);
     setError('');
     try {
@@ -807,12 +810,9 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || 'Kunne ikke tildele utvikler.');
-      const handoff = data.client?.developerHandoff;
-      setNotice(handoff?.status === 'waiting-upload'
-        ? 'Tildelt. Forrige datamaskin sender prosjektet når Website Creator er åpen.'
-        : 'Utvikler er tildelt.');
-      await loadItems();
+      if (data.client) patchDevelopmentClient(data.client);
     } catch (err) {
+      if (salesId) patchDevelopmentClient({ id: salesId, developerOwnerId: previous });
       setError(err instanceof Error ? err.message : 'Kunne ikke tildele utvikler.');
     } finally {
       setAssignBusy(false);
@@ -1318,6 +1318,7 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
               categories={focusCategories}
               queues={focusQueues}
               active={activeCategory}
+              stayOnLeave={activeCategory === 'unassigned'}
               onCategory={setCategory}
               nowMs={nowMs}
               statusFor={(entry) => developerStatus(entry, nowMs)}
