@@ -524,33 +524,74 @@ test('cancel proposes new times, adds Ny møtetid, and only the newest mail from
   assert.ok((live.nextActions || []).some((row) => /ny møtetid|finn møtetid/i.test(row.name || '') && !row.doneAt));
 });
 
-test('calendar accept/decline is not a client email, so it gets no reply', async () => {
-  const { isCalendarRsvp } = await import('../lib/inbox-bot/write.js');
-  assert.equal(isCalendarRsvp({
-    subject: 'Godkjent: Asoldi · Online møte · SPIRERIET AS @ tor. 15. okt 2026 10am - 11am (CEST) (alexander@asoldi.com)',
+test('machine mail is skipped from MIME/headers, not from the subject line', async () => {
+  const { isAutomatedMail } = await import('../lib/inbox-bot/write.js');
+  const rsvpRaw = [
+    'From: Spireriet <eier@spireriet.no>',
+    'Subject: Godkjent: Asoldi · Online møte · SPIRERIET AS @ tor. 15. okt 2026 10am - 11am (CEST) (alexander@asoldi.com)',
+    'Auto-Submitted: auto-generated',
+    'Content-Type: multipart/mixed; boundary="b1"',
+    '',
+    '--b1',
+    'Content-Type: text/plain',
+    '',
+    'Spireriet has accepted this invitation.',
+    '--b1',
+    'Content-Type: text/calendar; method=REPLY; charset=UTF-8',
+    '',
+    'BEGIN:VCALENDAR\r\nMETHOD:REPLY\r\nEND:VCALENDAR\r\n',
+    '--b1--',
+    '',
+  ].join('\r\n');
+  const rsvp = parseRfc822(rsvpRaw);
+  assert.equal(rsvp.calendarMethod, 'REPLY');
+  assert.equal(rsvp.attachmentNames.includes('invite.ics'), false);
+  assert.equal(isAutomatedMail(rsvp), true);
+  assert.equal(isAutomatedMail({
+    subject: 'Godkjent: logoen er ferdig',
+    from: 'eier@spireriet.no',
+    text: 'Kan vi ta tirsdag kl 14?',
+  }), false);
+  assert.equal(isAutomatedMail({
+    from: 'Mailer-Daemon <mailer-daemon@googlemail.com>',
+    subject: 'Delivery Status Notification (Failure)',
+    contentType: 'multipart/report; report-type=delivery-status',
   }), true);
-  assert.equal(isCalendarRsvp({ subject: 'Godtatt: SUNHOV LANDHANDLERI AS · Online møte med Asoldi' }), true);
-  assert.equal(isCalendarRsvp({
-    subject: 'Asoldi · Online møte',
-    attachments: [{ filename: 'invite.ics', mimeType: 'text/calendar', buffer: Buffer.from('BEGIN:VCALENDAR\nMETHOD:REPLY\nEND:VCALENDAR\n') }],
+  assert.equal(isAutomatedMail({
+    from: 'Kari <kari@example.no>',
+    autoSubmitted: 'auto-replied',
+    text: 'Jeg er på ferie.',
   }), true);
-  assert.equal(isCalendarRsvp({ subject: 'Re: Påminnelse: Online møte med Asoldi om 24 timer' }), false);
 
   const client = seedClient({ id: 'sale-rsvp-1', contactEmail: 'eier@spireriet.no' });
   const sent = [];
   await ingestInboxMessage({
     id: 'imap-rsvp-ok',
     mailbox: 'alexander@asoldi.com',
-    from: 'Spireriet <eier@spireriet.no>',
-    subject: 'Godkjent: Asoldi · Online møte · SPIRERIET AS @ tor. 15. okt 2026 10am - 11am (CEST) (alexander@asoldi.com)',
-    text: '',
+    from: rsvp.from,
+    subject: rsvp.subject,
+    text: rsvp.text,
+    calendarMethod: rsvp.calendarMethod,
+    autoSubmitted: rsvp.autoSubmitted,
     mailAt: '2026-10-10T16:21:34.000Z',
   }, {
     sendEmail: async (mail) => { sent.push(mail); },
     queryBusy: async () => ({ busy: [] }),
   });
-  assert.equal(sent.length, 0);
-  assert.equal((sales.getSalesClientById(client.id).nextActions || []).some((row) => /Bot:/.test(row.note || '')), false);
+  const human = await ingestInboxMessage({
+    id: 'imap-rsvp-human',
+    mailbox: 'alexander@asoldi.com',
+    from: 'Spireriet <eier@spireriet.no>',
+    subject: 'Godkjent: logoen er ferdig',
+    text: 'Kan vi ta tirsdag kl 14?',
+    mailAt: '2026-10-10T16:30:00.000Z',
+  }, {
+    now: new Date('2026-10-10T16:30:00.000Z'),
+    sendEmail: async (mail) => { sent.push(mail); },
+    queryBusy: async () => ({ busy: [] }),
+  });
+  assert.equal(sent.length, 1);
+  assert.equal(human.write?.kind || human.kind, 'sales_book');
 });
 
 test('failed send stamps the card; changing the email clears it', () => {
@@ -805,7 +846,9 @@ test('signature images and calendar invites are not client files; real attachmen
     '--b1--',
     '',
   ].join('\r\n');
-  assert.deepEqual(parseRfc822(raw).attachmentNames, ['IMG_1234.jpg', 'meny.doc']);
+  const parsedInvite = parseRfc822(raw);
+  assert.deepEqual(parsedInvite.attachmentNames, ['IMG_1234.jpg', 'meny.doc']);
+  assert.equal(parsedInvite.calendarMethod, 'REPLY');
   for (const name of ['meny.doc', 'pitch.pptx', 'om-oss.odt', 'notat.rtf', 'video.mov']) {
     assert.equal(categorize({ subject: 'Fil', text: 'Her', attachmentNames: [name] }).kind, 'client_elements', name);
   }

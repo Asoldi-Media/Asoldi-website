@@ -5,6 +5,7 @@ import { mergeFieldValue, applyFieldOps, normalizeFieldOps, mergeWeekHours } fro
 import { buildFactPrompt } from '../packages/suite/core/facts/prompt.js';
 import { ingestMessage, createInboxTicker } from '../packages/suite/core/inbox/pipeline.js';
 import { parseRfc822 } from '../packages/suite/core/mail/mime.js';
+import { isAutomatedMail } from '../packages/suite/core/mail/automated.js';
 import { extractDocumentText } from '../packages/suite/core/documents/text.js';
 import { ASOLDI_FACT_PROMPT, KUNDEDATA_FACT_SCHEMA } from '../packages/suite/harness/asoldi/facts.js';
 
@@ -109,4 +110,20 @@ test('mail + documents: rfc822 with attachment, text extraction without AI', asy
   assert.deepEqual(doc, { fileName: 'menu.csv', text: 'Pizza;120\n', kind: 'spreadsheet' });
   const image = await extractDocumentText({ originalName: 'a.png', buffer: Buffer.from([0x89, 0x50, 0x4e, 0x47]) });
   assert.deepEqual(image, { fileName: 'a.png', text: '', kind: 'image' });
+});
+
+test('machine mail is iTIP / Auto-Submitted / DSN, never the subject', () => {
+  const rsvp = parseRfc822([
+    'From: Client <a@x.test>',
+    'Subject: Godkjent: anything',
+    'Content-Type: text/calendar; method=REPLY',
+    '',
+    'BEGIN:VCALENDAR\r\nMETHOD:REPLY\r\nEND:VCALENDAR\r\n',
+  ].join('\r\n'));
+  assert.equal(rsvp.calendarMethod, 'REPLY');
+  assert.equal(rsvp.attachments.length, 0);
+  assert.equal(isAutomatedMail(rsvp), true);
+  assert.equal(isAutomatedMail({ subject: 'Godkjent: logoen', from: 'a@x.test', text: 'Her er filen' }), false);
+  assert.equal(isAutomatedMail({ from: 'mailer-daemon@x.test', contentType: 'multipart/report' }), true);
+  assert.equal(isAutomatedMail({ from: 'a@x.test', autoSubmitted: 'auto-replied', text: 'OOO' }), true);
 });

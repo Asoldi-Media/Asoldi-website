@@ -107,16 +107,32 @@ function parseMimeTree(raw = '') {
   return { headers, contentType, body: decodePartBody(body, headers['content-transfer-encoding']), children: [] };
 }
 
-export function walkMime(node, acc = { text: [], attachments: [] }) {
+function calendarMethodOfPart(contentType = '', body = '') {
+  const fromType = String(contentType || '').match(/method=([a-z]+)/i);
+  const fromBody = String(body || '').match(/^METHOD:(\w+)/im);
+  return String(fromType?.[1] || fromBody?.[1] || '').toUpperCase();
+}
+
+export function walkMime(node, acc = { text: [], attachments: [], calendar: [] }) {
   if (!node) return acc;
+  if (!acc.calendar) acc.calendar = [];
   const type = String(node.contentType || '').toLowerCase();
   const filename = headerFilename(node.headers || {});
   if (node.children?.length) {
     for (const child of node.children) walkMime(child, acc);
     return acc;
   }
+  const isCalendar = /^(text\/calendar|application\/ics)/.test(type) || /\.ics$/i.test(filename);
+  if (isCalendar && node.body) {
+    const raw = node.body.toString('utf8').slice(0, 8000);
+    acc.calendar.push({
+      filename: filename || 'invite.ics',
+      mimeType: type.split(';')[0].trim() || 'text/calendar',
+      method: calendarMethodOfPart(node.contentType, raw),
+    });
+    return acc;
+  }
   if (filename && node.body) {
-    if (/^(text\/calendar|application\/ics)/.test(type) || /\.ics$/i.test(filename)) return acc;
     const disposition = String(node.headers?.['content-disposition'] || '').toLowerCase();
     // shortcut: a small inline image with a Content-ID is a signature logo, not client media; a real photo is bigger.
     if (type.startsWith('image/') && node.headers?.['content-id'] && !disposition.startsWith('attachment') && node.body.length < 40_000) return acc;
@@ -133,12 +149,22 @@ export function parseRfc822(raw = '') {
   const tree = parseMimeTree(raw);
   const walked = walkMime(tree);
   const headers = tree.headers || headerMap(String(raw).split(/\r?\n\r?\n/)[0] || '');
+  const contentType = String(headers['content-type'] || '');
+  const calendar = walked.calendar || [];
+  const calendarMethod = calendar.map((row) => row.method).find(Boolean)
+    || calendarMethodOfPart(contentType, '');
   return {
     from: decodeMimeWords(headers.from),
     to: decodeMimeWords(headers.to),
     subject: decodeMimeWords(headers.subject).trim(),
     date: headers.date || '',
     messageId: String(headers['message-id'] || '').trim(),
+    autoSubmitted: String(headers['auto-submitted'] || '').trim(),
+    contentType,
+    precedence: String(headers.precedence || '').trim(),
+    listId: String(headers['list-id'] || '').trim(),
+    calendar,
+    calendarMethod,
     text: walked.text.join('\n').replace(/\s+/g, ' ').trim(),
     attachments: walked.attachments,
     attachmentNames: walked.attachments.map((part) => part.filename),

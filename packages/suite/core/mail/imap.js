@@ -164,6 +164,11 @@ export async function listImapMessages(creds, {
         to: parsed.to,
         subject: parsed.subject,
         text: headersOnly ? '' : parsed.text,
+        autoSubmitted: parsed.autoSubmitted,
+        contentType: parsed.contentType,
+        precedence: parsed.precedence,
+        listId: parsed.listId,
+        calendarMethod: parsed.calendarMethod,
         attachmentNames: headersOnly ? [] : parsed.attachmentNames,
         attachments: headersOnly ? [] : parsed.attachments.map((part) => ({
           filename: part.filename,
