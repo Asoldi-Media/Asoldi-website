@@ -1,10 +1,11 @@
 /**
- * Machine mail: calendar iTIP, DSN, out-of-office, lists. Not a person writing to us.
- * Uses MIME/headers, never the subject line.
+ * Machine mail only: calendar iTIP, bounce reports, out-of-office.
+ * A person writing from their own address is never skipped here — newsletters
+ * already get no reply because From does not match a client card.
  */
 import { freshReplyText } from './thread.js';
 
-const MACHINE_LOCAL = /^(mailer-daemon|postmaster|noreply|no-reply)$/i;
+const BOUNCE_LOCAL = /^(mailer-daemon|postmaster)$/i;
 const CALENDAR_MACHINE = /^(REPLY|CANCEL|COUNTER|REFRESH)$/i;
 
 function addressLocalPart(value = '') {
@@ -31,8 +32,5 @@ export function isAutomatedMail(message = {}) {
   const auto = String(message.autoSubmitted || '').trim().toLowerCase();
   if (auto && auto !== 'no') return true;
   if (/multipart\/report|message\/delivery-status/i.test(message.contentType || '')) return true;
-  if (MACHINE_LOCAL.test(addressLocalPart(message.from))) return true;
-  if (/^(bulk|list|junk)$/i.test(String(message.precedence || '').trim())) return true;
-  if (String(message.listId || '').trim()) return true;
-  return false;
+  return BOUNCE_LOCAL.test(addressLocalPart(message.from));
 }

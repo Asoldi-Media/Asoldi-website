@@ -161,8 +161,6 @@ export function parseRfc822(raw = '') {
     messageId: String(headers['message-id'] || '').trim(),
     autoSubmitted: String(headers['auto-submitted'] || '').trim(),
     contentType,
-    precedence: String(headers.precedence || '').trim(),
-    listId: String(headers['list-id'] || '').trim(),
     calendar,
     calendarMethod,
     text: walked.text.join('\n').replace(/\s+/g, ' ').trim(),

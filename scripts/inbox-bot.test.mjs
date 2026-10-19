@@ -551,6 +551,8 @@ test('machine mail is skipped from MIME/headers, not from the subject line', asy
     subject: 'Godkjent: logoen er ferdig',
     from: 'eier@spireriet.no',
     text: 'Kan vi ta tirsdag kl 14?',
+    listId: '<team@spireriet.no>',
+    precedence: 'list',
   }), false);
   assert.equal(isAutomatedMail({
     from: 'Mailer-Daemon <mailer-daemon@googlemail.com>',

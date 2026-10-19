@@ -124,6 +124,12 @@ test('machine mail is iTIP / Auto-Submitted / DSN, never the subject', () => {
   assert.equal(rsvp.attachments.length, 0);
   assert.equal(isAutomatedMail(rsvp), true);
   assert.equal(isAutomatedMail({ subject: 'Godkjent: logoen', from: 'a@x.test', text: 'Her er filen' }), false);
+  assert.equal(isAutomatedMail({
+    from: 'a@x.test',
+    text: 'Kan vi ta tirsdag kl 14?',
+    listId: '<sales@firma.no>',
+    precedence: 'list',
+  }), false);
   assert.equal(isAutomatedMail({ from: 'mailer-daemon@x.test', contentType: 'multipart/report' }), true);
   assert.equal(isAutomatedMail({ from: 'a@x.test', autoSubmitted: 'auto-replied', text: 'OOO' }), true);
 });
