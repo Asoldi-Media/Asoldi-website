@@ -942,6 +942,31 @@ test('a time that has passed is never booked and bot actions never land in the p
   assert.match(sent[0].text, /passer noe av dette/i);
 });
 
+test('backfill apply records a thrown ingest and continues', async () => {
+  const client = seedClient({ id: 'sale-bf-err', contactEmail: 'err-bf@example.com' });
+  const msg = {
+    id: 'imap-bf-err',
+    mailbox: 'alexander@asoldi.com',
+    from: 'err-bf@example.com',
+    subject: 'Møte',
+    text: 'Kan vi ta tirsdag kl 14?',
+    mailAt: '2026-10-18T10:00:00.000Z',
+  };
+  const out = await backfillInboxReplies({
+    apply: true,
+    now: new Date('2026-10-18T12:00:00.000Z'),
+    clients: [client],
+    items: [],
+    listImap: async () => ({ skipped: false, messages: [msg] }),
+    listSent: async () => [],
+    categorize: async () => { throw new Error('categorize-down'); },
+    sendEmail: async () => {},
+    queryBusy: async () => ({ busy: [] }),
+  });
+  assert.equal(out.results[0].reason, 'error');
+  assert.match(out.results[0].error, /categorize-down/);
+});
+
 test('UID FETCH bodies keep their stable UID', async () => {
   const { parseFetchBodies } = await import('../lib/inbox-bot/mail-imap.js');
   const block = Buffer.from('* 4 FETCH (UID 812 RFC822 {5}\r\nhello)\r\n* 5 FETCH (UID 813 RFC822 {2}\r\nhi)\r\nA1 OK\r\n', 'latin1');
