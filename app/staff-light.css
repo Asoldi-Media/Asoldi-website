@@ -3,6 +3,10 @@
   color: #1f2937;
 }
 
+.staff-light.developer-fill {
+  background-color: #ffffff !important;
+}
+
 .staff-light .text-white {
   color: #111827;
 }

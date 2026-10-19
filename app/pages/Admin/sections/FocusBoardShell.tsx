@@ -186,11 +186,13 @@ type Props<T extends FocusShellEntry> = {
   focusRequest?: FocusRequest;
   /** Assign tabs stay put and show the next client. Do not follow or toast. */
   stayOnLeave?: boolean;
+  /** Stretch to the page edges. Sales keeps the inset card. */
+  bleed?: boolean;
 };
 
 /** Sales-style board: tabs with count + clock, Neste kunder popup, one focused client with a pager. */
 export function FocusBoardShell<T extends FocusShellEntry>(props: Props<T>) {
-  const { ariaLabel, categories, queues, active, onCategory, nowMs, statusFor, detailFor, renderCard, emptyText, focusRequest, stayOnLeave } = props;
+  const { ariaLabel, categories, queues, active, onCategory, nowMs, statusFor, detailFor, renderCard, emptyText, focusRequest, stayOnLeave, bleed = false } = props;
   const [focus, setFocus] = useState<Record<string, { id: string; index: number }>>({});
   const [menuOpen, setMenuOpen] = useState(false);
   /** The client stays on screen after leaving the tab, so the tick can be seen and undone. */
@@ -352,7 +354,7 @@ export function FocusBoardShell<T extends FocusShellEntry>(props: Props<T>) {
   ) : null;
 
   return (
-    <section className="rounded-2xl bg-[#2a2a2a] border border-white/10 p-3 sm:p-4 space-y-3" aria-label={ariaLabel}>
+    <section className={bleed ? 'flex flex-col flex-1 min-h-0 space-y-3' : 'rounded-2xl bg-[#2a2a2a] border border-white/10 p-3 sm:p-4 space-y-3'} aria-label={ariaLabel}>
       <div className="relative">
         <div ref={tabListRef} className="flex gap-2 overflow-x-auto pb-0.5" role="tablist">
           {categories.map((meta) => {

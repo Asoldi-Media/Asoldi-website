@@ -70,7 +70,7 @@ export const DeveloperWorkspace = () => {
         <title>Utviklerterminal – Asoldi</title>
         <meta name="robots" content="noindex,nofollow" />
       </Helmet>
-      <div className="staff-light min-h-screen bg-[#1a1a1a] text-white">
+      <div className="staff-light developer-fill flex h-dvh w-full flex-col overflow-hidden bg-[#1a1a1a] text-white">
         <DevelopmentClientsSection onLogout={logout} />
       </div>
     </>

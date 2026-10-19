@@ -15,7 +15,7 @@ function item(id, overrides = {}) {
   return { id, businessName: id, developerOwnerId: 'dev:1', developerGoals: {}, rankAt: '', ...overrides };
 }
 
-test('Ikke tildelt is admin only', () => {
+test('Tildel utvikler is admin only', () => {
   assert.equal(developerFocusCategoriesFor({ isAdmin: false }).some((row) => row.id === 'unassigned'), false);
   assert.equal(normalizeDeveloperFocusCategory('unassigned', { isAdmin: false }), '');
   assert.equal(normalizeDeveloperFocusCategory('unassigned', { isAdmin: true }), 'unassigned');
@@ -40,7 +40,7 @@ test('deployment items follow the first unticked win goal; preview stays in Prev
   assert.deepEqual(queues.preview.map((row) => row.id), ['prev']);
 });
 
-test('order: past due within two weeks, upcoming, older past due, no time; ready previews last', () => {
+test('Preview ranks the next meeting first, then newer overdue, then no time; ready previews last', () => {
   const queues = groupDeveloperFocusQueues({
     previewItems: [
       item('none'),
@@ -50,6 +50,7 @@ test('order: past due within two weeks, upcoming, older past due, no time; ready
       item('ready', { rankAt: iso(NOW - DAY), developerGoals: { readyForPreview: true } }),
     ],
   }, NOW, { isAdmin: false });
-  assert.deepEqual(queues.preview.map((row) => row.id), ['recent-late', 'soon', 'old-late', 'none', 'ready']);
+  assert.deepEqual(queues.preview.map((row) => row.id), ['soon', 'recent-late', 'old-late', 'none', 'ready']);
   assert.equal(defaultDeveloperFocusCategory(queues, { isAdmin: false }), 'preview');
+  assert.equal(developerFocusCategoriesFor({ isAdmin: true })[0].label, 'Tildel utvikler');
 });

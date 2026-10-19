@@ -693,6 +693,15 @@ export function seedExistingDeveloperOwnersToAdmin() {
   return { seeded: true, assignedCount: applied.assignedCount };
 }
 
+/** While Admin is the only developer, new website clients do not sit unassigned. */
+export function assignOpenDeveloperClientsToAdmin() {
+  const list = readState();
+  const applied = applyAdminDeveloperOwnerSeed(list);
+  if (!applied.assignedCount) return { assignedCount: 0 };
+  writeState(applied.clients);
+  return { assignedCount: applied.assignedCount };
+}
+
 export function deriveReminderSchedule({ agreedTime, meetingAt }, nowMs = Date.now()) {
   const empty = {
     reminder3dAt: '',

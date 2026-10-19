@@ -34,11 +34,15 @@ test('the first seed assigns current website clients to Admin and leaves SSU alo
   assert.ok(meta.existingAssignedToAdminAt);
 });
 
-test('clients created after the seed stay unassigned', () => {
+test('clients created after the seed stay unassigned until the open assign runs', () => {
   const created = sales.createSalesClient({ businessName: 'Future Cafe', product: 'asoldi' });
   assert.equal(created.developerOwnerId, '');
   const again = sales.seedExistingDeveloperOwnersToAdmin();
   assert.equal(again.seeded, false);
   const fresh = sales.getSalesClientById(created.id);
   assert.equal(fresh.developerOwnerId, '');
+  const assigned = sales.assignOpenDeveloperClientsToAdmin();
+  assert.equal(assigned.assignedCount, 1);
+  assert.equal(sales.getSalesClientById(created.id).developerOwnerId, ADMIN_DEVELOPER_OWNER_ID);
+  assert.equal(sales.assignOpenDeveloperClientsToAdmin().assignedCount, 0);
 });

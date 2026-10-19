@@ -523,7 +523,7 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
     if (unassigned.length) {
       sections.push({
         id: `${prefix}:unassigned`,
-        title: 'Ikke tildelt',
+        title: 'Tildel utvikler',
         hint: 'Tildel en utvikler før arbeidet starter.',
         tone: 'assign',
         items: unassigned,
@@ -905,9 +905,9 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
   }
 
   return (
-    <div className="sales-clients-surface min-h-screen bg-[#1a1a1a] text-white">
+    <div className="sales-clients-surface flex h-full min-h-0 w-full flex-col bg-[#1a1a1a] text-white">
       <header ref={headerShellRef} className="sales-sticky-header sticky top-0 z-[90] border-b border-white/10 bg-[#161616] shadow-sm">
-        <div className="max-w-[1440px] mx-auto px-3 sm:px-5 py-2.5 flex items-center gap-2 sm:gap-3">
+        <div className="w-full px-3 sm:px-5 py-2.5 flex items-center gap-2 sm:gap-3">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink-0 relative z-[80]">
             <img src="/media/Untitled-1.png" alt="Asoldi" className="h-8 sm:h-9 w-auto shrink-0" />
             <div className="min-w-0 relative">
@@ -1111,7 +1111,7 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
                         className="w-full rounded-lg bg-[#1a1a1a] border border-white/10 text-white text-sm px-3 py-2"
                       >
                         <option value="">Alle</option>
-                        <option value="unassigned">Ikke tildelt</option>
+                        <option value="unassigned">Tildel utvikler</option>
                         {developers.map((owner) => (
                           <option key={owner.accountKey} value={owner.accountKey}>
                             {owner.name || owner.username}
@@ -1268,7 +1268,7 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
               </form>
       </FocusHeaderPopup>
 
-      <div className="max-w-[1440px] mx-auto px-3 sm:px-6 py-4 space-y-4">
+      <div className="flex min-h-0 w-full flex-1 flex-col gap-3 px-3 sm:px-4 py-3">
       {headerPanel !== 'filter' && (selectedIds.length > 0 || runningJobs > 0) && (
         <button
           type="button"
@@ -1312,8 +1312,9 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
         </div>
       ) : (
         <>
-          <div className="flex flex-col gap-3" style={{ minHeight: `calc(100dvh - ${headerBarPx}px - 2rem)` }}>
+          <div className="flex min-h-0 flex-1 flex-col gap-3">
             <FocusBoardShell<DeveloperFocusEntry>
+              bleed
               ariaLabel="Utviklertavle"
               categories={focusCategories}
               queues={focusQueues}
