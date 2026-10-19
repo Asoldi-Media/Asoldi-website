@@ -962,6 +962,26 @@ test('a book still lands if Google calendar is disconnected', async () => {
   assert.equal(sales.getSalesClientById(client.id).meetingAt, '2026-10-21T13:00:00.000Z');
 });
 
+test('live ingest uses mailAt for neste uke even when caller omits now', async () => {
+  const client = seedClient({ id: 'sale-mailat-now', contactEmail: 'mailat-now@example.com' });
+  const sent = [];
+  const result = await ingestInboxMessage({
+    id: 'imap-mailat-now',
+    mailbox: 'alexander@asoldi.com',
+    from: 'mailat-now@example.com',
+    subject: 'Sv: Invitasjon',
+    text: 'Kan vi flytte møtet til onsdag neste uke istedet? Gjerne kl. 15.',
+    mailAt: '2026-10-18T20:44:00.000Z',
+  }, {
+    sendEmail: async (mail) => { sent.push(mail); },
+    queryBusy: async () => ({ busy: [] }),
+    decideAi: async () => ({}),
+  });
+  assert.equal(result.write?.kind || result.kind, 'sales_book');
+  assert.equal(sales.getSalesClientById(client.id).meetingAt, '2026-10-21T13:00:00.000Z');
+  assert.equal(sent.length, 1);
+});
+
 test('backfill parses neste uke from the mail date, not from today', async () => {
   const client = seedClient({ id: 'sale-bf-week', contactEmail: 'week-bf@example.com' });
   sales.updateSalesClient(client.id, { meetingAt: '2026-10-19T13:00:00.000Z', agreedTime: true });

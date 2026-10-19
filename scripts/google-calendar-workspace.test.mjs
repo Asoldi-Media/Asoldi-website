@@ -84,6 +84,14 @@ test('oauth token for the same mailbox is copied onto the sales key', () => {
   assert.equal(getGoogleCalendarStatus('sales:rep-1').googleEmail, 'alexander@asoldi.com');
 });
 
+test('service account json may be pretty-printed or wrapped in extra quotes', () => {
+  process.env.GOOGLE_WORKSPACE_SERVICE_ACCOUNT_JSON = JSON.stringify(FAKE_SA);
+  assert.equal(workspaceServiceAccountConfigured(), true);
+  process.env.GOOGLE_WORKSPACE_SERVICE_ACCOUNT_JSON = JSON.stringify(JSON.parse(FAKE_SA), null, 2);
+  assert.equal(workspaceServiceAccountConfigured(), true);
+  delete process.env.GOOGLE_WORKSPACE_SERVICE_ACCOUNT_JSON;
+});
+
 test('workspace scopes are calendar write, not an API key', () => {
   const scopes = googleWorkspaceCalendarScopes();
   assert.ok(scopes.includes('https://www.googleapis.com/auth/calendar.events'));
