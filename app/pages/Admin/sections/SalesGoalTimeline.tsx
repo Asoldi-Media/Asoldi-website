@@ -1,5 +1,5 @@
-import React, { useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, CalendarDays, CheckCircle2, ChevronsDown, ChevronsUp, Circle, GripVertical, History, Loader2, Pencil, Pin, Plus, Trash2, X } from 'lucide-react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, CalendarDays, CheckCircle2, Circle, GripVertical, History, Loader2, Pencil, Pin, Plus, Trash2, X } from 'lucide-react';
 import type { SalesClient, SalesGoalKey, SalesNextAction, SalesNextActionPreset } from '../shared';
 import {
   AFTER_SALE_GOAL,
@@ -13,10 +13,8 @@ import {
   formatGoalLabel,
   formatPresetLabel,
   getCurrentGoalKey,
-  getFutureGoalKeys,
-  getRemainingGoalCount,
+  getGoalActions,
   getSalesGoalKeys,
-  getVisibleGoalKeys,
   GOAL_PRESETS,
   FOLLOW_UP_1M_NOTE,
   isoToDatetimeLocalOslo,
@@ -135,7 +133,6 @@ type Props = {
   client: SalesClient;
   progressBusyKey: string | null;
   actionBusy: boolean;
-  onToggleGoal: (key: SalesGoalKey, extra?: { fastTrack?: boolean }) => void;
   onMutateAction: (body: Record<string, unknown>) => Promise<void>;
   /** Sold clients: actions only, no møte/tilbud/kontrakt checkpoints. */
   variant?: 'active' | 'win';
@@ -185,7 +182,6 @@ export function SalesGoalTimeline({
   client,
   progressBusyKey,
   actionBusy,
-  onToggleGoal,
   onMutateAction,
   variant = 'active',
   fixedRows,
@@ -197,39 +193,47 @@ export function SalesGoalTimeline({
   const [edit, setEdit] = useState<EditState | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dropHint, setDropHint] = useState<{ id: string; before: boolean } | null>(null);
+  const timelineRootRef = useRef<HTMLDivElement | null>(null);
   const actionListRef = useRef<HTMLDivElement | null>(null);
   const [actionListMaxPx, setActionListMaxPx] = useState<number | null>(null);
   const [boardOverflow, setBoardOverflow] = useState(false);
   const [boardMaxPx, setBoardMaxPx] = useState<number | null>(null);
-  const [showFutureGoals, setShowFutureGoals] = useState(false);
+  const [viewedGoal, setViewedGoal] = useState<SalesGoalKey | null>(null);
   const [logOpen, setLogOpen] = useState(false);
   const isWin = variant === 'win';
   const currentGoal = (isWin ? AFTER_SALE_GOAL : getCurrentGoalKey(client)) as SalesGoalKey | 'afterSale' | '';
-  const remainingCount = getRemainingGoalCount(client);
-  const visibleGoals = (showFutureGoals
-    ? getSalesGoalKeys(client.product)
-    : getVisibleGoalKeys(client)) as SalesGoalKey[];
-  const futureGoalSet = new Set(getFutureGoalKeys(client) as SalesGoalKey[]);
+  const visibleGoals = getSalesGoalKeys(client.product) as SalesGoalKey[];
+  const displayGoal = (viewedGoal && visibleGoals.includes(viewedGoal) ? viewedGoal : currentGoal) as SalesGoalKey | 'afterSale' | '';
+  const viewingCurrent = displayGoal === currentGoal;
+  const canCreateActions = Boolean(displayGoal) && (isWin || viewingCurrent);
   const boardMode = Array.isArray(fixedRows);
-  const currentActions = useMemo(() => getVisibleNextActions(client) as SalesNextAction[], [client]);
+  const currentActions = useMemo(
+    () => (
+      viewingCurrent || isWin
+        ? getVisibleNextActions(client)
+        : getGoalActions(client, displayGoal)
+    ) as SalesNextAction[],
+    [client, displayGoal, isWin, viewingCurrent],
+  );
   const listItems = useMemo<ListItem[]>(() => {
     const open: ListItem[] = currentActions.map((action) => ({ kind: 'action', action, done: false }));
-    if (!boardMode || !currentGoal) return open;
-    const goalFixed = (fixedRows || []).filter((row) => row.goalKey === currentGoal);
+    const done: ListItem[] = (decorateNextActions(client) as SalesNextAction[])
+      .filter((action) => action.doneAt && action.presetKey !== 'sendOffer' && boardRowGoalKey(action) === displayGoal)
+      .sort((a, b) => String(a.doneAt).localeCompare(String(b.doneAt)))
+      .map((action) => ({ kind: 'action', action, done: true }));
+    if (!boardMode) return viewingCurrent || !displayGoal ? open : [...done, ...open];
+    if (!displayGoal) return open;
+    const goalFixed = (fixedRows || []).filter((row) => row.goalKey === displayGoal);
     const fixedAt = (placement: SalesFixedRow['placement']): ListItem[] => goalFixed
       .filter((row) => row.placement === placement)
       .map((row) => ({ kind: 'fixed', row }));
-    const done: ListItem[] = (decorateNextActions(client) as SalesNextAction[])
-      .filter((action) => action.doneAt && action.presetKey !== 'sendOffer' && boardRowGoalKey(action) === currentGoal)
-      .sort((a, b) => String(a.doneAt).localeCompare(String(b.doneAt)))
-      .map((action) => ({ kind: 'action', action, done: true }));
     const beforeMeeting = fixedAt('beforeMeeting');
     const meetingIndex = open.findIndex((item) => item.kind === 'action' && item.action.presetKey === 'meeting');
     const middle = meetingIndex < 0
       ? [...open, ...beforeMeeting]
       : [...open.slice(0, meetingIndex), ...beforeMeeting, ...open.slice(meetingIndex)];
     return [...fixedAt('start'), ...done, ...middle, ...fixedAt('end')];
-  }, [boardMode, client, currentActions, currentGoal, fixedRows]);
+  }, [boardMode, client, currentActions, displayGoal, fixedRows, viewingCurrent]);
   const goalCounts = useMemo(
     () => (boardMode ? salesGoalRowCounts(client, nowMs) as Record<string, { done: number; total: number }> : {}),
     [boardMode, client, nowMs],
@@ -248,7 +252,7 @@ export function SalesGoalTimeline({
     return item.kind === 'fixed' ? item.row.id : item.action.id;
   })();
   const salesHover = clientMeetingHover(client, 'sales');
-  const presets = currentGoal ? (GOAL_PRESETS[currentGoal] || []) : [];
+  const presets = canCreateActions && displayGoal ? (GOAL_PRESETS[displayGoal] || []) : [];
   const hasMeeting = Boolean(client.agreedTime && client.meetingAt);
   const capActionList = !boardMode && currentActions.length > 1 && !edit;
 
@@ -256,20 +260,20 @@ export function SalesGoalTimeline({
     if (done) return 'done';
     const dueMs = Date.parse(action.dueAt || '');
     if (Number.isFinite(dueMs) && dueMs < nowMs) return 'overdue';
-    return action.id === nextItemKey ? 'next' : 'later';
+    return viewingCurrent && action.id === nextItemKey ? 'next' : 'later';
   }
 
   function fixedStatus(row: SalesFixedRow): RowStatus {
     if (row.done) return 'done';
     if (row.state === 'overdue') return 'overdue';
-    return row.id === nextItemKey ? 'next' : 'later';
+    return viewingCurrent && row.id === nextItemKey ? 'next' : 'later';
   }
 
-  const isNextRow = (id: string) => Boolean(nextItemKey) && id === nextItemKey;
+  const isNextRow = (id: string) => viewingCurrent && Boolean(nextItemKey) && id === nextItemKey;
 
   const listCapped = boardMode ? boardOverflow : Boolean(actionListMaxPx);
 
-  const scrollTargetId = boardMode ? nextItemKey : '';
+  const scrollTargetId = boardMode && viewingCurrent ? nextItemKey : '';
 
   useLayoutEffect(() => {
     const root = actionListRef.current;
@@ -324,6 +328,29 @@ export function SalesGoalTimeline({
     root.querySelectorAll('[data-action-row]').forEach((node) => observer.observe(node));
     return () => observer.disconnect();
   }, [capActionList, currentActions]);
+
+  useEffect(() => {
+    setViewedGoal(null);
+  }, [client.id]);
+
+  useEffect(() => {
+    function onPointerDown(event: PointerEvent) {
+      const node = event.target;
+      if (!(node instanceof Element)) return;
+      if (node.closest('[data-sales-client-overlay]')) return;
+      const card = timelineRootRef.current?.closest('[data-sales-client-card]');
+      if (!card || card.contains(node)) return;
+      setViewedGoal(null);
+    }
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [client.id]);
+
+  function showGoal(key: SalesGoalKey) {
+    setDraft(null);
+    setEdit(null);
+    setViewedGoal(key === currentGoal ? null : key);
+  }
 
   function startPreset(presetKey: SalesNextActionPreset) {
     if (presetNeedsMeeting(presetKey) && !hasMeeting) return;
@@ -466,30 +493,31 @@ export function SalesGoalTimeline({
   }
 
   return (
-    <div className="space-y-2" onClick={(event) => event.stopPropagation()}>
+    <div ref={timelineRootRef} className="space-y-2" onClick={(event) => event.stopPropagation()}>
       {!isWin && (
       <div className="flex flex-wrap items-center gap-1.5">
         {visibleGoals.map((key) => {
           const done = Boolean(client.progression?.[key]);
           const busy = progressBusyKey === `${client.id}:${key}`;
-          const isFuture = futureGoalSet.has(key);
+          const isCurrent = key === currentGoal;
+          const isViewed = key === displayGoal;
           return (
             <button
               key={key}
               type="button"
-              disabled={busy || isFuture}
-              onClick={() => onToggleGoal(key)}
+              aria-current={isViewed ? 'step' : undefined}
+              onClick={() => showGoal(key)}
               title={
-                isFuture
-                  ? 'Fullfør nåværende mål først'
-                  : done
-                    ? 'Klikk for å angre dette målet'
-                    : 'Marker dette målet som ferdig. Neste mål vises automatisk.'
+                isCurrent
+                  ? (isViewed ? 'Nåværende mål' : 'Tilbake til nåværende mål')
+                  : `Vis handlingene i ${formatGoalLabel(key)}`
               }
-              className={`px-2 py-1 rounded-md text-[11px] border transition-colors disabled:opacity-60 ${
-                done
-                  ? 'bg-green-900/40 border-green-600/40 text-green-300 hover:border-green-500/50'
-                  : 'bg-black/20 border-white/10 text-gray-300 hover:border-white/20'
+              className={`px-2 py-1 rounded-md text-[11px] border transition-colors ${
+                isCurrent
+                  ? 'bg-[#FF5B00]/15 border-[#FF5B00] text-white'
+                  : done
+                    ? `bg-green-900/40 border-green-600/40 text-green-300 hover:border-green-500/50 ${isViewed ? 'ring-1 ring-white/40' : ''}`
+                    : `bg-black/20 border-white/10 text-gray-300 hover:border-white/20 ${isViewed ? 'ring-1 ring-white/40' : ''}`
               }`}
             >
               {busy ? <Loader2 size={11} className="inline mr-1 animate-spin" /> : done ? <CheckCircle2 size={11} className="inline mr-1" /> : null}
@@ -500,21 +528,10 @@ export function SalesGoalTimeline({
             </button>
           );
         })}
-        {remainingCount > 0 && (
-          <button
-            type="button"
-            onClick={() => setShowFutureGoals((prev) => !prev)}
-            className="inline-flex items-center justify-center p-1 text-gray-400 hover:text-gray-200"
-            title={showFutureGoals ? 'Skjul senere mål' : `Vis ${remainingCount} senere mål`}
-            aria-label={showFutureGoals ? 'Skjul senere mål' : `Vis ${remainingCount} senere mål`}
-          >
-            {showFutureGoals ? <ChevronsUp size={16} /> : <ChevronsDown size={16} />}
-          </button>
-        )}
       </div>
       )}
 
-      {currentGoal ? (
+      {displayGoal ? (
         <div className="rounded-xl border border-white/10 bg-black/20 p-2.5 space-y-2">
           <div className="flex items-center justify-between gap-2">
             <button
@@ -524,7 +541,7 @@ export function SalesGoalTimeline({
               title="Åpne logg over alle handlinger og opptak"
             >
               {isWin ? (boardMode ? 'Etter salg' : 'Neste handling') : (
-                <>{boardMode ? 'Handlinger i' : 'Neste handling i'} <span className="text-gray-200">{formatGoalLabel(currentGoal)}</span></>
+                <>{boardMode ? 'Handlinger i' : 'Neste handling i'} <span className="text-gray-200">{formatGoalLabel(displayGoal)}</span></>
               )}
             </button>
             <button
@@ -837,7 +854,7 @@ export function SalesGoalTimeline({
           </div>
           )}
 
-          {draft ? (
+          {canCreateActions && draft ? (
             <div className="rounded-lg border border-white/10 bg-black/10 p-2 grid grid-cols-1 sm:grid-cols-2 gap-2">
               <label className="text-[10px] text-gray-400 uppercase tracking-wide">
                 Navn
@@ -896,7 +913,7 @@ export function SalesGoalTimeline({
                 </button>
               </div>
             </div>
-          ) : (
+          ) : canCreateActions ? (
             <div className="flex flex-wrap gap-1.5">
               {presets.map((presetKey: SalesNextActionPreset) => {
                 const needsMeeting = presetNeedsMeeting(presetKey) && !hasMeeting;
@@ -915,7 +932,7 @@ export function SalesGoalTimeline({
                 );
               })}
             </div>
-          )}
+          ) : null}
         </div>
       ) : null}
       {logOpen ? (

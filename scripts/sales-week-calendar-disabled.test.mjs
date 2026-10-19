@@ -127,11 +127,30 @@ test('sales Details & tools keeps ops tools and skips Kundekort page 1 links', (
   assert.match(details, /Fireflies/);
   assert.match(details, /Gi tilbud/);
   assert.match(details, /openClientFlow\(client, 1\)/);
+  assert.match(details, />Handlinger</);
+  assert.match(details, /aria-label="Selger"/);
+  assert.match(details, /Møtte ikke opp/);
+  assert.match(details, /promptSkipMeetingNote/);
+  assert.match(details, /Sekundær/);
+  assert.match(details, /Ikke solgt/);
+  assert.match(details, /Åpne preview/);
+  assert.match(details, /Tilbake til salg/);
+  assert.equal(details.includes('meetingStarted'), false);
+  assert.equal(details.includes('meetingsToday'), false);
+  assert.equal(details.includes('category ==='), false);
   assert.equal(details.includes('QuickFill links'), false);
   assert.equal(details.includes('instagramUrl'), false);
   assert.equal(details.includes('facebookUrl'), false);
   assert.equal(details.includes('googleBusinessProfile'), false);
   assert.equal(details.includes('Listen in Sales UI'), false);
+});
+
+test('sales focus card header puts Åpne preview next to Rediger', () => {
+  const board = readFileSync(join(root, 'app/pages/Admin/sections/SalesFocusBoard.tsx'), 'utf8');
+  const rediger = board.indexOf('Rediger');
+  const preview = board.indexOf('Åpne preview', rediger);
+  const sekundar = board.indexOf('Sekundær', preview);
+  assert.ok(rediger > 0 && preview > rediger && sekundar > preview);
 });
 
 test('sales focus chips show IRL/Online and skip category-restating labels', () => {

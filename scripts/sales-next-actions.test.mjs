@@ -752,6 +752,22 @@ test('Sales goal rows expose a drag handle only for free actions', () => {
   assert.match(src, /orderedIds/);
 });
 
+test('goal chips open that goal\'s actions instead of checking the goal', () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const src = readFileSync(join(here, '../app/pages/Admin/sections/SalesGoalTimeline.tsx'), 'utf8');
+  assert.match(src, /function showGoal/);
+  assert.match(src, /getSalesGoalKeys\(client\.product\)/);
+  assert.match(src, /setViewedGoal\(null\)/);
+  assert.match(src, /data-sales-client-card/);
+  assert.equal(src.includes('onClick={() => onToggleGoal(key)}'), false);
+  assert.equal(src.includes('Fullfør nåværende mål først'), false);
+  const board = readFileSync(join(here, '../app/pages/Admin/sections/SalesFocusBoard.tsx'), 'utf8');
+  assert.match(board, /data-sales-client-card/);
+  const clients = readFileSync(join(here, '../app/pages/Admin/sections/SalesClientsSection.tsx'), 'utf8');
+  assert.match(clients, /data-sales-client-card/);
+  assert.match(clients, /data-sales-client-overlay/);
+});
+
 test('checkmark removes one action and leaves the others', () => {
   const row = client();
   const sms = decorateNextActions(row).find((action) => action.presetKey === 'sms1h');

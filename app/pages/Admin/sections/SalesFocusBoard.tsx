@@ -851,7 +851,7 @@ function FocusCard(props: FocusCardProps) {
   const status = entryStatus(entry, nowMs);
 
   return (
-    <div className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
+    <div data-sales-client-card className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
       <div className="space-y-3 min-w-0">
         <div className="rounded-xl border border-white/10 bg-black/20 p-3">
           <div className="flex flex-wrap items-start justify-between gap-2">
@@ -899,6 +899,15 @@ function FocusCard(props: FocusCardProps) {
             <button type="button" onClick={() => onEdit(client)} className={HEADER_BUTTON}>
               <Pencil size={13} />
               Rediger
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenPreview(client)}
+              className={HEADER_BUTTON}
+              title={hasPreview ? 'Åpne nettside-preview i ny fane' : 'Ingen preview publisert ennå'}
+            >
+              <Globe size={13} />
+              Åpne preview
             </button>
             {!isWon ? (
               <>
@@ -973,7 +982,6 @@ function FocusCard(props: FocusCardProps) {
             variant={isWon ? 'win' : 'active'}
             progressBusyKey={progressBusyKey}
             actionBusy={actionBusy}
-            onToggleGoal={(key) => toggleGoal(key)}
             onMutateAction={(body) => onMutateAction(client, body)}
             fixedRows={isWon ? [] : fixedRows}
             renderRowExtras={rowExtras}

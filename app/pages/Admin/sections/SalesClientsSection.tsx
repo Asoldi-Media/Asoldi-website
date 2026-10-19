@@ -9,6 +9,7 @@ import {
   FileText,
   Filter,
   Gift,
+  Layers,
   Loader2,
   LogOut,
   Mail,
@@ -19,12 +20,14 @@ import {
   Plus,
   ShieldCheck,
   Search,
+  SkipForward,
   StickyNote,
   Tag,
   Trash2,
   Undo2,
   UserRound,
   Users,
+  UserX,
   Volume2,
   X,
 } from 'lucide-react';
@@ -53,6 +56,7 @@ import {
   confirmationSendGaps,
   clientNeedsConfirmationSend,
   clientIsNewlyAssigned,
+  clientMeetingAtIso,
   SALES_PIPELINE_STATES,
   SECONDARY_INTEREST_STATES,
   normalizeSecondaryInterest,
@@ -69,6 +73,7 @@ import {
   normalizeSalesFocusCategory,
   salesFocusCategoriesFor,
   salesFocusEntries,
+  salesMissedMeeting,
 } from '../../../../lib/sales-playbook.js';
 import { calendarDurationForMode } from '../../../../lib/sales-meeting-duration.js';
 import { GOOGLE_CALENDAR_OAUTH_EVENT } from '../../../../lib/google-calendar-oauth-ui.js';
@@ -313,6 +318,17 @@ function normalizeSalesProduct(value: unknown): SalesProduct {
 
 function isSsuClient(client: Pick<SalesClient, 'product'> | null | undefined) {
   return normalizeSalesProduct(client?.product) === 'ssu';
+}
+
+function promptSkipMeetingNote() {
+  const written = window.prompt('Skriv i Notater hvorfor møtet hoppes over.', '');
+  if (written == null) return null;
+  const line = written.trim();
+  if (!line) {
+    window.alert('Skriv noe i Notater før du hopper over.');
+    return null;
+  }
+  return line;
 }
 
 function parseDetails(details: Record<string, unknown> | undefined) {
@@ -2370,11 +2386,176 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
     ];
     const meetLink = salesMeetLink(client);
     const reminderStamp = (iso?: string) => (iso ? formatWhen(iso) : 'Venter / hoppet over');
+    const websiteSold = Boolean(client.progression?.contractSigned);
+    const isWin = clientIsSalesWin(client);
+    const meetingAt = clientMeetingAtIso(client);
+    const missed = salesMissedMeeting(client, meetingNowMs) as {
+      kind: 'noShow' | 'skipped' | 'auto';
+      label: string;
+      undoable: boolean;
+    } | null;
+    const meetingHeld = Boolean(client.progression?.meetingHeld || client.progression?.offerSent || websiteSold);
+    const canMarkMissed = Boolean(meetingAt) && !missed && !meetingHeld;
+    const missedBusy = readUpBusyId === client.id;
+    const missBlockedTitle = meetingHeld
+      ? 'Møtet er allerede markert som holdt.'
+      : !meetingAt
+        ? 'Sett møtetid først.'
+        : missed
+          ? `Allerede merket: ${missed.label}`
+          : '';
+    const interestLabel = secondaryInterestLabel(client.secondaryInterest);
+    const detailsBtn = 'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50';
     return (
     <div className="space-y-3 pt-2">
       <p className="text-[11px] text-gray-500">
         Lenker, adresse, bransje og opptak ligger på Kundekort (side 1). Dette er booking, e-post og kalender for kunden — samme uansett fane.
       </p>
+      <div className="rounded-xl bg-black/20 border border-white/10 p-3 space-y-2">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Handlinger</div>
+        {isSalesAdmin ? (
+          <label className="flex items-center gap-2 text-[11px] text-gray-400">
+            <span className="shrink-0">Selger</span>
+            <select
+              aria-label="Selger"
+              value={
+                salesRepOptions.some((owner) => owner.accountKey === (client.ownerId || ''))
+                  ? (client.ownerId || '')
+                  : ''
+              }
+              disabled={assigningOwnerId === client.id || !salesRepOptions.length}
+              onChange={(event) => void assignClientOwner(client, event.target.value)}
+              className="min-w-0 flex-1 rounded-md bg-black/30 border border-white/10 text-gray-200 px-2 py-1 disabled:opacity-50"
+            >
+              {!salesRepOptions.some((owner) => owner.accountKey === (client.ownerId || '')) && (
+                <option value="" disabled>
+                  {assigningOwnerId === client.id ? 'Tildeler…' : 'Ikke tildelt'}
+                </option>
+              )}
+              {salesRepOptions.map((owner) => (
+                <option key={owner.accountKey} value={owner.accountKey}>
+                  {ownerLabel(owner)}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {!salesRepOptions.length && isSalesAdmin ? (
+          <p className="text-xs text-gray-400">Ingen selgere å velge. Legg til en selger under Admin først.</p>
+        ) : null}
+        <div className="flex flex-wrap items-center gap-1.5">
+          {!clientIsSsu ? (
+            <>
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => openPublicPreview(client)}
+                  className={detailsBtn}
+                  title={clientHasPublicPreviewSnapshot(client) ? 'Åpne nettside-preview i ny fane' : 'Ingen preview publisert ennå'}
+                >
+                  <ExternalLink size={13} />
+                  Åpne preview
+                </button>
+                {previewMissingToastId === client.id && (
+                  <div
+                    role="status"
+                    className="absolute left-0 bottom-full mb-1 z-20 whitespace-nowrap rounded-md border border-amber-700/40 bg-amber-950/95 px-2.5 py-1.5 text-[11px] text-amber-100 shadow-lg"
+                  >
+                    Not on asoldi.com yet
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => void navigator.clipboard.writeText(publicPreviewUrl).then(
+                  () => setNotice(`Copied ${publicPreviewUrl}`),
+                  () => setError('Could not copy preview URL')
+                )}
+                className={detailsBtn}
+                title={publicPreviewUrl}
+              >
+                <Copy size={13} />
+                Kopier preview
+              </button>
+            </>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => void markSecondary(client)}
+            disabled={statusBusyId === `secondary:${client.id}` || websiteSold}
+            className={`${detailsBtn} ${
+              client.status === 'secondary'
+                ? 'bg-violet-500/20 border border-violet-400/40 text-violet-100'
+                : ''
+            }`}
+            title={websiteSold ? 'Angre kontrakt signert først hvis dette var et uhell' : 'Velg Redesign, Consulting eller et sekundært produkt'}
+          >
+            {statusBusyId === `secondary:${client.id}` ? <Loader2 size={13} className="animate-spin" /> : <Layers size={13} />}
+            {client.status === 'secondary' && interestLabel ? `Sekundær · ${interestLabel}` : 'Sekundær'}
+          </button>
+          <button
+            type="button"
+            onClick={() => void markNotSold(client)}
+            disabled={statusBusyId === `not-sold:${client.id}` || websiteSold}
+            className={detailsBtn}
+            title={websiteSold ? 'Angre kontrakt signert først hvis dette var et uhell' : 'Arkiver kunden som ikke solgt'}
+          >
+            {statusBusyId === `not-sold:${client.id}` ? <Loader2 size={13} className="animate-spin" /> : <ArchiveX size={13} />}
+            Ikke solgt
+          </button>
+          <button
+            type="button"
+            onClick={() => void setPlaybookStep(client, 'noShow', true, 'Møtte ikke opp')}
+            disabled={missedBusy || !canMarkMissed}
+            className={detailsBtn}
+            title={canMarkMissed
+              ? 'Kunden kom ikke. Skriver «Møtte ikke opp» i Notater og flytter til Venter møtebekreftelse.'
+              : missBlockedTitle}
+          >
+            {missedBusy ? <Loader2 size={13} className="animate-spin" /> : <UserX size={13} />}
+            Møtte ikke opp
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const line = promptSkipMeetingNote();
+              if (!line) return;
+              void setPlaybookStep(client, 'skip', true, line);
+            }}
+            disabled={missedBusy || !canMarkMissed}
+            className={detailsBtn}
+            title={canMarkMissed
+              ? 'Hopp over møtet. Du skriver grunnen i Notater, også om det allerede står noe der.'
+              : missBlockedTitle}
+          >
+            {missedBusy ? <Loader2 size={13} className="animate-spin" /> : <SkipForward size={13} />}
+            Skip
+          </button>
+          {missed?.undoable ? (
+            <button
+              type="button"
+              onClick={() => void setPlaybookStep(client, missed.kind === 'noShow' ? 'noShow' : 'skip', false)}
+              disabled={missedBusy}
+              className={detailsBtn}
+              title={`Angre «${missed.label}». Kunden går tilbake dit den var.`}
+            >
+              {missedBusy ? <Loader2 size={13} className="animate-spin" /> : <Undo2 size={13} />}
+              Angre {missed.label.toLowerCase()}
+            </button>
+          ) : null}
+          {isWin ? (
+            <button
+              type="button"
+              onClick={() => void toggleProgress(client, 'contractSigned')}
+              disabled={progressBusyKey === `${client.id}:contractSigned`}
+              className={detailsBtn}
+              title="Angre kontrakt signert og send kunden tilbake i handlinglisten"
+            >
+              Tilbake til salg
+            </button>
+          ) : null}
+        </div>
+      </div>
       <div className="rounded-xl bg-black/20 border border-white/10 p-3">
         <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-2">Booking</div>
         <ul className="space-y-1 text-xs">
@@ -2408,40 +2589,6 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
           <FileText size={13} />
           Kundekort
         </button>
-        {!clientIsSsu && (
-          <>
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => openPublicPreview(client)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
-              >
-                <ExternalLink size={13} />
-                Åpne preview
-              </button>
-              {previewMissingToastId === client.id && (
-                <div
-                  role="status"
-                  className="absolute left-0 bottom-full mb-1 z-20 whitespace-nowrap rounded-md border border-amber-700/40 bg-amber-950/95 px-2.5 py-1.5 text-[11px] text-amber-100 shadow-lg"
-                >
-                  Not on asoldi.com yet
-                </div>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={() => void navigator.clipboard.writeText(publicPreviewUrl).then(
-                () => setNotice(`Copied ${publicPreviewUrl}`),
-                () => setError('Could not copy preview URL')
-              )}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
-              title={publicPreviewUrl}
-            >
-              <Copy size={13} />
-              Kopier preview
-            </button>
-          </>
-        )}
         {meetLink ? (
           <button
             type="button"
@@ -2787,6 +2934,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
             return (
               <React.Fragment key={client.id}>
                 <div
+                  data-sales-client-card
                   onClick={(event) => handleClientCardClick(event, client.id)}
                   className={`rounded-2xl border flex flex-col cursor-pointer min-w-0 ${
                     showCompact ? 'p-2.5 gap-1' : 'p-3 sm:p-4 gap-2 sm:gap-3'
@@ -2955,7 +3103,6 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                   client={client}
                   progressBusyKey={progressBusyKey}
                   actionBusy={nextActionBusyId === client.id}
-                  onToggleGoal={(key, extra) => void toggleProgress(client, key, extra)}
                   onMutateAction={(body) => mutateNextAction(client, body)}
                   variant={isWin ? 'win' : 'active'}
                 />
@@ -4072,7 +4219,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
       </div>
 
       {(showForm || inClientFlow) && (
-        <div className={inClientFlow ? 'fixed inset-0 z-[100] flex flex-col bg-[#1a1a1a]' : 'fixed inset-0 z-[100] bg-black/70 flex items-center justify-center p-3 sm:p-4'}>
+        <div data-sales-client-overlay className={inClientFlow ? 'fixed inset-0 z-[100] flex flex-col bg-[#1a1a1a]' : 'fixed inset-0 z-[100] bg-black/70 flex items-center justify-center p-3 sm:p-4'}>
           {inClientFlow && (
             <div className="shrink-0 border-b border-[#E6E9EF] bg-white text-[#111827]">
               <div className="px-3 sm:px-5 pt-2 sm:pt-3 flex items-center justify-between gap-2">
