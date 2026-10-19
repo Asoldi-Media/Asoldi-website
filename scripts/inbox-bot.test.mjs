@@ -942,6 +942,26 @@ test('a time that has passed is never booked and bot actions never land in the p
   assert.match(sent[0].text, /passer noe av dette/i);
 });
 
+test('a book still lands if Google calendar is disconnected', async () => {
+  const client = seedClient({ id: 'sale-cal-off', contactEmail: 'cal-off@example.com' });
+  const sent = [];
+  const result = await ingestInboxMessage({
+    id: 'imap-cal-off',
+    mailbox: 'alexander@asoldi.com',
+    from: 'cal-off@example.com',
+    subject: 'Møte',
+    text: 'Kan vi ta onsdag kl 15?',
+    mailAt: '2026-10-18T10:00:00.000Z',
+  }, {
+    now: new Date('2026-10-18T10:00:00.000Z'),
+    sendEmail: async (mail) => { sent.push(mail); },
+    queryBusy: async () => { throw new Error('Google Calendar account is not connected yet.'); },
+  });
+  assert.equal(sent.length, 1);
+  assert.equal(result.write?.kind || result.kind, 'sales_book');
+  assert.equal(sales.getSalesClientById(client.id).meetingAt, '2026-10-21T13:00:00.000Z');
+});
+
 test('backfill apply records a thrown ingest and continues', async () => {
   const client = seedClient({ id: 'sale-bf-err', contactEmail: 'err-bf@example.com' });
   const msg = {
