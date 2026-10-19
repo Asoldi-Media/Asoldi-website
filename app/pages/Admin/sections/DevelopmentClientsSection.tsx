@@ -631,14 +631,14 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
       const developerGoals = client.developerGoals ?? item.developerGoals;
       return {
         ...item,
-        businessName: String(client.businessName || item.businessName),
-        contactPerson: String(client.contactPerson || item.contactPerson || ''),
-        contactEmail: String(client.contactEmail || item.contactEmail || ''),
-        contactPhone: String(client.contactPhone || item.contactPhone || ''),
-        meetingPlace: String(client.meetingPlace || item.meetingPlace || ''),
-        industry: String(client.industry || item.industry || ''),
-        notes: typeof client.notes === 'string' ? client.notes : item.notes,
-        websiteDomain: String(client.websiteDomain || item.websiteDomain || ''),
+        businessName: client.businessName != null ? String(client.businessName) : item.businessName,
+        contactPerson: client.contactPerson != null ? String(client.contactPerson) : String(item.contactPerson || ''),
+        contactEmail: client.contactEmail != null ? String(client.contactEmail) : String(item.contactEmail || ''),
+        contactPhone: client.contactPhone != null ? String(client.contactPhone) : String(item.contactPhone || ''),
+        meetingPlace: client.meetingPlace != null ? String(client.meetingPlace) : String(item.meetingPlace || ''),
+        industry: client.industry != null ? String(client.industry) : String(item.industry || ''),
+        notes: client.notes != null ? String(client.notes) : item.notes,
+        websiteDomain: client.websiteDomain != null ? String(client.websiteDomain) : String(item.websiteDomain || ''),
         kundekort: client.details || client.businessName
           ? salesKundekortView({ ...item, ...client, kundekort: undefined })
           : item.kundekort,

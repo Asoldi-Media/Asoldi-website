@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import { DOCUMENT_LABELS } from '../../../lib/developer-card.js';
-import { DeveloperClientIdentityFull, DeveloperKundedata } from './DeveloperKundedata';
+import { DeveloperClientIdentityFull, DeveloperKundedata, type KundekortDraft } from './DeveloperKundedata';
 
 const TODO_CATEGORIES = [
   'Sider og innhold',
@@ -228,6 +228,7 @@ export function DeveloperClientBrief({
   kundekortSource = {},
   itemId = '',
   latestRecordingUrl = '',
+  onSaveKundekort,
 }: {
   open: boolean;
   onClose: () => void;
@@ -243,6 +244,7 @@ export function DeveloperClientBrief({
   kundekortSource?: Record<string, unknown>;
   itemId?: string;
   latestRecordingUrl?: string;
+  onSaveKundekort?: (draft: KundekortDraft) => Promise<void>;
 }) {
   if (!open) return null;
   const images = files.filter((file) => isImageFile(file) && file.url);
@@ -291,8 +293,9 @@ export function DeveloperClientBrief({
               itemId={itemId}
               latestRecordingUrl={latestRecordingUrl}
               authHeaders={authHeaders}
+              onSave={onSaveKundekort}
             />
-            <DeveloperClientIdentityFull source={kundekortSource} />
+            {onSaveKundekort ? null : <DeveloperClientIdentityFull source={kundekortSource} />}
             <section className="space-y-3">
               <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-300">Sammendrag</h3>
               {summary.ready ? (

@@ -167,6 +167,7 @@ import {
 } from './lib/sales-client-links.js';
 import { isUpcomingSalesClient, searchGoogle, serpPayloadToResults } from './lib/sales-link-discovery.js';
 import { applyInfokortResult, isInfokortAgentConfigured, runInfokortAgent } from './lib/infokort-agent.js';
+import { normalizeExtraFacts } from './lib/sales-kundekort.js';
 import {
   buildContractOnlyEmailForClient,
   buildOfferEmailForClient,
@@ -19064,6 +19065,56 @@ app.post('/api/admin/development/:id/handoff/accepted', developmentAuth, (req, r
   deleteDevHandoff(target.client.id);
   const updated = sales.updateSalesClient(target.client.id, { developerHandoff: emptyDeveloperHandoff() });
   return res.json({ ok: true, client: updated });
+});
+
+app.patch('/api/admin/development/:id/kundekort', developmentAuth, (req, res) => {
+  const target = resolveDevelopmentTarget(req.params.id);
+  if (!target?.client) return res.status(404).json({ message: 'Sales client not found.' });
+  if (!assertDevelopmentVisible(req, res, target.client)) return;
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const current = target.client;
+  const details = current.details && typeof current.details === 'object' ? current.details : {};
+  const links = body.details && typeof body.details === 'object' ? body.details : body;
+  const textField = (value, max) => sanitizeText(value).slice(0, max);
+  const patch = {
+    businessName: textField(body.businessName ?? current.businessName, 180),
+    contactPerson: textField(body.contactPerson ?? current.contactPerson, 180),
+    contactEmail: textField(body.contactEmail ?? current.contactEmail, 180),
+    websiteEmail: textField(body.websiteEmail ?? current.websiteEmail, 180),
+    contactPhone: textField(body.contactPhone ?? current.contactPhone, 80),
+    industry: textField(body.industry ?? current.industry, 180),
+    websiteDomain: textField(body.websiteDomain ?? current.websiteDomain, 180),
+    orgNumber: textField(body.orgNumber ?? current.orgNumber, 32),
+    meetingPlace: textField(body.meetingPlace ?? current.meetingPlace, 300),
+    notes: textField(body.notes ?? current.notes, 8000),
+    details: {
+      instagramUrl: textField(links.instagramUrl ?? details.instagramUrl, 400),
+      facebookUrl: textField(links.facebookUrl ?? details.facebookUrl, 400),
+      proffUrl: textField(links.proffUrl ?? details.proffUrl, 400),
+      googleBusinessProfile: textField(links.googleBusinessProfile ?? details.googleBusinessProfile, 400),
+      otherLinks: textField(links.otherLinks ?? details.otherLinks, 4000),
+      extraFacts: normalizeExtraFacts(links.extraFacts ?? details.extraFacts),
+    },
+  };
+  if (!patch.businessName || !patch.contactPerson) {
+    return res.status(400).json({ message: 'Bedrift og kontaktperson må stå.' });
+  }
+  if (body.clientBrief && typeof body.clientBrief === 'object') {
+    const previous = current.clientBrief && typeof current.clientBrief === 'object' ? current.clientBrief : {};
+    patch.clientBrief = {
+      short: textField(body.clientBrief.short ?? previous.short, 400),
+      full: textField(body.clientBrief.full ?? previous.full, 8000),
+      generatedAt: sanitizeText(previous.generatedAt) || new Date().toISOString(),
+      source: 'developer',
+    };
+  }
+  const updated = sales.updateSalesClient(current.id, patch);
+  if (!updated) return res.status(404).json({ message: 'Sales client not found.' });
+  return res.json({
+    ok: true,
+    client: updated,
+    item: listDeveloperBoard().find((entry) => entry.salesClientId === updated.id) || null,
+  });
 });
 
 app.patch('/api/admin/development/:id', developmentAuth, (req, res) => {

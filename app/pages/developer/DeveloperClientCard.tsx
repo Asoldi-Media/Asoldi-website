@@ -13,7 +13,7 @@ import { ClientNotesFeed, clientFeedMessages } from '../Admin/sections/ClientNot
 import { DeveloperLanguageLockPopup } from './DeveloperLanguageLockPopup';
 import { DeveloperPagesPopup } from './DeveloperPagesPopup';
 import { DeveloperAuthImage, DeveloperClientBrief, DeveloperMediaLibrary, type BriefMediaFile, type MaterialDot } from './DeveloperClientBrief';
-import { DeveloperClientIdentityLine } from './DeveloperKundedata';
+import { DeveloperClientIdentityLine, type KundekortDraft } from './DeveloperKundedata';
 import { enqueueMakerQueue, ensureLocalMaker, fetchMakerRunStatus, findMakerRunBySalesClientId, saveMakerRunDomain } from './makerQueue';
 import { createSalesMakerRun } from './MakerRunTools';
 import { summarizeMaterialDots } from '../../../lib/client-material-dots.js';
@@ -1308,6 +1308,30 @@ export function DeveloperClientCard({
         onOpenLibrary={() => setLibraryOpen(true)}
         itemId={item.id}
         latestRecordingUrl={item.latestRecordingUrl || ''}
+        onSaveKundekort={async (draft: KundekortDraft) => {
+          const response = await fetch(`${API}/admin/development/${encodeURIComponent(item.id)}/kundekort`, {
+            method: 'PATCH',
+            headers: { ...developmentAuthHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ...draft,
+              details: {
+                instagramUrl: draft.instagramUrl,
+                facebookUrl: draft.facebookUrl,
+                proffUrl: draft.proffUrl,
+                googleBusinessProfile: draft.googleBusinessProfile,
+                otherLinks: draft.otherLinks,
+                extraFacts: draft.extraFacts,
+              },
+              clientBrief: {
+                full: draft.brief,
+                short: draft.brief.split('\n').map((line) => line.trim()).find(Boolean)?.slice(0, 400) || '',
+              },
+            }),
+          });
+          const data = await response.json().catch(() => ({}));
+          if (!response.ok) throw new Error(data.message || 'Kunne ikke lagre kundedata.');
+          if (data.client && onClientUpdated) onClientUpdated(data.client as Record<string, unknown>);
+        }}
         kundekortSource={{
           ...item,
           clientBrief: item.clientBrief,

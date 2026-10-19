@@ -258,6 +258,7 @@ type SalesFormState = {
   proffUrl: string;
   otherLinks: string;
   googleBusinessProfile: string;
+  extraFacts: Array<{ id: string; label: string; value: string }>;
 };
 
 const INITIAL_FORM: SalesFormState = {
@@ -279,6 +280,7 @@ const INITIAL_FORM: SalesFormState = {
   proffUrl: '',
   otherLinks: '',
   googleBusinessProfile: '',
+  extraFacts: [],
 };
 
 function clientCardSnapshot(form: SalesFormState, websiteEmailTouched: boolean) {
@@ -301,6 +303,7 @@ function clientCardSnapshot(form: SalesFormState, websiteEmailTouched: boolean) 
     proffUrl: form.proffUrl.trim(),
     otherLinks: form.otherLinks.trim(),
     googleBusinessProfile: form.googleBusinessProfile.trim(),
+    extraFacts: form.extraFacts,
   });
 }
 
@@ -1523,6 +1526,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
       proffUrl: details.proffUrl || proffUrlFromOrgNumber(client.orgNumber),
       otherLinks: details.otherLinks,
       googleBusinessProfile: details.googleBusinessProfile,
+      extraFacts: Array.isArray(details.extraFacts) ? details.extraFacts : [],
     };
     setForm(nextForm);
     clientCardBaselineRef.current = clientCardSnapshot(nextForm, touched);
@@ -1683,6 +1687,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
           proffUrl: form.proffUrl,
           otherLinks: form.otherLinks,
           googleBusinessProfile: form.googleBusinessProfile,
+          extraFacts: form.extraFacts,
           editEmailBeforeSend: Boolean(existingClient?.details?.editEmailBeforeSend),
         },
       };
@@ -4215,6 +4220,31 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                 value={form.notes}
                 onChange={(value) => setForm((prev) => ({ ...prev, notes: value }))}
               />
+              <div className="md:col-span-2 space-y-2">
+                <div className="text-sm text-gray-300">Ekstra info</div>
+                {form.extraFacts.map((fact) => (
+                  <div key={fact.id} className="flex gap-2">
+                    <input
+                      value={fact.label}
+                      placeholder="Navn"
+                      onChange={(event) => setForm((prev) => ({
+                        ...prev,
+                        extraFacts: prev.extraFacts.map((row) => (row.id === fact.id ? { ...row, label: event.target.value } : row)),
+                      }))}
+                      className="w-40 rounded-lg bg-[#161616] border border-white/10 text-white text-sm px-3 py-2"
+                    />
+                    <input
+                      value={fact.value}
+                      placeholder="Innhold"
+                      onChange={(event) => setForm((prev) => ({
+                        ...prev,
+                        extraFacts: prev.extraFacts.map((row) => (row.id === fact.id ? { ...row, value: event.target.value } : row)),
+                      }))}
+                      className="min-w-0 flex-1 rounded-lg bg-[#161616] border border-white/10 text-white text-sm px-3 py-2"
+                    />
+                  </div>
+                ))}
+              </div>
 
               {editingId && (
                 <div className="md:col-span-2 flex flex-wrap gap-2">

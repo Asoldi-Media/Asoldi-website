@@ -24,7 +24,7 @@ import {
 } from '../lib/sales-next-actions.js';
 import { calendarDurationForMode } from '../lib/sales-meeting-duration.js';
 import { filterCustomOtherLinks } from '../lib/sales-client-links.js';
-import { persistClientBrief } from '../lib/sales-kundekort.js';
+import { normalizeExtraFacts, persistClientBrief } from '../lib/sales-kundekort.js';
 import { persistPreviewDocument } from '../lib/booker-preview-document.js';
 import { normalizeWorkshopAction, offerStartDateFromWorkshopDueAt } from '../lib/workshop-action.js';
 import { getWorkshopRecord, markProjectTodoDone, persistWorkshopRecord } from '../lib/workshop-record.js';
@@ -420,6 +420,7 @@ function normalizeSalesDetails(value = {}) {
     proffUrl: sanitizeText(input.proffUrl),
     otherLinks: sanitizeText(input.otherLinks),
     googleBusinessProfile: sanitizeText(input.googleBusinessProfile),
+    extraFacts: normalizeExtraFacts(input.extraFacts),
     emailCustomNeed: sanitizeText(input.emailCustomNeed),
     meetingQuote: normalizeMeetingQuote(input.meetingQuote),
     editEmailBeforeSend: parseSalesBoolean(input.editEmailBeforeSend),
