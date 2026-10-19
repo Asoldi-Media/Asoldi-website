@@ -299,6 +299,8 @@ import {
   SALES_WEEK_CALENDAR_DISABLED,
   findConnectedCalendarAccountKeysByGoogleEmail,
   calendarIdForAccount,
+  calendarKeysShareMailbox,
+  calendarMailboxesMatch,
   resolveCalendarSyncAccountKey,
   resolveSalesCalendarPreviewAccountKey,
   resolveSalesCalendarWeekSources,
@@ -8446,11 +8448,21 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
       // If the event lived on a different connected account or calendar id
       // (e.g. shared admin calendar vs sales primary), recreate instead of
       // updating an event the current token cannot see.
+      // admin:asoldi.com and sales:<id> often share Alexander's mailbox — deleting
+      // there wipes the sales calendar and a failed insert leaves it empty.
+      const sameMailbox = calendarMailboxesMatch(
+        previousClient?.calendar?.googleEmail || getGoogleCalendarStatus(previousAccountKey).googleEmail,
+        syncCalendarStatus.googleEmail
+      ) || calendarKeysShareMailbox(previousAccountKey, accountKey);
+      const calendarIdChanged = Boolean(storedCalendarId)
+        && storedCalendarId !== targetCalendarId
+        && !(storedCalendarId === 'primary' && targetCalendarId === 'primary');
       if (
         eventIdForUpsert &&
+        !sameMailbox &&
         (
           (previousAccountKey && previousAccountKey !== accountKey)
-          || (storedCalendarId && storedCalendarId !== targetCalendarId)
+          || calendarIdChanged
         )
       ) {
         try {
@@ -8819,11 +8831,17 @@ async function backfillMissingSalesCalendarEvents({
   notifyAttendees = false,
   repairUpcoming = false,
   sendMissingConfirmations = false,
+  clientIds = [],
+  maxActions = 0,
 } = {}) {
   const allClients = sales.getSalesClients();
   const productScoped = productFilter
     ? allClients.filter((client) => sales.normalizeSalesProduct(client.product) === productFilter)
     : allClients;
+  const wantedIds = new Set(
+    (Array.isArray(clientIds) ? clientIds : []).map((id) => sanitizeText(id)).filter(Boolean)
+  );
+  const actionCap = Number(maxActions) > 0 ? Math.max(1, Math.trunc(Number(maxActions))) : 0;
   const scopedClients = Number(limit) > 0
     ? productScoped.slice(0, Math.max(1, Math.trunc(Number(limit))))
     : productScoped;
@@ -8839,6 +8857,7 @@ async function backfillMissingSalesCalendarEvents({
     skippedHasEvent: 0,
     skippedNoSchedule: 0,
     skippedUnassigned: 0,
+    skippedCap: 0,
     repaired: 0,
     wouldRepair: 0,
     mailed: 0,
@@ -8852,7 +8871,9 @@ async function backfillMissingSalesCalendarEvents({
     summary.warningReasons[key] = Number(summary.warningReasons[key] || 0) + 1;
   };
 
+  let acted = 0;
   for (const client of scopedClients) {
+    if (wantedIds.size && !wantedIds.has(sanitizeText(client?.id))) continue;
     const hasSchedule = Boolean(client?.agreedTime && client?.meetingAt);
     if (!hasSchedule) {
       summary.skippedNoSchedule += 1;
@@ -8867,14 +8888,21 @@ async function backfillMissingSalesCalendarEvents({
     const hasEvent = Boolean(sanitizeText(client?.calendar?.eventId));
     const thankYouSent = Boolean(sanitizeText(client?.reminders?.thankYouSentAt));
     const inWindow = salesMeetingInCalendarRepairWindow(client);
+    const hostKey = sanitizeText(client?.calendar?.accountKey);
+    const staleHostKey = Boolean(hostKey && hostKey !== sanitizeText(client?.ownerId));
     const needsCreate = !hasEvent;
-    const needsRepair = repairUpcoming && hasEvent && inWindow;
+    const needsRepair = repairUpcoming && hasEvent && inWindow && staleHostKey;
     const needsMail = sendMissingConfirmations && !thankYouSent && !meetingTimeHasPassed(client);
     if (!needsCreate && !needsRepair && !needsMail) {
       if (hasEvent) summary.skippedHasEvent += 1;
       if (thankYouSent) summary.alreadyConfirmed += 1;
       continue;
     }
+    if (actionCap && acted >= actionCap) {
+      summary.skippedCap += 1;
+      continue;
+    }
+    acted += 1;
     if (thankYouSent) summary.alreadyConfirmed += 1;
     if (needsCreate) summary.missingEvent += 1;
     if (dryRun) {
@@ -13824,6 +13852,13 @@ app.post('/api/admin/sales/backfill-calendar', salesAuth, async (req, res) => {
     const notifyAttendees = parseBoolean(req.body?.notifyAttendees, false);
     const repairUpcoming = parseBoolean(req.body?.repairUpcoming, true);
     const sendMissingConfirmations = parseBoolean(req.body?.sendMissingConfirmations, true);
+    const requestedMaxActions = Number(req.body?.maxActions ?? 0);
+    const maxActions = Number.isFinite(requestedMaxActions) && requestedMaxActions > 0
+      ? Math.max(1, Math.min(40, Math.trunc(requestedMaxActions)))
+      : 0;
+    const clientIds = Array.isArray(req.body?.clientIds)
+      ? req.body.clientIds.map((id) => sanitizeText(id)).filter(Boolean).slice(0, 80)
+      : [];
     const result = await backfillMissingSalesCalendarEvents({
       dryRun,
       limit,
@@ -13832,6 +13867,8 @@ app.post('/api/admin/sales/backfill-calendar', salesAuth, async (req, res) => {
       notifyAttendees,
       repairUpcoming,
       sendMissingConfirmations,
+      clientIds,
+      maxActions,
     });
     return res.json({
       ok: true,

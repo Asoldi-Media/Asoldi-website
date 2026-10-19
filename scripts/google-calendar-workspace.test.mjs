@@ -17,6 +17,8 @@ const {
   listConnectedAsoldiCalendarSources,
   loadSalesCalendarWeek,
   persistGoogleMailboxToken,
+  calendarKeysShareMailbox,
+  calendarMailboxesMatch,
   rememberCalendarAccountEmail,
   resolveCalendarSyncAccountKey,
   shareGoogleCalendarToken,
@@ -145,6 +147,17 @@ test('workspace scopes are calendar write, not an API key', () => {
   const scopes = googleWorkspaceCalendarScopes();
   assert.ok(scopes.includes('https://www.googleapis.com/auth/calendar.events'));
   assert.equal(scopes.some((scope) => scope.includes('gmail')), false);
+});
+
+test('the same Alexander mailbox on admin:asoldi.com and sales: must not look like two calendars', () => {
+  assert.equal(calendarMailboxesMatch('alexander@asoldi.com', 'alexander@asoldi.com'), true);
+  assert.equal(calendarMailboxesMatch('alexander@asoldi.com', 'damian@asoldi.com'), false);
+  assert.equal(calendarMailboxesMatch('contact@asoldi.com', 'contact@asoldi.com'), false);
+  writeFileSync(join(dataDir, 'google-calendar-tokens.json'), JSON.stringify({
+    'admin:asoldi.com': { refresh_token: 'rt', googleEmail: 'alexander@asoldi.com' },
+    'sales:1789355644760': { refresh_token: 'rt', googleEmail: 'alexander@asoldi.com' },
+  }));
+  assert.equal(calendarKeysShareMailbox('admin:asoldi.com', 'sales:1789355644760'), true);
 });
 
 test.after(() => {

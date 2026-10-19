@@ -372,10 +372,16 @@ test('after confirmation the sales Meet button does not force a second room at c
   assert.match(server, /salesReminderCatchUpIsDue\('24h'/);
   assert.match(server, /overlaySalesInboxMeetOnEvents\(/);
   assert.match(server, /overlaySalesMeetingsOnEvents\(/);
+  const syncFn = server.slice(server.indexOf('async function maybeSyncCalendar'));
+  assert.match(syncFn.slice(0, 9000), /sameMailbox/);
+  assert.match(syncFn.slice(0, 9000), /calendarKeysShareMailbox/);
+  assert.match(syncFn.slice(0, 9000), /!sameMailbox/);
   const backfill = server.slice(server.indexOf('async function backfillMissingSalesCalendarEvents'));
   assert.match(backfill.slice(0, 5500), /repairUpcoming/);
   assert.match(backfill.slice(0, 5500), /sendMissingConfirmations/);
   assert.match(backfill.slice(0, 5500), /autoSendThankYouFromOwner/);
+  assert.match(backfill.slice(0, 5500), /staleHostKey/);
+  assert.match(backfill.slice(0, 5500), /maxActions/);
   assert.equal(/if \(hasEvent\) \{\s*summary\.skippedHasEvent \+= 1;\s*continue;/.test(backfill.slice(0, 2500)), false);
   const jsonClient = server.slice(server.indexOf('function jsonSalesClient'));
   assert.match(jsonClient.slice(0, 800), /salesInboxMeetLink\(client\)/);
