@@ -265,8 +265,8 @@ function phoneDigits(client: SalesClient) {
 function ModeChip({ client }: { client: SalesClient }) {
   const irl = client.meetingMode === 'in-person';
   return (
-    <span className={`inline-flex shrink-0 items-center px-2 py-0.5 rounded border text-[11px] ${
-      irl ? 'border-sky-400/40 bg-sky-500/10 text-sky-100' : 'border-white/15 text-gray-300'
+    <span className={`inline-flex shrink-0 items-center px-2 py-0.5 rounded-md text-[11px] font-bold tracking-wide ${
+      irl ? 'bg-[#FF5B00] text-white' : 'bg-sky-500 text-white'
     }`}>
       {meetingModeLabel(client)}
     </span>
@@ -947,25 +947,23 @@ function FocusCard(props: FocusCardProps) {
           </div>
         </div>
 
-        {isAssign ? (
-          <AssignPanel {...props} />
-        ) : (
-          <div className="rounded-xl border border-white/10 bg-black/20 p-2.5">
-            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400">Handlinger</div>
-            <SalesGoalTimeline
-              client={client}
-              nowMs={nowMs}
-              variant={isWon ? 'win' : 'active'}
-              progressBusyKey={progressBusyKey}
-              actionBusy={actionBusy}
-              onToggleGoal={(key) => toggleGoal(key)}
-              onMutateAction={(body) => onMutateAction(client, body)}
-              fixedRows={isWon ? [] : fixedRows}
-              renderRowExtras={rowExtras}
-              focusRowId={entry.focusRowId}
-            />
-          </div>
-        )}
+        {isAssign ? <AssignPanel {...props} /> : null}
+
+        <div className="rounded-xl border border-white/10 bg-black/20 p-2.5">
+          <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400">Handlinger</div>
+          <SalesGoalTimeline
+            client={client}
+            nowMs={nowMs}
+            variant={isWon ? 'win' : 'active'}
+            progressBusyKey={progressBusyKey}
+            actionBusy={actionBusy}
+            onToggleGoal={(key) => toggleGoal(key)}
+            onMutateAction={(body) => onMutateAction(client, body)}
+            fixedRows={isWon ? [] : fixedRows}
+            renderRowExtras={rowExtras}
+            focusRowId={entry.focusRowId}
+          />
+        </div>
 
         <div className="rounded-xl border border-white/10 bg-black/20 p-2.5">
           <button

@@ -143,6 +143,8 @@ test('sales focus chips show IRL/Online and skip category-restating labels', () 
   assert.equal(board.includes("'Klargjør tilbud'"), false);
   assert.equal(board.includes('Venter på signatur'), false);
   assert.match(board, /if \(stepId === 'assign'\) return null;/);
+  assert.match(board, /bg-\[#FF5B00\] text-white/);
+  assert.match(board, /bg-sky-500 text-white/);
 });
 
 test('Tildel selger assigns on select, stays on the tab, and does not toast', () => {
@@ -159,9 +161,21 @@ test('Tildel selger assigns on select, stays on the tab, and does not toast', ()
   assert.match(ownerFn, /applySavedClient\(\{ \.\.\.client, ownerId \}\)/);
   const ownerStart = server.indexOf("app.post('/api/admin/sales/:id/owner'");
   const ownerRoute = server.slice(ownerStart, server.indexOf("app.post('/api/admin/sales',", ownerStart + 1));
-  assert.match(ownerRoute, /thankYouReason: 'queued'/);
-  assert.ok(ownerRoute.indexOf('res.json') < ownerRoute.indexOf('autoSendThankYouFromOwner'));
+  assert.match(ownerRoute, /ownerJustAssigned: true/);
+  assert.ok(ownerRoute.indexOf('autoSendThankYouFromOwner') < ownerRoute.indexOf('res.json'));
+  assert.match(ownerRoute, /thankYouSent: Boolean\(thankYou\?\.sent\)/);
   assert.match(server, /const needsCalendar = previousActions\.some/);
   assert.match(shell, /stayOnLeave\?: boolean/);
   assert.match(readFileSync(join(root, 'app/pages/Admin/sections/DevelopmentClientsSection.tsx'), 'utf8'), /stayOnLeave=\{activeCategory === 'unassigned'\}/);
+  assert.match(board, /isAssign \? <AssignPanel \{\.\.\.props\} \/> : null/);
+  assert.match(board, /<SalesGoalTimeline/);
+  assert.match(salesUi, /fixed inset-0 z-\[100\]/);
+  assert.match(salesUi, /if \(event\.key !== 'Escape'\) return;/);
+  assert.match(salesUi, /ignoreCreateClickUntilRef/);
+  assert.match(salesUi, /pointer-events-none/);
+  assert.equal(salesUi.includes('showGoals'), false);
+  const nextStart = server.indexOf("app.patch('/api/admin/sales/:id/next-actions'");
+  const nextRoute = server.slice(nextStart, server.indexOf("app.post('/api/admin/sales/:id/playbook'"));
+  assert.match(nextRoute, /const assigned = isSalesRepAccountKey\(client\.ownerId\)/);
+  assert.match(nextRoute, /notifyAttendees: assigned/);
 });

@@ -591,6 +591,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
   const salesListLoadedRef = useRef(false);
   const clientsLenRef = useRef(0);
   const errorRef = useRef('');
+  const ignoreCreateClickUntilRef = useRef(0);
   const [discardPrompt, setDiscardPrompt] = useState(false);
   const [verifiedInboxOpen, setVerifiedInboxOpen] = useState(false);
   const [previewMissingToastId, setPreviewMissingToastId] = useState<string | null>(null);
@@ -1362,6 +1363,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
   }
 
   function openCreate() {
+    if (Date.now() < ignoreCreateClickUntilRef.current) return;
     setEditingId(null);
     setWebsiteEmailTouched(false);
     setForm({ ...INITIAL_FORM, product: productBracket });
@@ -1593,6 +1595,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
   }
 
   function closeClientFlow() {
+    ignoreCreateClickUntilRef.current = Date.now() + 500;
     setDiscardPrompt(false);
     const next = new URLSearchParams(searchParams);
     next.delete('flow');
@@ -1610,6 +1613,18 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
     }
     closeClientFlow();
   }
+
+  useEffect(() => {
+    if (!inClientFlow && !showForm) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      if (inClientFlow) requestCloseClientFlow();
+      else setShowForm(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [inClientFlow, showForm, clientCardDirty]);
 
   async function saveClientCardAndClose() {
     const ok = await saveForm(undefined, { keepOpen: true });
@@ -2856,9 +2871,13 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                         ) : null}
                       </div>
                     ) : null}
-                    <div className={`${showCompact ? 'mt-0.5' : 'mt-1'} text-[11px] text-gray-500 truncate`}>
-                      {client.meetingMode === 'in-person' ? 'IRL' : 'Online'}
-                      {client.meetingPlace ? ` · ${client.meetingPlace}` : ''}
+                    <div className={`${showCompact ? 'mt-0.5' : 'mt-1'} text-[11px] truncate`}>
+                      <span className={`inline-flex items-center px-1.5 py-0.5 rounded font-semibold ${
+                        client.meetingMode === 'in-person' ? 'bg-[#FF5B00] text-white' : 'bg-sky-500 text-white'
+                      }`}>
+                        {client.meetingMode === 'in-person' ? 'IRL' : 'Online'}
+                      </span>
+                      {client.meetingPlace ? <span className="ml-1.5 text-gray-500">{client.meetingPlace}</span> : ''}
                     </div>
                     {showCompact ? (
                       <button
@@ -3098,7 +3117,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
 
   return (
     <div className="sales-clients-surface min-h-screen bg-[#1a1a1a] text-white">
-      <header ref={headerShellRef} className="sales-sticky-header sticky top-0 z-[90] border-b border-white/10 bg-[#161616] shadow-sm">
+      <header ref={headerShellRef} className={`sales-sticky-header sticky top-0 z-[90] border-b border-white/10 bg-[#161616] shadow-sm${showForm || inClientFlow ? ' pointer-events-none' : ''}`}>
         <div className="max-w-[1440px] mx-auto px-3 sm:px-5 py-2.5 flex items-center gap-2 sm:gap-3">
           <div className="flex items-center gap-2 sm:gap-3 min-w-0 shrink-0 relative z-[80]">
             <img src="/media/Untitled-1.png" alt="Asoldi" className="h-8 sm:h-9 w-auto shrink-0" />
@@ -4035,7 +4054,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
       </div>
 
       {(showForm || inClientFlow) && (
-        <div className={inClientFlow ? 'fixed inset-0 z-[80] flex flex-col bg-[#1a1a1a]' : 'fixed inset-0 z-[80] bg-black/70 flex items-center justify-center p-3 sm:p-4'}>
+        <div className={inClientFlow ? 'fixed inset-0 z-[100] flex flex-col bg-[#1a1a1a]' : 'fixed inset-0 z-[100] bg-black/70 flex items-center justify-center p-3 sm:p-4'}>
           {inClientFlow && (
             <div className="shrink-0 border-b border-[#E6E9EF] bg-white text-[#111827]">
               <div className="px-3 sm:px-5 pt-2 sm:pt-3 flex items-center justify-between gap-2">
@@ -4056,7 +4075,17 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                   >
                     {saving ? 'Lagrer…' : 'Lagre'}
                   </button>
-                  <button type="button" onClick={requestCloseClientFlow} className="px-3 py-2 rounded-lg bg-[#F3F4F6] text-sm text-[#111827]">Lukk</button>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      requestCloseClientFlow();
+                    }}
+                    className="px-3 py-2 rounded-lg bg-[#F3F4F6] text-sm text-[#111827]"
+                  >
+                    Lukk
+                  </button>
                 </div>
               </div>
               {error ? <p className="px-3 sm:px-5 pt-2 text-xs text-red-600">{error}</p> : null}
@@ -4064,7 +4093,6 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                 <SalesFlowSteps
                   step={flowStep}
                   onStep={(step) => void goFlowStep(step)}
-                  showGoals
                   done={flowClient ? {
                     1: Boolean(flowClient.salesPlaybook?.readUpAt),
                     2: clientHasProductNotes(flowClient),
@@ -4237,14 +4265,27 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
           </div>
           {inClientFlow && (
             <div className="shrink-0 sticky bottom-0 z-10 border-t border-[#E6E9EF] bg-white px-3 sm:px-5 py-3 flex items-center justify-between gap-3">
-              <button
-                type="button"
-                disabled={saving || flowStep === 1}
-                onClick={() => void goFlowStep((flowStep - 1) as 1 | 2 | 3)}
-                className="px-4 py-2.5 rounded-lg bg-[#F3F4F6] text-sm font-medium text-[#111827] disabled:opacity-40"
-              >
-                Forrige
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    requestCloseClientFlow();
+                  }}
+                  className="px-4 py-2.5 rounded-lg bg-[#F3F4F6] text-sm font-medium text-[#111827]"
+                >
+                  Lukk
+                </button>
+                <button
+                  type="button"
+                  disabled={saving || flowStep === 1}
+                  onClick={() => void goFlowStep((flowStep - 1) as 1 | 2 | 3)}
+                  className="px-4 py-2.5 rounded-lg bg-[#F3F4F6] text-sm font-medium text-[#111827] disabled:opacity-40"
+                >
+                  Forrige
+                </button>
+              </div>
               <button
                 type="button"
                 disabled={saving || flowStep === 3}

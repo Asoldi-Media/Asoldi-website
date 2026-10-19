@@ -399,7 +399,7 @@ export function SalesGoalTimeline({
     onChange: (patch: Partial<Pick<DraftState, 'format' | 'addToCalendar' | 'meetingMode' | 'sticky'>>) => void,
   ) {
     const calendarLocked = value.presetKey === 'meeting';
-    const showMeetingMode = value.presetKey === 'meeting' && value.format === 'mote';
+    const showMeetingMode = value.presetKey === 'meeting';
     const recordedWhenOn = isRecordedSalesAction({
       presetKey: value.presetKey,
       format: value.format,
@@ -411,27 +411,32 @@ export function SalesGoalTimeline({
       : '15 min i Google Kalender';
     return (
       <div className="sm:col-span-2 flex flex-wrap items-center gap-2">
-        <select
-          aria-label="Format"
-          value={value.format}
-          onChange={(event) => onChange({ format: event.target.value as SalesActionFormat })}
-          className="min-w-0 flex-1 rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
-        >
-          {ACTION_FORMATS.map((format) => (
-            <option key={format} value={format}>{formatActionFormatLabel(format)}</option>
-          ))}
-        </select>
         {showMeetingMode ? (
           <select
             aria-label="Møteform"
             value={value.meetingMode === 'in-person' ? 'in-person' : 'online'}
             onChange={(event) => onChange({ meetingMode: event.target.value as 'online' | 'in-person' })}
-            className="w-[7.5rem] shrink-0 rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
+            className={`min-w-0 flex-1 rounded-md border text-xs font-semibold px-2 py-1.5 ${
+              value.meetingMode === 'in-person'
+                ? 'bg-[#FF5B00] border-[#FF5B00] text-white'
+                : 'bg-sky-500 border-sky-500 text-white'
+            }`}
           >
             <option value="online">Online</option>
             <option value="in-person">IRL</option>
           </select>
-        ) : null}
+        ) : (
+          <select
+            aria-label="Format"
+            value={value.format}
+            onChange={(event) => onChange({ format: event.target.value as SalesActionFormat })}
+            className="min-w-0 flex-1 rounded-md bg-[#161616] border border-white/10 text-white text-xs px-2 py-1.5"
+          >
+            {ACTION_FORMATS.map((format) => (
+              <option key={format} value={format}>{formatActionFormatLabel(format)}</option>
+            ))}
+          </select>
+        )}
         <span title={calendarTitle} className="shrink-0 text-gray-300">
           <CalendarDays size={15} />
         </span>
@@ -723,7 +728,7 @@ export function SalesGoalTimeline({
                   <div className="min-w-0 flex-1">
                     <div className="text-xs text-white truncate">
                       {currentAction.name}
-                      {currentAction.presetKey === 'meeting' && currentAction.format === 'mote' ? null : currentAction.format ? (
+                      {currentAction.presetKey === 'meeting' ? null : currentAction.format ? (
                         <span className="ml-1.5 text-[10px] uppercase tracking-wide text-gray-400">{formatActionFormatLabel(currentAction.format)}</span>
                       ) : null}
                     </div>
@@ -732,7 +737,7 @@ export function SalesGoalTimeline({
                       <div className="mt-0.5 text-[11px] text-gray-300 whitespace-pre-wrap break-words">{currentAction.note}</div>
                     ) : null}
                   </div>
-                  {currentAction.presetKey === 'meeting' && currentAction.format === 'mote' ? (
+                  {currentAction.presetKey === 'meeting' ? (
                     <select
                       aria-label="Møteform"
                       disabled={actionBusy}
@@ -743,8 +748,12 @@ export function SalesGoalTimeline({
                         id: currentAction.id,
                         meetingMode: event.target.value,
                       })}
-                      className="shrink-0 w-[5.75rem] rounded-md bg-[#161616] border border-white/10 text-white text-[11px] px-1.5 py-1"
-                      title="Bytt Online/IRL — ny kalenderinvitasjon sendes til kunden"
+                      className={`shrink-0 w-[6.5rem] rounded-md border text-[11px] font-semibold px-1.5 py-1 ${
+                        client.meetingMode === 'in-person'
+                          ? 'bg-[#FF5B00] border-[#FF5B00] text-white'
+                          : 'bg-sky-500 border-sky-500 text-white'
+                      }`}
+                      title="Bytt Online/IRL. Bekreftelse sendes ikke før kunden har en selger."
                     >
                       <option value="online">Online</option>
                       <option value="in-person">IRL</option>

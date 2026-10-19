@@ -171,19 +171,23 @@ test('Tildel selger is admin only and the client moves on once a seller is set',
   assert.deepEqual(categories(unassigned, now, { isAdmin: true }), ['assign:assign:due']);
   assert.equal(categories(unassigned, now).some((row) => row.startsWith('assign')), false);
   const assigned = client({ reminders: {} });
-  assert.equal(categories(assigned, now, { isAdmin: true })[0], 'confirm:confirmation:due');
+  assert.deepEqual(categories(assigned, now, { isAdmin: true }), ['confirm:confirmation:due']);
   assert.equal(normalizeSalesFocusCategory('assign'), '');
   assert.equal(normalizeSalesFocusCategory('assign', { isAdmin: true }), 'assign');
 });
 
-test('a booked but unconfirmed meeting waits in Venter møtebekreftelse, red after an hour', () => {
+test('Møter and Påminnelser wait until confirmation is sent; assign is what sends it', () => {
   const booked = client({ reminders: {}, myphoner: { bookedAt: '2026-10-20T10:00:00.000Z' } });
-  assert.deepEqual(categories(booked, '2026-10-20T10:30:00.000Z'), ['confirm:confirmation:due', UPCOMING_MEETING]);
-  assert.deepEqual(categories(booked, '2026-10-20T11:30:00.000Z'), ['confirm:confirmation:overdue', UPCOMING_MEETING]);
-  const [row] = salesFocusEntries(booked, at('2026-10-20T11:30:00.000Z'));
-  assert.equal(row.focusRowId, 'fixed:confirmation');
-  assert.deepEqual(categories(booked, '2026-10-21T07:10:00.000Z'), ['confirm:confirmation:overdue', 'reminders:reminder:due', UPCOMING_MEETING]);
-  assert.deepEqual(categories(booked, '2026-10-25T13:00:00.000Z'), ['confirm:missedCall:upcoming']);
+  assert.deepEqual(categories(booked, '2026-10-20T10:30:00.000Z'), ['confirm:confirmation:due']);
+  assert.deepEqual(categories(booked, '2026-10-20T11:30:00.000Z'), ['confirm:confirmation:overdue']);
+  assert.equal(categories(booked, '2026-10-21T07:10:00.000Z').some((row) => row.startsWith('meetingsToday') || row.startsWith('reminders')), false);
+  const sent = client({
+    reminders: { thankYouSentAt: '2026-10-20T10:05:00.000Z' },
+    myphoner: { bookedAt: '2026-10-20T10:00:00.000Z' },
+  });
+  assert.deepEqual(categories(sent, '2026-10-20T10:30:00.000Z'), [UPCOMING_MEETING]);
+  assert.deepEqual(categories(sent, '2026-10-21T07:10:00.000Z'), ['reminders:reminder:due', UPCOMING_MEETING]);
+  assert.deepEqual(categories(sent, '2026-10-25T13:00:00.000Z'), ['confirm:missedCall:upcoming']);
 });
 
 test('not-sold clients stay out of every category, even for admins and after a win', () => {
@@ -445,7 +449,7 @@ test('the 72-hour auto mark leaves meetings before 17 Oct 2026 alone; they still
   assert.deepEqual(categories(oldSkipped, '2026-10-21T10:00:00.000Z'), ['confirm:missedCall:overdue']);
 });
 
-test('Venter møtebekreftelse lists tid ikke satt first, then the newest past-due, then new bookers', () => {
+test('Venter møtebekreftelse ranks the next action first, not old backlog', () => {
   const now = at('2026-10-21T10:00:00.000Z');
   const noTimeOld = client({
     id: 'no-time-old',
@@ -471,18 +475,19 @@ test('Venter møtebekreftelse lists tid ikke satt first, then the newest past-du
     businessName: 'DDD Ny forfalt',
     meetingAt: '2026-10-16T10:00:00.000Z',
   });
-  const booker = client({
+  const futureAssigned = client({
     id: 'booker',
     businessName: 'EEE Nybooket',
     reminders: {},
     myphoner: { bookedAt: '2026-10-21T09:00:00.000Z' },
   });
-  const queues = groupSalesFocusQueues([booker, pastOlder, noTimeNew, pastNewer, noTimeOld], now);
+  const queues = groupSalesFocusQueues([futureAssigned, pastOlder, noTimeNew, pastNewer, noTimeOld], now);
   assert.deepEqual(queues.confirm.map((row) => row.client.id), [
-    'no-time-old',
+    'booker',
     'no-time-new',
     'past-new',
     'past-old',
-    'booker',
+    'no-time-old',
   ]);
+  assert.equal(queues.meetingsToday.some((row) => row.client.id === 'booker'), false);
 });

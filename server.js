@@ -14345,26 +14345,33 @@ app.post('/api/admin/sales/:id/owner', salesAuth, async (req, res) => {
     ...assignmentStampForOwnerChange(existing.ownerId, ownerId),
   });
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
-  res.json({
-    client,
-    thankYouSent: false,
-    thankYouReason: 'queued',
-    confirmationGaps: confirmationSendGaps(client),
-    from: '',
-    warnings: [],
-  });
+  let next = client;
+  const warnings = [];
+  let thankYou = { sent: false, reason: '', gaps: confirmationSendGaps(client) };
   try {
     const syncResult = await maybeSyncCalendar(client, existing, {
       notifyAttendees: false,
       actorAccountKey: client.ownerId,
     });
-    await autoSendThankYouFromOwner(syncResult.client || client, {
+    next = syncResult.client || client;
+    warnings.push(...(syncResult.warnings || []));
+    thankYou = await autoSendThankYouFromOwner(next, {
       existing,
       ownerJustAssigned: true,
     });
+    if (thankYou?.client) next = thankYou.client;
+    warnings.push(...(thankYou?.warnings || []));
   } catch (error) {
     console.error('[sales] owner follow-up failed', error?.message || error);
   }
+  res.json({
+    client: next,
+    thankYouSent: Boolean(thankYou?.sent),
+    thankYouReason: thankYou?.reason || '',
+    confirmationGaps: thankYou?.gaps || confirmationSendGaps(next),
+    from: thankYou?.from || '',
+    warnings,
+  });
 });
 
 app.post('/api/admin/sales', salesAuth, async (req, res) => {
@@ -14524,17 +14531,20 @@ app.patch('/api/admin/sales/:id/next-actions', salesAuth, async (req, res) => {
     const warnings = [];
     let thankYouSent = false;
     if (meetingChanged) {
+      const assigned = isSalesRepAccountKey(client.ownerId);
       const syncResult = await maybeSyncCalendar(client, existing, {
-        notifyAttendees: true,
-        forceGuestInvite: true,
+        notifyAttendees: assigned,
+        forceGuestInvite: assigned,
         actorAccountKey: req.salesUser.accountKey,
       });
       client = syncResult.client || client;
       warnings.push(...(syncResult.warnings || []));
-      const thankYou = await autoSendThankYouFromOwner(client, { existing });
-      if (thankYou?.client) client = thankYou.client;
-      thankYouSent = Boolean(thankYou?.sent);
-      warnings.push(...(thankYou?.warnings || []));
+      if (assigned) {
+        const thankYou = await autoSendThankYouFromOwner(client, { existing });
+        if (thankYou?.client) client = thankYou.client;
+        thankYouSent = Boolean(thankYou?.sent);
+        warnings.push(...(thankYou?.warnings || []));
+      }
     }
     const reminderSync = await maybeSyncNextActionCalendars(existing, client, {
       actorAccountKey: req.salesUser.accountKey,
