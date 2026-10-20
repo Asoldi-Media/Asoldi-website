@@ -84,6 +84,7 @@ import {
   useWebsiteMakerBaseUrl,
 } from '../../sales/websiteMaker';
 import type { MeetingQuoteState } from '../../sales/websitePricing';
+import { WEBSITE_TIERS, formatMonthlyPrice } from '../../../../lib/website-tiers.js';
 import 'leaflet/dist/leaflet.css';
 
 type WebsiteOffer = {
@@ -110,11 +111,11 @@ type ClientUserResult = {
   businessName: string;
 };
 
-const OFFER_TIERS = [
-  { id: 'tier-1-standard', name: 'Tier 1: Standard', price: '999,-/mnd' },
-  { id: 'tier-2-seo', name: 'Tier 2: SEO', price: '1 499,-/mnd' },
-  { id: 'tier-3-ecommerce', name: 'Tier 3: Nettbutikk', price: '1 999,-/mnd' },
-];
+const OFFER_TIERS = WEBSITE_TIERS.map((tier) => ({
+  id: tier.id,
+  name: tier.name,
+  price: formatMonthlyPrice(tier.monthlyExMva),
+}));
 const SALES_MAP_DEFAULT_CENTER: [number, number] = [63.4305, 10.3951];
 const SALES_MAP_DEFAULT_ZOOM = 5;
 const SALES_COMPACT_PREVIEW = 6;

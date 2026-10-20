@@ -8,6 +8,7 @@ const dataDir = mkdtempSync(join(tmpdir(), 'asoldi-sales-offers-'));
 process.env.APP_DATA_DIR = dataDir;
 
 const tiers = await import('../lib/website-tiers.js');
+const TIER1_MONTHLY = tiers.WEBSITE_TIERS[0].monthlyExMva;
 const offerEmail = await import('../lib/offer-email.js');
 const readiness = await import('../lib/offer-readiness.js');
 const contractPdf = await import('../lib/offer-contract-pdf.js');
@@ -704,9 +705,9 @@ test('contract pdf: mva-included offers state the incl. VAT price as the quoted 
   assert.equal(buffer.subarray(0, 4).toString(), '%PDF');
   const exVat = JSON.stringify(contractPdf.contractArticleModel({ client: CLIENT, tierId: tiers.WEBSITE_TIERS[0].id, mvaIncluded: false }));
   const inclVat = JSON.stringify(contractPdf.contractArticleModel({ client: CLIENT, tierId: tiers.WEBSITE_TIERS[0].id, mvaIncluded: true }));
-  assert.match(exVat, /Monthly price: 999 kr excl\. VAT/);
-  assert.match(inclVat, /Monthly price: 999 kr incl\. VAT/);
-  assert.doesNotMatch(exVat, /Monthly price: 999 kr incl\. VAT/);
+  assert.match(exVat, new RegExp(`Monthly price: ${TIER1_MONTHLY} kr excl\\. VAT`));
+  assert.match(inclVat, new RegExp(`Monthly price: ${TIER1_MONTHLY} kr incl\\. VAT`));
+  assert.doesNotMatch(exVat, new RegExp(`Monthly price: ${TIER1_MONTHLY} kr incl\\. VAT`));
   assert.notEqual(exVat, inclVat);
   const products = offerEmail.productsWithTier([], tiers.WEBSITE_TIERS[0].id);
   const emailEx = offerEmail.buildOfferEmail({ client: CLIENT, products, mvaIncluded: false, mergeTags: false }).html;
@@ -773,7 +774,7 @@ test('meeting quote sets tier pages, one-time host, and workshop date on the off
   assert.equal(starter.tierId, 'tier-1-standard');
   assert.equal(starter.billing, 'month');
   assert.equal(starter.products[0].pages, 5);
-  assert.equal(starter.products[0].priceExMva, 999);
+  assert.equal(starter.products[0].priceExMva, TIER1_MONTHLY);
 
   const extraPage = quoteOffer.buildOfferFromMeetingQuote({
     tierId: 'starter',
@@ -781,7 +782,7 @@ test('meeting quote sets tier pages, one-time host, and workshop date on the off
     selected: ['hosting', 'contact', 'changes', 'blog'],
     oneTimeAddOns: [],
   });
-  assert.ok(extraPage.products[0].priceExMva > 999);
+  assert.ok(extraPage.products[0].priceExMva > TIER1_MONTHLY);
   assert.match(extraPage.products[0].includes.join(' '), /1 ekstra side utover 5 inkludert/);
 
   const seo = quoteOffer.buildOfferFromMeetingQuote({
@@ -808,7 +809,7 @@ test('meeting quote sets tier pages, one-time host, and workshop date on the off
     oneTimeAddOns: ['thirdpartyhost'],
   });
   assert.equal(hosted.billing, 'once');
-  assert.equal(hosted.products[0].priceExMva, 999 * 9 + 2500);
+  assert.equal(hosted.products[0].priceExMva, TIER1_MONTHLY * 9 + 2500);
   assert.match(hosted.products[0].includes.join(' '), /tredjeparts host/i);
 
   assert.equal(offerEmail.workshopStartSentence(''), 'Startdato for workshop: Vi avtaler startdato for workshop senere.');
@@ -1057,10 +1058,10 @@ test('dual meeting quote builds two alternatives without summing products', () =
   assert.equal(dual.alternatives.length, 2);
   assert.equal(dual.products.length, 1, 'products stay Tilbud 1, not both packages');
   assert.equal(dual.tierId, dual.alternatives[0].tierId);
-  assert.equal(dual.products[0].priceExMva, 999);
+  assert.equal(dual.products[0].priceExMva, TIER1_MONTHLY);
   assert.equal(dual.alternatives[1].products[0].priceExMva, 1499);
   const productTotal = dual.products.reduce((sum, item) => sum + item.priceExMva, 0);
-  assert.ok(productTotal < 999 + 1499, 'composer products must not be a summed total');
+  assert.ok(productTotal < TIER1_MONTHLY + 1499, 'composer products must not be a summed total');
   assert.equal(quoteOffer.quoteBuiltIsCustom(dual), false);
 
   const customAlt = quoteOffer.buildOfferFromMeetingQuote({
@@ -1236,7 +1237,7 @@ test('dual portal accept requires an index and flattens tilbud 2 onto tierId', (
   assert.equal(flattened.tierId, 'tier-2-seo');
   assert.equal(flattened.products[0].priceExMva, 1499);
   assert.equal(flattened.chosenOfferIndex, 1);
-  assert.equal(offer.products[0].priceExMva, 999);
+  assert.equal(offer.products[0].priceExMva, TIER1_MONTHLY);
   const persisted = store.updateSalesOffer(offer.id, flattened, { actor: 'client', action: 'chosen-offer' });
   assert.equal(persisted.tierId, 'tier-2-seo');
   assert.equal(persisted.chosenOfferIndex, 1);

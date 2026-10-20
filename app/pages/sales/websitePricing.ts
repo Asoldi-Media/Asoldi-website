@@ -40,7 +40,7 @@ const TIER_SERVICE_IDS: Record<string, string[]> = {
 
 export const PRICING = {
   oneTimeMultiplier: 9,
-  minMonthly: 999,
+  minMonthly: WEBSITE_TIERS[0].monthlyExMva,
   // includedPages is the à-la-carte baseline; named packages use their own `pages` (5 / 7 / 10).
   pageScaling: { includedPages: 5, ratePercent: 0.1 },
   packagePrices: Object.fromEntries(

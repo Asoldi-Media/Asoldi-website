@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom';
 const websiteTiers = [
   { 
     name: 'Starter', 
-    price: 999,
+    price: 499,
     features: [
       "Full nettsideutvikling",
       "Hosting og vedlikehold",
@@ -51,9 +51,12 @@ export const PackageDeals = () => {
 
   const smmPrice = 2999;
   const emailPrice = 5999;
-  const starterNettsideValue = 999;
+  const starterNettsideValue = 499;
   const starterMarketingValue = 1999;
   const starterGuideValue = 999;
+  const starterOriginal = starterNettsideValue + starterMarketingValue + starterGuideValue;
+  const starterDeal = Math.round(starterOriginal * 0.5);
+  const fmtDeal = (n: number) => `${n.toLocaleString('nb-NO')},-`;
   const discount = 0.2;
 
   const calculateTotal = () => {
@@ -158,14 +161,14 @@ export const PackageDeals = () => {
                     </div>
 
                     <div className="flex items-baseline gap-4 mb-6">
-                      <span className="text-lg md:text-xl text-gray-500 line-through">3 997,-</span>
-                      <span className="text-3xl md:text-4xl font-medium text-white">1 999,- /mnd</span>
+                      <span className="text-lg md:text-xl text-gray-500 line-through">{fmtDeal(starterOriginal)}</span>
+                      <span className="text-3xl md:text-4xl font-medium text-white">{fmtDeal(starterDeal)} /mnd</span>
                     </div>
 
                     <div className="bg-[#FF5B00]/10 border border-[#FF5B00]/20 rounded-2xl p-4 mb-6">
                       <div className="text-[#FF5B00] font-bold text-sm mb-1">50% Rabatt inkludert</div>
                       <p className="text-gray-400 text-xs">
-                        Du sparer over 1 900 kr på denne pakken.
+                        Du sparer {(starterOriginal - starterDeal).toLocaleString('nb-NO')} kr på denne pakken.
                       </p>
                     </div>
                   </div>

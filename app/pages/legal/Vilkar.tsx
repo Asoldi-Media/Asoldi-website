@@ -7,8 +7,10 @@ import {
   LegalList,
   LegalCallout,
 } from '../../components/legal/LegalLayout';
+import { WEBSITE_TIERS, formatKr } from '../../../lib/website-tiers.js';
 
 const legalLinkClass = 'text-[#FF5B00] hover:underline';
+const tierPrice = (index: number) => `${formatKr(WEBSITE_TIERS[index].monthlyExMva)} eks. mva per måned`;
 
 export const Vilkar = () => {
   return (
@@ -88,7 +90,7 @@ export const Vilkar = () => {
           omsetningsresultat. Arbeidet er løpende.
         </p>
 
-        <LegalSubheading>Nivå 1 – Standard (999 kr eks. mva per måned)</LegalSubheading>
+        <LegalSubheading>Nivå 1 – Standard ({tierPrice(0)})</LegalSubheading>
         <LegalList
           items={[
             'Full utvikling av en enkel nettside uten nettbutikk, inntil fem (5) hovedsider, med responsivt design, utvikling og layout.',
@@ -103,7 +105,7 @@ export const Vilkar = () => {
           ]}
         />
 
-        <LegalSubheading>Nivå 2 – SEO (1 499 kr eks. mva per måned)</LegalSubheading>
+        <LegalSubheading>Nivå 2 – SEO ({tierPrice(1)})</LegalSubheading>
         <p>Inkluderer alt i Nivå 1, utvidet til inntil syv (7) hovedsider, i tillegg til:</p>
         <LegalList
           items={[
@@ -119,7 +121,7 @@ export const Vilkar = () => {
           ]}
         />
 
-        <LegalSubheading>Nivå 3 – Nettbutikk (1 999 kr eks. mva per måned)</LegalSubheading>
+        <LegalSubheading>Nivå 3 – Nettbutikk ({tierPrice(2)})</LegalSubheading>
         <p>Inkluderer alt i Nivå 2, utvidet til inntil ti (10) hovedsider, i tillegg til:</p>
         <LegalList
           items={[

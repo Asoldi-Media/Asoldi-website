@@ -104,11 +104,11 @@
 <p class="note">Website services only (no marketing tier yet). Not styled for production - for testing price logic before going live.</p>
 
 <div class="editable-note">
-  <strong>How this works now:</strong> Starter / SEO / Nettbutikk are <strong>fixed packages</strong> (999 / 1 499 / 1 999 at 5 pages).
+  <strong>How this works now:</strong> Starter / SEO / Nettbutikk are <strong>fixed packages</strong> (499 / 1 499 / 1 999 at 5 pages).
   Taking a service out of a named package does <strong>not</strong> lower the price. Add-ons on top of a package use Skreddersydd unit prices.
   Skreddersydd is à la carte at those custom prices (nettbutikk-funksjonalitet 900 kr, ubegrenset redigering 1 000 kr, blogg 400 kr, …).
-  Blogg-integrasjon is included in every named package (package price stays 999 / 1 499 / 1 999). On Skreddersydd it is 400 kr if ticked.
-  Layout/webdesign is always on and free. Floor on Skreddersydd is still <strong>999 kr/mnd</strong>.
+  Blogg-integrasjon is included in every named package (package price stays 499 / 1 499 / 1 999). On Skreddersydd it is 400 kr if ticked.
+  Layout/webdesign is always on and free. Floor on Skreddersydd is still <strong>499 kr/mnd</strong>.
   Page scaling is +10% of that service’s own base per page beyond 5, for hosting, SEO, flerspråklig and dedicated server.
   Ubegrenset innholdsendringer is 1 000 kr/mnd; on one-time payment it covers the <strong>first 6 months only</strong> (×6, not ×9).
   Edit the <code>DATA</code> object at the top of the &lt;script&gt; tag to change numbers.
@@ -145,7 +145,7 @@
   Named package is active. The package price stays put if you untick something inside it (blogg is included in every named package). Extra services (flerspråk, ubegrenset, apper, …) add Skreddersydd unit prices on top. Page scaling still applies from the package.
 </div>
 <div class="custom-banner" id="customBanner">
-  Skreddersydd is à la carte. Each ticked service uses its own custom price (not the named-package bundle). Layout/webdesign stays included. Monthly retainer unless you toggle one-time payment. The total never goes below 999 kr/mnd (8 991 kr one-time).
+  Skreddersydd is à la carte. Each ticked service uses its own custom price (not the named-package bundle). Layout/webdesign stays included. Monthly retainer unless you toggle one-time payment. The total never goes below 499 kr/mnd (4 491 kr one-time).
 </div>
 <table id="breakdownTable">
   <thead><tr><th>Service</th><th>Base monthly</th><th>Page scaling</th><th>Adjusted monthly</th><th>Status</th></tr></thead>
@@ -212,7 +212,7 @@
 // ---------------------------------------------------------------
 const DATA = {
   oneTimeMultiplier: 9,
-  minMonthly: 999,        // Skreddersydd floor; named packages already sit on 999 / 1499 / 1999
+  minMonthly: 499,        // Skreddersydd floor; named packages already sit on 499 / 1499 / 1999
 
   pageScaling: {
     includedPages: 5,     // pages covered before any extra-page surcharge kicks in
@@ -221,7 +221,7 @@ const DATA = {
 
   // Named-tier sticker prices at 5 pages. Unticking a package line does not discount these.
   packagePrices: {
-    starter: 999,
+    starter: 499,
     seo: 1499,
     nettbutikk: 1999
   },
@@ -587,7 +587,7 @@ function render() {
     subnote.style.display = "block";
     const parts = [`${fmt(monthly)}/mnd × ${DATA.oneTimeMultiplier}`];
     if (state.customMode && rawCustom < DATA.minMonthly) {
-      parts[0] = `Minimum ${fmt(minOneTime())} (999 kr/mnd × ${DATA.oneTimeMultiplier})`;
+      parts[0] = `Minimum ${fmt(minOneTime())} (${DATA.minMonthly} kr/mnd × ${DATA.oneTimeMultiplier})`;
     }
     if (capped > 0) parts.push(`${fmt(capped)} ubegrenset (6 mnd, ikke ×9)`);
     if (setup > 0) parts.push(`${fmt(setup)} engangs oppsett`);

@@ -5,6 +5,7 @@ import { resolvePortalCatalogs } from '../lib/client-product-catalog.js';
 import { mapsUrlFromPlace } from '../lib/google-places-search.js';
 import * as clientBusinesses from './client-businesses.js';
 import { emptyDomainSetup, normalizeDomainSetup } from '../lib/domain-setup.js';
+import { WEBSITE_TIERS, formatMonthlyPrice } from '../lib/website-tiers.js';
 
 const CLIENT_PROFILES_PATH = getDataFilePath('client-portal-profiles.json');
 const CLIENT_STATE_PATH = getDataFilePath('client-portal-state.json');
@@ -70,7 +71,7 @@ function defaultCustomPlan() {
     name: 'Din nettside plan',
     title: 'Din nettside plan',
     subtitle: 'Skreddersydd forslag',
-    monthlyPrice: 999,
+    monthlyPrice: WEBSITE_TIERS[0].monthlyExMva,
     summary: 'Skreddersydd onboarding-plan satt opp av Asoldi-teamet.',
     features: ['Nettsideutvikling', 'Hosting', 'Opprettelse', 'Domene', 'Email'],
     highlighted: true,
@@ -155,7 +156,7 @@ function defaultWebsiteBuilder() {
     existingWebsiteCode: '',
     selectedPlanId: 'tier-1-standard',
     selectedPlanName: 'Tier 1: Standard',
-    selectedPlanPrice: '999,-/mnd',
+    selectedPlanPrice: formatMonthlyPrice(WEBSITE_TIERS[0].monthlyExMva),
     selectedPlanType: 'standard',
     lastCheckoutStartedAt: '',
     legalAcknowledgement: defaultLegalAcknowledgement(),
