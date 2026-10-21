@@ -109,6 +109,24 @@ test('sent preview contract button shows Signer kontrakt without a hover', () =>
   assert.doesNotMatch(src, /\.btn\[data-status="ready"\]:hover \.btn-label/);
 });
 
+test('contract overlay scrolls inside the popup instead of the site behind', () => {
+  const src = readFileSync(new URL('../public/sales-preview-contract.js', import.meta.url), 'utf8');
+  assert.match(src, /<dialog class="overlay"/);
+  assert.match(src, /dialog\.overlay:modal/);
+  assert.match(src, /\.panel \{[\s\S]*?min-height:\s*0/);
+  assert.match(src, /\.panel \{[\s\S]*?max-height:\s*min\(92dvh/);
+  assert.match(src, /\.scroller \{[\s\S]*?overflow-y:\s*auto/);
+  assert.match(src, /\.scroller \{[\s\S]*?overscroll-behavior:\s*contain/);
+  assert.match(src, /\.overlay \{[\s\S]*?overscroll-behavior:\s*none/);
+  assert.match(src, /showModal/);
+  assert.match(src, /data-lenis-prevent/);
+  assert.match(src, /lockPageScroll/);
+  assert.match(src, /overflow = 'hidden'/);
+  assert.match(src, /trapWheel/);
+  assert.match(src, /preventDefault\(\)/);
+  assert.match(src, /lenis\?\.stop/);
+});
+
 test('preview accept is rate-limited per key', () => {
   const key = `test-ip|${Date.now()}`;
   for (let i = 0; i < 8; i += 1) {

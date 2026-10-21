@@ -7,7 +7,9 @@
   const api = `/api/public/sales-preview/${encodeURIComponent(clientId)}/contract`;
   const host = document.createElement('div');
   host.setAttribute('data-asoldi-preview-contract', '');
-  document.documentElement.appendChild(host);
+  host.setAttribute('data-lenis-prevent', '');
+  host.setAttribute('data-lenis-prevent-wheel', '');
+  (document.body || document.documentElement).appendChild(host);
   const shadow = host.attachShadow({ mode: 'open' });
 
   shadow.innerHTML = `
@@ -75,19 +77,39 @@
         display: none;
         align-items: center;
         justify-content: center;
+        width: 100%;
+        height: 100%;
+        max-width: none;
+        max-height: none;
+        margin: 0;
+        border: 0;
         padding: 24px 16px;
         background: rgba(0,0,0,.5);
+        overflow: hidden;
+        overscroll-behavior: none;
+        touch-action: none;
       }
-      .overlay.open { display: flex; }
+      .overlay.open, .overlay[open] { display: flex; }
+      dialog.overlay:modal {
+        width: 100vw;
+        height: 100dvh;
+        max-width: none;
+        max-height: none;
+        margin: 0;
+      }
+      .overlay::backdrop { background: rgba(0,0,0,.45); }
       .panel {
         display: flex;
         flex-direction: column;
         width: min(1020px, 100%);
-        max-height: min(92vh, 920px);
+        max-height: min(92dvh, 92vh, 920px);
+        min-height: 0;
         overflow: hidden;
+        overscroll-behavior: contain;
         border-radius: 16px;
         background: #EFECE4;
         box-shadow: 0 24px 80px rgba(0,0,0,.35);
+        touch-action: auto;
       }
       .head {
         display: flex;
@@ -103,7 +125,15 @@
         width: 36px; height: 36px; border: 0; border-radius: 8px;
         background: #F3F4F6; color: #111; cursor: pointer; font-size: 20px; line-height: 1;
       }
-      .scroller { min-height: 0; flex: 1; overflow-y: auto; }
+      .scroller {
+        min-height: 0;
+        flex: 1 1 auto;
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
+        touch-action: pan-y;
+      }
       .paper {
         margin: 24px auto;
         max-width: 680px;
@@ -132,7 +162,18 @@
       .offer-contract-sign h2 { margin-top: 0; }
       .offer-contract-sign-line { min-height: 56px; border-bottom: 1px solid #222; display: flex; align-items: flex-end; }
       .offer-contract-stamp { height: 52px; width: auto; max-width: 100%; object-fit: contain; }
-      .foot { flex: 0 0 auto; padding: 16px 20px 18px; border-top: 1px solid #E5E1D8; background: rgba(255,255,255,.95); }
+      .foot {
+        flex: 0 0 auto;
+        max-height: 50%;
+        min-height: 0;
+        overflow-x: hidden;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        touch-action: pan-y;
+        padding: 16px 20px 18px;
+        border-top: 1px solid #E5E1D8;
+        background: rgba(255,255,255,.95);
+      }
       .alts { display: grid; gap: 8px; margin-bottom: 12px; }
       .alt { display: flex; gap: 10px; padding: 10px 12px; border: 1px solid #E5E7EB; border-radius: 12px; cursor: pointer; font-size: 14px; }
       .alt input { margin-top: 3px; }
@@ -165,8 +206,8 @@
       </svg>
       <span class="btn-label">Signer kontrakt</span>
     </button>
-    <div class="overlay" hidden>
-      <div class="panel" role="dialog" aria-modal="true" aria-labelledby="asoldi-contract-title">
+    <dialog class="overlay" aria-modal="true" aria-labelledby="asoldi-contract-title">
+      <div class="panel" role="document">
         <div class="head">
           <h2 id="asoldi-contract-title">Kontrakt</h2>
           <button class="close" type="button" aria-label="Lukk">\u00d7</button>
@@ -176,7 +217,7 @@
         </div>
         <div class="foot"></div>
       </div>
-    </div>
+    </dialog>
   `;
 
   const btn = shadow.querySelector('.btn');
@@ -188,6 +229,7 @@
   let atBottom = false;
   let chosen = null;
   let busy = false;
+  const frozenStyles = [];
 
   function setStatus(status) {
     state.status = status;
@@ -195,9 +237,114 @@
     btn.setAttribute('aria-label', status === 'signed' ? 'Kontrakt signert' : status === 'ready' ? 'Signer kontrakt' : 'Kontrakt');
   }
 
+  function isModalOpen() {
+    return overlay.classList.contains('open') || overlay.open === true;
+  }
+
+  function eventInside(root, event) {
+    if (!root || !event) return false;
+    const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+    if (path.length) return path.includes(root);
+    return root.contains(event.target);
+  }
+
+  function wheelDeltaY(event) {
+    if (event.deltaMode === 1) return event.deltaY * 16;
+    if (event.deltaMode === 2) return event.deltaY * (scroller.clientHeight || 800);
+    return event.deltaY;
+  }
+
+  function scrollableForEvent(event) {
+    if (eventInside(foot, event) && foot.scrollHeight > foot.clientHeight + 1) return foot;
+    return scroller;
+  }
+
+  function applyDelta(el, delta) {
+    const max = Math.max(0, el.scrollHeight - el.clientHeight);
+    const next = Math.min(max, Math.max(0, el.scrollTop + delta));
+    const moved = next !== el.scrollTop;
+    el.scrollTop = next;
+    if (el === scroller) syncBottom();
+    return moved;
+  }
+
+  function pauseSmoothScroll() {
+    try { window.lenis?.stop?.(); } catch {}
+    try { window.Lenis?.instances?.forEach?.((item) => item.stop?.()); } catch {}
+  }
+
+  function resumeSmoothScroll() {
+    try { window.lenis?.start?.(); } catch {}
+  }
+
+  function lockPageScroll() {
+    if (frozenStyles.length) return;
+    [document.documentElement, document.body].forEach((node) => {
+      if (!node) return;
+      frozenStyles.push({ node, overflow: node.style.overflow, overscrollBehavior: node.style.overscrollBehavior });
+      node.style.overflow = 'hidden';
+      node.style.overscrollBehavior = 'none';
+    });
+    document.documentElement.setAttribute('data-asoldi-contract-open', '');
+    pauseSmoothScroll();
+    window.addEventListener('wheel', trapWheel, { capture: true, passive: false });
+    window.addEventListener('touchmove', trapTouch, { capture: true, passive: false });
+    window.addEventListener('keydown', trapKeys, true);
+  }
+
+  function unlockPageScroll() {
+    frozenStyles.splice(0).forEach((item) => {
+      item.node.style.overflow = item.overflow;
+      item.node.style.overscrollBehavior = item.overscrollBehavior;
+    });
+    document.documentElement.removeAttribute('data-asoldi-contract-open');
+    window.removeEventListener('wheel', trapWheel, { capture: true });
+    window.removeEventListener('touchmove', trapTouch, { capture: true });
+    window.removeEventListener('keydown', trapKeys, true);
+    resumeSmoothScroll();
+  }
+
+  function trapWheel(event) {
+    if (!isModalOpen()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+    applyDelta(scrollableForEvent(event), wheelDeltaY(event));
+  }
+
+  function trapTouch(event) {
+    if (!isModalOpen()) return;
+    if (eventInside(scroller, event) || eventInside(foot, event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function trapKeys(event) {
+    if (!isModalOpen()) return;
+    const keys = ['ArrowDown', 'ArrowUp', 'PageDown', 'PageUp', 'Home', 'End', ' '];
+    if (!keys.includes(event.key)) return;
+    const tag = String(event.target?.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select' || event.target?.isContentEditable) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const page = scroller.clientHeight || 400;
+    const delta = event.key === 'ArrowDown' ? 40
+      : event.key === 'ArrowUp' ? -40
+        : event.key === 'PageDown' || event.key === ' ' ? page
+          : event.key === 'PageUp' ? -page
+            : event.key === 'Home' ? -scroller.scrollHeight
+              : scroller.scrollHeight;
+    applyDelta(scroller, delta);
+  }
+
   function closeModal() {
+    if (typeof overlay.close === 'function' && overlay.open) {
+      overlay.close();
+      return;
+    }
     overlay.classList.remove('open');
-    overlay.hidden = true;
+    overlay.removeAttribute('open');
+    unlockPageScroll();
     btn.hidden = false;
   }
 
@@ -292,11 +439,23 @@
     paper.innerHTML = state.contractHtml || '<p>Kontraktteksten kommer når tilbudet er sendt.</p>';
     chosen = null;
     renderFooter();
-    overlay.hidden = false;
     overlay.classList.add('open');
+    if (typeof overlay.showModal === 'function') {
+      try {
+        if (!overlay.open) overlay.showModal();
+      } catch {
+        overlay.setAttribute('open', '');
+      }
+    } else {
+      overlay.setAttribute('open', '');
+    }
     btn.hidden = true;
+    lockPageScroll();
     scroller.scrollTop = 0;
-    requestAnimationFrame(syncBottom);
+    requestAnimationFrame(() => {
+      syncBottom();
+      requestAnimationFrame(syncBottom);
+    });
   }
 
   async function load() {
@@ -361,10 +520,17 @@
     if (state.status === 'ready') openModal();
   });
   shadow.querySelector('.close').addEventListener('click', closeModal);
+  overlay.addEventListener('close', () => {
+    overlay.classList.remove('open');
+    unlockPageScroll();
+    btn.hidden = false;
+  });
   overlay.addEventListener('click', (event) => {
     if (event.target === overlay) closeModal();
   });
+  overlay.addEventListener('wheel', trapWheel, { passive: false });
+  overlay.addEventListener('touchmove', trapTouch, { passive: false });
   scroller.addEventListener('scroll', syncBottom, { passive: true });
-  window.addEventListener('resize', syncBottom);
+  window.addEventListener('resize', () => { if (isModalOpen()) syncBottom(); });
   void load();
 })();
