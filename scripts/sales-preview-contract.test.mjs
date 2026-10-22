@@ -149,14 +149,17 @@ test('kontrakt link opens the contract, docks into the sign button, and explains
   assert.match(src, /wantsContractOpen/);
   assert.match(src, /params\.get\('kontrakt'\)/);
   assert.match(src, /fromContractLink && state\.status === 'ready'/);
+  assert.match(src, /if \(status === 'ready'\) btn\.dataset\.call = '1'/);
   assert.match(src, /dockIntoButton/);
   assert.match(src, /data-call/);
   assert.match(src, /asoldi-orbit/);
   assert.match(src, /@property --asoldi-orbit/);
   assert.doesNotMatch(src, /asoldi-orbit[^}]*rotate\(360deg\)/);
   assert.match(src, /account-note/);
+  assert.doesNotMatch(src, /\.account-note \{[\s\S]*?background:\s*#111/);
   assert.match(src, /Nytt Asoldi-passord/);
-  assert.match(src, /read-note/);
+  assert.doesNotMatch(src, /read-note/);
+  assert.match(src, /Du m\\u00e5 lese hele kontrakten/);
   assert.match(src, />Signer</);
 });
 

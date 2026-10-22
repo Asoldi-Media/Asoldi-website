@@ -134,11 +134,11 @@ const withBody = injectSalesPreviewContractWidget(
   '<html><body><p>site</p></body></html>',
   'client-1'
 );
-assert.match(withBody, /src="\/sales-preview-contract\.js\?v=kontrakt-3"/);
+assert.match(withBody, /src="\/sales-preview-contract\.js\?v=kontrakt-4"/);
 assert.match(withBody, /data-sales-client-id="client-1"/);
 assert.equal(
   withBody,
-  '<html><body><p>site</p><script src="/sales-preview-contract.js?v=kontrakt-3" data-sales-client-id="client-1" charset="utf-8" defer></script></body></html>'
+  '<html><body><p>site</p><script src="/sales-preview-contract.js?v=kontrakt-4" data-sales-client-id="client-1" charset="utf-8" defer></script></body></html>'
 );
 assert.equal(
   injectSalesPreviewContractWidget(withBody, 'client-1'),
@@ -146,7 +146,7 @@ assert.equal(
 );
 assert.equal(
   injectSalesPreviewContractWidget('<p>no body</p>', 'client-1'),
-  '<p>no body</p><script src="/sales-preview-contract.js?v=kontrakt-3" data-sales-client-id="client-1" charset="utf-8" defer></script>'
+  '<p>no body</p><script src="/sales-preview-contract.js?v=kontrakt-4" data-sales-client-id="client-1" charset="utf-8" defer></script>'
 );
 assert.equal(injectSalesPreviewContractWidget('<p>x</p>', ''), '<p>x</p>');
 

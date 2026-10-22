@@ -246,35 +246,12 @@
       .hint, .err { margin: 8px 0 0; text-align: center; font-size: 12px; }
       .hint { color: #9CA3AF; }
       .err { color: #DC2626; }
-      .read-note, .account-note {
-        margin: 0 0 10px;
-        padding: 11px 12px;
-        border-radius: 10px;
+      .account-note {
+        margin: 0 0 12px;
         font-size: 13px;
         line-height: 1.45;
-        font-weight: 650;
-      }
-      .read-note {
-        background: #FFF4E8;
-        border: 1px solid #FFB27A;
-        color: #9A3412;
-      }
-      .read-note.warn {
-        background: #FF5B00;
-        color: #fff;
-        border-color: #C2410C;
-        animation: asoldi-warn .7s ease 2;
-      }
-      .account-note {
-        background: #111;
-        color: #fff;
-        border: 1px solid #111;
         font-weight: 500;
-      }
-      .account-note strong { color: #FFB27A; }
-      @keyframes asoldi-warn {
-        0%, 100% { transform: scale(1); }
-        50% { transform: scale(1.02); }
+        color: #4B5563;
       }
       @media (max-width: 640px) {
         .paper { padding: 28px 20px; }
@@ -332,6 +309,8 @@
     state.status = status;
     btn.dataset.status = status;
     btn.setAttribute('aria-label', status === 'signed' ? 'Kontrakt signert' : status === 'ready' ? 'Signer kontrakt' : 'Kontrakt');
+    if (status === 'ready') btn.dataset.call = '1';
+    else delete btn.dataset.call;
   }
 
   function isModalOpen() {
@@ -456,6 +435,7 @@
     overlay.removeAttribute('open');
     unlockPageScroll();
     btn.hidden = false;
+    if (state.status === 'ready') btn.dataset.call = '1';
   }
 
   function dockIntoButton() {
@@ -517,18 +497,12 @@
     const submit = shadow.querySelector('.go');
     if (!submit) return;
     submit.classList.toggle('wait', Boolean(blockReason()) || busy);
-    const readNote = shadow.querySelector('.read-note');
-    if (readNote) {
-      readNote.hidden = atBottom;
-      if (atBottom) readNote.classList.remove('warn');
-    }
   }
 
   function renderFooter() {
     const alts = Array.isArray(state.alternatives) && state.alternatives.length >= 2 ? state.alternatives : [];
     const nameLocked = Boolean(state.name);
     foot.innerHTML = `
-      <p class="read-note">Scroll gjennom hele kontrakten f\u00f8r du trykker Signer. Hvis du ikke har lest ferdig, m\u00e5 du lese resten f\u00f8rst.</p>
       <p class="account-note">For \u00e5 signere m\u00e5 du lage en Asoldi-konto. Passordet du skriver inn blir innloggingen din p\u00e5 asoldi.com.</p>
       ${alts.length ? `<div class="alts">${alts.map((alt) => `
         <label class="alt">
@@ -575,7 +549,6 @@
     foot.querySelector('.go')?.addEventListener('click', () => {
       const reason = blockReason();
       const err = shadow.querySelector('.err');
-      const readNote = shadow.querySelector('.read-note');
       if (reason) {
         const message = reason === 'scroll'
           ? 'Du m\u00e5 lese hele kontrakten f\u00f8r du kan signere. Scroll ned til bunnen f\u00f8rst.'
@@ -590,15 +563,9 @@
           err.hidden = false;
           err.textContent = message;
         }
-        if (reason === 'scroll' && readNote) {
-          readNote.hidden = false;
-          readNote.classList.add('warn');
-          scroller.scrollBy({ top: Math.min(280, Math.max(120, scroller.clientHeight * 0.45)), behavior: 'smooth' });
-        }
         return;
       }
       if (err) { err.hidden = true; err.textContent = ''; }
-      if (readNote) readNote.classList.remove('warn');
       void submitAccept();
     });
     refreshSubmit();
@@ -713,7 +680,7 @@
     overlay.classList.remove('docking');
     unlockPageScroll();
     btn.hidden = false;
-    if (fromContractLink && state.status === 'ready') btn.dataset.call = '1';
+    if (state.status === 'ready') btn.dataset.call = '1';
   });
   overlay.addEventListener('click', (event) => {
     if (event.target === overlay) closeModal();
