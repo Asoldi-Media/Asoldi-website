@@ -1,6 +1,6 @@
 {
   "source": "asoldi-website/packages/suite",
-  "syncedAt": "2026-10-19T00:34:57.464Z",
+  "syncedAt": "2026-10-19T05:45:15.700Z",
   "files": {
     "core/documents/kind.js": "2d619597ae6c457698c539b3b7ecd6923709e868922e5afd9a1eceb4b98ae109",
     "core/documents/text.js": "1bfd544013c84f6872c11e129d36d3a914df6c0ffb68c4ec321506bed8b9b7e0",
@@ -17,8 +17,8 @@
     "core/media/gemini.js": "aa1fa7ac35b2975059442495e4994381aba57dc1138a0d6879f29828a14b92d0",
     "core/media/index.js": "4b6536788d41fe6f2f230f92439acdf207d97996a88d1f687b1293c9c1e870bd",
     "core/media/measure.js": "fa5b2bca53a2d9aaf603c04c05f14852ff13f293d6d9382898dfae5ad39dbf09",
-    "core/media/normalize.js": "874e871e9d01874ebe0765b7061778dceeb0f0310395f20edac4428bb34a4ef0",
-    "core/media/prompt.js": "4cc1d72ccd56131bb597ada1cdc52ccdeda6b0d635ae9e67fe872d616d9a5bcd",
+    "core/media/normalize.js": "d6b102f9fd733d8bcf5e34629212a00acd021d6a9b85c03fd169db20506ebe8a",
+    "core/media/prompt.js": "3740b20ea357cebaf3b3ab9b86638b0b5857d8e7fc43c6a639690181d4270acb",
     "harness/asoldi/facts.js": "fd1b16312ddd0ebe3b13bbb4789ca861331b8c166e5e672501192da05afc8b8e",
     "harness/asoldi/inbox.js": "5b96380c7f9c96459a2ef522668e7be37ba836e3def3422bac84c3d27276a157",
     "harness/asoldi/media.js": "0bc842f2f529dcb7ad0b74ea41b75212687fda74fb234ebd31ecef81ed4df45e",

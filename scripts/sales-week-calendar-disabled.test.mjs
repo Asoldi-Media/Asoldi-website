@@ -145,6 +145,15 @@ test('sales Details & tools keeps ops tools and skips Kundekort page 1 links', (
   assert.equal(details.includes('Listen in Sales UI'), false);
 });
 
+test('sales header Mail opens Hostinger webmail next to Client map', () => {
+  const salesUi = readFileSync(join(root, 'app/pages/Admin/sections/SalesClientsSection.tsx'), 'utf8');
+  const header = salesUi.slice(salesUi.indexOf('Salgsterminal'), salesUi.indexOf('Add client'));
+  const map = header.indexOf('Client map');
+  const mail = header.indexOf('https://mail.hostinger.com', map);
+  assert.ok(map > 0 && mail > map);
+  assert.match(header.slice(mail), /target="_blank"/);
+});
+
 test('sales focus card header puts Åpne preview next to Rediger', () => {
   const board = readFileSync(join(root, 'app/pages/Admin/sections/SalesFocusBoard.tsx'), 'utf8');
   const rediger = board.indexOf('Rediger');
@@ -200,4 +209,24 @@ test('Tildel selger assigns on select, stays on the tab, and does not toast', ()
   const nextRoute = server.slice(nextStart, server.indexOf("app.post('/api/admin/sales/:id/playbook'"));
   assert.match(nextRoute, /const assigned = isSalesRepAccountKey\(client\.ownerId\)/);
   assert.match(nextRoute, /notifyAttendees: assigned/);
+});
+
+test('møte extras resend confirmation after Åpne preview without changing the time', () => {
+  const board = readFileSync(join(root, 'app/pages/Admin/sections/SalesFocusBoard.tsx'), 'utf8');
+  const extras = board.slice(
+    board.indexOf("if (action.presetKey === 'meeting')"),
+    board.indexOf("const callRow = action.presetKey"),
+  );
+  const preview = extras.indexOf('Åpne preview');
+  const resend = extras.indexOf('Send konfirmasjon på nytt', preview);
+  const notes = extras.indexOf('Notater', resend);
+  assert.ok(preview > 0 && resend > preview && notes > resend);
+  assert.match(extras, /onSendConfirmation\(client\)/);
+  assert.match(extras, /Flytter ikke møtet/);
+  const server = readFileSync(join(root, 'server.js'), 'utf8');
+  const welcome = server.slice(
+    server.indexOf("app.post('/api/admin/sales/:id/send-welcome-email'"),
+    server.indexOf("app.post('/api/admin/sales/:id/send-reminder'"),
+  );
+  assert.match(welcome, /force: true/);
 });

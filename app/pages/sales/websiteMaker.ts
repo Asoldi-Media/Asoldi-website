@@ -113,11 +113,21 @@ export function getPublicPreviewHref(clientId = '') {
   return `${PUBLIC_SALES_URL}/sales-preview/${encodeURIComponent(id)}/`;
 }
 
+export function getPublicPreviewContractHref(clientId = '') {
+  const id = String(clientId || '').trim();
+  if (!id) return '';
+  return `${PUBLIC_SALES_URL}/sales-preview/${encodeURIComponent(id)}/kontrakt`;
+}
+
 export function getPublicClientPreviewUrl(client: { id?: string; websiteImport?: { publicUrl?: string } | null }) {
   const id = String(client?.id || '').trim();
   const stored = String(client.websiteImport?.publicUrl || '').trim();
   if (id && stored.includes(id)) return stored.endsWith('/') ? stored : `${stored}/`;
   return getPublicPreviewHref(id);
+}
+
+export function getPublicClientContractUrl(client: { id?: string } | null | undefined) {
+  return getPublicPreviewContractHref(client?.id);
 }
 
 export function buildMakerRunUrl(

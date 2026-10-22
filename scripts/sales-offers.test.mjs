@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'fs';
+import { mkdtempSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 
@@ -179,10 +179,15 @@ test('offer draft shows the client and the editing rep instead of identity merge
   assert.match(old, /Dere sender logo/);
   assert.doesNotMatch(old, /eget CMS/);
   assert.doesNotMatch(old, /Vedlagt ligger kontrakten/);
-  assert.match(old, /Hva som skjer fremover[\s\S]*signert kontrakten som er vedlagt/);
+  assert.match(old, /Hva som skjer fremover[\s\S]*åpner dere knappen under/);
+  assert.doesNotMatch(old, /signert kontrakten som er vedlagt/);
   const fromReply = offerEmail.refreshOfferShell('<h2>Hva som skjer fremover</h2><p data-offer-fixed="next">Etter at dere har sett på tilbudet og vi har mottatt svar vil vi avtale oppstarts tid.</p>');
-  assert.match(fromReply, /signert kontrakten som er vedlagt/);
+  assert.match(fromReply, /åpner dere knappen under/);
   assert.doesNotMatch(fromReply, /mottatt svar/);
+  const withCta = offerEmail.ensureOfferContractCta(fromReply, 'https://asoldi.com/sales-preview/client-1/kontrakt');
+  assert.match(withCta, /data-offer-cta="contract"/);
+  assert.match(withCta, /Les og signer kontrakten/);
+  assert.match(withCta, /https:\/\/asoldi\.com\/sales-preview\/client-1\/kontrakt/);
 });
 
 test('offer party: empty override uses the card, Til is the website email, map address is the address', () => {
@@ -532,7 +537,7 @@ test('offer AI: transcript fill and contract reflection go through the injected 
   assert.match(fillCall.system, /Kall mottakeren "kunden"/i);
   assert.doesNotMatch(fillCall.system, /Kunden vil at …/);
   const letter = offerEmail.offerLetterAlreadyWritten();
-  assert.match(letter, /\{\{terms\}\}[\s\S]*Hva er inkludert[\s\S]*\{\{benefits\}\}[\s\S]*Hva som skjer fremover[\s\S]*signert kontrakten som er vedlagt/);
+  assert.match(letter, /\{\{terms\}\}[\s\S]*Hva er inkludert[\s\S]*\{\{benefits\}\}[\s\S]*Hva som skjer fremover[\s\S]*åpner dere knappen under/);
   assert.doesNotMatch(letter, /eget CMS/);
   assert.match(fillCall.system, /allerede står/i);
   assert.doesNotMatch(fillCall.system, /Aldri start med/i);
@@ -851,17 +856,25 @@ test('in-meeting contract mail skips the transcript letter', () => {
   assert.equal(offerEmail.offerSendContentMode('contract'), 'contract');
   assert.equal(offerEmail.offerSendContentMode(''), 'full');
   assert.equal(offerEmail.offerSendContentMode('full'), 'full');
-  const email = offerEmail.buildContractOnlyBodyHtml({ attached: true });
+  const email = offerEmail.buildContractOnlyBodyHtml({
+    contractUrl: 'https://asoldi.com/sales-preview/client-1/kontrakt',
+  });
   const portal = offerEmail.buildContractOnlyBodyHtml({ attached: false });
   assert.equal(offerEmail.findOfferPlaceholders(email).length, 0);
   assert.doesNotMatch(email, /data-offer-slot|data-offer-placeholder|\{\{need\}\}/);
-  assert.match(email, /kontrakten vedlagt/i);
-  assert.match(email, /asoldi\.com under Tilbud/);
-  assert.match(portal, /avtalen under/i);
+  assert.match(email, /lag Asoldi-konto/i);
+  assert.match(email, /data-offer-cta="contract"/);
+  assert.match(email, /\/sales-preview\/client-1\/kontrakt/);
+  assert.doesNotMatch(email, /vedlagt/);
+  assert.match(portal, /lag Asoldi-konto/i);
   assert.doesNotMatch(portal, /vedlagt/);
-  const built = offerEmail.buildContractOnlyEmail({ client: CLIENT, attached: true });
+  const built = offerEmail.buildContractOnlyEmail({
+    client: CLIENT,
+    contractUrl: 'https://asoldi.com/sales-preview/client-1/kontrakt',
+  });
   assert.match(built.subject, /Kontrakt til \{\{businessName\}\}/);
   assert.match(built.html, /Hei \{\{firstName\}\}/);
+  assert.match(built.html, /Les og signer kontrakten/);
 });
 
 test('portal letter strips email chrome and keeps greeting plus product specs', async () => {
@@ -1259,5 +1272,20 @@ test('sending tilbud or kun kontrakt checks Møte and Tilbud without a page relo
   assert.equal(afterContract.progression.offerSent, true);
   const again = salesClients.markOfferSentOnDelivery(row.id);
   assert.equal(again.progression.offerSent, true);
+});
+
+test('offer send uses the /kontrakt link and does not attach a PDF', () => {
+  const server = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  const composeStart = server.indexOf('async function composeOfferMessage');
+  const sendStart = server.indexOf("app.post('/api/admin/sales/:id/offer/send'");
+  const sendEnd = server.indexOf('// --- Admin side: review queue', sendStart);
+  const compose = server.slice(composeStart, sendStart);
+  const send = server.slice(sendStart, sendEnd);
+  assert.ok(composeStart > 0 && sendStart > composeStart && sendEnd > sendStart);
+  assert.match(compose, /buildPublicSalesPreviewContractUrl/);
+  assert.match(compose, /ensureOfferContractCta/);
+  assert.match(compose, /attached: false/);
+  assert.match(send, /attachments: Array.isArray\(composed\.attachments\)/);
+  assert.doesNotMatch(send, /contentType: 'application\/pdf'/);
 });
 

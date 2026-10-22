@@ -7,6 +7,7 @@ import {
   assertImportedPreviewHasAssets,
   collectRelativeAssetRefs,
   fillExportZipWithMakerAssets,
+  ensureSharedPreviewStyles,
   inlineLocalStylesheets,
   makerAssetFetchUrls,
   recoverMissingStylesheets,
@@ -109,6 +110,23 @@ const inlined = inlineLocalStylesheets(
 assert.match(inlined, /<style data-preview-css="theme.css">/);
 assert.match(inlined, /url\(assets\/brand\.woff\)/);
 assert.doesNotMatch(inlined, /<link rel="stylesheet"/);
+
+const sharedTmp = await fs.mkdtemp(path.join(os.tmpdir(), 'shared-css-'));
+await fs.mkdir(path.join(sharedTmp, 'assets'), { recursive: true });
+await fs.writeFile(path.join(sharedTmp, 'assets', 'theme.css'), 'body{color:red}', 'utf8');
+await fs.writeFile(
+  path.join(sharedTmp, 'index.html'),
+  '<html><head><link rel="stylesheet" href="assets/theme.css"></head><body>home</body></html>',
+  'utf8'
+);
+const shared = ensureSharedPreviewStyles(
+  '<html><head><link rel="stylesheet" href="https://demo.example/home_v2.html/demo/assets/css/style.css"></head><body>about</body></html>',
+  [sharedTmp]
+);
+assert.match(shared, /<style data-preview-css="theme.css">/);
+assert.match(shared, /body\{color:red\}/);
+assert.doesNotMatch(shared, /home_v2\.html/);
+await fs.rm(sharedTmp, { recursive: true, force: true });
 await fs.rm(tmp, { recursive: true, force: true });
 
 const inlinedOnly = await fs.mkdtemp(path.join(os.tmpdir(), 'inline-only-'));

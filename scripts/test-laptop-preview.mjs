@@ -6,7 +6,9 @@ import {
   buildLaptopPreviewEntry,
   buildMakerExportUrl,
   buildPreviewBundleUploadUrl,
+  buildPublicSalesPreviewContractUrl,
   buildPublicSalesPreviewUrl,
+  buildSalesPreviewContractPath,
   buildSalesPreviewPath,
   clientNeedsPublicPreviewSnapshot,
   injectPreviewBaseHref,
@@ -21,11 +23,17 @@ import {
   lanAsoldiOriginFromMakerUrl,
   rewritePreviewAssetPaths,
   rewriteMakerPreviewRefs,
+  repairHtmlFileUsedAsDirectoryUrl,
   toPublicSalesPreviewUrl,
 } from '../lib/laptop-preview.js';
 
 assert.equal(buildSalesPreviewPath('abc 1'), '/sales-preview/abc%201/');
 assert.equal(buildPublicSalesPreviewUrl('client-1'), `${PUBLIC_SALES_ORIGIN}/sales-preview/client-1/`);
+assert.equal(buildSalesPreviewContractPath('client-1'), '/sales-preview/client-1/kontrakt');
+assert.equal(
+  buildPublicSalesPreviewContractUrl('client-1'),
+  `${PUBLIC_SALES_ORIGIN}/sales-preview/client-1/kontrakt`
+);
 assert.equal(
   toPublicSalesPreviewUrl('/sales-preview/client-1/', 'client-1'),
   `${PUBLIC_SALES_ORIGIN}/sales-preview/client-1/`
@@ -130,7 +138,7 @@ assert.match(withBody, /src="\/sales-preview-contract\.js"/);
 assert.match(withBody, /data-sales-client-id="client-1"/);
 assert.equal(
   withBody,
-  '<html><body><p>site</p><script src="/sales-preview-contract.js" data-sales-client-id="client-1" charset="utf-8" defer></script></body></html>'
+  '<html><body><p>site</p><script src="/sales-preview-contract.js?v=kontrakt-1" data-sales-client-id="client-1" charset="utf-8" defer></script></body></html>'
 );
 assert.equal(
   injectSalesPreviewContractWidget(withBody, 'client-1'),
@@ -138,9 +146,27 @@ assert.equal(
 );
 assert.equal(
   injectSalesPreviewContractWidget('<p>no body</p>', 'client-1'),
-  '<p>no body</p><script src="/sales-preview-contract.js" data-sales-client-id="client-1" charset="utf-8" defer></script>'
+  '<p>no body</p><script src="/sales-preview-contract.js?v=kontrakt-1" data-sales-client-id="client-1" charset="utf-8" defer></script>'
 );
 assert.equal(injectSalesPreviewContractWidget('<p>x</p>', ''), '<p>x</p>');
+
+assert.equal(
+  repairHtmlFileUsedAsDirectoryUrl(
+    'https://landing.engotheme.com/html/freshfood/demo/home_v2.html/html/freshfood/demo/assets/css/bootstrap.css'
+  ),
+  'https://landing.engotheme.com/html/freshfood/demo/assets/css/bootstrap.css'
+);
+assert.equal(
+  repairHtmlFileUsedAsDirectoryUrl('https://landing.engotheme.com/html/freshfood/demo/assets/css/bootstrap.css'),
+  'https://landing.engotheme.com/html/freshfood/demo/assets/css/bootstrap.css'
+);
+assert.match(
+  rewritePreviewAssetPaths(
+    '<link rel="stylesheet" href="https://landing.engotheme.com/html/freshfood/demo/home_v2.html/html/freshfood/demo/assets/css/style.css">',
+    'client-1'
+  ),
+  /href="https:\/\/landing\.engotheme\.com\/html\/freshfood\/demo\/assets\/css\/style\.css"/
+);
 
 // Root-absolute assets must be pulled back inside the preview folder.
 assert.equal(

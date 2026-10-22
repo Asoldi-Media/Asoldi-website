@@ -110,7 +110,7 @@ export function buildMediaBriefPrompt({
     '- facesVisible: true only if at least one face is sharp enough that you could tell two people apart.',
     '- setting: where this is, in a few words (open kitchen pass, hotel bedroom, museum gallery, street facade, plain studio backdrop).',
     '- medium: photo (camera image, including a cut-out photo), illustration (drawn/flat art, circular typographic badges, spinning text rings, watermarks — not a photograph of a person), logo (a brand mark or wordmark meant to identify a business — a photo of a sign on a building is still a photo), icon (a small simple UI, social, or payment glyph), video, audio, other.',
-    '- logoKind: client if this is THIS client\'s brand mark (a motif that fits the business counts even when the name is not readable — scissors for a salon named Cutters). partner if readable words name a different business. none if it is not a logo. unknown if it looks like a mark but you cannot tell whose.',
+    '- logoKind: client if this file IS the brand mark (a motif that fits the business counts even when the name is not readable — scissors for a salon named Cutters). partner if readable words name a different business. none if it is not a logo. unknown if it looks like a mark but you cannot tell whose. A photo of a person, product, place, or sign is none even when the brand is printed on it.',
     '- logoFormat: wordmark (wide name lockup), mark (symbol only), favicon (tiny square app/site icon), none.',
     '- background: transparent | solid | photo | unknown. Use measured transparency when provided.',
     '- subjectKind: employee (staff who are the subject), customer (reviewer, testimonial portrait, quote graphic of a client), product, place, graphic, none.',

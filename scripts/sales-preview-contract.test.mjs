@@ -123,8 +123,24 @@ test('contract overlay scrolls inside the popup instead of the site behind', () 
   assert.match(src, /lockPageScroll/);
   assert.match(src, /overflow = 'hidden'/);
   assert.match(src, /trapWheel/);
+  assert.match(src, /applyDelta\(scroller,/);
+  assert.doesNotMatch(src, /scrollableForEvent/);
   assert.match(src, /preventDefault\(\)/);
   assert.match(src, /lenis\?\.stop/);
+});
+
+test('kontrakt link opens the contract, docks into the sign button, and explains the Asoldi password', () => {
+  const src = readFileSync(new URL('../public/sales-preview-contract.js', import.meta.url), 'utf8');
+  assert.match(src, /wantsContractOpen/);
+  assert.match(src, /kontrakt=1/);
+  assert.match(src, /fromContractLink && state\.status === 'ready'/);
+  assert.match(src, /dockIntoButton/);
+  assert.match(src, /data-call/);
+  assert.match(src, /asoldi-orbit/);
+  assert.match(src, /account-note/);
+  assert.match(src, /Nytt Asoldi-passord/);
+  assert.match(src, /read-note/);
+  assert.match(src, />Signer</);
 });
 
 test('preview accept is rate-limited per key', () => {

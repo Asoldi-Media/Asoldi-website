@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Copy,
   ExternalLink,
   FileText,
   Globe,
@@ -89,6 +90,8 @@ type Props = {
   onSendConfirmation: (client: SalesClient) => void;
   onOpenMeet: (client: SalesClient) => void;
   onOpenPreview: (client: SalesClient) => void;
+  onOpenContract: (client: SalesClient) => void;
+  onCopyContract: (client: SalesClient) => void;
   onAssign: (client: SalesClient, ownerId: string) => void;
   onSecondary: (client: SalesClient) => void;
   onNotSold: (client: SalesClient) => void;
@@ -389,7 +392,7 @@ export function SalesFocusBoard(props: Props) {
       const missedUndone = last.missed && !missedNow;
       if (active === 'assign') {
         // Stay on Tildel selger and show the next unassigned client. Do not follow or toast.
-      } else if ((active === 'meetingsToday' && moved?.progression?.meetingHeld) || missedNow || missedUndone || parked) {
+      } else if (missedNow || missedUndone || parked) {
         setNote(`${last.name} ${where}.${entry ? ` Neste: ${entry.client.businessName || 'kunde'}.` : ''}`);
       } else {
         setHeld({ category: active, id: last.id, note: `${last.name} ${where}.` });
@@ -647,6 +650,8 @@ function FocusCard(props: FocusCardProps) {
     onSendConfirmation,
     onOpenMeet,
     onOpenPreview,
+    onOpenContract,
+    onCopyContract,
     onSecondary,
     onNotSold,
     renderNotes,
@@ -665,6 +670,9 @@ function FocusCard(props: FocusCardProps) {
   const meetOpening = meetOpeningId === client.id;
   const actionBusy = actionBusyId === client.id;
   const hasPreview = previewAvailable(client);
+  const mailBusy = sendingMailKey === `${client.id}:thank-you`;
+  const confirmationGaps = confirmationSendGaps(client) as string[];
+  const confirmationSent = Boolean(client.reminders?.thankYouSentAt);
   const name = client.businessName || 'kunden';
   const signedAt = String(client.contractSignedAt || '').trim();
   const missed = salesMissedMeeting(client, nowMs) as MissedMeeting | null;
@@ -782,7 +790,19 @@ function FocusCard(props: FocusCardProps) {
           busy: progressBusyKey === `${client.id}:contractSigned`,
           toggleTitle: row.done ? 'Kontrakt signert. Klikk for å angre.' : 'Marker kontrakt signert. Kunden flyttes til Solgt.',
           onToggle: sent ? () => toggleGoal('contractSigned') : undefined,
-          extras: sent ? <button type="button" onClick={() => onOpenFlow(client, 3)} className={ROW_BUTTON}>Åpne tilbud</button> : null,
+          extras: sent ? (
+            <>
+              <button type="button" onClick={() => onOpenContract(client)} className={ROW_BUTTON} title="Åpne preview med kontrakten åpen">
+                <FileText size={11} />
+                Åpne kontraktlenke
+              </button>
+              <button type="button" onClick={() => onCopyContract(client)} className={ROW_BUTTON} title="Kopier lenken kunden signerer på">
+                <Copy size={11} />
+                Kopier kontraktlenke
+              </button>
+              <button type="button" onClick={() => onOpenFlow(client, 3)} className={ROW_BUTTON}>Åpne tilbud</button>
+            </>
+          ) : null,
         };
       }
       return row;
@@ -826,6 +846,20 @@ function FocusCard(props: FocusCardProps) {
           </button>
           <button
             type="button"
+            onClick={() => onSendConfirmation(client)}
+            disabled={mailBusy || confirmationGaps.length > 0}
+            className={ROW_BUTTON}
+            title={confirmationGaps.length
+              ? `Mangler ${confirmationGaps.join(', ')}`
+              : confirmationSent
+                ? 'Sender samme bekreftelse på nytt. Flytter ikke møtet.'
+                : 'Send møtebekreftelse til kunden'}
+          >
+            {mailBusy ? <Loader2 size={11} className="animate-spin" /> : <Mail size={11} />}
+            {mailBusy ? 'Sender…' : confirmationSent ? 'Send konfirmasjon på nytt' : 'Send konfirmasjon'}
+          </button>
+          <button
+            type="button"
             onClick={() => onOpenFlow(client, 2)}
             className={ROW_BUTTON}
             title="Åpne produktnotater (side 2 etter Kundekort)"
@@ -838,10 +872,17 @@ function FocusCard(props: FocusCardProps) {
     }
     const callRow = action.presetKey === 'contractCheckup' || action.presetKey === 'signatureFollowUp' || action.presetKey === 'checkup3mnd';
     if (callRow && phone && !action.doneAt) {
+      const offerSent = Boolean(client.progression?.offerSent);
       return (
         <>
           <a href={`tel:${phone}`} className={ROW_BUTTON}><Phone size={11} />Ring</a>
           <a href={`sms:${phone}`} className={ROW_BUTTON}><MessageSquare size={11} />SMS</a>
+          {offerSent ? (
+            <button type="button" onClick={() => onOpenContract(client)} className={ROW_BUTTON} title="Åpne preview med kontrakten åpen">
+              <FileText size={11} />
+              Åpne kontraktlenke
+            </button>
+          ) : null}
         </>
       );
     }
@@ -909,6 +950,28 @@ function FocusCard(props: FocusCardProps) {
               <Globe size={13} />
               Åpne preview
             </button>
+            {client.progression?.offerSent ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onOpenContract(client)}
+                  className={HEADER_BUTTON}
+                  title={hasPreview ? 'Åpne preview med kontrakten allerede åpen' : 'Ingen preview publisert ennå'}
+                >
+                  <FileText size={13} />
+                  Åpne kontraktlenke
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onCopyContract(client)}
+                  className={HEADER_BUTTON}
+                  title="Kopier lenken kunden signerer på"
+                >
+                  <Copy size={13} />
+                  Kopier kontraktlenke
+                </button>
+              </>
+            ) : null}
             {!isWon ? (
               <>
                 <button

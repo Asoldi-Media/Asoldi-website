@@ -104,6 +104,35 @@ export function demoteForeignBrandLogo(transcript = {}, businessName = '', { fie
   );
 }
 
+/** A photo of a product, person, place, or sign is not the header logo, even when the brand is visible. */
+export function demoteSceneMarkedAsLogo(transcript = {}, { fieldForSection } = {}) {
+  if (!transcript || typeof transcript !== 'object') return transcript;
+  const kind = lower(transcript.logoKind);
+  if (kind !== 'client' && kind !== 'unknown') return transcript;
+  const medium = lower(transcript.medium);
+  const section = lower(transcript.primarySection);
+  const subject = lower(transcript.subjectKind);
+  const people = Number(transcript.peopleCount || 0);
+  const sceneSubject = ['product', 'employee', 'customer', 'place'].includes(subject);
+  const scene = medium === 'photo' || transcript.background === 'photo' || people > 0 || sceneSubject;
+  if (!scene) return transcript;
+  const cleanMark = (section === 'logo' || section === 'favicon' || medium === 'logo' || medium === 'icon') && people === 0 && transcript.background !== 'photo' && !sceneSubject;
+  if (cleanMark) return transcript;
+  const alt = lower(transcript.alternateSection);
+  const nextSection = section === 'logo' || section === 'favicon'
+    ? (alt && alt !== 'logo' && alt !== 'favicon' ? transcript.alternateSection : 'gallery')
+    : transcript.primarySection;
+  return withField(
+    {
+      ...transcript,
+      logoKind: 'none',
+      logoFormat: 'none',
+      primarySection: nextSection,
+    },
+    fieldForSection
+  );
+}
+
 /** Measured shape decides favicon vs wordmark, not the model's eyeballing. */
 export function applyMeasuredLogoFormat(transcript = {}, measured = {}, { fieldForSection } = {}) {
   if (!transcript || typeof transcript !== 'object') return transcript;
@@ -306,6 +335,7 @@ export function normalizeMediaBrief(raw = {}, { fileName = '', kind = 'image', m
   };
   // Foreign-brand check first: the shape rule below would otherwise lift a logo-looking price list into the logo slot.
   if (typeof businessName === 'string') next = demoteForeignBrandLogo(next, businessName, { fieldForSection: fieldFor });
+  next = demoteSceneMarkedAsLogo(next, { fieldForSection: fieldFor });
   next = applyMeasuredLogoFormat(next, measured || { aspectClass, ext: extOf(fileName), maxSide: Math.max(next.width, next.height) }, { fieldForSection: fieldFor });
   next.primaryField = fieldFor(next.primarySection);
   next.cardLine = buildCardLine(next, labelForSection);

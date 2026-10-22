@@ -141,7 +141,7 @@ type Props = {
    * goal's done rows, done/total on the goal chips, and the full list without the scroll cap.
    */
   fixedRows?: SalesFixedRow[];
-  /** Extra buttons under a stored row (Møtelenke / Åpne preview on the Møte row). */
+  /** Extra buttons under a stored row (Møtelenke / Åpne preview / Send konfirmasjon on the Møte row). */
   renderRowExtras?: (action: SalesNextAction) => React.ReactNode;
   /** Row the selected focus category points to. */
   focusRowId?: string;
@@ -602,7 +602,7 @@ export function SalesGoalTimeline({
                     <StatusToggle
                       status="done"
                       disabled={actionBusy}
-                      title="Ferdig. Klikk for å angre."
+                      title={currentAction.presetKey === 'meeting' ? 'Møtet hatt. Klikk for å gå tilbake til Møter.' : 'Ferdig. Klikk for å angre.'}
                       onClick={() => void onMutateAction({ op: 'uncomplete', id: currentAction.id })}
                     />
                     <span className="shrink-0 w-4" aria-hidden="true" />

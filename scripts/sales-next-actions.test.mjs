@@ -763,6 +763,8 @@ test('goal chips open that goal\'s actions instead of checking the goal', () => 
   assert.equal(src.includes('Fullfør nåværende mål først'), false);
   const board = readFileSync(join(here, '../app/pages/Admin/sections/SalesFocusBoard.tsx'), 'utf8');
   assert.match(board, /data-sales-client-card/);
+  assert.equal(board.includes("active === 'meetingsToday' && moved?.progression?.meetingHeld"), false);
+  assert.match(src, /Møtet hatt\. Klikk for å gå tilbake til Møter/);
   const clients = readFileSync(join(here, '../app/pages/Admin/sections/SalesClientsSection.tsx'), 'utf8');
   assert.match(clients, /data-sales-client-card/);
   assert.match(clients, /data-sales-client-overlay/);
@@ -856,6 +858,53 @@ test('unchecking møtet hatt removes the auto oppsjekk sett', () => {
   const undone = applyProgressionChange(after, 'meetingHeld', false, { nowMs: now });
   assert.equal(undone.error, undefined);
   assert.equal(undone.nextActions.some((entry) => isAutoOfferCheckIn(entry)), false);
+});
+
+test('unchecking the meeting action reverts møtet hatt and keeps the row', () => {
+  const row = client();
+  const meeting = decorateNextActions(row).find((action) => action.presetKey === 'meeting');
+  const done = applyNextActionMutation(row, { op: 'complete', id: meeting.id });
+  const held = { ...row, progression: done.progression, nextActions: done.nextActions };
+  const undone = applyNextActionMutation(held, { op: 'uncomplete', id: meeting.id });
+  assert.equal(undone.error, undefined);
+  assert.equal(undone.progression.meetingHeld, false);
+  const after = { ...held, progression: undone.progression, nextActions: undone.nextActions };
+  assert.equal(getCurrentGoalKey(after), 'meetingHeld');
+  const openMeeting = decorateNextActions(after).find((action) => action.presetKey === 'meeting');
+  assert.ok(openMeeting);
+  assert.equal(openMeeting.doneAt, '');
+  assert.equal(after.nextActions.some((entry) => isAutoOfferCheckIn(entry)), false);
+});
+
+test('unchecking påminnelse after møtet hatt keeps the row instead of deleting it', () => {
+  const now = Date.parse('2026-09-28T14:00:00.000Z');
+  const held = applyProgressionChange(client(), 'meetingHeld', true, { nowMs: now });
+  const sms = held.nextActions.find((action) => action.presetKey === 'sms1h');
+  assert.ok(sms?.doneAt);
+  const after = { ...client(), progression: held.progression, nextActions: held.nextActions };
+  const undone = applyNextActionMutation(after, { op: 'uncomplete', id: sms.id });
+  assert.equal(undone.error, undefined);
+  assert.equal(undone.progression, undefined);
+  const kept = decorateNextActions({ ...after, nextActions: undone.nextActions })
+    .find((action) => action.presetKey === 'sms1h');
+  assert.ok(kept);
+  assert.equal(kept.doneAt, '');
+  assert.equal(after.progression.meetingHeld, true);
+});
+
+test('møtet hatt with stripped rows still shows meeting and påminnelse as done', () => {
+  const stripped = client({
+    progression: { meetingHeld: true },
+    nextActions: [],
+  });
+  const actions = decorateNextActions(stripped);
+  const meeting = actions.find((action) => action.presetKey === 'meeting');
+  const sms = actions.find((action) => action.presetKey === 'sms1h');
+  assert.ok(meeting?.doneAt);
+  assert.ok(sms?.doneAt);
+  const undone = applyNextActionMutation(stripped, { op: 'uncomplete', id: meeting.id });
+  assert.equal(undone.progression.meetingHeld, false);
+  assert.equal(undone.nextActions.some((action) => action.presetKey === 'meeting' && !action.doneAt), true);
 });
 
 test('next day 09:00 uses Europe/Oslo in winter', () => {

@@ -5,10 +5,12 @@ import path from 'path';
 import {
   embedSrcFromRequest,
   hrefForPreviewRoute,
+  isPreviewContractSlug,
   labelForPreviewRoute,
   listSalesPreviewPages,
   pagesFromSitemapXml,
   previewBaseFromRequestPath,
+  previewWantsContract,
   previewWantsEmbed,
   renderSalesPreviewChrome,
   routeFromPreviewRelativePath,
@@ -24,6 +26,14 @@ assert.equal(
 );
 assert.equal(labelForPreviewRoute('/'), 'Hjem');
 assert.equal(labelForPreviewRoute('/about-us'), 'About Us');
+assert.equal(
+  labelForPreviewRoute('/2026/01/28/how-food-trucks-boost-crowd-energy-at-events'),
+  'Blogginnlegg'
+);
+assert.equal(labelForPreviewRoute('/single-post'), 'Blogginnlegg');
+assert.equal(labelForPreviewRoute('/news/hello', 'post'), 'Blogginnlegg');
+assert.equal(labelForPreviewRoute('/blog/hello', 'blog'), 'Blogginnlegg');
+assert.equal(labelForPreviewRoute('/blog', 'blog'), 'Blog');
 assert.equal(previewBaseFromRequestPath('/sales-preview/garnstogo/shop', 'id-1'), '/sales-preview/garnstogo/');
 assert.equal(
   hrefForPreviewRoute('/sales-preview/client-1/', '/shop'),
@@ -42,6 +52,17 @@ assert.equal(
 assert.equal(
   embedSrcFromRequest({ originalUrl: '/sales-preview/client-1/shop' }),
   '/sales-preview/client-1/shop?asoldi-embed=1'
+);
+assert.equal(isPreviewContractSlug('kontrakt'), true);
+assert.equal(isPreviewContractSlug('kontrakt/index.html'), true);
+assert.equal(isPreviewContractSlug('shop'), false);
+assert.equal(
+  previewWantsContract({ originalUrl: '/sales-preview/client-1/kontrakt', query: {} }),
+  true
+);
+assert.equal(
+  embedSrcFromRequest({ originalUrl: '/sales-preview/client-1/kontrakt' }),
+  '/sales-preview/client-1/?kontrakt=1&asoldi-embed=1'
 );
 
 const sitemap = `<?xml version="1.0" encoding="UTF-8"?>

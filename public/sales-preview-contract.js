@@ -34,11 +34,37 @@
         color: #fff;
         cursor: pointer;
         transform: translateX(-50%);
-        overflow: hidden;
+        isolation: isolate;
+        overflow: visible;
         white-space: nowrap;
         box-shadow: 0 8px 28px rgba(0,0,0,.28);
-        transition: min-width .25s ease, background .2s ease, color .2s ease, border-color .2s ease, opacity .2s ease;
+        transition: min-width .25s ease, background .2s ease, color .2s ease, border-color .2s ease, opacity .2s ease, box-shadow .2s ease;
       }
+      .btn::before {
+        content: "";
+        position: absolute;
+        inset: -4px;
+        border-radius: inherit;
+        pointer-events: none;
+        opacity: 0;
+        z-index: -1;
+        padding: 2.5px;
+        background: conic-gradient(from 0deg, #FF5B00 0 12%, #ffb087 16%, #111 40%, #fff 70%, #FF5B00 100%);
+        box-shadow: 0 0 18px rgba(255,91,0,.55);
+        -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+        -webkit-mask-composite: xor;
+        mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+        mask-composite: exclude;
+      }
+      .btn[data-call="1"] {
+        border-color: transparent;
+        box-shadow: 0 0 0 1px rgba(255,91,0,.4), 0 8px 28px rgba(255,91,0,.32);
+      }
+      .btn[data-call="1"]::before {
+        opacity: 1;
+        animation: asoldi-orbit 1.05s linear infinite;
+      }
+      @keyframes asoldi-orbit { to { transform: rotate(360deg); } }
       .btn[data-status="idle"] {
         background: #9CA3AF;
         border-color: #D1D5DB;
@@ -98,6 +124,11 @@
         margin: 0;
       }
       .overlay::backdrop { background: rgba(0,0,0,.45); }
+      .overlay.docking {
+        background: rgba(0,0,0,0);
+        transition: background .45s ease;
+      }
+      .overlay.docking::backdrop { background: rgba(0,0,0,0); }
       .panel {
         display: flex;
         flex-direction: column;
@@ -110,6 +141,11 @@
         background: #EFECE4;
         box-shadow: 0 24px 80px rgba(0,0,0,.35);
         touch-action: auto;
+        will-change: transform, opacity;
+      }
+      .panel.docking {
+        pointer-events: none;
+        transition: transform .55s cubic-bezier(.22,.7,.2,1), opacity .4s ease;
       }
       .head {
         display: flex;
@@ -194,6 +230,36 @@
       .hint, .err { margin: 8px 0 0; text-align: center; font-size: 12px; }
       .hint { color: #9CA3AF; }
       .err { color: #DC2626; }
+      .read-note, .account-note {
+        margin: 0 0 10px;
+        padding: 11px 12px;
+        border-radius: 10px;
+        font-size: 13px;
+        line-height: 1.45;
+        font-weight: 650;
+      }
+      .read-note {
+        background: #FFF4E8;
+        border: 1px solid #FFB27A;
+        color: #9A3412;
+      }
+      .read-note.warn {
+        background: #FF5B00;
+        color: #fff;
+        border-color: #C2410C;
+        animation: asoldi-warn .7s ease 2;
+      }
+      .account-note {
+        background: #111;
+        color: #fff;
+        border: 1px solid #111;
+        font-weight: 500;
+      }
+      .account-note strong { color: #FFB27A; }
+      @keyframes asoldi-warn {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.02); }
+      }
       @media (max-width: 640px) {
         .paper { padding: 28px 20px; }
         .offer-contract-parties, .offer-contract-sign, .pair { grid-template-columns: 1fr; }
@@ -229,7 +295,19 @@
   let atBottom = false;
   let chosen = null;
   let busy = false;
+  let docking = false;
   const frozenStyles = [];
+
+  function wantsContractOpen() {
+    try {
+      const params = new URLSearchParams(location.search || '');
+      if (params.get('kontrakt') === '1' || params.get('contract') === '1') return true;
+      return /\/kontrakt(?:\/index\.html?)?$/i.test(String(location.pathname || '').replace(/\/+$/, ''));
+    } catch {
+      return false;
+    }
+  }
+  const fromContractLink = wantsContractOpen();
 
   function setStatus(status) {
     state.status = status;
@@ -252,11 +330,6 @@
     if (event.deltaMode === 1) return event.deltaY * 16;
     if (event.deltaMode === 2) return event.deltaY * (scroller.clientHeight || 800);
     return event.deltaY;
-  }
-
-  function scrollableForEvent(event) {
-    if (eventInside(foot, event) && foot.scrollHeight > foot.clientHeight + 1) return foot;
-    return scroller;
   }
 
   function applyDelta(el, delta) {
@@ -288,6 +361,7 @@
     document.documentElement.setAttribute('data-asoldi-contract-open', '');
     pauseSmoothScroll();
     window.addEventListener('wheel', trapWheel, { capture: true, passive: false });
+    window.addEventListener('touchstart', trapTouchStart, { capture: true, passive: true });
     window.addEventListener('touchmove', trapTouch, { capture: true, passive: false });
     window.addEventListener('keydown', trapKeys, true);
   }
@@ -299,6 +373,7 @@
     });
     document.documentElement.removeAttribute('data-asoldi-contract-open');
     window.removeEventListener('wheel', trapWheel, { capture: true });
+    window.removeEventListener('touchstart', trapTouchStart, { capture: true });
     window.removeEventListener('touchmove', trapTouch, { capture: true });
     window.removeEventListener('keydown', trapKeys, true);
     resumeSmoothScroll();
@@ -309,14 +384,22 @@
     event.preventDefault();
     event.stopPropagation();
     if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
-    applyDelta(scrollableForEvent(event), wheelDeltaY(event));
+    applyDelta(scroller, wheelDeltaY(event));
   }
 
+  let touchY = 0;
+  function trapTouchStart(event) {
+    touchY = event.touches?.[0]?.clientY || 0;
+  }
   function trapTouch(event) {
     if (!isModalOpen()) return;
+    const y = event.touches?.[0]?.clientY || 0;
+    const delta = touchY - y;
+    touchY = y;
     if (eventInside(scroller, event) || eventInside(foot, event)) return;
     event.preventDefault();
     event.stopPropagation();
+    applyDelta(scroller, delta);
   }
 
   function trapKeys(event) {
@@ -337,7 +420,15 @@
     applyDelta(scroller, delta);
   }
 
-  function closeModal() {
+  function finishClose() {
+    overlay.classList.remove('docking');
+    const panel = shadow.querySelector('.panel');
+    if (panel) {
+      panel.classList.remove('docking');
+      panel.style.transform = '';
+      panel.style.opacity = '';
+      panel.style.transformOrigin = '';
+    }
     if (typeof overlay.close === 'function' && overlay.open) {
       overlay.close();
       return;
@@ -346,6 +437,44 @@
     overlay.removeAttribute('open');
     unlockPageScroll();
     btn.hidden = false;
+  }
+
+  function dockIntoButton() {
+    if (docking) return;
+    const panel = shadow.querySelector('.panel');
+    if (!panel) {
+      finishClose();
+      return;
+    }
+    docking = true;
+    btn.hidden = false;
+    btn.dataset.call = '1';
+    const panelRect = panel.getBoundingClientRect();
+    const btnRect = btn.getBoundingClientRect();
+    const dx = (btnRect.left + btnRect.width / 2) - (panelRect.left + panelRect.width / 2);
+    const dy = (btnRect.top + btnRect.height / 2) - (panelRect.top + panelRect.height / 2);
+    const sx = Math.max(0.04, btnRect.width / Math.max(1, panelRect.width));
+    const sy = Math.max(0.04, btnRect.height / Math.max(1, panelRect.height));
+    overlay.classList.add('docking');
+    panel.classList.add('docking');
+    panel.style.transformOrigin = 'center center';
+    requestAnimationFrame(() => {
+      panel.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`;
+      panel.style.opacity = '0';
+    });
+    window.setTimeout(() => {
+      docking = false;
+      finishClose();
+    }, 560);
+  }
+
+  function closeModal() {
+    if (!isModalOpen() || docking) return;
+    if (fromContractLink && state.status === 'ready') {
+      dockIntoButton();
+      return;
+    }
+    finishClose();
   }
 
   function syncBottom() {
@@ -367,12 +496,19 @@
     const submit = shadow.querySelector('.go');
     if (!submit) return;
     submit.classList.toggle('wait', Boolean(blockReason()) || busy);
+    const readNote = shadow.querySelector('.read-note');
+    if (readNote) {
+      readNote.hidden = atBottom;
+      if (atBottom) readNote.classList.remove('warn');
+    }
   }
 
   function renderFooter() {
     const alts = Array.isArray(state.alternatives) && state.alternatives.length >= 2 ? state.alternatives : [];
     const nameLocked = Boolean(state.name);
     foot.innerHTML = `
+      <p class="read-note">Scroll gjennom hele kontrakten f\u00f8r du trykker Signer. Hvis du ikke har lest ferdig, m\u00e5 du lese resten f\u00f8rst.</p>
+      <p class="account-note">For \u00e5 signere m\u00e5 du lage en Asoldi-konto. Passordet du skriver inn blir innloggingen din p\u00e5 asoldi.com.</p>
       ${alts.length ? `<div class="alts">${alts.map((alt) => `
         <label class="alt">
           <input type="radio" name="chosen" value="${alt.index === 1 ? 1 : 0}">
@@ -386,12 +522,12 @@
           <label class="field">E-post
             <input name="email" type="email" value="${escapeAttr(state.email)}" readonly autocomplete="email">
           </label>
-          <label class="field">Passord
-            <input name="password" type="password" minlength="8" autocomplete="new-password">
+          <label class="field">Nytt Asoldi-passord
+            <input name="password" type="password" minlength="8" autocomplete="new-password" placeholder="Minst 8 tegn">
           </label>
         </div>
       </div>
-      <button class="go wait" type="button">Jeg har lest og aksepterer avtalen</button>
+      <button class="go wait" type="button">Signer</button>
       <p class="hint">Dette l\u00e5ser deg ikke fast til et samarbeid med oss, men gj\u00f8r det lettere \u00e5 starte arbeidsforholdet.</p>
       <p class="err" hidden></p>
     `;
@@ -405,19 +541,26 @@
     foot.querySelector('.go')?.addEventListener('click', () => {
       const reason = blockReason();
       const err = shadow.querySelector('.err');
+      const readNote = shadow.querySelector('.read-note');
       if (reason) {
         const message = reason === 'scroll'
-          ? 'Du m\u00e5 lese hele kontrakten f\u00f8rst.'
+          ? 'Du m\u00e5 lese hele kontrakten f\u00f8r du kan signere. Scroll ned til bunnen f\u00f8rst.'
           : reason === 'choice'
-            ? 'Velg Tilbud 1 eller Tilbud 2 f\u00f8r du aksepterer.'
-            : 'Passord m\u00e5 v\u00e6re minst 8 tegn.';
+            ? 'Velg Tilbud 1 eller Tilbud 2 f\u00f8r du signerer.'
+            : 'Passordet m\u00e5 v\u00e6re minst 8 tegn. Det blir innloggingen din p\u00e5 asoldi.com.';
         if (err) {
           err.hidden = false;
           err.textContent = message;
         }
+        if (reason === 'scroll' && readNote) {
+          readNote.hidden = false;
+          readNote.classList.add('warn');
+          scroller.scrollBy({ top: Math.min(280, Math.max(120, scroller.clientHeight * 0.45)), behavior: 'smooth' });
+        }
         return;
       }
       if (err) { err.hidden = true; err.textContent = ''; }
+      if (readNote) readNote.classList.remove('warn');
       void submitAccept();
     });
     refreshSubmit();
@@ -436,7 +579,8 @@
 
   function openModal() {
     if (state.status !== 'ready') return;
-    paper.innerHTML = state.contractHtml || '<p>Kontraktteksten kommer når tilbudet er sendt.</p>';
+    delete btn.dataset.call;
+    paper.innerHTML = state.contractHtml || '<p>Kontraktteksten kommer n\u00e5r tilbudet er sendt.</p>';
     chosen = null;
     renderFooter();
     overlay.classList.add('open');
@@ -520,17 +664,26 @@
     if (state.status === 'ready') openModal();
   });
   shadow.querySelector('.close').addEventListener('click', closeModal);
+  overlay.addEventListener('cancel', (event) => {
+    event.preventDefault();
+    closeModal();
+  });
   overlay.addEventListener('close', () => {
     overlay.classList.remove('open');
+    overlay.classList.remove('docking');
     unlockPageScroll();
     btn.hidden = false;
+    if (fromContractLink && state.status === 'ready') btn.dataset.call = '1';
   });
   overlay.addEventListener('click', (event) => {
     if (event.target === overlay) closeModal();
   });
   overlay.addEventListener('wheel', trapWheel, { passive: false });
+  overlay.addEventListener('touchstart', trapTouchStart, { passive: true });
   overlay.addEventListener('touchmove', trapTouch, { passive: false });
   scroller.addEventListener('scroll', syncBottom, { passive: true });
   window.addEventListener('resize', () => { if (isModalOpen()) syncBottom(); });
-  void load();
+  void load().then(() => {
+    if (fromContractLink && state.status === 'ready') openModal();
+  });
 })();

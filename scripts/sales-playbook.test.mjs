@@ -246,6 +246,8 @@ test('fixed rows sit in their goal and the counts include stored rows', () => {
   assert.deepEqual(counts.contractSigned, { done: 0, total: 1 });
   const readUp = client({ salesPlaybook: { readUpAt: '2026-10-21T07:30:00.000Z' } });
   assert.deepEqual(salesGoalRowCounts(readUp, now).meetingHeld, { done: 2, total: 4 });
+  const held = client({ progression: { meetingHeld: true }, nextActions: [] });
+  assert.deepEqual(salesGoalRowCounts(held, now).meetingHeld, { done: 4, total: 4 });
 });
 
 test('after the checkup, Venter signering follows up every 3 days', () => {

@@ -21,6 +21,7 @@ import { ContractSummaryCard, HtmlPreview, OfferProductsCard, OfferStatusChip } 
 import { SalesFlowSteps } from './SalesFlowSteps';
 import { clientCardParty, offerMissingFields, offerReadinessMessage } from '../../../lib/offer-readiness.js';
 import { resolveWebsiteEmail } from '../../../lib/sales-website-email.js';
+import { getPublicPreviewContractHref } from './websiteMaker';
 
 const PdfPreviewOverlay = React.lazy(() =>
   import('./PdfPreviewOverlay').then((mod) => ({ default: mod.PdfPreviewOverlay }))
@@ -745,11 +746,34 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                       {lastResentAt ? ` Sendt på nytt ${new Date(lastResentAt).toLocaleString('nb-NO')}.` : ''}
                     </span>
                     <div className="flex shrink-0 items-center gap-2">
+                      {getPublicPreviewContractHref(clientId) ? (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => window.open(getPublicPreviewContractHref(clientId), '_blank')}
+                            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 text-xs hover:bg-white/15"
+                            title="Åpne preview med kontrakten allerede åpen"
+                          >
+                            <ExternalLink size={12} /> Åpne kontraktlenke
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void navigator.clipboard.writeText(getPublicPreviewContractHref(clientId)).then(
+                              () => setNotice(`Kopiert ${getPublicPreviewContractHref(clientId)}`),
+                              () => setError('Kunne ikke kopiere kontraktlenken')
+                            )}
+                            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 text-xs hover:bg-white/15"
+                            title="Kopier lenken kunden signerer på"
+                          >
+                            <Copy size={12} /> Kopier kontraktlenke
+                          </button>
+                        </>
+                      ) : null}
                       <button
                         type="button"
                         onClick={() => void handleResend()}
                         disabled={busy === 'send' || !canSendEmail}
-                        title={!canSendEmail ? 'E-post er ikke satt opp.' : 'Sender samme e-post og kontrakt på nytt, så den havner øverst i innboksen.'}
+                        title={!canSendEmail ? 'E-post er ikke satt opp.' : 'Sender samme e-post med signeringslenke på nytt, så den havner øverst i innboksen.'}
                         className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#FF5B00] text-white text-xs hover:opacity-90 disabled:opacity-50"
                       >
                         {busy === 'send' ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />} Send e-post på nytt
@@ -1032,7 +1056,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                         </div>
                         {contractSend && (
                           <p className="text-[11px] text-gray-400 max-w-xl">
-                            Kan sendes under møtet. E-posten er en kort melding med kontrakten som PDF. Asoldi.com viser avtalen. Møteteksten fra transkriptet er ikke med.
+                            Kan sendes under møtet. E-posten er en kort melding med en stor knapp til signeringslenken. Kunden leser kontrakten, lager Asoldi-passord og signerer der. Møteteksten fra transkriptet er ikke med.
                           </p>
                         )}
                         <div className="flex flex-wrap items-center gap-3">

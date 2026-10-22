@@ -80,6 +80,7 @@ import { GOOGLE_CALENDAR_OAUTH_EVENT } from '../../../../lib/google-calendar-oau
 import { expireFatCookies } from '../../../lib/expire-fat-cookies';
 import {
   clientHasPublicPreviewSnapshot,
+  getPublicClientContractUrl,
   getPublicClientPreviewUrl,
   useWebsiteMakerBaseUrl,
 } from '../../sales/websiteMaker';
@@ -2354,6 +2355,32 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
     window.open(getPublicClientPreviewUrl(client), '_blank');
   }
 
+  function openPublicContract(client: SalesClient) {
+    if (!clientHasPublicPreviewSnapshot(client)) {
+      setPreviewMissingToastId(client.id);
+      if (previewMissingTimerRef.current) window.clearTimeout(previewMissingTimerRef.current);
+      previewMissingTimerRef.current = window.setTimeout(() => {
+        setPreviewMissingToastId((current) => (current === client.id ? null : current));
+      }, 3000);
+      return;
+    }
+    const href = getPublicClientContractUrl(client);
+    if (!href) return;
+    window.open(href, '_blank');
+  }
+
+  function copyPublicContract(client: SalesClient) {
+    const href = getPublicClientContractUrl(client);
+    if (!href) {
+      setError('Could not copy contract URL');
+      return;
+    }
+    void navigator.clipboard.writeText(href).then(
+      () => setNotice(`Copied ${href}`),
+      () => setError('Could not copy contract URL')
+    );
+  }
+
   function applyClientNameSearch(e?: React.FormEvent) {
     if (e) e.preventDefault();
     setClientSearchQuery(normalizeClientSearchText(clientSearchInput));
@@ -2376,6 +2403,8 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
   function renderSalesClientDetails(client: SalesClient) {
     const clientIsSsu = isSsuClient(client);
     const publicPreviewUrl = getPublicClientPreviewUrl(client);
+    const publicContractUrl = getPublicClientContractUrl(client);
+    const offerSent = Boolean(client.progression?.offerSent);
     const clientOffers = offers.filter((entry) => entry.salesClientId === client.id);
     const showMailActions = showMailActionsId === client.id;
     const booking = salesBookingFacts(client);
@@ -2478,6 +2507,28 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                 <Copy size={13} />
                 Kopier preview
               </button>
+              {offerSent ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => openPublicContract(client)}
+                    className={detailsBtn}
+                    title={clientHasPublicPreviewSnapshot(client) ? 'Åpne preview med kontrakten allerede åpen' : 'Ingen preview publisert ennå'}
+                  >
+                    <FileText size={13} />
+                    Åpne kontraktlenke
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => copyPublicContract(client)}
+                    className={detailsBtn}
+                    title={publicContractUrl}
+                  >
+                    <Copy size={13} />
+                    Kopier kontraktlenke
+                  </button>
+                </>
+              ) : null}
             </>
           ) : null}
           <button
@@ -3364,6 +3415,16 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
               <span className="sm:hidden">Kart</span>
               <ChevronDown size={12} className={`hidden sm:block transition-transform ${headerPanel === 'map' ? 'rotate-180' : ''}`} />
             </button>
+            <a
+              href="https://mail.hostinger.com"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1.5 px-2.5 py-2 rounded-lg bg-white/10 text-white text-xs sm:text-sm hover:bg-white/15"
+              title="Åpne Hostinger-webmail"
+            >
+              <Mail size={14} />
+              <span className="hidden sm:inline">Mail</span>
+            </a>
           </div>
 
           <div className="ml-auto flex items-center gap-1.5 sm:gap-2 shrink-0">
@@ -3748,6 +3809,11 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
             if (clientHasPublicPreviewSnapshot(client)) openPublicPreview(client);
             else setNotice(`${client.businessName || 'Kunden'} har ingen preview ennå.`);
           }}
+          onOpenContract={(client) => {
+            if (clientHasPublicPreviewSnapshot(client)) openPublicContract(client);
+            else setNotice(`${client.businessName || 'Kunden'} har ingen preview ennå.`);
+          }}
+          onCopyContract={(client) => copyPublicContract(client)}
           onAssign={(client, ownerId) => void assignClientOwner(client, ownerId)}
           onSecondary={(client) => openSecondaryPicker([client])}
           onNotSold={(client) => void markNotSold(client)}

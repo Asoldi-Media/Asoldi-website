@@ -88,7 +88,7 @@ import * as salesPreview from './lib/sales-preview-import.js';
 import {
   fillExportZipWithMakerAssets,
   findPreviewFileByBasename,
-  inlineLocalStylesheets,
+  ensureSharedPreviewStyles,
   looksLikeAssetFileName,
 } from './lib/preview-bundle-assets.js';
 import * as emailLib from './lib/email.js';
@@ -188,6 +188,7 @@ import {
 import * as salesOffers from './data/sales-offers.js';
 import {
   applyOfferProducts,
+  ensureOfferContractCta,
   ensureWorkshopSentence,
   escapeHtml as escapeOfferHtml,
   fillOfferSlots,
@@ -261,6 +262,7 @@ import {
   buildLaptopPreviewEntry,
   buildMakerExportUrl,
   buildPreviewBundleUploadUrl,
+  buildPublicSalesPreviewContractUrl,
   buildPublicSalesPreviewUrl,
   buildSalesPreviewPath,
   clientNeedsPublicPreviewSnapshot,
@@ -280,6 +282,7 @@ import {
 import { allowPreviewAcceptAttempt, ensurePreviewSigner, presentPreviewContract } from './lib/sales-preview-contract.js';
 import {
   embedSrcFromRequest,
+  isPreviewContractSlug,
   listSalesPreviewPagesCached,
   previewBaseFromRequestPath,
   previewWantsEmbed,
@@ -15796,7 +15799,10 @@ function presentOffer(offer) {
  */
 function refreshStoredOfferShell(offer, req, client = null) {
   if (!offer || salesOffers.offerContentIsLocked(offer)) return offer;
-  let html = refreshOfferShell(offer.email?.html || '');
+  let html = ensureOfferContractCta(
+    refreshOfferShell(offer.email?.html || ''),
+    buildPublicSalesPreviewContractUrl(client?.id)
+  );
   const products = Array.isArray(offer.products) ? offer.products : [];
   const start = projectStartFromQuote(client?.details?.meetingQuote || {});
   if (products.length || offer.tierId) {
@@ -16722,7 +16728,7 @@ async function composeOfferMessage(offer, client, req, { to = '' } = {}) {
   const sender = await resolveSalesSenderForAccount(req.salesUser);
   const view = clientWithOfferParty(client, offer, { to });
   const composed = composeEmailForClient(view, 'offer', {
-    html: refreshOfferShell(offer.email.html),
+    html: ensureOfferContractCta(refreshOfferShell(offer.email.html), buildPublicSalesPreviewContractUrl(client.id)),
     subject: offer.email.subject,
     preheader: offer.email.preheader,
   }, { sender, attachInvite: false, offer: { products: offer.products, mvaIncluded: offer.mvaIncluded } }).message;
@@ -16746,10 +16752,14 @@ function offerSendBlocker(offer, { ignoreReviewGate = false, contractOnly = fals
 }
 
 /** In-meeting send: short cover + contract. The stored letter (transcript slots) is not what the client receives. */
-async function composeContractOnlyMessage(offer, client, req, { to = '', attached = true } = {}) {
+async function composeContractOnlyMessage(offer, client, req, { to = '' } = {}) {
   const sender = await resolveSalesSenderForAccount(req.salesUser);
   const view = clientWithOfferParty(client, offer, { to });
-  const built = buildContractOnlyEmailForClient(view, { sender, attached });
+  const built = buildContractOnlyEmailForClient(view, {
+    sender,
+    attached: false,
+    contractUrl: buildPublicSalesPreviewContractUrl(client.id),
+  });
   const composed = composeEmailForClient(view, 'offer', {
     html: built.html,
     subject: built.subject,
@@ -17264,7 +17274,7 @@ app.post('/api/admin/sales/:id/offer/send', salesAuth, async (req, res) => {
   const delivery = sendEmail && sendPortal ? 'both' : (sendPortal ? 'portal' : 'email');
   try {
     const { composed } = contractOnly
-      ? await composeContractOnlyMessage(offer, client, req, { to, attached: sendEmail })
+      ? await composeContractOnlyMessage(offer, client, req, { to })
       : await composeOfferMessage(offer, client, req, { to });
     if (sendPortal) {
       const view = clientWithOfferParty(client, offer, { to });
@@ -17284,10 +17294,7 @@ app.post('/api/admin/sales/:id/offer/send', salesAuth, async (req, res) => {
         subject: composed.subject,
         text: composed.text || htmlToPlainText(composed.html),
         html: composed.html,
-        attachments: [
-          ...(Array.isArray(composed.attachments) ? composed.attachments : []),
-          { filename: packed.fileName, content: packed.buffer, contentType: 'application/pdf' },
-        ],
+        attachments: Array.isArray(composed.attachments) ? composed.attachments : [],
       });
     }
     const sent = resend
@@ -20158,7 +20165,8 @@ async function sendSalesPreviewFile(req, res, relativePath = '') {
   const importBase = path.resolve(join(SALES_IMPORTS_ROOT, client.id));
   const roots = [root];
   if (root !== importBase && existsSync(importBase) && root.startsWith(importBase)) roots.push(importBase);
-  const cleaned = sanitizeText(relativePath).replace(/^[/\\]+/, '').split(/[?#]/)[0];
+  const asked = sanitizeText(relativePath).replace(/^[/\\]+/, '').split(/[?#]/)[0];
+  const cleaned = isPreviewContractSlug(asked.replace(/\\/g, '/')) ? 'index.html' : asked;
   const normalized = path.normalize(cleaned || 'index.html');
   const requestedAbs = path.resolve(root, normalized);
   const rootWithSep = root.endsWith(path.sep) ? root : `${root}${path.sep}`;
@@ -20212,7 +20220,7 @@ async function sendSalesPreviewFile(req, res, relativePath = '') {
           res.send(
             injectSalesPreviewContractWidget(
               injectPreviewRobotsMeta(
-                inlineLocalStylesheets(rewritePreviewAssetPaths(injectPreviewBaseHref(text, client.id), client.id), roots)
+                ensureSharedPreviewStyles(rewritePreviewAssetPaths(injectPreviewBaseHref(text, client.id), client.id), roots)
               ),
               client.id
             )
