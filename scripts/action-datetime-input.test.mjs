@@ -11,3 +11,8 @@ test('an empty action time already has this year so the picker does not ask for 
 test('an existing action time keeps its own year and clock', () => {
   assert.equal(defaultActionDateTimeLocal('2027-01-15T10:00', now), '2027-01-15T10:00');
 });
+
+test('workshop time can stay empty until the rep picks one', () => {
+  assert.equal(defaultActionDateTimeLocal('', now, { allowEmpty: true }), '');
+  assert.equal(defaultActionDateTimeLocal('2027-01-15T10:00', now, { allowEmpty: true }), '2027-01-15T10:00');
+});

@@ -242,6 +242,7 @@ test('Sales persist stays a draft; Admin Save is the send gate', () => {
   assert.equal(modalSrc.includes('Startdato for workshop'), false);
   assert.equal(modalSrc.includes('SalesCalendarWeek'), false);
   assert.equal(modalSrc.includes('confirmSend'), false);
+  assert.match(modalSrc, /allowEmpty/);
 
   const salesSrc = readFileSync(new URL('../app/pages/Admin/sections/SalesClientsSection.tsx', import.meta.url), 'utf8');
   assert.match(salesSrc, /toggleHeaderPanel\('calendar'\)/);

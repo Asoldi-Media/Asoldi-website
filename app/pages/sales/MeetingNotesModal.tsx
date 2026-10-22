@@ -548,6 +548,7 @@ export function MeetingNotesModal({
                   <span className="text-xs text-[#6B7280]">Tid</span>
                   <ActionDateTimeInput
                     value={workshop.dueAt}
+                    allowEmpty
                     ariaLabel="Workshop-tid"
                     className="mt-1 w-full px-3 py-2 rounded-lg bg-white border border-[#E5E7EB] text-sm text-[#111827]"
                     onChange={(dueAt) => setWorkshop((prev) => ({ ...prev, dueAt }))}
