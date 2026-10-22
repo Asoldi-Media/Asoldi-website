@@ -5,6 +5,8 @@ import {
   attachRegistryDefaults,
   composeIdentityBrief,
   fillProvenPublicLinks,
+  INFOKORT_MAPS_SEARCH_LIMIT,
+  INFOKORT_ORGANIC_SEARCH_LIMIT,
   isRegistryBrief,
   normalizeInfokortSubmission,
   runInfokortAgent,
@@ -235,6 +237,84 @@ test('fillProvenPublicLinks writes TASS socials and Maps from trading-name hits'
     googleBusinessProfile: 'https://maps.google.com/?cid=5208062932965149043',
   }, filled);
   assert.equal(score.ok, true, String(score.failed));
+});
+
+test('runInfokortAgent spends at most 2 Google searches and 1 Maps search', async () => {
+  const searches = [];
+  const maps = [];
+  let step = 0;
+  const chat = async () => {
+    step += 1;
+    if (step <= 5) {
+      return {
+        content: [{
+          type: 'tool_use',
+          id: String(step),
+          name: 'google_search',
+          input: { query: `query ${step} site:instagram.com` },
+        }],
+        usage: {},
+      };
+    }
+    if (step <= 7) {
+      return {
+        content: [{
+          type: 'tool_use',
+          id: String(step),
+          name: 'maps_search',
+          input: { query: `maps ${step}` },
+        }],
+        usage: {},
+      };
+    }
+    return {
+      content: [{
+        type: 'tool_use',
+        id: 'done',
+        name: 'submit_card',
+        input: {
+          industry: 'markedsplass',
+          meetingPlace: 'Vasøyveien 103, 7167 Vallersund',
+          orgNumber: '925992720',
+          websiteDomain: 'tass.no',
+          instagramUrl: '',
+          facebookUrl: '',
+          proffUrl: '',
+          googleBusinessProfile: '',
+          briefShort: 'TASS er en markedsplass.',
+        },
+      }],
+      usage: {},
+    };
+  };
+  const result = await runInfokortAgent(
+    { businessName: 'Deles Are Terjesen', orgNumber: '925992720' },
+    {
+      chat,
+      search: async (query) => {
+        searches.push(query);
+        return [];
+      },
+      mapsSearch: async (query) => {
+        maps.push(query);
+        return { ok: true, results: [] };
+      },
+      readWebsite: async () => [],
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          navn: 'DELES ARE TERJESEN',
+          organisasjonsnummer: '925992720',
+          forretningsadresse: { adresse: ['Vasøyveien 103'], postnummer: '7167', poststed: 'VALLERSUND' },
+          hjemmeside: 'tass.no',
+        }),
+      }),
+    }
+  );
+  assert.equal(result.ok, true);
+  assert.equal(searches.length, INFOKORT_ORGANIC_SEARCH_LIMIT);
+  assert.equal(maps.length, INFOKORT_MAPS_SEARCH_LIMIT);
 });
 
 test('fillProvenPublicLinks leaves Bakkes socials empty when search is empty', async () => {

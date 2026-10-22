@@ -1,8 +1,9 @@
-import test from 'node:test';
+import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   dataForSeoMapsToPlaces,
   dataForSeoOrganicToResults,
+  searchDataForSeoOrganic,
   searchGoogle,
   discoverSalesLinks,
   distinctiveNameTokens,
@@ -11,6 +12,11 @@ import {
   pickNamedCandidate,
   serpPayloadToResults,
 } from '../lib/sales-link-discovery.js';
+import {
+  resetSerpSpendForTests,
+  shouldRefuseSerpCall,
+  stripPaidSearchOperators,
+} from '../lib/dataforseo-serp.js';
 
 const cafePage = {
   ok: true,
@@ -84,11 +90,31 @@ test('DataForSEO organic and local pack become the same result rows', () => {
   assert.equal(rows.some((row) => row.url.includes('bynesetcafe.no')), true);
 });
 
+test('paid Google operators are stripped so site: cannot 5x the SERP bill', () => {
+  assert.equal(stripPaidSearchOperators('site:instagram.com "TASS" Trondheim'), 'instagram.com TASS Trondheim');
+  assert.equal(stripPaidSearchOperators('intitle:bakkes inurl:om-oss'), 'bakkes om-oss');
+  assert.equal(
+    shouldRefuseSerpCall({ spentUsd: 4.999, dailyUsd: 0, budgetUsd: 5, dailyBudgetUsd: 0.4 }, { worstCase: 0.002 }),
+    true
+  );
+  assert.equal(
+    shouldRefuseSerpCall({ spentUsd: 0.1, dailyUsd: 0.399, budgetUsd: 5, dailyBudgetUsd: 0.4 }, { worstCase: 0.002 }),
+    true
+  );
+  assert.equal(
+    shouldRefuseSerpCall({ spentUsd: 0.1, dailyUsd: 0.1, budgetUsd: 5, dailyBudgetUsd: 0.4 }, { worstCase: 0.002 }),
+    false
+  );
+});
+
+describe('kundekort DataForSEO SERP spend', { concurrency: false }, () => {
 test('searchGoogle uses DataForSEO first when auth is set', async () => {
   const previous = process.env.DATAFORSEO_AUTH;
   process.env.DATAFORSEO_AUTH = Buffer.from('x:y').toString('base64');
+  resetSerpSpendForTests();
   try {
     const rows = await searchGoogle('tass instagram', {
+      persist: false,
       fetchImpl: async (url) => {
         assert.match(String(url), /dataforseo\.com/);
         return {
@@ -113,6 +139,69 @@ test('searchGoogle uses DataForSEO first when auth is set', async () => {
     if (previous == null) delete process.env.DATAFORSEO_AUTH;
     else process.env.DATAFORSEO_AUTH = previous;
   }
+});
+
+test('a spent lifetime or daily SERP budget refuses the live call', async () => {
+  const previousAuth = process.env.DATAFORSEO_AUTH;
+  const previousBudget = process.env.SALES_LINK_DATAFORSEO_BUDGET_USD;
+  const previousDaily = process.env.SALES_LINK_DATAFORSEO_DAILY_USD;
+  process.env.DATAFORSEO_AUTH = Buffer.from('x:y').toString('base64');
+  process.env.SALES_LINK_DATAFORSEO_BUDGET_USD = '5';
+  process.env.SALES_LINK_DATAFORSEO_DAILY_USD = '0.40';
+  resetSerpSpendForTests({ totalUsd: 5, dailyUsd: 0.4 });
+  let fetched = 0;
+  try {
+    const rows = await searchDataForSeoOrganic('tass instagram', {
+      persist: false,
+      fetchImpl: async () => {
+        fetched += 1;
+        return { ok: true, status: 200, json: async () => ({}) };
+      },
+    });
+    assert.deepEqual(rows, []);
+    assert.equal(fetched, 0);
+  } finally {
+    resetSerpSpendForTests();
+    if (previousAuth == null) delete process.env.DATAFORSEO_AUTH;
+    else process.env.DATAFORSEO_AUTH = previousAuth;
+    if (previousBudget == null) delete process.env.SALES_LINK_DATAFORSEO_BUDGET_USD;
+    else process.env.SALES_LINK_DATAFORSEO_BUDGET_USD = previousBudget;
+    if (previousDaily == null) delete process.env.SALES_LINK_DATAFORSEO_DAILY_USD;
+    else process.env.SALES_LINK_DATAFORSEO_DAILY_USD = previousDaily;
+  }
+});
+
+test('live organic search strips site: from the paid keyword', async () => {
+  const previous = process.env.DATAFORSEO_AUTH;
+  process.env.DATAFORSEO_AUTH = Buffer.from('x:y').toString('base64');
+  resetSerpSpendForTests();
+  let keyword = '';
+  try {
+    await searchDataForSeoOrganic('site:instagram.com tass', {
+      persist: false,
+      fetchImpl: async (_url, init) => {
+        keyword = JSON.parse(init.body)[0].keyword;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            tasks: [{
+              status_code: 20000,
+              cost: 0.002,
+              result: [{ items: [] }],
+            }],
+          }),
+        };
+      },
+    });
+    assert.equal(keyword.includes('site:'), false);
+    assert.match(keyword, /instagram.com/);
+  } finally {
+    resetSerpSpendForTests();
+    if (previous == null) delete process.env.DATAFORSEO_AUTH;
+    else process.env.DATAFORSEO_AUTH = previous;
+  }
+});
 });
 
 test('DataForSEO Maps items become cid places', () => {
