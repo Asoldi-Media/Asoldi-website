@@ -35,22 +35,26 @@
         cursor: pointer;
         transform: translateX(-50%);
         isolation: isolate;
-        overflow: visible;
+        overflow: hidden;
         white-space: nowrap;
         box-shadow: 0 8px 28px rgba(0,0,0,.28);
         transition: min-width .25s ease, background .2s ease, color .2s ease, border-color .2s ease, opacity .2s ease, box-shadow .2s ease;
       }
+      @property --asoldi-orbit {
+        syntax: "<angle>";
+        inherits: false;
+        initial-value: 0deg;
+      }
       .btn::before {
         content: "";
         position: absolute;
-        inset: -4px;
+        inset: 0;
         border-radius: inherit;
         pointer-events: none;
         opacity: 0;
-        z-index: -1;
-        padding: 2.5px;
-        background: conic-gradient(from 0deg, #FF5B00 0 12%, #ffb087 16%, #111 40%, #fff 70%, #FF5B00 100%);
-        box-shadow: 0 0 18px rgba(255,91,0,.55);
+        z-index: 0;
+        padding: 2px;
+        background: conic-gradient(from var(--asoldi-orbit), #FF5B00 0 14%, #ffb087 22%, transparent 38% 68%, #fff 84%, #FF5B00 100%);
         -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
         -webkit-mask-composite: xor;
         mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
@@ -62,9 +66,9 @@
       }
       .btn[data-call="1"]::before {
         opacity: 1;
-        animation: asoldi-orbit 1.05s linear infinite;
+        animation: asoldi-orbit 1.4s linear infinite;
       }
-      @keyframes asoldi-orbit { to { transform: rotate(360deg); } }
+      @keyframes asoldi-orbit { to { --asoldi-orbit: 360deg; } }
       .btn[data-status="idle"] {
         background: #9CA3AF;
         border-color: #D1D5DB;
@@ -79,6 +83,8 @@
         border-color: #111;
       }
       .btn-label {
+        position: relative;
+        z-index: 1;
         max-width: 0;
         margin-left: 0;
         opacity: 0;
@@ -92,7 +98,7 @@
         margin-left: 8px;
         opacity: 1;
       }
-      .mark { width: 18px; height: 18px; flex: 0 0 18px; }
+      .mark { position: relative; z-index: 1; width: 18px; height: 18px; flex: 0 0 18px; }
       .check-icon { display: none; }
       .btn[data-status="signed"] .idle-icon { display: none; }
       .btn[data-status="signed"] .check-icon { display: block; }
@@ -157,6 +163,12 @@
         background: #fff;
       }
       .head h2 { margin: 0; font-size: 15px; font-weight: 650; color: #111827; }
+      .head-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+      .pdf {
+        height: 36px; padding: 0 12px; border: 1px solid #E5E7EB; border-radius: 8px;
+        background: #fff; color: #111; font-size: 12px; font-weight: 650; text-decoration: none;
+        display: inline-flex; align-items: center; white-space: nowrap;
+      }
       .close {
         width: 36px; height: 36px; border: 0; border-radius: 8px;
         background: #F3F4F6; color: #111; cursor: pointer; font-size: 20px; line-height: 1;
@@ -221,7 +233,11 @@
         font-size: 14px; color: #111827; background: #fff;
       }
       input[readonly] { background: #F9FAFB; color: #4B5563; }
-      .accept { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; color: #111827; margin: 8px 0 12px; }
+      .accept { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; color: #111827; margin: 8px 0 0; }
+      .accept + .accept { margin-top: 8px; }
+      .accept input { margin-top: 3px; flex: 0 0 auto; }
+      .accept a { color: #FF5B00; font-weight: 650; }
+      .accepts { margin: 8px 0 12px; display: grid; gap: 0; }
       .go {
         width: 100%; height: 46px; border: 0; border-radius: 12px;
         background: #FF5B00; color: #fff; font-size: 14px; font-weight: 650; cursor: pointer;
@@ -276,7 +292,10 @@
       <div class="panel" role="document">
         <div class="head">
           <h2 id="asoldi-contract-title">Kontrakt</h2>
-          <button class="close" type="button" aria-label="Lukk">\u00d7</button>
+          <div class="head-actions">
+            <a class="pdf" href="${api}.pdf?download=1" target="_blank" rel="noopener">Last ned PDF</a>
+            <button class="close" type="button" aria-label="Lukk">\u00d7</button>
+          </div>
         </div>
         <div class="scroller">
           <div class="paper"></div>
@@ -488,6 +507,8 @@
     const needsChoice = Array.isArray(state.alternatives) && state.alternatives.length >= 2;
     if (!atBottom) return 'scroll';
     if (needsChoice && chosen !== 0 && chosen !== 1) return 'choice';
+    if (!shadow.querySelector('[name="terms"]')?.checked) return 'terms';
+    if (!shadow.querySelector('[name="binding"]')?.checked) return 'binding';
     if (password.length < 8) return 'password';
     return '';
   }
@@ -527,8 +548,18 @@
           </label>
         </div>
       </div>
+      <div class="accepts">
+        <label class="accept">
+          <input name="terms" type="checkbox">
+          <span>Jeg godtar <a href="https://asoldi.com/vilkar" target="_blank" rel="noopener">vilk\u00e5r og betingelser</a>.</span>
+        </label>
+        <label class="accept">
+          <input name="binding" type="checkbox">
+          <span>Jeg anerkjenner at avtalen har bindingstid p\u00e5 6 m\u00e5neder.</span>
+        </label>
+      </div>
       <button class="go wait" type="button">Signer</button>
-      <p class="hint">Dette l\u00e5ser deg ikke fast til et samarbeid med oss, men gj\u00f8r det lettere \u00e5 starte arbeidsforholdet.</p>
+      <p class="hint">Signering oppretter Asoldi-kontoen og binder dere i 6 m\u00e5neder.</p>
       <p class="err" hidden></p>
     `;
     foot.querySelectorAll('[name="chosen"]').forEach((input) => {
@@ -538,6 +569,9 @@
       });
     });
     foot.querySelector('[name="password"]')?.addEventListener('input', refreshSubmit);
+    foot.querySelectorAll('[name="terms"], [name="binding"]').forEach((input) => {
+      input.addEventListener('change', refreshSubmit);
+    });
     foot.querySelector('.go')?.addEventListener('click', () => {
       const reason = blockReason();
       const err = shadow.querySelector('.err');
@@ -547,7 +581,11 @@
           ? 'Du m\u00e5 lese hele kontrakten f\u00f8r du kan signere. Scroll ned til bunnen f\u00f8rst.'
           : reason === 'choice'
             ? 'Velg Tilbud 1 eller Tilbud 2 f\u00f8r du signerer.'
-            : 'Passordet m\u00e5 v\u00e6re minst 8 tegn. Det blir innloggingen din p\u00e5 asoldi.com.';
+            : reason === 'terms'
+              ? 'Du m\u00e5 godta vilk\u00e5r og betingelser f\u00f8r du signerer.'
+              : reason === 'binding'
+                ? 'Du m\u00e5 godkjenne 6 m\u00e5neders bindingstid f\u00f8r du signerer.'
+                : 'Passordet m\u00e5 v\u00e6re minst 8 tegn. Det blir innloggingen din p\u00e5 asoldi.com.';
         if (err) {
           err.hidden = false;
           err.textContent = message;
@@ -633,6 +671,8 @@
         password: String(shadow.querySelector('[name="password"]')?.value || ''),
         name: String(shadow.querySelector('[name="name"]')?.value || ''),
         accepted: true,
+        termsAccepted: Boolean(shadow.querySelector('[name="terms"]')?.checked),
+        bindingAccepted: Boolean(shadow.querySelector('[name="binding"]')?.checked),
         language: navigator.language || '',
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
         platform: navigator.platform || '',

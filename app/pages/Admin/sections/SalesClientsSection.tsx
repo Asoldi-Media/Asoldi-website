@@ -1823,6 +1823,23 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
     }
   }
 
+  async function approveOfferLetter(client: SalesClient) {
+    setSendingMailKey(`${client.id}:offer-letter`);
+    setError('');
+    try {
+      const data = await request(`/admin/sales/${client.id}/offer/approve-letter`, {
+        method: 'POST',
+        body: '{}',
+      }) as { client?: SalesClient };
+      if (data.client?.id) applySavedClient(data.client);
+      setNotice(`Tilbudse-post sendt til ${client.contactEmail || 'kunden'}.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Kunne ikke sende tilbudse-posten');
+    } finally {
+      setSendingMailKey(null);
+    }
+  }
+
   async function mutateNextAction(client: SalesClient, body: Record<string, unknown>) {
     setNextActionBusyId(client.id);
     setError('');
@@ -3814,6 +3831,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
             else setNotice(`${client.businessName || 'Kunden'} har ingen preview ennå.`);
           }}
           onCopyContract={(client) => copyPublicContract(client)}
+          onApproveLetter={(client) => void approveOfferLetter(client)}
           onAssign={(client, ownerId) => void assignClientOwner(client, ownerId)}
           onSecondary={(client) => openSecondaryPicker([client])}
           onNotSold={(client) => void markNotSold(client)}

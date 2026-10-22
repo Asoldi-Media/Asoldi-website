@@ -35,6 +35,7 @@ import { mergeMakerRunPatch, normalizeDeveloperQa } from '../lib/developer-card.
 import { canonicalDeveloperOwnerId, normalizeDeveloperHandoff, applyAdminDeveloperOwnerSeed, shouldSeedExistingDeveloperOwners } from '../lib/developer-assignment.js';
 import { normalizeDeveloperGoals } from '../lib/developer-goals.js';
 import { normalizeDueDate } from '../lib/website-due.js';
+import { normalizeOfferSentContent } from './sales-offers.js';
 
 function persistWorkshopAction(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -620,6 +621,9 @@ function normalizeSalesClient(raw = {}) {
     developerGoals: normalizeDeveloperGoals(raw.developerGoals),
     contractSignedAt: nextProgression.contractSigned ? sanitizeText(raw.contractSignedAt) : '',
     contractSentAt: sanitizeText(raw.contractSentAt),
+    offerSentContent: normalizeOfferSentContent(raw.offerSentContent),
+    offerLetterApprovedAt: sanitizeText(raw.offerLetterApprovedAt),
+    offerLetterFilledAt: sanitizeText(raw.offerLetterFilledAt),
     sentContractFingerprint: normalizeSentContractFingerprint(raw.sentContractFingerprint),
     websiteDueOverride: normalizeDueDate(raw.websiteDueOverride),
     websiteDeliveryWeeks: Math.max(0, Math.round(Number(raw.websiteDeliveryWeeks) || 0)),
@@ -1116,20 +1120,37 @@ export function markOfferDelivered(id) {
 }
 
 /** Any tilbud/contract send: stamp contractSentAt, then check Møte + Tilbud. */
-export function markOfferSentOnDelivery(id, sentAt = '') {
-  recordContractSent(id, sentAt);
+export function markOfferSentOnDelivery(id, sentAt = '', extra = {}) {
+  recordContractSent(id, sentAt, extra);
   return markOfferDelivered(id);
 }
 
-export function recordContractSent(id, sentAt = '') {
+export function recordContractSent(id, sentAt = '', extra = {}) {
   const current = getSalesClientById(id);
   if (!current) return null;
   const contractSentAt = sanitizeText(current.contractSentAt) || sanitizeText(sentAt) || new Date().toISOString();
-  const stamped = { ...current, contractSentAt };
+  const offerSentContent = normalizeOfferSentContent(extra.sentContent) || current.offerSentContent;
+  const offerLetterFilledAt = extra.letterFilled
+    ? (sanitizeText(current.offerLetterFilledAt) || new Date().toISOString())
+    : current.offerLetterFilledAt;
+  const stamped = { ...current, contractSentAt, offerSentContent, offerLetterFilledAt };
   const nextActions = stamped.progression?.offerSent
     ? ensureContractCheckupAction(stamped.nextActions, stamped)
     : stamped.nextActions;
-  return updateSalesClient(id, { contractSentAt, nextActions });
+  return updateSalesClient(id, { contractSentAt, offerSentContent, offerLetterFilledAt, nextActions });
+}
+
+export function markOfferLetterApprovedOnClient(id, approvedAt = '') {
+  const current = getSalesClientById(id);
+  if (!current) return null;
+  const offerLetterApprovedAt = sanitizeText(current.offerLetterApprovedAt)
+    || sanitizeText(approvedAt)
+    || new Date().toISOString();
+  return updateSalesClient(id, {
+    offerSentContent: 'full',
+    offerLetterApprovedAt,
+    offerLetterFilledAt: sanitizeText(current.offerLetterFilledAt) || offerLetterApprovedAt,
+  });
 }
 
 /** Byte size / page / hash of the PDF we actually emailed, so inbound copies can be compared. */

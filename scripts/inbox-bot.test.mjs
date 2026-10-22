@@ -13,7 +13,7 @@ const clientPortal = await import('../data/client-portal.js');
 const { categorizeEmailHeuristic, normalizeMediaBucket } = await import('../lib/inbox-bot/categorize.js');
 const { matchSalesClient, parseEmailAddress } = await import('../lib/inbox-bot/match-client.js');
 const { pdfLooksLikeAsoldiContract } = await import('../lib/inbox-bot/pdf-text.js');
-const { fingerprintPdfBuffer, scoreContractSigning, inspectInboundContract } = await import('../lib/inbox-bot/inspect-contract.js');
+const { fingerprintPdfBuffer, scoreContractSigning, inspectInboundContract, clientDateSignals } = await import('../lib/inbox-bot/inspect-contract.js');
 const { resolveMailboxSource } = await import('../lib/inbox-bot/mail.js');
 const {
   backfillInboxReplies,
@@ -79,7 +79,10 @@ test('heuristic: newsletter without files is other', () => {
 
 test('pdf text with Asoldi org number looks like a contract', () => {
   assert.equal(pdfLooksLikeAsoldiContract('CHAPANA (Asoldi Marketing) org 934 327 497', 'scan.pdf'), true);
+  assert.equal(pdfLooksLikeAsoldiContract('Tjenesteavtale for nettside', 'scan.pdf'), true);
   assert.equal(pdfLooksLikeAsoldiContract('random menu', 'meny.pdf'), false);
+  assert.equal(clientDateSignals('Date: ____________').blankClientDate, true);
+  assert.equal(clientDateSignals('Dato: ____________').blankClientDate, true);
 });
 
 test('match prefers from-email then org nr', () => {

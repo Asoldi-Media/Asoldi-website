@@ -252,14 +252,16 @@ test('contract pdf: tier contract and custom-summary contract both render a PDF'
 
 test('contract terms: statutory late interest, six-month liability, permanent ownership, legal pages', () => {
   const article = contractPdf.contractArticleModel({ client: CLIENT, tierId: tiers.WEBSITE_TIERS[1].id });
+  assert.equal(article.language, 'nb');
   const blob = JSON.stringify(article);
+  assert.match(blob, /Tjenesteavtale/);
   assert.match(blob, /forsinkelsesrente og gebyrer etter gjeldende norsk lov/);
-  assert.match(blob, /six \(6\) months/);
-  assert.match(blob, /seven \(7\) business days/);
+  assert.match(blob, /seks \(6\) måneder/);
+  assert.match(blob, /syv \(7\) virkedager/);
   assert.match(blob, /asoldi\.com\/vilkar/);
   assert.match(blob, /asoldi\.com\/databehandleravtale/);
-  assert.match(blob, /three \(3\) per week/);
-  assert.match(blob, /basic report every fourteen \(14\) days/i);
+  assert.match(blob, /tre \(3\) per uke/);
+  assert.match(blob, /grunrapport hver fjortende \(14\) dag/i);
   assert.doesNotMatch(blob, /NOK 100/);
   assert.doesNotMatch(blob, /ownership reverts/i);
   assert.doesNotMatch(blob, /last monthly payment/i);
@@ -269,14 +271,14 @@ test('contract terms: statutory late interest, six-month liability, permanent ow
   assert.ok(seo.includes.some((line) => /3\/uke|3 per uke/i.test(line)));
 
   const starter = JSON.stringify(contractPdf.contractArticleModel({ client: CLIENT, tierId: tiers.WEBSITE_TIERS[0].id }));
-  assert.match(starter, /does not include an analytics page/i);
-  assert.doesNotMatch(starter, /every fourteen \(14\) days/);
+  assert.match(starter, /inkluderer ikke analyseside/i);
+  assert.doesNotMatch(starter, /hver fjortende \(14\) dag/);
 
   const shop = JSON.stringify(contractPdf.contractArticleModel({ client: CLIENT, tierId: tiers.WEBSITE_TIERS[2].id }));
-  assert.match(shop, /advanced report every seven \(7\) days/i);
-  assert.match(blob, /Domain connection/);
-  assert.match(blob, /does not store the Client/);
-  assert.match(blob, /Guidance meeting \(once\)/);
+  assert.match(shop, /avansert rapport hver sjuende \(7\) dag/i);
+  assert.match(blob, /Domenekobling/);
+  assert.match(blob, /lagrer ikke kundens innloggingspassord/);
+  assert.match(blob, /Veiledningsmøte \(én gang\)/);
   assert.doesNotMatch(blob, /custom web.?app/i);
   assert.doesNotMatch(blob, /dedicated server/i);
   assert.doesNotMatch(blob, /advanced API/i);
@@ -284,11 +286,20 @@ test('contract terms: statutory late interest, six-month liability, permanent ow
   assert.ok(tiers.WEBSITE_TIERS[0].includes.some((line) => /veiledningsmøte/i.test(line)));
   assert.doesNotMatch(blob, /Google Business Profile development/i);
   assert.doesNotMatch(blob, /Asoldi \/ Hostinger hosting network/);
-  assert.match(blob, /leaves the Asoldi hosting network/);
-  assert.match(blob, /one \(1\) month of service free of charge/);
-  assert.match(blob, /Domain access/);
-  assert.match(blob, /inspiration materials/);
-  assert.match(blob, /Sections 6 and 7 do not apply/);
+  assert.match(blob, /forlater Asoldis hostingnettverk/);
+  assert.match(blob, /én \(1\) måned med tjeneste gratis/);
+  assert.match(blob, /Domenetilgang/);
+  assert.match(blob, /inspirasjonsmateriell/);
+  assert.match(blob, /gjelder ikke punkt 6 og 7/);
+
+  const english = JSON.stringify(contractPdf.contractArticleModel({
+    client: CLIENT,
+    tierId: tiers.WEBSITE_TIERS[1].id,
+    language: 'en',
+  }));
+  assert.match(english, /Service agreement/);
+  assert.match(english, /six \(6\) months/);
+  assert.match(english, /leaves the Asoldi hosting network/);
 });
 
 test('opening Tilbud does not wait for Fireflies GraphQL', async () => {
@@ -563,6 +574,7 @@ test('sales offers store: draft → review → verify → send lifecycle with lo
     products: [{ id: 'c1', kind: 'custom', name: 'Skreddersydd', priceExMva: 3000, pages: 8, includes: ['A'], note: '', deliveryWeeks: 5 }],
   }, { actor: 'anna' });
   assert.equal(created.status, 'draft');
+  assert.equal(created.contractLanguage, 'nb');
   assert.equal(store.offerNeedsVerification(created), true, 'custom tier must go through admin');
   assert.equal(store.offerCanBeSentBySales(created), false);
 
@@ -710,9 +722,16 @@ test('contract pdf: mva-included offers state the incl. VAT price as the quoted 
   assert.equal(buffer.subarray(0, 4).toString(), '%PDF');
   const exVat = JSON.stringify(contractPdf.contractArticleModel({ client: CLIENT, tierId: tiers.WEBSITE_TIERS[0].id, mvaIncluded: false }));
   const inclVat = JSON.stringify(contractPdf.contractArticleModel({ client: CLIENT, tierId: tiers.WEBSITE_TIERS[0].id, mvaIncluded: true }));
-  assert.match(exVat, new RegExp(`Monthly price: ${TIER1_MONTHLY} kr excl\\. VAT`));
-  assert.match(inclVat, new RegExp(`Monthly price: ${TIER1_MONTHLY} kr incl\\. VAT`));
-  assert.doesNotMatch(exVat, new RegExp(`Monthly price: ${TIER1_MONTHLY} kr incl\\. VAT`));
+  assert.match(exVat, new RegExp(`Månedspris: ${TIER1_MONTHLY} kr eks\\. mva`));
+  assert.match(inclVat, new RegExp(`Månedspris: ${TIER1_MONTHLY} kr inkl\\. mva`));
+  assert.doesNotMatch(exVat, new RegExp(`Månedspris: ${TIER1_MONTHLY} kr inkl\\. mva`));
+  const exVatEn = JSON.stringify(contractPdf.contractArticleModel({
+    client: CLIENT,
+    tierId: tiers.WEBSITE_TIERS[0].id,
+    mvaIncluded: false,
+    language: 'en',
+  }));
+  assert.match(exVatEn, new RegExp(`Monthly price: ${TIER1_MONTHLY} kr excl\\. VAT`));
   assert.notEqual(exVat, inclVat);
   const products = offerEmail.productsWithTier([], tiers.WEBSITE_TIERS[0].id);
   const emailEx = offerEmail.buildOfferEmail({ client: CLIENT, products, mvaIncluded: false, mergeTags: false }).html;
@@ -850,6 +869,14 @@ test('offer send can target email, asoldi.com, or both', () => {
   });
   assert.equal(contractSent.sentContent, 'contract');
   assert.match(contractSent.history.at(-1).note, /email:contract:/);
+
+  assert.equal(store.offerLetterCanFill(duringMeeting), true);
+  assert.equal(store.offerLetterCanFill(contractSent), true);
+  const approved = store.markSalesOfferLetterApproved(contractSent.id, { actor: 'anna' });
+  assert.equal(approved.sentContent, 'full');
+  assert.ok(approved.letterApprovedAt);
+  assert.equal(store.offerLetterCanFill(approved), false);
+  assert.equal(store.offerLetterCanFill({ status: 'verified' }), false);
 });
 
 test('in-meeting contract mail skips the transcript letter', () => {
@@ -939,15 +966,17 @@ test('contract includes POS one-time add-on in Section 1 and defines it', async 
   assert.equal(inputs.oneTimeFees[0].price, 6000);
   const article = contractPdf.contractArticleModel({ client: CLIENT, ...inputs });
   const scopeBlob = JSON.stringify(article.scope);
-  assert.match(scopeBlob, /POS \/ cash-register connection \(kassasystem\)/);
-  assert.match(scopeBlob, /6 000 kr excl\. VAT, billed once/);
+  assert.match(scopeBlob, /Kassasystem-oppkobling/);
+  assert.match(scopeBlob, /6 000 kr eks\. mva, faktureres én gang/);
   const blob = JSON.stringify(article);
-  assert.match(blob, /existing point-of-sale \/ cash-register system/);
-  assert.match(blob, /does not sell, license, host or support the POS/);
-  assert.match(blob, /One-time add-ons listed in Section 1, if any/);
+  assert.match(blob, /eksisterende kassasystem/);
+  assert.match(blob, /selger, lisensierer, hoster eller supporterer ikke kassasystemet/);
+  assert.match(blob, /Engangstillegg som står i punkt 1, hvis noen/);
   const html = (await import('../lib/offer-contract-html.js')).contractHtmlForOffer(offer, CLIENT);
-  assert.match(html, /POS \/ cash-register connection \(kassasystem\)/);
-  assert.match(html, /billed once and are not part of the monthly price/);
+  assert.match(html, /Kassasystem-oppkobling/);
+  assert.match(html, /faktureres én gang og inngår ikke i månedsprisen/);
+  const english = contractPdf.contractArticleModel({ client: CLIENT, ...inputs, language: 'en' });
+  assert.match(JSON.stringify(english.scope), /POS \/ cash-register connection \(kassasystem\)/);
   const storedOnly = contractPdf.contractInputsForOffer({
     tierId: built.tierId,
     products: built.products,
@@ -960,7 +989,7 @@ test('contract includes POS one-time add-on in Section 1 and defines it', async 
     tierId: tiers.WEBSITE_TIERS[2].id,
   }).scope);
   assert.doesNotMatch(plainScope, /kassasystem/);
-  assert.doesNotMatch(plainScope, /billed once/);
+  assert.doesNotMatch(plainScope, /faktureres én gang/);
 });
 
 test('portal contract html uses a document header, party columns, and numbered sections', async () => {
@@ -973,13 +1002,18 @@ test('portal contract html uses a document header, party columns, and numbered s
     CLIENT,
   );
   assert.match(html, /offer-contract-masthead/);
-  assert.match(html, /<h1>Service agreement<\/h1>/);
-  assert.match(html, /leaves the Asoldi hosting network/);
-  assert.match(html, /Domain access/);
+  assert.match(html, /<h1>Tjenesteavtale<\/h1>/);
+  assert.match(html, /forlater Asoldis hostingnettverk/);
+  assert.match(html, /Domenetilgang/);
   assert.doesNotMatch(html, /Google Business Profile development/);
   assert.match(html, /offer-contract-parties/);
   assert.match(html, /Byneset Bydelskafé/);
-  assert.match(html, /1\. Service scope/);
+  assert.match(html, /1\. Tjenesteomfang/);
+  const englishHtml = contractHtmlForOffer(
+    { tierId: tiers.WEBSITE_TIERS[0].id, contractLanguage: 'en', sentAt: '2026-09-28T08:00:00.000Z' },
+    CLIENT,
+  );
+  assert.match(englishHtml, /<h1>Service agreement<\/h1>/);
   assert.match(html, /offer-contract-sign/);
   assert.match(html, /asoldi-contract-signature\.png/);
   assert.match(html, /offer-contract-stamp/);
@@ -1188,13 +1222,13 @@ test('dual PDF and portal HTML list both scopes and Tilbud 1/2 checkboxes', asyn
     { tierId: dual.tierId, alternatives: dual.alternatives, sentAt: '2026-09-28T08:00:00.000Z' },
     CLIENT,
   );
-  assert.match(html, /alternative service scopes/);
+  assert.match(html, /alternative omfang/);
   assert.match(html, /<strong>Tilbud 1<\/strong>/);
   assert.match(html, /<strong>Tilbud 2<\/strong>/);
-  assert.match(html, /Chosen scope:<\/strong> Tilbud 1 or Tilbud 2/);
-  assert.doesNotMatch(html, /The Client has selected the following service tier/);
-  assert.match(html, /14 working days after project start/);
-  assert.match(html, /the period starts when the contract is signed/);
+  assert.match(html, /Valgt omfang:<\/strong> Tilbud 1 eller Tilbud 2/);
+  assert.doesNotMatch(html, /Kunden har valgt følgende tjenestenivå/);
+  assert.match(html, /14 arbeidsdager etter prosjektstart/);
+  assert.match(html, /starter fristen ved signert kontrakt/);
   assert.doesNotMatch(html, /\b14 days from\b/);
 
   const article = contractPdf.contractArticleModel({
@@ -1287,5 +1321,33 @@ test('offer send uses the /kontrakt link and does not attach a PDF', () => {
   assert.match(compose, /attached: false/);
   assert.match(send, /attachments: Array.isArray\(composed\.attachments\)/);
   assert.doesNotMatch(send, /contentType: 'application\/pdf'/);
+  assert.match(send, /sendPortal = !resend/);
+  assert.match(send, /approve-letter/);
+  assert.match(send, /sentContent: contentMode/);
+  assert.match(send, /if \(!contractOnly\) offer = await autoFillOfferIfReady/);
+  assert.match(server, /sales-preview\/:id\/contract\.pdf/);
+  assert.match(server, /previewSignAgreementsOk/);
+  assert.match(server, /fillPendingContractLetters/);
+  const getOffer = server.slice(
+    server.indexOf("app.get('/api/admin/sales/:id/offer'"),
+    server.indexOf("app.post('/api/admin/sales/:id/offer'"),
+  );
+  assert.match(getOffer, /if \(salesOffers\.offerLetterCanFill\(offer\)\)/);
+  assert.doesNotMatch(getOffer, /status === 'sent' && salesOffers\.offerLetterCanFill/);
+});
+
+test('stored offers default to Norwegian contract language', () => {
+  assert.equal(store.normalizeSalesOffer({}).contractLanguage, 'nb');
+  assert.equal(store.normalizeSalesOffer({ contractLanguage: 'en' }).contractLanguage, 'en');
+  assert.equal(store.normalizeSalesOffer({ contractLanguage: 'english' }).contractLanguage, 'en');
+  const offer = store.createSalesOffer({ salesClientId: 'lang-1', ownerId: 'x' });
+  assert.equal(offer.contractLanguage, 'nb');
+  assert.equal(contractPdf.contractInputsForOffer(offer).language, 'nb');
+  const hashedNb = store.offerContentHash(offer);
+  assert.equal(hashedNb, store.offerContentHash({ ...offer, contractLanguage: '' }));
+  assert.notEqual(hashedNb, store.offerContentHash({ ...offer, contractLanguage: 'en' }));
+  const english = store.updateSalesOffer(offer.id, { contractLanguage: 'en' });
+  assert.equal(english.contractLanguage, 'en');
+  assert.equal(contractPdf.contractInputsForOffer(english).language, 'en');
 });
 

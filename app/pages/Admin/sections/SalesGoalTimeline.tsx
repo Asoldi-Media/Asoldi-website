@@ -145,6 +145,8 @@ type Props = {
   renderRowExtras?: (action: SalesNextAction) => React.ReactNode;
   /** Row the selected focus category points to. */
   focusRowId?: string;
+  /** Open this goal's list first (Tilbud when the card sits in that category). */
+  preferredGoalKey?: SalesGoalKey;
   nowMs?: number;
 };
 
@@ -187,6 +189,7 @@ export function SalesGoalTimeline({
   fixedRows,
   renderRowExtras,
   focusRowId = '',
+  preferredGoalKey,
   nowMs = Date.now(),
 }: Props) {
   const [draft, setDraft] = useState<DraftState | null>(null);
@@ -203,7 +206,11 @@ export function SalesGoalTimeline({
   const isWin = variant === 'win';
   const currentGoal = (isWin ? AFTER_SALE_GOAL : getCurrentGoalKey(client)) as SalesGoalKey | 'afterSale' | '';
   const visibleGoals = getSalesGoalKeys(client.product) as SalesGoalKey[];
-  const displayGoal = (viewedGoal && visibleGoals.includes(viewedGoal) ? viewedGoal : currentGoal) as SalesGoalKey | 'afterSale' | '';
+  const displayGoal = (
+    viewedGoal && visibleGoals.includes(viewedGoal)
+      ? viewedGoal
+      : (preferredGoalKey && visibleGoals.includes(preferredGoalKey) ? preferredGoalKey : currentGoal)
+  ) as SalesGoalKey | 'afterSale' | '';
   const viewingCurrent = displayGoal === currentGoal;
   const canCreateActions = Boolean(displayGoal) && (isWin || viewingCurrent);
   const boardMode = Array.isArray(fixedRows);

@@ -193,6 +193,7 @@ import {
   escapeHtml as escapeOfferHtml,
   fillOfferSlots,
   findOfferPlaceholders,
+  offerLetterSlotsFilled,
   offerSendContentMode,
   offerSlotIsOpen,
   productsWithTier,
@@ -206,6 +207,7 @@ import {
 import { buildOfferFromMeetingQuote, quoteBuiltIsCustom } from './lib/offer-from-quote.js';
 import { clientWithOfferParty, offerMissingFields, offerReadinessMessage } from './lib/offer-readiness.js';
 import { buildContractPdf, contractFileName, contractInputsForOffer, offerContractIsAvailable } from './lib/offer-contract-pdf.js';
+import { normalizeContractLanguage } from './lib/offer-contract-copy.js';
 import { dueDateDay, isCustomWebsiteOffer, normalizeDueDate, offerDeliveryPhraseNb, projectStartFromQuote, resolveWebsiteDue, weekendDueDateMessage, weeksForDeveloperBoard, workDaysForDeveloperBoard } from './lib/website-due.js';
 import { contractHtmlForOffer } from './lib/offer-contract-html.js';
 import { extractOfferLetterBody } from './lib/offer-letter-html.js';
@@ -279,7 +281,7 @@ import {
   rewritePreviewAssetPaths,
   toPublicSalesPreviewUrl,
 } from './lib/laptop-preview.js';
-import { allowPreviewAcceptAttempt, ensurePreviewSigner, presentPreviewContract } from './lib/sales-preview-contract.js';
+import { allowPreviewAcceptAttempt, ensurePreviewSigner, presentPreviewContract, previewSignAgreementsOk } from './lib/sales-preview-contract.js';
 import {
   embedSrcFromRequest,
   isPreviewContractSlug,
@@ -15829,6 +15831,9 @@ function persistOfferDraft(offer, client, body, req, { content = true } = {}) {
   const patch = content && offer.status !== 'verified' && offer.status !== 'review-requested'
     ? offerPatchFromBody(body || {}, offer)
     : {};
+  if (typeof (body || {}).contractLanguage === 'string') {
+    patch.contractLanguage = normalizeContractLanguage(body.contractLanguage);
+  }
   const recipient = offerRecipientPatch(body || {}, client);
   if (recipient) patch.party = { ...(patch.party || {}), ...recipient };
   if (!Object.keys(patch).length) return offer;
@@ -16094,6 +16099,7 @@ function scheduleFirefliesTranscriptIngest({ force = false } = {}) {
       await hydrateRecentStoredTranscripts({ max: 8 });
       ensureFirefliesMeetLinkBackfill({ force: true });
       await hydratePendingClientTranscripts({ max: 6 });
+      await fillPendingContractLetters();
     } catch (error) {
       console.warn(`[fireflies] transcript ingest ${sanitizeText(error?.message) || error}`);
     } finally {
@@ -16541,6 +16547,7 @@ function offerPatchFromBody(body = {}, current = {}) {
     };
   }
   if (body.party && typeof body.party === 'object') patch.party = body.party;
+  if (typeof body.contractLanguage === 'string') patch.contractLanguage = normalizeContractLanguage(body.contractLanguage);
   return patch;
 }
 
@@ -16657,9 +16664,49 @@ function offerContextBlocker(client, meeting, meetings = []) {
   return '';
 }
 
+function stampOfferLetterFilled(clientId, offer) {
+  const client = sales.getSalesClientById(clientId);
+  if (!client || client.offerLetterFilledAt) return client;
+  if (!offerLetterSlotsFilled(offer?.email?.html)) return client;
+  return sales.updateSalesClient(clientId, { offerLetterFilledAt: new Date().toISOString() }) || client;
+}
+
+async function maybeFillContractLetter(client, req) {
+  if (!client?.id) return null;
+  const offer = salesOffers.getOfferForClient(client.id);
+  if (!salesOffers.offerLetterCanFill(offer)) return offer;
+  try {
+    const filled = await fillOpenOfferSlotsFromSalesMeeting(offer, client, req);
+    if (filled?.status === 'sent') stampOfferLetterFilled(client.id, filled);
+    return filled;
+  } catch (error) {
+    console.warn(`[offer] contract-letter fill ${sanitizeText(error?.message) || error}`);
+    return offer;
+  }
+}
+
+async function fillPendingContractLetters() {
+  const req = { salesUser: { accountKey: 'fireflies' } };
+  const pending = [];
+  for (const client of sales.getSalesClients()) {
+    if (client.offerLetterApprovedAt) continue;
+    const offer = salesOffers.getOfferForClient(client.id);
+    if (!salesOffers.offerLetterCanFill(offer)) continue;
+    if (offerLetterSlotsFilled(offer?.email?.html)) {
+      if (offer.status === 'sent') stampOfferLetterFilled(client.id, offer);
+      continue;
+    }
+    pending.push({ client, sent: offer.status === 'sent' });
+  }
+  pending.sort((a, b) => Number(b.sent) - Number(a.sent));
+  for (const row of pending.slice(0, 4)) {
+    await maybeFillContractLetter(row.client, req);
+  }
+}
+
 /** Fill empty letter slots when the selected Fireflies meeting (or product notes) can support it. */
 async function autoFillOfferIfReady(offer, client, req) {
-  if (!offer || offer.status === 'sent' || offer.status === 'verified' || offer.status === 'review-requested') return offer;
+  if (!offer || !salesOffers.offerLetterCanFill(offer)) return offer;
   try {
     return await fillOpenOfferSlotsFromSalesMeeting(offer, client, req);
   } catch (error) {
@@ -16695,7 +16742,7 @@ async function portalAccountForClient(client, requested = '') {
 
 /** Writes the meeting transcript and sales notes into still-empty offer slots. */
 async function fillOpenOfferSlotsFromSalesMeeting(offer, client, req) {
-  if (!offer || salesOffers.offerContentIsLocked(offer)) return offer;
+  if (!offer || !salesOffers.offerLetterCanFill(offer)) return offer;
   const html = offer.email?.html || '';
   const open = ['need', 'project', 'terms', 'benefits'].some((slot) => offerSlotIsOpen(html, slot));
   if (!open) return offer;
@@ -16746,7 +16793,7 @@ function offerSendBlocker(offer, { ignoreReviewGate = false, contractOnly = fals
   if (contractOnly) return '';
   const placeholders = findOfferPlaceholders(offer.email.html);
   if (placeholders.length) {
-    return `E-posten har ${placeholders.length} felt fra malen som ikke er fylt ut: ${placeholders.slice(0, 3).map((label) => `«${label}»`).join(', ')}${placeholders.length > 3 ? ' …' : ''}. Fyll ut eller slett dem før du sender, eller velg Kun kontrakt for å sende avtalen under møtet.`;
+    return `E-posten har ${placeholders.length} felt fra malen som ikke er fylt ut: ${placeholders.slice(0, 3).map((label) => `«${label}»`).join(', ')}${placeholders.length > 3 ? ' …' : ''}. Fyll ut eller slett dem før du sender, eller velg Signer nå for å sende avtalen under møtet.`;
   }
   return '';
 }
@@ -16788,6 +16835,10 @@ app.get('/api/admin/sales/:id/offer', salesAuth, async (req, res) => {
   client = sales.getSalesClientById(client.id) || client;
   offer = dropUnknownOfferMeetings(salesOffers.getOfferForClient(client.id) || offer, client);
   offer = syncOfferMeetingSelection(offer, client);
+  if (salesOffers.offerLetterCanFill(offer)) {
+    offer = await autoFillOfferIfReady(offer, client, req);
+    if (offer.status === 'sent') client = stampOfferLetterFilled(client.id, offer) || client;
+  }
   const sender = await resolveSalesSenderForAccount(req.salesUser);
   const meeting = primaryMeetingForOffer(client, offer);
   const portalAccount = await portalAccountForClient(client);
@@ -16894,7 +16945,7 @@ app.post('/api/admin/sales/:id/offer/fill', salesAuth, async (req, res) => {
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
   if (!isDeepseekConfigured()) return res.status(503).json({ message: 'DeepSeek er ikke konfigurert (DEEPSEEK_API_KEY mangler).' });
   let current = await ensureOfferDraft(client, req);
-  if (salesOffers.offerContentIsLocked(current)) {
+  if (!salesOffers.offerLetterCanFill(current)) {
     return res.status(409).json({ message: 'Tilbudet er låst. Innholdet kan ikke skrives om fra transkriptet.' });
   }
   client = clientAfterFirefliesBackfill(client);
@@ -16927,6 +16978,7 @@ app.post('/api/admin/sales/:id/offer/fill', salesAuth, async (req, res) => {
       meetingIds,
       meetingId: meetingIds[0] || sanitizeText(meeting?.meetingId),
     }, { actor: offerActor(req), action: 'ai-filled', note: sanitizeText(meeting?.title) });
+    stampOfferLetterFilled(client.id, updated);
     res.json({ offer: presentOffer(updated), nuances });
   } catch (error) {
     const status = Number(error?.status) >= 400 ? Number(error.status) : 502;
@@ -17224,9 +17276,9 @@ async function attachWebsiteCodeToSentOffer(salesClient, offer, { letterHtml = '
   });
 }
 
-function markOfferSentProgress(client) {
+function markOfferSentProgress(client, extra = {}) {
   try {
-    return sales.markOfferSentOnDelivery(client.id);
+    return sales.markOfferSentOnDelivery(client.id, '', extra);
   } catch (error) {
     console.error('[sales] tilbud send did not check Tilbud', client?.id, error);
     return sales.getSalesClientById(client.id);
@@ -17246,10 +17298,10 @@ app.post('/api/admin/sales/:id/offer/send', salesAuth, async (req, res) => {
   if (resend && offer.status !== 'sent') {
     return res.status(400).json({ message: 'Tilbudet er ikke sendt ennå.', offer: presentOffer(offer) });
   }
-  const channels = resend ? ['email'] : salesOffers.normalizeOfferChannels(req.body || {});
-  const sendEmail = channels.includes('email');
-  const sendPortal = channels.includes('portal');
-  if (sendEmail && !emailLib.canSendEmail()) {
+  const sendEmail = true;
+  const sendPortal = !resend;
+  const channels = sendPortal ? ['email', 'portal'] : ['email'];
+  if (!emailLib.canSendEmail()) {
     return res.status(400).json({ message: salesEmailFailureMessage('smtp-not-configured') });
   }
 
@@ -17263,12 +17315,13 @@ app.post('/api/admin/sales/:id/offer/send', salesAuth, async (req, res) => {
   if (!resend) {
     const readiness = offerReadiness(client, offer, { to });
     if (!readiness.ready) return res.status(400).json({ message: readiness.message, readiness });
+    offer = persistOfferDraft(offer, client, req.body, req, { content: false });
+    if (!contractOnly) offer = await autoFillOfferIfReady(offer, client, req);
     const blocker = offerSendBlocker(offer, { contractOnly });
     if (blocker) {
       const waiting = offer.status === 'review-requested' || (salesOffers.offerNeedsVerification(offer) && offer.status !== 'verified');
       return res.status(waiting ? 409 : 400).json({ message: blocker, offer: presentOffer(offer) });
     }
-    offer = persistOfferDraft(offer, client, req.body, req, { content: false });
   }
   if (!to || !isValidEmail(to)) return res.status(400).json({ message: salesEmailFailureMessage('missing-email') });
   const delivery = sendEmail && sendPortal ? 'both' : (sendPortal ? 'portal' : 'email');
@@ -17303,7 +17356,10 @@ app.post('/api/admin/sales/:id/offer/send', salesAuth, async (req, res) => {
     const portalOffer = resend ? null : await attachWebsiteCodeToSentOffer(client, sent, { letterHtml: composed.html, to });
     const presented = presentOffer(sent);
     const account = await portalAccountForClient(client, to);
-    const progressed = resend ? client : markOfferSentProgress(client);
+    const progressed = resend ? client : markOfferSentProgress(client, {
+      sentContent: contentMode,
+      letterFilled: offerLetterSlotsFilled(offer.email?.html),
+    });
     return res.json({
       ok: true,
       resent: resend,
@@ -17321,6 +17377,52 @@ app.post('/api/admin/sales/:id/offer/send', salesAuth, async (req, res) => {
   } catch (error) {
     const portalOnly = sendPortal && !sendEmail;
     res.status(500).json({ message: portalOnly ? (sanitizeText(error?.message) || 'Kunne ikke legge tilbudet på asoldi.com.') : formatSmtpSendError(error) });
+  }
+});
+
+app.post('/api/admin/sales/:id/offer/approve-letter', salesAuth, async (req, res) => {
+  const client = sales.getSalesClientById(req.params.id);
+  if (!client) return res.status(404).json({ message: 'Sales client not found.' });
+  if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
+  let offer = salesOffers.getOfferForClient(client.id);
+  if (!offer || offer.status !== 'sent' || offer.sentContent !== 'contract') {
+    return res.status(409).json({ message: 'Ingen Signer nå-sending å godkjenne.' });
+  }
+  if (offer.letterApprovedAt) {
+    return res.json({ ok: true, offer: presentOffer(offer), client: jsonSalesClient(client) });
+  }
+  if (!emailLib.canSendEmail()) {
+    return res.status(400).json({ message: salesEmailFailureMessage('smtp-not-configured') });
+  }
+  try {
+    offer = await fillOpenOfferSlotsFromSalesMeeting(offer, client, req) || offer;
+    stampOfferLetterFilled(client.id, offer);
+    if (!offerLetterSlotsFilled(offer.email?.html)) {
+      return res.status(409).json({ message: 'E-posten er ikke skrevet ferdig ennå. Vent på transkriptet.' });
+    }
+    const to = normalizeEmail(offer.sentTo) || offerSendToEmail(client);
+    if (!to || !isValidEmail(to)) return res.status(400).json({ message: salesEmailFailureMessage('missing-email') });
+    const { composed } = await composeOfferMessage(offer, client, req, { to });
+    await emailLib.sendEmail({
+      to,
+      from: composed.from,
+      replyTo: composed.replyTo,
+      bcc: salesEmailCopyBcc(to),
+      subject: composed.subject,
+      text: composed.text || htmlToPlainText(composed.html),
+      html: composed.html,
+      attachments: Array.isArray(composed.attachments) ? composed.attachments : [],
+    });
+    await attachWebsiteCodeToSentOffer(client, offer, { letterHtml: composed.html, to });
+    const approved = salesOffers.markSalesOfferLetterApproved(offer.id, { actor: offerActor(req) }) || offer;
+    const progressed = sales.markOfferLetterApprovedOnClient(client.id) || sales.getSalesClientById(client.id);
+    return res.json({
+      ok: true,
+      offer: presentOffer(approved),
+      client: jsonSalesClient(progressed),
+    });
+  } catch (error) {
+    res.status(500).json({ message: formatSmtpSendError(error) });
   }
 });
 
@@ -20304,6 +20406,26 @@ app.get('/api/public/sales-preview/:id/contract', (req, res) => {
   return res.json(salesPreviewContractPayload(client));
 });
 
+app.get('/api/public/sales-preview/:id/contract.pdf', async (req, res) => {
+  if (refusePreviewCrawler(req, res)) return;
+  applySalesPreviewSecurityHeaders(res);
+  const client = salesPreview.findSalesClientForPreviewParam(req.params.id, sales);
+  if (!client) return res.status(404).json({ message: 'Fant ikke kunden.' });
+  const portal = offers.getActiveOfferForSalesClient(client.id);
+  const offer = portal?.salesOfferId
+    ? salesOffers.getSalesOfferById(portal.salesOfferId)
+    : salesOffers.getOfferForClient(client.id);
+  if (!offer || offer.status !== 'sent') {
+    return res.status(404).json({ message: 'Ingen kontrakt er sendt ennå.' });
+  }
+  try {
+    const { buffer, fileName } = await offerContractBuffer(offer, client);
+    sendPdf(res, buffer, fileName, { download: true });
+  } catch (error) {
+    res.status(400).json({ message: sanitizeText(error?.message) || 'Kunne ikke lage kontrakt.' });
+  }
+});
+
 app.post('/api/public/sales-preview/:id/contract/accept', async (req, res) => {
   if (refusePreviewCrawler(req, res)) return;
   applySalesPreviewSecurityHeaders(res);
@@ -20320,6 +20442,9 @@ app.post('/api/public/sales-preview/:id/contract/accept', async (req, res) => {
   }
   if (req.body?.accepted !== true) {
     return res.status(400).json({ message: 'Du må akseptere avtalen.' });
+  }
+  if (!previewSignAgreementsOk(req.body)) {
+    return res.status(400).json({ message: 'Du må godkjenne vilkår og 6 måneders bindingstid.' });
   }
   const email = sanitizeText(offer.targetEmail) || offerSendToEmail(client);
   const name = sanitizeText(req.body?.name) || sanitizeText(client.contactPerson);

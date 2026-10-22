@@ -4,6 +4,7 @@ import { getDataFilePath, ensurePersistentDataDir, writeDataJson } from './stora
 import { CUSTOM_TIER_ID, tierById } from '../lib/website-tiers.js';
 import { normalizeDueDate } from '../lib/website-due.js';
 import { normalizeOfferMeetingIds } from '../lib/offer-meetings.js';
+import { normalizeContractLanguage } from '../lib/offer-contract-copy.js';
 
 /**
  * Offer (tilbud) drafts: the offer email + product blocks + contract summary for one sales client.
@@ -246,6 +247,16 @@ export function offerContentIsLocked(offer = {}) {
   return status === 'review-requested' || status === 'verified' || status === 'sent';
 }
 
+/** Drafts, and Signer nå sends until the full letter is approved, may still receive Fireflies copy. */
+export function offerLetterCanFill(offer = {}) {
+  const status = normalizeOfferStatus(offer?.status);
+  if (status === 'sent') {
+    return normalizeOfferSentContent(offer.sentContent) === 'contract'
+      && !sanitizeText(offer.letterApprovedAt);
+  }
+  return status === 'draft';
+}
+
 export function normalizeSalesOffer(raw = {}) {
   const createdAt = sanitizeText(raw.createdAt) || nowIso();
   const contract = raw.contract && typeof raw.contract === 'object' ? raw.contract : {};
@@ -290,6 +301,9 @@ export function normalizeSalesOffer(raw = {}) {
     sentBy: sanitizeText(raw.sentBy),
     /** `contract` = in-meeting send (PDF / portal agreement, no transcript letter). `full` = the offer e-mail. */
     sentContent: normalizeOfferSentContent(raw.sentContent),
+    /** Preview/PDF language. Empty and unknown values are Norwegian. */
+    contractLanguage: normalizeContractLanguage(raw.contractLanguage),
+    letterApprovedAt: sanitizeText(raw.letterApprovedAt),
     delivery: normalizeOfferDelivery(raw.delivery),
     dueDate: normalizeDueDate(raw.dueDate),
     createdAt,
@@ -482,6 +496,17 @@ export function markSalesOfferSent(id, { actor = '', to = '', pdfPath = '', deli
   }, { actor, action: 'sent', note: `${channel}${content ? `:${content}` : ''}:${sanitizeText(to)}` });
 }
 
+/** Full Fireflies letter went out after a Signer nå send. Keeps first sentAt. */
+export function markSalesOfferLetterApproved(id, { actor = '' } = {}) {
+  const current = getSalesOfferById(id);
+  if (!current || current.status !== 'sent') return null;
+  if (sanitizeText(current.letterApprovedAt)) return current;
+  return updateSalesOffer(id, {
+    sentContent: 'full',
+    letterApprovedAt: nowIso(),
+  }, { actor, action: 'letter-approved' });
+}
+
 /** Re-mail a sent offer. Keeps first sentAt / Checkup / contractSentAt; only appends history. */
 export function markSalesOfferResent(id, { actor = '', to = '' } = {}) {
   const current = getSalesOfferById(id);
@@ -532,6 +557,8 @@ export function offerContentHash(offer = {}, { includeParty = true } = {}) {
   if (alternatives.length >= 2) payload.alternatives = alternatives;
   if (offer?.chosenOfferIndex === 0 || offer?.chosenOfferIndex === 1) payload.chosenOfferIndex = offer.chosenOfferIndex;
   if (includeParty) payload.party = partyOverrides(offer?.party);
+  const contractLanguage = normalizeContractLanguage(offer?.contractLanguage);
+  if (contractLanguage !== 'nb') payload.contractLanguage = contractLanguage;
   return createHash('sha1').update(JSON.stringify(payload)).digest('hex');
 }
 

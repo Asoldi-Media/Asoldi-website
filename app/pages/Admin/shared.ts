@@ -740,6 +740,9 @@ export type SalesOffer = {
   sentBy: string;
   /** `contract` = sent during the meeting without the transcript letter. `full` = the offer e-mail. */
   sentContent?: '' | 'full' | 'contract';
+  /** Preview/PDF language. Missing values are Norwegian. */
+  contractLanguage?: 'nb' | 'en';
+  letterApprovedAt?: string;
   delivery?: 'email' | 'portal' | 'both';
   websiteCode?: string;
   createdAt: string;
@@ -834,6 +837,10 @@ export type SalesClient = {
   contractSignedAt?: string;
   /** When the contract PDF was sent. Checkup is due 24h after this, once Kontrakt is checked. */
   contractSentAt?: string;
+  /** `contract` = Signer nå (letter still in Tilbud). `full` = whole offer already mailed. */
+  offerSentContent?: '' | 'full' | 'contract';
+  offerLetterApprovedAt?: string;
+  offerLetterFilledAt?: string;
   inboxBot?: {
     pendingContracts: number;
     stagedElements: number;

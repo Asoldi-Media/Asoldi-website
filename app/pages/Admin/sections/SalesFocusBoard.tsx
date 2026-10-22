@@ -92,6 +92,7 @@ type Props = {
   onOpenPreview: (client: SalesClient) => void;
   onOpenContract: (client: SalesClient) => void;
   onCopyContract: (client: SalesClient) => void;
+  onApproveLetter: (client: SalesClient) => void;
   onAssign: (client: SalesClient, ownerId: string) => void;
   onSecondary: (client: SalesClient) => void;
   onNotSold: (client: SalesClient) => void;
@@ -241,6 +242,13 @@ function entryStatus(entry: FocusEntry, nowMs: number): { text: string; tone: ke
     const late = dueAt ? since(dueAt, nowMs) : '';
     if (state === 'overdue') return { text: late ? `Forfalt ${late}` : 'Forfalt', tone: 'red' };
     return dueAt ? { text: `Frist ${when(dueAt, nowMs)}`, tone: 'warn' } : null;
+  }
+  if (stepId === 'offerLetterReview') {
+    if (state === 'waiting') return { text: 'Venter på transkript', tone: 'muted' };
+    return { text: 'Se gjennom e-posten', tone: 'warn' };
+  }
+  if (stepId === 'offerContractLink') {
+    return { text: 'Signer nå-lenke', tone: 'muted' };
   }
   if (stepId === 'signatureFollowUp') {
     if (state === 'overdue') return { text: `Oppfølging forfalt · ${since(dueAt, nowMs)}`, tone: 'red' };
@@ -652,6 +660,7 @@ function FocusCard(props: FocusCardProps) {
     onOpenPreview,
     onOpenContract,
     onCopyContract,
+    onApproveLetter,
     onSecondary,
     onNotSold,
     renderNotes,
@@ -781,6 +790,49 @@ function FocusCard(props: FocusCardProps) {
               Klargjør tilbud
             </button>
           ) : null,
+        };
+      }
+      if (row.stepId === 'offerContractLink') {
+        return {
+          ...row,
+          extras: (
+            <>
+              <button type="button" onClick={() => onOpenContract(client)} className={ROW_BUTTON} title="Åpne preview med kontrakten åpen">
+                <FileText size={11} />
+                Åpne kontraktlenke
+              </button>
+              <button type="button" onClick={() => onCopyContract(client)} className={ROW_BUTTON} title="Kopier lenken kunden signerer på">
+                <Copy size={11} />
+                Kopier kontraktlenke
+              </button>
+            </>
+          ),
+        };
+      }
+      if (row.stepId === 'offerLetterReview') {
+        const filled = Boolean(client.offerLetterFilledAt);
+        const letterBusy = sendingMailKey === `${client.id}:offer-letter`;
+        return {
+          ...row,
+          busy: letterBusy,
+          extras: (
+            <>
+              <button type="button" onClick={() => onOpenFlow(client, 3)} className={ROW_BUTTON} title="Forhåndsvis tilbudse-posten">
+                <Mail size={11} />
+                Forhåndsvis
+              </button>
+              <button
+                type="button"
+                onClick={() => onApproveLetter(client)}
+                disabled={letterBusy}
+                className={ROW_BUTTON}
+                title={filled ? 'Send den fulle tilbudse-posten. Kontrakten er allerede ute.' : 'Sender hvis transkriptet har skrevet e-posten'}
+              >
+                {letterBusy ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle2 size={11} />}
+                Ser bra ut
+              </button>
+            </>
+          ),
         };
       }
       if (row.stepId === 'contractSigned') {
@@ -1049,6 +1101,7 @@ function FocusCard(props: FocusCardProps) {
             fixedRows={isWon ? [] : fixedRows}
             renderRowExtras={rowExtras}
             focusRowId={entry.focusRowId}
+            preferredGoalKey={entry.category === 'offer' ? 'offerSent' : undefined}
           />
         </div>
 

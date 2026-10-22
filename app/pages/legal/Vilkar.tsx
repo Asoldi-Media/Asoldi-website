@@ -62,7 +62,7 @@ export const Vilkar = () => {
         <LegalSubheading>Hva tjenestene betyr</LegalSubheading>
         <p>
           Nivåteksten nedenfor er en kort oversikt over hva som inngår. Forklaringene her sier hva
-          tjenestenavnene betyr. Den signerte kontrakten har samme forklaringer på engelsk i punkt 5.
+          tjenestenavnene betyr. Den signerte kontrakten har samme forklaringer i punkt 5 (norsk som standard, engelsk hvis det er valgt ved sending).
         </p>
         <LegalList
           items={[

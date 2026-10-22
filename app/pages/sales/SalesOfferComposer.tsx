@@ -119,10 +119,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
   const [meetingsOpen, setMeetingsOpen] = useState(false);
   const [fillPhase, setFillPhase] = useState<'' | 'running' | 'done' | 'error'>('');
   const [fillMessage, setFillMessage] = useState('');
-  const [sendEmail, setSendEmail] = useState(true);
-  const [sendPortal, setSendPortal] = useState(false);
   const [sendContent, setSendContent] = useState<'full' | 'contract'>('full');
-  const [portalAccount, setPortalAccount] = useState<{ email: string; found: boolean } | null>(null);
   const [subject, setSubject] = useState('');
   const [preheader, setPreheader] = useState('');
   const [html, setHtml] = useState('');
@@ -153,6 +150,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
   const needsReview = reviewChecked;
   const mvaIncluded = Boolean(offer?.mvaIncluded);
   const placeholders = offer?.placeholders || [];
+  const contractLanguage = offer?.contractLanguage === 'en' ? 'en' : 'nb';
   const applyOffer = useCallback((next: SalesOffer, { resetHtml = true } = {}) => {
     setOffer(next);
     setSubject(next.email.subject || '');
@@ -178,10 +176,8 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
         sender: SalesSender;
         deepseek: boolean;
         canSendEmail: boolean;
-        portalAccount?: { email: string; found: boolean };
       };
       setClient(data.client);
-      setPortalAccount(data.portalAccount || null);
       setMergeFields(Array.isArray(data.mergeFields) ? data.mergeFields : []);
       setMeeting(data.meeting || null);
       setMeetings(Array.isArray(data.meetings) ? data.meetings : []);
@@ -249,7 +245,14 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
           }
           return next;
         });
-        if (becameReady) setNotice('Fireflies-møtet er klart på tilbudet.');
+        if (becameReady) {
+          setNotice('Fireflies-møtet er klart. E-posten skrives fra transkriptet.');
+          void fillClientOffer(clientId, { meetingId: next?.meetingId || '', force: false })
+            .then((filled: { offer?: SalesOffer }) => {
+              if (!cancelled && filled.offer) applyOffer(filled.offer);
+            })
+            .catch(() => {});
+        }
       } catch {
         // Keep waiting; the webhook may not have landed yet.
       }
@@ -263,7 +266,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [clientId, meeting?.manual, meetingReady]);
+  }, [clientId, meeting?.manual, meetingReady, applyOffer]);
 
   function partyPayload() {
     const card = clientCardParty(clientRef.current || {});
@@ -286,8 +289,11 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       try {
+        const language = extra.contractLanguage === 'en' || extra.contractLanguage === 'nb'
+          ? extra.contractLanguage
+          : (offer.contractLanguage === 'en' ? 'en' : 'nb');
         const payload = locked
-          ? { to: toRef.current }
+          ? { to: toRef.current, contractLanguage: language }
           : {
             html: htmlRef.current,
             subject: subjectRef.current,
@@ -295,6 +301,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
             to: toRef.current,
             party: partyPayload(),
             ...extra,
+            contractLanguage: language,
           };
         const data = await saveClientOffer(clientId, payload) as { offer: SalesOffer };
         setOffer(data.offer);
@@ -501,8 +508,12 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     setError('');
     setNotice('');
     try {
-      const channels = [sendEmail ? 'email' : '', sendPortal ? 'portal' : ''].filter(Boolean);
-      const payload = { to: (to || '').trim() || resolveWebsiteEmail(client || {}), party: partyPayload(), channels, content: sendContent };
+      const payload = {
+        to: (to || '').trim() || resolveWebsiteEmail(client || {}),
+        party: partyPayload(),
+        content: sendContent,
+        contractLanguage,
+      };
       const data = await sendClientOffer(clientId, payload) as {
         offer: SalesOffer;
         client?: SalesClient;
@@ -645,23 +656,20 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
 
   const sendDisabledReason = useMemo(() => {
     if (!offer) return '';
-    if (!sendEmail && !sendPortal) return 'Velg e-post, asoldi.com, eller begge.';
-    if (sendEmail && !canSendEmail) return 'E-post er ikke konfigurert på serveren.';
+    if (!canSendEmail) return 'E-post er ikke konfigurert på serveren.';
     if (!readiness.ready) return readiness.message;
     if (!offerTo) return 'Mangler e-postadresse.';
     if (!offer.products.length) return 'Velg en nettside-tier først.';
     if (status === 'review-requested') return 'Venter på gjennomgang hos admin.';
     if (needsReview && status !== 'verified') return 'Dette tilbudet må verifiseres av admin før det kan sendes.';
-    if (sendContent === 'full' && placeholders.length) return `${placeholders.length} felt fra malen er ikke fylt ut enda. Velg Kun kontrakt for å sende avtalen under møtet.`;
+    if (sendContent === 'full' && placeholders.length) return `${placeholders.length} felt fra malen er ikke fylt ut enda. Velg Signer nå for å sende avtalen under møtet.`;
     return '';
-  }, [offer, canSendEmail, readiness, offerTo, status, needsReview, placeholders.length, sendEmail, sendPortal, sendContent]);
+  }, [offer, canSendEmail, readiness, offerTo, status, needsReview, placeholders.length, sendContent]);
 
   const lastResentAt = [...(offer?.history || [])].reverse().find((entry) => entry.action === 'resent')?.at || '';
   const showSendButton = status !== 'sent' && (!needsReview || status === 'verified');
   const contractSend = sendContent === 'contract';
-  const sendButtonLabel = contractSend
-    ? (sendEmail && sendPortal ? 'Send kontrakt begge' : sendPortal ? 'Legg kontrakt på Asoldi' : 'Send kontrakt')
-    : (sendEmail && sendPortal ? 'Send begge' : sendPortal ? 'Legg på Asoldi' : 'Send e-post');
+  const sendButtonLabel = contractSend ? 'Signer nå' : 'Send tilbud';
   const title = 'Se gjennom tilbud';
 
   return (
@@ -740,9 +748,11 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                 <div className="space-y-2">
                   <div className="flex items-center justify-between gap-3 rounded-xl border border-emerald-400/30 bg-emerald-900/20 px-4 py-3 text-sm text-emerald-200">
                     <span>
-                      {offer.sentContent === 'contract' ? 'Kontrakt sendt' : 'Sendt'}
+                      {offer.sentContent === 'contract' && !offer.letterApprovedAt ? 'Signer nå sendt' : 'Sendt'}
                       {' '}{offer.sentAt ? new Date(offer.sentAt).toLocaleString('nb-NO') : ''} til {offer.sentTo}
-                      {offer.sentContent === 'contract' ? '. Uten møtetekst fra transkriptet.' : '.'}
+                      {offer.sentContent === 'contract' && !offer.letterApprovedAt
+                        ? '. Kontrakten er ute. Full e-post dukker opp i Tilbud når transkriptet er inne.'
+                        : '.'}
                       {lastResentAt ? ` Sendt på nytt ${new Date(lastResentAt).toLocaleString('nb-NO')}.` : ''}
                     </span>
                     <div className="flex shrink-0 items-center gap-2">
@@ -1005,7 +1015,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                         <div className="text-xs mt-1">
                           {placeholders.map((label) => `«${label}»`).join(' · ')}
                         </div>
-                        <div className="text-xs mt-1">Hele tilbudet venter på disse feltene (de fylles fra transkriptet). Velg Kun kontrakt under for å sende avtalen under møtet.</div>
+                        <div className="text-xs mt-1">Hele tilbudet venter på disse feltene (de fylles fra transkriptet). Velg Signer nå under for å sende avtalen under møtet.</div>
                       </div>
                     </div>
                   )}
@@ -1051,35 +1061,46 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                           </label>
                           <label className="inline-flex items-center gap-1.5 text-sm" title="Sender avtalen nå, uten å vente på Fireflies-transkriptet">
                             <input type="radio" name="offer-send-content" checked={sendContent === 'contract'} onChange={() => setSendContent('contract')} />
-                            Kun kontrakt
+                            Signer nå
+                          </label>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-3">
+                          <span className="text-xs text-gray-400">Kontrakt</span>
+                          <label className="inline-flex items-center gap-1.5 text-sm">
+                            <input
+                              type="radio"
+                              name="offer-contract-language"
+                              checked={contractLanguage === 'nb'}
+                              onChange={() => {
+                                setOffer((prev) => (prev ? { ...prev, contractLanguage: 'nb' } : prev));
+                                scheduleSave({ contractLanguage: 'nb' });
+                              }}
+                            />
+                            Norsk
+                          </label>
+                          <label className="inline-flex items-center gap-1.5 text-sm">
+                            <input
+                              type="radio"
+                              name="offer-contract-language"
+                              checked={contractLanguage === 'en'}
+                              onChange={() => {
+                                setOffer((prev) => (prev ? { ...prev, contractLanguage: 'en' } : prev));
+                                scheduleSave({ contractLanguage: 'en' });
+                              }}
+                            />
+                            English
                           </label>
                         </div>
                         {contractSend && (
                           <p className="text-[11px] text-gray-400 max-w-xl">
-                            Kan sendes under møtet. E-posten er en kort melding med en stor knapp til signeringslenken. Kunden leser kontrakten, lager Asoldi-passord og signerer der. Møteteksten fra transkriptet er ikke med.
+                            Sendes på e-post og asoldi.com under møtet. Kunden får signeringslenken med en gang. Full tilbudstekst skrives fra transkriptet etterpå, og du godkjenner den i Tilbud.
                           </p>
                         )}
-                        <div className="flex flex-wrap items-center gap-3">
-                        <span className="text-xs text-gray-400">Levering</span>
-                        <label className="inline-flex items-center gap-1.5 text-sm">
-                          <input type="checkbox" checked={sendEmail} onChange={(event) => setSendEmail(event.target.checked)} />
-                          E-post
-                        </label>
-                        <label
-                          className="inline-flex items-center gap-1.5 text-sm"
-                          title={portalAccount?.found
-                            ? `Legges på kundekontoen ${portalAccount.email}`
-                            : `Legges på asoldi.com for ${offerTo || 'e-posten på kortet'}`}
-                        >
-                          <input type="checkbox" checked={sendPortal} onChange={(event) => setSendPortal(event.target.checked)} disabled={!offerTo} />
-                          Asoldi.com
-                        </label>
-                        {sendPortal && offerTo && (
-                          <span className={`text-[11px] ${portalAccount?.found ? 'text-emerald-300' : 'text-amber-200'}`}>
-                            {portalAccount?.found ? 'Kundekonto funnet' : 'Ingen kundekonto med denne e-posten enda'}
-                          </span>
+                        {!contractSend && (
+                          <p className="text-[11px] text-gray-400 max-w-xl">
+                            Sendes på e-post og asoldi.com. Kunden går kun til Venter signering.
+                          </p>
                         )}
-                        </div>
                       </div>
                     )}
                     {showSendButton && (
@@ -1088,8 +1109,8 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                         onClick={() => void handleSend()}
                         disabled={busy === 'send' || Boolean(sendDisabledReason)}
                         title={sendDisabledReason || (contractSend
-                          ? 'Send kontrakten nå, uten å vente på transkriptet'
-                          : (sendEmail && sendPortal ? 'Send e-post og legg tilbudet på asoldi.com' : sendPortal ? 'Legg tilbudet på asoldi.com' : 'Send tilbudet på e-post'))}
+                          ? 'Send kontrakten nå på e-post og asoldi.com, uten å vente på transkriptet'
+                          : 'Send hele tilbudet på e-post og asoldi.com')}
                         className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#FF5B00] text-white text-sm whitespace-nowrap shrink-0 disabled:opacity-50"
                       >
                         {busy === 'send' ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}

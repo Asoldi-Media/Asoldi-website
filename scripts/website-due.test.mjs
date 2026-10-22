@@ -120,19 +120,23 @@ test('offer and contract mention arbeidsdager / working days', () => {
   assert.match(offerDeliveryPhraseNb({ tierId: 'tier-1-standard', projectStartMode: 'undecided' }), /ikke avtalt enda/);
   assert.equal(
     contractDeliverySentence({ weeks: 2 }),
+    'Leveringstid: 14 arbeidsdager etter prosjektstart. Hvis ingen egen oppstartstid er avtalt, starter fristen ved signert kontrakt.',
+  );
+  assert.equal(
+    contractDeliverySentence({ weeks: 2, language: 'en' }),
     'Delivery time: 14 working days after project start. If no other start time is agreed, the period starts when the contract is signed.',
   );
   assert.equal(
-    contractDeliverySentence({ workDays: 14 }),
+    contractDeliverySentence({ workDays: 14, language: 'en' }),
     'Delivery time: 14 working days after project start. If no other start time is agreed, the period starts when the contract is signed.',
   );
   assert.equal(
-    contractDeliverySentence({ tierId: 'tier-1-standard' }),
+    contractDeliverySentence({ tierId: 'tier-1-standard', language: 'en' }),
     'Delivery time: 14 working days after project start. If no other start time is agreed, the period starts when the contract is signed.',
   );
   assert.doesNotMatch(contractDeliverySentence({ weeks: 2 }), /\b14 days\b/);
   assert.equal(
-    contractDeliverySentence({ dueDate: '2026-11-02' }),
+    contractDeliverySentence({ dueDate: '2026-11-02', language: 'en' }),
     'Delivery date: 2 November 2026.',
   );
 });

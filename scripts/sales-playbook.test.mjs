@@ -31,7 +31,13 @@ function client(overrides = {}) {
     agreedTime: true,
     meetingAt: MEETING_AT,
     meetingDurationMinutes: 60,
-    nextActions: [],
+    nextActions: [{
+      id: 'na-sms1h-c1',
+      goalKey: 'meetingHeld',
+      presetKey: 'sms1h',
+      createdAt: '2026-10-18T10:00:00.000Z',
+      relativeToMeetingHours: 24,
+    }],
     reminders: { thankYouSentAt: '2026-10-19T10:00:00.000Z' },
     ...overrides,
     progression: {
@@ -123,10 +129,74 @@ test('the goal chips decide the category', () => {
   });
   assert.deepEqual(categories(sent, '2026-10-23T12:00:00.000Z'), ['signature:checkup:upcoming']);
   assert.deepEqual(categories(sent, '2026-10-24T12:00:00.000Z'), ['signature:checkup:overdue']);
-  const noCheckupRow = client({ progression: { meetingHeld: true, offerSent: true } });
+  const noCheckupRow = client({ progression: { meetingHeld: true, offerSent: true }, nextActions: [] });
   assert.deepEqual(categories(noCheckupRow, '2026-10-24T12:00:00.000Z'), ['signature:contractSigned:waiting']);
   const signed = client({ progression: { meetingHeld: true, offerSent: true, contractSigned: true } });
   assert.deepEqual(salesFocusEntries(signed, at('2026-10-24T12:00:00.000Z')).map((row) => row.category), ['won']);
+});
+
+test('Signer nå keeps Tilbud + Venter signering until the Fireflies letter is approved', () => {
+  const now = '2026-10-23T12:00:00.000Z';
+  const signerNa = client({
+    progression: { meetingHeld: true, offerSent: true },
+    offerSentContent: 'contract',
+    contractSentAt: '2026-10-23T10:00:00.000Z',
+    nextActions: [{
+      id: 'na-contract-checkup-c1',
+      goalKey: 'offerSent',
+      presetKey: 'contractCheckup',
+      dueAt: '2026-10-24T10:00:00.000Z',
+    }],
+  });
+  assert.deepEqual(
+    salesFocusEntries(signerNa, at(now)).map((row) => row.category).sort(),
+    ['offer', 'signature'],
+  );
+  const steps = salesFixedRows(signerNa, at(now)).map((row) => row.stepId);
+  assert.ok(steps.includes('offerContractLink'));
+  assert.ok(steps.includes('offerLetterReview'));
+  const letter = salesFixedRows(signerNa, at(now)).find((row) => row.stepId === 'offerLetterReview');
+  assert.equal(letter.state, 'waiting');
+
+  const filled = client({ ...signerNa, offerLetterFilledAt: now });
+  const filledLetter = salesFixedRows(filled, at(now)).find((row) => row.stepId === 'offerLetterReview');
+  assert.equal(filledLetter.state, 'due');
+
+  const wholeOffer = client({
+    progression: { meetingHeld: true, offerSent: true },
+    offerSentContent: 'full',
+    contractSentAt: '2026-10-23T10:00:00.000Z',
+    nextActions: signerNa.nextActions,
+  });
+  assert.deepEqual(
+    salesFocusEntries(wholeOffer, at(now)).map((row) => row.category),
+    ['signature'],
+  );
+  const wholeSteps = salesFixedRows(wholeOffer, at(now)).map((row) => row.stepId);
+  assert.equal(wholeSteps.includes('offerLetterReview'), false);
+  assert.equal(wholeSteps.includes('offerContractLink'), false);
+
+  const waitedAndSentBoth = client({
+    progression: { meetingHeld: true, offerSent: true },
+    offerSentContent: '',
+    contractSentAt: '2026-10-23T10:00:00.000Z',
+    nextActions: signerNa.nextActions,
+  });
+  assert.deepEqual(
+    salesFocusEntries(waitedAndSentBoth, at(now)).map((row) => row.category),
+    ['signature'],
+  );
+
+  const approved = client({
+    ...signerNa,
+    offerSentContent: 'full',
+    offerLetterApprovedAt: now,
+    offerLetterFilledAt: now,
+  });
+  assert.deepEqual(
+    salesFocusEntries(approved, at(now)).map((row) => row.category),
+    ['signature'],
+  );
 });
 
 test('Kontrakt signert moves the client from Venter signering to Solgt', () => {

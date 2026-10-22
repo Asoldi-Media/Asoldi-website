@@ -8,7 +8,7 @@ const dataDir = mkdtempSync(join(tmpdir(), 'asoldi-preview-contract-'));
 process.env.APP_DATA_DIR = dataDir;
 
 const offers = await import('../data/offers.js');
-const { allowPreviewAcceptAttempt, ensurePreviewSigner, presentPreviewContract } = await import('../lib/sales-preview-contract.js');
+const { allowPreviewAcceptAttempt, ensurePreviewSigner, presentPreviewContract, previewSignAgreementsOk } = await import('../lib/sales-preview-contract.js');
 
 test('idle / ready / signed payloads never include the offer letter', () => {
   const idle = presentPreviewContract({ name: 'Kari', email: 'kari@cafe.no' });
@@ -129,14 +129,31 @@ test('contract overlay scrolls inside the popup instead of the site behind', () 
   assert.match(src, /lenis\?\.stop/);
 });
 
+test('contract popup can download the PDF and requires terms plus 6-month binding', () => {
+  const src = readFileSync(new URL('../public/sales-preview-contract.js', import.meta.url), 'utf8');
+  assert.match(src, /Last ned PDF/);
+  assert.match(src, /\.pdf\?download=1/);
+  assert.match(src, /name="terms"/);
+  assert.match(src, /name="binding"/);
+  assert.match(src, /asoldi\.com\/vilkar/);
+  assert.match(src, /bindingstid/);
+  assert.match(src, /termsAccepted/);
+  assert.match(src, /bindingAccepted/);
+  assert.equal(previewSignAgreementsOk({ termsAccepted: true, bindingAccepted: true }), true);
+  assert.equal(previewSignAgreementsOk({ termsAccepted: true }), false);
+  assert.equal(previewSignAgreementsOk({ accepted: true }), false);
+});
+
 test('kontrakt link opens the contract, docks into the sign button, and explains the Asoldi password', () => {
   const src = readFileSync(new URL('../public/sales-preview-contract.js', import.meta.url), 'utf8');
   assert.match(src, /wantsContractOpen/);
-  assert.match(src, /kontrakt=1/);
+  assert.match(src, /params\.get\('kontrakt'\)/);
   assert.match(src, /fromContractLink && state\.status === 'ready'/);
   assert.match(src, /dockIntoButton/);
   assert.match(src, /data-call/);
   assert.match(src, /asoldi-orbit/);
+  assert.match(src, /@property --asoldi-orbit/);
+  assert.doesNotMatch(src, /asoldi-orbit[^}]*rotate\(360deg\)/);
   assert.match(src, /account-note/);
   assert.match(src, /Nytt Asoldi-passord/);
   assert.match(src, /read-note/);
