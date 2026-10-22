@@ -13,6 +13,7 @@ import {
   salesGoalRowCounts,
   salesMissedMeeting,
 } from '../lib/sales-playbook.js';
+import { nextDayAtNineAmIso } from '../lib/sales-next-actions.js';
 
 /** Thu 22 Oct 2026 14:00 Oslo (CEST). Påminnelse is Wed 21 Oct 09:00 Oslo = 07:00Z. */
 const MEETING_AT = '2026-10-22T12:00:00.000Z';
@@ -158,6 +159,17 @@ test('Signer nå keeps Tilbud + Venter signering until the Fireflies letter is a
   const letter = salesFixedRows(signerNa, at(now)).find((row) => row.stepId === 'offerLetterReview');
   assert.equal(letter.state, 'waiting');
 
+  const pick = client({
+    ...signerNa,
+    meetings: [
+      { meetingId: 'a', hasTranscript: true },
+      { meetingId: 'b', hasTranscript: true },
+    ],
+  });
+  const pickLetter = salesFixedRows(pick, at(now)).find((row) => row.stepId === 'offerLetterReview');
+  assert.equal(pickLetter.state, 'due');
+  assert.match(pickLetter.detail, /Flere opptak/);
+
   const filled = client({ ...signerNa, offerLetterFilledAt: now });
   const filledLetter = salesFixedRows(filled, at(now)).find((row) => row.stepId === 'offerLetterReview');
   assert.equal(filledLetter.state, 'due');
@@ -201,10 +213,10 @@ test('Signer nå keeps Tilbud + Venter signering until the Fireflies letter is a
 
 test('Kontrakt signert moves the client from Venter signering to Solgt', () => {
   const sent = client({ progression: { meetingHeld: true, offerSent: true }, contractSentAt: '2026-10-23T10:00:00.000Z' });
-  assert.deepEqual(categories(sent, '2026-10-25T12:00:00.000Z'), ['signature:signatureFollowUp:upcoming']);
-  const entries = salesFocusEntries(sent, at('2026-10-25T12:00:00.000Z'));
+  assert.deepEqual(categories(sent, '2026-10-24T06:00:00.000Z'), ['signature:signatureFollowUp:upcoming']);
+  const entries = salesFocusEntries(sent, at('2026-10-24T06:00:00.000Z'));
   assert.equal(entries[0].focusRowId, 'na-signoppfolging-c1-1');
-  assert.equal(entries[0].dueAt, '2026-10-26T10:00:00.000Z');
+  assert.equal(entries[0].dueAt, '2026-10-24T07:00:00.000Z');
   const signed = client({
     progression: { meetingHeld: true, offerSent: true, contractSigned: true },
     contractSignedAt: '2026-10-25T12:00:00.000Z',
@@ -320,7 +332,7 @@ test('fixed rows sit in their goal and the counts include stored rows', () => {
   assert.deepEqual(salesGoalRowCounts(held, now).meetingHeld, { done: 4, total: 4 });
 });
 
-test('after the checkup, Venter signering follows up every 3 days', () => {
+test('after the checkup, Venter signering follows up at 09:00 the next Oslo day', () => {
   const checked = client({
     progression: { meetingHeld: true, offerSent: true },
     contractSentAt: '2026-10-23T10:00:00.000Z',
@@ -332,18 +344,22 @@ test('after the checkup, Venter signering follows up every 3 days', () => {
       doneAt: '2026-10-24T10:05:00.000Z',
     }],
   });
-  assert.deepEqual(categories(checked, '2026-10-25T12:00:00.000Z'), ['signature:signatureFollowUp:upcoming']);
-  assert.deepEqual(categories(checked, '2026-10-27T11:00:00.000Z'), ['signature:signatureFollowUp:overdue']);
+  const dueAt = nextDayAtNineAmIso(Date.parse('2026-10-24T10:05:00.000Z'));
+  assert.deepEqual(categories(checked, '2026-10-25T06:00:00.000Z'), ['signature:signatureFollowUp:upcoming']);
+  assert.deepEqual(categories(checked, '2026-10-25T12:00:00.000Z'), ['signature:signatureFollowUp:overdue']);
+  const [first] = salesFocusEntries(checked, at('2026-10-25T06:00:00.000Z'));
+  assert.equal(first.focusRowId, 'na-signoppfolging-c1-1');
+  assert.equal(first.dueAt, dueAt);
   const followedUp = client({
     ...checked,
     nextActions: [
       ...checked.nextActions,
-      { id: 'na-signoppfolging-c1-1', goalKey: 'contractSigned', presetKey: 'signatureFollowUp', dueAt: '2026-10-27T10:05:00.000Z', doneAt: '2026-10-27T11:00:00.000Z' },
+      { id: 'na-signoppfolging-c1-1', goalKey: 'contractSigned', presetKey: 'signatureFollowUp', dueAt, doneAt: '2026-10-25T11:00:00.000Z' },
     ],
   });
-  const [next] = salesFocusEntries(followedUp, at('2026-10-27T12:00:00.000Z'));
+  const [next] = salesFocusEntries(followedUp, at('2026-10-26T06:00:00.000Z'));
   assert.equal(next.focusRowId, 'na-signoppfolging-c1-2');
-  assert.equal(next.dueAt, '2026-10-30T11:00:00.000Z');
+  assert.equal(next.dueAt, nextDayAtNineAmIso(Date.parse('2026-10-25T11:00:00.000Z')));
 });
 
 test('SSU and not-sold are off the board; no meeting time waits on the Møte row', () => {

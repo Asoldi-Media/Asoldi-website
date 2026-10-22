@@ -121,7 +121,7 @@ import {
 } from './lib/sales-email.js';
 import { assignmentStampForOwnerChange, clientIsSalesWin, confirmationSendGaps, confirmationShouldSendOnChange, decorateNextActions, isRecordedSalesAction, meetingTimeHasPassed, normalizeSecondaryInterest, osloWeekRange, recordedSalesActions, resolveMeetingAtOnMyphonerMerge, resolveMeetingModeOnMyphonerMerge, sameMeetingInstant } from './lib/sales-next-actions.js';
 import { attachFirefliesToMatchingAction } from './lib/sales-activity-log.js';
-import { isPlaceholderMeetingId, meetingHasOfferTalk, normalizeOfferMeetingIds, seedOfferMeetingIds, selectOfferMeetingId } from './lib/offer-meetings.js';
+import { isPlaceholderMeetingId, meetingHasOfferTalk, normalizeOfferMeetingIds, offerAutoFillDecision, seedOfferMeetingIds, selectOfferMeetingId } from './lib/offer-meetings.js';
 import { normalizeStoredWebsiteEmail, resolveWebsiteEmail } from './lib/sales-website-email.js';
 import { extractBookingFromLead, salesBookingFacts } from './lib/sales-booking-facts.js';
 import {
@@ -16671,14 +16671,28 @@ function stampOfferLetterFilled(clientId, offer) {
   return sales.updateSalesClient(clientId, { offerLetterFilledAt: new Date().toISOString() }) || client;
 }
 
+function loadedMeetingsForOfferFill(client, offer) {
+  const selected = meetingsForOffer(client, offer);
+  const extra = (Array.isArray(client?.meetings) ? client.meetings : [])
+    .map((row) => loadStoredOrClientMeeting(client, row.meetingId))
+    .filter(Boolean);
+  const seen = new Set();
+  const out = [];
+  for (const row of [...selected, ...extra]) {
+    const id = sanitizeText(row?.meetingId);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(row);
+  }
+  return out;
+}
+
 async function maybeFillContractLetter(client, req) {
   if (!client?.id) return null;
   const offer = salesOffers.getOfferForClient(client.id);
   if (!salesOffers.offerLetterCanFill(offer)) return offer;
   try {
-    const filled = await fillOpenOfferSlotsFromSalesMeeting(offer, client, req);
-    if (filled?.status === 'sent') stampOfferLetterFilled(client.id, filled);
-    return filled;
+    return await fillOpenOfferSlotsFromSalesMeeting(offer, client, req);
   } catch (error) {
     console.warn(`[offer] contract-letter fill ${sanitizeText(error?.message) || error}`);
     return offer;
@@ -16693,7 +16707,7 @@ async function fillPendingContractLetters() {
     const offer = salesOffers.getOfferForClient(client.id);
     if (!salesOffers.offerLetterCanFill(offer)) continue;
     if (offerLetterSlotsFilled(offer?.email?.html)) {
-      if (offer.status === 'sent') stampOfferLetterFilled(client.id, offer);
+      stampOfferLetterFilled(client.id, offer);
       continue;
     }
     pending.push({ client, sent: offer.status === 'sent' });
@@ -16745,10 +16759,19 @@ async function fillOpenOfferSlotsFromSalesMeeting(offer, client, req) {
   if (!offer || !salesOffers.offerLetterCanFill(offer)) return offer;
   const html = offer.email?.html || '';
   const open = ['need', 'project', 'terms', 'benefits'].some((slot) => offerSlotIsOpen(html, slot));
-  if (!open) return offer;
-  const meetings = meetingsForOffer(client, offer);
-  const meeting = primaryMeetingForOffer(client, offer);
-  if (offerContextBlocker(client, meeting, meetings)) return offer;
+  if (!open) {
+    stampOfferLetterFilled(client.id, offer);
+    return offer;
+  }
+  const loaded = loadedMeetingsForOfferFill(client, offer);
+  const decision = offerAutoFillDecision({
+    offer,
+    meetings: loaded,
+    selectedIds: selectedOfferMeetingIds(client, offer),
+  });
+  if (decision.action !== 'fill') return offer;
+  const meetings = decision.meetings;
+  const meeting = meetings[0] || primaryMeetingForOffer(client, offer);
   if (!isDeepseekConfigured()) return offer;
   const nuances = await fillOfferFromTranscript({
     client: clientForOfferFill(client),
@@ -16756,18 +16779,21 @@ async function fillOpenOfferSlotsFromSalesMeeting(offer, client, req) {
     meetings,
     products: offer.products,
     tierId: offer.tierId,
+    quote: client?.details?.meetingQuote || {},
   });
   const filled = refreshOfferShell(fillOfferSlots(html, {
     ...nuances,
     workshop: workshopSentenceForClient(client),
   }, { onlyOpen: true }));
   if (filled === html) return offer;
-  const meetingIds = selectedOfferMeetingIds(client, offer);
-  return salesOffers.updateSalesOffer(offer.id, {
+  const meetingIds = meetings.map((row) => sanitizeText(row?.meetingId)).filter(Boolean);
+  const updated = salesOffers.updateSalesOffer(offer.id, {
     email: { html: filled },
-    meetingIds,
+    meetingIds: meetingIds.length ? meetingIds : selectedOfferMeetingIds(client, offer),
     meetingId: meetingIds[0] || sanitizeText(meeting?.meetingId),
   }, { actor: offerActor(req), action: 'ai-filled', note: sanitizeText(meeting?.title) }) || offer;
+  stampOfferLetterFilled(client.id, updated);
+  return updated;
 }
 
 /** The exact message the client receives (merge fields resolved, hosted assets), used for preview and send. */
@@ -16837,7 +16863,7 @@ app.get('/api/admin/sales/:id/offer', salesAuth, async (req, res) => {
   offer = syncOfferMeetingSelection(offer, client);
   if (salesOffers.offerLetterCanFill(offer)) {
     offer = await autoFillOfferIfReady(offer, client, req);
-    if (offer.status === 'sent') client = stampOfferLetterFilled(client.id, offer) || client;
+    client = stampOfferLetterFilled(client.id, offer) || client;
   }
   const sender = await resolveSalesSenderForAccount(req.salesUser);
   const meeting = primaryMeetingForOffer(client, offer);
@@ -16954,10 +16980,13 @@ app.post('/api/admin/sales/:id/offer/fill', salesAuth, async (req, res) => {
   client = sales.getSalesClientById(client.id) || client;
   current = dropUnknownOfferMeetings(salesOffers.getOfferForClient(client.id) || current, client);
   current = syncOfferMeetingSelection(current, client);
-  const meetings = meetingsForOffer(client, current);
-  const meeting = primaryMeetingForOffer(client, current);
-  const contextBlocker = offerContextBlocker(client, meeting, meetings);
-  if (contextBlocker) return res.status(400).json({ message: contextBlocker });
+  const fromProfile = Boolean(req.body?.fromProfile);
+  const meetings = fromProfile ? [] : meetingsForOffer(client, current);
+  const meeting = fromProfile ? null : primaryMeetingForOffer(client, current);
+  if (!fromProfile) {
+    const contextBlocker = offerContextBlocker(client, meeting, meetings);
+    if (contextBlocker) return res.status(400).json({ message: contextBlocker });
+  }
   try {
     const force = Boolean(req.body?.force);
     const html = typeof req.body?.html === 'string' && !force ? req.body.html : current.email.html;
@@ -16967,6 +16996,8 @@ app.post('/api/admin/sales/:id/offer/fill', salesAuth, async (req, res) => {
       meetings,
       products: current.products,
       tierId: current.tierId,
+      quote: client?.details?.meetingQuote || {},
+      source: fromProfile ? 'profile' : 'transcript',
     });
     const filled = refreshOfferShell(fillOfferSlots(html, {
       ...nuances,
@@ -16977,7 +17008,7 @@ app.post('/api/admin/sales/:id/offer/fill', salesAuth, async (req, res) => {
       email: { html: filled },
       meetingIds,
       meetingId: meetingIds[0] || sanitizeText(meeting?.meetingId),
-    }, { actor: offerActor(req), action: 'ai-filled', note: sanitizeText(meeting?.title) });
+    }, { actor: offerActor(req), action: 'ai-filled', note: fromProfile ? 'kundekort' : sanitizeText(meeting?.title) });
     stampOfferLetterFilled(client.id, updated);
     res.json({ offer: presentOffer(updated), nuances });
   } catch (error) {

@@ -43,6 +43,7 @@ import {
   decorateNextActions,
   isoToDatetimeLocalOslo,
 } from '../../../../lib/sales-next-actions.js';
+import { offerLetterNeedsMeetingPick } from '../../../../lib/offer-meetings.js';
 
 export type SalesFocusCategoryId = 'assign' | 'confirm' | 'reminders' | 'meetingsToday' | 'offer' | 'signature' | 'won';
 
@@ -245,6 +246,7 @@ function entryStatus(entry: FocusEntry, nowMs: number): { text: string; tone: ke
   }
   if (stepId === 'offerLetterReview') {
     if (state === 'waiting') return { text: 'Venter på transkript', tone: 'muted' };
+    if (!entry.client?.offerLetterFilledAt) return { text: 'Velg opptak', tone: 'warn' };
     return { text: 'Se gjennom e-posten', tone: 'warn' };
   }
   if (stepId === 'offerContractLink') {
@@ -811,22 +813,23 @@ function FocusCard(props: FocusCardProps) {
       }
       if (row.stepId === 'offerLetterReview') {
         const filled = Boolean(client.offerLetterFilledAt);
+        const pickMeetings = !filled && offerLetterNeedsMeetingPick(client);
         const letterBusy = sendingMailKey === `${client.id}:offer-letter`;
         return {
           ...row,
           busy: letterBusy,
           extras: (
             <>
-              <button type="button" onClick={() => onOpenFlow(client, 3)} className={ROW_BUTTON} title="Forhåndsvis tilbudse-posten">
+              <button type="button" onClick={() => onOpenFlow(client, 3)} className={ROW_BUTTON} title={pickMeetings ? 'Åpne tilbudet og velg opptak' : 'Forhåndsvis tilbudse-posten'}>
                 <Mail size={11} />
-                Forhåndsvis
+                {pickMeetings ? 'Velg opptak' : 'Forhåndsvis'}
               </button>
               <button
                 type="button"
                 onClick={() => onApproveLetter(client)}
-                disabled={letterBusy}
+                disabled={letterBusy || !filled}
                 className={ROW_BUTTON}
-                title={filled ? 'Send den fulle tilbudse-posten. Kontrakten er allerede ute.' : 'Sender hvis transkriptet har skrevet e-posten'}
+                title={filled ? 'Send den fulle tilbudse-posten. Kontrakten er allerede ute.' : 'E-posten skrives automatisk når ett opptak er klart'}
               >
                 {letterBusy ? <Loader2 size={11} className="animate-spin" /> : <CheckCircle2 size={11} />}
                 Ser bra ut

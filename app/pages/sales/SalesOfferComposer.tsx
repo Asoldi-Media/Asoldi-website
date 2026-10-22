@@ -1,7 +1,7 @@
 import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { AlertTriangle, Copy, ExternalLink, FileText, Loader2, RefreshCw, Send, ShieldCheck, X } from 'lucide-react';
+import { AlertTriangle, Copy, ExternalLink, FileText, Loader2, RefreshCw, Send, ShieldCheck, Sparkles, X } from 'lucide-react';
 import { EmailVisualEditor } from './EmailVisualEditor';
 import {
   fillClientOffer,
@@ -468,6 +468,32 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     }
   }
 
+  async function handleFillFromProfile() {
+    if (!deepseek) {
+      setFillPhase('error');
+      setFillMessage('AI-utfylling er ikke aktivert på serveren enda. Du kan skrive feltene i editoren.');
+      return;
+    }
+    setBusy('fill');
+    setFillPhase('running');
+    setFillMessage('Skriver e-posten fra kundekortet…');
+    setError('');
+    try {
+      await flushSave();
+      const data = await fillClientOffer(clientId, { force: true, fromProfile: true }) as { offer: SalesOffer };
+      applyOffer(data.offer);
+      setFillPhase('done');
+      setFillMessage('E-posten er skrevet fra kundekortet, bransjen og valgt pakke.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'AI-utfylling feilet';
+      setFillPhase('error');
+      setFillMessage(message);
+      setError(message);
+    } finally {
+      setBusy('');
+    }
+  }
+
   async function openContract() {
     setBusy('contract');
     setError('');
@@ -857,16 +883,28 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                       Kjør via admin først{isCustom ? ' (påkrevd for skreddersydd)' : ''}
                     </label>
                     {!locked && (
-                      <button
-                        type="button"
-                        onClick={() => void handleFill(true)}
-                        disabled={busy === 'fill' || Boolean(fillDisabledReason)}
-                        title={fillDisabledReason || 'Skriv e-posten på nytt fra transkriptet og tilbudet'}
-                        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 text-xs whitespace-nowrap hover:bg-white/15 disabled:opacity-50"
-                      >
-                        {busy === 'fill' ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                        Generer på nytt
-                      </button>
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => void handleFillFromProfile()}
+                          disabled={busy === 'fill' || !deepseek}
+                          title={!deepseek ? 'AI-utfylling er ikke aktivert på serveren enda.' : 'Skriv e-posten fra kundekortet, bransjen og valgt pakke'}
+                          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 text-xs whitespace-nowrap hover:bg-white/15 disabled:opacity-50"
+                        >
+                          {busy === 'fill' ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                          Autofyll
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleFill(true)}
+                          disabled={busy === 'fill' || Boolean(fillDisabledReason)}
+                          title={fillDisabledReason || 'Skriv e-posten på nytt fra transkriptet og tilbudet'}
+                          className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 text-xs whitespace-nowrap hover:bg-white/15 disabled:opacity-50"
+                        >
+                          {busy === 'fill' ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                          Generer på nytt
+                        </button>
+                      </>
                     )}
                   </div>
 

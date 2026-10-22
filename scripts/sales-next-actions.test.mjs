@@ -1307,6 +1307,24 @@ test('meeting can be sticky and keeps its gap when the action below moves', () =
   assert.equal(moved.meetingAt, movedMeeting.dueAt);
 });
 
+test('Oppfølging signering is 09:00 Oslo the day after the checkup', () => {
+  const doneAt = '2026-10-24T10:05:00.000Z';
+  const row = client({
+    progression: { meetingHeld: true, offerSent: true },
+    contractSentAt: '2026-10-23T10:00:00.000Z',
+    nextActions: [{
+      id: 'na-contract-checkup-c1',
+      goalKey: 'offerSent',
+      presetKey: 'contractCheckup',
+      dueAt: '2026-10-24T10:00:00.000Z',
+      doneAt,
+    }],
+  });
+  const follow = decorateNextActions(row).find((action) => action.presetKey === 'signatureFollowUp' && !action.doneAt);
+  assert.ok(follow);
+  assert.equal(follow.dueAt, nextDayAtNineAmIso(Date.parse(doneAt)));
+});
+
 test('tilbud checkup is 24h after the offer send, sms/ring, no calendar, not sticky', () => {
   const sentAt = '2026-10-06T10:00:00.000Z';
   const unsigned = ensureContractCheckupAction([], client({ contractSentAt: sentAt, progression: { offerSent: false } }));

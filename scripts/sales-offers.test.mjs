@@ -16,6 +16,7 @@ const matcher = await import('../lib/fireflies-client-match.js');
 const offerAi = await import('../lib/offer-ai.js');
 const quoteOffer = await import('../lib/offer-from-quote.js');
 const store = await import('../data/sales-offers.js');
+const offerMeetings = await import('../lib/offer-meetings.js');
 
 const CLIENT = {
   id: 'client-1',
@@ -557,12 +558,70 @@ test('offer AI: transcript fill and contract reflection go through the injected 
   assert.doesNotMatch(fillCall.user, /opp til 7 sider/i);
   assert.doesNotMatch(fillCall.system, /enkelt CMS/i);
 
+  const profileSeen = [];
+  const profileChat = async ({ system, user }) => {
+    profileSeen.push({ system, user });
+    return { need: 'synlig nettside for kafeen', project: ['En nettside som viser meny og åpningstider.'], terms: 'Kunden sender logo.', benefits: 'Flere gjester via Google.' };
+  };
+  const profileFilled = await offerAi.fillOfferFromTranscript({
+    client: { ...CLIENT, industry: 'kafé', clientBrief: { short: 'Lokal kafé på Byneset.' } },
+    quote: { productGoal: 'Flere gjester fra Google' },
+    products: offerEmail.productsWithTier([], tiers.WEBSITE_TIERS[1].id),
+    tierId: tiers.WEBSITE_TIERS[1].id,
+    source: 'profile',
+    deps: { chat: profileChat },
+  });
+  assert.equal(profileFilled.need, 'synlig nettside for kafeen');
+  assert.match(profileSeen[0].system, /ikke møtetranskript/i);
+  assert.match(profileSeen[0].system, /kundekortet, produktnotatene og den valgte pakken/i);
+  assert.doesNotMatch(profileSeen[0].user, /Transkript:/);
+  assert.match(profileSeen[0].user, /kafé/i);
+  assert.match(profileSeen[0].user, /Lokal kafé på Byneset/);
+  assert.match(profileSeen[0].user, /SEO optimalisering/i);
+  assert.doesNotMatch(profileSeen[0].user, /1499/);
+
   const products = offerEmail.productsWithTier([], tiers.WEBSITE_TIERS[1].id);
   const summary = await offerAi.reflectContractFromEmail({ emailHtml: '<p>Tilbud</p>', products, deps: { chat } });
   assert.equal(summary.products.length, 1);
   assert.equal(summary.deliveryWeeks, 4);
   assert.ok(summary.monthlyExMva > 0);
   assert.equal(seen.length, 2);
+});
+
+test('offer auto-fill waits on empty talk, picks when several transcripts, fills one', () => {
+  const empty = { meetingId: 'empty', hasTranscript: true, transcript: '', summary: '' };
+  const first = { meetingId: 'a', transcript: 'Kunde: vi trenger booking og meny.' };
+  const second = { meetingId: 'b', summary: 'De vil ha SEO og anmeldelser.' };
+  assert.equal(offerMeetings.meetingHasUsableOfferTalk(empty), false);
+  assert.equal(offerMeetings.offerAutoFillDecision({
+    offer: { meetingIds: ['empty'] },
+    meetings: [empty],
+  }).action, 'wait');
+  assert.equal(offerMeetings.offerAutoFillDecision({
+    offer: { meetingIds: ['a'] },
+    meetings: [first, empty],
+  }).action, 'fill');
+  assert.equal(offerMeetings.offerAutoFillDecision({
+    offer: { meetingIds: ['a', 'b'] },
+    meetings: [first, second],
+  }).action, 'pick');
+  assert.equal(offerMeetings.offerAutoFillDecision({
+    offer: { meetingIds: ['a', 'b'], meetingSource: 'manual' },
+    meetings: [first, second],
+  }).action, 'fill');
+  assert.equal(offerMeetings.offerLetterNeedsMeetingPick({
+    meetings: [
+      { meetingId: 'a', hasTranscript: true },
+      { meetingId: 'b', hasTranscript: true },
+    ],
+  }), true);
+  assert.equal(offerMeetings.offerLetterNeedsMeetingPick({
+    offerLetterFilledAt: '2026-10-22T12:00:00.000Z',
+    meetings: [
+      { meetingId: 'a', hasTranscript: true },
+      { meetingId: 'b', hasTranscript: true },
+    ],
+  }), false);
 });
 
 test('sales offers store: draft → review → verify → send lifecycle with locks', () => {
@@ -1328,6 +1387,8 @@ test('offer send uses the /kontrakt link and does not attach a PDF', () => {
   assert.match(server, /sales-preview\/:id\/contract\.pdf/);
   assert.match(server, /previewSignAgreementsOk/);
   assert.match(server, /fillPendingContractLetters/);
+  assert.match(server, /fromProfile \? 'profile' : 'transcript'/);
+  assert.match(server, /offerAutoFillDecision/);
   const getOffer = server.slice(
     server.indexOf("app.get('/api/admin/sales/:id/offer'"),
     server.indexOf("app.post('/api/admin/sales/:id/offer'"),
