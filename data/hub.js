@@ -355,10 +355,10 @@ export function updateSiteSpecs(id, mutate) {
   if (i === -1) return { ok: false, status: 404, error: 'Site not found' };
   const result = mutate(structuredClone(sites[i])) || { ok: false, status: 500, error: 'No result' };
   if (!result.ok) return result;
+  const fields = ['featureSpec', 'cmsSpec', 'cmsSpecHistory', 'featureEnforcement'].filter((field) => result[field] !== undefined);
+  if (!fields.length) return { ...result, site: publicSite(sites[i]), record: sites[i] };
   const next = { ...sites[i] };
-  for (const field of ['featureSpec', 'cmsSpec', 'cmsSpecHistory', 'featureEnforcement']) {
-    if (result[field] !== undefined) next[field] = result[field];
-  }
+  for (const field of fields) next[field] = result[field];
   sites[i] = normalizeSite(next);
   writeSites(sites);
   return { ...result, site: publicSite(sites[i]), record: sites[i] };

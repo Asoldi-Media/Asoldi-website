@@ -47,7 +47,7 @@ The registry names automatic posts `blog.autoPosts` (Tier 2+, `seo` bundle only)
 | `shadow` | Unchanged. The tree is computed for every site-config call and the result (source, services, lost flags, errors) is shown by `GET /api/admin/cms-features`. |
 | `on` | Sites in `siteIds` (or every site with `allSites`) get the tree; all other sites are shadowed. |
 
-An error while computing the tree never changes the answer: the old config is returned and the error is recorded. `cmsSpec.makerAccess` lets the Maker host token (`x-maker-callback-token`) read and write cms-spec; until then only Superadmin can.
+An error while computing the tree never changes the answer: the old config is returned and the error is recorded. The sales client list is read at most every 30 seconds for this. `cmsSpec.makerAccess` lets the Maker host token (`x-maker-callback-token`) read and write cms-spec; until then only Superadmin can.
 
 ## site-config with the tree
 
@@ -55,7 +55,8 @@ For a site that is switched on, `GET /api/hub/site-config` adds:
 
 - `featureTree`: `{ v, registryVersion, rev, plan, tier, services, source, entitled, defaults, values, locks }`. `source` is `planSource`, `sitePlan` or `websitePlan`.
 - `featureEnforcement`: `off`, `log` or `on` (default `log`).
-- `pendingSettings`: `{ rev, sections, force }`, only for `?site_key=` lookups and only while `cmsSpec.rev` is newer than the `settingsRevApplied` the CMS reported. A domain lookup never has it, nor any admin field.
+- `pendingSettings`: `{ rev, sections, force }`, only for `?site_key=` lookups and only while `cmsSpec.rev` is newer than the `settingsRevApplied` the CMS reported.
+- A domain lookup is public: with the tree on it returns only the fields in `PUBLIC_SITE_CONFIG_FIELDS` (`lib/cms-entitlements.js`), so it never has `pendingSettings` or an admin field, and a field added to site-config later stays out until it is listed.
 - The 7 legacy `features` come from the tree (`legacyFromTree`). Every flag that is on today stays on, except `socialSync`, which is always off (it only showed a placeholder tab). Tier 1 gains `blog` and `general`. `ecommerceCatalogType` and `analyticsLevel` follow the derived flags.
 
 **Services** come from `site.planSource.services` (WS8.4), else the linked sales client's `sitePlan.services` and `oneTimeAddOns` (WS8.3), else the tier's services. Ids the registry does not know are logged once and dropped.

@@ -236,6 +236,12 @@ test('every route needs Superadmin, or the Maker token once Superadmin allows it
   assert.equal(storedSite().cmsSpec.updatedBy, 'maker');
   assert.equal((await put({ featureEnforcement: 'on' }, maker)).status, 403);
   assert.equal((await put({ featureEnforcement: 'loud' })).status, 400);
+  // Setting the mode the site already has changes nothing and writes nothing.
+  const sitesBefore = readFileSync(join(DATA_DIR, 'sites.json'), 'utf8');
+  const same = await put({ featureEnforcement: 'log' });
+  assert.equal(same.status, 200);
+  assert.equal(same.body.changed, false);
+  assert.equal(readFileSync(join(DATA_DIR, 'sites.json'), 'utf8'), sitesBefore);
   const enforce = await put({ featureEnforcement: 'on', reason: 'seven quiet days' });
   assert.equal(enforce.status, 200);
   assert.equal(enforce.body.featureEnforcement, 'on');

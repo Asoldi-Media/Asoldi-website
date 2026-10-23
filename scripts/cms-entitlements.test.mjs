@@ -233,6 +233,14 @@ test('pendingSettings goes only to site_key lookups, only while the CMS has not 
   const byDomain = hub.getSiteConfig('shop-two.test', true, { withFeatures: hook.siteConfigFeatures });
   for (const field of ['pendingSettings', 'pendingAdmin', 'clientAdmin']) assert.equal(field in byDomain, false, field);
   assert.ok(byDomain.featureTree);
+  assert.deepEqual(Object.keys(byDomain).filter((key) => !ent.PUBLIC_SITE_CONFIG_FIELDS.includes(key)), []);
+  // The domain answer is an allowlist: a field the base config gains later stays out until listed.
+  const site = hub.getSiteById('f4');
+  const result = ent.resolveSiteFeatures(site, null, { registry, log: quiet });
+  const widened = ent.siteConfigWithTree({ id: 'f4', features: {}, pendingAdmin: { passwordHash: 'x' }, extraField: 1 }, site, result, { byDomain: true });
+  assert.deepEqual(Object.keys(widened).sort(), ['ecommerceCatalogType', 'analyticsLevel', 'featureEnforcement', 'featureTree', 'features', 'id'].sort());
+  const keyed = ent.siteConfigWithTree({ id: 'f4', features: {}, pendingAdmin: null }, site, result, { byDomain: false });
+  assert.equal('pendingAdmin' in keyed, true, 'a site_key lookup keeps the admin sync fields');
   hub.recordHeartbeat('key-f4', { packageVersion: '2.3.0', report: { settingsRevApplied: 3 } });
   assert.equal('pendingSettings' in hub.getSiteConfig('key-f4', false, { withFeatures: hook.siteConfigFeatures }), false);
   settingsStore.saveCmsFeatureSettings({ siteConfig: { mode: 'off', allSites: false, siteIds: [] } }, { dataDir: DATA_DIR, by: 'test' });
