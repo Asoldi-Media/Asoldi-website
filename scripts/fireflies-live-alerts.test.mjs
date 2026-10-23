@@ -275,6 +275,11 @@ test('a reused room: the earlier meeting\'s bot still in it is never taken for t
   const [row] = client.meetings;
   assert.equal(row.recording.state, 'recording');
   assert.equal(row.recording.ffMeetingId, '', 'the earlier meeting\'s id never goes on this placeholder');
+  // A late bot_joined webhook for that bot has no start time: it is still the earlier meeting's.
+  await live.noteFirefliesBotJoined({ meetingId: 'FFPREV01', fetchPresence: async () => ({ meetingLink: ROOM }), nowMs: at(-2) });
+  session = readLiveSessionStore().sessions[KEY];
+  assert.equal(live.recordingForLiveSession(session).ffMeetingId, '');
+  assert.equal(session.message, LIVE_JOIN_MESSAGES.earlierBot);
   // It leaves at 10:06; this meeting's own bot is sent in and let in.
   await tickAt(state, 5);
   state.active = [];
