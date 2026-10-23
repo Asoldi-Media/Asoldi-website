@@ -155,11 +155,9 @@ For an offer: tier contract when only a tier is present; admin-verified summary 
   the hub's Fireflies key (`lib/fireflies-key-owner.js`; asked once per 6 hours, damian@asoldi.com until then).
   On another rep's event he would start that rep's own Fireflies, whose recording the hub cannot read. He is
   still only added when the confirmation is actually sent, and recording never depends on him.
-* Webhook `POST /api/webhooks/fireflies?token=…` (`lib/fireflies-webhook.js`) stores the meeting record and runs
-  `lib/fireflies-client-match.js`: attendee e-mail = `contactEmail` (+70), attendee domain = client website (+30),
-  host = client’s rep (+15), start within 45 min / 3 h of `meetingAt` (+35 / +25), contact name / business name in
-  title or attendees (+25 / +20). `high ≥ 70`, `medium ≥ 40`; ties are downgraded so a human confirms.
-  Matched meetings land in `client.meetings[]`; the notify e-mail still goes to `FIREFLIES_NOTIFY_EMAIL`.
+* Webhook `POST /api/webhooks/fireflies?token=…` (`lib/fireflies-webhook.js`) stores the meeting record and links
+  it to a client by its Meet room (see "Fireflies matching" below). Matched meetings land in
+  `client.meetings[]`; the notify e-mail still goes to `FIREFLIES_NOTIFY_EMAIL`.
   A failing notify e-mail no longer fails the webhook (record + match are the primary output).
   A V2 `meeting.bot_joined` event marks the live-join session on that room as recording (one cheap read
   finds the room).
@@ -168,6 +166,46 @@ For an offer: tier contract when only a tier is present; admin-verified summary 
   `GET /api/admin/fireflies/meetings/:id/media/:kind?token=…`.
 * Admin: list / link / unlink / refresh under `/api/admin/fireflies/meetings…`; UI in
   `MeetingDataPanel.tsx` (Tilbud → Møtedata tab and the unmatched list).
+
+### Fireflies matching
+
+Every link path (webhook, pull ingest, Tilbud paste, calendar session, admin, the meet-link backfill,
+the watchdog) goes through `linkFirefliesMeeting` in server.js. `client.meetings` is the one record of
+who holds a recording; the stored record's `match` says the same.
+
+* **Client.** `lib/fireflies-client-match.js`: a person's link first (a card that holds it as `manual`,
+  `admin:*`, `sales:*` or `developer:*`, or with a picked purpose; else the stored `pin`), then the client
+  whose booked Meet room Fireflies' `meeting_link` is. A room two clients hold goes to the one whose
+  booked slot the recording started in; with none, existing links stay. A client in the stored
+  `excludedClientIds` never gets it back automatically. Title, e-mail and host are never used.
+* **Slot and purpose.** `lib/fireflies-slots.js`: each booked meeting is a slot (`sales:<ms>`,
+  `workshop:<ms>`, `iteration:<ms>`, `action:<id>`). The room decides the purpose; time only picks between
+  slots sharing a room. A recording gets the slot key only when it starts inside the slot's session window
+  (half an hour before the booked start to the session's end, as the watchdog). Without a booked room it
+  keeps the purpose it was linked with; an earlier room of the client is the sales meeting's only for a
+  recording with no purpose; one with nothing takes the nearest slot's purpose within three hours, without
+  a key. Purpose and `slotKey` are stored on the row and in `match`; the backfill re-tags rows linked
+  before these rules.
+* **Placeholders.** A live-join placeholder is dropped (and hidden on the card) only by a recording with
+  talk on its own slot that starts in its window, or one a person put on that slot. Live captions, a silent
+  copy, a recording of another slot or of none never do, and a placeholder past its deadline stays (the
+  watchdog marks it missing). A placeholder has no Fireflies link and is left out of meeting counts.
+* **One meeting, two recordings.** Recordings in one room that start within 20 minutes, overlap, or follow
+  within 5 minutes of the other's end are one meeting; the one with the most talk (sentences, then
+  minutes) is the primary and the rest carry `duplicateOf`. Offers seed one per meeting and only sales
+  recordings (workshop and iteration ones are listed, not ticked), auto-fill counts meetings, and the
+  workshop / iteration slots, Møte actions and the offer lock never move to a copy with less talk.
+* **People win.** The backfill never moves or unlinks a person's link, a pin brings a recording back to
+  its client, and with no stored record nothing but the old hub's title and name links is cleaned up. A
+  store with no records while cards hold recordings is not read as proof: the run is skipped.
+* **Moves clean up.** The client a recording leaves loses it from its slots, actions, open offer and offer
+  lock. The lock never names a placeholder: it follows the sales recording with talk once one is linked.
+* **Routes.** `POST /api/admin/sales/:id/meetings/:meetingId/purpose` `{ purpose: 'sales' | 'workshop' |
+  'iteration' | '' }` (the client's rep or admin) is a person's purpose pick, kept by every automatic pass
+  (`''` goes back to automatic). `POST /api/admin/fireflies/meetings/:meetingId/exclude` `{ clientId }`
+  ("Ikke denne kunden", the client's rep or admin) takes it off that client for good; the admin unlink
+  does the same for the client that held it. A rep's Tilbud paste of a recording on another client answers
+  409 with that client's name, and a rep's title search only sees recordings on no card or this one.
 
 ### Fireflies transcript intake
 
@@ -244,11 +282,14 @@ non-sent one). Every transition is appended to `offer.history`.
 Sales (owner or admin): `GET/PUT /api/admin/sales/:id/offer`, `POST …/offer/new`, `POST …/offer/fill`,
 `POST …/offer/preview`, `POST …/offer/approve-preview`, `POST …/offer/request-review`,
 `GET …/offer/contract.pdf`, `POST …/offer/send`. Sender profile: `GET/PUT /api/admin/me/sender` (admin).
+Fireflies on the card (owner or admin): `POST /api/admin/sales/:id/meetings/:meetingId/purpose`,
+`POST /api/admin/fireflies/meetings/:meetingId/exclude` (`{clientId}`).
 
 Admin only: `GET /api/admin/offers[?status=]`, `GET/PUT /api/admin/offers/:id`,
 `POST …/:id/client-intent` (refresh the “hva kunden vil ha” briefing), `POST …/:id/reflect-contract`, `PUT …/:id/contract`, `POST …/:id/verify`, `POST …/:id/reopen` (`{toDraft}`),
 `GET …/:id/contract.pdf`, `GET /api/admin/offers/contract-template/:tierId.pdf`,
-`GET /api/admin/fireflies/meetings[?unmatched=1|clientId=]`, `GET/POST …/:meetingId[/link|/unlink|/refresh]`.
+`GET /api/admin/fireflies/meetings[?unmatched=1|clientId=]` (unmatched: on no client's card),
+`GET/POST …/:meetingId[/link|/unlink|/refresh]`.
 
 ## Tests
 
