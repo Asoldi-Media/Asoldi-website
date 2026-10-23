@@ -3261,7 +3261,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                         <audio controls preload="metadata" src={recordingBlobUrlByClient[client.id]} className="w-full" />
                         <button
                           type="button"
-                          onClick={() => window.open(client.myphoner?.latestRecordingUrl || '', '_blank')}
+                          onClick={() => window.open(recordingBlobUrlByClient[client.id] || '', '_blank')}
                           className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15"
                         >
                           <ExternalLink size={12} />

@@ -25,7 +25,11 @@ function argValue(flag, fallback = '') {
 const PROD_BASE = (argValue('--prod', process.env.PROD_ADMIN_URL || 'https://asoldi.com')).replace(/\/+$/, '');
 const MAKER_BASE = (argValue('--maker', process.env.WEBSITE_MAKER_BASE_URL || 'http://192.168.68.92:3000')).replace(/\/+$/, '');
 const USERNAME = argValue('--username', process.env.PROD_ADMIN_USERNAME || 'asoldi.com');
-const PASSWORD = argValue('--password', process.env.PROD_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD || 'D@mi@N102020');
+const PASSWORD = argValue('--password', process.env.PROD_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD || '');
+if (!PASSWORD) {
+  console.error('Set PROD_ADMIN_PASSWORD (asoldi.com/admin password) or pass --password.');
+  process.exit(1);
+}
 const LOOP = args.includes('--loop');
 const INTERVAL_MS = Math.max(60_000, Number(argValue('--interval', '')) || 5 * 60_000);
 const MAKER_API_KEY = String(process.env.WEBSITE_MAKER_API_KEY || '').trim();

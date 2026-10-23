@@ -74,6 +74,15 @@ import { applyMakerBundleToPortal } from './lib/maker-bundle-sync.js';
 import * as offers from './data/offers.js';
 import * as resetTokens from './data/reset-tokens.js';
 import { getPersistentDataDir, pruneAllDataBackups } from './data/storage-path.js';
+import {
+  createLoginLimiter,
+  createStaffMediaGate,
+  guardLogin,
+  clientIpFromRequest,
+  isTokenFresh,
+  readOrCreateDiskSecret,
+  safeEqual,
+} from './lib/auth-hardening.js';
 import { applyPersistentProductionEnv } from './lib/persistent-env.js';
 import { applyProxyKeepAlive, describeProxyTimeouts, proxyHttpServerOptions } from './lib/http-server-timeouts.js';
 import {
@@ -493,7 +502,9 @@ app.use((req, res, next) => {
 const PORT = process.env.PORT || 3000;
 const distPath = join(__dirname, 'dist');
 const publicPath = join(__dirname, 'public');
-const ADMIN_SECRET = process.env.ADMIN_SECRET || 'change-me-in-production';
+// Env wins; otherwise a random secret generated once in <dataDir>/secrets/ (no literal default).
+const ADMIN_SECRET = String(process.env.ADMIN_SECRET || '').trim() || readOrCreateDiskSecret(getPersistentDataDir(), 'admin-secret');
+const loginLimiter = createLoginLimiter();
 
 function signToken(payload) {
   const data = JSON.stringify(payload);
@@ -504,9 +515,11 @@ function signToken(payload) {
 function verifyToken(token) {
   try {
     const raw = JSON.parse(Buffer.from(token, 'base64url').toString());
-    const expect = createHmac('sha256', ADMIN_SECRET).update(raw.data).digest('hex');
-    if (expect !== raw.sig) return null;
-    return JSON.parse(raw.data);
+    const expect = createHmac('sha256', ADMIN_SECRET).update(String(raw.data)).digest('hex');
+    if (!safeEqual(expect, raw.sig)) return null;
+    const payload = JSON.parse(raw.data);
+    if (!isTokenFresh(payload)) return null;
+    return payload;
   } catch {
     return null;
   }
@@ -516,9 +529,13 @@ async function ensureAdminExists() {
   const admin = await store.getAdmin();
   if (admin) return;
   const username = process.env.ADMIN_USERNAME || 'asoldi.com';
-  const password = process.env.ADMIN_PASSWORD || 'D@mi@N102020';
+  let password = String(process.env.ADMIN_PASSWORD || '').trim();
+  if (!password) {
+    // First boot without ADMIN_PASSWORD: random password, readable only on the server disk.
+    password = readOrCreateDiskSecret(getPersistentDataDir(), 'initial-admin-password', 18);
+    console.log('Admin created with a generated password in <dataDir>/secrets/initial-admin-password. Change it after first login.');
+  }
   await store.setAdminCredentials(username, password);
-  console.log('Default admin created (username:', username, '). Set ADMIN_USERNAME/ADMIN_PASSWORD/ADMIN_SECRET in production.');
 }
 
 // --- API (must be before static)
@@ -591,10 +608,13 @@ app.post('/api/admin/login', async (req, res) => {
   if (!username || !password) {
     return res.status(400).json({ message: 'Username and password required' });
   }
+  if (!guardLogin(loginLimiter, req, res, `admin:${username}`)) return;
   const valid = await store.verifyAdmin(username, password);
   if (!valid) {
+    loginLimiter.fail(`admin:${username}`, clientIpFromRequest(req));
     return res.status(401).json({ message: 'Invalid credentials' });
   }
+  loginLimiter.succeed(`admin:${username}`);
   const token = signToken({ role: 'admin', username, at: Date.now() });
   res.json({ token });
 });
@@ -2771,11 +2791,19 @@ function resolveSalesPreviewPushUrl() {
   return `${salesPreview.getPublicPreviewOrigin()}/api/admin/sales/maker-preview-push`;
 }
 
+let makerCallbackTokenCache = '';
+// Env wins; otherwise one random token kept in <dataDir>/secrets/. Callbacks never run unauthenticated.
+function getMakerCallbackToken() {
+  const fromEnv = sanitizeText(process.env.WEBSITE_MAKER_STATUS_CALLBACK_TOKEN || process.env.SALES_MAKER_STATUS_CALLBACK_TOKEN || '');
+  if (fromEnv) return fromEnv;
+  if (!makerCallbackTokenCache) makerCallbackTokenCache = readOrCreateDiskSecret(getPersistentDataDir(), 'maker-callback-token', 32);
+  return makerCallbackTokenCache;
+}
+
 function isMakerStatusCallbackAuthorized(req) {
-  const requiredToken = sanitizeText(process.env.WEBSITE_MAKER_STATUS_CALLBACK_TOKEN || process.env.SALES_MAKER_STATUS_CALLBACK_TOKEN || '');
-  if (!requiredToken) return true;
+  const requiredToken = getMakerCallbackToken();
   const provided = sanitizeText(req.headers['x-sales-callback-token'] || req.headers['x-maker-callback-token']);
-  return provided && secureStringEqual(provided, requiredToken);
+  return Boolean(provided) && safeEqual(provided, requiredToken);
 }
 
 function secureStringEqual(left = '', right = '') {
@@ -7389,10 +7417,7 @@ async function loginToProdAdmin() {
     return { prodBase: '', token: '' };
   }
   const username = sanitizeText(process.env.PROD_ADMIN_USERNAME || process.env.ADMIN_USERNAME) || 'asoldi.com';
-  // Falls back to the same seeded default as ensureAdminExists so the office
-  // Docker can publish previews without extra .env setup.
-  const password =
-    sanitizeText(process.env.PROD_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD) || 'D@mi@N102020';
+  const password = sanitizeText(process.env.PROD_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD);
   if (!password) {
     throw makeHttpError(503, 'Set PROD_ADMIN_PASSWORD (asoldi.com/admin password) to publish a public preview.');
   }
@@ -9970,6 +9995,12 @@ app.post('/api/admin/change-password', adminAuth, async (req, res) => {
   res.json({ ok: true });
 });
 
+// The Maker sends this token as x-sales-callback-token on status callbacks and preview pushes.
+app.get('/api/admin/system/maker-callback-token', adminAuth, (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({ token: getMakerCallbackToken() });
+});
+
 app.get('/api/admin/employees/overview', adminAuth, async (_req, res) => {
   const users = await store.getAllUsers();
   employees.ensureWorkersForUsers(users);
@@ -10474,10 +10505,13 @@ app.post('/api/auth/login', async (req, res) => {
   if (!username || !password) {
     return res.status(400).json({ message: 'Username and password required' });
   }
+  if (!guardLogin(loginLimiter, req, res, `staff:${username}`)) return;
   const result = await store.verifyStaff(username, password);
   if (!result.ok) {
+    loginLimiter.fail(`staff:${username}`, clientIpFromRequest(req));
     return res.status(401).json({ message: 'Invalid username or password' });
   }
+  loginLimiter.succeed(`staff:${username}`);
   const token = signToken({ role: result.user.role, userId: result.user.id, username: result.user.username, at: Date.now() });
   res.json({
     token,
@@ -10654,10 +10688,13 @@ app.post('/api/client/auth/login', async (req, res) => {
   if (!isValidEmail(email) || !password) {
     return res.status(400).json({ message: 'E-post og passord er påkrevd.' });
   }
+  if (!guardLogin(loginLimiter, req, res, `client:${email}`)) return;
   const result = await store.verifyClient(email, password);
   if (!result.ok) {
+    loginLimiter.fail(`client:${email}`, clientIpFromRequest(req));
     return res.status(401).json({ message: 'Ugyldig e-post eller passord.' });
   }
+  loginLimiter.succeed(`client:${email}`);
   const user = await store.getUserById(result.user.id);
   const token = signToken({ role: 'client', userId: result.user.id, at: Date.now() });
   res.json({
@@ -12515,10 +12552,13 @@ app.post('/api/client-auth/login', async (req, res) => {
   if (!email || !password) {
     return res.status(400).json({ message: 'E-post og passord er påkrevd.' });
   }
+  if (!guardLogin(loginLimiter, req, res, `client:${email}`)) return;
   const result = await store.verifyClient(email, password);
   if (!result.ok) {
+    loginLimiter.fail(`client:${email}`, clientIpFromRequest(req));
     return res.status(401).json({ message: 'Ugyldig e-post eller passord.' });
   }
+  loginLimiter.succeed(`client:${email}`);
   const token = signToken({ role: 'client', userId: result.user.id, at: Date.now() });
   const profile = clientPortal.getClientProfile(result.user.id) || clientPortal.upsertClientProfile(result.user.id, {
     userId: result.user.id,
@@ -18220,9 +18260,7 @@ function readRequestZipBuffer(req) {
 }
 
 function isMakerPreviewPushAuthorized(req) {
-  if (isMakerStatusCallbackAuthorized(req) && sanitizeText(process.env.WEBSITE_MAKER_STATUS_CALLBACK_TOKEN || process.env.SALES_MAKER_STATUS_CALLBACK_TOKEN)) {
-    return true;
-  }
+  if (isMakerStatusCallbackAuthorized(req)) return true;
   const apiKey = sanitizeText(process.env.WEBSITE_MAKER_API_KEY || process.env.WEBSITEMAKER_API_KEY);
   const providedKey = sanitizeText(req.headers['x-api-key']);
   if (apiKey && providedKey && secureStringEqual(providedKey, apiKey)) return true;
@@ -18467,9 +18505,7 @@ app.post('/api/admin/sales/:id/create-maker-run', salesOrDevelopmentAuth, async 
     const previousRunId = sanitizeText(client.makerRun?.runId);
     const existingRunId = forceNewRun ? '' : previousRunId;
     const salesCallbackUrl = resolveSalesMakerCallbackUrl(req);
-    const salesCallbackToken = sanitizeText(
-      process.env.WEBSITE_MAKER_STATUS_CALLBACK_TOKEN || process.env.SALES_MAKER_STATUS_CALLBACK_TOKEN || ''
-    );
+    const salesCallbackToken = getMakerCallbackToken();
     const requestBody = {
       existingRunId,
       templateSetId: sanitizeText(client.makerRun?.templateSetId),
@@ -20565,6 +20601,13 @@ app.get('/email/preview/draft/:id', (req, res) => {
 
 
 // --- Static and SPA
+// Sales call recordings are personal data and some file names are sequential call ids:
+// only signed-in staff may fetch them. The sales UI streams them through the
+// authenticated /api/admin/*/recording routes.
+const staffMediaGate = createStaffMediaGate(verifyToken);
+app.use('/myphoner-recordings', staffMediaGate);
+app.use('/myphoner-audio', staffMediaGate);
+
 app.get('/myphoner-audio/:file', async (req, res, next) => {
   const fileName = path.basename(String(req.params.file || ''));
   if (!fileName || !LOCAL_RECORDING_EXTENSIONS.has(path.extname(fileName).toLowerCase())) {

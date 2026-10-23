@@ -67,8 +67,7 @@ export function getSiteByDomain(domain) {
 export function getSiteConfig(siteKeyOrDomain, byDomain = false) {
   const site = byDomain ? getSiteByDomain(siteKeyOrDomain) : getSiteByKey(siteKeyOrDomain);
   if (!site) return null;
-  const clientAdmin = normalizeClientAdmin(site.clientAdmin);
-  return {
+  const config = {
     id: site.id,
     name: site.name,
     domain: site.domain,
@@ -77,6 +76,13 @@ export function getSiteConfig(siteKeyOrDomain, byDomain = false) {
     websitePlan: site.websitePlan,
     desiredCmsVersion: desiredCmsVersion(site),
     analyticsLevel: site.analyticsLevel || 'none',
+  };
+  // A domain (or Host header) is public, so domain lookups never carry admin data.
+  // Only a caller holding the site key (the client CMS) gets the admin sync fields.
+  if (byDomain) return config;
+  const clientAdmin = normalizeClientAdmin(site.clientAdmin);
+  return {
+    ...config,
     clientAdmin: publicClientAdmin(clientAdmin),
     pendingAdmin:
       clientAdmin.pendingSync && clientAdmin.passwordHash

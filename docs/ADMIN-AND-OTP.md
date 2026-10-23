@@ -3,15 +3,13 @@
 ## Admin access
 
 - **URL:** `https://yourdomain.com/admin` (e.g. asoldi.com/admin)
-- **Default credentials** (change in production via env):
-  - Username: `asoldi.com`
-  - Password: `D@mi@N102020`
+- **Username:** `asoldi.com` (or `ADMIN_USERNAME`). There is no default password: on a first boot without `ADMIN_PASSWORD` the server writes a random one to `<dataDir>/secrets/initial-admin-password`.
 
 Set these in production (e.g. Hostinger env or `.env`):
 
 - `ADMIN_USERNAME` – admin login name (default: asoldi.com)
-- `ADMIN_PASSWORD` – admin password (default above; **must** change in production)
-- `ADMIN_SECRET` – secret used to sign admin JWT tokens (**set a long random string in production**)
+- `ADMIN_PASSWORD` – optional first-boot admin password (only used when no admin exists yet)
+- `ADMIN_SECRET` – optional token-signing secret. When unset, the server generates one in `<dataDir>/secrets/admin-secret` and keeps it across deploys. Tokens expire after 30 days (`AUTH_TOKEN_MAX_AGE_DAYS`). Failed logins are rate-limited per account and IP.
 
 On first run, if the admin data file does not exist yet, the server creates the default admin. Runtime data is stored outside the git-tracked app files by default, under `.builds/data` on the server, or in `APP_DATA_DIR` if you override it. After first login, change the password via **Admin → “Change my password”** in the sidebar.
 
