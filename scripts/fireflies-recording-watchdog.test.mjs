@@ -243,6 +243,115 @@ test('a finished silent recording on the room sets empty, and a processing one k
   assert.equal(again.checked.includes(silent.meetings[0].meetingId), false, 'empty is final');
 });
 
+test('a meeting that runs past its booking: no lookup while capture sees the bot, and live captions are never linked or stored', async () => {
+  const start = Date.parse('2026-10-23T08:00:00.000Z');
+  const client = booking(start, { state: 'recording', ffMeetingId: 'FFLONG01', lastSeenAt: iso(start + 64 * MIN) });
+  const [row] = client.meetings;
+  assert.equal(watchdog.planPlaceholderCheck(row, { nowMs: start + 65 * MIN }).reason, 'in-session', 'capture saw the bot a minute ago');
+  assert.equal(watchdog.recordingDeadlineMs(row), start + (64 + 90) * MIN, 'the deadline counts from when the bot was last seen');
+
+  const h = hub([client]);
+  const fetched = [];
+  let reply = {
+    ...answer('FFLONG01', { start, meet: row.meetLink, status: 'processing' }),
+    is_live: true,
+    duration: null,
+    meeting_info: { summary_status: null },
+  };
+  const lookupAt = (nowMs) => (placeholder) => watchdog.lookupPlaceholderTranscript(placeholder, {
+    apiKey: 'fake-key',
+    nowMs,
+    fetchTranscript: async (id) => { fetched.push(id); return { ...reply }; },
+    listTranscripts: async () => [],
+  });
+  // Capture stopped reporting (a restart), the meeting is still on: the bot's id answers with captions.
+  const first = await watchdog.runFirefliesRecordingWatchdog({ ...h.deps, apiKey: 'fake-key', nowMs: start + 80 * MIN, lookup: lookupAt(start + 80 * MIN), log: quiet });
+  assert.deepEqual(fetched, ['FFLONG01']);
+  assert.deepEqual(h.linked, [], 'captions are not this meeting\'s recording yet');
+  assert.equal(ff.readStoredFirefliesMeeting('FFLONG01'), null, 'nor stored, where the other ingest steps would link them');
+  assert.equal(client.meetings[0].meetingId, row.meetingId, 'the placeholder stays for capture');
+  assert.equal(client.meetings[0].recording.state, 'recording');
+  assert.deepEqual(first.missing, []);
+
+  // The call ended and Fireflies has the transcript: found by the id and linked.
+  reply = answer('FFLONG01', { start, meet: row.meetLink });
+  await watchdog.runFirefliesRecordingWatchdog({ ...h.deps, apiKey: 'fake-key', nowMs: start + 95 * MIN, lookup: lookupAt(start + 95 * MIN), log: quiet });
+  assert.deepEqual(h.linked.map((entry) => entry.meetingId), ['FFLONG01']);
+});
+
+test('a later meeting in the same reused room is not this one: only offered, and it never hides the missing alert', async () => {
+  const start = Date.parse('2026-10-23T07:00:00.000Z');
+  const client = booking(start);
+  const [row] = client.meetings;
+  // Three hours later the same room held the recorded follow-up, already on the card.
+  client.meetings.push({ meetingId: 'FFNEXT01', meetLink: row.meetLink, startedAt: iso(start + 180 * MIN), hasTranscript: true });
+  const h = hub([client]);
+  const fake = fireflies({
+    list: [{ id: 'FFNEXT01', title: 'Opptak', dateString: iso(start + 180 * MIN), meeting_link: row.meetLink, transcript_url: 'https://app.fireflies.ai/view/FFNEXT01' }],
+    transcripts: { FFNEXT01: answer('FFNEXT01', { start: start + 180 * MIN, meet: row.meetLink }) },
+  });
+  const result = await run(h, fake, start + 200 * MIN);
+  assert.deepEqual(result.checked, [row.meetingId], 'the later recording does not count as this session');
+  assert.deepEqual(fake.calls.fetch, [], 'nor is it fetched as this one');
+  assert.deepEqual(h.linked, []);
+  assert.equal(row.recording.state, 'missing');
+  assert.equal(h.sent.length, 1);
+  assert.match(h.sent[0].text, /fra samme Meet-rom til en annen tid/);
+  assert.match(h.sent[0].text, /https:\/\/app\.fireflies\.ai\/view\/FFNEXT01/);
+});
+
+test('a recording Fireflies is still working on beats an empty fragment; still unfinished hours later it is missing', async () => {
+  const start = Date.parse('2026-10-22T09:00:00.000Z');
+  const client = booking(start, { state: 'ended' });
+  const [row] = client.meetings;
+  const h = hub([client]);
+  const fake = fireflies({
+    list: [
+      { id: 'FFFRAG01', title: 'Opptak', dateString: iso(start + MIN), meeting_link: row.meetLink },
+      { id: 'FFSLOW01', title: 'Opptak', dateString: iso(start + 2 * MIN), meeting_link: row.meetLink },
+    ],
+    transcripts: {
+      FFFRAG01: answer('FFFRAG01', { start, meet: row.meetLink, status: 'skipped', talk: false }),
+      FFSLOW01: answer('FFSLOW01', { start, meet: row.meetLink, status: 'processing', talk: false }),
+    },
+  });
+  await run(h, fake, start + 160 * MIN);
+  assert.equal(row.recording.state, 'ended', 'not empty: the real recording is still coming');
+  assert.match(row.recording.message, /behandler fortsatt/);
+  assert.equal(h.sent.length, 0);
+
+  const deadline = watchdog.recordingDeadlineMs(row);
+  await run(h, fake, deadline + watchdog.PENDING_GRACE_MS + MIN);
+  assert.equal(row.recording.state, 'missing');
+  assert.match(row.recording.message, /aldri ferdig/);
+  assert.equal(h.sent.length, 1);
+  assert.match(h.sent[0].text, /fortsatt ikke ferdig/);
+});
+
+test('lookups that keep failing are counted for the ingest health', async () => {
+  const start = Date.parse('2026-10-23T05:00:00.000Z');
+  const client = booking(start);
+  const h = hub([client]);
+  const rejected = Object.assign(new Error('Variable "$fromDate" got an invalid value.'), { code: 'invalid_arguments' });
+  const result = await run(h, fireflies({ list: rejected }), start + 70 * MIN);
+  assert.deepEqual(result.failed, [client.meetings[0].meetingId]);
+  assert.deepEqual(result.health, { missingPlaceholders: 0, lookups: 1, lookupErrors: 1, lastLookupError: rejected.message });
+  assert.equal(client.meetings[0].recording.state, 'dispatched', 'a failed lookup decides nothing');
+  const paused = await run(hub([booking(start)]), fireflies({ list: new FirefliesApiError('Too many requests.', { code: 'rate-limited' }) }), start + 70 * MIN);
+  assert.equal(paused.health.lookups, 0, 'a pause is no lookup');
+});
+
+test('"Marker uten opptak" ends the search on a placeholder only', () => {
+  const start = Date.parse('2026-10-23T04:00:00.000Z');
+  const [row] = booking(start).meetings;
+  const decided = watchdog.declinedRecordingPatch(row, { by: 'Kari Test', nowMs: start + 200 * MIN });
+  assert.equal(decided.recording.state, 'declined');
+  assert.equal(decided.recording.message, 'Markert som uten opptak av Kari Test.');
+  const declined = { ...row, recording: mergeRecordingState(row.recording, decided.recording) };
+  assert.equal(watchdog.planPlaceholderCheck(declined, { nowMs: start + 300 * MIN }).reason, 'done');
+  assert.deepEqual(watchdog.declinedRecordingPatch({ meetingId: 'FFREAL01' }), { error: 'not-a-placeholder' });
+});
+
 test('a placeholder from long ago is decided once, quietly; a linked session is skipped', async () => {
   const start = Date.parse('2026-10-01T10:00:00.000Z');
   const old = booking(start, {});
