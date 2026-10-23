@@ -22,7 +22,7 @@ A hub that runs on a PC (or the office LAN box) has the same keys as asoldi.com.
   - Items are deleted after 30 days. The outbox lives in the local data dir, which is never backed up to prod.
   - Brevo and Gmail have no hub send path yet. Their hosts are refused by the egress allowlist. New senders must go through `outboxOrSend({ channel, allowKey, message, send })` in `lib/safe-mode-mail.js`, which writes to the outbox in safe mode and sends for real otherwise (for Brevo, `allowKey: 'brevoSend'`).
 - **External writes** are blocked. Each blocked attempt is recorded in `<dataDir>/safe-mode/intents.jsonl` and in counters:
-  - calendar events and ACLs (the caller gets a `safe-…` stand-in event), and opening Meet rooms for the notetaker (reason `safe-mode`);
+  - calendar events and ACLs (the caller gets a `safe-…` stand-in event), and opening Meet rooms for the notetaker (reason `safe-mode`, see [fireflies-recording.md](fireflies-recording.md));
   - Fireflies live-join;
   - Myphoner POST, PATCH and DELETE;
   - WordPress writes;
