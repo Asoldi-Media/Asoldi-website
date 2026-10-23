@@ -743,6 +743,34 @@ test('budget alerts: five calls over the cap write one alert per scope and clien
   assert.equal(ledgerRows(dir).length, 6, 'alerts never stop a call');
 });
 
+test('budget alerts: the hub day cap alerts once a day however many clients cross it; the client cap once per client', async () => {
+  const { alertKey } = await import('../lib/llm/ledger.js');
+  const dir = freshDir('alert-clients');
+  writeFileSync(join(dir, 'ai-budgets.override.json'), JSON.stringify({ periodic: { hubDayUsd: 0.000001, clientMonthUsd: 0.000001 } }));
+  const warnings = [];
+  const facade = createHubLlm({ dataDir: dir, env: process.env, fetch: globalThis.fetch, log: { warn: (line) => warnings.push(line), log() {} } });
+  registerHubLlm(facade);
+  try {
+    for (let i = 0; i < 5; i += 1) await deepseekChatJson({ task: 'inbox.categorize', system: 's', user: `u${i}`, ctx: { salesClientId: `c-${i}` } });
+    await deepseekChatJson({ task: 'inbox.categorize', system: 's', user: 'no client' });
+  } finally {
+    registerHubLlm(null);
+  }
+  const month = new Date().toISOString().slice(0, 7);
+  const alerts = readFileSync(join(dir, 'ai', `alerts-${month}.jsonl`), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+  assert.equal(alerts.filter((alert) => alert.scope === 'hubDay').length, 1, JSON.stringify(alerts));
+  assert.deepEqual(alerts.filter((alert) => alert.scope === 'clientMonth').map((alert) => alert.salesClientId).sort(), ['c-0', 'c-1', 'c-2', 'c-3', 'c-4']);
+  assert.equal(warnings.filter((line) => /budget alert/.test(line)).length, 6);
+  // The key: periodic hub-wide scopes ignore the call's client, run and session; scaled scopes keep them.
+  const at = '2026-10-23T10:00:00.000Z';
+  assert.equal(alertKey({ at, scope: 'hubDay', salesClientId: 'a', runId: 'r1' }), alertKey({ at, scope: 'hubDay', salesClientId: 'b', sessionId: 's2' }));
+  assert.notEqual(alertKey({ at, scope: 'clientMonth', salesClientId: 'a' }), alertKey({ at, scope: 'clientMonth', salesClientId: 'b' }));
+  assert.equal(alertKey({ at, scope: 'clientMonth', salesClientId: 'a', runId: 'r1' }), alertKey({ at, scope: 'clientMonth', salesClientId: 'a', runId: 'r2' }));
+  assert.notEqual(alertKey({ at, scope: 'run', runId: 'r1' }), alertKey({ at, scope: 'run', runId: 'r2' }));
+  assert.notEqual(alertKey({ at, scope: 'devSession', sessionId: 's1' }), alertKey({ at, scope: 'devSession', sessionId: 's2' }));
+  assert.notEqual(alertKey({ at, scope: 'hubDay' }), alertKey({ at: '2026-10-24T10:00:00.000Z', scope: 'hubDay' }));
+});
+
 test('the data-dir off switch sends every call site directly: no facade, no ledger row, today\'s provider even on prod', async () => {
   const dir = freshDir('off-switch');
   const facade = facadeAt(dir);
