@@ -262,8 +262,8 @@ test('HS-4: calls without a known site key are limited per address; a known key 
     const limited = await redeem(hub.base, { token: junkToken(), siteKey: 'guess-x', ip: '203.0.113.9' });
     assert.equal(limited.status, 429);
     assert.ok(Number(limited.headers.get('retry-after')) > 0);
-    const spoofed = await redeem(hub.base, { token: junkToken(), siteKey: 'guess-y', ip: '192.0.2.1, 203.0.113.9' });
-    assert.equal(spoofed.status, 429, 'a client-written first hop does not change the counted address');
+    const extraHop = await redeem(hub.base, { token: junkToken(), siteKey: 'guess-y', ip: '192.0.2.1, 203.0.113.9' });
+    assert.equal(extraHop.status, 429, 'a client-written first hop does not change the counted address');
     assert.equal((await redeem(hub.base, { token: junkToken(), ip: '203.0.113.9' })).status, 429, 'no key at all counts the same way');
     const good = tokenOf((await link(hub.base, '42')).body.url);
     assert.equal((await redeem(hub.base, { token: good, siteKey: 'key-42', ip: '203.0.113.9' })).status, 200, 'another tenant on a shared address cannot block a real site');
@@ -337,7 +337,7 @@ test('HS-1: a heartbeat from a site-key holder cannot move the sign-in link to a
   const created = hub.createSite({ name: 'Example shop', domain: 'shop.example' });
   const id = created.site?.id || created.id;
   const key = hub.getSiteById(id).site_key;
-  assert.equal(hub.recordHeartbeat(key, { packageVersion: '2.2.1', adminUrl: 'https://attacker.example/admin' }).ok, true);
+  assert.equal(hub.recordHeartbeat(key, { packageVersion: '2.2.1', adminUrl: 'https://elsewhere.example/admin' }).ok, true);
   const app = express();
   app.use(express.json());
   const adminAuth = (req, _res, next) => { req.admin = { username: 'staff-one' }; next(); };
@@ -352,7 +352,7 @@ test('HS-1: a heartbeat from a site-key holder cannot move the sign-in link to a
     assert.equal(new URL(body.url).origin, 'https://shop.example', 'the link stays on the stored domain');
     const row = registered.store().auditLog().at(-1);
     assert.equal(row.originFrom, 'domain');
-    assert.equal(row.ignoredAdminHost, 'attacker.example', 'the ignored report is noted');
+    assert.equal(row.ignoredAdminHost, 'elsewhere.example', 'the ignored report is noted');
     hub.recordHeartbeat(key, { adminUrl: 'http://www.shop.example/admin' });
     const www = await (await fetch(`${base}/api/hub/sites/${id}/cms-sso`, { method: 'POST' })).json();
     assert.equal(new URL(www.url).origin, 'https://www.shop.example', 'a plain-http report on the same host still gives https');

@@ -86,10 +86,10 @@ test('site-config: the hub is asked for the other spelling only when the first i
   assert.equal(asked.length, 2);
   assert.match(missing.checks.find((check) => check.id === 'site-config').detail, /HTTP 404 for ukjent-frisør\.no; HTTP 404 for xn--/);
   // Admin fields in any answer fail at once.
-  const leaky = async (url, opts) => (new URL(url).pathname === '/api/hub/site-config'
+  const withAdminFields = async (url, opts) => (new URL(url).pathname === '/api/hub/site-config'
     ? { status: 200, contentType: 'application/json', body: JSON.stringify({ features: {}, clientAdmin: {} }) }
     : answers.get(url, opts));
-  assert.deepEqual(failed(await runPostDeployCheck(options('frisør-eksempel.no'), { get: leaky })), ['site-config']);
+  assert.deepEqual(failed(await runPostDeployCheck(options('frisør-eksempel.no'), { get: withAdminFields })), ['site-config']);
 });
 
 test('a production-like hub passes every check', async () => {
