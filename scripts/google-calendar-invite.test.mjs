@@ -372,9 +372,12 @@ test('after confirmation the sales Meet button does not force a second room at c
   const thankYouSync = server.slice(server.indexOf('async function syncCalendarInviteForThankYou'));
   assert.match(thankYouSync.slice(0, 1200), /forceOwnerMeet: true/);
   assert.equal(server.includes('forceOwnerMeet && isOnline && Boolean(eventIdForUpsert)'), false);
-  assert.match(server, /lockedMeetLink: forceNewMeet \? '' : salesInboxMeetLink\(nextClient\)/);
-  const liveJoin = server.slice(server.indexOf('async function maybeJoinFirefliesLive'));
-  assert.match(liveJoin.slice(0, 1400), /salesInboxMeetLink\(client\)/);
+  // A moved meeting keeps the room the client was e-mailed; live join treats the new time as a new session.
+  assert.match(server, /lockedMeetLink: salesInboxMeetLink\(nextClient\)/);
+  // The bot goes into that same room: live-join sessions take the sales room from salesInboxMeetLink.
+  const liveSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../lib/fireflies-live-sessions.js'), 'utf8');
+  const bookedSlots = liveSrc.slice(liveSrc.indexOf('export function bookedLiveSlots'));
+  assert.match(bookedSlots.slice(0, 1600), /salesInboxMeetLink\(client\)/);
   assert.match(server, /shouldRescheduleSalesReminders\(/);
   assert.match(server, /salesReminderCatchUpIsDue\('24h'/);
   assert.match(server, /overlaySalesInboxMeetOnEvents\(/);

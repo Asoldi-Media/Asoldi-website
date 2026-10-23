@@ -125,21 +125,37 @@ For an offer: tier contract when only a tier is present; admin-verified summary 
 
 ## Fireflies meeting data
 
+* Live join records every booked online meeting (`lib/fireflies-live-sessions.js`, a 60 s loop). Each sales
+  meeting, workshop or iteration Møte and recorded Møte action with a real Meet link is one session (room +
+  start time), built from the booking itself: no confirmation, calendar guest, "Møtet hatt" tick or done mark
+  inside the meeting's window stops it. Two slots on one room and start share one bot.
+  * The bot goes in with `addToLiveMeeting` (duration 120 min, the documented maximum, or until one minute
+    before the next booked meeting's send) from 3 minutes before start. Fireflies' answer only means
+    "dispatched": the bot is an anonymous guest someone in the Meet has to let in.
+  * From the first send the loop looks at Fireflies `active_meetings` once a minute. A bot not seen is sent
+    again at T+1, T+5 and then every 10 minutes until T+30 (at most 5 sends), once more if it drops out early,
+    and once near its end time while the meeting runs on. Never seen: `not-admitted`.
+  * Every send shares one account-wide budget of 3 calls per rolling 20 minutes (Fireflies' limit), kept with
+    the sessions in `fireflies-live-sessions.json`. First sends go before retries; a retry or manual send waits
+    while first sends due in the next 20 minutes need the budget.
+  * Request handlers only record the booking and kick the loop. A moved meeting keeps its Meet room; the new
+    time is a new session, so the bot is sent in again.
+  * The card gets `client.liveRecordings` (state per slot); `POST /api/admin/sales/:id/fireflies/live-join`
+    (`{ slotKey }`) queues "send Fireflies again" through the same budget. The `live:` placeholder in
+    `client.meetings` is written only after an accepted send and carries the same `recording` state.
 * Fred (`fred@fireflies.ai`) is invited on the Google Calendar event only when the
   confirmation is actually sent — after a sales rep is assigned. Silent MyPhoner /
   unassigned calendar creates keep him off the attendee list so Google does not
   save-without-sending. If he was already saved on the event, confirmation send
   removes and re-adds him so Fireflies gets a real invite.
-* Calendar sync often never lists sales-page events in Fireflies Upcoming (the
-  confirmation From address is Resend, not the Google organizer). At meeting
-  start Asoldi also calls Fireflies `addToLiveMeeting` with the Meet link so Fred
-  joins even when Upcoming is empty. Retries stay under the API cap (3 / 20 min).
 * Webhook `POST /api/webhooks/fireflies?token=…` (`lib/fireflies-webhook.js`) stores the meeting record and runs
   `lib/fireflies-client-match.js`: attendee e-mail = `contactEmail` (+70), attendee domain = client website (+30),
   host = client’s rep (+15), start within 45 min / 3 h of `meetingAt` (+35 / +25), contact name / business name in
   title or attendees (+25 / +20). `high ≥ 70`, `medium ≥ 40`; ties are downgraded so a human confirms.
   Matched meetings land in `client.meetings[]`; the notify e-mail still goes to `FIREFLIES_NOTIFY_EMAIL`.
   A failing notify e-mail no longer fails the webhook (record + match are the primary output).
+  A V2 `meeting.bot_joined` event marks the live-join session on that room as recording (one cheap read
+  finds the room).
 * Media (video / audio / transcript) is downloaded in the background to `<data>/fireflies-media/<meetingId>/`
   (`lib/fireflies-media.js`, cap `FIREFLIES_MEDIA_MAX_MB`, default 400) and streamed to admins via
   `GET /api/admin/fireflies/meetings/:id/media/:kind?token=…`.

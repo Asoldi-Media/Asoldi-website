@@ -12,8 +12,6 @@ const {
   addFirefliesToLiveMeeting,
   authorizeFirefliesWebhook,
   buildFirefliesMeetingRecord,
-  firefliesLiveJoinShouldWait,
-  firefliesLiveJoinWindow,
   buildFirefliesNotifyEmail,
   eventFromPayload,
   fetchActiveFirefliesMeetings,
@@ -33,14 +31,43 @@ const {
   storedMeetingsNeedingHydration,
   verifyFirefliesSignature,
 } = await import('../lib/fireflies-webhook.js');
+const {
+  applyLiveJoinAttempt,
+  collectLiveSessions,
+  planLiveSessionTick,
+  syncLiveSessions,
+} = await import('../lib/fireflies-live-sessions.js');
 const { resetFirefliesGraphqlStateForTests } = await import('../lib/fireflies-graphql.js');
 import {
-  firefliesJoinedCurrentMeet,
   firefliesMeetLinksDiffer,
-  firefliesNeedsFreshMeetOnReschedule,
   shouldDropLiveJoinStub,
 } from '../lib/fireflies-client-match.js';
+import { sessionKeyFor } from '../lib/fireflies-recording-state.js';
 import { readFileSync } from 'node:fs';
+
+function liveClient(meetingAt, meetLink = 'https://meet.google.com/abc-defg-hij') {
+  return {
+    id: 'live-client',
+    businessName: 'Testfirma AS',
+    contactPerson: 'Kari Test',
+    meetingMode: 'online',
+    agreedTime: true,
+    meetingAt,
+    calendar: { meetLink, confirmedMeetLink: meetLink },
+    nextActions: [],
+    meetings: [],
+  };
+}
+
+function liveSession(meetingAt, nowMs) {
+  const facts = collectLiveSessions([liveClient(meetingAt)], nowMs);
+  return syncLiveSessions({}, facts, { nowMs })[facts[0].key];
+}
+
+function liveDispatches(session, nowMs, activeMeetings = []) {
+  return planLiveSessionTick({ sessions: [session], activeMeetings, nowMs }).actions
+    .filter((action) => action.type === 'dispatch');
+}
 
 const TRANSCRIPT = {
   id: 'ASxwZxCstx',
@@ -211,74 +238,54 @@ test('bot-joined events are ignored', async () => {
   });
 });
 
-test('live-join window is 3 minutes before through 2 hours after start', () => {
+test('live join goes in from 3 minutes before start and, if never sent, stops 30 minutes after', () => {
+  // The per-slot window moved into the session planner (lib/fireflies-live-sessions.js).
   const meetingAt = '2026-09-26T10:00:00.000Z';
   const start = Date.parse(meetingAt);
-  assert.equal(firefliesLiveJoinWindow({ meetingAt, nowMs: start - (3 * 60 * 1000) }), true);
-  assert.equal(firefliesLiveJoinWindow({ meetingAt, nowMs: start - (3 * 60 * 1000) - 1 }), false);
-  assert.equal(firefliesLiveJoinWindow({ meetingAt, nowMs: start }), true);
-  assert.equal(firefliesLiveJoinWindow({ meetingAt, nowMs: start + (90 * 60 * 1000) }), true);
-  assert.equal(firefliesLiveJoinWindow({ meetingAt, nowMs: start + (2 * 60 * 60 * 1000) }), true);
-  assert.equal(firefliesLiveJoinWindow({ meetingAt, nowMs: start + (2 * 60 * 60 * 1000) + 1 }), false);
-  assert.equal(firefliesLiveJoinWindow({ meetingAt: 'not-a-date', nowMs: start }), false);
+  const session = liveSession(meetingAt, start - (60 * 60 * 1000));
+  assert.equal(liveDispatches(session, start - (3 * 60 * 1000) - 1).length, 0);
+  assert.deepEqual(liveDispatches(session, start - (3 * 60 * 1000)).map((row) => row.kind), ['first']);
+  assert.equal(liveDispatches(session, start + (30 * 60 * 1000)).length, 1);
+  assert.equal(liveDispatches(session, start + (30 * 60 * 1000) + 1).length, 0);
 });
 
-test('live-join is per Meet URL so a later room swap joins again', () => {
-  const oldMeet = 'https://meet.google.com/eue-pfvs-zot';
-  const newMeet = 'https://meet.google.com/ssy-ndai-cpy';
-  assert.equal(firefliesJoinedCurrentMeet({
-    joinedAt: '2026-10-08T12:57:35.071Z',
-    joinedMeetLink: oldMeet,
-    meetLink: oldMeet,
-  }), true);
-  assert.equal(firefliesJoinedCurrentMeet({
-    joinedAt: '2026-10-08T12:57:35.071Z',
-    joinedMeetLink: oldMeet,
-    meetLink: newMeet,
-  }), false);
-  assert.equal(firefliesJoinedCurrentMeet({
-    joinedAt: '',
-    joinedMeetLink: '',
-    meetLink: newMeet,
-  }), false);
-  assert.equal(firefliesJoinedCurrentMeet({
-    joinedAt: '2026-10-08T13:57:35.114Z',
-    joinedMeetLink: '',
-    meetLink: newMeet,
-  }), false);
+test('live join is per Meet room and start: a room swap or a new time is a new session', () => {
+  const oldMeet = 'https://meet.google.com/abc-defg-hij';
+  const newMeet = 'https://meet.google.com/bcd-efgh-ijk';
+  const at = '2026-10-08T13:00:00.000Z';
+  assert.notEqual(sessionKeyFor(oldMeet, at), sessionKeyFor(newMeet, at));
+  assert.notEqual(sessionKeyFor(oldMeet, at), sessionKeyFor(oldMeet, '2026-10-08T13:30:00.000Z'));
+  assert.equal(sessionKeyFor(oldMeet, at), sessionKeyFor(`${oldMeet}?authuser=0`, at));
   assert.equal(firefliesMeetLinksDiffer(oldMeet, newMeet), true);
   assert.equal(firefliesMeetLinksDiffer(oldMeet, `${oldMeet}?authuser=0`), false);
   const serverSrc = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
-  assert.match(serverSrc, /firefliesJoinedCurrentMeet\(/);
+  // The stamps now mean "last accepted dispatch" and start clean for a new room or time.
   assert.match(serverSrc, /firefliesLiveJoinedMeetLink/);
-  assert.match(serverSrc, /meetLinkChanged \|\| calendarMeta\.replacedForeignMeet/);
-  assert.match(serverSrc, /firefliesNeedsFreshMeetOnReschedule\(/);
+  assert.match(serverSrc, /meetLinkChanged \|\| calendarMeta\.replacedForeignMeet \|\| startChanged/);
+  assert.equal(serverSrc.includes('firefliesJoinedCurrentMeet('), false, 'an accepted dispatch no longer blocks later sends');
+  assert.equal(serverSrc.includes('firefliesNeedsFreshMeetOnReschedule('), false);
   assert.equal(serverSrc.includes('sanitizeText(previousClient?.meetingAt) !== sanitizeText(nextClient?.meetingAt)'), false);
 });
 
-test('a later start after Fred entered this Meet needs a new room', () => {
-  const meet = 'https://meet.google.com/bru-bphr-ekz';
-  const joined = {
-    joinedAt: '2026-10-15T14:57:10.901Z',
-    joinedMeetLink: meet,
-    meetLink: meet,
-    previousMeetingAt: '2026-10-15T15:00:00.000Z',
-    nextMeetingAt: '2026-10-15T15:30:00.000Z',
-  };
-  assert.equal(firefliesNeedsFreshMeetOnReschedule(joined), true);
-  assert.equal(firefliesNeedsFreshMeetOnReschedule({
-    ...joined,
-    joinedAt: '',
-    joinedMeetLink: '',
-  }), false);
-  assert.equal(firefliesNeedsFreshMeetOnReschedule({
-    ...joined,
-    nextMeetingAt: joined.previousMeetingAt,
-  }), false);
-  assert.equal(firefliesNeedsFreshMeetOnReschedule({
-    ...joined,
-    meetLink: 'https://meet.google.com/ssy-ndai-cpy',
-  }), false);
+test('a moved meeting keeps its room and is joined again at the new time', () => {
+  const meet = 'https://meet.google.com/abc-defg-hij';
+  const before = collectLiveSessions([liveClient('2026-10-15T15:00:00.000Z', meet)], Date.parse('2026-10-15T14:00:00.000Z'));
+  const after = collectLiveSessions([liveClient('2026-10-15T15:30:00.000Z', meet)], Date.parse('2026-10-15T14:00:00.000Z'));
+  assert.equal(after[0].meetLink, before[0].meetLink);
+  assert.notEqual(after[0].key, before[0].key);
+  // The bot went into the 15:00 session; the 15:30 session is still sent in at 15:27.
+  const moved = syncLiveSessions({ [before[0].key]: applyLiveJoinAttempt(syncLiveSessions({}, before, {})[before[0].key], {
+    at: '2026-10-15T14:57:00.000Z',
+    kind: 'first',
+    ok: true,
+  }) }, after, { nowMs: Date.parse('2026-10-15T15:05:00.000Z') });
+  const next = moved[after[0].key];
+  assert.equal(liveDispatches(next, Date.parse('2026-10-15T15:27:00.000Z')).length, 1);
+  const serverSrc = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  const syncFn = serverSrc.slice(serverSrc.indexOf('async function maybeSyncCalendar'), serverSrc.indexOf('async function maybeSyncNextActionCalendars'));
+  assert.equal(syncFn.includes('forceNewMeet'), false, 'no fresh room just because the bot had been sent');
+  const workshopSrc = readFileSync(new URL('../lib/workshop-action.js', import.meta.url), 'utf8');
+  assert.equal(workshopSrc.includes('forceNewMeet'), false);
 });
 
 test('live stubs drop when the real recording is on any owned Meet', () => {
@@ -341,12 +348,18 @@ test('recent Fireflies rows without a Meet link still need a full fetch', () => 
   assert.deepEqual(rows.map((row) => row.meetingId), ['ff-new']);
 });
 
-test('live-join retries wait 6 minutes after an attempt', () => {
-  const attemptAt = '2026-09-26T10:00:00.000Z';
-  const now = Date.parse(attemptAt);
-  assert.equal(firefliesLiveJoinShouldWait({ attemptAt, nowMs: now + (6 * 60 * 1000) - 1 }), true);
-  assert.equal(firefliesLiveJoinShouldWait({ attemptAt, nowMs: now + (6 * 60 * 1000) }), false);
-  assert.equal(firefliesLiveJoinShouldWait({ attemptAt: '', nowMs: now }), false);
+test('a bot never seen in the room is sent again at T+1, then T+5 (after a look at the room)', () => {
+  // The old per-slot 6-minute wait is gone: the session planner owns the schedule and the account limiter.
+  const meetingAt = '2026-09-26T10:00:00.000Z';
+  const start = Date.parse(meetingAt);
+  const sent = applyLiveJoinAttempt(liveSession(meetingAt, start - (60 * 60 * 1000)), {
+    at: new Date(start - (3 * 60 * 1000)).toISOString(),
+    kind: 'first',
+    ok: true,
+  });
+  assert.equal(liveDispatches(sent, start).length, 0);
+  assert.deepEqual(liveDispatches(sent, start + (60 * 1000)).map((row) => row.kind), ['retry']);
+  assert.equal(liveDispatches(sent, start + (60 * 1000), null).length, 0, 'no second bot without a fresh look');
 });
 
 function liveReply(payload) {
