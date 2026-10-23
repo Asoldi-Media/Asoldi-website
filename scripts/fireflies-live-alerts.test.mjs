@@ -3,7 +3,7 @@
 // recording is reported once; the owner hears when live join is down; "uten opptak" can be set and undone.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -707,6 +707,50 @@ test('a lobby e-mail that fails is released and tried again two minutes later, w
   assert.equal(session.lobbyAlertAt, iso(5));
 });
 
+test('a bot seen only before the knock does not stop the lobby alert; the e-mail promises a new knock only when one is due', async () => {
+  resetAll();
+  const base = knockedSession();
+  // The earlier meeting's bot was in the room until 10:02; this meeting's own bot knocked at 10:03.
+  const adopted = applyLiveJoinAttempt(live.normalizeLiveSession({
+    ...base,
+    attempts: [],
+    dispatchedAt: '',
+    lastDispatchedAt: '',
+    state: 'ended',
+    firstSeenActiveAt: iso(-3),
+    lastSeenActiveAt: iso(2),
+    endedAt: iso(2),
+  }), { at: iso(3), kind: 'rejoin', ok: true });
+  const looked = { ...adopted, checkedAt: iso(7) };
+  assert.equal(alerts.planLobbyAlert(looked, at(7)).due, true);
+  assert.equal(alerts.planLobbyAlert({ ...looked, lastSeenActiveAt: iso(6) }, at(7)).reason, 'seen', 'in the room since the knock');
+  assert.equal(live.liveSessionKnocksAgain(looked, at(7)), true, 'sent back again at 10:15 if nobody lets it in');
+
+  // The first accepted knock at 10:25 used the last automatic send: the e-mail does not promise another.
+  let last = live.normalizeLiveSession({ ...base, attempts: [] });
+  for (const minutes of [-3, 1, 5, 15]) {
+    last = applyLiveJoinAttempt(last, { at: iso(minutes), kind: minutes < 0 ? 'first' : 'retry', ok: false, message: 'Fireflies svarte ikke' });
+  }
+  last = { ...applyLiveJoinAttempt(last, { at: iso(25), kind: 'retry', ok: true }), checkedAt: iso(29) };
+  assert.equal(alerts.planLobbyAlert(last, at(29)).due, true);
+  assert.equal(live.liveSessionKnocksAgain(last, at(29)), false);
+  updateLiveSessionStore((store) => {
+    store.sessions[KEY] = last;
+    return store;
+  }, { nowMs: at(29) });
+  const sent = [];
+  await alerts.runFirefliesLobbyAlerts({
+    clients: [salesClient()],
+    nowMs: at(29),
+    log: quiet,
+    recipientsFor: async () => ['alexander@asoldi.com'],
+    sendEmail: async (message) => { sent.push(message); },
+  });
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].text, /Asoldi sender den ikke inn igjen av seg selv, så slipp den inn nå hvis dere er i møtet\./);
+  assert.doesNotMatch(sent[0].text, /trenger du ikke gjøre noe/);
+});
+
 test('the engine keeps the lobby stamp through its own writes', async () => {
   resetAll();
   const client = salesClient();
@@ -777,6 +821,17 @@ test('health: one owner e-mail per 12 hours, kept on disk through a restart', as
   const later = { ...salesClient(), meetingAt: iso(13 * 60) };
   const again = await alerts.maybeAlertFirefliesLiveJoin({ sendEmail: send, clients: [later], apiKeyPresent: false, nowMs: at(12 * 60 - 59), env: { FIREFLIES_ALERT_EMAIL: 'alexander@asoldi.com' }, log: quiet });
   assert.deepEqual(again, { reason: 'no-api-key', to: 'alexander@asoldi.com' });
+});
+
+test('health: the owner alert stamp is claimed under the store lock, so a hub process that sent it first wins', () => {
+  resetAll();
+  // This process read the ingest state a moment ago (still cached): no stamp yet.
+  assert.equal(ingest.firefliesIngestStatus({ nowMs: at(0) }).lastLiveJoinAlertAt, '');
+  // A second hub process on the same data dir claims it inside this one's read-cache second.
+  writeFileSync(join(dataDir, 'fireflies-ingest-state.json'), JSON.stringify({ lastLiveJoinAlertAt: iso(0) }));
+  assert.equal(ingest.claimFirefliesLiveJoinAlert({ nowMs: at(0) + 500 }), false, 'checked on fresh data');
+  assert.equal(ingest.claimFirefliesLiveJoinAlert({ nowMs: at(12 * 60 + 1) }), true, '12 hours later it may go');
+  assert.equal(ingest.claimFirefliesLiveJoinAlert({ nowMs: at(12 * 60 + 2) }), false, 'once');
 });
 
 test('health: a live-join loop that stopped is reported by the ingest tick watching it', async () => {
