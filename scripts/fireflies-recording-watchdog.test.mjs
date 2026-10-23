@@ -549,3 +549,58 @@ test('a recording of the next booked meeting in the same room is that meeting\'s
   const forFollowUp = await lookup(followUp, client, [client]);
   assert.equal(forFollowUp.found?.meetingId, 'FFNEXT02');
 });
+
+test('what lands while the lookup waits on Fireflies wins: a rep\'s "uten opptak", the recording linked, another pass\'s e-mail', async () => {
+  const start = Date.parse('2026-10-24T10:00:00.000Z');
+  const nowMs = start + 160 * MIN;
+  const empty = fireflies({ list: [] });
+  // The rep marks the meeting "uten opptak" while the lookup is out.
+  const marked = booking(start);
+  const h1 = hub([marked]);
+  await watchdog.runFirefliesRecordingWatchdog({
+    ...h1.deps,
+    apiKey: 'fake-key',
+    nowMs,
+    log: quiet,
+    lookup: async (placeholder, client, clients) => {
+      const decided = watchdog.declinedRecordingPatch(placeholder, { by: 'Kari Test', nowMs });
+      h1.deps.patchPlaceholder(client.id, placeholder.meetingId, decided.recording);
+      return empty.lookupWith(nowMs)(placeholder, client, clients);
+    },
+  });
+  assert.equal(marked.meetings[0].recording.state, 'declined', 'the rep\'s mark stands');
+  assert.equal(h1.sent.length, 0);
+  assert.equal(watchdog.missingRecordingRows([marked], { nowMs }).count, 0);
+
+  // The recording is linked (the placeholder dropped) while the lookup is out.
+  const linked = booking(start);
+  const h2 = hub([linked]);
+  await watchdog.runFirefliesRecordingWatchdog({
+    ...h2.deps,
+    apiKey: 'fake-key',
+    nowMs,
+    log: quiet,
+    lookup: async (placeholder, client, clients) => {
+      linked.meetings = [{ meetingId: 'FFLATE09', meetLink: placeholder.meetLink, startedAt: iso(start + MIN), hasTranscript: true }];
+      return empty.lookupWith(nowMs)(placeholder, client, clients);
+    },
+  });
+  assert.equal(h2.sent.length, 0, 'no e-mail for a meeting whose recording is in');
+
+  // Another hub process sent the e-mail while this one waited for the addresses.
+  const told = booking(start);
+  const h3 = hub([told]);
+  await watchdog.runFirefliesRecordingWatchdog({
+    ...h3.deps,
+    apiKey: 'fake-key',
+    nowMs,
+    log: quiet,
+    lookup: empty.lookupWith(nowMs),
+    recipientsFor: async () => {
+      h3.deps.patchPlaceholder(told.id, told.meetings[0].meetingId, { alertedAt: iso(nowMs) });
+      return ['ansatte@asoldi.com'];
+    },
+  });
+  assert.equal(told.meetings[0].recording.state, 'missing');
+  assert.equal(h3.sent.length, 0, 'one e-mail across both');
+});
