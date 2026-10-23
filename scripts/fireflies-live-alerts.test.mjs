@@ -819,6 +819,46 @@ test('declined by meeting id or slot key; a booked slot with no row gets one; ne
   assert.deepEqual(watchdog.recordingDecision({ client: ahead, slotKey: 'sales:1', state: 'declined', nowMs: at(0) }), { error: 'not-found' });
 });
 
+test('a moved Møte is marked on its current booking, never on the row of the time it was moved from', () => {
+  resetAll();
+  // The rep's Møte was at 11:00 (its never-sent placeholder is on the card) and is now tomorrow at 11:00.
+  const tomorrow = at(24 * 60);
+  const action = {
+    id: 'act-1',
+    presetKey: 'custom',
+    goalKey: 'meetingHeld',
+    name: 'Oppfølgingsmøte',
+    format: 'mote',
+    addToCalendar: true,
+    calendarEventId: 'evt-1',
+    dueAt: new Date(tomorrow).toISOString(),
+    meetLink: ROOM_B,
+  };
+  const oldRow = placeholder('client-1:act-1', T, { state: 'not-admitted', sessionKey: `${ROOM_B}|${T}`, message: LIVE_JOIN_MESSAGES.neverSent }, {
+    slotKey: 'action:act-1',
+    meetLink: ROOM_B,
+    forSalesMeeting: false,
+  });
+  const client = salesClient({ agreedTime: false, nextActions: [action], meetings: [oldRow] });
+  const decision = watchdog.recordingDecision({ client, slotKey: 'action:act-1', state: 'declined', by: 'Kari Test', nowMs: at(120) });
+  assert.equal(decision.meetingId, `live:client-1:act-1:${tomorrow}`);
+  assert.equal(decision.sessionKey, `${ROOM_B}|${tomorrow}`, 'the engine stops the new session, not the old one');
+  assert.equal(decision.create?.slot.startAt, new Date(tomorrow).toISOString(), 'the current booking gets its own placeholder');
+  // Nothing to undo on the current booking; the earlier meeting is still marked by its own id.
+  const open = watchdog.recordingDecision({ client, slotKey: 'action:act-1', state: 'open', nowMs: at(120) });
+  assert.deepEqual([open.meetingId, open.sessionKey, open.recording, open.declined], [`live:client-1:act-1:${tomorrow}`, `${ROOM_B}|${tomorrow}`, null, false]);
+  assert.equal(watchdog.recordingDecision({ client, meetingId: oldRow.meetingId, state: 'declined', nowMs: at(120) }).meetingId, oldRow.meetingId);
+  // Once the Møte is no longer booked, its key finds the newest placeholder it left.
+  const gone = { ...client, nextActions: [] };
+  assert.equal(watchdog.recordingDecision({ client: gone, slotKey: 'action:act-1', state: 'declined', nowMs: at(120) }).meetingId, oldRow.meetingId);
+});
+
+test('a slot whose recording with talk is linked is not marked "uten opptak"', () => {
+  resetAll();
+  const client = salesClient({ meetings: [{ meetingId: 'FFTALK09', meetLink: ROOM, startedAt: iso(2), hasTranscript: true }] });
+  assert.deepEqual(watchdog.recordingDecision({ client, slotKey: `sales:${T}`, state: 'declined', nowMs: at(90) }), { error: 'has-recording' });
+});
+
 test('open undoes declined: missing stays reported, otherwise capture\'s state comes back', () => {
   resetAll();
   const wasMissing = salesClient({ meetings: [placeholder('client-1', T, { state: 'declined', missingAt: iso(150), alertedAt: iso(150), dispatchedAt: iso(-3) })] });
@@ -841,6 +881,14 @@ test('open undoes declined: missing stays reported, otherwise capture\'s state c
 
   const orphan = salesClient({ meetings: [placeholder('client-1', at(-600), { state: 'declined' }, { slotKey: '' })] });
   assert.equal(watchdog.recordingDecision({ client: orphan, meetingId: `live:client-1:${at(-600)}`, state: 'open', nowMs: at(0) }).recording.state, 'not-admitted');
+  // Marked three days ahead, before the engine has the session, and opened again: scheduled, not "not let in".
+  const aheadStart = at(3 * 24 * 60);
+  const ahead = salesClient({ meetingAt: new Date(aheadStart).toISOString() });
+  const marked = watchdog.recordingDecision({ client: ahead, slotKey: `sales:${aheadStart}`, state: 'declined', nowMs: at(0) });
+  ahead.meetings.push(placeholder('client-1', aheadStart, marked.create.recording));
+  const reopenedAhead = watchdog.recordingDecision({ client: ahead, meetingId: marked.meetingId, state: 'open', nowMs: at(1) });
+  assert.equal(reopenedAhead.recording.state, 'scheduled');
+  assert.equal(reopenedAhead.recording.message, LIVE_JOIN_MESSAGES.scheduled);
   const notDeclined = watchdog.recordingDecision({ client: declinedEarly, meetingId: STUB, state: 'open', nowMs: at(2) });
   assert.equal(notDeclined.recording.state, 'dispatched');
   const plain = salesClient({ meetings: [placeholder('client-1', T, { state: 'ended' })] });
@@ -894,7 +942,11 @@ test('server.js wires the alerts, the placeholders and the routes', () => {
   assert.match(missing, /canAccess: \(client\) => canAccessSalesClient\(req, client\)/);
   assert.match(missing, /res\.setHeader\('Cache-Control', 'no-store'\)/);
   const route = between("app.post('/api/admin/sales/:id/fireflies/recording'", "app.get('/api/admin/fireflies/meetings/:meetingId'");
-  assert.match(route, /if \(decision\.create\) writeLivePlaceholder\(\{ \.\.\.decision\.create, client \}\);/);
+  assert.match(route, /if \(decision\.create\) written = Boolean\(writeLivePlaceholder\(\{ \.\.\.decision\.create, client \}\)\);/);
+  assert.match(route, /decision\.error === 'has-recording'\) return res\.status\(409\)/);
+  // The engine is marked only once the row is written.
+  const guard = route.indexOf('if (!written) return res.status(404)');
+  assert.ok(guard > -1 && guard < route.indexOf('setLiveSessionDeclined('));
   assert.match(route, /setLiveSessionDeclined\(decision\.sessionKey, decision\.declined\);/);
   assert.match(route, /client: jsonSalesClient\(updated\)/);
   const env = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');

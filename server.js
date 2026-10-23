@@ -17942,9 +17942,13 @@ app.post('/api/admin/sales/:id/fireflies/recording', salesAuth, (req, res) => {
     by: workshopAuthorLabel(req),
   });
   if (decision.error === 'bad-state') return res.status(400).json({ message: 'Bare «uten opptak» eller «åpne igjen» kan settes her.' });
+  if (decision.error === 'has-recording') return res.status(409).json({ message: 'Møtet har allerede et Fireflies-opptak.' });
   if (decision.error) return res.status(404).json({ message: 'Fant ikke et møte som venter på opptak.' });
-  if (decision.create) writeLivePlaceholder({ ...decision.create, client });
-  else if (decision.recording) sales.patchSalesClientMeeting(client.id, decision.meetingId, { recording: decision.recording });
+  let written = true;
+  if (decision.create) written = Boolean(writeLivePlaceholder({ ...decision.create, client }));
+  else if (decision.recording) written = Boolean(sales.patchSalesClientMeeting(client.id, decision.meetingId, { recording: decision.recording }));
+  // The client or the row went away meanwhile: the engine is left as it was.
+  if (!written) return res.status(404).json({ message: 'Fant ikke et møte som venter på opptak.' });
   const updated = sales.getSalesClientById(client.id) || client;
   try {
     // The booking is recorded first, so the session exists to be marked.
