@@ -43,6 +43,7 @@ A hub that runs on a PC (or the office LAN box) has the same keys as asoldi.com.
   - Otherwise the caller gets a deterministic stub, for example `{ "safeModeStub": true }`.
   - `HUB_SAFE_MODE_AI=replay|error` throws the provider's own "not available" error instead of returning a stub.
   - To record cassettes, run with `HUB_SAFE_MODE_ALLOW=aiCalls HUB_SAFE_MODE_AI_RECORD=1`.
+  - The hub LLM facade (`lib/llm`, see `docs/ai-layer.md`) sends every provider call through this guard, on every profile; its ledger rows for guarded calls cost $0.
 - **Inbox.** IMAP sessions use `EXAMINE` and `BODY.PEEK`, so mail stays unread (`imapFlags` lifts this).
 - **Background jobs.** Only these start:
   - the sales reminder and workshop desk email loops (their mail lands in the outbox);
