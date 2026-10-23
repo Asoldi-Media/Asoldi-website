@@ -238,6 +238,7 @@ import { clientOwnedMeetLinks, emptyFirefliesLiveJoinStamp, firefliesMeetLinksDi
 import { firefliesNotetakerAllowedForOrganizer, refreshFirefliesKeyOwnerEmail } from './lib/fireflies-key-owner.js';
 import {
   currentSessionKeyForSlot,
+  ensureLivePlaceholders,
   findLiveSessionForSlot,
   liveJoinTitleForClient,
   liveRecordingsRevision,
@@ -9499,23 +9500,45 @@ function recordLiveJoinMeeting(slot, session, { reopen = false } = {}) {
     });
   }
   if (!shouldCreateLivePlaceholder(session, slot, client)) return null;
+  return writeLivePlaceholder({ slot, session, client, recording: recordingForLiveSession(session), liveJoinedAt: session.dispatchedAt });
+}
+
+/**
+ * Write one slot's placeholder row and remember it on the session, so it is never written twice. Only an
+ * accepted send passes liveJoinedAt; a row for a meeting the bot never got into (or a rep's mark on a slot
+ * with no row yet) has none. `session` may be null for a slot the engine has not seen.
+ */
+function writeLivePlaceholder({ slot, session = null, client, recording, liveJoinedAt = '' }) {
+  if (!slot?.stubMeetingId || !client?.id) return null;
+  const startAt = session?.startAt || slot.startAt;
   const created = sales.linkMeetingToSalesClient(client.id, {
     meetingId: slot.stubMeetingId,
-    title: session.title || firefliesLiveJoinTitle(client),
-    when: formatOfferMeetingWhen(session.startAt),
-    startedAt: session.startAt,
-    meetLink: session.meetLink,
+    title: session?.title || slot.title || firefliesLiveJoinTitle(client),
+    when: formatOfferMeetingWhen(startAt),
+    startedAt: startAt,
+    meetLink: session?.meetLink || slot.meetLink,
     hasTranscript: false,
-    liveJoinedAt: session.dispatchedAt,
+    liveJoinedAt: sanitizeText(liveJoinedAt),
     source: 'live-join',
     linkedBy: 'live-join',
     forSalesMeeting: slot.kind === 'sales',
     purpose: slot.purpose,
     slotKey: slot.slotKey,
-    recording: recordingForLiveSession(session),
+    recording,
   });
-  if (created) noteLivePlaceholderCreated(session.key, slot.stubMeetingId);
+  const sessionKey = session?.key || sanitizeText(recording?.sessionKey);
+  if (created && sessionKey) noteLivePlaceholderCreated(sessionKey, slot.stubMeetingId);
   return created;
+}
+
+/**
+ * A session that ended without the row an accepted send writes (never sent, never let in, or a bot the hub
+ * did not send) gets its placeholder, on fresh data, so the watchdog can follow it to 'missing'.
+ */
+function writeUnsentLivePlaceholder({ session, slot, recording }) {
+  const client = sales.getSalesClientById(slot.clientId);
+  if (!client || (client.meetings || []).some((row) => sanitizeText(row.meetingId) === slot.stubMeetingId)) return null;
+  return writeLivePlaceholder({ slot, session, client, recording });
 }
 
 /** After every addToLiveMeeting attempt: the legacy stamps, and the placeholder once a dispatch was accepted. */
@@ -9615,9 +9638,18 @@ function firefliesLiveJoinDeps() {
 /**
  * One live-join engine tick (the 60 s loop and the request kicks): sessions from bookings, one look at who is
  * in which room, sends where due. A mutex, a 2-minute watchdog and per-session error handling live in the lib.
+ * After it: the placeholders of sessions that ended without a bot, so the watchdog can follow them.
  */
 async function sendDueFirefliesLiveJoins() {
-  return runFirefliesLiveJoinTick(firefliesLiveJoinDeps());
+  const summary = await runFirefliesLiveJoinTick(firefliesLiveJoinDeps());
+  if (summary?.skipped) return summary;
+  const clients = sales.getSalesClients();
+  try {
+    ensureLivePlaceholders({ clients, writePlaceholder: writeUnsentLivePlaceholder });
+  } catch (error) {
+    console.warn(`[fireflies] live-join placeholders failed: ${sanitizeText(error?.message) || error}`);
+  }
+  return summary;
 }
 
 /**
@@ -16129,7 +16161,7 @@ function hydratePendingClientTranscripts({ max = 10 } = {}) {
 
 /**
  * Placeholders whose meeting is over: link the transcript that turned up, or mark the meeting
- * missing and tell the team and the rep once (lib/fireflies-recording-watchdog.js).
+ * missing (or empty) and tell the team and the rep once (lib/fireflies-recording-watchdog.js).
  */
 async function runFirefliesWatchdogStep() {
   const config = readFirefliesWebhookConfig();
