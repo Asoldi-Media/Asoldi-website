@@ -475,11 +475,12 @@ test('server.js: the paste route, the backfill, Fyll ut and the letter fill foll
   assert.match(link, /if \(!ref && storedMeetingIsPartial\(record\)\) return null;/);
   const fill = between('async function fillPendingContractLetters(', 'async function autoFillOfferIfReady(');
   assert.match(fill, /storedMeetingIsPartial\(readStoredFirefliesMeeting\(row\.meetingId\)\)\)\) continue;/);
+  // The decline route (and its undo) decides in lib/fireflies-recording-watchdog.js recordingDecision, which
+  // only ever picks a placeholder (scripts/fireflies-live-alerts.test.mjs).
   const declined = between("app.post('/api/admin/sales/:id/fireflies/recording'", "app.get('/api/admin/fireflies/meetings/:meetingId'");
   assert.match(declined, /canAccessSalesClient\(req, client\)/);
-  assert.match(declined, /declinedRecordingPatch\(row, \{ by: workshopAuthorLabel\(req\) \}\)/);
-  assert.match(declined, /isPlaceholderMeetingId\(item\.meetingId\)/, 'a slot key picks the placeholder, not a recording in that slot');
-  assert.match(declined, /sales\.patchSalesClientMeeting\(client\.id, row\.meetingId, \{ recording: decided\.recording \}\)/);
+  assert.match(declined, /recordingDecision\(\{[^]*by: workshopAuthorLabel\(req\),[^]*\}\)/);
+  assert.match(declined, /sales\.patchSalesClientMeeting\(client\.id, decision\.meetingId, \{ recording: decision\.recording \}\)/);
 });
 
 test('a keyed backoff doubles while nothing changes and ends when the input changes', () => {

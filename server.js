@@ -250,10 +250,11 @@ import {
   recordingForLiveSession,
   requestManualLiveJoin,
   runFirefliesLiveJoinTick,
+  setLiveSessionDeclined,
   shouldCreateLivePlaceholder,
   upsertLiveSessionsForClient,
 } from './lib/fireflies-live-sessions.js';
-import { maybeAlertFirefliesLiveJoin, runFirefliesLobbyAlerts } from './lib/fireflies-live-alerts.js';
+import { liveJoinStatusPayload, maybeAlertFirefliesLiveJoin, runFirefliesLobbyAlerts } from './lib/fireflies-live-alerts.js';
 import { automationScopeForClient } from './data/automation-settings.js';
 import { describeFirefliesMedia, firefliesMediaFilePath, saveFirefliesMediaForMeeting } from './lib/fireflies-media.js';
 import { runFirefliesPullFollowUp } from './lib/fireflies-pull-followup.js';
@@ -271,7 +272,7 @@ import {
   runFirefliesHydration,
   runFirefliesIngestTick,
 } from './lib/fireflies-ingest.js';
-import { declinedRecordingPatch, runFirefliesRecordingWatchdog } from './lib/fireflies-recording-watchdog.js';
+import { missingRecordingRows, recordingDecision, runFirefliesRecordingWatchdog } from './lib/fireflies-recording-watchdog.js';
 import { CUSTOM_TIER_ID, WEBSITE_TIERS, formatKr, resolveTier, tierById, toClientWebsitePlan } from './lib/website-tiers.js';
 import { buildSalesSender, normalizeAsoldiFromEmail } from './lib/sales-sender.js';
 import {
@@ -17907,23 +17908,54 @@ app.get('/api/admin/fireflies/ingest-status', salesAuth, (req, res) => {
   res.json(firefliesIngestStatus());
 });
 
-// "Marker uten opptak" from the missing-recording e-mail: { meetingId | slotKey, state: 'declined' }
-// on a placeholder ends the watchdog's search for it.
+// Live-join health for the admin pages (lib/fireflies-live-alerts.js liveJoinStatusPayload).
+app.get('/api/admin/fireflies/live-join-status', salesAuth, (req, res) => {
+  if (!requireOfferAdmin(req, res)) return;
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(liveJoinStatusPayload({
+    clients: sales.getSalesClients(),
+    apiKeyPresent: Boolean(resolveFirefliesApiKey().apiKey),
+    liveJoinEnabled: safeModeAllows('firefliesLiveJoin'),
+    lobbyAlertsEnabled: firefliesLobbyAlertEnabled(),
+  }));
+});
+
+// Booked online meetings with no recording (lib/fireflies-recording-watchdog.js missingRecordingRows):
+// every client for an admin, a rep's own clients otherwise.
+app.get('/api/admin/fireflies/missing-recordings', salesAuth, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(missingRecordingRows(sales.getSalesClients(), { canAccess: (client) => canAccessSalesClient(req, client) }));
+});
+
+// "Marker uten opptak" ({ meetingId | slotKey, state: 'declined' }) and its undo (state: 'open'). A slot key
+// of a booked slot with no placeholder yet gets one in 'declined'; either way the engine stops (or resumes)
+// sending, and the watchdog stops (or resumes) looking (lib/fireflies-recording-watchdog.js recordingDecision).
 app.post('/api/admin/sales/:id/fireflies/recording', salesAuth, (req, res) => {
   const client = sales.getSalesClientById(req.params.id);
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
-  if (sanitizeText(req.body?.state) !== 'declined') return res.status(400).json({ message: 'Bare «uten opptak» kan settes her.' });
-  const meetingId = sanitizeText(req.body?.meetingId);
-  const slotKey = sanitizeText(req.body?.slotKey);
-  const row = (client.meetings || []).find((item) => (meetingId
-    ? sanitizeText(item.meetingId) === meetingId
-    : Boolean(slotKey) && sanitizeText(item.slotKey) === slotKey && isPlaceholderMeetingId(item.meetingId)));
-  const decided = declinedRecordingPatch(row, { by: workshopAuthorLabel(req) });
-  if (decided.error) return res.status(404).json({ message: 'Fant ikke et møte som venter på opptak.' });
-  const updated = sales.patchSalesClientMeeting(client.id, row.meetingId, { recording: decided.recording });
-  const meeting = (updated?.meetings || []).find((item) => item.meetingId === row.meetingId) || null;
-  res.json({ meetingId: row.meetingId, recording: meeting?.recording || null });
+  const decision = recordingDecision({
+    client,
+    meetingId: req.body?.meetingId,
+    slotKey: req.body?.slotKey,
+    state: req.body?.state,
+    by: workshopAuthorLabel(req),
+  });
+  if (decision.error === 'bad-state') return res.status(400).json({ message: 'Bare «uten opptak» eller «åpne igjen» kan settes her.' });
+  if (decision.error) return res.status(404).json({ message: 'Fant ikke et møte som venter på opptak.' });
+  if (decision.create) writeLivePlaceholder({ ...decision.create, client });
+  else if (decision.recording) sales.patchSalesClientMeeting(client.id, decision.meetingId, { recording: decision.recording });
+  const updated = sales.getSalesClientById(client.id) || client;
+  try {
+    // The booking is recorded first, so the session exists to be marked.
+    kickFirefliesLiveJoins(updated);
+    setLiveSessionDeclined(decision.sessionKey, decision.declined);
+  } catch (error) {
+    // The row is written; a declined row also stops the engine, which reads it before every send.
+    console.warn(`[fireflies] recording mark id=${sanitizeText(client.id)} session not updated: ${sanitizeText(error?.message) || error}`);
+  }
+  const meeting = (updated.meetings || []).find((item) => item.meetingId === decision.meetingId) || null;
+  res.json({ meetingId: decision.meetingId, recording: meeting?.recording || null, client: jsonSalesClient(updated) });
 });
 
 app.get('/api/admin/fireflies/meetings/:meetingId', salesAuth, (req, res) => {

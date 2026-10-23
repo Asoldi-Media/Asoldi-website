@@ -1,6 +1,6 @@
 // No booked meeting ends without a recording unnoticed: every session that never got the bot in has a
 // placeholder that says why and is followed to 'missing'; the rep hears while the bot knocks; an empty
-// recording is reported once; the owner hears when live join is down.
+// recording is reported once; the owner hears when live join is down; "uten opptak" can be set and undone.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -623,16 +623,172 @@ test('health: a live-join loop that stopped is reported by the ingest tick watch
   assert.equal(sent[0].subject, 'Fireflies: live-join står stille');
 });
 
+// ── 5. status and missing-recordings payloads ───────────────────────────────
+
+test('the live-join status payload carries the engine status, the rate limit and the health alert', () => {
+  resetAll();
+  const payload = alerts.liveJoinStatusPayload({ nowMs: at(-60), apiKeyPresent: false, clients: [salesClient()], lobbyAlertsEnabled: false });
+  for (const field of ['lastTickAt', 'lastError', 'lastOkTickAt', 'failingSince', 'running', 'sessionsInWindow', 'sessions', 'limiter', 'apiKeyPresent', 'safeModeBlocking', 'keyOwnerEmail', 'oneBot']) {
+    assert.ok(Object.prototype.hasOwnProperty.call(payload, field), field);
+  }
+  assert.deepEqual(Object.keys(payload.rateLimit).sort(), ['api', 'join', 'lastError', 'lastRateLimitAt', 'pausedUntil']);
+  assert.equal(payload.alert.reason, 'no-api-key');
+  assert.equal(payload.alert.lastAlertAt, '');
+  assert.equal(payload.lobbyAlertsEnabled, false);
+  assert.equal(payload.liveJoinEnabled, true);
+});
+
+function placeholder(id, start, recording, extra = {}) {
+  return {
+    meetingId: `live:${id}:${start}`,
+    title: 'Testfirma AS · Kari Test',
+    startedAt: new Date(start).toISOString(),
+    meetLink: ROOM,
+    hasTranscript: false,
+    slotKey: `sales:${start}`,
+    purpose: 'sales',
+    forSalesMeeting: true,
+    recording: recording ? mergeRecordingState(null, recording) : null,
+    ...extra,
+  };
+}
+
+test('missing recordings: placeholders with no recording past the deadline, or called not-admitted, missing or empty', () => {
+  const now = at(0);
+  const day = 24 * 60 * MIN;
+  const a = {
+    id: 'c-a',
+    businessName: 'Testfirma A AS',
+    ownerId: 'sales:rep-1',
+    meetings: [
+      placeholder('c-a', now - 3 * 60 * MIN, { state: 'missing', missingAt: iso(-30), alertedAt: iso(-30), message: 'Ingen Fireflies-opptak etter møtet.' }),
+      placeholder('c-a', now - 50 * MIN, { state: 'not-admitted', message: LIVE_JOIN_MESSAGES.notAdmitted }),
+      placeholder('c-a', now - 30 * MIN, { state: 'dispatched' }, { slotKey: 'action:a1', purpose: '' }),
+      placeholder('c-a', now - 5 * 60 * MIN, { state: 'ended' }, { slotKey: '', purpose: 'workshop', forSalesMeeting: false }),
+      placeholder('c-a', now - 2 * day, { state: 'declined' }),
+      placeholder('c-a', now - 61 * day, { state: 'missing' }),
+    ],
+  };
+  const b = {
+    id: 'c-b',
+    businessName: 'Testfirma B AS',
+    ownerId: 'sales:rep-2',
+    meetings: [
+      placeholder('c-b', now - 4 * 60 * MIN, { state: 'empty', ffMeetingId: 'FFSIL003', missingAt: iso(-60), message: 'Fireflies var med, men opptaket er tomt.' }),
+      // Superseded: its recording with talk is linked.
+      placeholder('c-b', now - 6 * 60 * MIN, { state: 'missing' }),
+      { meetingId: 'FFTALK03', meetLink: ROOM, startedAt: new Date(now - 6 * 60 * MIN + MIN).toISOString(), hasTranscript: true },
+    ],
+  };
+  const all = watchdog.missingRecordingRows([a, b], { nowMs: now });
+  assert.equal(all.count, 4);
+  assert.deepEqual(all.rows.map((row) => [row.clientId, row.state]), [
+    ['c-a', 'not-admitted'],
+    ['c-a', 'missing'],
+    ['c-b', 'empty'],
+    ['c-a', 'missing'],
+  ]);
+  const [notAdmitted, missing, empty, derived] = all.rows;
+  assert.equal(notAdmitted.message, LIVE_JOIN_MESSAGES.notAdmitted);
+  assert.equal(missing.kind, 'sales');
+  assert.equal(missing.alertedAt, iso(-30));
+  assert.equal(empty.businessName, 'Testfirma B AS');
+  assert.equal(empty.ownerId, 'sales:rep-2');
+  assert.equal(derived.kind, 'workshop', 'a legacy row without a slot key');
+  assert.equal(derived.message, 'Ingen Fireflies-opptak etter møtet.', 'past its deadline, nothing written yet');
+  for (const field of ['clientId', 'businessName', 'ownerId', 'meetingId', 'slotKey', 'kind', 'startedAt', 'meetLink', 'title', 'state', 'message', 'missingAt', 'alertedAt']) {
+    assert.ok(Object.prototype.hasOwnProperty.call(missing, field), field);
+  }
+  const rep = watchdog.missingRecordingRows([a, b], { nowMs: now, canAccess: (client) => client.ownerId === 'sales:rep-2' });
+  assert.deepEqual(rep.rows.map((row) => row.clientId), ['c-b']);
+});
+
+// ── 4. "uten opptak" and its undo ────────────────────────────────────────────
+
+test('declined by meeting id or slot key; a booked slot with no row gets one; never a real recording', () => {
+  resetAll();
+  const recorded = salesClient({ meetings: [{ meetingId: 'FFREAL02', slotKey: `sales:${T}`, hasTranscript: true }] });
+  assert.deepEqual(watchdog.recordingDecision({ client: recorded, meetingId: 'FFREAL02', state: 'declined', nowMs: at(5) }), { error: 'not-found' });
+  assert.deepEqual(watchdog.recordingDecision({ client: recorded, meetingId: STUB, state: 'held' }), { error: 'bad-state' });
+
+  const withRow = salesClient({ meetings: [placeholder('client-1', T, { state: 'dispatched', sessionKey: KEY })] });
+  const byId = watchdog.recordingDecision({ client: withRow, meetingId: STUB, state: 'declined', by: 'Kari Test', nowMs: at(5) });
+  assert.equal(byId.meetingId, STUB);
+  assert.equal(byId.sessionKey, KEY);
+  assert.equal(byId.declined, true);
+  assert.equal(byId.recording.state, 'declined');
+  assert.equal(byId.recording.message, 'Markert som uten opptak av Kari Test.');
+  assert.equal(byId.create, null);
+  assert.equal(watchdog.recordingDecision({ client: withRow, slotKey: `sales:${T}`, state: 'declined', nowMs: at(5) }).meetingId, STUB);
+
+  // A slot with no placeholder yet (the client cancelled before the meeting), here three days out.
+  const ahead = salesClient({ meetingAt: iso(3 * 24 * 60) });
+  const slotKey = `sales:${at(3 * 24 * 60)}`;
+  const created = watchdog.recordingDecision({ client: ahead, slotKey, state: 'declined', by: 'Kari Test', nowMs: at(0) });
+  assert.equal(created.meetingId, `live:client-1:${at(3 * 24 * 60)}`);
+  assert.equal(created.recording, null);
+  assert.equal(created.create.slot.slotKey, slotKey);
+  assert.equal(created.create.recording.state, 'declined');
+  assert.equal(created.create.recording.sessionKey, `${ROOM}|${at(3 * 24 * 60)}`);
+  assert.deepEqual(watchdog.recordingDecision({ client: ahead, slotKey: 'sales:1', state: 'declined', nowMs: at(0) }), { error: 'not-found' });
+});
+
+test('open undoes declined: missing stays reported, otherwise capture\'s state comes back', () => {
+  resetAll();
+  const wasMissing = salesClient({ meetings: [placeholder('client-1', T, { state: 'declined', missingAt: iso(150), alertedAt: iso(150), dispatchedAt: iso(-3) })] });
+  const reopened = watchdog.recordingDecision({ client: wasMissing, meetingId: STUB, state: 'open', by: 'Kari Test', nowMs: at(200) });
+  assert.equal(reopened.declined, false);
+  assert.equal(reopened.recording.state, 'missing');
+  const merged = mergeRecordingState(wasMissing.meetings[0].recording, reopened.recording);
+  assert.equal(merged.alertedAt, iso(150), 'no second e-mail');
+  assert.equal(merged.checkedAt, '', 'the watchdog looks again soon');
+
+  live.upsertLiveSessionsForClient(salesClient(), { nowMs: at(-10) });
+  updateLiveSessionStore((store) => {
+    store.sessions[KEY] = { ...applyLiveJoinAttempt(store.sessions[KEY], { at: iso(-3), kind: 'first', ok: true }) };
+    return store;
+  }, { nowMs: at(-3) });
+  const declinedEarly = salesClient({ meetings: [placeholder('client-1', T, { state: 'declined', sessionKey: KEY })] });
+  const back = watchdog.recordingDecision({ client: declinedEarly, meetingId: STUB, state: 'open', nowMs: at(2) });
+  assert.equal(back.recording.state, 'dispatched');
+  assert.equal(back.recording.message, LIVE_JOIN_MESSAGES.dispatched);
+
+  const orphan = salesClient({ meetings: [placeholder('client-1', at(-600), { state: 'declined' }, { slotKey: '' })] });
+  assert.equal(watchdog.recordingDecision({ client: orphan, meetingId: `live:client-1:${at(-600)}`, state: 'open', nowMs: at(0) }).recording.state, 'not-admitted');
+  const notDeclined = watchdog.recordingDecision({ client: declinedEarly, meetingId: STUB, state: 'open', nowMs: at(2) });
+  assert.equal(notDeclined.recording.state, 'dispatched');
+  const plain = salesClient({ meetings: [placeholder('client-1', T, { state: 'ended' })] });
+  assert.equal(watchdog.recordingDecision({ client: plain, meetingId: STUB, state: 'open', nowMs: at(2) }).recording, null, 'nothing to undo');
+});
+
+test('declined stops the engine for that session, and open lets it send again', async () => {
+  resetAll();
+  const client = salesClient();
+  const state = { clients: [client], active: [], sent: [], reply: null };
+  const decision = watchdog.recordingDecision({ client, slotKey: `sales:${T}`, state: 'declined', by: 'Kari Test', nowMs: at(-10) });
+  rowWriter(state.clients)({ session: { title: 'Testfirma AS · Kari Test', startAt: iso(0), meetLink: ROOM }, slot: decision.create.slot, recording: decision.create.recording });
+  live.upsertLiveSessionsForClient(client, { nowMs: at(-10) });
+  assert.equal(live.setLiveSessionDeclined(decision.sessionKey, true, { nowMs: at(-10) }).declinedAt, iso(-10));
+  await tickAt(state, -3);
+  assert.equal(state.sent.length, 0, 'declined: no knock');
+  assert.equal(client.meetings[0].liveJoinedAt, '');
+
+  const open = watchdog.recordingDecision({ client, meetingId: decision.meetingId, state: 'open', nowMs: at(-2) });
+  client.meetings[0].recording = mergeRecordingState(client.meetings[0].recording, open.recording);
+  live.setLiveSessionDeclined(open.sessionKey, false, { nowMs: at(-2) });
+  await tickAt(state, -2);
+  assert.equal(state.sent.length, 1, 'opened: the first knock goes');
+  assert.equal(readLiveSessionStore().sessions[KEY].declinedAt, '');
+});
+
 // ── server glue ──────────────────────────────────────────────────────────────
 
-test('server.js writes the placeholders and sends the alerts after every tick, and the ingest tick watches live join', () => {
+test('server.js wires the alerts, the placeholders and the routes', () => {
   const server = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
   const between = (from, to) => server.slice(server.indexOf(from), server.indexOf(to, server.indexOf(from) + from.length));
-  const tick = between('async function sendDueFirefliesLiveJoins()', 'async function noteFirefliesBotJoinedWebhook(');
+  const tick = between('async function sendDueFirefliesLiveJoins()', 'function firefliesLobbyAlertEnabled()');
   assert.match(tick, /runFirefliesLiveJoinTick\(firefliesLiveJoinDeps\(\)\);\s*if \(summary\?\.skipped\) return summary;/);
   assert.match(tick, /ensureLivePlaceholders\(\{ clients, writePlaceholder: writeUnsentLivePlaceholder \}\)/);
-  const unsent = between('function writeUnsentLivePlaceholder(', '/** After every addToLiveMeeting attempt');
-  assert.match(unsent, /return writeLivePlaceholder\(\{ slot, session, client, recording \}\);/, 'no liveJoinedAt');
   assert.match(tick, /runFirefliesLobbyAlerts\(\{[^]*mayAlert: firefliesAlertAllowedFor,[^]*\}\)/);
   assert.match(tick, /maybeAlertFirefliesLiveJoinHealth\(clients\)/);
   assert.match(server, /function firefliesLobbyAlertEnabled\(\) \{\s*return parseBoolean\(process\.env\.FIREFLIES_LOBBY_ALERT, true\);/);
@@ -640,7 +796,21 @@ test('server.js writes the placeholders and sends the alerts after every tick, a
   const recipients = between('function firefliesLobbyRecipientsFor()', 'async function maybeAlertFirefliesLiveJoinHealth(');
   assert.match(recipients, /if \(!sanitizeText\(client\?\.ownerId\)\) return \[\];/);
   assert.match(recipients, /\(await firefliesRepEmailFor\(client, owners\)\) \|\| readFirefliesWebhookConfig\(\)\.notifyEmail/);
+  const unsent = between('function writeUnsentLivePlaceholder(', '/** After every addToLiveMeeting attempt');
+  assert.match(unsent, /return writeLivePlaceholder\(\{ slot, session, client, recording \}\);/, 'no liveJoinedAt');
   assert.match(server, /await maybeAlertFirefliesIngest\(\{[^\n]*\}\);\s*\/\/[^\n]*\n\s*await maybeAlertFirefliesLiveJoinHealth\(\);/);
+  const status = between("app.get('/api/admin/fireflies/live-join-status'", "app.get('/api/admin/fireflies/missing-recordings'");
+  assert.match(status, /requireOfferAdmin\(req, res\)/);
+  assert.match(status, /res\.setHeader\('Cache-Control', 'no-store'\)/);
+  assert.match(status, /liveJoinStatusPayload\(/);
+  const missing = between("app.get('/api/admin/fireflies/missing-recordings'", "app.post('/api/admin/sales/:id/fireflies/recording'");
+  assert.match(missing, /salesAuth/);
+  assert.match(missing, /canAccess: \(client\) => canAccessSalesClient\(req, client\)/);
+  assert.match(missing, /res\.setHeader\('Cache-Control', 'no-store'\)/);
+  const route = between("app.post('/api/admin/sales/:id/fireflies/recording'", "app.get('/api/admin/fireflies/meetings/:meetingId'");
+  assert.match(route, /if \(decision\.create\) writeLivePlaceholder\(\{ \.\.\.decision\.create, client \}\);/);
+  assert.match(route, /setLiveSessionDeclined\(decision\.sessionKey, decision\.declined\);/);
+  assert.match(route, /client: jsonSalesClient\(updated\)/);
   const env = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
   assert.match(env, /^FIREFLIES_LOBBY_ALERT=$/m);
 });
