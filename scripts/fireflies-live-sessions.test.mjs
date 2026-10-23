@@ -323,6 +323,54 @@ test('a bot that sat alone in an open room is sent back again while the first-se
   assert.deepEqual(dispatches(planAt(18, knock, { active: [] })).map((row) => row.kind), ['rejoin']);
 });
 
+test('a notetaker someone takes out of an open room soon after it walks in is sent back once at most', () => {
+  let session = dispatched(sessionFor(salesClient()), -3);
+  session = planAt(-2, session, { active: [activeRow()] }).session;
+  session = planAt(1, session, { active: [activeRow()] }).session;
+  // Taken out at 10:01 (the client does not want a recording): sent back once, in case it dropped out.
+  const gone = planAt(3, session, { active: [] });
+  assert.deepEqual(dispatches(gone).map((row) => row.kind), ['rejoin']);
+  session = applyLiveJoinAttempt(gone.session, { at: iso(3), kind: 'rejoin', ok: true });
+  const back = activeRow(ROOM, { id: 'ff-meeting-2', startTime: iso(3) });
+  session = planAt(4, session, { active: [back] }).session;
+  // Taken out again a minute after it walked in: it stays out.
+  session = planAt(6, session, { active: [] }).session;
+  assert.equal(session.state, 'ended');
+  for (const minutes of [8, 15, 17, 22, 28]) {
+    const plan = planAt(minutes, session, { active: [] });
+    assert.equal(dispatches(plan).length, 0, `no send at T+${minutes}`);
+    session = plan.session;
+  }
+  assert.equal(live.liveSessionKnocksAgain(session, at(8)), false, 'the lobby e-mail does not promise another knock');
+});
+
+test('a 30-minute workshop gets its send-backs through the first-send window, like any meeting', () => {
+  const workshopClient = salesClient({
+    agreedTime: false,
+    workshopAction: { name: 'Workshop', format: 'mote', dueAt: iso(0), meetLink: ROOM, status: 'confirmed' },
+  });
+  let session = dispatched(sessionFor(workshopClient), -3);
+  assert.equal(session.bookedMinutes, 30);
+  // An open room: the bot sits alone from 09:58 to 10:08, and the one sent back from 10:10 to 10:20.
+  session = planAt(-2, session, { active: [activeRow()] }).session;
+  session = planAt(8, session, { active: [activeRow()] }).session;
+  const first = planAt(10, session, { active: [] });
+  assert.deepEqual(dispatches(first).map((row) => row.kind), ['rejoin']);
+  session = applyLiveJoinAttempt(first.session, { at: iso(10), kind: 'rejoin', ok: true });
+  assert.equal(live.liveSessionKnocksAgain(session, at(12)), true, 'the lobby e-mail can say it is sent in again');
+  const back = activeRow(ROOM, { id: 'ff-meeting-2', startTime: iso(10) });
+  session = planAt(11, session, { active: [back] }).session;
+  session = planAt(20, session, { active: [back] }).session;
+  // People come at 10:22: one more is sent in, although the 30-minute booking is in its last 10 minutes.
+  const second = planAt(22, session, { active: [] });
+  assert.deepEqual(dispatches(second).map((row) => row.kind), ['rejoin']);
+  // Past T+30 the last 10 booked minutes are no rejoin time.
+  let late = dispatched(sessionFor(workshopClient), -3);
+  late = planAt(0, late, { active: [activeRow()] }).session;
+  late = planAt(29, late, { active: [activeRow()] }).session;
+  assert.equal(dispatches(planAt(31, late, { active: [] })).length, 0);
+});
+
 test('a bot that leaves at its own end time is not sent back as a rejoin', () => {
   let session = dispatched(sessionFor(salesClient()), -3);
   session = planAt(0, session, { active: [activeRow(ROOM, { endTime: iso(30) })] }).session;

@@ -165,6 +165,10 @@ T-30 it asks for the room each tick until it is open, with the host taken from t
 (`meetHostVerifiedEmail`, else the organizer) or Damian's login for workshops and iterations. A
 notetaker that leaves before T+30 is sent back again, more than once if the one sent back also
 sits alone and leaves (the open room's version of an unanswered knock), within the five-send cap.
+This holds to T+30 whatever the booked length (a 30-minute workshop too); only after T+30 do the
+last 10 booked minutes get no send-back. A notetaker sent back that leaves within a few minutes of
+walking in was taken out by someone in the meeting, so it is not sent again; the card points the
+rep to «Marker uten opptak» when the client does not want a recording.
 
 ### Before switching it on
 
