@@ -2,7 +2,7 @@
 // span hours, and an unreadable file that is never replaced by {} or a single record.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -105,13 +105,40 @@ test('timestamped backups are kept at most hourly, so the history spans hours', 
   assert.equal(latest.lastScanAt, 'd', 'latest.json follows every write');
 });
 
-test('another process\'s write is picked up once the file changes', () => {
+test('another process\'s write is picked up once the file changes, by size or by mtime', async () => {
   store.resetFirefliesStoreForTests();
   put('notified', { x: { state: 'sent' } });
   assert.ok(store.readFirefliesStore('notified').x);
-  writeFileSync(store.firefliesStorePath('notified'), JSON.stringify({ y: { state: 'sent' }, z: { state: 'failed' } }), 'utf8');
+  const path = store.firefliesStorePath('notified');
+  const later = () => new Promise((resolve) => setTimeout(resolve, 1100));
+  // No cache reset: the stat check itself has to notice.
+  writeFileSync(path, JSON.stringify({ y: { state: 'sent' }, z: { state: 'failed' } }), 'utf8');
+  await later();
+  assert.deepEqual(Object.keys(store.readFirefliesStore('notified')).sort(), ['y', 'z'], 'a new size');
+  // Same length, other content: only the mtime tells.
+  const before = statSync(path);
+  writeFileSync(path, JSON.stringify({ q: { state: 'sent' }, w: { state: 'failed' } }), 'utf8');
+  utimesSync(path, before.atime, new Date(before.mtimeMs + 5000));
+  assert.equal(statSync(path).size, before.size);
+  await later();
+  assert.deepEqual(Object.keys(store.readFirefliesStore('notified')).sort(), ['q', 'w'], 'a new mtime');
+});
+
+test('state the hub can work out again starts over when it cannot be read, keeping the bad file', () => {
   store.resetFirefliesStoreForTests();
-  assert.deepEqual(Object.keys(store.readFirefliesStore('notified')).sort(), ['y', 'z']);
+  const path = store.firefliesStorePath('ingest');
+  for (const name of backupsOf('fireflies-ingest-state.json')) unlinkSync(join(backupDir, name));
+  writeFileSync(path, '{"lastScanAt":"2026-10-2', 'utf8');
+  assert.equal(quietErrors(() => store.firefliesStoreSource('ingest')), 'unreadable');
+  assert.throws(() => quietErrors(() => put('ingest', { lastScanAt: 'x' })), store.FirefliesStoreUnreadableError, 'archives are never rebuilt from nothing');
+  const result = quietErrors(() => store.updateFirefliesStore('ingest', (state) => {
+    state.lastScanAt = '2026-10-23T08:00:00.000Z';
+    return true;
+  }, { backups: false, rebuildUnreadable: true }));
+  assert.equal(result.restored, true);
+  assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), { lastScanAt: '2026-10-23T08:00:00.000Z' });
+  assert.equal(store.firefliesStoreSource('ingest'), 'file');
+  assert.equal(backupsOf('fireflies-ingest-state.json').filter((name) => name.includes('.unreadable-')).length, 1);
 });
 
 test('records differ only in more than their bookkeeping stamps', () => {

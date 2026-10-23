@@ -2,7 +2,7 @@
 // full fetch, "try later" errors that never count against a meeting, and the ingest health.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -296,6 +296,165 @@ test('the owner hears once per 12 hours when the pull keeps failing or has not w
   assert.equal(stale.reason, 'stale');
   assert.equal(sent.length, 2);
   assert.equal(await ingest.maybeAlertFirefliesIngest({ sendEmail, nowMs: now + 30 * 60 * MIN, env: {}, log: quiet }), null, 'no key: nothing to alert about');
+});
+
+test('the alert stamp is kept in memory too, so a stamp that never reached the disk sends no second e-mail', async () => {
+  ingest.resetFirefliesIngestForTests();
+  clearIngestState();
+  const env = { FIREFLIES_API_KEY: 'fake-key' };
+  const sent = [];
+  const sendEmail = async (message) => { sent.push(message); };
+  for (let i = 0; i < 11; i += 1) {
+    await ingest.runFirefliesIngestTick([['list', async () => { throw new FirefliesApiError('HTTP 401', { code: 'http', status: 401 }); }]], { nowMs: T0 + i * MIN, log: quiet });
+  }
+  assert.equal((await ingest.maybeAlertFirefliesIngest({ sendEmail, nowMs: T0 + 11 * MIN, env, log: quiet })).reason, 'failures');
+  clearIngestState();
+  for (let i = 1; i <= 5; i += 1) {
+    assert.equal(await ingest.maybeAlertFirefliesIngest({ sendEmail, nowMs: T0 + (11 + i) * MIN, env, log: quiet }), null);
+  }
+  assert.equal(sent.length, 1);
+  assert.equal(ingest.firefliesIngestStatus({ nowMs: T0 + 20 * MIN, env }).lastHealthAlertAt, new Date(T0 + 11 * MIN).toISOString());
+});
+
+test('an unreadable ingest-state file starts over instead of refusing every write, and alerts once', async () => {
+  ingest.resetFirefliesIngestForTests();
+  store.resetFirefliesStoreForTests();
+  const path = store.firefliesStorePath('ingest');
+  writeFileSync(path, '{"lastScanAt":"2026-10-2', 'utf8');
+  const env = { FIREFLIES_API_KEY: 'fake-key' };
+  let sent = 0;
+  let now = T0;
+  const errors = console.error;
+  console.error = () => {};
+  try {
+    for (let i = 0; i < 12; i += 1) {
+      await ingest.runFirefliesIngestTick([['list', async () => { throw new FirefliesApiError('HTTP 401', { code: 'http', status: 401 }); }]], { nowMs: now, log: quiet });
+    }
+    for (let i = 0; i < 5; i += 1) {
+      now += MIN;
+      await ingest.maybeAlertFirefliesIngest({ sendEmail: async () => { sent += 1; }, nowMs: now, env, log: quiet });
+    }
+  } finally {
+    console.error = errors;
+  }
+  assert.equal(sent, 1, 'one e-mail, not one a minute');
+  assert.equal(typeof JSON.parse(readFileSync(path, 'utf8')).lastHealthAlertAt, 'string', 'the file is whole again');
+  assert.equal(ingest.firefliesIngestStatus({ nowMs: now, env }).stateError, '');
+  assert.ok(readdirSync(join(dataDir, 'backups')).some((name) => name.startsWith('fireflies-ingest-state.json.unreadable-')), 'the bad file is kept');
+});
+
+test('a catch-up scan or missing-recording lookups that fail for an hour alert the owner; pauses do not count', async () => {
+  ingest.resetFirefliesIngestForTests();
+  clearIngestState();
+  const env = { FIREFLIES_API_KEY: 'fake-key' };
+  const sent = [];
+  const sendEmail = async (message) => { sent.push(message); };
+  const fake = fakeList(ROWS);
+  let scanError = new FirefliesApiError('Fireflies did not answer within 15 s.', { code: 'timeout' });
+  const list = async (args) => {
+    if (args.skip !== undefined) throw scanError;
+    return fake.list(args);
+  };
+  const tick = (nowMs, watchdogHealth) => ingest.runFirefliesIngestTick([
+    ['list', () => ingest.ingestFirefliesTranscriptList({ apiKey: 'fake-key', listTranscripts: list, nowMs, log: quiet })],
+    ['watchdog', async () => ({ health: watchdogHealth })],
+  ], { nowMs, log: quiet });
+  const ok = { missingPlaceholders: 0, lookups: 0, lookupErrors: 0 };
+  // Timeouts for an hour and a half: try later, not a broken scan.
+  for (let m = 0; m <= 90; m += 10) await tick(T0 + 10 * DAY + m * MIN, ok);
+  assert.equal(await ingest.maybeAlertFirefliesIngest({ sendEmail, nowMs: T0 + 10 * DAY + 91 * MIN, env, log: quiet }), null);
+
+  // Fireflies rejects the scan's date window: an hour of that is worth an e-mail.
+  scanError = new FirefliesApiError('Variable "$fromDate" got an invalid value.', { code: 'invalid_arguments' });
+  const from = T0 + 11 * DAY;
+  for (let m = 0; m <= 50; m += 10) await tick(from + m * MIN, ok);
+  assert.equal(await ingest.maybeAlertFirefliesIngest({ sendEmail, nowMs: from + 55 * MIN, env, log: quiet }), null, 'not before an hour');
+  await tick(from + 61 * MIN, ok);
+  const scanAlert = await ingest.maybeAlertFirefliesIngest({ sendEmail, nowMs: from + 61 * MIN, env, log: quiet });
+  assert.equal(scanAlert.reason, 'scan-failing');
+  assert.equal(sent[0].subject, 'Fireflies: eldre opptak hentes ikke inn');
+  assert.match(sent[0].text, /invalid value/);
+  let status = ingest.firefliesIngestStatus({ nowMs: from + 61 * MIN, env });
+  assert.equal(status.scan.failingSince, new Date(from).toISOString());
+  assert.equal(status.consecutiveFailures, 0, 'the fast page kept working');
+
+  // The watchdog's lookups all fail (its step still runs), with the scan healthy again.
+  ingest.resetFirefliesIngestForTests();
+  clearIngestState();
+  scanError = null;
+  const healthy = async (args) => fake.list(args);
+  const watchTick = (nowMs, counts) => ingest.runFirefliesIngestTick([
+    ['list', () => ingest.ingestFirefliesTranscriptList({ apiKey: 'fake-key', listTranscripts: healthy, nowMs, log: quiet })],
+    ['watchdog', async () => ({ health: counts })],
+  ], { nowMs, log: quiet });
+  const failing = { missingPlaceholders: 0, lookups: 2, lookupErrors: 2, lastLookupError: 'Variable "$toDate" got an invalid value.' };
+  const at = T0 + 12 * DAY;
+  for (let m = 0; m <= 60; m += 10) await watchTick(at + m * MIN, failing);
+  await watchTick(at + 62 * MIN, ok);
+  assert.ok(ingest.firefliesIngestStatus({ nowMs: at + 62 * MIN, env }).watchdog.failingSince, 'a tick with no lookups changes nothing');
+  const watchAlert = await ingest.maybeAlertFirefliesIngest({ sendEmail, nowMs: at + 62 * MIN, env, log: quiet });
+  assert.equal(watchAlert.reason, 'watchdog-failing');
+  assert.equal(sent.at(-1).subject, 'Fireflies: bookede møter blir ikke sjekket');
+  assert.match(sent.at(-1).text, /\$toDate/);
+  await watchTick(at + 70 * MIN, { missingPlaceholders: 1, lookups: 2, lookupErrors: 1 });
+  status = ingest.firefliesIngestStatus({ nowMs: at + 70 * MIN, env });
+  assert.equal(status.watchdog.failingSince, '', 'one lookup that works ends the run');
+  assert.equal(status.missingPlaceholders, 1);
+});
+
+test('an unreadable e-mail list with no backup alerts the owner like an unreadable archive', async () => {
+  ingest.resetFirefliesIngestForTests();
+  clearIngestState();
+  store.resetFirefliesStoreForTests();
+  const path = store.firefliesStorePath('notified');
+  const backupDir = join(dataDir, 'backups');
+  const saved = existsSync(path) ? readFileSync(path, 'utf8') : null;
+  const latest = join(backupDir, 'fireflies-notified.json.latest.json');
+  const savedLatest = existsSync(latest) ? readFileSync(latest, 'utf8') : null;
+  writeFileSync(path, 'not json', 'utf8');
+  if (savedLatest !== null) writeFileSync(latest, 'not json either', 'utf8');
+  const errors = console.error;
+  console.error = () => {};
+  try {
+    const sent = [];
+    await ingest.runFirefliesIngestTick([['list', async () => ({ listed: 1 })]], { nowMs: T0, log: quiet });
+    const alert = await ingest.maybeAlertFirefliesIngest({ sendEmail: async (message) => { sent.push(message); }, nowMs: T0, env: { FIREFLIES_API_KEY: 'fake-key' }, log: quiet });
+    assert.equal(alert.reason, 'store-unreadable');
+    assert.equal(sent[0].subject, 'Fireflies: arkivet kan ikke leses');
+    assert.match(sent[0].text, /fireflies-notified\.json/);
+  } finally {
+    console.error = errors;
+    if (saved === null) unlinkSync(path); else writeFileSync(path, saved, 'utf8');
+    if (savedLatest !== null) writeFileSync(latest, savedLatest, 'utf8');
+    store.resetFirefliesStoreForTests();
+  }
+});
+
+test('rows the old ingest stored while Fireflies was processing are caught up once, however old', async () => {
+  const id = 'FFOLD0001';
+  const nowMs = T0 + 30 * DAY;
+  ff.updateStoredFirefliesMeeting(id, {
+    title: 'Testfirma AS · Kari Test',
+    startedAt: new Date(nowMs - 20 * DAY).toISOString(),
+    meetingLink: 'https://meet.google.com/abc-oldx-hij',
+    transcript: 'Kari Test: Hei.',
+    summary: '',
+  }, { nowMs: nowMs - 20 * DAY });
+  const card = [{ clientId: 'c-old', row: { meetingId: id, hasTranscript: true, summary: '' } }];
+  const plan = ingest.planFirefliesHydration({ storedRows: [ff.readStoredFirefliesMeeting(id)], clientRows: card, readStored: ff.readStoredFirefliesMeeting, nowMs });
+  assert.deepEqual(plan.fetch, [id]);
+  const result = await ingest.hydrateFirefliesTranscript(id, {
+    apiKey: 'fake-key',
+    nowMs,
+    fetchTranscript: async () => ({
+      ...listRow(id, nowMs - 20 * DAY),
+      sentences: [{ speaker_name: 'Kari Test', text: 'Hei.' }],
+      summary: { overview: 'Kunden vil ha nettside.', action_items: '- Send tilbud' },
+    }),
+  });
+  assert.equal(result.record.summary, 'Kunden vil ha nettside.');
+  const next = ingest.planFirefliesHydration({ storedRows: [ff.readStoredFirefliesMeeting(id)], clientRows: card, readStored: ff.readStoredFirefliesMeeting, nowMs: nowMs + MIN });
+  assert.deepEqual(next, { fetch: [], relink: [{ clientId: 'c-old', meetingId: id }] }, 'then only the card is brought up to date');
 });
 
 test('a keyed backoff doubles while nothing changes and ends when the input changes', () => {
