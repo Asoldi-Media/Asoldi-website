@@ -173,8 +173,14 @@ test('WS7.14: every Asoldi marketing send is refused for a suppressed address; s
   assert.equal(blocked.code, 'asoldi_unsubscribed');
   assert.match(blocked.message, /o\*\*\*@example\.no/);
   assert.equal(unsub.asoldiMarketingSendBlock({ to: 'Kari <kari@example.no>, ola@example.no', service: false })?.code, 'asoldi_unsubscribed');
+  assert.equal(unsub.asoldiMarketingSendBlock({ to: 'Ola <OLA@example.no>' })?.code, 'asoldi_unsubscribed', 'display-name form');
   assert.equal(unsub.asoldiMarketingSendBlock({ to: 'ola@example.no', service: true }), null);
   assert.equal(unsub.asoldiMarketingSendBlock({ to: 'ukjent@example.no', service: false }), null);
+  // The card opted out through its signed link; a new address on the same card is still blocked.
+  assert.equal(unsub.isAsoldiClientSuppressed('c_1'), true);
+  assert.equal(unsub.isAsoldiClientSuppressed('c_2'), false, 'an unsigned form unsubscribe does not mark the card');
+  assert.equal(unsub.asoldiMarketingSendBlock({ to: 'ny.adresse@example.no', clientId: 'c_1' })?.code, 'asoldi_unsubscribed');
+  assert.equal(unsub.asoldiMarketingSendBlock({ to: 'ny.adresse@example.no', clientId: 'c_2' }), null);
   for (const key of ['thank-you', 'reminder-24h-in-person', 'workshop-reminder-3d', 'data-innsamling-2', 'iteration', 'offer', '']) {
     assert.equal(unsub.isAsoldiServiceTemplate(key), true, key);
   }

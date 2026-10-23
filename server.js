@@ -15707,6 +15707,7 @@ app.post('/api/admin/sales/:id/send-composed-email', salesAuth, async (req, res)
     const templateKey = sanitizeText(req.body?.templateKey || req.body?.markAs) || 'thank-you';
     const unsubscribed = asoldiMarketingSendBlock({
       to: sanitizeText(req.body?.to) || client.contactEmail,
+      clientId: client.id,
       service: isAsoldiServiceTemplate(templateKey, getEmailTemplateById(templateKey)),
     });
     if (unsubscribed) return res.status(409).json(unsubscribed);
