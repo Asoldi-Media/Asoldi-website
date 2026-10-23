@@ -237,7 +237,18 @@ import { clientIntentSourceHash, fillOfferFromTranscript, meetingContextIsTooThi
 import { clientOwnedMeetLinks, emptyFirefliesLiveJoinStamp, firefliesJoinedCurrentMeet, firefliesMeetLinksDiffer, firefliesNeedsFreshMeetOnReschedule, matchMeetingToClients, normalizeFirefliesMeetLink, planFirefliesMeetLinkBackfill, recordingMatchesSalesMeeting, shouldDropLiveJoinStub } from './lib/fireflies-client-match.js';
 import { describeFirefliesMedia, firefliesMediaFilePath, persistFirefliesMedia } from './lib/fireflies-media.js';
 import { runFirefliesPullFollowUp } from './lib/fireflies-pull-followup.js';
-import { buildFirefliesListRecord, upsertListedFirefliesMeetings } from './lib/fireflies-webhook.js';
+import { storeFetchedFirefliesMeeting, storedMeetingIsFinal } from './lib/fireflies-webhook.js';
+import {
+  clientMeetingRefIsStale,
+  createKeyedBackoff,
+  firefliesIngestStatus,
+  hydrateFirefliesTranscript,
+  ingestFirefliesTranscriptList,
+  maybeAlertFirefliesIngest,
+  planFirefliesHydration,
+  runFirefliesHydration,
+  runFirefliesIngestTick,
+} from './lib/fireflies-ingest.js';
 import { CUSTOM_TIER_ID, WEBSITE_TIERS, formatKr, resolveTier, tierById, toClientWebsitePlan } from './lib/website-tiers.js';
 import { buildSalesSender, normalizeAsoldiFromEmail } from './lib/sales-sender.js';
 import {
@@ -16138,55 +16149,79 @@ function dropUnknownOfferMeetings(offer, client) {
   }, { actor: 'system', action: '' }) || { ...offer, meetingIds: ids, meetingId: ids[0] || '' };
 }
 
+/** The newest transcripts every tick, plus the paged date-window scan when due (lib/fireflies-ingest.js). */
 async function ingestRecentFirefliesMeetLinks() {
-  const config = readFirefliesWebhookConfig();
-  if (!config.apiKey) return;
-  try {
-    const rows = await fetchRecentFirefliesTranscripts({ apiKey: config.apiKey, limit: 30 });
-    // List rows carry metadata only: one write for the page, a full fetch queued on a status change.
-    upsertListedFirefliesMeetings(rows.map(buildFirefliesListRecord));
-  } catch (error) {
-    console.warn(`[fireflies] recent-transcripts ${sanitizeText(error?.message) || error}`);
-  }
+  return ingestFirefliesTranscriptList({ apiKey: readFirefliesWebhookConfig().apiKey });
 }
 
-async function hydrateRecentStoredTranscripts({ max = 8 } = {}) {
-  const rows = storedMeetingsNeedingHydration(listStoredFirefliesMeetings());
-  let fetched = 0;
-  for (const row of rows) {
-    if (fetched >= max) break;
-    await persistFetchedFirefliesTranscript(row.meetingId);
-    fetched += 1;
-  }
-}
-
-async function hydratePendingClientTranscripts({ max = 6 } = {}) {
-  const ids = [];
-  const seen = new Set();
+function firefliesClientMeetingRows() {
+  const rows = [];
   for (const client of sales.getSalesClients()) {
-    for (const row of client.meetings || []) {
-      const id = sanitizeText(row.meetingId);
-      if (!id || seen.has(id) || isPlaceholderMeetingId(id)) continue;
-      if (row.hasTranscript || storedMeetingHasTalk(readStoredFirefliesMeeting(id))) {
-        if (!row.hasTranscript && storedMeetingHasTalk(readStoredFirefliesMeeting(id))) {
-          linkStoredTranscriptToClient(readStoredFirefliesMeeting(id), {
-            clientId: client.id,
-            linkedBy: row.linkedBy,
-            reasons: row.reasons || ['Transkriptet lå allerede i Fireflies-arkivet'],
-          });
-        }
-        continue;
-      }
-      seen.add(id);
-      ids.push(id);
+    for (const row of client.meetings || []) rows.push({ clientId: client.id, row });
+  }
+  return rows;
+}
+
+/**
+ * Link a fetched transcript to the client whose Meet it was (or that already holds it), but
+ * only when that card does not show it yet or shows less (a summary that arrived later).
+ */
+function linkFetchedFirefliesTranscript(record) {
+  const id = sanitizeText(record?.meetingId);
+  if (!id) return null;
+  const match = matchMeetingToClients(record, sales.getSalesClients());
+  const holder = sales.findSalesClientByMeetingId(id);
+  const ownerId = sanitizeText(match.best?.clientId) || sanitizeText(holder?.id);
+  if (!ownerId) return null;
+  const owner = sanitizeText(holder?.id) === ownerId ? holder : sales.getSalesClientById(ownerId);
+  const ref = (owner?.meetings || []).find((row) => sanitizeText(row.meetingId) === id);
+  if (ref && !clientMeetingRefIsStale(ref, record)) return owner;
+  return linkStoredTranscriptToClient(record, {
+    clientId: ownerId,
+    linkedBy: match.best ? 'meet-link' : '',
+    reasons: match.best?.reasons || [],
+  });
+}
+
+/** Full fetches for stored rows that are not final and for card ids with no stored copy. */
+async function hydrateRecentStoredTranscripts({ max = 8 } = {}) {
+  const config = readFirefliesWebhookConfig();
+  if (!config.apiKey) return null;
+  const plan = planFirefliesHydration({
+    storedRows: listStoredFirefliesMeetings({ includeStubs: true }),
+    clientRows: firefliesClientMeetingRows(),
+    readStored: readStoredFirefliesMeeting,
+    max,
+  });
+  return runFirefliesHydration(plan.fetch, {
+    hydrate: (id) => hydrateFirefliesTranscript(id, { apiKey: config.apiKey }),
+    onFetched: (record) => linkFetchedFirefliesTranscript(record),
+  });
+}
+
+/** Cards that show less than the final stored copy are relinked. Nothing is fetched here. */
+function hydratePendingClientTranscripts({ max = 10 } = {}) {
+  const plan = planFirefliesHydration({
+    clientRows: firefliesClientMeetingRows(),
+    readStored: readStoredFirefliesMeeting,
+    max: 0,
+    maxRelinks: max,
+  });
+  let relinked = 0;
+  for (const { clientId, meetingId } of plan.relink) {
+    try {
+      const row = (sales.getSalesClientById(clientId)?.meetings || []).find((item) => sanitizeText(item.meetingId) === meetingId);
+      linkStoredTranscriptToClient(readStoredFirefliesMeeting(meetingId), {
+        clientId,
+        linkedBy: row?.linkedBy,
+        reasons: row?.reasons?.length ? row.reasons : ['Transkriptet lå allerede i Fireflies-arkivet'],
+      });
+      relinked += 1;
+    } catch (error) {
+      console.warn(`[fireflies] relink id=${meetingId} client=${clientId} ${sanitizeText(error?.message) || error}`);
     }
   }
-  let fetched = 0;
-  for (const id of ids) {
-    if (fetched >= max) break;
-    await persistFetchedFirefliesTranscript(id);
-    fetched += 1;
-  }
+  return { relinked };
 }
 
 let firefliesIngestAt = 0;
@@ -16202,13 +16237,16 @@ function scheduleFirefliesTranscriptIngest({ force = false } = {}) {
   firefliesIngestAt = now;
   firefliesIngestInFlight = (async () => {
     try {
-      await ingestRecentFirefliesMeetLinks();
-      await hydrateRecentStoredTranscripts({ max: 8 });
-      ensureFirefliesMeetLinkBackfill({ force: true });
-      await hydratePendingClientTranscripts({ max: 6 });
-      // Webhook-only steps (notify e-mail, media copy) for meetings the pull ingest brought in.
-      await runFirefliesPullFollowUp({ notify: (payload) => notifyFirefliesRecording(payload, readFirefliesWebhookConfig(), firefliesClientDeps()), persistMedia: persistFirefliesMediaInBackground });
-      await fillPendingContractLetters();
+      // Each step runs on its own, so one failing step or one odd client record never stops the rest.
+      await runFirefliesIngestTick([
+        ['list', () => ingestRecentFirefliesMeetLinks()],
+        ['hydrate', () => hydrateRecentStoredTranscripts({ max: 8 })],
+        ['backfill', () => ensureFirefliesMeetLinkBackfill({ force: true })],
+        ['relink', () => hydratePendingClientTranscripts()],
+        // Webhook-only steps (notify e-mail, media copy) for meetings the pull ingest brought in.
+        ['follow-up', () => runFirefliesPullFollowUp({ notify: (payload) => notifyFirefliesRecording(payload, readFirefliesWebhookConfig(), firefliesClientDeps()), persistMedia: persistFirefliesMediaInBackground })],
+      ]);
+      await maybeAlertFirefliesIngest({ sendEmail: (message) => emailLib.sendEmail(message) });
     } catch (error) {
       console.warn(`[fireflies] transcript ingest ${sanitizeText(error?.message) || error}`);
     } finally {
@@ -16222,6 +16260,29 @@ function startFirefliesTranscriptIngestLoop() {
   if (firefliesIngestInterval) return;
   firefliesIngestInterval = setInterval(() => {
     void scheduleFirefliesTranscriptIngest();
+  }, SALES_REMINDER_POLL_MS);
+}
+
+let offerLetterFillInFlight = null;
+let offerLetterFillInterval = null;
+
+/** Contract letters fill on their own loop: a slow DeepSeek call never holds up the transcript pull. */
+function scheduleOfferLetterFills() {
+  // Same switch as the ingest: the fill runs DeepSeek on real transcripts.
+  if (!safeModeAllows('firefliesIngest')) return null;
+  if (offerLetterFillInFlight) return offerLetterFillInFlight;
+  offerLetterFillInFlight = fillPendingContractLetters()
+    .catch((error) => console.warn(`[offer] contract-letter fills ${sanitizeText(error?.message) || error}`))
+    .finally(() => {
+      offerLetterFillInFlight = null;
+    });
+  return offerLetterFillInFlight;
+}
+
+function startOfferLetterFillLoop() {
+  if (offerLetterFillInterval) return;
+  offerLetterFillInterval = setInterval(() => {
+    void scheduleOfferLetterFills();
   }, SALES_REMINDER_POLL_MS);
 }
 
@@ -16314,40 +16375,30 @@ function refreshOfferClientMeetings(client, { force = false } = {}) {
   return syncClientTranscriptFlagsFromStore(current);
 }
 
+/**
+ * Fetch one transcript now (a rep pasted it, or opened Fyll ut) unless the stored copy is
+ * final, and link it to its client. A copy that is not final yet is linked and fetched again
+ * by the ingest until it is.
+ */
 async function persistFetchedFirefliesTranscript(meetingId) {
   const id = sanitizeText(meetingId);
   const config = readFirefliesWebhookConfig();
   if (!id || isPlaceholderMeetingId(id) || !config.apiKey) return readStoredFirefliesMeeting(id);
   const stored = readStoredFirefliesMeeting(id);
-  if (storedMeetingHasTalk(stored)) {
-    const match = matchMeetingToClients(stored, sales.getSalesClients());
-    const ownerId = sanitizeText(match.best?.clientId) || sanitizeText(sales.findSalesClientByMeetingId(id)?.id);
-    if (ownerId) {
-      linkStoredTranscriptToClient(stored, {
-        clientId: ownerId,
-        linkedBy: match.best ? 'meet-link' : '',
-        reasons: match.best?.reasons || [],
-      });
-    }
-    return stored;
-  }
   try {
-    const transcript = await fetchFirefliesTranscript(id, { apiKey: config.apiKey });
-    const built = buildFirefliesMeetingRecord({ meeting_id: id }, transcript);
-    storeFirefliesMeeting(built);
-    const fresh = readStoredFirefliesMeeting(id) || built;
-    const match = matchMeetingToClients(fresh, sales.getSalesClients());
-    const ownerId = sanitizeText(match.best?.clientId) || sanitizeText(sales.findSalesClientByMeetingId(id)?.id);
-    if (ownerId) {
-      linkStoredTranscriptToClient(fresh, {
-        clientId: ownerId,
-        linkedBy: match.best ? 'meet-link' : '',
-        reasons: match.best?.reasons || [],
-      });
+    if (storedMeetingIsFinal(stored)) {
+      linkFetchedFirefliesTranscript(stored);
+      return stored;
     }
-    return fresh;
+    const result = await hydrateFirefliesTranscript(id, { apiKey: config.apiKey });
+    if (result.outcome !== 'fetched') {
+      console.warn(`[fireflies] hydrate id=${id} ${result.outcome}: ${sanitizeText(result.error?.message) || result.error}`);
+      return stored;
+    }
+    linkFetchedFirefliesTranscript(result.record);
+    return result.record;
   } catch (error) {
-    console.warn(`[fireflies] hydrate ${id} ${sanitizeText(error?.message) || error}`);
+    console.warn(`[fireflies] hydrate id=${id} ${sanitizeText(error?.message) || error}`);
     return stored;
   }
 }
@@ -16365,7 +16416,7 @@ async function hydrateOfferMeetings(client, offer) {
     if (!id || seen.has(id) || isPlaceholderMeetingId(id)) continue;
     seen.add(id);
     const stored = readStoredFirefliesMeeting(id);
-    if (sanitizeText(stored?.transcript) || sanitizeText(stored?.summary)) continue;
+    if (storedMeetingIsFinal(stored)) continue;
     if (fetched >= 4) break;
     await persistFetchedFirefliesTranscript(id);
     fetched += 1;
@@ -16808,9 +16859,21 @@ async function maybeFillContractLetter(client, req) {
   }
 }
 
+// Per client: a fill that changes nothing waits longer each time, until the client's
+// recordings or the offer change.
+const offerLetterFillBackoff = createKeyedBackoff();
+
+function offerLetterFillFingerprint(client, offer) {
+  const meetings = (client?.meetings || [])
+    .map((row) => `${sanitizeText(row.meetingId)}:${row.hasTranscript ? 1 : 0}:${sanitizeText(row.summary).length}`)
+    .join('|');
+  return `${meetings}#${sanitizeText(offer?.updatedAt)}`;
+}
+
 async function fillPendingContractLetters() {
   const req = { salesUser: { accountKey: 'fireflies' } };
   const pending = [];
+  const now = Date.now();
   for (const client of sales.getSalesClients()) {
     if (client.offerLetterApprovedAt) continue;
     const offer = salesOffers.getOfferForClient(client.id);
@@ -16819,11 +16882,19 @@ async function fillPendingContractLetters() {
       stampOfferLetterFilled(client.id, offer);
       continue;
     }
-    pending.push({ client, sent: offer.status === 'sent' });
+    const fingerprint = offerLetterFillFingerprint(client, offer);
+    if (!offerLetterFillBackoff.due(client.id, fingerprint, now)) continue;
+    pending.push({ client, offer, fingerprint, sent: offer.status === 'sent' });
   }
   pending.sort((a, b) => Number(b.sent) - Number(a.sent));
   for (const row of pending.slice(0, 4)) {
-    await maybeFillContractLetter(row.client, req);
+    try {
+      const after = await maybeFillContractLetter(row.client, req);
+      if (sanitizeText(after?.email?.html) !== sanitizeText(row.offer?.email?.html)) offerLetterFillBackoff.clear(row.client.id);
+      else offerLetterFillBackoff.idle(row.client.id, row.fingerprint, Date.now());
+    } catch (error) {
+      console.warn(`[offer] contract-letter fill client=${row.client.id} ${sanitizeText(error?.message) || error}`);
+    }
   }
 }
 
@@ -17185,8 +17256,8 @@ app.post('/api/admin/sales/:id/offer/use-meeting', salesAuth, async (req, res) =
           const transcript = await fetchFirefliesTranscript(id, { apiKey: config.apiKey });
           const built = buildFirefliesMeetingRecord({ meeting_id: transcript?.id || id }, transcript);
           if (built?.meetingId) {
-            storeFirefliesMeeting(built);
-            matches = [readStoredFirefliesMeeting(built.meetingId) || built];
+            // A live or still-processing copy is linked now and fetched again until it is final.
+            matches = [storeFetchedFirefliesMeeting(built) || built];
             break;
           }
         } catch {
@@ -17788,6 +17859,13 @@ app.get('/api/admin/fireflies/meetings', salesAuth, (req, res) => {
   res.json({ meetings: listStoredFirefliesMeetings({ unmatchedOnly, clientId }).map(meetingListRow) });
 });
 
+// Pull-ingest health for the admin pages (lib/fireflies-ingest.js firefliesIngestStatus).
+app.get('/api/admin/fireflies/ingest-status', salesAuth, (req, res) => {
+  if (!requireOfferAdmin(req, res)) return;
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(firefliesIngestStatus());
+});
+
 app.get('/api/admin/fireflies/meetings/:meetingId', salesAuth, (req, res) => {
   const record = readStoredFirefliesMeeting(req.params.meetingId);
   if (!record) return res.status(404).json({ message: 'Meeting not found.' });
@@ -17822,8 +17900,15 @@ app.post('/api/admin/fireflies/meetings/:meetingId/refresh', salesAuth, async (r
   try {
     const updated = await refreshFirefliesMeeting(req.params.meetingId);
     void persistFirefliesMediaInBackground(updated.meetingId);
-    const clientId = sanitizeText(updated.match?.clientId);
-    if (clientId) linkFirefliesMeeting(clientId, meetingRefForClient(updated, updated.match, { linkedBy: updated.match?.linkedBy || 'auto' }));
+    // Meetings linked by the pull ingest or a paste have no stored match: use the client that holds it.
+    const holder = updated.match?.clientId ? null : sales.findSalesClientByMeetingId(updated.meetingId);
+    const clientId = sanitizeText(updated.match?.clientId) || sanitizeText(holder?.id);
+    const held = (holder?.meetings || []).find((row) => sanitizeText(row.meetingId) === sanitizeText(updated.meetingId));
+    if (clientId) {
+      linkFirefliesMeeting(clientId, meetingRefForClient(updated, updated.match || held || {}, {
+        linkedBy: updated.match?.linkedBy || held?.linkedBy || 'auto',
+      }));
+    }
     res.json({ meeting: meetingListRow(updated) });
   } catch (error) {
     res.status(502).json({ message: sanitizeText(error?.message) || 'Kunne ikke oppdatere fra Fireflies.' });
@@ -21120,6 +21205,7 @@ function startBackgroundJobs() {
     // Last, so its first run comes after the two local backfills above (as before).
     firefliesIngest: () => {
       startFirefliesTranscriptIngestLoop();
+      startOfferLetterFillLoop();
       setImmediate(() => void scheduleFirefliesTranscriptIngest({ force: true }));
     },
   });

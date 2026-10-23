@@ -141,8 +141,9 @@ test('a failing fetch is retried after a pause, not on every ingest tick', async
   assert.equal(h.emails.length, 0);
 });
 
-test('server.js runs the follow-up from the pull ingest loop', () => {
+test('server.js runs the follow-up as its own step of the pull ingest tick', () => {
   const server = readFileSync(fileURLToPath(new URL('../server.js', import.meta.url)), 'utf8');
   const loop = server.slice(server.indexOf('function scheduleFirefliesTranscriptIngest'), server.indexOf('function startFirefliesTranscriptIngestLoop'));
-  assert.match(loop, /await runFirefliesPullFollowUp\(\{ notify: \(payload\) => notifyFirefliesRecording\(payload, readFirefliesWebhookConfig\(\), firefliesClientDeps\(\)\), persistMedia: persistFirefliesMediaInBackground \}\)/);
+  assert.match(loop, /await runFirefliesIngestTick\(\[/);
+  assert.match(loop, /\['follow-up', \(\) => runFirefliesPullFollowUp\(\{ notify: \(payload\) => notifyFirefliesRecording\(payload, readFirefliesWebhookConfig\(\), firefliesClientDeps\(\)\), persistMedia: persistFirefliesMediaInBackground \}\)\]/);
 });
