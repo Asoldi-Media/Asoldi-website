@@ -62,6 +62,17 @@ test('core/media has no fs/os/child_process and no network call besides gemini.j
   assert.deepEqual(bad, []);
 });
 
+test('core/llm is pure: no fs, os, child_process, network, fetch or process.env', () => {
+  const bad = [];
+  for (const rel of files.filter((file) => file.startsWith('core/llm/'))) {
+    const source = readFileSync(join(root, rel), 'utf8');
+    if (/node:(?:fs|os|child_process|net|http|https|tls|dgram|worker_threads)\b|['"](?:fs|os|child_process|http|https)['"]/.test(source)) bad.push(`${rel}: forbidden node module`);
+    if (/\bfetch\(/.test(source)) bad.push(`${rel}: fetch`);
+    if (/process\.env/.test(source)) bad.push(`${rel}: process.env (pass env in)`);
+  }
+  assert.deepEqual(bad, []);
+});
+
 test('core holds no Asoldi names; Asoldi wording lives in the harness', () => {
   const bad = files
     .filter((file) => layerOf(file) === 'core')
