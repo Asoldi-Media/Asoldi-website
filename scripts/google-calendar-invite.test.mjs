@@ -23,6 +23,7 @@ import {
   MAX_CALENDAR_WEEK_SOURCES,
   googleCalendarOauthScopes,
   googleMailboxFromCalendarHtmlLink,
+  googleWorkspaceCalendarScopes,
 } from '../lib/google-calendar.js';
 import {
   GOOGLE_CALENDAR_OAUTH_EVENT,
@@ -269,6 +270,14 @@ test('sales calendar oauth asks to read the whole calendar, not only events the 
   assert.equal(scopes.includes('https://www.googleapis.com/auth/calendar.readonly'), true);
   assert.equal(scopes.includes('https://www.googleapis.com/auth/calendar.acls'), true);
   assert.equal(scopes.includes('https://www.googleapis.com/auth/gmail.readonly'), true);
+});
+
+test('sales calendar oauth may open the host’s own Meet rooms; delegation never asks for Meet', () => {
+  const scopes = googleCalendarOauthScopes();
+  assert.equal(scopes.includes('https://www.googleapis.com/auth/meetings.space.settings'), true);
+  assert.equal(scopes.some((scope) => scope.endsWith('/meetings.space.created')), false, 'no sensitive create scope');
+  // asoldi.com has no Workspace: a service account can never act on a mailbox's rooms.
+  assert.equal(googleWorkspaceCalendarScopes().some((scope) => scope.includes('/auth/meetings.')), false);
 });
 
 test('admin week view uses the filtered rep, or every connected sales mailbox', () => {
