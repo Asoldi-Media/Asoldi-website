@@ -67,29 +67,35 @@ test('Fireflies is added only when the sales meeting asks for it', () => {
 });
 
 test('silent calendar creates do not add Fred until the invite is actually sent', () => {
+  // The Fireflies key owner hosts these events (fred@ never goes on anyone else's; see below).
+  const organizerEmail = 'damian@asoldi.com';
   assert.equal(shouldIncludeFireflies({
     isOnline: true,
     addFireflies: true,
     sendUpdates: 'none',
     alreadyOnEvent: false,
+    organizerEmail,
   }), false);
   assert.equal(shouldIncludeFireflies({
     isOnline: true,
     addFireflies: true,
     sendUpdates: 'all',
     alreadyOnEvent: false,
+    organizerEmail,
   }), true);
   assert.equal(shouldIncludeFireflies({
     isOnline: true,
     addFireflies: false,
     sendUpdates: 'all',
     alreadyOnEvent: false,
+    organizerEmail,
   }), false);
   assert.equal(shouldIncludeFireflies({
     isOnline: false,
     addFireflies: true,
     sendUpdates: 'all',
     alreadyOnEvent: false,
+    organizerEmail,
   }), false);
 });
 
@@ -144,8 +150,13 @@ test('fred@ only goes on events the Fireflies key owner hosts; other reps\' even
     sendUpdates: 'all',
     organizerEmail: 'Damian@asoldi.com',
   }), true);
+  // A host we cannot name fails closed: it might be another rep (a token with no e-mail, a shared calendar).
+  assert.equal(shouldIncludeFireflies({ isOnline: true, addFireflies: true, sendUpdates: 'all', organizerEmail: '' }), false);
+  assert.equal(shouldIncludeFireflies({ isOnline: true, addFireflies: true, sendUpdates: 'all' }), false);
   const repHosted = buildMeetingAttendees(client, { includeAttendees: true, includeFireflies: true, organizerEmail: 'alexander@asoldi.com' });
   assert.equal(repHosted.some((entry) => entry.email.endsWith('@fireflies.ai')), false);
+  const unknownHost = buildMeetingAttendees(client, { includeAttendees: false, includeFireflies: true, organizerEmail: '' });
+  assert.deepEqual(unknownHost, [], 'the extra Møte of a mailbox we cannot name gets no fred@');
   const ownerHosted = buildMeetingAttendees(client, { includeAttendees: false, includeFireflies: true, organizerEmail: 'damian@asoldi.com' });
   assert.deepEqual(ownerHosted.map((entry) => entry.email), [firefliesNotetakerEmail()]);
   // The calendar writes pass the mailbox that hosts the event.
@@ -168,12 +179,14 @@ test('silent updates keep Fred after he was already invited', () => {
     addFireflies: false,
     sendUpdates: 'none',
     alreadyOnEvent: true,
+    organizerEmail: 'damian@asoldi.com',
   }), true);
   assert.equal(shouldIncludeFireflies({
     isOnline: true,
     addFireflies: true,
     sendUpdates: 'none',
     alreadyOnEvent: false,
+    organizerEmail: 'damian@asoldi.com',
   }), false);
 });
 

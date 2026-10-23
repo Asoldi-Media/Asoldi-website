@@ -72,11 +72,13 @@ test('workshop Møte builds a 30-minute invite with the client, Fireflies, Meet,
   assert.equal(invite.client.meetingMode, 'online');
   assert.equal(invite.client.meetingAt, DUE);
   assert.equal(invite.client.calendar?.eventId || '', action.calendarEventId);
+  // Damian hosts workshops; fred@ goes only on events of the Fireflies key owner.
   const includeFireflies = shouldIncludeFireflies({
     isOnline: true,
     addFireflies: true,
     sendUpdates: 'all',
     alreadyOnEvent: false,
+    organizerEmail: 'damian@asoldi.com',
   });
   const attendees = buildMeetingAttendees(invite.client, { includeAttendees: true, includeFireflies });
   assert.equal(attendees.some((entry) => entry.email === 'daracha777@gmail.com'), true);
