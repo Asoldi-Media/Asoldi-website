@@ -11,7 +11,10 @@
  *                   one means the deploy has not landed). With --expect-commit the commit must match.
  *   home            GET /: 200 HTML
  *   site-config     GET /api/hub/site-config?domain=<domain>: 200 with a site config and no
- *                   clientAdmin / pendingAdmin / passwordHash anywhere in the body
+ *                   clientAdmin / pendingAdmin / passwordHash anywhere in the body. A domain with
+ *                   non-ASCII letters (æ, ø, å) may be given either way: the spelling given is
+ *                   asked first, then the other one (punycode xn--… or Unicode), since the hub
+ *                   matches the domain exactly as it is stored in sites.json.
  *   recordings      GET /myphoner-recordings/<x> without a login: exactly 401
  *   audio           GET /myphoner-audio/<x> without a login: exactly 401
  *   maker-callback  GET /api/admin/sales/maker-status-callback without a token: exactly 401
@@ -19,7 +22,7 @@
  * Exit 0 when every check passes, 1 with a list of the failures, 2 on bad arguments.
  */
 import { resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { domainToASCII, domainToUnicode, fileURLToPath } from 'node:url';
 
 export const DEFAULT_BASE = 'https://asoldi.com';
 export const ADMIN_FIELDS = ['clientAdmin', 'pendingAdmin', 'passwordHash'];
@@ -45,11 +48,25 @@ export function parseArgs(argv = []) {
   if (!/^https?:\/\/[^/\s]+$/i.test(out.base)) throw new Error('--base must be an origin such as https://asoldi.com');
   out.domain = String(out.domain || '').trim().toLowerCase();
   if (!out.domain) throw new Error('--domain <a live client domain> is required (an unknown domain proves nothing)');
-  if (!/^[a-z0-9.-]+$/.test(out.domain)) throw new Error('--domain must be a host name such as example.no');
+  out.domainVariants = domainSpellings(out.domain);
+  if (!out.domainVariants.length) throw new Error('--domain must be a host name such as example.no');
   out.expectCommit = String(out.expectCommit || '').trim().toLowerCase();
   if (out.expectCommit && !/^[0-9a-f]{7,40}$/.test(out.expectCommit)) throw new Error('--expect-commit must be a commit sha');
   if (!Number.isFinite(out.timeoutMs) || out.timeoutMs <= 0) throw new Error('--timeout-ms must be a positive number');
   return out;
+}
+
+/**
+ * The spellings of a host name to ask the hub for: as given first, then punycode or Unicode.
+ * [] when it is not a plain host name (no scheme, path, port or spaces).
+ */
+export function domainSpellings(domain) {
+  const given = String(domain || '').trim().toLowerCase();
+  if (!given || /[\s/:?#@\\]/.test(given)) return [];
+  const ascii = domainToASCII(given);
+  if (!ascii || !/^[a-z0-9.-]+$/.test(ascii) || ascii.startsWith('.') || ascii.endsWith('.') || ascii.includes('..')) return [];
+  const unicode = domainToUnicode(ascii) || ascii;
+  return [...new Set([given, ascii, unicode])];
 }
 
 /** One GET. Never sends credentials or cookies. Redirects are not followed unless asked. */
@@ -76,6 +93,7 @@ function parseJson(text) {
 /** Runs every check. deps.get(url, { follow }) → { status, contentType, body } (injectable for tests). */
 export async function runPostDeployCheck(options, deps = {}) {
   const { base, domain, expectCommit, timeoutMs } = options;
+  const spellings = options.domainVariants?.length ? options.domainVariants : domainSpellings(domain);
   const get = deps.get || ((url, opts = {}) => getUrl(url, { timeoutMs, ...opts }));
   const probe = `post-deploy-${Date.now().toString(36)}`;
   const checks = [];
@@ -111,14 +129,20 @@ export async function runPostDeployCheck(options, deps = {}) {
   });
 
   await run('site-config', async () => {
-    const res = await get(`${base}/api/hub/site-config?domain=${encodeURIComponent(domain)}`);
-    const found = ADMIN_FIELDS.filter((field) => res.body.includes(`"${field}"`));
-    if (found.length) return record('site-config', false, `the public config for ${domain} contains ${found.join(', ')}`);
-    const body = parseJson(res.body);
-    if (res.status !== 200 || !body || typeof body !== 'object' || !body.features) {
-      return record('site-config', false, `HTTP ${res.status} for ${domain} (want 200 with a site config; is the domain a hub site?)`);
+    const tried = [];
+    for (const spelling of spellings.length ? spellings : [domain]) {
+      const res = await get(`${base}/api/hub/site-config?domain=${encodeURIComponent(spelling)}`);
+      const found = ADMIN_FIELDS.filter((field) => res.body.includes(`"${field}"`));
+      if (found.length) return record('site-config', false, `the public config for ${spelling} contains ${found.join(', ')}`);
+      const body = parseJson(res.body);
+      if (res.status === 200 && body && typeof body === 'object' && body.features) {
+        return record('site-config', true, `HTTP 200 for ${spelling}, no admin fields`);
+      }
+      tried.push(`HTTP ${res.status} for ${spelling}`);
+      // Only "not found" is worth another spelling; anything else is the answer.
+      if (res.status !== 404) break;
     }
-    return record('site-config', true, `HTTP 200 for ${domain}, no admin fields`);
+    return record('site-config', false, `${tried.join('; ')} (want 200 with a site config; is the domain a hub site, spelled as in sites.json?)`);
   });
 
   for (const [id, path] of [

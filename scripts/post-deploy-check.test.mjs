@@ -47,6 +47,51 @@ test('arguments: production is the default base, a client domain is required', (
   assert.throws(() => parseArgs(['--domain', 'a.no', '--token', 'x']), /unknown argument/);
 });
 
+test('arguments: a domain with æ, ø or å is accepted in either spelling', () => {
+  const unicode = parseArgs(['--domain', 'Frisør-Eksempel.no']);
+  assert.equal(unicode.domain, 'frisør-eksempel.no');
+  assert.deepEqual(unicode.domainVariants, ['frisør-eksempel.no', 'xn--frisr-eksempel-tqb.no']);
+  const puny = parseArgs(['--domain', 'xn--frisr-eksempel-tqb.no']);
+  assert.deepEqual(puny.domainVariants, ['xn--frisr-eksempel-tqb.no', 'frisør-eksempel.no']);
+  assert.deepEqual(parseArgs(['--domain', 'shop.example.no']).domainVariants, ['shop.example.no']);
+  for (const bad of ['a.no:443', 'https://a.no', 'a..no', '.a.no', 'a no', 'a.no@', 'a.no?x', 'a.no#x']) {
+    assert.throws(() => parseArgs(['--domain', bad]), /host name/, bad);
+  }
+});
+
+test('site-config: the hub is asked for the other spelling only when the first is not found', async () => {
+  const stored = 'xn--frisr-eksempel-tqb.no';
+  const asked = [];
+  const answers = fakeHub();
+  const get = async (url, opts) => {
+    const { pathname, searchParams } = new URL(url);
+    if (pathname !== '/api/hub/site-config') return answers.get(url, opts);
+    asked.push(searchParams.get('domain'));
+    return searchParams.get('domain') === stored
+      ? { status: 200, contentType: 'application/json', body: JSON.stringify({ domain: stored, features: {} }) }
+      : { status: 404, contentType: 'application/json', body: '{"message":"Site not found"}' };
+  };
+  const options = (domain) => ({ ...OPTIONS, ...parseArgs(['--domain', domain, '--base', OPTIONS.base]) });
+  const unicode = await runPostDeployCheck(options('frisør-eksempel.no'), { get });
+  assert.deepEqual(failed(unicode), [], formatReport(unicode));
+  assert.deepEqual(asked, ['frisør-eksempel.no', stored]);
+  assert.match(unicode.checks.find((check) => check.id === 'site-config').detail, /HTTP 200 for xn--frisr-eksempel-tqb\.no/);
+  asked.length = 0;
+  assert.deepEqual(failed(await runPostDeployCheck(options(stored), { get })), []);
+  assert.deepEqual(asked, [stored], 'found at once: no second request');
+  // Neither spelling is a hub site: one failure that names both answers.
+  asked.length = 0;
+  const missing = await runPostDeployCheck(options('ukjent-frisør.no'), { get });
+  assert.deepEqual(failed(missing), ['site-config']);
+  assert.equal(asked.length, 2);
+  assert.match(missing.checks.find((check) => check.id === 'site-config').detail, /HTTP 404 for ukjent-frisør\.no; HTTP 404 for xn--/);
+  // Admin fields in any answer fail at once.
+  const leaky = async (url, opts) => (new URL(url).pathname === '/api/hub/site-config'
+    ? { status: 200, contentType: 'application/json', body: JSON.stringify({ features: {}, clientAdmin: {} }) }
+    : answers.get(url, opts));
+  assert.deepEqual(failed(await runPostDeployCheck(options('frisør-eksempel.no'), { get: leaky })), ['site-config']);
+});
+
 test('a production-like hub passes every check', async () => {
   const hub = fakeHub();
   const report = await runPostDeployCheck({ ...OPTIONS, expectCommit: SHA.slice(0, 10) }, { get: hub.get });
