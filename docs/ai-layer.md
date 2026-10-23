@@ -61,20 +61,27 @@ change is refused with 409.
   served model, profile, tokens, USD priced from the served model, status, `attempt`, `salesClientId`).
   A call that tried more than once (the grounded search retry without `thinkingConfig`, the next media
   model) writes a row for each attempt. An answer that was billed but not usable (DeepSeek text that is
-  not JSON) is an error row with its tokens and price.
+  not JSON) is an error row with its tokens and price. Every call site passes the sales client it works
+  for when it knows one (the offer's client, the workshop's client, the portal user's connected client,
+  the inbox sender's or the matched client), so a client's hub spend is complete.
 - Several hub processes may share the data dir. Totals (the card, budgets, `spend-summary.json`) are
   always counted from the ledger file on disk, so rows from every process are included.
 - `<dataDir>/ai/spend-summary.json`: today and this month, by task and provider.
-- `<dataDir>/ai/alerts-YYYY-MM.jsonl`: budget alerts, one per scope, client, run and UTC day. Caps
-  never stop work; only the core's runaway (more than 5x expected in one run or session) or loop rules
-  stop a call.
+- `<dataDir>/ai/alerts-YYYY-MM.jsonl`: budget alerts, one per budget and UTC day: the hub day cap once
+  a day, the client month cap once a day per client, a run or session budget once a day per run or
+  session. Caps never stop work; only the core's runaway (more than 5x expected in one run or session)
+  or loop rules stop a call.
 - `<dataDir>/ai-budgets.override.json`: partial budgets merged over the shared ones (for example
   `{ "periodic": { "hubDayUsd": 5, "clientMonthUsd": 10 } }`).
-- The Maker reports its own spend with the callback event `run.ai.spend`
-  `{ runId, salesClientId, totalUsd, byTask, calls?, profile?, at }`; `at` is required (400 without
-  it). It is stored as `makerRun.aiSpend` (only for the client's linked run; an older snapshot, or one
-  with fewer calls at the same `at`, is ignored) and per run in `<dataDir>/ai/maker-spend.json`. Only
-  this callback writes `makerRun.aiSpend`, and it is dropped when the client is linked to another run.
+- The Maker reports its own spend with the callback event `run.ai.spend`. The canonical body is the
+  Maker's ledger v2 summary:
+  `{ runId, salesClientId, totalUsd, byTask: { <task>: { usd, calls } }, byProvider?: { <provider>: { usd, calls } }, calls?, unverifiedUsd?, profile?, at }`
+  (`target`, `status` and `ledgerVersion` may be sent and are ignored). A group may also be a plain USD
+  number. `at` is required (400 without it). It is stored as `makerRun.aiSpend`
+  `{ runId, totalUsd, byTask: { <task>: usd }, callsByTask?, byProvider?: { <provider>: usd }, calls?, unverifiedUsd?, profile?, at, receivedAt }`
+  (only for the client's linked run; an older snapshot, or one with fewer calls at the same `at`, is
+  ignored) and per run in `<dataDir>/ai/maker-spend.json`. Only this callback writes
+  `makerRun.aiSpend`, and it is dropped when the client is linked to another run.
 
 ## Admin endpoints (Superadmin)
 
@@ -83,8 +90,10 @@ change is refused with 409.
   key checks run side by side (Anthropic model list, DeepSeek balance, Gemini model list), each with a
   15 second limit, cached for 10 minutes and skipped while safe mode blocks AI calls. `facade` tells
   whether the call sites use the facade.
-- `GET /api/admin/ai/spend?from&to&by=task|client|provider|model|run&salesClientId=`: ledger totals;
-  with `salesClientId` also the Maker's runs, and the sum of both.
+- `GET /api/admin/ai/spend?from&to&by=task|client|provider|model|run&salesClientId=`: ledger totals
+  (default range: this month); with `salesClientId` also the Maker's runs (`totalUsd`, `calls`,
+  `byTask`, `byProvider`, `runs`), and the sum of both. A Maker run counts in the range of its newest
+  snapshot's `at`; the client's current run is added only when the per-run history has no row for it.
 - `PUT /api/admin/ai/routes` with `{ profile?, profiles?, facade? }`: validated against the shared
   registry and price table, then written to `<dataDir>/ai-routes.override.json` (replacing the previous
   override; `facade` is kept unless the body sets it). 400 for an invalid override or a local-only
