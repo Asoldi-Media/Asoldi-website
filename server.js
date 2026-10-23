@@ -113,7 +113,7 @@ import {
 } from './lib/password-reset.js';
 import * as clientForms from './lib/client-forms.js';
 import { registerOwnerRoutingRoutes, resolveFormRouting } from './lib/owner-recipients.js';
-import { asoldiMarketingSendBlock, isAsoldiServiceTemplate, registerAsoldiUnsubscribeRoutes } from './lib/asoldi-unsubscribe.js';
+import { asoldiMarketingSendBlock, isAsoldiServiceTemplate, registerAsoldiUnsubscribeRoutes, withAsoldiMarketingUnsubscribe } from './lib/asoldi-unsubscribe.js';
 import * as employeeWordPress from './lib/employee-wordpress.js';
 import * as employeeLuca from './lib/employee-luca.js';
 import * as employeeMyPhoner from './lib/employee-myphoner.js';
@@ -15704,10 +15704,11 @@ app.post('/api/admin/sales/:id/send-composed-email', salesAuth, async (req, res)
       return res.status(400).json({ message: salesEmailFailureMessage('smtp-not-configured') });
     }
     const templateKey = sanitizeText(req.body?.templateKey || req.body?.markAs) || 'thank-you';
+    const service = isAsoldiServiceTemplate(templateKey, getEmailTemplateById(templateKey));
     const unsubscribed = asoldiMarketingSendBlock({
       to: sanitizeText(req.body?.to) || client.contactEmail,
       clientId: client.id,
-      service: isAsoldiServiceTemplate(templateKey, getEmailTemplateById(templateKey)),
+      service,
     });
     if (unsubscribed) return res.status(409).json(unsubscribed);
     const isOnline = normalizeMeetingMode(client?.meetingMode) === 'online';
@@ -15731,7 +15732,7 @@ app.post('/api/admin/sales/:id/send-composed-email', salesAuth, async (req, res)
       thankYouSendActor(client, req.salesUser).salesUser || req.salesUser
     );
     const needLines = await loadDeskNeedLines(client, templateKey);
-    const composed = composeEmailForClient(client, templateKey, {
+    const composed = withAsoldiMarketingUnsubscribe(composeEmailForClient(client, templateKey, {
       html: req.body?.html,
       subject: req.body?.subject,
       preheader: req.body?.preheader,
@@ -15739,7 +15740,7 @@ app.post('/api/admin/sales/:id/send-composed-email', salesAuth, async (req, res)
       sender,
       attachInvite: isThankYou,
       needLines,
-    }).message;
+    }).message, { clientId: client.id, service });
     const subject = composed.subject;
     await emailLib.sendEmail({
       to,
@@ -15749,6 +15750,7 @@ app.post('/api/admin/sales/:id/send-composed-email', salesAuth, async (req, res)
       subject,
       text: composed.text || htmlToPlainText(composed.html),
       html: composed.html,
+      headers: composed.headers,
       attachments: composed.attachments,
       icalEvent: composed.icalEvent,
     });
