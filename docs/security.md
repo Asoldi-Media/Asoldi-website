@@ -55,6 +55,30 @@ Routes (admin token): `GET /api/admin/system/security`, `PUT /api/admin/security
 `POST /api/admin/security/revoke-tokens` (`{scope}` or `{userId}`). Client token:
 `POST /api/client/account/logout-everywhere`.
 
+## Open CMS as Asoldi
+
+`POST /api/hub/sites/:id/cms-sso` (admin token) returns a one-time sign-in link into a client
+CMS (`lib/cms-sso.js`). The format follows the CMS version from the site's last heartbeat:
+
+- CMS 2.2.1 and later, and sites with no reported version: a random 32-byte token. The hub stores
+  only its sha256 with the site id, who asked and the expiry (60 s) in
+  `<dataDir>/cms-sso/tokens.json` (private folder, locked writes). The CMS checks it with
+  `POST /api/cms/sso/redeem` (site key in the `x-site-key` header or the body, `{ token }`
+  in the body) before it opens a session. The hub answers `{ ok: true, by }` once, for that
+  site only, before expiry; anything else gets the same 401. Failed checks are limited per
+  site and address (10 per 15 minutes), per address (30) and per site (100), with 429 and
+  Retry-After above that.
+- CMS 2.0.0 up to 2.2.0: the earlier token signed with the site key, which those versions
+  check themselves.
+- CMS 1.x has no Asoldi sign-in: 409.
+
+Every link and every check is recorded in `<dataDir>/cms-sso/audit.json` (last 500 rows:
+site id, who, format, CMS version, result), never the token.
+
+A new client admin password (`PUT /api/hub/sites/:id/client-admin`) must be at least
+8 characters and not a common default, the same rule the CMS applies, so a synced admin
+is never replaced at the CMS's next start.
+
 ## Fireflies webhook
 
 The old `FIREFLIES_WEBHOOK_SECRET(S)` and `FIREFLIES_WEBHOOK_TOKEN` env values are retired: a
