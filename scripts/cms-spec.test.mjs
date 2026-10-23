@@ -14,7 +14,7 @@ const hub = await import('../data/hub.js');
 const { registerCmsFeatureRoutes } = await import('../lib/routes/cms-feature-routes.js');
 const { cmsFeatureRegistry } = await import('../lib/cms-entitlements.js');
 const { cmsSpecPrompt, mergeFeatureSpec, mergeSections, PROMPT_LIMIT } = await import('../lib/cms-spec.js');
-const { SECTION_NAMES, SECTION_OWNERS, validateCmsSpec, validateSection } = await import('../lib/cms-spec-schema.js');
+const { MAX_SPEC_DEPTH, SECTION_NAMES, SECTION_OWNERS, validateCmsSpec, validateSection } = await import('../lib/cms-spec-schema.js');
 const registry = cmsFeatureRegistry();
 const quiet = { warn() {}, error() {}, log() {} };
 
@@ -375,3 +375,36 @@ test('the Maker sets only sections, force and featureSpec defaults and values; s
   assert.deepEqual(storedSite().featureSpec.grantServices, ['email']);
 });
 
+/** An object nested `levels` objects deep inside the returned object ({} for 0). */
+function nested(levels) {
+  let value = {};
+  for (let i = 0; i < levels; i += 1) value = { a: value };
+  return value;
+}
+
+test('a spec nested deeper than the limit is refused with its path and nothing is stored, however deep the body', async () => {
+  seedSites();
+  const LIMIT = 16;
+  // 2000 levels (about 14 kB of JSON): a 400 with the path, not a stack overflow, and nothing stored.
+  const deep = await put({ sections: { wizards: [{ id: 'w', steps: [nested(2000)] }] }, reason: 'deep' });
+  assert.equal(deep.status, 400, JSON.stringify(deep.body).slice(0, 300));
+  assert.deepEqual(paths(deep), [`sections.wizards[0].steps[0]${'.a'.repeat(LIMIT - 4)}`]);
+  const deepList = await put({ featureSpec: { defaults: { 'blog.autoPosts': JSON.parse(`${'['.repeat(3000)}${']'.repeat(3000)}`) } } });
+  assert.equal(deepList.status, 400);
+  assert.equal(deepList.body.errors.length, 1);
+  assert.equal('cmsSpec' in storedSite(), false);
+  assert.equal('featureSpec' in storedSite(), false);
+  // The limit: a wizard step sits 5 levels below the spec (sections, wizards, the wizard, steps, the step).
+  assert.equal(MAX_SPEC_DEPTH, LIMIT);
+  const atLimit = await put({ sections: { wizards: [{ id: 'w', steps: [nested(LIMIT - 5)] }] } });
+  assert.equal(atLimit.status, 200, JSON.stringify(atLimit.body));
+  seedSites();
+  const over = await put({ sections: { wizards: [{ id: 'w', steps: [nested(LIMIT - 4)] }] } });
+  assert.equal(over.status, 400);
+  assert.deepEqual(paths(over), [`sections.wizards[0].steps[0]${'.a'.repeat(LIMIT - 4)}`]);
+  assert.match(over.body.errors[0].message, /Nested more than 16 levels deep/);
+  assert.equal('cmsSpec' in storedSite(), false);
+  // The validators refuse it the same way when called directly.
+  assert.equal(validateCmsSpec({ sections: { wizards: [{ id: 'w', steps: [nested(5000)] }] } }, { registry }).ok, false);
+  assert.match(validateSection('wizards', [{ id: 'w', steps: [nested(5000)] }])[0].message, /Nested more than/);
+});
