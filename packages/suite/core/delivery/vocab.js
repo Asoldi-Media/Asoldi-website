@@ -17,7 +17,8 @@
 //   computed and recorded, never sent) and `auto` (runs, with runtime guards that pause a kind).
 // - Soft budgets never block. Only a runaway (more than 5x expected) or a detected loop stops work.
 
-export const VOCAB_VERSION = 1;
+// 1: batch 0 (WS8.45). 2: tier service matrix, site plan contract, Maker events (WS8.1/8.3/8.28).
+export const VOCAB_VERSION = 2;
 
 function freezeList(list) {
   return Object.freeze(list.map((item) => (item && typeof item === 'object' ? Object.freeze({ ...item }) : item)));
@@ -479,6 +480,9 @@ export const SETTINGS_KEYS = Object.freeze({
   alertsHostOfflineHours: 'alerts.hostOfflineHours',
   alertsJobBlockedHours: 'alerts.jobBlockedHours',
   alertsDigestAt: 'alerts.digestAt',
+  // v2
+  makerEvents: 'development.makerEvents',
+  deliveryBackfill: 'migrations.deliveryBackfill',
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);
@@ -496,3 +500,113 @@ export const RELEASE_GATED_SWITCHES = Object.freeze([
   'publish.staging',
   'publish.production',
 ]);
+
+// ---------------------------------------------------------------- tier matrix and site plan (v2)
+
+// The tier service matrix as one versioned, frozen table: services, the monthly change allowance
+// and the page cap per tier. Prices and copy stay with the hub's tier list; ids and services
+// live here so hub and Maker read the same matrix.
+export const TIER_MATRIX_VERSION = 1;
+
+export const TIER_MATRIX = Object.freeze({
+  'tier-1-standard': Object.freeze({ tierNumber: 1, services: TIER_SERVICES['tier-1-standard'], changesPerMonth: CHANGES_PER_MONTH, pages: 5 }),
+  'tier-2-seo': Object.freeze({ tierNumber: 2, services: TIER_SERVICES['tier-2-seo'], changesPerMonth: CHANGES_PER_MONTH, pages: 7 }),
+  'tier-3-ecommerce': Object.freeze({ tierNumber: 3, services: TIER_SERVICES['tier-3-ecommerce'], changesPerMonth: CHANGES_PER_MONTH, pages: 10 }),
+  custom: Object.freeze({ tierNumber: 0, services: TIER_SERVICES.custom, changesPerMonth: CHANGES_PER_MONTH, pages: 5 }),
+});
+
+export function isTierId(value) {
+  return TIER_IDS.includes(String(value ?? ''));
+}
+
+export function changesPerMonthForTier(tierId) {
+  return TIER_MATRIX[String(tierId ?? '')]?.changesPerMonth ?? CHANGES_PER_MONTH;
+}
+
+/** The 7 legacy CMS flags of a service list (alias of legacyFlagsForServices, the plan's name). */
+export function featuresFromServices(list) {
+  return legacyFlagsForServices(list);
+}
+
+/**
+ * The legacy flag table used before plans carried services: the `blog` flag meant automatic,
+ * location-based posts, which belong to the `seo` service. Tier 1 therefore keeps `blog:false`
+ * here, while featuresFromServices (the plan-based table) turns it on for every tier.
+ */
+export function legacyTierFlagsForServices(list) {
+  const flags = legacyFlagsForServices(list);
+  flags.blog = expandServices(list).includes('seo');
+  return flags;
+}
+
+export const BILLING_KINDS = Object.freeze(['month', 'once']);
+
+export const CATALOG_TYPES = Object.freeze(['menu', 'tiers', 'normal']);
+
+// client.sitePlan (WS8.3). `active` is the plan in force; `void` follows an un-signing and
+// `ended` a cancellation.
+export const SITE_PLAN_VERSION = 1;
+export const SITE_PLAN_STATUSES = Object.freeze(['active', 'void', 'ended']);
+export const SITE_PLAN_SOURCES = Object.freeze([
+  'portal-accept',
+  'preview-accept',
+  'progression',
+  'inbox-contract',
+  'got-client',
+  'stripe-checkout',
+  'offer-upgrade',
+  'superadmin',
+  'backfill',
+]);
+
+// Where a resolved plan for a client without a stored sitePlan came from (resolver evidence).
+export const SITE_PLAN_EVIDENCE = Object.freeze([
+  'stored',
+  'portal-accept',
+  'offer',
+  'hub-plan-source',
+  'hub-site',
+  'payment',
+  'meeting-quote',
+]);
+
+// The plan the Maker receives in the create-maker-run body and in the delivery brief.
+// A plan counts as known on the Maker side only with `source` and `signedAt`.
+export const SITE_PLAN_HANDOFF_SCHEMA = 'site-plan/1';
+export const SITE_PLAN_HANDOFF_FIELDS = Object.freeze([
+  'schema',
+  'status',
+  'tierId',
+  'services',
+  'pages',
+  'oneTimeAddOns',
+  'billing',
+  'catalogType',
+  'languages',
+  'changesPerMonth',
+  'source',
+  'offerId',
+  'alternativeIndex',
+  'signedAt',
+  'needsConfirmation',
+  'features',
+  'planHash',
+]);
+
+// ---------------------------------------------------------------- Maker events (v2)
+
+// Events the Maker posts to the hub's status callback for delivery (WS8.28). Older hubs ignore them.
+export const MAKER_DELIVERY_EVENTS = Object.freeze(['run.materials.updated', 'run.autopilot.updated']);
+
+export function isMakerDeliveryEvent(value) {
+  return MAKER_DELIVERY_EVENTS.includes(String(value ?? ''));
+}
+
+// How old a materials snapshot may be before the hub stops using it in place of a live run fetch.
+export const MATERIALS_SNAPSHOT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+export const MATERIALS_SUMMARY_MAX_BYTES = 2048;
+
+// `off`: nothing runs. `dry-run`: the report is written, nothing else. `apply`: snapshot, apply, report.
+export const BACKFILL_MODES = Object.freeze(['off', 'dry-run', 'apply']);
+// `off`: the callback treats delivery events as before (step status only). `record`: stored on makerRun.
+export const MAKER_EVENT_MODES = Object.freeze(['off', 'record']);

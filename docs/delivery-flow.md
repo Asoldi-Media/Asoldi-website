@@ -172,7 +172,8 @@ Settings keys (`SETTINGS_KEYS`, dotted paths in the file):
 | Senders | `sender.scheduling`, `sender.service.accountKey`, `sender.service.replyTo` (must be one of the read mailboxes) |
 | Inbox | `inbox.mailboxes` (only alexander@asoldi.com and damian@asoldi.com are allowed; default: alexander@ only, as today), `inbox.autoActions`, `inbox.autoReply`, `inbox.prefilter`, `inbox.internalDomains`, `inbox.internalSenders` |
 | Fireflies | `fireflies.candidateRanker.enabled`, `fireflies.candidateRanker.candidateMinScore`, `fireflies.autoLink.enabled`, `fireflies.autoLink.requireExactAttendeeEmail`, `fireflies.autoLink.slotWindowMinutes` |
-| Development | `development.autoQueue`, `development.directivesForAutoDev`, `development.defaultHostId`, `development.requireConfirmForCustom`, `development.previewJobs`, `development.seoJobs` |
+| Development | `development.autoQueue`, `development.directivesForAutoDev`, `development.defaultHostId`, `development.requireConfirmForCustom`, `development.previewJobs`, `development.seoJobs`, `development.makerEvents` (`off` or `record`; default `off`, see [Maker events](#maker-events)) |
+| Migrations | `migrations.deliveryBackfill` (`off`, `dry-run` or `apply`; default `off`, see [Backfill](#backfill)) |
 | Publish | `publish.staging.mode`, `publish.staging.tiers`, `publish.production.mode` |
 | Change requests | `changeRequests.enforce`, `changeRequests.slaWorkDays`, `changeRequests.countAt` (counted at acceptance) |
 | Pricing | `pricing.oneTimeMultiplier`, `pricing.oneTimeMinExMva`, `pricing.oneTimeMonths` |

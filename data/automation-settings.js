@@ -13,9 +13,11 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getPersistentDataDir, writeDataJson } from './storage-path.js';
 import {
+  BACKFILL_MODES,
   CANCELLATION_GRACE_DAYS,
   EMAIL_KINDS,
   EMAIL_KIND_IDS,
+  MAKER_EVENT_MODES,
   RELEASE_GATED_SWITCHES,
   TIER_IDS,
   normalizeAutomationMode,
@@ -96,7 +98,11 @@ export function defaultAutomationSettings() {
       requireConfirmForCustom: true,
       previewJobs: false,
       seoJobs: false,
+      // WS8.28: Maker delivery events are recorded on makerRun only when set to 'record'.
+      makerEvents: 'off',
     },
+    // WS8.41: 'dry-run' writes the backfill report at boot, 'apply' also applies it (idempotent).
+    migrations: { deliveryBackfill: 'off' },
     publish: {
       staging: { mode: 'shadow', tiers: ['tier-3-ecommerce'], paused: null },
       production: { mode: 'shadow', paused: null },
@@ -227,6 +233,8 @@ const ENUMS = {
   'development.directivesForAutoDev': ['accepted+must', 'accepted', 'none'],
   'changeRequests.enforce': ['track', 'enforce'],
   'changeRequests.countAt': ['accepted'],
+  'development.makerEvents': [...MAKER_EVENT_MODES],
+  'migrations.deliveryBackfill': [...BACKFILL_MODES],
 };
 
 const RANGES = {
