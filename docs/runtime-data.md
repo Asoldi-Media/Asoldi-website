@@ -137,3 +137,14 @@ The app now keeps only `DATA_BACKUP_KEEP` dated snapshots per file (default 5) a
 ```bash
 node scripts/prune-data-backups.mjs --dir /home/u439392007/domains/asoldi.com/.asoldi-website-data --wipe-stamped
 ```
+
+## 6) Email data (opt-outs, owner routing, email log)
+
+All in the same data dir, never in Git:
+
+- `email-suppressions.json`: the legal opt-out record. The `asoldi` key holds people who unsubscribed from Asoldi marketing at `/email/avmeld`. Never delete it. If it is missing or corrupt, the app restores it from `backups/email-suppressions.json.latest.json`, so keep that backup too. If neither can be read, Asoldi marketing sends are refused until it is fixed.
+- `email-sites.json`: per-site email state. `ownerRouting` decides where client form and order notices go: unset = Asoldi inbox (old behaviour), `owner` = the client owner, `owner+asoldi-bcc` = the owner plus a copy to Asoldi for 30 days after the switch. Set it per site under Manage clients.
+- `email-settings.json`: email platform settings (dark by default: rollout off).
+- `email-log/`: monthly JSONL of sends and provider events. No plain recipient addresses.
+- `email-locks/`: short-lived lock, lease and fencing files. Safe to delete only while the app is stopped.
+- `secrets/email-unsub-key`, `secrets/email-webhook-token`: generated once. Deleting the unsub key breaks the signed unsubscribe links in mail already sent (they fall back to a form that asks for the address).
