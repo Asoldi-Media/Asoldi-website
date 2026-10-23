@@ -90,6 +90,7 @@ type MeetingMatch = {
   purpose?: string;
   placeholder?: boolean;
   recordingState?: string;
+  recordingMessage?: string;
   duplicateOf?: string;
   emptyFinal?: boolean;
   pendingTranscript?: boolean;
@@ -1206,13 +1207,14 @@ export function SalesOfferComposer({
                                 const state = entry.recordingState
                                   || rowRecording(entry.meetingId)?.state
                                   || (entry.meetingId === meeting?.meetingId ? meetingRecording.state : '');
+                                const message = entry.recordingMessage || rowRecording(entry.meetingId)?.message || '';
                                 return (
                                   <label key={entry.meetingId} className="inline-flex items-center gap-2 px-2 py-1 rounded-md bg-white/5 text-gray-400">
                                     {entry.selected ? (
                                       <input type="checkbox" checked onChange={() => toggleDraftMeeting(entry.meetingId)} />
                                     ) : null}
                                     <PurposeChip purpose={entry.purpose} />
-                                    <span>{entry.title || 'Uten tittel'}{entry.when ? ` · ${entry.when}` : ''} · {recordingStateLabel(state) || 'Ingen opptak koblet ennå'}</span>
+                                    <span>{entry.title || 'Uten tittel'}{entry.when ? ` · ${entry.when}` : ''} · {recordingStateLabel(state, { message }) || 'Ingen opptak koblet ennå'}</span>
                                   </label>
                                 );
                               })}

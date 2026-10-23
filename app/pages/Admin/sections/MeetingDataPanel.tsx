@@ -243,7 +243,7 @@ function PlaceholderMeetingCard({ recording, title = '', when = '' }: Pick<Clien
         {when ? <div className="text-xs text-gray-400">{when}</div> : null}
       </div>
       {recording?.state ? (
-        <RecordingChip state={recording.state} />
+        <RecordingChip state={recording.state} message={recording.message} />
       ) : (
         <p className="text-xs text-gray-400">Ingen Fireflies-opptak er koblet til dette møtet ennå.</p>
       )}

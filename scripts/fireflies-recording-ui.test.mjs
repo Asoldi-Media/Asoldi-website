@@ -103,6 +103,29 @@ test('a transcript with talk is the answer, whatever was marked before', () => {
   assert.equal(view({ state: 'recording', lastSeenAt: at(10) }, 11).label, 'Fireflies tar opp');
 });
 
+test('a send the hub never checked reads "ikke sjekket" on every screen, never "kom ikke inn"', async () => {
+  const { LIVE_JOIN_MESSAGES } = await import(new URL('../lib/fireflies-live-sessions.js', import.meta.url).href);
+  assert.ok(LIVE_JOIN_MESSAGES.notChecked.startsWith(h.NOT_CHECKED_LEAD), "the app reads the server's own copy");
+  const unchecked = view({ state: 'not-admitted', attempts: 1, lastAttemptAt: at(-3), message: LIVE_JOIN_MESSAGES.notChecked }, 200);
+  assert.equal(unchecked.label, 'Fireflies ble sendt inn – ikke sjekket om den kom inn');
+  assert.equal(unchecked.short, 'Ikke sjekket');
+  assert.equal(unchecked.tone, 'amber');
+  const keptOut = view({ state: 'not-admitted', attempts: 1, lastAttemptAt: at(-3), message: LIVE_JOIN_MESSAGES.notAdmitted }, 200);
+  assert.equal(keptOut.label, 'Fireflies kom ikke inn i møtet');
+  assert.equal(keptOut.tone, 'red');
+  assert.equal(h.recordingStateLabel('not-admitted', { message: LIVE_JOIN_MESSAGES.notChecked }), unchecked.label);
+  assert.equal(h.recordingStateLabel('missing', { message: LIVE_JOIN_MESSAGES.notChecked }), 'Ingen opptak fra Fireflies');
+  for (const [file, snippet] of [
+    ['app/pages/Admin/sections/MeetingRecordingControls.tsx', 'recordingStateLabel(state, { hasTranscript, message })'],
+    ['app/pages/Admin/sections/MissingRecordingsPanel.tsx', '<RecordingChip state={row.state} message={row.message} />'],
+    ['app/pages/Admin/sections/MeetingDataPanel.tsx', '<RecordingChip state={recording.state} message={recording.message} />'],
+    ['app/pages/Admin/sections/ClientRecordingsPanel.tsx', '<RecordingChip state={state} message={row.recording?.message} />'],
+    ['app/pages/Admin/sections/ClientActivityLogCover.tsx', '<RecordingChip state={state} message={message} />'],
+    ['app/pages/Admin/sections/ClientNotesFeed.tsx', 'message: meeting.recordingMessage || row?.recording?.message'],
+    ['app/pages/sales/SalesOfferComposer.tsx', 'recordingStateLabel(state, { message })'],
+  ]) assert.ok(read(file).includes(snippet), file);
+});
+
 test('knocks are found across clients, and a knock sorts first on its card', () => {
   const now = START - MIN;
   const a = { id: 'a', businessName: 'Testfirma AS', meetingDurationMinutes: 60, liveRecordings: [entry({ state: 'dispatched', lastAttemptAt: at(-3) })] };

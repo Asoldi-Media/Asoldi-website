@@ -55,7 +55,7 @@ export function ClientRecordingsPanel({ client, onClient, isAdmin = false }: {
                 <span className="text-gray-200">{row.title || 'Møte'}{row.when ? ` · ${row.when}` : ''}</span>
                 {placeholder ? (
                   <>
-                    {state ? <RecordingChip state={state} /> : <span className="text-gray-400">Ingen opptak koblet ennå</span>}
+                    {state ? <RecordingChip state={state} message={row.recording?.message} /> : <span className="text-gray-400">Ingen opptak koblet ennå</span>}
                     <PlaceholderRecordingActions clientId={client.id} meetingId={row.meetingId} state={state} onClient={onClient} />
                   </>
                 ) : (

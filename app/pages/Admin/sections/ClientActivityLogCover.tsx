@@ -94,7 +94,7 @@ export function ClientActivityLogCover({ client, onClose, onClient, isAdmin = fa
             <span className="px-2 py-1 rounded-md bg-white/10 text-gray-300">
               {meeting.title}{meeting.when ? ` · ${meeting.when}` : ''}
             </span>
-            {state ? <RecordingChip state={state} /> : <span className="text-gray-400">Ingen opptak koblet ennå</span>}
+            {state ? <RecordingChip state={state} message={message} /> : <span className="text-gray-400">Ingen opptak koblet ennå</span>}
             <PlaceholderRecordingActions clientId={current.id} meetingId={meeting.meetingId} state={state} onClient={applyClient} />
           </div>
           {message ? <p className="text-[11px] text-gray-400">{message}</p> : null}

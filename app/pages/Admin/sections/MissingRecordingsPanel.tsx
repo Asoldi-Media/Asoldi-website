@@ -83,7 +83,7 @@ export function MissingRecordingsPanel({ active = true, nowMs, refreshKey = 0, o
                 <span className="text-[11px] text-gray-400">
                   {[slotKindLabel(row.kind), recordingWhen(row.startedAt, nowMs)].filter(Boolean).join(' · ')}
                 </span>
-                <RecordingChip state={row.state} />
+                <RecordingChip state={row.state} message={row.message} />
               </div>
               {row.message ? <p className="text-[11px] text-gray-400">{row.message}</p> : null}
               <div className="flex flex-wrap items-center gap-1.5">

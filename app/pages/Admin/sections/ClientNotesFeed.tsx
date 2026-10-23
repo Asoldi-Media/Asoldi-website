@@ -25,6 +25,7 @@ type LogRow = {
     hasTranscript: boolean;
     placeholder?: boolean;
     recordingState?: string;
+    recordingMessage?: string;
   } | null;
 };
 
@@ -58,7 +59,9 @@ export function clientFeedMessages(
   const meetingStatus = (meeting: NonNullable<LogRow['meeting']>) => {
     const row = clientRows.get(meeting.meetingId) || null;
     if (meeting.placeholder || isPlaceholderRow(row || { meetingId: meeting.meetingId })) {
-      const label = recordingStateLabel(meeting.recordingState || row?.recording?.state || '');
+      const label = recordingStateLabel(meeting.recordingState || row?.recording?.state || '', {
+        message: meeting.recordingMessage || row?.recording?.message || '',
+      });
       return ` · ${label || 'Ingen opptak koblet ennå'}`;
     }
     if (isDuplicateRow(row)) return ' · duplikat';

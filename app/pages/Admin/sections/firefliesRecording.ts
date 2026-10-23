@@ -89,8 +89,20 @@ export function recordingWhen(iso = '', nowMs = Date.now()) {
   return `${dayText} kl. ${local.slice(11, 16)}`;
 }
 
-/** The status line for one meeting. `at` is when the bot goes in (scheduled only). */
-export function recordingStateLabel(state = '', { at = '', hasTranscript = false } = {}) {
+/**
+ * How the server's 'not-admitted' copy starts when the hub never looked at the room after the send
+ * (LIVE_JOIN_MESSAGES.notChecked in lib/fireflies-live-sessions.js): the bot may have been in, so no screen
+ * says it was kept out.
+ */
+export const NOT_CHECKED_LEAD = 'Fireflies ble sendt inn, men Asoldi fikk ikke sjekket';
+
+function notChecked(state = '', message = '') {
+  return state === 'not-admitted' && String(message || '').startsWith(NOT_CHECKED_LEAD);
+}
+
+/** The status line for one meeting. `at` is when the bot goes in (scheduled only); `message` is the row's own copy. */
+export function recordingStateLabel(state = '', { at = '', hasTranscript = false, message = '' } = {}) {
+  if (notChecked(state, message)) return 'Fireflies ble sendt inn – ikke sjekket om den kom inn';
   switch (state) {
     case 'scheduled': {
       const clock = recordingClock(at);
@@ -116,7 +128,8 @@ export function recordingStateLabel(state = '', { at = '', hasTranscript = false
 }
 
 /** Short form for chips on compact cards. */
-export function recordingStateShortLabel(state = '', { at = '', hasTranscript = false } = {}) {
+export function recordingStateShortLabel(state = '', { at = '', hasTranscript = false, message = '' } = {}) {
+  if (notChecked(state, message)) return 'Ikke sjekket';
   switch (state) {
     case 'scheduled': {
       const clock = recordingClock(at);
@@ -141,8 +154,8 @@ export function recordingStateShortLabel(state = '', { at = '', hasTranscript = 
   }
 }
 
-export function recordingStateTone(state = '', { hasTranscript = false } = {}): RecordingTone {
-  if (state === 'dispatched' || state === 'empty') return 'amber';
+export function recordingStateTone(state = '', { hasTranscript = false, message = '' } = {}): RecordingTone {
+  if (state === 'dispatched' || state === 'empty' || notChecked(state, message)) return 'amber';
   if (state === 'not-admitted' || state === 'missing') return 'red';
   if (state === 'recording' || (state === 'ended' && hasTranscript)) return 'green';
   if (state === 'declined') return 'grey';
@@ -268,12 +281,8 @@ export function liveRecordingView(entry: SalesLiveRecording, { nowMs = Date.now(
       return view('Fireflies gikk ut av møtet', 'Fireflies gikk ut', 'amber');
     }
   }
-  const tone = recordingStateTone(state, { hasTranscript: entry.hasTranscript });
-  return view(
-    recordingStateLabel(state, { hasTranscript: entry.hasTranscript }),
-    recordingStateShortLabel(state, { hasTranscript: entry.hasTranscript }),
-    tone,
-  );
+  const facts = { hasTranscript: entry.hasTranscript, message: entry.message };
+  return view(recordingStateLabel(state, facts), recordingStateShortLabel(state, facts), recordingStateTone(state, facts));
 }
 
 export function liveRecordingLabel(entry: SalesLiveRecording, options: { nowMs?: number; bookedMinutes?: number } = {}) {
@@ -438,8 +447,9 @@ export function salesRecordingWithTalk(client?: SalesClient | null) {
 export function salesRecordingSummary(client: SalesClient, { nowMs = Date.now(), hasMeetLink = false } = {}) {
   const slot = salesSlotRecording(client, nowMs);
   if (slot) {
-    const label = slot.view?.label || recordingStateLabel(slot.state, { at: slot.at, hasTranscript: slot.hasTranscript });
-    const tone = slot.view?.tone || recordingStateTone(slot.state, { hasTranscript: slot.hasTranscript });
+    const facts = { at: slot.at, hasTranscript: slot.hasTranscript, message: slot.message };
+    const label = slot.view?.label || recordingStateLabel(slot.state, facts);
+    const tone = slot.view?.tone || recordingStateTone(slot.state, facts);
     return { state: slot.state, tone, hasTranscript: slot.hasTranscript, text: label, detail: slot.message !== label ? slot.message : '' };
   }
   const real = salesRecordingWithTalk(client);

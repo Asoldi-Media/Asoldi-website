@@ -52,17 +52,19 @@ export async function freshClientAfter(clientId: string, data?: { client?: Sales
   }
 }
 
-export function RecordingChip({ state, hasTranscript = false, label = '', title = '', tone: toneOverride }: {
+export function RecordingChip({ state, hasTranscript = false, message = '', label = '', title = '', tone: toneOverride }: {
   state: string;
   hasTranscript?: boolean;
+  /** The row's own copy: a send the hub never checked reads "ikke sjekket", not "kom ikke inn". */
+  message?: string;
   label?: string;
   title?: string;
   /** When the label says more than the state (a blocked or late send). */
   tone?: RecordingTone;
 }) {
-  const text = label || recordingStateLabel(state, { hasTranscript });
+  const text = label || recordingStateLabel(state, { hasTranscript, message });
   if (!text) return null;
-  const tone = toneOverride || recordingStateTone(state, { hasTranscript });
+  const tone = toneOverride || recordingStateTone(state, { hasTranscript, message });
   return (
     <span title={title || undefined} className={`inline-flex items-center px-2 py-0.5 rounded border text-[11px] ${RECORDING_TONE_CLASS[tone]}`}>
       {text}
