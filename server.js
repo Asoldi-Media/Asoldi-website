@@ -14204,7 +14204,7 @@ app.post('/api/admin/sales/backfill-integrity', salesAuth, async (req, res) => {
     const effectiveBaseUrl =
       sanitizeText(req.body?.baseUrl) ||
       sanitizeText(process.env.PUBLIC_API_BASE_URL) ||
-      getRequestBaseUrl(req) ||
+      resolveRequestBaseUrl(req) ||
       '';
     const result = await runSalesDataIntegrityBackfill({
       dryRun,
