@@ -119,10 +119,98 @@ test('applyRunAiSpendCallback stores the snapshot on the client and in the per-r
   assert.equal(ledger.makerSpendFor('linked').totalUsd, 2);
 });
 
+// The body the Maker sends (website-maker lib/sales-sync.js buildRunAiSpendPayload through
+// postSalesCallback): ledger v2 groups { usd, calls } per task and provider, plus run fields the hub ignores.
+function makerSpendBody({ runId = 'run-linked', salesClientId = 'linked', at = '2026-10-23T13:00:00.000Z' } = {}) {
+  return {
+    at,
+    runId,
+    source: 'sales',
+    salesClientId,
+    salesOrderId: '',
+    event: 'run.ai.spend',
+    totalUsd: 0.42,
+    byTask: {
+      'step2.copywriter': { usd: 0.3, calls: 4 },
+      'seo.meta': { usd: 0.12, calls: 2 },
+    },
+    byProvider: { claude: { usd: 0.4, calls: 5 }, deepseek: { usd: 0.02, calls: 1 } },
+    calls: 6,
+    unverifiedUsd: 0.01,
+    target: '2.1',
+    status: 'done',
+    ledgerVersion: 2,
+  };
+}
+
+test('normalizeRunAiSpend reads the Maker\'s { usd, calls } groups and stores a shape that reads back unchanged', () => {
+  const stored = normalizeRunAiSpend(makerSpendBody(), { runId: 'run-linked', receivedAt: '2026-10-23T13:00:01Z' });
+  assert.deepEqual(stored, {
+    runId: 'run-linked',
+    totalUsd: 0.42,
+    byTask: { 'step2.copywriter': 0.3, 'seo.meta': 0.12 },
+    callsByTask: { 'step2.copywriter': 4, 'seo.meta': 2 },
+    byProvider: { claude: 0.4, deepseek: 0.02 },
+    at: '2026-10-23T13:00:00.000Z',
+    receivedAt: '2026-10-23T13:00:01.000Z',
+    calls: 6,
+    unverifiedUsd: 0.01,
+  });
+  assert.deepEqual(normalizeRunAiSpend(stored), stored, 'the stored shape normalizes to itself');
+  // Without totalUsd the total is the sum of the task groups (not a 400).
+  const { totalUsd, ...noTotal } = makerSpendBody();
+  assert.equal(totalUsd, 0.42);
+  assert.equal(normalizeRunAiSpend(noTotal).totalUsd, 0.42);
+  // Bad groups are skipped one by one: no amount, a negative amount, a bad call count.
+  const mixed = normalizeRunAiSpend({ totalUsd: 1, byTask: { 'a.ok': { usd: 0.5, calls: 2 }, 'b.none': { calls: 3 }, 'c.neg': { usd: -1 }, 'd.calls': { usd: 0.1, calls: 1.5 }, 'e.num': 0.2 } });
+  assert.deepEqual(mixed.byTask, { 'a.ok': 0.5, 'd.calls': 0.1, 'e.num': 0.2 });
+  assert.deepEqual(mixed.callsByTask, { 'a.ok': 2 });
+});
+
+test('applyRunAiSpendCallback keeps the Maker\'s per-task spend on the client, in the per-run history and in the spend totals', () => {
+  sales.replaceSalesMakerRun('linked', { runId: 'run-linked' });
+  const dir = mkdtempSync(join(tmpdir(), 'asoldi-ai-spend-maker-'));
+  const ledger = createHubLedger({ dataDir: dir });
+  const result = applyRunAiSpendCallback({ sales, client: sales.getSalesClientById('linked'), runId: 'run-linked', body: makerSpendBody(), ledger });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(result.body.stored, true);
+  const onClient = diskClient(unitDir, 'linked').makerRun.aiSpend;
+  assert.deepEqual(onClient.byTask, { 'step2.copywriter': 0.3, 'seo.meta': 0.12 });
+  assert.deepEqual(onClient.callsByTask, { 'step2.copywriter': 4, 'seo.meta': 2 });
+  assert.deepEqual(onClient.byProvider, { claude: 0.4, deepseek: 0.02 });
+  assert.equal(onClient.unverifiedUsd, 0.01);
+  const history = JSON.parse(readFileSync(join(dir, 'ai', 'maker-spend.json'), 'utf8')).clients.linked.runs['run-linked'];
+  assert.deepEqual(history.byTask, { 'step2.copywriter': 0.3, 'seo.meta': 0.12 });
+  const spend = ledger.makerSpendFor('linked');
+  assert.equal(spend.totalUsd, 0.42);
+  assert.deepEqual(spend.byTask, { 'step2.copywriter': 0.3, 'seo.meta': 0.12 });
+  assert.deepEqual(spend.byProvider, { claude: 0.4, deepseek: 0.02 });
+  assert.equal(spend.calls, 6);
+});
+
+test('Maker spend in a date range: a run counts at its newest snapshot time, and the current run is never added twice', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'asoldi-ai-spend-range-'));
+  const ledger = createHubLedger({ dataDir: dir });
+  const october = { runId: 'run-oct', totalUsd: 3, byTask: { 'step2.copywriter': 3 }, at: '2026-10-15T10:00:00.000Z' };
+  ledger.recordMakerSpend('c-range', october);
+  const range = (month) => ({ from: `${month}-01T00:00:00.000Z`, to: new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 1) - 1).toISOString() });
+  assert.equal(ledger.makerSpendFor('c-range', range('2026-10')).totalUsd, 3);
+  // The client's current snapshot is the same run (already in the history): not counted again, in no month.
+  assert.equal(ledger.makerSpendFor('c-range', { ...range('2026-10'), current: october }).totalUsd, 3);
+  assert.equal(ledger.makerSpendFor('c-range', { ...range('2026-11'), current: october }).totalUsd, 0);
+  assert.equal(ledger.makerSpendFor('c-range', { ...range('2026-09'), current: october }).totalUsd, 0);
+  // A current run the history does not have (its history write failed) counts only in its own month.
+  const lost = { runId: 'run-lost', totalUsd: 2, byTask: { 'seo.meta': 2 }, at: '2026-11-03T09:00:00.000Z' };
+  assert.equal(ledger.makerSpendFor('c-range', { ...range('2026-11'), current: lost }).totalUsd, 2);
+  assert.deepEqual(ledger.makerSpendFor('c-range', { ...range('2026-11'), current: lost }).byTask, { 'seo.meta': 2 });
+  assert.equal(ledger.makerSpendFor('c-range', { ...range('2026-10'), current: lost }).totalUsd, 3);
+  assert.equal(ledger.makerSpendFor('c-range', { current: lost }).totalUsd, 5, 'no range: every run');
+});
+
 // ---------------------------------------------------------------- AI admin routes in this process
 // registerAiAdminRoutes on a bare express app (127.0.0.1, admin check stubbed): this process has no
 // safe mode and no AI_PROFILE, like a production hub.
-async function adminRoutesApp({ registered }) {
+async function adminRoutesApp({ registered, sales: salesStub = null }) {
   const express = (await import('express')).default;
   const { registerAiAdminRoutes } = await import('../lib/llm/routes.js');
   const { createHubLlm } = await import('../lib/llm/index.js');
@@ -130,7 +218,7 @@ async function adminRoutesApp({ registered }) {
   const facade = createHubLlm({ dataDir: dir, env: { ANTHROPIC_API_KEY: '' }, log: { warn() {}, log() {} } });
   const app = express();
   app.use(express.json());
-  registerAiAdminRoutes(app, { adminAuth: (req, res, next) => next(), registered: () => (registered ? facade : null), facade: () => facade });
+  registerAiAdminRoutes(app, { adminAuth: (req, res, next) => next(), sales: salesStub, registered: () => (registered ? facade : null), facade: () => facade });
   const server = await new Promise((resolve) => {
     const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
   });
@@ -140,8 +228,33 @@ async function adminRoutesApp({ registered }) {
     return { status: res.status, body: await res.json() };
   };
   const status = async () => (await fetch(`${base}/api/admin/ai/status`)).json();
-  return { dir, facade, put, status, close: () => new Promise((resolve) => server.close(resolve)) };
+  const spend = async (query) => (await fetch(`${base}/api/admin/ai/spend?${new URLSearchParams(query)}`)).json();
+  return { dir, facade, put, status, spend, close: () => new Promise((resolve) => server.close(resolve)) };
 }
+
+test('GET /api/admin/ai/spend?salesClientId= counts the client\'s current run only in the range of its snapshot time', async () => {
+  const october = { runId: 'run-oct', totalUsd: 3, byTask: { 'step2.copywriter': 3 }, at: '2026-10-15T10:00:00.000Z' };
+  let current = october;
+  const app = await adminRoutesApp({ registered: true, sales: { getSalesClientById: (id) => (id === 'c-range' ? { id, makerRun: { runId: current.runId, aiSpend: current } } : null) } });
+  try {
+    app.facade.ledger.recordMakerSpend('c-range', october);
+    const month = (from, to) => app.spend({ salesClientId: 'c-range', from, to });
+    assert.equal((await month('2026-10-01T00:00:00Z', '2026-10-31T23:59:59Z')).maker.totalUsd, 3);
+    const november = await month('2026-11-01T00:00:00Z', '2026-11-30T23:59:59Z');
+    assert.equal(november.maker.totalUsd, 0, 'an October run is not November spend');
+    assert.deepEqual(november.maker.runs, []);
+    assert.equal(november.totalUsd, 0);
+    assert.equal((await month('2026-09-01T00:00:00Z', '2026-09-30T23:59:59Z')).maker.totalUsd, 0);
+    // A current run that never reached the per-run history counts in its own month only.
+    current = { runId: 'run-new', totalUsd: 2, byTask: { 'seo.meta': 2 }, at: '2026-11-03T09:00:00.000Z' };
+    const withNew = await month('2026-11-01T00:00:00Z', '2026-11-30T23:59:59Z');
+    assert.equal(withNew.maker.totalUsd, 2);
+    assert.deepEqual(withNew.maker.byTask, { 'seo.meta': 2 });
+    assert.equal((await month('2026-10-01T00:00:00Z', '2026-10-31T23:59:59Z')).maker.totalUsd, 3);
+  } finally {
+    await app.close();
+  }
+});
 
 test('PUT /api/admin/ai/routes: outside safe mode the override may choose legacy or prod only', async () => {
   delete process.env.AI_PROFILE;
@@ -302,6 +415,22 @@ test('server: run.ai.spend callback, AI spend and status endpoints, and the rout
     const respend = await (await fetch(`${hub.base}/api/admin/ai/spend?salesClientId=c-spend`, { headers: admin })).json();
     assert.equal(respend.maker.totalUsd, 2, 'the run is counted once, with its newest snapshot');
     assert.equal(respend.totalUsd, 2.25);
+    // The Maker's own body (ledger v2 groups): the per-task spend reaches the client, the history and the endpoint.
+    const makerBody = makerSpendBody({ runId: 'run-1', salesClientId: 'c-spend', at: `${month}-04T10:00:00.000Z` });
+    const fromMaker = await callback(makerBody);
+    assert.equal(fromMaker.status, 200);
+    assert.equal((await fromMaker.json()).stored, true);
+    assert.deepEqual(onDisk().byTask, { 'step2.copywriter': 0.3, 'seo.meta': 0.12 });
+    const history = JSON.parse(readFileSync(join(hub.dataDir, 'ai', 'maker-spend.json'), 'utf8')).clients['c-spend'].runs['run-1'];
+    assert.deepEqual(history.byTask, { 'step2.copywriter': 0.3, 'seo.meta': 0.12 });
+    const makerSpend = await (await fetch(`${hub.base}/api/admin/ai/spend?salesClientId=c-spend`, { headers: admin })).json();
+    assert.equal(makerSpend.maker.totalUsd, 0.42);
+    assert.deepEqual(makerSpend.maker.byTask, { 'step2.copywriter': 0.3, 'seo.meta': 0.12 });
+    assert.deepEqual(makerSpend.maker.byProvider, { claude: 0.4, deepseek: 0.02 });
+    // A range before the run: neither the history nor the client's current run counts.
+    const before = await (await fetch(`${hub.base}/api/admin/ai/spend?salesClientId=c-spend&from=2020-01-01T00:00:00Z&to=2020-01-31T23:59:59Z`, { headers: admin })).json();
+    assert.equal(before.maker.totalUsd, 0);
+    assert.equal(before.totalUsd, 0);
     assert.equal((await fetch(`${hub.base}/api/admin/ai/spend?from=not-a-date`, { headers: admin })).status, 400);
     assert.equal((await fetch(`${hub.base}/api/admin/ai/spend?by=nonsense`, { headers: admin })).status, 400);
 
