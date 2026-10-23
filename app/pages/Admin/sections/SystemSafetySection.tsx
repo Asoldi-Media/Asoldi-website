@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { RefreshCw, ShieldCheck, ShieldOff } from 'lucide-react';
 import { API, authHeaders } from '../shared';
+import { MakerHostsCard } from './MakerHostsCard';
 
 type EgressRule = { key: string; label: string; on: boolean; readOnly: boolean; hosts: string[] };
 type Intent = { at: string; kind: string; detail: string; layer?: string; host?: string };
@@ -154,6 +155,8 @@ export function SystemSafetySection() {
           {!!snapshot.unknownAllow?.length && <p className="text-amber-400 mt-1">Ignored unknown HUB_SAFE_MODE_ALLOW keys: {snapshot.unknownAllow.join(', ')}</p>}
         </div>
       </div>
+
+      <MakerHostsCard />
 
       {snapshot.safeMode && (
         <div className="grid gap-4 md:grid-cols-3">
