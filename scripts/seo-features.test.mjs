@@ -64,11 +64,15 @@ test('owner decisions: blog on every tier, auto posts and the backlink network T
 test('the tier fallback gives the same result as a resolved tree for the 3 tiers', () => {
   for (const [tier, keys] of Object.entries(EXPECTED)) {
     const fromTier = seoFeaturesForSite(site(tier));
-    // A WS6-shaped effective tree carrying unrelated keys too.
-    const tree = { effective: [...keys, 'shop', 'shop.checkout', 'users'] };
+    // A WS6 resolveFeatures-shaped tree ({nodes, effective}) carrying unrelated keys too.
+    const tree = { nodes: [...SEO_FEATURE_KEYS, 'shop', 'shop.checkout', 'users'].map((key) => ({ key })), effective: new Set([...keys, 'shop', 'shop.checkout', 'users']) };
     const fromTree = seoFeaturesForSite(site(tier), { featureTree: tree });
     assert.equal(fromTree.source, 'tree');
+    assert.deepEqual(fromTree.fallbackKeys, []);
     assert.deepEqual(fromTree.list, fromTier.list, tier);
+    // A bare effective list only decides the keys it lists; the rest keep the tier value.
+    const bare = seoFeaturesForSite(site(tier), { featureTree: { effective: [...keys, 'shop'] } });
+    assert.deepEqual(bare.list, fromTier.list, `${tier} (bare list)`);
     const objectTree = Object.fromEntries(SEO_FEATURE_KEYS.map((k) => [k, keys.includes(k)]));
     assert.deepEqual(seoFeaturesForSite(site(tier), { featureTree: objectTree }).list, fromTier.list, `${tier} (object tree)`);
   }
@@ -126,4 +130,37 @@ test('feature keys never reuse CMS feeler names (feelers carry no seo. prefix)',
   // featuresFromPlan is still the legacy 7-flag source the fallback reads by tier.
   assert.equal(featuresFromPlan('tier-2-seo').blog, true);
   assert.deepEqual([...seoKeysForServices(['site', 'dashboard'])].includes('seo.reports.advanced'), false, 'dashboard alone has no report parent');
+});
+
+test('a tree that does not carry the SEO keys yet keeps the tier value per key (never switches them off)', () => {
+  const tier2 = site('tier-2-seo');
+  // WS6 tree that knows only non-SEO keys: treated as absent for SEO.
+  const nonSeo = { nodes: [{ key: 'shop' }, { key: 'users' }], effective: new Set(['users']) };
+  const a = seoFeaturesForSite(tier2, { featureTree: nonSeo });
+  assert.equal(a.source, 'tier-fallback');
+  for (const key of ['blog.autoPosts', 'seo.linkNetwork', 'seo.tracking.organic', 'seo.liveAudit']) assert.equal(a.has(key), true, key);
+
+  // WS6 tree that knows the older SEO keys but not blog.autoPosts, seo.tracking.aiAssistants,
+  // seo.liveAudit or seo.multilingual: those fall back to the tier, the rest follow the tree.
+  const missing = new Set(['blog.autoPosts', 'blog.posts', 'seo.tracking.aiAssistants', 'seo.liveAudit', 'seo.multilingual']);
+  const knownKeys = SEO_FEATURE_KEYS.filter((k) => !missing.has(k));
+  const partial = {
+    nodes: [...knownKeys, 'shop'].map((key) => ({ key })),
+    effective: new Set(knownKeys.filter((k) => k !== 'seo.searchConsole')),
+  };
+  const b = seoFeaturesForSite(tier2, { featureTree: partial });
+  assert.equal(b.source, 'tree+tier-fallback');
+  assert.deepEqual([...b.fallbackKeys].sort(), [...missing].sort());
+  assert.equal(b.has('blog.autoPosts'), true, 'tier 2 keeps auto posts');
+  assert.equal(b.has('seo.linkNetwork'), true, 'tier 2 keeps the link network');
+  assert.equal(b.has('seo.tracking.aiAssistants'), true);
+  assert.equal(b.has('seo.liveAudit'), true);
+  assert.equal(b.has('seo.multilingual'), false, 'tier 2 has no multilingual in the tier map either');
+  assert.equal(b.has('seo.searchConsole'), false, 'a key the tree knows and leaves off stays off');
+  assert.equal(seoJobAllowed(tier2, 'blog-scheduler', { featureTree: partial }).allowed, true);
+
+  // Object-form tree with an explicit off still wins for the keys it mentions.
+  const c = seoFeaturesForSite(tier2, { featureTree: { 'seo.linkNetwork': false, shop: true } });
+  assert.equal(c.has('seo.linkNetwork'), false);
+  assert.equal(c.has('blog.autoPosts'), true);
 });
