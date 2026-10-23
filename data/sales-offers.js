@@ -376,9 +376,14 @@ export function getOfferForClient(salesClientId) {
   return readAll().filter((offer) => offer.salesClientId === target).sort(byUpdatedDesc)[0] || null;
 }
 
-export function countOffersByStatus() {
+/** Offer counts per status. `excludeSalesClientIds` leaves out test clients (WS8.56). */
+export function countOffersByStatus({ excludeSalesClientIds = null } = {}) {
+  const skip = excludeSalesClientIds instanceof Set ? excludeSalesClientIds : new Set(excludeSalesClientIds || []);
   const counts = Object.fromEntries(OFFER_STATUSES.map((status) => [status, 0]));
-  for (const offer of readAll()) counts[offer.status] = (counts[offer.status] || 0) + 1;
+  for (const offer of readAll()) {
+    if (skip.has(offer.salesClientId)) continue;
+    counts[offer.status] = (counts[offer.status] || 0) + 1;
+  }
   return counts;
 }
 

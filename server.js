@@ -32,6 +32,7 @@ import { registerShopPaymentsRoutes, registerShopPaymentsWebhook } from './lib/s
 import { registerCmsSsoRoutes } from './lib/cms-sso.js';
 import { registerDeliveryRoutes } from './lib/routes/delivery-routes.js';
 import { runDeliverySchemaStartupSnapshot } from './lib/delivery-snapshots.js';
+import { myphonerSyncSkipReason, testClientIdSet } from './lib/test-clients.js';
 import * as employees from './data/employees.js';
 import * as sales from './data/sales.js';
 import { SALES_CONTACT_CORRECTIONS } from './data/sales-contact-corrections.js';
@@ -6019,6 +6020,7 @@ async function upsertSalesClientFromMyphonerLead({
   const source = lead && typeof lead === 'object' ? lead : {};
   const leadId = getMyphonerLeadId(source, resourcePath);
   const existing = findSalesClientForMyphonerLead(source, resourcePath);
+  if (myphonerSyncSkipReason(existing)) return { client: existing, created: false, warnings: [], skipped: 'test-client' };
   const incomingInput = buildSalesInputFromMyphonerLead(source, resourcePath);
   const leadDataMap = getLeadDataMap(source);
   const winnerCommentText = pickFirstNonEmpty([
@@ -17539,7 +17541,7 @@ app.get('/api/admin/offers', salesAuth, async (req, res) => {
   for (const offer of offers) rows.push(await offerListRow(offer, ownerNames));
   res.json({
     offers: rows,
-    counts: salesOffers.countOffersByStatus(),
+    counts: salesOffers.countOffersByStatus({ excludeSalesClientIds: testClientIdSet(sales.getSalesClients()) }),
     unmatchedMeetings: listStoredFirefliesMeetings({ unmatchedOnly: true }).length,
   });
 });

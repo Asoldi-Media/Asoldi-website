@@ -86,6 +86,7 @@ import {
 } from '../../sales/websiteMaker';
 import type { MeetingQuoteState } from '../../sales/websitePricing';
 import { WEBSITE_TIERS, formatMonthlyPrice } from '../../../../lib/website-tiers.js';
+import { TestFlagToggle } from './TestFlagToggle';
 import 'leaflet/dist/leaflet.css';
 
 type WebsiteOffer = {
@@ -4479,7 +4480,14 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
               </div>
 
               {editingId && (
-                <div className="md:col-span-2 flex flex-wrap gap-2">
+                <div className="md:col-span-2 flex flex-wrap items-center gap-2">
+                  {isSalesAdmin && (
+                    <TestFlagToggle
+                      kind="client"
+                      id={editingId}
+                      initial={clients.find((entry) => entry.id === editingId)?.isTest === true}
+                    />
+                  )}
                   <button
                     type="button"
                     onClick={() => {
