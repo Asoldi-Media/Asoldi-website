@@ -60,7 +60,8 @@ export function ClientActivityLogCover({ client, onClose, onClient, isAdmin = fa
   const [showDuplicates, setShowDuplicates] = useState(false);
   useEffect(() => setFresh(null), [client]);
   const current = fresh && fresh.id === client.id ? fresh : client;
-  const log = useMemo(() => buildClientActivityLog(current) as { sections: LogSection[] }, [current]);
+  // Copies come along as rows of their own, so "Vis duplikater" can show them.
+  const log = useMemo(() => buildClientActivityLog(current, { includeDuplicates: true }) as { sections: LogSection[] }, [current]);
   const rowsById = useMemo(() => {
     const map = new Map<string, SalesClientMeeting>();
     for (const row of Array.isArray(current.meetings) ? current.meetings : []) map.set(row.meetingId, row);
