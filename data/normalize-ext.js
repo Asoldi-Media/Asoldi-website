@@ -115,3 +115,15 @@ export function carryFutureKeys(target, raw, keys) {
 export function pickFutureKeys(raw, keys) {
   return carryFutureKeys({}, raw, keys);
 }
+
+/**
+ * A shallow copy of `raw` without the listed keys. Writers use it on incoming patches, so a key a
+ * later batch owns is only ever copied from the stored record, never from a request body.
+ * Anything that is not a plain object is returned unchanged.
+ */
+export function withoutKeys(raw, keys) {
+  if (!isPlainObject(raw)) return raw;
+  const out = { ...raw };
+  for (const key of keys) delete out[key];
+  return out;
+}

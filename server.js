@@ -16567,7 +16567,7 @@ function offerPatchFromBody(body = {}, current = {}) {
   const mvaIncluded = mvaChanged ? body.mvaIncluded : Boolean(current.mvaIncluded);
   if (mvaChanged) patch.mvaIncluded = mvaIncluded;
 
-  let products = Array.isArray(body.products) ? salesOffers.normalizeOfferProducts(body.products) : null;
+  let products = Array.isArray(body.products) ? salesOffers.normalizeOfferProducts(body.products, { strict: true }) : null;
   const tierChanged = typeof body.tierId === 'string' && sanitizeText(body.tierId) !== sanitizeText(current.tierId);
   if (tierChanged) {
     const tierId = salesOffers.normalizeOfferTierId(body.tierId) || (sanitizeText(body.tierId) === '' ? '' : current.tierId);

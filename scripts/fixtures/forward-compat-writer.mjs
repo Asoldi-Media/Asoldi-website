@@ -1,7 +1,8 @@
 // Child process for scripts/forward-compat-revert.test.mjs.
 // Runs the hub's data layer from --code-root (the current tree or an older commit) against
 // APP_DATA_DIR and performs ordinary writes: one client update, a makerRun merge, a hubSite merge,
-// a site update, a CMS heartbeat, the delivery-phase reconcile and an offer update.
+// a site update (plain and with a cms patch), a CMS heartbeat, the delivery-phase reconcile, an
+// offer update and a product edit on that offer.
 import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 
@@ -34,4 +35,12 @@ if (typeof hub.reconcileDeliveryPhases === 'function') {
 }
 offers.updateSalesOffer('fc-offer', { adminNote: 'touched by the older code' });
 done.push('updateSalesOffer');
+// A rep's product edit as the composer sends it: the stored product (same id) without the keys
+// this code does not know, at a new price. The stored product keys must survive it.
+offers.updateSalesOffer('fc-offer', {
+  products: offers.normalizeOfferProducts([{ id: 'p-Site', kind: 'custom', name: 'Site', priceExMva: 2099 }], { strict: true }),
+});
+done.push('updateSalesOffer(products)');
+hub.updateSite('fc-site', { cms: { githubRepo: 'org/repo-2' } });
+done.push('updateSite(cms)');
 console.log(JSON.stringify({ ok: true, done }));

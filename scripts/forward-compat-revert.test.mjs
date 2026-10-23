@@ -2,8 +2,8 @@
 //
 // The fixture data dir holds every key in data/normalize-ext.js (what later batches write). A child
 // process runs the hub data layer against it and performs one client update, makerRun and hubSite
-// merges, a site update, a heartbeat, the delivery-phase reconcile and an offer update. Then every
-// key must still be there, unchanged.
+// merges, site updates (with and without a cms patch), a heartbeat, the delivery-phase reconcile,
+// an offer update and a rep-style product edit. Then every key must still be there, unchanged.
 //
 // By default the child runs this working tree (the code a later batch would be reverted to).
 // FORWARD_COMPAT_REF=<git ref> runs that commit instead, extracted with `git archive` into
@@ -157,7 +157,9 @@ test(`keys written by later batches survive writes by ${ref ? `commit ${ref}` : 
     assert.equal(savedClient.notes, 'touched by the older code');
     assert.equal(savedClient.hubSite.liveUrl, 'https://forward-compat.test');
     assert.equal(savedSite.name, 'Touched site');
+    assert.equal(savedSite.cms.githubRepo, 'org/repo-2');
     assert.equal(savedOffer.adminNote, 'touched by the older code');
+    assert.equal(savedOffer.products[0].priceExMva, 2099, 'the product edit applied');
 
     const lost = [];
     const check = (label, holder, keys) => {

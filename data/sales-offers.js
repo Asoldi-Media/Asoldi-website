@@ -10,6 +10,7 @@ import {
   FUTURE_OFFER_ALTERNATIVE_KEYS,
   FUTURE_OFFER_KEYS,
   FUTURE_OFFER_PRODUCT_KEYS,
+  withoutKeys,
 } from './normalize-ext.js';
 
 /**
@@ -408,11 +409,72 @@ export function createSalesOffer(input = {}, { actor = '' } = {}) {
   return offer;
 }
 
-export function updateSalesOffer(id, patch = {}, { actor = '', action = 'updated', note = '' } = {}) {
+function isPlainRecord(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Stored products by id: the offer's own, each alternative's and the contract summary's. */
+function storedProductsById(current = {}) {
+  const byId = new Map();
+  const add = (list) => {
+    for (const item of Array.isArray(list) ? list : []) {
+      const id = sanitizeText(item?.id);
+      if (id && !byId.has(id)) byId.set(id, item);
+    }
+  };
+  add(current?.products);
+  for (const alternative of Array.isArray(current?.alternatives) ? current.alternatives : []) add(alternative?.products);
+  add(current?.contract?.summary?.products);
+  return byId;
+}
+
+function guardPatchProducts(list, stored) {
+  if (!Array.isArray(list)) return list;
+  return list.map((item) => {
+    if (!isPlainRecord(item)) return item;
+    const clean = withoutKeys(item, FUTURE_OFFER_PRODUCT_KEYS);
+    const prior = stored.get(sanitizeText(item.id));
+    return prior ? carryFutureKeys(clean, prior, FUTURE_OFFER_PRODUCT_KEYS) : clean;
+  });
+}
+
+/**
+ * WS8.44: keys a later batch owns on an offer (plan, pricing, dpaVersion, products[].services,
+ * products[].oneTimeAddOns, ext) come only from the stored offer, never from a patch. A rep's
+ * composer body therefore cannot grant services, and a product edit by this code keeps the keys
+ * the stored product with the same id carries (alternatives: the stored one at the same index).
+ * Returns a new patch.
+ */
+export function withoutFutureOfferPatchKeys(patch = {}, current = {}) {
+  if (!isPlainRecord(patch)) return {};
+  const stored = storedProductsById(current);
+  const out = withoutKeys(patch, FUTURE_OFFER_KEYS);
+  if (Array.isArray(out.products)) out.products = guardPatchProducts(out.products, stored);
+  if (Array.isArray(out.alternatives)) {
+    const priorAlternatives = Array.isArray(current?.alternatives) ? current.alternatives : [];
+    out.alternatives = out.alternatives.map((alternative, index) => {
+      if (!isPlainRecord(alternative)) return alternative;
+      const clean = withoutKeys(alternative, FUTURE_OFFER_ALTERNATIVE_KEYS);
+      if (Array.isArray(clean.products)) clean.products = guardPatchProducts(clean.products, stored);
+      const prior = priorAlternatives[index];
+      return isPlainRecord(prior) ? carryFutureKeys(clean, prior, FUTURE_OFFER_ALTERNATIVE_KEYS) : clean;
+    });
+  }
+  if (isPlainRecord(out.contract) && isPlainRecord(out.contract.summary) && Array.isArray(out.contract.summary.products)) {
+    out.contract = {
+      ...out.contract,
+      summary: { ...out.contract.summary, products: guardPatchProducts(out.contract.summary.products, stored) },
+    };
+  }
+  return out;
+}
+
+export function updateSalesOffer(id, rawPatch = {}, { actor = '', action = 'updated', note = '' } = {}) {
   const list = readAll();
   const index = list.findIndex((offer) => offer.id === sanitizeText(id));
   if (index === -1) return null;
   const current = list[index];
+  const patch = withoutFutureOfferPatchKeys(rawPatch, current);
   const merged = normalizeSalesOffer({
     ...current,
     ...patch,
