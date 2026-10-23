@@ -87,6 +87,10 @@ import {
 import type { MeetingQuoteState } from '../../sales/websitePricing';
 import { WEBSITE_TIERS, formatMonthlyPrice } from '../../../../lib/website-tiers.js';
 import { TestFlagToggle } from './TestFlagToggle';
+import { FirefliesLiveChip, FirefliesLiveStatus } from './FirefliesLiveStatus';
+import { RecordingChip } from './MeetingRecordingControls';
+import { mergeFreshClient, salesRecordingSummary } from './firefliesRecording';
+import { useLiveRecordingRefresh } from './useLiveRecordingRefresh';
 import 'leaflet/dist/leaflet.css';
 
 type WebsiteOffer = {
@@ -1132,6 +1136,15 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
     return () => window.clearInterval(timer);
   }, [isSalesAdmin, inClientFlow, flowStep]);
 
+  // A live meeting's card is read again about every 30 s, unless the list poll above already does it.
+  useLiveRecordingRefresh({
+    clients,
+    nowMs: meetingNowMs,
+    enabled: isSalesAdmin || (inClientFlow && flowStep === 3),
+    onClient: (fresh) => applyFreshClient(fresh),
+    reloadAll: () => loadSales({ clearMessages: false, showLoading: false }),
+  });
+
   useEffect(() => {
     const timer = window.setInterval(() => setMeetingNowMs(Date.now()), 60_000);
     return () => window.clearInterval(timer);
@@ -1413,6 +1426,26 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
       delete next[saved.id];
       return next;
     });
+  }
+
+  /**
+   * A client that a Fireflies route or the live refresh sent back. Keeps the fields that route leaves out,
+   * and never touches unsaved notes. A rep's own action also wins over a list load already in flight.
+   */
+  function applyFreshClient(fresh: SalesClient, { fromUser = false } = {}) {
+    if (!fresh?.id) return;
+    if (fromUser) salesListGenRef.current += 1;
+    setClients((prev) => {
+      const index = prev.findIndex((entry) => entry.id === fresh.id);
+      if (index === -1) return prev;
+      const next = prev.map((entry, i) => (i === index ? mergeFreshClient(entry, fresh) : entry));
+      if (fromUser) writeSalesListCache(next, productCounts);
+      return next;
+    });
+  }
+
+  function applyUserClient(fresh: SalesClient) {
+    applyFreshClient(fresh, { fromUser: true });
   }
 
   async function saveClientNotes(client: SalesClient) {
@@ -2433,6 +2466,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
       ['Liste', booking.listName],
     ];
     const meetLink = salesMeetLink(client);
+    const recordingSummary = salesRecordingSummary(client, { nowMs: meetingNowMs, hasMeetLink: Boolean(meetLink) });
     const reminderStamp = (iso?: string) => (iso ? formatWhen(iso) : 'Venter / hoppet over');
     const websiteSold = Boolean(client.progression?.contractSigned);
     const isWin = clientIsSalesWin(client);
@@ -2741,17 +2775,14 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
           </li>
           {client.calendar?.eventId ? <li>Kalender-event: {client.calendar.eventId}</li> : null}
           {client.calendar?.accountKey ? <li>Kalenderkonto: {client.calendar.accountKey}</li> : null}
-          <li>
-            Fireflies: {client.calendar?.firefliesInvitedAt
-              ? `invitert ${formatWhen(client.calendar.firefliesInvitedAt)}`
-              : 'ikke invitert — send bekreftelse på nytt'}
-            {client.calendar?.firefliesLiveJoinedAt
-              ? ` · sendt inn i Meet ${formatWhen(client.calendar.firefliesLiveJoinedAt)}`
-              : client.calendar?.firefliesLiveJoinError
-                ? ` · live-join: ${client.calendar.firefliesLiveJoinError}`
-                : client.reminders?.thankYouSentAt
-                  ? ' · sendes inn i Meet ved start'
-                  : ''}
+          <li className="flex flex-wrap items-center gap-1.5">
+            <span>Fireflies:</span>
+            {recordingSummary.state ? (
+              <RecordingChip state={recordingSummary.state} hasTranscript={recordingSummary.hasTranscript} label={recordingSummary.text} />
+            ) : (
+              <span>{recordingSummary.text}</span>
+            )}
+            {recordingSummary.detail ? <span className="text-gray-500">{recordingSummary.detail}</span> : null}
           </li>
           <li>
             Bekreftelse: {client.reminders?.thankYouSentAt ? formatWhen(client.reminders.thankYouSentAt) : 'Ikke sendt'}
@@ -3036,6 +3067,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                       {isWin ? (
                         <span className="shrink-0 text-[11px] px-2 py-0.5 rounded bg-emerald-900/40 text-emerald-200 border border-emerald-700/40">Solgt</span>
                       ) : null}
+                      {showCompact ? <FirefliesLiveChip client={client} /> : null}
                       {interestLabel ? (
                         <span className={`shrink-0 px-2 py-0.5 rounded text-[11px] bg-violet-500/15 border border-violet-400/40 text-violet-100 truncate ${showCompact ? 'max-w-[52%]' : 'max-w-[46%]'}`}>
                           {interestLabel}
@@ -3169,12 +3201,15 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
 
                 {showCompact ? null : (
                 <>
+                <FirefliesLiveStatus client={client} onClient={applyUserClient} />
                 <SalesGoalTimeline
                   client={client}
                   progressBusyKey={progressBusyKey}
                   actionBusy={nextActionBusyId === client.id}
                   onMutateAction={(body) => mutateNextAction(client, body)}
                   variant={isWin ? 'win' : 'active'}
+                  onClient={applyUserClient}
+                  isAdmin={isSalesAdmin}
                 />
                 <ClientNotesField
                   label="Notater"
@@ -3836,6 +3871,8 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
           onAssign={(client, ownerId) => void assignClientOwner(client, ownerId)}
           onSecondary={(client) => openSecondaryPicker([client])}
           onNotSold={(client) => void markNotSold(client)}
+          onClient={applyUserClient}
+          renderLiveRecording={(client) => <FirefliesLiveStatus client={client} onClient={applyUserClient} />}
           renderDetails={renderSalesClientDetails}
           renderRecording={(client) => (
             <BookerRecordingPlayer

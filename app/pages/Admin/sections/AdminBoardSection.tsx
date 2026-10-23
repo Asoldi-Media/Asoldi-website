@@ -26,6 +26,9 @@ import {
   normalizeClientSearchText,
 } from '../clientSearch';
 import { AdminRequestInbox } from './AdminRequestInbox';
+import { FirefliesLiveStatus } from './FirefliesLiveStatus';
+import { mergeFreshClient } from './firefliesRecording';
+import { useLiveRecordingRefresh } from './useLiveRecordingRefresh';
 import { WorkshopAdminActionRow } from './WorkshopAdminActionRow';
 import { WebsiteDueField } from './WebsiteDueField';
 import { WorkshopNeedsPanel } from './WorkshopNeedsPanel';
@@ -481,6 +484,8 @@ function AdminFocusCard({
           </div>
         </div>
 
+        <FirefliesLiveStatus client={client} onClient={onClient} />
+
         <div className="rounded-xl border border-white/10 bg-black/20 p-2.5" data-admin-card-actions>
           <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400">Handlinger</div>
           <WorkshopAdminActionRow client={client} onClient={onClient} />
@@ -684,8 +689,12 @@ export function AdminBoardSection() {
   const unreadRequests = requestThreads.reduce((sum, row) => sum + row.unreadForAdmin, 0);
 
   function replaceClient(next: SalesClient) {
-    setClients((prev) => prev.map((entry) => (entry.id === next.id ? next : entry)));
+    // A route that leaves liveRecordings out must not blank the Fireflies banner until the next read.
+    setClients((prev) => prev.map((entry) => (entry.id === next.id ? mergeFreshClient(entry, next) : entry)));
   }
+
+  // Workshops and iterations are held from this board: follow a live meeting's Fireflies state.
+  useLiveRecordingRefresh({ clients, nowMs, onClient: replaceClient, reloadAll: loadClients });
 
   function toggleHeaderPanel(panel: HeaderPanel) {
     setHeaderPanel((current) => (current === panel ? null : panel));

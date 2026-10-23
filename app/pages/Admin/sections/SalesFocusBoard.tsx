@@ -44,6 +44,7 @@ import {
   isoToDatetimeLocalOslo,
 } from '../../../../lib/sales-next-actions.js';
 import { offerLetterNeedsMeetingPick } from '../../../../lib/offer-meetings.js';
+import { isNoRecordingState, salesSlotRecording } from './firefliesRecording';
 
 export type SalesFocusCategoryId = 'assign' | 'confirm' | 'reminders' | 'meetingsToday' | 'offer' | 'signature' | 'won';
 
@@ -101,6 +102,10 @@ type Props = {
   renderNotes: (client: SalesClient) => React.ReactNode;
   /** Sales ops overflow: booking, mail, portal email, calendar/Fireflies, MyPhoner, preview, offer codes. Kundekort page 1 holds links and contact fields. */
   renderDetails: (client: SalesClient) => React.ReactNode;
+  /** Is Fireflies in this client's booked online meetings right now (client.liveRecordings). */
+  renderLiveRecording?: (client: SalesClient) => React.ReactNode;
+  /** A client a recording action in the log sent back (purpose pick, "Marker uten opptak"). */
+  onClient?: (client: SalesClient) => void;
 };
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -245,7 +250,13 @@ function entryStatus(entry: FocusEntry, nowMs: number): { text: string; tone: ke
     return dueAt ? { text: `Frist ${when(dueAt, nowMs)}`, tone: 'warn' } : null;
   }
   if (stepId === 'offerLetterReview') {
-    if (state === 'waiting') return { text: 'Venter på transkript', tone: 'muted' };
+    if (state === 'waiting') {
+      // "Waiting" is only true while Fireflies may still deliver.
+      const recording = salesSlotRecording(entry.client)?.state || '';
+      if (isNoRecordingState(recording)) return { text: 'Ingen opptak fra Fireflies', tone: 'red' };
+      if (recording === 'declined') return { text: 'Uten opptak · skriv e-posten', tone: 'warn' };
+      return { text: 'Venter på transkript', tone: 'muted' };
+    }
     if (!entry.client?.offerLetterFilledAt) return { text: 'Velg opptak', tone: 'warn' };
     return { text: 'Se gjennom e-posten', tone: 'warn' };
   }
@@ -667,6 +678,9 @@ function FocusCard(props: FocusCardProps) {
     onNotSold,
     renderNotes,
     renderDetails,
+    renderLiveRecording,
+    onClient,
+    isAdmin,
   } = props;
   const { client } = entry;
   const [detailsOpen, setDetailsOpen] = useState(false);
@@ -815,8 +829,15 @@ function FocusCard(props: FocusCardProps) {
         const filled = Boolean(client.offerLetterFilledAt);
         const pickMeetings = !filled && offerLetterNeedsMeetingPick(client);
         const letterBusy = sendingMailKey === `${client.id}:offer-letter`;
+        const recording = row.state === 'waiting' ? salesSlotRecording(client)?.state || '' : '';
+        const detail = isNoRecordingState(recording)
+          ? 'Ingen opptak fra Fireflies. Lim inn Fireflies-lenken under Bytt opptak i Tilbud, eller skriv e-posten fra produktnotatene.'
+          : recording === 'declined'
+            ? 'Møtet er markert uten opptak. Skriv e-posten fra produktnotatene i Tilbud.'
+            : row.detail;
         return {
           ...row,
+          detail,
           busy: letterBusy,
           extras: (
             <>
@@ -1090,6 +1111,8 @@ function FocusCard(props: FocusCardProps) {
           </div>
         </div>
 
+        {renderLiveRecording ? renderLiveRecording(client) : null}
+
         {isAssign ? <AssignPanel {...props} /> : null}
 
         <div className="rounded-xl border border-white/10 bg-black/20 p-2.5">
@@ -1105,6 +1128,8 @@ function FocusCard(props: FocusCardProps) {
             renderRowExtras={rowExtras}
             focusRowId={entry.focusRowId}
             preferredGoalKey={entry.category === 'offer' ? 'offerSent' : undefined}
+            onClient={onClient}
+            isAdmin={isAdmin}
           />
         </div>
 
