@@ -145,13 +145,24 @@ function setPath(obj, path, value) {
   node[keys[keys.length - 1]] = value;
 }
 
-/** Deep merge: plain objects merge, everything else (arrays included) replaces. */
-function deepMerge(base, patch) {
+function isLeafObjectPath(path) {
+  return LEAF_OBJECT_PATHS.some((re) => re.test(path));
+}
+
+/**
+ * Deep merge: plain objects merge, everything else (arrays included) replaces. The leaf maps
+ * (`releases`, every `paused`, the per-mailbox `inbox.autoActions` / `inbox.autoReply`) replace as a
+ * whole, so a save can remove a mailbox entry again.
+ */
+function deepMerge(base, patch, prefix = '') {
   if (!isPlainObject(base) || !isPlainObject(patch)) return clone(patch);
   const out = clone(base);
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue;
-    out[key] = isPlainObject(value) && isPlainObject(out[key]) ? deepMerge(out[key], value) : clone(value);
+    const path = prefix ? `${prefix}.${key}` : key;
+    out[key] = isPlainObject(value) && isPlainObject(out[key]) && !isLeafObjectPath(path)
+      ? deepMerge(out[key], value, path)
+      : clone(value);
   }
   return out;
 }
@@ -161,7 +172,7 @@ function leafPaths(obj, prefix = '') {
   for (const [key, value] of Object.entries(obj || {})) {
     const path = prefix ? `${prefix}.${key}` : key;
     // `releases`, `paused` and the per-mailbox maps are leaves: their keys are data, not schema.
-    if (isPlainObject(value) && !LEAF_OBJECT_PATHS.some((re) => re.test(path))) out.push(...leafPaths(value, path));
+    if (isPlainObject(value) && !isLeafObjectPath(path)) out.push(...leafPaths(value, path));
     else out.push(path);
   }
   return out;
@@ -301,6 +312,16 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
 
   const value = deepMerge(base, input);
   value.version = AUTOMATION_SETTINGS_VERSION;
+
+  // A patch that changes inbox.mailboxes drops the per-mailbox entries it inherited for mailboxes
+  // that are no longer listed. Entries the patch sends itself are validated as sent.
+  if (Array.isArray(input.inbox?.mailboxes) && isPlainObject(value.inbox)) {
+    const listed = new Set(input.inbox.mailboxes.map((entry) => String(entry || '').trim().toLowerCase()));
+    for (const mapKey of ['autoActions', 'autoReply']) {
+      if (Object.prototype.hasOwnProperty.call(input.inbox, mapKey) || !isPlainObject(value.inbox[mapKey])) continue;
+      value.inbox[mapKey] = Object.fromEntries(Object.entries(value.inbox[mapKey]).filter(([mailbox]) => listed.has(mailbox)));
+    }
+  }
 
   // Modes: shadow or auto (approve and manual are old names for shadow).
   for (const kind of EMAIL_KIND_IDS) {

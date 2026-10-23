@@ -88,6 +88,24 @@ test('automation settings: an invalid mailbox gives 400; a valid partial PUT is 
   assert.equal(store.getAutomationSettings({ fresh: true }).development.previewJobs, true);
 });
 
+test('automation settings: a mailbox added through PUT can be removed through PUT', async () => {
+  const both = ['alexander@asoldi.com', 'damian@asoldi.com'];
+  const added = await call('PUT', '/api/admin/automation-settings', {
+    inbox: { mailboxes: both, autoActions: { 'alexander@asoldi.com': true, 'damian@asoldi.com': true }, autoReply: { 'damian@asoldi.com': false } },
+  });
+  assert.equal(added.status, 200, JSON.stringify(await added.clone().json()));
+  assert.deepEqual((await added.json()).settings.inbox.autoReply, { 'damian@asoldi.com': false }, 'a map replaces as a whole');
+
+  const removed = await call('PUT', '/api/admin/automation-settings', { inbox: { mailboxes: ['alexander@asoldi.com'] } });
+  assert.equal(removed.status, 200, JSON.stringify(await removed.clone().json()));
+  const inbox = (await removed.json()).settings.inbox;
+  assert.deepEqual(inbox.mailboxes, ['alexander@asoldi.com']);
+  assert.deepEqual(inbox.autoActions, { 'alexander@asoldi.com': true });
+  assert.deepEqual(inbox.autoReply, {});
+  const restored = await call('PUT', '/api/admin/automation-settings', { inbox: { autoReply: { 'alexander@asoldi.com': true } } });
+  assert.equal(restored.status, 200);
+});
+
 test('snapshots: list, create, restore as a dry run unless dryRun is false', async () => {
   const created = await call('POST', '/api/admin/system/delivery-snapshots', { label: 'route' });
   assert.equal(created.status, 201);

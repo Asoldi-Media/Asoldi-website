@@ -11,7 +11,12 @@ delete process.env.WORKSHOP_DESK_EMAIL_AUTOSEND;
 
 const store = await import('../data/automation-settings.js');
 const vocab = await import('../packages/suite/core/delivery/vocab.js');
-const { workshopDeskEmailAutosendEnabled } = await import('../lib/workshop-desk-emails.js');
+const {
+  preWorkshopAutosendForClient,
+  workshopDeskEmailAutosendEnabled,
+  workshopDeskEmailAutosendForClient,
+  workshopReminderClients,
+} = await import('../lib/workshop-desk-emails.js');
 const { INBOX_BOT_MAILBOXES } = await import('../lib/gmail-readonly.js');
 
 const FILE = join(DATA_DIR, store.AUTOMATION_SETTINGS_FILE);
@@ -170,6 +175,91 @@ test('workshop reminders follow the setting; a runtime guard pause stops them un
   assert.equal(store.saveAutomationSettings({ emails: { workshopReminders: { paused: null } } }).ok, true);
   assert.equal(store.effectiveEmailMode('workshopReminders'), 'auto');
   assert.equal(store.saveAutomationSettings({ emails: { workshopReminders: { paused: { at: 'x' } } } }).ok, false, 'a pause needs a reason');
+});
+
+test('WORKSHOP_DESK_EMAIL_AUTOSEND=1 overrides enabled and mode only: a runtime guard pause still stops reminders', () => {
+  reset();
+  process.env.WORKSHOP_DESK_EMAIL_AUTOSEND = '1';
+  try {
+    assert.equal(workshopDeskEmailAutosendEnabled(), true, 'env=1 without a pause sends');
+    assert.equal(store.pauseAutomationSwitch('emails.workshopReminders', { reason: 'bounces' }).ok, true);
+    assert.equal(store.automationSettingsView().effective.emails.workshopReminders.mode, 'paused');
+    assert.equal(workshopDeskEmailAutosendEnabled(), false, 'env=1 plus a pause does not send');
+    assert.equal(workshopDeskEmailAutosendForClient({ id: 'real-1', status: 'active' }), false);
+    assert.equal(store.resumeAutomationSwitch('emails.workshopReminders', { by: 'dev' }).ok, true);
+    assert.equal(workshopDeskEmailAutosendEnabled(), true);
+  } finally {
+    delete process.env.WORKSHOP_DESK_EMAIL_AUTOSEND;
+  }
+});
+
+test('workshop reminders and the pre-workshop autosend skip test clients unless they are pilots', () => {
+  reset();
+  const real = { id: 'real-1', status: 'active' };
+  const testClient = { id: 'test-1', status: 'active', isTest: true };
+  const inactive = { id: 'old-1', status: 'archived' };
+  const clients = [real, testClient, inactive];
+
+  // Reminders off (default): nobody is mailed.
+  assert.deepEqual(workshopReminderClients(clients), []);
+  assert.equal(store.saveAutomationSettings({ emails: { workshopReminders: { enabled: true } } }).ok, true);
+  assert.deepEqual(workshopReminderClients(clients).map((client) => client.id), ['real-1']);
+  assert.equal(workshopDeskEmailAutosendForClient(testClient), false);
+  assert.equal(preWorkshopAutosendForClient(real), true);
+  assert.equal(preWorkshopAutosendForClient(testClient), false);
+
+  // Listed as a pilot, the test client takes part; legacy kinds ignore the pilot list for others.
+  assert.equal(store.saveAutomationSettings({ pilotClientIds: ['test-1'] }).ok, true);
+  assert.deepEqual(workshopReminderClients(clients).map((client) => client.id), ['real-1', 'test-1']);
+  assert.equal(preWorkshopAutosendForClient(testClient), true);
+  assert.equal(preWorkshopAutosendForClient(real), true);
+
+  // A pause stops both kinds for everyone.
+  assert.equal(store.pauseAutomationSwitch('emails.workshopReminders', { reason: 'complaint' }).ok, true);
+  assert.equal(store.pauseAutomationSwitch('emails.preWorkshop', { reason: 'complaint' }).ok, true);
+  assert.deepEqual(workshopReminderClients(clients), []);
+  assert.equal(preWorkshopAutosendForClient(real), false);
+});
+
+test('a mailbox added to the inbox maps can be removed again (save and rollback)', () => {
+  reset();
+  const added = store.saveAutomationSettings({
+    inbox: {
+      mailboxes: ['alexander@asoldi.com', 'damian@asoldi.com'],
+      autoActions: { 'alexander@asoldi.com': true, 'damian@asoldi.com': true },
+      autoReply: { 'alexander@asoldi.com': true, 'damian@asoldi.com': false },
+    },
+  });
+  assert.equal(added.ok, true, JSON.stringify(added.errors));
+  assert.deepEqual(Object.keys(added.settings.inbox.autoActions), ['alexander@asoldi.com', 'damian@asoldi.com']);
+
+  // Mailboxes only: the inherited per-mailbox entries for damian@ go with it.
+  const removed = store.saveAutomationSettings({ inbox: { mailboxes: ['alexander@asoldi.com'] } });
+  assert.equal(removed.ok, true, JSON.stringify(removed.errors));
+  assert.deepEqual(removed.settings.inbox.autoActions, { 'alexander@asoldi.com': true });
+  assert.deepEqual(removed.settings.inbox.autoReply, { 'alexander@asoldi.com': true });
+  const stored = JSON.parse(readFileSync(FILE, 'utf8'));
+  assert.deepEqual(stored.inbox.mailboxes, ['alexander@asoldi.com']);
+  assert.deepEqual(stored.inbox.autoActions, { 'alexander@asoldi.com': true });
+
+  // Rollback with the full old values (the runbook) works too: maps replace as a whole.
+  assert.equal(store.saveAutomationSettings({ inbox: added.settings.inbox }).ok, true);
+  const rollback = store.saveAutomationSettings({
+    inbox: { mailboxes: ['alexander@asoldi.com'], autoActions: { 'alexander@asoldi.com': true }, autoReply: { 'alexander@asoldi.com': false } },
+  });
+  assert.equal(rollback.ok, true, JSON.stringify(rollback.errors));
+  assert.deepEqual(rollback.settings.inbox.autoReply, { 'alexander@asoldi.com': false });
+
+  // A map entry sent explicitly for a mailbox that is not listed is still an error, not dropped.
+  const typo = store.saveAutomationSettings({ inbox: { mailboxes: ['alexander@asoldi.com'], autoActions: { 'damain@asoldi.com': true } } });
+  assert.equal(typo.ok, false);
+  assert.ok(errorPaths(typo).includes('inbox.autoActions'));
+  // replyTo must follow: removing the mailbox replyTo points at is refused with a clear path.
+  assert.equal(store.saveAutomationSettings({ inbox: added.settings.inbox, sender: { service: { replyTo: 'damian@asoldi.com' } } }).ok, true);
+  const orphan = store.saveAutomationSettings({ inbox: { mailboxes: ['alexander@asoldi.com'] } });
+  assert.equal(orphan.ok, false);
+  assert.deepEqual(errorPaths(orphan), ['sender.service.replyTo']);
+  assert.equal(store.saveAutomationSettings({ inbox: { mailboxes: ['alexander@asoldi.com'] }, sender: { service: { replyTo: 'alexander@asoldi.com' } } }).ok, true);
 });
 
 test('audit keeps the last 50 changes, with who and what; unchanged saves add nothing', () => {
