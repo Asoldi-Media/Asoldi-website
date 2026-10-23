@@ -244,6 +244,20 @@ test('site plan model: normalizing is idempotent, keeps later keys and drops wha
   assert.equal(model.activeSitePlan({ sitePlan: { ...raw, status: 'void' } }), null);
 });
 
+test('site plan model: a status, source or evidence a later batch adds is kept, and only active is in force', () => {
+  const later = model.normalizeSitePlan({ status: 'suspended', source: 'later-source', evidence: 'later-evidence', tierId: 'tier-2-seo', services: ['site', 'seo'] });
+  assert.equal(later.status, 'suspended');
+  assert.equal(later.source, 'later-source');
+  assert.equal(later.evidence, 'later-evidence');
+  assert.deepEqual(model.normalizeSitePlan(later), later, 'idempotent');
+  assert.equal(model.activeSitePlan({ sitePlan: later }), null, 'not in force');
+  assert.equal(sitePlan.makerSitePlanPayload(later), null, 'not sent to the Maker');
+  assert.equal(sitePlan.websiteTierIdForClient({ sitePlan: later }, { tierId: 'tier-1-standard' }), 'tier-1-standard');
+  assert.equal(model.normalizeSitePlan({ tierId: 'tier-2-seo', services: ['site'] }).status, 'active', 'a plan without a status is active');
+  assert.equal(model.normalizeSitePlan({ status: 42, tierId: 'tier-2-seo', services: ['site'] }).status, 'active');
+  assert.equal(model.normalizeSitePlan({ status: 'x'.repeat(60), tierId: 'tier-2-seo', services: ['site'] }).status.length, 40);
+});
+
 // ---------------------------------------------------------------- readers and handoff
 
 test('readers: the website-due tier follows the plan in force, else the old order', () => {
@@ -315,6 +329,15 @@ test('data layer: a signed client stored with a plan keeps it; generic writes ca
   assert.equal(quote.details.meetingQuote.tierExplicit, true);
   const plain = sales.updateSalesClient('c1', { details: { meetingQuote: { tierId: 'seo' } } });
   assert.equal(Object.hasOwn(plain.details.meetingQuote, 'tierExplicit'), false, 'stored only when true');
+
+  // A plan a later batch stored with a status this code does not know survives reads and writes.
+  writeFileSync(join(DATA_DIR, 'sales-clients.json'), JSON.stringify([signed({ businessName: 'Later AS', status: 'active', sitePlan: { status: 'suspended', source: 'later-source', tierId: 'tier-2-seo', services: ['site', 'seo'] } })], null, 2));
+  sales.noteSalesStoreReplaced();
+  const rewritten = sales.updateSalesClient('c1', { notes: 'later' });
+  assert.equal(rewritten.sitePlan.status, 'suspended');
+  assert.equal(rewritten.sitePlan.source, 'later-source');
+  const onDisk = JSON.parse(readFileSync(join(DATA_DIR, 'sales-clients.json'), 'utf8')).find((client) => client.id === 'c1');
+  assert.equal(onDisk.sitePlan.status, 'suspended', 'written back as it was, not as active');
 });
 
 test('meeting-notes calculator: picking a package or custom marks the tier as picked; the quote keeps the mark', () => {
