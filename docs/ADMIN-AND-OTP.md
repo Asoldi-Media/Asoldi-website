@@ -75,7 +75,7 @@ Add to `.env` (and never commit real values):
   - Find user by username.  
   - Generate a short-lived OTP (e.g. 6 digits, store in memory or in a small table with expiry, e.g. 10 minutes).  
   - Send email via `transporter.sendMail({ to: userEmail, subject: '...', text: 'Your code: 123456' })`.  
-  - Return success (do not leak whether the user exists).
+  - Return success (do not reveal whether the user exists).
 - **Verify OTP and set new password:** e.g. `POST /api/auth/reset-password` with `{ username, otp, newPassword }`.  
   - Verify OTP and expiry.  
   - Call the same logic you use in the CMS to update password: e.g. `await store.updateUserPassword(userId, newPassword)` (or update by username).  

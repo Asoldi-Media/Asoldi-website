@@ -209,7 +209,7 @@ async function withRawServer(fn) {
   }
 }
 
-test('WS7.14: a spoofed X-Forwarded-For cannot dodge the per-client limit on typed addresses', async () => {
+test('WS7.14: a client-written X-Forwarded-For cannot dodge the per-client limit on typed addresses', async () => {
   await withRawServer(async (port) => {
     const statuses = [];
     for (let i = 0; i < 30; i += 1) {

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deepgramListenQuery, formatDeepgramChat, transcribePrerecordedBuffer } from '../lib/deepgram-transcribe.js';
 import { buildBookerPreviewUserPrompt, persistPreviewDocument, PREVIEW_SYSTEM, shouldEnqueueBookerPreview } from '../lib/booker-preview-document.js';
@@ -236,4 +236,73 @@ test('both developer documents mount booker audio in Kundedata', () => {
   assert.match(card, /latestRecordingUrl=\{item\.latestRecordingUrl/);
   assert.match(server, /\/api\/admin\/development\/:id\/recording/);
   assert.match(server, /developmentAuth/);
+});
+
+// This repository is public. Test names and docs describe what the code does in plain words. The two
+// tests below keep the words this repo avoids out of test names and docs; identifiers, assert
+// messages and fixtures are not checked. Local notes (docs/daily-logs, tmp/) are skipped.
+const AVOIDED_WORDS = /\b(?:leak(?:s|ed|ing|age|y)?|forg(?:e|ed|es|ing|ery|eable)|exploit\w*|vulnerab\w*|spoof\w*)\b/i;
+const repoRoot = join(here, '..');
+const SKIPPED_DIRS = new Set(['node_modules', '.git', 'dist', 'build', 'coverage', 'tmp', '.local-data', 'fixtures-private', 'daily-logs']);
+const TEST_FILE = /(?:\.test\.(?:mjs|cjs|js|ts|tsx)|^test-[\w.-]+\.(?:mjs|js))$/;
+const TEST_NAME = /(?<![\w.$])(?:t\.test|test|it|describe)(?:\.(?:skip|only|todo))?\(\s*(['"`])((?:\\.|(?!\1)[^\\])*)\1/g;
+const TEST_DIRS = ['scripts', 'data', 'lib', 'packages', 'app', 'src'];
+const ROOT_DOCS = ['README.md', 'SECURITY.md', 'DEPLOYMENT.md', 'deployment prompt.md', 'LICENSE.md', 'CHANGELOG.md'];
+
+function listFiles(dir, accept, out = []) {
+  let entries;
+  try {
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return out;
+  }
+  for (const entry of entries) {
+    if (SKIPPED_DIRS.has(entry.name)) continue;
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) listFiles(full, accept, out);
+    else if (entry.isFile() && accept(entry.name)) out.push(full);
+  }
+  return out;
+}
+
+function lineOf(text, index) {
+  return text.slice(0, index).split('\n').length;
+}
+
+function testNamesIn(source) {
+  return [...source.matchAll(TEST_NAME)].map((m) => ({ name: m[2], line: lineOf(source, m.index) }));
+}
+
+test('the wording check reads test names and tells the avoided words from look-alikes', () => {
+  const names = testNamesIn("test('a', () => {});\n/x/.test('b');\nt.test(\"c\", fn);\nit.skip(`d`);\nsubmit('e');\ndescribe('f');");
+  assert.deepEqual(names.map((n) => n.name), ['a', 'c', 'd', 'f']);
+  assert.deepEqual(names.map((n) => n.line), [1, 3, 4, 6]);
+  for (const word of ['leak', 'leaked', 'leaking', 'forged', 'forgeable', 'exploit', 'vulnerability', 'spoofed']) {
+    assert.match(word, AVOIDED_WORDS);
+  }
+  for (const word of ['forget', 'forgot', 'forgotten', 'forgive', 'release', 'spoon', 'exploration']) {
+    assert.doesNotMatch(word, AVOIDED_WORDS);
+  }
+});
+
+test('test names and docs in this public repo use neutral, behaviour-describing words', () => {
+  const found = [];
+  const testFiles = TEST_DIRS.flatMap((dir) => listFiles(join(repoRoot, dir), (name) => TEST_FILE.test(name)));
+  assert.ok(testFiles.length >= 50, `expected the test suite under ${TEST_DIRS.join(', ')}, found ${testFiles.length} files`);
+  for (const file of testFiles) {
+    for (const { name, line } of testNamesIn(readFileSync(file, 'utf8'))) {
+      if (AVOIDED_WORDS.test(name)) found.push(`${relative(repoRoot, file)}:${line} test name: ${name}`);
+    }
+  }
+  const docs = [
+    ...listFiles(join(repoRoot, 'docs'), (name) => name.endsWith('.md')),
+    ...ROOT_DOCS.map((name) => join(repoRoot, name)).filter((file) => existsSync(file)),
+  ];
+  assert.ok(docs.length >= 10, `expected the docs folder, found ${docs.length} files`);
+  for (const file of docs) {
+    readFileSync(file, 'utf8').split('\n').forEach((text, i) => {
+      if (AVOIDED_WORDS.test(text)) found.push(`${relative(repoRoot, file)}:${i + 1}: ${text.trim()}`);
+    });
+  }
+  assert.deepEqual(found, [], 'reword these to describe the behaviour instead');
 });

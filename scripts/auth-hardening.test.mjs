@@ -97,7 +97,7 @@ function fakeLimitRes() {
   };
 }
 
-test('a forged leading X-Forwarded-For entry cannot reset the per-IP login counter', () => {
+test('a client-written leading X-Forwarded-For entry cannot reset the per-IP login counter', () => {
   const limiter = createLoginLimiter({ maxPerAccount: 100, maxPerIp: 3, windowMs: 60_000 });
   // The client sends a new fake address each time; the hosting proxy appends the real one,
   // and an internal hop may follow it.

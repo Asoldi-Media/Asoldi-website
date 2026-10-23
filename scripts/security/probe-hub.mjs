@@ -10,7 +10,7 @@
  *   dns           (unless --no-doh) the host resolves over DNS-over-HTTPS
  *   admin-token   (with --admin-token-file) the token file can be read
  *   health        /api/health answers; with --expect-prod, safeMode must not be true
- *   forged-token  a token signed with an old public default secret gets 401 on an admin route
+ *   default-secret-token  a token signed with an old built-in default secret gets 401 on an admin route
  *   site-config   /api/hub/site-config?domain=<a live site> answers 200 and holds no passwordHash /
  *                 pendingAdmin / clientAdmin (--site-domain is required with --expect-prod)
  *   recordings    /myphoner-recordings/… without a login gets exactly 401 (the staff gate)
@@ -139,11 +139,11 @@ export async function runProbe(options = {}, deps = {}) {
   });
 
   for (const secret of PUBLIC_DEFAULT_SECRETS) {
-    const id = `forged-token:${secret.length}`;
+    const id = `default-secret-token:${secret.length}`;
     await safe(id, async () => {
       const token = forgeToken(secret, { role: 'admin', username: 'asoldi.com', at: now });
       const res = await get(`${target}/api/hub/sites`, { headers: { authorization: `Bearer ${token}` } });
-      record(id, res.status === 401, `HTTP ${res.status} for a token signed with a public default (want 401)`);
+      record(id, res.status === 401, `HTTP ${res.status} for a token signed with an old default secret (want 401)`);
     });
   }
 
@@ -153,7 +153,7 @@ export async function runProbe(options = {}, deps = {}) {
       const body = parseJson(res.body);
       const leaked = LEAK_FIELDS.filter((field) => res.body.includes(`"${field}"`));
       if (leaked.length) return record('site-config', false, `public config contains ${leaked.join(', ')}`);
-      // Only a real site's config proves anything: a 404 for an unknown domain would hide a leak.
+      // Only a real site's config proves anything: a 404 for an unknown domain would hide what the body contains.
       if (res.status !== 200 || !body || typeof body !== 'object') {
         return record('site-config', false, `HTTP ${res.status} for ${options.siteDomain} (want 200 with a site config)`);
       }

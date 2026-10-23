@@ -211,7 +211,7 @@ node scripts/security/retire-secret.mjs --label "…" --env-file <path> --key NA
 | `dns` | the host resolves over DNS-over-HTTPS (1.1.1.1, then 8.8.8.8); skipped with `--no-doh` |
 | `admin-token` | the `--admin-token-file` can be read (only when the flag is given) |
 | `health` | `/api/health` answers; with `--expect-prod`, `safeMode` is not on |
-| `forged-token:*` | a token signed with an old public default secret gets 401 |
+| `default-secret-token:*` | a token signed with an old built-in default secret gets 401 |
 | `site-config` | `/api/hub/site-config?domain=<--site-domain>` answers 200 with no `passwordHash` / `pendingAdmin` / `clientAdmin`. A 404 fails (it would hide what the body contains), and `--site-domain` is required with `--expect-prod` |
 | `recordings` | `/myphoner-recordings/…` without a login gets exactly 401 (a 404 means the staff gate is gone) |
 | `fireflies` | the Fireflies API key is present, so the pull ingest runs |

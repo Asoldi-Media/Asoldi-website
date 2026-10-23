@@ -116,7 +116,7 @@ test('the boot env blanks every credential and the child cwd has no .env', () =>
   assert.equal(env.HUB_SAFE_MODE, '1');
 });
 
-test('local hub boot: forged and stale tokens, password change, logout everywhere, Fireflies rotation, counters', { timeout: 120_000 }, async (t) => {
+test('local hub boot: tokens signed with an old default secret, stale tokens, password change, logout everywhere, Fireflies rotation, counters', { timeout: 120_000 }, async (t) => {
   const dataDir = mkdtempSync(join(tmpdir(), 'asoldi-security-boot-'));
   const home = mkdtempSync(join(tmpdir(), 'asoldi-security-home-'));
   // Empty working directory: dotenv reads <cwd>/.env, and there must be none.
@@ -154,7 +154,7 @@ test('local hub boot: forged and stale tokens, password change, logout everywher
       const res = await fetch(`${base}/api/hub/sites`, {
         headers: { authorization: `Bearer ${forge(fake, { role: 'admin', username: 'asoldi.com', at: now })}` },
       });
-      assert.equal(res.status, 401, `forged with ${fake.length}-char default`);
+      assert.equal(res.status, 401, `signed with the ${fake.length}-char default`);
     }
 
     // 2. The one-time boot migration refuses admin tokens issued before this code first booted.
@@ -312,7 +312,7 @@ test('local hub boot: forged and stale tokens, password change, logout everywher
     const { runProbe } = await import('./security/probe-hub.mjs');
     const report = await runProbe({ target: base, adminToken, siteDomain: 'probe.example' });
     const byId = Object.fromEntries(report.checks.map((check) => [check.id, check]));
-    for (const id of ['health', 'forged-token:23', 'forged-token:9', 'site-config', 'recordings', 'counters']) {
+    for (const id of ['health', 'default-secret-token:23', 'default-secret-token:9', 'site-config', 'recordings', 'counters']) {
       assert.equal(byId[id].ok, true, `${id}: ${byId[id].detail}`);
     }
     assert.equal(byId.fireflies.ok, false);

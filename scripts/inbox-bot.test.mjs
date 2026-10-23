@@ -402,7 +402,7 @@ test('LOGIN timeout stays short and FETCH is longer', () => {
   assert.ok(FETCH_TIMEOUT_MS > LOGIN_TIMEOUT_MS);
 });
 
-test('status reports configured without leaking the password', async () => {
+test('status reports configured without showing the password', async () => {
   process.env.INBOX_IMAP_ALEXANDER_PASS = 'super-secret-pass';
   try {
     const payload = await presentInboxBotStatus({

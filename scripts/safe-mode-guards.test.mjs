@@ -334,7 +334,7 @@ test('intent details carry no secrets', () => {
   assert.doesNotMatch(scrubbed, /abc123|xyz|ABCDEF123|hunter2/);
 });
 
-test('no test request leaked past the guards to a real socket', () => {
+test('no test request reached a real socket past the guards', () => {
   assert.deepEqual(leakedSockets, []);
 });
 

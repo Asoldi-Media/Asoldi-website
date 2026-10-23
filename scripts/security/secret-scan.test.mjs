@@ -460,7 +460,7 @@ test('--staged: a rename into a blocked path is caught, also with diff.noprefix 
   assert.match(prefixed.out, /docs\/daily-logs\/a\.md {2}path:daily-log/);
 });
 
-test('--range and --pre-push scan merge resolutions, evil merges and commit messages', async () => {
+test('--range and --pre-push scan merge resolutions, merges with changes of their own and commit messages', async () => {
   const dir = makeRepo();
   writeFileSync(join(dir, 'config.js'), 'export const value = 1;\n');
   git(dir, ['add', 'config.js']);

@@ -64,21 +64,21 @@ test('a healthy hub passes every check, with GET requests only', async () => {
   try {
     const report = await runProbe({ target: base, expectProd: true, siteDomain: 'kunde.example', adminToken: 'good' });
     assert.equal(report.ok, true, JSON.stringify(report.checks));
-    assert.deepEqual(report.checks.map((c) => c.id), ['health', 'forged-token:23', 'forged-token:9', 'site-config', 'recordings', 'fireflies', 'counters']);
+    assert.deepEqual(report.checks.map((c) => c.id), ['health', 'default-secret-token:23', 'default-secret-token:9', 'site-config', 'recordings', 'fireflies', 'counters']);
     assert.deepEqual([...methods], ['GET']);
   } finally {
     await close();
   }
 });
 
-test('a broken hub fails: safe mode in prod, forged token accepted, config leak, open recordings, no API key, callback spike', async () => {
+test('a broken hub fails: safe mode in prod, default-secret token accepted, admin fields in site config, open recordings, no API key, callback spike', async () => {
   const { base, close } = await serve(brokenHub());
   try {
     const report = await runProbe({ target: base, expectProd: true, siteDomain: 'kunde.example', adminToken: 'any' });
     assert.equal(report.ok, false);
     const failed = Object.fromEntries(report.checks.filter((c) => !c.ok).map((c) => [c.id, c.detail]));
     assert.match(failed.health, /safeMode is ON/);
-    assert.match(failed['forged-token:23'], /HTTP 200/);
+    assert.match(failed['default-secret-token:23'], /HTTP 200/);
     assert.match(failed['site-config'], /passwordHash, pendingAdmin/);
     assert.match(failed.recordings, /HTTP 200/);
     assert.match(failed.fireflies, /no Fireflies API key/);
@@ -308,7 +308,7 @@ test('the pinned lookup answers both dns.lookup callback shapes, and requests us
   }
 });
 
-test('forged tokens use the hub token format', () => {
+test('tokens signed with an old default secret use the hub token format', () => {
   const token = forgeToken('change-me', { role: 'admin', at: 1 });
   const raw = JSON.parse(Buffer.from(token, 'base64url').toString());
   assert.deepEqual(JSON.parse(raw.data), { role: 'admin', at: 1 });
