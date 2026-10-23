@@ -65,15 +65,24 @@ CMS (`lib/cms-sso.js`). The format follows the CMS version from the site's last 
   `<dataDir>/cms-sso/tokens.json` (private folder, locked writes). The CMS checks it with
   `POST /api/cms/sso/redeem` (site key in the `x-site-key` header or the body, `{ token }`
   in the body) before it opens a session. The hub answers `{ ok: true, by }` once, for that
-  site only, before expiry; anything else gets the same 401. Failed checks are limited per
-  site and address (10 per 15 minutes), per address (30) and per site (100), with 429 and
-  Retry-After above that.
+  site only, before expiry; anything else gets the same 401. Calls without a known site key
+  are limited per address (30 per 15 minutes), and a known key with a live token of another
+  site per site and address (10), with 429 and Retry-After above that. A known key with an
+  unknown, used or expired token is not limited: a CMS passes on all its visitors' links from
+  one server address, and the tokens cannot be guessed.
 - CMS 2.0.0 up to 2.2.0: the earlier token signed with the site key, which those versions
   check themselves.
 - CMS 1.x has no Asoldi sign-in: 409.
 
-Every link and every check is recorded in `<dataDir>/cms-sso/audit.json` (last 500 rows:
-site id, who, format, CMS version, result), never the token.
+The link always goes to the site's stored domain over https. The address a CMS reports in its
+heartbeat only picks the www or bare spelling of that host; a report for any other host is
+ignored and noted in the audit (a loopback domain keeps http, for local runs). A site without a
+domain gets 409.
+
+Every link, every successful check and every refusal of a real token (another site's, used or
+expired) is recorded in `<dataDir>/cms-sso/audit.json` (last 500 rows: site id, who, format, CMS
+version, link origin, result), never the token. Calls without a known key and tokens that were
+never issued are only counted in memory and logged at most once a minute.
 
 A new client admin password (`PUT /api/hub/sites/:id/client-admin`) must be at least
 8 characters and not a common default, the same rule the CMS applies, so a synced admin

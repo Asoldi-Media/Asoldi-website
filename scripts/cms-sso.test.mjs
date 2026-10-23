@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -10,7 +10,9 @@ import express from 'express';
 import {
   cmsOrigin,
   cmsSsoFormatForVersion,
+  cmsSsoOrigin,
   createCmsSsoStore,
+  createQuietCounter,
   createRedeemLimiter,
   hashCmsSsoToken,
   mintSiteKeyCmsSsoToken,
@@ -24,7 +26,8 @@ const otherSite = { id: '43', site_key: 'key-43', domain: 'https://other.example
 const legacySite = { id: '44', site_key: 'key-44', domain: 'https://legacy.example', cms: { packageVersion: '2.1.3' } };
 const oldSite = { id: '45', site_key: 'key-45', domain: 'https://old.example', cms: { packageVersion: '1.7.1' } };
 const newSite = { id: '46', site_key: 'key-46', domain: 'https://new.example', cms: { packageVersion: '' } };
-const ALL = [site, otherSite, legacySite, oldSite, newSite, { id: '7', site_key: 'k7' }];
+const noDomainSite = { id: '47', site_key: 'key-47', domain: '', cms: { adminUrl: 'https://cms.example.net/admin', packageVersion: '2.2.1' } };
+const ALL = [site, otherSite, legacySite, oldSite, newSite, noDomainSite, { id: '7', site_key: 'k7' }];
 const byId = (id) => ALL.find((s) => s.id === id) || null;
 const byKey = (key) => ALL.find((s) => s.site_key === key) || null;
 
@@ -32,12 +35,12 @@ function tempDir() {
   return mkdtempSync(path.join(tmpdir(), 'hub-cms-sso-'));
 }
 
-async function boot({ dataDir, clock } = {}) {
+async function boot({ dataDir, clock, quiet } = {}) {
   const app = express();
   app.use(express.json());
   const adminAuth = (req, res, next) => (req.get('authorization') === 'Bearer ok' ? ((req.admin = { username: 'staff-one' }), next()) : res.status(401).end());
   const now = clock ? () => clock.t : undefined;
-  const registered = registerCmsSsoRoutes(app, { adminAuth, getSiteById: byId, getSiteByKey: byKey, dataDir, now });
+  const registered = registerCmsSsoRoutes(app, { adminAuth, getSiteById: byId, getSiteByKey: byKey, dataDir, now, quiet });
   const server = await new Promise((r) => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
   const base = `http://127.0.0.1:${server.address().port}`;
   return { base, registered, close: () => new Promise((r) => server.close(r)) };
@@ -70,10 +73,28 @@ async function redeem(base, { token, siteKey, via = 'header', ip } = {}) {
   return { status: res.status, body: await res.json().catch(() => ({})), headers: res.headers };
 }
 
-test('HS-1: CMS origin prefers the heartbeat admin URL, falls back to the domain', () => {
-  assert.equal(cmsOrigin(site), 'https://snow.example.com');
-  assert.equal(cmsOrigin({ domain: 'shop.example' }), 'https://shop.example');
-  assert.equal(cmsOrigin({}), '');
+test('HS-1: a sign-in link goes to the stored domain over https; a reported address on another host is ignored', () => {
+  assert.deepEqual(cmsSsoOrigin(site), { origin: 'https://shop.example', source: 'domain', ignoredHost: 'snow.example.com' });
+  const at = (domain, adminUrl) => cmsSsoOrigin({ domain, cms: { adminUrl } }).origin;
+  assert.equal(at('shop.example', 'https://www.shop.example/admin'), 'https://www.shop.example', 'the report picks the www spelling of the same host');
+  assert.equal(at('www.shop.example', 'https://shop.example/admin'), 'https://shop.example');
+  assert.equal(at('shop.example', 'http://shop.example/admin'), 'https://shop.example', 'an http report still gives https');
+  assert.equal(at('http://shop.example', ''), 'https://shop.example', 'an http domain still gives https');
+  assert.equal(at('shop.example', 'https://shop.example:8443/admin'), 'https://shop.example', 'a reported port is not used');
+  assert.equal(at('shop.example', 'https://shop.example.other.example/admin'), 'https://shop.example');
+  assert.equal(at('shop.example', 'https://evilshop.example/admin'), 'https://shop.example');
+  const withCredentials = new URL('https://shop.example/admin');
+  withCredentials.username = 'user';
+  withCredentials.password = 'pw';
+  assert.equal(at('shop.example', withCredentials.href), 'https://shop.example', 'a report with credentials is not used');
+  assert.equal(at('shop.example', 'http://127.0.0.1:4200/admin'), 'https://shop.example', 'a loopback report on a public domain is ignored');
+  assert.equal(at('kafé.example', 'https://www.xn--kaf-dma.example/admin'), 'https://www.xn--kaf-dma.example', 'Unicode and punycode spellings match');
+  assert.equal(at('127.0.0.1:4100', 'http://127.0.0.1:4200/admin'), 'http://127.0.0.1:4200', 'local runs keep http and the reported port');
+  assert.equal(at('127.0.0.1:4100', ''), 'http://127.0.0.1:4100');
+  assert.equal(at('localhost:4100', 'http://127.0.0.1:4200/admin'), 'http://localhost:4100');
+  assert.deepEqual(cmsSsoOrigin(noDomainSite), { origin: '', source: '', ignoredHost: 'cms.example.net' }, 'no domain, no link');
+  assert.equal(cmsSsoOrigin({}).origin, '');
+  assert.equal(cmsOrigin(site), 'https://snow.example.com', 'server-to-server notices keep using the reported address');
 });
 
 test('HS-1: the link format follows the CMS version from the heartbeat', () => {
@@ -106,11 +127,12 @@ test('HS-1: only admins get a link, unknown sites 404, sites without an address 
     assert.equal((await fetch(`${hub.base}/api/hub/sites/42/cms-sso`, { method: 'POST' })).status, 401);
     const ok = await link(hub.base, '42');
     assert.equal(ok.status, 200);
-    assert.match(ok.body.url, /^https:\/\/snow\.example\.com\/api\/cms\/admin\/sso\?token=[A-Za-z0-9_-]{43}$/);
+    assert.match(ok.body.url, /^https:\/\/shop\.example\/api\/cms\/admin\/sso\?token=[A-Za-z0-9_-]{43}$/, 'the stored domain, not the reported address');
     assert.equal(ok.body.expiresInSeconds, 60);
     assert.equal(ok.body.format, 'redeem');
     assert.equal((await link(hub.base, '99')).status, 404);
     assert.equal((await link(hub.base, '7')).status, 409);
+    assert.equal((await link(hub.base, '47')).status, 409, 'a reported address alone is not enough');
     const old = await link(hub.base, '45');
     assert.equal(old.status, 409);
     assert.match(old.body.message, /1\.7\.1/);
@@ -148,9 +170,9 @@ test('HS-1: site-key format for 2.1.3, redeem for an unreported version, and eac
     const fresh = await link(hub.base, '46');
     assert.equal(fresh.body.format, 'redeem');
     const rows = hub.registered.store().auditLog();
-    assert.deepEqual(rows.map((r) => [r.action, r.siteId, r.format, r.packageVersion, r.by]), [
-      ['link', '44', 'site-key', '2.1.3', 'staff-one'],
-      ['link', '46', 'redeem', '', 'staff-one'],
+    assert.deepEqual(rows.map((r) => [r.action, r.siteId, r.format, r.packageVersion, r.by, r.origin, r.originFrom]), [
+      ['link', '44', 'site-key', '2.1.3', 'staff-one', 'https://legacy.example', 'domain'],
+      ['link', '46', 'redeem', '', 'staff-one', 'https://new.example', 'domain'],
     ]);
     const auditText = readFileSync(hub.registered.store().auditPath(), 'utf8');
     assert.ok(!auditText.includes(tokenOf(fresh.body.url)), 'no token in the audit');
@@ -178,6 +200,7 @@ test('HS-4: redeem accepts a token once, for its own site, with the key in the h
 });
 
 test('HS-4: a token for another site, an unknown or malformed token and a missing key get the same 401', async () => {
+  const quiet = createQuietCounter({ log: () => {} });
   await withHub(async (hub) => {
     const token = tokenOf((await link(hub.base, '42')).body.url);
     const cross = await redeem(hub.base, { token, siteKey: 'key-43' });
@@ -193,9 +216,10 @@ test('HS-4: a token for another site, an unknown or malformed token and a missin
     assert.equal((await redeem(hub.base, { token, siteKey: 'key-42' })).status, 200, 'refusals elsewhere do not burn the token for its own site');
     const signed = mintSiteKeyCmsSsoToken(site);
     assert.equal((await redeem(hub.base, { token: signed, siteKey: 'key-42' })).status, 401, 'a token signed with the site key is not a hub token');
-    const reasons = hub.registered.store().auditLog().filter((r) => r.action === 'redeem' && !r.ok).map((r) => r.reason);
-    assert.deepEqual(reasons, ['other-site', 'unknown', 'malformed', 'malformed', 'other-site', 'malformed']);
-  });
+    const refusals = hub.registered.store().auditLog().filter((r) => r.action === 'redeem' && !r.ok);
+    assert.deepEqual(refusals.map((r) => [r.reason, r.siteId, r.via]), [['other-site', '42', '43']], 'only refusals of a real token are audited');
+    assert.deepEqual(quiet.totals(), { unknown: 1, malformed: 2, 'no-site': 2 }, 'the rest are counted in memory');
+  }, { quiet });
 });
 
 test('HS-4: a token expires after 60 seconds, and settled rows are pruned', async () => {
@@ -216,34 +240,128 @@ test('HS-4: a token expires after 60 seconds, and settled rows are pruned', asyn
   }, { clock });
 });
 
-test('HS-4: failed redeems are limited per site and address; other addresses keep working', async () => {
+const junkToken = () => randomBytes(32).toString('base64url');
+
+test('HS-4: junk tokens with a valid site key are never limited, so the next real link from that address works', async () => {
   await withHub(async (hub) => {
-    const bogus = 'B'.repeat(43);
-    for (let i = 0; i < 10; i += 1) assert.equal((await redeem(hub.base, { token: bogus, siteKey: 'key-42', ip: '203.0.113.9' })).status, 401);
-    const limited = await redeem(hub.base, { token: bogus, siteKey: 'key-42', ip: '203.0.113.9' });
-    assert.equal(limited.status, 429);
-    assert.ok(Number(limited.headers.get('retry-after')) > 0);
-    const spoofed = await redeem(hub.base, { token: bogus, siteKey: 'key-42', ip: '192.0.2.1, 203.0.113.9' });
-    assert.equal(spoofed.status, 429, 'a client-written first hop does not change the counted address');
+    for (let i = 0; i < 20; i += 1) {
+      assert.equal((await redeem(hub.base, { token: junkToken(), siteKey: 'key-42', ip: '203.0.113.9' })).status, 401);
+    }
+    assert.equal((await redeem(hub.base, { token: 'not a token', siteKey: 'key-42', ip: '203.0.113.9' })).status, 401);
     const good = tokenOf((await link(hub.base, '42')).body.url);
-    assert.equal((await redeem(hub.base, { token: good, siteKey: 'key-42', ip: '203.0.113.9' })).status, 429, 'a limited pair waits even with a good token');
-    assert.equal((await redeem(hub.base, { token: good, siteKey: 'key-42', ip: '198.51.100.7' })).status, 200, 'the site from another address still works');
+    assert.equal((await redeem(hub.base, { token: good, siteKey: 'key-42', ip: '203.0.113.9' })).status, 200, 'a CMS passing on junk from its visitors keeps working');
+    assert.equal(hub.registered.limiter.size(), 0, 'nothing was counted');
+    for (let i = 0; i < 3; i += 1) assert.equal((await redeem(hub.base, { token: good, siteKey: 'key-42', ip: '203.0.113.9' })).status, 401, 'a used token stays refused');
+    assert.equal(hub.registered.limiter.check({ ip: '203.0.113.9', siteId: '42' }).ok, true);
   });
 });
 
-test('HS-4: limiter counts per address across sites and per site across addresses, with bounded memory', () => {
+test('HS-4: calls without a known site key are limited per address; a known key from that address still works', async () => {
+  await withHub(async (hub) => {
+    for (let i = 0; i < 30; i += 1) assert.equal((await redeem(hub.base, { token: junkToken(), siteKey: `guess-${i}`, ip: '203.0.113.9' })).status, 401);
+    const limited = await redeem(hub.base, { token: junkToken(), siteKey: 'guess-x', ip: '203.0.113.9' });
+    assert.equal(limited.status, 429);
+    assert.ok(Number(limited.headers.get('retry-after')) > 0);
+    const spoofed = await redeem(hub.base, { token: junkToken(), siteKey: 'guess-y', ip: '192.0.2.1, 203.0.113.9' });
+    assert.equal(spoofed.status, 429, 'a client-written first hop does not change the counted address');
+    assert.equal((await redeem(hub.base, { token: junkToken(), ip: '203.0.113.9' })).status, 429, 'no key at all counts the same way');
+    const good = tokenOf((await link(hub.base, '42')).body.url);
+    assert.equal((await redeem(hub.base, { token: good, siteKey: 'key-42', ip: '203.0.113.9' })).status, 200, 'another tenant on a shared address cannot block a real site');
+  });
+});
+
+test('HS-4: live tokens of another site are limited per (site, address)', async () => {
+  await withHub(async (hub) => {
+    for (let i = 0; i < 10; i += 1) {
+      const foreign = tokenOf((await link(hub.base, '43')).body.url);
+      assert.equal((await redeem(hub.base, { token: foreign, siteKey: 'key-42', ip: '203.0.113.9' })).status, 401);
+    }
+    const foreign = tokenOf((await link(hub.base, '43')).body.url);
+    assert.equal((await redeem(hub.base, { token: foreign, siteKey: 'key-42', ip: '203.0.113.9' })).status, 429);
+    const good = tokenOf((await link(hub.base, '42')).body.url);
+    assert.equal((await redeem(hub.base, { token: good, siteKey: 'key-42', ip: '203.0.113.9' })).status, 429, 'a limited pair waits even with a good token');
+    assert.equal((await redeem(hub.base, { token: good, siteKey: 'key-42', ip: '198.51.100.7' })).status, 200, 'the site from another address still works');
+    assert.equal((await redeem(hub.base, { token: foreign, siteKey: 'key-43', ip: '203.0.113.9' })).status, 200, 'the other site is not affected');
+  });
+});
+
+test('HS-4: limiter counts pairs and addresses in a sliding window with bounded memory', () => {
   let t = 0;
-  const limiter = createRedeemLimiter({ windowMs: 1000, maxPerPair: 3, maxPerIp: 5, maxPerSite: 6, maxKeys: 50, now: () => t });
+  const limiter = createRedeemLimiter({ windowMs: 1000, maxPerPair: 3, maxPerIp: 5, maxKeys: 50, now: () => t });
   for (let i = 0; i < 5; i += 1) limiter.fail({ ip: '1.1.1.1', siteId: '' });
-  assert.equal(limiter.check({ ip: '1.1.1.1', siteId: '42' }).ok, false, 'an address with five failures is limited for every site');
-  assert.equal(limiter.check({ ip: '2.2.2.2', siteId: '42' }).ok, true);
-  for (let i = 0; i < 6; i += 1) limiter.fail({ ip: `9.9.9.${i}`, siteId: '43' });
-  assert.equal(limiter.check({ ip: '8.8.8.8', siteId: '43' }).ok, false, 'a site with six failures from many addresses is limited');
+  assert.equal(limiter.check({ ip: '1.1.1.1', siteId: '' }).ok, false, 'an address with five failures without a key is limited');
+  assert.equal(limiter.check({ ip: '1.1.1.1', siteId: '42' }).ok, true, 'a known site from that address is not');
+  for (let i = 0; i < 3; i += 1) limiter.fail({ ip: '2.2.2.2', siteId: '43' });
+  assert.equal(limiter.check({ ip: '2.2.2.2', siteId: '43' }).ok, false);
+  assert.equal(limiter.check({ ip: '3.3.3.3', siteId: '43' }).ok, true);
   for (let i = 0; i < 500; i += 1) limiter.fail({ ip: `10.0.${i}.1`, siteId: '' });
   assert.ok(limiter.size() <= 50, `key count ${limiter.size()} is capped`);
-  assert.equal(limiter.check({ ip: '8.8.8.8', siteId: '43' }).ok, false, 'site counts are never evicted inside the window');
+  assert.equal(limiter.check({ ip: '2.2.2.2', siteId: '43' }).ok, false, 'address keys are evicted before pair keys');
   t = 1001;
-  assert.equal(limiter.check({ ip: '8.8.8.8', siteId: '43' }).ok, true, 'the window slides');
+  assert.equal(limiter.check({ ip: '2.2.2.2', siteId: '43' }).ok, true, 'the window slides');
+});
+
+test('HS-4: junk redeems are not written to the audit; they are counted and logged at most once a minute', async () => {
+  const clock = { t: 5_000_000 };
+  const lines = [];
+  const quiet = createQuietCounter({ now: () => clock.t, log: (...args) => lines.push(args.join(' ')) });
+  await withHub(async (hub) => {
+    await link(hub.base, '42');
+    const auditPath = hub.registered.store().auditPath();
+    const before = readFileSync(auditPath, 'utf8');
+    for (let i = 0; i < 50; i += 1) {
+      const ip = `198.51.100.${i}`;
+      const kind = i % 3;
+      let res;
+      if (kind === 0) res = await redeem(hub.base, { token: junkToken(), ip });
+      else if (kind === 1) res = await redeem(hub.base, { token: junkToken(), siteKey: `guess-${i}`, ip });
+      else res = await redeem(hub.base, { token: i % 2 ? junkToken() : 'x', siteKey: 'key-42', ip });
+      assert.equal(res.status, 401);
+    }
+    assert.equal(readFileSync(auditPath, 'utf8'), before, 'audit.json is unchanged');
+    const totals = quiet.totals();
+    assert.equal(Object.values(totals).reduce((a, b) => a + b, 0), 50);
+    assert.equal(lines.length, 1, 'one log line inside the minute');
+    clock.t += 60_000;
+    await redeem(hub.base, { token: junkToken(), ip: '198.51.100.200' });
+    assert.equal(lines.length, 2, 'the next line after a minute');
+    assert.match(lines[1], /no-site/);
+  }, { clock, quiet });
+});
+
+test('HS-1: a heartbeat from a site-key holder cannot move the sign-in link to another host', async () => {
+  const dataDir = tempDir();
+  const saved = process.env.APP_DATA_DIR;
+  process.env.APP_DATA_DIR = dataDir;
+  const hub = await import('../data/hub.js');
+  const created = hub.createSite({ name: 'Example shop', domain: 'shop.example' });
+  const id = created.site?.id || created.id;
+  const key = hub.getSiteById(id).site_key;
+  assert.equal(hub.recordHeartbeat(key, { packageVersion: '2.2.1', adminUrl: 'https://attacker.example/admin' }).ok, true);
+  const app = express();
+  app.use(express.json());
+  const adminAuth = (req, _res, next) => { req.admin = { username: 'staff-one' }; next(); };
+  const registered = registerCmsSsoRoutes(app, { adminAuth, getSiteById: hub.getSiteById, getSiteByKey: hub.getSiteByKey, dataDir });
+  const server = await new Promise((r) => { const x = app.listen(0, '127.0.0.1', () => r(x)); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const res = await fetch(`${base}/api/hub/sites/${id}/cms-sso`, { method: 'POST' });
+    const body = await res.json();
+    assert.equal(res.status, 200);
+    assert.equal(body.format, 'redeem');
+    assert.equal(new URL(body.url).origin, 'https://shop.example', 'the link stays on the stored domain');
+    const row = registered.store().auditLog().at(-1);
+    assert.equal(row.originFrom, 'domain');
+    assert.equal(row.ignoredAdminHost, 'attacker.example', 'the ignored report is noted');
+    hub.recordHeartbeat(key, { adminUrl: 'http://www.shop.example/admin' });
+    const www = await (await fetch(`${base}/api/hub/sites/${id}/cms-sso`, { method: 'POST' })).json();
+    assert.equal(new URL(www.url).origin, 'https://www.shop.example', 'a plain-http report on the same host still gives https');
+  } finally {
+    await new Promise((r) => server.close(r));
+    if (saved === undefined) delete process.env.APP_DATA_DIR;
+    else process.env.APP_DATA_DIR = saved;
+    rmSync(dataDir, { recursive: true, force: true });
+  }
 });
 
 test('HS-4: four processes redeeming one token at the same time accept it once', async () => {
