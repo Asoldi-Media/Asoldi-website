@@ -91,6 +91,36 @@ recording, erase request, payment not connected) are added by the batch that shi
 
 ---
 
+## Backfill could not plan some clients
+
+**Symptom.** The backfill report lists clients under `needsChoice` (a dual offer was signed without a recorded alternative), `noEvidence` (signed, but no accepted or sent offer, no linked hub site, no payment plan and no explicitly picked tier) or with `needsConfirmation` (the plan was derived from offer text with lines it could not read, or from a custom offer).
+
+**Check.** `GET /api/admin/system/delivery-backfill` shows the latest report; `node scripts/backfill-site-plans.mjs` prints the counts for the current data (dry run).
+
+**Fix.** `needsChoice`: get the chosen alternative recorded (the client accepts it in the portal), then run the dry run again. `noEvidence`: pick the tier in the meeting-notes calculator (this stores `tierExplicit`) or send the offer, then run again. `needsConfirmation` is informational until the signing batch: check the listed offer lines. Nothing reads `client.sitePlan` for these clients until then, so leaving them unplanned changes nothing.
+
+---
+
+## Backfill applied a wrong plan or stage
+
+**Symptom.** After an apply, a client's `sitePlan`, a site's `planSource` or a stored stage is not what it should be.
+
+**Check.** The apply report (`GET /api/admin/system/delivery-backfill/reports/<file>`) names the evidence per client and the `snapshotId` taken before writing; `GET /api/admin/system/delivery-snapshots` lists that snapshot.
+
+**Fix.** Restore the snapshot (dry run first): `POST /api/admin/system/delivery-snapshots/<snapshotId>/restore` with `{"dryRun": true}`, then `{"dryRun": false}`. Set `migrations.deliveryBackfill` back to `off` (`PUT /api/admin/automation-settings`), correct the evidence (offer, accepted alternative, hub site plan) and run the dry run again before the next apply. Live site flags are never changed by the backfill, so no client site needs a fix.
+
+---
+
+## Maker events are not recorded
+
+**Symptom.** `makerRun.materials` or `makerRun.autopilot` stays empty although the Maker sends `run.materials.updated` / `run.autopilot.updated`, and the material dots still wait for a live run fetch.
+
+**Check.** `GET /api/admin/automation-settings`: `development.makerEvents` must be `record`. The callback also ignores an event whose `runId` is not the run linked to the client (`callback-run-does-not-match-linked-run`).
+
+**Fix.** `PUT /api/admin/automation-settings` with `{"development": {"makerEvents": "record"}}`. If the run link is wrong, link the right run on the client first. Snapshots older than 24 hours are not used; the next event from the Maker refreshes them.
+
+---
+
 ## Blocking codes
 
 What each code means and how to clear it. Jobs and the board arrive in later batches; the codes are fixed now (`BLOCKING_CODES` in the vocabulary).
