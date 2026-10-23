@@ -839,6 +839,56 @@ test('engine: a rate-limit answer blocks the limiter; a safe-mode refusal is not
   assert.equal(store.sessions[`${ROOM}|${T}`].attempts.length, 0);
 });
 
+test('engine: a retry planned before the bot_joined webhook said the bot is in is not sent', async () => {
+  resetStore();
+  const state = engineState([salesClient()]);
+  await runFirefliesLiveJoinTick(engineDeps(state));
+  assert.equal(state.sent.length, 1, 'the first knock at 09:57');
+  live.resetFirefliesLiveJoinEngineForTests();
+  state.now = at(1);
+  await runFirefliesLiveJoinTick(engineDeps(state, {
+    // The rep lets the bot in while the look is out, so the look answers a moment too early.
+    fetchActiveMeetings: async () => {
+      await live.noteFirefliesBotJoined({ meetingId: 'ff-bot-1', fetchPresence: async () => ({ meetingLink: ROOM, isLive: true }), nowMs: at(1) });
+      return [];
+    },
+  }));
+  assert.equal(state.sent.length, 1, 'no second bot at the door of a meeting being recorded');
+  const session = readLiveSessionStore().sessions[`${ROOM}|${T}`];
+  assert.deepEqual([session.state, session.message, session.attempts.length], ['recording', live.LIVE_JOIN_MESSAGES.recording, 1]);
+});
+
+test('engine: a send is stamped and counted when it goes out, not when its tick began', async () => {
+  resetStore();
+  const state = engineState([salesClient()]);
+  // A tick that began at 10:00 sends at 10:00:30, after a room open and a look.
+  state.now = at(0);
+  await runFirefliesLiveJoinTick(engineDeps(state, { clock: () => at(0.5) }));
+  let store = readLiveSessionStore();
+  assert.equal(store.sessions[`${ROOM}|${T}`].attempts[0].at, iso(0.5));
+  assert.deepEqual(store.limiter.calls.map((call) => call.at), [iso(0.5)]);
+
+  // A tick stuck since 10:00 resumes at 10:02:30, after the tick that took over sent three: the limit holds.
+  resetStore();
+  const stuck = engineState([salesClient()]);
+  updateLiveSessionStore((current) => ({
+    ...current,
+    limiter: { calls: ['a', 'b', 'c'].map((key) => ({ at: iso(2.5), key, kind: 'first' })) },
+  }), { nowMs: at(2.5) });
+  stuck.now = at(0);
+  await runFirefliesLiveJoinTick(engineDeps(stuck, { clock: () => at(2.5) }));
+  assert.equal(stuck.sent.length, 0, 'no fourth call inside 20 minutes');
+  store = readLiveSessionStore();
+  assert.equal(store.limiter.calls.length, 3);
+
+  // An "exceeded" answer with no retry-after blocks for a minute, not a whole window.
+  resetStore();
+  const exceeded = engineState([salesClient()]);
+  exceeded.reply = () => ({ ok: false, error: { message: 'Rate limit exceeded' } });
+  await runFirefliesLiveJoinTick(engineDeps(exceeded));
+  assert.equal(readLiveSessionStore().limiter.blockedUntil, iso(-2));
+});
+
 test('engine: a send another hub process has out stands this one back (one knock, not two)', async () => {
   resetStore();
   live.upsertLiveSessionsForClient(salesClient(), { nowMs: at(-10) });
