@@ -2,7 +2,7 @@
 // modules on a temp data dir behind a fake adminAuth and a fake Maker token check.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -43,7 +43,10 @@ registerCmsFeatureRoutes(app, {
 });
 const server = app.listen(0);
 const base = `http://127.0.0.1:${server.address().port}`;
-test.after(() => server.close());
+test.after(() => {
+  server.close();
+  rmSync(DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+});
 
 async function call(method, path, body, headers = { authorization: 'Bearer admin' }) {
   const res = await fetch(`${base}${path}`, {
@@ -276,5 +279,46 @@ test('a cms spec larger than 256 kB is refused with 413', async () => {
   const entries = Array.from({ length: 200 }, (_, i) => ({ question: `Q${i}`, answer: 'x'.repeat(1500) }));
   const res = await put({ sections: { 'content.seed': { faq: entries } } });
   assert.equal(res.status, 413);
+  assert.equal('cmsSpec' in storedSite(), false);
+});
+
+test('only own section and field names count, and __proto__, constructor and prototype are refused anywhere and never merged', async () => {
+  seedSites();
+  // Names found only through Object.prototype are unknown sections.
+  const force = validateCmsSpec({ force: ['__proto__', 'constructor', 'toString'] }, { registry });
+  assert.deepEqual(force.errors.map((e) => e.path), ['force[0]', 'force[1]', 'force[2]']);
+  const removals = validateCmsSpec({ sections: { toString: null, hasOwnProperty: null } }, { registry });
+  assert.deepEqual(removals.errors.map((e) => e.path), ['sections.toString', 'sections.hasOwnProperty']);
+  assert.match(validateSection('constructor', {})[0].message, /Unknown section/);
+  assert.deepEqual(validateSection('general', { toString: 'x' }).map((e) => e.path), ['sections.general.toString']);
+
+  // A JSON body can carry these names as own keys, in any section and in featureSpec.
+  const body = JSON.parse('{"sections":{"content.seed":{"__proto__":[{"title":"x"}]},"email":{"evidence":{"constructor":"a"}},'
+    + '"wizards":[{"id":"w","__proto__":{"open":true}}],"general":{"__proto__":{"siteName":"x"}}},'
+    + '"featureSpec":{"defaults":{"__proto__":true}}}');
+  const checked = validateCmsSpec(body, { registry });
+  assert.equal(checked.ok, false);
+  for (const path of ['featureSpec.defaults.__proto__', 'sections.content.seed.__proto__', 'sections.email.evidence.constructor', 'sections.wizards[0].__proto__', 'sections.general.__proto__']) {
+    assert.ok(checked.errors.some((e) => e.path === path), `${path} in ${JSON.stringify(checked.errors)}`);
+  }
+
+  // Merges skip them, so merged objects keep the plain prototype and only real keys.
+  const merged = mergeSections({ general: { siteName: 'A' } }, JSON.parse('{"general":{"__proto__":{"extra":true},"phone":"1"},"__proto__":{"x":1}}'));
+  assert.equal(Object.getPrototypeOf(merged), Object.prototype);
+  assert.equal(Object.getPrototypeOf(merged.general), Object.prototype);
+  assert.equal(merged.general.extra, undefined);
+  assert.deepEqual(merged, { general: { siteName: 'A', phone: '1' } });
+  const features = mergeFeatureSpec({}, JSON.parse('{"defaults":{"__proto__":{"x":true},"shop.upsell":true}}'));
+  assert.equal(Object.getPrototypeOf(features.defaults), Object.prototype);
+  assert.deepEqual(features.defaults, { 'shop.upsell': true });
+
+  // Through the route: refused with the path, nothing stored.
+  const res = await put(JSON.parse('{"sections":{"general":{"__proto__":{"siteName":"x"}}},"force":["general"]}'));
+  assert.equal(res.status, 400);
+  assert.deepEqual(paths(res), ['sections.general.__proto__']);
+  assert.equal('cmsSpec' in storedSite(), false);
+  const forced = await put({ sections: { general: { siteName: 'Shop' } }, force: ['toString'] });
+  assert.equal(forced.status, 400);
+  assert.deepEqual(paths(forced), ['force[0]']);
   assert.equal('cmsSpec' in storedSite(), false);
 });

@@ -27,6 +27,13 @@ function isPlainObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+// Names that would set an object's prototype instead of a key; never stored as keys.
+const RESERVED_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function storableKey(key) {
+  return Boolean(key) && !RESERVED_KEYS.has(key);
+}
+
 function text(value, max = MAX_TEXT) {
   return String(value ?? '').trim().slice(0, max);
 }
@@ -80,13 +87,15 @@ export function normalizeFeatureSpec(raw) {
   if (raw.defaults !== undefined) {
     out.defaults = {};
     for (const [key, value] of Object.entries(isPlainObject(raw.defaults) ? raw.defaults : {}).slice(0, MAX_LIST)) {
-      if (typeof value === 'boolean') out.defaults[text(key, MAX_KEY_LENGTH)] = value;
+      const name = text(key, MAX_KEY_LENGTH);
+      if (typeof value === 'boolean' && storableKey(name)) out.defaults[name] = value;
     }
   }
   if (raw.values !== undefined) {
     out.values = {};
     for (const [key, value] of Object.entries(isPlainObject(raw.values) ? raw.values : {}).slice(0, MAX_LIST)) {
-      if (typeof value === 'string' && value.trim()) out.values[text(key, MAX_KEY_LENGTH)] = text(value, 60);
+      const name = text(key, MAX_KEY_LENGTH);
+      if (typeof value === 'string' && value.trim() && storableKey(name)) out.values[name] = text(value, 60);
     }
   }
   if (raw.updatedAt) out.updatedAt = text(raw.updatedAt, 40);
@@ -99,7 +108,8 @@ export function normalizeCmsSpec(raw) {
   if (!isPlainObject(raw)) return null;
   const sections = {};
   for (const [name, value] of Object.entries(isPlainObject(raw.sections) ? raw.sections : {})) {
-    if (isPlainObject(value) || Array.isArray(value)) sections[text(name, MAX_KEY_LENGTH)] = value;
+    const key = text(name, MAX_KEY_LENGTH);
+    if ((isPlainObject(value) || Array.isArray(value)) && storableKey(key)) sections[key] = value;
   }
   const out = { rev: wholeNumber(raw.rev) ?? 0, sections, force: keyList(raw.force) };
   if (raw.updatedAt) out.updatedAt = text(raw.updatedAt, 40);
