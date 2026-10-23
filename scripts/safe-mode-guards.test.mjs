@@ -333,6 +333,17 @@ test('Google read-only traffic is allowed, writes are not', () => {
   assert.equal(egress.evaluateEgress(policy, { host: 'api.brevo.com', method: 'POST', path: '/v3/smtp/email' }).kind, 'brevoSend');
 });
 
+test('Meet room access (lib/google-meet-access.js) is a calendarWrite, reads included', () => {
+  const blocked = egress.buildEgressPolicy({ allow: new Set() });
+  for (const method of ['GET', 'PATCH']) {
+    const outcome = egress.evaluateEgress(blocked, { host: 'meet.googleapis.com', method, path: '/v2/spaces/abc-defg-hij' });
+    assert.deepEqual([outcome.allowed, outcome.kind], [false, 'calendarWrite'], method);
+  }
+  const allowed = egress.buildEgressPolicy({ allow: new Set(['calendarWrite']) });
+  assert.equal(egress.evaluateEgress(allowed, { host: 'meet.googleapis.com', method: 'PATCH', path: '/v2/spaces/sp-test-1' }).allowed, true);
+  assert.equal(egress.evaluateEgress(allowed, { host: 'meet.googleapis.com', method: 'POST', path: '/v2/conferenceRecords' }).allowed, false, 'only room settings');
+});
+
 test('on Hostinger every guard is a pass-through and no egress guard is installed', async () => {
   safeMode.installSafeMode({ env: { HOSTINGER: '1' }, dataDir, log: null });
   assert.equal(safeMode.isSafeModeActive(), false);
