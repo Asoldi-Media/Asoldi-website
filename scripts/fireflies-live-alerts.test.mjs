@@ -1445,6 +1445,26 @@ test('open undoes declined: missing stays reported, otherwise capture\'s state c
   assert.equal(watchdog.recordingDecision({ client: plain, meetingId: STUB, state: 'open', nowMs: at(2) }).recording, null, 'nothing to undo');
 });
 
+test('"uten opptak" and "Angre" on an empty recording bring back "tomt opptak", not "ingen opptak"', () => {
+  resetAll();
+  // The watchdog called it empty: a fragment with no talk, its id on the row, one shared stamp.
+  const empty = { state: 'empty', missingAt: iso(150), alertedAt: iso(150), ffMeetingId: 'FFHALLO5', message: 'Fireflies var med, men opptaket er tomt (ingen tale, eller for kort).' };
+  const client = salesClient({ meetings: [placeholder('client-1', T, empty)] });
+  const declined = watchdog.recordingDecision({ client, meetingId: STUB, state: 'declined', by: 'Kari Test', nowMs: at(200) });
+  client.meetings[0].recording = mergeRecordingState(client.meetings[0].recording, declined.recording);
+  assert.deepEqual([client.meetings[0].recording.state, client.meetings[0].recording.declinedFrom], ['declined', 'empty']);
+  const open = watchdog.recordingDecision({ client, meetingId: STUB, state: 'open', by: 'Kari Test', nowMs: at(210) });
+  const reopened = mergeRecordingState(client.meetings[0].recording, open.recording);
+  assert.deepEqual([reopened.state, reopened.ffMeetingId, reopened.alertedAt], ['empty', 'FFHALLO5', iso(150)]);
+  assert.equal(reopened.message, 'Åpnet igjen av Kari Test. Fireflies var med, men opptaket er tomt (ingen tale, eller for kort).');
+  assert.equal(reopened.declinedFrom, undefined, 'the note goes with the mark');
+  // A missing meeting whose bot capture saw still comes back missing.
+  const seen = salesClient({ meetings: [placeholder('client-1', T, { state: 'missing', missingAt: iso(150), ffMeetingId: 'FFBOT0001' })] });
+  const mark = watchdog.recordingDecision({ client: seen, meetingId: STUB, state: 'declined', nowMs: at(200) });
+  seen.meetings[0].recording = mergeRecordingState(seen.meetings[0].recording, mark.recording);
+  assert.equal(watchdog.recordingDecision({ client: seen, meetingId: STUB, state: 'open', nowMs: at(210) }).recording.state, 'missing');
+});
+
 test('declined stops the engine for that session, and open lets it send again', async () => {
   resetAll();
   const client = salesClient();
