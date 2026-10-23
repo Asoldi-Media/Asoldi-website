@@ -13,7 +13,7 @@ process.env.BOOKING_INBOX_EMAIL = 'booking@asoldi.test';
 const store = await import('../data/email-store.js');
 const owners = await import('../lib/owner-recipients.js');
 const clientForms = await import('../lib/client-forms.js');
-const { resolveBccHeader } = await import('../lib/email.js');
+const { buildMessage, resolveBccHeader } = await import('../lib/email.js');
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOW = Date.parse('2026-10-23T12:00:00.000Z');
@@ -113,6 +113,25 @@ test('WS7.39 (a): owner+asoldi-bcc mails the owner with BCC to SALES_CONTACT_EMA
   assert.equal(mail.replyTo, 'kari@example.no');
   assert.equal(mail.text, legacyPayload(target).text);
   assert.equal(resolveBccHeader(mail.bcc, mail.to), 'salg@asoldi.test', 'the transport sends the BCC');
+});
+
+test('WS7.39: on the SMTP transport an explicit BCC is in the envelope, so it is delivered', () => {
+  const saved = { user: process.env.SMTP_USER, bcc: process.env.SMTP_BCC };
+  process.env.SMTP_USER = 'smtp-user@asoldi.test';
+  delete process.env.SMTP_BCC;
+  try {
+    const copied = buildMessage({ to: 'admin@example.no', bcc: 'salg@asoldi.test', subject: 's', text: 't' });
+    assert.deepEqual(copied.envelope.to, ['admin@example.no', 'salg@asoldi.test']);
+    assert.equal(copied.bcc, 'salg@asoldi.test');
+    const ownerOnly = buildMessage({ to: 'admin@example.no', bcc: false, subject: 's', text: 't' });
+    assert.equal(ownerOnly.envelope.to, 'admin@example.no');
+    assert.equal(ownerOnly.bcc, undefined);
+    const legacy = buildMessage({ to: 'booking@asoldi.test', subject: 's', text: 't' });
+    assert.equal(legacy.envelope.to, 'booking@asoldi.test', 'the default copy keeps the old envelope');
+  } finally {
+    if (saved.user === undefined) delete process.env.SMTP_USER; else process.env.SMTP_USER = saved.user;
+    if (saved.bcc !== undefined) process.env.SMTP_BCC = saved.bcc;
+  }
 });
 
 test('WS7.39: the Asoldi BCC stops 30 days after the switch; owner mode never copies Asoldi', async () => {
