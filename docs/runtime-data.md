@@ -118,6 +118,16 @@ Optional env (see `.env.example`):
 - `PROD_ADMIN_USERNAME` / `PROD_ADMIN_PASSWORD`
 - `LAN_USER_SYNC_PASSWORD`
 
+## Delivery data on disk (batch 0)
+
+Three items in the data dir belong to the delivery work (WS8). None is in git and none needs an env var.
+
+- `automation-settings.json`: Superadmin → Automatisering (shadow/auto switches, pauses, pilots, mailboxes, audit of the last 50 changes). Missing file = the defaults, which reproduce the behaviour before batch 0. Saved through `writeDataJson`, so it also gets dated copies in `backups/`.
+- `delivery-schema.json`: the delivery schema version the stores were last snapshotted for. The server compares it with `DELIVERY_SCHEMA_VERSION` on startup.
+- `snapshots/<label>-<timestamp>/`: copies of the delivery stores (`sales-clients.json`, `sites.json`, `sales-offers.json`, `automation-settings.json` and later delivery files) plus a checksummed `manifest.json`. Taken once per schema bump on startup, by hand from Superadmin, and before every restore (`pre-restore-*`). The newest 3 are kept and older ones are deleted. **Inodes:** at most 3 folders of up to 8 files each (about 30 inodes). **Content:** the same personal data and secrets as the live stores (site keys, client admin password hashes, blog token hashes), so treat the folder like the live files: never copy it off the server except as part of an approved backup, and include it when a client's data is erased (WS8.48).
+
+Restore runbook: hub `docs/delivery-runbooks.md`.
+
 ## 5) Hostinger `backups/` folder (inodes)
 
 Every write to live JSON (`sales-clients.json`, `sites.json`, users, offers, …) also used to drop a **new timestamped copy** into `backups/` with **no cleanup**. That folder is never read by the app. Live data is the sibling `*.json` files in the parent directory.

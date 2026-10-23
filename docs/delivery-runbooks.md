@@ -21,7 +21,7 @@ recording, erase request, payment not connected) are added by the batch that shi
 - Older full copies: `<dataDir>/backups/automation-settings.json.<timestamp>.json` (kept by `writeDataJson`).
 
 **Fix.**
-- Put the old values back with `PUT /api/admin/automation-settings {"settings": {...the "from" values...}, "reason": "rollback"}`. A partial object is enough; it is deep-merged.
+- Put the old values back with `PUT /api/admin/automation-settings {"settings": {...the "from" values...}, "reason": "rollback"}`. A partial object is enough; it is deep-merged, except the per-mailbox maps and `paused` objects, which replace as a whole. To remove a mailbox, PUT the old `inbox.mailboxes` (its entries in `inbox.autoActions` / `inbox.autoReply` go with it) and, if `sender.service.replyTo` pointed at it, the old `replyTo` too.
 - To go back to the defaults for one group, PUT the matching part of `defaults` from the GET response.
 - If the whole file is broken, restore it from a delivery snapshot (below) or copy a backup over it on the operator PC; the hub re-reads it within 10 s.
 

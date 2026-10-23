@@ -43,7 +43,7 @@ One-time add-ons: `pos`, `thirdpartyhost`.
 
 Owner decisions built into the vocabulary:
 
-- **Blog on every tier.** Clients write posts on every tier (`blog`, `blog.posts`). Auto-written posts (`blog.autoPosts`) come with the `seo` service, so tier 2 and up.
+- **Blog on every tier.** Clients write posts on every tier (WS6 feature `blog`; the master plan calls it `blog.posts`). Auto-written posts (WS6 feature `blog.localPosts`; the master plan calls it `blog.autoPosts`) come with the `seo` service only, so tier 2 and up (`SERVICE_FEATURE_ANCHORS`, `SERVICE_EXCLUSIVE_FEATURES`, `FEATURE_KEY_ALIASES`). The WS6 `blog` bundle must therefore not entitle `blog.localPosts`, and the CMS must not treat the legacy `features.blog` flag (on for tier 1 now) as permission to pull auto posts.
 - **Backlink network** is its own service (`backlinks`, feature `seo.linkNetwork`), on by default for tier 2 and up.
 - **Cancellation stops hub services** (`CANCELLATION_EFFECTS`: `cms-updates`, `auto-posts`, `backlink-network`, `hub-email`, `change-requests`) after the paid period plus `CANCELLATION_GRACE_DAYS` (30). There is no standalone mode; `thirdpartyhost` is SEO and change work for a site hosted elsewhere.
 - **Soft budgets never block.** Reaching a budget is the warning `budget-soft-limit`. Only a runaway (`budget-runaway`, more than 5× expected) or a loop (`loop-detected`) stops a job.
@@ -147,7 +147,7 @@ Scheduling mails go out from the client's rep with the rep's reply-to, so replie
 
 ## Switches
 
-`GET/PUT /api/admin/automation-settings` (Superadmin). PUT takes a partial object (deep-merged) or `{settings, reason}`; invalid input returns 400 with `errors[{path, message}]`. Every change is audited (last 50: who, when, what, why).
+`GET/PUT /api/admin/automation-settings` (Superadmin). PUT takes a partial object (deep-merged) or `{settings, reason}`. The per-mailbox maps (`inbox.autoActions`, `inbox.autoReply`) and every `paused` object replace as a whole, and a PUT that changes `inbox.mailboxes` drops the map entries of a mailbox that is no longer listed; invalid input returns 400 with `errors[{path, message}]`. Every change is audited (last 50: who, when, what, why).
 
 **Modes.** Each email kind has `enabled`, `mode` and `paused`:
 
@@ -212,8 +212,8 @@ Warning codes (`WARNING_CODES`) never block: `dev-skipped`, `seo-deferred-no-dom
 
 ## Data safety
 
-- **Forward-compatible keys.** `data/normalize-ext.js` lists what later batches store on sales clients (`sitePlan`, `delivery`, `nurture`, `isTest`, ...), `makerRun`, `hubSite`, hub sites (`planSource`, `stagingDomain`, `featureSpec`, ...), `site.cms` and offers (`plan`, `pricing`, `dpaVersion`), plus a reserved `ext` object. Normalizers pass them through unchanged; the code that owns a key normalizes it itself. `offerContentHash` ignores them, so no offer hash changes. `site.deliveryPhase` keeps `cancelled` and `archived`.
-- **Snapshots.** `DELIVERY_SCHEMA_VERSION` (in `lib/delivery-snapshots.js`) goes up by one in every batch that adds or reshapes delivery data. On startup, when it is higher than `<dataDir>/delivery-schema.json`, the server copies the delivery stores (`DELIVERY_SNAPSHOT_FILES`) into `<dataDir>/snapshots/batch-<n>-<timestamp>/` before anything writes. The newest 3 snapshots are kept. Secrets and Maker host tokens are never copied.
+- **Forward-compatible keys.** `data/normalize-ext.js` lists what later batches store on sales clients (`sitePlan`, `delivery`, `nurture`, `isTest`, ...), `makerRun`, `hubSite`, hub sites (`planSource`, `stagingDomain`, `featureSpec`, ...), `site.cms` and offers (`plan`, `pricing`, `dpaVersion`), plus a reserved `ext` object. Normalizers pass them through unchanged from the stored record; the code that owns a key normalizes it itself. An incoming patch cannot write them: `mergeMakerRunPatch` drops future `makerRun` keys and step tokens from a patch (for example a set-maker-run body), so a value such as `makerRun.goLive` only ever comes from the batch that owns it. `offerContentHash` ignores them, so no offer hash changes. `site.deliveryPhase` keeps `cancelled` and `archived`.
+- **Snapshots.** `DELIVERY_SCHEMA_VERSION` (in `lib/delivery-snapshots.js`) goes up by one in every batch that adds or reshapes delivery data. On startup, when it is higher than `<dataDir>/delivery-schema.json`, the server copies the delivery stores (`DELIVERY_SNAPSHOT_FILES`) into `<dataDir>/snapshots/batch-<n>-<timestamp>/` before anything writes. The newest 3 snapshots are kept. A snapshot holds the same data as the live stores, including personal data, site keys (`site_key`), client admin password hashes and blog token hashes from `sites.json`, so it is as sensitive as the stores themselves. It lives only inside the data dir, is never served and never leaves the server through any route (the list and restore routes return snapshot ids, counts, record ids and the names of changed keys, never values).
 - **Restore** shows a per-record diff first and saves the current state as `pre-restore-<timestamp>` before it writes.
 - **Test clients.** `client.isTest` and `site.isTest` are set from Superadmin (Testkunde / Testside). Test clients stay workable on the boards but are left out of offer counts and other reports, social proof, nurture, Myphoner sync (no copy out, no incoming rewrite) and the gate evaluation set. The public site-config never carries the flag.
 
