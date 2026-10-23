@@ -88,7 +88,7 @@ The first cms-spec write that sends `featureSpec` stores this spec with the chan
 
 ## Heartbeat
 
-`POST /api/hub/heartbeat` also keeps, in `site.cms`, what a CMS 2.3+ reports: `featuresRev`, `clientFeaturesRev`, `settingsRevApplied`, `settingsConflicts`, `effective` (comma-separated), `effectiveHash`, `migrations` (including `pruned`), `packageBuild`, `initialAdminPending`, `loginAddressMode`, `loginForwardedFor`, `loginAddressFrom`, and the daily block counts (`featureBlocksDaily`) as `blockHistory` (one row per day, 14 days). Values are typed and size-bounded; a field the CMS does not send is not added, so an older CMS leaves the site as it was. The heartbeat can never set `featureSpec`, `cmsSpec` or `featureEnforcement`.
+`POST /api/hub/heartbeat` also keeps, in `site.cms`, what a CMS 2.3+ reports: `featuresRev`, `clientFeaturesRev`, `settingsRevApplied`, `settingsConflicts`, `effective` (comma-separated), `effectiveHash`, `migrations` (the CMS migrations summary: the last 40 items, the failed, pending and pruned ids, status, lockedBy, firstBackup, hold, lastRun and lastRestore; at most 16 kB, or only status, failed and pending marked `truncated`), `packageBuild`, `initialAdminPending`, `loginAddressMode`, `loginForwardedFor`, `loginAddressFrom`, and the daily block counts (`featureBlocksDaily`) as `blockHistory` (one row per day, 14 days, each day's top list at most 2 kB). Values are typed and size-bounded; a field the CMS does not send is not added, so an older CMS leaves the site as it was. The heartbeat can never set `featureSpec`, `cmsSpec` or `featureEnforcement`.
 
 ## got-client
 

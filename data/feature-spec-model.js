@@ -122,13 +122,82 @@ export function featureEnforcementOf(site) {
   return normalizeFeatureEnforcement(site?.featureEnforcement) || DEFAULT_FEATURE_ENFORCEMENT;
 }
 
+const utf8 = new TextEncoder();
+
+function jsonBytes(value) {
+  return utf8.encode(JSON.stringify(value ?? null)).length;
+}
+
+/** The leading entries of a bounded list whose JSON stays within maxBytes. */
+function withinBytes(list, maxBytes) {
+  const out = [];
+  let used = 2;
+  for (const entry of list) {
+    used += jsonBytes(entry) + 1;
+    if (used > maxBytes) break;
+    out.push(entry);
+  }
+  return out;
+}
+
+const BLOCK_TOP_MAX_BYTES = 2048;
+export const MIGRATIONS_REPORT_MAX_BYTES = 16 * 1024;
+const MIGRATION_ITEMS_MAX = 40;
+
 function normalizeBlockDay(raw) {
   if (!isPlainObject(raw)) return null;
   const date = text(raw.date, 10);
   const count = wholeNumber(raw.count);
   if (!DATE_RE.test(date) || count === null) return null;
-  const top = Array.isArray(raw.top) ? boundedClone(raw.top.slice(0, 10)) : [];
+  const top = Array.isArray(raw.top) ? withinBytes(boundedClone(raw.top.slice(0, 10)), BLOCK_TOP_MAX_BYTES) : [];
   return { date, count, top };
+}
+
+function optionalText(value, max) {
+  const out = text(value, max);
+  return out || null;
+}
+
+/**
+ * The CMS migrations report (website-cms migrationsSummary), typed: items [{id, status, at, error}]
+ * (the last 40), the failed, pending and pruned id lists, status, lockedBy, firstBackup, hold,
+ * lastRun and lastRestore. Unknown fields are dropped. A report whose JSON is still larger than
+ * 16 kB keeps only status, failed and pending, marked truncated. null when it is not an object.
+ */
+export function normalizeMigrationsReport(raw) {
+  if (!isPlainObject(raw)) return null;
+  const out = {};
+  if (Array.isArray(raw.items)) {
+    out.items = raw.items.slice(-MIGRATION_ITEMS_MAX).filter(isPlainObject).map((item) => {
+      const row = { id: text(item.id, MAX_KEY_LENGTH), status: text(item.status, 20), at: text(item.at, 40) };
+      if (item.error !== undefined && item.error !== null) row.error = text(item.error, 200);
+      return row;
+    }).filter((row) => row.id);
+  }
+  for (const field of ['failed', 'pending', 'pruned']) {
+    if (raw[field] !== undefined) out[field] = keyList(raw[field]).slice(0, MIGRATION_ITEMS_MAX);
+  }
+  if (raw.status !== undefined) out.status = optionalText(raw.status, 20);
+  if (isPlainObject(raw.lockedBy)) {
+    out.lockedBy = { pid: wholeNumber(raw.lockedBy.pid), host: text(raw.lockedBy.host, 120), at: optionalText(raw.lockedBy.at, 40) };
+  }
+  if (raw.firstBackup !== undefined) out.firstBackup = optionalText(raw.firstBackup, 120);
+  if (isPlainObject(raw.hold)) {
+    out.hold = { version: text(raw.hold.version, 40), at: optionalText(raw.hold.at, 40), backupId: optionalText(raw.hold.backupId, 120) };
+  }
+  if (raw.lastRun !== undefined) {
+    out.lastRun = isPlainObject(raw.lastRun)
+      ? { at: optionalText(raw.lastRun.at, 40), version: optionalText(raw.lastRun.version, 40), backup: optionalText(raw.lastRun.backup, 120) }
+      : null;
+  }
+  if (raw.lastRestore !== undefined) {
+    out.lastRestore = isPlainObject(raw.lastRestore)
+      ? { at: optionalText(raw.lastRestore.at, 40), backupId: optionalText(raw.lastRestore.backupId, 120), status: optionalText(raw.lastRestore.status, 20) }
+      : null;
+  }
+  if (raw.truncated === true) out.truncated = true;
+  if (jsonBytes(out) <= MIGRATIONS_REPORT_MAX_BYTES) return out;
+  return { status: out.status ?? null, failed: (out.failed || []).slice(0, 10), pending: (out.pending || []).slice(0, 10), truncated: true };
 }
 
 /** Block history: one row per day, newest last, at most 14 days. */
@@ -160,8 +229,8 @@ export function normalizeCmsReportedFields(cms) {
   if (cms.effectiveHash !== undefined) out.effectiveHash = text(cms.effectiveHash, 100);
   if (cms.blockHistory !== undefined) out.blockHistory = normalizeBlockHistory(cms.blockHistory);
   if (cms.migrations !== undefined) {
-    const copy = boundedClone(cms.migrations);
-    if (copy !== undefined && copy !== null) out.migrations = copy;
+    const report = normalizeMigrationsReport(cms.migrations);
+    if (report) out.migrations = report;
   }
   if (cms.lastHeartbeatAt !== undefined) out.lastHeartbeatAt = text(cms.lastHeartbeatAt, 40);
   if (cms.packageBuild !== undefined) out.packageBuild = text(cms.packageBuild, 80);

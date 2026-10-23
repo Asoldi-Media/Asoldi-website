@@ -3,6 +3,7 @@ import { analyticsLevelFromFlags } from '../lib/website-tiers.js';
 import { normalizeDueDate } from '../lib/website-due.js';
 import { carryFutureKeys, FUTURE_SITE_CMS_KEYS, FUTURE_SITE_KEYS } from './normalize-ext.js';
 import {
+  CMS_REPORTED_KEYS,
   normalizeCmsReportedFields,
   normalizeCmsSpec,
   normalizeCmsSpecHistory,
@@ -172,9 +173,10 @@ export function normalizeCmsMeta(cms) {
     desiredPackageVersion: String(cms.desiredPackageVersion || ''),
     ...reported,
   }, cms, FUTURE_SITE_CMS_KEYS);
-  // A reported field that did not normalize is dropped, never carried through as it was.
-  for (const key of FUTURE_SITE_CMS_KEYS) {
-    if (key !== 'ext' && !(key in reported)) delete out[key];
+  // A reported field that did not normalize is dropped, never carried through as it was. Only the
+  // keys this code owns: a key another batch appends to FUTURE_SITE_CMS_KEYS is carried as it is.
+  for (const key of CMS_REPORTED_KEYS) {
+    if (!(key in reported)) delete out[key];
   }
   return out;
 }

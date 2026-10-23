@@ -1,14 +1,15 @@
 // WS6.7: hub feature entitlements (lib/cms-entitlements.js), the site-config feature block behind
 // its switch, the heartbeat report and the site shape. Runs the real data modules on a temp data dir.
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const DATA_DIR = mkdtempSync(join(tmpdir(), 'asoldi-cms-entitlements-'));
 process.env.APP_DATA_DIR = DATA_DIR;
+after(() => rmSync(DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const golden = JSON.parse(readFileSync(join(root, 'scripts', 'fixtures', 'cms-feature-matrix.json'), 'utf8'));
@@ -16,6 +17,7 @@ const vocab = await import('../packages/suite/core/delivery/vocab.js');
 const ent = await import('../lib/cms-entitlements.js');
 const hub = await import('../data/hub.js');
 const model = await import('../data/hub-model.js');
+const specModel = await import('../data/feature-spec-model.js');
 const settingsStore = await import('../data/cms-feature-settings.js');
 const { registerCmsFeatureRoutes } = await import('../lib/routes/cms-feature-routes.js');
 const registry = ent.cmsFeatureRegistry();
@@ -298,6 +300,50 @@ test('the heartbeat keeps the reported fields, bounded, and 14 days of block cou
   hub.recordHeartbeat('key-f2', { report: { featureSpec: { grantServices: ['ecom'] }, cmsSpec: { rev: 9 }, featureEnforcement: 'off' } });
   const site = hub.getSiteById('f2');
   for (const field of ['featureSpec', 'cmsSpec', 'featureEnforcement']) assert.equal(field in site, false, field);
+});
+
+test('a heartbeat migrations report keeps its typed shape and stays under 16 kB, however large the body', () => {
+  writeFileSync(join(DATA_DIR, 'sites.json'), JSON.stringify(FLEET, null, 2));
+  const summary = {
+    items: [{ id: '2.3.0-features', status: 'failed', at: '2026-11-01T00:00:00.000Z', error: 'disk full' }],
+    failed: ['2.3.0-features'],
+    pending: ['2.3.0-features'],
+    status: 'locked',
+    lockedBy: { pid: 41, host: 'web-1', at: '2026-11-01T00:00:00.000Z' },
+    firstBackup: 'set-2026-11-01',
+    hold: { version: '2.3.0', at: '2026-11-01T00:00:00.000Z', backupId: 'set-2026-11-01' },
+    lastRun: { at: '2026-11-01T00:00:00.000Z', version: '2.3.0', backup: 'set-2026-11-01' },
+    lastRestore: null,
+    pruned: ['set-2026-09-01'],
+  };
+  assert.deepEqual(specModel.normalizeMigrationsReport(summary), summary, 'the CMS migrationsSummary shape is kept as it is');
+
+  // About 1.5 MB: thousands of rows, long texts, unknown fields and deep nesting.
+  const huge = {
+    items: Array.from({ length: 5000 }, (_, i) => ({ id: `m-${i}-${'i'.repeat(200)}`, status: 'failed'.repeat(20), at: 'x'.repeat(100), error: 'e'.repeat(1000), extra: { deep: { deeper: 'z'.repeat(300) } } })),
+    failed: Array.from({ length: 5000 }, (_, i) => `f-${i}-${'f'.repeat(100)}`),
+    pending: Array.from({ length: 5000 }, (_, i) => `p-${i}`),
+    status: 'failed',
+    unknown: { blob: 'b'.repeat(200_000) },
+    lockedBy: { pid: 'x', host: 'h'.repeat(1000), at: 1, extra: 'y'.repeat(10_000) },
+  };
+  assert.ok(JSON.stringify(huge).length > 1_400_000);
+  const days = [{ date: '2026-11-01', count: 3, top: Array.from({ length: 10 }, (_, i) => ({ key: `k${i}`, note: 'n'.repeat(300), more: { a: 'a'.repeat(300) } })) }];
+  hub.recordHeartbeat('key-f2', { report: { migrations: huge, featureBlocksDaily: days } });
+  const cms = hub.getSiteById('f2').cms;
+  assert.ok(Buffer.byteLength(JSON.stringify(cms.migrations)) <= specModel.MIGRATIONS_REPORT_MAX_BYTES, 'migrations is at most 16 kB');
+  assert.equal('unknown' in cms.migrations, false);
+  assert.ok(Buffer.byteLength(JSON.stringify(cms.blockHistory)) < 4096, 'a day row with its top list stays small');
+  assert.ok(Buffer.byteLength(JSON.stringify(cms)) < 24 * 1024, 'site.cms stays small');
+  assert.ok(statSync(join(DATA_DIR, 'sites.json')).size < 64 * 1024, 'sites.json did not grow with the body');
+  // Rows and lists are capped first; a report still over 16 kB keeps only its status lines.
+  const capped = specModel.normalizeMigrationsReport({ items: huge.items.slice(0, 3), failed: ['a'], status: 'failed' });
+  assert.deepEqual(Object.keys(capped.items[0]).sort(), ['at', 'error', 'id', 'status']);
+  assert.ok(capped.items[0].error.length <= 200 && capped.items[0].id.length <= 80);
+  assert.deepEqual(Object.keys(cms.migrations).sort(), ['failed', 'pending', 'status', 'truncated']);
+  assert.equal(cms.migrations.truncated, true);
+  assert.equal(cms.migrations.failed.length, 10);
+  assert.equal(specModel.normalizeMigrationsReport('text'), null);
 });
 
 test('sites without the new fields keep their exact stored shape; invalid stored values are dropped, not carried', () => {
