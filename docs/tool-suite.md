@@ -10,7 +10,7 @@ One media categorizer, one mail/document/facts core, used by website-maker and b
 | **Harness** | `packages/suite/harness/asoldi/` | core + its own folder only | Data and prompt text: Kundedata schema, maker field map, Norwegian rules, inbox kinds, tone brief |
 | **App** | `lib/ai-assistant/*`, `lib/inbox-bot/*`, website-maker `lib/media-transcript.js` | core + harness + the rest of that app | I/O, storage, sales match, send, calendar, contracts |
 
-A boundary test (`scripts/suite-boundary.test.mjs`) fails if core mentions Asoldi/Kundedata, if `core/media` imports `fs`, or if the harness imports app code.
+A boundary test (`scripts/suite-boundary.test.mjs`) fails if core mentions Asoldi/Kundedata, if `core/media` imports `fs`, if `core/llm` touches fs, network, `fetch` or the process environment, or if the harness imports app code.
 
 The categorizer stores nothing. `describeMedia` takes a buffer, converts formats in memory (SVG/GIF/AVIF → PNG/JPEG), calls Gemini, returns a ~1–2 KB JSON brief. Each app decides what to keep: website-maker writes `.generated-runs/` on the developer machine; asoldi.com keeps briefs in the client bank (capped). No extra media copies on Hostinger from this layer.
 
@@ -33,6 +33,7 @@ website-maker tests that load the suite run **inside the Docker app container** 
 - **Documents:** `core/documents` (kind sniff + text). PDF subprocess and product OCR stay injected from the app.
 - **Facts:** `core/facts` (add/replace/delete merge, English default prompt) + `harness/asoldi/facts.js` (Kundedata schema + Norwegian prompt text, shipped verbatim).
 - **Inbox:** `core/inbox/pipeline.js` (adapters) + `harness/asoldi/inbox.js` (kinds, brief, categorize/decide prompt text). Sales match, `write.js`, contracts, calendar, Resend stay in the app.
+- **LLM:** `core/llm` (task registry schema, `ai-routes` schema and `resolveRoute`, data policy, the one price table, Claude request builder, JSON validation, ledger rows, replay keys, scaled soft budgets, `createLlmCore`/`callLlm`) + `harness/asoldi/llm.js` (the shared task-key registry for both repos and the reference routes, policy and budgets). The contract is frozen in `core/llm/CONTRACT.md` and `LLM_CONTRACT`; `scripts/llm-contract.test.mjs` pins its fingerprint, and the Maker runs the same `runContractChecks()` on its copy. SDK clients, storage and health checks stay in each repo's facade (Maker `lib/ai-pipeline/_shared/llm`, hub `lib/llm`). Tests: `npm run test:llm-core`.
 
 ## Standalone bot later (option B)
 
