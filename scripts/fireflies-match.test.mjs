@@ -25,6 +25,8 @@ const sales = await import('../data/sales.js');
 const MIN = 60 * 1000;
 const HOUR = 60 * MIN;
 const iso = (ms) => new Date(ms).toISOString();
+/** A transcript of `count` lines (Fireflies stores one line per sentence). */
+const talk = (count) => Array.from({ length: count }, (_, index) => `Kari Test: setning ${index + 1}.`).join('\n');
 const SALES_ROOM = 'https://meet.google.com/sal-room-aaa';
 const WORKSHOP_ROOM = 'https://meet.google.com/wrk-room-bbb';
 const ITERATION_ROOM = 'https://meet.google.com/itr-room-ccc';
@@ -244,8 +246,57 @@ test('M15/M1: the activity log shows a placeholder\'s recording state without a 
   assert.equal(stub.meeting.recordingState, 'missing');
   assert.equal(stub.meeting.recordingMessage, 'Ingen Fireflies-opptak etter møtet.');
   assert.equal(rows.some((row) => row.meeting.meetingId === 'ff-frag'), false, 'the fragment is not logged as a second meeting');
+  assert.equal(stub.meeting.url, '', 'the shared contract\'s name for the same empty link');
   assert.equal(activity.firefliesUrlForMeeting({ meetingId: 'live:c1:1' }), '');
-  assert.equal(log.meetingCount, 2, 'the placeholder is no recording');
+  // Was 2: the fragment counted as a meeting of its own.
+  assert.equal(log.meetingCount, 1, 'the placeholder is no recording, and the fragment is the same meeting');
+});
+
+test('M1: "still on its way" is never forever, for the offer and on the card rows', () => {
+  const stub = placeholder('sales', SALES_AT, SALES_ROOM, { recording: { state: 'ended' } });
+  const pending = (row, options) => meetings.meetingTranscriptPending(row, options);
+  assert.equal(pending(stub, { nowMs: SALES_AT + 2 * HOUR }), true, 'before the watchdog\'s deadline');
+  assert.equal(pending(stub, { nowMs: SALES_AT + 6 * HOUR }), false, 'past the deadline and its grace');
+  for (const state of ['missing', 'empty', 'declined', 'not-admitted']) {
+    assert.equal(pending({ ...stub, recording: { state } }, { nowMs: SALES_AT + 2 * HOUR }), false, state);
+  }
+  const row = recording('ff-pending', SALES_ROOM, SALES_AT, { hasTranscript: false });
+  const at = SALES_AT + 2 * HOUR;
+  assert.equal(pending(row, { stored: { meetingId: 'ff-pending', summaryStatus: 'processing', firstSeenAt: iso(SALES_AT + HOUR) }, nowMs: at }), true);
+  assert.equal(pending(row, { stored: { meetingId: 'ff-pending', summaryStatus: 'skipped', transcript: '' }, nowMs: at }), false, 'Fireflies finished it empty');
+  assert.equal(pending(row, { stored: { meetingId: 'ff-pending', summaryStatus: 'processing', firstSeenAt: iso(at - 8 * 24 * HOUR) }, nowMs: at }), false, 'a week on it is not coming');
+  ff.storeFirefliesMeeting({ meetingId: 'ff-card-pending', title: 'Salg', startedAt: iso(SALES_AT), meetingLink: SALES_ROOM, transcript: '', summaryStatus: 'processing' });
+  const shown = meetings.presentClientMeetings(bookedClient({
+    meetings: [recording('ff-card-pending', SALES_ROOM, SALES_AT, { hasTranscript: false })],
+  }), null, { media: false });
+  assert.deepEqual([shown[0].pendingTranscript, shown[0].emptyFinal], [true, false]);
+});
+
+test('M15/M6: the developer page counts recorded meetings, not placeholders or copies', async () => {
+  const { evaluateWorkshopNeeds } = await import('../lib/workshop-needs.js');
+  const client = bookedClient({
+    meetings: [
+      placeholder('workshop', WORKSHOP_AT, WORKSHOP_ROOM),
+      recording('ff-count-real', SALES_ROOM, SALES_AT, { sentenceCount: 300, durationMinutes: 50 }),
+      recording('ff-count-frag', SALES_ROOM, SALES_AT + MIN, { hasTranscript: false, sentenceCount: 0, durationMinutes: 1 }),
+    ],
+  });
+  const line = evaluateWorkshopNeeds({ client, bank: {} }).lines.find((row) => row.id === 'activity.fireflies');
+  assert.equal(line.detail, '1 møte');
+});
+
+test('M6 (review): the log keeps the server\'s primary when the browser would rank the copies the other way', () => {
+  // Two copies stored before sentence counts: the server ranked them by stored transcript lines
+  // (B has more), the browser only sees the rows (A runs longer). Both used to be hidden.
+  const client = bookedClient({
+    meetings: [
+      { ...recording('ff-a', SALES_ROOM, SALES_AT, { purpose: 'sales', durationMinutes: 50, sentenceCount: '' }), duplicateOf: 'ff-b' },
+      { ...recording('ff-b', SALES_ROOM, SALES_AT + 5 * MIN, { purpose: 'sales', durationMinutes: 45, sentenceCount: '' }), duplicateOf: '' },
+    ],
+  });
+  const ids = activity.buildClientActivityLog(client).sections.flatMap((section) => section.rows)
+    .filter((row) => row.meeting).map((row) => row.meeting.meetingId);
+  assert.deepEqual(ids, ['ff-b']);
 });
 
 test('M10: the offer lock never names a placeholder and prefers the sales recording with talk', () => {
@@ -270,6 +321,23 @@ test('M10: the offer lock never names a placeholder and prefers the sales record
     meetings: client.meetings.map((row) => ({ ...row, meetLink: SALES_ROOM, startedAt: iso(SALES_AT) })),
   };
   assert.equal(meetings.offerLockIsStale(sameMeeting, { talkOf }), true, 'a fragment of the meeting gives way to the real recording');
+  // Review R2: the bot sat alone at T-3 (a silent fragment) and the client came 25 minutes late, so the
+  // two are not one meeting. A lock on the fragment still gives way, and no pick lands on an empty row.
+  const late = bookedClient({
+    progression: { meetingHeld: true },
+    lockedOfferMeetingId: 'ff-frag1',
+    meetings: [
+      { meetingId: 'ff-frag1', purpose: 'sales', slotKey: `sales:${SALES_AT}`, meetLink: SALES_ROOM, startedAt: iso(SALES_AT - 3 * MIN), hasTranscript: false, sentenceCount: 0, durationMinutes: 1 },
+      { meetingId: 'ff-real1', purpose: 'sales', slotKey: `sales:${SALES_AT}`, meetLink: SALES_ROOM, startedAt: iso(SALES_AT + 25 * MIN), hasTranscript: true, sentenceCount: 400, durationMinutes: 50 },
+    ],
+  });
+  assert.equal(slots.sameRecordedMeeting(late.meetings[0], late.meetings[1]), false);
+  assert.equal(meetings.offerLockIsStale(late, { talkOf }), true);
+  assert.equal(sales.pickLockedOfferMeetingId(late, { talkOf }), 'ff-real1');
+  assert.equal(sales.pickLockedOfferMeetingId({ ...late, meetings: [late.meetings[0]] }, { talkOf }), '', 'only the fragment: no lock yet');
+  // A person's "Salgsmøte" pick comes first among recordings with talk.
+  const picked = { ...late, meetings: [...late.meetings, { meetingId: 'ff-picked', purpose: 'sales', purposePickedAt: iso(SALES_AT), hasTranscript: true, sentenceCount: 30 }] };
+  assert.equal(sales.pickLockedOfferMeetingId(picked, { talkOf }), 'ff-picked');
 });
 
 test('M10: ticking "Møtet hatt" never keeps a placeholder lock', () => {
@@ -283,6 +351,12 @@ test('M10: ticking "Møtet hatt" never keeps a placeholder lock', () => {
   const ticked = sales.setSalesProgress(created.id, 'meetingHeld', true);
   assert.equal(ticked.progression.meetingHeld, true);
   assert.equal(ticked.lockedOfferMeetingId, 'ff-lock-real');
+  // Nor a lock on a recording without talk: re-ticking picks the one with talk.
+  sales.linkMeetingToSalesClient(created.id, {
+    meetingId: 'ff-lock-silent', linkedBy: 'meet-link', purpose: 'sales', forSalesMeeting: true, hasTranscript: false, startedAt: iso(SALES_AT - 3 * MIN), sentenceCount: 0,
+  });
+  sales.updateSalesClient(created.id, { lockedOfferMeetingId: 'ff-lock-silent' });
+  assert.equal(sales.setSalesProgress(created.id, 'meetingHeld', true).lockedOfferMeetingId, 'ff-lock-real');
 });
 
 test('the card rows: placeholders have no link, a covered one is hidden, live captions and silent copies cover nothing', () => {
@@ -298,13 +372,19 @@ test('the card rows: placeholders have no link, a covered one is hidden, live ca
   assert.ok(shownStub, 'the bot is recording: live captions do not replace the placeholder');
   assert.equal(shownStub.transcriptUrl, '');
   assert.equal(live.find((row) => row.meetingId === 'ff-card-live').partial, true);
-  assert.equal(live.find((row) => row.meetingId === 'ff-card-silent').duplicateOf, 'ff-card-live', 'the silent copy is a duplicate of the one with talk');
-  // Fireflies finishes the meeting: the finished copy with talk covers the placeholder.
-  ff.storeFetchedFirefliesMeeting({ meetingId: 'ff-card-live', isLive: false, summaryStatus: 'processed', transcript: 'Kari: hei\nSelger: hei', summary: 'Ny nettside.' });
-  const done = meetings.presentClientMeetings(bookedClient({
+  const silent = live.find((row) => row.meetingId === 'ff-card-silent');
+  assert.equal(silent.duplicateOf, 'ff-card-live', 'the silent copy is a duplicate of the one with talk');
+  assert.deepEqual([silent.emptyFinal, live.find((row) => row.meetingId === 'ff-card-live').emptyFinal], [true, false], 'Fireflies finished the silent copy: empty, not "still coming"');
+  const done = () => meetings.presentClientMeetings(bookedClient({
     meetings: [stub, recording('ff-card-live', SALES_ROOM, SALES_AT + MIN, { hasTranscript: true })],
   }), null, { media: false });
-  assert.equal(done.some((row) => row.placeholder), false);
+  // Fireflies finishes it with two sentences: a fragment, not the meeting, so the placeholder stays.
+  ff.storeFetchedFirefliesMeeting({ meetingId: 'ff-card-live', isLive: false, summaryStatus: 'processed', transcript: 'Kari: hei\nSelger: hei', summary: 'Kort.' });
+  assert.equal(done().some((row) => row.placeholder), true);
+  assert.equal(done().find((row) => row.meetingId === 'ff-card-live').sentenceCount, 2, 'the card carries the stored line count');
+  // The finished copy with real talk covers the placeholder.
+  ff.storeFetchedFirefliesMeeting({ meetingId: 'ff-card-live', isLive: false, summaryStatus: 'processed', transcript: talk(12), summary: 'Ny nettside.' });
+  assert.equal(done().some((row) => row.placeholder), false);
   // A placeholder long past its deadline with nothing recorded stays (the watchdog says missing).
   const missing = meetings.presentClientMeetings(bookedClient({
     meetings: [placeholder('workshop', WORKSHOP_AT - 30 * 24 * HOUR, WORKSHOP_ROOM, { recording: { state: 'missing' } })],
@@ -331,8 +411,34 @@ test('M6/M12: the workshop slot keeps the recording with talk, ignores ids no lo
   assert.equal(meetings.meetingIdForPurpose(retagged, 'workshop'), '', 'a slot id whose recording is the sales meeting now is not the workshop');
 });
 
+test('M6 (review): a slot that already names a rejoin fragment reads and moves to the primary', () => {
+  ff.storeFirefliesMeeting({ meetingId: 'ff-slot-frag', title: 'Workshop', startedAt: iso(WORKSHOP_AT), meetingLink: WORKSHOP_ROOM, transcript: '', summaryStatus: 'skipped', sentenceCount: 0, durationMinutes: 1 });
+  ff.storeFirefliesMeeting({ meetingId: 'ff-slot-main', title: 'Workshop', startedAt: iso(WORKSHOP_AT + 5 * MIN), meetingLink: WORKSHOP_ROOM, transcript: talk(30), sentenceCount: 300, durationMinutes: 90 });
+  ff.storeFirefliesMeeting({ meetingId: 'ff-act-frag', title: 'Plan', startedAt: iso(SALES_AT + 2 * 24 * HOUR), meetingLink: ACTION_ROOM, transcript: 'Kari: hei', sentenceCount: 1, durationMinutes: 1 });
+  ff.storeFirefliesMeeting({ meetingId: 'ff-act-main', title: 'Plan', startedAt: iso(SALES_AT + 2 * 24 * HOUR + 3 * MIN), meetingLink: ACTION_ROOM, transcript: talk(40), sentenceCount: 40, durationMinutes: 30 });
+  const client = bookedClient({
+    // Linked before the deploy: the workshop slot and the Møte action hold the fragments.
+    workshopAction: { ...bookedClient().workshopAction, firefliesMeetingId: 'ff-slot-frag' },
+    nextActions: [{ ...bookedClient().nextActions[0], firefliesMeetingId: 'ff-act-frag' }],
+    meetings: [
+      recording('ff-slot-frag', WORKSHOP_ROOM, WORKSHOP_AT, { purpose: 'workshop', hasTranscript: false }),
+      recording('ff-slot-main', WORKSHOP_ROOM, WORKSHOP_AT + 5 * MIN, { purpose: 'workshop' }),
+      recording('ff-act-frag', ACTION_ROOM, SALES_AT + 2 * 24 * HOUR),
+      recording('ff-act-main', ACTION_ROOM, SALES_AT + 2 * 24 * HOUR + 3 * MIN),
+    ],
+  });
+  assert.equal(meetings.meetingIdForPurpose(client, 'workshop'), 'ff-slot-main', 'the project document reads the real workshop');
+  const plan = meetings.planClientMeetingSync(client);
+  assert.deepEqual(plan.slots, {
+    workshopMeetingId: 'ff-slot-main',
+    actions: [{ actionId: 'na-plan', meetingId: 'ff-act-main' }],
+  });
+  const fixed = { ...client, workshopAction: { ...client.workshopAction, firefliesMeetingId: 'ff-slot-main' }, nextActions: [{ ...client.nextActions[0], firefliesMeetingId: 'ff-act-main' }] };
+  assert.deepEqual(meetings.planClientMeetingSync(fixed).slots, {}, 'nothing to move once they name the primaries');
+});
+
 test('sync: rows linked before the rules get their purpose, slot and sentence count; covered placeholders are listed; a person\'s pick stays', () => {
-  ff.storeFirefliesMeeting({ meetingId: 'ff-sync-1', title: 'Salg', startedAt: iso(SALES_AT + MIN), meetingLink: SALES_ROOM, transcript: 'A\nB', sentenceCount: 2 });
+  ff.storeFirefliesMeeting({ meetingId: 'ff-sync-1', title: 'Salg', startedAt: iso(SALES_AT + MIN), meetingLink: SALES_ROOM, transcript: talk(40), sentenceCount: 40 });
   const stub = placeholder('sales', SALES_AT, SALES_ROOM);
   const plan = meetings.planClientMeetingSync(bookedClient({
     meetings: [
@@ -343,7 +449,7 @@ test('sync: rows linked before the rules get their purpose, slot and sentence co
     ],
   }));
   const patch = plan.patches.find((entry) => entry.meetingId === 'ff-sync-1')?.patch;
-  assert.deepEqual([patch.purpose, patch.slotKey, patch.forSalesMeeting, patch.sentenceCount], ['sales', `sales:${SALES_AT}`, true, 2]);
+  assert.deepEqual([patch.purpose, patch.slotKey, patch.forSalesMeeting, patch.sentenceCount], ['sales', `sales:${SALES_AT}`, true, 40]);
   assert.equal(plan.patches.some((entry) => entry.meetingId === 'ff-sync-2'), false);
   assert.deepEqual(plan.drop, [stub.meetingId]);
 });

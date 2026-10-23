@@ -191,3 +191,80 @@ test('M6: two recordings of one meeting are one, and the one with the most talk 
   assert.equal(map.has('ff-later'), false, 'the same room three hours later is another meeting');
   assert.equal(slots.sameRecordedMeeting(real, recording('ff-other-room', OTHER_ROOM, SALES_AT)), false);
 });
+
+// Review fixes: a room booked again later, a pick weeks later, a fragment, two booked slots in one room.
+test('M4: a room booked again days later never takes a recording off the slot it was linked with', () => {
+  // The sales meeting moved to a fresh room two weeks on; a Møte three weeks on reuses the first room.
+  const moved = bookedClient({
+    meetingAt: iso(SALES_AT + 14 * 24 * HOUR),
+    calendar: { meetLink: 'https://meet.google.com/new-sale-ggg', confirmedMeetLink: 'https://meet.google.com/new-sale-ggg' },
+    nextActions: [{ ...bookedClient().nextActions[0], dueAt: iso(SALES_AT + 20 * 24 * HOUR), meetLink: SALES_ROOM }],
+  });
+  const held = recording('ff-s1', SALES_ROOM, SALES_AT + MIN, { purpose: 'sales', forSalesMeeting: true, slotKey: `sales:${SALES_AT}` });
+  const facts = slots.meetingSlotFacts(moved, held);
+  assert.deepEqual([facts.purpose, facts.slotKey, facts.by], ['sales', `sales:${SALES_AT}`, 'kept']);
+  // A recording in that room near the Møte is the Møte's, and a row with nothing yet still takes the room.
+  assert.equal(slots.meetingSlotFacts(moved, recording('ff-m', SALES_ROOM, SALES_AT + 20 * 24 * HOUR + MIN)).slotKey, 'action:na-plan');
+  assert.equal(slots.meetingSlotFacts(moved, recording('ff-bare', SALES_ROOM, SALES_AT + MIN)).by, 'room');
+  // The old clock rule's tag near a slot in its room is still corrected by the room.
+  const retag = slots.meetingSlotFacts(bookedClient(), recording('ff-w', WORKSHOP_ROOM, WORKSHOP_AT + 110 * MIN, { purpose: 'sales' }));
+  assert.deepEqual([retag.purpose, retag.by], ['workshop', 'room']);
+});
+
+test('a purpose pick puts a recording on a booked slot of that purpose only the same day', () => {
+  const client = bookedClient();
+  assert.equal(slots.slotForPurposePick(client, recording('ff-a', OTHER_ROOM, SALES_AT + 5 * HOUR), 'sales')?.slotKey, `sales:${SALES_AT}`, 'held later that day in another room');
+  assert.equal(slots.slotForPurposePick(client, recording('ff-b', SALES_ROOM, SALES_AT + 21 * 24 * HOUR), 'sales'), null, 'a follow-up three weeks on, even in the sales room');
+  assert.equal(slots.slotForPurposePick(client, recording('ff-c', OTHER_ROOM, WORKSHOP_AT + 6 * HOUR), 'workshop')?.slotKey, `workshop:${WORKSHOP_AT}`);
+  assert.equal(slots.slotForPurposePick(client, { meetingId: 'ff-d', meetLink: SALES_ROOM }, 'sales'), null, 'no start time: no slot');
+});
+
+test('a person\'s link in another room inside one slot\'s window is that slot\'s; so is the bot capture saw', () => {
+  const stub = placeholder('sales', SALES_AT, SALES_ROOM, { recording: { state: 'ended', ffMeetingId: 'ff-bot' } });
+  const client = bookedClient({ meetings: [stub] });
+  const pasted = recording('ff-paste', OTHER_ROOM, SALES_AT + 4 * MIN, { linkedBy: 'manual' });
+  const linked = slots.meetingSlotFacts(client, pasted);
+  assert.deepEqual([linked.purpose, linked.slotKey, linked.by], ['sales', `sales:${SALES_AT}`, 'linked']);
+  const automatic = slots.meetingSlotFacts(client, { ...pasted, linkedBy: 'meet-link' });
+  assert.deepEqual([automatic.purpose, automatic.slotKey, automatic.by], ['sales', '', 'time'], 'an automatic link in no booked room gets no slot');
+  assert.equal(slots.meetingSlotFacts(client, { ...pasted, startedAt: iso(SALES_AT + 5 * HOUR) }).slotKey, '', 'outside every window');
+  // Capture saw this bot in the placeholder's session: its recording is that slot's, whatever its meeting_link says.
+  const bot = slots.meetingSlotFacts(client, { meetingId: 'ff-bot', meetLink: '', startedAt: iso(SALES_AT + 2 * HOUR), hasTranscript: true });
+  assert.deepEqual([bot.slotKey, bot.by], [`sales:${SALES_AT}`, 'bot']);
+  assert.equal(slots.placeholderSupersededBy(stub, [{ meetingId: 'ff-bot', startedAt: iso(SALES_AT + 2 * HOUR), hasTranscript: true, sentenceCount: 80 }])?.meetingId, 'ff-bot');
+});
+
+test('M5/F15: a fragment of a few sentences never covers a placeholder; an old open placeholder goes with talk of its purpose', () => {
+  const stub = placeholder('sales', SALES_AT, SALES_ROOM);
+  const client = bookedClient({ meetings: [stub] });
+  const covers = (rows) => slots.placeholderSupersededBy(stub, rows, {
+    factsOf: (row) => slots.meetingSlotFacts({ ...client, meetings: [stub, ...rows] }, row),
+  });
+  const hallo = recording('ff-hallo', SALES_ROOM, SALES_AT - 2 * MIN, { sentenceCount: 1, durationMinutes: 1 });
+  assert.equal(covers([hallo]), null, 'a "hallo?" in the open room is not the meeting');
+  assert.equal(covers([{ ...hallo, sentenceCount: 2, durationMinutes: 6 }]), null, 'minutes alone are not talk');
+  assert.equal(covers([{ ...hallo, sentenceCount: slots.COVER_MIN_SENTENCES }])?.meetingId, 'ff-hallo');
+  assert.equal(covers([{ ...hallo, sentenceCount: '', transcript: 'Kari: hei\nSelger: hei' }]), null, 'two transcript lines are counted too');
+  assert.equal(covers([{ ...hallo, sentenceCount: '' }])?.meetingId, 'ff-hallo', 'talk nobody counted (an old row) still covers');
+  assert.deepEqual(slots.recordingTalk({ hasTranscript: true }), { sentences: 1, minutes: 0, known: false });
+  const open = { meetingId: 'live:c-booked:open', linkedBy: 'live-join', purpose: 'sales', forSalesMeeting: true, hasTranscript: false };
+  assert.equal(slots.placeholderSupersededBy(open, [{ ...hallo, purpose: 'sales', sentenceCount: 40 }])?.meetingId, 'ff-hallo');
+  assert.equal(slots.placeholderSupersededBy(open, [{ ...hallo, purpose: 'workshop', sentenceCount: 40 }]), null);
+});
+
+test('M6: recordings of two booked slots in one room are never one meeting; the card\'s duplicateOf is used as it is', () => {
+  const sales = recording('ff-sales', SALES_ROOM, SALES_AT, { sentenceCount: 300, durationMinutes: 60, slotKey: `sales:${SALES_AT}` });
+  const next = recording('ff-next', SALES_ROOM, SALES_AT + 65 * MIN, { sentenceCount: 500, durationMinutes: 40, slotKey: 'action:na-plan' });
+  assert.equal(slots.duplicateRecordingMap([sales, next]).size, 0, 'the sales meeting and the Møte booked right after it');
+  const rejoin = recording('ff-rejoin', SALES_ROOM, SALES_AT + 62 * MIN, { sentenceCount: 4, durationMinutes: 3, slotKey: '' });
+  const map = slots.duplicateRecordingMap([sales, rejoin, next]);
+  assert.equal(map.size, 1, 'a fragment with no slot joins one of them, never both');
+  assert.equal(map.get('ff-rejoin'), 'ff-sales');
+  // The browser ranks by row fields; rows from the card already carry the server's answer.
+  const card = [
+    { ...sales, meetingId: 'ff-a', sentenceCount: '', duplicateOf: 'ff-b' },
+    { ...sales, meetingId: 'ff-b', sentenceCount: '', startedAt: iso(SALES_AT + 5 * MIN), duplicateOf: '' },
+  ];
+  assert.deepEqual([...slots.duplicateRecordingIds(card)], ['ff-a']);
+  assert.deepEqual([...slots.duplicateRecordingIds(card.map(({ duplicateOf, ...row }) => row))], ['ff-b'], 'raw rows are worked out here');
+});

@@ -1325,13 +1325,6 @@ export function liveJoinMeetingId(clientId, meetingAt = '') {
   return `live:${sanitizeText(clientId)}:${Number.isFinite(when) ? when : 'open'}`;
 }
 
-/** The offer lock while it names a real recording on the card: a placeholder or a recording that left is no lock. */
-function heldOfferLock(client = {}) {
-  const lock = sanitizeText(client.lockedOfferMeetingId);
-  if (!lock || lock.toLowerCase().startsWith('live:')) return '';
-  return (Array.isArray(client.meetings) ? client.meetings : []).some((row) => row?.meetingId === lock) ? lock : '';
-}
-
 function talkOfRow(row = {}) {
   const counted = row.sentenceCount === '' || row.sentenceCount == null ? NaN : Number(row.sentenceCount);
   return {
@@ -1341,10 +1334,22 @@ function talkOfRow(row = {}) {
 }
 
 /**
- * The recording the offer is locked to once "Møtet hatt" is ticked: of the sales meeting's recordings,
- * one with talk (the booked slot's first, then the most talk), else the newest other recording with
- * talk that is not a workshop or iteration. Never a live-join placeholder: '' until a real recording is
- * linked, which re-points it. `talkOf(row)` → { sentences, minutes }; server code reads the stored copy.
+ * The offer lock while it names a real recording with talk on the card: a placeholder, a recording that
+ * left, or a silent one (a fragment from before the client came) is no lock.
+ */
+function heldOfferLock(client = {}) {
+  const lock = sanitizeText(client.lockedOfferMeetingId);
+  if (!lock || lock.toLowerCase().startsWith('live:')) return '';
+  const row = (Array.isArray(client.meetings) ? client.meetings : []).find((item) => item?.meetingId === lock);
+  return row && talkOfRow(row).sentences > 0 ? lock : '';
+}
+
+/**
+ * The recording the offer is locked to once "Møtet hatt" is ticked: of the sales meeting's recordings
+ * with talk, the one a person picked as the sales meeting first, then the booked slot's, then the most
+ * talk; else the first other recording with talk that is not a workshop or iteration. Never a live-join
+ * placeholder or a recording without talk: '' until one is linked, which re-points it.
+ * `talkOf(row)` → { sentences, minutes }; server code reads the stored copy.
  */
 export function pickLockedOfferMeetingId(client = {}, { talkOf = talkOfRow } = {}) {
   const meetings = (Array.isArray(client.meetings) ? client.meetings : [])
@@ -1352,17 +1357,17 @@ export function pickLockedOfferMeetingId(client = {}, { talkOf = talkOfRow } = {
   const meetingMs = client.agreedTime ? Date.parse(client.meetingAt || '') : NaN;
   const salesKey = Number.isFinite(meetingMs) ? `sales:${meetingMs}` : '';
   const onSlot = (item) => Boolean(salesKey) && sanitizeText(item.slotKey) === salesKey;
+  const sentencesOf = (item) => Number((talkOf(item) || {}).sentences) || 0;
   const rank = (item) => {
-    const talk = talkOf(item) || {};
-    const sentences = Number(talk.sentences) || 0;
-    return [sentences > 0 ? 1 : 0, onSlot(item) ? 1 : 0, sentences, Number(talk.minutes) || 0];
+    const picked = Boolean(sanitizeText(item.purposePickedAt)) && item.purpose === 'sales';
+    return [picked ? 1 : 0, onSlot(item) ? 1 : 0, sentencesOf(item), Number((talkOf(item) || {}).minutes) || 0];
   };
   const sales = meetings
-    .filter((item) => item.forSalesMeeting || item.purpose === 'sales' || onSlot(item))
+    .filter((item) => (item.forSalesMeeting || item.purpose === 'sales' || onSlot(item)) && sentencesOf(item) > 0)
     .map((item) => ({ item, rank: rank(item) }))
     .sort((a, b) => b.rank.reduce((diff, value, i) => diff || value - a.rank[i], 0))[0]?.item;
   if (sales) return sanitizeText(sales.meetingId);
-  const other = meetings.find((item) => item.hasTranscript && item.purpose !== 'workshop' && item.purpose !== 'iteration');
+  const other = meetings.find((item) => sentencesOf(item) > 0 && item.purpose !== 'workshop' && item.purpose !== 'iteration');
   return sanitizeText(other?.meetingId);
 }
 

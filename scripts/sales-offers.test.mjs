@@ -325,7 +325,8 @@ test('opening Tilbud does not wait for Fireflies GraphQL', async () => {
 });
 
 // The placeholder carries its slot (slotKey, startedAt) as the live join writes it; the stored
-// recording with talk in that slot's room and session covers it.
+// recording with talk in that slot's room and session covers it. The transcript is a meeting's worth
+// of lines: one or two sentences are a fragment and cover nothing (scripts/fireflies-slots.test.mjs).
 test('client card meetings show stored transcript text and hide live stubs', async () => {
   const hooks = await import('../lib/fireflies-webhook.js');
   const workshop = await import('../lib/workshop-meetings.js');
@@ -335,7 +336,7 @@ test('client card meetings show stored transcript text and hide live stubs', asy
     meetingId: 'ff-card',
     title: 'Salgsmøte',
     startedAt: '2026-09-18T10:02:00.000Z',
-    transcript: 'Kunde: vi vil ha ny nettside.',
+    transcript: Array.from({ length: 12 }, (_, index) => `Kunde: vi vil ha ny nettside, punkt ${index + 1}.`).join('\n'),
     meetingLink: 'https://meet.google.com/aaa-bbbb-ccc',
   });
   const shown = workshop.presentClientMeetings({
