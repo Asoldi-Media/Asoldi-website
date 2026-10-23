@@ -9,7 +9,9 @@ import { fileURLToPath } from 'node:url';
 
 const DATA_DIR = mkdtempSync(join(tmpdir(), 'asoldi-test-client-flag-'));
 process.env.APP_DATA_DIR = DATA_DIR;
-for (const key of ['MYPHONER_API_KEY', 'MYPHONER_PERSONAL_API_KEY', 'MYPHONER_SUBDOMAIN']) delete process.env[key];
+for (const key of ['MYPHONER_API_KEY', 'MYPHONER_PERSONAL_API_KEY', 'MYPHONER_SUBDOMAIN', 'WORKSHOP_DESK_EMAIL_AUTOSEND']) delete process.env[key];
+// No mail transport in this test: nothing can be sent even if a check were missing.
+for (const key of Object.keys(process.env)) if (/^(SMTP|RESEND)/i.test(key)) delete process.env[key];
 
 const realClient = { id: 'real-1', product: 'asoldi', businessName: 'Real AS', status: 'active', myphoner: { leadId: 'L-real' } };
 const testClient = {
@@ -32,6 +34,8 @@ const sales = await import('../data/sales.js');
 const salesOffers = await import('../data/sales-offers.js');
 const ssuWins = await import('../lib/myphoner-ssu-wins.js');
 const settingsStore = await import('../data/automation-settings.js');
+const deskEmails = await import('../lib/workshop-desk-emails.js');
+const prepSend = await import('../lib/workshop-prep-send.js');
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 test('helpers: reportable lists, id sets and record filters leave test clients and test sites out', () => {
@@ -99,4 +103,75 @@ test('delivery automation: a test client takes part only when listed as a pilot'
   const piloted = { ...settings, pilotClientIds: ['test-1'] };
   assert.equal(settingsStore.automationScopeForClient(client, { settings: piloted }).included, true);
   assert.equal(settingsStore.effectiveModeForClient('emails.preWorkshop', client, { settings: piloted }), 'auto');
+});
+
+test('Myphoner winner: a test client matched without a lead id stops the winner flow before any Myphoner write', () => {
+  // findSalesClientForMyphonerLead also matches by email, phone or name, so the lead-id lookup in
+  // copySsuWinnerToWinsList would miss such a client. The winner flow must stop right after upsert.
+  const server = readFileSync(join(root, 'server.js'), 'utf8').replace(/\r\n/g, '\n');
+  const start = server.indexOf('async function processMyphonerWinnerFromResource(');
+  assert.ok(start > 0);
+  const end = server.indexOf('\n}\n', start);
+  assert.ok(end > start);
+  const body = server.slice(start, end);
+  const upsert = body.indexOf('await upsertSalesClientFromMyphonerLead(');
+  const stop = body.indexOf("if (upserted.skipped === 'test-client') return");
+  assert.ok(upsert > 0 && stop > upsert, 'the flow checks upserted.skipped right after upsert');
+  for (const later of ['attachCachedOrPendingRecordingToClient(', 'enqueuePendingRecording(', 'copySsuWinnerToWinsList(']) {
+    const at = body.indexOf(later);
+    assert.ok(at > stop, `${later} runs only after the test-client stop`);
+  }
+});
+
+test('Myphoner recordings: an incoming call recording is never written onto a test client', () => {
+  const server = readFileSync(join(root, 'server.js'), 'utf8').replace(/\r\n/g, '\n');
+  const start = server.indexOf('async function ingestMyphonerCallRecording(');
+  const end = server.indexOf('\n}\n', start);
+  assert.ok(start > 0 && end > start);
+  const body = server.slice(start, end);
+  const found = body.indexOf('findSalesClientForRecordingMeta(');
+  const guard = body.indexOf('if (myphonerSyncSkipReason(targetClient)) return');
+  const write = body.indexOf('applyRecordingMetaToSalesClient(');
+  assert.ok(found > 0 && guard > found && write > guard, 'the test-client check sits between the match and the write');
+});
+
+test('workshop reminders: the loop mails only active clients in automation scope (test clients only as pilots)', () => {
+  const server = readFileSync(join(root, 'server.js'), 'utf8').replace(/\r\n/g, '\n');
+  const start = server.indexOf('async function sendDueWorkshopDeskEmails(');
+  const end = server.indexOf('\n}\n', start);
+  assert.ok(start > 0 && end > start);
+  const body = server.slice(start, end);
+  assert.match(body, /for \(const client of workshopReminderClients\(sales\.getSalesClients\(\)\)\)/);
+  assert.doesNotMatch(body, /for \(const client of sales\.getSalesClients\(\)\)/, 'no loop over every client');
+
+  const on = { ...settingsStore.defaultAutomationSettings() };
+  on.emails = { ...on.emails, workshopReminders: { ...on.emails.workshopReminders, enabled: true } };
+  const clients = sales.getSalesClients();
+  assert.deepEqual(deskEmails.workshopReminderClients(clients, { settings: on }).map((client) => client.id), ['real-1']);
+  const piloted = { ...on, pilotClientIds: ['test-1'] };
+  assert.deepEqual(deskEmails.workshopReminderClients(clients, { settings: piloted }).map((client) => client.id).sort(), ['real-1', 'test-1']);
+});
+
+test('pre-workshop autosend on signing: a test client that is not a pilot gets nothing', async () => {
+  const originalFetch = globalThis.fetch;
+  let requests = 0;
+  globalThis.fetch = async () => {
+    requests += 1;
+    throw new Error('no network in tests');
+  };
+  const deps = { fetchMakerRun: async () => null, listMail: async () => ({ messages: [] }) };
+  const signed = (client) => ({ ...client, contactEmail: 'kunde@example.com', progression: { contractSigned: true } });
+  try {
+    const skipped = await prepSend.sendPreWorkshopAfterContractSigned(signed(sales.getSalesClientById('test-1')), deps);
+    assert.equal(skipped.sent, false);
+    assert.equal(skipped.reason, 'automation-off');
+    assert.match(skipped.warning, /testkunde/);
+    // The real client passes the automation check (it stops later only because mail is not configured here).
+    const real = await prepSend.sendPreWorkshopAfterContractSigned(signed(sales.getSalesClientById('real-1')), deps);
+    assert.notEqual(real.reason, 'automation-off');
+    assert.equal(real.sent, false);
+    assert.equal(requests, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

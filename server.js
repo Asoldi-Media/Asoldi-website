@@ -396,6 +396,7 @@ import {
   workshopDeskEmailIsDue,
   workshopDeskEmailKindAutosends,
   workshopDeskEmailStampKey,
+  workshopReminderClients,
   workshopReminderScheduleAt,
 } from './lib/workshop-desk-emails.js';
 import {
@@ -6156,6 +6157,7 @@ async function processMyphonerWinnerFromResource(resourcePath = '', { winnerCate
     winnerCategory,
     winnerComment,
   });
+  if (upserted.skipped === 'test-client') return { ok: true, skipped: 'test-client', clientId: sanitizeText(upserted.client?.id) };
   let client = upserted.client;
   const recordingAttach = await attachCachedOrPendingRecordingToClient(client, {
     syncReason: 'winner-recording-attached',
@@ -6622,6 +6624,7 @@ async function ingestMyphonerCallRecording(callPayload = {}, options = {}) {
       recordingUrl: recordingMeta.recordingUrl || '',
     };
   }
+  if (myphonerSyncSkipReason(targetClient)) return { ok: true, updated: false, pending: false, leadId, callId: recordingMeta.callId, clientId: sanitizeText(targetClient.id), reason: 'test-client' };
   const syncReason = recordingMeta.recordingUrl
     ? options.syncReason || 'recording-url-synced'
     : options.pendingReason || 'call-without-recording-url';
@@ -15055,8 +15058,7 @@ async function sendDueWorkshopDeskEmails() {
   if (!workshopDeskEmailAutosendEnabled()) return;
   if (!emailLib.canSendEmail()) return;
   const nowMs = Date.now();
-  for (const client of sales.getSalesClients()) {
-    if (sanitizeText(client.status) !== 'active') continue;
+  for (const client of workshopReminderClients(sales.getSalesClients())) {
     const action = getWorkshopAction(client);
     const record = getWorkshopRecord(client);
     try {
