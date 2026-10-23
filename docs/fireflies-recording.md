@@ -44,6 +44,12 @@ about 10 minutes alone, with at best an empty transcript. So a listing before th
 person has joined is not proof of a recording: keep checking until people are in the room (or
 until about T+10), and send the notetaker again if it drops out before then.
 
+The engine does both. `server.js` passes `openLiveSessionMeetRoom` as `deps.openMeetRoom`: from
+T-30 it asks for the room each tick until it is open, with the host taken from the sales calendar
+(`meetHostVerifiedEmail`, else the organizer) or Damian's login for workshops and iterations. A
+notetaker that leaves before T+30 is sent back again, more than once if the one sent back also
+sits alone and leaves (the open room's version of an unanswered knock), within the five-send cap.
+
 ### Before switching it on
 
 - Single notetaker first. An open room lets every notetaker in, not only the hub's: a rep's own

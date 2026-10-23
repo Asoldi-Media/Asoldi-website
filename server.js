@@ -421,7 +421,9 @@ import {
   workshopIsConfirmed,
   maybeSyncWorkshopGoalActionCalendars,
   pickDamianCalendarAccountKey,
+  resolveDamianWorkshopAccountKey,
 } from './lib/workshop-action.js';
+import { ensureMeetRoomOpen } from './lib/google-meet-access.js';
 import { sendPreWorkshopAfterContractSigned } from './lib/workshop-prep-send.js';
 import {
   adminBoardViewerIsDamianMailbox,
@@ -9547,6 +9549,40 @@ function syncLiveJoinPlaceholders({ session }) {
   }
 }
 
+/**
+ * The Google login that hosts a session's room: the sales calendar's (a Møte uses the same mailbox), or
+ * Damian's for workshop and iteration Møter. The first slot that names one wins.
+ */
+function liveSessionMeetHost(session) {
+  for (const slot of session?.slots || []) {
+    if (slot.kind === 'workshop' || slot.kind === 'iteration') {
+      return { accountKey: resolveDamianWorkshopAccountKey(), ownerEmail: DAMIAN_WORKSHOP_CALENDAR_EMAIL };
+    }
+    const calendar = sales.getSalesClientById(slot.clientId)?.calendar || {};
+    const ownerEmail = sanitizeText(
+      (slot.kind === 'sales' ? calendar.meetHostVerifiedEmail : '') || calendar.organizerEmail || calendar.googleEmail,
+    ).toLowerCase();
+    const accountKey = sanitizeText(calendar.accountKey);
+    if (ownerEmail || accountKey) return { accountKey, ownerEmail };
+  }
+  return { accountKey: '', ownerEmail: '' };
+}
+
+/**
+ * From T-30 the engine asks for the room to be opened, so the notetaker walks in without a knock
+ * (lib/google-meet-access.js; inert until the host has granted the Meet settings scope). Asked again each tick
+ * until it is open: the opener caches its own refusals and errors, so a repeat costs a file read.
+ */
+async function openLiveSessionMeetRoom(session) {
+  const host = liveSessionMeetHost(session);
+  return ensureMeetRoomOpen({
+    meetLink: session.meetLink,
+    accountKey: host.accountKey,
+    ownerEmail: host.ownerEmail,
+    maxAgeMs: 15 * 60 * 1000,
+  });
+}
+
 /** Optional FIREFLIES_LIVE_JOIN_ONE_BOT=1: the Fireflies plan runs one bot at a time (default off). */
 function firefliesLiveJoinOneBot() {
   return parseBoolean(process.env.FIREFLIES_LIVE_JOIN_ONE_BOT, false);
@@ -9571,6 +9607,7 @@ function firefliesLiveJoinDeps() {
     }),
     onDispatch: recordLiveJoinDispatch,
     onSessionChange: syncLiveJoinPlaceholders,
+    openMeetRoom: openLiveSessionMeetRoom,
     log: console,
   };
 }

@@ -295,6 +295,34 @@ test('seen then gone early: one rejoin; gone again or near the end: ended', () =
   assert.equal(dispatches(nearEnd).length, 0, 'no rejoin in the last 10 minutes of the booking');
 });
 
+test('a bot that sat alone in an open room is sent back again while the first-send window lasts', () => {
+  let session = dispatched(sessionFor(salesClient()), -3);
+  session = planAt(-2, session, { active: [activeRow()] }).session;
+  session = planAt(7, session, { active: [activeRow()] }).session;
+  const gone = planAt(9, session, { active: [] });
+  assert.deepEqual(dispatches(gone).map((row) => row.kind), ['rejoin']);
+  session = applyLiveJoinAttempt(gone.session, { at: iso(9), kind: 'rejoin', ok: true });
+  session = planAt(10, session, { active: [activeRow(ROOM, { id: 'ff-meeting-2', startTime: iso(10) })] }).session;
+  session = planAt(19, session, { active: [activeRow(ROOM, { id: 'ff-meeting-2', startTime: iso(10) })] }).session;
+  const goneAgain = planAt(21, session, { active: [] });
+  assert.equal(goneAgain.session.state, 'ended');
+  assert.deepEqual(dispatches(goneAgain).map((row) => row.kind), ['rejoin'], 'the bot sent back came in and left: send again');
+  session = applyLiveJoinAttempt(goneAgain.session, { at: iso(21), kind: 'rejoin', ok: true });
+  assert.equal(dispatches(planAt(25, session, { active: [] })).length, 0, 'its knock still has its lobby wait');
+  assert.equal(dispatches(planAt(30, session, { active: [] })).length, 0, 'lobby wait not over at T+30');
+  assert.equal(dispatches(planAt(34, session, { active: [] })).length, 0, 'not after T+30');
+
+  // A knock room: the rejoin knock went unanswered for its lobby wait, so one more goes before T+30.
+  let knock = dispatched(sessionFor(salesClient()), -3);
+  knock = planAt(0, knock, { active: [activeRow()] }).session;
+  knock = planAt(3, knock, { active: [activeRow()] }).session;
+  const left = planAt(5, knock, { active: [] });
+  assert.deepEqual(dispatches(left).map((row) => row.kind), ['rejoin']);
+  knock = applyLiveJoinAttempt(left.session, { at: iso(5), kind: 'rejoin', ok: true });
+  assert.equal(dispatches(planAt(12, knock, { active: [] })).length, 0, 'inside the lobby wait');
+  assert.deepEqual(dispatches(planAt(18, knock, { active: [] })).map((row) => row.kind), ['rejoin']);
+});
+
 test('a bot that leaves at its own end time is not sent back as a rejoin', () => {
   let session = dispatched(sessionFor(salesClient()), -3);
   session = planAt(0, session, { active: [activeRow(ROOM, { endTime: iso(30) })] }).session;
@@ -678,6 +706,35 @@ function engineDeps(state, overrides = {}) {
 function engineState(clients) {
   return { now: at(-3), clients, active: [], sent: [], verifyCalls: 0, dispatchEvents: [], changeEvents: [], reply: null };
 }
+
+test('engine: a room that is not open yet is asked about again next tick; an open one only once', async () => {
+  resetStore();
+  const state = engineState([salesClient()]);
+  const asked = [];
+  let answer = { ok: false, reason: 'scope-missing' };
+  const deps = () => engineDeps(state, {
+    openMeetRoom: async (session) => {
+      asked.push(session.meetLink);
+      return answer;
+    },
+  });
+  state.now = at(-30);
+  await runFirefliesLiveJoinTick(deps());
+  assert.equal(readLiveSessionStore().sessions[`${ROOM}|${T}`].meetRoomRequestedAt, '');
+  state.now = at(-29);
+  answer = { ok: true, accessType: 'OPEN' };
+  await runFirefliesLiveJoinTick(deps());
+  assert.equal(readLiveSessionStore().sessions[`${ROOM}|${T}`].meetRoomRequestedAt, iso(-29));
+  state.now = at(-28);
+  await runFirefliesLiveJoinTick(deps());
+  assert.deepEqual(asked, [ROOM, ROOM]);
+  assert.equal(state.sent.length, 0, 'opening the room sends no bot');
+  // server.js hands the engine the Meet-room opener with the room host's login.
+  const server = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  assert.match(server, /openMeetRoom: openLiveSessionMeetRoom,/);
+  const opener = server.slice(server.indexOf('async function openLiveSessionMeetRoom'), server.indexOf('function firefliesLiveJoinOneBot'));
+  assert.match(opener, /ensureMeetRoomOpen\(\{[\s\S]*meetLink: session\.meetLink[\s\S]*maxAgeMs: 15 \* 60 \* 1000/);
+});
 
 test('engine: dispatch at T-3 with duration 120, look every minute, retry at T+1, then record the sighting', async () => {
   resetStore();
