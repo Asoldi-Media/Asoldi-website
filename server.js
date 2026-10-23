@@ -91,6 +91,7 @@ import {
 import { isTokenAccepted, runTokenPolicyBootMigrations, stampTokenVersion } from './lib/token-policy.js';
 import { noteSecurityEvent } from './lib/security-counters.js';
 import { registerSecurityAdminRoutes } from './lib/security-admin-routes.js';
+import { readBuildInfo } from './lib/build-info.js';
 import { applyPersistentProductionEnv } from './lib/persistent-env.js';
 import { assertSafeModeAllows, hubListenHost, isSafeModeActive, isSafeModeError, runBackgroundJobs, safeModeAllows } from './lib/safe-mode.js';
 import { registerSafeModeRoutes } from './lib/safe-mode-routes.js';
@@ -587,8 +588,17 @@ app.post(
   express.raw({ type: 'application/json', limit: '8mb' }),
   handleFirefliesWebhook
 );
+// The running build: dist/build-info.json from the Vite build, else the git checkout; never the env.
+const BUILD_INFO = readBuildInfo({ distDir: distPath, repoRoot: __dirname });
+console.log(`[build] commit ${BUILD_INFO.commit ? BUILD_INFO.commit.slice(0, 12) : 'unknown'} (${BUILD_INFO.source})`);
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, uptime: Math.round(process.uptime()), safeMode: isSafeModeActive(), http: httpRequestSummary() });
+  res.json({
+    ok: true,
+    uptime: Math.round(process.uptime()),
+    safeMode: isSafeModeActive(),
+    build: BUILD_INFO,
+    http: httpRequestSummary(),
+  });
 });
 app.post('/api/diag/browser', express.json({ limit: '32kb' }), (req, res) => {
   const body = req.body && typeof req.body === 'object' ? req.body : {};
@@ -13376,6 +13386,16 @@ app.get('/api/admin/sales/maker-tunnel/status', salesAuth, (_req, res) => {
     targetUrl: makerTunnelTargetUrl,
     startedAt: makerTunnelStartedAt,
   });
+});
+
+// GET does nothing but check the callback token: 401 without a valid one, { ok: true } with it.
+// The post-deploy check reads the 401 (scripts/post-deploy-check.mjs); after a token rotation the
+// Maker or the operator can check a pasted token this way. Before this route a GET fell through
+// to the SPA page (200 HTML).
+app.get('/api/admin/sales/maker-status-callback', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  if (!isMakerStatusCallbackAuthorized(req)) return res.status(401).json({ message: 'Unauthorized callback.' });
+  return res.json({ ok: true });
 });
 
 app.post('/api/admin/sales/maker-status-callback', async (req, res) => {
