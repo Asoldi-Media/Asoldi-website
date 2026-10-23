@@ -38,6 +38,9 @@ test('the health card warns about a restored backup and a live-join engine that 
   assert.match(card, /source === 'backup'/);
   assert.match(card, /Live-join har ikke kjørt/);
   assert.match(card, /LIVE_TICK_STALE_MS = 3 \* 60_000/);
+  // The empty-archive state (the backfill stands still) is shown, and a file that is gone is not called unreadable.
+  assert.match(card, /if \(ingestData\?\.archiveEmptySince\) \{\s*warnings\.push\(`Fireflies-arkivet er tomt, mens kundekort har opptak/);
+  assert.match(card, /store\.error === 'missing' \? 'mangler' : 'kunne ikke leses'/);
 });
 
 test('a scheduled meeting only promises a send the server planned', () => {

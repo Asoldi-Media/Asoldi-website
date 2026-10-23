@@ -604,3 +604,17 @@ test('what lands while the lookup waits on Fireflies wins: a rep\'s "uten opptak
   assert.equal(told.meetings[0].recording.state, 'missing');
   assert.equal(h3.sent.length, 0, 'one e-mail across both');
 });
+
+test('the health count of meetings without a recording is the list\'s: empty and never let in count, declined does not', async () => {
+  const start = Date.parse('2026-10-24T08:00:00.000Z');
+  const nowMs = start + 5 * 60 * MIN;
+  const recent = iso(nowMs - 5 * MIN);
+  const empty = booking(start, { state: 'empty', missingAt: iso(start + 150 * MIN), alertedAt: iso(start + 150 * MIN), checkedAt: recent, ffMeetingId: 'FFHALLO7' });
+  const notLetIn = booking(start, { state: 'not-admitted', checkedAt: recent, message: 'Fireflies ble ikke sluppet inn i møtet, så det blir trolig ikke noe opptak. Skriv notater fra møtet.' });
+  const declined = booking(start, { state: 'declined', checkedAt: recent });
+  const clients = [empty, notLetIn, declined];
+  const result = await run(hub(clients), fireflies({ list: [] }), nowMs);
+  assert.deepEqual(result.checked, [], 'all three were looked at a moment ago');
+  assert.equal(result.health.missingPlaceholders, 2);
+  assert.equal(result.health.missingPlaceholders, watchdog.missingRecordingRows(clients, { nowMs }).count);
+});

@@ -27,6 +27,8 @@ type IngestStatus = {
   unfinishedSummaries?: number;
   gaveUp?: number;
   missingPlaceholders?: number;
+  /** The archive reads empty while cards hold recordings (the meet-link backfill stands still). */
+  archiveEmptySince?: string;
   scan?: PartStatus;
   watchdog?: PartStatus;
   lastHealthAlertAt?: string;
@@ -167,8 +169,12 @@ export function FirefliesHealthCard() {
   for (const [name, file] of Object.entries(STORE_FILES)) {
     const store = ingestData?.store?.[name];
     if (store?.source === 'backup') {
-      warnings.push(`${file} kunne ikke leses, så huben bruker sikkerhetskopien${store.backupFile ? ` ${store.backupFile}` : ''}. Det som ble lagret etter den, kan mangle.`);
+      const why = store.error === 'missing' ? 'mangler' : 'kunne ikke leses';
+      warnings.push(`${file} ${why}, så huben bruker sikkerhetskopien${store.backupFile ? ` ${store.backupFile}` : ''}. Det som ble lagret etter den, kan mangle.`);
     }
+  }
+  if (ingestData?.archiveEmptySince) {
+    warnings.push(`Fireflies-arkivet er tomt, mens kundekort har opptak (siden ${when(ingestData.archiveEmptySince)}). Huben flytter og fjerner ingen opptak på kortene før arkivet har møter igjen.`);
   }
   const pausedUntil = [rate?.pausedUntil?.api, rate?.pausedUntil?.join].filter((iso) => future(iso, nowMs)).sort()[0] || '';
   if (pausedUntil) warnings.push(`Fireflies har bedt huben vente til ${when(pausedUntil)} (fartsgrense). Henting og innsending venter til da.`);
