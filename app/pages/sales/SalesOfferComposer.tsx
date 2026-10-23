@@ -66,6 +66,8 @@ type MeetingInfo = {
   hasSummary: boolean;
   tooThin?: boolean;
   pendingTranscript?: boolean;
+  /** Fireflies finished the recording and nothing was said. */
+  emptyFinal?: boolean;
   liveJoined?: boolean;
   manual?: boolean;
   firefliesUrl?: string;
@@ -89,6 +91,8 @@ type MeetingMatch = {
   placeholder?: boolean;
   recordingState?: string;
   duplicateOf?: string;
+  emptyFinal?: boolean;
+  pendingTranscript?: boolean;
 };
 
 function meetingPurposeLabel(purpose = '') {
@@ -161,6 +165,7 @@ export function SalesOfferComposer({
 
   const [to, setTo] = useState('');
   const [meetingsOpen, setMeetingsOpen] = useState(false);
+  const [showPickerDuplicates, setShowPickerDuplicates] = useState(false);
   const [fillPhase, setFillPhase] = useState<'' | 'running' | 'done' | 'error'>('');
   const [fillMessage, setFillMessage] = useState('');
   const [sendContent, setSendContent] = useState<'full' | 'contract'>('full');
@@ -766,6 +771,10 @@ export function SalesOfferComposer({
     [meetings, pickerIds]
   );
   const pickerHasTranscript = pickerMeetings.some((entry) => entry.selected && (entry.hasTranscript || entry.hasSummary));
+  // A shorter or empty copy of another recording of the same meeting stays out of the lists unless asked for
+  // (or picked, so it can be unticked).
+  const pickerDuplicateCount = pickerMeetings.filter((entry) => entry.duplicateOf && !isPlaceholderEntry(entry)).length;
+  const pickerShown = pickerMeetings.filter((entry) => !entry.duplicateOf || entry.selected || showPickerDuplicates);
   // A real recording with text is picked: the booked meeting's "no recording" or "on the way" no longer applies.
   const selectedRecordingReady = meetings.some((entry) => (
     entry.selected && !isPlaceholderEntry(entry) && (entry.hasTranscript || entry.hasSummary)
@@ -1048,13 +1057,15 @@ export function SalesOfferComposer({
                           ? `${pickerMeetings.filter((entry) => entry.selected && !isPlaceholderEntry(entry)).length} opptak valgt${pickerDirty ? ' (ikke lagret)' : ''}`
                           : meeting
                             ? `${meeting.title || 'Møte'}${meeting.when ? ` · ${meeting.when}` : ''}${
-                              meetingRecording.waiting
-                                ? ' · venter på transkript'
-                                : meetingRecording.noRecording
-                                  ? ' · ingen opptak'
-                                  : meetingRecording.declined
-                                    ? ' · uten opptak'
-                                    : ''
+                              meeting.emptyFinal
+                                ? ' · tomt opptak'
+                                : meetingRecording.waiting
+                                  ? ' · venter på transkript'
+                                  : meetingRecording.noRecording
+                                    ? ' · ingen opptak'
+                                    : meetingRecording.declined
+                                      ? ' · uten opptak'
+                                      : ''
                             }`
                             : 'Ingen Fireflies-opptak valgt'}
                       </span>
@@ -1118,11 +1129,21 @@ export function SalesOfferComposer({
                     {meetingsOpen && !locked && (
                       <div className="mt-2 space-y-3">
                         <p className="text-[11px] text-gray-500">Huk av opptaket og trykk Lagre. Det lagrer valget og skriver e-posten. Er det allerede huket av, starter Lagre skrivingen.</p>
+                        {pickerDuplicateCount ? (
+                          <button
+                            type="button"
+                            onClick={() => setShowPickerDuplicates((value) => !value)}
+                            className="px-2 py-1 rounded-md bg-white/10 text-[11px] text-gray-300 hover:bg-white/15"
+                            title="Kortere eller tomme kopier av opptak av samme møte"
+                          >
+                            {showPickerDuplicates ? 'Skjul duplikater' : `Vis duplikater (${pickerDuplicateCount})`}
+                          </button>
+                        ) : null}
                         <div>
                           <div className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">Transkript fra denne kunden</div>
-                          {pickerMeetings.some((entry) => entry.hasTranscript && !isPlaceholderEntry(entry)) ? (
+                          {pickerShown.some((entry) => entry.hasTranscript && !isPlaceholderEntry(entry)) ? (
                             <div className="flex flex-wrap gap-2">
-                              {pickerMeetings.filter((entry) => entry.hasTranscript && !isPlaceholderEntry(entry)).map((entry) => (
+                              {pickerShown.filter((entry) => entry.hasTranscript && !isPlaceholderEntry(entry)).map((entry) => (
                                 <label
                                   key={entry.meetingId}
                                   className={`inline-flex items-center gap-2 px-2 py-1 rounded-md text-left cursor-pointer ${
@@ -1149,9 +1170,9 @@ export function SalesOfferComposer({
                             <p className="mt-1 text-[11px] text-gray-500">Workshop- og iterasjonsopptak er ikke valgt som standard. Huk dem av hvis de skal med i tilbudet.</p>
                           ) : null}
                         </div>
-                        {pickerMeetings.some((entry) => !entry.hasTranscript && !isPlaceholderEntry(entry)) && (
+                        {pickerShown.some((entry) => !entry.hasTranscript && !isPlaceholderEntry(entry)) && (
                           <div className="flex flex-wrap gap-2">
-                            {pickerMeetings.filter((entry) => !entry.hasTranscript && !isPlaceholderEntry(entry)).map((entry) => (
+                            {pickerShown.filter((entry) => !entry.hasTranscript && !isPlaceholderEntry(entry)).map((entry) => (
                               <label
                                 key={entry.meetingId}
                                 className={`inline-flex items-center gap-2 px-2 py-1 rounded-md text-left cursor-pointer ${

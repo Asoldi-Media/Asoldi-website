@@ -6,6 +6,7 @@
  * older hub, so every helper reads it defensively and falls back to saying less, never to a guess.
  */
 import { slotKindFromKey } from '../../../../lib/fireflies-recording-state.js';
+import { recordingTalk, talkCoversPlaceholder } from '../../../../lib/fireflies-slots.js';
 import { isPlaceholderMeetingId } from '../../../../lib/offer-meetings.js';
 import { ONLINE_CALENDAR_DURATION_MINUTES } from '../../../../lib/sales-meeting-duration.js';
 import {
@@ -446,15 +447,22 @@ type MeetingRowLike = {
   duplicateOf?: string;
   hasTranscript?: boolean;
   slotKey?: string;
+  partial?: boolean;
+  emptyFinal?: boolean;
+  pendingTranscript?: boolean;
+  sentenceCount?: number | '';
   recording?: { state?: string; ffMeetingId?: string } | null;
 };
 
 /**
- * A placeholder whose real recording with talk is linked (same slot, or the Fireflies id the hub saw for it).
- * Newer hubs leave such a placeholder out already; raw client rows (the offer pages) still carry it.
+ * A placeholder whose real recording is linked (same slot, or the Fireflies id the hub saw for it), by the
+ * hub's rule: talk that is not live captions and more than a fragment (lib/fireflies-slots.js
+ * talkCoversPlaceholder). Rows the hub presented (presentClientMeetings, which marks every row `placeholder`)
+ * leave a covered placeholder out already, so one still among them is not covered, whatever a "hallo?" on its
+ * slot says; rows from an older hub are judged here.
  */
 export function placeholderIsSuperseded(row: MeetingRowLike | null | undefined, rows: MeetingRowLike[] = []) {
-  if (!row || !isPlaceholderRow(row)) return false;
+  if (!row || !isPlaceholderRow(row) || typeof row.placeholder === 'boolean') return false;
   const slotKey = String(row.slotKey || '');
   const ffMeetingId = String(row.recording?.ffMeetingId || '');
   if (!slotKey && !ffMeetingId) return false;
@@ -463,6 +471,8 @@ export function placeholderIsSuperseded(row: MeetingRowLike | null | undefined, 
     && !isPlaceholderRow(other)
     && !isDuplicateRow(other)
     && Boolean(other.hasTranscript)
+    && other.partial !== true
+    && talkCoversPlaceholder(recordingTalk(other))
     && ((slotKey && String(other.slotKey || '') === slotKey) || (ffMeetingId && String(other.meetingId || '') === ffMeetingId))
   ));
 }
@@ -474,16 +484,21 @@ export function visibleMeetingRows<T extends MeetingRowLike>(rows: T[] | null | 
 }
 
 /**
- * What to say next to a real recording without a transcript: an empty recording the hub already judged
- * (a placeholder marked "empty" points at it) is not "on the way".
+ * What to say next to a real recording without a transcript. The hub's rows say it themselves: Fireflies
+ * finished it and nothing was said (emptyFinal: "tomt opptak"), it is still on its way (pendingTranscript),
+ * or neither ("ingen transkript": Fireflies gave up, or it is too old to wait for). Rows from an older hub
+ * only have the placeholder's word: one marked "empty" points at it.
  */
 export function realRowWaitingNote(row: MeetingRowLike | null | undefined, rows: MeetingRowLike[] = []) {
   if (!row || isPlaceholderRow(row) || row.hasTranscript) return '';
+  if (row.emptyFinal) return 'tomt opptak';
+  if (row.pendingTranscript === true) return 'venter på transkript';
   const id = String(row.meetingId || '');
   const empty = Boolean(id) && (Array.isArray(rows) ? rows : []).some((other) => (
     isPlaceholderRow(other) && other?.recording?.state === 'empty' && String(other.recording?.ffMeetingId || '') === id
   ));
-  return empty ? 'tomt opptak' : 'venter på transkript';
+  if (empty) return 'tomt opptak';
+  return row.pendingTranscript === false ? 'ingen transkript' : 'venter på transkript';
 }
 
 /** The server's answer to "Send Fireflies inn nå", plus "Tidligst kl. HH:MM" when the send has to wait. */

@@ -222,6 +222,53 @@ test('meeting rows: superseded placeholders, duplicates and empty recordings', (
   assert.equal(h.realRowWaitingNote(real, [real]), '');
 });
 
+test('the hub\'s own words on a row win: "tomt opptak", "venter på transkript", or neither; a "hallo?" never hides a placeholder', () => {
+  // Card rows (presentClientMeetings) carry emptyFinal and pendingTranscript on every real recording.
+  const emptyRow = { meetingId: 'REC20', placeholder: false, duplicateOf: '', hasTranscript: false, emptyFinal: true, pendingTranscript: false };
+  const coming = { ...emptyRow, meetingId: 'REC21', emptyFinal: false, pendingTranscript: true };
+  const gaveUp = { ...emptyRow, meetingId: 'REC22', emptyFinal: false, pendingTranscript: false };
+  assert.equal(h.realRowWaitingNote(emptyRow, [emptyRow]), 'tomt opptak', 'no placeholder needs to point at it');
+  assert.equal(h.realRowWaitingNote(coming, [coming]), 'venter på transkript');
+  assert.equal(h.realRowWaitingNote(gaveUp, [gaveUp]), 'ingen transkript', 'never "on its way" for ever');
+  // Every screen that lists a real recording without text asks the same helper.
+  for (const file of [
+    'app/pages/Admin/sections/ClientActivityLogCover.tsx',
+    'app/pages/Admin/sections/ClientNotesFeed.tsx',
+    'app/pages/Admin/sections/ClientRecordingsPanel.tsx',
+    'app/pages/sales/SalesOfferComposer.tsx',
+  ]) assert.match(read(file), /realRowWaitingNote\(/, file);
+  assert.match(read('app/pages/sales/SalesOfferComposer.tsx'), /meeting\.emptyFinal\s*\? ' · tomt opptak'/);
+
+  // A placeholder the hub still lists is not covered, whatever a fragment on its slot says (the hub's rule
+  // needs talk that is not live captions and more than a few sentences).
+  const presented = { meetingId: 'live:c1:20', placeholder: true, slotKey: 'sales:20', recording: { state: 'ended' } };
+  const hello = { meetingId: 'REC23', placeholder: false, duplicateOf: '', slotKey: 'sales:20', hasTranscript: true, sentenceCount: 2 };
+  assert.equal(h.placeholderIsSuperseded(presented, [presented, hello]), false);
+  assert.deepEqual(h.visibleMeetingRows([presented, hello]).map((row) => row.meetingId), ['live:c1:20', 'REC23']);
+  // Rows from an older hub are judged here by the same bar.
+  const raw = { meetingId: 'live:c1:21', slotKey: 'sales:21', recording: { state: 'ended' } };
+  const fragment = { meetingId: 'REC24', slotKey: 'sales:21', hasTranscript: true, sentenceCount: 2 };
+  const captions = { meetingId: 'REC25', slotKey: 'sales:21', hasTranscript: true, partial: true, sentenceCount: 40 };
+  const meeting = { meetingId: 'REC26', slotKey: 'sales:21', hasTranscript: true, sentenceCount: 40 };
+  assert.equal(h.placeholderIsSuperseded(raw, [raw, fragment, captions]), false);
+  assert.equal(h.placeholderIsSuperseded(raw, [raw, meeting]), true);
+});
+
+test('Tilbud and Tilbudsgjennomgang hide copies of a meeting by the hub\'s duplicateOf', () => {
+  const composer = read('app/pages/sales/SalesOfferComposer.tsx');
+  assert.match(composer, /const pickerShown = pickerMeetings\.filter\(\(entry\) => !entry\.duplicateOf \|\| entry\.selected \|\| showPickerDuplicates\);/);
+  assert.match(composer, /pickerShown\.filter\(\(entry\) => entry\.hasTranscript && !isPlaceholderEntry\(entry\)\)/);
+  assert.match(composer, /pickerShown\.filter\(\(entry\) => !entry\.hasTranscript && !isPlaceholderEntry\(entry\)\)/);
+  assert.match(composer, /Vis duplikater \(\$\{pickerDuplicateCount\}\)/);
+  const review = read('app/pages/Admin/sections/OfferReviewSection.tsx');
+  assert.match(review, /visibleMeetingRows<OfferMeetingRef>\(detail\.client\.meetings, \{ showDuplicates: showDuplicateMeetings \}\)/);
+  assert.match(review, /filter\(\(ref\) => !isPlaceholderRow\(ref\) && !isDuplicateRow\(ref\)\)\.length/);
+  // The rows there are the card's (server.js compactOfferClient), so they carry duplicateOf.
+  const server = read('server.js');
+  const compact = server.slice(server.indexOf('function compactOfferClient('), server.indexOf('function presentOffer('));
+  assert.match(compact, /meetings: presentClientMeetings\(client, null, \{ media: false \}\)\.filter\(\(row\) => !row\.placeholder\),/);
+});
+
 test('recording buttons keep unsaved offer edits, Tilbud reads the card\'s fresher rows, and admins get the buttons', () => {
   const review = read('app/pages/Admin/sections/OfferReviewSection.tsx');
   const meetings = review.slice(review.indexOf("detailTab === 'meetings'"));
