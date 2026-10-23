@@ -358,6 +358,158 @@ test('a reused room: the earlier meeting\'s bot still in it is never taken for t
   assert.match(sent[0].text, /https:\/\/app\.fireflies\.ai\/view\/FFPREV01/);
 });
 
+/** Two invented clients booked back to back in one reused room: Testfirma at T, Annenfirma at T+60. */
+function backToBack() {
+  const first = salesClient();
+  const next = salesClient({ id: 'client-2', businessName: 'Annenfirma AS', contactPerson: 'Ola Test', ownerId: 'sales:rep-2', meetingAt: iso(60) });
+  return { first, next, firstKey: KEY, nextKey: `${ROOM}|${at(60)}` };
+}
+
+test('a reused room the other way: a meeting nobody let the bot into never takes the next meeting\'s bot', async () => {
+  resetAll();
+  const { first, next, firstKey, nextKey } = backToBack();
+  const state = { clients: [first, next], active: [], sent: [], reply: null };
+  const nextBot = { id: 'FFNEXT01', meetingLink: ROOM, startTime: iso(57), endTime: iso(177) };
+  let joined = null;
+  for (let minutes = -3; minutes <= 75; minutes += 1) {
+    // Nobody lets the first meeting's knocks in; the next meeting's bot is let in at its first send (10:57).
+    state.active = minutes >= 57 ? [nextBot] : [];
+    if (minutes === 58) {
+      joined = await live.noteFirefliesBotJoined({ meetingId: 'FFNEXT01', fetchPresence: async () => ({ meetingLink: ROOM, isLive: true }), nowMs: at(58) });
+    }
+    await tickAt(state, minutes);
+  }
+  assert.deepEqual(joined.map((session) => session.key), [nextKey], 'the bot_joined webhook marks only the next meeting');
+  const sessions = readLiveSessionStore().sessions;
+  assert.equal(sessions[firstKey].state, 'not-admitted');
+  assert.deepEqual(sessions[firstKey].ffMeetingIds, [], 'the next meeting\'s bot is never this one\'s');
+  assert.equal(live.recordingForLiveSession(sessions[firstKey]).ffMeetingId, '');
+  assert.equal(sessions[nextKey].state, 'recording');
+  assert.equal(live.recordingForLiveSession(sessions[nextKey]).ffMeetingId, 'FFNEXT01');
+  // The same with the next booking not in the hub at all: a bot that started after this booked end is not its own.
+  resetAll();
+  const alone = { clients: [salesClient()], active: [], sent: [], reply: null };
+  for (let minutes = -3; minutes <= 75; minutes += 1) {
+    alone.active = minutes >= 62 ? [{ ...nextBot, startTime: iso(62) }] : [];
+    await tickAt(alone, minutes);
+  }
+  assert.equal(readLiveSessionStore().sessions[KEY].state, 'not-admitted');
+  assert.deepEqual(readLiveSessionStore().sessions[KEY].ffMeetingIds, []);
+});
+
+test('an earlier meeting still in the room when the next one\'s bot comes in keeps its own bot', async () => {
+  resetAll();
+  const { first, next, firstKey, nextKey } = backToBack();
+  const state = { clients: [first, next], active: [], sent: [], reply: null };
+  const ownBot = { id: 'FFOWN001', meetingLink: ROOM, startTime: iso(-3), endTime: iso(117) };
+  const nextBot = { id: 'FFNEXT01', meetingLink: ROOM, startTime: iso(57), endTime: iso(177) };
+  for (let minutes = -3; minutes <= 59; minutes += 1) {
+    state.active = minutes < -2 ? [] : minutes >= 57 ? [ownBot, nextBot] : [ownBot];
+    await tickAt(state, minutes);
+  }
+  const sessions = readLiveSessionStore().sessions;
+  assert.deepEqual([sessions[firstKey].state, sessions[firstKey].ffMeetingId], ['recording', 'FFOWN001']);
+  assert.deepEqual([sessions[nextKey].state, sessions[nextKey].ffMeetingId], ['recording', 'FFNEXT01']);
+});
+
+test('the watchdog never moves the next meeting\'s recording in a reused room onto an earlier meeting without one', async () => {
+  resetAll();
+  const { first, next } = backToBack();
+  const firstRow = placeholder('client-1', T, { state: 'not-admitted', dispatchedAt: iso(-3), message: LIVE_JOIN_MESSAGES.notAdmitted });
+  const nextRow = placeholder('client-2', at(60), { state: 'ended', dispatchedAt: iso(57), verifiedAt: iso(58), lastSeenAt: iso(115), endedAt: iso(115) });
+  first.meetings = [firstRow];
+  next.meetings = [nextRow];
+  const clients = [first, next];
+  const nextRecording = {
+    meetingId: 'FFNEXT01',
+    title: 'Annenfirma AS · Ola Test',
+    meetingLink: ROOM,
+    startedAt: iso(57),
+    durationMinutes: 58,
+    transcript: Array.from({ length: 120 }, (_, index) => `Ola Test: linje ${index}.`).join('\n'),
+    summary: 'Salgsmøte.',
+    summaryStatus: 'processed',
+    final: true,
+    isLive: false,
+    sentenceCount: 120,
+    transcriptUrl: 'https://app.fireflies.ai/view/FFNEXT01',
+  };
+  const lookupAt = (minutes) => (placeholderRow, client, all) => watchdog.lookupPlaceholderTranscript(placeholderRow, {
+    apiKey: 'fake-key',
+    nowMs: at(minutes),
+    clientId: client.id,
+    clients: all,
+    readStored: (id) => (id === 'FFNEXT01' ? nextRecording : null),
+    storedRows: () => [nextRecording],
+    listTranscripts: async () => [{ id: 'FFNEXT01', title: nextRecording.title, dateString: iso(57), meeting_link: ROOM, transcript_url: nextRecording.transcriptUrl }],
+    hydrate: async () => ({ outcome: 'fetched', record: nextRecording }),
+  });
+  // Looked up first, the earlier meeting does not find it; it is offered as the room at another time.
+  const early = await lookupAt(215)(firstRow, first, clients);
+  assert.equal(early.found, null);
+  assert.deepEqual(early.candidates.map((entry) => [entry.meetingId, entry.why]), [['FFNEXT01', 'room']]);
+  assert.equal((await lookupAt(215)(nextRow, next, clients)).found?.meetingId, 'FFNEXT01');
+
+  const sent = [];
+  const linked = [];
+  await watchdog.runFirefliesRecordingWatchdog({
+    getClients: () => clients,
+    apiKey: 'fake-key',
+    nowMs: at(215),
+    log: quiet,
+    patchPlaceholder: (clientId, meetingId, patch) => {
+      const row = clients.find((client) => client.id === clientId)?.meetings.find((item) => item.meetingId === meetingId);
+      if (row) row.recording = mergeRecordingState(row.recording, patch);
+      return row || null;
+    },
+    // As the store-backed link: the recording moves to this client and covers its placeholder.
+    linkTranscript: (clientId, record, row) => {
+      linked.push([clientId, record.meetingId]);
+      for (const client of clients) client.meetings = client.meetings.filter((item) => item.meetingId !== record.meetingId);
+      const client = clients.find((item) => item.id === clientId);
+      client.meetings = client.meetings.filter((item) => item !== row);
+      client.meetings.push({ meetingId: record.meetingId, meetLink: ROOM, startedAt: record.startedAt, hasTranscript: true, sentenceCount: 120 });
+      return client;
+    },
+    recipientsFor: async () => ['ansatte@asoldi.com'],
+    sendEmail: async (message) => { sent.push(message); },
+    lookup: lookupAt(215),
+  });
+  assert.deepEqual(linked, [['client-2', 'FFNEXT01']]);
+  assert.equal(next.meetings.some((row) => row.meetingId === 'FFNEXT01'), true, 'the next meeting keeps its recording');
+  assert.equal(firstRow.recording.state, 'missing');
+  assert.deepEqual(sent.map((message) => message.subject), ['Fireflies: ingen opptak av salgsmøtet med Testfirma AS']);
+});
+
+test('a late or replayed bot_joined for a finished meeting in the room is not this meeting\'s bot let in', async () => {
+  resetAll();
+  const state = { clients: [salesClient()], active: [], sent: [], reply: null };
+  await tickAt(state, -3);
+  await tickAt(state, 0);
+  // The 09:00 meeting's bot_joined, delivered again at 10:00:30 after it ended.
+  const late = await live.noteFirefliesBotJoined({
+    meetingId: 'FFOLD009',
+    fetchPresence: async () => ({ meetingLink: ROOM, isLive: false, startTime: iso(-60) }),
+    nowMs: at(0.5),
+  });
+  assert.deepEqual(late, []);
+  let session = readLiveSessionStore().sessions[KEY];
+  assert.deepEqual([session.state, session.firstSeenActiveAt, session.ffMeetingId], ['dispatched', '', '']);
+  for (const minutes of [1, 2, 3]) await tickAt(state, minutes);
+  session = readLiveSessionStore().sessions[KEY];
+  assert.equal(alerts.planLobbyAlert(session, at(3)).due, true, 'the rep is still told to let the bot in');
+  assert.deepEqual(state.sent.map((input) => input.meetingLink), [ROOM, ROOM], 'the retry ladder goes on');
+  // Still running (the earlier meeting ran over): it is that meeting's bot, never named on this placeholder.
+  await live.noteFirefliesBotJoined({
+    meetingId: 'FFOLD009',
+    fetchPresence: async () => ({ meetingLink: ROOM, isLive: true, startTime: iso(-60) }),
+    nowMs: at(3.5),
+  });
+  session = readLiveSessionStore().sessions[KEY];
+  assert.equal(session.message, LIVE_JOIN_MESSAGES.earlierBot);
+  assert.equal(live.recordingForLiveSession(session).ffMeetingId, '');
+});
+
 test('the watchdog follows a never-sent placeholder to missing with one honest alert', async () => {
   resetAll();
   const client = salesClient();

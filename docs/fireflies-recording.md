@@ -44,7 +44,14 @@ while the first-send window lasts, and the meeting is still followed to `missing
 A reused room can still hold the bot of an earlier meeting that ran over. A bot that started more
 than 30 minutes before the booked start is that meeting's: the card says so ("Fireflies fra møtet
 før …"), its id never goes on this meeting's placeholder, and the watchdog only offers its
-recording as a candidate, so it is never moved off the client it belongs to.
+recording as a candidate, so it is never moved off the client it belongs to. The same holds the
+other way: a bot that started after this meeting's booked end, or once the next booked meeting in
+the room (any client's) reached its first send, is that meeting's, unless it started within the
+lobby wait of one of this meeting's own sends. The engine never takes it for this meeting (a look or
+a `meeting.bot_joined`), and the watchdog's room window ends at that next meeting's first send, so
+an earlier meeting with no recording is reported missing instead of taking the next client's. A
+`meeting.bot_joined` whose transcript is no longer live (a late or replayed delivery) counts as no
+sighting at all.
 
 The watchdog (`lib/fireflies-recording-watchdog.js`) follows every placeholder after the meeting:
 it links the recording when it turns up, and at the deadline (session end + 90 minutes) sets

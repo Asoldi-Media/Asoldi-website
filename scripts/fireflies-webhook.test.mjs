@@ -493,12 +493,19 @@ test('a bot_joined event resolves its room with one cheap read; the key owner is
     apiKey: 'ff-key',
     fetchImpl: async (_url, options) => {
       query = JSON.parse(options.body).query;
-      return liveReply({ data: { transcript: { id: 'ff-active-1', meeting_link: 'https://meet.google.com/abc-defg-hij', is_live: true } } });
+      return liveReply({ data: { transcript: { id: 'ff-active-1', meeting_link: 'https://meet.google.com/abc-defg-hij', is_live: true, dateString: '2026-11-02T09:57:00.000Z' } } });
     },
   });
   assert.match(query, /meeting_link/);
+  assert.match(query, /dateString/);
   assert.doesNotMatch(query, /sentences/);
-  assert.deepEqual(presence, { id: 'ff-active-1', meetingLink: 'https://meet.google.com/abc-defg-hij', isLive: true });
+  assert.deepEqual(presence, { id: 'ff-active-1', meetingLink: 'https://meet.google.com/abc-defg-hij', isLive: true, startTime: '2026-11-02T09:57:00.000Z' });
+  // A transcript that does not say whether it is live is not called finished.
+  const unknown = await fetchFirefliesTranscriptPresence('ff-active-2', {
+    apiKey: 'ff-key',
+    fetchImpl: async () => liveReply({ data: { transcript: { id: 'ff-active-2', meeting_link: 'https://meet.google.com/abc-defg-hij' } } }),
+  });
+  assert.equal(unknown.isLive, undefined);
   const owner = await fetchFirefliesKeyOwnerEmail({
     apiKey: 'ff-key',
     fetchImpl: async () => liveReply({ data: { user: { email: 'Damian@asoldi.com' } } }),
