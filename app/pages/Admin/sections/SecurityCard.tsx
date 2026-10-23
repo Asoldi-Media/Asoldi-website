@@ -45,6 +45,8 @@ type LoginAddresses = {
   hopFromRight: number | null;
   peer: string | null;
   trustedHops: number | null;
+  processId?: number;
+  processStartedAt?: string;
 };
 type Reveal = { webhookUrl: string; secret: string; tokenUrl: string | null; rotatedAt: string };
 type RotateKind = 'signing-secret' | 'maker-callback-token';
@@ -78,9 +80,13 @@ function when(value: string | null | undefined) {
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('nb-NO');
 }
 
-/** One line on where the login limits took client addresses from in the last hour (never an address). */
+/**
+ * One line on where the login limits took client addresses from in the last hour (never an
+ * address). The figures and the limits are kept per hub process: the one that answered this page.
+ */
 function loginAddressLine(login: LoginAddresses) {
-  if (!login.attemptsLastHour) return 'Sign-in addresses: no sign-in attempts in the last hour.';
+  const scope = `in this hub process${login.processId ? ` (pid ${login.processId}, started ${when(login.processStartedAt)})` : ''}`;
+  if (!login.attemptsLastHour) return `Sign-in addresses ${scope}: no sign-in attempts in the last hour.`;
   const sources: Record<string, string> = {
     forwarded: `X-Forwarded-For entry ${login.hopFromRight ?? 1} from the right`,
     'forwarded-internal': 'an internal proxy address (every client behind it shares one count)',
@@ -91,7 +97,10 @@ function loginAddressLine(login: LoginAddresses) {
   const shared = login.attemptsLastHour >= 10 && login.distinctLastHour === 1
     ? ' Every attempt counted as one address: check the proxy in front of the hub.'
     : '';
-  return `Sign-in addresses, last hour: ${login.distinctLastHour} different over ${login.attemptsLastHour} attempts, counted by ${source}.${hops}${shared}`;
+  const publicPeer = login.mode === 'forwarded' && login.peer === 'public'
+    ? ' The connection comes from a public address, so X-Forwarded-For may be written by the client: check the proxy in front of the hub.'
+    : '';
+  return `Sign-in addresses ${scope}, last hour: ${login.distinctLastHour} different over ${login.attemptsLastHour} attempts, counted by ${source}.${hops}${shared}${publicPeer}`;
 }
 
 function storeAdminToken(token: string) {

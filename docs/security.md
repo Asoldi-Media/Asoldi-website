@@ -122,10 +122,16 @@ hash or the sync flag.
   never an address). `GET /api/admin/system/security` adds `loginAddressMode` (the most common
   source of the last hour: `forwarded`, `forwarded-internal`, `socket`, or `none`) and
   `loginAddresses` (`distinctLastHour`, `attemptsLastHour`, `modesLastHour`, and `hopFromRight`
-  and `peer` of the latest attempt, `trustedHops`); the Security card shows it in one line.
-  Addresses are kept only as short hashes, for an hour. Many attempts with `distinctLastHour` 1
-  mean every client reaches the hub through one public proxy (a CDN in front of the hosting
-  proxy, for example), so all of them share one per-address count.
+  and `peer` of the latest attempt, `trustedHops`, and `processId` / `processStartedAt`); the
+  Security card shows it in one line. These figures belong to the hub process that answered the
+  request, like the counts. Addresses are kept only as short hashes, for an hour. Many attempts
+  with `distinctLastHour` 1 mean every client reaches the hub through one public proxy (a CDN in
+  front of the hosting proxy, for example), so all of them share one per-address count.
+- After a deploy, expect `loginAddressMode` `forwarded` with `peer` `internal`: the hosting proxy
+  connects from an internal address and appends the client's address. `peer` `public` with
+  `forwarded` means the hub is reached from a public address that sends `X-Forwarded-For`, so the
+  counted entry may be written by the client; the Security card then warns, and the proxy in
+  front of the hub needs checking.
 - Then `PUT /api/admin/security/login-address` with `{ "trustedHops": 2 }` (1 to 5; `null` is
   the default, 1) makes the limits count the second public entry from the right. Raise it only
   when every request passes that many public proxies: a request that skips one decides which

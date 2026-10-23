@@ -545,7 +545,12 @@ test('routes: the security status shows where login addresses come from, never a
       hopFromRight: 1,
       peer: 'internal',
       trustedHops: null,
+      processId: process.pid,
+      processStartedAt: after.loginAddresses.processStartedAt,
     });
+    const startedAt = Date.parse(after.loginAddresses.processStartedAt);
+    assert.ok(startedAt <= Date.now() && Date.now() - startedAt < 24 * 60 * 60 * 1000, 'the figures name the process that answered');
+    assert.equal(before.loginAddresses.processStartedAt, after.loginAddresses.processStartedAt);
     assert.equal(JSON.stringify(after).includes('203.0.113.'), false, 'no address in the status');
   });
   assert.equal(lines.length, 1);
