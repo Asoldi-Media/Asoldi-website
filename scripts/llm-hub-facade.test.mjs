@@ -413,22 +413,24 @@ test('the ledger records 100% of calls in a scripted run of every hub task (lega
   const jpeg = await tinyJpeg();
   const png = await tinyPng();
 
+  // Each call site gets the sales client the way its caller passes it.
+  const salesClientId = CLIENT.id;
   await offerAi.fillOfferFromTranscript({ client: CLIENT, meeting: MEETING, meetings: [MEETING] });
-  await offerAi.reflectContractFromEmail({ emailHtml: '<p>Vi lager en nettside med booking.</p>', products: [{ id: 'p1', name: 'Nettside', pages: 5, priceExMva: 1499 }] });
+  await offerAi.reflectContractFromEmail({ emailHtml: '<p>Vi lager en nettside med booking.</p>', products: [{ id: 'p1', name: 'Nettside', pages: 5, priceExMva: 1499 }], client: { id: salesClientId } });
   await offerAi.summarizeClientIntent({ client: CLIENT, meeting: MEETING, meetings: [MEETING] });
   await generateWorkshopSummaryWithDeepSeek({ client: CLIENT, salesMeeting: MEETING, workshopMeeting: MEETING });
   await generateWorkshopProjectDocumentWithDeepSeek({ client: CLIENT, salesMeeting: MEETING, workshopMeeting: MEETING, meetingId: 'meeting-1' });
-  await evaluateWorkshopTranscriptWithDeepSeek({ transcript: TRANSCRIPT, durationMinutes: 30, businessName: CLIENT.businessName, meetingId: 'meeting-1' });
+  await evaluateWorkshopTranscriptWithDeepSeek({ transcript: TRANSCRIPT, durationMinutes: 30, businessName: CLIENT.businessName, meetingId: 'meeting-1', salesClientId });
   await generateBookerPreviewSummaryWithDeepSeek({ client: CLIENT, transcriptChat: TRANSCRIPT });
-  await runProductAssistantTurn({ messages: [{ role: 'user', text: 'Hei, vi selger brød og kaker.' }], summary: {} });
-  await interpretLooseNote('Vi har åpent fra ti til seks hver dag og selger brød.', {});
-  await structureProductsFromText({ texts: [{ fileName: 'liste.txt', text: 'Brød 45 kr\nKanelbolle 35 kr', preferAi: true }] });
-  await extractIngestText({ buffer: png, originalName: 'meny.png', mimeType: 'image/png' });
-  await transcribeClientMedia({ buffer: jpeg, fileName: 'kaffe.jpg', context: { businessName: CLIENT.businessName } });
-  await categorizeEmail({ from: 'kunde@firma.test', subject: 'Spørsmål', text: 'Hei, når er siden klar?' });
+  await runProductAssistantTurn({ messages: [{ role: 'user', text: 'Hei, vi selger brød og kaker.' }], summary: {}, salesClientId });
+  await interpretLooseNote('Vi har åpent fra ti til seks hver dag og selger brød.', {}, { salesClientId });
+  await structureProductsFromText({ texts: [{ fileName: 'liste.txt', text: 'Brød 45 kr\nKanelbolle 35 kr', preferAi: true }], salesClientId });
+  await extractIngestText({ buffer: png, originalName: 'meny.png', mimeType: 'image/png' }, { salesClientId });
+  await transcribeClientMedia({ buffer: jpeg, fileName: 'kaffe.jpg', context: { businessName: CLIENT.businessName }, salesClientId });
+  await categorizeEmail({ from: 'kunde@firma.test', subject: 'Spørsmål', text: 'Hei, når er siden klar?', salesClientId });
   await decideInboxWrite({ client: CLIENT, message: { text: 'Hei, kan vi flytte møtet?', subject: 'Møte', from: 'kunde@firma.test' }, heuristic: { intent: 'question' } });
-  await askVisionIfSigned({ bytes: png, mimeType: 'image/png' });
-  await askGeminiForLinks({ businessName: CLIENT.businessName, city: 'Bergen' }, ['instagramUrl'], { fetchImpl: globalThis.fetch });
+  await askVisionIfSigned({ bytes: png, mimeType: 'image/png' }, { salesClientId });
+  await askGeminiForLinks({ id: salesClientId, businessName: CLIENT.businessName, city: 'Bergen' }, ['instagramUrl'], { fetchImpl: globalThis.fetch });
   claudeScript.push({ stop_reason: 'tool_use', content: [{ type: 'tool_use', id: 'tu1', name: 'submit_card', input: { industry: 'bakeri', meetingPlace: '', orgNumber: '', websiteDomain: '', instagramUrl: '', facebookUrl: '', proffUrl: '', googleBusinessProfile: '', briefShort: 'Et bakeri.' } }] });
   await runInfokortAgent({ id: CLIENT.id, businessName: CLIENT.businessName }, {
     search: async () => [],
@@ -453,7 +455,37 @@ test('the ledger records 100% of calls in a scripted run of every hub task (lega
   assert.equal(providersByTask['sales-link.discover'], 'gemini');
   assert.equal(providersByTask['infokort.agent'], 'claude');
   assert.equal(providersByTask['brief.map'], 'claude');
+  // Per-client spend: every row names the sales client, so the hub part of a client's spend is complete.
+  const unnamed = rows.filter((row) => row.salesClientId !== salesClientId).map((row) => row.task);
+  assert.deepEqual(unnamed, [], 'rows without the sales client');
+  assert.equal(facade.spend({ salesClientId }).hub.calls, rows.length);
   assert.deepEqual(outsideSockets, []);
+});
+
+test('the portal assistant and the inbox find the sales client for their ledger rows', async () => {
+  const { salesClientIdOf } = await import('../lib/ai-assistant/service.js');
+  const { ingestInboxMessage } = await import('../lib/inbox-bot/index.js');
+  writeFileSync(join(dataDir, 'sales-clients.json'), JSON.stringify([
+    { id: 'sc-connected', product: 'asoldi', businessName: 'Connected AS', status: 'active', portalUserId: 'portal-user-1', contactEmail: 'post@connected.test' },
+  ], null, 2));
+  assert.equal(salesClientIdOf('portal-user-1'), 'sc-connected', 'the sales client connected to the portal user');
+  assert.equal(salesClientIdOf('portal-user-unknown'), '');
+  assert.equal(salesClientIdOf(''), '');
+
+  // The inbox categorizer gets the sender's client (the categorize call runs before the full match).
+  const seen = [];
+  await ingestInboxMessage({ id: 'm-1', mailbox: 'alexander@asoldi.com', from: 'Kari <post@connected.test>', subject: 'Spørsmål', text: 'Hei, når er siden klar?', mailAt: '2026-10-20T10:00:00.000Z' }, {
+    clients: JSON.parse(readFileSync(join(dataDir, 'sales-clients.json'), 'utf8')),
+    categorize: async (input) => {
+      seen.push(input.salesClientId);
+      return { kind: 'other', summary: '', match: {}, elements: [], dueAt: '' };
+    },
+    force: true,
+    sendEmail: async () => ({ ok: true }),
+    queryBusy: async () => [],
+    decideAi: async () => ({}),
+  }).catch(() => null);
+  assert.deepEqual(seen, ['sc-connected']);
 });
 
 test('legacy Infokort turns send today\'s Claude request: raw tools as written, configured model and effort', async () => {

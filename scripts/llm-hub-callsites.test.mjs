@@ -63,7 +63,7 @@ test('the suite\'s direct Gemini helper is reached only through the facade\'s me
   const users = SERVER_FILES.filter((file) => /generateGeminiJson/.test(read(file)));
   assert.deepEqual(users, ['lib/ai-assistant/media-transcript.js']);
   const media = read('lib/ai-assistant/media-transcript.js');
-  assert.match(media, /: mediaBriefThroughFacade\(models\)/, 'describeMedia always gets a generate function, so its default Gemini call is never used');
+  assert.match(media, /: mediaBriefThroughFacade\(models, \{ salesClientId \}\)/, 'describeMedia always gets a generate function, so its default Gemini call is never used');
   assert.match(media, /runLlmTask\(isImage \? 'json' : 'native', \{\n\s+task: 'assistant\.media-brief'/);
 });
 
@@ -96,7 +96,7 @@ function callsIn(source) {
     if (/function\s*$|async\s*$/.test(before)) continue;
     const window = source.slice(match.index, match.index + 600);
     const task = window.match(/\btask:\s*'([a-z0-9.-]+)'/);
-    out.push({ fn: match[1], task: task ? task[1] : '', at: source.slice(0, match.index).split('\n').length });
+    out.push({ fn: match[1], task: task ? task[1] : '', at: source.slice(0, match.index).split('\n').length, window });
   }
   return out;
 }
@@ -114,6 +114,17 @@ test('every model call in a call-site file carries a registered hub task key', (
     for (const task of expected) if (!calls.some((call) => call.task === task)) problems.push(`${file}: no call with task "${task}"`);
   }
   assert.deepEqual(problems, []);
+});
+
+test('every model call in a call-site file passes a ctx, so its ledger row can name the sales client', () => {
+  const missing = [];
+  for (const file of Object.keys(CALL_SITES)) {
+    for (const call of callsIn(read(file))) {
+      // The call's own argument object, up to its task's closing lines (the window callsIn scanned).
+      if (!/\bctx\b/.test(call.window)) missing.push(`${file}:${call.at} ${call.fn}(...) task "${call.task}" has no ctx`);
+    }
+  }
+  assert.deepEqual(missing, []);
 });
 
 test('no other server file calls the DeepSeek or Claude wrappers', () => {

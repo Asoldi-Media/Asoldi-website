@@ -17771,7 +17771,7 @@ app.post('/api/admin/offers/:id/reflect-contract', salesAuth, async (req, res) =
   const patched = salesOffers.updateSalesOffer(current.id, offerPatchFromBody(req.body || {}, current), { actor: offerActor(req), action: '' });
   if (!patched.products.length) return res.status(400).json({ message: 'Legg til minst ett produkt (tier eller skreddersydd) før kontrakten kan speiles.' });
   try {
-    const summary = await reflectContractFromEmail({ emailHtml: patched.email.html, products: patched.products });
+    const summary = await reflectContractFromEmail({ emailHtml: patched.email.html, products: patched.products, client: { id: patched.salesClientId } });
     const updated = salesOffers.updateSalesOffer(patched.id, {
       contract: { summary, generatedAt: new Date().toISOString() },
     }, { actor: offerActor(req), action: 'contract-reflected' });
