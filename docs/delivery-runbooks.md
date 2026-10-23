@@ -113,11 +113,11 @@ recording, erase request, payment not connected) are added by the batch that shi
 
 ## Maker events are not recorded
 
-**Symptom.** `makerRun.materials` or `makerRun.autopilot` stays empty although the Maker sends `run.materials.updated` / `run.autopilot.updated`, and the material dots still wait for a live run fetch.
+**Symptom.** `makerRun.materials` or `makerRun.autopilot` stays empty although the Maker sends `run.materials.updated` / `run.autopilot.updated`, and the material dots stay empty whenever the live run fetch fails.
 
 **Check.** `GET /api/admin/automation-settings`: `development.makerEvents` must be `record`. The callback also ignores an event whose `runId` is not the run linked to the client (`callback-run-does-not-match-linked-run`).
 
-**Fix.** `PUT /api/admin/automation-settings` with `{"development": {"makerEvents": "record"}}`. If the run link is wrong, link the right run on the client first. Snapshots older than 24 hours are not used; the next event from the Maker refreshes them.
+**Fix.** `PUT /api/admin/automation-settings` with `{"development": {"makerEvents": "record"}}`. If the run link is wrong, link the right run on the client first. A snapshot stands in only when the live run fetch fails, only for the run linked now and only while it is younger than 24 hours; the next event from the Maker refreshes it.
 
 ---
 

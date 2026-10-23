@@ -35,7 +35,7 @@ import { registerCmsSsoRoutes } from './lib/cms-sso.js';
 import { registerDeliveryRoutes } from './lib/routes/delivery-routes.js';
 import { runDeliverySchemaStartupSnapshot } from './lib/delivery-snapshots.js';
 import { chosenWebsiteTier, makerSitePlanPayload, websiteTierIdForClient } from './lib/site-plan.js';
-import { freshMakerMaterials, isMakerDeliveryEvent, makerEventsRecording, makerRunFromMaterials, recordMakerDeliveryEvent } from './lib/maker-events-hub.js';
+import { isMakerDeliveryEvent, makerEventsRecording, makerRunFetchWithMaterials, recordMakerDeliveryEvent } from './lib/maker-events-hub.js';
 import { runDeliveryBackfillAtBoot } from './lib/delivery-backfill.js';
 import { myphonerMatchCandidates, myphonerSyncSkipReason, testClientIdSet } from './lib/test-clients.js';
 import * as employees from './data/employees.js';
@@ -13471,7 +13471,7 @@ app.post('/api/admin/sales/maker-status-callback', async (req, res) => {
   // WS8.28: Maker delivery events are stored on makerRun while development.makerEvents is 'record'.
   // With the switch off they take the step-status path below, as before.
   if (isMakerDeliveryEvent(event) && makerEventsRecording()) {
-    return res.json(recordMakerDeliveryEvent({ event, body: req.body || {}, client, sales }));
+    return res.json(recordMakerDeliveryEvent({ event, body: req.body || {}, client, sales, runId: nextRunId }));
   }
 
   // Maker → Sales field sync (links + core parameters edited in Website Maker).
@@ -14291,10 +14291,9 @@ app.get('/api/admin/sales/:id', salesAuth, (req, res) => {
 });
 
 async function workshopNeedsMakerFetch(client) {
-  // WS8.28: a materials snapshot younger than 24 h replaces the live Maker run fetch.
-  const snapshot = makerEventsRecording() ? freshMakerMaterials(client?.makerRun) : null;
-  if (snapshot) return async () => ({ run: makerRunFromMaterials(snapshot) });
-  return async (runId) => {
+  // WS8.28: the live Maker run first; a fresh materials snapshot of the linked run stands in only
+  // when that fetch fails (and only while development.makerEvents is 'record').
+  return makerRunFetchWithMaterials(client, async (runId) => {
     const websiteMakerBaseUrl = resolveWebsiteMakerBaseUrl('', client);
     if (!websiteMakerBaseUrl) return { failed: true };
     try {
@@ -14303,7 +14302,7 @@ async function workshopNeedsMakerFetch(client) {
     } catch {
       return { failed: true };
     }
-  };
+  });
 }
 
 async function loadDeskNeedLines(client, templateKey = '') {
