@@ -1,3 +1,5 @@
+// Must stay first: decides hub safe mode and installs the egress guard before any other module loads.
+import './lib/safe-mode-boot.js';
 import express from 'express';
 import { createHmac, randomBytes, randomUUID } from 'crypto';
 import { createServer } from 'http';
@@ -84,6 +86,8 @@ import {
   safeEqual,
 } from './lib/auth-hardening.js';
 import { applyPersistentProductionEnv } from './lib/persistent-env.js';
+import { assertSafeModeAllows, isSafeModeActive, runBackgroundJobs, safeModeAllows } from './lib/safe-mode.js';
+import { registerSafeModeRoutes } from './lib/safe-mode-routes.js';
 import { applyProxyKeepAlive, describeProxyTimeouts, proxyHttpServerOptions } from './lib/http-server-timeouts.js';
 import {
   cookieHeaderBytes,
@@ -558,7 +562,7 @@ app.post(
   handleFirefliesWebhook
 );
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, uptime: Math.round(process.uptime()), http: httpRequestSummary() });
+  res.json({ ok: true, uptime: Math.round(process.uptime()), safeMode: isSafeModeActive(), http: httpRequestSummary() });
 });
 app.post('/api/diag/browser', express.json({ limit: '32kb' }), (req, res) => {
   const body = req.body && typeof req.body === 'object' ? req.body : {};
@@ -1784,6 +1788,7 @@ async function stopMakerTunnelProcess() {
 }
 
 async function restartMakerTunnel(targetUrl = DEFAULT_MAKER_LOCAL_URL) {
+  assertSafeModeAllows('publicTunnel', 'cloudflared tunnel');
   const normalizedTarget = normalizeHttpBaseUrl(targetUrl) || DEFAULT_MAKER_LOCAL_URL;
   await stopMakerTunnelProcess();
 
@@ -2786,6 +2791,11 @@ function resolveSalesMakerCallbackUrl(req) {
 }
 
 function resolveSalesPreviewPushUrl() {
+  // Hub safe mode: never hand the Maker a production push target; previews come back to this hub.
+  if (!safeModeAllows('prodPublish')) {
+    const localBase = normalizeHttpBaseUrl(process.env.HUB_PUBLIC_URL_FOR_MAKER || process.env.APP_URL || '');
+    return localBase ? `${localBase}/api/admin/sales/maker-preview-push` : '';
+  }
   const explicit = normalizeAbsoluteHttpUrl(process.env.SALES_PREVIEW_PUSH_URL || '');
   if (explicit) return explicit;
   return `${salesPreview.getPublicPreviewOrigin()}/api/admin/sales/maker-preview-push`;
@@ -7412,6 +7422,7 @@ async function applyImportedWebsiteZip(client, zipBuffer, {
 }
 
 async function loginToProdAdmin() {
+  assertSafeModeAllows('prodPublish', 'loginToProdAdmin');
   const prodBase = resolveProdAdminBaseUrl();
   if (!prodBase) {
     return { prodBase: '', token: '' };
@@ -12750,6 +12761,7 @@ app.patch('/api/client-portal/state', clientAuthV2, async (req, res) => {
 
 registerShopPaymentsRoutes(app, { adminAuth });
 registerCmsSsoRoutes(app, { adminAuth, getSiteById: hub.getSiteById });
+registerSafeModeRoutes(app, { adminAuth });
 
 // --- Hub API (public: site config for client CMS)
 app.get('/api/hub/site-config', (req, res) => {
@@ -16129,6 +16141,8 @@ let firefliesIngestInFlight = null;
 let firefliesIngestInterval = null;
 
 function scheduleFirefliesTranscriptIngest({ force = false } = {}) {
+  // Hub safe mode: ingest pulls real transcripts and drives offer AI, so it is opt-in (firefliesIngest).
+  if (!safeModeAllows('firefliesIngest')) return null;
   const now = Date.now();
   if (firefliesIngestInFlight) return firefliesIngestInFlight;
   if (!force && now - firefliesIngestAt < 20_000) return null;
@@ -18104,6 +18118,7 @@ function setPreviewBundleCorsHeaders(req, res) {
 }
 
 async function publishPreviewBridgeJob(job = {}) {
+  assertSafeModeAllows('prodPublish', 'publishPreviewBridgeJob');
   const exportUrl = sanitizeText(job.exportUrl);
   const uploadUrl = sanitizeText(job.uploadUrl);
   const token = sanitizeText(job.token);
@@ -18162,6 +18177,7 @@ function resolveProdAdminBaseUrl() {
 }
 
 async function loginProdAdmin(prodBase = '') {
+  assertSafeModeAllows('prodPublish', 'loginProdAdmin');
   const base = sanitizeText(prodBase) || resolveProdAdminBaseUrl();
   if (!base) {
     throw makeHttpError(400, 'This instance is already production (or PROD_ADMIN_URL is unset).');
@@ -20997,48 +21013,63 @@ async function ensureData() {
   await ensureMyphonerRecordingsDir().catch(() => {});
 }
 
+// Every loop and startup backfill by name. lib/safe-mode.js BACKGROUND_JOBS decides which
+// run while hub safe mode is on (all run on asoldi.com). A new job needs an entry there.
 function startBackgroundJobs() {
-  startSalesReminderLoop();
-  startWorkshopDeskEmailLoop();
-  startFirefliesLiveJoinLoop();
-  startInboxBotLoop();
-  startFirefliesTranscriptIngestLoop();
-  startMyphonerWebhookReconcileLoop();
-  startMyphonerRecordingRetryLoop();
-  startSalesGeocodeWarmupLoop();
-  startLanPreviewAutoPublishLoop();
-  startMapsRankingLoop();
-  sendDueSalesReminders().catch((error) => console.error('Initial sales reminder run failed:', error));
-  sendDueWorkshopDeskEmails().catch((error) => console.error('Initial workshop desk email run failed:', error));
-  sendDueFirefliesLiveJoins().catch((error) => console.error('[fireflies] initial live-join failed:', error));
-  runStartupSalesRecordingBackfill().catch((error) => {
-    console.error('[sales] startup recording backfill crashed:', sanitizeText(error?.message) || error);
-  });
-  runStartupSalesLinkBackfill().catch((error) => {
-    console.error('[sales] startup links backfill crashed:', sanitizeText(error?.message) || error);
-  });
-  runStartupSsuWinsBackfill().catch((error) => {
-    console.error('[myphoner ssu-wins] startup backfill crashed:', sanitizeText(error?.message) || error);
-  });
-  backfillSalesBookingFacts().catch((error) => {
-    console.error('[sales booking] startup backfill crashed:', sanitizeText(error?.message) || error);
-  });
-  setImmediate(() => {
-    try {
-      const summary = ensureFirefliesMeetLinkBackfill({ force: true });
-      console.log(`[fireflies] startup meet-link backfill scanned=${summary.scanned} linked=${summary.linked} detached=${summary.detached}`);
-    } catch (error) {
-      console.error('[fireflies] startup meet-link backfill failed:', sanitizeText(error?.message) || error);
-    }
-    try {
-      const ny = sales.applyNyAssignmentBackfillOnce();
-      if (!ny?.skipped) {
-        console.log(`[sales] ny assignment backfill updated=${Number(ny?.updated || 0)}`);
+  runBackgroundJobs({
+    salesReminders: () => {
+      startSalesReminderLoop();
+      sendDueSalesReminders().catch((error) => console.error('Initial sales reminder run failed:', error));
+    },
+    workshopDeskEmails: () => {
+      startWorkshopDeskEmailLoop();
+      sendDueWorkshopDeskEmails().catch((error) => console.error('Initial workshop desk email run failed:', error));
+    },
+    firefliesLiveJoin: () => {
+      startFirefliesLiveJoinLoop();
+      sendDueFirefliesLiveJoins().catch((error) => console.error('[fireflies] initial live-join failed:', error));
+    },
+    inboxBot: () => startInboxBotLoop(),
+    myphonerWebhookReconcile: () => startMyphonerWebhookReconcileLoop(),
+    myphonerRecordingRetry: () => startMyphonerRecordingRetryLoop(),
+    salesGeocodeWarmup: () => startSalesGeocodeWarmupLoop(),
+    lanPreviewAutoPublish: () => startLanPreviewAutoPublishLoop(),
+    mapsRanking: () => startMapsRankingLoop(),
+    salesRecordingBackfill: () => runStartupSalesRecordingBackfill().catch((error) => {
+      console.error('[sales] startup recording backfill crashed:', sanitizeText(error?.message) || error);
+    }),
+    salesLinkBackfill: () => runStartupSalesLinkBackfill().catch((error) => {
+      console.error('[sales] startup links backfill crashed:', sanitizeText(error?.message) || error);
+    }),
+    ssuWinsBackfill: () => runStartupSsuWinsBackfill().catch((error) => {
+      console.error('[myphoner ssu-wins] startup backfill crashed:', sanitizeText(error?.message) || error);
+    }),
+    salesBookingFactsBackfill: () => backfillSalesBookingFacts().catch((error) => {
+      console.error('[sales booking] startup backfill crashed:', sanitizeText(error?.message) || error);
+    }),
+    firefliesMeetLinkBackfill: () => setImmediate(() => {
+      try {
+        const summary = ensureFirefliesMeetLinkBackfill({ force: true });
+        console.log(`[fireflies] startup meet-link backfill scanned=${summary.scanned} linked=${summary.linked} detached=${summary.detached}`);
+      } catch (error) {
+        console.error('[fireflies] startup meet-link backfill failed:', sanitizeText(error?.message) || error);
       }
-    } catch (error) {
-      console.error('[sales] ny assignment backfill failed:', sanitizeText(error?.message) || error);
-    }
-    void scheduleFirefliesTranscriptIngest({ force: true });
+    }),
+    nyAssignmentBackfill: () => setImmediate(() => {
+      try {
+        const ny = sales.applyNyAssignmentBackfillOnce();
+        if (!ny?.skipped) {
+          console.log(`[sales] ny assignment backfill updated=${Number(ny?.updated || 0)}`);
+        }
+      } catch (error) {
+        console.error('[sales] ny assignment backfill failed:', sanitizeText(error?.message) || error);
+      }
+    }),
+    // Last, so its first run comes after the two local backfills above (as before).
+    firefliesIngest: () => {
+      startFirefliesTranscriptIngestLoop();
+      setImmediate(() => void scheduleFirefliesTranscriptIngest({ force: true }));
+    },
   });
 }
 

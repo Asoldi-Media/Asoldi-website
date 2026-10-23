@@ -37,6 +37,10 @@ services:
       # every few minutes (browsers cannot copy HTTP LAN -> HTTPS themselves).
       # Uses PROD_ADMIN_USERNAME/PROD_ADMIN_PASSWORD from .env when set.
       LAN_PREVIEW_AUTOPUBLISH: "1"
+      # This box is not Hostinger, so hub safe mode is on (email to the outbox, external
+      # writes blocked, egress allowlist). Let through only what the LAN preview needs:
+      # the asoldi.com preview push and the Maker on the LAN. See docs/safe-mode.md.
+      HUB_SAFE_MODE_ALLOW: "prodPublish,lan"
     volumes:
       - .:/app
       - asoldi_node_modules:/app/node_modules
