@@ -197,7 +197,10 @@ test('a redirect with an endless body is never read: the socket closes and the c
   const bytesAtClose = endless.bytes;
   await new Promise((r) => setTimeout(r, 200));
   assert.equal(endless.bytes, bytesAtClose, 'nothing more is streamed after the close');
-  assert.ok(endless.bytes <= 2 * 1024 * 1024, `server wrote ${endless.bytes} bytes, more than the 2 MB cap`);
+  // What the server manages to write before backpressure is the socket buffers on both ends, not
+  // what safeFetch read (it reads none of a redirect body): about 2.6 MB on Linux loopback, less on
+  // Windows. The old bug streamed hundreds of MB, so a 16 MB bound still catches it on any OS.
+  assert.ok(endless.bytes <= 16 * 1024 * 1024, `server wrote ${endless.bytes} bytes; the redirect body is being read`);
 });
 
 test('the whole fetch times out', async () => {
