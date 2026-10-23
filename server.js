@@ -30,6 +30,7 @@ import {
 import * as hub from './data/hub.js';
 import { registerShopPaymentsRoutes, registerShopPaymentsWebhook } from './lib/shop-payments-routes.js';
 import { registerCmsSsoRoutes } from './lib/cms-sso.js';
+import { runDeliverySchemaStartupSnapshot } from './lib/delivery-snapshots.js';
 import * as employees from './data/employees.js';
 import * as sales from './data/sales.js';
 import { SALES_CONTACT_CORRECTIONS } from './data/sales-contact-corrections.js';
@@ -21042,6 +21043,12 @@ function startBackgroundJobs() {
   });
 }
 
+// WS8.44: snapshot the delivery stores once per schema bump, before anything writes to them.
+try {
+  runDeliverySchemaStartupSnapshot();
+} catch (error) {
+  console.error('[delivery] startup snapshot failed (will retry next boot):', error?.message || error);
+}
 const server = createServer(proxyHttpServerOptions(), app);
 applyProxyKeepAlive(server);
 server.on('error', (error) => {
