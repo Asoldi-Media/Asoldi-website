@@ -11,6 +11,7 @@ import {
   useCmsFleet,
 } from './CmsFleetSection';
 import { WebsiteDueField } from './WebsiteDueField';
+import { OwnerRoutingField } from './OwnerRoutingField';
 import { ShopPaymentsPlatformCard } from './ShopPaymentsPlatformCard';
 
 type Props = {
@@ -117,6 +118,7 @@ export function ClientSitesSection({
                   variant="card"
                   authHeaders={authHeaders()}
                 />
+                <OwnerRoutingField siteId={site.id} authHeaders={authHeaders()} />
               </div>
               <p className="text-gray-500 text-xs mt-1 flex items-center gap-1">
                 <Key size={12} /> <code className="bg-black/30 px-1 rounded">{site.site_key}</code>

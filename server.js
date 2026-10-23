@@ -30,6 +30,7 @@ import {
 import * as hub from './data/hub.js';
 import { registerShopPaymentsRoutes, registerShopPaymentsWebhook } from './lib/shop-payments-routes.js';
 import { registerCmsSsoRoutes } from './lib/cms-sso.js';
+import { registerOwnerRoutingRoutes, resolveFormRouting } from './lib/owner-recipients.js';
 import * as employees from './data/employees.js';
 import * as sales from './data/sales.js';
 import { SALES_CONTACT_CORRECTIONS } from './data/sales-contact-corrections.js';
@@ -12750,6 +12751,7 @@ app.patch('/api/client-portal/state', clientAuthV2, async (req, res) => {
 
 registerShopPaymentsRoutes(app, { adminAuth });
 registerCmsSsoRoutes(app, { adminAuth, getSiteById: hub.getSiteById });
+registerOwnerRoutingRoutes(app, { adminAuth, getSiteById: hub.getSiteById, getSalesClients: sales.getSalesClients });
 
 // --- Hub API (public: site config for client CMS)
 app.get('/api/hub/site-config', (req, res) => {
@@ -20232,16 +20234,9 @@ app.post(
       return res.status(400).json({ ok: false, message: 'The form was empty.' });
     }
     const pageUrl = sanitizeText(req.get('referer'));
-    const email = clientForms.buildFormEmail({ site, fields, pageUrl });
-    const replyTo = clientForms.replyToFromFields(fields);
+    const routing = resolveFormRouting(site, { getSalesClients: sales.getSalesClients });
     try {
-      await emailLib.sendEmail({
-        to: clientForms.resolveFormRecipient(site),
-        subject: email.subject,
-        text: email.text,
-        html: email.html,
-        replyTo: replyTo || undefined,
-      });
+      await emailLib.sendEmail(clientForms.buildClientFormMail({ site, fields, pageUrl, routing }));
     } catch (error) {
       console.error('Client form email error:', error);
       return res.status(500).json({ ok: false, message: 'Could not send the message.' });
