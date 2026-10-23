@@ -609,12 +609,18 @@ test('server.js: every link goes through the linker, and the offer and routes re
   assert.equal(offerMeeting.includes('firefliesLiveJoinedAt'), false, 'never from the calendar\'s live-join stamps');
   assert.match(offerMeeting, /liveJoined: recordingState === 'recording',/);
   assert.match(offerMeeting, /pendingTranscript: !hasTranscript && !hasSummary && offerMeetingPending\(meeting\),/);
+  assert.match(offerMeeting, /emptyFinal: Boolean\(stored\) && storedMeetingIsEmptyFinal\(stored\),/);
   // A lock that left the card (moved by the old hub) never hands this offer another client's transcript.
   const forOffer = between('function meetingForOffer(', 'function syncOfferMeetingSelection(');
   assert.match(forOffer, /\(client\?\.meetings \|\| \[\]\)\.some\(\(row\) => sanitizeText\(row\.meetingId\) === lock\)/);
   assert.match(forOffer, /if \(client\?\.progression\?\.meetingHeld && lockOnCard\) \{/);
+  // Tilbudsgjennomgang reads the card's rows (duplicateOf, slotKey, emptyFinal...), recordings only.
   const compact = between('function compactOfferClient(', 'function presentOffer(');
-  assert.match(compact, /filter\(\(row\) => !isPlaceholderMeetingId\(row\?\.meetingId\)\)/);
+  assert.match(compact, /meetings: presentClientMeetings\(client, null, \{ media: false \}\)\.filter\(\(row\) => !row\.placeholder\),/);
+  const detail = between("app.get('/api/admin/offers/:id', salesAuth", "app.post('/api/admin/offers/:id/client-intent'");
+  assert.match(detail, /const meetings = \(compact\?\.meetings \|\| \[\]\)\.map\(/);
+  const picker = between('function presentOfferMeetings(', 'async function offerIdentityValues(');
+  assert.match(picker, /emptyFinal: Boolean\(row\.emptyFinal\),\s*pendingTranscript: Boolean\(row\.pendingTranscript\),/);
   assert.match(server, /unmatchedMeetings: listStoredFirefliesMeetings\(\{ unmatchedOnly: true, holders: firefliesHolderMap\(\) \}\)\.length,/);
 });
 

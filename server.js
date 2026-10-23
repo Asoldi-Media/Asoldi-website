@@ -259,7 +259,13 @@ import { liveJoinStatusPayload, maybeAlertFirefliesLiveJoin, runFirefliesLobbyAl
 import { automationScopeForClient } from './data/automation-settings.js';
 import { describeFirefliesMedia, firefliesMediaFilePath, saveFirefliesMediaForMeeting } from './lib/fireflies-media.js';
 import { runFirefliesPullFollowUp } from './lib/fireflies-pull-followup.js';
-import { firefliesFetchDue, storeFetchedFirefliesMeeting, storedMeetingIsFinal, storedMeetingIsPartial } from './lib/fireflies-webhook.js';
+import {
+  firefliesFetchDue,
+  storeFetchedFirefliesMeeting,
+  storedMeetingIsEmptyFinal,
+  storedMeetingIsFinal,
+  storedMeetingIsPartial,
+} from './lib/fireflies-webhook.js';
 import { firefliesStoreSource } from './lib/fireflies-store.js';
 import {
   clientMeetingRefIsStale,
@@ -15935,8 +15941,9 @@ function compactOfferClient(client = {}) {
     workshopStartDate: sanitizeText(client?.details?.meetingQuote?.startDate),
     meetingQuote: client?.details?.meetingQuote || null,
     meetingAt: client.meetingAt || '',
-    // Recordings only (Møtedata and its count): a live-join placeholder has nothing to open.
-    meetings: (Array.isArray(client.meetings) ? client.meetings : []).filter((row) => !isPlaceholderMeetingId(row?.meetingId)),
+    // The rows as the card presents them (purpose, slotKey, duplicateOf, partial, emptyFinal, pendingTranscript,
+    // sentenceCount), recordings only (Møtedata and its count): a live-join placeholder has nothing to open.
+    meetings: presentClientMeetings(client, null, { media: false }).filter((row) => !row.placeholder),
   };
 }
 
@@ -16530,6 +16537,7 @@ function presentMeetingForOffer(meeting, offer, client = null) {
   const view = sanitizeText(meeting.transcriptUrl);
   const hasTranscript = !placeholder && Boolean(sanitizeText(meeting.transcript) || meeting.hasTranscript);
   const hasSummary = !placeholder && Boolean(sanitizeText(meeting.summary));
+  const stored = placeholder || hasTranscript || hasSummary ? null : readStoredFirefliesMeeting(meeting.meetingId);
   return {
     meetingId: meeting.meetingId || '',
     title: meeting.title || firefliesLiveJoinTitle(client) || 'Fireflies-møte',
@@ -16539,6 +16547,8 @@ function presentMeetingForOffer(meeting, offer, client = null) {
     hasSummary,
     tooThin: meetingContextIsTooThin(meeting, { notes: offerProductNotes(client) }),
     pendingTranscript: !hasTranscript && !hasSummary && offerMeetingPending(meeting),
+    // Fireflies finished this recording and nothing was said: "tomt opptak", not "on its way".
+    emptyFinal: Boolean(stored) && storedMeetingIsEmptyFinal(stored),
     liveJoined: recordingState === 'recording',
     manual: sanitizeText(offer?.meetingSource) === 'manual',
     firefliesUrl: !placeholder && /^https:\/\/app\.fireflies\.ai\/view\//i.test(view) ? view : '',
@@ -16570,6 +16580,9 @@ function presentOfferMeetings(client, offer) {
       recordingState,
       recordingMessage: sanitizeText(recording?.message),
       duplicateOf: sanitizeText(row.duplicateOf),
+      // A real recording with no text: Fireflies finished it with nothing said, or it is still on its way.
+      emptyFinal: Boolean(row.emptyFinal),
+      pendingTranscript: Boolean(row.pendingTranscript),
     };
   }).sort((a, b) => Number(b.hasTranscript) - Number(a.hasTranscript));
 }
@@ -17756,12 +17769,12 @@ app.get('/api/admin/offers/:id', salesAuth, async (req, res) => {
     }
   }
   const ownerNames = await salesOwnerNameMap(req);
-  const meetings = (client?.meetings || [])
-    .filter((ref) => !isPlaceholderMeetingId(ref.meetingId))
-    .map((ref) => ({ ...ref, media: describeFirefliesMedia(ref.meetingId) }));
+  // The card's recordings (no placeholders, copies marked), each with what is on disk.
+  const compact = client ? compactOfferClient(client) : null;
+  const meetings = (compact?.meetings || []).map((ref) => ({ ...ref, media: describeFirefliesMedia(ref.meetingId) }));
   res.json({
     offer: presentOffer(offer),
-    client: client ? compactOfferClient(client) : null,
+    client: compact,
     readiness: client ? offerReadiness(client, offer) : { ready: false, missing: [], message: 'Kunden finnes ikke lenger.' },
     ownerName: ownerNames[sanitizeText(offer.ownerId)] || offer.ownerId || '',
     tiers: compactTiers(),
