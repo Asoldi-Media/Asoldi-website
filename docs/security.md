@@ -83,8 +83,8 @@ hash or the sync flag.
   pressing it gets a fresh token) or everyone.
 - Failed logins are limited per account (10 per 15 minutes) and per client address (50). The
   address is the right-most `X-Forwarded-For` entry that is not an internal proxy address
-  (`lib/auth-hardening.js` `clientIpFromRequest`): the left entries come from the client and
-  can be forged, so changing them does not reset the count.
+  (`lib/auth-hardening.js` `clientIpFromRequest`): the left entries come from the client, so
+  changing them does not reset the count.
 - Tokens are stamped with the user's token version from a fresh read of
   `token-revocations.json`, so a login served by one hub process right after a "log out
   everywhere" in another is not refused a second later.
@@ -124,9 +124,8 @@ expired) is recorded in `<dataDir>/cms-sso/audit.json` (last 500 rows: site id, 
 version, link origin, result), never the token. Calls without a known key and tokens that were
 never issued are only counted in memory and logged at most once a minute.
 
-A new client admin password (`PUT /api/hub/sites/:id/client-admin`) must be at least
-8 characters and not a common default, the same rule the CMS applies, so a synced admin
-is never replaced at the CMS's next start.
+The client admin password set from the hub follows the same rule as the CMS (see
+"Client CMS admin password" above), so a synced admin is never replaced at the CMS's next start.
 
 ## Fireflies webhook
 
@@ -213,7 +212,7 @@ node scripts/security/retire-secret.mjs --label "…" --env-file <path> --key NA
 | `admin-token` | the `--admin-token-file` can be read (only when the flag is given) |
 | `health` | `/api/health` answers; with `--expect-prod`, `safeMode` is not on |
 | `forged-token:*` | a token signed with an old public default secret gets 401 |
-| `site-config` | `/api/hub/site-config?domain=<--site-domain>` answers 200 with no `passwordHash` / `pendingAdmin` / `clientAdmin`. A 404 fails (it would hide a leak), and `--site-domain` is required with `--expect-prod` |
+| `site-config` | `/api/hub/site-config?domain=<--site-domain>` answers 200 with no `passwordHash` / `pendingAdmin` / `clientAdmin`. A 404 fails (it would hide what the body contains), and `--site-domain` is required with `--expect-prod` |
 | `recordings` | `/myphoner-recordings/…` without a login gets exactly 401 (a 404 means the staff gate is gone) |
 | `fireflies` | the Fireflies API key is present, so the pull ingest runs |
 | `counters` | with an admin token: per-hour counts stay under the limits below |
