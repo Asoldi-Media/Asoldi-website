@@ -29,6 +29,12 @@ export const TIERS = Object.freeze(['tier-1-standard', 'tier-2-seo', 'tier-3-eco
 /** The only Claude models a route may name. */
 export const CLAUDE_MODELS = Object.freeze(['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5']);
 
+/**
+ * Models Anthropic's server-side refusal fallback (`fallbacks: "default"`) may serve a Sonnet/Opus 5.5 request
+ * from. Routes never name them; they are in the price table so fallback-served calls are priced, not guessed.
+ */
+export const CLAUDE_FALLBACK_MODELS = Object.freeze(['claude-opus-5', 'claude-opus-4-8', 'claude-sonnet-5']);
+
 export const CLAUDE_RULES = Object.freeze({
   /** Sampling parameters return 400 on these models; the request builder never emits them. */
   forbiddenParams: Object.freeze(['temperature', 'top_p', 'top_k']),
@@ -36,9 +42,10 @@ export const CLAUDE_RULES = Object.freeze({
   defaultEffort: 'medium',
   /** Thinking counts toward max_tokens, so JSON (and every other) Claude call gets at least this cap. */
   maxTokensFloor: 4096,
-  /** A `max_tokens` stop is retried once on the same model with the cap doubled. */
+  /** A `max_tokens` stop is retried once on the same model with the cap doubled (Claude only; other vendors fall back). */
   maxTokensRetryFactor: 2,
   maxTokensRetries: 1,
+  maxTokensRetryProviders: Object.freeze(['claude']),
   maxOutputTokens: 128000,
   /** Non-streaming requests above this cap risk HTTP timeouts; the builder flags them for streaming. */
   streamAboveMaxTokens: 16000,
@@ -61,6 +68,9 @@ export const BUDGET_RULES = Object.freeze({
   runawayFactor: 5,
   loopMaxRepeats: 3,
   loopMaxIdentical: 6,
+  /** Loop detection only looks at calls inside one run/session/job/task and within this window. */
+  loopWindowMinutes: 15,
+  loopScopeFields: Object.freeze(['runId', 'sessionId', 'jobId', 'taskId']),
   periodicScopesMode: 'alert-only',
 });
 

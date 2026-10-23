@@ -1,8 +1,10 @@
 // Scaled soft budgets. Caps never block a larger project:
 //   - the expected cost of a run or session comes from project size (pages x locales x products x tier);
 //   - reaching 100 % of expected gives an alert and the work continues;
+//   - a run or session with no project size gets the base expected cost of one reference project, so the
+//     runaway stop is never off; facades pass projectSize so larger projects scale up;
 //   - a hard stop happens only for a runaway (projected spend > runawayFactor x expected, default 5)
-//     or a loop (the same request repeating with no progress);
+//     or a loop (the same request repeating with no progress inside one run/session and a 15-minute window);
 //   - periodic totals (per client per month, global per day, evaluation) alert only.
 //
 // ai-budgets.json
@@ -10,7 +12,7 @@
 //   scopes: { run: { baseUsd: {default, 'tier-1-standard', ...}, referencePages, extraLocaleFactor, productsPerPage },
 //             devSession: {...}, iteration: { of: 'devSession', factor: 0.5 } },
 //   periodic: { clientMonthUsd: 10, makerDayUsd: 15, hubDayUsd: 5, evalTotalUsd: 200 },
-//   loop: { maxRepeats: 3, maxIdentical: 6 } }
+//   loop: { maxRepeats: 3, maxIdentical: 6, windowMinutes: 15 } }
 
 import { BUDGET_RULES, TIERS, normalizeTier } from './constants.js';
 import { canonicalJson } from './cassette.js';
@@ -44,7 +46,12 @@ export function validateBudgetsConfig(config) {
     for (const tier of Object.keys(base || {})) if (tier !== 'default' && !TIERS.includes(tier)) errors.push(`budgets.scopes.${name}.baseUsd.${tier}: unknown tier`);
   }
   for (const [key, value] of Object.entries(config.periodic || {})) {
+    if (!(key in PERIODIC_SCOPES)) errors.push(`budgets.periodic.${key}: unknown periodic budget (known: ${Object.keys(PERIODIC_SCOPES).join(', ')})`);
     if (!(Number(value) > 0)) errors.push(`budgets.periodic.${key} must be a positive number`);
+  }
+  for (const [key, value] of Object.entries(config.loop || {})) {
+    if (!['maxRepeats', 'maxIdentical', 'windowMinutes'].includes(key)) errors.push(`budgets.loop.${key}: unknown field`);
+    else if (!(Number(value) > 0)) errors.push(`budgets.loop.${key} must be a positive number`);
   }
   return { ok: errors.length === 0, errors };
 }
@@ -104,12 +111,45 @@ export function evaluateBudget({ expectedUsd, spentUsd = 0, estimateUsd = 0, ale
   return { action: 'ok', reason: '', projectedUsd: projected, expectedUsd: expected, ratio, thresholds };
 }
 
-/** Rough input token count before a call: characters / 3.5, plus ~1600 tokens per image at 1568 px. */
+export const IMAGE_TOKEN_ESTIMATE = 1600;
+
+/** Characters of text and the number of image/document blocks in a messages array (base64 is not text). */
+function messageSize(messages) {
+  let chars = 0;
+  let images = 0;
+  for (const message of Array.isArray(messages) ? messages : []) {
+    const content = message?.content;
+    if (typeof content === 'string') {
+      chars += content.length;
+      continue;
+    }
+    for (const block of Array.isArray(content) ? content : []) {
+      if (block?.type === 'image' || block?.type === 'document') images += 1;
+      else if (block?.type === 'text') chars += String(block.text || '').length;
+      else if (block?.type === 'tool_result' && Array.isArray(block.content)) {
+        const inner = messageSize([{ content: block.content }]);
+        chars += inner.chars;
+        images += inner.images;
+      } else chars += canonicalJson(block ?? '').length;
+    }
+  }
+  return { chars, images };
+}
+
+/**
+ * Rough input token count before a call: characters / 3.5, plus ~1600 tokens per image at 1568 px.
+ * Image and document blocks inside messages count as images, never as their base64 text.
+ */
 export function estimateInputTokens({ system = '', user = '', messages = null, images = 0 } = {}) {
   const textOf = (value) => (typeof value === 'string' ? value : canonicalJson(value ?? ''));
   let chars = textOf(system).length + textOf(user).length;
-  if (messages) chars += textOf(messages).length;
-  return Math.ceil(chars / 3.5) + (Number(images) || 0) * 1600;
+  let imageCount = Number(images) || 0;
+  if (messages) {
+    const size = messageSize(messages);
+    chars += size.chars;
+    imageCount += size.images;
+  }
+  return Math.ceil(chars / 3.5) + imageCount * IMAGE_TOKEN_ESTIMATE;
 }
 
 /** Output estimate for budgets: half the cap (thinking included). */
@@ -117,54 +157,125 @@ export function estimateOutputTokens(maxTokens = 0) {
   return Math.ceil((Number(maxTokens) || 0) * 0.5);
 }
 
+function windowMsOf({ windowMs, windowMinutes } = {}) {
+  if (Number(windowMs) > 0) return Number(windowMs);
+  return (Number(windowMinutes) > 0 ? Number(windowMinutes) : BUDGET_RULES.loopWindowMinutes) * 60_000;
+}
+
+function trailingStreak(events) {
+  if (!events.length) return 0;
+  const last = events[events.length - 1].outcome;
+  let streak = 0;
+  for (let i = events.length - 1; i >= 0 && events[i].outcome === last; i -= 1) streak += 1;
+  return streak;
+}
+
 /**
- * Pure loop check over a call history: the same request (`inputKey`) giving the same outcome
- * (`outcomeKey`: output hash or error code) `maxRepeats` times in a row, or the same request sent
- * `maxIdentical` times in total, is a loop.
+ * Pure loop check over a call history: within one window, the same request (`inputKey`) giving the same
+ * outcome (`outcomeKey`: output hash or error code) `maxRepeats` times in a row, or the same request sent
+ * `maxIdentical` times, is a loop. Items may carry `at` (ms); then only items within `windowMs` of the
+ * newest one count.
  */
-export function detectLoop(history = [], { maxRepeats = BUDGET_RULES.loopMaxRepeats, maxIdentical = BUDGET_RULES.loopMaxIdentical } = {}) {
+export function detectLoop(history = [], { maxRepeats = BUDGET_RULES.loopMaxRepeats, maxIdentical = BUDGET_RULES.loopMaxIdentical, windowMs = null, windowMinutes = null } = {}) {
+  const items = Array.isArray(history) ? history : [];
+  const newest = items.reduce((max, item) => (Number.isFinite(item?.at) ? Math.max(max, item.at) : max), -Infinity);
+  const span = windowMsOf({ windowMs, windowMinutes });
   const byInput = new Map();
-  for (const item of history) {
+  for (const item of items) {
+    if (Number.isFinite(item?.at) && Number.isFinite(newest) && newest - item.at > span) continue;
     const key = `${item.task}|${item.inputKey}`;
-    const state = byInput.get(key) || { total: 0, streak: 0, lastOutcome: null };
-    state.total += 1;
-    state.streak = state.lastOutcome !== null && state.lastOutcome === item.outcomeKey ? state.streak + 1 : 1;
-    state.lastOutcome = item.outcomeKey;
-    byInput.set(key, state);
-    if (state.streak >= maxRepeats) return { loop: true, reason: 'same-outcome', key, count: state.streak };
-    if (state.total >= maxIdentical) return { loop: true, reason: 'identical-requests', key, count: state.total };
+    const events = byInput.get(key) || [];
+    events.push({ outcome: item.outcomeKey });
+    byInput.set(key, events);
+    const streak = trailingStreak(events);
+    if (streak >= maxRepeats) return { loop: true, reason: 'same-outcome', key, count: streak };
+    if (events.length >= maxIdentical) return { loop: true, reason: 'identical-requests', key, count: events.length };
   }
   return { loop: false, reason: '', key: null, count: 0 };
 }
 
 /**
- * In-memory loop detector for one process or session. `before()` says whether sending this request again
- * would continue a loop; `after()` records the outcome.
+ * In-memory loop detector. Callers key requests by scope (run, session, job or task id) plus the request;
+ * the core skips the detector for calls without such a scope. Only calls within the window count, so a
+ * block expires on its own and the same request on another day is never a loop.
+ *   before(task, key) -> {loop, reason, count}: would sending this request again continue a loop?
+ *   after(task, key, outcome) records the outcome.
  */
-export function createLoopDetector({ maxRepeats = BUDGET_RULES.loopMaxRepeats, maxIdentical = BUDGET_RULES.loopMaxIdentical, maxEntries = 5000 } = {}) {
+export function createLoopDetector({
+  maxRepeats = BUDGET_RULES.loopMaxRepeats,
+  maxIdentical = BUDGET_RULES.loopMaxIdentical,
+  windowMs = null,
+  windowMinutes = null,
+  maxEntries = 5000,
+  now = () => Date.now(),
+} = {}) {
+  const span = windowMsOf({ windowMs, windowMinutes });
   const states = new Map();
   const keyOf = (task, inputKey) => `${task}|${inputKey}`;
+  const fresh = (key) => {
+    const events = states.get(key);
+    if (!events) return [];
+    const t = Number(now());
+    const kept = events.filter((event) => t - event.at <= span);
+    if (kept.length) states.set(key, kept);
+    else states.delete(key);
+    return kept;
+  };
   return {
     before(task, inputKey) {
-      const state = states.get(keyOf(task, inputKey));
-      if (!state) return { loop: false, count: 0 };
-      if (state.streak >= maxRepeats) return { loop: true, reason: 'same-outcome', count: state.streak };
-      if (state.total >= maxIdentical) return { loop: true, reason: 'identical-requests', count: state.total };
-      return { loop: false, count: state.total };
+      const events = fresh(keyOf(task, inputKey));
+      if (!events.length) return { loop: false, reason: '', count: 0 };
+      const streak = trailingStreak(events);
+      if (streak >= maxRepeats) return { loop: true, reason: 'same-outcome', count: streak };
+      if (events.length >= maxIdentical) return { loop: true, reason: 'identical-requests', count: events.length };
+      return { loop: false, reason: '', count: events.length };
     },
     after(task, inputKey, outcomeKey) {
       const key = keyOf(task, inputKey);
-      const state = states.get(key) || { total: 0, streak: 0, lastOutcome: null };
-      state.total += 1;
-      state.streak = state.lastOutcome !== null && state.lastOutcome === outcomeKey ? state.streak + 1 : 1;
-      state.lastOutcome = outcomeKey;
+      const events = fresh(key);
+      events.push({ at: Number(now()), outcome: outcomeKey });
+      while (events.length > maxIdentical + maxRepeats) events.shift();
       states.delete(key);
-      states.set(key, state);
+      states.set(key, events);
       if (states.size > maxEntries) states.delete(states.keys().next().value);
-      return state;
+      return { count: events.length, streak: trailingStreak(events) };
     },
     reset() {
       states.clear();
     },
   };
+}
+
+/** The scope id loop detection and in-memory spend use: the first of runId, sessionId, jobId, taskId. */
+export function loopScopeOf(ctx = {}) {
+  for (const field of BUDGET_RULES.loopScopeFields) if (ctx?.[field]) return `${field}:${ctx[field]}`;
+  return '';
+}
+
+/** Periodic budget keys in ai-budgets.json and the spend scope each one asks `spentUsd` for. */
+export const PERIODIC_SCOPES = Object.freeze({
+  clientMonthUsd: 'clientMonth',
+  makerDayUsd: 'makerDay',
+  hubDayUsd: 'hubDay',
+  evalTotalUsd: 'eval',
+});
+
+/**
+ * The periodic scopes that apply to one call. They alert only, never stop.
+ *   clientMonth: the call names a salesClientId    makerDay / hubDay: by repo
+ *   eval: task key starts with "eval." or ctx.budgetScope is "eval"
+ */
+export function periodicScopesFor(config = {}, { ctx = {}, task = '', repo = '' } = {}) {
+  const out = [];
+  for (const [key, scope] of Object.entries(PERIODIC_SCOPES)) {
+    const capUsd = Number(config?.periodic?.[key]);
+    if (!(capUsd > 0)) continue;
+    const applies =
+      (scope === 'clientMonth' && Boolean(ctx.salesClientId)) ||
+      (scope === 'makerDay' && repo === 'maker') ||
+      (scope === 'hubDay' && repo === 'hub') ||
+      (scope === 'eval' && (String(task).startsWith('eval.') || ctx.budgetScope === 'eval'));
+    if (applies) out.push({ key, scope, capUsd });
+  }
+  return out;
 }

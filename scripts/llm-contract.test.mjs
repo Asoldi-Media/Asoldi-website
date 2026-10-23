@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as core from '../packages/suite/core/llm/index.js';
 
-const PINNED_VERSION = '1.0.0';
+const PINNED_VERSION = '1.1.0';
 const TASKS = {
   version: 1,
   tasks: {
@@ -16,7 +16,7 @@ const TASKS = {
 const ROUTES = { version: 1, profiles: { legacy: { default: 'claude:claude-haiku-5-5:medium' }, prod: { default: 'claude:claude-haiku-5-5:medium|deepseek:deepseek-flash' } } };
 const POLICY = { version: 1, providers: { claude: { allow: ['public', 'business', 'personal', 'transcript'] }, deepseek: { allow: ['public', 'business'] } } };
 
-const PINNED_FINGERPRINT = 'sha256:0a37f9b51e9e0e3fb270507a4da6c4048606a1d6a4c9a573ce3fb2d8d048e62a';
+const PINNED_FINGERPRINT = 'sha256:cdb1ee94eb6332b0160681427f4a34bc4cfe9394a567e862ca16e1ba2d34b256';
 
 test('contract version and fingerprint are pinned', () => {
   assert.equal(core.LLM_CONTRACT.version, PINNED_VERSION);
@@ -47,6 +47,15 @@ test('the frozen rules say what the owner and the plan decided', () => {
   assert.deepEqual(c.claude.refusal, { needsReview: true, crossVendorRetry: false, error: 'RefusalError' });
   assert.deepEqual(c.claude.image, { mime: 'image/jpeg', maxLongEdge: 1568, maxImages: 6, jpegQuality: 80 });
   assert.deepEqual(c.policy.neverPersonal, ['deepseek']);
+  assert.deepEqual(c.policy.clientDataOnlySyntheticOrRedacted, ['deepseek'], 'Q5: no real client data to DeepSeek');
+  assert.equal(c.policy.appliesToProfiles, 'all, legacy included');
+  assert.equal(c.policy.defaultRedirect, 'claude:claude-haiku-5-5');
+  assert.deepEqual(c.claude.maxTokensRetryProviders, ['claude']);
+  assert.deepEqual(c.claude.serverFallback.servedBy, ['claude-opus-5', 'claude-opus-4-8', 'claude-sonnet-5']);
+  assert.equal(c.budgets.loopWindowMinutes, 15);
+  assert.deepEqual(c.budgets.loopScopeFields, ['runId', 'sessionId', 'jobId', 'taskId']);
+  assert.deepEqual(c.budgets.periodicScopes, { clientMonthUsd: 'clientMonth', makerDayUsd: 'makerDay', hubDayUsd: 'hubDay', evalTotalUsd: 'eval' });
+  assert.equal(c.prices.replayUsd, 0);
   assert.equal(c.budgets.runawayFactor, 5);
   assert.equal(c.budgets.alertRatio, 1);
   assert.deepEqual(c.budgets.hardStop, ['runaway', 'loop']);

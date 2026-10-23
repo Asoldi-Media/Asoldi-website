@@ -64,6 +64,8 @@ const TASKS = parseTaskRegistry({
     'qa.shot': { kind: 'json', vision: true, dataClass: 'public', maxTokens: 2000, family: 'visual-qa' },
     'qa.client-shot': { kind: 'json', vision: true, dataClass: 'business', maxTokens: 2000, family: 'visual-qa' },
     'plan.edit': { kind: 'json', vision: false, dataClass: 'business', maxTokens: 8000, family: 'plan' },
+    'tpl.analyze': { kind: 'json', vision: false, dataClass: 'public', maxTokens: 8000, family: 'extraction' },
+    'eval.judge': { kind: 'json', vision: true, dataClass: 'business', maxTokens: 2000, family: 'judge' },
     'note.text': { kind: 'text', vision: false, dataClass: 'public', maxTokens: 500 },
     'agent.run': { kind: 'tools', vision: false, dataClass: 'public', maxTokens: 4096, family: 'agent' },
   },
@@ -76,7 +78,7 @@ const ROUTES = {
     prod: {
       default: 'claude:claude-haiku-5-5:medium|deepseek:deepseek-flash',
       vision: 'claude:claude-haiku-5-5:medium|gemini:gemini-2.5-flash',
-      kinds: { classification: 'claude:claude-haiku-5-5:medium|deepseek:deepseek-flash', agent: 'claude:claude-haiku-5-5:medium' },
+      kinds: { classification: 'claude:claude-haiku-5-5:medium|deepseek:deepseek-flash', extraction: 'claude:claude-haiku-5-5:medium|deepseek:deepseek-flash', agent: 'claude:claude-haiku-5-5:medium' },
       tasks: { 'copy.write': 'claude:claude-haiku-5-5:high|openai:gpt-4.1' },
       escalate: { 'plan.edit': ['claude:claude-sonnet-5-5:medium', 'claude:claude-opus-5-5:medium'] },
       escalateKinds: { classification: ['claude:claude-haiku-5-5:medium'] },
@@ -94,10 +96,12 @@ const POLICY = {
     claude: { allow: ['public', 'business', 'personal', 'transcript'] },
     gemini: { allow: ['public', 'business', 'personal', 'transcript'], billingTier: 'unknown', paidTierConfirmedAt: null },
     deepseek: { allow: ['public', 'business'] },
-    openai: { allow: ['public', 'business'] },
+    openai: { allow: ['public', 'business'], tasks: ['eval.judge'] },
   },
-  redirect: 'claude:claude-haiku-5-5:low',
+  redirect: 'claude:claude-haiku-5-5',
 };
+
+const withGemini = (fields) => ({ ...POLICY, providers: { ...POLICY.providers, gemini: { ...POLICY.providers.gemini, ...fields } } });
 
 const BUDGETS = {
   version: 1,
@@ -159,7 +163,21 @@ test('tier overrides beat task routes; numeric tiers normalize', () => {
   assert.equal(tiered.tier, 'tier-3-ecommerce');
   assert.equal(tiered.source, 'tier-task');
   assert.equal(tiered.primary.model, 'claude-sonnet-5-5');
-  assert.throws(() => r.resolveRoute('copy.write', { tier: 'gold' }), /ctx.tier/);
+  for (const tier of ['custom', 'gold']) {
+    const route = r.resolveRoute('copy.write', { tier });
+    assert.equal(route.tier, null, `${tier}: no tier override`);
+    assert.equal(route.source, 'task');
+    assert.match(route.warnings.join(' '), /ctx.tier "/, `${tier}: warns instead of throwing`);
+  }
+});
+
+test('an unknown tier (the hub custom tier) never breaks a live call and budgets use the default base', async () => {
+  const seen = [];
+  const { llm } = makeCore({ providers: { claude: async () => claudeMessage() }, budgets: BUDGETS, spentUsd: async ({ scope }) => (seen.push(scope), 0) });
+  const out = await llm.json({ task: 'plan.edit', user: 'x', ctx: { runId: 'r-custom', tier: 'custom' } });
+  assert.equal(out.route.tier, null);
+  assert.equal(out.budget.expectedUsd, 2, 'run base default for one reference project');
+  assert.deepEqual(seen, ['run']);
 });
 
 test('family (kind) routes; ctx.kind overrides the task family', () => {
@@ -198,18 +216,27 @@ test('profile choice: ctx.profile beats env; production alias; AI_TEST_MODE; unk
 
 test('legacy placeholder resolves through legacyRoute and needs it', () => {
   const r = router();
-  assert.equal(r.resolveRoute('plan.edit').route, 'deepseek:deepseek-chat');
-  assert.equal(r.resolveRoute('plan.edit').legacy, true);
+  assert.equal(r.resolveRoute('tpl.analyze').route, 'deepseek:deepseek-chat');
+  assert.equal(r.resolveRoute('tpl.analyze').legacy, true);
   const bare = createRouter({ tasks: TASKS, routes: ROUTES, policy: POLICY });
   assert.throws(() => bare.resolveRoute('plan.edit'), /legacyRoute/);
 });
 
+test('the data policy applies under legacy too: client data leaves legacy DeepSeek, at the task effort', () => {
+  const route = router().resolveRoute('plan.edit');
+  assert.equal(route.legacy, true);
+  assert.equal(route.route, 'claude:claude-haiku-5-5:medium', 'real client data goes to Claude even in the legacy profile');
+  assert.equal(route.policyRedirects[0].from, 'deepseek:deepseek-chat');
+  assert.match(route.warnings.join(' '), /data policy replaced the whole route/);
+  assert.equal(router().resolveRoute('cls.page', {}, { payload: { email: 'kari@firma.no' } }).primary.effort, 'low', 'a redirect keeps the task effort');
+});
+
 test('vision task: text-only entries are dropped, the vision route is used, with a warning', () => {
-  const r = router({ AI_PROFILE: 'test', AI_ROUTE_QA_SHOT: 'deepseek:deepseek-flash' });
+  const r = createRouter({ tasks: TASKS, routes: ROUTES, policy: withGemini({ allowUnpaidPublic: true }), env: { AI_PROFILE: 'test', AI_ROUTE_QA_SHOT: 'deepseek:deepseek-flash' }, legacyRoute });
   const route = r.resolveRoute('qa.shot');
   assert.equal(route.primary.provider, 'gemini');
   assert.match(route.warnings.join(' '), /vision/);
-  assert.equal(r.resolveRoute('qa.shot', { vision: false }).primary.provider, 'deepseek', 'ctx.vision:false allows a text-only call');
+  assert.equal(r.resolveRoute('qa.shot', { vision: false }).primary.provider, 'deepseek', 'ctx.vision:false allows a text-only public call');
 });
 
 test('tools task needs a tool-loop provider', () => {
@@ -218,7 +245,7 @@ test('tools task needs a tool-loop provider', () => {
 });
 
 test('record inherits test and is flagged; replay routes to replay', () => {
-  const rec = router({ AI_PROFILE: 'record' }).resolveRoute('plan.edit');
+  const rec = router({ AI_PROFILE: 'record' }).resolveRoute('tpl.analyze');
   assert.equal(rec.record, true);
   assert.equal(rec.primary.provider, 'deepseek');
   const rep = router({ AI_PROFILE: 'replay' }).resolveRoute('brief.read');
@@ -282,29 +309,95 @@ test('policy redirects a transcript task away from DeepSeek', () => {
   const route = router({ AI_PROFILE: 'test' }).resolveRoute('brief.read');
   assert.equal(route.dataClass.effective, 'transcript');
   assert.ok(!route.chain.some((e) => e.provider === 'deepseek'));
-  assert.equal(route.route, 'claude:claude-haiku-5-5:low');
+  assert.equal(route.route, 'claude:claude-haiku-5-5:medium', 'a full redirect keeps the default effort, not low');
   assert.equal(route.policyRedirects[0].from, 'deepseek:deepseek-flash');
-  assert.equal(route.policyRedirects[0].to, 'claude:claude-haiku-5-5:low');
+  assert.equal(route.policyRedirects[0].to, 'claude:claude-haiku-5-5');
 });
 
-test('policy: DeepSeek never gets personal data even when the config allows it', () => {
+test('policy: DeepSeek never gets personal data, and client data only when synthetic or redacted, even when the config allows it', () => {
   const loose = { ...POLICY, providers: { ...POLICY.providers, deepseek: { allow: ['public', 'business', 'personal', 'transcript'] } } };
   assert.equal(providerAllows(loose, 'deepseek', 'personal').allowed, false);
   assert.equal(providerAllows(loose, 'deepseek', 'transcript').allowed, false);
-  assert.equal(providerAllows(loose, 'deepseek', 'business').allowed, true);
+  assert.equal(providerAllows(loose, 'deepseek', 'transcript', { redacted: true }).allowed, false);
+  assert.equal(providerAllows(loose, 'deepseek', 'business').allowed, false, 'real client business data (Q5)');
+  assert.equal(providerAllows(loose, 'deepseek', 'business', { redacted: true }).allowed, true);
+  assert.equal(providerAllows(loose, 'deepseek', 'public').allowed, true);
   assert.match(core.validatePolicy(loose).warnings.join(' '), /never sends them to deepseek/);
 });
 
-test('policy: Gemini sees client data only with a confirmed paid tier', () => {
-  assert.equal(providerAllows(POLICY, 'gemini', 'public').allowed, true);
+test('Q5: a business task with a real payload never reaches DeepSeek or OpenAI (test profile, and prod after a Claude 5xx)', async () => {
+  const payload = { user: 'Fjordbakeriet sells sourdough and cinnamon buns in Bergen.' };
+  const inTest = router({ AI_PROFILE: 'test' }).resolveRoute('copy.write', {}, { payload });
+  assert.deepEqual(inTest.chain.map((e) => e.provider), ['claude']);
+  const prod = router({ AI_PROFILE: 'prod' }).resolveRoute('copy.write', {}, { payload });
+  assert.deepEqual(prod.chain.map((e) => e.provider), ['claude'], 'the openai fallback is removed: OpenAI is limited to eval.judge');
+  const called = [];
+  const { llm } = makeCore({
+    providers: {
+      claude: async () => {
+        called.push('claude');
+        throw Object.assign(new Error('overloaded'), { status: 529 });
+      },
+      deepseek: async () => (called.push('deepseek'), { servedModel: 'deepseek-flash', text: '{}', stopReason: 'end_turn', usage: {} }),
+      openai: async () => (called.push('openai'), { servedModel: 'gpt-4.1', text: '{}', stopReason: 'end_turn', usage: {} }),
+    },
+  });
+  await assert.rejects(llm.json({ task: 'copy.write', ...payload }), (e) => e.status === 529);
+  await assert.rejects(llm.json({ task: 'plan.edit', ...payload }), (e) => e.status === 529, 'prod default claude|deepseek: DeepSeek is dropped for client data');
+  assert.deepEqual(called, ['claude', 'claude']);
+  const redacted = router({ AI_PROFILE: 'test' }).resolveRoute('copy.write', { redacted: true }, { payload: { user: 'The bakery sells bread. Contact [NAME] at [EMAIL].' } });
+  assert.equal(redacted.primary.provider, 'deepseek', 'a redacted payload may use DeepSeek');
+  assert.equal(redacted.dataClass.redacted, true);
+  assert.equal(router({ AI_PROFILE: 'prod' }).resolveRoute('eval.judge', { route: 'openai:gpt-4.1' }).primary.provider, 'openai', 'OpenAI stays usable as the evaluation judge');
+});
+
+test('Q5: ctx.synthetic / ctx.redacted cannot carry real person data past the policy', () => {
+  const real = 'Kari Nordmann kari@firma.no 22 33 44 55';
+  const synthetic = router({ AI_PROFILE: 'test' }).resolveRoute('brief.read', { synthetic: true }, { payload: { user: real } });
+  assert.equal(synthetic.dataClass.synthetic, false);
+  assert.equal(synthetic.dataClass.effective, 'transcript');
+  assert.ok(!synthetic.chain.some((e) => e.provider === 'deepseek' || e.provider === 'gemini'));
+  assert.match(synthetic.dataClass.reasons.join(' '), /synthetic flag ignored/);
+  const leftover = router({ AI_PROFILE: 'test' }).resolveRoute('cls.page', { redacted: true }, { payload: { user: 'Svar til ola@firma.no' } });
+  assert.equal(leftover.dataClass.redacted, false);
+  assert.equal(leftover.dataClass.effective, 'personal');
+  assert.ok(!leftover.chain.some((e) => e.provider === 'deepseek'));
+  const nameLeft = effectiveDataClass({ task: TASKS['copy.write'], ctx: { redacted: true }, payload: { owner: { firstName: 'Kari' } } });
+  assert.equal(nameLeft.redacted, false, 'a person-name field with a value means the redaction failed');
+  const placeholders = effectiveDataClass({ task: TASKS['brief.read'], ctx: { redacted: true }, payload: { owner: { firstName: '[NAME]' }, phone: '<PHONE>' } });
+  assert.equal(placeholders.redacted, true);
+  assert.equal(placeholders.effective, 'business');
+  const fixtures = router({ AI_PROFILE: 'test' }).resolveRoute('brief.read', { synthetic: true }, { payload: { user: 'Kari Testesen kari@example.no, ola@demo.test, +47 000 00 000, 12345678, +1 555 0142' } });
+  assert.equal(fixtures.dataClass.synthetic, true, 'reserved fixture values are allowed in synthetic data');
+  assert.equal(fixtures.primary.provider, 'deepseek');
+  assert.equal(core.isFixturePhone('22 33 44 55'), false);
+  assert.equal(core.isFixtureEmailDomain('firma.no'), false);
+  assert.equal(core.isFixtureEmailDomain('mail.example.com'), true);
+});
+
+test('policy: Gemini gets nothing until the paid tier is confirmed (public only with allowUnpaidPublic)', () => {
+  assert.equal(providerAllows(POLICY, 'gemini', 'public').allowed, false, 'strict Q5 default');
+  assert.equal(providerAllows(withGemini({ allowUnpaidPublic: true }), 'gemini', 'public').allowed, true);
+  assert.equal(providerAllows(withGemini({ allowUnpaidPublic: true }), 'gemini', 'business').allowed, false);
   assert.equal(providerAllows(POLICY, 'gemini', 'business').allowed, false);
-  const paidNoDate = { ...POLICY, providers: { ...POLICY.providers, gemini: { ...POLICY.providers.gemini, billingTier: 'paid' } } };
-  assert.equal(providerAllows(paidNoDate, 'gemini', 'business').allowed, false);
-  const paid = { ...POLICY, providers: { ...POLICY.providers, gemini: { ...POLICY.providers.gemini, billingTier: 'paid', paidTierConfirmedAt: '2026-10-23' } } };
+  assert.equal(providerAllows(withGemini({ billingTier: 'paid' }), 'gemini', 'business').allowed, false);
+  const paid = withGemini({ billingTier: 'paid', paidTierConfirmedAt: '2026-10-23' });
   assert.equal(providerAllows(paid, 'gemini', 'transcript').allowed, true);
+  assert.equal(providerAllows(paid, 'gemini', 'public').allowed, true);
   const route = router({ AI_PROFILE: 'test' }).resolveRoute('qa.client-shot');
   assert.equal(route.primary.provider, 'claude');
   assert.equal(route.policyRedirects[0].from, 'gemini:gemini-2.5-flash-lite');
+  assert.equal(router({ AI_PROFILE: 'test' }).resolveRoute('qa.shot').primary.provider, 'claude', 'public screenshots too');
+  assert.equal(core.validatePolicy(withGemini({ allowUnpaidPublic: 'yes' })).ok, false);
+});
+
+test('policy: provider task scopes (OpenAI only as the evaluation judge)', () => {
+  assert.equal(providerAllows(POLICY, 'openai', 'business', { task: 'eval.judge', family: 'judge' }).allowed, true);
+  assert.equal(providerAllows(POLICY, 'openai', 'public', { task: 'copy.write', family: 'copy' }).allowed, false);
+  assert.equal(providerAllows(POLICY, 'openai', 'public').allowed, false, 'no task context: a scoped provider is not used');
+  const byFamily = { ...POLICY, providers: { ...POLICY.providers, openai: { allow: ['public'], families: ['judge'] } } };
+  assert.equal(providerAllows(byFamily, 'openai', 'public', { task: 'x.y', family: 'judge' }).allowed, true);
+  assert.equal(core.validatePolicy({ ...POLICY, providers: { openai: { allow: ['public'], tasks: ['Bad Key'] } } }).ok, false);
 });
 
 test('person fields make a payload personal; dates, prices and org numbers do not', () => {
@@ -333,7 +426,7 @@ test('effective data class: ctx.dataClass raises it, synthetic and redacted lowe
 test('policy: a redirect that cannot see images is not used for a vision task', () => {
   const policy = { ...POLICY, redirect: 'deepseek:deepseek-flash' };
   const r = createRouter({ tasks: TASKS, routes: ROUTES, policy, env: { AI_PROFILE: 'test' } });
-  assert.throws(() => r.resolveRoute('qa.client-shot'), (e) => e.code === 'policy_blocked' && /needs vision/.test(e.message));
+  assert.throws(() => r.resolveRoute('qa.shot'), (e) => e.code === 'policy_blocked' && /needs vision/.test(e.message));
 });
 
 test('env route overrides are checked at load like config routes', () => {
@@ -654,12 +747,34 @@ test('cassette keys ignore dates, UUIDs and run ids, but not content', () => {
   assert.throws(() => cassettePath('x', '../etc'), /sha256/);
 });
 
-test('cassette records hold no keys or tokens', () => {
-  const record = cassetteRecord({ key: 'k', task: 't', provider: 'claude', model: 'claude-haiku-5-5', response: { text: 'used key sk-ant-abcdefghijklmnop and Bearer abcdefghijklmnop', usage: { input_tokens: 1 }, apiKey: 'x' } });
+// Key-shaped strings are built at runtime so the repo holds no literal that a secret scanner flags.
+const FAKE_KEY = ['sk', 'ant', 'x'.repeat(16)].join('-');
+const FAKE_BEARER = `${'Bear'}er ${'b'.repeat(16)}`;
+
+test('cassette records hold no keys or tokens, and keep the model output keys as recorded', () => {
+  const record = cassetteRecord({
+    key: 'k',
+    task: 't',
+    provider: 'claude',
+    model: 'claude-haiku-5-5',
+    response: {
+      text: `used key ${FAKE_KEY} and ${FAKE_BEARER}`,
+      data: { fields: [{ name: 'password', type: 'password' }], token: 'csrf-field', note: `leaked ${FAKE_KEY}` },
+      content: [{ type: 'tool_use', id: 'tu', name: 'form', input: { password: { label: 'Passord' }, auth: 'none' } }],
+      usage: { input_tokens: 1 },
+      apiKey: 'x',
+    },
+  });
   const text = JSON.stringify(record);
-  assert.ok(!text.includes('sk-ant-abcdefghijklmnop'));
-  assert.ok(!text.includes('Bearer abcdefghijklmnop'));
+  assert.ok(!text.includes(FAKE_KEY));
+  assert.ok(!text.includes(FAKE_BEARER));
+  assert.ok(!('apiKey' in record.response));
+  assert.equal(record.response.data.token, 'csrf-field', 'a key named token inside the model data is data');
+  assert.deepEqual(record.response.data.fields, [{ name: 'password', type: 'password' }]);
+  assert.match(record.response.data.note, /<redacted>/);
+  assert.deepEqual(record.response.content[0].input, { password: { label: 'Passord' }, auth: 'none' });
   assert.deepEqual(scrubSecrets({ headers: { Authorization: 'x', 'x-api-key': 'y', ok: 1 } }), { headers: { ok: 1 } });
+  assert.deepEqual(core.maskSecretValues({ password: 'p', key: FAKE_KEY }), { password: 'p', key: '<redacted>' });
 });
 
 // ---------- budgets ----------
@@ -685,19 +800,81 @@ test('budgets: 100 % alerts and continues; only a runaway (> 5x) stops; periodic
   assert.equal(evaluateBudget({ spentUsd: 100 }).action, 'ok');
 });
 
-test('loop detection: same request, same outcome 3 times, or 6 sends', () => {
+test('loop detection: same request, same outcome 3 times in a row, or 6 sends, inside one window', () => {
   const same = [1, 2, 3].map(() => ({ task: 't', inputKey: 'k', outcomeKey: 'o' }));
   assert.equal(detectLoop(same).loop, true);
   assert.equal(detectLoop([...same.slice(0, 2), { task: 't', inputKey: 'k', outcomeKey: 'o2' }]).loop, false);
   const varied = Array.from({ length: 6 }, (_, i) => ({ task: 't', inputKey: 'k', outcomeKey: `o${i}` }));
   assert.equal(detectLoop(varied).reason, 'identical-requests');
-  const detector = createLoopDetector();
+  const daily = [0, 1, 2, 3].map((day) => ({ task: 't', inputKey: 'k', outcomeKey: 'o', at: day * 86_400_000 }));
+  assert.equal(detectLoop(daily).loop, false, 'the same request on four days is not a loop');
+  let t = 0;
+  const detector = createLoopDetector({ now: () => t });
   for (let i = 0; i < 3; i += 1) {
     assert.equal(detector.before('t', 'k').loop, false);
     detector.after('t', 'k', 'same');
+    t += 1000;
   }
   assert.equal(detector.before('t', 'k').loop, true);
   assert.equal(detector.before('t', 'other').loop, false);
+  t += 16 * 60_000;
+  assert.equal(detector.before('t', 'k').loop, false, 'the block expires with the window');
+  const short = createLoopDetector({ now: () => t, windowMinutes: 1 });
+  for (let i = 0; i < 3; i += 1) short.after('t', 'k', 'same');
+  t += 61_000;
+  assert.equal(short.before('t', 'k').loop, false, 'windowMinutes from ai-budgets.json');
+});
+
+test('budgets: a run with no project size still stops at more than 5x the base; periodic totals alert and never stop', async () => {
+  const budgets = { ...BUDGETS, periodic: { clientMonthUsd: 10, hubDayUsd: 5 } };
+  const alerts = [];
+  let calls = 0;
+  const spent = { run: 0, clientMonth: 0, hubDay: 0 };
+  const { llm, rows } = makeCore({
+    providers: { claude: async () => (calls += 1, claudeMessage()) },
+    budgets,
+    repo: 'hub',
+    spentUsd: async ({ scope }) => spent[scope] ?? 0,
+    onAlert: (info) => alerts.push(info),
+  });
+  spent.run = 1_000_000;
+  await assert.rejects(llm.json({ task: 'plan.edit', user: 'x', ctx: { runId: 'r1', salesClientId: 'sc1' } }), (e) => e.code === 'budget_exceeded' && e.expectedUsd === 2 && e.sizeKnown === false);
+  assert.equal(calls, 0);
+  assert.equal(rows.at(-1).status, 'budget_blocked');
+  spent.run = 0;
+  spent.clientMonth = 500;
+  spent.hubDay = 50;
+  const out = await llm.json({ task: 'plan.edit', user: 'y', ctx: { runId: 'r1', salesClientId: 'sc1' } });
+  assert.equal(calls, 1, 'periodic totals far over their caps never stop a call');
+  assert.deepEqual(out.budgetAlerts.map((a) => a.scope).sort(), ['clientMonth', 'hubDay']);
+  assert.ok(alerts.some((a) => a.periodic && a.scope === 'clientMonth' && a.action === 'alert'));
+  // A hub call with no run or session: no scaled scope, periodic only.
+  const loose = await llm.json({ task: 'plan.edit', user: 'z', ctx: {} });
+  assert.equal(loose.budget, null);
+  assert.equal(core.periodicScopesFor(budgets, { ctx: {}, task: 'eval.judge', repo: 'maker' }).length, 0);
+  assert.deepEqual(core.periodicScopesFor({ periodic: { evalTotalUsd: 200, makerDayUsd: 15 } }, { ctx: {}, task: 'eval.judge', repo: 'maker' }).map((p) => p.scope), ['makerDay', 'eval']);
+  assert.equal(validateBudgetsConfig({ ...budgets, periodic: { weeklyUsd: 3 } }).ok, false);
+  assert.equal(validateBudgetsConfig({ ...budgets, loop: { maxRepeats: 3, windowMinutes: 0 } }).ok, false);
+});
+
+test('budgets: without a spentUsd hook the core tallies spend per run, so a runaway still stops', async () => {
+  let calls = 0;
+  const { llm } = makeCore({ providers: { claude: async () => (calls += 1, claudeMessage({ usage: { input_tokens: 0, output_tokens: 200_000 } })) } });
+  // $0.10 per call on Haiku (200k output); expected $0.05 -> stop once projected spend is over $0.25.
+  for (let i = 0; i < 3; i += 1) await llm.json({ task: 'plan.edit', user: `step ${i}`, ctx: { runId: 'tally', expectedUsd: 0.05 } });
+  await assert.rejects(llm.json({ task: 'plan.edit', user: 'step 9', ctx: { runId: 'tally', expectedUsd: 0.05 } }), (e) => e.code === 'budget_exceeded');
+  assert.equal(calls, 3);
+  await llm.json({ task: 'plan.edit', user: 'other run', ctx: { runId: 'fresh', expectedUsd: 0.05 } });
+  assert.equal(calls, 4, 'the tally is per run');
+});
+
+test('budgets: image blocks in messages count ~1600 tokens each, not their base64 length', () => {
+  const base64 = 'A'.repeat(300_000);
+  const messages = [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64 } }, { type: 'text', text: 'x'.repeat(35) }] }];
+  assert.equal(core.estimateInputTokens({ messages }), 1600 + 10);
+  const toolResult = [{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: [{ type: 'image', source: { type: 'base64', data: base64 } }] }] }];
+  assert.equal(core.estimateInputTokens({ messages: toolResult }), 1600);
+  assert.equal(core.estimateInputTokens({ user: 'x'.repeat(70), images: 2 }), 20 + 3200);
 });
 
 // ---------- callLlm with mock providers ----------
@@ -762,7 +939,7 @@ test('callLlm: a second max_tokens stop falls back to the next provider', async 
       },
     },
   });
-  const out = await llm.json({ task: 'plan.edit', user: 'Plan' });
+  const out = await llm.json({ task: 'tpl.analyze', user: 'Template HTML' });
   assert.equal(out.provider, 'deepseek');
   assert.equal(deepseekCalls, 1);
   assert.deepEqual(out.failures.map((f) => f.code), ['max_tokens']);
@@ -779,7 +956,7 @@ test('callLlm: refusal -> needs review, no other vendor is tried', async () => {
       },
     },
   });
-  await assert.rejects(llm.json({ task: 'plan.edit', user: 'Plan' }), (e) => e.code === 'refusal' && e.needsReview === true && e.crossVendorRetry === false);
+  await assert.rejects(llm.json({ task: 'tpl.analyze', user: 'Template HTML' }), (e) => e.code === 'refusal' && e.needsReview === true && e.crossVendorRetry === false);
   assert.equal(deepseekCalls, 0);
   assert.equal(rows.length, 1);
   assert.equal(rows[0].status, 'refusal');
@@ -797,8 +974,8 @@ test('callLlm: a 401 marks the provider dead and falls back within the same call
       deepseek: async () => ({ servedModel: 'deepseek-flash', text: '{"ok":true}', stopReason: 'end_turn', usage: {} }),
     },
   });
-  assert.equal((await llm.json({ task: 'plan.edit', user: 'One' })).provider, 'deepseek');
-  assert.equal((await llm.json({ task: 'plan.edit', user: 'Two' })).provider, 'deepseek');
+  assert.equal((await llm.json({ task: 'tpl.analyze', user: 'One' })).provider, 'deepseek');
+  assert.equal((await llm.json({ task: 'tpl.analyze', user: 'Two' })).provider, 'deepseek');
   assert.equal(claudeCalls, 1, 'dead provider is skipped on later calls');
   assert.deepEqual(llm.deadProviders(), ['claude']);
 });
@@ -812,10 +989,10 @@ test('callLlm: invalid JSON falls back; invalid on the last provider throws Sche
       deepseek: async () => ({ servedModel: 'deepseek-flash', text: answers.deepseek, stopReason: 'end_turn', usage: {} }),
     },
   });
-  await assert.rejects(llm.json({ task: 'plan.edit', user: 'x', schema }), (e) => e.code === 'schema_invalid' && e.failures.length === 2);
+  await assert.rejects(llm.json({ task: 'tpl.analyze', user: 'x', schema }), (e) => e.code === 'schema_invalid' && e.failures.length === 2);
   assert.deepEqual(rows.map((r) => [r.provider, r.status]), [['claude', 'schema_invalid'], ['deepseek', 'schema_invalid']]);
   answers.deepseek = '{"n":3}';
-  const out = await llm.json({ task: 'plan.edit', user: 'y', schema });
+  const out = await llm.json({ task: 'tpl.analyze', user: 'y', schema });
   assert.deepEqual(out.data, { n: 3 });
   assert.equal(out.provider, 'deepseek');
   assert.deepEqual(rows.slice(2).map((r) => r.status), ['schema_invalid', 'ok']);
@@ -840,7 +1017,11 @@ test('callLlm: transcript data never reaches DeepSeek under the test profile', a
   await llm.json({ task: 'plan.edit', user: 'Contact Kari on kari@example.no' });
   assert.deepEqual(seen, ['claude-haiku-5-5', 'claude-haiku-5-5']);
   await llm.json({ task: 'plan.edit', user: 'Plain business text' });
-  assert.deepEqual(seen, ['claude-haiku-5-5', 'claude-haiku-5-5', 'deepseek']);
+  assert.deepEqual(seen.slice(2), ['claude-haiku-5-5'], 'real client business text stays on Claude (Q5)');
+  await llm.json({ task: 'tpl.analyze', user: 'Template HTML' });
+  await llm.json({ task: 'plan.edit', user: 'The bakery sells bread; contact [EMAIL]', ctx: { redacted: true } });
+  await llm.json({ task: 'brief.read', user: 'Fixture transcript with ola@demo.test', ctx: { synthetic: true } });
+  assert.deepEqual(seen.slice(3), ['deepseek', 'deepseek', 'deepseek'], 'public, redacted and synthetic data may use DeepSeek');
 });
 
 test('callLlm: soft budget alerts and continues; a runaway stops before the provider is called', async () => {
@@ -878,7 +1059,7 @@ test('callLlm: record profile saves a secret-free cassette', async () => {
     providers: { deepseek: async () => ({ servedModel: 'deepseek-flash', text: '{"a":1}', stopReason: 'end_turn', usage: { inputTokens: 5 } }) },
     cassettes: { save: (record) => saved.push(record) },
   });
-  const out = await llm.json({ task: 'plan.edit', user: 'hello' });
+  const out = await llm.json({ task: 'tpl.analyze', user: 'hello' });
   assert.equal(saved.length, 1);
   assert.equal(saved[0].key, out.cassetteKey);
   assert.equal(saved[0].model, 'deepseek-flash');
@@ -918,4 +1099,145 @@ test('tools(): loops on tool_use and returns when the model ends its turn', asyn
   assert.equal(out.text, 'Done.');
   assert.equal(out.turns, 2);
   assert.equal(rows.length, 2);
+});
+
+// ---------- review fixes (2026-10-23) ----------
+test('callLlm: unscoped calls are never loop-blocked; a scoped retry loop is, and its block expires', async () => {
+  let now = Date.parse('2026-10-24T10:00:00Z');
+  const { llm } = makeCore({ providers: { claude: async () => claudeMessage({ text: '{"category":"lead"}' }) }, clock: () => now });
+  for (let day = 0; day < 8; day += 1) {
+    const out = await llm.json({ task: 'cls.page', user: `Inbox mail received ${new Date(now).toISOString().slice(0, 10)}: same text` });
+    assert.equal(out.provider, 'claude', `day ${day + 1}`);
+    now += 86_400_000;
+  }
+  for (let i = 0; i < 10; i += 1) await llm.json({ task: 'cls.page', user: 'same text, same minute' });
+  for (let i = 0; i < 3; i += 1) await llm.json({ task: 'cls.page', user: 'retry me', ctx: { jobId: 'job-1' } });
+  await assert.rejects(llm.json({ task: 'cls.page', user: 'retry me', ctx: { jobId: 'job-1' } }), (e) => e.code === 'loop_detected');
+  now += 16 * 60_000;
+  assert.equal((await llm.json({ task: 'cls.page', user: 'retry me', ctx: { jobId: 'job-1' } })).provider, 'claude', 'the block expired with the window');
+});
+
+test('callLlm: only Claude retries a max_tokens stop with a doubled cap; other vendors fall back', async () => {
+  const caps = [];
+  const { llm, rows } = makeCore({
+    env: { AI_PROFILE: 'test' },
+    providers: {
+      deepseek: async (call) => (caps.push(call.maxTokens), { servedModel: 'deepseek-flash', text: '{"partial":', stopReason: 'max_tokens', usage: {} }),
+      claude: async () => claudeMessage({ text: '{"ok":1}' }),
+    },
+  });
+  const out = await llm.json({ task: 'tpl.analyze', user: 'Template', ctx: { route: 'deepseek:deepseek-flash|claude:claude-haiku-5-5' } });
+  assert.deepEqual(caps, [8000], 'DeepSeek is not retried at 16000');
+  assert.equal(out.provider, 'claude');
+  assert.deepEqual(rows.map((r) => [r.provider, r.status, r.maxTokens]), [['deepseek', 'max_tokens', 8000], ['claude', 'ok', 8000]]);
+  assert.equal(core.shouldRetryMaxTokens('max_tokens', 1, 'gemini'), false);
+});
+
+test('callLlm: a caller abort stops the chain; no other provider is tried', async () => {
+  const called = [];
+  const { llm } = makeCore({
+    providers: {
+      claude: async () => {
+        called.push('claude');
+        const error = new Error('Request was aborted.');
+        error.name = 'APIUserAbortError';
+        throw error;
+      },
+      deepseek: async () => (called.push('deepseek'), { servedModel: 'deepseek-flash', text: '{}', stopReason: 'end_turn', usage: {} }),
+    },
+  });
+  await assert.rejects(llm.json({ task: 'tpl.analyze', user: 'x' }), (e) => e.name === 'APIUserAbortError' && e.aborted === true);
+  assert.deepEqual(called, ['claude']);
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(llm.json({ task: 'tpl.analyze', user: 'y', signal: controller.signal }), (e) => e.name === 'AbortError');
+  assert.deepEqual(called, ['claude'], 'an already-aborted signal calls no provider');
+  assert.equal(classifyError(Object.assign(new Error('x'), { name: 'AbortError' })).fallback, false);
+  assert.equal(classifyError(Object.assign(new Error('x'), { status: 503 })).fallback, true);
+});
+
+test('callLlm: replay attempts cost nothing; the recorded model goes to replayOf', async () => {
+  const { llm, rows } = makeCore({
+    env: { AI_PROFILE: 'replay' },
+    providers: { replay: async () => ({ servedModel: 'claude-opus-5-5', text: '{"a":1}', stopReason: 'end_turn', usage: { inputTokens: 25_000, outputTokens: 2_500 } }) },
+  });
+  const out = await llm.json({ task: 'plan.edit', user: 'hello', ctx: { runId: 'golden-1' } });
+  assert.equal(out.usd, 0);
+  assert.equal(rows[0].usd, 0);
+  assert.equal(rows[0].priceVerified, true);
+  assert.equal(rows[0].provider, 'replay');
+  assert.equal(rows[0].replayOf, 'claude-opus-5-5');
+  assert.notEqual(rows[0].model, 'claude-opus-5-5');
+});
+
+test('claude-shape: open maps and untyped objects skip structured output (they would be closed to {})', () => {
+  const map = { type: 'object', properties: { translations: { type: 'object', additionalProperties: { type: 'string' } } }, required: ['translations'] };
+  const built = buildClaudeRequest({ model: 'claude-haiku-5-5', user: 'x', kind: 'json', schema: map });
+  assert.equal('format' in built.params.output_config, false);
+  assert.equal(built.jsonMode, 'prompt');
+  assert.match(built.warnings.join(' '), /open objects at \/properties\/translations/);
+  const untyped = buildClaudeRequest({ model: 'claude-haiku-5-5', user: 'x', kind: 'json', schema: { type: 'object', properties: { meta: { type: 'object' } } } });
+  assert.equal('format' in untyped.params.output_config, false);
+  assert.deepEqual(core.openObjectPaths({ type: 'object', properties: { list: { type: 'array', items: { $ref: '#/$defs/m' } } }, $defs: { m: { type: 'object', additionalProperties: true } } }), ['/$defs/m']);
+  const closed = buildClaudeRequest({ model: 'claude-haiku-5-5', user: 'x', kind: 'json', schema: { type: 'object', properties: { a: { type: 'string' } }, additionalProperties: true } });
+  assert.equal(closed.jsonMode, 'structured', 'declared properties with additionalProperties:true close without data loss');
+  assert.equal(closed.params.output_config.format.schema.additionalProperties, false);
+  assert.deepEqual(core.openObjectPaths({ type: 'object', properties: { e: { enum: [{ type: 'object' }] } } }), [], 'enum values are not schemas');
+  const tool = buildClaudeRequest({ model: 'claude-haiku-5-5', user: 'x', kind: 'tools', tools: [{ name: 'save', input_schema: map }] });
+  assert.equal(tool.params.tools[0].strict, false);
+  assert.deepEqual(tool.params.tools[0].input_schema.properties.translations.additionalProperties, { type: 'string' });
+});
+
+test('callLlm: a map schema reaches Claude without format and the map survives client-side validation', async () => {
+  let params;
+  const { llm } = makeCore({ providers: { claude: async (call) => ((params = call.claude.params), claudeMessage({ text: '{"translations":{"hero":"Hei","cta":"Bestill"}}' })) } });
+  const schema = { type: 'object', properties: { translations: { type: 'object', additionalProperties: { type: 'string' } } }, required: ['translations'] };
+  const out = await llm.json({ task: 'plan.edit', user: 'Translate', schema });
+  assert.equal('format' in params.output_config, false);
+  assert.deepEqual(out.data.translations, { hero: 'Hei', cta: 'Bestill' });
+});
+
+test('prices: server-side fallback models are priced and verified (Opus 5, Opus 4.8, Sonnet 5)', () => {
+  for (const model of core.CLAUDE_FALLBACK_MODELS) {
+    assert.equal(core.PRICES[model].verifiedAt, '2026-10-23', model);
+    assert.equal(core.PRICES[model].fallbackOnly, true, model);
+  }
+  // Declined Opus 5.5 attempt (1k in) + Opus 5 fallback (1k in, 1k out): 4000 + 5000 + 25000 micro-dollars.
+  const priced = priceResponse({
+    requestedModel: 'claude-opus-5-5',
+    response: { model: 'claude-opus-5', usage: { input_tokens: 1000, output_tokens: 1000, iterations: [{ type: 'message', input_tokens: 1000, output_tokens: 0 }, { type: 'fallback_message', input_tokens: 1000, output_tokens: 1000 }] } },
+  });
+  close(priced.usd, 0.034);
+  assert.equal(priced.priceVerified, true);
+  close(priceUsage({ model: 'claude-sonnet-5', usage: { inputTokens: 1_000_000, cacheReadTokens: 1_000_000 } }).usd, 2.2);
+  close(priceUsage({ model: 'claude-opus-4-8', usage: { cacheWrite1hTokens: 1_000_000, outputTokens: 100_000 } }).usd, 12.5);
+  assert.throws(() => parseRoute('claude:claude-opus-5'), (e) => e.code === 'route_config', 'routes still name only the 5.5 models');
+});
+
+test('person-field detection is linear: hostile and large strings finish fast', () => {
+  const svgPath = Array.from({ length: 9000 }, (_, i) => `${(i * 7) % 997}.${i % 10} ${(i * 13) % 991}`).join(' ').slice(0, 64_000);
+  const cases = {
+    letters: 'a'.repeat(200_000),
+    atDots: `a@${'a.'.repeat(25_000)}`,
+    manyAts: 'a@'.repeat(100_000),
+    svgPath: `<path d="M${svgPath}"/>`,
+    digits: '1'.repeat(200_000),
+    plusDigits: '+12345678901234567890'.repeat(9000),
+  };
+  for (const [name, text] of Object.entries(cases)) {
+    const started = performance.now();
+    const found = detectPersonFields({ html: text });
+    const ms = performance.now() - started;
+    assert.ok(ms < 50, `${name}: ${ms.toFixed(1)} ms`);
+    if (name === 'svgPath' || name === 'letters' || name === 'atDots') assert.equal(found.found, false, `${name}: ${JSON.stringify(found)}`);
+  }
+});
+
+test('phone detection skips compact dates and number runs; still finds real numbers', () => {
+  assert.equal(detectPersonFields('Endret 20261023 kl 10').found, false, 'YYYYMMDD is a date');
+  assert.equal(detectPersonFields('<path d="M12 34 56 78 90 12 34 56"/>').found, false, 'SVG coordinates are not phones');
+  assert.equal(detectPersonFields('points="0.12345678,4"').found, false);
+  assert.deepEqual(detectPersonFields('Ring 92345678.').realPatterns, ['phone']);
+  assert.deepEqual(detectPersonFields('Tlf: 92 34 56 78, e-post post@firma.no').realPatterns.sort(), ['email', 'phone']);
+  assert.deepEqual(detectPersonFields({ contact: 'kari@example.no' }).realPatterns, [], 'a fixture email is a pattern, not a real one');
 });

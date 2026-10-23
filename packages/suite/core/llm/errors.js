@@ -119,15 +119,23 @@ export const ERROR_CODES = Object.freeze([
 ]);
 
 const STOPPING = new Set(['refusal', 'budget_exceeded', 'loop_detected', 'policy_blocked', 'route_config', 'invalid_request', 'cassette_miss']);
+const ABORT_NAMES = new Set(['AbortError', 'APIUserAbortError']);
+
+/** True for a caller cancellation (AbortController, the Anthropic SDK's APIUserAbortError). */
+export function isAbortError(error) {
+  return Boolean(error) && (ABORT_NAMES.has(error.name) || error.code === 'ABORT_ERR' || error.code === 'aborted');
+}
 
 /**
  * How the router treats a failure from one chain entry.
  *   fallback: try the next entry in the chain
  *   dead: mark this provider dead for the process
  *   needsReview: the item goes to a person or the review queue
+ * A caller abort stops the chain: the caller cancelled, so no other provider is tried.
  */
 export function classifyError(error) {
   const code = String(error?.code || '');
+  if (isAbortError(error)) return { kind: 'aborted', fallback: false, dead: false, needsReview: false };
   if (STOPPING.has(code)) {
     return { kind: code, fallback: false, dead: false, needsReview: code === 'refusal' };
   }

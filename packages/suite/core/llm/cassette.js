@@ -85,7 +85,7 @@ export function cassettePath(scope, key) {
 const SECRET_KEY = /^(?:api[-_]?key|x-api-key|authorization|auth|token|access[-_]?token|secret|password|cookie|set-cookie)$/i;
 const SECRET_VALUE = /\b(?:sk-[A-Za-z0-9_-]{10,}|sk-ant-[A-Za-z0-9_-]{10,}|AIza[0-9A-Za-z_-]{20,}|Bearer\s+[A-Za-z0-9._-]{10,})/g;
 
-/** Deep copy with secret-looking keys removed and key-looking values masked. */
+/** Deep copy with secret-looking keys removed and key-looking values masked. For transport and metadata. */
 export function scrubSecrets(value) {
   if (Array.isArray(value)) return value.map(scrubSecrets);
   if (value && typeof value === 'object') {
@@ -96,13 +96,27 @@ export function scrubSecrets(value) {
     }
     return out;
   }
+  return maskSecretValues(value);
+}
+
+/**
+ * Deep copy with key-looking values masked and every key kept. For model output (text, JSON data, content
+ * blocks, tool inputs): a field named "password" in a form spec is data, and replay must return it as recorded.
+ */
+export function maskSecretValues(value) {
+  if (Array.isArray(value)) return value.map(maskSecretValues);
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const [key, child] of Object.entries(value)) out[key] = maskSecretValues(child);
+    return out;
+  }
   if (typeof value === 'string') return value.replace(SECRET_VALUE, '<redacted>');
   return value;
 }
 
 /** The record a facade writes for one call (record profile) and reads back (replay profile). */
 export function cassetteRecord({ key, task = '', provider = '', model = '', response = {}, recordedAt = new Date().toISOString() } = {}) {
-  return scrubSecrets({
+  return {
     v: CASSETTE_VERSION,
     key: String(key),
     task: String(task),
@@ -110,12 +124,12 @@ export function cassetteRecord({ key, task = '', provider = '', model = '', resp
     model: String(model),
     recordedAt: String(recordedAt),
     response: {
-      servedModel: response.servedModel || model,
-      text: response.text ?? '',
-      data: response.data,
-      content: response.content,
-      stopReason: response.stopReason || 'end_turn',
-      usage: response.usage || {},
+      servedModel: String(response.servedModel || model),
+      text: maskSecretValues(response.text ?? ''),
+      data: maskSecretValues(response.data),
+      content: maskSecretValues(response.content),
+      stopReason: String(response.stopReason || 'end_turn'),
+      usage: scrubSecrets(response.usage || {}),
     },
-  });
+  };
 }

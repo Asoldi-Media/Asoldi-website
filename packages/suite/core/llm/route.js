@@ -73,17 +73,22 @@ function nonNegativeNumber(value) {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
-/** Validates and trims a ctx object to the contract's fields. Throws on a malformed value it cannot ignore. */
+/**
+ * Validates and trims a ctx object to the contract's fields. Throws on a malformed value that comes from code
+ * (profile, kind, dataClass, maxEscalation). Values that come from client data never throw: an unknown tier
+ * (for example the hub's 'custom' tier) means "no tier override" and adds a warning.
+ */
 export function normalizeCtx(ctx = {}) {
   const src = ctx && typeof ctx === 'object' ? ctx : {};
   const out = {};
+  const warnings = [];
   for (const key of ID_FIELDS) {
     if (src[key] !== undefined && src[key] !== null && src[key] !== '') out[key] = String(src[key]).trim().slice(0, 200);
   }
   if (src.tier !== undefined && src.tier !== null && src.tier !== '') {
     const tier = normalizeTier(src.tier);
-    if (!tier) throw new RouteConfigError(`ctx.tier "${src.tier}" is not one of ${TIERS.join(', ')}.`);
-    out.tier = tier;
+    if (tier) out.tier = tier;
+    else warnings.push(`ctx.tier "${String(src.tier).slice(0, 40)}" is not one of ${TIERS.join(', ')}; no tier routes, default budget base`);
   }
   if (src.profile) {
     const profile = normalizeProfile(src.profile);
@@ -119,7 +124,7 @@ export function normalizeCtx(ctx = {}) {
     out.projectSize = size;
   }
   const ignored = Object.keys(src).filter((key) => !CTX_FIELDS.includes(key));
-  return { ctx: out, ignored };
+  return { ctx: out, ignored, warnings };
 }
 
 function mergeMaps(base = {}, over = {}) {
@@ -294,8 +299,8 @@ function dedupe(chain) {
 export function resolveRoute(task, ctx = {}, options = {}) {
   const { tasks, routes, policy = {}, env = {}, legacyRoute = null, payload } = options;
   const spec = getTask(tasks, task);
-  const { ctx: c, ignored } = normalizeCtx(ctx);
-  const warnings = [];
+  const { ctx: c, ignored, warnings: ctxWarnings } = normalizeCtx(ctx);
+  const warnings = [...ctxWarnings];
   const profile = pickProfile(c, env, warnings);
   const view = profileView(routes, profile);
   const tier = c.tier || '';
@@ -350,11 +355,20 @@ export function resolveRoute(task, ctx = {}, options = {}) {
   }
 
   const dataClass = effectiveDataClass({ task: spec, ctx: c, payload });
-  const policyResult = applyPolicy(dedupe(chain), dataClass.effective, policy);
+  const original = dedupe(chain);
+  const policyResult = applyPolicy(original, dataClass.effective, policy, { synthetic: dataClass.synthetic, redacted: dataClass.redacted, task, family: family || null });
   // A policy redirect route must still be able to do the job (vision, tool loop).
-  const allowedChain = needs ? policyResult.chain.filter((entry) => PROVIDER_CAPABILITIES[entry.provider]?.[needs]) : policyResult.chain;
+  let allowedChain = needs ? policyResult.chain.filter((entry) => PROVIDER_CAPABILITIES[entry.provider]?.[needs]) : policyResult.chain;
   if (!allowedChain.length) {
     throw new PolicyBlockedError(`Task "${task}" needs ${needs}, but no provider allowed for ${dataClass.effective} data supports it.`, { task, dataClass: dataClass.effective });
+  }
+  if (policyResult.redirected) {
+    // A full redirect keeps the work's depth: task effort, else the replaced entry's, else the redirect's, else medium.
+    const replaced = original.find((entry) => entry.effort)?.effort || null;
+    allowedChain = allowedChain.map((entry) => ({ ...entry, effort: spec.effort || replaced || entry.effort || null }));
+    warnings.push(`data policy replaced the whole route (${dataClass.effective} data): ${policyResult.redirects[0]?.reason || ''}`);
+  } else if (policyResult.redirects.length) {
+    warnings.push(`data policy dropped ${policyResult.redirects.map((r) => r.from).join(', ')}`);
   }
   const specific = SPECIFIC_SOURCES.has(source);
   const finalChain = allowedChain.map((entry) => fillEffort(entry, spec, specific && !policyResult.redirects.length));
@@ -371,7 +385,7 @@ export function resolveRoute(task, ctx = {}, options = {}) {
     record: Boolean(view.record),
     replay: view0.provider === 'replay',
     escalation: Object.freeze({ requested: escalation.requested, applied: source === 'escalate' ? escalation.applied : 0, available: escalation.available, ceiling: escalation.ceiling, exhausted: escalation.exhausted }),
-    dataClass: Object.freeze({ declared: dataClass.declared, call: dataClass.call, effective: dataClass.effective, reasons: dataClass.reasons }),
+    dataClass: Object.freeze({ declared: dataClass.declared, call: dataClass.call, effective: dataClass.effective, synthetic: dataClass.synthetic, redacted: dataClass.redacted, reasons: Object.freeze([...dataClass.reasons]) }),
     primary: Object.freeze({ ...view0 }),
     fallbacks: Object.freeze(finalChain.slice(1).map((e) => Object.freeze({ ...e }))),
     chain: Object.freeze(finalChain.map((e) => Object.freeze({ ...e }))),

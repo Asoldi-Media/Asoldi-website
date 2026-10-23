@@ -32,13 +32,13 @@ export const ASOLDI_LLM_TASKS = {
     'step2.copy-judge': t('json', false, 'business', 4000, { family: 'judge', repo: M }),
     'step2.repair': t('json', false, 'business', 4000, { family: 'copy', repo: M }),
     'step2.claims-rewrite': t('json', false, 'business', 4000, { family: 'copy', repo: M, owner: 'WS3' }),
-    'step2.cta-classify': t('json', false, 'public', 2000, { family: 'classification', effort: 'low', repo: M, owner: 'WS3' }),
+    'step2.cta-classify': t('json', false, 'business', 2000, { family: 'classification', effort: 'low', repo: M, owner: 'WS3' }),
     'qa.label': t('json', false, 'business', 2000, { family: 'judge', repo: M, owner: 'WS3' }),
     // Maker: SEO and CMS
     'seo.meta': t('json', false, 'business', 4000, { family: 'copy', repo: M }),
     'seo.keywords.relevance': t('json', false, 'business', 4000, { family: 'keyword-judge', effort: 'low', repo: M }),
-    'cms.page-kinds': t('json', false, 'public', 2000, { family: 'classification', effort: 'low', repo: M }),
-    'cms.propose': t('json', false, 'public', 4000, { family: 'extraction', repo: M }),
+    'cms.page-kinds': t('json', false, 'business', 2000, { family: 'classification', effort: 'low', repo: M }),
+    'cms.propose': t('json', false, 'business', 4000, { family: 'extraction', repo: M }),
     'cms-spec.email': t('json', false, 'transcript', 4000, { family: 'extraction', repo: M, owner: 'WS7' }),
     // Maker: intake, media, import
     'quickfill.narrative': t('json', false, 'business', 4000, { family: 'copy', repo: M }),
@@ -87,28 +87,34 @@ export const ASOLDI_LLM_TASKS = {
 /**
  * Starting routes before the model evaluation (owner order: DeepSeek for tests, then Haiku 5.5, then other
  * Claude, then Gemini). Production routes by task family; WS4's evaluation adopts values into `tasks`.
+ * Q5: real client data runs on Claude (or replay). DeepSeek stays only as a fallback for families whose tasks
+ * are mostly public (template HTML, template classification); the data policy removes it for any client data.
+ * Gemini entries take effect once WS0.34 confirms the paid tier; until then the policy removes them.
  */
 export const ASOLDI_LLM_ROUTES = {
   version: 1,
   profiles: {
-    legacy: { default: '${legacy}', vision: '${legacy}', note: "Reproduces today's provider per call site; the facade supplies legacyRoute()." },
+    legacy: {
+      default: '${legacy}',
+      vision: '${legacy}',
+      note: "Today's provider per call site (the facade supplies legacyRoute()), filtered by the data policy like every profile.",
+    },
     prod: {
-      default: 'claude:claude-haiku-5-5:medium|deepseek:deepseek-flash',
+      default: 'claude:claude-haiku-5-5:medium',
       vision: 'claude:claude-haiku-5-5:medium|gemini:gemini-2.5-flash',
       kinds: {
         classification: 'claude:claude-haiku-5-5:low|deepseek:deepseek-flash',
         extraction: 'claude:claude-haiku-5-5:low|deepseek:deepseek-flash',
-        copy: 'claude:claude-haiku-5-5:medium|deepseek:deepseek-flash',
+        copy: 'claude:claude-haiku-5-5:medium',
         plan: 'claude:claude-haiku-5-5:medium',
         'visual-qa': 'claude:claude-haiku-5-5:medium|gemini:gemini-2.5-flash',
         media: 'claude:claude-haiku-5-5:low|gemini:gemini-2.5-flash-lite',
         brief: 'claude:claude-haiku-5-5:medium',
-        'keyword-judge': 'claude:claude-haiku-5-5:low|deepseek:deepseek-flash',
+        'keyword-judge': 'claude:claude-haiku-5-5:low',
         judge: 'claude:claude-haiku-5-5:medium',
         agent: 'claude:claude-haiku-5-5:medium',
       },
       tasks: {
-        'step2.copywriter': 'claude:claude-haiku-5-5:medium|openai:gpt-4.1',
         'eval.judge': 'claude:claude-opus-5-5:high',
       },
       escalate: {
@@ -130,13 +136,14 @@ export const ASOLDI_LLM_ROUTES = {
       default: 'deepseek:deepseek-flash',
       vision: 'gemini:gemini-2.5-flash-lite|claude:claude-haiku-5-5:low',
       kinds: { agent: 'claude:claude-haiku-5-5:low' },
-      note: 'DeepSeek for text on synthetic or redacted data; the policy moves personal and transcript calls to Claude Haiku (low).',
+      note: 'DeepSeek for text on public, synthetic or redacted data (Q5); the policy moves real client data to Claude Haiku at the task effort.',
     },
     replay: { default: 'replay:strict', vision: 'replay:strict' },
     record: { inherit: 'test', record: true },
   },
 };
 
+/** Owner decision Q5. The core hard-codes the DeepSeek rules; this file can only narrow them further. */
 export const ASOLDI_LLM_POLICY = {
   version: 1,
   providers: {
@@ -145,12 +152,17 @@ export const ASOLDI_LLM_POLICY = {
       allow: ['public', 'business', 'personal', 'transcript'],
       billingTier: 'unknown',
       paidTierConfirmedAt: null,
-      note: 'Client data goes to Gemini only after the paid tier is confirmed (WS0.34 sets billingTier and the date).',
+      allowUnpaidPublic: false,
+      note: 'Gemini only after the paid tier is confirmed (Q5; WS0.34 sets billingTier and the date).',
     },
-    deepseek: { allow: ['public', 'business'] },
-    openai: { allow: ['public', 'business'] },
+    deepseek: { allow: ['public', 'business'], note: 'Never personal or transcript data; client data only when synthetic or redacted (Q5).' },
+    openai: {
+      allow: ['public', 'business'],
+      tasks: ['eval.judge', 'siteintel.golden-judge-text', 'siteintel.golden-judge-vision'],
+      note: 'Q5: OpenAI only as the third evaluation judge.',
+    },
   },
-  redirect: 'claude:claude-haiku-5-5:low',
+  redirect: 'claude:claude-haiku-5-5',
 };
 
 /** Expected costs scale with project size; reaching them alerts, only 5x (runaway) or a loop stops. */
@@ -165,7 +177,7 @@ export const ASOLDI_LLM_BUDGETS = {
     step2: { baseUsd: { default: 0.6 }, referencePages: 6, extraLocaleFactor: 0.75, productsPerPage: 20 },
   },
   periodic: { clientMonthUsd: 10, makerDayUsd: 15, hubDayUsd: 5, evalTotalUsd: 200 },
-  loop: { maxRepeats: 3, maxIdentical: 6 },
+  loop: { maxRepeats: 3, maxIdentical: 6, windowMinutes: 15 },
 };
 
 /** Parsed config for one repo ('maker' or 'hub'). */

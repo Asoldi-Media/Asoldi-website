@@ -3,8 +3,10 @@
 //   - never temperature, top_p or top_k (400 on these models); params are built from a whitelist
 //   - thinking {type:'adaptive'}; depth set by output_config.effort
 //   - max_tokens >= 4096 (thinking counts toward it); a max_tokens stop retries once with the cap doubled
-//   - structured JSON through output_config.format (json_schema), never an assistant prefill
-//   - tools are strict, tool_choice is always auto (forced tool use returns 400 on Sonnet/Opus 5.5)
+//   - structured JSON through output_config.format (json_schema), never an assistant prefill; a schema with
+//     open maps (additionalProperties as a schema, untyped objects) skips the format and is validated client-side
+//   - tools are strict (unless their schema has open maps), tool_choice is always auto (forced tool use
+//     returns 400 on Sonnet/Opus 5.5)
 //   - images: JPEG, <= 1568 px long edge, <= 6 per call, placed before the text
 //   - Sonnet/Opus get the server-side refusal fallback (same vendor); Haiku has none; Batches reject it
 //   - stop_reason "refusal" is final: needs review, no other vendor is tried
@@ -27,9 +29,12 @@ export function claudeMaxTokens({ requested = 0, taskMaxTokens = 0, attempt = 1 
   return Math.min(CLAUDE_RULES.maxOutputTokens, base * factor);
 }
 
-/** True when a response stopped on max_tokens and the one doubled retry is still available. */
-export function shouldRetryMaxTokens(stopReason, attempt = 1) {
-  return stopReason === 'max_tokens' && attempt <= CLAUDE_RULES.maxTokensRetries;
+/**
+ * True when a response stopped on max_tokens and the one doubled retry is still available. Claude only:
+ * other vendors have lower output caps, so their max_tokens stop falls back instead.
+ */
+export function shouldRetryMaxTokens(stopReason, attempt = 1, provider = 'claude') {
+  return stopReason === 'max_tokens' && attempt <= CLAUDE_RULES.maxTokensRetries && CLAUDE_RULES.maxTokensRetryProviders.includes(provider);
 }
 
 const UNSUPPORTED_SCHEMA_KEYS = new Set([
@@ -51,9 +56,48 @@ const UNSUPPORTED_SCHEMA_KEYS = new Set([
 ]);
 const SUPPORTED_FORMATS = new Set(['date-time', 'time', 'date', 'duration', 'email', 'hostname', 'uri', 'ipv4', 'ipv6', 'uuid']);
 
+const VALUE_KEYS = new Set(['enum', 'const', 'default', 'examples']);
+
+function isObjectNode(node) {
+  return node.type === 'object' || (Array.isArray(node.type) && node.type.includes('object')) || Boolean(node.properties);
+}
+
+/**
+ * Paths of open objects in a schema: maps (additionalProperties is a schema), objects without declared
+ * properties that are not closed, and patternProperties. Structured outputs close every object, so Claude
+ * could only return {} there; such schemas skip output_config.format (see buildClaudeRequest).
+ * An object with declared properties and additionalProperties absent or true is closed without data loss.
+ */
+export function openObjectPaths(schema) {
+  const paths = [];
+  const walk = (node, path) => {
+    if (Array.isArray(node)) {
+      node.forEach((child, i) => walk(child, `${path}/${i}`));
+      return;
+    }
+    if (!node || typeof node !== 'object') return;
+    if (isObjectNode(node)) {
+      const extra = node.additionalProperties;
+      const declared = node.properties && typeof node.properties === 'object' && Object.keys(node.properties).length > 0;
+      if ((extra && typeof extra === 'object') || (!declared && extra !== false) || node.patternProperties) paths.push(path || '/');
+    }
+    for (const [key, value] of Object.entries(node)) {
+      if (VALUE_KEYS.has(key)) continue;
+      if (key === 'properties' || key === '$defs' || key === 'definitions' || key === 'patternProperties') {
+        for (const [name, child] of Object.entries(value || {})) walk(child, `${path}/${key}/${name}`);
+      } else if (value && typeof value === 'object') {
+        walk(value, `${path}/${key}`);
+      }
+    }
+  };
+  walk(unwrapSchema(schema), '');
+  return paths;
+}
+
 /**
  * A schema Claude's structured outputs accept: unsupported constraints removed, every object closed with
  * additionalProperties:false. The original schema is still enforced client-side by validateJson.
+ * Callers check openObjectPaths() first: an open map would be closed to {} here.
  */
 export function toClaudeSchema(schema) {
   const walk = (node) => {
@@ -105,13 +149,21 @@ function copyMessages(messages) {
   return out;
 }
 
-function toolDefinitions(tools = []) {
+function toolDefinitions(tools = [], warnings = []) {
   return tools.map((tool) => {
     if (!tool || typeof tool !== 'object') throw new InvalidRequestError('Each tool must be an object.');
     // Server and Anthropic-defined tools carry a `type`; they are passed through untouched.
     if (tool.type && tool.type !== 'custom') return { ...tool };
     if (!tool.name || !tool.input_schema) throw new InvalidRequestError('A custom tool needs name and input_schema.');
-    const out = { name: String(tool.name), input_schema: toClaudeSchema(tool.input_schema), strict: true };
+    const open = openObjectPaths(tool.input_schema);
+    let out;
+    if (open.length) {
+      // Strict mode would close the map; send the schema as written and validate the input client-side.
+      out = { name: String(tool.name), input_schema: JSON.parse(JSON.stringify(unwrapSchema(tool.input_schema))), strict: false };
+      warnings.push(`tool "${tool.name}" has open objects at ${open.join(', ')}; sent without strict mode`);
+    } else {
+      out = { name: String(tool.name), input_schema: toClaudeSchema(tool.input_schema), strict: true };
+    }
     if (tool.description) out.description = String(tool.description);
     return out;
   });
@@ -166,10 +218,19 @@ export function buildClaudeRequest(input = {}) {
   if (system.length) params.system = system;
 
   const schema = kind === 'json' ? unwrapSchema(input.schema) : null;
-  if (schema) params.output_config.format = { type: 'json_schema', schema: toClaudeSchema(schema) };
+  let jsonMode = kind === 'json' ? 'prompt' : null;
+  if (schema) {
+    const open = openObjectPaths(schema);
+    if (open.length) {
+      warnings.push(`schema has open objects at ${open.join(', ')}; output_config.format omitted, JSON is validated client-side only`);
+    } else {
+      params.output_config.format = { type: 'json_schema', schema: toClaudeSchema(schema) };
+      jsonMode = 'structured';
+    }
+  }
 
   if (Array.isArray(input.tools) && input.tools.length) {
-    params.tools = toolDefinitions(input.tools);
+    params.tools = toolDefinitions(input.tools, warnings);
     const requested = input.toolChoice || {};
     if (requested.type && requested.type !== 'auto' && requested.type !== 'none') {
       warnings.push(`tool_choice "${requested.type}" is not allowed on these models; using auto`);
@@ -194,6 +255,7 @@ export function buildClaudeRequest(input = {}) {
     maxTokens,
     effort,
     imageCount,
+    jsonMode,
     warnings,
   };
 }

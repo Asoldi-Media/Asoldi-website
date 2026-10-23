@@ -89,9 +89,16 @@ export function buildLedgerRow({
   inferenceGeo = '',
   error = null,
 } = {}) {
-  const model = str(servedModel || response?.model || requestedModel);
+  // A replay serves a recorded response: nothing is spent. The recorded model goes to `replayOf`.
+  const replay = provider === 'replay';
+  const recorded = str(servedModel || response?.model);
+  const model = replay ? str(requestedModel || 'replay') : str(servedModel || response?.model || requestedModel);
   const u = normalizeUsage(usage ?? response?.usage ?? {});
-  const priced = response ? priceResponse({ requestedModel, response, batch, inferenceGeo }) : priceUsage({ model, usage: u, batch, inferenceGeo });
+  const priced = replay
+    ? { usd: 0, priceVerified: true }
+    : response
+      ? priceResponse({ requestedModel, response, batch, inferenceGeo })
+      : priceUsage({ model, usage: u, batch, inferenceGeo });
   const row = {
     v: LEDGER_VERSION,
     kind: 'llm',
@@ -125,6 +132,7 @@ export function buildLedgerRow({
     budget: budget || null,
   };
   if (batch) row.batch = true;
+  if (replay && recorded) row.replayOf = recorded;
   if (error) row.error = { code: str(error.code || error.name || 'error'), message: str(error.message).slice(0, 300) };
   return row;
 }

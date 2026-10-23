@@ -43,8 +43,9 @@ test('every task resolves in every profile, and the data policy holds for all of
     for (const [task, spec] of Object.entries(cfg.tasks)) {
       const route = r.resolveRoute(task, { profile });
       assert.ok(route.chain.length > 0, `${profile} ${task}`);
-      if (['personal', 'transcript'].includes(route.dataClass.effective)) assert.ok(!route.chain.some((e) => e.provider === 'deepseek'), `${profile} ${task} reached DeepSeek`);
-      if (route.dataClass.effective !== 'public') assert.ok(!route.chain.some((e) => e.provider === 'gemini'), `${profile} ${task} reached unpaid Gemini`);
+      if (route.dataClass.effective !== 'public') assert.ok(!route.chain.some((e) => e.provider === 'deepseek'), `${profile} ${task} sent client data to DeepSeek`);
+      assert.ok(!route.chain.some((e) => e.provider === 'gemini'), `${profile} ${task} reached Gemini before the paid tier is confirmed`);
+      if (route.chain.some((e) => e.provider === 'openai')) assert.ok(ASOLDI_LLM_POLICY.providers.openai.tasks.includes(task), `${profile} ${task} reached OpenAI outside evaluation`);
       if (spec.vision) assert.ok(route.chain.every((e) => core.PROVIDER_CAPABILITIES[e.provider].vision), `${profile} ${task} vision`);
     }
   }
@@ -66,9 +67,13 @@ test('WS4 change requests are in: dev.copy and dev.locate exist, dev.plan is JSO
 test('production starting routes follow the owner order (Haiku 5.5 first) and the plan table', () => {
   const r = core.createRouter({ ...asoldiLlmConfig(), legacyRoute, now: NOW });
   const at = (task, ctx = {}) => r.resolveRoute(task, { profile: 'prod', ...ctx });
-  assert.equal(at('cms.page-kinds').route, 'claude:claude-haiku-5-5:low|deepseek:deepseek-flash');
+  assert.equal(at('template-import.classify').route, 'claude:claude-haiku-5-5:low|deepseek:deepseek-flash', 'public template data may fall back to DeepSeek');
+  assert.equal(at('cms.page-kinds').route, 'claude:claude-haiku-5-5:low', 'the client site is business data (Q5)');
   assert.equal(at('step2.copy-judge').primary.model, 'claude-haiku-5-5');
-  assert.equal(at('step2.copywriter').route, 'claude:claude-haiku-5-5:medium|openai:gpt-4.1');
+  assert.equal(at('step2.copywriter').route, 'claude:claude-haiku-5-5:medium', 'no OpenAI or DeepSeek fallback for client copy (Q5)');
+  assert.equal(at('products.import').route, 'claude:claude-haiku-5-5:low');
+  assert.equal(at('quickfill.narrative').route, 'claude:claude-haiku-5-5:medium');
+  assert.equal(at('step2.copywriter', { tier: 'custom' }).tier, null, 'the hub custom tier routes like no tier');
   assert.equal(at('dev.plan').route, 'claude:claude-haiku-5-5:medium');
   assert.equal(at('dev.plan', { escalation: 1 }).primary.model, 'claude-sonnet-5-5');
   assert.equal(at('dev.plan', { escalation: 2 }).primary.model, 'claude-opus-5-5');
@@ -79,12 +84,27 @@ test('production starting routes follow the owner order (Haiku 5.5 first) and th
   assert.equal(at('seo.keywords.relevance').primary.effort, 'low');
 });
 
-test('test profile: DeepSeek for text, Claude Haiku when the data is personal, synthetic data allowed', () => {
+test('test profile (Q5): DeepSeek for public, synthetic or redacted data; real client data on Claude Haiku', () => {
   const r = core.createRouter({ ...asoldiLlmConfig(), legacyRoute, now: NOW });
-  assert.equal(r.resolveRoute('step2.copywriter', { profile: 'test' }).primary.provider, 'deepseek');
-  assert.equal(r.resolveRoute('workshop.summary', { profile: 'test' }).route, 'claude:claude-haiku-5-5:low');
+  assert.equal(r.resolveRoute('step15.analyze', { profile: 'test' }).primary.provider, 'deepseek', 'template HTML is public');
+  assert.equal(r.resolveRoute('step2.copywriter', { profile: 'test' }).route, 'claude:claude-haiku-5-5:medium', 'real client copy stays on Claude');
+  assert.equal(r.resolveRoute('step2.copywriter', { profile: 'test', redacted: true }, { payload: { user: 'Bakery copy, contact [EMAIL]' } }).primary.provider, 'deepseek');
+  assert.equal(r.resolveRoute('step2.copywriter', { profile: 'test', redacted: true }, { payload: { user: 'Bakery copy, ring 92 34 56 78' } }).primary.provider, 'claude', 'a failed redaction stays on Claude');
+  assert.equal(r.resolveRoute('workshop.summary', { profile: 'test' }).route, 'claude:claude-haiku-5-5:medium');
   assert.equal(r.resolveRoute('workshop.summary', { profile: 'test', synthetic: true }).primary.provider, 'deepseek');
+  assert.equal(r.resolveRoute('workshop.summary', { profile: 'test', synthetic: true }, { payload: { user: 'Kari Nordmann kari@firma.no 22 33 44 55' } }).primary.provider, 'claude');
   assert.equal(r.resolveRoute('step2.copywriter', { profile: 'test' }, { payload: { owner: { firstName: 'Kari' } } }).primary.provider, 'claude');
+  assert.equal(r.resolveRoute('step15.judge', { profile: 'test' }).primary.provider, 'claude', 'no Gemini until WS0.34 confirms the paid tier');
+});
+
+test('reference policy follows Q5 and the loop window is configured', () => {
+  assert.deepEqual(ASOLDI_LLM_POLICY.providers.openai.tasks, ['eval.judge', 'siteintel.golden-judge-text', 'siteintel.golden-judge-vision']);
+  assert.equal(ASOLDI_LLM_POLICY.providers.gemini.allowUnpaidPublic, false);
+  assert.equal(ASOLDI_LLM_POLICY.redirect, 'claude:claude-haiku-5-5');
+  assert.equal(ASOLDI_LLM_BUDGETS.loop.windowMinutes, 15);
+  const paid = { ...ASOLDI_LLM_POLICY, providers: { ...ASOLDI_LLM_POLICY.providers, gemini: { ...ASOLDI_LLM_POLICY.providers.gemini, billingTier: 'paid', paidTierConfirmedAt: '2026-11-01' } } };
+  const r = core.createRouter({ ...asoldiLlmConfig(), policy: paid, legacyRoute, now: NOW });
+  assert.equal(r.resolveRoute('dev.judge', { profile: 'prod', escalation: 1 }).route, 'claude:claude-sonnet-5-5:medium|gemini:gemini-2.5-pro', 'Gemini fallbacks switch on once WS0.34 records the paid tier');
 });
 
 test('reference budgets: expected cost by tier and size, hard stop only for a runaway', () => {
