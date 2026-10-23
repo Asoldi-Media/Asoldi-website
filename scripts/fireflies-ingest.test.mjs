@@ -403,6 +403,52 @@ test('a catch-up scan or missing-recording lookups that fail for an hour alert t
   assert.equal(status.missingPlaceholders, 1);
 });
 
+test('an archive that reads empty while cards hold recordings is told to the owner once each time it happens', async () => {
+  ingest.resetFirefliesIngestForTests();
+  clearIngestState();
+  const env = { FIREFLIES_API_KEY: 'fake-key' };
+  const sent = [];
+  const sendEmail = async (message) => { sent.push(message); };
+  // The server's backfill step reports what it found (server.js ensureFirefliesMeetLinkBackfill).
+  const tick = (nowMs, archiveEmpty) => ingest.runFirefliesIngestTick([
+    ['list', async () => ({ listed: 1 })],
+    ['backfill', async () => ({ scanned: 0, linked: 0, detached: 0, health: { archiveEmpty } })],
+  ], { nowMs, log: quiet });
+  let now = T0;
+  await tick(now, true);
+  const first = await ingest.maybeAlertFirefliesIngest({ sendEmail, nowMs: now, env, log: quiet });
+  assert.equal(first.reason, 'archive-empty');
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].subject, 'Fireflies: arkivet er tomt');
+  assert.match(sent[0].text, /flytter og fjerner derfor ingen opptak på kundekortene før arkivet har møter igjen/);
+  assert.match(sent[0].text, /én gang hver gang arkivet blir tomt/);
+  // Every tick after that (also 13 hours later, and after a restart): no second e-mail for the same state.
+  for (const minutes of [1, 2, 3, 13 * 60]) {
+    await tick(T0 + minutes * MIN, true);
+    assert.equal(await ingest.maybeAlertFirefliesIngest({ sendEmail, nowMs: T0 + minutes * MIN, env, log: quiet }), null);
+  }
+  ingest.resetFirefliesIngestForTests();
+  now = T0 + 14 * 60 * MIN;
+  await tick(now, true);
+  assert.equal(await ingest.maybeAlertFirefliesIngest({ sendEmail, nowMs: now, env, log: quiet }), null, 'the stamp is on disk');
+  assert.equal(sent.length, 1);
+  // The archive holds meetings again; the next time it reads empty is a new state, told again.
+  await tick(now + MIN, false);
+  assert.equal(ingest.firefliesIngestStatus({ nowMs: now + MIN, env }).archiveEmptyAlertAt, '');
+  assert.equal(await ingest.maybeAlertFirefliesIngest({ sendEmail, nowMs: now + MIN, env, log: quiet }), null);
+  await tick(now + 2 * MIN, true);
+  assert.equal((await ingest.maybeAlertFirefliesIngest({ sendEmail, nowMs: now + 2 * MIN, env, log: quiet })).reason, 'archive-empty');
+  assert.equal(sent.length, 2);
+  // It never takes the 12-hour stamp of the other ingest alerts.
+  assert.equal(ingest.firefliesIngestStatus({ nowMs: now + 2 * MIN, env }).lastHealthAlertAt, '');
+
+  // server.js reports it from the backfill step.
+  const server = readFileSync(fileURLToPath(new URL('../server.js', import.meta.url)), 'utf8');
+  const backfill = server.slice(server.indexOf('function ensureFirefliesMeetLinkBackfill('), server.indexOf('function clientAfterFirefliesBackfill('));
+  assert.match(backfill, /health: \{ archiveEmpty: sanitizeText\(plan\.skipped\) === 'empty-store' \},/);
+  assert.match(server, /\['backfill', \(\) => ensureFirefliesMeetLinkBackfill\(\{ force: true \}\)\],/);
+});
+
 test('an unreadable e-mail list with no backup alerts the owner like an unreadable archive', async () => {
   ingest.resetFirefliesIngestForTests();
   clearIngestState();

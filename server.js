@@ -16093,6 +16093,8 @@ function ensureFirefliesMeetLinkBackfill({ force = false } = {}) {
     linked: plan.linked,
     detached: plan.detached,
     ...(plan.skipped ? { skipped: plan.skipped } : {}),
+    // The ingest tick's health: an empty archive while cards hold recordings tells the owner once.
+    health: { archiveEmpty: sanitizeText(plan.skipped) === 'empty-store' },
   };
   if (plan.linked || plan.detached || plan.patched || plan.dropped || plan.slotsMoved || plan.locksMoved) {
     console.log(`[fireflies] meet-link backfill scanned=${plan.scanned} linked=${plan.linked} detached=${plan.detached} retagged=${plan.patched || 0} placeholders-covered=${plan.dropped || 0} slots-to-primary=${plan.slotsMoved || 0} offer-locks=${plan.locksMoved || 0}`);
