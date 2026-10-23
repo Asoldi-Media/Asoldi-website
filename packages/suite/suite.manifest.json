@@ -1,6 +1,6 @@
 {
   "source": "asoldi-website/packages/suite",
-  "syncedAt": "2026-10-23T10:24:24.666Z",
+  "syncedAt": "2026-10-23T17:56:24.118Z",
   "files": {
     "core/delivery/vocab.js": "37a9801405006276f201d10205da236b456954e5bc0dc6913740815e76c98df1",
     "core/documents/kind.js": "2d619597ae6c457698c539b3b7ecd6923709e868922e5afd9a1eceb4b98ae109",
@@ -39,7 +39,7 @@
     "core/media/prompt.js": "3740b20ea357cebaf3b3ab9b86638b0b5857d8e7fc43c6a639690181d4270acb",
     "harness/asoldi/facts.js": "fd1b16312ddd0ebe3b13bbb4789ca861331b8c166e5e672501192da05afc8b8e",
     "harness/asoldi/inbox.js": "5b96380c7f9c96459a2ef522668e7be37ba836e3def3422bac84c3d27276a157",
-    "harness/asoldi/llm.js": "fc49cc805b7b4a713df19240c0899d2c016b308960495d7443be7372a6986631",
+    "harness/asoldi/llm.js": "d9bbad54f41a8d47f51e3bd69534511fa641a4182938df104a9e351d21a4bacc",
     "harness/asoldi/media.js": "0bc842f2f529dcb7ad0b74ea41b75212687fda74fb234ebd31ecef81ed4df45e",
     "manifest.js": "0399aad6d846d886f9f6c8bb8adb9d53a85b042ef7e9963fd9dbff13b1c165ec",
     "package.json": "5980ad0b5ad23fa532ba6b180b4b28da9fb1f22ef6bb56b48b20a8471983526a"
