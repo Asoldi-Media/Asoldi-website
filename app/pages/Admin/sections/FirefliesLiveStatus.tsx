@@ -5,8 +5,8 @@ import type { SalesClient, SalesLiveRecording } from '../shared';
 import {
   RECORDING_TONE_CLASS,
   isNoRecordingState,
-  isPlaceholderRow,
   liveJoinAnswerText,
+  livePlaceholderRow,
   liveRecordingBookedMinutes,
   liveRecordingView,
   liveRecordingsByUrgency,
@@ -67,16 +67,12 @@ export function FirefliesLiveStatus({ client, onClient, nowMs }: {
     }
   }
 
-  function placeholderFor(entry: SalesLiveRecording) {
-    return (Array.isArray(client.meetings) ? client.meetings : [])
-      .find((row) => isPlaceholderRow(row) && row.slotKey === entry.slotKey) || null;
-  }
-
   function actions(entry: SalesLiveRecording, ready: boolean) {
     // Once a transcript with talk is in there is nothing to send or mark.
     if (ready) return null;
     const busy = busySlot === entry.slotKey;
-    const row = placeholderFor(entry);
+    // This booking's own row only: with none yet, the slot key lets the server find the booking.
+    const row = livePlaceholderRow(client, entry);
     const settled = isNoRecordingState(entry.state) || entry.state === 'declined';
     return (
       <div className="flex flex-wrap items-center gap-1.5">

@@ -1054,6 +1054,58 @@ test('a moved Møte is marked on its current booking, never on the row of the ti
   assert.equal(watchdog.recordingDecision({ client: gone, slotKey: 'action:act-1', state: 'declined', nowMs: at(120) }).meetingId, oldRow.meetingId);
 });
 
+test('"uten opptak" on the live card of a moved Møte stops the bot for that booking and leaves the earlier one missing', async () => {
+  resetAll();
+  const ui = await import(new URL('../app/pages/Admin/sections/firefliesRecording.ts', import.meta.url).href);
+  const { buildClientActivityLog } = await import('../lib/sales-activity-log.js');
+  // Two days ago nobody came to the rep's Møte (its placeholder is 'missing'); it is now booked at T.
+  const earlier = T - 2 * 24 * 60 * MIN;
+  const action = {
+    id: 'act-9',
+    presetKey: 'custom',
+    goalKey: 'meetingHeld',
+    name: 'Oppfølgingsmøte',
+    format: 'mote',
+    addToCalendar: true,
+    calendarEventId: 'evt-9',
+    dueAt: iso(0),
+    meetLink: ROOM_B,
+  };
+  const oldRow = placeholder('client-1:act-9', earlier, {
+    state: 'missing',
+    missingAt: new Date(earlier + 3 * 60 * MIN).toISOString(),
+    message: 'Ingen Fireflies-opptak etter møtet.',
+  }, { slotKey: 'action:act-9', meetLink: ROOM_B, forSalesMeeting: false });
+  const client = salesClient({ agreedTime: false, nextActions: [action], meetings: [oldRow] });
+  const state = { clients: [client], active: [], sent: [], reply: null };
+  await tickAt(state, -20);
+
+  // The client log does not put the earlier meeting's "ingen opptak" on the Møte that is still ahead.
+  const logRows = (log) => log.sections.flatMap((section) => section.rows);
+  const before = logRows(buildClientActivityLog(client));
+  assert.equal(before.find((row) => row.actionId === 'act-9').meeting, null);
+  assert.equal(before.find((row) => row.kind === 'meeting')?.meeting.meetingId, oldRow.meetingId);
+
+  // The card's entry is the booking at T; it has no row yet, so the card sends the slot key, not the old row's id.
+  const entry = live.presentLiveRecordings(client, { nowMs: at(-20) }).find((item) => item.slotKey === 'action:act-9');
+  assert.equal(entry.startAt, iso(0));
+  assert.equal(ui.livePlaceholderRow(client, entry), null);
+  const decision = watchdog.recordingDecision({ client, slotKey: entry.slotKey, state: 'declined', by: 'Kari Test', nowMs: at(-20) });
+  // What the route does with it.
+  rowWriter(state.clients)(decision.create);
+  live.setLiveSessionDeclined(decision.sessionKey, true, { nowMs: at(-20) });
+  const newRow = client.meetings.find((row) => row.meetingId === `live:client-1:act-9:${T}`);
+  assert.equal(newRow.recording.state, 'declined');
+  assert.equal(ui.livePlaceholderRow(client, entry), newRow, 'once written, the booking\'s own row is the one marked');
+
+  for (const minutes of [-3, 1, 5, 15]) await tickAt(state, minutes);
+  assert.equal(state.sent.length, 0, 'Fireflies is never sent into the meeting the client said no to');
+  assert.equal(oldRow.recording.state, 'missing', 'the earlier meeting is still reported');
+  const after = logRows(buildClientActivityLog(client));
+  assert.equal(after.find((row) => row.actionId === 'act-9').meeting.meetingId, newRow.meetingId);
+  assert.equal(after.find((row) => row.kind === 'meeting')?.meeting.recordingState, 'missing');
+});
+
 test('a slot whose recording with talk is linked is not marked "uten opptak"', () => {
   resetAll();
   const client = salesClient({ meetings: [{ meetingId: 'FFTALK09', meetLink: ROOM, startedAt: iso(2), hasTranscript: true }] });

@@ -178,6 +178,19 @@ function startMs(iso = '') {
   return Number.isFinite(ms) ? ms : NaN;
 }
 
+/**
+ * The placeholder row of a live entry's own booking: its slot and its start. A moved Møte keeps its slot key,
+ * and the row of the time it was moved from belongs to that earlier meeting. null when the booking has no row
+ * yet: the server then finds (or writes) it by the slot key.
+ */
+export function livePlaceholderRow(client: Pick<SalesClient, 'meetings'> | null | undefined, entry: Pick<SalesLiveRecording, 'slotKey' | 'startAt'>) {
+  const start = startMs(entry?.startAt || '');
+  if (!Number.isFinite(start)) return null;
+  return (Array.isArray(client?.meetings) ? client.meetings : []).find((row) => (
+    isPlaceholderRow(row) && row.slotKey === entry.slotKey && startMs(row.startedAt || '') === start
+  )) || null;
+}
+
 /** When the bot goes in for a scheduled entry: the planned send, else 3 minutes before start. */
 export function liveRecordingSendAt(entry: SalesLiveRecording) {
   if (entry.nextAttemptAt) return entry.nextAttemptAt;
