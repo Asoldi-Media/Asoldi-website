@@ -92,6 +92,9 @@ test('server.js with a live-looking .env and no HUB_SAFE_MODE boots in safe mode
   const hub = await bootHub({ ...LIVE_LIKE, ADMIN_SECRET: '' });
   try {
     assert.ok(hub.health, `hub answered /api/health\n${hub.log().slice(-2000)}`);
+    // The child never runs in the repo folder: in the main checkout <repo>/.env is the live .env.
+    assert.notEqual(hub.cwd, REPO, 'the boot helper starts the hub from its own empty folder');
+    assert.equal(existsSync(join(hub.cwd, '.env')), false, 'no .env in the child working folder');
     assert.equal(hub.health.safeMode, true);
     assert.match(hub.log(), /\[safe-mode\] ON \(not Hostinger\)/);
     assert.match(hub.log(), /\[mail\] transport=outbox/);

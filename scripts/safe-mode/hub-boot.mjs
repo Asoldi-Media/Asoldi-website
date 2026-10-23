@@ -55,7 +55,10 @@ export async function bootHub(extraEnv = {}, { seed = null } = {}) {
     EGRESS_AUDIT_ALLOW: ALLOWLIST,
     EGRESS_AUDIT_ENFORCE: '1',
   };
-  const child = spawn(process.execPath, ['server.js'], { cwd: REPO, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  // Empty working folder (docs/security.md, tests that boot the hub): dotenv reads <cwd>/.env, and
+  // in the main checkout that is the live .env. npm test (and the pre-push hook) runs these boots there.
+  const runDir = mkdtempSync(join(tmpdir(), 'asoldi-hub-cwd-'));
+  const child = spawn(process.execPath, [join(REPO, 'server.js')], { cwd: runDir, env, stdio: ['ignore', 'pipe', 'pipe'] });
   let log = '';
   child.stdout.on('data', (chunk) => { log += chunk; });
   child.stderr.on('data', (chunk) => { log += chunk; });
@@ -73,6 +76,7 @@ export async function bootHub(extraEnv = {}, { seed = null } = {}) {
     base,
     port,
     dataDir,
+    cwd: runDir,
     health,
     log: () => log,
     egressRows() {
@@ -100,6 +104,7 @@ export async function bootHub(extraEnv = {}, { seed = null } = {}) {
       if (child.exitCode === null) child.kill('SIGKILL');
       await new Promise((r) => setTimeout(r, 300));
       rmSync(dataDir, { recursive: true, force: true });
+      rmSync(runDir, { recursive: true, force: true });
     },
   };
 }
