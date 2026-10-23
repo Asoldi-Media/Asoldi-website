@@ -2,6 +2,7 @@ import React from 'react';
 import { Edit2, Globe, Key, Plus, Trash2, UserRound } from 'lucide-react';
 import type { Site } from '../shared';
 import { WEBSITE_PLAN_OPTIONS, authHeaders } from '../shared';
+import { OwnerRoutingField } from './OwnerRoutingField';
 import {
   CmsFleetToolbar,
   cmsFleetJobBusy,
@@ -123,6 +124,7 @@ export function ClientSitesSection({
                   variant="card"
                   authHeaders={authHeaders()}
                 />
+                <OwnerRoutingField siteId={site.id} authHeaders={authHeaders()} />
               </div>
               <p className="text-gray-500 text-xs mt-1 flex items-center gap-1">
                 <Key size={12} /> <code className="bg-black/30 px-1 rounded">{site.site_key}</code>

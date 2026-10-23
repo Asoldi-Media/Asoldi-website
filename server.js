@@ -123,6 +123,8 @@ import {
   passwordResetPathForRole,
 } from './lib/password-reset.js';
 import * as clientForms from './lib/client-forms.js';
+import { registerOwnerRoutingRoutes, resolveFormRouting } from './lib/owner-recipients.js';
+import { asoldiMarketingSendBlock, isAsoldiServiceTemplate, registerAsoldiUnsubscribeRoutes, withAsoldiMarketingUnsubscribe } from './lib/asoldi-unsubscribe.js';
 import * as employeeWordPress from './lib/employee-wordpress.js';
 import * as employeeLuca from './lib/employee-luca.js';
 import * as employeeMyPhoner from './lib/employee-myphoner.js';
@@ -134,7 +136,6 @@ import {
   getSalesEmailPreviewClient,
   getSalesWorkshopPreviewClient,
   normalizeSalesReminderKind,
-  renderSalesUnsubscribePage,
   htmlToPlainText,
   salesEmailMergeMap,
   buildSalesCalendarInvite,
@@ -15761,6 +15762,13 @@ app.post('/api/admin/sales/:id/send-composed-email', salesAuth, async (req, res)
       return res.status(400).json({ message: salesEmailFailureMessage('smtp-not-configured') });
     }
     const templateKey = sanitizeText(req.body?.templateKey || req.body?.markAs) || 'thank-you';
+    const service = isAsoldiServiceTemplate(templateKey, getEmailTemplateById(templateKey));
+    const unsubscribed = asoldiMarketingSendBlock({
+      to: sanitizeText(req.body?.to) || client.contactEmail,
+      clientId: client.id,
+      service,
+    });
+    if (unsubscribed) return res.status(409).json(unsubscribed);
     const isOnline = normalizeMeetingMode(client?.meetingMode) === 'online';
     const isWorkshop = isWorkshopEmailTemplate(templateKey);
     const isThankYou = isThankYouEmailTemplate(templateKey);
@@ -15782,7 +15790,7 @@ app.post('/api/admin/sales/:id/send-composed-email', salesAuth, async (req, res)
       thankYouSendActor(client, req.salesUser).salesUser || req.salesUser
     );
     const needLines = await loadDeskNeedLines(client, templateKey);
-    const composed = composeEmailForClient(client, templateKey, {
+    const composed = withAsoldiMarketingUnsubscribe(composeEmailForClient(client, templateKey, {
       html: req.body?.html,
       subject: req.body?.subject,
       preheader: req.body?.preheader,
@@ -15790,7 +15798,7 @@ app.post('/api/admin/sales/:id/send-composed-email', salesAuth, async (req, res)
       sender,
       attachInvite: isThankYou,
       needLines,
-    }).message;
+    }).message, { clientId: client.id, service });
     const subject = composed.subject;
     await emailLib.sendEmail({
       to,
@@ -15800,6 +15808,7 @@ app.post('/api/admin/sales/:id/send-composed-email', salesAuth, async (req, res)
       subject,
       text: composed.text || htmlToPlainText(composed.html),
       html: composed.html,
+      headers: composed.headers,
       attachments: composed.attachments,
       icalEvent: composed.icalEvent,
     });
@@ -20270,6 +20279,8 @@ app.delete('/api/admin/sales/offers/:id', salesAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+registerOwnerRoutingRoutes(app, { adminAuth, getSiteById: hub.getSiteById, getSalesClients: sales.getSalesClients });
+
 app.options('/api/client-forms/:siteKey', (req, res) => {
   clientForms.setClientFormCors(req, res);
   return res.status(204).end();
@@ -20301,16 +20312,9 @@ app.post(
       return res.status(400).json({ ok: false, message: 'The form was empty.' });
     }
     const pageUrl = sanitizeText(req.get('referer'));
-    const email = clientForms.buildFormEmail({ site, fields, pageUrl });
-    const replyTo = clientForms.replyToFromFields(fields);
+    const routing = resolveFormRouting(site, { getSalesClients: sales.getSalesClients });
     try {
-      await emailLib.sendEmail({
-        to: clientForms.resolveFormRecipient(site),
-        subject: email.subject,
-        text: email.text,
-        html: email.html,
-        replyTo: replyTo || undefined,
-      });
+      await emailLib.sendEmail(clientForms.buildClientFormMail({ site, fields, pageUrl, routing }));
     } catch (error) {
       console.error('Client form email error:', error);
       return res.status(500).json({ ok: false, message: 'Could not send the message.' });
@@ -20624,10 +20628,7 @@ function publicRequestOrigin(req) {
   return 'https://asoldi.com';
 }
 
-app.get('/email/avmeld', (req, res) => {
-  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
-  res.type('html').send(renderSalesUnsubscribePage({ clientId: req.query?.c }));
-});
+registerAsoldiUnsubscribeRoutes(app, { getSalesClientById: sales.getSalesClientById });
 
 app.get('/email/preview/sales-thank-you', (req, res) => {
   const origin = publicRequestOrigin(req);
