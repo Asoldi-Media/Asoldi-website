@@ -187,6 +187,17 @@ test('the plan fetches the longest-waiting ids, including card ids never stored,
   assert.deepEqual(plan.relink, [{ clientId: 'c1', meetingId: 'final-b' }]);
 });
 
+test('a card is stale only when it shows less than the stored copy, compared the way the card keeps it', () => {
+  const stored = { transcript: 'Kari Test: hei', summary: `${'a'.repeat(1999)} ${'b'.repeat(50)}`, actionItems: ['Send tilbud'] };
+  // The card keeps the summary cut at 2000 characters and trimmed.
+  const card = { hasTranscript: true, summary: 'a'.repeat(1999), actionItems: ['Send tilbud'] };
+  assert.equal(ingest.clientMeetingRefIsStale(card, stored), false);
+  assert.equal(ingest.clientMeetingRefIsStale({ ...card, hasTranscript: false }, stored), true);
+  assert.equal(ingest.clientMeetingRefIsStale({ ...card, summary: '' }, stored), true, 'the summary came later');
+  assert.equal(ingest.clientMeetingRefIsStale({ ...card, actionItems: [] }, stored), true);
+  assert.equal(ingest.clientMeetingRefIsStale({ hasTranscript: false }, { summaryStatus: 'skipped' }), false, 'nothing to show');
+});
+
 test('try-later errors never count against a meeting; other failures back off', async () => {
   const limited = await ingest.hydrateFirefliesTranscript('FFLATER1', {
     apiKey: 'fake-key',

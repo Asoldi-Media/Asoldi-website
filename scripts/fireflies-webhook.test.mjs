@@ -474,6 +474,11 @@ test('a transcript stored while Fireflies is processing is fetched again until p
   assert.equal(processing.summary, '');
   assert.equal(ff.firefliesFetchDue(processing, { nowMs: T }), false, 'paused right after the fetch');
   assert.equal(ff.firefliesFetchDue(processing, { nowMs: T + 2 * MIN }), true, 'due after the first pause');
+  // Listed with the status the stored text already has: nothing to queue.
+  const [same] = ff.upsertListedFirefliesMeetings([ff.buildFirefliesListRecord({
+    id, title: 'Testfirma AS · Kari Test', meeting_info: { summary_status: 'processing' },
+  })], { nowMs: T + 10 * 1000 });
+  assert.equal(same.queued, false);
   // The next list shows it processed: one full fetch is queued at once.
   const [listed] = ff.upsertListedFirefliesMeetings([ff.buildFirefliesListRecord({
     id, title: 'Testfirma AS · Kari Test', meeting_info: { summary_status: 'processed' },
