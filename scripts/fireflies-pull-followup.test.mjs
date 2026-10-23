@@ -26,6 +26,8 @@ function transcriptFor(id, { startedAt = Date.now() - HOUR, talk = true, video =
     meeting_link: `https://meet.google.com/${id.toLowerCase()}`,
     video_url: video ? `https://cdn.example.com/${id}.mp4?sig=fake` : '',
     audio_url: video ? `https://cdn.example.com/${id}.mp3?sig=fake` : '',
+    is_live: false,
+    meeting_info: { summary_status: talk ? 'processed' : 'skipped' },
     organizer_email: 'host@example.com',
     sentences: talk ? [{ speaker_name: 'Host', text: 'Hei og velkommen.' }] : [],
     summary: talk ? { overview: 'Kort møte.' } : {},

@@ -237,6 +237,7 @@ import { clientIntentSourceHash, fillOfferFromTranscript, meetingContextIsTooThi
 import { clientOwnedMeetLinks, emptyFirefliesLiveJoinStamp, firefliesJoinedCurrentMeet, firefliesMeetLinksDiffer, firefliesNeedsFreshMeetOnReschedule, matchMeetingToClients, normalizeFirefliesMeetLink, planFirefliesMeetLinkBackfill, recordingMatchesSalesMeeting, shouldDropLiveJoinStub } from './lib/fireflies-client-match.js';
 import { describeFirefliesMedia, firefliesMediaFilePath, persistFirefliesMedia } from './lib/fireflies-media.js';
 import { runFirefliesPullFollowUp } from './lib/fireflies-pull-followup.js';
+import { buildFirefliesListRecord, upsertListedFirefliesMeetings } from './lib/fireflies-webhook.js';
 import { CUSTOM_TIER_ID, WEBSITE_TIERS, formatKr, resolveTier, tierById, toClientWebsitePlan } from './lib/website-tiers.js';
 import { buildSalesSender, normalizeAsoldiFromEmail } from './lib/sales-sender.js';
 import {
@@ -16142,11 +16143,8 @@ async function ingestRecentFirefliesMeetLinks() {
   if (!config.apiKey) return;
   try {
     const rows = await fetchRecentFirefliesTranscripts({ apiKey: config.apiKey, limit: 30 });
-    for (const row of rows) {
-      const meetingId = sanitizeText(row?.id);
-      if (!meetingId) continue;
-      storeFirefliesMeeting(buildFirefliesMeetingRecord({ meeting_id: meetingId }, row));
-    }
+    // List rows carry metadata only: one write for the page, a full fetch queued on a status change.
+    upsertListedFirefliesMeetings(rows.map(buildFirefliesListRecord));
   } catch (error) {
     console.warn(`[fireflies] recent-transcripts ${sanitizeText(error?.message) || error}`);
   }

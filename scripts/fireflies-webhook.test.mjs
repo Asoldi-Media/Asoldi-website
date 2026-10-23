@@ -41,6 +41,8 @@ const TRANSCRIPT = {
   title: 'Asoldi møte med Testbedrift',
   dateString: '2026-03-01T16:01:12Z',
   duration: 42,
+  is_live: false,
+  meeting_info: { summary_status: 'processed', silent_meeting: false },
   transcript_url: 'https://app.fireflies.ai/view/ASxwZxCstx',
   video_url: 'https://cdn.fireflies.ai/video/ASxwZxCstx.mp4',
   organizer_email: 'alexander@asoldi.com',
@@ -306,33 +308,27 @@ test('live stubs drop when the real recording is on any owned Meet', () => {
   }), false);
 });
 
-test('recent Fireflies rows without a Meet link still need a full fetch', () => {
+// Was: a row with a transcript and a Meet link was never fetched again, so a summary that
+// Fireflies finished after the first fetch never arrived. Now only finality decides.
+test('only transcripts Fireflies has not finished are fetched again, longest-waiting first', () => {
   const now = Date.parse('2026-10-09T12:30:00.000Z');
+  const link = 'https://meet.google.com/abc-defg-hij';
   const rows = storedMeetingsNeedingHydration([
-    {
-      meetingId: 'ff-new',
-      title: 'Kaperdal',
-      startedAt: '2026-10-09T12:05:00.000Z',
-      meetingLink: '',
-      transcript: '',
-    },
-    {
-      meetingId: 'live:skip',
-      startedAt: '2026-10-09T12:05:00.000Z',
-    },
-    {
-      meetingId: 'ff-old',
-      startedAt: '2026-10-01T12:05:00.000Z',
-      meetingLink: '',
-    },
-    {
-      meetingId: 'ff-ready',
-      startedAt: '2026-10-09T11:00:00.000Z',
-      meetingLink: 'https://meet.google.com/nxn-gmfc-roz',
-      transcript: 'Kunde: hei',
-    },
+    { meetingId: 'ff-new', title: 'Testfirma AS', startedAt: '2026-10-09T12:05:00.000Z', firstSeenAt: '2026-10-09T12:25:00.000Z', transcript: '' },
+    { meetingId: 'live:skip', startedAt: '2026-10-09T12:05:00.000Z' },
+    // Talk stored while Fireflies was still writing the summary.
+    { meetingId: 'ff-processing', startedAt: '2026-10-09T11:00:00.000Z', firstSeenAt: '2026-10-09T12:00:00.000Z', meetingLink: link, transcript: 'Kari Test: hei', summaryStatus: 'processing' },
+    { meetingId: 'ff-processed', startedAt: '2026-10-09T11:00:00.000Z', meetingLink: link, transcript: 'Kari Test: hei', summary: 'Kort.', summaryStatus: 'processed' },
+    // Silent: Fireflies finished and there is nothing to fetch, ever.
+    { meetingId: 'ff-empty-final', startedAt: '2026-10-09T11:00:00.000Z', meetingLink: link, transcript: '', summaryStatus: 'skipped', silent: true },
+    { meetingId: 'ff-waiting', startedAt: '2026-10-09T11:00:00.000Z', summaryStatus: 'processing', fetch: { attempts: 2, nextFetchAt: '2026-10-09T12:40:00.000Z' } },
+    { meetingId: 'ff-gave-up', startedAt: '2026-10-01T11:00:00.000Z', summaryStatus: 'processing', fetch: { attempts: 20, gaveUpAt: '2026-10-08T11:00:00.000Z' } },
+    // The list showed a new summary_status: one full fetch even past give-up.
+    { meetingId: 'ff-queued', startedAt: '2026-10-01T11:00:00.000Z', summaryStatus: 'processing', fetch: { gaveUpAt: '2026-10-08T11:00:00.000Z', queuedAt: '2026-10-09T12:29:00.000Z' } },
+    // No status at all (stored before it was): talk that has sat for 30 minutes is final.
+    { meetingId: 'ff-legacy', startedAt: '2026-10-09T11:00:00.000Z', meetingLink: link, transcript: 'Kunde: hei' },
   ], { nowMs: now });
-  assert.deepEqual(rows.map((row) => row.meetingId), ['ff-new']);
+  assert.deepEqual(rows.map((row) => row.meetingId), ['ff-processing', 'ff-new', 'ff-queued']);
 });
 
 test('live-join retries wait 6 minutes after an attempt', () => {
@@ -378,4 +374,258 @@ test('storing a metadata-only Fireflies row does not wipe an existing transcript
   const stored = readStoredFirefliesMeeting('ff-keep');
   assert.equal(stored.transcript, 'Kunde: Vi trenger nettside.');
   assert.equal(stored.title, 'Senere metadata');
+});
+// --- Intake: final copies, re-fetch with backoff, one write per tick, notify retries --------------
+
+const ff = await import('../lib/fireflies-webhook.js');
+const ffStore = await import('../lib/fireflies-store.js');
+const MIN = 60 * 1000;
+const T = Date.parse('2026-10-23T12:00:00.000Z');
+const MEET = 'https://meet.google.com/abc-defg-hij';
+const CONFIG = { token: 'team-token', secrets: [], apiKey: 'ff-key', notifyEmail: 'ansatte@asoldi.com' };
+
+/** A transcript(id) answer for an invented meeting. */
+function answer(overrides = {}) {
+  return {
+    id: 'FF-TEST',
+    title: 'Testfirma AS · Kari Test',
+    dateString: '2026-10-23T11:00:00.000Z',
+    duration: 48.8,
+    meeting_link: MEET,
+    is_live: false,
+    meeting_info: { summary_status: 'processed', silent_meeting: false },
+    organizer_email: 'damian@asoldi.com',
+    user: { name: 'Damian', email: 'damian@asoldi.com' },
+    meeting_attendees: [{ name: 'Kari Test', email: 'kari@firma.no' }],
+    sentences: [{ speaker_name: 'Kari Test', text: 'Vi trenger en ny nettside.' }],
+    summary: { overview: 'Kunden vil ha ny nettside.', action_items: '- Send tilbud' },
+    ...overrides,
+  };
+}
+
+test('transcript(id) asks for is_live and meeting_info, and the record carries the processing state', async () => {
+  let body;
+  await ff.fetchFirefliesTranscript('FF-Q', {
+    apiKey: 'ff-key',
+    fetchImpl: async (url, init) => {
+      body = JSON.parse(init.body);
+      return { ok: true, json: async () => ({ data: { transcript: answer() } }) };
+    },
+  });
+  assert.match(body.query, /is_live/);
+  assert.match(body.query, /meeting_info\s*\{\s*summary_status\s+silent_meeting\s*\}/);
+  const done = ff.buildFirefliesMeetingRecord({}, answer());
+  assert.deepEqual([done.isLive, done.summaryStatus, done.silent, done.sentenceCount, done.final], [false, 'processed', false, 1, true]);
+  const live = ff.buildFirefliesMeetingRecord({}, answer({ is_live: true, meeting_info: { summary_status: null }, summary: {} }));
+  assert.equal(live.isLive, true);
+  assert.equal(live.final, false);
+  const bare = ff.buildFirefliesMeetingRecord({ meeting_id: 'FF-BARE' }, { id: 'FF-BARE' });
+  assert.equal(bare.final, undefined, 'an answer without the state keeps the stored one');
+});
+
+test('live and processing copies are never final; a finished silent one is empty-final', () => {
+  const iso = (ms) => new Date(ms).toISOString();
+  assert.equal(ff.storedMeetingIsFinal({ transcript: 'x', isLive: true, summaryStatus: 'processed' }, { nowMs: T }), false);
+  assert.equal(ff.storedMeetingIsFinal({ transcript: 'x', summaryStatus: 'processing' }, { nowMs: T }), false);
+  for (const status of ['processed', 'skipped', 'failed']) {
+    assert.equal(ff.storedMeetingIsFinal({ summaryStatus: status }, { nowMs: T }), true, status);
+  }
+  assert.equal(ff.storedMeetingIsFinal({ transcript: 'x', firstSeenAt: iso(T - 29 * MIN) }, { nowMs: T }), false);
+  assert.equal(ff.storedMeetingIsFinal({ transcript: 'x', firstSeenAt: iso(T - 31 * MIN) }, { nowMs: T }), true);
+  assert.equal(ff.storedMeetingIsFinal({ firstSeenAt: iso(T - 300 * MIN) }, { nowMs: T }), false, 'no talk and no status');
+  assert.equal(ff.storedMeetingIsEmptyFinal({ summaryStatus: 'skipped', silent: true }, { nowMs: T }), true);
+  assert.equal(ff.storedMeetingIsEmptyFinal({ summaryStatus: 'processed', transcript: 'x' }, { nowMs: T }), false);
+});
+
+test('a live or processing copy never replaces finished text, and a list row keeps the metadata it lacks', () => {
+  const final = ff.mergeStoredFirefliesRecord({}, ff.buildFirefliesMeetingRecord({ event: 'meeting.summarized' }, answer()), { nowMs: T });
+  const listed = ff.mergeStoredFirefliesRecord(final, ff.buildFirefliesListRecord({
+    id: 'FF-TEST',
+    title: 'Testfirma AS · Kari Test',
+    dateString: '2026-10-23T11:00:00.000Z',
+    meeting_link: MEET,
+    meeting_info: { summary_status: 'processed' },
+  }), { nowMs: T });
+  for (const key of ['hostEmail', 'recordedBy', 'event', 'startedAt', 'durationMinutes', 'transcript', 'summary', 'attendees']) {
+    assert.deepEqual(listed[key], final[key], key);
+  }
+  const reprocessing = ff.mergeStoredFirefliesRecord(final, ff.buildFirefliesMeetingRecord({}, answer({
+    meeting_info: { summary_status: 'processing' },
+    sentences: [{ speaker_name: 'Kari Test', text: 'Vi' }],
+    summary: {},
+  })), { nowMs: T });
+  assert.equal(reprocessing.transcript, final.transcript);
+  assert.equal(reprocessing.summaryStatus, 'processed', 'the state stays with the text');
+  // Pasted while the meeting ran, then the processed copy arrives.
+  const partial = ff.mergeStoredFirefliesRecord({}, ff.buildFirefliesMeetingRecord({}, answer({ is_live: true, meeting_info: { summary_status: null }, summary: {} })), { nowMs: T });
+  const complete = ff.mergeStoredFirefliesRecord(partial, ff.buildFirefliesMeetingRecord({}, answer({
+    sentences: [{ speaker_name: 'Kari Test', text: 'Vi trenger en ny nettside.' }, { speaker_name: 'Damian', text: 'Det ordner vi.' }],
+  })), { nowMs: T });
+  assert.match(complete.transcript, /Det ordner vi/);
+  assert.equal(complete.isLive, false);
+  assert.equal(complete.summary, 'Kunden vil ha ny nettside.');
+});
+
+test('a transcript stored while Fireflies is processing is fetched again until processed, then never', () => {
+  const id = 'FF-PROC';
+  const processing = ff.storeFetchedFirefliesMeeting(ff.buildFirefliesMeetingRecord({ meeting_id: id }, answer({
+    id, meeting_info: { summary_status: 'processing' }, summary: {},
+  })), { nowMs: T });
+  assert.equal(processing.summary, '');
+  assert.equal(ff.firefliesFetchDue(processing, { nowMs: T }), false, 'paused right after the fetch');
+  assert.equal(ff.firefliesFetchDue(processing, { nowMs: T + 2 * MIN }), true, 'due after the first pause');
+  // The next list shows it processed: one full fetch is queued at once.
+  const [listed] = ff.upsertListedFirefliesMeetings([ff.buildFirefliesListRecord({
+    id, title: 'Testfirma AS · Kari Test', meeting_info: { summary_status: 'processed' },
+  })], { nowMs: T + 30 * 1000 });
+  assert.equal(listed.queued, true);
+  assert.equal(ff.firefliesFetchDue(ff.readStoredFirefliesMeeting(id), { nowMs: T + 30 * 1000 }), true);
+  const done = ff.storeFetchedFirefliesMeeting(ff.buildFirefliesMeetingRecord({ meeting_id: id }, answer({ id })), { nowMs: T + MIN });
+  assert.equal(done.summary, 'Kunden vil ha ny nettside.');
+  assert.deepEqual(done.actionItems, ['Send tilbud']);
+  assert.equal(done.fetch.queuedAt, '');
+  assert.equal(ff.firefliesFetchDue(done, { nowMs: T + 10 * 24 * 60 * MIN }), false, 'final: never fetched again');
+});
+
+test('an empty-final transcript is never fetched again', () => {
+  const id = 'FF-SILENT';
+  const silent = ff.storeFetchedFirefliesMeeting(ff.buildFirefliesMeetingRecord({ meeting_id: id }, answer({
+    id, sentences: [], summary: {}, meeting_info: { summary_status: 'skipped', silent_meeting: true },
+  })), { nowMs: T });
+  assert.equal(ff.storedMeetingIsEmptyFinal(silent, { nowMs: T }), true);
+  for (const later of [MIN, 60 * MIN, 3 * 24 * 60 * MIN]) {
+    assert.equal(ff.firefliesFetchDue(silent, { nowMs: T + later }), false);
+  }
+  const due = ff.storedMeetingsNeedingHydration(ff.listStoredFirefliesMeetings(), { nowMs: T + 60 * MIN });
+  assert.equal(due.some((row) => row.meetingId === id), false);
+});
+
+test('a failing id backs off, doubling, and is given up a week after it was first seen', () => {
+  const id = 'FF-GONE';
+  let row = ff.noteFirefliesFetchFailure(id, Object.assign(new Error('Object not found'), { code: 'object_not_found' }), { nowMs: T });
+  assert.equal(row.fetch.attempts, 1);
+  const first = Date.parse(row.fetch.nextFetchAt) - T;
+  row = ff.noteFirefliesFetchFailure(id, new Error('Object not found'), { nowMs: T + first });
+  assert.equal(Date.parse(row.fetch.nextFetchAt) - (T + first), first * 2);
+  row = ff.noteFirefliesFetchFailure(id, new Error('Object not found'), { nowMs: T + 8 * 24 * 60 * MIN });
+  assert.ok(row.fetch.gaveUpAt);
+  assert.equal(ff.firefliesFetchDue(row, { nowMs: T + 9 * 24 * 60 * MIN }), false);
+  assert.equal(ff.listStoredFirefliesMeetings().some((meeting) => meeting.meetingId === id), false, 'bookkeeping is not listed as a meeting');
+});
+
+test('one ingest tick writes the archive once, and not at all when nothing changed', () => {
+  const rows = ['FF-B1', 'FF-B2', 'FF-B3'].map((id) => ff.buildFirefliesListRecord({
+    id, title: `Møte ${id}`, dateString: '2026-10-22T10:00:00.000Z', meeting_link: MEET, meeting_info: { summary_status: 'processed' },
+  }));
+  const writes = () => ffStore.firefliesStoreHealth().meetings.writes;
+  const before = writes();
+  ff.upsertListedFirefliesMeetings(rows, { nowMs: T });
+  assert.equal(writes(), before + 1);
+  const again = ff.upsertListedFirefliesMeetings(rows, { nowMs: T + MIN });
+  assert.equal(writes(), before + 1, 'the same rows a minute later: no write');
+  assert.deepEqual(again.map((row) => row.changed), [false, false, false]);
+  const changed = ff.upsertListedFirefliesMeetings([{ ...rows[0], durationMinutes: 47 }, rows[1], rows[2]], { nowMs: T + 2 * MIN });
+  assert.equal(writes(), before + 2);
+  assert.deepEqual(changed.map((row) => row.changed), [true, false, false]);
+});
+
+test('the webhook stores the transcript before it links the client', async () => {
+  const id = 'FF-ORDER';
+  let seenAtLink = null;
+  await ff.notifyFirefliesRecording({ meeting_id: id, event: 'meeting.transcribed' }, CONFIG, {
+    fetchTranscript: async () => answer({ id }),
+    sendEmail: async () => {},
+    matchClients: async () => ({ best: { clientId: 'c-order', businessName: 'Testfirma AS' }, candidates: [] }),
+    linkMeeting: async () => { seenAtLink = ff.readStoredFirefliesMeeting(id); },
+  });
+  assert.equal(ff.storedMeetingHasTalk(seenAtLink), true, 'a workshop document job started by the link sees the talk');
+  assert.equal(ff.readStoredFirefliesMeeting(id).match.clientId, 'c-order');
+});
+
+test('a copy that is not final is stored and linked, and e-mailed once it is final', async () => {
+  const id = 'FF-DEFER';
+  const sent = [];
+  const deps = (reply) => ({
+    fetchTranscript: async () => reply,
+    sendEmail: async (message) => { sent.push(message); },
+    matchClients: async () => ({ best: null, candidates: [] }),
+  });
+  const first = await ff.notifyFirefliesRecording({ meeting_id: id, event: 'Transcription completed' }, CONFIG, deps(answer({
+    id, meeting_info: { summary_status: 'processing' }, summary: {},
+  })));
+  assert.equal(first.reason, 'not-final');
+  assert.equal(sent.length, 0);
+  assert.equal(ff.wasFirefliesMeetingNotified(id), false, 'nothing claimed yet');
+  assert.match(ff.readStoredFirefliesMeeting(id).transcript, /ny nettside/);
+  const second = await ff.notifyFirefliesRecording({ meeting_id: id, event: 'meeting.summarized' }, CONFIG, deps(answer({ id })));
+  assert.equal(second.sent, true);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].text, /Sammendrag:\nKunden vil ha ny nettside\./);
+  assert.equal(ff.readFirefliesNotifyState(id).state, 'sent');
+});
+
+test('a failed recording e-mail is retried up to five sends, ten minutes apart', async () => {
+  const id = 'FF-SMTP';
+  const failing = {
+    fetchTranscript: async () => answer({ id }),
+    sendEmail: async () => { throw new Error('SMTP down'); },
+    matchClients: async () => ({ best: null, candidates: [] }),
+  };
+  const result = await ff.notifyFirefliesRecording({ meeting_id: id, event: 'meeting.summarized' }, CONFIG, failing);
+  assert.equal(result.reason, 'notify-failed');
+  const state = ff.readFirefliesNotifyState(id);
+  assert.deepEqual([state.state, state.attempts, state.error], ['failed', 1, 'SMTP down']);
+  assert.equal(ff.readStoredFirefliesMeeting(id).notifyError, 'SMTP down');
+  const last = Date.parse(state.lastAttemptAt);
+  assert.equal(ff.wasFirefliesMeetingNotified(id, { nowMs: last + 9 * MIN }), true, 'not yet');
+  assert.equal(ff.claimFirefliesMeetingNotification(id, { nowMs: last + 9 * MIN }), false);
+  assert.equal(ff.wasFirefliesMeetingNotified(id, { nowMs: last + 10 * MIN }), false, 'due again');
+  let at = last + 10 * MIN;
+  for (let send = 2; send <= 5; send += 1) {
+    assert.equal(ff.claimFirefliesMeetingNotification(id, { nowMs: at }), true, `send ${send}`);
+    ff.markFirefliesMeetingNotified(id, { state: 'failed', error: 'SMTP down', nowMs: at });
+    at += 10 * MIN;
+  }
+  assert.equal(ff.readFirefliesNotifyState(id).attempts, 5);
+  assert.equal(ff.claimFirefliesMeetingNotification(id, { nowMs: at + 60 * MIN }), false, 'five sends, then it stops');
+  // A claim always blocks a second one: the webhook and the pull follow-up racing.
+  assert.equal(ff.claimFirefliesMeetingNotification('FF-RACE2', { nowMs: T }), true);
+  assert.equal(ff.claimFirefliesMeetingNotification('FF-RACE2', { nowMs: T }), false);
+});
+
+test('Oppdater merges into the record as it is after the fetch', async () => {
+  const id = 'FF-REFRESH';
+  ff.storeFetchedFirefliesMeeting(ff.buildFirefliesMeetingRecord({ meeting_id: id }, answer({ id })), { nowMs: T });
+  const refreshed = await ff.refreshFirefliesMeeting(id, CONFIG, {
+    fetchTranscript: async () => {
+      // A media copy and a client link finish while Fireflies answers.
+      ff.updateStoredFirefliesMeeting(id, { media: { savedAt: '2026-10-23T12:01:00.000Z', video: { bytes: 10 } }, match: { clientId: 'c-1' } });
+      return answer({ id, sentences: [], summary: {}, organizer_email: '', user: null, meeting_attendees: [], meeting_info: { summary_status: 'processing' } });
+    },
+  });
+  assert.equal(refreshed.media.savedAt, '2026-10-23T12:01:00.000Z');
+  assert.equal(refreshed.match.clientId, 'c-1');
+  assert.match(refreshed.transcript, /ny nettside/, 'an empty answer does not wipe the transcript');
+  assert.equal(refreshed.hostEmail, 'damian@asoldi.com');
+  assert.deepEqual(refreshed.attendees, ['Kari Test <kari@firma.no>']);
+});
+
+test('the transcripts list pages through a date window, at most 50 rows a page', async () => {
+  let body;
+  await ff.fetchRecentFirefliesTranscripts({
+    apiKey: 'ff-key',
+    limit: 80,
+    skip: 50,
+    fromDate: '2026-10-09T00:00:00.000Z',
+    fetchImpl: async (url, init) => {
+      body = JSON.parse(init.body);
+      return { ok: true, json: async () => ({ data: { transcripts: [] } }) };
+    },
+  });
+  assert.equal(body.variables.limit, 50);
+  assert.equal(body.variables.skip, 50);
+  assert.equal(body.variables.fromDate, '2026-10-09T00:00:00.000Z');
+  assert.equal('toDate' in body.variables, false, 'a filter that is not used is not sent');
+  assert.match(body.query, /is_live/);
+  assert.match(body.query, /meeting_info\s*\{\s*summary_status\s*\}/);
 });
