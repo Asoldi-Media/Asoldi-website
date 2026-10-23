@@ -30,6 +30,7 @@ import {
 import * as hub from './data/hub.js';
 import { registerShopPaymentsRoutes, registerShopPaymentsWebhook } from './lib/shop-payments-routes.js';
 import { registerCmsSsoRoutes } from './lib/cms-sso.js';
+import { registerDeliveryRoutes } from './lib/routes/delivery-routes.js';
 import { runDeliverySchemaStartupSnapshot } from './lib/delivery-snapshots.js';
 import * as employees from './data/employees.js';
 import * as sales from './data/sales.js';
@@ -12751,6 +12752,7 @@ app.patch('/api/client-portal/state', clientAuthV2, async (req, res) => {
 
 registerShopPaymentsRoutes(app, { adminAuth });
 registerCmsSsoRoutes(app, { adminAuth, getSiteById: hub.getSiteById });
+registerDeliveryRoutes(app, { adminAuth, sales, hub, salesOffers });
 
 // --- Hub API (public: site config for client CMS)
 app.get('/api/hub/site-config', (req, res) => {
