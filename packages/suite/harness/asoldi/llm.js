@@ -13,19 +13,24 @@ function t(kind, vision, dataClass, maxTokens, extra = {}) {
   return { kind, vision, dataClass, maxTokens, ...extra };
 }
 
+// Public tasks that may also read a client's own site (live-site imports, WS1 / WS2.24). `public` holds only
+// for template sources; callers pass ctx.dataClass: 'business' when the source is a client's live site, so the
+// data policy keeps it off DeepSeek and unpaid Gemini.
+const LIVE_SITE = { note: "public for template sources; pass ctx.dataClass 'business' when the source is a client's live site" };
+
 export const ASOLDI_LLM_TASKS = {
   version: 1,
   tasks: {
     // Maker: Step 1.5 site intelligence
-    'step15.analyze': t('json', false, 'public', 8000, { family: 'extraction', repo: M }),
-    'step15.curate': t('json', false, 'public', 6000, { family: 'extraction', repo: M }),
-    'step15.finalize': t('json', false, 'public', 6000, { family: 'extraction', repo: M }),
-    'step15.nav-resolve': t('json', false, 'public', 2000, { family: 'classification', effort: 'low', repo: M }),
-    'step15.judge': t('json', true, 'public', 4000, { family: 'visual-qa', repo: M }),
+    'step15.analyze': t('json', false, 'public', 8000, { family: 'extraction', repo: M, ...LIVE_SITE }),
+    'step15.curate': t('json', false, 'public', 6000, { family: 'extraction', repo: M, ...LIVE_SITE }),
+    'step15.finalize': t('json', false, 'public', 6000, { family: 'extraction', repo: M, ...LIVE_SITE }),
+    'step15.nav-resolve': t('json', false, 'public', 2000, { family: 'classification', effort: 'low', repo: M, ...LIVE_SITE }),
+    'step15.judge': t('json', true, 'public', 4000, { family: 'visual-qa', repo: M, ...LIVE_SITE }),
     'step15.media-vision': t('json', true, 'business', 2000, { family: 'media', repo: M }),
-    'siteintel.page-kind-vision': t('json', true, 'public', 1000, { family: 'visual-qa', repo: M, owner: 'WS2' }),
-    'siteintel.golden-judge-text': t('json', false, 'public', 1000, { family: 'judge', repo: M, owner: 'WS2' }),
-    'siteintel.golden-judge-vision': t('json', true, 'public', 1000, { family: 'judge', repo: M, owner: 'WS2' }),
+    'siteintel.page-kind-vision': t('json', true, 'public', 1000, { family: 'visual-qa', repo: M, owner: 'WS2', ...LIVE_SITE }),
+    'siteintel.golden-judge-text': t('json', false, 'public', 1000, { family: 'judge', repo: M, owner: 'WS2', ...LIVE_SITE }),
+    'siteintel.golden-judge-vision': t('json', true, 'public', 1000, { family: 'judge', repo: M, owner: 'WS2', ...LIVE_SITE }),
     // Maker: Step 2 branding
     'step2.copywriter': t('json', false, 'business', 16000, { family: 'copy', repo: M }),
     'step2.typesetter': t('json', false, 'business', 8192, { family: 'copy', repo: M }),
@@ -49,8 +54,8 @@ export const ASOLDI_LLM_TASKS = {
     'icon.resolve': t('json', false, 'public', 1000, { family: 'classification', effort: 'low', repo: M }),
     'icon.resolve-vision': t('json', true, 'public', 1000, { family: 'classification', effort: 'low', repo: M }),
     'products.import': t('json', false, 'business', 8000, { family: 'extraction', repo: M }),
-    'template-import.classify': t('json', false, 'public', 4000, { family: 'classification', effort: 'low', repo: M }),
-    'template-import.qa-vision': t('json', true, 'public', 4000, { family: 'visual-qa', repo: M, owner: 'WS1' }),
+    'template-import.classify': t('json', false, 'public', 4000, { family: 'classification', effort: 'low', repo: M, ...LIVE_SITE }),
+    'template-import.qa-vision': t('json', true, 'public', 4000, { family: 'visual-qa', repo: M, owner: 'WS1', ...LIVE_SITE }),
     'upload.ingest': t('json', true, 'business', 2000, { family: 'extraction', repo: M }),
     'data-extract.repair': t('json', false, 'business', 4000, { family: 'extraction', repo: M }),
     // Maker: automatic development agent and model evaluation (WS4)
@@ -74,7 +79,8 @@ export const ASOLDI_LLM_TASKS = {
     'inbox.decide': t('json', false, 'personal', 4000, { family: 'extraction', repo: H }),
     'inbox.inspect-contract': t('json', true, 'personal', 4000, { family: 'extraction', repo: H }),
     'infokort.agent': t('tools', false, 'public', 4096, { family: 'agent', repo: H }),
-    'sales-link.discover': t('json', false, 'public', 4000, { family: 'extraction', repo: H }),
+    // A real business's name, city, phone and address: business data (Q5), not public.
+    'sales-link.discover': t('json', false, 'business', 4000, { family: 'extraction', repo: H }),
     // Hub: delivery brief and change requests (WS8)
     'brief.map': t('json', false, 'transcript', 8000, { family: 'brief', repo: H, owner: 'WS8' }),
     'brief.reduce': t('json', false, 'transcript', 16000, { family: 'brief', repo: H, owner: 'WS8' }),
@@ -89,6 +95,7 @@ export const ASOLDI_LLM_TASKS = {
  * Claude, then Gemini). Production routes by task family; WS4's evaluation adopts values into `tasks`.
  * Q5: real client data runs on Claude (or replay). DeepSeek stays only as a fallback for families whose tasks
  * are mostly public (template HTML, template classification); the data policy removes it for any client data.
+ * When such a task reads a client's live site, the caller passes ctx.dataClass 'business' (see LIVE_SITE).
  * Gemini entries take effect once WS0.34 confirms the paid tier; until then the policy removes them.
  */
 export const ASOLDI_LLM_ROUTES = {
@@ -136,7 +143,7 @@ export const ASOLDI_LLM_ROUTES = {
       default: 'deepseek:deepseek-flash',
       vision: 'gemini:gemini-2.5-flash-lite|claude:claude-haiku-5-5:low',
       kinds: { agent: 'claude:claude-haiku-5-5:low' },
-      note: 'DeepSeek for text on public, synthetic or redacted data (Q5); the policy moves real client data to Claude Haiku at the task effort.',
+      note: 'DeepSeek for text on public or synthetic data, and on redacted data that is not a transcript (Q5); the policy moves real client data and every non-synthetic transcript to Claude Haiku at the task effort.',
     },
     replay: { default: 'replay:strict', vision: 'replay:strict' },
     record: { inherit: 'test', record: true },
@@ -163,6 +170,17 @@ export const ASOLDI_LLM_POLICY = {
     },
   },
   redirect: 'claude:claude-haiku-5-5',
+  // Known LLM calls outside the core, so outside this policy, ledger and budgets (critic WS0 #36).
+  exceptions: [
+    {
+      id: 'cms-local-blog-job',
+      provider: 'deepseek',
+      where: 'website-cms server/local-blog-job.js',
+      dataClass: 'business',
+      owner: 'WS9',
+      reason: 'The CMS generates local blog posts by calling DeepSeek directly (with temperature, per-site DEEPSEEK_API_KEY). WS9 moves it to a hub relay endpoint that uses lib/llm (ledger, budgets, this policy); until then it is a known exception.',
+    },
+  ],
 };
 
 /** Expected costs scale with project size; reaching them alerts, only 5x (runaway) or a loop stops. */
@@ -180,7 +198,11 @@ export const ASOLDI_LLM_BUDGETS = {
   loop: { maxRepeats: 3, maxIdentical: 6, windowMinutes: 15 },
 };
 
-/** Parsed config for one repo ('maker' or 'hub'). */
+/**
+ * Parsed config for one repo ('maker' or 'hub'), ready for createLlmCore({...asoldiLlmConfig(repo), providers}).
+ * The shared routes name both repos' tasks, so a repo config passes unknownTasks:'warn' (the other repo's task
+ * routes become warnings) and its repo name (for the makerDay / hubDay periodic budget).
+ */
 export function asoldiLlmConfig(repo = '') {
   const all = parseTaskRegistry(ASOLDI_LLM_TASKS);
   return {
@@ -188,5 +210,6 @@ export function asoldiLlmConfig(repo = '') {
     routes: ASOLDI_LLM_ROUTES,
     policy: ASOLDI_LLM_POLICY,
     budgets: ASOLDI_LLM_BUDGETS,
+    ...(repo ? { repo, unknownTasks: 'warn' } : {}),
   };
 }

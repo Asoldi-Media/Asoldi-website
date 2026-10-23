@@ -116,3 +116,42 @@ test('reference budgets: expected cost by tier and size, hard stop only for a ru
   assert.equal(core.evaluateBudget({ expectedUsd: 31, spentUsd: 100 }).action, 'alert');
   assert.equal(core.evaluateBudget({ expectedUsd: 31, spentUsd: 160 }).action, 'stop');
 });
+
+test('createLlmCore builds from the shared config for each repo (the routes name both repos\' tasks)', () => {
+  for (const repo of ['hub', 'maker']) {
+    const cfg = asoldiLlmConfig(repo);
+    assert.equal(cfg.repo, repo);
+    assert.equal(cfg.unknownTasks, 'warn');
+    const llm = core.createLlmCore({ ...cfg, providers: {}, legacyRoute, now: NOW });
+    assert.equal(typeof llm.json, 'function', repo);
+    assert.ok(Object.keys(llm.router.tasks).every((key) => ASOLDI_LLM_TASKS.tasks[key].repo.includes(repo)), repo);
+  }
+  assert.match(core.createLlmCore({ ...asoldiLlmConfig('hub'), providers: {}, now: NOW }).warnings.join('\n'), /eval\.judge: task is not in the registry/, 'the Maker task routes become warnings in the hub');
+  assert.equal(asoldiLlmConfig().unknownTasks, undefined, 'the all-repo config stays strict');
+});
+
+test('public tasks that may read a client\'s live site: callers pass ctx.dataClass business and DeepSeek is dropped', () => {
+  const r = core.createRouter({ ...asoldiLlmConfig(), legacyRoute, now: NOW });
+  const liveSite = ['template-import.classify', 'template-import.qa-vision', 'step15.analyze', 'step15.curate', 'step15.finalize', 'step15.nav-resolve', 'step15.judge', 'siteintel.page-kind-vision', 'siteintel.golden-judge-text', 'siteintel.golden-judge-vision'];
+  for (const task of liveSite) {
+    assert.match(ASOLDI_LLM_TASKS.tasks[task].note || '', /client's live site/, task);
+    for (const profile of ['prod', 'test', 'legacy']) {
+      const route = r.resolveRoute(task, { profile, dataClass: 'business' });
+      assert.equal(route.dataClass.effective, 'business', `${profile} ${task}`);
+      assert.ok(!route.chain.some((e) => e.provider === 'deepseek' || e.provider === 'gemini'), `${profile} ${task}: ${route.route}`);
+    }
+  }
+  assert.equal(r.resolveRoute('template-import.classify', { profile: 'prod' }).route, 'claude:claude-haiku-5-5:low|deepseek:deepseek-flash', 'a template source stays public');
+  assert.equal(r.resolveRoute('template-import.classify', { profile: 'prod', dataClass: 'business' }).route, 'claude:claude-haiku-5-5:low', 'a live client site does not');
+  assert.equal(ASOLDI_LLM_TASKS.tasks['sales-link.discover'].dataClass, 'business', 'name, city, phone and address of a real business');
+  assert.equal(r.resolveRoute('sales-link.discover', { profile: 'prod' }).route, 'claude:claude-haiku-5-5:low');
+});
+
+test('reference policy records the CMS local-blog-job DeepSeek call as a known exception (WS9)', () => {
+  assert.equal(core.validatePolicy(ASOLDI_LLM_POLICY).ok, true);
+  const [exception] = ASOLDI_LLM_POLICY.exceptions;
+  assert.equal(exception.id, 'cms-local-blog-job');
+  assert.equal(exception.provider, 'deepseek');
+  assert.equal(exception.owner, 'WS9');
+  assert.match(exception.where, /local-blog-job/);
+});
