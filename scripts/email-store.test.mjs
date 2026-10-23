@@ -86,12 +86,12 @@ test('WS7.1 (a): another process reads the same secrets from disk', async () => 
 test('WS7.1 (b): resolveBrevoKey ignores a masked env value and falls back to the Superadmin paste', async () => {
   assert.equal(store.resolveBrevoKey({ env: { BREVO_API_KEY: '********' } }), null);
   assert.equal(store.resolveBrevoKey({ env: { BREVO_API_KEY: '   ' } }), null);
-  assert.equal(store.resolveBrevoKey({ env: { BREVO_API_KEY: 'xkeysib-test-env' } }), 'xkeysib-test-env');
-  assert.equal(store.brevoKeySource({ env: { BREVO_API_KEY: 'xkeysib-test-env' } }), 'env');
-  await store.patchEmailSecrets({ brevoApiKey: 'xkeysib-test-paste' });
-  assert.equal(store.resolveBrevoKey({ env: { BREVO_API_KEY: '********' } }), 'xkeysib-test-paste');
+  assert.equal(store.resolveBrevoKey({ env: { BREVO_API_KEY: 'fake-brevo-test-env' } }), 'fake-brevo-test-env');
+  assert.equal(store.brevoKeySource({ env: { BREVO_API_KEY: 'fake-brevo-test-env' } }), 'env');
+  await store.patchEmailSecrets({ brevoApiKey: 'fake-brevo-test-paste' });
+  assert.equal(store.resolveBrevoKey({ env: { BREVO_API_KEY: '********' } }), 'fake-brevo-test-paste');
   assert.equal(store.brevoKeySource({ env: {} }), 'secrets');
-  assert.equal(store.resolveBrevoKey({ env: { BREVO_API_KEY: 'xkeysib-test-env' } }), 'xkeysib-test-env', 'env wins');
+  assert.equal(store.resolveBrevoKey({ env: { BREVO_API_KEY: 'fake-brevo-test-env' } }), 'fake-brevo-test-env', 'env wins');
   await store.patchEmailSecrets({ brevoApiKey: '*****' });
   assert.equal(store.resolveBrevoKey({ env: {} }), null, 'a masked paste is not a key');
   assert.equal(store.brevoKeySource({ env: {} }), null);
@@ -101,7 +101,7 @@ test('WS7.1 (b): resolveBrevoKey ignores a masked env value and falls back to th
 test('WS7.1: BREVO_API_KEY survives the durable production env backup', async () => {
   const { PRODUCTION_ENV_KEYS, mergeProductionEnv } = await import('../lib/persistent-env.js');
   assert.ok(PRODUCTION_ENV_KEYS.includes('BREVO_API_KEY'));
-  assert.equal(mergeProductionEnv({}, { BREVO_API_KEY: 'xkeysib-test' }).BREVO_API_KEY, 'xkeysib-test');
+  assert.equal(mergeProductionEnv({}, { BREVO_API_KEY: 'fake-brevo-test' }).BREVO_API_KEY, 'fake-brevo-test');
 });
 
 test('WS7.1 (c): 100 parallel increments from each of two child processes lose 0 updates', async () => {
@@ -240,9 +240,9 @@ test('WS7.1 (f): no API view, data file or log line contains a secret', async ()
   const original = { log: console.log, error: console.error, warn: console.warn };
   for (const key of Object.keys(original)) console[key] = (...args) => captured.push(args.map(String).join(' '));
   try {
-    await store.patchEmailSecrets({ brevoApiKey: 'xkeysib-secret-paste-value' });
+    await store.patchEmailSecrets({ brevoApiKey: 'fake-brevo-secret-paste-value' });
     const secrets = store.readEmailSecrets();
-    const values = [secrets.unsubKey, secrets.webhookToken, 'xkeysib-secret-paste-value', 'xkeysib-env-secret-value'];
+    const values = [secrets.unsubKey, secrets.webhookToken, 'fake-brevo-secret-paste-value', 'fake-brevo-env-secret-value'];
     await store.saveEmailSettings({ killSwitch: false });
     await store.patchEmailSite('site_f', { ownerRouting: 'owner' });
     const log = createEmailLog({ flushMs: 0 });
@@ -250,7 +250,7 @@ test('WS7.1 (f): no API view, data file or log line contains a secret', async ()
     log.appendEvent({ messageId: 'em_x', t: 'delivered', token: secrets.webhookToken });
     log.flushEvents();
     const views = JSON.stringify([
-      store.emailStoreStatus({ env: { BREVO_API_KEY: 'xkeysib-env-secret-value' } }),
+      store.emailStoreStatus({ env: { BREVO_API_KEY: 'fake-brevo-env-secret-value' } }),
       store.readEmailSettings(),
       store.readEmailSites(),
       log.statsFor({ siteId: 'site_f' }),
