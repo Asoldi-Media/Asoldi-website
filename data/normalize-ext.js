@@ -34,12 +34,16 @@ export const FUTURE_MAKERRUN_KEYS = Object.freeze([
   'materials', // WS8.28
   'autopilot', // WS3.22
   'dev', // WS4.18
-  'aiSpend', // WS0.19
   'goLive', // WS5.21
   'step1Qa', // WS1.43
   'homepageRoute', // WS1.13
   EXT_KEY,
 ]);
+
+// client.makerRun keys a batch owns and normalizes, but that only their own authenticated writer may set:
+// incoming makerRun patches (mergeMakerRunPatch, updateSalesClient) never carry them.
+//   aiSpend: WS0.19, written only by the Maker's run.ai.spend callback (data/sales.js setSalesMakerRunAiSpend)
+export const WRITER_ONLY_MAKERRUN_KEYS = Object.freeze(['aiSpend']);
 
 // client.makerRun.steps and step tokens beyond today's 1, 1.5, 2, 3 (WS4 chain).
 export const FUTURE_MAKERRUN_STEP_KEYS = Object.freeze(['2.5', 'cms', 'dev', 'dev-verify']);
