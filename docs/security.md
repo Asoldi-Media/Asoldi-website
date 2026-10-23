@@ -63,12 +63,20 @@ secret and token are generated in `secrets/webhooks.json`.
 
 Nothing depends on the webhook: the pull ingest asks the Fireflies API every 60 seconds with
 `FIREFLIES_API_KEY` (or `FIREFLIES_API`, the same key under the name used in hPanel), stores
-transcripts and links them to clients. For meetings it brings in (started in the last 2 days, with
-a transcript or summary), `lib/fireflies-pull-followup.js` then does what only the webhook did:
-the "recording ready" e-mail, once per meeting through the same `fireflies-notified.json` claim
-(a webhook after the paste never sends a second one), and the copy of video and audio to the
-data dir before the signed URLs expire. At most 3 e-mails and 2 downloads start per minute; a
-meeting whose fetch or download fails is retried a few times, minutes apart.
+transcripts and links them to clients (see "Fireflies transcript intake" in
+[sales-offer-flow.md](sales-offer-flow.md)). For meetings it brings in (started in the last 2
+days, with a transcript or summary), `lib/fireflies-pull-followup.js` then does what only the
+webhook did: the "recording ready" e-mail, once per meeting through the same
+`fireflies-notified.json` claim (a webhook after the paste never sends a second one), and the
+copy of video and audio to the data dir before the signed URLs expire. The e-mail waits until
+Fireflies has finished the meeting (or 20 minutes), and a failed send is tried again up to five
+times, ten minutes apart; downloads are retried with fresh links for two days.
+
+`fireflies-meetings.json` and `fireflies-notified.json` are written with a lock and temp file +
+rename (`lib/fireflies-store.js`). A file that does not parse is never replaced by an empty one:
+reads use the newest readable backup, the next write rebuilds the file from it and keeps the
+unreadable copy as `backups/<file>.unreadable-<time>`, and with no readable backup the write is
+refused and the owner is e-mailed.
 
 To switch the push webhook to the new secret, whenever convenient:
 1. Admin → Manage clients → Security → **Show secret for Fireflies**.

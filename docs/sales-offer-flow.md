@@ -146,6 +146,46 @@ For an offer: tier contract when only a tier is present; admin-verified summary 
 * Admin: list / link / unlink / refresh under `/api/admin/fireflies/meetings…`; UI in
   `MeetingDataPanel.tsx` (Tilbud → Møtedata tab and the unmatched list).
 
+### Fireflies transcript intake
+
+The pull ingest (`lib/fireflies-ingest.js`, one tick a minute when `firefliesIngest` runs) is what
+brings every recording in; the webhook only makes it sooner.
+
+* **List.** The newest 20 transcripts every tick, stored in one write (none when nothing changed).
+  Every 10 minutes, or at once when that page holds nothing known, it pages through
+  `transcripts(fromDate)` from a day before the last good scan (14 days on the first run) until a
+  page holds only known, unchanged ids, so an outage of any length is caught up.
+  `fireflies-ingest-state.json` keeps where the scan left off.
+* **Final copies.** Each stored meeting keeps Fireflies' `isLive`, `summaryStatus`, `silent` and a
+  `final` flag. A copy is final when it is not live and `summary_status` is processed, skipped or
+  failed (talk with no status: 30 minutes after first seen). Copies that are not final are fetched
+  again with a doubling pause (`fetch.nextFetchAt`) and given up a week after first seen; a new
+  `summary_status` in the list queues one fetch at once. Final copies are never fetched again,
+  silent empty ones included. A live or still-processing copy never replaces finished text, and
+  a client card that shows less than the stored copy (a summary that came later) is relinked.
+* **E-mail.** The recording e-mail waits for the final copy (or 20 minutes) and is retried up to five
+  times, ten minutes apart, when the send fails (`fireflies-notified.json` keeps
+  `{ at, state: 'sending' | 'sent' | 'failed', attempts }`).
+* **Media.** `media.savedAt` is set only when a file is on disk. A failed download is retried with
+  fresh signed links and a doubling pause for two days; `too-large` and `disabled` are final.
+  Nothing downloads while the data disk has less than `FIREFLIES_MEDIA_MIN_FREE_MB` free (optional,
+  default 2048, `0` turns the check off). `transcript.txt` and `summary.json` are written again
+  once the summary is in. Nothing is deleted automatically.
+* **Missing recordings.** `lib/fireflies-recording-watchdog.js` checks every live-join placeholder
+  whose meeting is over: by the bot's id, else by the booked Meet link around the booked time. A
+  transcript with talk is linked; a silent one sets `recording.state = 'empty'`; nothing by start +
+  booked (60) + 90 minutes sets `'missing'` and e-mails `FIREFLIES_NOTIFY_EMAIL` and the owning rep
+  once. A missing meeting is looked for hourly for 48 hours after that, so a late transcript still
+  links. Rate limits and network errors never make a meeting missing.
+* **Health.** `GET /api/admin/fireflies/ingest-status` (admin) returns `firefliesIngestStatus()`: last
+  tick, last good pull, last error, failures in a row, the Fireflies rate-limit state, pending
+  fetches, summaries still processing, missing recordings, whether safe mode blocks the pull, and
+  where each Fireflies file was read from. The owner (`FIREFLIES_ALERT_EMAIL`, optional, default
+  `damian@asoldi.com`) gets one e-mail per 12 hours when the pull fails more than 10 times in a row,
+  has not succeeded for 30 minutes, or the archive cannot be read.
+* The contract-letter fill runs on its own loop behind the same safe-mode switch, and a client
+  whose fill changes nothing waits longer each time until its recordings or offer change.
+
 ## Data
 
 `data/sales-offers.js` → `sales-offers.json` in the persistent data dir. One active offer per client (the newest
