@@ -36,6 +36,13 @@ import { canonicalDeveloperOwnerId, normalizeDeveloperHandoff, applyAdminDevelop
 import { normalizeDeveloperGoals } from '../lib/developer-goals.js';
 import { normalizeDueDate } from '../lib/website-due.js';
 import { normalizeOfferSentContent } from './sales-offers.js';
+import {
+  carryFutureKeys,
+  FUTURE_CLIENT_KEYS,
+  FUTURE_HUBSITE_KEYS,
+  FUTURE_MAKERRUN_KEYS,
+  FUTURE_MAKERRUN_STEP_KEYS,
+} from './normalize-ext.js';
 
 function persistWorkshopAction(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -185,6 +192,12 @@ export function salesDataRevision() {
   return salesRevision;
 }
 
+/** Call after sales-clients.json was replaced outside writeSalesFile (snapshot restore). */
+export function noteSalesStoreReplaced() {
+  salesRevision += 1;
+  return salesRevision;
+}
+
 function writeSalesFile(list) {
   salesRevision += 1;
   ensureDataDir();
@@ -240,12 +253,12 @@ function normalizeWebsiteImport(value = {}) {
 
 function normalizeMakerRunSteps(value = {}) {
   const input = value && typeof value === 'object' ? value : {};
-  return {
+  return carryFutureKeys({
     '1': sanitizeText(input['1']) || 'idle',
     '1.5': sanitizeText(input['1.5']) || 'idle',
     '2': sanitizeText(input['2']) || 'idle',
     '3': sanitizeText(input['3']) || 'idle',
-  };
+  }, input, FUTURE_MAKERRUN_STEP_KEYS);
 }
 
 function normalizeMakerStep2Substeps(value = {}) {
@@ -278,8 +291,8 @@ function normalizeMakerRun(value = {}) {
     quickFillCompletedAt: sanitizeText(input.quickFillCompletedAt),
     mediaGatherCompletedAt: sanitizeText(input.mediaGatherCompletedAt),
   };
-  if (!runId) return base;
-  return {
+  if (!runId) return carryFutureKeys(base, input, FUTURE_MAKERRUN_KEYS);
+  return carryFutureKeys({
     ...base,
     steps: normalizeMakerRunSteps(input.steps),
     step2Substeps: normalizeMakerStep2Substeps(input.step2Substeps),
@@ -294,18 +307,18 @@ function normalizeMakerRun(value = {}) {
     },
     productionDomain: sanitizeText(input.productionDomain),
     websiteDomain: sanitizeText(input.websiteDomain),
-  };
+  }, input, FUTURE_MAKERRUN_KEYS);
 }
 
 function normalizeHubSite(value = {}) {
   const input = value && typeof value === "object" ? value : {};
-  return {
+  return carryFutureKeys({
     siteKey: sanitizeText(input.siteKey || input.site_key),
     domain: sanitizeText(input.domain),
     id: sanitizeText(input.id),
     createdAt: sanitizeText(input.createdAt),
     liveUrl: sanitizeText(input.liveUrl),
-  };
+  }, input, FUTURE_HUBSITE_KEYS);
 }
 
 function normalizeArchive(value = {}) {
@@ -642,6 +655,11 @@ function normalizeSalesClient(raw = {}) {
     createdAt,
     updatedAt,
   };
+  // WS8.56: stored only when true, so existing records keep their shape.
+  if (raw.isTest === true) client.isTest = true;
+  // WS8.44: keys a later batch writes survive this code (see data/normalize-ext.js).
+  carryFutureKeys(client, raw, FUTURE_CLIENT_KEYS);
+  if (client.isTest !== true) delete client.isTest;
   const inboxPatch = planConfirmedMeetBackfill(client);
   if (inboxPatch) client.calendar = { ...client.calendar, ...inboxPatch };
   client.nextActions = decorateNextActions(client);
@@ -1432,6 +1450,11 @@ export function setSalesCalendar(id, calendarPatch = {}) {
 
 export function setSalesWebsiteImport(id, importPatch = {}) {
   return updateSalesClient(id, { websiteImport: importPatch });
+}
+
+/** WS8.56: mark or unmark a sales client as a test client (Superadmin). */
+export function setSalesTestFlag(id, isTest) {
+  return updateSalesClient(id, { isTest: isTest === true });
 }
 
 export function setSalesMakerRun(id, makerPatch = {}) {

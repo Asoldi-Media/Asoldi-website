@@ -42,8 +42,10 @@ function writeSites(sites) {
 
 function publicSite(site) {
   if (!site) return null;
+  // blogQueue (WS9.49) holds a token hash; it is kept on disk but never returned.
+  const { blogQueue, ...rest } = site;
   return {
-    ...site,
+    ...rest,
     clientAdmin: publicClientAdmin(site.clientAdmin),
     localBlog: publicLocalBlog(site.localBlog),
   };
@@ -241,6 +243,9 @@ export function updateSite(id, patch = {}) {
   }
   if (patch.websiteDueOverride !== undefined) {
     current.websiteDueOverride = patch.websiteDueOverride;
+  }
+  if (patch.isTest !== undefined) {
+    current.isTest = patch.isTest === true;
   }
   sites[i] = normalizeSite(current);
   writeSites(sites);
