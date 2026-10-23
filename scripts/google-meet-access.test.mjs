@@ -1,11 +1,12 @@
 // Opening Meet rooms for the notetaker (lib/google-meet-access.js). The Meet API is always a
 // stub; a socket spy refuses anything non-loopback, so no test can reach Google.
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { google } from 'googleapis';
 
 const dataDir = mkdtempSync(join(tmpdir(), 'asoldi-meet-access-'));
 process.env.APP_DATA_DIR = dataDir;
@@ -46,8 +47,13 @@ const CALENDAR_SCOPES = [
 ].join(' ');
 const WITH_MEET = `${CALENDAR_SCOPES} ${meet.MEET_SETTINGS_SCOPE}`;
 
-function token(googleEmail, scope = CALENDAR_SCOPES) {
-  return { access_token: 'at-test', refresh_token: 'rt-test', googleEmail, scope };
+function token(googleEmail, scope = CALENDAR_SCOPES, extra = {}) {
+  return { access_token: 'at-test', refresh_token: 'rt-test', googleEmail, scope, ...extra };
+}
+
+/** google.meet stub that answers with the API of whichever login (access token) asks. */
+function meetByLogin(apis) {
+  mock.method(google, 'meet', ({ auth }) => apis[auth?.credentials?.access_token]);
 }
 
 function writeTokens(map) {
@@ -94,6 +100,8 @@ test.beforeEach(() => {
   meet.resetMeetRoomAccessForTests();
   writeTokens({});
 });
+
+test.afterEach(() => mock.restoreAll());
 
 test('meeting codes come only from meet.google.com room links', () => {
   assert.equal(meet.meetingCodeFromLink(ROOM), 'abc-defg-hij');
@@ -192,6 +200,17 @@ test('Google refusals come back as soft reasons, never as throws', async () => {
   assert.deepEqual([notARoom.ok, notARoom.reason, notARoom.meetingCode], [false, 'error', '']);
 });
 
+test('Google being busy is an error to retry soon, not a refusal', async () => {
+  const outcome = (options) => meet.openMeetRoom({ meetLink: ROOM, meetApi: fakeMeet(options), nowMs: NOW });
+  for (const status of [408, 409, 429]) {
+    const busy = await outcome({ getError: googleError(status) });
+    assert.equal(busy.reason, 'error', `${status}`);
+    assert.match(busy.message, new RegExp(`ba oss vente \\(${status}\\)`));
+  }
+  const quota = await outcome({ patchError: googleError(403, { reason: 'RATE_LIMIT_EXCEEDED', message: 'Quota exceeded for quota metric.' }) });
+  assert.deepEqual([quota.reason, quota.accessType], ['error', 'TRUSTED']);
+});
+
 test('safe mode blocks the Meet call, records a calendarWrite intent, and lets it through when allowed', async () => {
   safeMode.installSafeMode({ env: { ...process.env, HUB_SAFE_MODE: '1', HUB_SAFE_MODE_ALLOW: '' }, dataDir, log: null, egress: false });
   try {
@@ -218,7 +237,8 @@ test('without an OAuth token that carries the scope, Google is never called', as
   const none = await meet.ensureMeetRoomOpen({ meetLink: ROOM, accountKey: 'sales:rep-1', nowMs: NOW, deps: { meetApi: api } });
   assert.deepEqual([none.ok, none.reason, none.cached], [false, 'scope-missing', false]);
 
-  writeTokens({ 'sales:rep-1': token('alexander@asoldi.com') });
+  // Connected since, but without the Meet box ticked.
+  writeTokens({ 'sales:rep-1': token('alexander@asoldi.com', CALENDAR_SCOPES, { updatedAt: new Date(NOW + 500).toISOString() }) });
   const noScope = await meet.ensureMeetRoomOpen({ meetLink: ROOM, accountKey: 'sales:rep-1', nowMs: NOW + 1000, deps: { meetApi: api } });
   assert.deepEqual([noScope.reason, noScope.ownerKey, noScope.cached], ['scope-missing', 'sales:rep-1', false]);
   assert.match(noScope.message, /koble til Google på nytt/i);
@@ -282,6 +302,72 @@ test('a room Google refused is asked about again only after 15 minutes', async (
   assert.equal(api.calls.length, 4);
 });
 
+test('an error is not retried by the same login for 3 minutes, and a missing scope waits for a reconnect', async () => {
+  writeTokens({ 'sales:rep-1': token('alexander@asoldi.com', WITH_MEET) });
+  const flaky = fakeMeet({ getError: googleError(503) });
+  const ensure = (nowMs, extra = {}) => meet.ensureMeetRoomOpen({ meetLink: ROOM, accountKey: 'sales:rep-1', nowMs, deps: { meetApi: flaky }, ...extra });
+  assert.equal((await ensure(NOW)).reason, 'error');
+  const soon = await ensure(NOW + 60_000);
+  assert.deepEqual([soon.reason, soon.cached], ['error', true]);
+  assert.equal(flaky.calls.length, 1, 'a loop calling every minute does not reach Google');
+  await ensure(NOW + meet.MEET_ROOM_ERROR_RETRY_MS + 1000);
+  assert.equal(flaky.calls.length, 2);
+  await ensure(NOW + meet.MEET_ROOM_ERROR_RETRY_MS + 2000, { force: true });
+  assert.equal(flaky.calls.length, 3, 'force asks at once');
+
+  const room = 'https://meet.google.com/kkk-llll-mmm';
+  writeTokens({ 'sales:rep-1': token('alexander@asoldi.com', CALENDAR_SCOPES, { updatedAt: '2026-10-23T09:00:00.000Z' }) });
+  const api = fakeMeet();
+  const check = (nowMs) => meet.ensureMeetRoomOpen({ meetLink: room, accountKey: 'sales:rep-1', nowMs, deps: { meetApi: api } });
+  assert.equal((await check(NOW)).reason, 'scope-missing');
+  const stored = readFileSync(ACCESS_FILE, 'utf8');
+  const again = await check(NOW + 60_000);
+  assert.deepEqual([again.reason, again.cached], ['scope-missing', true]);
+  assert.equal(readFileSync(ACCESS_FILE, 'utf8'), stored, 'nothing is rewritten while nothing changed');
+  // The host reconnects with the Meet permission: the next check asks Google at once.
+  writeTokens({ 'sales:rep-1': token('alexander@asoldi.com', WITH_MEET, { updatedAt: new Date(NOW + 90_000).toISOString() }) });
+  const opened = await check(NOW + 120_000);
+  assert.deepEqual([opened.ok, opened.cached], [true, false]);
+  assert.deepEqual(api.kinds(), ['get', 'patch']);
+});
+
+test('the pre-meeting check can ask for a fresher read of an open room', async () => {
+  writeTokens({ 'sales:rep-1': token('alexander@asoldi.com', WITH_MEET) });
+  const api = fakeMeet();
+  const ensure = (nowMs, extra = {}) => meet.ensureMeetRoomOpen({ meetLink: ROOM, accountKey: 'sales:rep-1', nowMs, deps: { meetApi: api }, ...extra });
+  await ensure(NOW);
+  assert.equal((await ensure(NOW + 10 * 60_000)).cached, true, 'by default an open room holds for 6 hours');
+  const fresh = await ensure(NOW + 10 * 60_000, { maxAgeMs: 5 * 60_000 });
+  assert.deepEqual([fresh.ok, fresh.cached], [true, false]);
+  assert.deepEqual(api.kinds(), ['get', 'patch', 'get'], 'an open room is read, not patched again');
+  assert.equal((await ensure(NOW + 12 * 60_000, { maxAgeMs: 5 * 60_000 })).cached, true);
+});
+
+test('the login that opened a room is tried again when another login is refused, and a refusal holds back only its own login', async () => {
+  writeTokens({
+    'admin:alexander@asoldi.com': token('alexander@asoldi.com', WITH_MEET, { access_token: 'at-alexander' }),
+    'admin:damian@asoldi.com': token('damian@asoldi.com', WITH_MEET, { access_token: 'at-damian' }),
+  });
+  const host = fakeMeet();
+  const other = fakeMeet({ getError: googleError(403, { message: 'The caller does not have permission' }) });
+  meetByLogin({ 'at-alexander': host, 'at-damian': other });
+
+  const opened = await meet.ensureMeetRoomOpen({ meetLink: ROOM, ownerEmail: 'alexander@asoldi.com', nowMs: NOW });
+  assert.deepEqual([opened.ok, opened.ownerKey], [true, 'admin:alexander@asoldi.com']);
+  // The client moved to the other rep, whose event keeps the room; the open window has passed.
+  const moved = await meet.ensureMeetRoomOpen({ meetLink: ROOM, ownerEmail: 'damian@asoldi.com', nowMs: NOW + meet.MEET_ROOM_OPEN_TTL_MS + 60_000 });
+  assert.deepEqual([moved.ok, moved.accessType, moved.ownerKey], [true, 'OPEN', 'admin:alexander@asoldi.com']);
+  assert.deepEqual(other.kinds(), ['get']);
+  assert.deepEqual(host.kinds(), ['get', 'patch', 'get']);
+
+  // No login opened this one before: the refusal is stored, but the room's own host still gets asked.
+  const room = 'https://meet.google.com/ppp-qqqq-rrr';
+  const refused = await meet.ensureMeetRoomOpen({ meetLink: room, ownerEmail: 'damian@asoldi.com', nowMs: NOW });
+  assert.deepEqual([refused.reason, refused.ownerKey], ['forbidden', 'admin:damian@asoldi.com']);
+  const byHost = await meet.ensureMeetRoomOpen({ meetLink: room, ownerEmail: 'alexander@asoldi.com', nowMs: NOW + 60_000 });
+  assert.deepEqual([byHost.ok, byHost.cached, byHost.ownerKey], [true, false, 'admin:alexander@asoldi.com']);
+});
+
 test('the owner mailbox token with the scope wins over a stale alias token', async () => {
   writeTokens({
     'sales:rep-1': token('alexander@asoldi.com'),
@@ -293,6 +379,7 @@ test('the owner mailbox token with the scope wins over a stale alias token', asy
     accountKey: 'admin:alexander@asoldi.com',
     googleEmail: 'alexander@asoldi.com',
     scope: WITH_MEET,
+    updatedAt: '',
     usable: true,
   });
   assert.equal(calendar.meetRoomOwnerToken({ accountKey: 'admin:damian@asoldi.com', ownerEmail: 'alexander@asoldi.com' }).accountKey, 'admin:alexander@asoldi.com');
@@ -315,7 +402,7 @@ test('only the owner’s own OAuth login may open a room', async () => {
   assert.equal(api.calls.length, 0);
 
   const failingLogin = { ...fakeCalendar, getAuthorizedClient: async () => { throw new Error('google-token-timeout'); } };
-  const login = await meet.ensureMeetRoomOpen({ meetLink: ROOM, nowMs: NOW, deps: { calendar: failingLogin, meetApi: api } });
+  const login = await meet.ensureMeetRoomOpen({ meetLink: 'https://meet.google.com/zzz-yyyy-xxx', nowMs: NOW, deps: { calendar: failingLogin, meetApi: api } });
   assert.equal(login.reason, 'error');
   assert.match(login.message, /google-token-timeout/);
 });
