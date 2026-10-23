@@ -253,6 +253,8 @@ import {
   shouldCreateLivePlaceholder,
   upsertLiveSessionsForClient,
 } from './lib/fireflies-live-sessions.js';
+import { maybeAlertFirefliesLiveJoin, runFirefliesLobbyAlerts } from './lib/fireflies-live-alerts.js';
+import { automationScopeForClient } from './data/automation-settings.js';
 import { describeFirefliesMedia, firefliesMediaFilePath, saveFirefliesMediaForMeeting } from './lib/fireflies-media.js';
 import { runFirefliesPullFollowUp } from './lib/fireflies-pull-followup.js';
 import { firefliesFetchDue, storeFetchedFirefliesMeeting, storedMeetingIsFinal, storedMeetingIsPartial } from './lib/fireflies-webhook.js';
@@ -9638,7 +9640,8 @@ function firefliesLiveJoinDeps() {
 /**
  * One live-join engine tick (the 60 s loop and the request kicks): sessions from bookings, one look at who is
  * in which room, sends where due. A mutex, a 2-minute watchdog and per-session error handling live in the lib.
- * After it: the placeholders of sessions that ended without a bot, so the watchdog can follow them.
+ * After it, outside the mutex so a slow mailer never holds up a send: the placeholders of sessions that ended
+ * without a bot, the rep's lobby alert, and the owner's health alert (lib/fireflies-live-alerts.js).
  */
 async function sendDueFirefliesLiveJoins() {
   const summary = await runFirefliesLiveJoinTick(firefliesLiveJoinDeps());
@@ -9649,7 +9652,67 @@ async function sendDueFirefliesLiveJoins() {
   } catch (error) {
     console.warn(`[fireflies] live-join placeholders failed: ${sanitizeText(error?.message) || error}`);
   }
+  try {
+    await runFirefliesLobbyAlerts({
+      clients,
+      enabled: firefliesLobbyAlertEnabled(),
+      recipientsFor: firefliesLobbyRecipientsFor(),
+      mayAlert: firefliesAlertAllowedFor,
+      sendEmail: (message) => emailLib.sendEmail(message),
+    });
+  } catch (error) {
+    console.warn(`[fireflies] lobby alerts failed: ${sanitizeText(error?.message) || error}`);
+  }
+  await maybeAlertFirefliesLiveJoinHealth(clients);
   return summary;
+}
+
+/** Optional FIREFLIES_LOBBY_ALERT=0 turns the rep's "slipp inn Fireflies" e-mail off (default on). */
+function firefliesLobbyAlertEnabled() {
+  return parseBoolean(process.env.FIREFLIES_LOBBY_ALERT, true);
+}
+
+/** A test client gets no Fireflies alert e-mail unless it is an automation pilot. */
+function firefliesAlertAllowedFor(client) {
+  try {
+    return automationScopeForClient(client).included;
+  } catch {
+    return client?.isTest !== true;
+  }
+}
+
+/** The owning rep's e-mail ('' when the client has no rep, or none resolves). */
+async function firefliesRepEmailFor(client, owners) {
+  const ownerId = sanitizeText(client?.ownerId);
+  if (!ownerId) return '';
+  return sanitizeText(owners[ownerId]) || sanitizeText(await accountKeyToEmail(ownerId));
+}
+
+/**
+ * Lobby alert recipients: the owning rep; the team address only when the rep is set but has no e-mail; nobody
+ * (skipped) when the client has no rep. The owner map is read once per run.
+ */
+function firefliesLobbyRecipientsFor() {
+  let owners = null;
+  return async (client) => {
+    if (!sanitizeText(client?.ownerId)) return [];
+    owners = owners || await salesOwnerEmailMap();
+    return [(await firefliesRepEmailFor(client, owners)) || readFirefliesWebhookConfig().notifyEmail];
+  };
+}
+
+/** The owner's live-join health alert; run from this loop and from the ingest tick, so a dead loop is seen. */
+async function maybeAlertFirefliesLiveJoinHealth(clients = sales.getSalesClients()) {
+  try {
+    await maybeAlertFirefliesLiveJoin({
+      clients,
+      apiKeyPresent: Boolean(resolveFirefliesApiKey().apiKey),
+      liveJoinEnabled: safeModeAllows('firefliesLiveJoin'),
+      sendEmail: (message) => emailLib.sendEmail(message),
+    });
+  } catch (error) {
+    console.warn(`[fireflies] live-join health alert failed: ${sanitizeText(error?.message) || error}`);
+  }
 }
 
 /**
@@ -16179,8 +16242,7 @@ async function runFirefliesWatchdogStep() {
     patchPlaceholder: (clientId, meetingId, recording) => sales.patchSalesClientMeeting(clientId, meetingId, { recording }),
     recipientsFor: async (client) => {
       owners = owners || await salesOwnerEmailMap();
-      const ownerId = sanitizeText(client.ownerId);
-      return [config.notifyEmail, owners[ownerId] || (ownerId ? await accountKeyToEmail(ownerId) : '')];
+      return [config.notifyEmail, await firefliesRepEmailFor(client, owners)];
     },
     sendEmail: (message) => emailLib.sendEmail(message),
   });
@@ -16214,6 +16276,8 @@ function scheduleFirefliesTranscriptIngest({ force = false } = {}) {
         ['watchdog', () => runFirefliesWatchdogStep()],
       ]);
       await maybeAlertFirefliesIngest({ sendEmail: (message) => emailLib.sendEmail(message) });
+      // The ingest loop also watches the live-join loop: a dead one has nobody else to tell.
+      await maybeAlertFirefliesLiveJoinHealth();
     } catch (error) {
       console.warn(`[fireflies] transcript ingest ${sanitizeText(error?.message) || error}`);
     } finally {

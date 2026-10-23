@@ -1,5 +1,6 @@
 // No booked meeting ends without a recording unnoticed: every session that never got the bot in has a
-// placeholder that says why and is followed to 'missing', and an empty recording is reported once.
+// placeholder that says why and is followed to 'missing'; the rep hears while the bot knocks; an empty
+// recording is reported once; the owner hears when live join is down.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -11,6 +12,7 @@ process.env.APP_DATA_DIR = dataDir;
 test.after(() => rmSync(dataDir, { recursive: true, force: true }));
 
 const live = await import('../lib/fireflies-live-sessions.js');
+const alerts = await import('../lib/fireflies-live-alerts.js');
 const watchdog = await import('../lib/fireflies-recording-watchdog.js');
 const ingest = await import('../lib/fireflies-ingest.js');
 const { mergeRecordingState } = await import('../lib/fireflies-recording-state.js');
@@ -55,6 +57,7 @@ function resetAll() {
   clearJsonCacheForTests();
   resetFirefliesStoreForTests();
   live.resetFirefliesLiveJoinEngineForTests();
+  alerts.resetFirefliesLiveAlertsForTests();
   ingest.resetFirefliesIngestForTests();
   watchdog.resetFirefliesWatchdogForTests();
 }
@@ -413,9 +416,216 @@ test('an empty alert that could not be sent is tried again on the hourly look, a
   assert.equal(sent.length, 1, 'once');
 });
 
+// ── 2. lobby alert ───────────────────────────────────────────────────────────
+
+function knockedSession({ knockAt = -3, checkedAt = 3, seen = false, client = salesClient() } = {}) {
+  live.upsertLiveSessionsForClient(client, { nowMs: at(-10) });
+  updateLiveSessionStore((store) => {
+    let session = applyLiveJoinAttempt(store.sessions[KEY], { at: iso(knockAt), kind: 'first', ok: true });
+    session = { ...session, checkedAt: iso(checkedAt), ...(seen ? { firstSeenActiveAt: iso(1), state: 'recording' } : {}) };
+    store.sessions[KEY] = session;
+    return store;
+  }, { nowMs: at(knockAt) });
+  return readLiveSessionStore().sessions[KEY];
+}
+
+test('the lobby alert is due by max(T+3, first knock + 4 min) once a look found no bot, inside the first-send window', () => {
+  resetAll();
+  const session = knockedSession();
+  assert.equal(alerts.planLobbyAlert(session, at(2)).reason, 'not-yet');
+  assert.equal(alerts.planLobbyAlert(session, at(3)).due, true);
+  assert.equal(alerts.planLobbyAlert(session, at(3)).dueMs, at(3));
+  assert.equal(alerts.planLobbyAlert(session, at(31)).reason, 'window-over');
+  assert.equal(alerts.planLobbyAlert({ ...session, checkedAt: iso(-3) }, at(4)).reason, 'unverified', 'no look since the knock');
+  assert.equal(alerts.planLobbyAlert({ ...session, firstSeenActiveAt: iso(1) }, at(4)).reason, 'seen');
+  assert.equal(alerts.planLobbyAlert({ ...session, declinedAt: iso(1) }, at(4)).reason, 'not-needed');
+  assert.equal(alerts.planLobbyAlert({ ...session, lobbyAlertAt: iso(3) }, at(4)).reason, 'sent');
+  // The first send failed and the T+1 retry was the first knock: due 4 minutes after it.
+  const failedFirst = applyLiveJoinAttempt(live.normalizeLiveSession({ ...session, attempts: [] }), { at: iso(-3), kind: 'first', ok: false, message: 'timeout', uncertain: false });
+  const late = { ...applyLiveJoinAttempt(failedFirst, { at: iso(1), kind: 'retry', ok: true }), checkedAt: iso(5) };
+  assert.equal(alerts.planLobbyAlert(late, at(4)).reason, 'not-yet');
+  assert.equal(alerts.planLobbyAlert(late, at(5)).due, true);
+  assert.equal(alerts.planLobbyAlert({ ...late, attempts: late.attempts.slice(0, 1) }, at(5)).reason, 'no-knock');
+});
+
+test('the rep gets one lobby e-mail, stamped on the session, also across a restart', async () => {
+  resetAll();
+  const client = salesClient();
+  knockedSession({ client });
+  const sent = [];
+  const deps = (minutes) => ({
+    clients: [client],
+    nowMs: at(minutes),
+    log: quiet,
+    recipientsFor: async () => ['alexander@asoldi.com'],
+    sendEmail: async (message) => { sent.push(message); },
+  });
+  const first = await alerts.runFirefliesLobbyAlerts(deps(3));
+  assert.deepEqual(first.sent, [KEY]);
+  assert.equal(sent.length, 1);
+  const [mail] = sent;
+  assert.equal(mail.to, 'alexander@asoldi.com');
+  assert.equal(mail.subject, 'Slipp inn Fireflies – Testfirma AS');
+  assert.match(mail.text, /^Fireflies\.ai Notetaker banker på i Google Meet-møtet med Testfirma AS kl\. 11:00, men er ikke sluppet inn ennå\./);
+  assert.match(mail.text, /slipp den inn\. Meet kan vise den under «Med potensielle risikoer»/);
+  assert.match(mail.text, /Er ingen i møtet ennå, trenger du ikke gjøre noe: Asoldi sender den inn på nytt\./);
+  assert.match(mail.text, /Meet: https:\/\/meet\.google\.com\/abc-defg-hij/);
+  assert.equal(readLiveSessionStore().sessions[KEY].lobbyAlertAt, iso(3));
+  await alerts.runFirefliesLobbyAlerts(deps(4));
+  // A restart: the stamp is on disk.
+  clearJsonCacheForTests();
+  alerts.resetFirefliesLiveAlertsForTests();
+  await alerts.runFirefliesLobbyAlerts(deps(5));
+  assert.equal(sent.length, 1, 'never twice');
+});
+
+test('no lobby e-mail for a test client, a client with no rep, when switched off, or when the bot got in', async () => {
+  resetAll();
+  knockedSession();
+  const sent = [];
+  const base = {
+    nowMs: at(3),
+    log: quiet,
+    recipientsFor: async () => ['alexander@asoldi.com'],
+    sendEmail: async (message) => { sent.push(message); },
+  };
+  const test1 = await alerts.runFirefliesLobbyAlerts({ ...base, clients: [salesClient({ isTest: true })] });
+  assert.deepEqual(test1.skipped, [{ key: KEY, reason: 'excluded' }]);
+  const noRep = await alerts.runFirefliesLobbyAlerts({ ...base, clients: [salesClient({ ownerId: '' })], recipientsFor: async () => [] });
+  assert.deepEqual(noRep.skipped, [{ key: KEY, reason: 'no-rep' }]);
+  await alerts.runFirefliesLobbyAlerts({ ...base, clients: [salesClient()], enabled: false });
+  assert.equal(sent.length, 0);
+  assert.equal(readLiveSessionStore().sessions[KEY].lobbyAlertAt, '', 'nothing stamped, so it can still go');
+
+  resetAll();
+  knockedSession({ seen: true });
+  await alerts.runFirefliesLobbyAlerts({ ...base, clients: [salesClient()] });
+  assert.equal(sent.length, 0);
+});
+
+test('a lobby e-mail that fails is released and tried again two minutes later, while the window lasts', async () => {
+  resetAll();
+  const client = salesClient();
+  knockedSession({ client });
+  let failing = true;
+  const sent = [];
+  const deps = (minutes) => ({
+    clients: [client],
+    nowMs: at(minutes),
+    log: quiet,
+    recipientsFor: async () => ['alexander@asoldi.com'],
+    sendEmail: async (message) => {
+      if (failing) throw new Error('SMTP down');
+      sent.push(message);
+    },
+  });
+  const failed = await alerts.runFirefliesLobbyAlerts(deps(3));
+  assert.deepEqual(failed.failed, [KEY]);
+  let session = readLiveSessionStore().sessions[KEY];
+  assert.equal(session.lobbyAlertAt, '');
+  assert.equal(session.lobbyAlertFailedAt, iso(3));
+  failing = false;
+  await alerts.runFirefliesLobbyAlerts(deps(4));
+  assert.equal(sent.length, 0, 'not within two minutes');
+  // The engine's next look still finds no bot.
+  updateLiveSessionStore((store) => {
+    store.sessions[KEY].checkedAt = iso(5);
+    return store;
+  }, { nowMs: at(5) });
+  await alerts.runFirefliesLobbyAlerts(deps(5));
+  assert.equal(sent.length, 1);
+  session = readLiveSessionStore().sessions[KEY];
+  assert.equal(session.lobbyAlertAt, iso(5));
+});
+
+test('the engine keeps the lobby stamp through its own writes', async () => {
+  resetAll();
+  const client = salesClient();
+  const state = { clients: [client], active: [], sent: [], reply: null };
+  await tickAt(state, -3);
+  await tickAt(state, 3);
+  const sent = [];
+  await alerts.runFirefliesLobbyAlerts({
+    clients: [client],
+    nowMs: at(3),
+    log: quiet,
+    recipientsFor: async () => ['alexander@asoldi.com'],
+    sendEmail: async (message) => { sent.push(message); },
+  });
+  assert.equal(sent.length, 1);
+  await tickAt(state, 5);
+  await tickAt(state, 6);
+  assert.equal(readLiveSessionStore().sessions[KEY].lobbyAlertAt, iso(3));
+});
+
+// ── 6. owner health alert ────────────────────────────────────────────────────
+
+test('health: a missing key near a meeting, a stalled loop, or failing ticks; nothing while safe mode keeps it off', () => {
+  const booked = live.collectLiveSessions([salesClient()], at(-90));
+  const ok = { apiKeyPresent: true, lastTickAt: iso(-91), failingSince: '' };
+  assert.equal(alerts.firefliesLiveJoinAlertReason({ status: { ...ok, apiKeyPresent: false }, booked, nowMs: at(-90) }), 'no-api-key');
+  assert.equal(alerts.firefliesLiveJoinAlertReason({ status: { ...ok, apiKeyPresent: false }, booked, nowMs: at(-130) }), '', 'more than 2 hours ahead');
+  assert.equal(alerts.firefliesLiveJoinAlertReason({ status: { ...ok, lastTickAt: iso(-11) }, booked, nowMs: at(0) }), 'loop-stalled');
+  assert.equal(alerts.firefliesLiveJoinAlertReason({ status: { ...ok, lastTickAt: iso(-9) }, booked, nowMs: at(0) }), '');
+  assert.equal(alerts.firefliesLiveJoinAlertReason({ status: { ...ok, lastTickAt: iso(-40) }, booked, nowMs: at(-20) }), '', 'no meeting in its window');
+  assert.equal(alerts.firefliesLiveJoinAlertReason({ status: { ...ok, lastTickAt: '' }, booked, nowMs: at(0), sinceMs: at(-12) }), 'loop-stalled', 'this process never ticked');
+  assert.equal(alerts.firefliesLiveJoinAlertReason({ status: { ...ok, lastTickAt: iso(0), failingSince: iso(-16) }, booked, nowMs: at(0) }), 'ticks-failing');
+  assert.equal(alerts.firefliesLiveJoinAlertReason({ status: { ...ok, lastTickAt: iso(0), failingSince: iso(-14) }, booked, nowMs: at(0) }), '');
+  assert.equal(alerts.firefliesLiveJoinAlertReason({ status: { ...ok, apiKeyPresent: false }, booked, nowMs: at(-90), liveJoinEnabled: false }), '');
+});
+
+test('health: the engine reports since when every tick has failed', async () => {
+  resetAll();
+  const state = { clients: [salesClient()], active: [], sent: [], reply: null };
+  await tickAt(state, -3, { fetchActiveMeetings: async () => { throw new Error('Fireflies down'); } });
+  let status = live.firefliesLiveJoinStatus({ nowMs: at(-3), apiKeyPresent: true });
+  assert.equal(status.failingSince, iso(-3));
+  await tickAt(state, -2, { fetchActiveMeetings: async () => { throw new Error('Fireflies down'); } });
+  assert.equal(live.firefliesLiveJoinStatus({ nowMs: at(-2), apiKeyPresent: true }).failingSince, iso(-3));
+  await tickAt(state, -1);
+  status = live.firefliesLiveJoinStatus({ nowMs: at(-1), apiKeyPresent: true });
+  assert.equal(status.failingSince, '');
+  assert.equal(status.lastOkTickAt, iso(-1));
+});
+
+test('health: one owner e-mail per 12 hours, kept on disk through a restart', async () => {
+  resetAll();
+  const sent = [];
+  const send = async (message) => { sent.push(message); };
+  const clients = [salesClient()];
+  const first = await alerts.maybeAlertFirefliesLiveJoin({ sendEmail: send, clients, apiKeyPresent: false, nowMs: at(-60), env: {}, log: quiet });
+  assert.deepEqual(first, { reason: 'no-api-key', to: 'damian@asoldi.com' });
+  assert.equal(sent[0].subject, 'Fireflies: nøkkelen mangler, ingen opptak av møtene');
+  assert.match(sent[0].text, /FIREFLIES_API_KEY/);
+  assert.match(sent[0].text, /Testfirma AS · Kari Test/);
+  assert.match(sent[0].text, /høyst én gang hver 12\. time/);
+  assert.equal(await alerts.maybeAlertFirefliesLiveJoin({ sendEmail: send, clients, apiKeyPresent: false, nowMs: at(-50), env: {}, log: quiet }), null);
+  ingest.resetFirefliesIngestForTests();
+  assert.equal(await alerts.maybeAlertFirefliesLiveJoin({ sendEmail: send, clients, apiKeyPresent: false, nowMs: at(-40), env: {}, log: quiet }), null, 'a restart keeps the stamp');
+  assert.equal(sent.length, 1);
+  assert.ok(ingest.firefliesIngestStatus({ nowMs: at(-40) }).lastLiveJoinAlertAt);
+  // FIREFLIES_ALERT_EMAIL, and a new alert after 12 hours.
+  const later = { ...salesClient(), meetingAt: iso(13 * 60) };
+  const again = await alerts.maybeAlertFirefliesLiveJoin({ sendEmail: send, clients: [later], apiKeyPresent: false, nowMs: at(12 * 60 - 59), env: { FIREFLIES_ALERT_EMAIL: 'alexander@asoldi.com' }, log: quiet });
+  assert.deepEqual(again, { reason: 'no-api-key', to: 'alexander@asoldi.com' });
+});
+
+test('health: a live-join loop that stopped is reported by the ingest tick watching it', async () => {
+  resetAll();
+  const sent = [];
+  const clients = [salesClient()];
+  const state = { clients, active: [], sent: [], reply: null };
+  await tickAt(state, -20);
+  // The loop died after its T-20 tick; the ingest tick keeps calling.
+  assert.equal(await alerts.maybeAlertFirefliesLiveJoin({ sendEmail: async (m) => { sent.push(m); }, clients, apiKeyPresent: true, nowMs: at(-5), log: quiet }), null, 'no meeting in its window yet');
+  const result = await alerts.maybeAlertFirefliesLiveJoin({ sendEmail: async (m) => { sent.push(m); }, clients, apiKeyPresent: true, nowMs: at(1), env: {}, log: quiet });
+  assert.equal(result?.reason, 'loop-stalled');
+  assert.equal(sent[0].subject, 'Fireflies: live-join står stille');
+});
+
 // ── server glue ──────────────────────────────────────────────────────────────
 
-test('server.js writes the placeholders of sessions that ended without a bot after every tick', () => {
+test('server.js writes the placeholders and sends the alerts after every tick, and the ingest tick watches live join', () => {
   const server = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
   const between = (from, to) => server.slice(server.indexOf(from), server.indexOf(to, server.indexOf(from) + from.length));
   const tick = between('async function sendDueFirefliesLiveJoins()', 'async function noteFirefliesBotJoinedWebhook(');
@@ -423,4 +633,14 @@ test('server.js writes the placeholders of sessions that ended without a bot aft
   assert.match(tick, /ensureLivePlaceholders\(\{ clients, writePlaceholder: writeUnsentLivePlaceholder \}\)/);
   const unsent = between('function writeUnsentLivePlaceholder(', '/** After every addToLiveMeeting attempt');
   assert.match(unsent, /return writeLivePlaceholder\(\{ slot, session, client, recording \}\);/, 'no liveJoinedAt');
+  assert.match(tick, /runFirefliesLobbyAlerts\(\{[^]*mayAlert: firefliesAlertAllowedFor,[^]*\}\)/);
+  assert.match(tick, /maybeAlertFirefliesLiveJoinHealth\(clients\)/);
+  assert.match(server, /function firefliesLobbyAlertEnabled\(\) \{\s*return parseBoolean\(process\.env\.FIREFLIES_LOBBY_ALERT, true\);/);
+  // The team address only when the rep is set but has no e-mail; no rep, no e-mail.
+  const recipients = between('function firefliesLobbyRecipientsFor()', 'async function maybeAlertFirefliesLiveJoinHealth(');
+  assert.match(recipients, /if \(!sanitizeText\(client\?\.ownerId\)\) return \[\];/);
+  assert.match(recipients, /\(await firefliesRepEmailFor\(client, owners\)\) \|\| readFirefliesWebhookConfig\(\)\.notifyEmail/);
+  assert.match(server, /await maybeAlertFirefliesIngest\(\{[^\n]*\}\);\s*\/\/[^\n]*\n\s*await maybeAlertFirefliesLiveJoinHealth\(\);/);
+  const env = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
+  assert.match(env, /^FIREFLIES_LOBBY_ALERT=$/m);
 });
