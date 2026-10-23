@@ -330,7 +330,7 @@ test('keys are made file-safe: plain keys stay, others are cleaned and get a has
   assert.throws(() => sanitizeSeoOpsKey('  '), (error) => error.code === 'invalid-key');
 });
 
-test('ledger months are kept for 13 months, and only the current month keeps backups', async () => {
+test('ledger months are kept for 13 months, and only this month and last month keep backups', async () => {
   let clock = new Date('2026-01-15T00:00:00.000Z');
   const store = createSeoOpsStore({ now: () => clock });
   for (let m = 0; m < 16; m += 1) {
@@ -344,9 +344,53 @@ test('ledger months are kept for 13 months, and only the current month keeps bac
   assert.equal(ledgers[0], 'dfs-ledger-2026-04.json');
   assert.equal(ledgers.at(-1), 'dfs-ledger-2027-04.json');
   const ledgerBackups = seoBackups().filter((n) => n.startsWith('seo-ops__dfs-ledger-'));
-  assert.ok(ledgerBackups.length > 0 && ledgerBackups.every((n) => n.startsWith('seo-ops__dfs-ledger-2027-04.json.')), ledgerBackups.join(', '));
+  const backedUp = [...new Set(ledgerBackups.map((n) => n.slice('seo-ops__dfs-ledger-'.length, 'seo-ops__dfs-ledger-'.length + 7)))].sort();
+  assert.deepEqual(backedUp, ['2027-03', '2027-04'], ledgerBackups.join(', '));
   assert.deepEqual(store.readLedger('2027-04').entries, [{ usd: 1 }, { usd: 2 }]);
   assert.throws(() => store.readLedger('2027-4'), (error) => error.code === 'invalid-key');
+  assert.throws(() => store.readLedger('2027-13'), (error) => error.code === 'invalid-key');
+});
+
+test('a booking later than next month or older than the months kept is refused and removes nothing; pruning follows the store clock, not the month booked', async () => {
+  const dir = join(DATA_DIR, 'seo-ops');
+  mkdirSync(dir, { recursive: true });
+  for (const name of readdirSync(dir).filter((n) => n.startsWith('dfs-ledger-'))) rmSync(join(dir, name));
+  for (const name of seoBackups().filter((n) => n.startsWith('seo-ops__dfs-ledger-'))) rmSync(join(backupDir(), name));
+  const ledgers = () => readdirSync(dir).filter((n) => n.startsWith('dfs-ledger-')).map((n) => n.slice(11, 18)).sort();
+  const backedUp = () => [...new Set(seoBackups().filter((n) => n.startsWith('seo-ops__dfs-ledger-')).map((n) => n.slice(20, 27)))].sort();
+  let clock = new Date('2026-10-23T12:00:00.000Z');
+  const store = createSeoOpsStore({ now: () => clock });
+  for (const month of ['2025-11', '2026-09', '2026-10']) {
+    await store.updateLedger(month, (doc) => { doc.entries.push({ usd: 1 }); });
+    await store.updateLedger(month, (doc) => { doc.entries.push({ usd: 2 }); });
+  }
+  assert.deepEqual(ledgers(), ['2025-11', '2026-09', '2026-10']);
+  const before = [ledgers(), seoBackups().sort()];
+
+  let ran = 0;
+  // At 2026-10 the 13 months kept are 2025-10 to 2026-10, and next month is 2026-11.
+  for (const month of ['2028-01', '2026-12', '2025-09', '2026-13', '2026-00']) {
+    await assert.rejects(store.updateLedger(month, () => { ran += 1; }), (error) => error.code === 'invalid-key', month);
+  }
+  assert.equal(ran, 0, 'a refused booking never runs its updater');
+  assert.deepEqual([ledgers(), seoBackups().sort()], before, 'a refused booking writes and removes nothing');
+  assert.deepEqual(backedUp(), ['2026-09', '2026-10'], 'this month and last month keep their backups');
+  // pruneLedgers takes no month; an argument cannot move its clock.
+  store.pruneLedgers('2030-01');
+  assert.deepEqual([ledgers(), seoBackups().sort()], before);
+
+  // Next month (a clock a little ahead) and a late booking into last month are fine and keep this month's backups.
+  await store.updateLedger('2026-11', (doc) => { doc.entries.push({ usd: 3 }); });
+  await store.updateLedger('2026-09', (doc) => { doc.entries.push({ usd: 4 }); });
+  assert.deepEqual(ledgers(), ['2025-11', '2026-09', '2026-10', '2026-11']);
+  assert.deepEqual(backedUp(), ['2026-09', '2026-10', '2026-11']);
+  assert.deepEqual(store.readLedger('2026-10').entries, [{ usd: 1 }, { usd: 2 }]);
+
+  // When the clock moves on, the months before last lose their backups and the oldest month goes.
+  clock = new Date('2026-12-02T08:00:00.000Z');
+  assert.deepEqual(store.pruneLedgers(), { removed: ['2025-11'] });
+  assert.deepEqual(ledgers(), ['2026-09', '2026-10', '2026-11']);
+  assert.deepEqual(backedUp(), ['2026-11']);
 });
 
 test('settings fill in the defaults; the safe-mode gate runs only allow-listed sites while hub safe mode is on', async () => {
@@ -385,22 +429,24 @@ test('deleting a site removes its file and every backup of it', async () => {
 test('several processes booking into one ledger month at the same time lose no entry', { timeout: 180_000 }, async (t) => {
   const store = createSeoOpsStore();
   const per = 30;
+  // The real clock's month: a booking must lie in the months the store keeps.
+  const month = new Date().toISOString().slice(0, 7);
   const children = [0, 1, 2].map((k) => runChild(t, `const store = createSeoOpsStore();
     for (let i = 0; i < ${per}; i += 1) {
-      await store.updateLedger('2026-10', async (doc) => {
+      await store.updateLedger('${month}', async (doc) => {
         await new Promise((resolve) => setTimeout(resolve, i % 3));
         doc.entries.push({ by: 'child-${k}', i });
       });
     }`));
   for (let i = 0; i < per; i += 1) {
-    await store.updateLedger('2026-10', async (doc) => {
+    await store.updateLedger(month, async (doc) => {
       await delay(i % 3);
       doc.entries.push({ by: 'parent', i });
     });
   }
   for (const child of children) assert.equal(await child.exited, 0, child.stderr());
-  // Earlier tests booked into this month too; only this test's entries carry `by`.
-  const entries = store.readLedger('2026-10').entries.filter((e) => e.by);
+  // Earlier tests may have booked into this month too; only this test's entries carry `by`.
+  const entries = store.readLedger(month).entries.filter((e) => e.by);
   assert.equal(entries.length, 4 * per);
   for (const by of ['parent', 'child-0', 'child-1', 'child-2']) {
     assert.deepEqual(entries.filter((e) => e.by === by).map((e) => e.i), Array.from({ length: per }, (_, i) => i), by);
