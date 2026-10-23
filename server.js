@@ -30,8 +30,6 @@ import {
 import * as hub from './data/hub.js';
 import { registerShopPaymentsRoutes, registerShopPaymentsWebhook } from './lib/shop-payments-routes.js';
 import { registerCmsSsoRoutes } from './lib/cms-sso.js';
-import { registerOwnerRoutingRoutes, resolveFormRouting } from './lib/owner-recipients.js';
-import { asoldiMarketingSendBlock, isAsoldiServiceTemplate, registerAsoldiUnsubscribeRoutes } from './lib/asoldi-unsubscribe.js';
 import * as employees from './data/employees.js';
 import * as sales from './data/sales.js';
 import { SALES_CONTACT_CORRECTIONS } from './data/sales-contact-corrections.js';
@@ -114,6 +112,8 @@ import {
   passwordResetPathForRole,
 } from './lib/password-reset.js';
 import * as clientForms from './lib/client-forms.js';
+import { registerOwnerRoutingRoutes, resolveFormRouting } from './lib/owner-recipients.js';
+import { asoldiMarketingSendBlock, isAsoldiServiceTemplate, registerAsoldiUnsubscribeRoutes } from './lib/asoldi-unsubscribe.js';
 import * as employeeWordPress from './lib/employee-wordpress.js';
 import * as employeeLuca from './lib/employee-luca.js';
 import * as employeeMyPhoner from './lib/employee-myphoner.js';
@@ -12751,7 +12751,6 @@ app.patch('/api/client-portal/state', clientAuthV2, async (req, res) => {
 
 registerShopPaymentsRoutes(app, { adminAuth });
 registerCmsSsoRoutes(app, { adminAuth, getSiteById: hub.getSiteById });
-registerOwnerRoutingRoutes(app, { adminAuth, getSiteById: hub.getSiteById, getSalesClients: sales.getSalesClients });
 
 // --- Hub API (public: site config for client CMS)
 app.get('/api/hub/site-config', (req, res) => {
@@ -20208,6 +20207,8 @@ app.delete('/api/admin/sales/offers/:id', salesAuth, (req, res) => {
   if (!ok) return res.status(404).json({ message: 'Offer not found.' });
   res.json({ ok: true });
 });
+
+registerOwnerRoutingRoutes(app, { adminAuth, getSiteById: hub.getSiteById, getSalesClients: sales.getSalesClients });
 
 app.options('/api/client-forms/:siteKey', (req, res) => {
   clientForms.setClientFormCors(req, res);
