@@ -274,3 +274,15 @@ test('data layer: a signed client stored with a plan keeps it; generic writes ca
   const plain = sales.updateSalesClient('c1', { details: { meetingQuote: { tierId: 'seo' } } });
   assert.equal(Object.hasOwn(plain.details.meetingQuote, 'tierExplicit'), false, 'stored only when true');
 });
+
+test('meeting-notes calculator: picking a package or custom marks the tier as picked; the quote keeps the mark', () => {
+  const modal = readFileSync(join(root, 'app', 'pages', 'sales', 'MeetingNotesModal.tsx'), 'utf8').replace(/\r\n/g, '\n');
+  for (const name of ['applyNamed', 'applyCustom']) {
+    const start = modal.indexOf(`function ${name}(`);
+    assert.ok(start > 0, name);
+    assert.match(modal.slice(start, modal.indexOf('\n  }\n', start)), /tierExplicit: true/, name);
+  }
+  const pricing = readFileSync(join(root, 'app', 'pages', 'sales', 'websitePricing.ts'), 'utf8');
+  assert.ok(pricing.includes('...(input.tierExplicit === true ? { tierExplicit: true } : {})'), 'the browser normalizer keeps the mark');
+  assert.ok(pricing.includes('...(quote.tierExplicit === true ? { tierExplicit: true } : {})'), 'the active package keeps the mark');
+});

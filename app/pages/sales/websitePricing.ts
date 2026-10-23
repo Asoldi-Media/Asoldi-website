@@ -15,6 +15,8 @@ export type MeetingQuotePackage = {
   pages: number;
   selected: string[];
   oneTimeAddOns: string[];
+  /** The rep picked this package (not the starter default). The plan resolver trusts the tier only then. */
+  tierExplicit?: boolean;
 };
 
 export type MeetingQuoteState = MeetingQuotePackage & {
@@ -129,6 +131,7 @@ export function normalizeMeetingQuotePackage(value: unknown, fallback?: MeetingQ
     pages: Number.isFinite(pages) && pages >= 1 ? Math.round(pages) : base.pages,
     selected,
     oneTimeAddOns,
+    ...(input.tierExplicit === true ? { tierExplicit: true } : {}),
   };
 }
 
@@ -157,6 +160,7 @@ export function activeMeetingQuotePackage(quote: MeetingQuoteState): MeetingQuot
     pages: quote.pages,
     selected: quote.selected,
     oneTimeAddOns: quote.oneTimeAddOns,
+    ...(quote.tierExplicit === true ? { tierExplicit: true } : {}),
   };
 }
 
