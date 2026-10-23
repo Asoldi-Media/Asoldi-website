@@ -433,3 +433,56 @@ test('data/sales.js keeps the new row fields and patches rows of several clients
   const rowB = sales.getSalesClientById(b.id).meetings[0];
   assert.deepEqual([rowB.purpose, rowB.recording], ['workshop', null], 'a recording state is not set through a row patch');
 });
+
+test('server.js: every link goes through linkFirefliesMeeting with the person, slot, lock and match rules', () => {
+  const server = readFileSync(fileURLToPath(new URL('../server.js', import.meta.url)), 'utf8');
+  const between = (from, to) => server.slice(server.indexOf(from), server.indexOf(to, server.indexOf(from) + from.length));
+  const link = between('function linkFirefliesMeeting(', 'function unlinkFirefliesMeetingFromClient(');
+  assert.match(link, /if \(!human && automaticLinkRefusal\(meetingId, client\.id, \{ stored: readStoredFirefliesMeeting\(meetingId\), clients \}\)\) \{\s*return client;/);
+  assert.match(link, /for \(const holder of holders\) detachMeetingFromClient\(holder\.id, meetingId\);/);
+  assert.match(link, /dropSupersededPlaceholders\(client\.id\)/);
+  assert.match(link, /repointOfferLock\(client\.id, \{ talkOf \}\);/);
+  assert.match(link, /syncStoredClientLink\(client\.id, meetingId, \{ human, actor: ref\.linkedBy \}\);/);
+  assert.equal(link.includes('recordingMatchesSalesMeeting'), false, 'the room decides the purpose, not the clock');
+  const deps = between('function firefliesClientDeps()', 'const firefliesMediaInFlight');
+  assert.match(deps, /matchClients: async \(record\) => matchRecordingToClients\(record\),/);
+  assert.equal(deps.includes('salesOwnerEmailMap'), false, 'no owner e-mail lookups per webhook');
+  const view = between('function canViewMeeting(', "app.get('/api/admin/fireflies/meetings', salesAuth");
+  assert.match(view, /sales\.findSalesClientByMeetingId\(/);
+  assert.equal(view.includes('match?.clientId'), false);
+  const media = between("app.get('/api/admin/fireflies/meetings/:meetingId/media/:kind'", "app.post('/api/admin/sales/:id/open-meet'");
+  assert.match(media, /if \(!canViewMeeting\(req, record\)\) return res\.status\(403\)/);
+  const backfill = between('function applyFirefliesMeetLinkBackfill(', 'let firefliesMeetLinkBackfillAt');
+  assert.match(backfill, /slotOwner: slotOwnerAmongClients/);
+  assert.match(backfill, /syncClientMeetingFacts\(/);
+  assert.match(backfill, /syncFirefliesMatchesToCards\(/);
+  const guard = between('function ensureFirefliesMeetLinkBackfill(', 'function clientAfterFirefliesBackfill(');
+  assert.match(guard, /if \(firefliesStoreSource\('meetings'\) === 'unreadable'\) return firefliesMeetLinkBackfillSummary;/);
+  const paste = between("app.post('/api/admin/sales/:id/offer/use-meeting'", "app.post('/api/admin/sales/:id/offer/request-review'");
+  assert.match(paste, /if \(holder && holder\.id !== client\.id && !req\.salesUser\?\.isAdmin\) \{\s*return res\.status\(409\)/);
+  assert.match(paste, /const holders = req\.salesUser\?\.isAdmin \? null : firefliesHolderMap\(\);/);
+  const offerMeeting = between('function presentMeetingForOffer(', 'function presentOfferMeetings(');
+  assert.equal(offerMeeting.includes('firefliesLiveJoinedAt'), false, 'never from the calendar\'s live-join stamps');
+  assert.match(offerMeeting, /liveJoined: recordingState === 'recording',/);
+  assert.match(offerMeeting, /pendingTranscript: !hasTranscript && !hasSummary && offerMeetingPending\(meeting\),/);
+  const compact = between('function compactOfferClient(', 'function presentOffer(');
+  assert.match(compact, /filter\(\(row\) => !isPlaceholderMeetingId\(row\?\.meetingId\)\)/);
+  assert.match(server, /unmatchedMeetings: listStoredFirefliesMeetings\(\{ unmatchedOnly: true, holders: firefliesHolderMap\(\) \}\)\.length,/);
+});
+
+test('server.js: the purpose and exclude routes check access and keep a person\'s word', () => {
+  const server = readFileSync(fileURLToPath(new URL('../server.js', import.meta.url)), 'utf8');
+  const between = (from, to) => server.slice(server.indexOf(from), server.indexOf(to, server.indexOf(from) + from.length));
+  const purpose = between("app.post('/api/admin/sales/:id/meetings/:meetingId/purpose'", "app.post('/api/admin/fireflies/meetings/:meetingId/refresh'");
+  assert.match(purpose, /salesAuth/);
+  assert.match(purpose, /if \(!canAccessSalesClient\(req, client\)\) return res\.status\(403\)/);
+  assert.match(purpose, /\['', 'sales', 'workshop', 'iteration'\]\.includes\(purpose\)/);
+  assert.match(purpose, /res\.json\(\{ client: jsonSalesClient\(updated \|\| client\) \}\);/);
+  const exclude = between("app.post('/api/admin/fireflies/meetings/:meetingId/exclude'", "app.post('/api/admin/sales/:id/meetings/:meetingId/purpose'");
+  assert.match(exclude, /if \(!canAccessSalesClient\(req, client\)\) return res\.status\(403\)/);
+  assert.match(exclude, /exclude: client\.id,/);
+  assert.match(exclude, /res\.json\(\{ ok: true, client: jsonSalesClient\(/);
+  const unlink = between("app.post('/api/admin/fireflies/meetings/:meetingId/unlink'", "app.post('/api/admin/fireflies/meetings/:meetingId/exclude'");
+  assert.match(unlink, /sales\.findSalesClientByMeetingId\(record\.meetingId\)/);
+  assert.match(unlink, /exclude: holder\.id/);
+});

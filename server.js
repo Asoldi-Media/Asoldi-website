@@ -234,7 +234,8 @@ import { contractHtmlForOffer } from './lib/offer-contract-html.js';
 import { extractOfferLetterBody } from './lib/offer-letter-html.js';
 import { isDeepseekConfigured } from './lib/deepseek.js';
 import { clientIntentSourceHash, fillOfferFromTranscript, meetingContextIsTooThin, reflectContractFromEmail, summarizeClientIntent } from './lib/offer-ai.js';
-import { clientOwnedMeetLinks, emptyFirefliesLiveJoinStamp, firefliesMeetLinksDiffer, matchMeetingToClients, normalizeFirefliesMeetLink, planFirefliesMeetLinkBackfill, recordingMatchesSalesMeeting, shouldDropLiveJoinStub } from './lib/fireflies-client-match.js';
+import { automaticLinkRefusal, clientOwnedMeetLinks, emptyFirefliesLiveJoinStamp, firefliesMeetLinksDiffer, isProtectedHumanLink, matchMeetingToClients, meetRoomIsOnlyClients, normalizeFirefliesMeetLink, planFirefliesMeetLinkBackfill } from './lib/fireflies-client-match.js';
+import { clientMeetingSlots, resolveRecordingSlot, slotOwnerAmongClients } from './lib/fireflies-slots.js';
 import { firefliesNotetakerAllowedForOrganizer, refreshFirefliesKeyOwnerEmail } from './lib/fireflies-key-owner.js';
 import {
   currentSessionKeyForSlot,
@@ -269,6 +270,7 @@ import {
   runFirefliesIngestTick,
 } from './lib/fireflies-ingest.js';
 import { declinedRecordingPatch, runFirefliesRecordingWatchdog } from './lib/fireflies-recording-watchdog.js';
+import { PENDING_GRACE_MS, recordingDeadlineMs } from './lib/fireflies-recording-watchdog.js';
 import { CUSTOM_TIER_ID, WEBSITE_TIERS, formatKr, resolveTier, tierById, toClientWebsitePlan } from './lib/website-tiers.js';
 import { buildSalesSender, normalizeAsoldiFromEmail } from './lib/sales-sender.js';
 import {
@@ -297,6 +299,9 @@ import {
   readStoredFirefliesMeeting,
   readStoredFirefliesMeetingMap,
   refreshFirefliesMeeting,
+  setStoredFirefliesClientLink,
+  storedMatchForCard,
+  syncStoredFirefliesMatches,
   updateStoredFirefliesMeeting,
 } from './lib/fireflies-webhook.js';
 import {
@@ -480,8 +485,14 @@ import {
 } from './lib/workshop-notes.js';
 import {
   applyFirefliesPurpose,
+  clientMeetingRowsView,
   meetingIdForPurpose,
+  offerLockIsStale,
+  planClientMeetingSync,
   presentClientMeetings,
+  purposePickPatch,
+  slotKeepsMeeting,
+  storedTalkOf,
 } from './lib/workshop-meetings.js';
 import { requestWorkshopInvoice } from './lib/workshop-invoice.js';
 import { renderGoogleCalendarOAuthResultHtml } from './lib/google-calendar-oauth-ui.js';
@@ -12040,7 +12051,7 @@ async function handleFirefliesWebhook(req, res) {
   }
 }
 
-/** Owner account key -> that rep's e-mail, so the matcher can credit meetings hosted by the client's own rep. */
+/** Owner account key -> that rep's e-mail (the missing-recording alert goes to the owning rep). */
 async function salesOwnerEmailMap() {
   const map = {};
   try {
@@ -12073,43 +12084,141 @@ async function salesOwnerEmailMap() {
   return map;
 }
 
-function dropLiveJoinStubsForMeetLink(clientId, meetLink, keepMeetingId = '', recordingPurpose = '') {
-  const client = sales.getSalesClientById(clientId);
-  if (!client) return client;
-  const ownedMeetLinks = clientOwnedMeetLinks(client);
-  for (const row of client.meetings || []) {
-    if (!shouldDropLiveJoinStub({
-      stub: row,
-      recordingMeetLink: meetLink,
-      ownedMeetLinks,
-      keepMeetingId,
-      recordingPurpose,
-    })) continue;
-    sales.unlinkMeetingFromSalesClient(clientId, row.meetingId);
-    stripMeetingFromClientOffer(clientId, row.meetingId);
-    clearFirefliesIdFromClientSlots(clientId, row.meetingId);
-  }
-  return sales.getSalesClientById(clientId) || client;
+/** The record with the stored pin and exclusions, which a fresh Fireflies copy does not carry. */
+function withStoredMatchFacts(record = {}) {
+  const stored = readStoredFirefliesMeeting(record?.meetingId);
+  if (!stored) return record;
+  return {
+    ...record,
+    pin: record.pin ?? stored.pin ?? null,
+    excludedClientIds: record.excludedClientIds ?? stored.excludedClientIds ?? [],
+  };
 }
 
+/**
+ * Which client a recording belongs to (lib/fireflies-client-match.js matchMeetingToClients): a person's
+ * link first, then the client whose booked Meet room it was recorded in; a room two clients share goes
+ * to the one whose booked slot it started in. Clients it was excluded from never get it.
+ */
+function matchRecordingToClients(record, clients = sales.getSalesClients()) {
+  return matchMeetingToClients(withStoredMatchFacts(record), clients, { slotOwner: slotOwnerAmongClients });
+}
+
+/** meetingId → the client whose card holds it: client.meetings is the one record of who has a recording. */
+function firefliesHolderMap(clients = sales.getSalesClients()) {
+  const map = new Map();
+  for (const client of clients) {
+    for (const row of client.meetings || []) {
+      const id = sanitizeText(row.meetingId);
+      if (id && !isPlaceholderMeetingId(id) && !map.has(id)) map.set(id, sanitizeText(client.id));
+    }
+  }
+  return map;
+}
+
+/** The stored match for the row a client card holds (what the card says, never a guess). */
+/**
+ * Write what the card says onto the stored record: the match, and for a person's link a pin (and the
+ * client off its excluded list). A store that cannot be written never fails the link itself.
+ */
+function syncStoredClientLink(clientId, meetingId, { human = false, actor = '' } = {}) {
+  const id = sanitizeText(meetingId);
+  if (!id || isPlaceholderMeetingId(id) || !readStoredFirefliesMeeting(id)) return null;
+  const client = sales.getSalesClientById(clientId);
+  const row = (client?.meetings || []).find((item) => sanitizeText(item.meetingId) === id);
+  if (!row) return null;
+  try {
+    return setStoredFirefliesClientLink(id, {
+      match: storedMatchForCard(client, row),
+      ...(human ? { pin: { clientId: client.id, linkedBy: sanitizeText(actor) || sanitizeText(row.linkedBy) }, include: client.id } : {}),
+    });
+  } catch (error) {
+    console.warn(`[fireflies] match id=${id} client=${sanitizeText(clientId)} not stored: ${sanitizeText(error?.message) || error}`);
+    return null;
+  }
+}
+
+/**
+ * The offer lock follows the sales recording once "Møtet hatt" is ticked: a stale lock
+ * (lib/workshop-meetings.js offerLockIsStale) points at the best real one
+ * (sales.pickLockedOfferMeetingId), or is cleared.
+ */
+function repointOfferLock(clientId, { talkOf = storedTalkOf() } = {}) {
+  const client = sales.getSalesClientById(clientId);
+  if (!client?.progression?.meetingHeld || !offerLockIsStale(client, { talkOf })) return client;
+  const lock = sanitizeText(client.lockedOfferMeetingId);
+  const next = sales.pickLockedOfferMeetingId(client, { talkOf });
+  if (next === lock) return client;
+  return sales.updateSalesClient(client.id, { lockedOfferMeetingId: next }) || client;
+}
+
+/** A recording left this client (moved, unlinked, excluded, a placeholder dropped): out of its slots, offer and lock. */
+function detachMeetingFromClient(clientId, meetingId) {
+  clearFirefliesIdFromClientSlots(clientId, meetingId);
+  stripMeetingFromClientOffer(clientId, meetingId);
+  repointOfferLock(clientId);
+}
+
+/** Drop the placeholders a recording with talk on their own slot now covers (lib/workshop-meetings.js). */
+function dropSupersededPlaceholders(clientId) {
+  const client = sales.getSalesClientById(clientId);
+  if (!client) return client;
+  const { superseded } = clientMeetingRowsView(client);
+  for (const id of superseded) {
+    sales.unlinkMeetingFromSalesClient(clientId, id);
+    detachMeetingFromClient(clientId, id);
+  }
+  return superseded.size ? (sales.getSalesClientById(clientId) || client) : client;
+}
+
+/**
+ * Put a Fireflies recording on a client card. Every link path goes through here (webhook, pull,
+ * Tilbud paste, calendar session, admin, backfill, watchdog); a live-join placeholder is written as it is.
+ *   - An automatic link never takes a recording off a person's link on another card, onto a client it
+ *     was excluded from, or away from the client a person pinned it to. A person's link (a 'manual' or
+ *     account linkedBy) moves it, pins it there and stays a person's link on later passes.
+ *   - Purpose and slot come from the room (lib/fireflies-slots.js); a person's pick stays.
+ *   - The card it leaves loses it from its workshop / iteration / action slots, offer and lock.
+ *   - Placeholders of its slot are dropped once it has talk; slots, actions and the offer lock keep the
+ *     copy of a meeting with the most talk.
+ *   - The stored record's match then says what this card says.
+ * Returns the client as it is now (unchanged when the link is refused), or null when it does not exist.
+ */
 function linkFirefliesMeeting(clientId, ref) {
   const client = sales.getSalesClientById(clientId);
-  const applied = applyFirefliesPurpose(client || {}, {
-    ...ref,
-    forSalesMeeting: recordingMatchesSalesMeeting(client || {}, ref),
-  });
-  sales.linkMeetingToSalesClient(clientId, applied.ref);
-  if (!isPlaceholderMeetingId(applied.ref.meetingId)) {
-    dropLiveJoinStubsForMeetLink(clientId, applied.ref.meetLink, applied.ref.meetingId, applied.ref.purpose);
+  const meetingId = sanitizeText(ref?.meetingId);
+  if (!client || !meetingId) return client || null;
+  if (isPlaceholderMeetingId(meetingId)) return sales.linkMeetingToSalesClient(client.id, ref) || client;
+  const human = isProtectedHumanLink(ref.linkedBy);
+  const clients = sales.getSalesClients();
+  const holders = clients.filter((entry) => entry.id !== client.id
+    && (entry.meetings || []).some((row) => sanitizeText(row.meetingId) === meetingId));
+  if (!human && automaticLinkRefusal(meetingId, client.id, { stored: readStoredFirefliesMeeting(meetingId), clients })) {
+    return client;
   }
-  const latestForAction = sales.getSalesClientById(clientId) || client;
-  const attached = attachFirefliesToMatchingAction(decorateNextActions(latestForAction || {}), applied.ref);
+  const existing = (client.meetings || []).find((row) => sanitizeText(row.meetingId) === meetingId) || null;
+  // A later automatic pass (a summary that came in, a relink) keeps a person's link a person's link.
+  const kept = !human && existing && isProtectedHumanLink(existing.linkedBy)
+    ? { linkedBy: existing.linkedBy, confidence: existing.confidence, score: existing.score, reasons: existing.reasons }
+    : {};
+  const talkOf = storedTalkOf();
+  const applied = applyFirefliesPurpose(client, { ...ref, ...kept }, { existing, talkOf });
+  sales.linkMeetingToSalesClient(client.id, applied.ref);
+  for (const holder of holders) detachMeetingFromClient(holder.id, meetingId);
+  const latest = dropSupersededPlaceholders(client.id) || client;
+  const slots = clientMeetingSlots(latest);
+  const slot = (applied.ref.slotKey && slots.find((entry) => entry.slotKey === applied.ref.slotKey))
+    || resolveRecordingSlot(latest, applied.ref, { slots }).slot;
+  const attached = attachFirefliesToMatchingAction(decorateNextActions(latest), applied.ref, {
+    slot,
+    keepCurrent: (action) => slotKeepsMeeting(latest, action.firefliesMeetingId, applied.ref, { talkOf }),
+    copyMeetLink: meetRoomIsOnlyClients(applied.ref.meetLink, latest, clients),
+  });
   const patch = {};
   if (attached.actionId) {
     patch.nextActions = attached.actions;
   }
   if (applied.workshopAction) {
-    const latest = sales.getSalesClientById(clientId);
     patch.workshopAction = {
       ...(latest?.workshopAction || {}),
       firefliesMeetingId: applied.workshopAction.firefliesMeetingId,
@@ -12119,18 +12228,63 @@ function linkFirefliesMeeting(clientId, ref) {
     patch.workshop = applied.workshop;
   }
   if (Object.keys(patch).length) {
-    sales.updateSalesClient(clientId, patch);
+    sales.updateSalesClient(client.id, patch);
   }
-  const latest = sales.getSalesClientById(clientId);
+  repointOfferLock(client.id, { talkOf });
+  syncStoredClientLink(client.id, meetingId, { human, actor: ref.linkedBy });
+  const fresh = sales.getSalesClientById(client.id);
   if (applied.ref?.purpose === 'workshop') {
-    scheduleWorkshopProjectDocument(clientId);
+    scheduleWorkshopProjectDocument(client.id);
   }
-  return latest;
+  return fresh;
+}
+
+/** Take a recording off a client card, with its slots, offer and lock. */
+function unlinkFirefliesMeetingFromClient(clientId, meetingId) {
+  const updated = sales.unlinkMeetingFromSalesClient(clientId, meetingId);
+  detachMeetingFromClient(clientId, meetingId);
+  return sales.getSalesClientById(clientId) || updated;
+}
+
+/**
+ * A person's purpose pick for one recording on the card (lib/workshop-meetings.js purposePickPatch): the
+ * row keeps it on every automatic pass, the workshop / iteration slot and the offer lock follow it, the
+ * placeholder of the slot it now covers goes, and the stored record is pinned to this client.
+ */
+function setFirefliesMeetingPurpose(clientId, meetingId, purpose, { by = '', actor = '' } = {}) {
+  const client = sales.getSalesClientById(clientId);
+  const id = sanitizeText(meetingId);
+  const row = (client?.meetings || []).find((item) => sanitizeText(item.meetingId) === id);
+  if (!client || !row || isPlaceholderMeetingId(id)) return client || null;
+  const patch = purposePickPatch(client, row, purpose, { by });
+  sales.patchSalesMeetingRows([{ clientId: client.id, meetingId: id, patch }]);
+  const latest = sales.getSalesClientById(client.id) || client;
+  const slotPatch = {};
+  const workshop = getWorkshopAction(latest);
+  if (workshop) {
+    const holds = sanitizeText(workshop.firefliesMeetingId) === id;
+    if (patch.purpose === 'workshop' && purpose && !holds) slotPatch.workshopAction = { ...latest.workshopAction, firefliesMeetingId: id };
+    if (patch.purpose !== 'workshop' && holds) slotPatch.workshopAction = { ...latest.workshopAction, firefliesMeetingId: '' };
+  }
+  const record = getWorkshopRecord(latest);
+  const iterationHolds = sanitizeText(record.iterationMeeting?.firefliesMeetingId) === id;
+  if (patch.purpose === 'iteration' && purpose && !iterationHolds) {
+    slotPatch.workshop = { ...record, iterationMeeting: { ...record.iterationMeeting, firefliesMeetingId: id } };
+  } else if (patch.purpose !== 'iteration' && iterationHolds) {
+    slotPatch.workshop = { ...record, iterationMeeting: { ...record.iterationMeeting, firefliesMeetingId: '' } };
+  }
+  if (patch.purpose !== 'sales' && sanitizeText(latest.lockedOfferMeetingId) === id) slotPatch.lockedOfferMeetingId = '';
+  if (Object.keys(slotPatch).length) sales.updateSalesClient(client.id, slotPatch);
+  dropSupersededPlaceholders(client.id);
+  repointOfferLock(client.id);
+  syncStoredClientLink(client.id, id, { human: true, actor });
+  if (patch.purpose === 'workshop') scheduleWorkshopProjectDocument(client.id);
+  return sales.getSalesClientById(client.id);
 }
 
 function firefliesClientDeps() {
   return {
-    matchClients: async (record) => matchMeetingToClients(record, sales.getSalesClients(), { ownerEmailById: await salesOwnerEmailMap() }),
+    matchClients: async (record) => matchRecordingToClients(record),
     linkMeeting: async (clientId, ref) => linkFirefliesMeeting(clientId, ref),
   };
 }
@@ -15826,7 +15980,8 @@ function compactOfferClient(client = {}) {
     workshopStartDate: sanitizeText(client?.details?.meetingQuote?.startDate),
     meetingQuote: client?.details?.meetingQuote || null,
     meetingAt: client.meetingAt || '',
-    meetings: Array.isArray(client.meetings) ? client.meetings : [],
+    // Recordings only (Møtedata and its count): a live-join placeholder has nothing to open.
+    meetings: (Array.isArray(client.meetings) ? client.meetings : []).filter((row) => !isPlaceholderMeetingId(row?.meetingId)),
   };
 }
 
@@ -15899,12 +16054,18 @@ function persistOfferDraft(offer, client, body, req, { content = true } = {}) {
   return updated;
 }
 
-/** Fireflies recording of this client's booked sales meeting. Later calendar reminders are ignored. */
+/**
+ * Fireflies recording of this client's booked sales meeting: the offer lock while it names a real
+ * recording on the card, else the best sales recording (sales.pickLockedOfferMeetingId), else the first
+ * row (a placeholder shows the meeting's recording state).
+ */
 function salesMeetingRef(client) {
   const meetings = Array.isArray(client?.meetings) ? client.meetings : [];
   const locked = sanitizeText(client?.lockedOfferMeetingId);
-  if (locked) return meetings.find((item) => item?.meetingId === locked) || null;
-  return meetings.find((item) => item?.forSalesMeeting || recordingMatchesSalesMeeting(client, item)) || meetings[0] || null;
+  const lockedRow = locked && !isPlaceholderMeetingId(locked) ? meetings.find((item) => item?.meetingId === locked) : null;
+  if (lockedRow) return lockedRow;
+  const picked = sales.pickLockedOfferMeetingId(client, { talkOf: storedTalkOf() });
+  return meetings.find((item) => item?.meetingId === picked) || meetings[0] || null;
 }
 
 function formatOfferMeetingWhen(value = '') {
@@ -15963,23 +16124,55 @@ function clearFirefliesIdFromClientSlots(clientId, meetingId) {
   if (Object.keys(patch).length) sales.updateSalesClient(clientId, patch);
 }
 
+/**
+ * Cards linked before the purpose and slot rules (or whose bookings moved) get what the rules say now,
+ * all in one write; placeholders a recording with talk now covers are dropped. A person's pick stays.
+ */
+function syncClientMeetingFacts(clients = sales.getSalesClients()) {
+  const patches = [];
+  const drops = [];
+  for (const client of clients) {
+    if (!(client.meetings || []).length) continue;
+    try {
+      const plan = planClientMeetingSync(client);
+      for (const entry of plan.patches) patches.push({ clientId: client.id, ...entry });
+      for (const meetingId of plan.drop) drops.push({ clientId: client.id, meetingId });
+    } catch (error) {
+      console.warn(`[fireflies] meeting facts client=${sanitizeText(client.id)} ${sanitizeText(error?.message) || error}`);
+    }
+  }
+  const patched = patches.length ? sales.patchSalesMeetingRows(patches) : 0;
+  for (const row of drops) unlinkFirefliesMeetingFromClient(row.clientId, row.meetingId);
+  return { patched, dropped: drops.length };
+}
+
+/**
+ * Every stored meeting's match names the card that holds it, or nothing (one write). Skipped when no
+ * card holds a recording at all: that is an empty or unreadable sales file, not proof.
+ */
+function syncFirefliesMatchesToCards(clients = sales.getSalesClients()) {
+  const held = new Map();
+  for (const client of clients) {
+    for (const row of client.meetings || []) {
+      const id = sanitizeText(row.meetingId);
+      if (id && !isPlaceholderMeetingId(id) && !held.has(id)) held.set(id, storedMatchForCard(client, row));
+    }
+  }
+  if (!held.size) return { changed: 0 };
+  const entries = listStoredFirefliesMeetings({ includeStubs: true })
+    .map((row) => ({ meetingId: row.meetingId, match: held.get(sanitizeText(row.meetingId)) || null }));
+  return syncStoredFirefliesMatches(entries);
+}
+
 function applyFirefliesMeetLinkBackfill() {
   const clients = sales.getSalesClients();
   const meetings = listStoredFirefliesMeetings();
-  const plan = planFirefliesMeetLinkBackfill({ clients, meetings });
-  const moving = new Set(plan.moves.map((row) => sanitizeText(row.meetingId)));
-  for (const row of plan.unlinks) {
-    sales.unlinkMeetingFromSalesClient(row.fromClientId, row.meetingId);
-    stripMeetingFromClientOffer(row.fromClientId, row.meetingId);
-    clearFirefliesIdFromClientSlots(row.fromClientId, row.meetingId);
-    const stored = readStoredFirefliesMeeting(row.meetingId);
-    if (
-      !moving.has(sanitizeText(row.meetingId))
-      && sanitizeText(stored?.match?.clientId) === sanitizeText(row.fromClientId)
-    ) {
-      updateStoredFirefliesMeeting(row.meetingId, { match: null });
-    }
+  const plan = planFirefliesMeetLinkBackfill({ clients, meetings, slotOwner: slotOwnerAmongClients });
+  if (plan.skipped) {
+    console.warn(`[fireflies] meet-link backfill skipped (${plan.skipped}): the archive holds no meetings while cards hold recordings.`);
+    return plan;
   }
+  for (const row of plan.unlinks) unlinkFirefliesMeetingFromClient(row.fromClientId, row.meetingId);
   for (const row of plan.moves) {
     const stored = readStoredFirefliesMeeting(row.meetingId);
     const client = sales.getSalesClientById(row.toClientId);
@@ -15987,27 +16180,20 @@ function applyFirefliesMeetLinkBackfill() {
     const record = stored?.meetingId
       ? { ...stored, meetLink: stored.meetingLink || row.meetLink }
       : { meetingId: row.meetingId, meetLink: row.meetLink, title: 'Fireflies-møte' };
+    const linkedBy = sanitizeText(row.linkedBy) || 'meet-link';
+    const person = isProtectedHumanLink(linkedBy);
     linkFirefliesMeeting(client.id, meetingRefForClient(record, {
       clientId: client.id,
       businessName: client.businessName,
-      confidence: 'high',
-      reasons: ['Google Meet-lenken matcher kundens møte'],
-      linkedBy: 'meet-link',
-    }, { linkedBy: 'meet-link' }));
-    if (stored?.meetingId) {
-      updateStoredFirefliesMeeting(row.meetingId, {
-        match: {
-          clientId: client.id,
-          businessName: client.businessName,
-          confidence: 'high',
-          reasons: ['Google Meet-lenken matcher kundens møte'],
-          linkedBy: 'meet-link',
-          linkedAt: new Date().toISOString(),
-        },
-      });
-    }
+      confidence: person ? 'manual' : 'high',
+      reasons: [person ? 'Koblet til kunden av en person' : 'Google Meet-lenken matcher kundens møte'],
+      linkedBy,
+    }, { linkedBy }));
   }
-  return plan;
+  const changed = plan.unlinks.length || plan.moves.length;
+  const facts = syncClientMeetingFacts(changed ? sales.getSalesClients() : clients);
+  syncFirefliesMatchesToCards(changed || facts.patched || facts.dropped ? sales.getSalesClients() : clients);
+  return { ...plan, patched: facts.patched, dropped: facts.dropped };
 }
 
 let firefliesMeetLinkBackfillAt = 0;
@@ -16026,8 +16212,8 @@ function ensureFirefliesMeetLinkBackfill({ force = false } = {}) {
     linked: plan.linked,
     detached: plan.detached,
   };
-  if (plan.linked || plan.detached) {
-    console.log(`[fireflies] meet-link backfill scanned=${plan.scanned} linked=${plan.linked} detached=${plan.detached}`);
+  if (plan.linked || plan.detached || plan.patched || plan.dropped) {
+    console.log(`[fireflies] meet-link backfill scanned=${plan.scanned} linked=${plan.linked} detached=${plan.detached} retagged=${plan.patched || 0} placeholders-covered=${plan.dropped || 0}`);
   }
   return firefliesMeetLinkBackfillSummary;
 }
@@ -16069,7 +16255,7 @@ function firefliesClientMeetingRows() {
 function linkFetchedFirefliesTranscript(record) {
   const id = sanitizeText(record?.meetingId);
   if (!id) return null;
-  const match = matchMeetingToClients(record, sales.getSalesClients());
+  const match = matchRecordingToClients(record);
   const holder = sales.findSalesClientByMeetingId(id);
   const ownerId = sanitizeText(match.best?.clientId) || sanitizeText(holder?.id);
   if (!ownerId) return null;
@@ -16221,7 +16407,10 @@ function startOfferLetterFillLoop() {
   }, SALES_REMINDER_POLL_MS);
 }
 
-/** Transcripts already stored for this client's booked Meet, so Bytt opptak can list them. */
+/**
+ * Transcripts already stored for this client's booked Meet, so Bytt opptak can list them. Live captions
+ * wait for the finished copy, and a recording excluded from or pinned away from this client stays away.
+ */
 function linkCalendarSessionTranscripts(client) {
   if (!client?.id) return client;
   let current = client;
@@ -16229,8 +16418,8 @@ function linkCalendarSessionTranscripts(client) {
   for (const meetLink of clientOwnedMeetLinks(current)) {
     const stored = listStoredFirefliesMeetingsForMeetLink(meetLink);
     for (const row of stored) {
-      if (!row?.meetingId) continue;
-      const match = matchMeetingToClients(row, all);
+      if (!row?.meetingId || storedMeetingIsPartial(row)) continue;
+      const match = matchRecordingToClients(row, all);
       if (match.best?.clientId !== sanitizeText(current.id)) continue;
       const already = (current.meetings || []).some((item) => sanitizeText(item.meetingId) === sanitizeText(row.meetingId));
       if (already) continue;
@@ -16386,15 +16575,16 @@ function meetingForOffer(client, offer) {
     const chosen = loadStoredOrClientMeeting(client, offer.meetingId);
     if (chosen) return chosen;
   }
-  if (client?.progression?.meetingHeld && sanitizeText(client.lockedOfferMeetingId)) {
-    const locked = loadStoredOrClientMeeting(client, client.lockedOfferMeetingId);
+  const lock = sanitizeText(client?.lockedOfferMeetingId);
+  if (client?.progression?.meetingHeld && lock && !isPlaceholderMeetingId(lock)) {
+    const locked = loadStoredOrClientMeeting(client, lock);
     if (locked) return locked;
   }
   const ref = salesMeetingRef(client);
   if (ref?.meetingId) return readStoredFirefliesMeeting(ref.meetingId) || { ...ref, transcript: '' };
   const byLink = findStoredFirefliesMeetingForMeetLink(client?.calendar?.meetLink);
   if (byLink?.meetingId) {
-    const match = matchMeetingToClients(byLink, sales.getSalesClients());
+    const match = matchRecordingToClients(byLink);
     if (match.best?.clientId === sanitizeText(client?.id)) {
       try {
         linkFirefliesMeeting(client.id, meetingRefForClient(byLink, byLink.match || {
@@ -16422,33 +16612,50 @@ function syncOfferMeetingSelection(offer, client) {
   }, { actor: 'system', action: '' }) || { ...offer, meetingIds: ids, meetingId: ids[0] || '' };
 }
 
+const TERMINAL_OR_UNADMITTED_RECORDING = new Set(['missing', 'empty', 'declined', 'not-admitted']);
+// A recording Fireflies has not finished stops counting as "on its way" after this.
+const OFFER_PENDING_TRANSCRIPT_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Is the transcript of this offer meeting still on its way? A placeholder waits until its recording
+ * state says otherwise (missing, empty, declined, not admitted), and never past the watchdog's
+ * deadline plus its pending grace; a real recording waits while Fireflies has not finished it, and
+ * never once it is final, given up or a week old. Never true forever.
+ */
+function offerMeetingPending(meeting = {}, { nowMs = Date.now() } = {}) {
+  if (sanitizeText(meeting.transcript) || sanitizeText(meeting.summary) || meeting.hasTranscript) return false;
+  const linked = Date.parse(meeting.linkedAt || meeting.liveJoinedAt || meeting.startedAt || '');
+  const linkedRecently = !Number.isFinite(linked) || nowMs - linked < OFFER_PENDING_TRANSCRIPT_MS;
+  if (isPlaceholderMeetingId(meeting.meetingId)) {
+    if (TERMINAL_OR_UNADMITTED_RECORDING.has(sanitizeText(meeting.recording?.state))) return false;
+    const deadline = recordingDeadlineMs(meeting);
+    return Number.isFinite(deadline) ? nowMs < deadline + PENDING_GRACE_MS : linkedRecently;
+  }
+  const stored = readStoredFirefliesMeeting(meeting.meetingId);
+  if (stored) {
+    if (storedMeetingIsFinal(stored, { nowMs }) || sanitizeText(stored.fetch?.gaveUpAt)) return false;
+    const seen = Date.parse(stored.firstSeenAt || stored.startedAt || '');
+    return !Number.isFinite(seen) || nowMs - seen < OFFER_PENDING_TRANSCRIPT_MS;
+  }
+  return linkedRecently;
+}
+
+/**
+ * The offer page's meeting. The recording state comes from the row's own `recording` (a live-join
+ * placeholder), never from the calendar's live-join stamps: liveJoined only while the bot is in the room,
+ * no Fireflies link for a placeholder, and pendingTranscript never true forever (offerMeetingPending).
+ */
 function presentMeetingForOffer(meeting, offer, client = null) {
   if (!meeting) {
-    const joinedAt = sanitizeText(client?.calendar?.firefliesLiveJoinedAt);
-    if (!joinedAt && !(client.meetings || []).length) return null;
-    const fallback = (client.meetings || [])[0];
-    if (fallback) {
-      return presentMeetingForOffer(fallback, offer, client);
-    }
-    const meetingMs = Date.parse(client?.meetingAt || '');
-    return {
-      meetingId: '',
-      title: firefliesLiveJoinTitle(client) || 'Fireflies ble sendt inn i Meet',
-      when: Number.isFinite(meetingMs)
-        ? formatOfferMeetingWhen(client.meetingAt)
-        : joinedAt,
-      durationMinutes: '',
-      hasTranscript: false,
-      hasSummary: false,
-      tooThin: true,
-      pendingTranscript: true,
-      liveJoined: true,
-      firefliesUrl: '',
-    };
+    const fallback = presentClientMeetings(client || {}, null, { media: false })[0];
+    return fallback ? presentMeetingForOffer(fallback, offer, client) : null;
   }
+  const placeholder = isPlaceholderMeetingId(meeting.meetingId);
+  const recording = placeholder && meeting.recording && typeof meeting.recording === 'object' ? meeting.recording : null;
+  const recordingState = sanitizeText(recording?.state);
   const view = sanitizeText(meeting.transcriptUrl);
-  const hasTranscript = Boolean(sanitizeText(meeting.transcript) || meeting.hasTranscript);
-  const hasSummary = Boolean(sanitizeText(meeting.summary));
+  const hasTranscript = !placeholder && Boolean(sanitizeText(meeting.transcript) || meeting.hasTranscript);
+  const hasSummary = !placeholder && Boolean(sanitizeText(meeting.summary));
   return {
     meetingId: meeting.meetingId || '',
     title: meeting.title || firefliesLiveJoinTitle(client) || 'Fireflies-møte',
@@ -16457,28 +16664,38 @@ function presentMeetingForOffer(meeting, offer, client = null) {
     hasTranscript,
     hasSummary,
     tooThin: meetingContextIsTooThin(meeting, { notes: offerProductNotes(client) }),
-    pendingTranscript: !hasTranscript && !hasSummary,
-    liveJoined: Boolean(meeting.liveJoinedAt) || String(meeting.meetingId || '').startsWith('live:') || Boolean(sanitizeText(client?.calendar?.firefliesLiveJoinedAt)),
+    pendingTranscript: !hasTranscript && !hasSummary && offerMeetingPending(meeting),
+    liveJoined: recordingState === 'recording',
     manual: sanitizeText(offer?.meetingSource) === 'manual',
-    firefliesUrl: /^https:\/\/app\.fireflies\.ai\/view\//i.test(view) ? view : '',
+    firefliesUrl: !placeholder && /^https:\/\/app\.fireflies\.ai\/view\//i.test(view) ? view : '',
+    placeholder,
+    recordingState,
+    recordingMessage: sanitizeText(recording?.message),
   };
 }
 
+/**
+ * The recordings the rep can pick for the offer (Bytt opptak): the card's rows as presentClientMeetings
+ * shows them (a covered placeholder hidden), with purpose, duplicateOf and the placeholder's recording state.
+ */
 function presentOfferMeetings(client, offer) {
   const selectedIds = new Set(selectedOfferMeetingIds(client, offer));
-  return (Array.isArray(client?.meetings) ? client.meetings : []).map((row) => {
-    const stored = readStoredFirefliesMeeting(row.meetingId);
-    const hasTranscript = Boolean(row.hasTranscript) || Boolean(sanitizeText(stored?.transcript));
-    const purpose = sanitizeText(row.purpose);
+  return presentClientMeetings(client || {}, null, { media: false }).map((row) => {
+    const recording = row.placeholder && row.recording && typeof row.recording === 'object' ? row.recording : null;
+    const recordingState = sanitizeText(recording?.state);
     return {
       meetingId: row.meetingId,
-      title: row.title || stored?.title || 'Fireflies-møte',
-      when: row.when || formatOfferMeetingWhen(row.startedAt || stored?.startedAt),
+      title: row.title || 'Fireflies-møte',
+      when: row.when || formatOfferMeetingWhen(row.startedAt),
       durationMinutes: row.durationMinutes === '' || row.durationMinutes == null ? '' : Number(row.durationMinutes),
-      hasTranscript,
-      purpose,
-      liveJoined: Boolean(row.liveJoinedAt) || String(row.meetingId || '').startsWith('live:'),
+      hasTranscript: Boolean(row.hasTranscript),
+      purpose: sanitizeText(row.purpose),
+      liveJoined: recordingState === 'recording',
       selected: selectedIds.has(sanitizeText(row.meetingId)),
+      placeholder: Boolean(row.placeholder),
+      recordingState,
+      recordingMessage: sanitizeText(recording?.message),
+      duplicateOf: sanitizeText(row.duplicateOf),
     };
   }).sort((a, b) => Number(b.hasTranscript) - Number(a.hasTranscript));
 }
@@ -17181,7 +17398,12 @@ app.post('/api/admin/sales/:id/offer/use-meeting', salesAuth, async (req, res) =
     record = (client.meetings || []).find((row) => row.meetingId === meetingId) || null;
   }
   if (!record) {
-    const stored = listStoredFirefliesMeetings({});
+    // A rep's title search only sees recordings on no card or on this one.
+    const holders = req.salesUser?.isAdmin ? null : firefliesHolderMap();
+    const stored = listStoredFirefliesMeetings({}).filter((row) => {
+      const holder = holders?.get(sanitizeText(row.meetingId));
+      return !holder || holder === sanitizeText(client.id);
+    });
     let matches = rankMeetingsByTitle(stored, pasted);
     let askedToWait = false;
     if (!matches.length) {
@@ -17234,7 +17456,16 @@ app.post('/api/admin/sales/:id/offer/use-meeting', salesAuth, async (req, res) =
     (row) => sanitizeText(row.meetingId) === sanitizeText(record.meetingId || meetingId)
   );
   if (!alreadyOnClient) {
-    const ownerId = sanitizeText(matchMeetingToClients(record, sales.getSalesClients()).best?.clientId);
+    const holder = sales.findSalesClientByMeetingId(sanitizeText(record.meetingId || meetingId));
+    if (holder && holder.id !== client.id && !req.salesUser?.isAdmin) {
+      return res.status(409).json({
+        message: `Dette opptaket er allerede koblet til ${sanitizeText(holder.businessName) || 'en annen kunde'}. Be en admin om å flytte det hvis det hører til denne kunden.`,
+      });
+    }
+    const ownerId = sanitizeText(matchMeetingToClients(withStoredMatchFacts(record), sales.getSalesClients(), {
+      slotOwner: slotOwnerAmongClients,
+      people: false,
+    }).best?.clientId);
     if (ownerId && ownerId !== sanitizeText(client.id)) {
       const owner = sales.getSalesClientById(ownerId);
       return res.status(409).json({
@@ -17622,7 +17853,8 @@ app.get('/api/admin/offers', salesAuth, async (req, res) => {
   res.json({
     offers: rows,
     counts: salesOffers.countOffersByStatus({ excludeSalesClientIds: testClientIdSet(sales.getSalesClients()) }),
-    unmatchedMeetings: listStoredFirefliesMeetings({ unmatchedOnly: true }).length,
+    // Unmatched means on no client's card.
+    unmatchedMeetings: listStoredFirefliesMeetings({ unmatchedOnly: true, holders: firefliesHolderMap() }).length,
   });
 });
 
@@ -17650,7 +17882,9 @@ app.get('/api/admin/offers/:id', salesAuth, async (req, res) => {
     }
   }
   const ownerNames = await salesOwnerNameMap(req);
-  const meetings = (client?.meetings || []).map((ref) => ({ ...ref, media: describeFirefliesMedia(ref.meetingId) }));
+  const meetings = (client?.meetings || [])
+    .filter((ref) => !isPlaceholderMeetingId(ref.meetingId))
+    .map((ref) => ({ ...ref, media: describeFirefliesMedia(ref.meetingId) }));
   res.json({
     offer: presentOffer(offer),
     client: client ? compactOfferClient(client) : null,
@@ -17790,18 +18024,18 @@ function meetingListRow(record = {}) {
   };
 }
 
+/** A rep sees a recording that is on the card of a client they can open (the card, not the stored match, decides). */
 function canViewMeeting(req, record) {
   if (req.salesUser?.isAdmin) return true;
-  const clientId = sanitizeText(record?.match?.clientId);
-  if (!clientId) return false;
-  return canAccessSalesClient(req, sales.getSalesClientById(clientId));
+  const holder = sales.findSalesClientByMeetingId(sanitizeText(record?.meetingId));
+  return Boolean(holder) && canAccessSalesClient(req, holder);
 }
 
 app.get('/api/admin/fireflies/meetings', salesAuth, (req, res) => {
   if (!requireOfferAdmin(req, res)) return;
   const unmatchedOnly = sanitizeText(req.query?.unmatched) === '1';
   const clientId = sanitizeText(req.query?.clientId);
-  res.json({ meetings: listStoredFirefliesMeetings({ unmatchedOnly, clientId }).map(meetingListRow) });
+  res.json({ meetings: listStoredFirefliesMeetings({ unmatchedOnly, clientId, holders: firefliesHolderMap() }).map(meetingListRow) });
 });
 
 // Pull-ingest health for the admin pages (lib/fireflies-ingest.js firefliesIngestStatus).
@@ -17843,9 +18077,10 @@ app.post('/api/admin/fireflies/meetings/:meetingId/link', salesAuth, (req, res) 
   if (!record) return res.status(404).json({ message: 'Meeting not found.' });
   const client = sales.getSalesClientById(sanitizeText(req.body?.clientId));
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
-  const match = { clientId: client.id, businessName: client.businessName, confidence: 'manual', score: 100, reasons: ['Koblet manuelt av admin'], linkedBy: offerActor(req), linkedAt: new Date().toISOString() };
+  const match = { clientId: client.id, businessName: client.businessName, confidence: 'manual', score: 100, reasons: ['Koblet manuelt av admin'], linkedBy: offerActor(req) };
+  // A person's link: it moves the recording, pins it here and stays put on later automatic passes.
   linkFirefliesMeeting(client.id, meetingRefForClient(record, match, { linkedBy: offerActor(req) }));
-  const updated = updateStoredFirefliesMeeting(record.meetingId, { match });
+  const updated = readStoredFirefliesMeeting(record.meetingId) || record;
   res.json({ meeting: meetingListRow(updated), client: compactOfferClient(sales.getSalesClientById(client.id)) });
 });
 
@@ -17853,10 +18088,71 @@ app.post('/api/admin/fireflies/meetings/:meetingId/unlink', salesAuth, (req, res
   if (!requireOfferAdmin(req, res)) return;
   const record = readStoredFirefliesMeeting(req.params.meetingId);
   if (!record) return res.status(404).json({ message: 'Meeting not found.' });
-  const clientId = sanitizeText(record.match?.clientId);
-  if (clientId) sales.unlinkMeetingFromSalesClient(clientId, record.meetingId);
-  const updated = updateStoredFirefliesMeeting(record.meetingId, { match: null });
+  const holder = sales.findSalesClientByMeetingId(record.meetingId);
+  if (holder) unlinkFirefliesMeetingFromClient(holder.id, record.meetingId);
+  // Taken off by a person: no automatic pass puts it back on that client (a person can link it again).
+  let updated = record;
+  try {
+    updated = setStoredFirefliesClientLink(record.meetingId, {
+      match: null,
+      pin: null,
+      ...(holder ? { exclude: holder.id } : {}),
+    }) || record;
+  } catch (error) {
+    console.warn(`[fireflies] unlink id=${record.meetingId} not stored: ${sanitizeText(error?.message) || error}`);
+  }
   res.json({ meeting: meetingListRow(updated) });
+});
+
+// "Ikke denne kunden": take a recording off one client and keep every automatic pass from putting it back.
+app.post('/api/admin/fireflies/meetings/:meetingId/exclude', salesAuth, (req, res) => {
+  const meetingId = sanitizeText(req.params.meetingId);
+  if (!meetingId || isPlaceholderMeetingId(meetingId)) {
+    return res.status(400).json({ message: 'Et booket møte uten opptak kan ikke tas bort her. Marker det som uten opptak.' });
+  }
+  const client = sales.getSalesClientById(sanitizeText(req.body?.clientId));
+  if (!client) return res.status(404).json({ message: 'Sales client not found.' });
+  if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
+  const record = readStoredFirefliesMeeting(meetingId);
+  const onCard = (client.meetings || []).some((row) => sanitizeText(row.meetingId) === meetingId);
+  if (!record && !onCard) return res.status(404).json({ message: 'Meeting not found.' });
+  if (onCard) unlinkFirefliesMeetingFromClient(client.id, meetingId);
+  if (record) {
+    try {
+      setStoredFirefliesClientLink(meetingId, {
+        exclude: client.id,
+        ...(sanitizeText(record.pin?.clientId) === client.id ? { pin: null } : {}),
+        ...(sanitizeText(record.match?.clientId) === client.id ? { match: null } : {}),
+      });
+    } catch (error) {
+      console.warn(`[fireflies] exclude id=${meetingId} client=${client.id} not stored: ${sanitizeText(error?.message) || error}`);
+      return res.status(503).json({ message: 'Opptaket ble tatt av kunden, men det ble ikke lagret at det ikke hører til. Prøv igjen.' });
+    }
+  }
+  res.json({ ok: true, client: jsonSalesClient(sales.getSalesClientById(client.id) || client) });
+});
+
+// A person says what one recording on the card is: sales | workshop | iteration, or '' to go back to automatic.
+app.post('/api/admin/sales/:id/meetings/:meetingId/purpose', salesAuth, (req, res) => {
+  const client = sales.getSalesClientById(req.params.id);
+  if (!client) return res.status(404).json({ message: 'Sales client not found.' });
+  if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
+  const purpose = sanitizeText(req.body?.purpose).toLowerCase();
+  if (!['', 'sales', 'workshop', 'iteration'].includes(purpose)) {
+    return res.status(400).json({ message: 'Velg salgsmøte, workshop, iterasjon eller automatisk.' });
+  }
+  const meetingId = sanitizeText(req.params.meetingId);
+  if (isPlaceholderMeetingId(meetingId)) {
+    return res.status(400).json({ message: 'Et booket møte uten opptak har formålet fra bookingen.' });
+  }
+  if (!(client.meetings || []).some((row) => sanitizeText(row.meetingId) === meetingId)) {
+    return res.status(404).json({ message: 'Fant ikke opptaket på kunden.' });
+  }
+  const updated = setFirefliesMeetingPurpose(client.id, meetingId, purpose, {
+    by: workshopAuthorLabel(req),
+    actor: offerActor(req),
+  });
+  res.json({ client: jsonSalesClient(updated || client) });
 });
 
 app.post('/api/admin/fireflies/meetings/:meetingId/refresh', salesAuth, async (req, res) => {
@@ -17864,16 +18160,15 @@ app.post('/api/admin/fireflies/meetings/:meetingId/refresh', salesAuth, async (r
   try {
     const updated = await refreshFirefliesMeeting(req.params.meetingId);
     void persistFirefliesMediaInBackground(updated.meetingId);
-    // Meetings linked by the pull ingest or a paste have no stored match: use the client that holds it.
-    const holder = updated.match?.clientId ? null : sales.findSalesClientByMeetingId(updated.meetingId);
-    const clientId = sanitizeText(updated.match?.clientId) || sanitizeText(holder?.id);
+    // The card that holds it gets the fresh copy (the card, not the stored match, says who has it).
+    const holder = sales.findSalesClientByMeetingId(updated.meetingId);
     const held = (holder?.meetings || []).find((row) => sanitizeText(row.meetingId) === sanitizeText(updated.meetingId));
-    if (clientId) {
-      linkFirefliesMeeting(clientId, meetingRefForClient(updated, updated.match || held || {}, {
-        linkedBy: updated.match?.linkedBy || held?.linkedBy || 'auto',
+    if (holder) {
+      linkFirefliesMeeting(holder.id, meetingRefForClient(updated, held || updated.match || {}, {
+        linkedBy: held?.linkedBy || updated.match?.linkedBy || 'auto',
       }));
     }
-    res.json({ meeting: meetingListRow(updated) });
+    res.json({ meeting: meetingListRow(readStoredFirefliesMeeting(updated.meetingId) || updated) });
   } catch (error) {
     res.status(502).json({ message: sanitizeText(error?.message) || 'Kunne ikke oppdatere fra Fireflies.' });
   }
