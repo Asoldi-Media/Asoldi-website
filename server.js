@@ -16991,6 +16991,8 @@ async function fillOpenOfferSlotsFromSalesMeeting(offer, client, req) {
     offer,
     meetings: loaded,
     selectedIds: selectedOfferMeetingIds(client, offer),
+    // Noise under 10 lines with no product notes leaves the slots open, as Fyll ut refuses it.
+    tooThin: (list) => Boolean(offerContextBlocker(client, list[0], list)),
   });
   if (decision.action !== 'fill') return offer;
   const meetings = decision.meetings;

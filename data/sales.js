@@ -30,6 +30,7 @@ import { normalizeWorkshopAction, offerStartDateFromWorkshopDueAt } from '../lib
 import { getWorkshopRecord, markProjectTodoDone, persistWorkshopRecord } from '../lib/workshop-record.js';
 import { collectRecordedMeetLinks, firefliesMeetLinksDiffer } from '../lib/fireflies-client-match.js';
 import { mergeRecordingState, normalizeRecordingState } from '../lib/fireflies-recording-state.js';
+import { talkCoversPlaceholder } from '../lib/fireflies-slots.js';
 import { planConfirmedMeetBackfill } from '../lib/sales-calendar-owner.js';
 import { clampClientActionsToDueDate, ensureFeedbackAction, ensureInformasjonAction } from '../lib/workshop-desk-actions.js';
 import { mergeMakerRunPatch, normalizeDeveloperQa } from '../lib/developer-card.js';
@@ -1330,26 +1331,33 @@ function talkOfRow(row = {}) {
   return {
     sentences: Number.isFinite(counted) ? counted : (row.hasTranscript ? 1 : 0),
     minutes: Number(row.durationMinutes) || 0,
+    known: Number.isFinite(counted),
   };
 }
 
 /**
  * The offer lock while it names a real recording with talk on the card: a placeholder, a recording that
- * left, or a silent one (a fragment from before the client came) is no lock.
+ * left, or a silent one (a fragment from before the client came) is no lock, and a fragment of a few
+ * sentences (a "hallo?") holds only until a recording with real talk is the one to pick.
  */
 function heldOfferLock(client = {}) {
   const lock = sanitizeText(client.lockedOfferMeetingId);
   if (!lock || lock.toLowerCase().startsWith('live:')) return '';
-  const row = (Array.isArray(client.meetings) ? client.meetings : []).find((item) => item?.meetingId === lock);
-  return row && talkOfRow(row).sentences > 0 ? lock : '';
+  const meetings = Array.isArray(client.meetings) ? client.meetings : [];
+  const row = meetings.find((item) => item?.meetingId === lock);
+  if (!row || !(talkOfRow(row).sentences > 0)) return '';
+  if (talkCoversPlaceholder(talkOfRow(row))) return lock;
+  const best = meetings.find((item) => item?.meetingId === pickLockedOfferMeetingId(client));
+  return best && best !== row && talkCoversPlaceholder(talkOfRow(best)) ? '' : lock;
 }
 
 /**
  * The recording the offer is locked to once "Møtet hatt" is ticked: of the sales meeting's recordings
- * with talk, the one a person picked as the sales meeting first, then the booked slot's, then the most
- * talk; else the first other recording with talk that is not a workshop or iteration. Never a live-join
- * placeholder or a recording without talk: '' until one is linked, which re-points it.
- * `talkOf(row)` → { sentences, minutes }; server code reads the stored copy.
+ * with talk, the one a person picked as the sales meeting first, then one with more than a fragment of
+ * talk (lib/fireflies-slots.js talkCoversPlaceholder), then the booked slot's, then the most talk; else
+ * the first other recording with talk that is not a workshop or iteration. Never a live-join placeholder
+ * or a recording without talk: '' until one is linked, which re-points it.
+ * `talkOf(row)` → { sentences, minutes, known }; server code reads the stored copy.
  */
 export function pickLockedOfferMeetingId(client = {}, { talkOf = talkOfRow } = {}) {
   const meetings = (Array.isArray(client.meetings) ? client.meetings : [])
@@ -1360,7 +1368,8 @@ export function pickLockedOfferMeetingId(client = {}, { talkOf = talkOfRow } = {
   const sentencesOf = (item) => Number((talkOf(item) || {}).sentences) || 0;
   const rank = (item) => {
     const picked = Boolean(sanitizeText(item.purposePickedAt)) && item.purpose === 'sales';
-    return [picked ? 1 : 0, onSlot(item) ? 1 : 0, sentencesOf(item), Number((talkOf(item) || {}).minutes) || 0];
+    const covers = talkCoversPlaceholder(talkOf(item) || {});
+    return [picked ? 1 : 0, covers ? 1 : 0, onSlot(item) ? 1 : 0, sentencesOf(item), Number((talkOf(item) || {}).minutes) || 0];
   };
   const sales = meetings
     .filter((item) => (item.forSalesMeeting || item.purpose === 'sales' || onSlot(item)) && sentencesOf(item) > 0)

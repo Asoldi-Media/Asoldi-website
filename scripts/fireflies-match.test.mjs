@@ -359,6 +359,60 @@ test('M10: ticking "Møtet hatt" never keeps a placeholder lock', () => {
   assert.equal(sales.setSalesProgress(created.id, 'meetingHeld', true).lockedOfferMeetingId, 'ff-lock-real');
 });
 
+test('M10: a lock on a "hallo?" fragment gives way to the recording with real talk, and the auto-fill asks no pick', () => {
+  const created = sales.createSalesClient({ businessName: 'Testfirma D AS', agreedTime: true, meetingAt: iso(SALES_AT), meetingMode: 'online', calendar: { meetLink: SALES_ROOM } });
+  const row = (meetingId, startMs, sentenceCount, durationMinutes) => ({
+    meetingId, linkedBy: 'meet-link', purpose: 'sales', forSalesMeeting: true, hasTranscript: true, meetLink: SALES_ROOM,
+    startedAt: iso(startMs), slotKey: `sales:${SALES_AT}`, sentenceCount, durationMinutes,
+  });
+  // The bot sat alone at T-3 and left a fragment; the meeting was recorded by the bot sent back at T+21.
+  sales.linkMeetingToSalesClient(created.id, row('ff-lock-hallo', SALES_AT - 3 * MIN, 2, 1));
+  assert.equal(sales.setSalesProgress(created.id, 'meetingHeld', true).lockedOfferMeetingId, 'ff-lock-hallo', 'only the fragment so far');
+  sales.linkMeetingToSalesClient(created.id, row('ff-lock-meeting', SALES_AT + 21 * MIN, 300, 45));
+  const client = sales.getSalesClientById(created.id);
+  const [hallo, meeting] = ['ff-lock-hallo', 'ff-lock-meeting'].map((id) => client.meetings.find((item) => item.meetingId === id));
+  assert.equal(slots.sameRecordedMeeting(hallo, meeting), false, 'not one meeting: the room was empty for 20 minutes');
+  const talkOf = (item) => ({ sentences: Number(item.sentenceCount) || 0, minutes: Number(item.durationMinutes) || 0, known: true });
+  assert.equal(meetings.offerLockIsStale(client, { talkOf }), true);
+  assert.equal(sales.pickLockedOfferMeetingId(client, { talkOf }), 'ff-lock-meeting');
+  assert.equal(sales.setSalesProgress(created.id, 'meetingHeld', true).lockedOfferMeetingId, 'ff-lock-meeting');
+  // Beside the meeting's recording, the fragment is noise, not a second meeting to choose between.
+  const stored = [
+    { meetingId: 'ff-lock-hallo', meetLink: SALES_ROOM, startedAt: iso(SALES_AT - 3 * MIN), transcript: 'Kari Test: Hallo?\nKari Test: Hei?', sentenceCount: 2 },
+    { meetingId: 'ff-lock-meeting', meetLink: SALES_ROOM, startedAt: iso(SALES_AT + 21 * MIN), transcript: talk(300), sentenceCount: 300 },
+  ];
+  const decision = offerMeetings.offerAutoFillDecision({ offer: { meetingIds: ['ff-lock-hallo', 'ff-lock-meeting'] }, meetings: stored });
+  assert.deepEqual([decision.action, decision.meetings.map((item) => item.meetingId)], ['fill', ['ff-lock-meeting']]);
+  assert.equal(offerMeetings.offerLetterNeedsMeetingPick(client), false);
+  assert.deepEqual(offerMeetings.transcriptMeetingIds(client), ['ff-lock-meeting']);
+});
+
+test('Tilbud: a "hallo?" fragment is not the meeting\'s recording, so the booked meeting keeps its placeholder and no letter is written from it', async () => {
+  const { meetingContextIsTooThin } = await import('../lib/offer-ai.js');
+  const stub = placeholder('sales', SALES_AT, SALES_ROOM, {
+    recording: { state: 'empty', ffMeetingId: 'ff-hallo', message: 'Fireflies var med, men opptaket er tomt (ingen tale, eller for kort).' },
+  });
+  const hallo = 'Kari Test: Hallo?\nKari Test: Hei?';
+  const fragment = recording('ff-hallo', SALES_ROOM, SALES_AT - 2 * MIN, { purpose: 'sales', forSalesMeeting: true, sentenceCount: 2, transcript: hallo });
+  const client = bookedClient({ meetings: [stub, fragment] });
+  assert.equal(offerMeetings.offerMeetingIsFragment(fragment), true);
+  assert.deepEqual(offerMeetings.transcriptMeetingIds(client), []);
+  assert.deepEqual(offerMeetings.seedOfferMeetingIds({ status: 'draft', meetingIds: [stub.meetingId], meetingId: stub.meetingId }, client), [stub.meetingId]);
+  // A selection saved on the fragment goes back to the booked meeting's placeholder.
+  assert.deepEqual(offerMeetings.seedOfferMeetingIds({ status: 'draft', meetingIds: ['ff-hallo'], meetingId: 'ff-hallo' }, client), [stub.meetingId]);
+  // Opening Tilbud writes no letter from it; product notes carry it, as Fyll ut allows.
+  const stored = { meetingId: 'ff-hallo', meetLink: SALES_ROOM, startedAt: iso(SALES_AT - 2 * MIN), transcript: hallo, sentenceCount: 2 };
+  const thin = (notes) => (list) => meetingContextIsTooThin(list[0] || {}, { notes, meetings: list });
+  const offer = { meetingIds: [stub.meetingId] };
+  assert.equal(offerMeetings.offerAutoFillDecision({ offer, meetings: [stored], tooThin: thin('') }).action, 'wait');
+  assert.equal(offerMeetings.offerAutoFillDecision({ offer, meetings: [stored], tooThin: thin('Kunden vil ha booking og meny på siden.') }).action, 'fill');
+  const server = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  assert.match(server, /tooThin: \(list\) => Boolean\(offerContextBlocker\(client, list\[0\], list\)\)/);
+  // Once the recording with talk is linked, it is the offer's meeting.
+  const real = recording('ff-real-mtg', SALES_ROOM, SALES_AT + 20 * MIN, { purpose: 'sales', forSalesMeeting: true, sentenceCount: 300 });
+  assert.deepEqual(offerMeetings.seedOfferMeetingIds({ status: 'draft', meetingIds: [stub.meetingId] }, { ...client, meetings: [stub, fragment, real] }), ['ff-real-mtg']);
+});
+
 test('the card rows: placeholders have no link, a covered one is hidden, live captions and silent copies cover nothing', () => {
   ff.storeFirefliesMeeting({ meetingId: 'ff-card-live', title: 'Live', startedAt: iso(SALES_AT + MIN), meetingLink: SALES_ROOM, transcript: 'Kari: hei', isLive: true });
   ff.storeFirefliesMeeting({
