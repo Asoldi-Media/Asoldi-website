@@ -45,8 +45,10 @@ Admin → Manage clients → Security → **Rotate secrets** makes a new value o
   (`lib/auth-hardening.js` `createHubSecretHolder`), so old tokens stop everywhere within about
   a second. A token or callback that does not match makes a process re-read the file once
   (`checkWithFreshSecret`, at most ten reads a second), so the fresh admin token and the new
-  Maker token work in every process at once. A damaged or missing file never replaces a good
-  value in memory. `HUB_SECRET_REFRESH_MS` changes the one-second interval; only tests set it.
+  Maker token work in every process at once. Sign-ins and Google sign-in starts re-read the file
+  before they sign (same limit), so no process signs with a replaced secret. A damaged or
+  missing file never replaces a good value in memory. `HUB_SECRET_REFRESH_MS` changes the
+  one-second interval; only tests set it.
 - Audit: `security-settings.json` `secretRotations.<name>` = `{ at, by }` (the latest, shown on
   the card) and `secretRotationHistory` (the last 50 rotations of either, newest first, as
   `{ name, at, by }`), the counters `admin-secret-rotated` / `maker-callback-token-rotated`
