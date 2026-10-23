@@ -23,6 +23,7 @@ type MakerHost = {
 type PersistedCounter = { total: number; byReason: Record<string, number>; lastAt: string | null };
 type HostsResponse = {
   hosts: MakerHost[];
+  hostsFile?: 'missing' | 'ok' | 'unreadable';
   scopes: string[];
   tokenEnv: { prod: string; local: string };
   legacyTokenSource: string;
@@ -146,6 +147,11 @@ export function MakerHostsCard() {
         <code>node scripts/security/provision-maker-host.mjs</code> in the Maker. The legacy callback token ({data?.legacyTokenSource || '…'}) keeps working; it is not tied to a host, so rotate it (Security card) after revoking a host you no longer use.
       </p>
       {error && <p className="text-red-400 text-sm mb-2">{error}</p>}
+      {data?.hostsFile === 'unreadable' && (
+        <p className="text-red-400 text-sm mb-2">
+          maker-hosts.json in the data folder cannot be read. Until it is fixed or restored from a backup, no host token is accepted, creating or revoking a host is refused, and any Maker that also sends the legacy callback token (revoked ones included) gets in through that token; rotate it in the Security card if that matters.
+        </p>
+      )}
 
       {fresh && (
         <div className="rounded-lg border border-amber-400/40 bg-amber-400/5 p-3 mb-3 text-sm">

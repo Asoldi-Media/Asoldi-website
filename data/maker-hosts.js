@@ -19,9 +19,13 @@
  * - Every change is a locked read-modify-write on a fresh read (data/atomic-json.js), so hub
  *   processes that share the data dir never lose each other's writes. Reads on the request path
  *   go through the mtime cache: a revocation in another process applies within a second.
+ * - A file that exists but cannot be read (not JSON, no hosts list, a row that does not
+ *   validate) is never rewritten: every change throws 'maker-hosts-unreadable' instead, so no
+ *   row, revoked ones included, is lost. Reads treat it as holding no hosts.
  * - The file holds no secret value, but it is written with mode 0600 like the other auth files.
  */
 import { createHash, randomBytes, timingSafeEqual } from 'crypto';
+import { existsSync } from 'fs';
 import { join } from 'path';
 import { readJsonCached, readJsonFresh, updateJsonLocked } from './atomic-json.js';
 import { getPersistentDataDir } from './storage-path.js';
@@ -199,15 +203,48 @@ export function getMakerHost(hostId, { dataDir, fresh = false } = {}) {
   return readMakerHosts({ dataDir, fresh }).hosts.find((host) => host.hostId === id) || null;
 }
 
+function unreadableError(why) {
+  return Object.assign(new Error(`${MAKER_HOSTS_FILE} cannot be read (${why}); fix or restore it before changing Maker hosts`), {
+    code: 'maker-hosts-unreadable',
+  });
+}
+
+/**
+ * Why a parsed maker-hosts.json may not be rewritten, or '' when it may. A file that exists but
+ * does not parse, has no hosts list, or holds a row that does not validate would lose rows
+ * (revoked ones included) if it were rewritten from what normalizeFile keeps.
+ */
+function unreadableReason(raw, exists) {
+  if (raw === null || raw === undefined) return exists ? 'not a JSON object' : '';
+  if (!Array.isArray(raw.hosts)) return 'no hosts list';
+  const bad = raw.hosts.filter((row) => !normalizeHost(row)).length;
+  return bad ? `${bad} row(s) that do not validate` : '';
+}
+
+/** 'missing' | 'ok' | 'unreadable' (the admin list shows the last one; writes are refused then). */
+export function makerHostsFileState({ dataDir } = {}) {
+  const path = makerHostsPath(dataDir);
+  if (!existsSync(path)) return 'missing';
+  return unreadableReason(readJsonCached(path), true) ? 'unreadable' : 'ok';
+}
+
 /**
  * Locked read-modify-write. mutate(current) returns null (nothing to do), or
  * { hosts, result, write } where write: false hands back `result` without touching the file.
+ * Throws code 'maker-hosts-unreadable' (and writes nothing) when the file on disk cannot be
+ * rewritten without losing rows; reads keep treating it as holding no hosts.
  */
 function change(mutate, { dataDir }) {
+  const path = makerHostsPath(dataDir);
   let result;
   updateJsonLocked(
-    makerHostsPath(dataDir),
+    path,
     (raw) => {
+      const why = unreadableReason(raw, existsSync(path));
+      if (why) {
+        console.error(`[maker-hosts] ${MAKER_HOSTS_FILE} cannot be read (${why}); no change was written`);
+        throw unreadableError(why);
+      }
       const current = normalizeFile(raw);
       const next = mutate(current);
       if (!next) return undefined;

@@ -147,6 +147,51 @@ test('another process sees a revocation within a second and a new host at once',
   assert.equal(host.hostId.length, 11);
 });
 
+test('a hosts file that cannot be read is never rewritten: create, revoke and lastSeenAt refuse and leave it byte-identical', () => {
+  const quiet = console.error;
+  console.error = () => {};
+  try {
+    for (const broken of ['{"version":1,"hosts":[{"hostId":"mh_aaaaaaaa"', '', '[]', '{"version":1}', '{"version":1,"hosts":{}}']) {
+      const dir = tempDir();
+      writeFileSync(hostsFile(dir), broken);
+      clearJsonCacheForTests();
+      assert.equal(hosts.makerHostsFileState({ dataDir: dir }), 'unreadable', `state for ${JSON.stringify(broken)}`);
+      assert.throws(() => hosts.createMakerHost({ label: 'new' }, { dataDir: dir }), (error) => error.code === 'maker-hosts-unreadable');
+      assert.equal(readHostsRaw(dir), broken, 'the file is untouched');
+    }
+
+    // A file that parses but holds a row that does not validate: the good rows (a revoked one
+    // among them) must not be dropped by the next write.
+    const dir = tempDir();
+    hosts.resetMakerHostsMemoForTests();
+    const kept = hosts.createMakerHost({ label: 'kept' }, { dataDir: dir });
+    const gone = hosts.createMakerHost({ label: 'revoked' }, { dataDir: dir });
+    hosts.revokeMakerHost(gone.host.hostId, { dataDir: dir });
+    const raw = JSON.parse(readHostsRaw(dir));
+    raw.hosts.push({ hostId: 'not-a-host-id', tokenHash: 'sha256:short' });
+    writeFileSync(hostsFile(dir), JSON.stringify(raw, null, 2));
+    clearJsonCacheForTests();
+    const before = readHostsRaw(dir);
+    assert.equal(hosts.makerHostsFileState({ dataDir: dir }), 'unreadable');
+    assert.throws(() => hosts.createMakerHost({ label: 'new' }, { dataDir: dir }), { code: 'maker-hosts-unreadable' });
+    assert.throws(() => hosts.revokeMakerHost(kept.host.hostId, { dataDir: dir }), { code: 'maker-hosts-unreadable' });
+    assert.throws(() => hosts.updateHostMeta(kept.host.hostId, { version: 'maker@2' }, { dataDir: dir }), { code: 'maker-hosts-unreadable' });
+    assert.equal(hosts.touchMakerHostLastSeen(kept.host.hostId, { dataDir: dir, now: Date.now() }), false);
+    assert.equal(readHostsRaw(dir), before, 'no write dropped a row');
+    // Reads still work on the rows that validate (the revoked one stays revoked).
+    assert.equal(hosts.verifyMakerHostToken(kept.token, { dataDir: dir, scope: 'callback' }).ok, true);
+    assert.equal(hosts.verifyMakerHostToken(gone.token, { dataDir: dir, scope: 'callback' }).reason, 'revoked');
+
+    // A missing file is fine: the first create makes it.
+    const fresh = tempDir();
+    assert.equal(hosts.makerHostsFileState({ dataDir: fresh }), 'missing');
+    hosts.createMakerHost({ label: 'first' }, { dataDir: fresh });
+    assert.equal(hosts.makerHostsFileState({ dataDir: fresh }), 'ok');
+  } finally {
+    console.error = quiet;
+  }
+});
+
 test('host rows are cleaned once per file version and frozen, so a large hosts file keeps token checks cheap', () => {
   const dir = tempDir();
   hosts.resetMakerHostsMemoForTests();
@@ -828,6 +873,37 @@ test('admin routes: create shows the token once (no-store), the list has no hash
   assert.equal((await fetch(`${base}/api/admin/maker-hosts`)).status, 401);
   assert.equal((await fetch(`${base}/api/admin/maker-hosts`, { method: 'POST', headers: json, body: JSON.stringify({ label: 'x' }) })).status, 401);
   assert.equal(existsSync(hostsFile(dir)), true);
+});
+
+test('admin routes: a hosts file that cannot be read shows in the list, and create and revoke answer 500 without writing', async (t) => {
+  const dir = tempDir();
+  const auth = makerAuthLib.createMakerAuth({ legacyHolder: legacyHolder(dir), dataDir: dir, env: {} });
+  const app = express();
+  app.use(express.json());
+  routes.registerMakerHostRoutes(app, { adminAuth: (req, _res, next) => ((req.admin = { username: 'owner' }), next()), makerAuth: auth, getDataDir: () => dir });
+  const { base, close } = await serve(app);
+  t.after(close);
+  const made = hosts.createMakerHost({ label: 'before' }, { dataDir: dir });
+  assert.equal((await (await fetch(`${base}/api/admin/maker-hosts`)).json()).hostsFile, 'ok');
+  const broken = readHostsRaw(dir).slice(0, -5);
+  writeFileSync(hostsFile(dir), broken);
+  clearJsonCacheForTests();
+  const quiet = console.error;
+  console.error = () => {};
+  try {
+    const listed = await (await fetch(`${base}/api/admin/maker-hosts`)).json();
+    assert.equal(listed.hostsFile, 'unreadable');
+    assert.deepEqual(listed.hosts, []);
+    const created = await fetch(`${base}/api/admin/maker-hosts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ label: 'after' }) });
+    assert.equal(created.status, 500);
+    const body = await created.json();
+    assert.match(body.message, /maker-hosts-unreadable/);
+    assert.equal(body.token, undefined, 'no token is handed out for a host that was not stored');
+    assert.equal((await fetch(`${base}/api/admin/maker-hosts/${made.host.hostId}`, { method: 'DELETE' })).status, 500);
+    assert.equal(readHostsRaw(dir), broken);
+  } finally {
+    console.error = quiet;
+  }
 });
 
 test('Superadmin Maker hosts card: shows the token only from the create answer and never stores it in the browser', () => {
