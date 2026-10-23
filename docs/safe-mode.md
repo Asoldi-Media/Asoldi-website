@@ -6,7 +6,7 @@ A hub that runs on a PC (or the office LAN box) has the same keys as asoldi.com.
 
 | Where | Safe mode |
 |---|---|
-| asoldi.com (Hostinger) | **Off.** Detected by `HOSTINGER`, a cwd under `/domains/<site>/nodejs`, or a home/cwd under `/home/u<digits>`. |
+| asoldi.com (Hostinger) | **Off.** Detected by `HOSTINGER`, a cwd under `/domains/<site>/nodejs`, a home or cwd under `/home/u<digits>`, or `APP_DATA_DIR`/`DATA_DIR` under `/home/u<digits>/`. |
 | Any other machine | **On**, unless `HUB_SAFE_MODE=0`. |
 | `HUB_SAFE_MODE=1` | On, anywhere. |
 
@@ -28,9 +28,16 @@ A hub that runs on a PC (or the office LAN box) has the same keys as asoldi.com.
   - WordPress writes;
   - Luca GraphQL mutations;
   - Stripe live keys, PayPal live, and Stripe webhook endpoint create/delete;
-  - the prod logins and pushes to asoldi.com;
+  - the prod logins and pushes to asoldi.com (a safe-mode hub never treats itself as production, even when `APP_URL` equals `PROD_ADMIN_URL`);
   - the cloudflared public tunnel.
-  - The preview push URL handed to the Maker points back at this hub.
+  - Routes answer a blocked action with **423**, not 500.
+- **Maker handoff.** Unless `prodPublish` is allowed, the preview push URL and the status callback URL handed to the Maker point back at this hub on a local address:
+  - `SALES_PREVIEW_PUSH_URL` / `WEBSITE_MAKER_STATUS_CALLBACK_URL` when their host is loopback, private LAN or `host.docker.internal`;
+  - else `HUB_PUBLIC_URL_FOR_MAKER` when its host is local;
+  - else `http://host.docker.internal:<PORT>` (the Maker runs in Docker, where 127.0.0.1 is the container itself).
+  - `APP_URL` is never used for these, and prod values of the variables above are ignored.
+  - The hub never takes the asoldi.com browser-handoff path (`requestIsPublicInternetHost` is false), so no response hands the browser an asoldi.com push, callback or upload URL. It creates the run server-to-server at the local Maker.
+- **Listening address.** In safe mode the hub binds `127.0.0.1`, not `0.0.0.0`, so the LAN cannot reach a hub that holds live keys, client data and the outbox. `lan` in `HUB_SAFE_MODE_ALLOW` (the LAN box) keeps `0.0.0.0`, and `HUB_LISTEN_HOST` overrides it (for example inside another container). Docker Desktop still reaches it through `host.docker.internal`. Production binding is unchanged.
 - **AI calls** (DeepSeek, Anthropic, Gemini) never leave the PC by default:
   - A cassette for the same request is replayed when one exists.
   - Otherwise the caller gets a deterministic stub, for example `{ "safeModeStub": true }`.
@@ -45,10 +52,12 @@ A hub that runs on a PC (or the office LAN box) has the same keys as asoldi.com.
   - loopback;
   - Google Calendar, Gmail and Business Profile reads, plus calendar freeBusy and OAuth token refresh;
   - Myphoner GET;
-  - Luca GraphQL queries;
+  - Luca GraphQL queries (a document with a mutation or subscription anywhere, or an `operationName` that is not one of its queries, counts as a write);
   - WordPress GET;
   - Stripe with test keys and PayPal sandbox.
   - Everything else is refused, and the refusal is recorded with its kind (`paidApi`, `aiCalls`, `prodPublish`, …).
+  - The socket layer sees only host and port. For the hosts above, whose rules depend on method, path, headers or body, it only admits a socket opened for a request that `fetch` or `http(s).request` already approved (tracked with AsyncLocalStorage). A raw `tls.connect`, http2, or an HTTP client that skips the patched `fetch`/`http.request` gets nothing (intent kind `rawSocket`). Host-only keys (SMTP, IMAP, LAN) still pass on the host once allowed.
+  - Child processes are outside the in-process guard; cloudflared is blocked semantically.
 
 ## Allow keys (`HUB_SAFE_MODE_ALLOW`, comma list)
 
@@ -87,13 +96,17 @@ npm run dev:safe -- --profile golden                       # data .local-data/go
 How the generated `.env` is built:
 - It contains every prod key except `ADMIN_SECRET`. The local hub makes its own secret on disk.
 - Keys the previous `.env` had are kept under `LOCAL EXTRA`.
-- The safe override block comes last.
+- The safe override block comes last. It holds no host path (no `APP_DATA_DIR`): `docker-compose.lan.yml` loads `.env` into a Linux container, where a Windows path would silently become an empty relative data dir. `dev:safe` sets the data dir per profile.
+- Every value is written so `dotenv` reads it back unchanged (checked per value, including multi-line JSON with literal `\n` escapes). A value no quoting can carry stops the run with an error naming the key, never the value.
 - `--substitute-test-keys` swaps the live Stripe keys for the Connect test key.
 
 How `dev:safe` behaves:
 - It refuses to start when safe mode would be off. `--unsafe-i-know` overrides this.
 - It never uses port 3000, which belongs to the Maker.
-- It never passes `.env` values to Vite.
+- Vite gets the shell environment only, not the `.env` values, plus `HUB_DEV_SAFE=1`, which makes `vite.config.ts` skip its `GEMINI_API_KEY` define.
+- It sets `HUB_PUBLIC_URL_FOR_MAKER=http://host.docker.internal:3101`, so the Maker's pushes and status callbacks reach this hub.
+
+A plain `node server.js` (or `npm run dev:api`) on the PC with the live `.env` is also in safe mode: email to the outbox, the guards and the egress allowlist on, local Maker URLs, `127.0.0.1` only. It still takes `PORT` and the default data dir (`~/.asoldi-website-data`) from that `.env`, so prefer `npm run dev:safe`.
 
 Superadmin → **System safety** shows:
 - the state, jobs and counters;
@@ -107,16 +120,21 @@ Email previews render in a `sandbox=""` iframe, from a signed 10-minute URL that
 
 ```
 npm run soak:safe -- --minutes 20 --env-file <path to the live .env>
+npm run soak:safe -- --minutes 20 --env-file <path to the live .env> --plain
 ```
 
 What it does:
-1. Runs the API on port 3191 with a fresh `.local-data/soak`. The soak data is synthetic (`example.invalid` addresses).
-2. Forces `HUB_SAFE_MODE=1` and an empty allow list.
-3. Preloads `scripts/safe-mode/egress-audit.cjs`. This recorder shares no code with the guard.
-4. Drives the prod publish, the Stripe webhook, the tunnel, the Infokort agent and a Fireflies refresh.
+1. Runs the API on port 3191 with a fresh `.local-data/soak` (`--plain`: `.local-data/soak-plain`). The soak data is synthetic (`example.invalid` addresses).
+2. Default: the `dev:safe` profile with `HUB_SAFE_MODE=1`. `--plain`: behaves like a plain `node server.js` with that `.env`, so `APP_URL` (https://asoldi.com with the live `.env`), `HUB_PUBLIC_URL_FOR_MAKER` and `HUB_SAFE_MODE` come from the file. Either way it refuses to run if safe mode would be off.
+3. Always: an empty allow list, and a fake loopback Maker in the soak process (`WEBSITE_MAKER_LOCAL_URL`/`BASE_URL` point at it), so the real local Maker is never touched.
+4. Preloads `scripts/safe-mode/egress-audit.cjs`. This recorder shares no code with the guard.
+5. Drives the prod publish, the Stripe webhook, the tunnel, the Infokort agent, a Fireflies refresh, and two `create-maker-run` calls: one with the Maker URL typed in Sales, one that looks like it reached asoldi.com (`Host: asoldi.com`) with no Maker URL.
 
 It fails on any connection to a host outside `scripts/safe-mode/soak-allowlist.json`. It also fails without:
 - an outbox email for the seeded due reminder;
-- the expected intents.
+- the expected intents, and 423 for the prod publish, the Stripe webhook and the tunnel;
+- both Maker runs created server-to-server, with no browser handoff and no off-machine URL in the Maker body or the responses.
 
-The recorder also refuses unlisted hosts, as a safety net. The report goes to `.local-data/soak/soak-report.json`.
+The recorder also refuses unlisted hosts, as a safety net. The report goes to `.local-data/soak/soak-report.json` (or `soak-plain`).
+
+Not covered yet: the synthetic data has no calendar tokens, Fireflies meetings or inbox mail, so those guards are exercised by the unit tests (`scripts/safe-mode-guards.test.mjs`, `scripts/safe-mode-egress.test.mjs`), not by the soak. Seed a booked client with calendar and Fireflies fixtures once WS0.21 lands.
