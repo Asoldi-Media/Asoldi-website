@@ -26,6 +26,9 @@
  *   - paths that hold secrets or client data (.env, keys, data JSON, transcripts, daily logs, …).
  * Fake test fixtures are allowed through .secret-scan-allowlist.json (path + rule + reason);
  * an allowlisted secret hit must still look fake, so a real key pasted there is caught.
+ * commitEntries (commit + path + line + rule + reason) let one finding through in one past
+ * commit, for history that is not rewritten; they never cover .env values or retired secrets,
+ * and the scan output lists every finding they let through.
  *
  * Output never contains a matched value. Exit 0 clean, 1 findings, 2 error.
  */
@@ -36,6 +39,7 @@ import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   buildRetiredMatcher,
+  commitEntryFor,
   formatFinding,
   isProbablyBinary,
   knownValuesFromEnv,
@@ -319,7 +323,15 @@ function scanPatchFiles(files, ctx) {
     const pathFinding = scanPath(file.path, ctx);
     if (pathFinding) findings.push({ ...pathFinding, path: label });
     if (file.binary || MEDIA_EXT.test(file.path)) continue;
-    for (const finding of scanLines(file.path, file.lines, ctx)) findings.push({ ...finding, path: label });
+    for (const finding of scanLines(file.path, file.lines, ctx)) {
+      // A commit-pinned allowlist entry covers this one line of this one commit (never a .env
+      // value or a retired secret); the count is reported so nothing passes silently.
+      if (file.commit && commitEntryFor(ctx.allowlist, file.commit, finding)) {
+        if (Array.isArray(ctx.allowedByCommit)) ctx.allowedByCommit.push(`${label}:${finding.line} ${finding.rule}`);
+        continue;
+      }
+      findings.push({ ...finding, path: label });
+    }
   }
   return findings;
 }
@@ -435,6 +447,7 @@ export function buildContext(cwd, { env = process.env, useEnv = true, useRetired
   return {
     root,
     allowlist: loadAllowlist(root),
+    allowedByCommit: [],
     knownValues: useEnv ? loadKnownValues(defaultEnvFiles(cwd, env)) : [],
     retired: useRetired ? loadRetired(defaultRetiredFile(env)) : null,
   };
@@ -492,11 +505,14 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), 
     path: findings.filter((f) => f.kind === 'path').length,
   };
   if (flags.has('--json')) {
-    process.stdout.write(`${JSON.stringify({ mode, counts, byRule: summarize(findings), findings }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ mode, counts, byRule: summarize(findings), findings, allowedByCommit: ctx.allowedByCommit }, null, 2)}\n`);
     return findings.length ? 1 : 0;
   }
   if (!flags.has('--summary')) for (const finding of findings) console.log(formatFinding(finding));
   const sources = `${ctx.knownValues.length} env values, ${ctx.retired ? 'retired hashes loaded' : 'no retired hashes'}`;
+  if (ctx.allowedByCommit.length) {
+    console.log(`secret-scan: let through by commit-pinned allowlist entries: ${ctx.allowedByCommit.join(', ')}`);
+  }
   if (!findings.length) {
     console.log(`secret-scan (${mode}): clean (${sources}).`);
     return 0;

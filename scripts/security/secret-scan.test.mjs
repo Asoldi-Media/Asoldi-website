@@ -512,6 +512,106 @@ test('--range and --pre-push scan merge resolutions, evil merges and commit mess
   assert.equal(pushed.out.includes(FAKE_ANTHROPIC), false);
 });
 
+/** A value the secret-assignment rule reports: random, and without any fixture marker. */
+function realLookingValue() {
+  for (;;) {
+    const value = `Q${randomBytes(14).toString('base64url').replace(/[^A-Za-z0-9]/g, 'k')}7z`;
+    if (lib.looksRandom(value) && !lib.looksFake(value)) return value;
+  }
+}
+
+test('commit-pinned allowlist entries: exact sha, exact path, a line, a rule and a reason', () => {
+  const sha = 'a'.repeat(39) + 'b';
+  const good = { commit: sha.toUpperCase(), path: 'scripts\\x.test.mjs', line: 24, rule: 'secret-assignment', reason: 'fake fixture in an old commit' };
+  const allow = lib.normalizeAllowlist({
+    commitEntries: [
+      good,
+      { ...good, commit: sha.slice(0, 12) },
+      { ...good, path: 'scripts/*.test.mjs' },
+      { ...good, line: 0 },
+      { ...good, line: '24' },
+      { ...good, rule: '*' },
+      { ...good, rule: 'known-value' },
+      { ...good, rule: 'retired-secret' },
+      { ...good, rule: 'path:env-file' },
+      { ...good, reason: '  ' },
+    ],
+  });
+  assert.deepEqual(allow.commitEntries, [{ commit: sha, path: 'scripts/x.test.mjs', line: 24, rule: 'secret-assignment', reason: good.reason }]);
+  const finding = { path: 'scripts/x.test.mjs', line: 24, rule: 'secret-assignment' };
+  assert.ok(lib.commitEntryFor(allow, sha, finding));
+  assert.equal(lib.commitEntryFor(allow, sha.replace(/b$/, 'c'), finding), null, 'another commit');
+  assert.equal(lib.commitEntryFor(allow, sha, { ...finding, line: 25 }), null, 'another line');
+  assert.equal(lib.commitEntryFor(allow, sha, { ...finding, path: 'scripts/y.test.mjs' }), null, 'another file');
+  assert.equal(lib.commitEntryFor(allow, sha, { ...finding, rule: 'anthropic-key' }), null, 'another rule');
+  assert.equal(lib.commitEntryFor(allow, '', finding), null, 'staged or tracked scans have no commit');
+  // Older allowlist files without commitEntries still load.
+  assert.deepEqual(lib.normalizeAllowlist({ entries: [] }).commitEntries, []);
+});
+
+test('--range: a commit-pinned entry lets exactly that line of that commit through', async () => {
+  const dir = makeRepo();
+  writeFileSync(join(dir, '.gitignore'), '.scan-test.env\n.scan-retired.json\n.secret-scan-allowlist.json\n');
+  writeFileSync(join(dir, 'conf.test.mjs'), 'export const a = 1;\n');
+  git(dir, ['add', '.gitignore', 'conf.test.mjs']);
+  git(dir, ['commit', '-q', '--no-verify', '-m', 'base']);
+  const base = git(dir, ['rev-parse', 'HEAD']).trim();
+  const value = realLookingValue();
+  const line = `export const env = { ADMIN_SECRET: '${value}' };`;
+  writeFileSync(join(dir, 'conf.test.mjs'), `export const a = 1;\n${line}\n`);
+  git(dir, ['commit', '-q', '--no-verify', '-am', 'fixture']);
+  const pinned = git(dir, ['rev-parse', 'HEAD']).trim();
+  writeFileSync(join(dir, 'conf.test.mjs'), 'export const a = 1;\n');
+  git(dir, ['commit', '-q', '--no-verify', '-am', 'fake values only']);
+  // The same line again in a later commit, at another line number.
+  writeFileSync(join(dir, 'other.test.mjs'), `// copy\n// of\n${line}\n`);
+  git(dir, ['add', 'other.test.mjs']);
+  git(dir, ['commit', '-q', '--no-verify', '-m', 'copy']);
+  const copy = git(dir, ['rev-parse', 'HEAD']).trim();
+  const range = () => runScan(['--range', `${base}..HEAD`], { cwd: dir, env: scanEnv(dir) });
+  const writeAllow = (commitEntries) => writeFileSync(join(dir, '.secret-scan-allowlist.json'), JSON.stringify({ version: 1, entries: [], commitEntries }));
+
+  const before = await range();
+  assert.equal(before.code, 1, before.out);
+  assert.match(before.out, new RegExp(`${pinned.slice(0, 10)}:conf\\.test\\.mjs:2 {2}secret-assignment`));
+  assert.match(before.out, new RegExp(`${copy.slice(0, 10)}:other\\.test\\.mjs:3 {2}secret-assignment`));
+
+  const entry = { commit: pinned, path: 'conf.test.mjs', line: 2, rule: 'secret-assignment', reason: 'fake fixture value in a past commit' };
+  writeAllow([entry]);
+  const after = await range();
+  assert.equal(after.code, 1, 'the copy in a later commit is still reported');
+  assert.doesNotMatch(after.out, new RegExp(`${pinned.slice(0, 10)}:conf\\.test\\.mjs:2 {2}secret-assignment`));
+  assert.match(after.out, new RegExp(`${copy.slice(0, 10)}:other\\.test\\.mjs:3 {2}secret-assignment`));
+  assert.match(after.out, new RegExp(`let through by commit-pinned allowlist entries: ${pinned.slice(0, 10)}:conf\\.test\\.mjs:2 secret-assignment`));
+  assert.equal(after.out.includes(value), false, 'value printed');
+
+  writeAllow([entry, { ...entry, commit: copy, path: 'other.test.mjs', line: 3 }]);
+  const clean = await range();
+  assert.equal(clean.code, 0, clean.out);
+
+  for (const wrong of [{ ...entry, line: 1 }, { ...entry, path: '*.test.mjs' }, { ...entry, commit: pinned.slice(0, 10) }, { ...entry, rule: '*' }]) {
+    writeAllow([wrong, { ...entry, commit: copy, path: 'other.test.mjs', line: 3 }]);
+    const res = await range();
+    assert.equal(res.code, 1, `entry ${JSON.stringify({ ...wrong, commit: wrong.commit.slice(0, 10) })} must not cover the finding`);
+  }
+
+  // A value that is also in a local .env file stays a finding in every commit.
+  writeAllow([entry, { ...entry, commit: copy, path: 'other.test.mjs', line: 3 }, { ...entry, rule: 'known-value' }]);
+  writeFileSync(join(dir, '.scan-test.env'), `SOME_ADMIN_SECRET=${value}\n`);
+  const known = await range();
+  assert.equal(known.code, 1, known.out);
+  assert.match(known.out, new RegExp(`${pinned.slice(0, 10)}:conf\\.test\\.mjs:2 {2}known-value`));
+  assert.equal(known.out.includes(value), false, 'value printed');
+  rmSync(join(dir, '.scan-test.env'));
+
+  // Staged changes have no commit: the same line is reported there.
+  writeFileSync(join(dir, 'staged.test.mjs'), `${line}\n`);
+  git(dir, ['add', 'staged.test.mjs']);
+  const staged = await runScan(['--staged'], { cwd: dir, env: scanEnv(dir) });
+  assert.equal(staged.code, 1, staged.out);
+  assert.match(staged.out, /staged\.test\.mjs:1 {2}secret-assignment/);
+});
+
 test('--commit-msg skips git comment lines and everything below the scissors line', async () => {
   const dir = makeRepo();
   const file = join(dir, 'MSG');
