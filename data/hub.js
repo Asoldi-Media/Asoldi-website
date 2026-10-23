@@ -268,6 +268,22 @@ export function updateSite(id, patch = {}) {
   return { ok: true, site: publicSite(sites[i]) };
 }
 
+/**
+ * Stores a site's planSource object (WS8.4 shape). Only server-side writers call this (the
+ * delivery backfill, later the plan apply); no route passes a request body here.
+ */
+export function setSitePlanSource(id, planSource) {
+  if (!planSource || typeof planSource !== 'object' || Array.isArray(planSource)) {
+    return { ok: false, error: 'planSource must be an object' };
+  }
+  const sites = readSites();
+  const i = sites.findIndex((s) => s.id === id);
+  if (i === -1) return { ok: false, error: 'Site not found' };
+  sites[i] = normalizeSite({ ...sites[i], planSource });
+  writeSites(sites);
+  return { ok: true, site: publicSite(sites[i]) };
+}
+
 export function recordHeartbeat(siteKey, { packageVersion, adminUrl, name, adminApplied } = {}) {
   const key = String(siteKey || '').trim();
   if (!key) return { ok: false, error: 'site_key required' };

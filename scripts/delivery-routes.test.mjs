@@ -60,6 +60,9 @@ test('every route is superadmin only', async () => {
     ['POST', '/api/admin/system/delivery-snapshots/x-1/restore'],
     ['PATCH', '/api/admin/sales/c1/test-flag'],
     ['PATCH', '/api/hub/sites/s1/test-flag'],
+    ['GET', '/api/admin/system/delivery-backfill'],
+    ['GET', '/api/admin/system/delivery-backfill/reports/delivery-backfill-1-dry-run.json'],
+    ['POST', '/api/admin/system/delivery-backfill'],
   ]) {
     assert.equal((await call(method, path, method === 'GET' ? undefined : {}, '')).status, 401, `${method} ${path}`);
     assert.equal((await call(method, path, method === 'GET' ? undefined : {}, 'Bearer staff')).status, 401, `${method} ${path}`);
@@ -166,4 +169,21 @@ test('test-client flag: set and cleared from Superadmin on sales clients and hub
   await call('PATCH', '/api/hub/sites/s1/test-flag', { isTest: false });
   assert.equal(Object.prototype.hasOwnProperty.call(hub.getSiteById('s1'), 'isTest'), false);
   assert.equal((await call('PATCH', '/api/hub/sites/nope/test-flag', { isTest: true })).status, 404);
+});
+
+test('delivery backfill: a POST is a dry run unless it says dryRun:false; reports are listed and read by name', async () => {
+  const before = readFileSync(join(DATA_DIR, 'sales-clients.json'), 'utf8');
+  const dry = await call('POST', '/api/admin/system/delivery-backfill', {});
+  assert.equal(dry.status, 200);
+  const report = await dry.json();
+  assert.equal(report.mode, 'dry-run');
+  assert.equal(report.counts.clients, 2);
+  assert.equal(readFileSync(join(DATA_DIR, 'sales-clients.json'), 'utf8'), before, 'a dry run writes no store');
+  const listed = await (await call('GET', '/api/admin/system/delivery-backfill')).json();
+  assert.equal(listed.reports[0], report.file);
+  assert.equal(listed.latest.fingerprint, report.fingerprint);
+  assert.equal((await call('GET', `/api/admin/system/delivery-backfill/reports/${report.file}`)).status, 200);
+  assert.equal((await call('GET', '/api/admin/system/delivery-backfill/reports/..%2Fsales-clients.json')).status, 404);
+  const applied = await (await call('POST', '/api/admin/system/delivery-backfill', { dryRun: false })).json();
+  assert.equal(applied.mode, 'apply');
 });

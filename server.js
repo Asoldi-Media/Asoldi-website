@@ -35,6 +35,8 @@ import { registerCmsSsoRoutes } from './lib/cms-sso.js';
 import { registerDeliveryRoutes } from './lib/routes/delivery-routes.js';
 import { runDeliverySchemaStartupSnapshot } from './lib/delivery-snapshots.js';
 import { chosenWebsiteTier, makerSitePlanPayload, websiteTierIdForClient } from './lib/site-plan.js';
+import { freshMakerMaterials, isMakerDeliveryEvent, makerEventsRecording, makerRunFromMaterials, recordMakerDeliveryEvent } from './lib/maker-events-hub.js';
+import { runDeliveryBackfillAtBoot } from './lib/delivery-backfill.js';
 import { myphonerMatchCandidates, myphonerSyncSkipReason, testClientIdSet } from './lib/test-clients.js';
 import * as employees from './data/employees.js';
 import * as sales from './data/sales.js';
@@ -484,6 +486,12 @@ try {
   runDeliverySchemaStartupSnapshot();
 } catch (error) {
   console.error('[delivery] startup snapshot failed (will retry next boot):', error?.message || error);
+}
+// WS8.41: the delivery backfill runs at boot only when migrations.deliveryBackfill is dry-run or apply.
+try {
+  runDeliveryBackfillAtBoot();
+} catch (error) {
+  console.error('[delivery] backfill at boot failed:', error?.message || error);
 }
 console.log(`[mail] transport=${emailLib.resolveMailTransport()}`);
 
@@ -13460,6 +13468,12 @@ app.post('/api/admin/sales/maker-status-callback', async (req, res) => {
     });
   }
 
+  // WS8.28: Maker delivery events are stored on makerRun while development.makerEvents is 'record'.
+  // With the switch off they take the step-status path below, as before.
+  if (isMakerDeliveryEvent(event) && makerEventsRecording()) {
+    return res.json(recordMakerDeliveryEvent({ event, body: req.body || {}, client, sales }));
+  }
+
   // Maker → Sales field sync (links + core parameters edited in Website Maker).
   if (event === 'run.fields.updated') {
     const links = fields.quickFillLinks && typeof fields.quickFillLinks === 'object' ? fields.quickFillLinks : {};
@@ -14277,6 +14291,9 @@ app.get('/api/admin/sales/:id', salesAuth, (req, res) => {
 });
 
 async function workshopNeedsMakerFetch(client) {
+  // WS8.28: a materials snapshot younger than 24 h replaces the live Maker run fetch.
+  const snapshot = makerEventsRecording() ? freshMakerMaterials(client?.makerRun) : null;
+  if (snapshot) return async () => ({ run: makerRunFromMaterials(snapshot) });
   return async (runId) => {
     const websiteMakerBaseUrl = resolveWebsiteMakerBaseUrl('', client);
     if (!websiteMakerBaseUrl) return { failed: true };
