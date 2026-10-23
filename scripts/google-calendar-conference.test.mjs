@@ -442,6 +442,6 @@ test('no room is touched for an event another mailbox organizes', async () => {
   assert.equal(meet.meetRoomAccessStatus(ROOM), null);
 });
 
-test('no test request leaked past the stubs to a real socket', () => {
+test('no test request reached a real socket past the stubs', () => {
   assert.deepEqual(leakedSockets, []);
 });

@@ -464,6 +464,6 @@ test('Connect asks for the Meet settings scope and keeps what was granted before
   assert.equal(url.searchParams.get('access_type'), 'offline');
 });
 
-test('no test request leaked past the stubs to a real socket', () => {
+test('no test request reached a real socket past the stubs', () => {
   assert.deepEqual(leakedSockets, []);
 });
