@@ -652,7 +652,7 @@ test('server.js: every link goes through the linker, and the offer and routes re
   const media = between("app.get('/api/admin/fireflies/meetings/:meetingId/media/:kind'", "app.post('/api/admin/sales/:id/open-meet'");
   assert.match(media, /if \(!canViewMeeting\(req, record\)\) return res\.status\(403\)/);
   const backfill = between('function applyFirefliesMeetLinkBackfill(', 'let firefliesMeetLinkBackfillAt');
-  assert.match(backfill, /const plan = firefliesLinker\(\)\.backfill\(\);/);
+  assert.match(backfill, /const plan = firefliesLinker\(\)\.backfill\(\{ archiveLost \}\);/);
   assert.match(backfill, /if \(skipped !== firefliesMeetLinkBackfillSkipped\)/, 'a skipped run is said once, not every 15 seconds');
   const guard = between('function ensureFirefliesMeetLinkBackfill(', 'function clientAfterFirefliesBackfill(');
   assert.match(guard, /if \(firefliesStoreSource\('meetings'\) === 'unreadable'\) return firefliesMeetLinkBackfillSummary;/);

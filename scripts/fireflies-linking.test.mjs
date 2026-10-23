@@ -318,3 +318,40 @@ test('the backfill moving a workshop slot to the longer copy keeps the project d
   });
   assert.equal(again.workshop.projectDocument.meetingId, 'ff-ws-later');
 });
+
+test('a lost archive is read from its backup: exclusions hold, the backup is never replaced by a first page, and the backfill holds off', async () => {
+  const { existsSync, readFileSync, unlinkSync } = await import('node:fs');
+  const { firefliesStorePath, firefliesStoreSource, resetFirefliesStoreForTests } = await import('../lib/fireflies-store.js');
+  const beta = makeClient('Testfirma Tapt AS', { meet: room('mmm-mmmm-mmm') });
+  store('ff-lost-ex', room('mmm-mmmm-mmm'), T + 3 * HOUR, { sentences: 60 });
+  linker.link(beta.id, ref('ff-lost-ex'));
+  linker.exclude(beta.id, 'ff-lost-ex');
+  assert.equal(rowOn(beta.id, 'ff-lost-ex'), null);
+  store('ff-lost-kept', room('mmm-mmmm-mmm'), T + MIN, { sentences: 90 });
+  linker.link(beta.id, ref('ff-lost-kept'));
+  const path = firefliesStorePath('meetings');
+  const latest = join(dataDir, 'backups', 'fireflies-meetings.json.latest.json');
+  const before = Object.keys(JSON.parse(readFileSync(latest, 'utf8')));
+  // The archive file is gone (a swapped data folder); its backup is not.
+  unlinkSync(path);
+  resetFirefliesStoreForTests();
+  const quiet = console.error;
+  console.error = () => {};
+  try {
+    assert.equal(firefliesStoreSource('meetings'), 'backup');
+    assert.deepEqual(ff.readStoredFirefliesMeeting('ff-lost-ex').excludedClientIds, [beta.id], 'the exclusion is read from the backup');
+    // The list step writes its first page: the archive comes back whole, and so does its backup.
+    ff.upsertListedFirefliesMeetings([{ meetingId: 'ff-lost-new', title: 'Nytt', startedAt: iso(T + 4 * HOUR), meetingLink: room('nnn-nnnn-nnn') }]);
+  } finally {
+    console.error = quiet;
+  }
+  assert.ok(existsSync(path));
+  const after = Object.keys(JSON.parse(readFileSync(latest, 'utf8')));
+  assert.ok(before.every((id) => after.includes(id)), 'no record of the backup was lost');
+  assert.ok(after.includes('ff-lost-new'));
+  linker.backfill();
+  assert.equal(rowOn(beta.id, 'ff-lost-ex'), null, '"Ikke denne kunden" still holds');
+  // With no backup either, the ingest tick says so before its list step: the backfill holds off.
+  const plan = linker.backfill({ archiveLost: true });
+  assert.equal(plan.skipped, 'empty-store');
+});

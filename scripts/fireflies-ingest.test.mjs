@@ -446,7 +446,9 @@ test('an archive that reads empty while cards hold recordings is told to the own
   const server = readFileSync(fileURLToPath(new URL('../server.js', import.meta.url)), 'utf8');
   const backfill = server.slice(server.indexOf('function ensureFirefliesMeetLinkBackfill('), server.indexOf('function clientAfterFirefliesBackfill('));
   assert.match(backfill, /health: \{ archiveEmpty: sanitizeText\(plan\.skipped\) === 'empty-store' \},/);
-  assert.match(server, /\['backfill', \(\) => ensureFirefliesMeetLinkBackfill\(\{ force: true \}\)\],/);
+  assert.match(server, /\['backfill', \(\) => ensureFirefliesMeetLinkBackfill\(\{ force: true, archiveLost \}\)\],/);
+  // Decided before the list step writes its first page into a lost archive.
+  assert.match(server, /const archiveLost = firefliesStoreSource\('meetings'\) === 'missing';\s*\/\/[^\n]*\n\s*await runFirefliesIngestTick\(\[\s*\['list'/);
 });
 
 test('an unreadable e-mail list with no backup alerts the owner like an unreadable archive', async () => {
@@ -514,7 +516,7 @@ test('server.js: the paste route, the backfill, Fyll ut and the letter fill foll
   assert.match(paste, /if \(isTryLaterError\(error\)\) askedToWait = true;/);
   assert.match(paste, /if \(!matches\.length && askedToWait\) \{\s*return res\.status\(503\)/);
   const backfill = between('function ensureFirefliesMeetLinkBackfill(', 'function clientAfterFirefliesBackfill(');
-  assert.match(backfill, /if \(firefliesStoreSource\('meetings'\) === 'unreadable'\) return firefliesMeetLinkBackfillSummary;[^]*applyFirefliesMeetLinkBackfill\(\)/);
+  assert.match(backfill, /if \(firefliesStoreSource\('meetings'\) === 'unreadable'\) return firefliesMeetLinkBackfillSummary;[^]*applyFirefliesMeetLinkBackfill\(\{ archiveLost \}\)/);
   const offer = between('async function hydrateOfferMeetings(', 'function selectedOfferMeetingIds(');
   assert.match(offer, /if \(stored && !firefliesFetchDue\(stored, \{ onDemand: true \}\)\) continue;/);
   const link = between('function linkFetchedFirefliesTranscript(', 'async function hydrateRecentStoredTranscripts(');

@@ -16069,9 +16069,10 @@ let firefliesMeetLinkBackfillSkipped = '';
  * Rehome stored recordings onto the client whose booked Meet room they were recorded in and bring
  * every card and stored match in line (lib/fireflies-linking.js backfill). A store with no records
  * while cards hold recordings is not read as proof: the run is skipped, and said once, not every run.
+ * `archiveLost`: the archive was gone (with no backup) when the ingest tick began.
  */
-function applyFirefliesMeetLinkBackfill() {
-  const plan = firefliesLinker().backfill();
+function applyFirefliesMeetLinkBackfill({ archiveLost = false } = {}) {
+  const plan = firefliesLinker().backfill({ archiveLost });
   const skipped = sanitizeText(plan.skipped);
   if (skipped !== firefliesMeetLinkBackfillSkipped) {
     if (skipped) {
@@ -16087,14 +16088,14 @@ function applyFirefliesMeetLinkBackfill() {
 let firefliesMeetLinkBackfillAt = 0;
 let firefliesMeetLinkBackfillSummary = { scanned: 0, linked: 0, detached: 0 };
 
-function ensureFirefliesMeetLinkBackfill({ force = false } = {}) {
+function ensureFirefliesMeetLinkBackfill({ force = false, archiveLost = false } = {}) {
   const now = Date.now();
   if (!force && now - firefliesMeetLinkBackfillAt < 15_000) return firefliesMeetLinkBackfillSummary;
   // An archive that does not parse (and has no readable backup) reads as empty: the backfill would
   // take that as proof and unlink every recording. The store has already raised the alarm.
   if (firefliesStoreSource('meetings') === 'unreadable') return firefliesMeetLinkBackfillSummary;
   firefliesMeetLinkBackfillAt = now;
-  const plan = applyFirefliesMeetLinkBackfill();
+  const plan = applyFirefliesMeetLinkBackfill({ archiveLost });
   firefliesMeetLinkBackfillSummary = {
     scanned: plan.scanned,
     linked: plan.linked,
@@ -16244,11 +16245,14 @@ function scheduleFirefliesTranscriptIngest({ force = false } = {}) {
   firefliesIngestAt = now;
   firefliesIngestInFlight = (async () => {
     try {
+      // Gone (with no backup) before the list step writes its first page: lost, not refilled, so the
+      // backfill holds off and the owner hears it (archive-empty).
+      const archiveLost = firefliesStoreSource('meetings') === 'missing';
       // Each step runs on its own, so one failing step or one odd client record never stops the rest.
       await runFirefliesIngestTick([
         ['list', () => ingestRecentFirefliesMeetLinks()],
         ['hydrate', () => hydrateRecentStoredTranscripts({ max: 8 })],
-        ['backfill', () => ensureFirefliesMeetLinkBackfill({ force: true })],
+        ['backfill', () => ensureFirefliesMeetLinkBackfill({ force: true, archiveLost })],
         ['relink', () => hydratePendingClientTranscripts()],
         // Webhook-only steps (notify e-mail, media copy) for meetings the pull ingest brought in.
         // The follow-up picks meetings that are ready to send, from the copy the ingest just stored.

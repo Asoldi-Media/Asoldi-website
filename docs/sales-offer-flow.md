@@ -311,7 +311,11 @@ brings every recording in; the webhook only makes it sooner.
   memory and on disk, so a disk that refuses the write does not repeat the e-mail. An archive that reads
   empty while cards hold recordings (the meet-link backfill stands still) is e-mailed once each time it
   happens ("Fireflies: arkivet er tomt", its own stamp `archiveEmptyAlertAt`, cleared once the archive
-  holds meetings again), never once per tick.
+  holds meetings again), never once per tick. An archive file that is gone while its backup is not is
+  read from `backups/` (the System page says so) and written back from there by the next write, so
+  its exclusions and pins hold and the backup is never replaced by the list step's first page; one
+  gone with no backup at the start of an ingest tick counts as empty for that tick, before the list
+  step writes into it.
 * While the archive cannot be read at all, the meet-link backfill does not run: an empty read would
   unlink every recording. Pasting a link on Tilbud while Fireflies asks the hub to wait answers
   "Fireflies ber oss vente litt" instead of "Fant ikke møtet".
