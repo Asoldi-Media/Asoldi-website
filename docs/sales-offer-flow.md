@@ -158,13 +158,23 @@ brings every recording in; the webhook only makes it sooner.
   `fireflies-ingest-state.json` keeps where the scan left off.
 * **Final copies.** Each stored meeting keeps Fireflies' `isLive`, `summaryStatus`, `silent` and a
   `final` flag. A copy is final when it is not live and `summary_status` is processed, skipped or
-  failed (talk with no status: 30 minutes after first seen). Copies that are not final are fetched
-  again with a doubling pause (`fetch.nextFetchAt`) and given up a week after first seen; a new
+  failed. Without a status: a row stored before the hub kept this state is final only with a
+  summary (otherwise it gets one fetch, which is how summaries that came after the old first
+  fetch get in, however old the meeting); fetched talk is final 30 minutes after the hub had it.
+  Copies that are not final are fetched again with a doubling pause (`fetch.nextFetchAt`; polls
+  of a running meeting every 3 minutes do not count) and given up a week after first seen; a new
   `summary_status` in the list queues one fetch at once. Final copies are never fetched again,
   silent empty ones included. A live or still-processing copy never replaces finished text, and
   a client card that shows less than the stored copy (a summary that came later) is relinked.
-* **E-mail.** The recording e-mail waits for the final copy (or 20 minutes) and is retried up to five
-  times, ten minutes apart, when the send fails (`fireflies-notified.json` keeps
+* **Live captions.** `transcript(id)` on a running meeting (a live link pasted on Tilbud) returns
+  partial captions. They are stored with `partial: true`, and stay so after the call, when
+  Fireflies answers with no sentences for a few minutes (`liveEndedAt` marks the end), until a copy
+  that is not live replaces them or Fireflies calls the meeting done. Partial copies are never
+  final, never e-mailed, never linked to a client that does not already hold them, never the basis
+  of a contract-letter fill, and get no media download while live.
+* **E-mail.** The recording e-mail waits for the final copy (or 20 minutes after the hub had it as it
+  is, counted from the end of the call for a pasted live link) and is retried up to five times, ten
+  minutes apart, when the send fails (`fireflies-notified.json` keeps
   `{ at, state: 'sending' | 'sent' | 'failed', attempts }`).
 * **Media.** `media.savedAt` is set only when a file is on disk. A failed download is retried with
   fresh signed links and a doubling pause for two days; `too-large` and `disabled` are final.
@@ -172,17 +182,32 @@ brings every recording in; the webhook only makes it sooner.
   default 2048, `0` turns the check off). `transcript.txt` and `summary.json` are written again
   once the summary is in. Nothing is deleted automatically.
 * **Missing recordings.** `lib/fireflies-recording-watchdog.js` checks every live-join placeholder
-  whose meeting is over: by the bot's id, else by the booked Meet link around the booked time. A
-  transcript with talk is linked; a silent one sets `recording.state = 'empty'`; nothing by start +
-  booked (60) + 90 minutes sets `'missing'` and e-mails `FIREFLIES_NOTIFY_EMAIL` and the owning rep
-  once. A missing meeting is looked for hourly for 48 hours after that, so a late transcript still
-  links. Rate limits and network errors never make a meeting missing.
+  whose meeting is over. While capture still sees the bot (`recording.state = 'recording'` with a
+  `lastSeenAt` under 10 minutes old) the meeting is on, however long it runs. It looks by the bot's
+  id, else by the booked Meet link with a start between 30 minutes before the booked start and the
+  session's end (sales rooms are reused, so a later meeting there is only offered as a candidate,
+  like a same-title recording in another room). A transcript with talk is linked; live captions
+  are only "not yet" and are not stored from here; a silent one sets `recording.state = 'empty'`,
+  unless a recording on the room is still processing. The session ends at start + booked
+  (`durationMinutes` on the placeholder, else 60) or later when capture saw the bot later
+  (`lastSeenAt`, `endedAt`); nothing by that end + 90 minutes sets `'missing'` and e-mails
+  `FIREFLIES_NOTIFY_EMAIL` and the owning rep once, and so does a recording Fireflies has still not
+  finished three hours after that. A missing meeting is looked for hourly for 48 hours, so a late
+  transcript still links. Rate limits and network errors never make a meeting missing.
+  `POST /api/admin/sales/:id/fireflies/recording` `{ meetingId | slotKey, state: 'declined' }` is
+  "Marker uten opptak" from the e-mail: the meeting was held without a recording, or not held.
 * **Health.** `GET /api/admin/fireflies/ingest-status` (admin) returns `firefliesIngestStatus()`: last
   tick, last good pull, last error, failures in a row, the Fireflies rate-limit state, pending
-  fetches, summaries still processing, missing recordings, whether safe mode blocks the pull, and
-  where each Fireflies file was read from. The owner (`FIREFLIES_ALERT_EMAIL`, optional, default
-  `damian@asoldi.com`) gets one e-mail per 12 hours when the pull fails more than 10 times in a row,
-  has not succeeded for 30 minutes, or the archive cannot be read.
+  fetches, summaries still processing, missing recordings, the catch-up scan's and the watchdog
+  lookups' last success and error, whether safe mode blocks the pull, and where each Fireflies
+  file was read from. The owner (`FIREFLIES_ALERT_EMAIL`, optional, default `damian@asoldi.com`)
+  gets one e-mail per 12 hours when the pull fails more than 10 times in a row, has not succeeded
+  for 30 minutes, the catch-up scan or the watchdog lookups have failed for an hour (try-later
+  pauses do not count), or the archive or the e-mail list cannot be read. The stamp is kept in
+  memory and on disk, so a disk that refuses the write does not repeat the e-mail.
+* While the archive cannot be read at all, the meet-link backfill does not run: an empty read would
+  unlink every recording. Pasting a link on Tilbud while Fireflies asks the hub to wait answers
+  "Fireflies ber oss vente litt" instead of "Fant ikke møtet".
 * The contract-letter fill runs on its own loop behind the same safe-mode switch, and a client
   whose fill changes nothing waits longer each time until its recordings or offer change.
 

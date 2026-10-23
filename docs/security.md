@@ -76,7 +76,10 @@ times, ten minutes apart; downloads are retried with fresh links for two days.
 rename (`lib/fireflies-store.js`). A file that does not parse is never replaced by an empty one:
 reads use the newest readable backup, the next write rebuilds the file from it and keeps the
 unreadable copy as `backups/<file>.unreadable-<time>`, and with no readable backup the write is
-refused and the owner is e-mailed.
+refused, the meet-link backfill stops (an empty archive would unlink every recording) and the
+owner is e-mailed (`FIREFLIES_ALERT_EMAIL`, default `damian@asoldi.com`, at most every 12 hours).
+`fireflies-ingest-state.json` only says where the pull left off, so an unreadable one starts
+over (one 14-day scan) and keeps the bad copy the same way.
 
 To switch the push webhook to the new secret, whenever convenient:
 1. Admin → Manage clients → Security → **Show secret for Fireflies**.
