@@ -39,6 +39,7 @@ net.Socket.prototype.connect = function spyConnect(...args) {
 
 const safeMode = await import('../lib/safe-mode.js');
 const email = await import('../lib/email.js');
+const { outboxOrSend } = await import('../lib/safe-mode-mail.js');
 
 function outboxIndex() {
   const file = join(dataDir, 'outbox', 'index.jsonl');
@@ -97,6 +98,26 @@ test('safe mode on, emailRedirect allowed but no EMAIL_REDIRECT_TO: outbox only'
   await email.sendEmail({ to: 'a@example.invalid', subject: 's', text: 't' });
   assert.equal(fetchCalls.length, 0);
   assert.equal(email.resolveMailTransport(), 'outbox');
+});
+
+test('Brevo / Gmail style senders: outboxOrSend sinks to the outbox unless their key is allowed', async () => {
+  safeMode.installSafeMode({ env: { HUB_SAFE_MODE: '1' }, dataDir, log: null });
+  let sends = 0;
+  const send = async () => { sends += 1; return { messageId: 'x' }; };
+  const message = { to: ['a@example.invalid', 'b@example.invalid'], subject: 'Kampanje', html: '<p>Hei</p>', from: 'Asoldi <contact@asoldi.com>' };
+  const out = await outboxOrSend({ channel: 'brevo', allowKey: 'brevoSend', message, send });
+  assert.equal(out.outboxed, true);
+  assert.equal(sends, 0);
+  const row = outboxIndex().find((item) => item.id === out.id);
+  assert.equal(row.channel, 'brevo');
+  assert.deepEqual(row.to, ['a@example.invalid', 'b@example.invalid']);
+  assert.ok(safeMode.readRecentIntents(10).some((intent) => intent.kind === 'brevoSend'));
+  safeMode.installSafeMode({ env: { HUB_SAFE_MODE: '1', HUB_SAFE_MODE_ALLOW: 'brevoSend' }, dataDir, log: null });
+  assert.equal((await outboxOrSend({ channel: 'brevo', allowKey: 'brevoSend', message, send })).sent, true);
+  assert.equal(sends, 1);
+  safeMode.installSafeMode({ env: { HOSTINGER: '1' }, dataDir, log: null });
+  assert.equal((await outboxOrSend({ channel: 'gmail', message, send })).sent, true, 'production sends for real');
+  assert.equal(sends, 2);
 });
 
 test('on Hostinger (HOSTINGER=1) safe mode stays off and sendEmail is a pass-through', async () => {
