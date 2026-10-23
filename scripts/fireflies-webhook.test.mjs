@@ -38,10 +38,8 @@ const {
   syncLiveSessions,
 } = await import('../lib/fireflies-live-sessions.js');
 const { resetFirefliesGraphqlStateForTests } = await import('../lib/fireflies-graphql.js');
-import {
-  firefliesMeetLinksDiffer,
-  shouldDropLiveJoinStub,
-} from '../lib/fireflies-client-match.js';
+import { firefliesMeetLinksDiffer } from '../lib/fireflies-client-match.js';
+import { meetingSlotFacts, placeholderSupersededBy } from '../lib/fireflies-slots.js';
 import { sessionKeyFor } from '../lib/fireflies-recording-state.js';
 import { readFileSync } from 'node:fs';
 
@@ -307,35 +305,43 @@ test('a moved meeting keeps its room and is joined again at the new time', () =>
   assert.equal(workshopSrc.includes('forceNewMeet'), false);
 });
 
-test('live stubs drop when the real recording is on any owned Meet', () => {
-  const oldMeet = 'https://meet.google.com/idy-uiyh-efh';
-  const newMeet = 'https://meet.google.com/uss-ynky-nfw';
+// Was: any real recording on any owned Meet dropped every stub of a compatible purpose. Now only a
+// recording with talk on the stub's own slot (room + session window) does; the reschedule case stays.
+test('a live stub is covered only by a recording with talk on its own slot, also after a fresh room', () => {
+  const oldMeet = 'https://meet.google.com/old-room-abc';
+  const newMeet = 'https://meet.google.com/new-room-abc';
+  const meetingAt = '2026-10-08T12:00:00.000Z';
+  const startMs = Date.parse(meetingAt);
   const stub = {
-    meetingId: 'live:gx1r5f:open',
+    meetingId: `live:gx1r5f:${startMs}`,
     meetLink: oldMeet,
+    startedAt: meetingAt,
     linkedBy: 'live-join',
     forSalesMeeting: true,
     purpose: 'sales',
+    slotKey: `sales:${startMs}`,
   };
-  assert.equal(shouldDropLiveJoinStub({
-    stub,
-    recordingMeetLink: newMeet,
-    ownedMeetLinks: [oldMeet, newMeet],
-    recordingPurpose: 'sales',
-  }), true);
-  assert.equal(shouldDropLiveJoinStub({
-    stub: { ...stub, purpose: 'workshop', forSalesMeeting: false },
-    recordingMeetLink: newMeet,
-    ownedMeetLinks: [oldMeet, newMeet],
-    recordingPurpose: 'sales',
-  }), false);
-  assert.equal(shouldDropLiveJoinStub({
-    stub,
-    recordingMeetLink: newMeet,
-    ownedMeetLinks: [oldMeet, newMeet],
-    keepMeetingId: stub.meetingId,
-    recordingPurpose: 'sales',
-  }), false);
+  const client = {
+    id: 'gx1r5f',
+    agreedTime: true,
+    meetingAt,
+    // The meeting was moved to a fresh room after the bot knocked on the old one.
+    calendar: { meetLink: newMeet },
+    recordedMeetLinks: [oldMeet, newMeet],
+  };
+  const recording = { meetingId: 'ff-new', meetLink: newMeet, startedAt: '2026-10-08T12:03:00.000Z', hasTranscript: true };
+  const covers = (rows) => placeholderSupersededBy(stub, rows, {
+    factsOf: (row) => meetingSlotFacts({ ...client, meetings: [stub, ...rows] }, row),
+  });
+  assert.equal(covers([recording])?.meetingId, 'ff-new', 'the new-room recording of the same slot covers the old-room stub');
+  assert.equal(covers([{ ...recording, hasTranscript: false }]), null, 'a silent copy does not');
+  assert.equal(covers([{ ...recording, partial: true }]), null, 'live captions do not');
+  assert.equal(covers([{ ...recording, startedAt: '2026-10-09T12:03:00.000Z' }]), null, 'the room on another day does not');
+  assert.equal(covers([{ ...recording, meetLink: 'https://meet.google.com/zzz-zzzz-zzz' }]), null, 'a room of no slot does not');
+  assert.equal(placeholderSupersededBy({ ...stub, purpose: 'workshop', slotKey: `workshop:${startMs}` }, [recording], {
+    factsOf: (row) => meetingSlotFacts({ ...client, meetings: [stub, recording] }, row),
+  }), null, 'a sales recording never covers a workshop stub');
+  assert.equal(placeholderSupersededBy(stub, [stub]), null, 'a stub never covers itself');
 });
 
 // Was: a row with a transcript and a Meet link was never fetched again, so a summary that
