@@ -19,6 +19,7 @@ import { hashLocalBlogToken, localBlogTokensMatch } from '../lib/local-blog-toke
 import { clientAdminPasswordProblem } from '../lib/client-admin-password.js';
 import { normalizeDeliveryPhase, normalizeDevelopment, resolveSiteDeliveryPhase } from '../lib/development-phase.js';
 import { FUTURE_SITE_CMS_KEYS, withoutKeys } from './normalize-ext.js';
+import { CMS_REPORTED_KEYS, cmsPatchFromHeartbeat } from './feature-spec-model.js';
 
 // The one client admin password rule (lib/client-admin-password.js), also under the names that
 // other hub code and tests import from here. Never define a second copy of it in this file.
@@ -76,9 +77,19 @@ export function getSiteByDomain(domain) {
   return sites.find((s) => (s.domain || '').toLowerCase() === normalized) || null;
 }
 
-export function getSiteConfig(siteKeyOrDomain, byDomain = false) {
+/**
+ * Site config for a client CMS. `withFeatures(config, site, { byDomain })` (WS6.7) may return a
+ * config with the feature tree; without it, or when it returns nothing, the answer is unchanged.
+ */
+export function getSiteConfig(siteKeyOrDomain, byDomain = false, { withFeatures = null } = {}) {
   const site = byDomain ? getSiteByDomain(siteKeyOrDomain) : getSiteByKey(siteKeyOrDomain);
   if (!site) return null;
+  const config = baseSiteConfig(site, byDomain);
+  if (typeof withFeatures !== 'function') return config;
+  return withFeatures(config, site, { byDomain }) || config;
+}
+
+function baseSiteConfig(site, byDomain) {
   const config = {
     id: site.id,
     name: site.name,
@@ -240,7 +251,7 @@ export function updateSite(id, patch = {}) {
       ...current.cms,
       // WS8.44: heartbeat-derived keys a later batch owns (effective, featuresRev, ...) come only
       // from the stored site, never from a request body.
-      ...(withoutKeys(patch.cms, FUTURE_SITE_CMS_KEYS) || {}),
+      ...(withoutKeys(patch.cms, [...FUTURE_SITE_CMS_KEYS, ...CMS_REPORTED_KEYS]) || {}),
       ...(patch.githubRepo !== undefined ? { githubRepo: patch.githubRepo } : {}),
     });
   }
@@ -268,15 +279,22 @@ export function updateSite(id, patch = {}) {
   return { ok: true, site: publicSite(sites[i]) };
 }
 
-export function recordHeartbeat(siteKey, { packageVersion, adminUrl, name, adminApplied } = {}) {
+/**
+ * `report` is the heartbeat body (WS6.7): the feature and settings revs, the effective keys, the
+ * daily block counts, the migration summary and the sign-in report fields are kept in site.cms
+ * (data/feature-spec-model.js cmsPatchFromHeartbeat picks and bounds them).
+ */
+export function recordHeartbeat(siteKey, { packageVersion, adminUrl, name, adminApplied, report = null } = {}) {
   const key = String(siteKey || '').trim();
   if (!key) return { ok: false, error: 'site_key required' };
   const sites = readSites();
   const i = sites.findIndex((s) => s.site_key === key);
   if (i === -1) return { ok: false, error: 'Site not found' };
+  const nowIso = new Date().toISOString();
   sites[i].cms = normalizeCmsMeta({
     ...sites[i].cms,
-    lastSeenAt: new Date().toISOString(),
+    ...cmsPatchFromHeartbeat(sites[i].cms, report, nowIso),
+    lastSeenAt: nowIso,
     packageVersion: packageVersion || sites[i].cms.packageVersion,
     adminUrl: adminUrl || sites[i].cms.adminUrl,
   });
@@ -324,6 +342,26 @@ export async function updateClientAdmin(id, patch = {}) {
   sites[i] = normalizeSite(sites[i]);
   writeSites(sites);
   return { ok: true, site: publicSite(sites[i]) };
+}
+
+/**
+ * Changes a site's feature spec fields (WS6.8) in one read-modify-write. `mutate(site)` returns
+ * { ok:false, ... } to stop, or { ok:true, featureSpec?, cmsSpec?, cmsSpecHistory?, featureEnforcement?, ... };
+ * only those four fields are taken from it. Returns mutate's result with the saved public site.
+ */
+export function updateSiteSpecs(id, mutate) {
+  const sites = readSites();
+  const i = sites.findIndex((s) => s.id === id);
+  if (i === -1) return { ok: false, status: 404, error: 'Site not found' };
+  const result = mutate(structuredClone(sites[i])) || { ok: false, status: 500, error: 'No result' };
+  if (!result.ok) return result;
+  const next = { ...sites[i] };
+  for (const field of ['featureSpec', 'cmsSpec', 'cmsSpecHistory', 'featureEnforcement']) {
+    if (result[field] !== undefined) next[field] = result[field];
+  }
+  sites[i] = normalizeSite(next);
+  writeSites(sites);
+  return { ...result, site: publicSite(sites[i]), record: sites[i] };
 }
 
 export function deleteSite(id) {

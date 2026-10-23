@@ -33,9 +33,31 @@ const writer = join(root, 'scripts', 'fixtures', 'forward-compat-writer.mjs');
 
 // When a batch starts owning a key (normalizing it itself), give the key a realistic sample here,
 // so the default working-tree run keeps passing; the sample must survive that batch's normalizer.
+// WS6.7 / WS6.8 own the feature spec fields on a site and the CMS-reported fields in site.cms.
+const AT = '2026-11-01T10:00:00.000Z';
+const OWNED_SAMPLES = {
+  featureSpec: {
+    rev: 3, grantServices: ['ecom'], revokeServices: [], grant: ['shop.subscriptions'], revoke: [], locks: [],
+    defaults: { 'shop.upsell': true }, values: { 'shop.catalog': 'normal' }, updatedAt: AT, updatedBy: 'admin:test',
+  },
+  cmsSpec: { rev: 2, sections: { 'shop.seller': { legalName: 'Forward Compat AS' } }, force: [], updatedAt: AT, updatedBy: 'admin:test' },
+  cmsSpecHistory: [{ at: AT, by: 'admin:test', featureSpecRev: 3, cmsSpecRev: 2 }],
+  featureEnforcement: 'log',
+  featuresRev: 3,
+  clientFeaturesRev: 1,
+  settingsRevApplied: 2,
+  settingsConflicts: ['shop.shipping'],
+  effective: 'users,site,blog',
+  effectiveHash: 'sha256:0123abcd',
+  blockHistory: [{ date: '2026-11-01', count: 0, top: [] }],
+  migrations: { items: [{ id: '2.3.0-features', status: 'ok', at: AT }], failed: [], pending: [], status: 'ok' },
+  lastHeartbeatAt: AT,
+};
+
 function sampleFor(key) {
   if (key === 'isTest') return true;
   if (key === 'ext') return { futureBatch: { note: `ext kept (${key})`, n: 7 } };
+  if (Object.hasOwn(OWNED_SAMPLES, key)) return structuredClone(OWNED_SAMPLES[key]);
   return { kept: key, nested: { list: [1, 2, 3], at: '2026-11-01T10:00:00.000Z' } };
 }
 

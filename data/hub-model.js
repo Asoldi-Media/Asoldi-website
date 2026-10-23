@@ -2,6 +2,13 @@ import { normalizeDeliveryPhase, normalizeDevelopment } from '../lib/development
 import { analyticsLevelFromFlags } from '../lib/website-tiers.js';
 import { normalizeDueDate } from '../lib/website-due.js';
 import { carryFutureKeys, FUTURE_SITE_CMS_KEYS, FUTURE_SITE_KEYS } from './normalize-ext.js';
+import {
+  normalizeCmsReportedFields,
+  normalizeCmsSpec,
+  normalizeCmsSpecHistory,
+  normalizeFeatureEnforcement,
+  normalizeFeatureSpec,
+} from './feature-spec-model.js';
 
 export const WEBSITE_PLANS = [
   { id: 'tier-1-standard', name: 'Tier 1: Standard' },
@@ -155,13 +162,21 @@ export function emptyCmsMeta() {
 export function normalizeCmsMeta(cms) {
   const base = emptyCmsMeta();
   if (!cms || typeof cms !== 'object') return base;
-  return carryFutureKeys({
+  // WS6.7: what the CMS reports in its heartbeat, each field only when it was reported.
+  const reported = normalizeCmsReportedFields(cms);
+  const out = carryFutureKeys({
     githubRepo: String(cms.githubRepo || ''),
     lastSeenAt: String(cms.lastSeenAt || ''),
     packageVersion: String(cms.packageVersion || ''),
     adminUrl: String(cms.adminUrl || ''),
     desiredPackageVersion: String(cms.desiredPackageVersion || ''),
+    ...reported,
   }, cms, FUTURE_SITE_CMS_KEYS);
+  // A reported field that did not normalize is dropped, never carried through as it was.
+  for (const key of FUTURE_SITE_CMS_KEYS) {
+    if (key !== 'ext' && !(key in reported)) delete out[key];
+  }
+  return out;
 }
 
 export function resolveCatalogTypeForSite({ features, ecommerceCatalogType }) {
@@ -196,9 +211,23 @@ export function normalizeSite(site) {
   };
   // WS8.56: stored only when true, so existing sites keep their shape.
   if (site.isTest === true) out.isTest = true;
+  // WS6.7 / WS6.8: the feature spec, the settings spec and its history, and the enforcement mode,
+  // each stored only when the site has one (lib/cms-entitlements.js fills in the rest on read).
+  const featureSpec = normalizeFeatureSpec(site.featureSpec);
+  if (featureSpec) out.featureSpec = featureSpec;
+  const cmsSpec = normalizeCmsSpec(site.cmsSpec);
+  if (cmsSpec) out.cmsSpec = cmsSpec;
+  if (Array.isArray(site.cmsSpecHistory)) out.cmsSpecHistory = normalizeCmsSpecHistory(site.cmsSpecHistory);
+  const featureEnforcement = normalizeFeatureEnforcement(site.featureEnforcement);
+  if (featureEnforcement) out.featureEnforcement = featureEnforcement;
   // WS8.44: keys a later batch writes survive this code (see data/normalize-ext.js).
   carryFutureKeys(out, site, FUTURE_SITE_KEYS);
   if (out.isTest !== true) delete out.isTest;
+  // Owned now: a value that did not normalize is dropped, never carried through as it was.
+  if (!featureSpec) delete out.featureSpec;
+  if (!cmsSpec) delete out.cmsSpec;
+  if (!Array.isArray(site.cmsSpecHistory)) delete out.cmsSpecHistory;
+  if (!featureEnforcement) delete out.featureEnforcement;
   return out;
 }
 

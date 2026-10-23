@@ -33,6 +33,8 @@ import * as hub from './data/hub.js';
 import { registerShopPaymentsRoutes, registerShopPaymentsWebhook } from './lib/shop-payments-routes.js';
 import { registerCmsSsoRoutes } from './lib/cms-sso.js';
 import { registerDeliveryRoutes } from './lib/routes/delivery-routes.js';
+import { registerCmsFeatureRoutes } from './lib/routes/cms-feature-routes.js';
+import { websitePlanForNewSite } from './lib/cms-entitlements.js';
 import { runDeliverySchemaStartupSnapshot } from './lib/delivery-snapshots.js';
 import { myphonerMatchCandidates, myphonerSyncSkipReason, testClientIdSet } from './lib/test-clients.js';
 import * as employees from './data/employees.js';
@@ -12866,6 +12868,8 @@ registerShopPaymentsRoutes(app, { adminAuth });
 registerCmsSsoRoutes(app, { adminAuth, getSiteById: hub.getSiteById, getSiteByKey: hub.getSiteByKey });
 registerSafeModeRoutes(app, { adminAuth });
 registerDeliveryRoutes(app, { adminAuth, sales, hub, salesOffers });
+// WS6.7/WS6.8: feature tree and cms-spec. Dark until Superadmin switches it on (cms-feature-settings.json).
+const cmsFeatures = registerCmsFeatureRoutes(app, { adminAuth, hub, sales, isMakerAuthorized: (req) => isMakerStatusCallbackAuthorized(req) });
 
 // --- Hub API (public: site config for client CMS)
 app.get('/api/hub/site-config', (req, res) => {
@@ -12876,12 +12880,12 @@ app.get('/api/hub/site-config', (req, res) => {
     return { ...config, analyticsGoals: analyticsGoalsFromBank(profile?.clientDataBank) };
   }
   if (siteKey) {
-    const config = hub.getSiteConfig(siteKey, false);
+    const config = hub.getSiteConfig(siteKey, false, { withFeatures: cmsFeatures.siteConfigFeatures });
     if (!config) return res.status(404).json({ message: 'Site not found' });
     return res.json(withGoals(config, siteKey));
   }
   if (domain) {
-    const config = hub.getSiteConfig(domain, true);
+    const config = hub.getSiteConfig(domain, true, { withFeatures: cmsFeatures.siteConfigFeatures });
     if (!config) return res.status(404).json({ message: 'Site not found' });
     const site = hub.getSiteByDomain(domain);
     return res.json(withGoals(config, site?.site_key));
@@ -12896,6 +12900,7 @@ app.post('/api/hub/heartbeat', (req, res) => {
     adminUrl: sanitizeText(req.body?.adminUrl),
     name: sanitizeText(req.body?.name),
     adminApplied: req.body?.adminApplied === true || req.body?.adminApplied === 'true',
+    report: req.body,
   });
   if (!result.ok) {
     const status = result.error === 'Site not found' ? 404 : 400;
@@ -12945,11 +12950,11 @@ app.post('/api/hub/sites/:id/local-blog-token', adminAuth, (req, res) => {
 app.get('/api/cms/config', (req, res) => {
   const siteKey = process.env.CMS_SITE_KEY;
   if (siteKey) {
-    const config = hub.getSiteConfig(siteKey, false);
+    const config = hub.getSiteConfig(siteKey, false, { withFeatures: cmsFeatures.siteConfigFeatures });
     if (config) return res.json(config);
   }
   const host = (req.get('host') || '').split(':')[0];
-  const config = hub.getSiteConfig(host, true);
+  const config = hub.getSiteConfig(host, true, { withFeatures: cmsFeatures.siteConfigFeatures });
   if (config) return res.json(config);
   res.json({
     features: { users: true, analytics: false, ecommerce: false, blog: false, socialSync: false, emailMarketing: false, general: false },
@@ -19063,7 +19068,7 @@ app.post('/api/admin/sales/:id/got-client', salesAuth, async (req, res) => {
       name: client.businessName || 'New client',
       domain: client.websiteDomain || '',
       site_key: client.hubSite?.siteKey || '',
-      websitePlan: req.body?.websitePlan,
+      websitePlan: websitePlanForNewSite(client, req.body?.websitePlan),
       ecommerceCatalogType: req.body?.ecommerceCatalogType,
       githubRepo: req.body?.githubRepo,
       features: req.body?.features,
