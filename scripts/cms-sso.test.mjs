@@ -94,7 +94,7 @@ test('HS-1: a sign-in link goes to the stored domain over https; a reported addr
   assert.equal(at('localhost:4100', 'http://127.0.0.1:4200/admin'), 'http://localhost:4100');
   assert.deepEqual(cmsSsoOrigin(noDomainSite), { origin: '', source: '', ignoredHost: 'cms.example.net' }, 'no domain, no link');
   assert.equal(cmsSsoOrigin({}).origin, '');
-  assert.equal(cmsOrigin(site), 'https://snow.example.com', 'server-to-server notices keep using the reported address');
+  assert.equal(cmsOrigin(site), 'https://snow.example.com', 'cmsOrigin still prefers the reported address');
 });
 
 test('HS-1: the link format follows the CMS version from the heartbeat', () => {

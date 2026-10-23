@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -180,6 +181,20 @@ shop.setShopPaymentDeps({ stripeFactory: (key) => fakeStripe(key), fetch: fakePa
 const site = hub.createSite({ name: 'Kafe Test', domain: 'kafe.no', websitePlan: 'tier-3-ecommerce' });
 const other = hub.createSite({ name: 'Other', domain: 'other.no' });
 
+// Both test sites have enrolled a site credential (lib/site-credentials.js): the money and payee
+// routes need it, and call() sends it with the site key.
+const credentials = new Map();
+{
+  const { createSiteCredentialStore, setSiteCredentialStoreForTests } = await import('../lib/site-credentials.js');
+  const credentialStore = createSiteCredentialStore({ dataDir });
+  setSiteCredentialStoreForTests(credentialStore);
+  for (const s of [site, other]) {
+    const credential = randomBytes(32).toString('base64url');
+    credentialStore.enroll(s.id, credential, { proofDomain: s.domain, proofOrigin: `https://${s.domain}` });
+    credentials.set(s.site_key, credential);
+  }
+}
+
 const app = express();
 registerShopPaymentsWebhook(app);
 app.use(express.json());
@@ -187,11 +202,12 @@ registerShopPaymentsRoutes(app, { adminAuth: (_req, _res, next) => next() });
 const server = app.listen(0);
 const base = `http://127.0.0.1:${server.address().port}`;
 
-async function call(method, path, body, siteKey = site.site_key) {
+async function call(method, path, body, siteKey = site.site_key, { withCredential = true } = {}) {
+  const credential = withCredential && siteKey ? credentials.get(siteKey) : '';
   const res = await fetch(`${base}${path}`, {
     method,
     redirect: 'manual',
-    headers: { 'content-type': 'application/json', ...(siteKey ? { 'x-site-key': siteKey } : {}) },
+    headers: { 'content-type': 'application/json', ...(siteKey ? { 'x-site-key': siteKey } : {}), ...(credential ? { 'x-site-credential': credential } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
@@ -212,6 +228,30 @@ test.after(() => {
 test('unknown site keys are rejected', async () => {
   assert.equal((await call('GET', '/api/hub/shop/status', null, 'nope')).status, 401);
   assert.equal((await call('GET', '/api/hub/shop/status', null, '')).status, 401);
+});
+
+test('the site key alone does not reach payments, payees or payment details', async () => {
+  for (const [method, path, body] of [
+    ['POST', '/api/hub/shop/stripe/connect', { returnUrl: 'https://kafe.no/admin' }],
+    ['POST', '/api/hub/shop/paypal/connect', { returnUrl: 'https://kafe.no/admin', email: 'seller@example.com' }],
+    ['POST', '/api/hub/shop/stripe/checkout', { ref: 'chk_key_only', currency: 'nok', lineItems: [{ name: 'Kaffe', unitAmount: 4950, quantity: 1 }] }],
+    ['POST', '/api/hub/shop/paypal/order', { ref: 'chk_key_only', currency: 'nok', lineItems: [{ name: 'Kaffe', unitAmount: 4950, quantity: 1 }] }],
+    ['POST', '/api/hub/shop/paypal/capture', { orderId: 'PPORDER1AAAA' }],
+    ['GET', '/api/hub/shop/stripe/session/cs_test_1'],
+    ['GET', '/api/hub/shop/stripe/invoice/in_1'],
+    ['GET', '/api/hub/shop/stripe/subscription/sub_1'],
+    ['POST', '/api/hub/shop/stripe/subscription/sub_1/cancel', { atPeriodEnd: false }],
+    ['POST', '/api/hub/shop/refund', { provider: 'stripe', providerId: 'cs_test_1', amountMinor: 100, currency: 'nok' }],
+    ['POST', '/api/hub/shop/disconnect', { provider: 'stripe' }],
+    ['GET', '/api/hub/shop/status'],
+    ['POST', '/api/hub/shop/document', { document: { kind: 'magic-link', siteName: 'Kafe', link: 'https://kafe.no/x' }, to: 'someone@example.com' }],
+  ]) {
+    const res = await call(method, path, body, site.site_key, { withCredential: false });
+    assert.equal(res.status, 401, `${method} ${path}`);
+    assert.equal(res.data.code, 'site-credential-required', `${method} ${path}`);
+  }
+  assert.equal(calls.filter(([name]) => name === 'accounts.create').length, 0, 'nothing reached Stripe');
+  assert.equal(paypalRequests.length, 0, 'nothing reached PayPal');
 });
 
 test('connect key comes from env only; billing account is refused; webhook moves off the billing account', async () => {
@@ -522,7 +562,9 @@ test('HP-10 webhook forwards expired, invoice and subscription events to the CMS
     res.json({ ok: true });
   });
   const cms = receiver.listen(0);
-  hub.updateSite(site.id, { cms: { adminUrl: `http://127.0.0.1:${cms.address().port}/admin` } });
+  // Notices go to the stored domain; a heartbeat address on another host is not followed.
+  hub.updateSite(site.id, { cms: { adminUrl: 'https://elsewhere.example/admin' } });
+  hub.updateSite(site.id, { domain: `127.0.0.1:${cms.address().port}` });
   const send = async (type, object) => {
     const payload = JSON.stringify({ id: `evt_${type}`, type, account: 'acct_1', data: { object } });
     const res = await fetch(`${base}/api/hub/shop/stripe/webhook`, { method: 'POST', headers: { 'content-type': 'application/json', 'stripe-signature': realStripe.webhooks.generateTestHeaderString({ payload, secret: 'whsec_test_secret' }) }, body: payload });
@@ -542,6 +584,7 @@ test('HP-10 webhook forwards expired, invoice and subscription events to the CMS
       { provider: 'stripe', type: 'subscription.updated', id: 'sub_1' },
     ]);
   } finally {
+    hub.updateSite(site.id, { domain: 'kafe.no', cms: { adminUrl: '' } });
     cms.close();
   }
 });

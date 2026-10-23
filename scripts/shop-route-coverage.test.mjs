@@ -5,16 +5,18 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { registerShopPaymentsRoutes, registerShopPaymentsWebhook } from '../lib/shop-payments-routes.js';
 import { registerCmsSsoRoutes } from '../lib/cms-sso.js';
+import { registerSiteCredentialRoutes } from '../lib/site-credentials.js';
 
-const TESTS = ['shop-payments.test.mjs', 'shop-documents.test.mjs', 'cms-sso.test.mjs'];
+const TESTS = ['shop-payments.test.mjs', 'shop-documents.test.mjs', 'cms-sso.test.mjs', 'site-credentials.test.mjs'];
 
-test('every hub shop, payments-platform and CMS SSO route is called by a test', () => {
+test('every hub shop, payments-platform, CMS SSO and site credential route is called by a test', () => {
   const routes = [];
   const app = Object.fromEntries(['get', 'post', 'put', 'delete', 'patch'].map((m) => [m, (p) => routes.push(`${m.toUpperCase()} ${p}`)]));
   const noop = (_req, _res, next) => next();
   registerShopPaymentsWebhook(app);
   registerShopPaymentsRoutes(app, { adminAuth: noop });
   registerCmsSsoRoutes(app, { adminAuth: noop, getSiteById: () => null });
+  registerSiteCredentialRoutes(app, { adminAuth: noop, getSiteByKey: () => null });
   assert.ok(routes.length >= 19, `expected the full hub shop surface, found ${routes.length}`);
   const dir = path.dirname(fileURLToPath(import.meta.url));
   const sources = TESTS.map((f) => readFileSync(path.join(dir, f), 'utf8')).join('\n');

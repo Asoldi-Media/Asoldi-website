@@ -76,7 +76,12 @@ export function getSiteByDomain(domain) {
   return sites.find((s) => (s.domain || '').toLowerCase() === normalized) || null;
 }
 
-export function getSiteConfig(siteKeyOrDomain, byDomain = false) {
+/**
+ * Config a client CMS reads. includeAdmin adds the client admin contact and a pending admin
+ * password hash; HTTP callers set it only for a request that carries the site's valid credential
+ * (lib/site-credentials.js), never for a site key or domain alone.
+ */
+export function getSiteConfig(siteKeyOrDomain, byDomain = false, { includeAdmin = !byDomain } = {}) {
   const site = byDomain ? getSiteByDomain(siteKeyOrDomain) : getSiteByKey(siteKeyOrDomain);
   if (!site) return null;
   const config = {
@@ -89,9 +94,8 @@ export function getSiteConfig(siteKeyOrDomain, byDomain = false) {
     desiredCmsVersion: desiredCmsVersion(site),
     analyticsLevel: site.analyticsLevel || 'none',
   };
-  // A domain (or Host header) is public, so domain lookups never carry admin data.
-  // Only a caller holding the site key (the client CMS) gets the admin sync fields.
-  if (byDomain) return config;
+  // A domain (or Host header) and a site key are public, so neither carries admin data on its own.
+  if (byDomain || !includeAdmin) return config;
   const clientAdmin = normalizeClientAdmin(site.clientAdmin);
   return {
     ...config,
@@ -268,15 +272,33 @@ export function updateSite(id, patch = {}) {
   return { ok: true, site: publicSite(sites[i]) };
 }
 
-export function recordHeartbeat(siteKey, { packageVersion, adminUrl, name, adminApplied } = {}) {
+/**
+ * A client CMS heartbeat. A verified heartbeat (the HTTP route sets verified only when the call
+ * carried the site's valid credential) updates the version and admin address the hub acts on, the
+ * name of an unnamed site and the pending admin flag. An unverified one only marks the site as
+ * seen and keeps what it reported in cms.reported, for display.
+ */
+export function recordHeartbeat(siteKey, { packageVersion, adminUrl, name, adminApplied } = {}, { verified = true } = {}) {
   const key = String(siteKey || '').trim();
   if (!key) return { ok: false, error: 'site_key required' };
   const sites = readSites();
   const i = sites.findIndex((s) => s.site_key === key);
   if (i === -1) return { ok: false, error: 'Site not found' };
+  const at = new Date().toISOString();
+  if (!verified) {
+    sites[i].cms = normalizeCmsMeta({
+      ...sites[i].cms,
+      lastSeenAt: at,
+      reported: { packageVersion, adminUrl, name, at },
+    });
+    writeSites(sites);
+    return { ok: true, verified: false, site: publicSite(sites[i]) };
+  }
   sites[i].cms = normalizeCmsMeta({
     ...sites[i].cms,
-    lastSeenAt: new Date().toISOString(),
+    lastSeenAt: at,
+    lastVerifiedAt: at,
+    reported: null,
     packageVersion: packageVersion || sites[i].cms.packageVersion,
     adminUrl: adminUrl || sites[i].cms.adminUrl,
   });
@@ -288,7 +310,7 @@ export function recordHeartbeat(siteKey, { packageVersion, adminUrl, name, admin
     });
   }
   writeSites(sites);
-  return { ok: true, site: publicSite(sites[i]) };
+  return { ok: true, verified: true, site: publicSite(sites[i]) };
 }
 
 /**
