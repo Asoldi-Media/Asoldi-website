@@ -31,6 +31,7 @@ import * as hub from './data/hub.js';
 import { registerShopPaymentsRoutes, registerShopPaymentsWebhook } from './lib/shop-payments-routes.js';
 import { registerCmsSsoRoutes } from './lib/cms-sso.js';
 import { registerOwnerRoutingRoutes, resolveFormRouting } from './lib/owner-recipients.js';
+import { asoldiMarketingSendBlock, isAsoldiServiceTemplate, registerAsoldiUnsubscribeRoutes } from './lib/asoldi-unsubscribe.js';
 import * as employees from './data/employees.js';
 import * as sales from './data/sales.js';
 import { SALES_CONTACT_CORRECTIONS } from './data/sales-contact-corrections.js';
@@ -124,7 +125,6 @@ import {
   getSalesEmailPreviewClient,
   getSalesWorkshopPreviewClient,
   normalizeSalesReminderKind,
-  renderSalesUnsubscribePage,
   htmlToPlainText,
   salesEmailMergeMap,
   buildSalesCalendarInvite,
@@ -15705,6 +15705,11 @@ app.post('/api/admin/sales/:id/send-composed-email', salesAuth, async (req, res)
       return res.status(400).json({ message: salesEmailFailureMessage('smtp-not-configured') });
     }
     const templateKey = sanitizeText(req.body?.templateKey || req.body?.markAs) || 'thank-you';
+    const unsubscribed = asoldiMarketingSendBlock({
+      to: sanitizeText(req.body?.to) || client.contactEmail,
+      service: isAsoldiServiceTemplate(templateKey, getEmailTemplateById(templateKey)),
+    });
+    if (unsubscribed) return res.status(409).json(unsubscribed);
     const isOnline = normalizeMeetingMode(client?.meetingMode) === 'online';
     const isWorkshop = isWorkshopEmailTemplate(templateKey);
     const isThankYou = isThankYouEmailTemplate(templateKey);
@@ -20550,10 +20555,7 @@ function publicRequestOrigin(req) {
   return 'https://asoldi.com';
 }
 
-app.get('/email/avmeld', (req, res) => {
-  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
-  res.type('html').send(renderSalesUnsubscribePage({ clientId: req.query?.c }));
-});
+registerAsoldiUnsubscribeRoutes(app, { getSalesClientById: sales.getSalesClientById });
 
 app.get('/email/preview/sales-thank-you', (req, res) => {
   const origin = publicRequestOrigin(req);
