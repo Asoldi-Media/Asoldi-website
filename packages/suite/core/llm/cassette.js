@@ -75,6 +75,25 @@ export function cassetteKey({ task = '', model = '', system = '', user = '', mes
   return sha256(canonicalJson(parts));
 }
 
+/**
+ * Exact request key: sha256 of task, system, user, messages, image hashes, schema and tools, with nothing
+ * normalized (unlike cassetteKey, two pages that differ only by a UUID or a date get different keys).
+ * Loop detection uses it, together with the model and effort the call goes to.
+ */
+export function requestKey({ task = '', system = '', user = '', messages = null, images = [], schema = null, tools = null } = {}) {
+  return sha256(
+    canonicalJson({
+      task: String(task),
+      system: system ?? '',
+      user: user ?? '',
+      messages: messages || null,
+      images: (Array.isArray(images) ? images : []).map(imageDigest),
+      schema: schema || null,
+      tools: tools || null,
+    }),
+  );
+}
+
 /** Relative cassette path: `<scope>/<key>.json`. Scope is a short folder name (run kind, fixture id). */
 export function cassettePath(scope, key) {
   const safeScope = String(scope || 'default').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80) || 'default';

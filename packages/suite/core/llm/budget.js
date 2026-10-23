@@ -4,8 +4,10 @@
 //   - a run or session with no project size gets the base expected cost of one reference project, so the
 //     runaway stop is never off; facades pass projectSize so larger projects scale up;
 //   - a hard stop happens only for a runaway (projected spend > runawayFactor x expected, default 5)
-//     or a loop (the same request repeating with no progress inside one run/session and a 15-minute window);
-//   - periodic totals (per client per month, global per day, evaluation) alert only.
+//     or a loop: the same exact request to the same model failing (or retried by the caller) with no
+//     progress inside one run/session/job/task and a 15-minute window. Successful repeats never count;
+//   - periodic totals (per client per month, global per day, evaluation) alert only;
+//   - a core created without a budgets config uses DEFAULT_BUDGETS, so the runaway stop is on by default.
 //
 // ai-budgets.json
 // { version: 1, alertRatio: 1, runawayFactor: 5,
@@ -18,6 +20,37 @@ import { BUDGET_RULES, TIERS, normalizeTier } from './constants.js';
 import { canonicalJson } from './cassette.js';
 
 const SCOPE_FIELDS = ['baseUsd', 'referencePages', 'extraLocaleFactor', 'productsPerPage', 'of', 'factor', 'note'];
+
+function deepFreeze(value) {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    Object.freeze(value);
+    for (const child of Object.values(value)) deepFreeze(child);
+  }
+  return value;
+}
+
+/**
+ * Built-in budgets for a core created without a config (or with a config that has no scopes): the expected
+ * cost of one reference project per run, dev session and iteration. The runaway stop is never off.
+ */
+export const DEFAULT_BUDGETS = deepFreeze({
+  version: 1,
+  alertRatio: BUDGET_RULES.alertRatio,
+  runawayFactor: BUDGET_RULES.runawayFactor,
+  scopes: {
+    run: { baseUsd: { default: 2, 'tier-1-standard': 1, 'tier-2-seo': 1.5, 'tier-3-ecommerce': 3 }, referencePages: 6, extraLocaleFactor: 0.75, productsPerPage: 20 },
+    devSession: { baseUsd: { default: 2.5, 'tier-1-standard': 1.5, 'tier-2-seo': 2.5, 'tier-3-ecommerce': 4 }, referencePages: 6, extraLocaleFactor: 0.75, productsPerPage: 20 },
+    iteration: { of: 'devSession', factor: 0.5 },
+  },
+  loop: { maxRepeats: BUDGET_RULES.loopMaxRepeats, maxIdentical: BUDGET_RULES.loopMaxIdentical, windowMinutes: BUDGET_RULES.loopWindowMinutes },
+});
+
+/** A budgets config with the built-in scopes filled in when it has none (null config -> DEFAULT_BUDGETS). */
+export function withDefaultBudgets(config = null) {
+  if (!config) return DEFAULT_BUDGETS;
+  const hasScopes = config.scopes && typeof config.scopes === 'object' && Object.keys(config.scopes).length > 0;
+  return hasScopes ? config : { ...config, scopes: DEFAULT_BUDGETS.scopes };
+}
 
 export function validateBudgetsConfig(config) {
   const errors = [];
@@ -162,18 +195,38 @@ function windowMsOf({ windowMs, windowMinutes } = {}) {
   return (Number(windowMinutes) > 0 ? Number(windowMinutes) : BUDGET_RULES.loopWindowMinutes) * 60_000;
 }
 
+/**
+ * Trailing run of no-progress events with the same outcome. A progress event (a successful, non-retry call)
+ * ends the run, so success in between is never part of a loop.
+ */
 function trailingStreak(events) {
-  if (!events.length) return 0;
+  if (!events.length || events[events.length - 1].progress) return 0;
   const last = events[events.length - 1].outcome;
   let streak = 0;
-  for (let i = events.length - 1; i >= 0 && events[i].outcome === last; i -= 1) streak += 1;
+  for (let i = events.length - 1; i >= 0 && !events[i].progress && events[i].outcome === last; i -= 1) streak += 1;
   return streak;
 }
 
+function noProgressCount(events) {
+  let count = 0;
+  for (const event of events) if (!event.progress) count += 1;
+  return count;
+}
+
+function loopVerdict(events, { maxRepeats, maxIdentical }) {
+  const streak = trailingStreak(events);
+  if (streak >= maxRepeats) return { loop: true, reason: 'same-outcome', count: streak };
+  const stuck = noProgressCount(events);
+  if (stuck >= maxIdentical) return { loop: true, reason: 'identical-requests', count: stuck };
+  return { loop: false, reason: '', count: stuck };
+}
+
 /**
- * Pure loop check over a call history: within one window, the same request (`inputKey`) giving the same
- * outcome (`outcomeKey`: output hash or error code) `maxRepeats` times in a row, or the same request sent
- * `maxIdentical` times, is a loop. Items may carry `at` (ms); then only items within `windowMs` of the
+ * Pure loop check over a call history. Only no-progress items count: failures, or calls the caller marked
+ * as retries. An item with `progress: true` (a successful call that is not a retry) never counts and ends a
+ * streak. Within one window, the same request (`inputKey`) giving the same no-progress outcome
+ * (`outcomeKey`: output hash or error code) `maxRepeats` times in a row, or `maxIdentical` no-progress sends
+ * of the same request, is a loop. Items may carry `at` (ms); then only items within `windowMs` of the
  * newest one count.
  */
 export function detectLoop(history = [], { maxRepeats = BUDGET_RULES.loopMaxRepeats, maxIdentical = BUDGET_RULES.loopMaxIdentical, windowMs = null, windowMinutes = null } = {}) {
@@ -185,21 +238,22 @@ export function detectLoop(history = [], { maxRepeats = BUDGET_RULES.loopMaxRepe
     if (Number.isFinite(item?.at) && Number.isFinite(newest) && newest - item.at > span) continue;
     const key = `${item.task}|${item.inputKey}`;
     const events = byInput.get(key) || [];
-    events.push({ outcome: item.outcomeKey });
+    events.push({ outcome: item.outcomeKey, progress: item.progress === true });
     byInput.set(key, events);
-    const streak = trailingStreak(events);
-    if (streak >= maxRepeats) return { loop: true, reason: 'same-outcome', key, count: streak };
-    if (events.length >= maxIdentical) return { loop: true, reason: 'identical-requests', key, count: events.length };
+    const verdict = loopVerdict(events, { maxRepeats, maxIdentical });
+    if (verdict.loop) return { ...verdict, key };
   }
   return { loop: false, reason: '', key: null, count: 0 };
 }
 
 /**
- * In-memory loop detector. Callers key requests by scope (run, session, job or task id) plus the request;
- * the core skips the detector for calls without such a scope. Only calls within the window count, so a
- * block expires on its own and the same request on another day is never a loop.
+ * In-memory loop detector. Callers key requests by scope (run, session, job or task id), the exact request
+ * and the model it goes to; the core skips the detector for calls without such a scope and for replays. Only
+ * calls within the window count, so a block expires on its own and the same request on another day is never
+ * a loop.
  *   before(task, key) -> {loop, reason, count}: would sending this request again continue a loop?
- *   after(task, key, outcome) records the outcome.
+ *   after(task, key, outcome, {progress}) records the outcome. Outcomes count as no progress unless
+ *   `progress: true` (callLlm passes it for a successful call that is not a retry).
  */
 export function createLoopDetector({
   maxRepeats = BUDGET_RULES.loopMaxRepeats,
@@ -207,9 +261,11 @@ export function createLoopDetector({
   windowMs = null,
   windowMinutes = null,
   maxEntries = 5000,
+  maxEvents = 64,
   now = () => Date.now(),
 } = {}) {
   const span = windowMsOf({ windowMs, windowMinutes });
+  const limits = { maxRepeats, maxIdentical };
   const states = new Map();
   const keyOf = (task, inputKey) => `${task}|${inputKey}`;
   const fresh = (key) => {
@@ -225,20 +281,21 @@ export function createLoopDetector({
     before(task, inputKey) {
       const events = fresh(keyOf(task, inputKey));
       if (!events.length) return { loop: false, reason: '', count: 0 };
-      const streak = trailingStreak(events);
-      if (streak >= maxRepeats) return { loop: true, reason: 'same-outcome', count: streak };
-      if (events.length >= maxIdentical) return { loop: true, reason: 'identical-requests', count: events.length };
-      return { loop: false, reason: '', count: events.length };
+      return loopVerdict(events, limits);
     },
-    after(task, inputKey, outcomeKey) {
+    after(task, inputKey, outcomeKey, { progress = false } = {}) {
       const key = keyOf(task, inputKey);
       const events = fresh(key);
-      events.push({ at: Number(now()), outcome: outcomeKey });
-      while (events.length > maxIdentical + maxRepeats) events.shift();
+      events.push({ at: Number(now()), outcome: outcomeKey, progress: progress === true });
+      // Keep enough history for both rules; drop progress events first, they never count.
+      while (events.length > Math.max(maxEvents, maxIdentical + maxRepeats)) {
+        const index = events.findIndex((event) => event.progress);
+        events.splice(index >= 0 ? index : 0, 1);
+      }
       states.delete(key);
       states.set(key, events);
       if (states.size > maxEntries) states.delete(states.keys().next().value);
-      return { count: events.length, streak: trailingStreak(events) };
+      return { count: noProgressCount(events), streak: trailingStreak(events) };
     },
     reset() {
       states.clear();

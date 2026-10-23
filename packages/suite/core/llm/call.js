@@ -11,6 +11,7 @@
 //   stopReason uses Claude's words: end_turn | max_tokens | refusal | tool_use (adapters map 'length' -> max_tokens).
 //   Adapters throw errors carrying `status` (HTTP) or `code`; classifyError() decides fallback.
 
+import { createHash } from 'node:crypto';
 import { BUDGET_RULES } from './constants.js';
 import {
   BudgetExceededError,
@@ -19,20 +20,31 @@ import {
   MaxTokensError,
   ProviderDeadError,
   RefusalError,
+  RouteConfigError,
   SchemaValidationError,
   classifyError,
   isAbortError,
 } from './errors.js';
 import { assertNotRefused, buildClaudeRequest, claudeMaxTokens, shouldRetryMaxTokens, toolResultMessage, toolUseBlocks } from './claude-shape.js';
-import { cassetteKey, cassetteRecord } from './cassette.js';
-import { createLoopDetector, estimateInputTokens, estimateOutputTokens, evaluateBudget, expectedCostUsd, loopScopeOf, periodicScopesFor } from './budget.js';
+import { canonicalJson, cassetteKey, cassetteRecord, requestKey } from './cassette.js';
+import {
+  createLoopDetector,
+  estimateInputTokens,
+  estimateOutputTokens,
+  evaluateBudget,
+  expectedCostUsd,
+  loopScopeOf,
+  periodicScopesFor,
+  validateBudgetsConfig,
+  withDefaultBudgets,
+} from './budget.js';
 import { parseJsonOutput } from './json.js';
 import { buildLedgerRow } from './ledger-row.js';
 import { estimateCallUsd } from './prices.js';
 import { createRouter } from './route.js';
 import { formatRouteEntry } from './route-string.js';
 import { getTask } from './tasks-schema.js';
-import { IMAGE_RULES } from './images.js';
+import { IMAGE_RULES, checkMessageImages } from './images.js';
 
 /** Parsed JSON of a response: the adapter's `data` when it has one (replay, Gemini), else the text. Validated against the schema. */
 function readJsonData(response, schema) {
@@ -42,9 +54,20 @@ function readJsonData(response, schema) {
   return raw;
 }
 
-function outcomeKeyOf(result, error) {
-  if (error) return `error:${error.code || error.status || error.name}`;
-  return `ok:${result?.text?.length || 0}:${String(result?.text || '').slice(0, 200)}`;
+/**
+ * The loop outcome of one call. Failures (any error after the chain, refusal, max_tokens, schema_invalid) and
+ * empty output make no progress; a call with output makes progress unless the caller marked it as a retry
+ * (ctx.retryOf, ctx.attempt > 1), in which case its output hash is compared with earlier retries.
+ */
+function loopOutcomeOf(result, error, ctx) {
+  if (error) return { key: `error:${error.code || error.status || error.name}`, progress: false };
+  const response = result?.response || {};
+  const text = String(response.text ?? '');
+  const uses = toolUseBlocks(response.content).map((block) => ({ name: block.name, input: block.input }));
+  if (!text.trim() && result?.data === undefined && !uses.length) return { key: 'empty', progress: false };
+  const hash = createHash('sha256').update(canonicalJson({ text, data: result?.data ?? null, uses })).digest('hex').slice(0, 32);
+  const retry = Boolean(ctx?.retryOf) || Number(ctx?.attempt) > 1;
+  return { key: `ok:${hash}`, progress: !retry };
 }
 
 function nowMs(clock) {
@@ -73,7 +96,10 @@ function scaledScopeOf(ctx) {
   return null;
 }
 
-/** The id the in-memory spend tally uses for a scope. */
+/**
+ * The id the in-memory spend tally uses for a scope. Empty means no tally: a scope without an id (a bare
+ * ctx.budgetScope) would otherwise pool unrelated runs and clients into one process-wide total.
+ */
 function scopeIdOf(scope, ctx) {
   if (scope === 'devSession' || scope === 'iteration') return ctx.sessionId || ctx.taskId || ctx.jobId || '';
   if (scope === 'run') return ctx.runId || '';
@@ -85,21 +111,27 @@ function scopeIdOf(scope, ctx) {
  * @param {object} options.tasks       parsed task registry (parseTaskRegistry)
  * @param {object} options.routes      ai-routes config
  * @param {object} options.policy      ai-policy config
- * @param {object} [options.budgets]   ai-budgets config
+ * @param {object} [options.budgets]   ai-budgets config; validated at creation. Without one (or without scopes)
+ *   DEFAULT_BUDGETS applies, so the runaway stop is on by default.
  * @param {object} [options.env]       env map (AI_PROFILE, AI_ROUTE_*); the core never reads the process environment
  * @param {Record<string, Function>} options.providers adapters by provider name
  * @param {{append:Function}} [options.ledger]
  * @param {Function} [options.spentUsd]  async ({scope, ctx, task}) => USD already spent in that scope. Scopes:
  *   run | devSession | iteration | <budgetScope> (scaled) and clientMonth | makerDay | hubDay | eval (periodic).
- *   Without it the core keeps an in-process tally per run/session (scaled scopes only).
+ *   Without it the core keeps an in-process tally per run/session/job/task id (scaled scopes only).
  * @param {Function} [options.onAlert]   (info) => void, budget alerts (work continues)
  * @param {{save:Function}} [options.cassettes]  record profile: save(record)
  * @param {Function} [options.legacyRoute]
  * @param {string} [options.repo]  'maker' | 'hub' (picks the makerDay / hubDay periodic budget)
  */
 export function createLlmCore(options = {}) {
-  const { providers = {}, ledger = null, spentUsd = null, onAlert = null, cassettes = null, budgets = null, repo = '', clock = () => new Date() } = options;
-  const loopDetector = options.loopDetector || createLoopDetector({ ...(budgets?.loop || {}), now: () => nowMs(clock) });
+  const { providers = {}, ledger = null, spentUsd = null, onAlert = null, cassettes = null, repo = '', clock = () => new Date() } = options;
+  if (options.budgets) {
+    const check = validateBudgetsConfig(options.budgets);
+    if (!check.ok) throw new RouteConfigError(`Invalid LLM budgets:\n- ${check.errors.join('\n- ')}`, { errors: check.errors });
+  }
+  const budgets = withDefaultBudgets(options.budgets || null);
+  const loopDetector = options.loopDetector || createLoopDetector({ ...(budgets.loop || {}), now: () => nowMs(clock) });
   const router = createRouter(options);
   const dead = new Set();
   // In-process spend per scaled scope, used when the facade gives no spentUsd (bounded LRU).
@@ -137,13 +169,21 @@ export function createLlmCore(options = {}) {
    */
   async function budgetCheck({ task, route, request, ctx }) {
     const scope = scaledScopeOf(ctx);
-    const tallyKey = scope ? `${scope}:${scopeIdOf(scope, ctx)}` : '';
+    const scopeId = scope ? scopeIdOf(scope, ctx) : '';
+    const tallyKey = scope && scopeId ? `${scope}:${scopeId}` : '';
     const empty = { scope, tallyKey, expectedUsd: null, decision: null, periodic: [] };
     if (route.primary.provider === 'replay') return empty;
-    let expected = ctx.expectedUsd ?? null;
+    // A scope the core can measure: the facade's spentUsd hook, or the in-process tally (needs an id).
+    const measurable = typeof spentUsd === 'function' || Boolean(tallyKey);
+    let expected = ctx.expectedUsd > 0 ? ctx.expectedUsd : null;
     const sizeKnown = expected !== null || Boolean(ctx.projectSize);
-    if (expected === null && budgets && scope) expected = expectedCostUsd(budgets, scope, { tier: ctx.tier, projectSize: ctx.projectSize || {} });
-    const periodicScopes = budgets && typeof spentUsd === 'function' ? periodicScopesFor(budgets, { ctx, task, repo }) : [];
+    if (expected === null && scope) {
+      const size = { tier: ctx.tier, projectSize: ctx.projectSize || {} };
+      // An unknown ctx.budgetScope still has an expected cost: that of the session or run it belongs to.
+      expected = expectedCostUsd(budgets, scope, size) ?? expectedCostUsd(budgets, ctx.sessionId ? 'devSession' : 'run', size);
+    }
+    if (!measurable) expected = null;
+    const periodicScopes = typeof spentUsd === 'function' ? periodicScopesFor(budgets, { ctx, task, repo }) : [];
     if (!(expected > 0) && !periodicScopes.length) return { ...empty, expectedUsd: expected };
 
     const inputTokens = estimateInputTokens({ system: request.system, user: request.user, messages: request.messages, images: request.images?.length || 0 });
@@ -169,7 +209,13 @@ export function createLlmCore(options = {}) {
 
   async function attemptEntry({ entry, index, route, request, ctx, key, fallbackFrom }) {
     const adapter = providers[entry.provider];
-    if (typeof adapter !== 'function') throw new ProviderDeadError(`No adapter for provider "${entry.provider}".`, { provider: entry.provider });
+    if (typeof adapter !== 'function') {
+      const error = new ProviderDeadError(`No adapter for provider "${entry.provider}".`, { provider: entry.provider });
+      const row = buildLedgerRow({ at: isoAt(clock), repo, task: route.task, provider: entry.provider, requestedModel: entry.model, effort: entry.effort, profile: route.profile, ctx, status: 'error', fallbackFrom, policyRedirect: route.policyRedirects[0] || null, error });
+      await appendRow(row);
+      error.ledgerRows = [row];
+      throw error;
+    }
     const rows = [];
     let attempt = 1;
     let maxTokens = entry.provider === 'claude' ? claudeMaxTokens({ requested: request.maxTokens, taskMaxTokens: route.maxTokens }) : request.maxTokens || route.maxTokens;
@@ -299,6 +345,10 @@ export function createLlmCore(options = {}) {
       if (request.signal?.aborted) throw Object.assign(abortError(request.signal), { failures });
       if (dead.has(entry.provider)) {
         failures.push({ entry: label, code: 'provider_dead', skipped: true });
+        const row = buildLedgerRow({ at: isoAt(clock), repo, task: route.task, provider: entry.provider, requestedModel: entry.model, effort: entry.effort, profile: route.profile, ctx, status: 'skipped_dead', fallbackFrom, policyRedirect: route.policyRedirects[0] || null });
+        await appendRow(row);
+        allRows.push(row);
+        fallbackFrom = label;
         continue;
       }
       let result;
@@ -331,17 +381,47 @@ export function createLlmCore(options = {}) {
     const images = Array.isArray(request.images) ? request.images.filter(Boolean) : [];
     if (images.length && !spec.vision) throw new InvalidRequestError(`Task "${request.task}" is not a vision task; images are not allowed.`);
     if (images.length > IMAGE_RULES.maxImages) throw new InvalidRequestError(`${images.length} images in one call; the limit is ${IMAGE_RULES.maxImages}.`);
+    // Images already in messages (tool results included) follow the same rules: JPEG, long edge, total count.
+    const messageImages = Array.isArray(request.messages) ? checkMessageImages(request.messages) : 0;
+    if (images.length + messageImages > IMAGE_RULES.maxImages) throw new InvalidRequestError(`${images.length + messageImages} images in one call; the limit is ${IMAGE_RULES.maxImages}.`);
     // Everything that is sent (and request.data) is checked for person fields; the system prompt can carry client facts too.
     const payload = { system: request.system, user: request.user, data: request.data, messages: request.messages };
-    const route = router.resolveRoute(request.task, request.ctx || {}, { payload });
+    let route;
+    try {
+      route = router.resolveRoute(request.task, request.ctx || {}, { payload });
+    } catch (error) {
+      if (error?.code === 'policy_blocked') {
+        const raw = request.ctx && typeof request.ctx === 'object' ? request.ctx : {};
+        const blocked = Array.isArray(error.blocked) ? error.blocked[0] : null;
+        await appendRow(
+          buildLedgerRow({
+            at: isoAt(clock),
+            repo,
+            task: request.task,
+            provider: error.primary?.provider || '',
+            requestedModel: error.primary?.model || '',
+            profile: error.profile || '',
+            ctx: { runId: raw.runId, salesClientId: raw.salesClientId, sessionId: raw.sessionId, tier: raw.tier },
+            status: 'policy_blocked',
+            policyRedirect: { from: blocked?.from || error.route || '', to: null, reason: blocked?.reason || error.message, dataClass: error.dataClass || null },
+            error,
+          }),
+        );
+      }
+      throw error;
+    }
     const ctx = route.ctx;
     if (images.length && !route.vision) throw new InvalidRequestError('ctx.vision is false, so this call may not carry images.');
     const req = { ...request, images };
     const key = cassetteKey({ task: request.task, system: request.system, user: request.user, messages: request.messages, images, schema: request.schema, tools: request.tools });
     // Loops are only detected inside an explicit scope (run, session, job or task) and a time window: the
-    // same request on another day, or from unrelated hub requests, is never a loop.
-    const loopScope = loopScopeOf(ctx);
-    const loopKey = loopScope ? `${loopScope}:${key}` : '';
+    // same request on another day, or from unrelated hub requests, is never a loop. The key is the exact
+    // request (no replay normalization: pages that differ by a UUID or date are different requests) plus the
+    // model and effort it goes to, so each escalation step is its own request. Replays are never loops.
+    const loopScope = route.replay ? '' : loopScopeOf(ctx);
+    const loopKey = loopScope
+      ? `${loopScope}:${route.primary.provider}:${route.primary.model}:${route.primary.effort || ''}:${requestKey({ task: request.task, system: request.system, user: request.user, messages: request.messages, images, schema: request.schema, tools: request.tools })}`
+      : '';
 
     if (loopKey) {
       const loop = loopDetector.before(request.task, loopKey);
@@ -354,7 +434,7 @@ export function createLlmCore(options = {}) {
 
     const budget = await budgetCheck({ task: request.task, route, request: req, ctx });
     if (budget.decision?.action === 'stop') {
-      const factor = budgets?.runawayFactor ?? BUDGET_RULES.runawayFactor;
+      const factor = budgets.runawayFactor ?? BUDGET_RULES.runawayFactor;
       const error = new BudgetExceededError(
         `Runaway spend on "${request.task}": projected $${budget.decision.projectedUsd.toFixed(4)} is over ${factor}x the expected $${budget.expectedUsd.toFixed(4)}${budget.decision.sizeKnown ? '' : ' (no project size given: one reference project)'}.`,
         { scope: budget.scope, expectedUsd: budget.expectedUsd, spentUsd: budget.spentUsd, estimateUsd: budget.estimateUsd, sizeKnown: budget.decision.sizeKnown },
@@ -373,11 +453,17 @@ export function createLlmCore(options = {}) {
       result = await runChain({ route, request: req, ctx, key });
     } catch (error) {
       spend(error.allRows || error.ledgerRows);
-      if (loopKey && !isAbortError(error) && !error.aborted) loopDetector.after(request.task, loopKey, outcomeKeyOf(null, error));
+      if (loopKey && !isAbortError(error) && !error.aborted) {
+        const outcome = loopOutcomeOf(null, error, ctx);
+        loopDetector.after(request.task, loopKey, outcome.key, { progress: outcome.progress });
+      }
       throw error;
     }
     spend(result.allRows);
-    if (loopKey) loopDetector.after(request.task, loopKey, outcomeKeyOf(result.response, null));
+    if (loopKey) {
+      const outcome = loopOutcomeOf(result, null, ctx);
+      loopDetector.after(request.task, loopKey, outcome.key, { progress: outcome.progress });
+    }
     if (route.record && cassettes?.save) {
       try {
         await cassettes.save(cassetteRecord({ key, task: request.task, provider: result.entry.provider, model: result.entry.model, response: { ...result.response, data: result.data }, recordedAt: isoAt(clock) }));

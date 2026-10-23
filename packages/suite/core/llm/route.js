@@ -58,9 +58,11 @@ export const CTX_FIELDS = Object.freeze([
   'budgetScope',
   'expectedUsd',
   'projectSize',
+  'retryOf',
+  'attempt',
 ]);
 
-const ID_FIELDS = ['runId', 'salesClientId', 'sessionId', 'taskId', 'jobId', 'step', 'budgetScope'];
+const ID_FIELDS = ['runId', 'salesClientId', 'sessionId', 'taskId', 'jobId', 'step', 'budgetScope', 'retryOf'];
 const SPECIFIC_SOURCES = new Set(['override', 'env-task', 'escalate', 'tier-task', 'task']);
 
 function nonNegativeInt(value) {
@@ -113,8 +115,11 @@ export function normalizeCtx(ctx = {}) {
   if (src.redacted === true) out.redacted = true;
   if (src.vision === false) out.vision = false;
   if (typeof src.route === 'string' && src.route.trim()) out.route = src.route.trim();
+  // 0 or a negative value would switch the runaway stop off; it means "not given".
   const expected = nonNegativeNumber(src.expectedUsd);
-  if (expected !== null) out.expectedUsd = expected;
+  if (expected !== null && expected > 0) out.expectedUsd = expected;
+  const attempt = nonNegativeInt(src.attempt);
+  if (attempt !== null && attempt > 0) out.attempt = attempt;
   if (src.projectSize && typeof src.projectSize === 'object') {
     const size = {};
     for (const key of ['pages', 'locales', 'products']) {
@@ -356,11 +361,19 @@ export function resolveRoute(task, ctx = {}, options = {}) {
 
   const dataClass = effectiveDataClass({ task: spec, ctx: c, payload });
   const original = dedupe(chain);
-  const policyResult = applyPolicy(original, dataClass.effective, policy, { synthetic: dataClass.synthetic, redacted: dataClass.redacted, task, family: family || null });
+  // Policy blocks carry the task, profile and route so the caller can write a policy_blocked ledger row.
+  const blockedContext = { task, profile, route: formatRoute(original), primary: { provider: original[0].provider, model: original[0].model }, reasons: [...dataClass.reasons] };
+  let policyResult;
+  try {
+    policyResult = applyPolicy(original, dataClass.effective, policy, { synthetic: dataClass.synthetic, redacted: dataClass.redacted, task, family: family || null });
+  } catch (error) {
+    if (error?.code === 'policy_blocked') Object.assign(error, blockedContext);
+    throw error;
+  }
   // A policy redirect route must still be able to do the job (vision, tool loop).
   let allowedChain = needs ? policyResult.chain.filter((entry) => PROVIDER_CAPABILITIES[entry.provider]?.[needs]) : policyResult.chain;
   if (!allowedChain.length) {
-    throw new PolicyBlockedError(`Task "${task}" needs ${needs}, but no provider allowed for ${dataClass.effective} data supports it.`, { task, dataClass: dataClass.effective });
+    throw new PolicyBlockedError(`Task "${task}" needs ${needs}, but no provider allowed for ${dataClass.effective} data supports it.`, { ...blockedContext, dataClass: dataClass.effective });
   }
   if (policyResult.redirected) {
     // A full redirect keeps the work's depth: task effort, else the replaced entry's, else the redirect's, else medium.
@@ -370,8 +383,10 @@ export function resolveRoute(task, ctx = {}, options = {}) {
   } else if (policyResult.redirects.length) {
     warnings.push(`data policy dropped ${policyResult.redirects.map((r) => r.from).join(', ')}`);
   }
+  // A task-specific route keeps its explicit efforts when the policy only drops some entries (a filtered
+  // DeepSeek or Gemini fallback); only a full redirect re-derives the effort (above).
   const specific = SPECIFIC_SOURCES.has(source);
-  const finalChain = allowedChain.map((entry) => fillEffort(entry, spec, specific && !policyResult.redirects.length));
+  const finalChain = allowedChain.map((entry) => fillEffort(entry, spec, specific && !policyResult.redirected));
   const view0 = finalChain[0];
   return Object.freeze({
     task,

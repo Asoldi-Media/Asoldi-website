@@ -6,6 +6,10 @@
 //      redacted, and the payload check agrees (no real-looking email or phone is left).
 //   3. Gemini receives data only when the policy records a confirmed paid tier (free-tier Gemini API data
 //      may be used by Google). `allowUnpaidPublic: true` opts public data back in; the default is off.
+//   4. Transcript data is lowered only by `synthetic`. Redaction cannot remove person names in free text,
+//      so a redacted transcript stays a transcript.
+//   5. The person-field scan fails closed: a payload too large or deep to scan fully counts as personal,
+//      and `synthetic` / `redacted` are then not accepted.
 // A provider spec may also carry `tasks` / `families`: the provider is then used only for those tasks
 // (OpenAI is the third evaluation judge and nothing else).
 // Any payload carrying person fields (names of people, email, phone, address) counts as personal.
@@ -20,17 +24,36 @@ export const DEFAULT_REDIRECT = 'claude:claude-haiku-5-5';
 const NEVER_PERSONAL = new Set(['deepseek']);
 const CLIENT_DATA_ONLY_SYNTHETIC_OR_REDACTED = new Set(['deepseek']);
 const BILLING_TIERS = ['paid', 'free', 'unknown'];
+const EXCEPTION_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /**
  * { version:1, providers: { gemini: { allow:[...], billingTier:'paid'|'free'|'unknown', paidTierConfirmedAt:'2026-10-23'|null,
  *   allowUnpaidPublic?:boolean, tasks?:string[], families?:string[], dpa?:string, confirmedBy?:string, note?:string }, ... },
- *   redirect: 'claude:claude-haiku-5-5' }
+ *   redirect: 'claude:claude-haiku-5-5',
+ *   exceptions?: [{ id:'cms-local-blog-job', provider:'deepseek', where:'website-cms server/local-blog-job.js',
+ *                   dataClass?:'business', owner:'WS9', reason:'...', until?:'...' }] }
+ * `exceptions` records known LLM calls that do not go through the core yet (so they bypass this policy).
+ * The core does not route by them; they are validated so the list stays an accurate audit record.
  */
 export function validatePolicy(policy) {
   const errors = [];
   const warnings = [];
   if (!policy || typeof policy !== 'object') return { ok: false, errors: ['policy must be an object'], warnings };
   if (policy.version !== 1) errors.push('policy.version must be 1');
+  if (policy.exceptions !== undefined) {
+    if (!Array.isArray(policy.exceptions)) errors.push('policy.exceptions must be a list');
+    for (const [i, item] of (Array.isArray(policy.exceptions) ? policy.exceptions : []).entries()) {
+      const at = `policy.exceptions[${i}]`;
+      if (!item || typeof item !== 'object') {
+        errors.push(`${at} must be an object`);
+        continue;
+      }
+      if (!EXCEPTION_ID.test(String(item.id || ''))) errors.push(`${at}.id must be a kebab-case id`);
+      if (!PROVIDERS.includes(item.provider)) errors.push(`${at}.provider must be one of ${PROVIDERS.join(', ')}`);
+      for (const field of ['where', 'owner', 'reason']) if (!(typeof item[field] === 'string' && item[field].trim())) errors.push(`${at}.${field} is required`);
+      if (item.dataClass !== undefined && !DATA_CLASSES.includes(item.dataClass)) errors.push(`${at}.dataClass: unknown class "${item.dataClass}"`);
+    }
+  }
   const providers = policy.providers;
   if (!providers || typeof providers !== 'object') errors.push('policy.providers must be an object');
   for (const [name, spec] of Object.entries(providers || {})) {
@@ -66,16 +89,20 @@ export function redirectRoute(policy = {}) {
 
 const PERSON_KEY = /^(?:first|last|full|given|family|middle|sur|contact|owner|person|customer|employee|staff|founder|daglig[-_]?leder)[-_ ]?(?:name|navn)$|^(?:e-?mail|e-?post|emails|phone|phones|telefon|telephone|mobile|mobil|tlf|address|adresse|street|gateadresse|postal[-_ ]?address|home[-_ ]?address|birth[-_ ]?date|date[-_ ]?of[-_ ]?birth|fødselsdato|fodselsdato|personnummer|fødselsnummer|fodselsnummer|ssn|national[-_ ]?id|contact[-_ ]?person|kontaktperson|people|persons|employees|staff)$/i;
 
-// International numbers need a leading +. Local numbers: 8 digits, or 2-2-2-2 / 3-2-3 groups split by single
-// spaces. Dashes are not separators, so ISO dates never look like phones; digits glued to letters (ids,
-// base64) are not phones; a group inside a longer run of numbers (SVG paths, coordinates) is not a phone.
-// Every alternative has bounded quantifiers, so the scan is linear in the text length.
+// International numbers need a leading +, or 47 / 0047 glued to 8 digits (4791234567). Local numbers:
+// 8 digits, or 2-2-2-2 / 3-2-3 groups split by single spaces or by dashes. ISO dates (4-2-2) never match;
+// digits glued to letters (ids, base64) are not phones; a group inside a longer run of numbers (SVG paths,
+// coordinates, dashed codes) is not a phone. Every alternative has bounded quantifiers, so the scan is
+// linear in the text length.
 const PHONE = new RegExp(
   [
     String.raw`\+\d{1,3}[\s.-]?\d{2,4}(?:[\s.-]?\d{2,4}){1,4}`,
     String.raw`(?<![\w.,-])\d{8}(?![\w-]|[.,]\d)`,
+    String.raw`(?<![\w.,+-])(?:00)?47\d{8}(?![\w-]|[.,]\d)`,
     String.raw`(?<![\d.,][ ,]?)(?<![\w-])\d{2} \d{2} \d{2} \d{2}(?![ ,]?\d)(?![.,]\d)`,
     String.raw`(?<![\d.,][ ,]?)(?<![\w-])\d{3} \d{2} \d{3}(?![ ,]?\d)(?![.,]\d)`,
+    String.raw`(?<![\w.,-])\d{2}-\d{2}-\d{2}-\d{2}(?![\w-]|[.,]\d)`,
+    String.raw`(?<![\w.,-])\d{3}-\d{2}-\d{3}(?![\w-]|[.,]\d)`,
   ].join('|'),
   'g',
 );
@@ -106,15 +133,29 @@ export function isFixturePhone(value = '') {
   return national.startsWith('0') || /^(\d)\1+$/.test(national) || national === '12345678' || national === '87654321';
 }
 
-const MAX_AT_CANDIDATES = 10000;
+/**
+ * Limits of one person-field scan. Hitting any of them sets `truncated`, and the caller fails closed
+ * (personal, no synthetic/redacted downgrade). 8M characters is more than any model's context window, so a
+ * real call never reaches it; only objects and arrays count as nodes.
+ */
+export const PERSON_SCAN_LIMITS = Object.freeze({ maxChars: 8_000_000, maxNodes: 200_000, maxDepth: 256 });
+
+const UNICODE_LETTER = /[\p{L}\p{M}]/u;
+
+function isUnicodeLetter(code) {
+  return code > 127 && UNICODE_LETTER.test(String.fromCharCode(code));
+}
 
 function isLocalChar(code) {
-  return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 46 || code === 95 || code === 37 || code === 43 || code === 45;
+  return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 46 || code === 95 || code === 37 || code === 43 || code === 45 || isUnicodeLetter(code);
 }
 
+// Domains may be internationalized (blåbærkafé.no); the xn-- form is plain ASCII.
 function isDomainChar(code) {
-  return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 46 || code === 45;
+  return (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 46 || code === 45 || isUnicodeLetter(code);
 }
+
+const TLD = /^(?:\p{L}{2,24}|xn--[a-z0-9-]{1,59})$/iu;
 
 function validDomain(domain) {
   const labels = domain.split('.');
@@ -122,25 +163,41 @@ function validDomain(domain) {
   for (const label of labels) {
     if (!label || label.length > 63 || label.startsWith('-') || label.endsWith('-')) return false;
   }
-  return /^[a-z]{2,24}$/i.test(labels[labels.length - 1]);
+  return TLD.test(labels[labels.length - 1]);
 }
 
 /**
  * Calls visit(domain) for each email address in `text`. Linear: it jumps from '@' to '@' and looks at most
- * 64 characters back (local part) and 253 forward (domain). Stops when visit returns true.
+ * 64 characters back (local part) and 253 forward (domain); neither walk passes another '@'. Stops when
+ * visit returns true. There is no candidate cap: a cap would let an email hide behind enough '@' signs.
  */
 function scanEmails(text, visit) {
+  // Domain text -> lowercased domain, or null when it is not a valid domain (repeated domains are common).
+  const seen = new Map();
   let at = text.indexOf('@');
-  let candidates = 0;
-  while (at !== -1 && candidates < MAX_AT_CANDIDATES) {
-    candidates += 1;
-    let start = at;
-    while (start > 0 && at - start < 64 && isLocalChar(text.charCodeAt(start - 1))) start -= 1;
-    let end = at + 1;
-    while (end < text.length && end - at - 1 < 253 && isDomainChar(text.charCodeAt(end))) end += 1;
-    if (start < at && end > at + 1) {
-      const domain = text.slice(at + 1, end).replace(/[.-]+$/, '').toLowerCase();
-      if (validDomain(domain) && visit(domain)) return;
+  while (at !== -1) {
+    // A local part needs at least one character right before the '@'.
+    if (at > 0 && isLocalChar(text.charCodeAt(at - 1))) {
+      let end = at + 1;
+      let firstDot = -1;
+      while (end < text.length && end - at - 1 < 253) {
+        const code = text.charCodeAt(end);
+        if (!isDomainChar(code)) break;
+        if (code === 46 && firstDot === -1) firstDot = end;
+        end += 1;
+      }
+      while (end > at + 1 && (text.charCodeAt(end - 1) === 46 || text.charCodeAt(end - 1) === 45)) end -= 1;
+      // Only a domain with a dot inside it can be an address; most '@' signs (CSS @media, handles) stop here.
+      if (firstDot > at + 1 && firstDot < end - 1) {
+        const raw = text.slice(at + 1, end);
+        let domain = seen.get(raw);
+        if (domain === undefined) {
+          const lower = raw.toLowerCase();
+          domain = validDomain(lower) ? lower : null;
+          if (seen.size < 10_000) seen.set(raw, domain);
+        }
+        if (domain && visit(domain)) return;
+      }
     }
     at = text.indexOf('@', at + 1);
   }
@@ -148,9 +205,7 @@ function scanEmails(text, visit) {
 
 function scanPhones(text, visit) {
   PHONE.lastIndex = 0;
-  let count = 0;
   for (const match of text.matchAll(PHONE)) {
-    if (++count > MAX_AT_CANDIDATES) return;
     const value = match[0];
     if (/^\d{8}$/.test(value) && COMPACT_DATE.test(value)) continue;
     if (visit(value)) return;
@@ -160,39 +215,60 @@ function scanPhones(text, visit) {
 // Redaction placeholders count as empty: [NAME], <email>, ***, xxx, REDACTED, anonymisert, fjernet.
 const PLACEHOLDER = /^\s*(?:\[[^\]]{0,40}\]|<[^>]{0,40}>|\{\{?[^}]{0,40}\}?\}|\*+|x{2,}|redacted|removed|anonymi[sz]ed|anonymisert|fjernet|skjult)\s*$/i;
 
-function hasValue(value) {
+function hasValue(value, depth = 0) {
   if (value === null || value === undefined) return false;
   if (typeof value === 'string') return value.trim().length > 0 && !PLACEHOLDER.test(value);
-  if (Array.isArray(value)) return value.some(hasValue);
-  if (typeof value === 'object') return Object.values(value).some(hasValue);
+  // Too deep to look at: assume a value (fail closed).
+  if (depth > 32) return true;
+  if (Array.isArray(value)) return value.some((item) => hasValue(item, depth + 1));
+  if (typeof value === 'object') return Object.values(value).some((item) => hasValue(item, depth + 1));
   return true;
+}
+
+// Inline base64 data URLs (images in template HTML) are binary, not text; their digits are not phones and they
+// cannot hold a readable '@'. Bounded quantifiers keep the replace linear.
+const DATA_URL_BASE64 = /data:[\w.+/-]{0,100}(?:;[\w.+=-]{0,100}){0,5};base64,[A-Za-z0-9+/]+={0,2}/g;
+
+/** The keys of a Claude image/document block's `source` that hold binary or a reference, not text. */
+function isBinarySource(source) {
+  return Boolean(source) && typeof source === 'object' && (source.type === 'base64' || source.type === 'url' || source.type === 'file');
 }
 
 /**
  * Finds person fields in a payload: keys that name a person's data (with a real value, not a redaction
- * placeholder) and email or phone patterns in any string. Bounded walk and linear-time scans, so a huge or
- * hostile payload cannot stall a call.
- * @returns {{found:boolean, fields:string[], patterns:string[], realPatterns:string[]}}
+ * placeholder) and email or phone patterns in any string. Linear-time scans with no early exit that could
+ * hide data. The walk has limits (PERSON_SCAN_LIMITS); when one is hit, `truncated` is true and callers must
+ * fail closed. Image and document blocks skip only their binary source (base64 data, url or file id); their
+ * other fields (captions, alt text, text-source documents) are scanned.
+ * @returns {{found:boolean, fields:string[], patterns:string[], realPatterns:string[], truncated:boolean, truncatedBy:string[]}}
  *   patterns: kinds found at all; realPatterns: kinds with at least one value that is not a reserved fixture value
  */
-export function detectPersonFields(payload, { maxNodes = 5000, maxChars = 400000 } = {}) {
+export function detectPersonFields(payload, { maxNodes = PERSON_SCAN_LIMITS.maxNodes, maxChars = PERSON_SCAN_LIMITS.maxChars, maxDepth = PERSON_SCAN_LIMITS.maxDepth } = {}) {
   const fields = [];
   const patterns = new Set();
   const real = new Set();
+  const truncatedBy = new Set();
+  const seen = new WeakSet();
   let nodes = 0;
   let chars = 0;
   const scanString = (text) => {
-    if (chars >= maxChars) return;
-    const slice = text.length > maxChars - chars ? text.slice(0, maxChars - chars) : text;
+    if (!text) return;
+    let slice = text;
+    if (chars + text.length > maxChars) {
+      truncatedBy.add('chars');
+      slice = text.slice(0, Math.max(0, maxChars - chars));
+    }
     chars += slice.length;
-    if (slice.includes('@')) {
+    if (!slice) return;
+    if (slice.includes(';base64,')) slice = slice.replace(DATA_URL_BASE64, ' ');
+    if (!real.has('email') && slice.includes('@')) {
       scanEmails(slice, (domain) => {
         patterns.add('email');
         if (!isFixtureEmailDomain(domain)) real.add('email');
         return real.has('email');
       });
     }
-    if (/\d/.test(slice)) {
+    if (!real.has('phone') && /\d/.test(slice)) {
       scanPhones(slice, (value) => {
         patterns.add('phone');
         if (!isFixturePhone(value)) real.add('phone');
@@ -200,49 +276,66 @@ export function detectPersonFields(payload, { maxNodes = 5000, maxChars = 400000
       });
     }
   };
-  const walk = (value, path) => {
-    if (nodes++ > maxNodes || value === null || value === undefined) return;
+  const walk = (value, path, depth) => {
+    if (truncatedBy.size || value === null || value === undefined) return;
     if (typeof value === 'string') return scanString(value);
     if (typeof value !== 'object') return;
-    // Image and document blocks carry base64, not person data.
-    if (value.type === 'image' || value.type === 'document') return;
+    if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return;
+    if (seen.has(value)) return;
+    seen.add(value);
+    if (++nodes > maxNodes) return void truncatedBy.add('nodes');
+    if (depth > maxDepth) return void truncatedBy.add('depth');
     if (Array.isArray(value)) {
-      value.forEach((item, i) => walk(item, `${path}[${i}]`));
+      for (let i = 0; i < value.length && !truncatedBy.size; i += 1) walk(value[i], `${path}[${i}]`, depth + 1);
       return;
     }
+    const block = value.type === 'image' || value.type === 'document';
     for (const [key, child] of Object.entries(value)) {
+      if (truncatedBy.size) return;
       const at = path ? `${path}.${key}` : key;
+      if (block && key === 'source' && isBinarySource(child)) continue;
       if (PERSON_KEY.test(key) && hasValue(child)) fields.push(at);
-      walk(child, at);
+      walk(child, at, depth + 1);
     }
   };
-  walk(payload, '');
-  return { found: fields.length > 0 || patterns.size > 0, fields, patterns: [...patterns], realPatterns: [...real] };
+  walk(payload, '', 0);
+  const truncated = truncatedBy.size > 0;
+  return { found: fields.length > 0 || patterns.size > 0 || truncated, fields, patterns: [...patterns], realPatterns: [...real], truncated, truncatedBy: [...truncatedBy] };
 }
+
+const NO_DETECTION = Object.freeze({ found: false, fields: [], patterns: [], realPatterns: [], truncated: false, truncatedBy: [] });
 
 /**
  * The data class a call is handled as.
- *   effective = max(task class, ctx.dataClass, 'personal' if the payload carries person fields)
- *   ctx.synthetic === true -> 'public' (fixture data), unless the payload holds a real-looking email or phone
- *   ctx.redacted === true  -> personal/transcript count as 'business', unless the payload still holds person
- *                             fields, or an email or phone that is not a fixture value (the redaction failed)
+ *   effective = max(task class, ctx.dataClass, 'personal' if the payload carries person fields or could not be
+ *               scanned fully)
+ *   ctx.synthetic === true -> 'public' (fixture data), unless the payload holds a real-looking email or phone,
+ *                             or the scan was truncated
+ *   ctx.redacted === true  -> personal counts as 'business', unless the payload still holds person fields, an
+ *                             email or phone that is not a fixture value, or the scan was truncated. Transcript
+ *                             data is never lowered by redaction (names in free text cannot be detected); only
+ *                             synthetic lowers it.
  * `synthetic` / `redacted` in the result say whether the flag was accepted; the policy reads them.
  */
 export function effectiveDataClass({ task = {}, ctx = {}, payload } = {}) {
   const declared = task.dataClass || 'public';
   const call = DATA_CLASSES.includes(ctx.dataClass) ? ctx.dataClass : null;
-  const detection = payload === undefined ? { found: false, fields: [], patterns: [], realPatterns: [] } : detectPersonFields(payload);
+  const detection = payload === undefined ? NO_DETECTION : detectPersonFields(payload);
   const detected = detection.found ? 'personal' : null;
   const reasons = [];
+  const base = maxDataClass(declared, call);
   let effective = maxDataClass(declared, call, detected);
   if (call && dataClassRank(call) > dataClassRank(declared)) reasons.push(`ctx.dataClass=${call}`);
-  if (detected && dataClassRank(detected) > dataClassRank(maxDataClass(declared, call))) {
+  if (detection.truncated) reasons.push(`person-field scan truncated (${detection.truncatedBy.join(', ')}); handled as personal`);
+  if (detected && dataClassRank(detected) > dataClassRank(base) && (detection.fields.length || detection.patterns.length)) {
     reasons.push(`person fields: ${[...detection.fields.slice(0, 5), ...detection.patterns].join(', ')}`);
   }
   let synthetic = false;
   let redacted = false;
   if (ctx.synthetic === true) {
-    if (detection.realPatterns.length) {
+    if (detection.truncated) {
+      reasons.push('synthetic flag ignored: person-field scan truncated');
+    } else if (detection.realPatterns.length) {
       reasons.push(`synthetic flag ignored: real-looking ${detection.realPatterns.join('/')} in the payload`);
     } else {
       synthetic = true;
@@ -250,11 +343,15 @@ export function effectiveDataClass({ task = {}, ctx = {}, payload } = {}) {
       reasons.push('synthetic fixture data');
     }
   } else if (ctx.redacted === true) {
-    if (detection.realPatterns.length || detection.fields.length) {
+    if (base === 'transcript') {
+      reasons.push('redacted flag ignored: transcript data is lowered only by synthetic (names in free text cannot be detected)');
+    } else if (detection.truncated) {
+      reasons.push('redaction not accepted: person-field scan truncated');
+    } else if (detection.realPatterns.length || detection.fields.length) {
       reasons.push(`redaction incomplete: ${[...detection.fields.slice(0, 5), ...detection.realPatterns].join(', ')} still in the payload`);
     } else {
       redacted = true;
-      if (effective === 'personal' || effective === 'transcript') effective = 'business';
+      if (effective === 'personal') effective = 'business';
       reasons.push('redacted payload');
     }
   }

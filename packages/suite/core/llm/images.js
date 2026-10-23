@@ -80,13 +80,52 @@ export function imageBlocks(images = [], { maxImages = IMAGE_RULES.maxImages, ma
   return list.map((image) => imageBlock(image, { maxLongEdge }));
 }
 
-/** Image blocks already inside a messages array (tool loops, multi-turn calls). */
-export function countImageBlocks(messages = []) {
-  let count = 0;
-  for (const message of Array.isArray(messages) ? messages : []) {
-    for (const block of Array.isArray(message?.content) ? message.content : []) if (block?.type === 'image') count += 1;
+/** Image blocks inside a list of content blocks, including those nested in tool_result content. */
+function collectImageBlocks(blocks, out, depth = 0) {
+  if (depth > 8) return out;
+  for (const block of Array.isArray(blocks) ? blocks : []) {
+    if (block?.type === 'image') out.push(block);
+    else if (block?.type === 'tool_result' && Array.isArray(block.content)) collectImageBlocks(block.content, out, depth + 1);
   }
-  return count;
+  return out;
+}
+
+/** Image blocks already inside a messages array (tool loops, multi-turn calls), tool results included. */
+export function messageImageBlocks(messages = []) {
+  const out = [];
+  for (const message of Array.isArray(messages) ? messages : []) collectImageBlocks(message?.content, out);
+  return out;
+}
+
+/** The number of image blocks in a messages array, tool results included. */
+export function countImageBlocks(messages = []) {
+  return messageImageBlocks(messages).length;
+}
+
+/**
+ * Applies the image rules to image blocks that are already in messages (tool results, earlier turns):
+ * at most maxImages, and every base64 image a JPEG with a long edge <= maxLongEdge (read from the bytes),
+ * as imageBlock() checks for new images. URL images must be https.
+ * @returns {number} the number of image blocks
+ */
+export function checkMessageImages(messages = [], { maxImages = IMAGE_RULES.maxImages, maxLongEdge = IMAGE_RULES.maxLongEdge, mime = IMAGE_RULES.mime } = {}) {
+  const blocks = messageImageBlocks(messages);
+  if (blocks.length > maxImages) throw new InvalidRequestError(`${blocks.length} images in one call (messages and tool results included); the limit is ${maxImages}.`, { images: blocks.length });
+  for (const block of blocks) {
+    const source = block.source || {};
+    if (source.type === 'url') {
+      if (!/^https:\/\//i.test(String(source.url || ''))) throw new InvalidRequestError('Image URLs must be https.');
+      continue;
+    }
+    if (source.type !== 'base64') throw new InvalidRequestError(`Image blocks in messages must be base64 or url (got ${source.type || 'none'}).`);
+    const declared = String(source.media_type || '').toLowerCase();
+    if (declared !== mime) throw new InvalidRequestError(`Images must be ${mime} (got ${declared || 'no media_type'}). Convert with prepareImage().`);
+    const size = jpegSize(Buffer.from(cleanBase64(source.data), 'base64'));
+    if (!size) throw new InvalidRequestError(`An image in messages is not a readable ${mime}. Convert with prepareImage().`);
+    const edge = Math.max(size.width, size.height);
+    if (edge > maxLongEdge) throw new InvalidRequestError(`An image in messages is ${edge}px on the long edge; the limit is ${maxLongEdge}px. Shrink with prepareImage().`);
+  }
+  return blocks.length;
 }
 
 /**

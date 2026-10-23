@@ -4,16 +4,17 @@
 //   - thinking {type:'adaptive'}; depth set by output_config.effort
 //   - max_tokens >= 4096 (thinking counts toward it); a max_tokens stop retries once with the cap doubled
 //   - structured JSON through output_config.format (json_schema), never an assistant prefill; a schema with
-//     open maps (additionalProperties as a schema, untyped objects) skips the format and is validated client-side
-//   - tools are strict (unless their schema has open maps), tool_choice is always auto (forced tool use
-//     returns 400 on Sonnet/Opus 5.5)
-//   - images: JPEG, <= 1568 px long edge, <= 6 per call, placed before the text
+//     open maps (additionalProperties as a schema, untyped objects) or recursive $refs skips the format and is
+//     validated client-side; oneOf is sent as anyOf and `not` is dropped (the original is validated client-side)
+//   - tools are strict (unless their schema has open maps or recursive $refs), tool_choice is always auto
+//     (forced tool use returns 400 on Sonnet/Opus 5.5)
+//   - images: JPEG, <= 1568 px long edge, <= 6 per call (tool results included), placed before the text
 //   - Sonnet/Opus get the server-side refusal fallback (same vendor); Haiku has none; Batches reject it
 //   - stop_reason "refusal" is final: needs review, no other vendor is tried
 
 import { CLAUDE_MODELS, CLAUDE_RULES, EFFORTS } from './constants.js';
 import { InvalidRequestError, RefusalError } from './errors.js';
-import { countImageBlocks, imageBlocks } from './images.js';
+import { checkMessageImages, imageBlocks } from './images.js';
 import { unwrapSchema } from './json.js';
 import { normalizeUsage } from './prices.js';
 
@@ -94,10 +95,62 @@ export function openObjectPaths(schema) {
   return paths;
 }
 
+function resolveLocalRef(root, ref) {
+  if (ref === '#') return root;
+  if (typeof ref !== 'string' || !ref.startsWith('#/')) return null;
+  return ref
+    .slice(2)
+    .split('/')
+    .map((part) => part.replace(/~1/g, '/').replace(/~0/g, '~'))
+    .reduce((node, key) => (node && typeof node === 'object' ? node[key] : undefined), root);
+}
+
+/**
+ * $refs that point back into themselves (a nav item whose children are nav items). Structured outputs do
+ * not support recursive schemas, so such schemas skip output_config.format (see buildClaudeRequest).
+ * Depth-first search over local refs ('#', '#/$defs/...'); each ref is explored once, so it is linear.
+ * @returns {string[]} the schema paths of the $refs that close a cycle
+ */
+export function recursiveRefPaths(schema) {
+  const root = unwrapSchema(schema);
+  const found = [];
+  const visiting = new Set(['#']);
+  const done = new Set();
+  const walk = (node, path) => {
+    if (Array.isArray(node)) {
+      node.forEach((child, i) => walk(child, `${path}/${i}`));
+      return;
+    }
+    if (!node || typeof node !== 'object') return;
+    if (typeof node.$ref === 'string') {
+      const ref = node.$ref;
+      if (visiting.has(ref)) found.push(path || '/');
+      else if (!done.has(ref)) {
+        const target = resolveLocalRef(root, ref);
+        if (target && typeof target === 'object') {
+          visiting.add(ref);
+          walk(target, ref.slice(1));
+          visiting.delete(ref);
+        }
+        done.add(ref);
+      }
+    }
+    for (const [key, value] of Object.entries(node)) {
+      // Definitions are reached through their $refs; enum/const values are data, not schemas.
+      if (key === '$ref' || key === '$defs' || key === 'definitions' || VALUE_KEYS.has(key)) continue;
+      if (value && typeof value === 'object') walk(value, `${path}/${key}`);
+    }
+  };
+  if (root && typeof root === 'object') walk(root, '');
+  return [...new Set(found)];
+}
+
 /**
  * A schema Claude's structured outputs accept: unsupported constraints removed, every object closed with
- * additionalProperties:false. The original schema is still enforced client-side by validateJson.
- * Callers check openObjectPaths() first: an open map would be closed to {} here.
+ * additionalProperties:false, `oneOf` sent as `anyOf` and `not` dropped. The original schema is still enforced
+ * client-side by validateJson (exactly-one and `not` included).
+ * Callers check openObjectPaths() and recursiveRefPaths() first: an open map would be closed to {} here, and
+ * a recursive schema is rejected by the API.
  */
 export function toClaudeSchema(schema) {
   const walk = (node) => {
@@ -108,18 +161,35 @@ export function toClaudeSchema(schema) {
       if (UNSUPPORTED_SCHEMA_KEYS.has(key)) continue;
       if (key === 'minItems' && !(value === 0 || value === 1)) continue;
       if (key === 'format' && !SUPPORTED_FORMATS.has(value)) continue;
-      if (key === 'additionalProperties') continue;
+      if (key === 'additionalProperties' || key === 'not' || key === 'oneOf') continue;
       if (key === 'properties' || key === '$defs' || key === 'definitions') {
         out[key] = Object.fromEntries(Object.entries(value || {}).map(([k, v]) => [k, walk(v)]));
+      } else if (VALUE_KEYS.has(key)) {
+        out[key] = value;
       } else {
         out[key] = walk(value);
       }
+    }
+    if (Array.isArray(node.oneOf)) {
+      const alternatives = node.oneOf.map(walk);
+      if (Array.isArray(out.anyOf)) out.allOf = [...(Array.isArray(out.allOf) ? out.allOf : []), { anyOf: alternatives }];
+      else out.anyOf = alternatives;
     }
     const isObject = out.type === 'object' || (Array.isArray(out.type) && out.type.includes('object')) || out.properties;
     if (isObject) out.additionalProperties = false;
     return out;
   };
   return walk(unwrapSchema(schema));
+}
+
+/** Why a schema cannot go to structured outputs (open maps, recursion); an empty list means it can. */
+function unstructuredReasons(schema) {
+  const reasons = [];
+  const open = openObjectPaths(schema);
+  if (open.length) reasons.push(`open objects at ${open.join(', ')}`);
+  const cycles = recursiveRefPaths(schema);
+  if (cycles.length) reasons.push(`recursive $ref at ${cycles.join(', ')}`);
+  return reasons;
 }
 
 function systemBlocks(system, cache) {
@@ -155,12 +225,12 @@ function toolDefinitions(tools = [], warnings = []) {
     // Server and Anthropic-defined tools carry a `type`; they are passed through untouched.
     if (tool.type && tool.type !== 'custom') return { ...tool };
     if (!tool.name || !tool.input_schema) throw new InvalidRequestError('A custom tool needs name and input_schema.');
-    const open = openObjectPaths(tool.input_schema);
+    const reasons = unstructuredReasons(tool.input_schema);
     let out;
-    if (open.length) {
-      // Strict mode would close the map; send the schema as written and validate the input client-side.
+    if (reasons.length) {
+      // Strict mode would close a map or reject recursion; send the schema as written and validate client-side.
       out = { name: String(tool.name), input_schema: JSON.parse(JSON.stringify(unwrapSchema(tool.input_schema))), strict: false };
-      warnings.push(`tool "${tool.name}" has open objects at ${open.join(', ')}; sent without strict mode`);
+      warnings.push(`tool "${tool.name}" has ${reasons.join('; ')}; sent without strict mode`);
     } else {
       out = { name: String(tool.name), input_schema: toClaudeSchema(tool.input_schema), strict: true };
     }
@@ -197,8 +267,8 @@ export function buildClaudeRequest(input = {}) {
   if (Array.isArray(input.messages) && input.messages.length) {
     if (input.images?.length) throw new InvalidRequestError('Pass images inside messages, or use user + images, not both.');
     messages = copyMessages(input.messages);
-    imageCount = countImageBlocks(messages);
-    if (imageCount > CLAUDE_RULES.image.maxImages) throw new InvalidRequestError(`${imageCount} images in one call; the limit is ${CLAUDE_RULES.image.maxImages}.`);
+    // Images already in messages (tool results included) follow the same rules as new ones.
+    imageCount = checkMessageImages(messages);
   } else {
     const text = String(input.user ?? '').trim();
     if (!text) throw new InvalidRequestError('A request needs user text or messages.');
@@ -220,9 +290,9 @@ export function buildClaudeRequest(input = {}) {
   const schema = kind === 'json' ? unwrapSchema(input.schema) : null;
   let jsonMode = kind === 'json' ? 'prompt' : null;
   if (schema) {
-    const open = openObjectPaths(schema);
-    if (open.length) {
-      warnings.push(`schema has open objects at ${open.join(', ')}; output_config.format omitted, JSON is validated client-side only`);
+    const reasons = unstructuredReasons(schema);
+    if (reasons.length) {
+      warnings.push(`schema has ${reasons.join('; ')}; output_config.format omitted, JSON is validated client-side only`);
     } else {
       params.output_config.format = { type: 'json_schema', schema: toClaudeSchema(schema) };
       jsonMode = 'structured';

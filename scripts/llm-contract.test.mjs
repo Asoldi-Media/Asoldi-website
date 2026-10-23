@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as core from '../packages/suite/core/llm/index.js';
 
-const PINNED_VERSION = '1.1.0';
+const PINNED_VERSION = '1.2.0';
 const TASKS = {
   version: 1,
   tasks: {
@@ -16,7 +16,7 @@ const TASKS = {
 const ROUTES = { version: 1, profiles: { legacy: { default: 'claude:claude-haiku-5-5:medium' }, prod: { default: 'claude:claude-haiku-5-5:medium|deepseek:deepseek-flash' } } };
 const POLICY = { version: 1, providers: { claude: { allow: ['public', 'business', 'personal', 'transcript'] }, deepseek: { allow: ['public', 'business'] } } };
 
-const PINNED_FINGERPRINT = 'sha256:cdb1ee94eb6332b0160681427f4a34bc4cfe9394a567e862ca16e1ba2d34b256';
+const PINNED_FINGERPRINT = 'sha256:315a1b5ede91dc78db6553f472e29fc9fa535955494e0ec19fc03d7418a7bdf7';
 
 test('contract version and fingerprint are pinned', () => {
   assert.equal(core.LLM_CONTRACT.version, PINNED_VERSION);
@@ -62,9 +62,22 @@ test('the frozen rules say what the owner and the plan decided', () => {
   assert.equal(c.prices.pricedFrom, 'response.model (+ usage.iterations)');
   assert.deepEqual(c.profiles, ['legacy', 'prod', 'test', 'replay', 'record']);
   assert.deepEqual(c.profileAliases, { production: 'prod' });
-  for (const field of ['escalation', 'maxEscalation', 'tier', 'kind', 'profile', 'budgetScope', 'expectedUsd', 'projectSize', 'sessionId']) {
+  for (const field of ['escalation', 'maxEscalation', 'tier', 'kind', 'profile', 'budgetScope', 'expectedUsd', 'projectSize', 'sessionId', 'retryOf', 'attempt']) {
     assert.ok(c.ctxFields.includes(field), field);
   }
+  // 1.2.0
+  assert.equal(c.policy.transcriptLoweredOnlyBy, 'synthetic', 'a redacted transcript stays a transcript');
+  assert.deepEqual(c.policy.personScan.limits, { maxChars: 8_000_000, maxNodes: 200_000, maxDepth: 256 });
+  assert.match(c.policy.personScan.truncated, /fail closed/);
+  assert.match(c.budgets.loopKey, /exact request \(no replay normalization\)/);
+  assert.match(c.budgets.loopCounts, /no-progress outcomes only/);
+  assert.ok(c.budgets.loopSkips.includes('replay'));
+  assert.equal(c.budgets.defaults.scopes.run.baseUsd.default, 2);
+  assert.equal(c.budgets.expectedUsdZero, 'treated as not given');
+  assert.match(c.claude.recursiveSchemas, /recursive \$ref/);
+  assert.match(c.claude.schemaMapping, /oneOf is sent as anyOf/);
+  assert.match(c.ledger.rows, /skipped_dead/);
+  for (const name of ['recursiveRefPaths', 'checkMessageImages', 'requestKey', 'DEFAULT_BUDGETS']) assert.ok(c.coreExports.includes(name), name);
 });
 
 test('a facade built on createLlmCore satisfies the facade contract', () => {
@@ -86,6 +99,17 @@ test('a drifted core is caught (missing export, changed rule)', () => {
   assert.match(core.runContractChecks({ core: sloppy }).join('\n'), /emitted temperature/);
   const leaky = { ...core, classifyError: () => ({ fallback: true }) };
   assert.match(core.runContractChecks({ core: leaky }).join('\n'), /must not fall back/);
+  // A detector that counts successful repeats (the 1.1.0 behaviour) breaks the contract.
+  const strictLoops = {
+    ...core,
+    createLoopDetector: (options) => {
+      const detector = core.createLoopDetector(options);
+      return { ...detector, after: (task, key, outcome) => detector.after(task, key, outcome) };
+    },
+  };
+  assert.match(core.runContractChecks({ core: strictLoops }).join('\n'), /successful repeats/);
+  const noDefaults = { ...core, DEFAULT_BUDGETS: { version: 1, scopes: {} } };
+  assert.match(core.runContractChecks({ core: noDefaults }).join('\n'), /runaway stop is on by default/);
 });
 
 test('one price source: routes naming an unpriced model fail at load', () => {

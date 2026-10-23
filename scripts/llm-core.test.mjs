@@ -364,9 +364,12 @@ test('Q5: ctx.synthetic / ctx.redacted cannot carry real person data past the po
   assert.ok(!leftover.chain.some((e) => e.provider === 'deepseek'));
   const nameLeft = effectiveDataClass({ task: TASKS['copy.write'], ctx: { redacted: true }, payload: { owner: { firstName: 'Kari' } } });
   assert.equal(nameLeft.redacted, false, 'a person-name field with a value means the redaction failed');
-  const placeholders = effectiveDataClass({ task: TASKS['brief.read'], ctx: { redacted: true }, payload: { owner: { firstName: '[NAME]' }, phone: '<PHONE>' } });
+  const placeholders = effectiveDataClass({ task: TASKS['copy.write'], ctx: { redacted: true, dataClass: 'personal' }, payload: { owner: { firstName: '[NAME]' }, phone: '<PHONE>' } });
   assert.equal(placeholders.redacted, true);
-  assert.equal(placeholders.effective, 'business');
+  assert.equal(placeholders.effective, 'business', 'personal data with every person field redacted counts as business');
+  const transcript = effectiveDataClass({ task: TASKS['brief.read'], ctx: { redacted: true }, payload: { owner: { firstName: '[NAME]' }, phone: '<PHONE>' } });
+  assert.equal(transcript.redacted, false, 'redaction never lowers a transcript');
+  assert.equal(transcript.effective, 'transcript');
   const fixtures = router({ AI_PROFILE: 'test' }).resolveRoute('brief.read', { synthetic: true }, { payload: { user: 'Kari Testesen kari@example.no, ola@demo.test, +47 000 00 000, 12345678, +1 555 0142' } });
   assert.equal(fixtures.dataClass.synthetic, true, 'reserved fixture values are allowed in synthetic data');
   assert.equal(fixtures.primary.provider, 'deepseek');
@@ -409,15 +412,17 @@ test('person fields make a payload personal; dates, prices and org numbers do no
   const clean = detectPersonFields({ name: 'Fjordbakeriet AS', products: [{ name: 'Sko', price: '1 299' }], orgNr: '923 456 789', at: '2026-10-23T10:02:11Z', date: '2026 10 23', firstName: '', id: 'run_12345678abc' });
   assert.equal(clean.found, false, JSON.stringify(clean));
   const withImage = detectPersonFields({ messages: [{ role: 'user', content: [{ type: 'image', source: { type: 'base64', data: 'Ab+12345678/Cd' } }, { type: 'text', text: 'Check the hero' }] }] });
-  assert.equal(withImage.found, false, 'image blocks are not scanned');
+  assert.equal(withImage.found, false, 'the base64 source of an image block is not scanned');
 });
 
-test('effective data class: ctx.dataClass raises it, synthetic and redacted lower it', () => {
+test('effective data class: ctx.dataClass raises it, synthetic lowers it, redacted lowers only personal', () => {
   const spec = TASKS['copy.write'];
   assert.equal(effectiveDataClass({ task: spec, ctx: {} }).effective, 'business');
   assert.equal(effectiveDataClass({ task: spec, ctx: { dataClass: 'personal' } }).effective, 'personal');
   assert.equal(effectiveDataClass({ task: spec, ctx: {}, payload: { phone: '+47 92345678' } }).effective, 'personal');
-  assert.equal(effectiveDataClass({ task: TASKS['brief.read'], ctx: { redacted: true } }).effective, 'business');
+  assert.equal(effectiveDataClass({ task: spec, ctx: { dataClass: 'personal', redacted: true } }).effective, 'business');
+  assert.equal(effectiveDataClass({ task: TASKS['brief.read'], ctx: { redacted: true } }).effective, 'transcript', 'redaction never lowers a transcript');
+  assert.equal(effectiveDataClass({ task: spec, ctx: { dataClass: 'transcript', redacted: true } }).effective, 'transcript', 'nor a ctx transcript class');
   assert.equal(effectiveDataClass({ task: TASKS['brief.read'], ctx: { synthetic: true } }).effective, 'public');
   const synthetic = router({ AI_PROFILE: 'test' }).resolveRoute('brief.read', { synthetic: true });
   assert.equal(synthetic.primary.provider, 'deepseek', 'synthetic fixtures may use the test profile');
@@ -1044,12 +1049,16 @@ test('callLlm: soft budget alerts and continues; a runaway stops before the prov
   assert.equal(calls, 2);
 });
 
-test('callLlm: the same request with the same outcome three times is a loop', async () => {
-  const { llm, rows } = makeCore({ providers: { claude: async () => claudeMessage({ text: '{"same":1}' }) } });
-  for (let i = 0; i < 3; i += 1) await llm.json({ task: 'plan.edit', user: 'retry me', ctx: { runId: 'r1' } });
-  await assert.rejects(llm.json({ task: 'plan.edit', user: 'retry me', ctx: { runId: 'r1' } }), (e) => e.code === 'loop_detected' && e.reason === 'loop');
+test('callLlm: the same request failing the same way three times in a row is a loop', async () => {
+  const answers = { text: 'not json' };
+  const { llm, rows } = makeCore({ providers: { claude: async () => claudeMessage({ text: answers.text }) } });
+  const schema = { type: 'object', properties: { ok: { type: 'boolean' } }, required: ['ok'] };
+  for (let i = 0; i < 3; i += 1) await assert.rejects(llm.json({ task: 'plan.edit', user: 'retry me', schema, ctx: { runId: 'r1' } }), (e) => e.code === 'schema_invalid');
+  await assert.rejects(llm.json({ task: 'plan.edit', user: 'retry me', schema, ctx: { runId: 'r1' } }), (e) => e.code === 'loop_detected' && e.reason === 'loop');
   assert.equal(rows.at(-1).status, 'loop_blocked');
-  await llm.json({ task: 'plan.edit', user: 'retry me', ctx: { runId: 'r2' } });
+  answers.text = '{"ok":true}';
+  assert.deepEqual((await llm.json({ task: 'plan.edit', user: 'retry me', schema, ctx: { runId: 'r2' } })).data, { ok: true }, 'another run is another scope');
+  assert.deepEqual((await llm.json({ task: 'plan.edit', user: 'a different request', schema, ctx: { runId: 'r1' } })).data, { ok: true });
 });
 
 test('callLlm: record profile saves a secret-free cassette', async () => {
@@ -1111,10 +1120,68 @@ test('callLlm: unscoped calls are never loop-blocked; a scoped retry loop is, an
     now += 86_400_000;
   }
   for (let i = 0; i < 10; i += 1) await llm.json({ task: 'cls.page', user: 'same text, same minute' });
-  for (let i = 0; i < 3; i += 1) await llm.json({ task: 'cls.page', user: 'retry me', ctx: { jobId: 'job-1' } });
-  await assert.rejects(llm.json({ task: 'cls.page', user: 'retry me', ctx: { jobId: 'job-1' } }), (e) => e.code === 'loop_detected');
+  // Caller-marked retries of the same request that keep giving the same answer are a loop.
+  for (let i = 0; i < 3; i += 1) await llm.json({ task: 'cls.page', user: 'retry me', ctx: { jobId: 'job-1', retryOf: 'call-1' } });
+  await assert.rejects(llm.json({ task: 'cls.page', user: 'retry me', ctx: { jobId: 'job-1', retryOf: 'call-1' } }), (e) => e.code === 'loop_detected');
   now += 16 * 60_000;
-  assert.equal((await llm.json({ task: 'cls.page', user: 'retry me', ctx: { jobId: 'job-1' } })).provider, 'claude', 'the block expired with the window');
+  assert.equal((await llm.json({ task: 'cls.page', user: 'retry me', ctx: { jobId: 'job-1', retryOf: 'call-1' } })).provider, 'claude', 'the block expired with the window');
+});
+
+test('loops (Q6): successful repeats inside one run are legitimate work and never blocked', async () => {
+  let calls = 0;
+  const { llm } = makeCore({ providers: { claude: async () => (calls += 1, claudeMessage({ text: '{"icon":"phone"}' })) } });
+  // The same section repeated on several pages: the same icon request, answered the same way every time.
+  for (let i = 0; i < 12; i += 1) assert.deepEqual((await llm.json({ task: 'cls.page', user: 'Icon for: Telefon', ctx: { runId: 'run-icons' } })).data, { icon: 'phone' });
+  assert.equal(calls, 12);
+  // Attempt counters mark retries too: the same answer three times on attempt 2+ is no progress.
+  for (let i = 2; i <= 4; i += 1) await llm.json({ task: 'cls.page', user: 'Icon for: Kart', ctx: { runId: 'run-icons', attempt: i } });
+  await assert.rejects(llm.json({ task: 'cls.page', user: 'Icon for: Kart', ctx: { runId: 'run-icons', attempt: 5 } }), (e) => e.code === 'loop_detected');
+  // A success between failures ends the streak.
+  const detector = createLoopDetector({ now: () => 0 });
+  detector.after('t', 'k', 'error:529');
+  detector.after('t', 'k', 'error:529');
+  detector.after('t', 'k', 'ok:1', { progress: true });
+  detector.after('t', 'k', 'error:529');
+  assert.equal(detector.before('t', 'k').loop, false);
+});
+
+test('loops: requests that differ only by a UUID or date are different requests; each model is its own key', async () => {
+  const seen = [];
+  const { llm } = makeCore({
+    providers: {
+      claude: async (call) => (seen.push(call.model), claudeMessage({ model: call.model, text: 'not json' })),
+      deepseek: async () => ({ servedModel: 'deepseek-flash', text: 'not json', stopReason: 'end_turn', usage: {} }),
+    },
+  });
+  const schema = { type: 'object', properties: { kind: { type: 'string' } }, required: ['kind'] };
+  const pages = ['3f1c2a9e-4b7d-4c1e-9a2b-1d2e3f4a5b6c', '7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d', '0f9e8d7c-6b5a-4c3d-9e2f-1a0b9c8d7e6f', 'c1d2e3f4-a5b6-4c7d-8e9f-0a1b2c3d4e5f'];
+  for (const id of pages) {
+    await assert.rejects(llm.json({ task: 'cls.page', user: `Page ${id}: Om oss`, schema, ctx: { runId: 'run-import' } }), (e) => e.code === 'schema_invalid', id);
+  }
+  for (const day of ['2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23']) {
+    await assert.rejects(llm.json({ task: 'cls.page', user: `Changes on ${day}`, schema, ctx: { runId: 'run-import' } }), (e) => e.code === 'schema_invalid', day);
+  }
+  // The exact same request failing a fourth time is a loop...
+  for (let i = 0; i < 2; i += 1) await assert.rejects(llm.json({ task: 'cls.page', user: `Page ${pages[0]}: Om oss`, schema, ctx: { runId: 'run-import' } }), (e) => e.code === 'schema_invalid');
+  await assert.rejects(llm.json({ task: 'cls.page', user: `Page ${pages[0]}: Om oss`, schema, ctx: { runId: 'run-import' } }), (e) => e.code === 'loop_detected');
+  // ...but the next step up the escalation ladder (another model or effort: here Haiku low -> medium) is a new request.
+  await assert.rejects(llm.json({ task: 'cls.page', user: `Page ${pages[0]}: Om oss`, schema, ctx: { runId: 'run-import', escalation: 1 } }), (e) => e.code === 'schema_invalid');
+  assert.equal(seen.length, 4 + 4 + 2 + 1);
+});
+
+test('loops: replay calls are never loop-checked', async () => {
+  let calls = 0;
+  const { llm } = makeCore({
+    env: { AI_PROFILE: 'replay' },
+    providers: {
+      replay: async () => {
+        calls += 1;
+        throw new core.CassetteMissError('no cassette');
+      },
+    },
+  });
+  for (let i = 0; i < 6; i += 1) await assert.rejects(llm.json({ task: 'plan.edit', user: 'golden', ctx: { runId: 'golden-1' } }), (e) => e.code === 'cassette_miss');
+  assert.equal(calls, 6);
 });
 
 test('callLlm: only Claude retries a max_tokens stop with a doubled cap; other vendors fall back', async () => {
@@ -1240,4 +1307,233 @@ test('phone detection skips compact dates and number runs; still finds real numb
   assert.deepEqual(detectPersonFields('Ring 92345678.').realPatterns, ['phone']);
   assert.deepEqual(detectPersonFields('Tlf: 92 34 56 78, e-post post@firma.no').realPatterns.sort(), ['email', 'phone']);
   assert.deepEqual(detectPersonFields({ contact: 'kari@example.no' }).realPatterns, [], 'a fixture email is a pattern, not a real one');
+});
+
+// ---------- review fixes, round 2 (2026-10-23) ----------
+test('Q5: a person-field scan that hits its limits fails closed (no synthetic/redacted downgrade)', () => {
+  const r = router({ AI_PROFILE: 'test' });
+  // 1) Redacted business payload with a real email and phone after 420k characters (data repeats the user text).
+  const filler = 'x'.repeat(420_000);
+  const late = r.resolveRoute('copy.write', { redacted: true }, { payload: { user: `${filler} kari@firma.no 912 34 567`, data: { user: filler } } });
+  assert.equal(late.dataClass.redacted, false);
+  assert.equal(late.primary.provider, 'claude');
+  // 2) Synthetic payload with 6000 items before contact.email.
+  const items = Array.from({ length: 6000 }, (_, i) => ({ n: i, label: `item ${i}` }));
+  const many = r.resolveRoute('cls.page', { synthetic: true }, { payload: { data: { items, contact: { email: 'kari@firma.no' } } } });
+  assert.equal(many.dataClass.synthetic, false);
+  assert.ok(!many.chain.some((e) => e.provider === 'deepseek'));
+  // 3) 10,001 CSS @media rules (310k characters) before a real email.
+  const css = '@media (min-width:1px){a{b:c}}'.repeat(10_001);
+  const media = effectiveDataClass({ task: TASKS['copy.write'], ctx: { redacted: true }, payload: { user: `${css} kari@firma.no` } });
+  assert.deepEqual(media.personFields.realPatterns, ['email']);
+  assert.equal(media.redacted, false);
+  // At the limits: truncated, personal, and both flags refused.
+  const small = { maxChars: 1000, maxNodes: 50, maxDepth: 8 };
+  assert.deepEqual(detectPersonFields({ user: 'x'.repeat(1001) }, small).truncatedBy, ['chars']);
+  assert.deepEqual(detectPersonFields({ list: Array.from({ length: 60 }, () => ({})) }, small).truncatedBy, ['nodes']);
+  let deep = { leaf: 'x' };
+  for (let i = 0; i < 20; i += 1) deep = { child: deep };
+  assert.deepEqual(detectPersonFields(deep, small).truncatedBy, ['depth']);
+  assert.equal(detectPersonFields({ list: Array.from({ length: 49_000 }, (_, i) => `text ${i}`) }).truncated, false, 'strings do not count as nodes');
+  const huge = { user: `${'x'.repeat(core.PERSON_SCAN_LIMITS.maxChars)} more` };
+  for (const flag of ['synthetic', 'redacted']) {
+    const out = effectiveDataClass({ task: TASKS['cls.page'], ctx: { [flag]: true }, payload: huge });
+    assert.equal(out[flag], false, flag);
+    assert.equal(out.effective, 'personal', flag);
+    assert.match(out.reasons.join(' '), /truncated/, flag);
+  }
+  // Shared references and typed arrays are not walked twice or byte by byte.
+  const shared = { text: 'hello' };
+  assert.equal(detectPersonFields({ a: shared, b: shared, c: new Uint8Array(1_000_000) }).truncated, false);
+});
+
+test('Q5: a redacted transcript never reaches DeepSeek (names in free text cannot be detected)', () => {
+  const r = router({ AI_PROFILE: 'test' });
+  const route = r.resolveRoute('brief.read', { redacted: true }, { payload: { user: 'Kari Nordmann (daglig leder) sa at Ola Hansen skal levere bildene.' } });
+  assert.equal(route.dataClass.effective, 'transcript');
+  assert.equal(route.dataClass.redacted, false);
+  assert.match(route.dataClass.reasons.join(' '), /only by synthetic/);
+  assert.ok(!route.chain.some((e) => e.provider === 'deepseek'));
+  assert.ok(!r.resolveRoute('copy.write', { redacted: true, dataClass: 'transcript' }, { payload: { user: 'redacted' } }).chain.some((e) => e.provider === 'deepseek'));
+  assert.equal(r.resolveRoute('brief.read', { synthetic: true }, { payload: { user: 'Kari Testesen sa hei.' } }).primary.provider, 'deepseek', 'synthetic transcripts may still use DeepSeek');
+});
+
+test('person fields: image and document blocks skip only their binary source', () => {
+  const media = detectPersonFields({ type: 'image', caption: 'Ring Kari på 912 34 567', alt: 'kari@firma.no', source: { type: 'base64', media_type: 'image/jpeg', data: '/12345678/+4791234567' } });
+  assert.deepEqual(media.realPatterns.sort(), ['email', 'phone']);
+  const textDoc = effectiveDataClass({ task: TASKS['copy.write'], ctx: { redacted: true }, payload: { messages: [{ role: 'user', content: [{ type: 'document', source: { type: 'text', media_type: 'text/plain', data: 'Kontakt: kari@firma.no' } }] }] } });
+  assert.equal(textDoc.redacted, false, 'a text-source document is scanned');
+  for (const source of [{ type: 'base64', media_type: 'application/pdf', data: 'JVBERi0xLjQ12345678' }, { type: 'url', url: 'https://example.com/a.pdf' }, { type: 'file', file_id: 'file_12345678' }]) {
+    assert.equal(detectPersonFields({ type: 'document', title: 'Brochure', source }).found, false, source.type);
+  }
+  assert.equal(detectPersonFields('<img src="data:image/png;base64,iVBOR/12345678/w0KGgo=" alt="Logo">').found, false, 'inline base64 data URLs are binary');
+  assert.ok(detectPersonFields('<img src="data:image/png;base64,iVBOR" alt="Ring 912 34 567">').realPatterns.includes('phone'), 'text around a data URL is still scanned');
+});
+
+test('person fields: IDN email domains, dashed numbers and 47-prefixed numbers', () => {
+  assert.deepEqual(detectPersonFields('post@blåbærkafé.no').realPatterns, ['email']);
+  assert.deepEqual(detectPersonFields('bjørn@xn--blbrkaf-gua.no').realPatterns, ['email']);
+  assert.deepEqual(detectPersonFields('kari@example.no').realPatterns, [], 'a fixture domain stays a fixture');
+  for (const text of ['Ring 912-34-567', 'Ring 91-23-45-67', 'tlf 4791234567', 'tlf 004791234567']) {
+    assert.deepEqual(detectPersonFields(text).realPatterns, ['phone'], text);
+  }
+  for (const text of ['2026-10-23', 'ISBN 978-82-123-4567-8', 'code 12-34-56-78-90', 'id A4791234567', 'n 147912345678']) {
+    assert.equal(detectPersonFields(text).found, false, text);
+  }
+  assert.equal(detectPersonFields('tlf 4700000000').realPatterns.length, 0, 'fixture national part');
+});
+
+test('person-field detection stays linear without a candidate cap', () => {
+  const cases = {
+    manyAts: 'a@'.repeat(100_000),
+    fixtures: 'kari@example.no '.repeat(20_000),
+    media: '@media (min-width:1px){a{b:c}}'.repeat(10_000),
+  };
+  for (const [name, text] of Object.entries(cases)) {
+    const started = performance.now();
+    detectPersonFields(text);
+    const ms = performance.now() - started;
+    assert.ok(ms < 100, `${name}: ${ms.toFixed(1)} ms`);
+  }
+});
+
+test('route effort: a task-specific route keeps its effort when the policy drops only a fallback', () => {
+  const tasks = parseTaskRegistry({ version: 1, tasks: { 'deep.task': { kind: 'json', vision: false, dataClass: 'business', maxTokens: 4000, effort: 'high' } } });
+  const routes = (route) => ({ version: 1, profiles: { prod: { default: 'claude:claude-haiku-5-5', tasks: { 'deep.task': route } }, test: { default: 'deepseek:deepseek-flash' } } });
+  const at = (route, profile = 'prod') => createRouter({ tasks, routes: routes(route), policy: POLICY }).resolveRoute('deep.task', { profile });
+  assert.equal(at('claude:claude-haiku-5-5:low|deepseek:deepseek-flash').route, 'claude:claude-haiku-5-5:low', 'DeepSeek dropped, the explicit effort stays');
+  assert.equal(at('claude:claude-haiku-5-5:low').route, 'claude:claude-haiku-5-5:low');
+  assert.equal(at('claude:claude-haiku-5-5|deepseek:deepseek-flash').route, 'claude:claude-haiku-5-5:high', 'no explicit effort: the task effort');
+  assert.equal(at('claude:claude-haiku-5-5:low', 'test').route, 'claude:claude-haiku-5-5:high', 'a full redirect (test profile, DeepSeek only) takes the task effort');
+});
+
+test('claude-shape: oneOf is sent as anyOf, not is dropped, recursive schemas skip structured output', () => {
+  const union = toClaudeSchema({ type: 'object', properties: { v: { oneOf: [{ type: 'string' }, { type: 'integer' }], not: { const: 'x' } }, e: { enum: [{ type: 'object' }] } }, required: ['v'] });
+  assert.deepEqual(union.properties.v, { anyOf: [{ type: 'string' }, { type: 'integer' }] });
+  assert.deepEqual(union.properties.e.enum, [{ type: 'object' }], 'enum values are copied, not treated as schemas');
+  const both = toClaudeSchema({ anyOf: [{ type: 'string' }], oneOf: [{ type: 'number' }, { type: 'boolean' }] });
+  assert.deepEqual(both, { anyOf: [{ type: 'string' }], allOf: [{ anyOf: [{ type: 'number' }, { type: 'boolean' }] }] });
+  const nav = { type: 'object', properties: { items: { type: 'array', items: { $ref: '#/$defs/item' } } }, required: ['items'], $defs: { item: { type: 'object', properties: { label: { type: 'string' }, children: { type: 'array', items: { $ref: '#/$defs/item' } } }, required: ['label'] } } };
+  assert.deepEqual(core.recursiveRefPaths(nav), ['/$defs/item/properties/children/items']);
+  assert.deepEqual(core.recursiveRefPaths({ type: 'object', properties: { a: { $ref: '#/$defs/x' }, b: { $ref: '#/$defs/x' } }, $defs: { x: { type: 'string' } } }), [], 'a shared non-recursive def is fine');
+  assert.deepEqual(core.recursiveRefPaths({ type: 'object', properties: { self: { $ref: '#' } } }), ['/properties/self']);
+  assert.equal(core.recursiveRefPaths({ $defs: { a: { $ref: '#/$defs/b' }, b: { type: 'array', items: { $ref: '#/$defs/a' } } }, $ref: '#/$defs/a' }).length, 1, 'indirect cycle');
+  const built = buildClaudeRequest({ model: 'claude-haiku-5-5', user: 'x', kind: 'json', schema: nav });
+  assert.equal('format' in built.params.output_config, false);
+  assert.equal(built.jsonMode, 'prompt');
+  assert.match(built.warnings.join(' '), /recursive \$ref/);
+  const tool = buildClaudeRequest({ model: 'claude-haiku-5-5', user: 'x', kind: 'tools', tools: [{ name: 'setNav', input_schema: nav }] });
+  assert.equal(tool.params.tools[0].strict, false);
+  const flat = buildClaudeRequest({ model: 'claude-haiku-5-5', user: 'x', kind: 'json', schema: { type: 'object', properties: { v: { oneOf: [{ type: 'string' }, { type: 'null' }] } } } });
+  assert.equal(flat.jsonMode, 'structured', 'a non-recursive union still uses structured output');
+  assert.ok(flat.params.output_config.format.schema.properties.v.anyOf);
+});
+
+test('callLlm: a nav tree schema reaches Claude without format and is validated client-side (oneOf enforced)', async () => {
+  let params;
+  const answers = { text: '{"items":[{"label":"Hjem","children":[{"label":"Om oss","children":[]}]}]}' };
+  const { llm } = makeCore({ providers: { claude: async (call) => ((params = call.claude.params), claudeMessage({ text: answers.text })) } });
+  const schema = { type: 'object', properties: { items: { type: 'array', items: { $ref: '#/$defs/item' } } }, required: ['items'], $defs: { item: { type: 'object', properties: { label: { type: 'string' }, children: { type: 'array', items: { $ref: '#/$defs/item' } } }, required: ['label'] } } };
+  const out = await llm.json({ task: 'plan.edit', user: 'Nav', schema });
+  assert.equal('format' in params.output_config, false);
+  assert.equal(out.data.items[0].children[0].label, 'Om oss');
+  answers.text = '{"v":3}';
+  const oneOf = { type: 'object', properties: { v: { oneOf: [{ type: 'integer' }, { type: 'number' }] } }, required: ['v'] };
+  await assert.rejects(llm.json({ task: 'plan.edit', user: 'Union', schema: oneOf }), (e) => e.code === 'schema_invalid', '3 matches both shapes: exactly-one is enforced client-side');
+  assert.ok(params.output_config.format.schema.properties.v.anyOf, 'the API got anyOf');
+});
+
+test('images in messages: tool results count toward 6, and base64 blocks must be JPEG within 1568 px', async () => {
+  const jpeg = (w, h) => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: tinyJpeg(w, h).toString('base64') } });
+  const results = (n, block = jpeg(800, 600)) => [{ role: 'user', content: Array.from({ length: n }, (_, i) => ({ type: 'tool_result', tool_use_id: `t${i}`, content: [block] })) }];
+  assert.equal(core.countImageBlocks(results(8)), 8);
+  assert.equal(core.checkMessageImages(results(6)), 6);
+  assert.throws(() => buildClaudeRequest({ model: 'claude-haiku-5-5', kind: 'tools', messages: results(8) }), /8 images in one call/);
+  assert.throws(() => core.checkMessageImages(results(1, jpeg(2000, 1000))), /2000px on the long edge/);
+  assert.throws(() => core.checkMessageImages([{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'iVBORw0KGgo=' } }] }]), /image\/jpeg/);
+  assert.throws(() => core.checkMessageImages([{ role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'bm90IGEganBlZw==' } }] }]), /not a readable/);
+  assert.throws(() => core.checkMessageImages([{ role: 'user', content: [{ type: 'image', source: { type: 'url', url: 'http://example.com/a.jpg' } }] }]), /https/);
+  const { llm } = makeCore({ providers: { claude: async () => assert.fail('no call expected') } });
+  const shots = Array.from({ length: 8 }, (_, i) => ({ type: 'tool_result', tool_use_id: `x${i}`, content: [jpeg(800, 600)] }));
+  await assert.rejects(llm.tools({ task: 'agent.run', messages: [{ role: 'user', content: shots }], tools: [{ name: 'shot', input_schema: { type: 'object', properties: { url: { type: 'string' } } } }], onToolUse: async () => [] }), (e) => e.code === 'invalid_request');
+});
+
+test('budgets: a core without a budgets config still stops a runaway; malformed configs fail at creation', async () => {
+  let calls = 0;
+  const providers = { claude: async () => (calls += 1, claudeMessage()) };
+  const { llm, rows } = makeCore({ providers, spentUsd: async ({ scope }) => (scope === 'run' || scope === 'step2' ? 1_000_000 : 0) });
+  await assert.rejects(llm.json({ task: 'plan.edit', user: 'x', ctx: { runId: 'r1' } }), (e) => e.code === 'budget_exceeded' && e.expectedUsd === 2);
+  await assert.rejects(llm.json({ task: 'plan.edit', user: 'x', ctx: { runId: 'r1', expectedUsd: 0 } }), (e) => e.code === 'budget_exceeded', 'expectedUsd 0 is "not given", not "no limit"');
+  await assert.rejects(llm.json({ task: 'plan.edit', user: 'x', ctx: { runId: 'r1', budgetScope: 'step2' } }), (e) => e.code === 'budget_exceeded', 'an unknown budgetScope falls back to the run');
+  assert.equal(calls, 0);
+  assert.equal(rows.at(-1).status, 'budget_blocked');
+  assert.throws(() => makeCore({ providers, budgets: { version: 1, alertRatio: 5, runawayFactor: 2 } }), (e) => e.code === 'route_config' && /runawayFactor must be larger/.test(e.message));
+  assert.throws(() => makeCore({ providers, budgets: { version: 1, scopes: { run: { baseUsd: {} } } } }), /baseUsd.default/);
+  assert.equal(core.withDefaultBudgets(null), core.DEFAULT_BUDGETS);
+  assert.deepEqual(core.withDefaultBudgets({ version: 1, periodic: { hubDayUsd: 5 } }).scopes, core.DEFAULT_BUDGETS.scopes);
+  assert.equal(core.normalizeCtx({ expectedUsd: 0 }).ctx.expectedUsd, undefined);
+  assert.equal(core.normalizeCtx({ expectedUsd: -1 }).ctx.expectedUsd, undefined);
+  assert.deepEqual(core.normalizeCtx({ retryOf: 'c1', attempt: 2 }).ctx, { escalation: 0, retryOf: 'c1', attempt: 2 });
+});
+
+test('budgets: a budgetScope without an id is never pooled across runs or clients', async () => {
+  let calls = 0;
+  // $0.10 per call (200k output tokens on Haiku); expected $0.05, so a pooled tally would stop after 3 calls.
+  const { llm } = makeCore({ providers: { claude: async () => (calls += 1, claudeMessage({ usage: { input_tokens: 0, output_tokens: 200_000 } })) } });
+  for (let client = 0; client < 6; client += 1) {
+    await llm.json({ task: 'plan.edit', user: `client ${client}`, ctx: { budgetScope: 'step2', salesClientId: `sc-${client}`, expectedUsd: 0.05 } });
+  }
+  assert.equal(calls, 6, 'six clients with budgetScope "step2" and no run id run independently');
+  for (let i = 0; i < 3; i += 1) await llm.json({ task: 'plan.edit', user: `step ${i}`, ctx: { budgetScope: 'step2', runId: 'run-a', expectedUsd: 0.05 } });
+  await assert.rejects(llm.json({ task: 'plan.edit', user: 'step 9', ctx: { budgetScope: 'step2', runId: 'run-a', expectedUsd: 0.05 } }), (e) => e.code === 'budget_exceeded', 'with an id the scope is tallied');
+});
+
+test('ledger: policy blocks and dead-provider skips are written as rows', async () => {
+  const strict = { version: 1, providers: { claude: { allow: ['public'] }, deepseek: { allow: ['public', 'business'] } }, redirect: 'claude:claude-haiku-5-5' };
+  const rows = [];
+  const llm = createLlmCore({ tasks: TASKS, routes: ROUTES, policy: strict, env: { AI_PROFILE: 'prod' }, providers: {}, ledger: { append: (row) => rows.push(row) }, repo: 'hub' });
+  await assert.rejects(llm.json({ task: 'brief.read', user: 'Transcript', ctx: { runId: 'r-policy', salesClientId: 'sc-1' } }), (e) => e.code === 'policy_blocked');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'policy_blocked');
+  assert.equal(rows[0].task, 'brief.read');
+  assert.equal(rows[0].profile, 'prod');
+  assert.equal(rows[0].provider, 'claude');
+  assert.equal(rows[0].runId, 'r-policy');
+  assert.equal(rows[0].policyRedirect.dataClass, 'transcript');
+  assert.equal(rows[0].usd, 0);
+  for (const field of LEDGER_FIELDS) assert.ok(field in rows[0], field);
+
+  const deadRows = [];
+  let claudeCalls = 0;
+  const { llm: dead } = makeCore({
+    ledger: { append: (row) => deadRows.push(row) },
+    providers: {
+      claude: async () => {
+        claudeCalls += 1;
+        throw Object.assign(new Error('invalid x-api-key'), { status: 401 });
+      },
+      deepseek: async () => ({ servedModel: 'deepseek-flash', text: '{"ok":true}', stopReason: 'end_turn', usage: {} }),
+    },
+  });
+  await dead.json({ task: 'tpl.analyze', user: 'One' });
+  await dead.json({ task: 'tpl.analyze', user: 'Two' });
+  assert.equal(claudeCalls, 1);
+  assert.deepEqual(deadRows.map((r) => [r.provider, r.status]), [['claude', 'error'], ['deepseek', 'ok'], ['claude', 'skipped_dead'], ['deepseek', 'ok']]);
+  assert.equal(deadRows[3].fallbackFrom, 'claude:claude-haiku-5-5:medium');
+  assert.equal(deadRows[2].usd, 0);
+  const missing = [];
+  const { llm: noAdapter } = makeCore({ ledger: { append: (row) => missing.push(row) }, providers: { deepseek: async () => ({ servedModel: 'deepseek-flash', text: '{}', stopReason: 'end_turn', usage: {} }) } });
+  await noAdapter.json({ task: 'tpl.analyze', user: 'x' });
+  assert.deepEqual(missing.map((r) => [r.provider, r.status, r.error?.code || null]), [['claude', 'error', 'provider_dead'], ['deepseek', 'ok', null]]);
+});
+
+test('policy: exceptions record known calls outside the core and are validated', () => {
+  const ok = { ...POLICY, exceptions: [{ id: 'cms-local-blog-job', provider: 'deepseek', where: 'website-cms server/local-blog-job.js', dataClass: 'business', owner: 'WS9', reason: 'direct call until the relay exists' }] };
+  assert.equal(core.validatePolicy(ok).ok, true);
+  const bad = core.validatePolicy({ ...POLICY, exceptions: [{ id: 'Bad Id', provider: 'mistral', dataClass: 'secret' }] });
+  assert.equal(bad.ok, false);
+  for (const fragment of ['.id must be', '.provider must be', '.where is required', '.owner is required', '.reason is required', 'unknown class']) {
+    assert.ok(bad.errors.some((e) => e.includes(fragment)), fragment);
+  }
+  assert.equal(core.validatePolicy({ ...POLICY, exceptions: 'none' }).ok, false);
 });
