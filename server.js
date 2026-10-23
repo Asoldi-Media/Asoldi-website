@@ -249,6 +249,7 @@ import {
   runFirefliesHydration,
   runFirefliesIngestTick,
 } from './lib/fireflies-ingest.js';
+import { runFirefliesRecordingWatchdog } from './lib/fireflies-recording-watchdog.js';
 import { CUSTOM_TIER_ID, WEBSITE_TIERS, formatKr, resolveTier, tierById, toClientWebsitePlan } from './lib/website-tiers.js';
 import { buildSalesSender, normalizeAsoldiFromEmail } from './lib/sales-sender.js';
 import {
@@ -16231,6 +16232,33 @@ function hydratePendingClientTranscripts({ max = 10 } = {}) {
   return { relinked };
 }
 
+/**
+ * Placeholders whose meeting is over: link the transcript that turned up, or mark the meeting
+ * missing and tell the team and the rep once (lib/fireflies-recording-watchdog.js).
+ */
+async function runFirefliesWatchdogStep() {
+  const config = readFirefliesWebhookConfig();
+  if (!config.apiKey) return { skipped: 'no-api-key' };
+  let owners = null;
+  return runFirefliesRecordingWatchdog({
+    getClients: () => sales.getSalesClients(),
+    apiKey: config.apiKey,
+    linkTranscript: (clientId, record, placeholder) => linkStoredTranscriptToClient(record, {
+      clientId,
+      // Found on the booked room, or by the id of the bot the hub sent in.
+      linkedBy: normalizeFirefliesMeetLink(record.meetingLink) === normalizeFirefliesMeetLink(placeholder?.meetLink) ? 'meet-link' : 'live-join',
+      reasons: ['Fireflies-opptaket av det bookede møtet'],
+    }),
+    patchPlaceholder: (clientId, meetingId, recording) => sales.patchSalesClientMeeting(clientId, meetingId, { recording }),
+    recipientsFor: async (client) => {
+      owners = owners || await salesOwnerEmailMap();
+      const ownerId = sanitizeText(client.ownerId);
+      return [config.notifyEmail, owners[ownerId] || (ownerId ? await accountKeyToEmail(ownerId) : '')];
+    },
+    sendEmail: (message) => emailLib.sendEmail(message),
+  });
+}
+
 let firefliesIngestAt = 0;
 let firefliesIngestInFlight = null;
 let firefliesIngestInterval = null;
@@ -16256,6 +16284,7 @@ function scheduleFirefliesTranscriptIngest({ force = false } = {}) {
           notify: (payload) => notifyFirefliesRecording(payload, readFirefliesWebhookConfig(), { ...firefliesClientDeps(), useStored: true, deferUntilFinal: false }),
           persistMedia: persistFirefliesMediaInBackground,
         })],
+        ['watchdog', () => runFirefliesWatchdogStep()],
       ]);
       await maybeAlertFirefliesIngest({ sendEmail: (message) => emailLib.sendEmail(message) });
     } catch (error) {
