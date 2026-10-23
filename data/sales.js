@@ -504,6 +504,10 @@ function normalizeMeetings(list) {
       summary: sanitizeText(raw.summary).slice(0, 2000),
       actionItems: Array.isArray(raw.actionItems) ? raw.actionItems.map((item) => sanitizeText(item)).filter(Boolean).slice(0, 20) : [],
       hasTranscript: Boolean(raw.hasTranscript),
+      // Sentences in the stored transcript: picks the copy with the most talk when one meeting has two.
+      sentenceCount: raw.sentenceCount === '' || raw.sentenceCount == null || !Number.isFinite(Number(raw.sentenceCount))
+        ? ''
+        : Math.max(0, Math.round(Number(raw.sentenceCount))),
       liveJoinedAt: sanitizeText(raw.liveJoinedAt),
       source: sanitizeText(raw.source),
       linkedAt: sanitizeText(raw.linkedAt) || nowIso(),
@@ -512,6 +516,9 @@ function normalizeMeetings(list) {
       purpose: ['sales', 'workshop', 'iteration'].includes(sanitizeText(raw.purpose))
         ? sanitizeText(raw.purpose)
         : '',
+      // A person picked the purpose (POST …/meetings/:meetingId/purpose): automatic passes keep it.
+      purposePickedBy: sanitizeText(raw.purposePickedBy),
+      purposePickedAt: sanitizeText(raw.purposePickedAt),
       // Which booked slot this row belongs to (lib/fireflies-recording-state.js slotKeyFor).
       slotKey: sanitizeText(raw.slotKey),
       // Recording state of a live-join placeholder (null on ordinary transcript rows).
@@ -1043,6 +1050,41 @@ export function patchSalesClientMeeting(clientId, meetingId, patch = {}) {
   return state[index];
 }
 
+/**
+ * Merge field patches into client.meetings rows of any clients in one write
+ * ([{ clientId, meetingId, patch }]; a `recording` in a patch is ignored here). Rows that are gone are
+ * skipped. Returns how many rows changed.
+ */
+export function patchSalesMeetingRows(entries = []) {
+  const byClient = new Map();
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const clientId = sanitizeText(entry?.clientId);
+    const meetingId = sanitizeText(entry?.meetingId);
+    if (!clientId || !meetingId || !entry.patch || typeof entry.patch !== 'object') continue;
+    if (!byClient.has(clientId)) byClient.set(clientId, new Map());
+    byClient.get(clientId).set(meetingId, entry.patch);
+  }
+  if (!byClient.size) return 0;
+  const state = readState();
+  let changed = 0;
+  for (let i = 0; i < state.length; i += 1) {
+    const patches = byClient.get(state[i].id);
+    if (!patches) continue;
+    let touched = false;
+    const meetings = state[i].meetings.map((row) => {
+      const patch = patches.get(row.meetingId);
+      if (!patch) return row;
+      const { recording, meetingId, ...rest } = patch;
+      touched = true;
+      changed += 1;
+      return { ...row, ...rest };
+    });
+    if (touched) state[i] = normalizeSalesClient({ ...state[i], meetings, updatedAt: nowIso() });
+  }
+  if (changed) writeState(state);
+  return changed;
+}
+
 export function unlinkMeetingFromSalesClient(clientId, meetingId) {
   const state = readState();
   const index = state.findIndex((entry) => entry.id === sanitizeText(clientId));
@@ -1164,7 +1206,7 @@ export function markOfferDelivered(id) {
   }
   const held = Boolean(applied.progression?.meetingHeld);
   const lockId = held
-    ? (sanitizeText(current.lockedOfferMeetingId) || pickLockedOfferMeetingId(current))
+    ? (heldOfferLock(current) || pickLockedOfferMeetingId(current))
     : '';
   return updateSalesClient(id, {
     progression: applied.progression,
@@ -1240,7 +1282,7 @@ export function setSalesProgress(id, key, value, { fastTrack = false } = {}) {
   }
   const held = Boolean(applied.progression?.meetingHeld);
   const lockId = held
-    ? (sanitizeText(current.lockedOfferMeetingId) || pickLockedOfferMeetingId(current))
+    ? (heldOfferLock(current) || pickLockedOfferMeetingId(current))
     : '';
   const turningOn = mapped === 'contractSigned' && Boolean(value) && !current.progression?.contractSigned;
   const turningOff = mapped === 'contractSigned' && !value;
@@ -1283,10 +1325,50 @@ export function liveJoinMeetingId(clientId, meetingAt = '') {
   return `live:${sanitizeText(clientId)}:${Number.isFinite(when) ? when : 'open'}`;
 }
 
-function pickLockedOfferMeetingId(client = {}) {
-  const meetings = Array.isArray(client.meetings) ? client.meetings : [];
-  const salesMeeting = meetings.find((item) => item?.forSalesMeeting);
-  return sanitizeText(salesMeeting?.meetingId || meetings[0]?.meetingId);
+function talkOfRow(row = {}) {
+  const counted = row.sentenceCount === '' || row.sentenceCount == null ? NaN : Number(row.sentenceCount);
+  return {
+    sentences: Number.isFinite(counted) ? counted : (row.hasTranscript ? 1 : 0),
+    minutes: Number(row.durationMinutes) || 0,
+  };
+}
+
+/**
+ * The offer lock while it names a real recording with talk on the card: a placeholder, a recording that
+ * left, or a silent one (a fragment from before the client came) is no lock.
+ */
+function heldOfferLock(client = {}) {
+  const lock = sanitizeText(client.lockedOfferMeetingId);
+  if (!lock || lock.toLowerCase().startsWith('live:')) return '';
+  const row = (Array.isArray(client.meetings) ? client.meetings : []).find((item) => item?.meetingId === lock);
+  return row && talkOfRow(row).sentences > 0 ? lock : '';
+}
+
+/**
+ * The recording the offer is locked to once "Møtet hatt" is ticked: of the sales meeting's recordings
+ * with talk, the one a person picked as the sales meeting first, then the booked slot's, then the most
+ * talk; else the first other recording with talk that is not a workshop or iteration. Never a live-join
+ * placeholder or a recording without talk: '' until one is linked, which re-points it.
+ * `talkOf(row)` → { sentences, minutes }; server code reads the stored copy.
+ */
+export function pickLockedOfferMeetingId(client = {}, { talkOf = talkOfRow } = {}) {
+  const meetings = (Array.isArray(client.meetings) ? client.meetings : [])
+    .filter((item) => sanitizeText(item?.meetingId) && !sanitizeText(item.meetingId).toLowerCase().startsWith('live:'));
+  const meetingMs = client.agreedTime ? Date.parse(client.meetingAt || '') : NaN;
+  const salesKey = Number.isFinite(meetingMs) ? `sales:${meetingMs}` : '';
+  const onSlot = (item) => Boolean(salesKey) && sanitizeText(item.slotKey) === salesKey;
+  const sentencesOf = (item) => Number((talkOf(item) || {}).sentences) || 0;
+  const rank = (item) => {
+    const picked = Boolean(sanitizeText(item.purposePickedAt)) && item.purpose === 'sales';
+    return [picked ? 1 : 0, onSlot(item) ? 1 : 0, sentencesOf(item), Number((talkOf(item) || {}).minutes) || 0];
+  };
+  const sales = meetings
+    .filter((item) => (item.forSalesMeeting || item.purpose === 'sales' || onSlot(item)) && sentencesOf(item) > 0)
+    .map((item) => ({ item, rank: rank(item) }))
+    .sort((a, b) => b.rank.reduce((diff, value, i) => diff || value - a.rank[i], 0))[0]?.item;
+  if (sales) return sanitizeText(sales.meetingId);
+  const other = meetings.find((item) => sentencesOf(item) > 0 && item.purpose !== 'workshop' && item.purpose !== 'iteration');
+  return sanitizeText(other?.meetingId);
 }
 
 export function setSalesNextAction(id, patch = {}) {
