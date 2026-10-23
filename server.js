@@ -463,6 +463,12 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 applyPersistentProductionEnv();
+// WS8.44: snapshot the delivery stores once per schema bump, before any code below writes to them.
+try {
+  runDeliverySchemaStartupSnapshot();
+} catch (error) {
+  console.error('[delivery] startup snapshot failed (will retry next boot):', error?.message || error);
+}
 console.log(`[mail] transport=${emailLib.resolveMailTransport()}`);
 
 process.on('unhandledRejection', (reason) => {
@@ -21047,12 +21053,6 @@ function startBackgroundJobs() {
   });
 }
 
-// WS8.44: snapshot the delivery stores once per schema bump, before anything writes to them.
-try {
-  runDeliverySchemaStartupSnapshot();
-} catch (error) {
-  console.error('[delivery] startup snapshot failed (will retry next boot):', error?.message || error);
-}
 const server = createServer(proxyHttpServerOptions(), app);
 applyProxyKeepAlive(server);
 server.on('error', (error) => {
