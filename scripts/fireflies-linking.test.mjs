@@ -267,3 +267,54 @@ test('the backfill moves an old fragment slot and a lock left by a move, re-tags
     'a second run changes nothing',
   );
 });
+
+test('the backfill moving a workshop slot to the longer copy keeps the project document and its ticked to-dos', async () => {
+  const { applyWorkshopTranscriptToRecord, markProjectTodoDone, persistProjectDocument } = await import('../lib/workshop-project-document.js');
+  const { getWorkshopRecord } = await import('../lib/workshop-record.js');
+  const { meetingIdForPurpose } = await import('../lib/workshop-meetings.js');
+  const workshopRoom = room('llw-llll-llw');
+  const client = makeClient('Testfirma Kopi AS', { meet: room('lll-llll-lll'), workshopMeet: workshopRoom });
+  // Two notetakers in one workshop: the old hub's slot and document are on the shorter copy.
+  store('ff-ws-short', workshopRoom, W, { sentences: 80, minutes: 40 });
+  store('ff-ws-long', workshopRoom, W + 2 * MIN, { sentences: 300, minutes: 85 });
+  for (const [meetingId, startMs] of [['ff-ws-short', W], ['ff-ws-long', W + 2 * MIN]]) {
+    sales.linkMeetingToSalesClient(client.id, { meetingId, meetLink: workshopRoom, startedAt: iso(startMs), hasTranscript: true, linkedBy: 'meet-link' });
+  }
+  let document = persistProjectDocument({
+    meetingId: 'ff-ws-short',
+    goalExplanation: 'Kunden skal kunne booke time.',
+    clientDocumentation: 'Lokalt bakeri.',
+    todos: [{ title: 'Booking' }, { title: 'Meny' }, { title: 'Farger' }],
+  });
+  document = markProjectTodoDone(markProjectTodoDone(document, 'todo-1', true), 'todo-2', true);
+  sales.setSalesWorkshop(client.id, { ...getWorkshopRecord(sales.getSalesClientById(client.id)), projectDocument: document });
+  sales.updateSalesClient(client.id, {
+    workshopAction: { ...sales.getSalesClientById(client.id).workshopAction, firefliesMeetingId: 'ff-ws-short' },
+  });
+  workshopDocs.length = 0;
+  linker.backfill();
+  const moved = sales.getSalesClientById(client.id);
+  assert.equal(moved.workshopAction.firefliesMeetingId, 'ff-ws-long');
+  assert.ok(workshopDocs.includes(client.id));
+  // What the project document job then does (server.js applyWorkshopProjectDocumentJob).
+  const workshopMeeting = ff.readStoredFirefliesMeeting(meetingIdForPurpose(moved, 'workshop'));
+  assert.equal(workshopMeeting.meetingId, 'ff-ws-long');
+  const result = await applyWorkshopTranscriptToRecord({
+    client: moved,
+    workshopMeeting,
+    evaluate: async () => { throw new Error('the workshop is not evaluated again'); },
+    generateDocument: async () => { throw new Error('the project document is not written again'); },
+  });
+  assert.equal(result.skipped, 'already-applied');
+  const kept = getWorkshopRecord(sales.getSalesClientById(client.id)).projectDocument;
+  assert.deepEqual(kept.todos.map((todo) => todo.done), [true, true, false]);
+  // A recording of another workshop (another day in the room) is still a new document.
+  const other = { ...moved, meetings: [...moved.meetings, { meetingId: 'ff-ws-later', meetLink: workshopRoom, startedAt: iso(W + DAY), hasTranscript: true }] };
+  const again = await applyWorkshopTranscriptToRecord({
+    client: other,
+    workshopMeeting: { meetingId: 'ff-ws-later', transcript: talk(200) },
+    evaluate: async () => ({ meetingId: 'ff-ws-later', valid: true, reason: 'valid', source: 'ai' }),
+    generateDocument: async () => persistProjectDocument({ meetingId: 'ff-ws-later', goalExplanation: 'Ny workshop.', todos: [{ title: 'Ny' }] }),
+  });
+  assert.equal(again.workshop.projectDocument.meetingId, 'ff-ws-later');
+});
