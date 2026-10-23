@@ -10,6 +10,7 @@ import {
   normalizeClientAdmin,
   normalizeFeatures,
   normalizeSite,
+  normalizeUnverifiedCms,
   normalizeWebsitePlan,
   publicClientAdmin,
   publicLocalBlog,
@@ -77,11 +78,11 @@ export function getSiteByDomain(domain) {
 }
 
 /**
- * Config a client CMS reads. includeAdmin adds the client admin contact and a pending admin
- * password hash; HTTP callers set it only for a request that carries the site's valid credential
- * (lib/site-credentials.js), never for a site key or domain alone.
+ * Config a client CMS reads. includeAdmin (off unless a caller turns it on) adds the client admin
+ * contact and a pending admin password hash; HTTP callers turn it on only for a request that
+ * carries the site's valid credential (lib/site-credentials.js), never for a site key or domain alone.
  */
-export function getSiteConfig(siteKeyOrDomain, byDomain = false, { includeAdmin = !byDomain } = {}) {
+export function getSiteConfig(siteKeyOrDomain, byDomain = false, { includeAdmin = false } = {}) {
   const site = byDomain ? getSiteByDomain(siteKeyOrDomain) : getSiteByKey(siteKeyOrDomain);
   if (!site) return null;
   const config = {
@@ -272,13 +273,18 @@ export function updateSite(id, patch = {}) {
   return { ok: true, site: publicSite(sites[i]) };
 }
 
+/** An unverified heartbeat that repeats the last report this soon is not written again. */
+const UNVERIFIED_HEARTBEAT_WRITE_GAP_MS = 60_000;
+
 /**
  * A client CMS heartbeat. A verified heartbeat (the HTTP route sets verified only when the call
  * carried the site's valid credential) updates the version and admin address the hub acts on, the
- * name of an unnamed site and the pending admin flag. An unverified one only marks the site as
- * seen and keeps what it reported in cms.unverified, for display.
+ * name of an unnamed site and the pending admin flag. An unverified one (the default) keeps what it
+ * reported in cms.unverified, for display, and marks the site as seen when marksSeen is on (the
+ * route turns it off for an enrolled site). An unverified heartbeat that repeats the last report
+ * within a minute is not written again.
  */
-export function recordHeartbeat(siteKey, { packageVersion, adminUrl, name, adminApplied } = {}, { verified = true } = {}) {
+export function recordHeartbeat(siteKey, { packageVersion, adminUrl, name, adminApplied } = {}, { verified = false, marksSeen = true } = {}) {
   const key = String(siteKey || '').trim();
   if (!key) return { ok: false, error: 'site_key required' };
   const sites = readSites();
@@ -286,13 +292,20 @@ export function recordHeartbeat(siteKey, { packageVersion, adminUrl, name, admin
   if (i === -1) return { ok: false, error: 'Site not found' };
   const at = new Date().toISOString();
   if (!verified) {
+    const previous = sites[i].cms.unverified || null;
+    const report = normalizeUnverifiedCms({ packageVersion, adminUrl, name, at });
+    const same = Boolean(previous) && ['packageVersion', 'adminUrl', 'name'].every((field) => previous[field] === report?.[field]);
+    const lastWrite = Date.parse(marksSeen ? sites[i].cms.lastSeenAt || '' : previous?.at || '');
+    if (same && Number.isFinite(lastWrite) && Date.now() - lastWrite < UNVERIFIED_HEARTBEAT_WRITE_GAP_MS) {
+      return { ok: true, verified: false, written: false, site: publicSite(sites[i]) };
+    }
     sites[i].cms = normalizeCmsMeta({
       ...sites[i].cms,
-      lastSeenAt: at,
-      unverified: { packageVersion, adminUrl, name, at },
+      ...(marksSeen ? { lastSeenAt: at } : {}),
+      unverified: report,
     });
     writeSites(sites);
-    return { ok: true, verified: false, site: publicSite(sites[i]) };
+    return { ok: true, verified: false, written: true, site: publicSite(sites[i]) };
   }
   sites[i].cms = normalizeCmsMeta({
     ...sites[i].cms,

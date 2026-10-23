@@ -22,7 +22,7 @@ test('createSite from tier 3 defaults ecommerce and catalog type', () => {
   assert.equal(site.ecommerceCatalogType, 'menu');
   assert.equal(site.cms.githubRepo, 'damianhch/website---mong-sushi');
 
-  const config = hub.getSiteConfig(site.site_key);
+  const config = hub.getSiteConfig(site.site_key, false, { includeAdmin: true });
   assert.equal(config.ecommerceCatalogType, 'menu');
   assert.equal(config.websitePlan, 'tier-3-ecommerce');
 });
@@ -58,7 +58,7 @@ test('heartbeat stores package version and lastSeenAt', () => {
   const result = hub.recordHeartbeat(site.site_key, {
     packageVersion: '1.1.0',
     adminUrl: 'https://shop.no/admin',
-  });
+  }, { verified: true });
   assert.equal(result.ok, true);
   assert.equal(result.site.cms.packageVersion, '1.1.0');
   assert.equal(result.site.cms.adminUrl, 'https://shop.no/admin');

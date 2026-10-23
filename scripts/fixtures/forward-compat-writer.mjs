@@ -26,7 +26,7 @@ done.push('updateSalesClient(hubSite)');
 hub.updateSite('fc-site', { name: 'Touched site' });
 done.push('updateSite');
 if (typeof hub.recordHeartbeat === 'function') {
-  hub.recordHeartbeat('fc-site-key', { packageVersion: '2.2.0' });
+  hub.recordHeartbeat('fc-site-key', { packageVersion: '2.2.0' }, { verified: true });
   done.push('recordHeartbeat');
 }
 if (typeof hub.reconcileDeliveryPhases === 'function') {

@@ -105,7 +105,7 @@ test('updateSite: a password hash or pending flag in a site patch is ignored', a
   assert.equal(admin.name, 'Via site patch', 'other client admin fields still update');
   assert.equal(admin.passwordHash, oldHash);
   assert.equal(admin.pendingSync, false);
-  assert.equal(hub.getSiteConfig('p'.repeat(32), false).pendingAdmin, null, 'nothing is handed to the CMS');
+  assert.equal(hub.getSiteConfig('p'.repeat(32), false, { includeAdmin: true }).pendingAdmin, null, 'nothing is handed to the CMS');
 });
 
 test('data/hub.js has no rule of its own: it re-exports this one, under the names other hub code uses', () => {

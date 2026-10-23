@@ -166,7 +166,8 @@ test('site config by domain never carries admin data', async () => {
     assert.ok(byDomain);
     assert.equal(byDomain.pendingAdmin, undefined);
     assert.equal(byDomain.clientAdmin, undefined);
-    const byKey = hub.getSiteConfig('k'.repeat(32), false);
+    assert.equal(hub.getSiteConfig('k'.repeat(32), false).pendingAdmin, undefined, 'a site key lookup carries no admin data unless asked for');
+    const byKey = hub.getSiteConfig('k'.repeat(32), false, { includeAdmin: true });
     assert.equal(byKey.pendingAdmin?.passwordHash, '$2a$10$abcdefghijklmnopqrstuv');
   } finally {
     if (previous === undefined) delete process.env.APP_DATA_DIR;

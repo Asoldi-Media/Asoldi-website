@@ -337,7 +337,7 @@ test('HS-1: a heartbeat from a site-key holder cannot move the sign-in link to a
   const created = hub.createSite({ name: 'Example shop', domain: 'shop.example' });
   const id = created.site?.id || created.id;
   const key = hub.getSiteById(id).site_key;
-  assert.equal(hub.recordHeartbeat(key, { packageVersion: '2.2.1', adminUrl: 'https://elsewhere.example/admin' }).ok, true);
+  assert.equal(hub.recordHeartbeat(key, { packageVersion: '2.2.1', adminUrl: 'https://elsewhere.example/admin' }, { verified: true }).ok, true);
   const app = express();
   app.use(express.json());
   const adminAuth = (req, _res, next) => { req.admin = { username: 'staff-one' }; next(); };
@@ -353,7 +353,7 @@ test('HS-1: a heartbeat from a site-key holder cannot move the sign-in link to a
     const row = registered.store().auditLog().at(-1);
     assert.equal(row.originFrom, 'domain');
     assert.equal(row.ignoredAdminHost, 'elsewhere.example', 'the ignored report is noted');
-    hub.recordHeartbeat(key, { adminUrl: 'http://www.shop.example/admin' });
+    hub.recordHeartbeat(key, { adminUrl: 'http://www.shop.example/admin' }, { verified: true });
     const www = await (await fetch(`${base}/api/hub/sites/${id}/cms-sso`, { method: 'POST' })).json();
     assert.equal(new URL(www.url).origin, 'https://www.shop.example', 'a plain-http report on the same host still gives https');
   } finally {
