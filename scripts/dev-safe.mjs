@@ -69,7 +69,8 @@ export function planDevSafe({ argv = [], shellEnv = process.env, fileEnv = {}, r
     apiEnv.EGRESS_AUDIT_FILE = join(dataDir, 'egress.jsonl');
   }
   // Vite gets the shell env only: its config can inline env values into the browser bundle.
-  const uiEnv = { ...shellEnv, API_PROXY_TARGET: `http://127.0.0.1:${apiPort}` };
+  // HUB_DEV_SAFE=1 also makes vite.config.ts skip its loadEnv-based define.
+  const uiEnv = { ...shellEnv, API_PROXY_TARGET: `http://127.0.0.1:${apiPort}`, HUB_DEV_SAFE: '1' };
   for (const key of Object.keys(fileEnv)) {
     if (!(key in shellEnv)) delete uiEnv[key];
   }
