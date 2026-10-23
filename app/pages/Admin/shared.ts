@@ -633,6 +633,52 @@ export type SalesMyphonerMeta = {
 
 export type SalesProduct = 'asoldi' | 'ssu';
 
+/** lib/fireflies-recording-state.js RECORDING_STATES: what happened to one booked meeting's recording. */
+export type FirefliesRecordingState =
+  | 'scheduled'
+  | 'dispatched'
+  | 'recording'
+  | 'ended'
+  | 'not-admitted'
+  | 'missing'
+  | 'empty'
+  | 'declined';
+
+/** `recording` on a live: placeholder row (null on ordinary transcript rows). */
+export type SalesMeetingRecording = {
+  state: FirefliesRecordingState;
+  message?: string;
+  attempts?: number;
+  dispatchedAt?: string;
+  verifiedAt?: string;
+  lastSeenAt?: string;
+  endedAt?: string;
+  missingAt?: string;
+  alertedAt?: string;
+  checkedAt?: string;
+  ffMeetingId?: string;
+  sessionKey?: string;
+};
+
+/** client.liveRecordings: one booked online slot from 30 minutes before start to 2 hours after its end. */
+export type SalesLiveRecording = {
+  slotKey: string;
+  kind: 'sales' | 'workshop' | 'iteration' | 'action';
+  startAt: string;
+  meetLink: string;
+  state: FirefliesRecordingState;
+  attempts: number;
+  lastAttemptAt: string;
+  verifiedAt: string;
+  message: string;
+  nextAttemptAt: string;
+  canResend: boolean;
+  sessionKey: string;
+  title: string;
+  lastSeenAt: string;
+  hasTranscript: boolean;
+};
+
 export type SalesClientMeeting = {
   meetingId: string;
   title: string;
@@ -655,6 +701,21 @@ export type SalesClientMeeting = {
   forSalesMeeting?: boolean;
   purpose?: 'sales' | 'workshop' | 'iteration' | '';
   hasVideo?: boolean;
+  /** Booked slot the row belongs to: sales:<ms>, workshop:<ms>, iteration:<ms> or action:<id>. */
+  slotKey?: string;
+  recording?: SalesMeetingRecording | null;
+  /** A live: row that stands in for a booked meeting until its real recording arrives. */
+  placeholder?: boolean;
+  /** Set on a shorter or empty copy of another recording of the same meeting (that one's meetingId). */
+  duplicateOf?: string;
+  /** The stored copy is Fireflies' live captions (the meeting is on, or the finished copy has not come yet). */
+  partial?: boolean;
+  /** Fireflies finished this recording and nothing was said ("tomt opptak"). */
+  emptyFinal?: boolean;
+  /** The transcript is still on its way (never true for ever: false once Fireflies is done or gave up). */
+  pendingTranscript?: boolean;
+  /** Sentences in the stored copy ('' when nobody counted). */
+  sentenceCount?: number | '';
 };
 
 export type OfferProduct = {
@@ -828,6 +889,8 @@ export type SalesClient = {
   calendar: SalesCalendarMeta;
   /** Fireflies meetings linked to this client (auto-matched or linked by admin). */
   meetings?: SalesClientMeeting[];
+  /** Is Fireflies in each booked online meeting right now (lib/fireflies-live-sessions.js presentLiveRecordings). */
+  liveRecordings?: SalesLiveRecording[];
   lockedOfferMeetingId?: string;
   websiteImport: SalesWebsiteImportMeta;
   makerRun: SalesMakerRunMeta;

@@ -125,26 +125,202 @@ For an offer: tier contract when only a tier is present; admin-verified summary 
 
 ## Fireflies meeting data
 
-* Fred (`fred@fireflies.ai`) is invited on the Google Calendar event only when the
-  confirmation is actually sent — after a sales rep is assigned. Silent MyPhoner /
-  unassigned calendar creates keep him off the attendee list so Google does not
-  save-without-sending. If he was already saved on the event, confirmation send
-  removes and re-adds him so Fireflies gets a real invite.
-* Calendar sync often never lists sales-page events in Fireflies Upcoming (the
-  confirmation From address is Resend, not the Google organizer). At meeting
-  start Asoldi also calls Fireflies `addToLiveMeeting` with the Meet link so Fred
-  joins even when Upcoming is empty. Retries stay under the API cap (3 / 20 min).
-* Webhook `POST /api/webhooks/fireflies?token=…` (`lib/fireflies-webhook.js`) stores the meeting record and runs
-  `lib/fireflies-client-match.js`: attendee e-mail = `contactEmail` (+70), attendee domain = client website (+30),
-  host = client’s rep (+15), start within 45 min / 3 h of `meetingAt` (+35 / +25), contact name / business name in
-  title or attendees (+25 / +20). `high ≥ 70`, `medium ≥ 40`; ties are downgraded so a human confirms.
-  Matched meetings land in `client.meetings[]`; the notify e-mail still goes to `FIREFLIES_NOTIFY_EMAIL`.
+* Live join records every booked online meeting (`lib/fireflies-live-sessions.js`, a 60 s loop). Each sales
+  meeting, workshop or iteration Møte and recorded Møte action with a real Meet link is one session (room +
+  start time), built from the booking itself: no confirmation, calendar guest, "Møtet hatt" tick or done mark
+  inside the meeting's window stops it. Two slots on one room and start share one bot.
+  * The bot goes in with `addToLiveMeeting` (duration 120 min, the documented maximum) from 3 minutes before
+    start. Fireflies' answer only means "dispatched": the bot is an anonymous guest someone in the Meet has to
+    let in. Optional `FIREFLIES_LIVE_JOIN_ONE_BOT=1` (default off) is for a Fireflies plan that runs one bot at
+    a time: the bot then leaves one minute before the next booked meeting's send, counting only meetings that
+    start after this one's booked time.
+  * From the first send the loop looks at Fireflies `active_meetings` once a minute. A bot not seen is sent
+    again at T+1, T+5 and then every 10 minutes until T+30 (at most 5 sends), once more if it drops out early,
+    and once near its end time while the meeting runs on. Never seen: `not-admitted`. A bot in the room before
+    T-3 belongs to an earlier meeting there; one room gets at most one knock per 4 minutes, a rep's "send
+    again" included. A rejoin after an early leave keeps the card on "ended" unless the bot is seen again.
+  * Every send shares one account-wide budget of 3 calls per rolling 20 minutes (Fireflies' limit), kept with
+    the sessions in `fireflies-live-sessions.json`. First sends go before retries; a retry or manual send waits
+    while first sends due in the next 20 minutes need the budget. At the same start, a meeting the client was
+    e-mailed goes first.
+  * Request handlers only record the booking and kick the loop. A moved meeting keeps its Meet room; the new
+    time is a new session, so the bot is sent in again.
+  * The card gets `client.liveRecordings` (state per slot); `POST /api/admin/sales/:id/fireflies/live-join`
+    (`{ slotKey }`) queues "send Fireflies again" through the same budget. The `live:` placeholder in
+    `client.meetings` is written once per session, only after an accepted send, and carries the same
+    `recording` state; intake's `missing`/`empty` and a rep's `declined` on it are never overwritten (only the
+    bot back in the room, or an accepted "send again", reopens `missing`/`empty`). A send an older hub made
+    (the slot's stamp or placeholder) is picked up and checked, not reported as never sent.
+* Fred (`fred@fireflies.ai`) goes on a Google Calendar event only when the mailbox hosting it is known and owns
+  the hub's Fireflies key (`lib/fireflies-key-owner.js`; asked once per 6 hours, damian@asoldi.com until then).
+  On another rep's event he would start that rep's own Fireflies, whose recording the hub cannot read. He is
+  still only added when the confirmation is actually sent, and recording never depends on him.
+* Webhook `POST /api/webhooks/fireflies?token=…` (`lib/fireflies-webhook.js`) stores the meeting record and links
+  it to a client by its Meet room (see "Fireflies matching" below). Matched meetings land in
+  `client.meetings[]`; the notify e-mail still goes to `FIREFLIES_NOTIFY_EMAIL`.
   A failing notify e-mail no longer fails the webhook (record + match are the primary output).
+  A V2 `meeting.bot_joined` event marks the live-join session on that room as recording (one cheap read
+  finds the room).
 * Media (video / audio / transcript) is downloaded in the background to `<data>/fireflies-media/<meetingId>/`
   (`lib/fireflies-media.js`, cap `FIREFLIES_MEDIA_MAX_MB`, default 400) and streamed to admins via
   `GET /api/admin/fireflies/meetings/:id/media/:kind?token=…`.
 * Admin: list / link / unlink / refresh under `/api/admin/fireflies/meetings…`; UI in
   `MeetingDataPanel.tsx` (Tilbud → Møtedata tab and the unmatched list).
+
+### Fireflies matching
+
+Every link path (webhook, pull ingest, Tilbud paste, calendar session, admin, the meet-link backfill,
+the watchdog) goes through `linkFirefliesMeeting` in server.js, which hands it to
+`lib/fireflies-linking.js` (the same module unlinks, excludes, sets a purpose and runs the backfill).
+`client.meetings` is the one record of who holds a recording; the stored record's `match` says the same.
+
+* **Client.** `lib/fireflies-client-match.js`: a person's link first (a card that holds it as `manual`,
+  `admin:*`, `sales:*` or `developer:*`, or with a picked purpose; else the stored `pin`), then the client
+  whose booked Meet room Fireflies' `meeting_link` is. A room two clients hold goes to the one whose
+  booked slot the recording started in; with none, existing links stay. A client in the stored
+  `excludedClientIds` never gets it back automatically. Title, e-mail and host are never used. An
+  automatic link that would break one of these rules is refused (`linkStoredTranscriptToClient` then
+  answers null).
+* **Slot and purpose.** `lib/fireflies-slots.js`: each booked meeting is a slot (`sales:<ms>`,
+  `workshop:<ms>`, `iteration:<ms>`, `action:<id>`). The room decides the purpose; time only picks between
+  slots sharing a room. A recording gets the slot key only when it starts inside the slot's session window
+  (half an hour before the booked start to the session's end, as the watchdog). A room booked again days
+  later (more than three hours from the recording and outside its window) does not take a recording off
+  the purpose and slot it was linked with. The recording of the bot capture saw in a placeholder's session
+  (`recording.ffMeetingId`) is that slot's. Without a booked room it keeps the purpose it was linked with;
+  a person's link (Tilbud paste, admin) inside exactly one slot's window is that slot's, so a meeting held
+  in another room covers its placeholder; an earlier room of the client is the sales meeting's only for a
+  recording with no purpose; one with nothing takes the nearest slot's purpose within three hours, without
+  a key. Purpose and `slotKey` are stored on the row and in `match`; the backfill re-tags rows linked
+  before these rules.
+* **Placeholders.** A live-join placeholder is dropped (and hidden on the card) only by a recording with
+  talk on its own slot that starts in its window, one a person put on that slot, or the bot's own
+  recording, and only when it has at least 10 sentences (the offer's `MIN_MEETING_CONTEXT_LINES`): a
+  "hallo?" in an open room is a fragment, not the meeting. Live captions, a silent copy, a recording of
+  another slot or of none never do, and a placeholder past its deadline stays (the watchdog marks it
+  missing). A placeholder from before slots and start times (`live:<client>:open`) goes once a recording of
+  its purpose has that much talk. A placeholder has no Fireflies link and is left out of meeting counts.
+  This one "covered" rule (`lib/fireflies-cover.js`, read with the stored copies) decides everywhere:
+  the card, capture (a covered session gets no rejoin and no new placeholder), "Marker uten opptak" (409
+  only when covered), the watchdog and "Møter uten opptak". A fragment or live captions on the card leave
+  the meeting followed and reported.
+* **Card rows.** `presentClientMeetings` adds `placeholder`, `duplicateOf`, `partial` (live captions),
+  `emptyFinal` (Fireflies finished it and nothing was said), `pendingTranscript` (still on its way, never
+  for ever: `meetingTranscriptPending`, shared with the offer page) and the stored copy's `sentenceCount`.
+  The activity log uses the card's `duplicateOf` as it is and gives placeholders `firefliesUrl` and `url` ''.
+  Tilbudsgjennomgang and the Tilbud page get the same rows (`compactOfferClient`, placeholders left out;
+  Bytt opptak's list carries `duplicateOf`, `emptyFinal` and `pendingTranscript` too). Every screen hides
+  copies (lists of recordings behind "Vis duplikater") and says "tomt opptak", "venter på transkript" or
+  "ingen transkript" (given up, or too old to wait for) from the row itself; a placeholder the hub still
+  lists is never hidden by the app.
+* **One meeting, two recordings.** Recordings in one room that start within 20 minutes, overlap, or follow
+  within 5 minutes of the other's end are one meeting, unless they are two booked slots (the sales
+  meeting and a Møte right after it); the one with the most talk (sentences, then minutes) is the primary
+  and the rest carry `duplicateOf`. Offers seed one per meeting and only sales recordings (workshop and
+  iteration ones are listed, not ticked), auto-fill and the meeting counts count meetings, and the
+  workshop / iteration slots, Møte actions and the offer lock never move to a copy with less talk; the
+  backfill moves a slot that already names a copy to its primary. A booked Møte action only takes a
+  recording within three hours of its time.
+* **People win.** The backfill never moves or unlinks a person's link, a pin brings a recording back to
+  its client, and with no stored record nothing but the old hub's title and name links is cleaned up. A
+  store with no records while cards hold recordings is not read as proof: the run is skipped (logged once,
+  and the owner is e-mailed once, see Health).
+* **Moves clean up.** The client a recording leaves loses it from its slots, actions, open offer and offer
+  lock. The lock never names a placeholder or a recording without talk: it follows the sales recording
+  with talk (one a person picked as the sales meeting first), and the backfill re-points a lock left on a
+  silent fragment or on a recording the old hub moved to another client. The offer page only honours a
+  lock that is on the card.
+* **Routes.** `POST /api/admin/sales/:id/meetings/:meetingId/purpose` `{ purpose: 'sales' | 'workshop' |
+  'iteration' | '' }` (the client's rep or admin) is a person's purpose pick, kept by every automatic pass
+  (`''` goes back to automatic). It puts the recording on the booked slot of that purpose the same day (12
+  hours either way, so it covers that slot's placeholder); a recording days from any such slot gets the
+  purpose and no slot, so a follow-up never hides a booked meeting that was not recorded. A "Salgsmøte"
+  pick of a recording with talk moves the offer lock to it. `POST
+  /api/admin/fireflies/meetings/:meetingId/exclude` `{ clientId }` ("Ikke denne kunden", the client's rep
+  or admin) takes it off that client for good, also a card row that was never stored (a bare stored record
+  keeps the exclusion); the admin unlink does the same for the client that held it. A rep's Tilbud paste
+  of a recording on another client answers 409 with that client's name, and a rep's title search only
+  sees recordings on no card or this one.
+
+### Fireflies transcript intake
+
+The pull ingest (`lib/fireflies-ingest.js`, one tick a minute when `firefliesIngest` runs) is what
+brings every recording in; the webhook only makes it sooner.
+
+* **List.** The newest 20 transcripts every tick, stored in one write (none when nothing changed).
+  Every 10 minutes, or at once when that page holds nothing known, it pages through
+  `transcripts(fromDate)` from a day before the last good scan (14 days on the first run) until a
+  page holds only known, unchanged ids, so an outage of any length is caught up.
+  `fireflies-ingest-state.json` keeps where the scan left off, and the owner-alert stamps.
+* **Final copies.** Each stored meeting keeps Fireflies' `isLive`, `summaryStatus`, `silent` and a
+  `final` flag. A copy is final when it is not live and `summary_status` is processed, skipped or
+  failed. Without a status: a row stored before the hub kept this state is final only with a
+  summary (otherwise it gets one fetch, which is how summaries that came after the old first
+  fetch get in, however old the meeting); fetched talk is final 30 minutes after the hub had it.
+  Copies that are not final are fetched again with a doubling pause (`fetch.nextFetchAt`; polls
+  of a running meeting every 3 minutes do not count) and given up a week after first seen; a new
+  `summary_status` in the list queues one fetch at once. Final copies are never fetched again,
+  silent empty ones included. A live or still-processing copy never replaces finished text, and
+  a client card that shows less than the stored copy (a summary that came later) is relinked.
+* **Live captions.** `transcript(id)` on a running meeting (a live link pasted on Tilbud) returns
+  partial captions. They are stored with `partial: true`, and stay so after the call, when
+  Fireflies answers with no sentences for a few minutes (`liveEndedAt` marks the end), until a copy
+  that is not live replaces them or Fireflies calls the meeting done. Partial copies are never
+  final, never e-mailed, never linked to a client that does not already hold them, never the basis
+  of a contract-letter fill, and get no media download while live.
+* **E-mail.** The recording e-mail waits for the final copy (or 20 minutes after the hub had it as it
+  is, counted from the end of the call for a pasted live link) and is retried up to five times, ten
+  minutes apart, when the send fails (`fireflies-notified.json` keeps
+  `{ at, state: 'sending' | 'sent' | 'failed', attempts }`).
+* **Media.** `media.savedAt` is set only when a file is on disk. A failed download is retried with
+  fresh signed links and a doubling pause for two days; `too-large` and `disabled` are final.
+  Nothing downloads while the data disk has less than `FIREFLIES_MEDIA_MIN_FREE_MB` free (optional,
+  default 2048, `0` turns the check off). `transcript.txt` and `summary.json` are written again
+  once the summary is in. Nothing is deleted automatically.
+* **Missing recordings.** `lib/fireflies-recording-watchdog.js` checks every live-join placeholder
+  whose meeting is over. While capture still sees the bot (`recording.state = 'recording'` with a
+  `lastSeenAt` under 10 minutes old) the meeting is on, however long it runs. It looks by the bot's
+  id, else by the booked Meet link with a start between 30 minutes before the booked start and the
+  session's end (sales rooms are reused, so a later meeting there is only offered as a candidate,
+  like a same-title recording in another room). A transcript that would cover the placeholder by the
+  card's rule is linked (one that would land on another booked slot in the room is only offered); live
+  captions are only "not yet" and are not stored from here. A finished one with only a few sentences
+  is linked so the rep sees it, but the meeting is not recorded. A recording a person excluded from this
+  client, pinned to another client or holds as their link on another card is neither found nor offered,
+  and a link the hub refuses counts as nothing found (no "funnet og koblet"). The session ends at
+  start + booked (`durationMinutes` on the placeholder, else 60) or later when capture saw the bot later
+  (`lastSeenAt`, `endedAt`); nothing by that end + 90 minutes sets `'missing'` and e-mails
+  `FIREFLIES_NOTIFY_EMAIL` and the owning rep once, and so does a recording Fireflies has still not
+  finished three hours after that. Only a silent or too short recording on the room by then sets
+  `'empty'`, with its own one e-mail (never sooner: a bot that sat alone before the meeting leaves such a
+  fragment).
+  A missing or empty meeting is looked for hourly for 48 hours, so a late transcript still links.
+  Rate limits and network errors never make a meeting missing. Meetings the bot never got into
+  have a `not-admitted` placeholder too, and are followed the same way.
+  `POST /api/admin/sales/:id/fireflies/recording` `{ meetingId | slotKey, state: 'declined' | 'open' }`
+  is "Marker uten opptak" from the e-mail and its undo. The states, every e-mail (the rep's lobby
+  alert included), who gets it and the routes are in `docs/fireflies-recording.md`.
+* **Health.** `GET /api/admin/fireflies/ingest-status` (admin) returns `firefliesIngestStatus()`: last
+  tick, last good pull, last error, failures in a row, the Fireflies rate-limit state, pending
+  fetches, summaries still processing, missing recordings, the catch-up scan's and the watchdog
+  lookups' last success and error, whether safe mode blocks the pull, and where each Fireflies
+  file was read from. The owner (`FIREFLIES_ALERT_EMAIL`, optional, default `damian@asoldi.com`)
+  gets one e-mail per 12 hours when the pull fails more than 10 times in a row, has not succeeded
+  for 30 minutes, the catch-up scan or the watchdog lookups have failed for an hour (try-later
+  pauses do not count), or the archive or the e-mail list cannot be read. The stamp is kept in
+  memory and on disk, so a disk that refuses the write does not repeat the e-mail. An archive that reads
+  empty while cards hold recordings (the meet-link backfill stands still) is e-mailed once each time it
+  happens ("Fireflies: arkivet er tomt", its own stamp `archiveEmptyAlertAt`, cleared once the archive
+  holds meetings again), never once per tick. An archive file that is gone while its backup is not is
+  read from `backups/` (the System page says so) and written back from there by the next write, so
+  its exclusions and pins hold and the backup is never replaced by the list step's first page; one
+  gone with no backup at the start of an ingest tick counts as empty for that tick, before the list
+  step writes into it.
+* While the archive cannot be read at all, the meet-link backfill does not run: an empty read would
+  unlink every recording. Pasting a link on Tilbud while Fireflies asks the hub to wait answers
+  "Fireflies ber oss vente litt" instead of "Fant ikke møtet".
+* The contract-letter fill runs on its own loop behind the same safe-mode switch, and a client
+  whose fill changes nothing waits longer each time until its recordings or offer change.
 
 ## Data
 
@@ -156,11 +332,14 @@ non-sent one). Every transition is appended to `offer.history`.
 Sales (owner or admin): `GET/PUT /api/admin/sales/:id/offer`, `POST …/offer/new`, `POST …/offer/fill`,
 `POST …/offer/preview`, `POST …/offer/approve-preview`, `POST …/offer/request-review`,
 `GET …/offer/contract.pdf`, `POST …/offer/send`. Sender profile: `GET/PUT /api/admin/me/sender` (admin).
+Fireflies on the card (owner or admin): `POST /api/admin/sales/:id/meetings/:meetingId/purpose`,
+`POST /api/admin/fireflies/meetings/:meetingId/exclude` (`{clientId}`).
 
 Admin only: `GET /api/admin/offers[?status=]`, `GET/PUT /api/admin/offers/:id`,
 `POST …/:id/client-intent` (refresh the “hva kunden vil ha” briefing), `POST …/:id/reflect-contract`, `PUT …/:id/contract`, `POST …/:id/verify`, `POST …/:id/reopen` (`{toDraft}`),
 `GET …/:id/contract.pdf`, `GET /api/admin/offers/contract-template/:tierId.pdf`,
-`GET /api/admin/fireflies/meetings[?unmatched=1|clientId=]`, `GET/POST …/:meetingId[/link|/unlink|/refresh]`.
+`GET /api/admin/fireflies/meetings[?unmatched=1|clientId=]` (unmatched: on no client's card),
+`GET/POST …/:meetingId[/link|/unlink|/refresh]`.
 
 ## Tests
 

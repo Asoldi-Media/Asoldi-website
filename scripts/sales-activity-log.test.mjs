@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   attachFirefliesToMatchingAction,
   buildClientActivityLog,
@@ -181,4 +182,22 @@ test('open offers drop live-join stubs once a real transcript exists', () => {
   }, row);
   assert.ok(!seeded.includes('live:c-log:open'));
   assert.deepEqual(seeded, ['ff-sales', 'ff-plan']);
+});
+
+test('the log cover can show a copy of a meeting when asked; the log itself counts each meeting once', () => {
+  const room = 'https://meet.google.com/sales-meet-abc';
+  // Card rows as the hub presents them: the server's duplicateOf names the copy.
+  const rows = [
+    { meetingId: 'ff-main', title: 'Salgsmøte Test AS', startedAt: MEETING_AT, meetLink: room, hasTranscript: true, sentenceCount: 300, purpose: 'sales', duplicateOf: '' },
+    { meetingId: 'ff-copy', title: 'Salgsmøte Test AS', startedAt: '2026-10-02T12:03:00.000Z', meetLink: room, hasTranscript: true, sentenceCount: 4, purpose: 'sales', duplicateOf: 'ff-main' },
+  ];
+  const ids = (log) => log.sections.flatMap((section) => section.rows).filter((row) => row.meeting).map((row) => [row.kind, row.meeting.meetingId]);
+  const plain = buildClientActivityLog(client({ meetings: rows }));
+  assert.deepEqual(ids(plain).map(([, id]) => id), ['ff-main']);
+  const withCopies = buildClientActivityLog(client({ meetings: rows }), { includeDuplicates: true });
+  assert.ok(ids(withCopies).some(([kind, id]) => kind === 'meeting' && id === 'ff-copy'), 'the copy is a row of its own');
+  assert.equal(ids(withCopies).filter(([, id]) => id === 'ff-main').length, 1);
+  assert.equal(withCopies.meetingCount, plain.meetingCount, 'still one recorded meeting');
+  const cover = readFileSync(new URL('../app/pages/Admin/sections/ClientActivityLogCover.tsx', import.meta.url), 'utf8');
+  assert.match(cover, /buildClientActivityLog\(current, \{ includeDuplicates: true \}\)/);
 });

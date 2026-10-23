@@ -26,6 +26,11 @@ import {
   normalizeClientSearchText,
 } from '../clientSearch';
 import { AdminRequestInbox } from './AdminRequestInbox';
+import { ClientRecordingsPanel } from './ClientRecordingsPanel';
+import { FirefliesKnockStrip, useKnockTitle } from './FirefliesKnockStrip';
+import { FirefliesLiveStatus } from './FirefliesLiveStatus';
+import { freshClientIsStale, knockingMeetings, mergeFreshClient } from './firefliesRecording';
+import { useLiveRecordingRefresh } from './useLiveRecordingRefresh';
 import { WorkshopAdminActionRow } from './WorkshopAdminActionRow';
 import { WebsiteDueField } from './WebsiteDueField';
 import { WorkshopNeedsPanel } from './WorkshopNeedsPanel';
@@ -215,6 +220,7 @@ function AdminCardDetails({
       />
       <InboxBotPanel client={client} />
       <WorkshopNeedsPanel clientId={client.id} />
+      <ClientRecordingsPanel client={client} onClient={onClient} isAdmin />
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"
@@ -481,6 +487,8 @@ function AdminFocusCard({
           </div>
         </div>
 
+        <FirefliesLiveStatus client={client} onClient={onClient} />
+
         <div className="rounded-xl border border-white/10 bg-black/20 p-2.5" data-admin-card-actions>
           <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-400">Handlinger</div>
           <WorkshopAdminActionRow client={client} onClient={onClient} />
@@ -516,9 +524,12 @@ function AdminFocusCard({
   );
 }
 
-export function AdminBoardSection() {
+/** `active`: false while Manage clients shows another tab (this board stays mounted, hidden). */
+export function AdminBoardSection({ active = true }: { active?: boolean } = {}) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [clients, setClients] = useState<SalesClient[]>([]);
+  // Bumped by every save on this board: a list read that left before it is dropped.
+  const boardGenRef = useRef(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -555,7 +566,9 @@ export function AdminBoardSection() {
   }, [headerPanel]);
 
   const loadClients = useCallback(async () => {
+    const gen = boardGenRef.current;
     const data = await request('/admin/sales');
+    if (gen !== boardGenRef.current) return;
     const next = Array.isArray(data.clients) ? data.clients as SalesClient[] : [];
     setClients(next);
     setInboxPendingContracts(Number(data.inboxPendingContracts) || next.reduce((sum, client) => sum + (client.inboxBot?.pendingContracts || 0), 0));
@@ -684,8 +697,28 @@ export function AdminBoardSection() {
   const unreadRequests = requestThreads.reduce((sum, row) => sum + row.unreadForAdmin, 0);
 
   function replaceClient(next: SalesClient) {
-    setClients((prev) => prev.map((entry) => (entry.id === next.id ? next : entry)));
+    boardGenRef.current += 1;
+    // A route that leaves liveRecordings out must not blank the Fireflies banner until the next read.
+    setClients((prev) => prev.map((entry) => (entry.id === next.id ? mergeFreshClient(entry, next) : entry)));
   }
+
+  /** The live refresh's read: never over a save that landed after it left. */
+  function applyRefreshedClient(next: SalesClient) {
+    setClients((prev) => prev.map((entry) => (
+      entry.id === next.id && !freshClientIsStale(entry, next) ? mergeFreshClient(entry, next) : entry
+    )));
+  }
+
+  // Workshops and iterations are held from this board: follow a live meeting's Fireflies state.
+  useLiveRecordingRefresh({
+    clients,
+    nowMs,
+    enabled: active,
+    onClient: applyRefreshedClient,
+    reloadAll: loadClients,
+    generation: () => boardGenRef.current,
+  });
+  useKnockTitle(active && knockingMeetings(clients, nowMs).length > 0);
 
   function toggleHeaderPanel(panel: HeaderPanel) {
     setHeaderPanel((current) => (current === panel ? null : panel));
@@ -751,6 +784,8 @@ export function AdminBoardSection() {
             </button>
           </div>
         </div>
+        {/* In the sticky header, so a knock shows whichever client the board has open. */}
+        <FirefliesKnockStrip clients={clients} nowMs={nowMs} onOpenClient={(client) => showOnBoard(client.id)} />
       </header>
 
       <FocusHeaderPopup

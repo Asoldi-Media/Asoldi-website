@@ -70,11 +70,11 @@ test('server.js starts every background job through runBackgroundJobs, each one 
   assert.match(body, /runBackgroundJobs\(\{/);
   const names = [...body.matchAll(/^ {4}([A-Za-z]+): /gm)].map((m) => m[1]);
   assert.deepEqual(names.slice().sort(), Object.keys(BACKGROUND_JOBS).sort(), 'jobMap keys == BACKGROUND_JOBS keys');
-  for (const loop of ['startSalesReminderLoop', 'startWorkshopDeskEmailLoop', 'startFirefliesLiveJoinLoop', 'startInboxBotLoop', 'startFirefliesTranscriptIngestLoop', 'startMyphonerWebhookReconcileLoop', 'startMyphonerRecordingRetryLoop', 'startSalesGeocodeWarmupLoop', 'startLanPreviewAutoPublishLoop', 'startMapsRankingLoop']) {
+  for (const loop of ['startSalesReminderLoop', 'startWorkshopDeskEmailLoop', 'startFirefliesLiveJoinLoop', 'startInboxBotLoop', 'startFirefliesTranscriptIngestLoop', 'startOfferLetterFillLoop', 'startMyphonerWebhookReconcileLoop', 'startMyphonerRecordingRetryLoop', 'startSalesGeocodeWarmupLoop', 'startLanPreviewAutoPublishLoop', 'startMapsRankingLoop']) {
     assert.ok(body.includes(`${loop}()`), `${loop} is wired through the plan`);
   }
   const outside = source.slice(0, start) + source.slice(start + body.length);
-  assert.doesNotMatch(outside, /^\s*start(SalesReminder|WorkshopDeskEmail|FirefliesLiveJoin|InboxBot|FirefliesTranscriptIngest|MyphonerWebhookReconcile|MyphonerRecordingRetry|SalesGeocodeWarmup|LanPreviewAutoPublish|MapsRanking)Loop\(\);/m, 'no loop is started outside the plan');
+  assert.doesNotMatch(outside, /^\s*start(SalesReminder|WorkshopDeskEmail|FirefliesLiveJoin|InboxBot|FirefliesTranscriptIngest|OfferLetterFill|MyphonerWebhookReconcile|MyphonerRecordingRetry|SalesGeocodeWarmup|LanPreviewAutoPublish|MapsRanking)Loop\(\);/m, 'no loop is started outside the plan');
 });
 
 test('server.js: safe mode boots first, health reports it, ingest and prod logins are guarded', () => {
@@ -83,6 +83,8 @@ test('server.js: safe mode boots first, health reports it, ingest and prod login
   assert.equal(firstImport.trim(), "import './lib/safe-mode-boot.js';");
   assert.match(source, /safeMode: isSafeModeActive\(\)/);
   assert.match(source, /function scheduleFirefliesTranscriptIngest[^]*?if \(!safeModeAllows\('firefliesIngest'\)\) return null;/);
+  // The contract-letter fill left the ingest tick for its own loop, behind the same switch.
+  assert.match(source, /function scheduleOfferLetterFills\(\) \{[^]*?if \(!safeModeAllows\('firefliesIngest'\)\) return null;/);
   assert.match(source, /async function loginToProdAdmin\(\) \{\s*assertSafeModeAllows\('prodPublish'/);
   assert.match(source, /async function loginProdAdmin\(prodBase = ''\) \{\s*assertSafeModeAllows\('prodPublish'/);
   assert.match(source, /async function publishPreviewBridgeJob\(job = \{\}\) \{\s*assertSafeModeAllows\('prodPublish'/);

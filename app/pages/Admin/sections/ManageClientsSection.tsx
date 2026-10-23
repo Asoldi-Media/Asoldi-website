@@ -79,7 +79,7 @@ export function ManageClientsSection({
       ) : null}
       {opened.admin ? (
         <div className={view === 'admin' ? '' : 'hidden'} hidden={view !== 'admin'}>
-          <AdminBoardSection />
+          <AdminBoardSection active={view === 'admin'} />
         </div>
       ) : null}
     </div>

@@ -324,32 +324,41 @@ test('opening Tilbud does not wait for Fireflies GraphQL', async () => {
   assert.match(meetingGet, /refreshOfferClientMeetings/);
 });
 
+// The placeholder carries its slot (slotKey, startedAt) as the live join writes it; the stored
+// recording with talk in that slot's room and session covers it. The transcript is a meeting's worth
+// of lines: one or two sentences are a fragment and cover nothing (scripts/fireflies-slots.test.mjs).
 test('client card meetings show stored transcript text and hide live stubs', async () => {
   const hooks = await import('../lib/fireflies-webhook.js');
   const workshop = await import('../lib/workshop-meetings.js');
+  const meetingAt = '2026-09-18T10:00:00.000Z';
+  const startMs = Date.parse(meetingAt);
   hooks.storeFirefliesMeeting({
     meetingId: 'ff-card',
     title: 'Salgsmøte',
-    transcript: 'Kunde: vi vil ha ny nettside.',
+    startedAt: '2026-09-18T10:02:00.000Z',
+    transcript: Array.from({ length: 12 }, (_, index) => `Kunde: vi vil ha ny nettside, punkt ${index + 1}.`).join('\n'),
     meetingLink: 'https://meet.google.com/aaa-bbbb-ccc',
   });
   const shown = workshop.presentClientMeetings({
     id: 'c-card',
     agreedTime: true,
-    meetingAt: '2026-09-18T10:00:00.000Z',
+    meetingAt,
     meetings: [
       {
-        meetingId: 'live:c-card:open',
+        meetingId: `live:c-card:${startMs}`,
         title: 'Fireflies ble sendt inn',
+        startedAt: meetingAt,
         meetLink: 'https://meet.google.com/aaa-bbbb-ccc',
         hasTranscript: false,
         linkedBy: 'live-join',
         forSalesMeeting: true,
         purpose: 'sales',
+        slotKey: `sales:${startMs}`,
       },
       {
         meetingId: 'ff-card',
         title: 'Salgsmøte',
+        startedAt: '2026-09-18T10:02:00.000Z',
         meetLink: 'https://meet.google.com/aaa-bbbb-ccc',
         hasTranscript: false,
         linkedBy: 'meet-link',
@@ -359,31 +368,37 @@ test('client card meetings show stored transcript text and hide live stubs', asy
   });
   assert.equal(shown.some((row) => String(row.meetingId).startsWith('live:')), false);
   assert.equal(shown.find((row) => row.meetingId === 'ff-card')?.hasTranscript, true);
+  assert.equal(shown.find((row) => row.meetingId === 'ff-card')?.slotKey, `sales:${startMs}`);
 });
 
-test('client card hides a live stub when the transcript is on another owned Meet', async () => {
+test('client card hides a live stub when the transcript of its slot is on the fresh room', async () => {
   const { presentClientMeetings } = await import('../lib/workshop-meetings.js');
+  const meetingAt = '2026-10-08T14:00:00.000Z';
+  const startMs = Date.parse(meetingAt);
   const shown = presentClientMeetings({
     id: 'c-swap',
     agreedTime: true,
-    meetingAt: '2026-10-08T14:00:00.000Z',
-    calendar: { meetLink: 'https://meet.google.com/uss-ynky-nfw' },
+    meetingAt,
+    calendar: { meetLink: 'https://meet.google.com/new-room-def' },
     recordedMeetLinks: [
-      'https://meet.google.com/idy-uiyh-efh',
-      'https://meet.google.com/uss-ynky-nfw',
+      'https://meet.google.com/old-room-def',
+      'https://meet.google.com/new-room-def',
     ],
     meetings: [
       {
-        meetingId: 'live:c-swap:open',
-        meetLink: 'https://meet.google.com/idy-uiyh-efh',
+        meetingId: `live:c-swap:${startMs}`,
+        startedAt: meetingAt,
+        meetLink: 'https://meet.google.com/old-room-def',
         hasTranscript: false,
         linkedBy: 'live-join',
         forSalesMeeting: true,
         purpose: 'sales',
+        slotKey: `sales:${startMs}`,
       },
       {
         meetingId: 'ff-swap',
-        meetLink: 'https://meet.google.com/uss-ynky-nfw',
+        startedAt: '2026-10-08T14:04:00.000Z',
+        meetLink: 'https://meet.google.com/new-room-def',
         hasTranscript: true,
         linkedBy: 'meet-link',
         purpose: 'sales',
@@ -461,15 +476,27 @@ test('fireflies matcher: only the booked Google Meet owns the recording', () => 
   assert.equal(plan.moves[0].toClientId, 'khana-1');
   assert.deepEqual(plan.unlinks.map((row) => row.fromClientId), [jan.id]);
 
+  // A title link of the old hub with no stored record is still cleaned up (the archive has other
+  // meetings, so it was read); an automatic Meet link with no stored record is not evidence and stays.
   const fromListedLink = matcher.planFirefliesMeetLinkBackfill({
     clients: [{
       ...jan,
-      meetings: [{ meetingId: 'listed-rec', meetLink: khanaMeet, linkedBy: 'title' }],
+      meetings: [
+        { meetingId: 'listed-rec', meetLink: khanaMeet, linkedBy: 'title' },
+        { meetingId: 'auto-rec', meetLink: janMeet, linkedBy: 'auto' },
+      ],
     }, khana],
-    meetings: [],
+    meetings: [{ meetingId: 'other-rec', title: 'Et annet møte', meetingLink: 'https://meet.google.com/ooo-oooo-ooo' }],
   });
   assert.equal(fromListedLink.moves.length, 0);
-  assert.equal(fromListedLink.unlinks[0]?.fromClientId, jan.id);
+  assert.deepEqual(fromListedLink.unlinks.map((row) => [row.meetingId, row.fromClientId]), [['listed-rec', jan.id]]);
+  // An archive that yields nothing while cards hold recordings is unreadable or lost, not proof.
+  const emptyStore = matcher.planFirefliesMeetLinkBackfill({
+    clients: [{ ...jan, meetings: [{ meetingId: 'listed-rec', meetLink: khanaMeet, linkedBy: 'title' }] }, khana],
+    meetings: [],
+  });
+  assert.equal(emptyStore.skipped, 'empty-store');
+  assert.equal(emptyStore.unlinks.length, 0);
 
   const afterReschedule = matcher.matchMeetingToClients(
     { meetingLink: khanaMeet },

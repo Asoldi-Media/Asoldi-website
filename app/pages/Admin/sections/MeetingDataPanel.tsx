@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ExternalLink, Link2, Link2Off, Loader2, RefreshCw } from 'lucide-react';
+import { isPlaceholderMeetingId } from '../../../../lib/offer-meetings.js';
 import {
   firefliesMediaUrl,
   getFirefliesMeeting,
@@ -7,7 +8,8 @@ import {
   refreshFirefliesMeeting,
   unlinkFirefliesMeeting,
 } from '../../sales/emailApi';
-import { API, salesAuthHeaders } from '../shared';
+import { API, salesAuthHeaders, type SalesMeetingRecording } from '../shared';
+import { RecordingChip } from './MeetingRecordingControls';
 
 export type MeetingMediaInfo = {
   hasVideo: boolean;
@@ -222,14 +224,42 @@ export const MeetingCard: React.FC<MeetingCardProps> = ({
   );
 };
 
-type ClientMeetingCardProps = { meetingId: string; clients?: ClientOption[]; onChanged?: (next: StoredMeetingRow | null) => void };
+type ClientMeetingCardProps = {
+  meetingId: string;
+  clients?: ClientOption[];
+  onChanged?: (next: StoredMeetingRow | null) => void;
+  /** The client row of a live: placeholder, shown instead of a Fireflies record that does not exist. */
+  recording?: Pick<SalesMeetingRecording, 'state' | 'message'> | null;
+  title?: string;
+  when?: string;
+};
+
+/** A booked meeting with no Fireflies record behind it yet: its recording state, nothing to fetch or open. */
+function PlaceholderMeetingCard({ recording, title = '', when = '' }: Pick<ClientMeetingCardProps, 'recording' | 'title' | 'when'>) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-[#161616] p-4 text-sm text-gray-200 space-y-2">
+      <div className="min-w-0">
+        <div className="text-white font-medium truncate">{title || 'Booket møte'}</div>
+        {when ? <div className="text-xs text-gray-400">{when}</div> : null}
+      </div>
+      {recording?.state ? (
+        <RecordingChip state={recording.state} message={recording.message} />
+      ) : (
+        <p className="text-xs text-gray-400">Ingen Fireflies-opptak er koblet til dette møtet ennå.</p>
+      )}
+      {recording?.message ? <p className="text-xs text-gray-400">{recording.message}</p> : null}
+    </div>
+  );
+}
 
 /** Loads the full record (with transcript) for a client meeting reference. */
-export const ClientMeetingCard: React.FC<ClientMeetingCardProps> = ({ meetingId, clients, onChanged }) => {
+export const ClientMeetingCard: React.FC<ClientMeetingCardProps> = ({ meetingId, clients, onChanged, recording, title, when }) => {
   const [meeting, setMeeting] = useState<StoredMeetingRow | null>(null);
   const [error, setError] = useState('');
+  const placeholder = isPlaceholderMeetingId(meetingId);
 
   useEffect(() => {
+    if (placeholder) return undefined;
     let cancelled = false;
     getFirefliesMeeting(meetingId)
       .then((data) => {
@@ -241,8 +271,9 @@ export const ClientMeetingCard: React.FC<ClientMeetingCardProps> = ({ meetingId,
     return () => {
       cancelled = true;
     };
-  }, [meetingId]);
+  }, [meetingId, placeholder]);
 
+  if (placeholder) return <PlaceholderMeetingCard recording={recording} title={title} when={when} />;
   if (error) return <p className="text-xs text-red-300">{error}</p>;
   if (!meeting) return <p className="text-xs text-gray-500 inline-flex items-center gap-2"><Loader2 size={12} className="animate-spin" /> Henter møtedata…</p>;
   return (

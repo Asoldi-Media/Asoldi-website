@@ -22,7 +22,7 @@ A hub that runs on a PC (or the office LAN box) has the same keys as asoldi.com.
   - Items are deleted after 30 days. The outbox lives in the local data dir, which is never backed up to prod.
   - Brevo and Gmail have no hub send path yet. Their hosts are refused by the egress allowlist. New senders must go through `outboxOrSend({ channel, allowKey, message, send })` in `lib/safe-mode-mail.js`, which writes to the outbox in safe mode and sends for real otherwise (for Brevo, `allowKey: 'brevoSend'`).
 - **External writes** are blocked. Each blocked attempt is recorded in `<dataDir>/safe-mode/intents.jsonl` and in counters:
-  - calendar events and ACLs (the caller gets a `safe-…` stand-in event);
+  - calendar events and ACLs (the caller gets a `safe-…` stand-in event), and opening Meet rooms for the notetaker (reason `safe-mode`, see [fireflies-recording.md](fireflies-recording.md));
   - Fireflies live-join;
   - Myphoner POST, PATCH and DELETE;
   - WordPress writes;
@@ -65,8 +65,8 @@ A hub that runs on a PC (or the office LAN box) has the same keys as asoldi.com.
 |---|---|
 | `emailRedirect` | Real sends, rewritten to `EMAIL_REDIRECT_TO`. The bcc is dropped and the subject becomes `[SAFE→original recipients] …`. |
 | `brevoSend` | Brevo API |
-| `calendarWrite` | Google Calendar writes |
-| `firefliesLiveJoin` | Fireflies `addToLive` |
+| `calendarWrite` | Google Calendar writes, and Meet room access (`meet.googleapis.com` spaces get/patch) |
+| `firefliesLiveJoin` | Fireflies `addToLive` and the live-join loop's read-only checks (`active_meetings`, the `bot_joined` lookup, the key owner). Those reads also pass under `firefliesIngest`; a refused one is logged as `firefliesIngest`. |
 | `firefliesIngest` | Fireflies transcript queries, the ingest loop and its follow-ups |
 | `myphonerWrite` / `myphonerSync` | Myphoner writes / the Myphoner loops |
 | `paymentsLive` | Stripe live keys, PayPal live |

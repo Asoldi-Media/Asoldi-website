@@ -17,9 +17,19 @@ import {
   type OfferTier,
 } from '../../sales/emailApi';
 import { ContractSummaryCard, OFFER_STATUS_LABEL, OfferProductsCard, OfferStatusChip } from '../../sales/offerUi';
-import { API, salesAuthHeaders, type OfferContractSummary, type OfferProduct, type SalesOffer, type SalesOfferStatus } from '../shared';
+import {
+  API,
+  salesAuthHeaders,
+  type OfferContractSummary,
+  type OfferProduct,
+  type SalesClientMeeting,
+  type SalesOffer,
+  type SalesOfferStatus,
+} from '../shared';
 import { ClientMeetingCard, MeetingCard, type StoredMeetingRow } from './MeetingDataPanel';
 import { WebsiteDueField } from './WebsiteDueField';
+import { isDuplicateRow, isPlaceholderRow, visibleMeetingRows } from './firefliesRecording';
+import { ExcludeMeetingButton, MeetingPurposePicker, PlaceholderRecordingActions } from './MeetingRecordingControls';
 
 type OfferRow = SalesOffer & {
   client: { id: string; businessName: string; contactPerson: string; contactEmail: string } | null;
@@ -38,7 +48,7 @@ type OfferDetail = {
     businessAddress: string;
     meetingPlace: string;
     industry: string;
-    meetings: { meetingId: string; title: string; when: string }[];
+    meetings: Array<Pick<SalesClientMeeting, 'meetingId' | 'title' | 'when'> & Partial<SalesClientMeeting>>;
     meetingQuote?: {
       tierId?: string;
       productNotes?: string;
@@ -56,6 +66,8 @@ type OfferDetail = {
 };
 
 type ClientOption = { id: string; businessName: string };
+
+type OfferMeetingRef = NonNullable<OfferDetail['client']>['meetings'][number];
 
 type DetailTab = 'email' | 'contract' | 'meetings';
 
@@ -170,6 +182,7 @@ export function OfferReviewSection({ hideHeader = false }: { hideHeader?: boolea
   const [clients, setClients] = useState<ClientOption[]>([]);
   const [unmatched, setUnmatched] = useState<StoredMeetingRow[]>([]);
   const [showUnmatched, setShowUnmatched] = useState(false);
+  const [showDuplicateMeetings, setShowDuplicateMeetings] = useState(false);
 
   // Editable state for the selected offer
   const [subject, setSubject] = useState('');
@@ -222,6 +235,22 @@ export function OfferReviewSection({ hideHeader = false }: { hideHeader?: boolea
       setDetailLoading(false);
     }
   }, [applyDetail]);
+
+  /**
+   * After a recording button in Møtedata: read the offer again but take only the client's meeting rows, so
+   * unsaved edits to the e-mail, note and contract stay where they are.
+   */
+  const reloadDetailMeetings = useCallback(async (id: string) => {
+    if (!id) return;
+    try {
+      const data = await getAdminOffer(id) as OfferDetail;
+      setDetail((current) => (current && current.offer.id === id && current.client && data.client
+        ? { ...current, client: { ...current.client, meetings: data.client.meetings || [] } }
+        : current));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Kunne ikke hente møtedata');
+    }
+  }, []);
 
   useEffect(() => {
     void loadList();
@@ -615,7 +644,8 @@ export function OfferReviewSection({ hideHeader = false }: { hideHeader?: boolea
                 {([
                   ['email', 'E-post'],
                   ['contract', 'Kontrakt'],
-                  ['meetings', `Møtedata (${detail.client?.meetings?.length || 0})`],
+                  // Placeholders and duplicate copies are not recordings of their own.
+                  ['meetings', `Møtedata (${(detail.client?.meetings || []).filter((ref) => !isPlaceholderRow(ref) && !isDuplicateRow(ref)).length})`],
                 ] as [DetailTab, string][]).map(([key, label]) => (
                   <button
                     key={key}
@@ -871,14 +901,66 @@ export function OfferReviewSection({ hideHeader = false }: { hideHeader?: boolea
                       Ingen Fireflies-møter er koblet til denne kunden. Åpne «ukoblede Fireflies-møter» øverst for å koble et møte manuelt.
                     </div>
                   ) : (
-                    detail.client.meetings.map((ref) => (
-                      <ClientMeetingCard
-                        key={ref.meetingId}
-                        meetingId={ref.meetingId}
-                        clients={clients}
-                        onChanged={() => void loadDetail(offer.id)}
-                      />
-                    ))
+                    <>
+                      {detail.client.meetings.some((ref) => isDuplicateRow(ref)) ? (
+                        <button
+                          type="button"
+                          onClick={() => setShowDuplicateMeetings((value) => !value)}
+                          className="px-3 py-1.5 rounded-lg bg-white/10 text-xs text-gray-300 hover:bg-white/15"
+                          title="Kortere eller tomme kopier av opptak av samme møte"
+                        >
+                          {showDuplicateMeetings
+                            ? 'Skjul duplikater'
+                            : `Vis duplikater (${detail.client.meetings.filter((ref) => isDuplicateRow(ref)).length})`}
+                        </button>
+                      ) : null}
+                      {/* A placeholder whose real recording is in is left out, as on the sales card. */}
+                      {visibleMeetingRows<OfferMeetingRef>(detail.client.meetings, { showDuplicates: showDuplicateMeetings })
+                        .map((ref) => {
+                          const clientId = detail.client?.id || '';
+                          // These buttons only change meeting rows: unsaved edits above must survive them.
+                          const reloadMeetings = () => void reloadDetailMeetings(offer.id);
+                          if (isPlaceholderRow(ref)) {
+                            // A booked meeting with no Fireflies record: its state and the decline, no fetch.
+                            return (
+                              <div key={ref.meetingId} className="space-y-1.5">
+                                <ClientMeetingCard meetingId={ref.meetingId} recording={ref.recording} title={ref.title} when={ref.when} />
+                                <PlaceholderRecordingActions
+                                  clientId={clientId}
+                                  meetingId={ref.meetingId}
+                                  state={ref.recording?.state || ''}
+                                  onDone={reloadMeetings}
+                                />
+                              </div>
+                            );
+                          }
+                          return (
+                            <div key={ref.meetingId} className={`space-y-1.5 ${isDuplicateRow(ref) ? 'opacity-60' : ''}`}>
+                              <div className="flex flex-wrap items-center gap-2 text-[11px] text-gray-400">
+                                {isDuplicateRow(ref) ? <span className="px-1.5 py-0.5 rounded bg-white/10">duplikat</span> : null}
+                                <MeetingPurposePicker
+                                  clientId={clientId}
+                                  meetingId={ref.meetingId}
+                                  purpose={ref.purpose || ''}
+                                  onClient={reloadMeetings}
+                                />
+                                <ExcludeMeetingButton
+                                  clientId={clientId}
+                                  meetingId={ref.meetingId}
+                                  title={ref.title}
+                                  businessName={detail.client?.businessName || ''}
+                                  onDone={reloadMeetings}
+                                />
+                              </div>
+                              <ClientMeetingCard
+                                meetingId={ref.meetingId}
+                                clients={clients}
+                                onChanged={() => void loadDetail(offer.id)}
+                              />
+                            </div>
+                          );
+                        })}
+                    </>
                   )}
                 </div>
               )}

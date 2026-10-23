@@ -117,6 +117,27 @@ test('Fireflies: addToLive blocked, transcript ingest blocked by default, allowe
   assert.equal(fetchCalls.length, 1);
 });
 
+test('Fireflies live-join reads (active meetings, bot_joined lookup, key owner) need firefliesLiveJoin or firefliesIngest', async () => {
+  install();
+  fetchCalls.length = 0;
+  const before = intents('firefliesIngest').length;
+  await assert.rejects(() => fireflies.fetchActiveFirefliesMeetings({ apiKey: 'k', fetchImpl: globalThis.fetch }), /firefliesIngest/);
+  await assert.rejects(() => fireflies.fetchFirefliesTranscriptPresence('m1', { apiKey: 'k', fetchImpl: globalThis.fetch }), /firefliesIngest/);
+  await assert.rejects(() => fireflies.fetchFirefliesKeyOwnerEmail({ apiKey: 'k', fetchImpl: globalThis.fetch }), /firefliesIngest/);
+  assert.equal(fetchCalls.length, 0);
+  // A refused read is logged as firefliesIngest, the kind the egress guard gives any Fireflies query.
+  assert.equal(intents('firefliesIngest').length, before + 3);
+  const reply = async (url, init) => {
+    fetchCalls.push({ url, init });
+    return new Response('{"data":{"active_meetings":[]}}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+  };
+  install('firefliesLiveJoin');
+  assert.deepEqual(await fireflies.fetchActiveFirefliesMeetings({ apiKey: 'k', fetchImpl: reply }), []);
+  install('firefliesIngest');
+  assert.deepEqual(await fireflies.fetchActiveFirefliesMeetings({ apiKey: 'k', fetchImpl: reply }), []);
+  assert.equal(fetchCalls.length, 2);
+});
+
 test('Fireflies egress: a GraphQL mutation is refused even when ingest (queries) is allowed', async () => {
   install('firefliesIngest');
   fetchCalls.length = 0;
@@ -310,6 +331,17 @@ test('Google read-only traffic is allowed, writes are not', () => {
   const send = egress.evaluateEgress(policy, { host: 'gmail.googleapis.com', method: 'POST', path: '/gmail/v1/users/me/messages/send' });
   assert.equal(send.allowed, false, 'Gmail sends never leave');
   assert.equal(egress.evaluateEgress(policy, { host: 'api.brevo.com', method: 'POST', path: '/v3/smtp/email' }).kind, 'brevoSend');
+});
+
+test('Meet room access (lib/google-meet-access.js) is a calendarWrite, reads included', () => {
+  const blocked = egress.buildEgressPolicy({ allow: new Set() });
+  for (const method of ['GET', 'PATCH']) {
+    const outcome = egress.evaluateEgress(blocked, { host: 'meet.googleapis.com', method, path: '/v2/spaces/abc-defg-hij' });
+    assert.deepEqual([outcome.allowed, outcome.kind], [false, 'calendarWrite'], method);
+  }
+  const allowed = egress.buildEgressPolicy({ allow: new Set(['calendarWrite']) });
+  assert.equal(egress.evaluateEgress(allowed, { host: 'meet.googleapis.com', method: 'PATCH', path: '/v2/spaces/sp-test-1' }).allowed, true);
+  assert.equal(egress.evaluateEgress(allowed, { host: 'meet.googleapis.com', method: 'POST', path: '/v2/conferenceRecords' }).allowed, false, 'only room settings');
 });
 
 test('on Hostinger every guard is a pass-through and no egress guard is installed', async () => {
