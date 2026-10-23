@@ -132,7 +132,8 @@ test('owner decisions: blog on all tiers, auto posts and backlinks in tier 2+, n
   assert.equal(vocab.canonicalFeatureKey('blog.localPosts'), 'blog.autoPosts');
   assert.equal(vocab.canonicalFeatureKey('seo.backlinkNetwork'), 'seo.linkNetwork');
   assert.equal(vocab.canonicalFeatureKey('seo.linkNetwork'), 'seo.linkNetwork');
-  assert.equal(vocab.VOCAB_VERSION, 2);
+  // The blog.autoPosts rename came with version 2; later changes only raise the number.
+  assert.ok(Number.isInteger(vocab.VOCAB_VERSION) && vocab.VOCAB_VERSION >= 2, `VOCAB_VERSION ${vocab.VOCAB_VERSION}`);
   const anchored = Object.values(vocab.SERVICE_FEATURE_ANCHORS).flat();
   for (const alias of Object.keys(vocab.FEATURE_KEY_ALIASES)) assert.equal(anchored.includes(alias), false, alias);
   const everyId = [
