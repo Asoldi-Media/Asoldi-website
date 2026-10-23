@@ -3,6 +3,7 @@
 // SEO feature map.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -147,10 +148,37 @@ test('a tree that does not build, or that disagrees with the vocabulary, stops t
   assert.deepEqual(missing.problems, ['missing in the CMS source: server/features.js']);
 });
 
-// Set CMS_SOURCE_DIR (and CMS_SOURCE_REF for a branch or tag) to compare with a website-cms checkout.
+// Parity with website-cms. By default the check reads the commit the copy was synced from
+// (sourceCommit in data/cms-feature-tree.meta.json) with git, from ../website-cms or CMS_SOURCE_DIR,
+// so it does not depend on the branch that checkout is on. It is skipped, with the reason, when that
+// checkout or that commit is not there. CMS_SOURCE_REF compares with another branch or tag instead;
+// a ref named that way must exist.
 const cmsSource = process.env.CMS_SOURCE_DIR || join(root, '..', 'website-cms');
-test('the hub copy equals the website-cms registry it was synced from', { skip: !existsSync(cmsSource) && 'website-cms not checked out next to this repo (set CMS_SOURCE_DIR)' }, async () => {
-  const result = await syncCmsFeatureTree({ sourceDir: cmsSource, ref: process.env.CMS_SOURCE_REF || '', check: true });
+const parityRef = process.env.CMS_SOURCE_REF || JSON.parse(read(META_FILE)).sourceCommit || '';
+
+function paritySkipReason(sourceDir = cmsSource, ref = parityRef, explicitRef = Boolean(process.env.CMS_SOURCE_REF)) {
+  if (!existsSync(sourceDir)) return 'website-cms not checked out next to this repo (set CMS_SOURCE_DIR)';
+  if (!ref) return 'the sync recorded no source commit (set CMS_SOURCE_REF)';
+  if (explicitRef) return false;
+  try {
+    execFileSync('git', ['-C', sourceDir, 'cat-file', '-e', `${ref}^{commit}`], { stdio: 'ignore' });
+    return false;
+  } catch {
+    return `the website-cms checkout has no commit ${ref.slice(0, 12)}, which the copy was synced from (fetch it, or set CMS_SOURCE_REF)`;
+  }
+}
+
+test('the hub copy equals the website-cms registry it was synced from', { skip: paritySkipReason() }, async () => {
+  const result = await syncCmsFeatureTree({ sourceDir: cmsSource, ref: parityRef, check: true });
   assert.deepEqual(result.problems, []);
   assert.deepEqual(result.changed, [], 'run node scripts/sync-cms-feature-tree.mjs');
+});
+
+test('the parity check is skipped with its reason when the website-cms checkout lacks the synced commit', (t) => {
+  const { source } = tempDirs(t);
+  assert.match(String(paritySkipReason(join(source, 'absent'), 'abc', false)), /not checked out/);
+  assert.match(String(paritySkipReason(source, '', false)), /no source commit/);
+  // A folder that is not a git checkout (or a clone without the commit) cannot show the commit.
+  assert.match(String(paritySkipReason(source, '0123456789abcdef0123456789abcdef01234567', false)), /has no commit 0123456789ab/);
+  assert.equal(paritySkipReason(source, 'v9.9.9', true), false, 'an explicit ref is always compared');
 });
