@@ -10073,8 +10073,15 @@ app.post('/api/admin/change-password', adminAuth, async (req, res) => {
   if (!currentPassword || !newPassword) {
     return res.status(400).json({ message: 'Current and new password required' });
   }
+  // A wrong current password counts toward the same login limits as an admin sign-in.
+  const attempt = beginLogin(loginLimiter, req, res, `admin:${sanitizeText(req.admin?.username)}`);
+  if (!attempt) return;
   const valid = await store.verifyAdmin(req.admin.username, currentPassword);
-  if (!valid) return res.status(401).json({ message: 'Current password is wrong' });
+  if (!valid) {
+    attempt.fail();
+    return res.status(401).json({ message: 'Current password is wrong' });
+  }
+  attempt.succeed();
   const admin = await store.getAdmin();
   if (!admin) return res.status(500).json({ message: 'Admin not found' });
   // Logs the admin out on every device (data/store.js); this browser gets a fresh token.

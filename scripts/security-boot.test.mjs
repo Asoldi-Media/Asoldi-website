@@ -344,7 +344,26 @@ test('local hub boot: tokens signed with an old default secret, stale tokens, pa
     assert.equal(sourceLines.filter((line) => line.includes('X-Forwarded-For entry 1 from the right')).length, 1, sourceLines.join('\n'));
     assert.equal(sourceLines.some((line) => /\d+\.\d+\.\d+\.\d+/.test(line)), false, 'no address is logged');
 
-    // 12. Only the hub admin (admin.json) confirms a rotation. An admin token of a users.json user
+    // 12. Attempts are counted when they start: forty wrong admin logins sent at once from one
+    //     address get at most ten password checks, and the right password from another address
+    //     still gets in. A wrong current password on the password change counts the same way.
+    const burst = await Promise.all(Array.from({ length: 40 }, (_, i) => loginFrom('203.0.113.77', `burst-${i}`)));
+    const burstChecked = burst.filter((res) => res.status !== 429);
+    assert.ok(burstChecked.length >= 1 && burstChecked.length <= 10, `password checks in the burst: ${burstChecked.length}`);
+    assert.ok(burstChecked.every((res) => res.status === 401));
+    for (let i = 0; i < 20; i += 1) await loginFrom('203.0.113.77', `burst-after-${i}`);
+    assert.equal((await loginFrom('203.0.113.77', newPassword)).status, 429, 'that address used its ten tries');
+    assert.equal((await loginFrom('203.0.113.80', newPassword)).status, 200, 'the right password from another address gets in');
+    const changeFrom = (address, currentPassword) => fetch(`${base}/api/admin/change-password`, {
+      method: 'POST',
+      headers: { ...admin(), 'content-type': 'application/json', 'x-forwarded-for': address },
+      body: JSON.stringify({ currentPassword, newPassword: 'boot-unused-new-password-2' }),
+    });
+    for (let i = 0; i < 10; i += 1) assert.equal((await changeFrom('203.0.113.90', `wrong-current-${i}`)).status, 401);
+    assert.equal((await changeFrom('203.0.113.90', newPassword)).status, 429, 'ten wrong current passwords from one address');
+    assert.equal((await loginWith(newPassword)).status, 200, 'the password did not change');
+
+    // 13. Only the hub admin (admin.json) confirms a rotation. An admin token of a users.json user
     //     (it carries a user id) gets 403 before any password check, even with the hub admin's
     //     password, and never counts toward the login limits.
     const attemptsBefore = (await (await fetch(`${base}/api/admin/system/security`, { headers: admin() })).json()).loginAddresses.attemptsLastHour;
@@ -364,7 +383,7 @@ test('local hub boot: tokens signed with an old default secret, stale tokens, pa
     assert.equal(afterRefusals, attemptsBefore, 'the refusals never reached the login limits');
     assert.equal(readFileSync(join(dataDir, 'secrets', 'admin-secret'), 'utf8').trim(), diskSecret, 'nothing rotated');
 
-    // 13. No live system was touched: no Myphoner reconcile, no Fireflies pull, and nothing
+    // 14. No live system was touched: no Myphoner reconcile, no Fireflies pull, and nothing
     //     but loopback was even attempted.
     assert.doesNotMatch(logs, /\[myphoner\] webhook reconcile complete/);
     assert.doesNotMatch(logs, /\[fireflies\] recent-transcripts/);

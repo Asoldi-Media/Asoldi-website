@@ -87,9 +87,10 @@ hash or the sync flag.
   several processes boot together, and never moves a later cutoff backwards.
 - Admin → Manage clients → Security can log out all clients, all staff, all admins (the admin
   pressing it gets a fresh token) or everyone.
-- Failed logins (admin, staff and client portal sign-ins, and the password re-check of a
-  rotation) are counted per 15 minutes under three keys (`lib/auth-hardening.js`
-  `createLoginLimiter`, the same structure as the client CMS 2.2):
+- Sign-in attempts (admin, staff and client portal sign-ins, the password re-check of a
+  rotation, and the current password of an admin password change) are counted per 15 minutes
+  under three keys (`lib/auth-hardening.js` `createLoginLimiter`, the same structure as the
+  client CMS 2.2):
 
   | Key | Counts | Limit |
   |---|---|---|
@@ -99,12 +100,20 @@ hash or the sync flag.
 
   A sign-in is refused with 429 while any of its three keys is full. So the right password from
   an address that is not blocked by its own `p:` or `i:` key gets in while the account's `a:` key
-  is under 100: failures from other addresses cannot keep an account out on their own. A right
-  password clears only the `p:` key of that account and address. Accounts are kept as short
-  hashes and the table holds at most 10 000 keys; when it is full, keys of accounts that do not
-  exist in `admin.json` / `users.json` go first, then address keys, and keys of real accounts
-  stay for their whole window (`lib/login-limits.js`). The counts live in memory, so a restart
-  clears them.
+  is under 100: failures from other addresses cannot keep an account out on their own.
+- An attempt is counted when it starts, before the password check (`beginLogin`, no await in
+  between), so requests sent at the same moment cannot all pass a limit before the first wrong
+  password lands. At most 2 password checks run at once per account and per address; another
+  attempt meanwhile gets 429 with `Retry-After: 1`. A wrong password keeps the attempt counted.
+  The right one takes it back and clears the `p:` key of that account and address; the `a:`
+  and `i:` keys keep their other attempts. A request that ends without a verdict (an error, a
+  closed connection) counts as a wrong password, and a check still running after 30 seconds
+  stops holding its place.
+- Accounts are kept as short hashes and the table holds at most 10 000 keys; when it is full,
+  keys of accounts that do not exist in `admin.json` / `users.json` go first, then address keys,
+  and keys of real accounts stay for their whole window (`lib/login-limits.js`). The counts live
+  in memory per hub process: a restart clears them, and with several hub processes each one
+  counts on its own (the limits are then per process).
 - The address is the right-most `X-Forwarded-For` entry that is not an internal proxy address
   (`lib/auth-hardening.js` `readClientAddress`): the left entries come from the client, so
   changing them does not reset the count.

@@ -249,6 +249,45 @@ test('password confirmer: wrong passwords count toward the limit, the right one 
   for (const empty of ['', undefined, null, 42]) assert.notEqual(await attempt(empty), 'ok');
 });
 
+test('password confirmer: password checks that start together are counted at once, and a check that throws stays counted without blocking the next', async () => {
+  const limiter = hardening.createLoginLimiter({ log: () => {} });
+  const fakeRes = () => ({
+    statusCode: 200,
+    headers: {},
+    setHeader(name, value) { this.headers[name] = value; },
+    status(code) { this.statusCode = code; return this; },
+    json(body) { this.body = body; return this; },
+  });
+  const req = { admin: { username: 'tester' }, headers: { 'x-forwarded-for': '203.0.113.30' }, socket: { remoteAddress: '127.0.0.1' } };
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const slow = hardening.createPasswordConfirmer({
+    limiter,
+    accountFor: (r) => `admin:${r.admin.username}`,
+    verifyPassword: async () => { await gate; return false; },
+  });
+  const responses = Array.from({ length: 12 }, fakeRes);
+  const pending = responses.map((res) => slow(req, res, 'wrong'));
+  release();
+  await Promise.all(pending);
+  const codes = responses.map((res) => res.statusCode);
+  assert.equal(codes.filter((code) => code === 401).length, 2, `two checks ran, the rest waited: ${codes}`);
+  assert.equal(codes.filter((code) => code === 429).length, 10);
+  assert.equal(limiter.running(), 0);
+
+  const throwing = hardening.createPasswordConfirmer({
+    limiter,
+    accountFor: (r) => `admin:${r.admin.username}`,
+    verifyPassword: async () => { throw new Error('store read failed'); },
+  });
+  for (let i = 0; i < 3; i += 1) await assert.rejects(throwing(req, fakeRes(), 'pw'), /store read failed/, `attempt ${i} is checked, not refused as busy`);
+  assert.equal(limiter.running(), 0, 'a check that threw no longer runs');
+  const counted = fakeRes();
+  for (let i = 0; i < 5; i += 1) await slow(req, fakeRes(), 'wrong');
+  assert.equal(await slow(req, counted, 'wrong'), false);
+  assert.equal(counted.statusCode, 429, 'two failures, three checks that threw and five failures fill the ten tries of that address');
+});
+
 // ------------------------------------------------------------------ routes (a small express app)
 
 const PASSWORD = `pw-${Date.now()}`;

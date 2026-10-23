@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -221,6 +222,118 @@ test('beginLogin: one address per attempt, a 429 with Retry-After when limited, 
   const ok = beginLogin(limiter, elsewhere, fakeLimitRes(), 'admin:owner');
   ok.succeed();
   assert.equal(guardLogin(limiter, elsewhere, fakeLimitRes(), 'admin:owner'), true);
+});
+
+const viaProxy = (address) => ({ headers: { 'x-forwarded-for': address }, socket: { remoteAddress: '127.0.0.1' } });
+
+test('login limiter: an attempt counts when it starts, so attempts that all start before any settles pass at most the pair limit', () => {
+  const limiter = createLoginLimiter({ maxInFlight: 1000, log: () => {} });
+  const tickets = [];
+  for (let i = 0; i < 20; i += 1) {
+    const verdict = limiter.begin('admin:owner', '203.0.113.77');
+    if (verdict.ok) tickets.push(verdict.ticket);
+    else assert.equal(verdict.busy, undefined, 'refused by the pair limit, not as busy');
+  }
+  assert.equal(tickets.length, 10, 'ten attempts admitted for one account from one address');
+  assert.equal(limiter.begin('admin:owner', '198.51.100.80').ok, true, 'the account from another address is still admitted');
+  for (const ticket of tickets) ticket.fail();
+  assert.equal(limiter.check('admin:owner', '203.0.113.77').ok, false);
+});
+
+test('login limiter: at most two checks run at once per account and per address; the rest get a short busy refusal', () => {
+  const limiter = createLoginLimiter({ log: () => {} });
+  const first = limiter.begin('admin:owner', '203.0.113.77');
+  const second = limiter.begin('admin:owner', '203.0.113.78');
+  assert.equal(first.ok && second.ok, true);
+  assert.deepEqual(limiter.begin('admin:owner', '203.0.113.79'), { ok: false, retryAfterSec: 1, busy: true }, 'the account has two checks running');
+  const otherAccount = limiter.begin('staff:dev', '203.0.113.77');
+  assert.equal(otherAccount.ok, true, 'another account from the first address');
+  assert.equal(limiter.begin('staff:third', '203.0.113.77').busy, true, 'the address has two checks running');
+  assert.equal(limiter.running(), 4, 'two account keys and two address keys hold running checks');
+  first.ticket.fail();
+  first.ticket.fail();
+  assert.equal(limiter.begin('admin:owner', '203.0.113.79').ok, true, 'a settled check frees its slot once');
+  assert.equal(limiter.begin('admin:owner', '203.0.113.80').busy, true);
+});
+
+test('login limiter: a right password takes its attempt back from the account and address counts and clears the pair', () => {
+  const limiter = createLoginLimiter({ maxPerPair: 3, maxPerAccount: 4, maxPerIp: 4, maxInFlight: 10, log: () => {} });
+  for (let i = 0; i < 2; i += 1) limiter.begin('admin:owner', '203.0.113.1').ticket.fail();
+  const right = limiter.begin('admin:owner', '203.0.113.1');
+  assert.equal(limiter.keys().length, 3);
+  right.ticket.succeed();
+  right.ticket.fail();
+  assert.deepEqual(limiter.keys().filter((key) => key.startsWith('p:')), [], 'the pair is cleared');
+  // Two failures stay on the account and address keys; the right password took only its own attempt back.
+  limiter.begin('admin:owner', '203.0.113.1').ticket.fail();
+  limiter.begin('admin:owner', '203.0.113.1').ticket.fail();
+  assert.equal(limiter.check('admin:owner', '203.0.113.2').ok, false, 'the account count (4) is reached');
+  assert.equal(limiter.begin('staff:other', '203.0.113.1').ok, false, 'the address count (4) is reached');
+  assert.equal(limiter.running(), 0);
+});
+
+test('login limiter: a check that never settles stops holding its slot after maxCheckMs; its attempt stays counted', () => {
+  let clock = 1_000_000;
+  const limiter = createLoginLimiter({ maxPerPair: 3, maxCheckMs: 30_000, now: () => clock, log: () => {} });
+  limiter.begin('staff:dev', '203.0.113.5');
+  limiter.begin('staff:dev', '203.0.113.5');
+  assert.equal(limiter.begin('staff:dev', '203.0.113.5').busy, true);
+  clock += 30_000;
+  const later = limiter.begin('staff:dev', '203.0.113.5');
+  assert.equal(later.ok, true, 'the two stuck checks no longer hold the slots');
+  later.ticket.fail();
+  assert.equal(limiter.check('staff:dev', '203.0.113.5').ok, false, 'the stuck attempts stayed counted (3 of 3)');
+  clock -= 60_000;
+  const stuck = createLoginLimiter({ now: () => clock, log: () => {} });
+  stuck.begin('staff:dev', '203.0.113.6');
+  stuck.begin('staff:dev', '203.0.113.6');
+  clock -= 1000;
+  assert.equal(stuck.begin('staff:dev', '203.0.113.6').ok, true, 'a clock that went back frees the slots instead of keeping them');
+});
+
+test('beginLogin: 150 attempts for one account that all start before any settles are mostly refused, and the account still gets in elsewhere', () => {
+  const limiter = createLoginLimiter({ log: () => {} });
+  const admitted = [];
+  const refused = [];
+  for (let i = 0; i < 150; i += 1) {
+    const res = fakeLimitRes();
+    const attempt = beginLogin(limiter, viaProxy('203.0.113.77'), res, 'admin:owner');
+    if (attempt) admitted.push(attempt);
+    else refused.push(res);
+  }
+  assert.ok(admitted.length <= 2, `admitted ${admitted.length} at once`);
+  assert.equal(refused.length, 150 - admitted.length);
+  assert.ok(refused.every((res) => res.statusCode === 429 && res.headers['Retry-After'] === '1'));
+  for (const attempt of admitted) attempt.fail();
+  let total = admitted.length;
+  for (let i = 0; i < 40; i += 1) {
+    const attempt = beginLogin(limiter, viaProxy('203.0.113.77'), fakeLimitRes(), 'admin:owner');
+    if (attempt) {
+      total += 1;
+      attempt.fail();
+    }
+  }
+  assert.equal(total, 10, 'one address gets ten tries at the account in all');
+  const owner = beginLogin(limiter, viaProxy('203.0.113.80'), fakeLimitRes(), 'admin:owner');
+  assert.ok(owner, 'the right password from another address is still checked');
+  owner.succeed();
+});
+
+test('beginLogin: a response that ends before the route settles counts as a failure and frees the running check', () => {
+  const limiter = createLoginLimiter({ maxPerPair: 2, log: () => {} });
+  const res = Object.assign(new EventEmitter(), fakeLimitRes());
+  const attempt = beginLogin(limiter, viaProxy('203.0.113.9'), res, 'client:owner@example.com');
+  assert.ok(attempt);
+  assert.equal(limiter.running(), 2);
+  res.emit('close');
+  assert.equal(limiter.running(), 0, 'the check no longer runs');
+  attempt.succeed();
+  limiter.begin('client:owner@example.com', '203.0.113.9').ticket.fail();
+  assert.equal(limiter.check('client:owner@example.com', '203.0.113.9').ok, false, 'the attempt that broke off stayed counted');
+  const settled = Object.assign(new EventEmitter(), fakeLimitRes());
+  beginLogin(limiter, viaProxy('203.0.113.10'), settled, 'client:owner@example.com').succeed();
+  settled.emit('close');
+  assert.equal(limiter.keys().filter((key) => key.startsWith('p:')).length, 1, 'a close after a right password counts nothing');
 });
 
 test('a client-written leading X-Forwarded-For entry cannot reset the per-IP login counter', () => {
