@@ -148,7 +148,7 @@ export type SiteCmsMeta = {
   /** Last heartbeat that carried the site's valid credential. */
   lastVerifiedAt?: string;
   /** What the last heartbeat without a valid credential reported: shown, never used. */
-  reported?: { packageVersion?: string; adminUrl?: string; name?: string; at?: string };
+  unverified?: { packageVersion?: string; adminUrl?: string; name?: string; at?: string };
 };
 
 export type Site = {

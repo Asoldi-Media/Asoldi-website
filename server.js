@@ -12899,7 +12899,7 @@ app.get('/api/hub/site-config', (req, res) => {
 
 // Liveness from any caller with the site key. The version, admin address, name and the pending admin
 // flag are acted on only for a heartbeat with the site's valid credential; otherwise they are kept
-// as reported (cms.reported) and shown, never used.
+// in cms.unverified and shown, never used.
 app.post('/api/hub/heartbeat', (req, res) => {
   const siteKey = sanitizeText(req.get('x-site-key') || req.body?.site_key || req.query?.site_key);
   const site = siteKey ? hub.getSiteByKey(siteKey) : null;

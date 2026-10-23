@@ -276,7 +276,7 @@ export function updateSite(id, patch = {}) {
  * A client CMS heartbeat. A verified heartbeat (the HTTP route sets verified only when the call
  * carried the site's valid credential) updates the version and admin address the hub acts on, the
  * name of an unnamed site and the pending admin flag. An unverified one only marks the site as
- * seen and keeps what it reported in cms.reported, for display.
+ * seen and keeps what it reported in cms.unverified, for display.
  */
 export function recordHeartbeat(siteKey, { packageVersion, adminUrl, name, adminApplied } = {}, { verified = true } = {}) {
   const key = String(siteKey || '').trim();
@@ -289,7 +289,7 @@ export function recordHeartbeat(siteKey, { packageVersion, adminUrl, name, admin
     sites[i].cms = normalizeCmsMeta({
       ...sites[i].cms,
       lastSeenAt: at,
-      reported: { packageVersion, adminUrl, name, at },
+      unverified: { packageVersion, adminUrl, name, at },
     });
     writeSites(sites);
     return { ok: true, verified: false, site: publicSite(sites[i]) };
@@ -298,7 +298,7 @@ export function recordHeartbeat(siteKey, { packageVersion, adminUrl, name, admin
     ...sites[i].cms,
     lastSeenAt: at,
     lastVerifiedAt: at,
-    reported: null,
+    unverified: null,
     packageVersion: packageVersion || sites[i].cms.packageVersion,
     adminUrl: adminUrl || sites[i].cms.adminUrl,
   });

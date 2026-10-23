@@ -95,7 +95,7 @@ export function useSiteCredentials(sites: Site[] = []) {
 
 /** Per site in Manage clients: enrolled yes/no, when, the domain that gave the proof, and revoke. */
 export function SiteCredentialStatus({ site, info, busy, onRevoke }: { site: Site; info?: SiteCredentialInfo; busy?: boolean; onRevoke: (site: Site) => void }) {
-  const reported = site.cms?.reported;
+  const unverified = site.cms?.unverified;
   return (
     <div className="text-xs space-y-0.5">
       {info?.enrolled ? (
@@ -119,10 +119,10 @@ export function SiteCredentialStatus({ site, info, busy, onRevoke }: { site: Sit
       {info?.enrolled && !info.proofDomainMatches ? (
         <p className="text-amber-300">The stored domain changed after the last proof ({info.proofDomain}). Revoke to make the site prove the new domain.</p>
       ) : null}
-      {reported?.packageVersion || reported?.adminUrl ? (
+      {unverified?.packageVersion || unverified?.adminUrl ? (
         <p className="text-gray-500">
-          Last unverified heartbeat {when(reported.at)} reported{reported.packageVersion ? ` CMS ${reported.packageVersion}` : ''}
-          {reported.adminUrl ? ` at ${reported.adminUrl}` : ''} (shown only, not used)
+          Last unverified heartbeat {when(unverified.at)} reported{unverified.packageVersion ? ` CMS ${unverified.packageVersion}` : ''}
+          {unverified.adminUrl ? ` at ${unverified.adminUrl}` : ''} (shown only, not used)
         </p>
       ) : null}
     </div>

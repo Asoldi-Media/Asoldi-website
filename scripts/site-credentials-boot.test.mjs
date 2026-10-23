@@ -133,7 +133,7 @@ test('real hub: site config, heartbeat, money routes, enrollment switch, revoke 
   let listed = (await json('/api/hub/sites', { headers: admin })).body.find((row) => row.id === site.id);
   assert.equal(listed.cms.packageVersion, '');
   assert.equal(listed.cms.adminUrl, '');
-  assert.equal(listed.cms.reported.packageVersion, '9.9.9');
+  assert.equal(listed.cms.unverified.packageVersion, '9.9.9');
   assert.ok(listed.cms.lastSeenAt);
 
   // 4. The site enrolls (written to the store the hub reads; the proof itself is covered in
@@ -164,7 +164,7 @@ test('real hub: site config, heartbeat, money routes, enrollment switch, revoke 
   listed = (await json('/api/hub/sites', { headers: admin })).body.find((row) => row.id === site.id);
   assert.equal(listed.cms.packageVersion, '2.2.2');
   assert.equal(listed.cms.adminUrl, 'https://boot-shop.example/admin');
-  assert.equal(listed.cms.reported, undefined);
+  assert.equal(listed.cms.unverified, undefined);
   assert.ok(listed.cms.lastVerifiedAt);
 
   // 6. A money route: site key alone 401, with the credential it reaches the payment code.

@@ -487,7 +487,7 @@ test('analytics commerce keeps the known summary fields, bounded, and refuses la
   assert.equal(last.status, 429);
 });
 
-test('a heartbeat without a valid credential is kept as reported and changes nothing the hub acts on', async () => {
+test('a heartbeat without a valid credential is kept as unverified and changes nothing the hub acts on', async () => {
   const site = hub.createSite({ name: 'Heartbeat site', domain: 'beat.example' });
   hub.recordHeartbeat(site.site_key, { packageVersion: '2.2.2', adminUrl: 'https://beat.example/admin' }, { verified: true });
   await hub.updateClientAdmin(site.id, { username: 'owner', password: 'a-long-client-password' });
@@ -499,12 +499,12 @@ test('a heartbeat without a valid credential is kept as reported and changes not
   assert.equal(stored.cms.packageVersion, '2.2.2');
   assert.equal(stored.cms.adminUrl, 'https://beat.example/admin');
   assert.equal(stored.clientAdmin.pendingSync, true, 'an unverified heartbeat cannot mark the admin password as applied');
-  assert.equal(stored.cms.reported.packageVersion, '1.0.0');
-  assert.equal(stored.cms.reported.adminUrl, 'https://elsewhere.example/admin');
+  assert.equal(stored.cms.unverified.packageVersion, '1.0.0');
+  assert.equal(stored.cms.unverified.adminUrl, 'https://elsewhere.example/admin');
   assert.ok(stored.cms.lastSeenAt);
   const verified = hub.recordHeartbeat(site.site_key, { packageVersion: '2.2.3', adminApplied: true }, { verified: true });
   assert.equal(verified.site.cms.packageVersion, '2.2.3');
-  assert.equal(verified.site.cms.reported, undefined);
+  assert.equal(verified.site.cms.unverified, undefined);
   assert.ok(verified.site.cms.lastVerifiedAt);
   assert.equal(hub.getSiteById(site.id).clientAdmin.pendingSync, false);
 });

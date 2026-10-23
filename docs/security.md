@@ -165,7 +165,7 @@ client CMS 2.2.2 and 1.7.2):
 | `GET /api/hub/analytics?refresh=1` (paid maps refresh) | stored ranking only | refresh runs |
 | `GET /api/hub/analytics/spend` | 401 | allowed |
 | `GET /api/hub/site-config` (site key in `x-site-key` or `?site_key=`) | public fields only | adds `pendingAdmin` and the client admin contact |
-| `POST /api/hub/heartbeat` | liveness; version, admin address and name kept as `cms.reported` (shown, not used); `adminApplied` ignored | acted on (`cms.packageVersion`, `cms.adminUrl`, `cms.lastVerifiedAt`) |
+| `POST /api/hub/heartbeat` | liveness; version, admin address and name kept as `cms.unverified` (shown, not used); `adminApplied` ignored | acted on (`cms.packageVersion`, `cms.adminUrl`, `cms.lastVerifiedAt`) |
 
 A wrong credential on site config or the heartbeat still gets the public answer. Every answer
 carries `x-site-credential-status` (`valid`, `missing`, `invalid`, `not-enrolled`), so the CMS
