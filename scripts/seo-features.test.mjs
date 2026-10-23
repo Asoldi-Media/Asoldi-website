@@ -164,3 +164,27 @@ test('a tree that does not carry the SEO keys yet keeps the tier value per key (
   assert.equal(c.has('seo.linkNetwork'), false);
   assert.equal(c.has('blog.autoPosts'), true);
 });
+
+test('advanced reports replace basic on the tree path too (tier 3 tree with both levels effective)', () => {
+  const tier3 = site('tier-3-ecommerce');
+  const both = [...EXPECTED['tier-3-ecommerce'], 'seo.reports.basic'];
+  const shapes = {
+    nodes: { nodes: SEO_FEATURE_KEYS.map((key) => ({ key })), effective: new Set(both) },
+    bare: { effective: both },
+    object: Object.fromEntries(SEO_FEATURE_KEYS.map((k) => [k, both.includes(k)])),
+  };
+  for (const [name, featureTree] of Object.entries(shapes)) {
+    const f = seoFeaturesForSite(tier3, { featureTree });
+    assert.equal(f.has('seo.reports.advanced'), true, name);
+    assert.equal(f.has('seo.reports.basic'), false, `${name}: basic is replaced by advanced`);
+    assert.equal(f.reports, 'advanced', name);
+    assert.deepEqual(f.list, EXPECTED['tier-3-ecommerce'], `${name}: same keys as the tier map`);
+  }
+  // An override that switches advanced on for a tier-2 site also drops basic.
+  const upgraded = seoFeaturesForSite({ ...site('tier-2-seo'), seoFeatureOverrides: { 'seo.reports.advanced': true } });
+  assert.equal(upgraded.has('seo.reports.basic'), false);
+  assert.equal(upgraded.reports, 'advanced');
+  // A tree with only basic keeps basic.
+  const basicOnly = seoFeaturesForSite(site('tier-2-seo'), { featureTree: { nodes: shapes.nodes.nodes, effective: new Set(EXPECTED['tier-2-seo']) } });
+  assert.equal(basicOnly.reports, 'basic');
+});
