@@ -21,7 +21,7 @@ recording, erase request, payment not connected) are added by the batch that shi
 - Older full copies: `<dataDir>/backups/automation-settings.json.<timestamp>.json` (kept by `writeDataJson`).
 
 **Fix.**
-- Put the old values back with `PUT /api/admin/automation-settings {"settings": {...the "from" values...}, "reason": "rollback"}`. A partial object is enough; it is deep-merged, except the per-mailbox maps and `paused` objects, which replace as a whole. To remove a mailbox, PUT the old `inbox.mailboxes` (its entries in `inbox.autoActions` / `inbox.autoReply` go with it) and, if `sender.service.replyTo` pointed at it, the old `replyTo` too.
+- Put the old values back with `PUT /api/admin/automation-settings {"settings": {...the "from" values...}, "reason": "rollback"}`. A partial object is enough; it is deep-merged, except `paused` objects, which replace as a whole. The per-mailbox maps merge per mailbox, so a PUT that names one mailbox leaves the other mailbox's flag alone. To remove a mailbox, PUT the old `inbox.mailboxes` (its entries in `inbox.autoActions` / `inbox.autoReply` go with it) and, if `sender.service.replyTo` pointed at it, the old `replyTo` too.
 - To go back to the defaults for one group, PUT the matching part of `defaults` from the GET response.
 - If the whole file is broken, restore it from a delivery snapshot (below) or copy a backup over it on the operator PC; the hub re-reads it within 10 s.
 
@@ -80,6 +80,14 @@ recording, erase request, payment not connected) are added by the batch that shi
 **Check.** The client card (Kundekort) shows the **Testkunde** checkbox; the hub site list shows **Testside**. API: `GET /api/admin/sales/<id>` has `isTest: true`.
 
 **Fix.** Tick Testkunde (`PATCH /api/admin/sales/<id>/test-flag {"isTest": true}`) and Testside for its hub site (`PATCH /api/hub/sites/<id>/test-flag {"isTest": true}`). To let the test client run delivery automation, add its id to `pilotClientIds`.
+
+## Myphoner winner skipped for a test client
+
+**Symptom.** The server log shows `[myphoner] winner for lead <leadId> skipped: linked to test client <clientId>`, and no sales client appears for a lead someone won.
+
+**Check.** Only a lead-id link reaches a test client (email, phone and name matches leave test clients out). `GET /api/admin/sales/<clientId>` shows `isTest: true` and `myphoner.leadId` equal to that lead.
+
+**Fix.** If the client is in fact real, untick Testkunde (`PATCH /api/admin/sales/<id>/test-flag {"isTest": false}`) and send the winner event again from Myphoner. If it really is a test client, it should not hold a real lead id: remove `myphoner.leadId` / `myphoner.leadIds` from that client, then send the winner event again, which creates a real client.
 
 ---
 
