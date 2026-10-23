@@ -9,8 +9,8 @@ change here needs a new Hostinger env variable.
 
 | File (under the data dir) | Holds | Made by |
 |---|---|---|
-| `secrets/admin-secret` | token signing secret, used when `ADMIN_SECRET` is unset, shorter than 16 characters or a known public default | `lib/auth-hardening.js` `resolveHubSecret` |
-| `secrets/maker-callback-token` | Maker callback token when no env token is set | `server.js` `getMakerCallbackToken` |
+| `secrets/admin-secret` | token signing secret, used when `ADMIN_SECRET` is unset, shorter than 16 characters or a known public default; rotatable from the Security card | `lib/auth-hardening.js` `createHubSecretHolder` |
+| `secrets/maker-callback-token` | Maker callback token when no env token is set; rotatable from the Security card | `server.js` `getMakerCallbackToken` |
 | `secrets/initial-admin-password` | first admin password on an empty install | `ensureAdminExists` |
 | `secrets/webhooks.json` | Fireflies webhook signing secret and URL token | `data/webhook-secrets.js` |
 | `security-settings.json` | max token age, `revokedBefore` per class, one-time `migrations` | `data/security-settings.js` |
@@ -54,6 +54,28 @@ Status pages report the source of a secret, never the value.
 Routes (admin token): `GET /api/admin/system/security`, `PUT /api/admin/security/token-settings`,
 `POST /api/admin/security/revoke-tokens` (`{scope}` or `{userId}`). Client token:
 `POST /api/client/account/logout-everywhere`.
+
+## Rotating the disk secrets (no FTP, no deploy)
+
+Admin → Manage clients → Security → **Rotate secrets** makes a new value on the data disk:
+
+| Action | Route (admin token) | Effect |
+|---|---|---|
+| Make a new signing secret | `POST /api/admin/security/signing-secret/rotate` | `secrets/admin-secret` is replaced. Every admin, staff and client portal token, and any Google sign-in that is half-way (OAuth state), is refused at once. The admin who pressed it gets a fresh token. |
+| Make a new Maker token | `POST /api/admin/security/maker-callback-token/rotate` | `secrets/maker-callback-token` is replaced and shown once (`callbackToken`, no-store). Paste it into the Maker `.env` as `WEBSITE_MAKER_STATUS_CALLBACK_TOKEN` and `SALES_MAKER_STATUS_CALLBACK_TOKEN`. Callbacks and preview pushes with the old token get 401, also from runs that were started with it. |
+
+- Both need the admin's current password (`currentPassword`; wrong passwords count toward the
+  login limit) and the typed word `ROTER` (`confirm`).
+- When the env value wins (`ADMIN_SECRET` of 16+ characters that is not a known default, or
+  `WEBSITE_MAKER_STATUS_CALLBACK_TOKEN` / `SALES_MAKER_STATUS_CALLBACK_TOKEN`), the route answers
+  409 with a Norwegian explanation and changes nothing: rotate the env value where it is set.
+- The new value is written to a temp file and renamed over the old one under the file's lock.
+  This process uses it at once; other hub processes re-read the file at most a second later
+  (`lib/auth-hardening.js` `createHubSecretHolder`). A damaged or missing file never replaces
+  a good value in memory.
+- Audit: `security-settings.json` `secretRotations.<name>` = `{ at, by }` (shown on the card),
+  the counters `admin-secret-rotated` / `maker-callback-token-rotated`, and a `[security]` log
+  line. No value is ever logged or stored outside `secrets/`.
 
 ## Fireflies webhook
 

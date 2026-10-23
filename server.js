@@ -84,8 +84,8 @@ import {
   createStaffMediaGate,
   guardLogin,
   clientIpFromRequest,
+  createHubSecretHolder,
   readOrCreateDiskSecret,
-  resolveHubSecret,
   safeEqual,
 } from './lib/auth-hardening.js';
 import { isTokenAccepted, runTokenPolicyBootMigrations, stampTokenVersion } from './lib/token-policy.js';
@@ -523,22 +523,28 @@ const PORT = process.env.PORT || 3000;
 const distPath = join(__dirname, 'dist');
 const publicPath = join(__dirname, 'public');
 // Env wins unless it is a known default or shorter than 16; otherwise a random secret kept in <dataDir>/secrets/.
-const ADMIN_SECRET_SOURCE = resolveHubSecret({ envValue: process.env.ADMIN_SECRET, dataDir: getPersistentDataDir(), name: 'admin-secret' });
-const ADMIN_SECRET = ADMIN_SECRET_SOURCE.secret;
+// Admin → Security can rotate the disk secret while the hub runs: every token signer and verifier
+// (admin, staff, client portal, OAuth state) reads it through hubSigningSecret(), and other hub
+// processes pick the new value up from the file within a second.
+const ADMIN_SECRET_HOLDER = createHubSecretHolder({ envValue: process.env.ADMIN_SECRET, dataDir: getPersistentDataDir(), name: 'admin-secret' });
+const ADMIN_SECRET_SOURCE = { source: ADMIN_SECRET_HOLDER.source, envRejected: ADMIN_SECRET_HOLDER.envRejected };
+function hubSigningSecret() {
+  return ADMIN_SECRET_HOLDER.get();
+}
 // One-time boot migrations (a reset of admin and staff sessions; see data/security-settings.js).
 runTokenPolicyBootMigrations();
 const loginLimiter = createLoginLimiter();
 
 function signToken(payload) {
   const data = JSON.stringify(stampTokenVersion(payload));
-  const sig = createHmac('sha256', ADMIN_SECRET).update(data).digest('hex');
+  const sig = createHmac('sha256', hubSigningSecret()).update(data).digest('hex');
   return Buffer.from(JSON.stringify({ data, sig })).toString('base64url');
 }
 
 function verifyToken(token) {
   try {
     const raw = JSON.parse(Buffer.from(token, 'base64url').toString());
-    const expect = createHmac('sha256', ADMIN_SECRET).update(String(raw.data)).digest('hex');
+    const expect = createHmac('sha256', hubSigningSecret()).update(String(raw.data)).digest('hex');
     if (!safeEqual(expect, raw.sig)) return null;
     const payload = JSON.parse(raw.data);
     // Age (security-settings.json, default 30 days) plus revokedBefore and per-user tokenVersion.
@@ -2821,13 +2827,18 @@ function resolveSalesPreviewPushUrl() {
   return `${salesPreview.getPublicPreviewOrigin()}/api/admin/sales/maker-preview-push`;
 }
 
-let makerCallbackTokenCache = '';
-// Env wins; otherwise one random token kept in <dataDir>/secrets/. Callbacks never run unauthenticated.
+// Env wins; otherwise one random token kept in <dataDir>/secrets/ (made on first use). Callbacks never
+// run unauthenticated. Admin → Security can rotate the disk token; other hub processes follow within a second.
+const MAKER_CALLBACK_TOKEN_HOLDER = createHubSecretHolder({
+  envValue: sanitizeText(process.env.WEBSITE_MAKER_STATUS_CALLBACK_TOKEN) || sanitizeText(process.env.SALES_MAKER_STATUS_CALLBACK_TOKEN),
+  envRule: 'any',
+  lazy: true,
+  dataDir: getPersistentDataDir(),
+  name: 'maker-callback-token',
+  bytes: 32,
+});
 function getMakerCallbackToken() {
-  const fromEnv = sanitizeText(process.env.WEBSITE_MAKER_STATUS_CALLBACK_TOKEN || process.env.SALES_MAKER_STATUS_CALLBACK_TOKEN || '');
-  if (fromEnv) return fromEnv;
-  if (!makerCallbackTokenCache) makerCallbackTokenCache = readOrCreateDiskSecret(getPersistentDataDir(), 'maker-callback-token', 32);
-  return makerCallbackTokenCache;
+  return MAKER_CALLBACK_TOKEN_HOLDER.get();
 }
 
 function makerCallbackTokenFrom(req) {
@@ -7867,7 +7878,7 @@ function getMeetingMinutes(client) {
   return client?.meetingMode === 'in-person' ? 60 : 30;
 }
 
-// Stateless OAuth state. Signed with ADMIN_SECRET (same value across every
+// Stateless OAuth state. Signed with the token signing secret (same value across every
 // worker process) so the callback can validate a state issued by any process
 // and it survives app restarts — unlike an in-memory store, which breaks under
 // Passenger/PM2 multi-process or idle-restart hosting.
@@ -7882,7 +7893,7 @@ function signOAuthState(purpose, payload = {}) {
       n: randomBytes(8).toString('hex'),
     })
   ).toString('base64url');
-  const sig = createHmac('sha256', ADMIN_SECRET).update(`${purpose}.${body}`).digest('base64url');
+  const sig = createHmac('sha256', hubSigningSecret()).update(`${purpose}.${body}`).digest('base64url');
   return `${body}.${sig}`;
 }
 
@@ -7893,7 +7904,7 @@ function verifyOAuthState(purpose, state, maxAgeMs = OAUTH_STATE_TTL_MS) {
   if (dot <= 0) return null;
   const body = raw.slice(0, dot);
   const sig = raw.slice(dot + 1);
-  const expect = createHmac('sha256', ADMIN_SECRET).update(`${purpose}.${body}`).digest('base64url');
+  const expect = createHmac('sha256', hubSigningSecret()).update(`${purpose}.${body}`).digest('base64url');
   if (sig.length !== expect.length) return null;
   let diff = 0;
   for (let i = 0; i < sig.length; i += 1) diff |= sig.charCodeAt(i) ^ expect.charCodeAt(i);
@@ -10051,8 +10062,34 @@ app.get('/api/admin/system/maker-callback-token', adminAuth, (_req, res) => {
   res.json({ token: getMakerCallbackToken() });
 });
 
-// Security status, Fireflies webhook secret (disk), token revocation, client "log out everywhere".
-registerSecurityAdminRoutes(app, { adminAuth, clientAuth, signToken, adminSecret: ADMIN_SECRET_SOURCE });
+/**
+ * Re-checks the signed-in admin's password before a sensitive action (secret rotation). Wrong
+ * passwords count toward the normal login limit for that admin. On false the response is sent.
+ */
+async function confirmAdminPassword(req, res, password) {
+  const username = sanitizeText(req.admin?.username);
+  const account = `admin:${username}`;
+  if (!guardLogin(loginLimiter, req, res, account)) return false;
+  const valid = typeof password === 'string' && password.length > 0 && (await store.verifyAdmin(username, password));
+  if (!valid) {
+    loginLimiter.fail(account, clientIpFromRequest(req));
+    res.status(401).json({ code: 'wrong-password', message: 'Feil passord.' });
+    return false;
+  }
+  return true;
+}
+
+// Security status, Fireflies webhook secret (disk), token revocation, client "log out everywhere",
+// and rotation of the token signing secret and the Maker callback token.
+registerSecurityAdminRoutes(app, {
+  adminAuth,
+  clientAuth,
+  signToken,
+  adminSecret: ADMIN_SECRET_SOURCE,
+  adminSecretHolder: ADMIN_SECRET_HOLDER,
+  makerCallbackTokenHolder: MAKER_CALLBACK_TOKEN_HOLDER,
+  confirmAdminPassword,
+});
 
 app.get('/api/admin/employees/overview', adminAuth, async (_req, res) => {
   const users = await store.getAllUsers();
