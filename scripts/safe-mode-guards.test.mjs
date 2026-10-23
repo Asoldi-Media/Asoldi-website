@@ -33,7 +33,7 @@ net.Socket.prototype.connect = function testNetSpy(...args) {
   let first = args[0];
   if (Array.isArray(first)) first = first[0];
   const host = String((first && typeof first === 'object' ? first.host : args[1]) || 'localhost');
-  if (/^(127.|localhost$|::1$)/.test(host)) return realConnect.apply(this, args);
+  if (/^(127\.\d+\.\d+\.\d+|localhost|::1)$/.test(host)) return realConnect.apply(this, args);
   leakedSockets.push(host);
   process.nextTick(() => this.destroy(Object.assign(new Error(`test spy refused ${host}`), { code: 'ETESTLEAK' })));
   return this;
