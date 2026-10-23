@@ -32,7 +32,7 @@ import { registerShopPaymentsRoutes, registerShopPaymentsWebhook } from './lib/s
 import { registerCmsSsoRoutes } from './lib/cms-sso.js';
 import { registerDeliveryRoutes } from './lib/routes/delivery-routes.js';
 import { runDeliverySchemaStartupSnapshot } from './lib/delivery-snapshots.js';
-import { myphonerSyncSkipReason, testClientIdSet } from './lib/test-clients.js';
+import { myphonerMatchCandidates, myphonerSyncSkipReason, testClientIdSet } from './lib/test-clients.js';
 import * as employees from './data/employees.js';
 import * as sales from './data/sales.js';
 import { SALES_CONTACT_CORRECTIONS } from './data/sales-contact-corrections.js';
@@ -5890,7 +5890,7 @@ function buildMyphonerMetaPatch({
 function findSalesClientByPhone(phone = '') {
   const targetDigits = normalizePhoneDigits(phone);
   if (!targetDigits) return null;
-  const all = sales.getSalesClients();
+  const all = myphonerMatchCandidates(sales.getSalesClients());
   return (
     all.find((client) => {
       const currentDigits = normalizePhoneDigits(client.contactPhone);
@@ -5912,7 +5912,7 @@ function findSalesClientForMyphonerLead(lead = {}, resourcePath = '') {
     // We only allow fallback matching to rows that are not already linked to another lead ID.
     const email = normalizeEmail(pickMyphonerLeadEmail(source, leadDataMap, commentText));
     if (email) {
-      const byUnlinkedEmail = sales.getSalesClients().find((client) => {
+      const byUnlinkedEmail = myphonerMatchCandidates(sales.getSalesClients()).find((client) => {
         const clientEmail = normalizeEmail(client.contactEmail);
         const linkedLeadId = sanitizeText(client.myphoner?.leadId);
         return clientEmail === email && !linkedLeadId;
@@ -5922,7 +5922,7 @@ function findSalesClientForMyphonerLead(lead = {}, resourcePath = '') {
     const phone = pickMyphonerLeadPhone(source, leadDataMap, commentText) || normalizePhoneCandidate(source.destination_number);
     if (phone) {
       const targetDigits = normalizePhoneDigits(phone);
-      const byUnlinkedPhone = sales.getSalesClients().find((client) => {
+      const byUnlinkedPhone = myphonerMatchCandidates(sales.getSalesClients()).find((client) => {
         const linkedLeadId = sanitizeText(client.myphoner?.leadId);
         if (linkedLeadId) return false;
         const currentDigits = normalizePhoneDigits(client.contactPhone);
@@ -5947,7 +5947,7 @@ function findSalesClientForMyphonerLead(lead = {}, resourcePath = '') {
           source.secondary_identifier,
         ])
       );
-      const byLinkedDuplicate = sales.getSalesClients().find((client) => {
+      const byLinkedDuplicate = myphonerMatchCandidates(sales.getSalesClients()).find((client) => {
         const linkedLeadId = sanitizeText(client.myphoner?.leadId);
         if (!linkedLeadId || linkedLeadId === leadId) return false;
         const currentDigits = normalizePhoneDigits(client.contactPhone);
@@ -5979,7 +5979,7 @@ function findSalesClientForMyphonerLead(lead = {}, resourcePath = '') {
   }
   const email = normalizeEmail(pickMyphonerLeadEmail(source, leadDataMap, commentText));
   if (email) {
-    const byEmail = sales.getSalesClients().find((client) => normalizeEmail(client.contactEmail) === email);
+    const byEmail = myphonerMatchCandidates(sales.getSalesClients()).find((client) => normalizeEmail(client.contactEmail) === email);
     if (byEmail) return byEmail;
   }
   const phone = pickMyphonerLeadPhone(source, leadDataMap, commentText) || normalizePhoneCandidate(source.destination_number);
@@ -6157,7 +6157,10 @@ async function processMyphonerWinnerFromResource(resourcePath = '', { winnerCate
     winnerCategory,
     winnerComment,
   });
-  if (upserted.skipped === 'test-client') return { ok: true, skipped: 'test-client', clientId: sanitizeText(upserted.client?.id) };
+  if (upserted.skipped === 'test-client') {
+    console.warn(`[myphoner] winner for lead ${getMyphonerLeadId(leadPayload, normalizedResource) || '?'} skipped: linked to test client ${sanitizeText(upserted.client?.id)}`);
+    return { ok: true, skipped: 'test-client', clientId: sanitizeText(upserted.client?.id) };
+  }
   let client = upserted.client;
   const recordingAttach = await attachCachedOrPendingRecordingToClient(client, {
     syncReason: 'winner-recording-attached',
@@ -6554,6 +6557,7 @@ function resolveCachedRecordingForClient(client = {}) {
 async function attachCachedOrPendingRecordingToClient(client = {}, options = {}) {
   const current = client && typeof client === 'object' ? client : null;
   if (!current?.id) return { attached: false, reason: 'missing-client' };
+  if (myphonerSyncSkipReason(current)) return { attached: false, reason: 'test-client', client: current };
   if (sanitizeText(current?.myphoner?.latestRecordingUrl) && !options.force) {
     scheduleBookerPreview(current);
     return { attached: false, reason: 'already-has-recording', client: current };
@@ -6741,6 +6745,7 @@ async function processMyphonerRecordingFromResource(resourcePath = '', payload =
       // Official docs describe resource_url as a lead URL. Recover by phone cache /
       // previously seen call ids for this lead, and keep waiting for a call webhook.
       const leadClient = leadId ? sales.getSalesClientByMyphonerLeadId(leadId) : null;
+      if (myphonerSyncSkipReason(leadClient)) return { ok: true, updated: false, leadId, clientId: sanitizeText(leadClient.id), reason: 'test-client' };
       const leadPhone =
         sanitizeText(leadClient?.contactPhone) ||
         sanitizeText(leadClient?.myphoner?.latestCallDestinationNumber);
@@ -10441,11 +10446,16 @@ app.post('/api/admin/integrations/myphoner/retry-recordings', adminAuth, async (
       enqueued: 0,
       skippedHasRecording: 0,
       skippedNoCallId: 0,
+      skippedTestClient: 0,
       attachedFromCache: 0,
       pendingRetry: null,
     };
     if (enqueueMissing) {
       for (const client of sales.getSalesClients()) {
+        if (myphonerSyncSkipReason(client)) {
+          summary.skippedTestClient += 1;
+          continue;
+        }
         if (sanitizeText(client?.myphoner?.latestRecordingUrl)) {
           summary.skippedHasRecording += 1;
           continue;

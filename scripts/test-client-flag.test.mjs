@@ -105,9 +105,9 @@ test('delivery automation: a test client takes part only when listed as a pilot'
   assert.equal(settingsStore.effectiveModeForClient('emails.preWorkshop', client, { settings: piloted }), 'auto');
 });
 
-test('Myphoner winner: a test client matched without a lead id stops the winner flow before any Myphoner write', () => {
-  // findSalesClientForMyphonerLead also matches by email, phone or name, so the lead-id lookup in
-  // copySsuWinnerToWinsList would miss such a client. The winner flow must stop right after upsert.
+test('Myphoner winner: a winner linked to a test client stops before any Myphoner write and is logged', () => {
+  // Only a lead-id link reaches a test client (the email/phone/name fallbacks leave test clients
+  // out). Such a winner must stop right after upsert, before the recording attach and the wins list.
   const server = readFileSync(join(root, 'server.js'), 'utf8').replace(/\r\n/g, '\n');
   const start = server.indexOf('async function processMyphonerWinnerFromResource(');
   assert.ok(start > 0);
@@ -115,12 +115,75 @@ test('Myphoner winner: a test client matched without a lead id stops the winner 
   assert.ok(end > start);
   const body = server.slice(start, end);
   const upsert = body.indexOf('await upsertSalesClientFromMyphonerLead(');
-  const stop = body.indexOf("if (upserted.skipped === 'test-client') return");
+  const stop = body.indexOf("if (upserted.skipped === 'test-client') {");
   assert.ok(upsert > 0 && stop > upsert, 'the flow checks upserted.skipped right after upsert');
+  const stopBlock = body.slice(stop, body.indexOf('\n  }\n', stop));
+  assert.match(stopBlock, /console\.warn\(/, 'a skipped winner is logged, not silent');
+  assert.match(stopBlock, /return \{ ok: true, skipped: 'test-client'/);
   for (const later of ['attachCachedOrPendingRecordingToClient(', 'enqueuePendingRecording(', 'copySsuWinnerToWinsList(']) {
     const at = body.indexOf(later);
-    assert.ok(at > stop, `${later} runs only after the test-client stop`);
+    assert.ok(at > stop + stopBlock.length, `${later} runs only after the test-client stop`);
   }
+});
+
+function serverFunction(server, signature) {
+  const start = server.indexOf(signature);
+  assert.ok(start > 0, `${signature} exists`);
+  const end = server.indexOf('\n}\n', start);
+  assert.ok(end > start);
+  return server.slice(start, end);
+}
+
+test('Myphoner matching: only an explicit lead-id link reaches a test client', () => {
+  const clients = [
+    { id: 'canary', isTest: true, contactPhone: '+47 900 00 001', contactEmail: 'post@canary.test' },
+    { id: 'real', contactPhone: '+47 900 00 001', contactEmail: 'post@real.test' },
+  ];
+  assert.deepEqual(testClients.myphonerMatchCandidates(clients).map((client) => client.id), ['real']);
+  assert.deepEqual(testClients.myphonerMatchCandidates(null), []);
+
+  // Every email/phone/name fallback in the lead matcher and the phone matcher uses the candidates;
+  // the lead-id lookup does not (that link is explicit, and upsert then skips the event).
+  const server = readFileSync(join(root, 'server.js'), 'utf8').replace(/\r\n/g, '\n');
+  for (const signature of ['function findSalesClientForMyphonerLead(', 'function findSalesClientByPhone(']) {
+    const body = serverFunction(server, signature);
+    const all = body.split('sales.getSalesClients()').length - 1;
+    const filtered = body.split('myphonerMatchCandidates(sales.getSalesClients())').length - 1;
+    assert.ok(all > 0, signature);
+    assert.equal(filtered, all, `${signature}: every fallback leaves test clients out`);
+  }
+  assert.match(serverFunction(server, 'function findSalesClientForMyphonerLead('), /sales\.getSalesClientByMyphonerLeadId\(leadId\)/);
+});
+
+test('Myphoner recordings: a cached or retried recording is never attached to a test client', () => {
+  const server = readFileSync(join(root, 'server.js'), 'utf8').replace(/\r\n/g, '\n');
+
+  // The shared attach helper refuses test clients before it reads the cache, queues or writes.
+  const attach = serverFunction(server, 'async function attachCachedOrPendingRecordingToClient(');
+  const guard = attach.indexOf("if (myphonerSyncSkipReason(current)) return { attached: false, reason: 'test-client'");
+  assert.ok(guard > 0, 'attachCachedOrPendingRecordingToClient checks the test flag');
+  for (const later of ['resolveCachedRecordingForClient(', 'enqueuePendingRecording(', 'applyRecordingMetaToSalesClient(']) {
+    assert.ok(attach.indexOf(later) > guard, `${later} runs only after the test-client check`);
+  }
+
+  // The recording webhook on a lead resource stops for a test client before the attach and before
+  // the diagnostic stamp.
+  const lookup = server.indexOf('const leadClient = leadId ? sales.getSalesClientByMyphonerLeadId(leadId) : null;');
+  assert.ok(lookup > 0);
+  const branch = server.slice(lookup, server.indexOf("return { ok: true, updated: false, leadId, reason: diagnosticReason, pending: true };", lookup));
+  const leadGuard = branch.indexOf("if (myphonerSyncSkipReason(leadClient)) return { ok: true, updated: false, leadId");
+  assert.ok(leadGuard > 0, 'the lead-resource branch checks the test flag');
+  assert.ok(branch.indexOf('attachCachedOrPendingRecordingToClient(leadClient') > leadGuard);
+  assert.ok(branch.indexOf('sales.updateSalesClient(leadClient.id') > leadGuard);
+
+  // The superadmin retry loop skips test clients before attaching or queueing.
+  const routeStart = server.indexOf("app.post('/api/admin/integrations/myphoner/retry-recordings'");
+  const route = server.slice(routeStart, server.indexOf('\n});\n', routeStart));
+  const skip = route.indexOf('if (myphonerSyncSkipReason(client)) {');
+  assert.ok(skip > 0, 'the retry loop checks the test flag');
+  assert.match(route, /skippedTestClient: 0/);
+  assert.ok(route.indexOf('attachCachedOrPendingRecordingToClient(client') > skip);
+  assert.ok(route.indexOf('enqueuePendingRecording(') > skip);
 });
 
 test('Myphoner recordings: an incoming call recording is never written onto a test client', () => {
