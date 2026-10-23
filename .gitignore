@@ -30,6 +30,7 @@ production.env
 fixtures-private/
 .golden-reports/
 .ai-cassettes/
+# Local safe-mode hub data (npm run dev:safe, soak, golden profiles): outbox, intents, seeded clients.
 .local-data/
 /tmp/
 tmp-*.mjs

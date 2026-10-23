@@ -1,0 +1,13 @@
+{
+  "note": "Hosts a default safe-mode hub may reach (read-only). Loopback is always allowed. Anything else fails the soak.",
+  "hosts": [
+    "www.googleapis.com",
+    "gmail.googleapis.com",
+    "oauth2.googleapis.com",
+    "mybusinessbusinessinformation.googleapis.com",
+    "mybusinessaccountmanagement.googleapis.com",
+    "businessprofileperformance.googleapis.com",
+    "*.myphoner.com",
+    "go.lucaregnskap.no"
+  ]
+}

@@ -1,0 +1,389 @@
+#!/usr/bin/env node
+/**
+ * One hub .env, generated from the production env plus a local safe-mode block.
+ *
+ *   node scripts/env-sync.mjs --from <prod env copy>     write .env from a local copy
+ *   node scripts/env-sync.mjs --from-prod                fetch production.env read-only (FTPS RETR via
+ *                                                        website-maker/scripts/prod-read.mjs) into
+ *                                                        ~/.asoldi-secrets/prod-env/, then write .env
+ *   node scripts/env-sync.mjs --check [--from <file>]    drift report: key NAMES only
+ *   node scripts/env-sync.mjs --archive-strays           move .env.bak-*, .env.before-live-*, .env.starred-*,
+ *                                                        .env.hostinger-import and ~/.asoldi-website-data/production.env
+ *                                                        to ~/.asoldi-secrets/env-archive/<ts>/
+ *   node scripts/env-sync.mjs --write-example           regenerate .env.example (names only)
+ *   --substitute-test-keys   live Stripe keys are replaced by the Connect test key (or withheld)
+ *   --out <file>             write somewhere other than <repo>/.env
+ *
+ * Output order: header, prod keys (PRODUCTION_ENV_KEYS order, then alphabetical; ADMIN_SECRET is
+ * never copied), LOCAL EXTRA (keys only the previous .env had), LOCAL SAFE OVERRIDES. A rerun with
+ * the same input produces the same file. Values are never printed.
+ */
+import { spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { basename, dirname, join, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+import dotenv from 'dotenv';
+import { PRODUCTION_ENV_KEYS } from '../lib/persistent-env.js';
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+export const SECTION_PROD = '# ---- PROD KEYS (scripts/env-sync.mjs) ----';
+export const SECTION_EXTRA = '# ---- LOCAL EXTRA (kept from the previous .env) ----';
+export const SECTION_OVERRIDES = '# ---- LOCAL SAFE OVERRIDES (scripts/env-sync.mjs) ----';
+export const NEVER_COPY = new Set(['ADMIN_SECRET']);
+export const STRAY_PATTERNS = [/^\.env\.bak-/, /^\.env\.before-live-/, /^\.env\.starred-/, /^\.env\.hostinger-import$/];
+
+/**
+ * The block that makes a PC hub safe. It holds no host path: docker-compose.lan.yml loads
+ * this .env into a Linux container, where a Windows APP_DATA_DIR would silently turn into
+ * a relative (empty) data dir. dev:safe sets APP_DATA_DIR per profile instead, and a plain
+ * `node server.js` keeps the usual ~/.asoldi-website-data.
+ */
+export function safeOverrides(repoRoot = REPO_ROOT) {
+  void repoRoot;
+  return {
+    HUB_SAFE_MODE: '1',
+    APP_URL: 'http://127.0.0.1:3100',
+    PORT: '3101',
+    PERSIST_PRODUCTION_ENV: '0',
+    SALES_EMAIL_AUTOSEND: '0',
+    WORKSHOP_DESK_EMAIL_AUTOSEND: '0',
+    LAN_PREVIEW_AUTOPUBLISH: '0',
+    WEBSITE_MAKER_LOCAL_URL: 'http://127.0.0.1:3000',
+    HUB_PUBLIC_URL_FOR_MAKER: 'http://host.docker.internal:3101',
+  };
+}
+
+export function parseEnvText(text = '') {
+  return dotenv.parse(String(text || ''));
+}
+
+// Lines placed after a candidate while checking it, so a quote that runs on into the next
+// line (dotenv's multi-line match) is caught.
+const ROUND_TRIP_TAIL = ['', "ZZ_ENV_SYNC_NEXT1='a'", 'ZZ_ENV_SYNC_NEXT2="b"', 'ZZ_ENV_SYNC_NEXT3=`c`', 'ZZ_ENV_SYNC_NEXT4=d', ''].join('\n');
+
+function roundTrips(candidate, text) {
+  const parsed = dotenv.parse(`ZZ_ENV_SYNC_VALUE=${candidate}${ROUND_TRIP_TAIL}`);
+  return parsed.ZZ_ENV_SYNC_VALUE === text
+    && parsed.ZZ_ENV_SYNC_NEXT1 === 'a'
+    && parsed.ZZ_ENV_SYNC_NEXT2 === 'b'
+    && parsed.ZZ_ENV_SYNC_NEXT3 === 'c'
+    && parsed.ZZ_ENV_SYNC_NEXT4 === 'd';
+}
+
+/**
+ * Quote so that dotenv.parse gives the exact value back. The first candidate that
+ * round-trips wins:
+ *   bare; 'single' and `backtick` (kept literally by dotenv, may span lines);
+ *   "double" with real newlines written as \n (dotenv expands \n and \r inside double
+ *   quotes, so only when the text has no literal backslash-n or backslash-r).
+ * A multi-line service-account JSON whose private_key holds literal \n escapes therefore
+ * goes out single-quoted. Throws, naming the key and never the value, when none fits.
+ */
+export function quoteEnvValue(value = '', key = '') {
+  const text = String(value ?? '');
+  if (text === '') return '';
+  const candidates = [];
+  if (/^[A-Za-z0-9_./:@,+=%-]+$/.test(text)) candidates.push(text);
+  const trailingBackslash = text.endsWith('\\');
+  if (!text.includes("'") && !trailingBackslash) candidates.push(`'${text}'`);
+  if (!text.includes('`') && !trailingBackslash) candidates.push(`\`${text}\``);
+  if (!text.includes('"') && !trailingBackslash && !/\\[nr]/.test(text)) {
+    candidates.push(`"${text.replace(/\r/g, '\\r').replace(/\n/g, '\\n')}"`);
+  }
+  // Last resort for one-line values holding all three quote characters: unquoted, which
+  // dotenv reads up to a '#' and trims (the round-trip check decides).
+  if (!/[\r\n]/.test(text)) candidates.push(text);
+  for (const candidate of candidates) {
+    if (roundTrips(candidate, text)) return candidate;
+  }
+  throw new Error(`env-sync: the value of ${key || 'a key'} cannot be written so that dotenv reads it back unchanged; set it by hand.`);
+}
+
+export function orderedProdKeys(prodEnv = {}) {
+  const keys = Object.keys(prodEnv);
+  const known = PRODUCTION_ENV_KEYS.filter((key) => keys.includes(key));
+  const rest = keys.filter((key) => !PRODUCTION_ENV_KEYS.includes(key)).sort();
+  return [...known, ...rest];
+}
+
+/** An override an older env-sync wrote that must not survive as LOCAL EXTRA (the per-repo APP_DATA_DIR). */
+function isRetiredOverride(key, value) {
+  return key === 'APP_DATA_DIR' && /[\\/]\.local-data[\\/]default\/?$/.test(String(value || ''));
+}
+
+function isLiveStripeKey(key, value) {
+  return /^STRIPE_/.test(key) && /^(sk|rk|pk)_live_/.test(String(value || ''));
+}
+
+/**
+ * Build the .env text. Returns { text, report } where report holds key names only.
+ * currentEnv: the previous .env (parsed), for LOCAL EXTRA.
+ */
+export function buildEnvFile({ prodEnv = {}, currentEnv = {}, repoRoot = REPO_ROOT, substituteTestKeys = false, source = 'prod copy', now = new Date() } = {}) {
+  const overrides = safeOverrides(repoRoot);
+  const lines = [
+    '# Asoldi hub .env, generated by scripts/env-sync.mjs. Never commit this file.',
+    `# Source: ${source}. Regenerate with: node scripts/env-sync.mjs --from <file> | --from-prod`,
+    '# Edit only LOCAL EXTRA by hand; the other sections are replaced on every run.',
+    '',
+    SECTION_PROD,
+  ];
+  const report = { prod: [], withheld: [], neverCopied: [], substituted: [], extra: [], overrides: Object.keys(overrides) };
+  for (const key of orderedProdKeys(prodEnv)) {
+    const value = prodEnv[key];
+    if (NEVER_COPY.has(key)) {
+      lines.push(`# ${key}: never copied; the local hub generates its own on disk`);
+      report.neverCopied.push(key);
+      continue;
+    }
+    if (Object.prototype.hasOwnProperty.call(overrides, key)) {
+      lines.push(`# ${key}: prod value withheld (local override below)`);
+      report.withheld.push(key);
+      continue;
+    }
+    if (substituteTestKeys && isLiveStripeKey(key, value)) {
+      const testKey = String(prodEnv.STRIPE_CONNECT_TEST_SECRET_KEY || '');
+      if (/^(sk|rk)_test_/.test(testKey) && /^STRIPE_(SECRET_KEY|CONNECT_SECRET_KEY)$/.test(key)) {
+        lines.push(`# ${key}: live key replaced by STRIPE_CONNECT_TEST_SECRET_KEY (--substitute-test-keys)`);
+        lines.push(`${key}=${quoteEnvValue(testKey, key)}`);
+      } else {
+        lines.push(`# ${key}: live key withheld (--substitute-test-keys)`);
+      }
+      report.substituted.push(key);
+      continue;
+    }
+    lines.push(`${key}=${quoteEnvValue(value, key)}`);
+    report.prod.push(key);
+  }
+  const extraKeys = Object.keys(currentEnv)
+    .filter((key) => !Object.prototype.hasOwnProperty.call(prodEnv, key))
+    .filter((key) => !Object.prototype.hasOwnProperty.call(overrides, key))
+    .filter((key) => !NEVER_COPY.has(key))
+    .filter((key) => !isRetiredOverride(key, currentEnv[key]))
+    .sort();
+  lines.push('', SECTION_EXTRA);
+  for (const key of extraKeys) {
+    lines.push(`${key}=${quoteEnvValue(currentEnv[key], key)}`);
+    report.extra.push(key);
+  }
+  lines.push('', SECTION_OVERRIDES);
+  for (const [key, value] of Object.entries(overrides)) lines.push(`${key}=${quoteEnvValue(value, key)}`);
+  void now;
+  return { text: `${lines.join('\n')}\n`, report };
+}
+
+/** Keys used locally or by operator scripts that are not on the Hostinger env tab. */
+export const LOCAL_KEYS = [
+  'PORT', 'APP_DATA_DIR', 'DATA_DIR', 'DATA_BACKUP_KEEP', 'WEBSITE_MAKER_LOCAL_URL', 'HUB_PUBLIC_URL_FOR_MAKER',
+  'LAN_PREVIEW_AUTOPUBLISH', 'LAN_PREVIEW_AUTOPUBLISH_MS', 'WORKSHOP_DESK_EMAIL_AUTOSEND', 'SALES_REMINDER_POLL_MS',
+  'PROD_ADMIN_URL', 'PROD_ADMIN_USERNAME', 'PROD_ADMIN_PASSWORD', 'LAN_USER_SYNC_PASSWORD',
+  'BREVO_API_KEY', 'HOSTINGER_API_TOKEN',
+];
+
+/** Safe-mode switches (docs/safe-mode.md). */
+export const SAFE_MODE_KEYS = [
+  'HUB_SAFE_MODE', 'HUB_SAFE_MODE_ALLOW', 'EMAIL_REDIRECT_TO', 'HUB_SAFE_MODE_AI', 'HUB_SAFE_MODE_AI_RECORD',
+  'HUB_SAFE_MODE_AI_CASSETTES', 'PERSIST_PRODUCTION_ENV',
+];
+
+/** .env.example: names only, grouped. `knownKeys` are extra names to keep (e.g. from the previous example). */
+export function buildEnvExample(knownKeys = []) {
+  const seen = new Set();
+  const block = (title, keys) => {
+    const rows = [];
+    for (const key of keys) {
+      if (seen.has(key) || !/^[A-Z][A-Z0-9_]*$/.test(key)) continue;
+      seen.add(key);
+      rows.push(`${key}=`);
+    }
+    return rows.length ? ['', `# ---- ${title} ----`, ...rows] : [];
+  };
+  const lines = [
+    '# Asoldi hub env: NAMES ONLY. Never put a value in this file (the repo is public).',
+    '# Production values live in Hostinger -> asoldi.com -> Environment variables.',
+    '# A PC gets its .env from: node scripts/env-sync.mjs --from <prod copy> | --from-prod',
+    '# Then run the hub with: npm run dev:safe   (see docs/safe-mode.md)',
+    ...block('Safe mode (PC and LAN box only; asoldi.com never sets these)', SAFE_MODE_KEYS),
+    ...block('Production keys (scripts/env-sync.mjs copies these; ADMIN_SECRET never leaves the server)', PRODUCTION_ENV_KEYS),
+    ...block('Local and operator keys', LOCAL_KEYS),
+    ...block('Optional tuning', [...new Set(knownKeys)].sort()),
+  ];
+  return `${lines.join('\n')}\n`;
+}
+
+/** Key names in an existing env/example file, including commented-out `# KEY=` lines. */
+export function keyNamesIn(text = '') {
+  const keys = [];
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const match = line.match(/^#?\s*([A-Z][A-Z0-9_]{2,})=/);
+    if (match && !keys.includes(match[1])) keys.push(match[1]);
+  }
+  return keys;
+}
+
+function isMasked(value = '') {
+  return /\*{4,}/.test(String(value || ''));
+}
+
+/** Drift report, names only. */
+export function checkEnv({ prodEnv = null, currentEnv = {}, repoRoot = REPO_ROOT } = {}) {
+  const overrides = safeOverrides(repoRoot);
+  const reference = prodEnv ? Object.keys(prodEnv) : PRODUCTION_ENV_KEYS;
+  const missing = reference
+    .filter((key) => !NEVER_COPY.has(key) && !Object.prototype.hasOwnProperty.call(overrides, key))
+    .filter((key) => !Object.prototype.hasOwnProperty.call(currentEnv, key))
+    .filter((key) => !prodEnv || String(prodEnv[key] || '') !== '');
+  const extra = Object.keys(currentEnv).filter((key) => !reference.includes(key) && !Object.prototype.hasOwnProperty.call(overrides, key));
+  const empty = Object.keys(currentEnv).filter((key) => String(currentEnv[key] ?? '') === '');
+  const masked = Object.keys(currentEnv).filter((key) => isMasked(currentEnv[key]));
+  const overrideDrift = Object.keys(overrides).filter((key) => String(currentEnv[key] ?? '') !== overrides[key]);
+  const adminSecretPresent = Object.prototype.hasOwnProperty.call(currentEnv, 'ADMIN_SECRET');
+  return { missing, extra: extra.sort(), empty, masked, overrideDrift, adminSecretPresent, reference: prodEnv ? 'prod copy' : 'PRODUCTION_ENV_KEYS' };
+}
+
+export function formatCheck(result) {
+  const rows = [`env-sync --check (reference: ${result.reference})`];
+  const list = (label, keys) => rows.push(`  ${label} (${keys.length})${keys.length ? `: ${keys.join(', ')}` : ''}`);
+  list('missing locally', result.missing);
+  list('extra (local only)', result.extra);
+  list('empty', result.empty);
+  list('masked', result.masked);
+  list('safe overrides not applied', result.overrideDrift);
+  if (result.adminSecretPresent) rows.push('  ADMIN_SECRET is set locally: remove it so the local hub uses its own disk secret');
+  return rows.join('\n');
+}
+
+export function findStrays(repoRoot = REPO_ROOT, home = homedir()) {
+  const out = [];
+  if (existsSync(repoRoot)) {
+    for (const name of readdirSync(repoRoot)) {
+      if (STRAY_PATTERNS.some((re) => re.test(name))) out.push(join(repoRoot, name));
+    }
+  }
+  const localProdEnv = join(home, '.asoldi-website-data', 'production.env');
+  if (existsSync(localProdEnv)) out.push(localProdEnv);
+  return out;
+}
+
+function stamp(now = new Date()) {
+  return now.toISOString().replace(/[:.]/g, '-');
+}
+
+/** Best effort: on Windows, strip inherited ACLs and grant only the current user. */
+export function restrictToUser(path) {
+  try {
+    chmodSync(path, 0o700);
+  } catch {
+    // ignore
+  }
+  if (process.platform !== 'win32') return;
+  const user = process.env.USERNAME;
+  if (!user) return;
+  spawnSync('icacls', [path, '/inheritance:r', '/grant:r', `${user}:(OI)(CI)F`], { stdio: 'ignore', windowsHide: true });
+}
+
+/** Move stray env copies into ~/.asoldi-secrets/env-archive/<ts>/. Returns moved base names. */
+export function archiveStrays({ repoRoot = REPO_ROOT, home = homedir(), now = new Date(), restrict = restrictToUser } = {}) {
+  const strays = findStrays(repoRoot, home);
+  if (!strays.length) return { dir: '', moved: [] };
+  const dir = join(home, '.asoldi-secrets', 'env-archive', stamp(now));
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  restrict(dir);
+  const moved = [];
+  for (const file of strays) {
+    let target = join(dir, basename(file));
+    if (existsSync(target)) target = join(dir, `${basename(dirname(file))}-${basename(file)}`);
+    renameSync(file, target);
+    moved.push(basename(file));
+  }
+  return { dir, moved };
+}
+
+/** Read-only fetch of the prod env through website-maker/scripts/prod-read.mjs (FTPS RETR only). */
+export function fetchProdEnv({ makerRoot = resolve(REPO_ROOT, '..', 'website-maker'), home = homedir() } = {}) {
+  const script = join(makerRoot, 'scripts', 'prod-read.mjs');
+  if (!existsSync(script)) throw new Error('website-maker/scripts/prod-read.mjs not found next to this repo.');
+  const dir = join(home, '.asoldi-secrets', 'prod-env');
+  mkdirSync(dir, { recursive: true, mode: 0o700 });
+  restrictToUser(dir);
+  const dest = join(dir, 'production.env');
+  const result = spawnSync(process.execPath, [script, 'get', '.asoldi-website-data/production.env', dest], { cwd: makerRoot, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+  if (result.status !== 0) throw new Error(`prod-read failed (exit ${result.status}).`);
+  try {
+    chmodSync(dest, 0o600);
+  } catch {
+    // ignore
+  }
+  return dest;
+}
+
+function argValue(argv, flag) {
+  const i = argv.indexOf(flag);
+  return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : '';
+}
+
+function readEnvIfExists(file) {
+  return file && existsSync(file) ? parseEnvText(readFileSync(file, 'utf8')) : null;
+}
+
+export async function main(argv = process.argv.slice(2), { log = console.log, repoRoot = REPO_ROOT, home = homedir() } = {}) {
+  if (argv.includes('--write-example')) {
+    const examplePath = join(repoRoot, '.env.example');
+    const previous = existsSync(examplePath) ? keyNamesIn(readFileSync(examplePath, 'utf8')) : [];
+    writeFileSync(examplePath, buildEnvExample(previous), 'utf8');
+    log(`wrote ${examplePath} (names only)`);
+    return 0;
+  }
+  const out = resolve(argValue(argv, '--out') || join(repoRoot, '.env'));
+  const currentEnv = readEnvIfExists(out) || {};
+  if (argv.includes('--archive-strays')) {
+    const { dir, moved } = archiveStrays({ repoRoot, home });
+    log(moved.length ? `archived ${moved.length} file(s) to ${dir}: ${moved.join(', ')}` : 'no stray env files');
+    if (!argv.includes('--from') && !argv.includes('--from-prod') && !argv.includes('--check')) return 0;
+  }
+  let fromFile = argValue(argv, '--from');
+  if (argv.includes('--from-prod')) fromFile = fetchProdEnv({ home });
+  if (!fromFile) {
+    const cached = join(home, '.asoldi-secrets', 'prod-env', 'production.env');
+    if (argv.includes('--check') && existsSync(cached)) fromFile = cached;
+  }
+  const prodEnv = readEnvIfExists(fromFile);
+  if (argv.includes('--check')) {
+    log(formatCheck(checkEnv({ prodEnv, currentEnv, repoRoot })));
+    return 0;
+  }
+  if (!prodEnv) {
+    log('usage: node scripts/env-sync.mjs --from <prod env copy> | --from-prod | --check | --archive-strays');
+    return 2;
+  }
+  const { text, report } = buildEnvFile({
+    prodEnv,
+    currentEnv,
+    repoRoot,
+    substituteTestKeys: argv.includes('--substitute-test-keys'),
+    source: argv.includes('--from-prod') ? 'prod (read-only fetch)' : 'local prod copy',
+  });
+  writeFileSync(out, text, { encoding: 'utf8', mode: 0o600 });
+  log(`wrote ${out}: ${report.prod.length} prod keys, ${report.extra.length} local extra, ${report.overrides.length} safe overrides`
+    + `${report.withheld.length ? `; withheld for override: ${report.withheld.join(', ')}` : ''}`
+    + `${report.neverCopied.length ? `; never copied: ${report.neverCopied.join(', ')}` : ''}`
+    + `${report.substituted.length ? `; test-key substitution: ${report.substituted.join(', ')}` : ''}`);
+  return 0;
+}
+
+function isDirectRun() {
+  try {
+    return Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectRun()) {
+  main().then((code) => process.exit(code)).catch((error) => {
+    console.error(`env-sync: ${error?.message || error}`);
+    process.exit(1);
+  });
+}

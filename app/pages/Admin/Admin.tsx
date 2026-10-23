@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BarChart3, Briefcase, ChevronDown, Code2, FileSignature, FileText, FolderCog, Globe, Image as ImageIcon, LayoutDashboard, LogOut, Mail, Newspaper, Share2, ShoppingBag, Users, UserPlus } from 'lucide-react';
+import { BarChart3, Briefcase, ChevronDown, Code2, FileSignature, FileText, FolderCog, Globe, Image as ImageIcon, LayoutDashboard, LogOut, Mail, Newspaper, Share2, ShieldCheck, ShoppingBag, Users, UserPlus } from 'lucide-react';
 import { Helmet } from 'react-helmet-async';
 import { ManageClientsSection } from './sections/ManageClientsSection';
 import { PagesSection } from './sections/PagesSection';
@@ -36,6 +36,9 @@ const OfferReviewSection = lazy(() =>
 );
 const MediaLibrarySection = lazy(() =>
   import('./sections/MediaLibrarySection').then((m) => ({ default: m.MediaLibrarySection }))
+);
+const SystemSafetySection = lazy(() =>
+  import('./sections/SystemSafetySection').then((m) => ({ default: m.SystemSafetySection }))
 );
 
 export const Admin = () => {
@@ -600,6 +603,7 @@ export const Admin = () => {
             />
             {features.socialSync && <SidebarButton active={tab === 'social'} onClick={() => setTab('social')} icon={<Share2 size={18} />} label="Social sync" />}
             {features.analytics && <SidebarButton active={tab === 'analytics'} onClick={() => setTab('analytics')} icon={<BarChart3 size={18} />} label="Analytics" />}
+            <SidebarButton active={tab === 'system'} onClick={() => setTab('system')} icon={<ShieldCheck size={18} />} label="System safety" />
           </nav>
           <div className="p-2 border-t border-white/10 space-y-1">
             <button onClick={() => setChangePasswordOpen(true)} className="w-full px-3 py-2 text-left text-sm text-gray-400 hover:text-white">Change my password</button>
@@ -716,6 +720,11 @@ export const Admin = () => {
             </Suspense>
           )}
           {tab === 'social' && <PlaceholderSection title="Social sync" description="Reviews and social media sync. Coming soon." />}
+          {tab === 'system' && (
+            <Suspense fallback={<p className="text-gray-400">Loading…</p>}>
+              <SystemSafetySection />
+            </Suspense>
+          )}
         </main>
       </div>
 

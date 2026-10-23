@@ -1,6 +1,6 @@
 {
   "source": "asoldi-website/packages/suite",
-  "syncedAt": "2026-10-19T05:45:15.700Z",
+  "syncedAt": "2026-10-23T02:39:54.993Z",
   "files": {
     "core/documents/kind.js": "2d619597ae6c457698c539b3b7ecd6923709e868922e5afd9a1eceb4b98ae109",
     "core/documents/text.js": "1bfd544013c84f6872c11e129d36d3a914df6c0ffb68c4ec321506bed8b9b7e0",
@@ -8,7 +8,7 @@
     "core/facts/prompt.js": "5b7a877625e4791f6612f0aeeffe451ea941d4823169bbfe48b5a000e150cf8e",
     "core/inbox/pipeline.js": "40ab0366a85943bd9b58c7104c195d0f1236ac7e1989aa06cfe1d06824c0fcf4",
     "core/mail/automated.js": "f937f45cbd3dcbbfdabab10f6e0f82606cd4f030613debc6e9ee21e7a2c92a25",
-    "core/mail/imap.js": "7bac4c2b5e123d2335ecc5d54f572057c331cf5ba0ff62d1bec4ed746edaf593",
+    "core/mail/imap.js": "f87ad319600179db03b3fcff0c8c841a1c7d01a17e84c3a5df3233c82814eef4",
     "core/mail/mime.js": "326a2f150eb3b2a96d1b04c2c67a1328de6cc3b7f286e8fdc25ce7748f1a5602",
     "core/mail/thread.js": "a4d2a9730f499e0f13b05f03ca03ef272b8988c43fcdff289c16f938fa3b0e15",
     "core/mail/unpack.js": "a118aa9112481b12f03031b84bbf420c5a5a75e2300f3f877b44fb01bc74ef93",

@@ -29,7 +29,8 @@ export default defineConfig(({ command, mode }) => {
     publicDir: command === 'serve' ? path.resolve(__dirname, 'public') : false,
     cacheDir: path.join(homedir(), 'Library', 'Caches', 'asoldi-website', 'vite'),
     plugins: [react(), tailwindcss(), stripLeftoverDistMedia()],
-    define: {
+    // npm run dev:safe (HUB_DEV_SAFE=1) never inlines .env values into the bundle.
+    define: process.env.HUB_DEV_SAFE === '1' ? {} : {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
     },
     optimizeDeps: {

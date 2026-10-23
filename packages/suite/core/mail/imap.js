@@ -134,23 +134,33 @@ export async function probeImap(creds) {
   }
 }
 
+/** IMAP commands for one listing. readOnly: EXAMINE + BODY.PEEK so no flag (\Seen) changes. */
+export function imapListCommands({ folder = 'INBOX', headersOnly = false, readOnly = false } = {}) {
+  const box = String(folder || 'INBOX').replace(/[\r\n"\\]/g, '') || 'INBOX';
+  const mailbox = /^[A-Za-z0-9._-]+$/.test(box) ? box : quoteImap(box);
+  let spec = headersOnly ? '(UID RFC822.HEADER)' : '(UID RFC822)';
+  if (readOnly) spec = headersOnly ? '(UID BODY.PEEK[HEADER])' : '(UID BODY.PEEK[])';
+  return { open: `${readOnly ? 'EXAMINE' : 'SELECT'} ${mailbox}`, fetchSpec: spec };
+}
+
 /** The newest messages of the last `days` days, parsed. Ids use UIDs, which stay stable when mail moves. */
 export async function listImapMessages(creds, {
   maxResults = 8,
   days = 2,
   folder = 'INBOX',
   headersOnly = false,
+  readOnly = false,
   timeoutMs,
 } = {}) {
   const messages = [];
-  const box = String(folder || 'INBOX').replace(/[\r\n"\\]/g, '') || 'INBOX';
   const waitMs = Number(timeoutMs) > 0 ? Number(timeoutMs) : FETCH_TIMEOUT_MS;
+  const commands = imapListCommands({ folder, headersOnly, readOnly });
   await imapSession(creds, async ({ tagged }) => {
-    await tagged(`SELECT ${/^[A-Za-z0-9._-]+$/.test(box) ? box : quoteImap(box)}`);
+    await tagged(commands.open);
     const search = await tagged(`UID SEARCH SINCE ${imapSinceDate(days)}`);
     const ids = parseSearchIds(search).slice(-Math.max(1, Number(maxResults) || 8));
     if (!ids.length) return;
-    const spec = headersOnly ? '(UID RFC822.HEADER)' : '(UID RFC822)';
+    const spec = commands.fetchSpec;
     const fetched = await tagged(`UID FETCH ${ids.join(',')} ${spec}`);
     parseFetchBodies(fetched).forEach(({ uid, raw }, index) => {
       const parsed = parseRfc822(raw);
