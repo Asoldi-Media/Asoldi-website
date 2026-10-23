@@ -48,6 +48,19 @@ test('plan: --egress-audit preloads the recorder into the API only', () => {
   assert.equal(plan.uiEnv.NODE_OPTIONS, undefined);
 });
 
+test('soak --plain keeps the env file APP_URL (a plain node server.js) but its own port, data dir and recorder', async () => {
+  const { plainSoakEnv } = await import('./safe-mode-soak.mjs');
+  const plan = planDevSafe({ argv: ['--profile', 'soak-plain', '--api-port', '3195', '--ui-port', '3196', '--egress-audit'], shellEnv: {}, fileEnv: LIVE_LIKE, repoRoot: REPO });
+  const env = plainSoakEnv({ fileEnv: LIVE_LIKE, shellEnv: {}, plan });
+  assert.equal(env.APP_URL, 'https://asoldi.com');
+  assert.equal(env.HUB_PUBLIC_URL_FOR_MAKER, undefined, 'not the dev:safe value');
+  assert.equal(env.HUB_SAFE_MODE, undefined, 'safe mode decided as on a PC: not Hostinger');
+  assert.equal(env.ADMIN_SECRET, undefined);
+  assert.equal(env.PORT, '3195');
+  assert.match(env.APP_DATA_DIR.replace(/\\/g, '/'), /\.local-data\/soak-plain$/);
+  assert.match(env.NODE_OPTIONS, /egress-audit\.cjs/);
+});
+
 test('egress-audit.cjs records every connection, marks loopback listed, and refuses unlisted hosts in enforce mode', { timeout: 60_000 }, async () => {
   const { spawnSync } = await import('node:child_process');
   const dir = mkdtempSync(join(tmpdir(), 'asoldi-audit-'));
