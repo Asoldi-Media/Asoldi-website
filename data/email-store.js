@@ -13,6 +13,11 @@
  * lockfile ({pid, at, nonce}, 10 s stale timeout), so two hub workers sharing
  * the data dir serialize too. acquireLease adds a TTL lease with a monotonically
  * increasing fencing token.
+ *
+ * Sync file calls never block the event loop for long: only Windows EPERM/EBUSY
+ * is retried, within READ_BUDGET_MS per file; every other error fails at once,
+ * and callers fail closed (marketing) or keep today's behaviour (routing).
+ * Reads never write; only locked writes repair a live file from its backup.
  */
 import {
   closeSync,
@@ -51,8 +56,17 @@ export const EMAIL_SECRET_NAMES = Object.freeze({
 const LOCK_DIR = 'email-locks';
 export const LOCK_STALE_MS = 10_000;
 const LOCK_TIMEOUT_MS = 30_000;
-const TRANSIENT_FS_CODES = new Set(['EPERM', 'EACCES', 'EBUSY', 'EMFILE', 'ENFILE']);
+/**
+ * Sync file calls block the event loop, so every retry has a hard time budget.
+ * A read of one file never blocks for more than READ_BUDGET_MS; a backed-up read
+ * (live file, then its backup) stays under about 2 x READ_BUDGET_MS.
+ */
+export const READ_BUDGET_MS = 50;
+const WRITE_BUDGET_MS = 150;
+const IS_WINDOWS = process.platform === 'win32';
 const OWNER_ROUTING_MODES = new Set(['', 'owner', 'owner+asoldi-bcc']);
+/** Marker in the disk secret store: once present, a missing opt-out record is an incident, not a fresh install. */
+export const SUPPRESSIONS_MARKER = 'email-suppressions-created';
 
 const sleepCell = new Int32Array(new SharedArrayBuffer(4));
 function sleepSync(ms) {
@@ -63,25 +77,55 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Windows reports EPERM/EBUSY while another process has the file open; retry briefly. */
-function retrySync(fn, attempts = 80) {
+/**
+ * Windows reports EPERM/EBUSY while another process holds or renames the file.
+ * Everything else (EACCES, EMFILE, EIO, ...) is a hard error: callers fail
+ * closed or fall back at once instead of stalling the hub.
+ */
+function isTransientFsError(error) {
+  return IS_WINDOWS && (error?.code === 'EPERM' || error?.code === 'EBUSY');
+}
+
+function retrySync(fn, budgetMs = READ_BUDGET_MS) {
+  const deadline = Date.now() + budgetMs;
   for (let i = 0; ; i += 1) {
     try {
       return fn();
     } catch (error) {
-      if (!TRANSIENT_FS_CODES.has(error?.code) || i >= attempts) throw error;
-      sleepSync(Math.min(40, 2 + i));
+      if (!isTransientFsError(error)) throw error;
+      const left = deadline - Date.now();
+      if (left <= 0) throw error;
+      sleepSync(Math.min(left, 2 + i * 3, 15));
     }
   }
 }
 
 function unlinkQuiet(path) {
   try {
-    retrySync(() => unlinkSync(path), 20);
+    retrySync(() => unlinkSync(path));
     return true;
   } catch {
     return false;
   }
+}
+
+/** File text, or null when the file does not exist. Other errors throw (no swallowing). */
+function readTextOrNull(path) {
+  try {
+    return retrySync(() => readFileSync(path, 'utf8'));
+  } catch (error) {
+    if (error?.code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
+const alertedAt = new Map();
+/** Ops alert on the console, at most once per 10 minutes per key and process. Never include data. */
+function opsAlert(key, message) {
+  const t = Date.now();
+  if (t - (alertedAt.get(key) || 0) < 10 * 60 * 1000) return;
+  alertedAt.set(key, t);
+  console.error(`[email-store] ALERT ${message}`);
 }
 
 function isPlainObject(value) {
@@ -123,25 +167,35 @@ function unreadableError(name, cause) {
   const error = new Error(`email store: ${name} is unreadable`);
   error.code = 'EMAIL_STORE_UNREADABLE';
   error.file = name;
-  if (cause) error.cause = cause;
+  // Only the code: a JSON parse message quotes file content (addresses, keys).
+  if (cause?.code) error.causeCode = cause.code;
   return error;
 }
 
+/**
+ * One JSON file within one READ_BUDGET_MS deadline. Missing → fallback.
+ * A torn read (writeDataJson writes in place) and Windows EPERM/EBUSY are retried
+ * until the deadline; any other error (EACCES, ...) throws at once.
+ */
 function readJsonAbs(path, fallback, label) {
-  let lastError = null;
-  for (let attempt = 0; attempt < 6; attempt += 1) {
-    if (!existsSync(path)) return clone(fallback);
+  const deadline = Date.now() + READ_BUDGET_MS;
+  for (let attempt = 0; ; attempt += 1) {
+    let text;
     try {
-      const text = retrySync(() => readFileSync(path, 'utf8'));
-      return JSON.parse(text);
+      text = readFileSync(path, 'utf8');
     } catch (error) {
       if (error?.code === 'ENOENT') return clone(fallback);
-      lastError = error;
-      // A writer may be between truncate and write (writeDataJson writes in place); ~70 ms in total.
-      if (attempt < 5) sleepSync(2 + attempt * 4);
+      if (!isTransientFsError(error) || Date.now() >= deadline) throw unreadableError(label || path, error);
+      sleepSync(Math.min(Math.max(1, deadline - Date.now()), 2 + attempt * 3, 15));
+      continue;
+    }
+    try {
+      return JSON.parse(text);
+    } catch (error) {
+      if (Date.now() >= deadline) throw unreadableError(label || path, error);
+      sleepSync(Math.min(Math.max(1, deadline - Date.now()), 2 + attempt * 3, 15));
     }
   }
-  throw unreadableError(label || path, lastError);
 }
 
 /** Read a JSON file from the data dir. Missing → fallback. Persistently corrupt → throws EMAIL_STORE_UNREADABLE. */
@@ -155,7 +209,7 @@ function writeAtomicAbs(path, value, { mode } = {}) {
   const tmp = `${path}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
   writeFileSync(tmp, text, mode ? { encoding: 'utf8', mode } : 'utf8');
   try {
-    retrySync(() => renameSync(tmp, path));
+    retrySync(() => renameSync(tmp, path), WRITE_BUDGET_MS);
   } catch (error) {
     unlinkQuiet(tmp);
     throw error;
@@ -176,45 +230,49 @@ export function readJsonFile(path, fallback = null) {
   return readJsonAbs(path, fallback, path);
 }
 
-/** Low-churn files: writeDataJson keeps a backup snapshot under <dataDir>/backups. */
+/**
+ * Low-churn files: writeDataJson keeps a backup snapshot under <dataDir>/backups.
+ * Only called inside withFileLock, so a write never races another writer.
+ */
 function writeBackedUpJson(name, value) {
   const path = emailDataPath(name);
-  retrySync(() => writeDataJson(path, value));
+  retrySync(() => writeDataJson(path, value), WRITE_BUDGET_MS);
 }
 
 /**
- * Read a backed-up file. If the live file is missing or corrupt but the latest
- * backup is readable, the backup is restored. Both bad → throws (callers fail closed).
+ * Read a backed-up file: { value, source } with source 'live', 'backup' or 'none'.
+ * A missing or corrupt live file falls back to backups/<name>.latest.json, which is
+ * returned as is. The read path never writes: a reader in another process could
+ * otherwise put an older backup over a write in progress. The next locked write
+ * repairs the live file. Both unreadable → throws EMAIL_STORE_UNREADABLE.
  */
-export function readBackedUpJson(name, fallback = null) {
-  let live;
+function readBackedUpJsonMeta(name) {
   let liveError = null;
   const path = emailDataPath(name);
   try {
-    live = readJsonAbs(path, undefined, name);
+    const live = readJsonAbs(path, undefined, name);
+    if (live !== undefined && live !== null) return { value: live, source: 'live' };
   } catch (error) {
     liveError = error;
   }
-  if (live !== undefined && live !== null) return live;
   const backupPath = join(getDataBackupDir(), `${name.split('/').pop()}.latest.json`);
-  if (existsSync(backupPath)) {
-    let restored;
-    try {
-      restored = readJsonAbs(backupPath, undefined, `${name} backup`);
-    } catch (error) {
-      if (liveError) throw unreadableError(name, error);
-    }
-    if (restored !== undefined && restored !== null) {
-      try {
-        writeAtomicAbs(path, restored);
-      } catch {
-        // Reading from the backup still works; the next write repairs the live file.
-      }
-      return restored;
-    }
+  let backupError = null;
+  try {
+    const backup = readJsonAbs(backupPath, undefined, `${name} backup`);
+    if (backup !== undefined && backup !== null) return { value: backup, source: 'backup' };
+  } catch (error) {
+    backupError = error;
   }
-  if (liveError) throw liveError;
-  return clone(fallback);
+  if (liveError) throw unreadableError(name, liveError);
+  // Live file missing: a corrupt backup alone is not fatal, but it is worth an alert.
+  if (backupError) opsAlert(`backup-${name}`, `${name} is missing and its backup is unreadable.`);
+  return { value: undefined, source: 'none' };
+}
+
+/** Value of a backed-up file (see readBackedUpJsonMeta), or the fallback when neither file exists. */
+export function readBackedUpJson(name, fallback = null) {
+  const { value } = readBackedUpJsonMeta(name);
+  return value === undefined ? clone(fallback) : value;
 }
 
 /* ------------------------------------------------------------------ locks */
@@ -295,7 +353,8 @@ async function acquireLockFile(key, { staleMs, timeoutMs }) {
     try {
       fd = openSync(path, 'wx', 0o600);
     } catch (error) {
-      if (error?.code !== 'EEXIST' && !TRANSIENT_FS_CODES.has(error?.code)) throw error;
+      // Windows: EPERM while the previous holder's lockfile is still being deleted.
+      if (error?.code !== 'EEXIST' && !isTransientFsError(error)) throw error;
       if (error?.code === 'EEXIST') reapStaleLock(path, staleMs);
     }
     if (fd !== null) {
@@ -318,8 +377,9 @@ async function acquireLockFile(key, { staleMs, timeoutMs }) {
 function releaseLockFile(handle) {
   if (!handle) return;
   const info = readLockInfo(handle.path);
-  // Only remove our own lock; a stale-reaped lock may now belong to someone else.
-  if (info && (info.nonce === handle.nonce || !info.nonce)) unlinkQuiet(handle.path);
+  // Only remove our own lock. After a stale reap the file may be another process's
+  // brand-new lock, created with O_EXCL but not written yet (empty nonce): leave it.
+  if (info && info.nonce && info.nonce === handle.nonce) unlinkQuiet(handle.path);
 }
 
 /**
@@ -355,14 +415,30 @@ function leasePath(name) {
   return join(lockDir(), `${lockKeyFor(name)}.lease`);
 }
 
-/** The highest fencing token issued for a lease name (0 when none). */
+function fenceError(name, cause) {
+  const error = new Error(`email store: fencing token for "${name}" is unreadable`);
+  error.code = 'EMAIL_FENCE_UNREADABLE';
+  if (cause?.code) error.causeCode = cause.code;
+  return error;
+}
+
+/**
+ * The highest fencing token issued for a lease name. 0 only when no token was
+ * ever issued (no file). A read error or a damaged file throws, so the token can
+ * never go backwards (fence files are written tmp + rename, so they are never torn).
+ */
 export function currentFence(name) {
+  let text;
   try {
-    const value = Number.parseInt(readFileSync(fencePath(name), 'utf8').trim(), 10);
-    return Number.isFinite(value) && value > 0 ? value : 0;
-  } catch {
-    return 0;
+    text = readTextOrNull(fencePath(name));
+  } catch (error) {
+    throw fenceError(name, error);
   }
+  if (text === null) return 0;
+  const trimmed = text.trim();
+  const value = /^\d+$/.test(trimmed) ? Number.parseInt(trimmed, 10) : Number.NaN;
+  if (!Number.isSafeInteger(value)) throw fenceError(name);
+  return value;
 }
 
 function bumpFence(name) {
@@ -371,9 +447,16 @@ function bumpFence(name) {
   return next;
 }
 
+/**
+ * The lease on disk, or null when there is none. A read error throws (the lease may
+ * be live, so nobody may take it). A damaged lease file counts as none: the next
+ * holder gets a higher fencing token, which the old holder's isCurrent() rejects.
+ */
 function readLease(name) {
+  const text = readTextOrNull(leasePath(name));
+  if (text === null) return null;
   try {
-    const lease = JSON.parse(readFileSync(leasePath(name), 'utf8'));
+    const lease = JSON.parse(text);
     return isPlainObject(lease) ? lease : null;
   } catch {
     return null;
@@ -401,10 +484,15 @@ export async function acquireLease(name, ttlMs = 60_000, { now = () => Date.now(
       get expiresAt() {
         return lease.expiresAt;
       },
-      /** True while this lease is the newest one and has not expired. */
+      /** True while this lease is the newest one and has not expired. A read error counts as not current. */
       isCurrent() {
-        const onDisk = readLease(name);
-        return held && Boolean(onDisk && onDisk.nonce === nonce && Number(onDisk.expiresAt) > now()) && currentFence(name) === token;
+        if (!held) return false;
+        try {
+          const onDisk = readLease(name);
+          return Boolean(onDisk && onDisk.nonce === nonce && Number(onDisk.expiresAt) > now()) && currentFence(name) === token;
+        } catch {
+          return false;
+        }
       },
       async renew(nextTtlMs = ttl) {
         return withFileLock(`lease-${lockKeyFor(name)}`, () => {
@@ -598,23 +686,71 @@ export async function patchEmailSite(siteId, patch = {}) {
 
 /* ------------------------------------------------------------------ suppressions */
 
+function suppressionsMarkerPath() {
+  return join(emailDataDir(), 'secrets', SUPPRESSIONS_MARKER);
+}
+
+const markersSeen = new Set();
+/** Written once the opt-out record exists (on the first write, or the first read of an existing file). */
+function ensureSuppressionsMarker() {
+  const path = suppressionsMarkerPath();
+  if (markersSeen.has(path)) return;
+  try {
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+    writeFileSync(path, `${new Date().toISOString()}\n`, { flag: 'wx', mode: 0o600 });
+  } catch (error) {
+    if (error?.code !== 'EEXIST') return; // retried on the next read or write
+  }
+  markersSeen.add(path);
+}
+
+function suppressionsLostError() {
+  const error = unreadableError(EMAIL_FILES.suppressions);
+  error.missing = true;
+  opsAlert(
+    'suppressions-lost',
+    `${EMAIL_FILES.suppressions} and its backup are gone, but the opt-out record existed (secrets/${SUPPRESSIONS_MARKER}). `
+      + 'All marketing that checks it is blocked until the file is restored from backups/ (or the marker is removed on purpose).',
+  );
+  return error;
+}
+
+function readSuppressionsMeta() {
+  const meta = readBackedUpJsonMeta(EMAIL_FILES.suppressions);
+  if (meta.source === 'none') {
+    // Both files missing. Before the first opt-out that is a fresh install; after it, the record was lost.
+    if (existsSync(suppressionsMarkerPath())) throw suppressionsLostError();
+    return { rows: {}, source: 'none' };
+  }
+  if (!isPlainObject(meta.value)) throw unreadableError(EMAIL_FILES.suppressions);
+  ensureSuppressionsMarker();
+  return { rows: meta.value, source: meta.source };
+}
+
 /**
  * The legal opt-out record, keyed per site id, plus "*" (global) and "asoldi"
  * (Asoldi's own marketing). Throws EMAIL_STORE_UNREADABLE when neither the file
- * nor its backup can be read, so callers fail closed.
+ * nor its backup can be read, or when both are gone after the record existed,
+ * so callers fail closed.
  */
 export function readEmailSuppressions() {
-  const stored = readBackedUpJson(EMAIL_FILES.suppressions, {});
-  if (!isPlainObject(stored)) throw unreadableError(EMAIL_FILES.suppressions);
-  return stored;
+  return readSuppressionsMeta().rows;
 }
 
-/** Read-modify-write under the cross-process lock. mutate(rows) edits rows in place. */
+/**
+ * Read-modify-write under the cross-process lock. mutate(rows) edits rows in place.
+ * Nothing is written when mutate changed nothing (an idempotent repost costs one read),
+ * unless the live file had to come from the backup: then the locked write repairs it.
+ */
 export async function updateEmailSuppressions(mutate) {
   return withFileLock(EMAIL_FILES.suppressions, async () => {
-    const rows = readEmailSuppressions();
+    const { rows, source } = readSuppressionsMeta();
+    const before = JSON.stringify(rows);
     const result = await mutate(rows);
-    writeBackedUpJson(EMAIL_FILES.suppressions, rows);
+    if (source === 'backup' || JSON.stringify(rows) !== before) {
+      writeBackedUpJson(EMAIL_FILES.suppressions, rows);
+      ensureSuppressionsMarker();
+    }
     return result;
   });
 }
@@ -625,16 +761,43 @@ function secretsJsonPath() {
   return join(emailDataDir(), 'secrets', EMAIL_SECRET_NAMES.json);
 }
 
-function readSecretsJson() {
+function secretsUnreadableError(cause) {
+  // Never attach the parse error: its message quotes the file, i.e. the secrets.
+  const error = new Error(`email store: secrets/${EMAIL_SECRET_NAMES.json} is unreadable; nothing was written`);
+  error.code = 'EMAIL_SECRETS_UNREADABLE';
+  if (cause?.code) error.causeCode = cause.code;
+  return error;
+}
+
+/**
+ * secrets/email-secrets.json. Missing → empty. With strict, any other read error or
+ * a damaged file throws EMAIL_SECRETS_UNREADABLE (patches must not write over it);
+ * without strict (key lookups) it reads as empty.
+ */
+function readSecretsJson({ strict = false } = {}) {
+  const empty = { brevoApiKey: '', siteKeys: {} };
+  let raw;
   try {
-    const raw = JSON.parse(readFileSync(secretsJsonPath(), 'utf8'));
-    return {
-      brevoApiKey: typeof raw?.brevoApiKey === 'string' ? raw.brevoApiKey : '',
-      siteKeys: isPlainObject(raw?.siteKeys) ? raw.siteKeys : {},
-    };
-  } catch {
-    return { brevoApiKey: '', siteKeys: {} };
+    const text = readTextOrNull(secretsJsonPath());
+    if (text === null) return empty;
+    raw = JSON.parse(text);
+  } catch (error) {
+    if (strict) throw secretsUnreadableError(error);
+    return empty;
   }
+  if (!isPlainObject(raw)) {
+    if (strict) throw secretsUnreadableError();
+    return empty;
+  }
+  return {
+    brevoApiKey: typeof raw.brevoApiKey === 'string' ? raw.brevoApiKey : '',
+    siteKeys: isPlainObject(raw.siteKeys) ? raw.siteKeys : {},
+  };
+}
+
+/** Only the unsubscribe HMAC key (created on first use). Rendering a link needs nothing else. */
+export function readEmailUnsubKey() {
+  return readOrCreateDiskSecret(emailDataDir(), EMAIL_SECRET_NAMES.unsubKey, 32);
 }
 
 /**
@@ -644,16 +807,20 @@ function readSecretsJson() {
  */
 export function readEmailSecrets() {
   const dir = emailDataDir();
-  const unsubKey = readOrCreateDiskSecret(dir, EMAIL_SECRET_NAMES.unsubKey, 32);
+  const unsubKey = readEmailUnsubKey();
   const webhookToken = readOrCreateDiskSecret(dir, EMAIL_SECRET_NAMES.webhookToken, 24);
   const extra = readSecretsJson();
   return { unsubKey, webhookToken, brevoApiKey: extra.brevoApiKey, siteKeys: extra.siteKeys };
 }
 
-/** Superadmin Brevo key paste (fallback when env has none) and per-site emailKeys (WS7.34). */
+/**
+ * Superadmin Brevo key paste (fallback when env has none) and per-site emailKeys (WS7.34).
+ * Rejects with EMAIL_SECRETS_UNREADABLE, writing nothing, when the current file cannot be
+ * read: a paste must never wipe the per-site keys.
+ */
 export async function patchEmailSecrets(patch = {}) {
   return withFileLock('email-secrets', () => {
-    const current = readSecretsJson();
+    const current = readSecretsJson({ strict: true });
     if (typeof patch.brevoApiKey === 'string') current.brevoApiKey = patch.brevoApiKey.trim();
     if (isPlainObject(patch.siteKeys)) current.siteKeys = deepMerge(current.siteKeys, patch.siteKeys);
     mkdirSync(dirname(secretsJsonPath()), { recursive: true, mode: 0o700 });
