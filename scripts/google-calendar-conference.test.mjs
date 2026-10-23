@@ -1,5 +1,6 @@
-// A re-inserted calendar event keeps its Meet room as conferenceData (CAL-8). google.calendar
-// is a stub; a socket spy refuses anything non-loopback.
+// A re-inserted calendar event keeps its Meet room as conferenceData (CAL-8), and the hub asks
+// the Meet API to open rooms on events the host's own OAuth login organizes. google.calendar
+// and google.meet are stubs; a socket spy refuses anything non-loopback.
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
@@ -32,6 +33,8 @@ net.Socket.prototype.connect = function testNetSpy(...args) {
 };
 
 const calendar = await import('../lib/google-calendar.js');
+const meet = await import('../lib/google-meet-access.js');
+const { clearJsonCacheForTests } = await import('../data/atomic-json.js');
 
 test.after(() => rmSync(dataDir, { recursive: true, force: true }));
 
@@ -154,6 +157,23 @@ function fakeCalendar({ events = {}, organizer = HOST, refuseConferenceCopy = fa
   return { api, calls, store, ops: () => calls.map((call) => `${call.op}${call.eventId ? `:${call.eventId}` : ''}`) };
 }
 
+function fakeMeet() {
+  const calls = [];
+  return {
+    calls,
+    spaces: {
+      async get(params) {
+        calls.push({ kind: 'get', params });
+        return { data: { name: 'spaces/sp-test-1', config: { accessType: 'TRUSTED' } } };
+      },
+      async patch(params) {
+        calls.push({ kind: 'patch', params });
+        return { data: { name: params.name, config: { accessType: 'OPEN' } } };
+      },
+    },
+  };
+}
+
 function bookedClient(extra = {}) {
   return {
     id: 'c-test-1',
@@ -167,13 +187,23 @@ function bookedClient(extra = {}) {
   };
 }
 
-function useFakes({ calendarApi }) {
+function useFakes({ calendarApi, meetApi = fakeMeet() }) {
   mock.method(google, 'calendar', () => calendarApi);
+  mock.method(google, 'meet', () => meetApi);
+  return meetApi;
 }
 
-test.beforeEach(() => writeTokens());
+test.beforeEach(() => {
+  rmSync(join(dataDir, 'meet-room-access.json'), { force: true });
+  clearJsonCacheForTests();
+  meet.resetMeetRoomAccessForTests();
+  writeTokens();
+});
 
-test.afterEach(() => mock.restoreAll());
+test.afterEach(async () => {
+  await meet.settleMeetRoomOpensForTests();
+  mock.restoreAll();
+});
 
 function insertsOf(fake) {
   return fake.calls.filter((call) => call.op === 'insert');
@@ -303,6 +333,45 @@ test('kept conference data: a copy of the same room, else one built from the cod
   assert.deepEqual(calendar.keptMeetConferenceData(ROOM, otherRoom), ROOM_FROM_CODE, 'never another room’s conference');
   assert.equal(calendar.keptMeetConferenceData('https://meet.google.com/safe-mode', ROOM_CONFERENCE), null);
   assert.equal(calendar.keptMeetConferenceData('', null), null);
+});
+
+test('after the upsert, the organizer’s own OAuth login opens the room in the background', async () => {
+  writeTokens(`${BASE_SCOPES} ${meet.MEET_SETTINGS_SCOPE}`);
+  const fake = fakeCalendar({ events: { 'evt-4': bookedEvent('evt-4') } });
+  const meetApi = useFakes({ calendarApi: fake.api });
+  await calendar.upsertMeetingEvent(bookedClient({ calendar: { eventId: 'evt-4', meetLink: ROOM } }), 'evt-4', 'sales:rep-1', { sendUpdates: 'none', lockedMeetLink: ROOM });
+  await meet.settleMeetRoomOpensForTests();
+  assert.deepEqual(meetApi.calls.map((call) => call.kind), ['get', 'patch']);
+  assert.equal(meetApi.calls[0].params.name, 'spaces/abc-defg-hij');
+  const status = meet.meetRoomAccessStatus(ROOM);
+  assert.deepEqual([status.ok, status.accessType, status.ownerKey], [true, 'OPEN', 'sales:rep-1']);
+
+  // The recorded Møte path does the same for its own room.
+  const actionRoom = 'https://meet.google.com/mte-room-abc';
+  await calendar.upsertRecordedSalesActionEvent(bookedClient(), { id: 'act-2', name: 'Møte', dueAt: NEW_START, meetLink: actionRoom }, '', 'sales:rep-1');
+  await meet.settleMeetRoomOpensForTests();
+  assert.equal(meet.meetRoomAccessStatus(actionRoom)?.ok, true);
+});
+
+test('without the scope the room is recorded as scope-missing, and the sync result is unchanged', async () => {
+  const fake = fakeCalendar({ events: { 'evt-5': bookedEvent('evt-5') } });
+  const meetApi = useFakes({ calendarApi: fake.api });
+  const meta = await calendar.upsertMeetingEvent(bookedClient({ calendar: { eventId: 'evt-5', meetLink: ROOM } }), 'evt-5', 'sales:rep-1', { sendUpdates: 'none', lockedMeetLink: ROOM });
+  await meet.settleMeetRoomOpensForTests();
+  assert.equal(meetApi.calls.length, 0);
+  assert.equal(meet.meetRoomAccessStatus(ROOM)?.reason, 'scope-missing');
+  assert.equal(meta.meetLink, ROOM);
+  assert.equal(Object.hasOwn(meta, 'meetRoom'), false, 'the calendar meta stays as it was');
+});
+
+test('no room is touched for an event another mailbox organizes', async () => {
+  writeTokens(`${BASE_SCOPES} ${meet.MEET_SETTINGS_SCOPE}`);
+  const fake = fakeCalendar({ organizer: 'damian@asoldi.com' });
+  const meetApi = useFakes({ calendarApi: fake.api });
+  await calendar.upsertMeetingEvent(bookedClient(), '', 'sales:rep-1', { sendUpdates: 'none', lockedMeetLink: ROOM });
+  await meet.settleMeetRoomOpensForTests();
+  assert.equal(meetApi.calls.length, 0);
+  assert.equal(meet.meetRoomAccessStatus(ROOM), null);
 });
 
 test('no test request leaked past the stubs to a real socket', () => {
