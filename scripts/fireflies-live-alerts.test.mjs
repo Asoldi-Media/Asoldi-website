@@ -1084,6 +1084,46 @@ test('health: one owner e-mail per 12 hours, kept on disk through a restart', as
   assert.deepEqual(again, { reason: 'no-api-key', to: 'alexander@asoldi.com' });
 });
 
+test('health: the owner hears at once when Fireflies refuses every send, though every tick passes', async () => {
+  resetAll();
+  const client = salesClient();
+  const state = {
+    clients: [client],
+    active: [],
+    sent: [],
+    reply: () => ({ ok: false, error: { code: 'paid_required', message: 'paid_required: upgrade your plan' } }),
+  };
+  await tickAt(state, -3);
+  assert.equal(state.sent.length, 1);
+  const status = live.firefliesLiveJoinStatus({ nowMs: at(-2), apiKeyPresent: true });
+  assert.equal(status.failingSince, '', 'the tick itself did not fail');
+  const owner = [];
+  const alert = await alerts.maybeAlertFirefliesLiveJoin({
+    sendEmail: async (message) => { owner.push(message); },
+    clients: [client],
+    apiKeyPresent: true,
+    nowMs: at(-2),
+    env: {},
+    log: quiet,
+  });
+  assert.deepEqual(alert, { reason: 'sends-refused', to: 'damian@asoldi.com' });
+  assert.equal(owner[0].subject, 'Fireflies: tar ikke imot innsendinger til møtene');
+  assert.match(owner[0].text, /Siste svar fra Fireflies: paid_required: upgrade your plan/);
+  assert.match(owner[0].text, /Testfirma AS · Kari Test/);
+  // One accepted send in the last 15 minutes: Fireflies takes sends, so no alert.
+  const sessions = Object.values(readLiveSessionStore().sessions);
+  const accepted = sessions.map((session) => applyLiveJoinAttempt(session, { at: iso(1), kind: 'manual', ok: true }));
+  const base = { status, booked: live.collectLiveSessions([client], at(2)), nowMs: at(2) };
+  assert.equal(alerts.firefliesLiveJoinAlertReason({ ...base, sessions }), 'sends-refused');
+  assert.equal(alerts.firefliesLiveJoinAlertReason({ ...base, sessions: accepted }), '');
+  // A rate limit is a refusal too; a send with no answer is not (it may have put a bot out).
+  const limited = sessions.map((session) => ({ ...session, attempts: [{ at: iso(1), kind: 'retry', ok: false, rateLimited: true, message: 'Too many requests' }] }));
+  const unanswered = sessions.map((session) => ({ ...session, attempts: [{ at: iso(1), kind: 'retry', ok: false, uncertain: true, message: 'timeout' }] }));
+  assert.equal(alerts.firefliesLiveJoinAlertReason({ ...base, sessions: limited }), 'sends-refused');
+  assert.equal(alerts.firefliesLiveJoinAlertReason({ ...base, sessions: unanswered }), '');
+  assert.equal(alerts.firefliesLiveJoinAlertReason({ ...base, status: { ...status, lastTickAt: iso(20) }, sessions, nowMs: at(20) }), '', 'nothing sent in the last 15 minutes');
+});
+
 test('health: the owner alert stamp is claimed under the store lock, so a hub process that sent it first wins', () => {
   resetAll();
   // This process read the ingest state a moment ago (still cached): no stamp yet.
