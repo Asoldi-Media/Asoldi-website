@@ -1,5 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { AlertTriangle, Loader2, Mic, Send } from 'lucide-react';
+import React, { useState } from 'react';
+import { AlertTriangle, ExternalLink, Loader2, Mic, Send } from 'lucide-react';
 import { HubRequestError, requestFirefliesLiveJoin, type LiveJoinAnswer } from '../../sales/emailApi';
 import type { SalesClient, SalesLiveRecording } from '../shared';
 import {
@@ -7,13 +7,11 @@ import {
   isNoRecordingState,
   isPlaceholderRow,
   liveJoinAnswerText,
-  liveRecordingLabel,
-  liveRecordingSendAt,
+  liveRecordingBookedMinutes,
+  liveRecordingView,
   liveRecordingsByUrgency,
   mostUrgentLiveRecording,
   recordingClock,
-  recordingStateShortLabel,
-  recordingStateTone,
   slotKindLabel,
 } from './firefliesRecording';
 import { PlaceholderRecordingActions } from './MeetingRecordingControls';
@@ -32,16 +30,21 @@ function entryMeta(entry: SalesLiveRecording) {
 
 const BUTTON = 'inline-flex items-center gap-1 px-2 py-1 rounded-md bg-white/10 text-[11px] text-gray-100 hover:bg-white/15 disabled:opacity-50';
 
+// Before the meeting is over, "uten opptak" stops every send: ask first.
+const DECLINE_CONFIRM = 'Marker møtet uten opptak? Huben slutter da å sende Fireflies inn i dette møtet og varsler ikke om manglende opptak. Bruk det når kunden ikke vil bli tatt opp, eller møtet ikke blir holdt.';
+
 /**
  * Is Fireflies in each booked online meeting near now (client.liveRecordings), with the server's own words
  * as detail and "Send Fireflies inn nå" while a send is allowed. A knock at the door is an amber banner,
  * since only someone in the Meet can let the notetaker in.
  */
-export function FirefliesLiveStatus({ client, onClient }: {
+export function FirefliesLiveStatus({ client, onClient, nowMs }: {
   client: SalesClient;
   onClient?: (client: SalesClient) => void;
+  nowMs?: number;
 }) {
-  const entries = useMemo(() => liveRecordingsByUrgency(client), [client]);
+  const now = nowMs ?? Date.now();
+  const entries = liveRecordingsByUrgency(client, now);
   const [busySlot, setBusySlot] = useState('');
   const [note, setNote] = useState<Note | null>(null);
   if (!entries.length) return null;
@@ -69,11 +72,12 @@ export function FirefliesLiveStatus({ client, onClient }: {
       .find((row) => isPlaceholderRow(row) && row.slotKey === entry.slotKey) || null;
   }
 
-  function actions(entry: SalesLiveRecording) {
+  function actions(entry: SalesLiveRecording, ready: boolean) {
+    // Once a transcript with talk is in there is nothing to send or mark.
+    if (ready) return null;
     const busy = busySlot === entry.slotKey;
     const row = placeholderFor(entry);
-    const markable = isNoRecordingState(entry.state) || entry.state === 'declined';
-    if (!entry.canResend && !markable) return null;
+    const settled = isNoRecordingState(entry.state) || entry.state === 'declined';
     return (
       <div className="flex flex-wrap items-center gap-1.5">
         {entry.canResend ? (
@@ -88,15 +92,15 @@ export function FirefliesLiveStatus({ client, onClient }: {
             Send Fireflies inn nå
           </button>
         ) : null}
-        {markable ? (
-          <PlaceholderRecordingActions
-            clientId={client.id}
-            meetingId={row?.meetingId || ''}
-            slotKey={entry.slotKey}
-            state={entry.state}
-            onClient={onClient}
-          />
-        ) : null}
+        <PlaceholderRecordingActions
+          clientId={client.id}
+          meetingId={row?.meetingId || ''}
+          slotKey={entry.slotKey}
+          state={entry.state}
+          anyState
+          confirmText={settled ? '' : DECLINE_CONFIRM}
+          onClient={onClient}
+        />
       </div>
     );
   }
@@ -113,36 +117,45 @@ export function FirefliesLiveStatus({ client, onClient }: {
   return (
     <div className="space-y-1.5" data-fireflies-live>
       {entries.map((entry) => {
-        const label = liveRecordingLabel(entry);
-        const detail = entry.message && entry.message !== label ? entry.message : '';
-        if (entry.state === 'dispatched') {
+        const view = liveRecordingView(entry, { nowMs: now, bookedMinutes: liveRecordingBookedMinutes(entry, client) });
+        const { ready } = view;
+        // Once the transcript is in, an older "uten opptak" or "kom ikke inn" note only confuses.
+        const detail = !ready && entry.message && entry.message !== view.label ? entry.message : '';
+        if (view.knock) {
           return (
             <div key={entry.slotKey} role="status" className={`rounded-xl border px-3 py-2.5 space-y-1.5 ${RECORDING_TONE_CLASS.amber}`}>
               <div className="flex items-start gap-2">
                 <AlertTriangle size={16} className="shrink-0 mt-0.5" />
                 <div className="min-w-0">
-                  <div className="text-sm font-semibold leading-snug">{label}</div>
+                  <div className="text-sm font-semibold leading-snug">{view.label}</div>
                   <div className="text-[11px] opacity-90">{entryMeta(entry)}</div>
                   {detail ? <p className="mt-1 text-[11px]">{detail}</p> : null}
                 </div>
               </div>
-              {actions(entry)}
+              <div className="flex flex-wrap items-center gap-1.5">
+                {/^https:\/\/meet\.google\.com\//i.test(entry.meetLink || '') ? (
+                  <a href={entry.meetLink} target="_blank" rel="noreferrer" className={BUTTON}>
+                    <ExternalLink size={11} />
+                    Åpne Meet
+                  </a>
+                ) : null}
+                {actions(entry, ready)}
+              </div>
               {noteFor(entry)}
             </div>
           );
         }
-        const tone = recordingStateTone(entry.state, { hasTranscript: entry.hasTranscript });
         return (
           <div key={entry.slotKey} className="rounded-lg border border-white/10 bg-black/20 px-2.5 py-2 space-y-1">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] font-medium ${RECORDING_TONE_CLASS[tone]}`}>
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] font-medium ${RECORDING_TONE_CLASS[view.tone]}`}>
                 <Mic size={11} />
-                {label}
+                {view.label}
               </span>
               <span className="text-[11px] text-gray-400">{entryMeta(entry)}</span>
             </div>
             {detail ? <p className="text-[11px] text-gray-400">{detail}</p> : null}
-            {actions(entry)}
+            {actions(entry, ready)}
             {noteFor(entry)}
           </div>
         );
@@ -152,20 +165,19 @@ export function FirefliesLiveStatus({ client, onClient }: {
 }
 
 /** One short chip for a compact card: the meeting that needs attention first. */
-export function FirefliesLiveChip({ client }: { client: SalesClient }) {
-  const entry = mostUrgentLiveRecording(client);
+export function FirefliesLiveChip({ client, nowMs }: { client: SalesClient; nowMs?: number }) {
+  const now = nowMs ?? Date.now();
+  const entry = mostUrgentLiveRecording(client, now);
   if (!entry) return null;
-  const tone = recordingStateTone(entry.state, { hasTranscript: entry.hasTranscript });
-  const text = recordingStateShortLabel(entry.state, { at: liveRecordingSendAt(entry), hasTranscript: entry.hasTranscript });
-  if (!text) return null;
-  const label = liveRecordingLabel(entry);
+  const view = liveRecordingView(entry, { nowMs: now, bookedMinutes: liveRecordingBookedMinutes(entry, client) });
+  if (!view.short) return null;
   return (
     <span
-      className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] ${RECORDING_TONE_CLASS[tone]}`}
-      title={entry.message && entry.message !== label ? `${label}. ${entry.message}` : label}
+      className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded border text-[11px] ${RECORDING_TONE_CLASS[view.tone]}`}
+      title={entry.message && entry.message !== view.label ? `${view.label}. ${entry.message}` : view.label}
     >
       <Mic size={11} />
-      {text}
+      {view.short}
     </span>
   );
 }

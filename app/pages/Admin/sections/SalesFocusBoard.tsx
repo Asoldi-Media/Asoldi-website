@@ -252,7 +252,7 @@ function entryStatus(entry: FocusEntry, nowMs: number): { text: string; tone: ke
   if (stepId === 'offerLetterReview') {
     if (state === 'waiting') {
       // "Waiting" is only true while Fireflies may still deliver.
-      const recording = salesSlotRecording(entry.client)?.state || '';
+      const recording = salesSlotRecording(entry.client, nowMs)?.state || '';
       if (isNoRecordingState(recording)) return { text: 'Ingen opptak fra Fireflies', tone: 'red' };
       if (recording === 'declined') return { text: 'Uten opptak · skriv e-posten', tone: 'warn' };
       return { text: 'Venter på transkript', tone: 'muted' };
@@ -829,7 +829,7 @@ function FocusCard(props: FocusCardProps) {
         const filled = Boolean(client.offerLetterFilledAt);
         const pickMeetings = !filled && offerLetterNeedsMeetingPick(client);
         const letterBusy = sendingMailKey === `${client.id}:offer-letter`;
-        const recording = row.state === 'waiting' ? salesSlotRecording(client)?.state || '' : '';
+        const recording = row.state === 'waiting' ? salesSlotRecording(client, nowMs)?.state || '' : '';
         const detail = isNoRecordingState(recording)
           ? 'Ingen opptak fra Fireflies. Lim inn Fireflies-lenken under Bytt opptak i Tilbud, eller skriv e-posten fra produktnotatene.'
           : recording === 'declined'

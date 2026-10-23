@@ -9,7 +9,7 @@ import {
   type MeetingPurposePick,
 } from '../../sales/emailApi';
 import type { SalesClient } from '../shared';
-import { RECORDING_TONE_CLASS, recordingStateLabel, recordingStateTone } from './firefliesRecording';
+import { RECORDING_TONE_CLASS, recordingStateLabel, recordingStateTone, type RecordingTone } from './firefliesRecording';
 
 /**
  * Buttons on one meeting row: "Marker uten opptak" / "Angre" on a placeholder, the purpose picker and
@@ -52,15 +52,17 @@ export async function freshClientAfter(clientId: string, data?: { client?: Sales
   }
 }
 
-export function RecordingChip({ state, hasTranscript = false, label = '', title = '' }: {
+export function RecordingChip({ state, hasTranscript = false, label = '', title = '', tone: toneOverride }: {
   state: string;
   hasTranscript?: boolean;
   label?: string;
   title?: string;
+  /** When the label says more than the state (a blocked or late send). */
+  tone?: RecordingTone;
 }) {
   const text = label || recordingStateLabel(state, { hasTranscript });
   if (!text) return null;
-  const tone = recordingStateTone(state, { hasTranscript });
+  const tone = toneOverride || recordingStateTone(state, { hasTranscript });
   return (
     <span title={title || undefined} className={`inline-flex items-center px-2 py-0.5 rounded border text-[11px] ${RECORDING_TONE_CLASS[tone]}`}>
       {text}
@@ -71,11 +73,24 @@ export function RecordingChip({ state, hasTranscript = false, label = '', title 
 const ROW_BUTTON = 'inline-flex items-center gap-1 px-2 py-1 rounded-md bg-white/10 text-[11px] text-gray-100 hover:bg-white/15 disabled:opacity-50';
 
 /** "Marker uten opptak" on a meeting Fireflies did not record, "Angre" on one a rep marked. */
-export function PlaceholderRecordingActions({ clientId, meetingId = '', slotKey = '', state, onClient, onDone }: {
+export function PlaceholderRecordingActions({
+  clientId,
+  meetingId = '',
+  slotKey = '',
+  state,
+  anyState = false,
+  confirmText = '',
+  onClient,
+  onDone,
+}: {
   clientId: string;
   meetingId?: string;
   slotKey?: string;
   state: string;
+  /** The live card: a rep may also mark a meeting that is still due or running (the client said no, a no-show). */
+  anyState?: boolean;
+  /** Asked before "Marker uten opptak" is saved. */
+  confirmText?: string;
   onClient?: (client: SalesClient) => void;
   /** After the hub saved it: the state the meeting was set to. */
   onDone?: (state: 'declined' | 'open') => void;
@@ -83,11 +98,12 @@ export function PlaceholderRecordingActions({ clientId, meetingId = '', slotKey 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const declined = state === 'declined';
-  const canDecline = state === 'not-admitted' || state === 'missing' || state === 'empty';
+  const canDecline = state === 'not-admitted' || state === 'missing' || state === 'empty' || (anyState && Boolean(state));
   const hidden = useMissingRoute('recording');
   if ((!declined && !canDecline) || (hidden && !error)) return null;
 
   async function run(next: 'declined' | 'open') {
+    if (next === 'declined' && confirmText && !window.confirm(confirmText)) return;
     setBusy(true);
     setError('');
     try {

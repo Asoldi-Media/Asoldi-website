@@ -87,10 +87,17 @@ import {
 import type { MeetingQuoteState } from '../../sales/websitePricing';
 import { WEBSITE_TIERS, formatMonthlyPrice } from '../../../../lib/website-tiers.js';
 import { TestFlagToggle } from './TestFlagToggle';
+import { FirefliesKnockStrip, useKnockTitle } from './FirefliesKnockStrip';
 import { FirefliesLiveChip, FirefliesLiveStatus } from './FirefliesLiveStatus';
 import { RecordingChip } from './MeetingRecordingControls';
 import { MissingRecordingsPanel } from './MissingRecordingsPanel';
-import { mergeFreshClient, salesRecordingSummary } from './firefliesRecording';
+import {
+  freshClientIsStale,
+  knockingMeetings,
+  liveRecordingsOf,
+  mergeFreshClient,
+  salesRecordingSummary,
+} from './firefliesRecording';
 import { useLiveRecordingRefresh } from './useLiveRecordingRefresh';
 import type { MissingRecordingRow } from '../../sales/emailApi';
 import 'leaflet/dist/leaflet.css';
@@ -1148,14 +1155,17 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
     return () => window.clearInterval(timer);
   }, [isSalesAdmin, inClientFlow, flowStep]);
 
-  // A live meeting's card is read again about every 30 s, unless the list poll above already does it.
+  // A live meeting's card is read again about every 30 s, unless the list poll above already does it, and
+  // not while this section sits hidden behind another admin tab.
   useLiveRecordingRefresh({
     clients,
     nowMs: meetingNowMs,
-    enabled: isSalesAdmin || (inClientFlow && flowStep === 3),
+    enabled: active && (isSalesAdmin || (inClientFlow && flowStep === 3)),
     onClient: (fresh) => applyFreshClient(fresh),
     reloadAll: () => loadSales({ clearMessages: false, showLoading: false }),
+    generation: () => salesListGenRef.current,
   });
+  useKnockTitle(active && knockingMeetings(clients, meetingNowMs).length > 0);
 
   useEffect(() => {
     const timer = window.setInterval(() => setMeetingNowMs(Date.now()), 60_000);
@@ -1442,7 +1452,8 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
 
   /**
    * A client that a Fireflies route or the live refresh sent back. Keeps the fields that route leaves out,
-   * and never touches unsaved notes. A rep's own action also wins over a list load already in flight.
+   * and never touches unsaved notes. A rep's own action also wins over a list load already in flight; a
+   * background read never wins over a save that landed after it left (older updatedAt).
    */
   function applyFreshClient(fresh: SalesClient, { fromUser = false } = {}) {
     if (!fresh?.id) return;
@@ -1450,6 +1461,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
     setClients((prev) => {
       const index = prev.findIndex((entry) => entry.id === fresh.id);
       if (index === -1) return prev;
+      if (!fromUser && freshClientIsStale(prev[index], fresh)) return prev;
       const next = prev.map((entry, i) => (i === index ? mergeFreshClient(entry, fresh) : entry));
       if (fromUser) writeSalesListCache(next, productCounts);
       return next;
@@ -1462,18 +1474,23 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
     setMissingRecordingsKey((key) => key + 1);
   }
 
-  /** "Åpne kunde" from Møter uten opptak: Tilbud for a sales meeting, Kundekort otherwise. */
-  function openMissingRecordingClient(row: MissingRecordingRow) {
-    const client = clients.find((entry) => entry.id === row.clientId);
+  /** A client named by a Fireflies alert: its flow at `step` when it opens here, else found in Alle kunder. */
+  function openAlertClient(clientId: string, businessName: string, step: 1 | 2 | 3) {
+    const client = clients.find((entry) => entry.id === clientId);
     if (client && !isSsuClient(client)) {
-      openClientFlow(client, row.kind === 'sales' ? 3 : 1);
+      openClientFlow(client, step);
       return;
     }
     // Not openable as a flow here (SSU, or not in this list): show it in Alle kunder instead.
     if (client) setProductBracket(normalizeSalesProduct(client.product));
-    setClientSearchInput(row.businessName || '');
-    setClientSearchQuery(normalizeClientSearchText(row.businessName || ''));
+    setClientSearchInput(businessName || '');
+    setClientSearchQuery(normalizeClientSearchText(businessName || ''));
     setShowAllClients(true);
+  }
+
+  /** "Åpne kunde" from Møter uten opptak: Tilbud for a sales meeting, Kundekort otherwise. */
+  function openMissingRecordingClient(row: MissingRecordingRow) {
+    openAlertClient(row.clientId, row.businessName, row.kind === 'sales' ? 3 : 1);
   }
 
   async function saveClientNotes(client: SalesClient) {
@@ -2806,7 +2823,12 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
           <li className="flex flex-wrap items-center gap-1.5">
             <span>Fireflies:</span>
             {recordingSummary.state ? (
-              <RecordingChip state={recordingSummary.state} hasTranscript={recordingSummary.hasTranscript} label={recordingSummary.text} />
+              <RecordingChip
+                state={recordingSummary.state}
+                hasTranscript={recordingSummary.hasTranscript}
+                label={recordingSummary.text}
+                tone={recordingSummary.tone}
+              />
             ) : (
               <span>{recordingSummary.text}</span>
             )}
@@ -3605,6 +3627,13 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
             </div>
           </div>
         </div>
+
+        {/* In the sticky header, so a knock in any of these meetings shows whichever card is in view. */}
+        <FirefliesKnockStrip
+          clients={clients}
+          nowMs={meetingNowMs}
+          onOpenClient={(client) => openAlertClient(client.id, client.businessName, 1)}
+        />
 
         {(headerPanel || mapMounted) && (
           <div
@@ -4442,6 +4471,19 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
               </div>
             </div>
           )}
+          {inClientFlow && flowClient && (liveRecordingsOf(flowClient).length > 0
+            || knockingMeetings(clients, meetingNowMs).some((item) => item.client.id !== flowClient.id)) ? (
+            // The flow covers the list and its cards: this client's meetings, and a knock in any other, show here.
+            // No "Åpne kunde" in here: switching clients would drop unsaved edits on this card.
+            <div className="shrink-0 border-b border-white/10 bg-[#161616] max-h-[45vh] overflow-y-auto" data-flow-live-recording>
+              <FirefliesKnockStrip clients={clients} nowMs={meetingNowMs} excludeClientId={flowClient.id} />
+              {liveRecordingsOf(flowClient).length > 0 ? (
+                <div className="max-w-3xl mx-auto px-3 sm:px-5 py-2">
+                  <FirefliesLiveStatus client={flowClient} onClient={applyUserClient} />
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <div className={inClientFlow
             ? `flex-1 min-h-0 ${flowStep === 2 ? 'overflow-hidden' : 'overflow-auto'}`
             : 'w-full max-w-3xl rounded-2xl bg-[#1f1f1f] border border-white/10 p-4 sm:p-6 max-h-[90vh] overflow-y-auto'}>
