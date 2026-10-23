@@ -94,16 +94,25 @@ test('automation settings: a mailbox added through PUT can be removed through PU
     inbox: { mailboxes: both, autoActions: { 'alexander@asoldi.com': true, 'damian@asoldi.com': true }, autoReply: { 'damian@asoldi.com': false } },
   });
   assert.equal(added.status, 200, JSON.stringify(await added.clone().json()));
-  assert.deepEqual((await added.json()).settings.inbox.autoReply, { 'damian@asoldi.com': false }, 'a map replaces as a whole');
+  assert.deepEqual(
+    (await added.json()).settings.inbox.autoReply,
+    { 'alexander@asoldi.com': true, 'damian@asoldi.com': false },
+    'a partial map keeps the mailbox it does not name',
+  );
+
+  const partial = await call('PUT', '/api/admin/automation-settings', { inbox: { autoReply: { 'damian@asoldi.com': true } } });
+  assert.equal(partial.status, 200, JSON.stringify(await partial.clone().json()));
+  assert.deepEqual((await partial.json()).settings.inbox.autoReply, { 'alexander@asoldi.com': true, 'damian@asoldi.com': true });
 
   const removed = await call('PUT', '/api/admin/automation-settings', { inbox: { mailboxes: ['alexander@asoldi.com'] } });
   assert.equal(removed.status, 200, JSON.stringify(await removed.clone().json()));
   const inbox = (await removed.json()).settings.inbox;
   assert.deepEqual(inbox.mailboxes, ['alexander@asoldi.com']);
   assert.deepEqual(inbox.autoActions, { 'alexander@asoldi.com': true });
-  assert.deepEqual(inbox.autoReply, {});
-  const restored = await call('PUT', '/api/admin/automation-settings', { inbox: { autoReply: { 'alexander@asoldi.com': true } } });
+  assert.deepEqual(inbox.autoReply, { 'alexander@asoldi.com': true });
+  const restored = await call('PUT', '/api/admin/automation-settings', { inbox: { autoReply: { 'alexander@asoldi.com': false } } });
   assert.equal(restored.status, 200);
+  assert.deepEqual((await restored.json()).settings.inbox.autoReply, { 'alexander@asoldi.com': false });
 });
 
 test('snapshots: list, create, restore as a dry run unless dryRun is false', async () => {

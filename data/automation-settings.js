@@ -149,10 +149,14 @@ function isLeafObjectPath(path) {
   return LEAF_OBJECT_PATHS.some((re) => re.test(path));
 }
 
+function isReplaceObjectPath(path) {
+  return REPLACE_OBJECT_PATHS.some((re) => re.test(path));
+}
+
 /**
- * Deep merge: plain objects merge, everything else (arrays included) replaces. The leaf maps
- * (`releases`, every `paused`, the per-mailbox `inbox.autoActions` / `inbox.autoReply`) replace as a
- * whole, so a save can remove a mailbox entry again.
+ * Deep merge: plain objects merge, everything else (arrays included) replaces. `releases` and every
+ * `paused` object replace as a whole. The per-mailbox maps (`inbox.autoActions`, `inbox.autoReply`)
+ * merge per mailbox; alignMailboxMaps then keeps exactly the listed mailboxes.
  */
 function deepMerge(base, patch, prefix = '') {
   if (!isPlainObject(base) || !isPlainObject(patch)) return clone(patch);
@@ -160,11 +164,37 @@ function deepMerge(base, patch, prefix = '') {
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue;
     const path = prefix ? `${prefix}.${key}` : key;
-    out[key] = isPlainObject(value) && isPlainObject(out[key]) && !isLeafObjectPath(path)
+    out[key] = isPlainObject(value) && isPlainObject(out[key]) && !isReplaceObjectPath(path)
       ? deepMerge(out[key], value, path)
       : clone(value);
   }
   return out;
+}
+
+export const INBOX_MAILBOX_MAP_KEYS = Object.freeze(['autoActions', 'autoReply']);
+
+/**
+ * Gives each per-mailbox map exactly one entry per listed mailbox (in place). A mailbox the map
+ * does not mention keeps its previous value, or `false` (off) when it is new; entries of mailboxes
+ * that are no longer listed are dropped. Entries in `sent` (what a patch sent explicitly) are kept
+ * even when the mailbox is not listed, so validation reports them as typos instead of dropping them.
+ */
+function alignMailboxMaps(settings, sent = {}) {
+  const inbox = settings?.inbox;
+  if (!isPlainObject(inbox) || !Array.isArray(inbox.mailboxes)) return settings;
+  const listed = inbox.mailboxes.map((entry) => String(entry || '').trim().toLowerCase()).filter(Boolean);
+  for (const mapKey of INBOX_MAILBOX_MAP_KEYS) {
+    const map = inbox[mapKey];
+    if (!isPlainObject(map)) continue;
+    const explicit = isPlainObject(sent?.[mapKey]) ? sent[mapKey] : {};
+    const next = {};
+    for (const mailbox of listed) next[mailbox] = Object.prototype.hasOwnProperty.call(map, mailbox) ? map[mailbox] : false;
+    for (const [mailbox, flag] of Object.entries(map)) {
+      if (!Object.prototype.hasOwnProperty.call(next, mailbox) && Object.prototype.hasOwnProperty.call(explicit, mailbox)) next[mailbox] = flag;
+    }
+    inbox[mapKey] = next;
+  }
+  return settings;
 }
 
 function leafPaths(obj, prefix = '') {
@@ -179,6 +209,7 @@ function leafPaths(obj, prefix = '') {
 }
 
 const LEAF_OBJECT_PATHS = [/^releases$/, /\.paused$/, /^inbox\.autoActions$/, /^inbox\.autoReply$/];
+const REPLACE_OBJECT_PATHS = [/^releases$/, /\.paused$/];
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i;
 const DOMAIN_RE = /^(?=.{1,253}$)([a-z0-9-]+\.)+[a-z]{2,}$/i;
@@ -313,15 +344,10 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
   const value = deepMerge(base, input);
   value.version = AUTOMATION_SETTINGS_VERSION;
 
-  // A patch that changes inbox.mailboxes drops the per-mailbox entries it inherited for mailboxes
-  // that are no longer listed. Entries the patch sends itself are validated as sent.
-  if (Array.isArray(input.inbox?.mailboxes) && isPlainObject(value.inbox)) {
-    const listed = new Set(input.inbox.mailboxes.map((entry) => String(entry || '').trim().toLowerCase()));
-    for (const mapKey of ['autoActions', 'autoReply']) {
-      if (Object.prototype.hasOwnProperty.call(input.inbox, mapKey) || !isPlainObject(value.inbox[mapKey])) continue;
-      value.inbox[mapKey] = Object.fromEntries(Object.entries(value.inbox[mapKey]).filter(([mailbox]) => listed.has(mailbox)));
-    }
-  }
+  // One entry per listed mailbox: a partial map keeps the other mailboxes' values, a removed
+  // mailbox's entries go with it, a new mailbox starts off. Entries the patch sends itself are
+  // validated as sent.
+  alignMailboxMaps(value, isPlainObject(input.inbox) ? input.inbox : {});
 
   // Modes: shadow or auto (approve and manual are old names for shadow).
   for (const kind of EMAIL_KIND_IDS) {
@@ -471,7 +497,7 @@ export function readAutomationSettingsFile({ dataDir } = {}) {
   const audit = Array.isArray(stored?.audit) ? stored.audit.slice(-AUTOMATION_AUDIT_MAX) : [];
   const body = stored ? { ...stored } : {};
   delete body.audit;
-  const settings = deepMerge(defaultAutomationSettings(), body);
+  const settings = alignMailboxMaps(deepMerge(defaultAutomationSettings(), body));
   settings.version = AUTOMATION_SETTINGS_VERSION;
   return { settings, audit, stored: Boolean(stored) };
 }

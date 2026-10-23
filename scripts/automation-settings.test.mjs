@@ -69,6 +69,9 @@ test('validation: mailboxes on the allowlist, replyTo among them, enums, thresho
     sender: { service: { replyTo: 'damian@asoldi.com' } },
   });
   assert.equal(both.ok, true, JSON.stringify(both.errors));
+  // A partial map keeps the other mailbox's value; a newly listed mailbox starts off.
+  assert.deepEqual(both.value.inbox.autoActions, { 'alexander@asoldi.com': true, 'damian@asoldi.com': true });
+  assert.deepEqual(both.value.inbox.autoReply, { 'alexander@asoldi.com': true, 'damian@asoldi.com': false });
 
   const stray = store.validateAutomationSettings({ inbox: { autoReply: { 'damian@asoldi.com': true } } });
   assert.ok(errorPaths(stray).includes('inbox.autoReply'));
@@ -242,7 +245,7 @@ test('a mailbox added to the inbox maps can be removed again (save and rollback)
   assert.deepEqual(stored.inbox.mailboxes, ['alexander@asoldi.com']);
   assert.deepEqual(stored.inbox.autoActions, { 'alexander@asoldi.com': true });
 
-  // Rollback with the full old values (the runbook) works too: maps replace as a whole.
+  // Rollback with the full old values (the runbook) works too.
   assert.equal(store.saveAutomationSettings({ inbox: added.settings.inbox }).ok, true);
   const rollback = store.saveAutomationSettings({
     inbox: { mailboxes: ['alexander@asoldi.com'], autoActions: { 'alexander@asoldi.com': true }, autoReply: { 'alexander@asoldi.com': false } },
@@ -260,6 +263,38 @@ test('a mailbox added to the inbox maps can be removed again (save and rollback)
   assert.equal(orphan.ok, false);
   assert.deepEqual(errorPaths(orphan), ['sender.service.replyTo']);
   assert.equal(store.saveAutomationSettings({ inbox: { mailboxes: ['alexander@asoldi.com'] }, sender: { service: { replyTo: 'alexander@asoldi.com' } } }).ok, true);
+});
+
+test('a partial per-mailbox map changes only the mailboxes it names', () => {
+  reset();
+  const both = ['alexander@asoldi.com', 'damian@asoldi.com'];
+  // Adding a mailbox without map entries: it starts off in both maps, alexander@ keeps its values.
+  const added = store.saveAutomationSettings({ inbox: { mailboxes: both } });
+  assert.equal(added.ok, true, JSON.stringify(added.errors));
+  assert.deepEqual(added.settings.inbox.autoActions, { 'alexander@asoldi.com': true, 'damian@asoldi.com': false });
+  assert.deepEqual(added.settings.inbox.autoReply, { 'alexander@asoldi.com': true, 'damian@asoldi.com': false });
+
+  // The reviewer's case: one entry for damian@ must not remove alexander@'s flag.
+  const partial = store.saveAutomationSettings({ inbox: { autoReply: { 'damian@asoldi.com': true } } });
+  assert.equal(partial.ok, true, JSON.stringify(partial.errors));
+  assert.deepEqual(partial.settings.inbox.autoReply, { 'alexander@asoldi.com': true, 'damian@asoldi.com': true });
+  assert.deepEqual(partial.changes, [{ path: 'inbox.autoReply', from: { 'alexander@asoldi.com': true, 'damian@asoldi.com': false }, to: { 'alexander@asoldi.com': true, 'damian@asoldi.com': true } }]);
+  const stored = JSON.parse(readFileSync(FILE, 'utf8'));
+  assert.deepEqual(stored.inbox.autoReply, { 'alexander@asoldi.com': true, 'damian@asoldi.com': true });
+  assert.deepEqual(stored.inbox.autoActions, { 'alexander@asoldi.com': true, 'damian@asoldi.com': false });
+
+  // Turning one mailbox off leaves the other one on.
+  const off = store.saveAutomationSettings({ inbox: { autoActions: { 'alexander@asoldi.com': false } } });
+  assert.equal(off.ok, true, JSON.stringify(off.errors));
+  assert.deepEqual(off.settings.inbox.autoActions, { 'alexander@asoldi.com': false, 'damian@asoldi.com': false });
+  assert.deepEqual(off.settings.inbox.autoReply, { 'alexander@asoldi.com': true, 'damian@asoldi.com': true });
+
+  // Every read gives one entry per listed mailbox, even for a hand-edited file that lacks one.
+  writeFileSync(FILE, JSON.stringify({ inbox: { mailboxes: both, autoActions: { 'damian@asoldi.com': true }, autoReply: {} } }));
+  store.invalidateAutomationSettingsCache();
+  const read = store.getAutomationSettings({ fresh: true });
+  assert.deepEqual(read.inbox.autoActions, { 'alexander@asoldi.com': true, 'damian@asoldi.com': true });
+  assert.deepEqual(read.inbox.autoReply, { 'alexander@asoldi.com': true, 'damian@asoldi.com': false });
 });
 
 test('audit keeps the last 50 changes, with who and what; unchanged saves add nothing', () => {
