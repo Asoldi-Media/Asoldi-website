@@ -12956,9 +12956,10 @@ app.patch('/api/hub/sites/:id/website-due', adminAuth, (req, res) => {
   res.json(websiteDueViewForTarget(saved));
 });
 
+// A new CMS password must have 8+ characters and not be a known default (400 with a Norwegian message).
 app.put('/api/hub/sites/:id/client-admin', adminAuth, async (req, res) => {
   const result = await hub.updateClientAdmin(req.params.id, req.body || {});
-  if (!result.ok) return res.status(404).json({ message: result.error });
+  if (!result.ok) return res.status(result.status || 404).json({ message: result.error });
   res.json(result.site);
 });
 
