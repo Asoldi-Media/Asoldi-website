@@ -189,7 +189,16 @@ type CalendarStatus = {
   loginRole?: string;
   loginUsername?: string;
   loginAccountKey?: string;
+  /** The login granted meetings.space.settings, so the hub can open its Meet rooms (missing on older hubs). */
+  meetSettingsScope?: boolean;
 };
+
+const MEET_SCOPE_PROMPT = 'Koble til Google på nytt og huk av for Google Meet-tilgang, så kan huben åpne møterommene for Fireflies.';
+
+/** Connected, but without the Meet permission: the hub cannot open rooms, so Fireflies may wait in the lobby. */
+function calendarNeedsMeetScope(status: CalendarStatus | null) {
+  return Boolean(status?.connected) && status?.meetSettingsScope === false;
+}
 
 function calendarChipLabel(status: CalendarStatus | null) {
   if (!status?.connected) return 'Kalender';
@@ -3535,14 +3544,17 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                   setProductMenuOpen(false);
                   setAccountMenuOpen((open) => !open);
                 }}
-                className={`inline-flex items-center justify-center h-10 w-10 rounded-lg ${
+                className={`relative inline-flex items-center justify-center h-10 w-10 rounded-lg ${
                   accountMenuOpen ? 'bg-[#FF5B00] text-white' : 'bg-white/10 text-white hover:bg-white/15'
                 }`}
-                title="Konto"
+                title={calendarNeedsMeetScope(calendarStatus) ? `Konto · ${MEET_SCOPE_PROMPT}` : 'Konto'}
                 aria-expanded={accountMenuOpen}
                 aria-label="Konto"
               >
                 <UserRound size={16} />
+                {calendarNeedsMeetScope(calendarStatus) ? (
+                  <span className="absolute top-1.5 right-1.5 h-2 w-2 rounded-full bg-amber-400" aria-hidden="true" />
+                ) : null}
               </button>
               {accountMenuOpen && (
                 <div className="absolute right-0 top-full mt-1 z-[90] w-72 rounded-xl border border-white/10 bg-[#1f1f1f] shadow-xl p-3">
@@ -3553,6 +3565,20 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                         : 'Kalender koblet')
                       : 'Kalender ikke koblet'}
                   </p>
+                  {calendarNeedsMeetScope(calendarStatus) ? (
+                    <div className="mt-2 rounded-lg border border-amber-400/40 bg-amber-900/30 px-2.5 py-2 text-[11px] text-amber-200 space-y-1.5">
+                      <p>{MEET_SCOPE_PROMPT}</p>
+                      <button
+                        type="button"
+                        onClick={() => { setAccountMenuOpen(false); void connectGoogleCalendar(); }}
+                        disabled={calendarConnecting}
+                        className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-[#FF5B00] text-white text-[11px] hover:bg-[#e55200] disabled:opacity-50"
+                      >
+                        {calendarConnecting ? <Loader2 size={11} className="animate-spin" /> : <Calendar size={11} />}
+                        Koble til Google på nytt
+                      </button>
+                    </div>
+                  ) : null}
                   <p className="mt-1 text-[11px] text-gray-400">Innlogget som {loggedInAs}</p>
                   {showCalendarConnect && (
                     <button
@@ -4674,6 +4700,11 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                 <X size={16} />
               </button>
             </div>
+            {calendarNeedsMeetScope(calendarStatus) ? (
+              <p className="mt-3 rounded-lg border border-amber-400/40 bg-amber-900/30 px-3 py-2 text-xs text-amber-200">
+                {MEET_SCOPE_PROMPT}
+              </p>
+            ) : null}
             <p className="mt-3 text-[11px] text-gray-400">
               Logged in as {loggedInAs}. Calendar is a separate Google login for this sales user.
               {calendarStatus?.loginRole === 'admin'
