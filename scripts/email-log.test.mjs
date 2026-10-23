@@ -153,7 +153,7 @@ test('WS7.1 (e): rebuilding from 4 monthly files with 20 000 messages takes < 2 
   assert.equal(delivered, 5000);
 });
 
-test('WS7.1: pruning rolls up months outside the index and deletes files older than 13 months', () => {
+test('WS7.1: pruning rolls up months outside the index and keeps every line at least 400 days', () => {
   const dir = freshDir();
   createEmailLog({ dir, now: () => NOW, flushMs: 0 }).readIndex();
   const write = (month, rows) => writeFileSync(join(dir, `messages-${month}.jsonl`), `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`);
@@ -168,11 +168,11 @@ test('WS7.1: pruning rolls up months outside the index and deletes files older t
   const log = createEmailLog({ dir, now: () => NOW, flushMs: 0 });
   const result = log.pruneLogs(NOW);
   const left = readdirSync(dir).sort();
-  assert.equal(left.includes('messages-202508.jsonl'), false, '14 months old: deleted');
-  assert.equal(left.includes('messages-202509.jsonl'), false, '13 months back is outside the keep window');
+  assert.equal(left.includes('messages-202508.jsonl'), false, 'August 2025 ended 418 days ago: deleted');
+  assert.equal(left.includes('messages-202509.jsonl'), true, 'September 2025 ended 388 days ago: kept (400-day evidence window)');
   assert.equal(left.includes('messages-202604.jsonl'), true);
   assert.equal(left.includes('messages-202610.jsonl'), true);
-  assert.equal(result.removed, 2);
+  assert.equal(result.removed, 1);
   const rollups = log.readRollups();
   assert.equal(rollups.months['202604'].sites.s.sent, 1);
   assert.equal(rollups.months['202604'].sites.s.complaints, 1);
@@ -180,6 +180,65 @@ test('WS7.1: pruning rolls up months outside the index and deletes files older t
   assert.equal(rollups.months['202508'].messages, 1, 'old months keep their rollup after deletion');
   assert.equal(rollups.months['202610'], undefined, 'indexed months are not rolled up');
   assert.equal(log.pruneLogs(NOW).rolledUp, 0, 'idempotent');
+  // 2025-09-30 + 400 days = 2026-11-04: the September file goes the day after.
+  assert.equal(log.pruneLogs(Date.parse('2026-11-04T12:00:00.000Z')).removed, 0);
+  assert.equal(log.pruneLogs(Date.parse('2026-11-05T00:00:00.000Z')).removed, 1);
+  assert.equal(readdirSync(dir).includes('messages-202509.jsonl'), false);
+});
+
+test('WS7.1: a worker that was idle for a whole month still sees that month (no index gap)', () => {
+  const dir = freshDir();
+  let clockA = Date.parse('2026-08-15T10:00:00.000Z');
+  const a = createEmailLog({ dir, now: () => clockA, flushMs: 0 });
+  a.appendMessage({ siteId: 's', kind: 'k', dedupeKey: 'aug-key' });
+  const b = createEmailLog({ dir, now: () => Date.parse('2026-09-10T10:00:00.000Z'), flushMs: 0 });
+  b.appendMessage({ siteId: 's', kind: 'k', dedupeKey: 'sep-key' });
+  clockA = Date.parse('2026-10-23T10:00:00.000Z');
+  assert.equal(a.hasDedupeKey('sep-key'), true, 'September was appended by another worker while A was idle');
+  assert.equal(a.hasDedupeKey('aug-key'), true);
+  const fresh = createEmailLog({ dir, now: () => clockA, flushMs: 0 });
+  assert.equal(fresh.hasDedupeKey('sep-key'), true);
+  assert.deepEqual(a.siteTotals('s'), fresh.siteTotals('s'), 'same counters as a fresh boot');
+  assert.deepEqual(a.readIndex().months, ['202607', '202608', '202609', '202610', '202611']);
+});
+
+test('WS7.1: an append with a skewed createdAt is visible at once, to this and other workers', () => {
+  const dir = freshDir();
+  const a = createEmailLog({ dir, now: () => NOW, flushMs: 0 });
+  const b = createEmailLog({ dir, now: () => NOW, flushMs: 0 });
+  b.readIndex();
+  a.appendMessage({ siteId: 's', kind: 'k', dedupeKey: 'future-key', createdAt: '2027-01-05T00:00:00.000Z' });
+  a.appendMessage({ siteId: 's', kind: 'k', dedupeKey: 'past-key', createdAt: '2026-01-05T00:00:00.000Z' });
+  assert.equal(a.hasDedupeKey('future-key'), true, 'clock skew into a later month');
+  assert.equal(b.hasDedupeKey('future-key'), true);
+  assert.equal(a.siteTotals('s').sent, 2, 'both are counted, whatever their createdAt');
+  assert.deepEqual(readdirSync(dir).filter((name) => name.startsWith('messages-')), [`messages-${monthKey(NOW)}.jsonl`], 'filed by append time');
+  // Events for a month outside the window are filed under the current month, so they count too.
+  const message = a.appendMessage({ siteId: 's', kind: 'k' });
+  a.appendEvent({ messageId: message.id, t: 'delivered', at: '2025-01-01T00:00:00.000Z' });
+  a.flushEvents();
+  assert.equal(b.siteTotals('s').delivered, 1);
+  // A worker whose clock is still in the previous month sees a file already started for the new one.
+  const lagging = createEmailLog({ dir, now: () => Date.parse('2026-09-30T23:59:00.000Z'), flushMs: 0 });
+  assert.equal(lagging.hasDedupeKey('future-key'), true);
+});
+
+test('WS7.1: months that leave the window are evicted, so memory and counters match a fresh boot', () => {
+  const dir = freshDir();
+  let clock = NOW;
+  const log = createEmailLog({ dir, now: () => clock, flushMs: 0 });
+  log.readIndex();
+  writeFileSync(join(dir, 'messages-202607.jsonl'), `${JSON.stringify({ id: 'jul1', siteId: 's', kind: 'k', dedupeKey: 'jul-key', createdAt: '2026-07-30T00:00:00.000Z' })}\n`);
+  log.appendMessage({ siteId: 's', kind: 'k', dedupeKey: 'oct-key' });
+  assert.equal(log.siteTotals('s').sent, 2);
+  assert.equal(log.readIndex().messages.has('jul1'), true);
+  clock = Date.parse('2026-11-02T10:00:00.000Z');
+  const index = log.readIndex();
+  assert.equal(index.messages.has('jul1'), false, 'July left the window');
+  assert.equal(log.siteTotals('s').sent, 1);
+  const fresh = createEmailLog({ dir, now: () => clock, flushMs: 0 });
+  assert.deepEqual(log.siteTotals('s'), fresh.siteTotals('s'));
+  assert.equal(log.hasDedupeKey('oct-key'), true);
 });
 
 test.after(() => {
