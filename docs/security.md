@@ -112,6 +112,9 @@ node scripts/security/secret-scan.mjs --history --secrets-only   # every commit
   caught), its message, and the lines written while resolving a merge (`--cc`), then runs
   `npm test`. A push to main deploys asoldi.com, so a failing test blocks it. When the remote
   sha is not in this clone, it scans everything that is on no remote-tracking branch.
+  `npm test` runs with a throwaway `APP_DATA_DIR` (removed afterwards) and
+  `PERSIST_PRODUCTION_ENV=0`: some older tests fall back to `~/.asoldi-website-data`, which on
+  the operator PC is the local hub data. Run `npm test` by hand the same way.
 - The diffs are read with `--no-renames` (a file moved into `secrets/` is a new file),
   fixed `a/` `b/` prefixes and `--text`, so `diff.noprefix`, `diff.mnemonicPrefix`,
   `diff.renames` or `diff.relative` in a user's git config cannot change what is scanned.

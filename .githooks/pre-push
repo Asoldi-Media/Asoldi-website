@@ -12,7 +12,17 @@ elif [ "$status" -ne 0 ]; then
   echo "pre-push: the secret scan could not run (exit $status); push refused."
   exit 1
 fi
-npm test || {
+# npm test gets a throwaway data dir: a few older tests fall back to ~/.asoldi-website-data,
+# which on the operator PC is the local hub data.
+test_data=$(mktemp -d 2>/dev/null) || test_data=""
+if [ -z "$test_data" ] || [ ! -d "$test_data" ]; then
+  echo "pre-push: could not create a temp data dir for npm test; push refused."
+  exit 1
+fi
+APP_DATA_DIR="$test_data" DATA_DIR="" PERSIST_PRODUCTION_ENV=0 npm test
+status=$?
+rm -rf "$test_data"
+if [ "$status" -ne 0 ]; then
   echo "pre-push: npm test failed; push refused."
   exit 1
-}
+fi

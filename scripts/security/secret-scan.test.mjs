@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -543,8 +543,19 @@ test('installed hooks refuse a commit with a secret and a push that fails npm te
   const remote = tempDir('asoldi-scan-remote-');
   git(remote, ['init', '-q', '--bare']);
   git(dir, ['remote', 'add', 'origin', remote]);
-  copyTooling(dir, 'node -e "process.exit(0)"');
-  const env = { ...process.env, SECRET_SCAN_ENV_FILES: '', ASOLDI_RETIRED_SECRETS: join(dir, 'none.json') };
+  // The first push's npm test checks that the hook hands it a fresh throwaway data dir, never the
+  // default ~/.asoldi-website-data (the operator's local hub data), and no production.env writes.
+  writeFileSync(join(dir, 'data-dir-check.cjs'), [
+    "const fs = require('fs'); const path = require('path'); const os = require('os');",
+    "const d = process.env.APP_DATA_DIR || '';",
+    "fs.writeFileSync('data-dir-seen.txt', d);",
+    "const ok = d && fs.existsSync(d) && fs.readdirSync(d).length === 0",
+    "  && path.resolve(d) !== path.join(os.homedir(), '.asoldi-website-data') && process.env.PERSIST_PRODUCTION_ENV === '0';",
+    'process.exit(ok ? 0 : 1);',
+    '',
+  ].join('\n'));
+  copyTooling(dir, 'node data-dir-check.cjs');
+  const env = { ...process.env, SECRET_SCAN_ENV_FILES: '', ASOLDI_RETIRED_SECRETS: join(dir, 'none.json'), APP_DATA_DIR: '' };
   const run = (cmd, args) => spawnSync(cmd, args, { cwd: dir, env, encoding: 'utf8', shell: false });
 
   const install = run(process.execPath, ['scripts/security/install-git-hooks.mjs']);
@@ -575,6 +586,9 @@ test('installed hooks refuse a commit with a secret and a push that fails npm te
 
   const pushOk = run('git', ['push', '-q', 'origin', 'main']);
   assert.equal(pushOk.status, 0, `${pushOk.stdout}${pushOk.stderr}`);
+  const seenDataDir = readFileSync(join(dir, 'data-dir-seen.txt'), 'utf8').trim();
+  assert.ok(seenDataDir, 'npm test ran with APP_DATA_DIR set');
+  assert.equal(existsSync(seenDataDir), false, 'the hook removes the throwaway data dir after npm test');
 
   copyTooling(dir, 'node -e "process.exit(1)"');
   run('git', ['add', 'package.json']);
