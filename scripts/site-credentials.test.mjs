@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac, randomBytes } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
@@ -12,6 +12,7 @@ import express from 'express';
 const dataDir = mkdtempSync(join(tmpdir(), 'asoldi-site-cred-'));
 process.env.APP_DATA_DIR = dataDir;
 
+const { clearJsonCacheForTests } = await import('../data/atomic-json.js');
 const hub = await import('../data/hub.js');
 const sc = await import('../lib/site-credentials.js');
 const { registerShopPaymentsRoutes } = await import('../lib/shop-payments-routes.js');
@@ -33,11 +34,17 @@ function listen(app) {
  */
 async function fakeCms(name) {
   const pending = new Map();
-  const state = { name, mode: 'normal', calls: 0, redirectTo: '' };
+  const state = { name, mode: 'normal', calls: 0, redirectTo: '', delayMs: 0, inFlight: 0, maxInFlight: 0 };
   const app = express();
-  app.get('/api/cms/hub-enroll-proof', (req, res) => {
+  app.get('/api/cms/hub-enroll-proof', async (req, res) => {
     state.calls += 1;
     const nonce = String(req.query.nonce || '');
+    if (state.delayMs) {
+      state.inFlight += 1;
+      state.maxInFlight = Math.max(state.maxInFlight, state.inFlight);
+      await new Promise((resolve) => setTimeout(resolve, state.delayMs));
+      state.inFlight -= 1;
+    }
     if (state.mode === 'redirect') {
       const target = state.redirectTo.replace('{nonce}', encodeURIComponent(nonce));
       state.mode = state.afterRedirect || 'normal';
@@ -80,10 +87,24 @@ function resolveProofUrl(href) {
 
 const store = sc.createSiteCredentialStore({ dataDir });
 sc.setSiteCredentialStoreForTests(store);
+/** A trusted CMS version, as a heartbeat with a valid credential (or one from before credentials) leaves it. */
+const trustVersion = (site, packageVersion) => hub.recordHeartbeat(site.site_key, { packageVersion }, { verified: true });
+// Site A ran CMS 2.1.3 (site key only) and enrolls below.
 const siteA = hub.createSite({ name: 'Site A', domain: 'site-a.example', websitePlan: 'tier-3-ecommerce' });
+trustVersion(siteA, '2.1.3');
 const siteNoDomain = hub.createSite({ name: 'No domain yet' });
 const siteInternal = hub.createSite({ name: 'Internal', domain: '127.0.0.1:8080' });
+// A shop with no reported CMS version: it never gets the site-key-only routes.
 const siteOther = hub.createSite({ name: 'Other', domain: 'other.example', websitePlan: 'tier-3-ecommerce' });
+// A shop that stays on CMS 2.1.3 and never enrolls.
+const siteLegacy = hub.createSite({ name: 'Legacy shop', domain: 'legacy.example', websitePlan: 'tier-3-ecommerce' });
+trustVersion(siteLegacy, '2.1.3');
+// A 1.7 site with the shop feature on: 1.7 never calls the shop or dashboard routes.
+const site17 = hub.createSite({ name: 'Site on 1.7', domain: 'seventeen.example', websitePlan: 'tier-3-ecommerce' });
+trustVersion(site17, '1.7.0');
+// A 2.2.2 site that has not enrolled: it has a credential, so it must enroll.
+const site222 = hub.createSite({ name: 'Site on 2.2.2', domain: 'new.example', websitePlan: 'tier-3-ecommerce' });
+trustVersion(site222, '2.2.2');
 
 const app = express();
 app.use(express.json());
@@ -99,10 +120,12 @@ const routes = sc.registerSiteCredentialRoutes(app, {
   getSiteByKey: hub.getSiteByKey,
   getSiteById: hub.getSiteById,
   getAllSites: hub.getAllSites,
+  setTrustedCmsVersion: (id, packageVersion) => hub.updateSite(id, { cms: { packageVersion } }).ok,
   store,
   limiter: {
     unknownSite: (...args) => limiter.unknownSite(...args),
     site: (...args) => limiter.site(...args),
+    proofFailed: (...args) => limiter.proofFailed(...args),
   },
   resolveProofUrl,
 });
@@ -317,6 +340,69 @@ test('enroll attempts are limited per site and address, and unknown keys per add
   assert.equal(unknown.at(-1), 429);
 });
 
+test('callers whose proofs fail cannot use up the enrollment of the site\'s own CMS', async () => {
+  freshLimits();
+  const statuses = [];
+  // Five addresses with the public site key, six attempts each, none of which the site confirms.
+  for (const address of ['192.0.2.101', '192.0.2.102', '192.0.2.103', '192.0.2.104', '192.0.2.105']) {
+    for (let i = 0; i < 6; i += 1) statuses.push((await enroll(siteA, value(), value(), { headers: { 'x-forwarded-for': address } })).status);
+  }
+  assert.equal(statuses.filter((s) => s === 403).length, 25, 'each address gets its first try; retries share 20 an hour');
+  assert.equal(statuses.filter((s) => s === 429).length, 5);
+  // The site's own CMS, from an address with no failed proof, still enrolls.
+  const credential = value();
+  const real = await enroll(siteA, credential, cmsA.start(credential), { headers: { 'x-forwarded-for': '203.0.113.10' } });
+  assert.equal(real.status, 200, JSON.stringify(real.data));
+  siteA.credential = credential;
+});
+
+test('the enroll limiter: fresh addresses are never held by the shared allowance; an IPv6 /64 counts as one address', () => {
+  let t = 0;
+  const local = sc.createEnrollLimiter({ now: () => t });
+  // Six hours of attempts from three addresses that never prove anything, every 10 s.
+  let refusedReal = 0;
+  for (t = 0; t < 6 * 3600_000; t += 10_000) {
+    for (const address of ['198.51.100.66', '198.51.100.67', '198.51.100.68']) {
+      if (local.site('s1', address).ok) local.proofFailed('s1', address);
+    }
+    if (t % (15 * 60_000) === 7 * 60_000 && !local.site('s1', '203.0.113.10').ok) refusedReal += 1;
+  }
+  assert.equal(refusedReal, 0, 'the CMS trying every 15 minutes is never refused');
+  t = 0;
+  const v6 = sc.createEnrollLimiter({ now: () => t });
+  for (let i = 1; i <= 6; i += 1) assert.equal(v6.site('s2', `2001:db8:5:6::${i}`).ok, true);
+  assert.equal(v6.site('s2', '2001:db8:5:6:ffff::99').ok, false, 'the same /64');
+  assert.equal(v6.site('s2', '2001:db8:5:7::1').ok, true, 'another /64');
+});
+
+test('proof calls for one site run one at a time and later callers wait their turn', async () => {
+  freshLimits();
+  cmsA.state.delayMs = 300;
+  cmsA.state.maxInFlight = 0;
+  const first = value();
+  const second = value();
+  const results = await Promise.all([
+    enroll(siteA, first, cmsA.start(first), { headers: { 'x-forwarded-for': '203.0.113.21' } }),
+    enroll(siteA, second, cmsA.start(second), { headers: { 'x-forwarded-for': '203.0.113.22' } }),
+  ]);
+  cmsA.state.delayMs = 0;
+  assert.deepEqual(results.map((r) => r.status), [200, 200], JSON.stringify(results.map((r) => r.data)));
+  assert.equal(cmsA.state.maxInFlight, 1, 'never two proof calls to the site at once');
+  siteA.credential = store.state(siteA.id, second) === 'valid' ? second : first;
+
+  const lane = sc.createProofLane({ waitMs: 150 });
+  const order = [];
+  const slow = lane.run('s', () => new Promise((resolve) => setTimeout(() => { order.push('slow'); resolve(1); }, 350)));
+  const late = await lane.run('s', () => { order.push('late'); return 2; });
+  assert.deepEqual(late, { busy: true }, 'a caller whose turn does not come in time is told to try again');
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const after = lane.run('s', () => { order.push('after'); return 3; });
+  assert.deepEqual(await slow, { busy: false, value: 1 });
+  assert.deepEqual(await after, { busy: false, value: 3 });
+  assert.deepEqual(order, ['slow', 'after'], 'the next caller still waits for the running proof');
+  assert.equal(lane.size(), 0);
+});
+
 test('a revoked credential stops working; the site enrolls again and that counts as a re-enrollment', async () => {
   freshLimits();
   const credential = value();
@@ -326,10 +412,24 @@ test('a revoked credential stops working; the site enrolls again and that counts
   const revoked = await send('POST', `/api/hub/sites/${siteA.id}/site-credential/revoke`);
   assert.equal(revoked.status, 200);
   assert.equal(revoked.data.credential.enrolled, false);
+  assert.equal(revoked.data.credential.revoked, true);
   assert.equal(revoked.data.credential.revokedBy, 'staff-one');
-  assert.equal(store.state(siteA.id, credential), 'not-enrolled');
+  assert.equal(store.state(siteA.id, credential), 'revoked');
   const status = await send('GET', '/api/hub/shop/status', { siteKey: siteA.site_key, credential });
   assert.equal(status.headers.get('x-site-credential-status'), 'not-enrolled', 'the CMS learns that it must enroll again');
+  // Site A ran 2.1.3 before it enrolled, but a revoked site stays closed: neither the site key alone
+  // nor the revoked credential opens the routes that allow the site key for never-enrolled sites.
+  for (const [method, path, body] of [
+    ['GET', '/api/hub/shop/status'],
+    ['POST', '/api/hub/shop/document', { document: { kind: 'magic-link' }, to: 'someone@example.com' }],
+    ['GET', '/api/hub/analytics'],
+  ]) {
+    for (const presented of [undefined, credential]) {
+      const res = await send(method, path, { siteKey: siteA.site_key, credential: presented, body });
+      assert.equal(res.status, 401, `${method} ${path} after revoke, ${presented ? 'revoked credential' : 'site key only'}`);
+      assert.equal(res.headers.get('x-site-credential-status'), 'not-enrolled');
+    }
+  }
   assert.equal((await send('POST', `/api/hub/sites/${siteA.id}/site-credential/revoke`)).status, 409);
   const next = value();
   const res = await enroll(siteA, next, cmsA.start(next));
@@ -379,7 +479,7 @@ const MONEY_ROUTES = [
 ];
 
 test('each money and payee route refuses the site key alone, also for a site that never enrolled', async () => {
-  for (const site of [siteA, siteOther]) {
+  for (const site of [siteA, siteOther, siteLegacy]) {
     for (const [method, path, body] of MONEY_ROUTES) {
       const res = await send(method, path, { siteKey: site.site_key, body });
       assert.equal(res.status, 401, `${site.name} ${method} ${path}`);
@@ -405,10 +505,40 @@ test('with the credential the money routes reach the payment code (200 for disco
   assert.equal(disconnect.status, 200);
 });
 
-test('shop status and documents accept the site key until the site enrolls, then need the credential', async () => {
-  const before = await send('GET', '/api/hub/shop/status', { siteKey: siteOther.site_key });
-  assert.equal(before.status, 200, 'a site without a credential (older CMS) keeps its shop status');
-  assert.equal(before.headers.get('x-site-credential-status'), 'not-enrolled');
+test('legacy versions: CMS 2.0.0 up to 2.2.1 are the versions without a credential', () => {
+  for (const version of ['2.0.0', '2.1.3', 'v2.1.3', '2.2.0', '2.2.1']) assert.equal(sc.isLegacyKeyOnlyVersion(version), true, version);
+  for (const version of ['', '1.7.0', '1.7.2', '2.2.2', '2.3.0', '3.0.0', 'junk']) assert.equal(sc.isLegacyKeyOnlyVersion(version), false, version);
+  const shop = { cms: { packageVersion: '2.1.3' }, features: { ecommerce: true } };
+  assert.equal(sc.legacyKeyOnlySite(shop, { shop: true }), true);
+  assert.equal(sc.legacyKeyOnlySite({ ...shop, features: { ecommerce: false } }, { shop: true }), false, 'shop routes need the shop feature');
+  assert.equal(sc.legacyKeyOnlySite({ ...shop, features: { ecommerce: false } }), true, 'the dashboard does not');
+  assert.equal(sc.legacyKeyOnlySite({ cms: { packageVersion: '', unverified: { packageVersion: '2.1.3' } }, features: { ecommerce: true } }, { shop: true }), false, 'an unverified report is not a trusted version');
+});
+
+test('the site key alone opens shop status, documents and the dashboard only for a never-enrolled shop on CMS 2.0.0 to 2.2.1', async () => {
+  const legacyStatus = await send('GET', '/api/hub/shop/status', { siteKey: siteLegacy.site_key });
+  assert.equal(legacyStatus.status, 200, 'a shop on CMS 2.1.3 keeps its shop status');
+  assert.equal(legacyStatus.headers.get('x-site-credential-status'), 'not-enrolled');
+  const legacyDoc = await send('POST', '/api/hub/shop/document', { siteKey: siteLegacy.site_key, body: { document: { kind: 'magic-link' }, to: 'someone@example.com' } });
+  assert.notEqual(legacyDoc.status, 401, 'and reaches the document code');
+  const legacyDash = await send('GET', `/api/hub/analytics?site_key=${siteLegacy.site_key}&refresh=1`);
+  assert.equal(legacyDash.status, 200, 'and its dashboard');
+  assert.equal(legacyDash.data.mapsRefreshSkipped, 'site-credential-required', 'a paid refresh is skipped without the credential, and says so');
+  for (const site of [siteOther, site17, site222]) {
+    for (const [method, path, body] of [
+      ['GET', '/api/hub/shop/status'],
+      ['POST', '/api/hub/shop/document', { document: { kind: 'magic-link' }, to: 'someone@example.com' }],
+      ['GET', '/api/hub/analytics'],
+    ]) {
+      const res = await send(method, path, { siteKey: site.site_key, body });
+      assert.equal(res.status, 401, `${site.name}: ${method} ${path} with the site key alone`);
+      assert.equal(res.data.code, 'site-credential-required');
+      assert.equal(res.headers.get('x-site-credential-status'), 'not-enrolled', 'a CMS 2.2.2 learns that it must enroll');
+    }
+  }
+});
+
+test('shop status and documents need the credential once the site has enrolled', async () => {
   const keyOnly = await send('GET', '/api/hub/shop/status', { siteKey: siteA.site_key });
   assert.equal(keyOnly.status, 401);
   assert.equal(keyOnly.headers.get('x-site-credential-status'), 'missing');
@@ -431,8 +561,10 @@ test('analytics: the spend summary needs the credential; an enrolled site must s
   assert.equal(dashKeyOnly.status, 401, 'an enrolled site needs its credential');
   const dash = await send('GET', '/api/hub/analytics', { siteKey: siteA.site_key, credential: siteA.credential });
   assert.equal(dash.status, 200, JSON.stringify(dash.data).slice(0, 200));
-  const dashOld = await send('GET', `/api/hub/analytics?site_key=${siteOther.site_key}`);
-  assert.equal(dashOld.status, 200, 'a site that never enrolled keeps its dashboard');
+  const dashOld = await send('GET', `/api/hub/analytics?site_key=${siteLegacy.site_key}`);
+  assert.equal(dashOld.status, 200, 'a never-enrolled site on CMS 2.1.3 keeps its dashboard');
+  const dashNoVersion = await send('GET', `/api/hub/analytics?site_key=${siteOther.site_key}`);
+  assert.equal(dashNoVersion.status, 401, 'a site with no CMS 2.0.0–2.2.1 version needs the credential');
 });
 
 test('analytics collect keeps only the known event fields and limits calls per site and address', async () => {
@@ -509,6 +641,36 @@ test('a heartbeat without a valid credential is kept as unverified and changes n
   assert.equal(hub.getSiteById(site.id).clientAdmin.pendingSync, false);
 });
 
+test('heartbeats: unverified by default, an enrolled site is not marked seen without its credential, repeats are not rewritten, and calls are limited', async () => {
+  const site = hub.createSite({ name: 'Beat two', domain: 'beat-two.example' });
+  const byDefault = hub.recordHeartbeat(site.site_key, { packageVersion: '2.2.2', adminUrl: 'https://beat-two.example/admin' });
+  assert.equal(byDefault.verified, false, 'a heartbeat is unverified unless the caller says otherwise');
+  assert.equal(hub.getSiteById(site.id).cms.packageVersion, '');
+  const seen = hub.getSiteById(site.id).cms.lastSeenAt;
+  assert.ok(seen);
+  const repeat = hub.recordHeartbeat(site.site_key, { packageVersion: '2.2.2', adminUrl: 'https://beat-two.example/admin' });
+  assert.equal(repeat.written, false, 'the same report within a minute is not written again');
+  const changed = hub.recordHeartbeat(site.site_key, { packageVersion: '2.2.3' });
+  assert.equal(changed.written, true);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  hub.recordHeartbeat(site.site_key, { packageVersion: '9.9.9' }, { verified: false, marksSeen: false });
+  const after = hub.getSiteById(site.id).cms;
+  assert.equal(after.unverified.packageVersion, '9.9.9');
+  assert.equal(after.lastSeenAt, changed.site.cms.lastSeenAt, 'an enrolled site is not marked seen by a heartbeat without its credential');
+  for (const [state, marks] of [['valid', true], ['not-enrolled', true], ['unavailable', true], ['missing', false], ['invalid', false], ['revoked', false]]) {
+    assert.equal(sc.heartbeatMarksSeen(state), marks, state);
+  }
+
+  let t = 0;
+  const limits = sc.createHeartbeatLimits({ now: () => t });
+  for (let i = 0; i < 30; i += 1) assert.equal(limits.take({ siteId: 's1', address: '2001:db8:9:9::1' }).ok, true);
+  assert.equal(limits.take({ siteId: 's1', address: '2001:db8:9:9::2' }).ok, false, '30 a minute per site and address (/64)');
+  assert.equal(limits.take({ siteId: 's1', address: '198.51.100.9' }).ok, true, 'another address is not held up');
+  assert.equal(limits.take({ siteId: 's1', address: '2001:db8:9:9::1', credentialValid: true }).ok, true, 'the site server with its credential is not limited');
+  t = 60_000;
+  assert.equal(limits.take({ siteId: 's1', address: '2001:db8:9:9::1' }).ok, true);
+});
+
 test('site config by site key carries no admin fields unless asked for with the credential', async () => {
   const site = hub.createSite({ name: 'Config site', domain: 'config.example' });
   await hub.updateClientAdmin(site.id, { username: 'owner', email: 'owner@example.com', password: 'a-long-client-password' });
@@ -536,9 +698,91 @@ test('the credential store survives a missing or damaged file and refuses a dama
     assert.equal(local.reserveNonce('n'.repeat(43)), false);
     assert.deepEqual(local.list().map((r) => r.siteId), ['1']);
     assert.equal(sc.publicCredentialRow('1', { hash: 'h' }).hash, undefined);
+    assert.equal(local.health().ok, true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('an unreadable credential store fails closed, keeps every row and is set aside only by an admin', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'asoldi-site-cred-damaged-'));
+  const local = sc.createSiteCredentialStore({ dataDir: dir });
+  const one = value();
+  local.enroll('s1', one, { proofDomain: 'site-a.example', proofOrigin: 'https://site-a.example' });
+  local.enroll('s2', value(), {});
+  local.setSettings({ enrollment: 'on' });
+  const fakeSite = { id: 's3', site_key: 'k-s3', domain: 'site-a.example' };
+  const mini = express();
+  mini.use(express.json());
+  mini.get('/gated', sc.requireSiteCredential({ getSiteByKey: (key) => (key === 'k-s1' ? { id: 's1' } : null), policy: 'when-enrolled', legacyAllowed: () => true, store: local }), (_req, res) => res.json({ ok: true }));
+  sc.registerSiteCredentialRoutes(mini, { adminAuth, getSiteByKey: (key) => (key === fakeSite.site_key ? fakeSite : null), getSiteById: (id) => (id === 's3' ? fakeSite : null), getAllSites: () => [fakeSite], store: local, resolveProofUrl });
+  const miniServer = await listen(mini);
+  const miniBase = `http://127.0.0.1:${miniServer.address().port}`;
+  try {
+    writeFileSync(local.credentialsPath(), '{ damaged');
+    clearJsonCacheForTests();
+    resetSecurityCounters();
+    assert.throws(() => local.state('s1', one), (error) => error instanceof sc.SiteCredentialStoreUnreadable);
+    assert.deepEqual(local.health(), { ok: false, problem: 'unreadable' });
+    const gated = await fetch(`${miniBase}/gated`, { headers: { 'x-site-key': 'k-s1' } });
+    assert.equal(gated.status, 503, 'a route that accepts never-enrolled sites does not treat an unreadable store as "nobody enrolled"');
+    assert.equal(gated.headers.get('x-site-credential-status'), 'unavailable');
+    assert.throws(() => local.enroll('s3', value(), {}), (error) => error instanceof sc.SiteCredentialStoreUnreadable);
+    assert.throws(() => local.revoke('s1'), (error) => error instanceof sc.SiteCredentialStoreUnreadable);
+    assert.equal(readFileSync(local.credentialsPath(), 'utf8'), '{ damaged', 'no write replaces the other sites\' rows');
+    const calls = cmsA.state.calls;
+    const credential = value();
+    const enrollRes = await fetch(`${miniBase}/api/hub/site-credential/enroll`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ siteKey: 'k-s3', credential, nonce: cmsA.start(credential) }) });
+    assert.equal(enrollRes.status, 503);
+    assert.equal(cmsA.state.calls, calls, 'no proof call while the store cannot be read');
+    assert.ok(securityCounters()['site-credential-store-unreadable'].total >= 1, 'counted on the Security card');
+    const listing = await (await fetch(`${miniBase}/api/hub/site-credentials`)).json();
+    assert.deepEqual(listing.store, { ok: false, problem: 'unreadable' });
+    const aside = await fetch(`${miniBase}/api/hub/site-credentials/set-aside-unreadable`, { method: 'POST' });
+    assert.equal(aside.status, 200);
+    const { file } = await aside.json();
+    assert.match(file, /^credentials\.json\.unreadable-/);
+    assert.equal(readFileSync(join(dir, 'site-credentials', file), 'utf8'), '{ damaged', 'the unreadable file is kept for repair');
+    assert.equal(local.state('s1', one), 'not-enrolled', 'the store starts empty; sites enroll again');
+    assert.equal((await fetch(`${miniBase}/api/hub/site-credentials/set-aside-unreadable`, { method: 'POST' })).status, 409);
+    assert.equal(local.auditLog().at(-1).action, 'set-aside-store');
+  } finally {
+    miniServer.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('an admin reset forgets a site\'s credential row and takes back a reported 2.0.0–2.2.1 version (a CMS that went back)', async () => {
+  const site = hub.createSite({ name: 'Rollback shop', domain: 'rollback.example', websitePlan: 'tier-3-ecommerce' });
+  trustVersion(site, '2.2.2');
+  const credential = value();
+  store.enroll(site.id, credential, { proofDomain: 'rollback.example', proofOrigin: 'https://rollback.example' });
+  // The site went back to 2.1.3, which sends no credential.
+  hub.recordHeartbeat(site.site_key, { packageVersion: '2.1.3' }, { verified: false, marksSeen: false });
+  assert.equal((await send('GET', '/api/hub/shop/status', { siteKey: site.site_key })).status, 401);
+  const row = (await send('GET', '/api/hub/site-credentials')).data.sites.find((r) => r.siteId === site.id);
+  assert.equal(row.reportedLegacyVersion, '2.1.3');
+  resetSecurityCounters();
+  const reset = await send('POST', `/api/hub/sites/${site.id}/site-credential/reset`);
+  assert.equal(reset.status, 200);
+  assert.equal(reset.data.trustedVersion, '2.1.3');
+  assert.equal(reset.data.credential.enrolled, false);
+  assert.equal(hub.getSiteById(site.id).cms.packageVersion, '2.1.3');
+  assert.equal(store.state(site.id, credential), 'not-enrolled');
+  assert.equal(store.auditLog().at(-1).action, 'reset');
+  assert.equal(securityCounters()['site-credential-reset'].total, 1);
+  assert.equal((await send('GET', '/api/hub/shop/status', { siteKey: site.site_key })).status, 200, 'the older CMS has its shop status again');
+  assert.equal((await send('POST', '/api/hub/shop/disconnect', { siteKey: site.site_key, body: { provider: 'paypal' } })).status, 401, 'money routes still need a credential');
+  assert.equal((await send('POST', `/api/hub/sites/${site.id}/site-credential/reset`)).status, 409, 'nothing left to reset');
+  assert.equal((await send('POST', '/api/hub/sites/nope/site-credential/reset')).status, 404);
+  // Without a reported legacy version the reset only forgets the row.
+  const plain = hub.createSite({ name: 'Plain reset', domain: 'plain.example', websitePlan: 'tier-3-ecommerce' });
+  trustVersion(plain, '2.2.2');
+  store.enroll(plain.id, value(), {});
+  const plainReset = await send('POST', `/api/hub/sites/${plain.id}/site-credential/reset`);
+  assert.equal(plainReset.data.trustedVersion, '');
+  assert.equal(hub.getSiteById(plain.id).cms.packageVersion, '2.2.2');
+  assert.equal((await send('GET', '/api/hub/shop/status', { siteKey: plain.site_key })).status, 401, 'a 2.2.2 site must enroll again');
 });
 
 test('routes were registered with the shared store', () => {

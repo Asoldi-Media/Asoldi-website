@@ -189,6 +189,29 @@ test('real hub: site config, heartbeat, money routes, enrollment switch, revoke 
   const security = await json('/api/admin/system/security', { headers: admin });
   assert.equal(security.body.counters['site-credential-revoked'].total, 1, 'counted on the Security card');
 
+  // 7b. A revoked site stays closed and is not marked as seen by heartbeats without its credential;
+  //     those heartbeats are limited to 30 a minute per site and address.
+  const statusAfterRevoke = await json('/api/hub/shop/status', { headers: { 'x-site-key': key } });
+  assert.equal(statusAfterRevoke.status, 401);
+  const seenBefore = (await json('/api/hub/sites', { headers: admin })).body.find((r) => r.id === site.id).cms.lastSeenAt;
+  const beats = [];
+  for (let i = 0; i < 31; i += 1) {
+    beats.push((await json('/api/hub/heartbeat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ site_key: key, packageVersion: '2.1.3' }) })).status);
+  }
+  assert.equal(beats[0], 200);
+  assert.equal(beats.at(-1), 429, 'heartbeats without a valid credential are limited');
+  listed = (await json('/api/hub/sites', { headers: admin })).body.find((r) => r.id === site.id);
+  assert.equal(listed.cms.lastSeenAt, seenBefore, 'a revoked site is not marked as seen on its site key alone');
+  assert.equal(listed.cms.unverified.packageVersion, '2.1.3');
+
+  // 7c. An admin reset for a CMS that went back to 2.1.3: the row is forgotten and the reported
+  //     version is taken, so shop status works on the site key again; money routes do not.
+  const reset = await json(`/api/hub/sites/${site.id}/site-credential/reset`, { method: 'POST', headers: admin });
+  assert.equal(reset.status, 200);
+  assert.equal(reset.body.trustedVersion, '2.1.3');
+  assert.equal((await json('/api/hub/shop/status', { headers: { 'x-site-key': key } })).status, 200);
+  assert.equal((await json('/api/hub/shop/disconnect', { method: 'POST', headers: { 'x-site-key': key, 'content-type': 'application/json' }, body: JSON.stringify({ provider: 'paypal' }) })).status, 401);
+
   // 8. Visitor forms: 8 per site and address in 10 minutes (safe mode keeps the e-mails in its outbox).
   const statuses = [];
   for (let i = 0; i < 9; i += 1) {

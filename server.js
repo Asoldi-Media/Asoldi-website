@@ -32,7 +32,7 @@ import {
 import * as hub from './data/hub.js';
 import { registerShopPaymentsRoutes, registerShopPaymentsWebhook } from './lib/shop-payments-routes.js';
 import { registerCmsSsoRoutes } from './lib/cms-sso.js';
-import { registerSiteCredentialRoutes, siteCredentialState } from './lib/site-credentials.js';
+import { createHeartbeatLimits, heartbeatMarksSeen, registerSiteCredentialRoutes, siteCredentialState } from './lib/site-credentials.js';
 import { registerDeliveryRoutes } from './lib/routes/delivery-routes.js';
 import { runDeliverySchemaStartupSnapshot } from './lib/delivery-snapshots.js';
 import { myphonerMatchCandidates, myphonerSyncSkipReason, testClientIdSet } from './lib/test-clients.js';
@@ -12865,7 +12865,7 @@ app.patch('/api/client-portal/state', clientAuthV2, async (req, res) => {
 
 registerShopPaymentsRoutes(app, { adminAuth });
 registerCmsSsoRoutes(app, { adminAuth, getSiteById: hub.getSiteById, getSiteByKey: hub.getSiteByKey });
-registerSiteCredentialRoutes(app, { adminAuth, getSiteByKey: hub.getSiteByKey, getSiteById: hub.getSiteById, getAllSites: hub.getAllSites });
+registerSiteCredentialRoutes(app, { adminAuth, getSiteByKey: hub.getSiteByKey, getSiteById: hub.getSiteById, getAllSites: hub.getAllSites, setTrustedCmsVersion: (id, packageVersion) => hub.updateSite(id, { cms: { packageVersion } }).ok });
 registerSafeModeRoutes(app, { adminAuth });
 registerDeliveryRoutes(app, { adminAuth, sales, hub, salesOffers });
 
@@ -12897,19 +12897,28 @@ app.get('/api/hub/site-config', (req, res) => {
   return res.status(400).json({ message: 'Provide site_key or domain' });
 });
 
-// Liveness from any caller with the site key. The version, admin address, name and the pending admin
-// flag are acted on only for a heartbeat with the site's valid credential; otherwise they are kept
-// in cms.unverified and shown, never used.
+// Liveness from any caller with the site key of a site that has never enrolled (30 a minute per
+// site and address). The version, admin address, name and the pending admin flag are acted on only
+// for a heartbeat with the site's valid credential; otherwise they are kept in cms.unverified and
+// shown, never used. An enrolled site is marked as seen only by heartbeats with its credential.
+const heartbeatLimits = createHeartbeatLimits();
 app.post('/api/hub/heartbeat', (req, res) => {
   const siteKey = sanitizeText(req.get('x-site-key') || req.body?.site_key || req.query?.site_key);
   const site = siteKey ? hub.getSiteByKey(siteKey) : null;
   const credential = site ? siteCredentialState(req, site, { res }) : 'not-enrolled';
+  if (site) {
+    const gate = heartbeatLimits.take({ siteId: site.id, address: clientIpFromRequest(req), credentialValid: credential === 'valid' });
+    if (!gate.ok) {
+      res.set('Retry-After', String(gate.retryAfterSec));
+      return res.status(429).json({ message: 'Too many requests.' });
+    }
+  }
   const result = hub.recordHeartbeat(siteKey, {
     packageVersion: sanitizeText(req.body?.packageVersion).slice(0, 40),
     adminUrl: sanitizeText(req.body?.adminUrl).slice(0, 300),
     name: sanitizeText(req.body?.name).slice(0, 120),
     adminApplied: req.body?.adminApplied === true || req.body?.adminApplied === 'true',
-  }, { verified: credential === 'valid' });
+  }, { verified: credential === 'valid', marksSeen: heartbeatMarksSeen(credential) });
   if (!result.ok) {
     const status = result.error === 'Site not found' ? 404 : 400;
     return res.status(status).json({ message: result.error });

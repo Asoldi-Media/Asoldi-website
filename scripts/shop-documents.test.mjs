@@ -26,6 +26,9 @@ docs.setShopDocumentDeps({
 });
 
 const site = hub.createSite({ name: 'Kazal Test', domain: 'kazal.no', websitePlan: 'tier-3-ecommerce' });
+// A shop on client CMS 2.1.3 (no site credential): it sends documents with its site key alone, which
+// the hub allows only for a shop site that never enrolled and runs 2.0.0 up to 2.2.1.
+hub.recordHeartbeat(site.site_key, { packageVersion: '2.1.3' }, { verified: true });
 const app = express();
 app.use(express.json({ limit: '2mb' }));
 registerShopPaymentsRoutes(app, { adminAuth: (_req, _res, next) => next() });
