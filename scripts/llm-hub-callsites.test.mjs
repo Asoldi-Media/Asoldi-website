@@ -219,3 +219,13 @@ test('the only server.js changes for the facade are the boot import, the admin r
   assert.doesNotMatch(server, /isDeepseekConfigured\(\)/, 'every DeepSeek gate asks the facade for its task');
   assert.equal((server.match(/aiTaskConfigured\('offer\.(fill-from-transcript|reflect-contract)', isDeepseekConfigured\)/g) || []).length, 5);
 });
+
+test('Superadmin System safety shows the AI card, which reads only the AI admin endpoints', () => {
+  const section = read('app/pages/Admin/sections/SystemSafetySection.tsx');
+  assert.match(section, /import \{ AiStatusCard \} from '\.\/AiStatusCard';/);
+  assert.match(section, /<AiStatusCard \/>/);
+  const card = read('app/pages/Admin/sections/AiStatusCard.tsx');
+  const endpoints = [...card.matchAll(/\$\{API\}(\/[a-z0-9/?=-]+)/gi)].map((m) => m[1].replace(/\?.*$/, '').replace(/\$\{.*$/, ''));
+  assert.deepEqual([...new Set(endpoints)].sort(), ['/admin/ai/routes', '/admin/ai/status']);
+  assert.doesNotMatch(card, /dangerouslySetInnerHTML|innerHTML/);
+});
