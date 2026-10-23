@@ -89,8 +89,10 @@ import { WEBSITE_TIERS, formatMonthlyPrice } from '../../../../lib/website-tiers
 import { TestFlagToggle } from './TestFlagToggle';
 import { FirefliesLiveChip, FirefliesLiveStatus } from './FirefliesLiveStatus';
 import { RecordingChip } from './MeetingRecordingControls';
+import { MissingRecordingsPanel } from './MissingRecordingsPanel';
 import { mergeFreshClient, salesRecordingSummary } from './firefliesRecording';
 import { useLiveRecordingRefresh } from './useLiveRecordingRefresh';
+import type { MissingRecordingRow } from '../../sales/emailApi';
 import 'leaflet/dist/leaflet.css';
 
 type WebsiteOffer = {
@@ -620,6 +622,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
   const ignoreCreateClickUntilRef = useRef(0);
   const [discardPrompt, setDiscardPrompt] = useState(false);
   const [verifiedInboxOpen, setVerifiedInboxOpen] = useState(false);
+  const [missingRecordingsKey, setMissingRecordingsKey] = useState(0);
   const [previewMissingToastId, setPreviewMissingToastId] = useState<string | null>(null);
   const meetingMapContainerRef = useRef<HTMLDivElement | null>(null);
   const meetingMapRef = useRef<any>(null);
@@ -1446,6 +1449,22 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
 
   function applyUserClient(fresh: SalesClient) {
     applyFreshClient(fresh, { fromUser: true });
+    // A meeting marked (or unmarked) here may leave or join "Møter uten opptak".
+    setMissingRecordingsKey((key) => key + 1);
+  }
+
+  /** "Åpne kunde" from Møter uten opptak: Tilbud for a sales meeting, Kundekort otherwise. */
+  function openMissingRecordingClient(row: MissingRecordingRow) {
+    const client = clients.find((entry) => entry.id === row.clientId);
+    if (client && !isSsuClient(client)) {
+      openClientFlow(client, row.kind === 'sales' ? 3 : 1);
+      return;
+    }
+    // Not openable as a flow here (SSU, or not in this list): show it in Alle kunder instead.
+    if (client) setProductBracket(normalizeSalesProduct(client.product));
+    setClientSearchInput(row.businessName || '');
+    setClientSearchQuery(normalizeClientSearchText(row.businessName || ''));
+    setShowAllClients(true);
   }
 
   async function saveClientNotes(client: SalesClient) {
@@ -3792,6 +3811,13 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
       </header>
 
       <div className="max-w-[1440px] mx-auto px-3 sm:px-6 py-4 space-y-3 sm:space-y-4">
+      <MissingRecordingsPanel
+        active={active}
+        nowMs={meetingNowMs}
+        refreshKey={missingRecordingsKey}
+        onOpenClient={openMissingRecordingClient}
+        onClient={applyUserClient}
+      />
       {!isSalesAdmin && verifiedInbox.length > 0 && (
         <div className="relative rounded-2xl border border-sky-400/30 bg-sky-900/30 p-3 sm:p-4">
           <button
