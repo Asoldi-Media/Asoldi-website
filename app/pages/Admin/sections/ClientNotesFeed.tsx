@@ -7,15 +7,25 @@ import {
   type ThreadFeedGroup,
   type ThreadKindFilter,
 } from '../../developer/DeveloperRequestThread';
+import type { SalesClientMeeting } from '../shared';
+import { isDuplicateRow, isPlaceholderRow, realRowWaitingNote, recordingStateLabel } from './firefliesRecording';
 
 type LogRow = {
   id: string;
+  kind: string;
   name: string;
   note: string;
   formatLabel: string;
   doneAt: string;
   at: string;
-  meeting: { title: string; when: string; hasTranscript: boolean } | null;
+  meeting: {
+    meetingId: string;
+    title: string;
+    when: string;
+    hasTranscript: boolean;
+    placeholder?: boolean;
+    recordingState?: string;
+  } | null;
 };
 
 type LogSection = { key: string; label: string; rows: LogRow[] };
@@ -40,13 +50,30 @@ export function clientFeedMessages(
   transcript?: { text: string; at: string },
 ): ExtraMessage[] {
   const log = buildClientActivityLog(logSource) as { sections: LogSection[] };
+  const clientRows = new Map<string, SalesClientMeeting>();
+  for (const item of Array.isArray(logSource?.meetings) ? logSource.meetings as SalesClientMeeting[] : []) {
+    if (item?.meetingId) clientRows.set(item.meetingId, item);
+  }
+  // A placeholder says what happened to the meeting; "venter på transkript" is only true for a real recording.
+  const meetingStatus = (meeting: NonNullable<LogRow['meeting']>) => {
+    const row = clientRows.get(meeting.meetingId) || null;
+    if (meeting.placeholder || isPlaceholderRow(row || { meetingId: meeting.meetingId })) {
+      const label = recordingStateLabel(meeting.recordingState || row?.recording?.state || '');
+      return ` · ${label || 'Ingen opptak koblet ennå'}`;
+    }
+    if (isDuplicateRow(row)) return ' · duplikat';
+    if (meeting.hasTranscript) return '';
+    return ` · ${realRowWaitingNote(row || meeting, [...clientRows.values()]) || 'venter på transkript'}`;
+  };
   const rows: ExtraMessage[] = [];
   for (const section of log.sections) {
     const group = groupFor(section.key);
     for (const row of section.rows) {
+      // A shorter or empty copy of another recording of the same meeting is not a log entry of its own.
+      if (row.kind === 'meeting' && row.meeting && isDuplicateRow(clientRows.get(row.meeting.meetingId))) continue;
       const tags = [row.formatLabel, row.doneAt ? 'ferdig' : ''].filter(Boolean).join(', ');
       const meeting = row.meeting
-        ? `${row.meeting.title}${row.meeting.when ? ` · ${row.meeting.when}` : ''}${row.meeting.hasTranscript ? '' : ' · venter på transkript'}`
+        ? `${row.meeting.title}${row.meeting.when ? ` · ${row.meeting.when}` : ''}${meetingStatus(row.meeting)}`
         : '';
       rows.push({
         id: `log-${row.id}`,

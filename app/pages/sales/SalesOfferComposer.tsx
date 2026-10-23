@@ -12,6 +12,7 @@ import {
   requestClientOfferReview,
   saveClientOffer,
   sendClientOffer,
+  setFirefliesRecordingState,
   startNewClientOffer,
   type MergeField,
   type OfferReadiness,
@@ -20,6 +21,15 @@ import { getSalesToken, type SalesClient, type SalesOffer, type SalesSender } fr
 import { ContractSummaryCard, HtmlPreview, OfferProductsCard, OfferStatusChip } from './offerUi';
 import { SalesFlowSteps } from './SalesFlowSteps';
 import { clientCardParty, offerMissingFields, offerReadinessMessage } from '../../../lib/offer-readiness.js';
+import { isPlaceholderMeetingId } from '../../../lib/offer-meetings.js';
+import {
+  RECORDING_TONE_CLASS,
+  offerMeetingRecording,
+  placeholderIsSuperseded,
+  realRowWaitingNote,
+  recordingStateLabel,
+} from '../Admin/sections/firefliesRecording';
+import { freshClientAfter } from '../Admin/sections/MeetingRecordingControls';
 import { resolveWebsiteEmail } from '../../../lib/sales-website-email.js';
 import { getPublicPreviewContractHref } from './websiteMaker';
 
@@ -39,6 +49,13 @@ type OfferClient = {
   orgNumber: string;
   businessAddress: string;
   meetingPlace: string;
+  /** The client's meeting rows (compactOfferClient): a placeholder's own recording state lives here. */
+  meetings?: Array<{
+    meetingId: string;
+    recording?: { state?: string; message?: string; checkedAt?: string; ffMeetingId?: string } | null;
+    slotKey?: string;
+    hasTranscript?: boolean;
+  }>;
 };
 
 type MeetingInfo = {
@@ -53,6 +70,10 @@ type MeetingInfo = {
   manual?: boolean;
   firefliesUrl?: string;
   durationMinutes?: number | '';
+  /** Newer hubs: a live: placeholder, and what happened to its recording ('' for a real recording). */
+  placeholder?: boolean;
+  recordingState?: string;
+  recordingMessage?: string;
 } | null;
 
 type MeetingMatch = {
@@ -65,6 +86,9 @@ type MeetingMatch = {
   hasSummary?: boolean;
   liveJoined?: boolean;
   purpose?: string;
+  placeholder?: boolean;
+  recordingState?: string;
+  duplicateOf?: string;
 };
 
 function meetingPurposeLabel(purpose = '') {
@@ -72,6 +96,16 @@ function meetingPurposeLabel(purpose = '') {
   if (purpose === 'workshop') return 'Workshop';
   if (purpose === 'iteration') return 'Iterasjon';
   return '';
+}
+
+function isPlaceholderEntry(entry?: { meetingId?: string; placeholder?: boolean } | null) {
+  return Boolean(entry?.placeholder) || isPlaceholderMeetingId(entry?.meetingId || '');
+}
+
+function PurposeChip({ purpose = '' }: { purpose?: string }) {
+  const label = meetingPurposeLabel(purpose);
+  if (!label) return null;
+  return <span className="px-1.5 py-0.5 rounded bg-white/10 text-[10px] text-gray-300">{label}</span>;
 }
 
 const AUTOSAVE_MS = 1500;
@@ -91,15 +125,25 @@ type ComposerProps = {
   embedded?: boolean;
   clientId?: string;
   onSent?: (client: SalesClient) => void;
+  /** The sales card's copy of this client, kept fresh by its own polls (the meeting rows' recording state). */
+  liveClient?: SalesClient | null;
+  /** The client after "Marker uten opptak" / "Angre" here, for the card behind the flow. */
+  onClient?: (client: SalesClient) => void;
 };
 
-export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = '', onSent }: ComposerProps = {}) {
+export function SalesOfferComposer({
+  embedded = false,
+  clientId: clientIdProp = '',
+  onSent,
+  liveClient = null,
+  onClient,
+}: ComposerProps = {}) {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const clientId = clientIdProp || params.get('clientId') || '';
 
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState<'' | 'tier' | 'mva' | 'review-toggle' | 'fill' | 'review' | 'send' | 'contract' | 'new' | 'save' | 'meeting' | 'meeting-save'>('');
+  const [busy, setBusy] = useState<'' | 'tier' | 'mva' | 'review-toggle' | 'fill' | 'review' | 'send' | 'contract' | 'new' | 'save' | 'meeting' | 'meeting-save' | 'recording'>('');
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [offer, setOffer] = useState<SalesOffer | null>(null);
@@ -126,6 +170,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
   const [htmlKey, setHtmlKey] = useState('');
   const [contractPdfUrl, setContractPdfUrl] = useState('');
   const dirtyRef = useRef(false);
+  const meetingQueryRef = useRef<HTMLInputElement | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const htmlRef = useRef(html);
   const subjectRef = useRef(subject);
@@ -220,6 +265,24 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
   }, []);
 
   const meetingReady = Boolean(meeting?.hasTranscript || meeting?.hasSummary);
+  const rowRecording = useCallback((meetingId = '') => {
+    const find = (rows?: OfferClient['meetings']) => (Array.isArray(rows) ? rows : [])
+      .find((row) => row?.meetingId === meetingId)?.recording || null;
+    const own = find(client?.meetings);
+    // The card's copy is kept fresh by its polls; this page's copy is only read on open (or marked here).
+    const live = liveClient && liveClient.id === clientId ? find(liveClient.meetings) : null;
+    if (!live || !own) return live || own;
+    return String(own.checkedAt || '') > String(live.checkedAt || '') ? own : live;
+  }, [client, liveClient, clientId]);
+  // Only the recording state says Fireflies is in the meeting. A hub that does not send it on the meeting
+  // still has it on the placeholder row; otherwise all that is known is "no transcript yet".
+  const meetingRecording = offerMeetingRecording(
+    meeting && typeof meeting.recordingState !== 'string' && rowRecording(meeting.meetingId)?.state
+      ? { ...meeting, recordingState: rowRecording(meeting.meetingId)?.state }
+      : meeting,
+  );
+  const meetingRecordingMessage = meeting?.recordingMessage ?? rowRecording(meeting?.meetingId)?.message ?? '';
+  const meetingIsPlaceholder = isPlaceholderEntry(meeting);
 
   useEffect(() => {
     if (!clientId || !getSalesToken()) return undefined;
@@ -238,7 +301,9 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
           const same = (current?.meetingId || '') === (next?.meetingId || '')
             && Boolean(current?.hasTranscript) === Boolean(next?.hasTranscript)
             && Boolean(current?.hasSummary) === Boolean(next?.hasSummary)
-            && (current?.title || '') === (next?.title || '');
+            && (current?.title || '') === (next?.title || '')
+            && (current?.recordingState ?? '') === (next?.recordingState ?? '')
+            && (current?.recordingMessage ?? '') === (next?.recordingMessage ?? '');
           if (same) return current;
           if (next && (next.hasTranscript || next.hasSummary) && !(current?.hasTranscript || current?.hasSummary)) {
             becameReady = true;
@@ -440,6 +505,45 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     }
   }
 
+  /** "Marker uten opptak" / "Angre" on the meeting's placeholder, then read the meeting again. */
+  async function markMeetingRecording(next: 'declined' | 'open') {
+    if (!meeting?.meetingId || !meetingIsPlaceholder) return;
+    setBusy('recording');
+    setError('');
+    setNotice('');
+    try {
+      const meetingId = meeting.meetingId;
+      const saved = await setFirefliesRecordingState(clientId, { meetingId }, next);
+      if (saved && 'recording' in saved) {
+        // The placeholder row this page holds says the same as the hub now.
+        setClient((current) => (current ? {
+          ...current,
+          meetings: (current.meetings || []).map((row) => (row.meetingId === meetingId ? { ...row, recording: saved.recording } : row)),
+        } : current));
+      }
+      const data = await getClientOfferMeeting(clientId) as { meeting: MeetingInfo; meetings?: MeetingMatch[] };
+      setMeeting(data.meeting || null);
+      if (Array.isArray(data.meetings)) setMeetings(data.meetings);
+      setNotice(next === 'declined'
+        ? 'Møtet er markert som holdt uten opptak. Skriv e-posten fra produktnotatene.'
+        : 'Huben ser etter opptaket igjen.');
+      // The sales card (and "Møter uten opptak") should say the same.
+      if (onClient) {
+        const fresh = await freshClientAfter(clientId, saved as { client?: SalesClient });
+        if (fresh) onClient(fresh);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Kunne ikke lagre.');
+    } finally {
+      setBusy('');
+    }
+  }
+
+  function openMeetingPaste() {
+    setMeetingsOpen(true);
+    window.setTimeout(() => meetingQueryRef.current?.focus(), 0);
+  }
+
   async function handleFill(force = false) {
     if (fillDisabledReason) {
       if (force) {
@@ -634,11 +738,18 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
       return '';
     }
     if (!meeting && !meetings.length) return 'Venter på Fireflies-transkript, eller skriv produktnotater på forrige side.';
-    if (meeting?.pendingTranscript || meetings.some((entry) => entry.selected && !entry.hasTranscript)) {
+    const recording = meetingRecording;
+    if (recording.noRecording) {
+      return 'Ingen opptak fra Fireflies for dette møtet. Lim inn Fireflies-lenken under Bytt opptak, eller skriv produktnotater på forrige side.';
+    }
+    if (recording.declined) {
+      return 'Møtet er markert uten opptak. Skriv produktnotater på forrige side, eller lim inn en Fireflies-lenke under Bytt opptak.';
+    }
+    if (recording.waiting || recording.inMeeting || recording.knocking || meetings.some((entry) => entry.selected && !entry.hasTranscript)) {
       return 'Fireflies-transkriptet er ikke hentet hit ennå. Åpne tilbudet på nytt, eller lim inn Fireflies-lenken under Bytt opptak.';
     }
     return 'Møtet mangler transkript og sammendrag.';
-  }, [deepseek, meeting, meetings, client?.hasProductNotes]);
+  }, [deepseek, meeting, meetings, client?.hasProductNotes, meetingRecording]);
 
   const serverSelectedIds = useMemo(
     () => meetings.filter((entry) => entry.selected).map((entry) => entry.meetingId),
@@ -655,6 +766,27 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
     [meetings, pickerIds]
   );
   const pickerHasTranscript = pickerMeetings.some((entry) => entry.selected && (entry.hasTranscript || entry.hasSummary));
+  // A real recording with text is picked: the booked meeting's "no recording" or "on the way" no longer applies.
+  const selectedRecordingReady = meetings.some((entry) => (
+    entry.selected && !isPlaceholderEntry(entry) && (entry.hasTranscript || entry.hasSummary)
+  ));
+  // This page's rows (read on open) with the card's fresher copy on top: what each placeholder says now.
+  const recordingRows = useMemo(() => {
+    const byId = new Map<string, NonNullable<OfferClient['meetings']>[number]>();
+    for (const row of Array.isArray(client?.meetings) ? client.meetings : []) if (row?.meetingId) byId.set(row.meetingId, row);
+    if (liveClient && liveClient.id === clientId) {
+      for (const row of Array.isArray(liveClient.meetings) ? liveClient.meetings : []) {
+        if (row?.meetingId) byId.set(row.meetingId, { ...byId.get(row.meetingId), ...row });
+      }
+    }
+    return [...byId.values()];
+  }, [client, liveClient, clientId]);
+  const recordingRow = (meetingId = '') => recordingRows.find((row) => row.meetingId === meetingId) || null;
+  // A placeholder whose real recording is in is not "a booked meeting without a recording" (still listed
+  // while picked, so it can be unticked).
+  const pickerPlaceholders = pickerMeetings.filter((entry) => (
+    isPlaceholderEntry(entry) && (entry.selected || !placeholderIsSuperseded(recordingRow(entry.meetingId), recordingRows))
+  ));
 
   function toggleDraftMeeting(meetingId: string) {
     setDraftMeetingIds((current) => {
@@ -911,18 +1043,36 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                   <div className="rounded-lg border border-white/10 px-3 py-2 text-xs text-gray-400">
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                       <span>
-                        {pickerMeetings.filter((entry) => entry.selected).length
-                          ? `${pickerMeetings.filter((entry) => entry.selected).length} opptak valgt${pickerDirty ? ' (ikke lagret)' : ''}`
+                        {/* A placeholder is not a recording, so it does not count as one picked. */}
+                        {pickerMeetings.filter((entry) => entry.selected && !isPlaceholderEntry(entry)).length
+                          ? `${pickerMeetings.filter((entry) => entry.selected && !isPlaceholderEntry(entry)).length} opptak valgt${pickerDirty ? ' (ikke lagret)' : ''}`
                           : meeting
-                            ? `${meeting.title || 'Møte'}${meeting.when ? ` · ${meeting.when}` : ''}${meeting.pendingTranscript ? ' · venter på transkript' : ''}`
+                            ? `${meeting.title || 'Møte'}${meeting.when ? ` · ${meeting.when}` : ''}${
+                              meetingRecording.waiting
+                                ? ' · venter på transkript'
+                                : meetingRecording.noRecording
+                                  ? ' · ingen opptak'
+                                  : meetingRecording.declined
+                                    ? ' · uten opptak'
+                                    : ''
+                            }`
                             : 'Ingen Fireflies-opptak valgt'}
                       </span>
                       {/^https:\/\/app\.fireflies\.ai\/view\//i.test(meeting?.firefliesUrl || '') ? (
                       <a href={meeting.firefliesUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[#FF5B00] hover:underline">
                         <ExternalLink size={12} /> Fireflies
                       </a>
-                      ) : meeting?.pendingTranscript || meeting?.liveJoined ? (
+                      ) : selectedRecordingReady ? null : meetingRecording.inMeeting ? (
                         <span>Fireflies er i møtet. Transkriptet kommer hit når opptaket er ferdig.</span>
+                      ) : meetingRecording.knocking ? (
+                        <span className="text-amber-200">Fireflies banker på – slipp inn «Fireflies.ai Notetaker» i Meet.</span>
+                      ) : meetingRecording.state === 'scheduled' ? (
+                        // The hub's own words: it also says when it will not send the bot (safe mode, no key).
+                        <span>{meetingRecordingMessage || 'Fireflies sendes inn i Meet når møtet starter.'}</span>
+                      ) : meetingRecording.state === 'ended' ? (
+                        <span>Møtet er ferdig – transkriptet kommer hit når Fireflies er ferdig med opptaket.</span>
+                      ) : meetingRecording.waiting ? (
+                        <span>Transkriptet kommer hit når Fireflies er ferdig med opptaket.</span>
                       ) : null}
                       {!locked && (
                         <button type="button" onClick={() => setMeetingsOpen((open) => !open)} className="text-[#FF5B00] hover:underline">
@@ -930,60 +1080,122 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                         </button>
                       )}
                     </div>
+                    {meeting && !selectedRecordingReady && (meetingRecording.noRecording || meetingRecording.declined) ? (
+                      <div className={`mt-2 rounded-lg border px-3 py-2 space-y-1.5 ${meetingRecording.declined ? RECORDING_TONE_CLASS.grey : RECORDING_TONE_CLASS.red}`}>
+                        <div className="text-xs font-medium">
+                          {meetingRecording.declined ? 'Møtet er markert uten opptak' : 'Ingen opptak fra Fireflies for dette møtet'}
+                        </div>
+                        {meetingRecordingMessage ? <p className="text-[11px]">{meetingRecordingMessage}</p> : null}
+                        <div className="flex flex-wrap items-center gap-2">
+                          {!locked && !meetingRecording.declined ? (
+                            <button
+                              type="button"
+                              onClick={openMeetingPaste}
+                              className="px-2 py-1 rounded-md bg-white/10 text-[11px] text-white hover:bg-white/15"
+                              title="Har noen tatt opp møtet i sin egen Fireflies, lim inn lenken her."
+                            >
+                              Lim inn Fireflies-lenke
+                            </button>
+                          ) : null}
+                          {meetingIsPlaceholder ? (
+                            <button
+                              type="button"
+                              disabled={busy === 'recording'}
+                              onClick={() => void markMeetingRecording(meetingRecording.declined ? 'open' : 'declined')}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-white/10 text-[11px] text-white hover:bg-white/15 disabled:opacity-50"
+                              title={meetingRecording.declined
+                                ? 'Angre «uten opptak». Huben ser etter opptaket igjen.'
+                                : 'Møtet ble holdt uten opptak. Huben slutter å lete og varsle.'}
+                            >
+                              {busy === 'recording' ? <Loader2 size={11} className="animate-spin" /> : null}
+                              {meetingRecording.declined ? 'Angre' : 'Marker uten opptak'}
+                            </button>
+                          ) : null}
+                        </div>
+                        <p className="text-[11px]">Uten opptak kan e-posten skrives fra produktnotatene (Generer på nytt) eller kundekortet (Autofyll).</p>
+                      </div>
+                    ) : null}
                     {meetingsOpen && !locked && (
                       <div className="mt-2 space-y-3">
                         <p className="text-[11px] text-gray-500">Huk av opptaket og trykk Lagre. Det lagrer valget og skriver e-posten. Er det allerede huket av, starter Lagre skrivingen.</p>
                         <div>
                           <div className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">Transkript fra denne kunden</div>
-                          {pickerMeetings.some((entry) => entry.hasTranscript) ? (
+                          {pickerMeetings.some((entry) => entry.hasTranscript && !isPlaceholderEntry(entry)) ? (
                             <div className="flex flex-wrap gap-2">
-                              {pickerMeetings.filter((entry) => entry.hasTranscript).map((entry) => (
+                              {pickerMeetings.filter((entry) => entry.hasTranscript && !isPlaceholderEntry(entry)).map((entry) => (
                                 <label
                                   key={entry.meetingId}
                                   className={`inline-flex items-center gap-2 px-2 py-1 rounded-md text-left cursor-pointer ${
                                     entry.selected
                                       ? 'bg-[#FF5B00]/20 text-white'
                                       : 'bg-white/10 text-white hover:bg-white/15'
-                                  }`}
+                                  } ${entry.duplicateOf ? 'opacity-60' : ''}`}
                                 >
                                   <input
                                     type="checkbox"
                                     checked={Boolean(entry.selected)}
                                     onChange={() => toggleDraftMeeting(entry.meetingId)}
                                   />
-                                  <span>
-                                    {meetingPurposeLabel(entry.purpose) ? `${meetingPurposeLabel(entry.purpose)} · ` : ''}
-                                    {entry.title || 'Uten tittel'}{entry.when ? ` · ${entry.when}` : ''}
-                                  </span>
+                                  <PurposeChip purpose={entry.purpose} />
+                                  <span>{entry.title || 'Uten tittel'}{entry.when ? ` · ${entry.when}` : ''}</span>
+                                  {entry.duplicateOf ? <span className="text-[10px] text-gray-400">duplikat</span> : null}
                                 </label>
                               ))}
                             </div>
                           ) : (
                             <p className="text-[11px] text-gray-500">Ingen transkript er knyttet til denne kunden ennå.</p>
                           )}
+                          {pickerMeetings.some((entry) => entry.hasTranscript && (entry.purpose === 'workshop' || entry.purpose === 'iteration')) ? (
+                            <p className="mt-1 text-[11px] text-gray-500">Workshop- og iterasjonsopptak er ikke valgt som standard. Huk dem av hvis de skal med i tilbudet.</p>
+                          ) : null}
                         </div>
-                        {pickerMeetings.some((entry) => !entry.hasTranscript) && (
+                        {pickerMeetings.some((entry) => !entry.hasTranscript && !isPlaceholderEntry(entry)) && (
                           <div className="flex flex-wrap gap-2">
-                            {pickerMeetings.filter((entry) => !entry.hasTranscript).map((entry) => (
+                            {pickerMeetings.filter((entry) => !entry.hasTranscript && !isPlaceholderEntry(entry)).map((entry) => (
                               <label
                                 key={entry.meetingId}
                                 className={`inline-flex items-center gap-2 px-2 py-1 rounded-md text-left cursor-pointer ${
                                   entry.selected
                                     ? 'bg-[#FF5B00]/20 text-white'
                                     : 'bg-white/10 text-gray-300 hover:bg-white/15'
-                                }`}
+                                } ${entry.duplicateOf ? 'opacity-60' : ''}`}
                               >
                                 <input
                                   type="checkbox"
                                   checked={Boolean(entry.selected)}
                                   onChange={() => toggleDraftMeeting(entry.meetingId)}
                                 />
+                                <PurposeChip purpose={entry.purpose} />
                                 <span>
-                                  {meetingPurposeLabel(entry.purpose) ? `${meetingPurposeLabel(entry.purpose)} · ` : ''}
-                                  {entry.title || 'Uten tittel'}{entry.when ? ` · ${entry.when}` : ''} · venter på transkript
+                                  {entry.title || 'Uten tittel'}{entry.when ? ` · ${entry.when}` : ''}
+                                  {` · ${realRowWaitingNote(recordingRow(entry.meetingId) || entry, recordingRows) || 'venter på transkript'}`}
                                 </span>
+                                {entry.duplicateOf ? <span className="text-[10px] text-gray-400">duplikat</span> : null}
                               </label>
                             ))}
+                          </div>
+                        )}
+                        {pickerPlaceholders.length > 0 && (
+                          <div className="space-y-1">
+                            <div className="text-[11px] uppercase tracking-wide text-gray-500">Bookede møter uten opptak ennå</div>
+                            <div className="flex flex-wrap gap-2">
+                              {pickerPlaceholders.map((entry) => {
+                                // A placeholder is not a recording: shown with its state, not offered as a pick
+                                // (one picked by an older version can still be unticked).
+                                const state = entry.recordingState
+                                  || rowRecording(entry.meetingId)?.state
+                                  || (entry.meetingId === meeting?.meetingId ? meetingRecording.state : '');
+                                return (
+                                  <label key={entry.meetingId} className="inline-flex items-center gap-2 px-2 py-1 rounded-md bg-white/5 text-gray-400">
+                                    {entry.selected ? (
+                                      <input type="checkbox" checked onChange={() => toggleDraftMeeting(entry.meetingId)} />
+                                    ) : null}
+                                    <PurposeChip purpose={entry.purpose} />
+                                    <span>{entry.title || 'Uten tittel'}{entry.when ? ` · ${entry.when}` : ''} · {recordingStateLabel(state) || 'Ingen opptak koblet ennå'}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
                           </div>
                         )}
                         <div className="flex flex-wrap items-center gap-2">
@@ -1004,6 +1216,7 @@ export function SalesOfferComposer({ embedded = false, clientId: clientIdProp = 
                           <div className="text-[11px] uppercase tracking-wide text-gray-500 mb-1">Legg til Fireflies-lenke eller navn</div>
                           <div className="flex flex-wrap items-end gap-2">
                             <input
+                              ref={meetingQueryRef}
                               value={meetingQuery}
                               onChange={(event) => setMeetingQuery(event.target.value)}
                               onKeyDown={(event) => {

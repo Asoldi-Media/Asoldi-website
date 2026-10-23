@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { isPlaceholderMeetingId } from '../../../../lib/offer-meetings.js';
 import { firefliesMediaUrl } from '../../sales/emailApi';
 import { ClientMeetingCard } from './MeetingDataPanel';
 
@@ -10,11 +11,13 @@ type Props = {
 };
 
 export function MeetingVideoHover({
-  meetingId = '',
+  meetingId: rawMeetingId = '',
   hasVideo = false,
   children,
   className = '',
 }: Props) {
+  // A live: placeholder has no Fireflies record behind it, so there is nothing to show or open.
+  const meetingId = isPlaceholderMeetingId(rawMeetingId) ? '' : rawMeetingId;
   const [hovered, setHovered] = useState(false);
   const [open, setOpen] = useState(false);
   const leaveTimer = useRef<number | null>(null);
