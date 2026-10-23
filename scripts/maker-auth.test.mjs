@@ -434,6 +434,45 @@ test('requireMakerHost: 403 for a host without the scope, and the preview push m
   assert.equal((await fetch(`${base}/push`, { method: 'POST', headers: { 'x-api-key': 'k-123' } })).status, 200);
 });
 
+test('hostScopeAllows: a client bundle sent through the status callback needs the client-bundle scope on a host token', async (t) => {
+  const dir = tempDir();
+  hosts.resetMakerHostsMemoForTests();
+  const callbackOnly = hosts.createMakerHost({ label: 'callback only', scopes: ['callback'] }, { dataDir: dir });
+  const both = hosts.createMakerHost({ label: 'callback and bundle', scopes: ['callback', 'client-bundle'] }, { dataDir: dir });
+  const disk = legacyHolder(dir);
+  const auth = makerAuthLib.createMakerAuth({ legacyHolder: disk, dataDir: dir, env: {} });
+  const app = express();
+  app.use(express.json());
+  // The shape of POST /api/admin/sales/maker-status-callback: callback scope for the route, and
+  // client-bundle on top for the bundle event.
+  app.post('/cb', auth.requireMakerHost('callback'), (req, res) => {
+    if (req.body?.event === 'run.client-bundle.updated' && !auth.hostScopeAllows(req, res, 'client-bundle')) return undefined;
+    return res.json({ ok: true, via: req.makerAuth.via });
+  });
+  app.post('/unguarded', (req, res) => (auth.hostScopeAllows(req, res, 'client-bundle') ? res.json({ ok: true }) : undefined));
+  const { base, close } = await serve(app);
+  t.after(close);
+  const post = (path, headers, event) => fetch(`${base}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', ...headers },
+    body: JSON.stringify({ event, bundle: {} }),
+  });
+
+  const refused = await post('/cb', { 'x-maker-host-token': callbackOnly.token }, 'run.client-bundle.updated');
+  assert.equal(refused.status, 403);
+  assert.equal((await refused.json()).code, 'maker-scope');
+  assert.equal(refused.headers.get('cache-control'), 'no-store');
+  assert.equal(
+    (await post('/cb', { 'x-maker-host-token': callbackOnly.token, 'x-sales-callback-token': disk.get() }, 'run.client-bundle.updated')).status,
+    403,
+    'the legacy run token does not widen a host token'
+  );
+  assert.equal((await post('/cb', { 'x-maker-host-token': callbackOnly.token }, 'run.fields.updated')).status, 200, 'other events need only callback');
+  assert.equal((await post('/cb', { 'x-maker-host-token': both.token }, 'run.client-bundle.updated')).status, 200);
+  assert.equal((await post('/cb', { 'x-sales-callback-token': disk.get() }, 'run.client-bundle.updated')).status, 200, 'the legacy token carries no scopes');
+  assert.equal((await post('/unguarded', { 'x-maker-host-token': both.token }, 'run.client-bundle.updated')).status, 401, 'no requireMakerHost before it: refused');
+});
+
 test('failure limiter: a stale token polling at 3 failures a minute never blocks a valid host', () => {
   const dir = tempDir();
   hosts.resetMakerHostsMemoForTests();

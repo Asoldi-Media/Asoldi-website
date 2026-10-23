@@ -222,6 +222,25 @@ test('real hub: per-host tokens on Maker callbacks, revoke, legacy disk token, h
     assert.equal(narrowPush.status, 403);
     assert.equal((await narrowPush.json()).code, 'maker-scope');
 
+    // 5c. A client bundle sent through the status callback is the same portal write as the
+    //     client-bundle route, so a host token needs that scope as well. Allowed requests reach the
+    //     portal lookup, which answers 404 here (no portal account in this data dir).
+    const bundleCallback = (headers) => fetch(`${base}/api/admin/sales/maker-status-callback`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify({ event: 'run.client-bundle.updated', runId: RUN_ID, salesClientId: CLIENT_ID, bundle: { id: 'bundle-boot' } }),
+    });
+    const narrowBundle = await bundleCallback({ 'x-maker-host-token': narrow.token, 'x-sales-callback-token': legacy });
+    assert.equal(narrowBundle.status, 403, 'a callback-only host may not write client bundles, legacy token or not');
+    assert.equal((await narrowBundle.json()).code, 'maker-scope');
+    const wide = await (await fetch(`${base}/api/admin/maker-hosts`, {
+      method: 'POST',
+      headers: hub.admin({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ label: 'Callback and bundle Maker', scopes: ['callback', 'client-bundle'] }),
+    })).json();
+    assert.equal((await bundleCallback({ 'x-maker-host-token': wide.token })).status, 404, 'a host with both scopes gets through');
+    assert.equal((await bundleCallback({ 'x-sales-callback-token': legacy })).status, 404, 'the legacy token carries no scopes');
+
     // 6. Counters: in memory under the existing names, and persisted without any token.
     const security = await (await fetch(`${base}/api/admin/system/security`, { headers: hub.admin() })).json();
     assert.ok(security.counters['maker-callback-missing-token'].total >= 2);

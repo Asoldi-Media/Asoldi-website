@@ -13406,6 +13406,8 @@ app.get('/api/admin/sales/maker-status-callback', requireMakerHost('callback'), 
 app.post('/api/admin/sales/maker-status-callback', requireMakerHost('callback'), async (req, res) => {
   const event = sanitizeText(req.body?.event) || 'run.step.updated';
   if (event === 'run.client-bundle.updated' && req.body?.bundle) {
+    // The same portal write as /api/internal/maker/client-bundle: a host token needs that scope too.
+    if (!makerAuth.hostScopeAllows(req, res, 'client-bundle')) return;
     const result = applyMakerBundleToPortal({
       portalUserId: sanitizeText(req.body?.portalUserId),
       salesClientId: sanitizeText(req.body?.salesClientId),
