@@ -129,7 +129,7 @@ function unreadableError(name, cause) {
 
 function readJsonAbs(path, fallback, label) {
   let lastError = null;
-  for (let attempt = 0; attempt < 8; attempt += 1) {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
     if (!existsSync(path)) return clone(fallback);
     try {
       const text = retrySync(() => readFileSync(path, 'utf8'));
@@ -137,8 +137,8 @@ function readJsonAbs(path, fallback, label) {
     } catch (error) {
       if (error?.code === 'ENOENT') return clone(fallback);
       lastError = error;
-      // A writer may be between truncate and write (writeDataJson writes in place).
-      sleepSync(5 + attempt * 5);
+      // A writer may be between truncate and write (writeDataJson writes in place); ~70 ms in total.
+      if (attempt < 5) sleepSync(2 + attempt * 4);
     }
   }
   throw unreadableError(label || path, lastError);
