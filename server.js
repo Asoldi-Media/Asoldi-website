@@ -16226,10 +16226,10 @@ function hydratePendingClientTranscripts({ max = 10 } = {}) {
 /**
  * Placeholders whose meeting is over: link the transcript that turned up, or mark the meeting
  * missing (or empty) and tell the team and the rep once (lib/fireflies-recording-watchdog.js).
+ * Without a Fireflies key it still reports the meetings no bot was ever sent to.
  */
 async function runFirefliesWatchdogStep() {
   const config = readFirefliesWebhookConfig();
-  if (!config.apiKey) return { skipped: 'no-api-key' };
   let owners = null;
   return runFirefliesRecordingWatchdog({
     getClients: () => sales.getSalesClients(),
@@ -16245,6 +16245,7 @@ async function runFirefliesWatchdogStep() {
       owners = owners || await salesOwnerEmailMap();
       return [config.notifyEmail, await firefliesRepEmailFor(client, owners)];
     },
+    mayAlert: firefliesAlertAllowedFor,
     sendEmail: (message) => emailLib.sendEmail(message),
   });
 }

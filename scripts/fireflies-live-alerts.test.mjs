@@ -372,6 +372,89 @@ test('the watchdog follows a never-sent placeholder to missing with one honest a
   assert.equal(hub.sent.length, 1, 'one e-mail');
 });
 
+test('without a Fireflies key a meeting no bot was sent to still turns missing with one e-mail; a sent one waits for the key', async () => {
+  resetAll();
+  const neverSent = salesClient({ meetings: [placeholder('client-1', T, { state: 'not-admitted', sessionKey: KEY, message: LIVE_JOIN_MESSAGES.neverSentNoKey })] });
+  const sentIn = salesClient({
+    id: 'client-2',
+    businessName: 'Annenfirma AS',
+    meetings: [placeholder('client-2', T, { state: 'not-admitted', dispatchedAt: iso(-3), message: LIVE_JOIN_MESSAGES.notAdmitted }, { meetLink: ROOM_B })],
+  });
+  const clients = [neverSent, sentIn];
+  const sent = [];
+  const run = (minutes) => watchdog.runFirefliesRecordingWatchdog({
+    getClients: () => clients,
+    apiKey: '',
+    nowMs: at(minutes),
+    log: quiet,
+    patchPlaceholder: (clientId, meetingId, patch) => {
+      const row = clients.find((client) => client.id === clientId)?.meetings.find((item) => item.meetingId === meetingId);
+      if (row) row.recording = mergeRecordingState(row.recording, patch);
+    },
+    linkTranscript: () => { throw new Error('nothing is linked without a key'); },
+    recipientsFor: async () => ['ansatte@asoldi.com', 'alexander@asoldi.com'],
+    sendEmail: async (message) => { sent.push(message); },
+    lookup: async () => { throw new Error('nothing is looked up without a key'); },
+  });
+  await run(61);
+  const [row] = neverSent.meetings;
+  assert.equal(row.recording.state, 'not-admitted', 'before the deadline it waits');
+  assert.equal(row.recording.message, LIVE_JOIN_MESSAGES.neverSentNoKey, 'and keeps the why');
+  const result = await run(151);
+  assert.deepEqual(result.missing, [row.meetingId]);
+  assert.equal(result.health.lookups, 0, 'no Fireflies lookup was made');
+  assert.equal(row.recording.state, 'missing');
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].text, /^Asoldi har ikke noe Fireflies-opptak av salgsmøtet med Testfirma AS/);
+  assert.ok(sent[0].text.includes(LIVE_JOIN_MESSAGES.neverSentNoKey), 'says the key was missing');
+  assert.match(sent[0].text, /før Fireflies-nøkkelen er på plass igjen/);
+  const [other] = sentIn.meetings;
+  assert.equal(other.recording.state, 'not-admitted', 'a bot was sent: never called missing unlooked');
+  assert.equal(other.recording.missingAt, '');
+  await run(215);
+  assert.equal(sent.length, 1, 'one e-mail');
+});
+
+test('a test client that is not a pilot gets no missing e-mail; its meeting is still marked missing', async () => {
+  resetAll();
+  const client = salesClient({ id: 'client-t', isTest: true, meetings: [placeholder('client-t', T, { state: 'ended', dispatchedAt: iso(-3) })] });
+  const hub = watchdogHub([client]);
+  const result = await hub.run(151);
+  assert.deepEqual(result.missing, [client.meetings[0].meetingId]);
+  assert.equal(client.meetings[0].recording.state, 'missing');
+  assert.equal(client.meetings[0].recording.alertedAt, '');
+  assert.equal(hub.sent.length, 0);
+});
+
+test('a meeting ticked held, or a done Møte, still gets its placeholder when the hub was down through it', async () => {
+  resetAll();
+  const action = {
+    id: 'act-9',
+    presetKey: 'custom',
+    goalKey: 'meetingHeld',
+    name: 'Oppfølgingsmøte',
+    format: 'mote',
+    addToCalendar: true,
+    calendarEventId: 'evt-9',
+    dueAt: iso(0),
+    meetLink: ROOM_B,
+    doneAt: iso(50),
+  };
+  const client = salesClient({ progression: { meetingHeld: true }, nextActions: [action] });
+  const state = { clients: [client], active: [], sent: [], reply: null };
+  // The hub comes back 2.5 hours after the start; the rep ticked both right after the call.
+  await tickAt(state, 150);
+  assert.equal(state.sent.length, 0, 'long past the first-send window: nothing is sent');
+  const created = live.ensureLivePlaceholders({ clients: state.clients, writePlaceholder: rowWriter(state.clients), nowMs: at(150), log: quiet });
+  assert.deepEqual(created.map((row) => row.meetingId).sort(), [STUB, `live:client-1:act-9:${T}`].sort());
+  for (const row of client.meetings) {
+    assert.equal(row.recording.state, 'not-admitted');
+    assert.equal(row.recording.message, LIVE_JOIN_MESSAGES.neverSent);
+  }
+  // Before the meeting a ticked "held" still means no bot.
+  assert.equal(live.collectLiveSessions([salesClient({ progression: { meetingHeld: true } })], at(-60)).length, 0);
+});
+
 test('a meeting whose knocks nobody answered says so in its missing alert', () => {
   const placeholder = {
     meetingId: STUB,
@@ -739,7 +822,7 @@ function placeholder(id, start, recording, extra = {}) {
   };
 }
 
-test('missing recordings: placeholders with no recording past the deadline, or called not-admitted, missing or empty', () => {
+test('missing recordings: placeholders with no recording past the deadline, or called missing or empty', () => {
   const now = at(0);
   const day = 24 * 60 * MIN;
   const a = {
@@ -748,9 +831,14 @@ test('missing recordings: placeholders with no recording past the deadline, or c
     ownerId: 'sales:rep-1',
     meetings: [
       placeholder('c-a', now - 3 * 60 * MIN, { state: 'missing', missingAt: iso(-30), alertedAt: iso(-30), message: 'Ingen Fireflies-opptak etter møtet.' }),
+      // Not let in 50 minutes ago: the meeting may still get its recording, so not listed yet.
       placeholder('c-a', now - 50 * MIN, { state: 'not-admitted', message: LIVE_JOIN_MESSAGES.notAdmitted }),
+      // Past its deadline before the watchdog wrote 'missing': listed with capture's why.
+      placeholder('c-a', now - 270 * MIN, { state: 'not-admitted', message: LIVE_JOIN_MESSAGES.neverSentNoKey }, { slotKey: 'action:a2', purpose: '' }),
       placeholder('c-a', now - 30 * MIN, { state: 'dispatched' }, { slotKey: 'action:a1', purpose: '' }),
       placeholder('c-a', now - 5 * 60 * MIN, { state: 'ended' }, { slotKey: '', purpose: 'workshop', forSalesMeeting: false }),
+      // Past the deadline, but Fireflies is still processing a recording from the room.
+      placeholder('c-a', now - 192 * MIN, { state: 'ended', message: 'Fireflies behandler fortsatt opptaket.' }, { slotKey: 'action:a3', purpose: '' }),
       placeholder('c-a', now - 2 * day, { state: 'declined' }),
       placeholder('c-a', now - 61 * day, { state: 'missing' }),
     ],
@@ -769,13 +857,14 @@ test('missing recordings: placeholders with no recording past the deadline, or c
   const all = watchdog.missingRecordingRows([a, b], { nowMs: now });
   assert.equal(all.count, 4);
   assert.deepEqual(all.rows.map((row) => [row.clientId, row.state]), [
-    ['c-a', 'not-admitted'],
     ['c-a', 'missing'],
     ['c-b', 'empty'],
+    ['c-a', 'not-admitted'],
     ['c-a', 'missing'],
   ]);
-  const [notAdmitted, missing, empty, derived] = all.rows;
-  assert.equal(notAdmitted.message, LIVE_JOIN_MESSAGES.notAdmitted);
+  const [missing, empty, notAdmitted, derived] = all.rows;
+  assert.equal(notAdmitted.message, LIVE_JOIN_MESSAGES.neverSentNoKey);
+  assert.equal(notAdmitted.kind, 'action');
   assert.equal(missing.kind, 'sales');
   assert.equal(missing.alertedAt, iso(-30));
   assert.equal(empty.businessName, 'Testfirma B AS');
@@ -932,6 +1021,11 @@ test('server.js wires the alerts, the placeholders and the routes', () => {
   assert.match(recipients, /\(await firefliesRepEmailFor\(client, owners\)\) \|\| readFirefliesWebhookConfig\(\)\.notifyEmail/);
   const unsent = between('function writeUnsentLivePlaceholder(', '/** After every addToLiveMeeting attempt');
   assert.match(unsent, /return writeLivePlaceholder\(\{ slot, session, client, recording \}\);/, 'no liveJoinedAt');
+  // No key still reports the meetings no bot was sent to; test clients that are not pilots get no e-mail.
+  const step = between('async function runFirefliesWatchdogStep()', 'let firefliesIngestAt = 0;');
+  assert.doesNotMatch(step, /if \(!config\.apiKey\) return/);
+  assert.match(step, /apiKey: config\.apiKey,/);
+  assert.match(step, /mayAlert: firefliesAlertAllowedFor,/);
   assert.match(server, /await maybeAlertFirefliesIngest\(\{[^\n]*\}\);\s*\/\/[^\n]*\n\s*await maybeAlertFirefliesLiveJoinHealth\(\);/);
   const status = between("app.get('/api/admin/fireflies/live-join-status'", "app.get('/api/admin/fireflies/missing-recordings'");
   assert.match(status, /requireOfferAdmin\(req, res\)/);
