@@ -18176,7 +18176,8 @@ function resolveProdAdminBaseUrl() {
   const prod = normalizeHttpBaseUrl(process.env.PROD_ADMIN_URL || 'https://asoldi.com');
   const self = normalizeHttpBaseUrl(process.env.APP_URL || '');
   if (!prod) return '';
-  if (self && prod.replace(/\/$/, '') === self.replace(/\/$/, '')) return '';
+  // Hub safe mode: a local hub is never production, even with APP_URL=https://asoldi.com.
+  if (self && !isSafeModeActive() && prod.replace(/\/$/, '') === self.replace(/\/$/, '')) return '';
   return prod;
 }
 

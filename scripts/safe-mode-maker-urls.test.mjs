@@ -113,6 +113,10 @@ function seedClient(dataDir) {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   }], null, 2));
+  // A website snapshot, so publish-preview-to-prod gets as far as the prod login.
+  const snapshot = join(dataDir, 'sales-site-imports', 'maker-urls-client');
+  mkdirSync(snapshot, { recursive: true });
+  writeFileSync(join(snapshot, 'index.html'), '<!doctype html><title>t</title>');
 }
 
 function postWithHost(base, path, { token, host, body }) {
@@ -185,6 +189,11 @@ test('server.js with the live-like .env: create-maker-run hands the Maker only l
     const tunnel = await fetch(`${hub.base}/api/admin/sales/maker-tunnel/start`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: '{}' });
     assert.equal(tunnel.status, 423);
     assert.match((await tunnel.json()).message, /safe mode/i);
+    // APP_URL equals PROD_ADMIN_URL here; a safe-mode hub still never treats itself as production.
+    const publish = await fetch(`${hub.base}/api/admin/sales/maker-urls-client/publish-preview-to-prod`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+    const publishJson = await publish.json();
+    assert.equal(publish.status, 423, JSON.stringify(publishJson).slice(0, 300));
+    assert.notEqual(publishJson.alreadyProduction, true);
 
     // 4) Bound to loopback only.
     const ip = lanAddress();
