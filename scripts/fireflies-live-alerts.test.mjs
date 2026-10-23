@@ -178,10 +178,12 @@ test('a session never sent says why when it gives up: no key, the rate limit, a 
   assert.equal(session.message, LIVE_JOIN_MESSAGES.neverSent);
   assert.equal(live.liveSessionUnsentReason(session), 'never-sent');
 
-  // A knock Fireflies accepted that nobody answered is the "not let in" case.
+  // A knock Fireflies accepted that nobody answered, by a look at the room after it, is the "not let in" case.
   const knocked = applyLiveJoinAttempt(session, { at: iso(-3), kind: 'first', ok: true });
   assert.equal(live.liveSessionUnsentReason(knocked), 'not-let-in');
-  assert.equal(live.notAdmittedMessage(knocked), LIVE_JOIN_MESSAGES.notAdmitted);
+  assert.equal(live.notAdmittedMessage({ ...knocked, checkedAt: iso(5) }), LIVE_JOIN_MESSAGES.notAdmitted);
+  // With no look after it (the hub was down), the hub does not know: it says so.
+  assert.equal(live.notAdmittedMessage(knocked), LIVE_JOIN_MESSAGES.notChecked);
 });
 
 test('a session that ends without a bot gets one placeholder per slot: honest state, no liveJoinedAt, never twice', async () => {
@@ -253,7 +255,7 @@ test('no placeholder for a moved, declined or old session; a bot the hub did not
     store.sessions[KEY].declinedAt = '';
     return store;
   }, { nowMs: at(31) });
-  assert.deepEqual(live.ensureLivePlaceholders({ clients: state.clients, writePlaceholder: rowWriter(state.clients), nowMs: at(13 * 60), log: quiet }), [], 'past the collect horizon');
+  assert.deepEqual(live.ensureLivePlaceholders({ clients: state.clients, writePlaceholder: rowWriter(state.clients), nowMs: at(49 * 60), log: quiet }), [], 'past the collect horizon');
 
   // A Fireflies bot someone added by hand: adopted, never sent by the hub.
   resetAll();
@@ -617,6 +619,52 @@ test('a meeting ticked held, or a done Møte, still gets its placeholder when th
   }
   // Before the meeting a ticked "held" still means no bot.
   assert.equal(live.collectLiveSessions([salesClient({ progression: { meetingHeld: true } })], at(-60)).length, 0);
+});
+
+test('a hub down for more than 12 hours through a meeting, or not yet running then, still reports it missing', async () => {
+  resetAll();
+  // Seen the day before (36 hours ahead), then the hub went down; and a booking it never saw, at the same time.
+  const seen = salesClient();
+  const unseen = salesClient({ id: 'client-2', businessName: 'Annenfirma AS', ownerId: 'sales:rep-2', calendar: { meetLink: ROOM_B, confirmedMeetLink: ROOM_B } });
+  const state = { clients: [seen], active: [], sent: [], reply: null };
+  await tickAt(state, -20 * 60);
+  assert.deepEqual(Object.keys(readLiveSessionStore().sessions), [KEY]);
+  live.resetFirefliesLiveJoinEngineForTests();
+  state.clients = [seen, unseen];
+  // Back 20 hours after the start.
+  await tickAt(state, 20 * 60);
+  assert.equal(state.sent.length, 0, 'nothing is sent that long after');
+  const sessions = readLiveSessionStore().sessions;
+  for (const key of [KEY, `${ROOM_B}|${T}`]) {
+    assert.deepEqual([sessions[key]?.state, sessions[key]?.message], ['not-admitted', LIVE_JOIN_MESSAGES.neverSent], key);
+  }
+  const created = live.ensureLivePlaceholders({ clients: state.clients, writePlaceholder: rowWriter(state.clients), nowMs: at(20 * 60), log: quiet });
+  assert.deepEqual(created.map((row) => row.meetingId).sort(), [STUB, `live:client-2:${T}`]);
+  const listed = watchdog.missingRecordingRows(state.clients, { nowMs: at(20 * 60) });
+  assert.deepEqual(listed.rows.map((row) => row.clientId).sort(), ['client-1', 'client-2']);
+  const hub = watchdogHub(state.clients);
+  await hub.run(20 * 60);
+  assert.deepEqual(hub.sent.map((mail) => mail.subject).sort(), [
+    'Fireflies: ingen opptak av salgsmøtet med Annenfirma AS',
+    'Fireflies: ingen opptak av salgsmøtet med Testfirma AS',
+  ]);
+});
+
+test('a send nobody could check (an older hub sent it, then nothing looked) is not called "never let in"', async () => {
+  resetAll();
+  // The older hub sent the bot at 09:57 and stamped it; this hub's first tick is five hours later.
+  const client = salesClient({ calendar: { meetLink: ROOM, confirmedMeetLink: ROOM, firefliesLiveJoinedAt: iso(-3), firefliesLiveJoinedMeetLink: ROOM } });
+  const state = { clients: [client], active: [], sent: [], reply: null };
+  await tickAt(state, 5 * 60);
+  const session = readLiveSessionStore().sessions[KEY];
+  assert.deepEqual([session.state, session.message], ['not-admitted', LIVE_JOIN_MESSAGES.notChecked]);
+  client.meetings = [placeholder('client-1', T, live.recordingForLiveSession(session))];
+  const hub = watchdogHub(state.clients);
+  await hub.run(5 * 60);
+  assert.equal(client.meetings[0].recording.message, 'Ingen Fireflies-opptak etter møtet. Asoldi fikk ikke sjekket om Fireflies kom inn.');
+  assert.equal(hub.sent.length, 1);
+  assert.match(hub.sent[0].text, /Fireflies-boten ble sendt inn, men Asoldi fikk ikke sjekket om den kom inn i møtet\./);
+  assert.doesNotMatch(hub.sent[0].text, /aldri sluppet inn/);
 });
 
 test('a meeting whose knocks nobody answered says so in its missing alert', () => {

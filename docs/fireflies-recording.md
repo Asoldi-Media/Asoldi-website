@@ -16,7 +16,7 @@ before start to 2 hours after the booked end) and on the meeting's placeholder r
 | `dispatched` | Fireflies accepted a send. That only means the bot is at the door. | capture |
 | `recording` | The bot is in the room (Fireflies `active_meetings`). | capture |
 | `ended` | The bot was in and has left; the transcript is on its way. | capture |
-| `not-admitted` | The bot was never in the room: sent but never let in, or never sent at all (`message` says why: no Fireflies key, the rate limit, Fireflies refused, or the hub did not try in time). | capture |
+| `not-admitted` | The bot was never seen in the room: sent but never let in, sent but nobody could look at the room after (the hub was down, or an older hub sent it), or never sent at all (`message` says why: no Fireflies key, the rate limit, Fireflies refused, or the hub did not try in time). | capture |
 | `missing` | Session end + 90 minutes and no recording. | watchdog |
 | `empty` | By then Fireflies only has a recording with no talk, or too little to be the meeting (silent, or a few sentences). | watchdog |
 | `declined` | A person marked the meeting held without a recording, or not held. | rep |
@@ -29,8 +29,8 @@ by hand) gets its row as soon as that bot is seen, as `recording`. A row is writ
 session: one that intake dropped after linking the recording never comes back, and none is written
 when the slot's recording is already linked. A ticked "Møtet hatt" or a done Møte stops only a
 meeting that has not begun: once it has begun it stays booked, so a hub that was down through the
-meeting still writes its row when it comes back (within 12 hours of the start, the engine's collect
-horizon).
+meeting, or did not run yet, still writes its row when it comes back (within 48 hours of the start,
+the engine's collect horizon and the watchdog's watch), and the meeting is reported missing.
 
 "The slot's recording is linked" is one rule everywhere (`lib/fireflies-cover.js`, the card's own
 rule): a recording on the card with talk that is not live captions and at least 10 sentences (or
