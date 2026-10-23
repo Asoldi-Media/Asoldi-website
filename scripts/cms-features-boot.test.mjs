@@ -10,7 +10,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import net from 'node:net';
+import { randomBytes } from 'node:crypto';
 import { PRODUCTION_ENV_KEYS } from '../lib/persistent-env.js';
+import { PUBLIC_SITE_CONFIG_FIELDS } from '../lib/cms-entitlements.js';
+
+// A Maker callback token made for this boot only, and a site key served by /api/cms/config.
+const MAKER_TOKEN = randomBytes(24).toString('hex');
+const ENV_SITE_KEY = 'boot-key-shop';
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url));
 const serverPath = join(repoRoot, 'server.js');
@@ -39,6 +45,8 @@ function bootEnv({ dataDir, home, port }) {
     MYPHONER_RECORDING_DOWNLOAD_ENABLED: '0',
     HUB_SAFE_MODE: '1',
     WEBSITE_MAKER_LOCAL_URL: 'http://127.0.0.1:9',
+    WEBSITE_MAKER_STATUS_CALLBACK_TOKEN: MAKER_TOKEN,
+    CMS_SITE_KEY: ENV_SITE_KEY,
   };
 }
 
@@ -116,6 +124,13 @@ test('local hub in safe mode: site-config unchanged while dark, cms-spec writes,
     assert.deepEqual(Object.keys(darkKey.body).sort(), ['analyticsGoals', 'analyticsLevel', 'clientAdmin', 'desiredCmsVersion', 'domain', 'ecommerceCatalogType', 'features', 'id', 'name', 'pendingAdmin', 'websitePlan']);
     assert.deepEqual(Object.keys(darkDomain.body).sort(), ['analyticsGoals', 'analyticsLevel', 'desiredCmsVersion', 'domain', 'ecommerceCatalogType', 'features', 'id', 'name', 'websitePlan']);
     assert.equal(darkKey.body.features.socialSync, true);
+    // Every field of the dark domain answer is public, so switching a site on keeps all of them.
+    assert.deepEqual(Object.keys(darkDomain.body).filter((key) => !PUBLIC_SITE_CONFIG_FIELDS.includes(key)), []);
+    // /api/cms/config is open and its site key comes from the environment: no admin data.
+    const darkCmsConfig = await json('/api/cms/config');
+    assert.equal(darkCmsConfig.status, 200);
+    assert.equal(darkCmsConfig.body.id, 'b1');
+    for (const field of ['clientAdmin', 'pendingAdmin', 'pendingSettings']) assert.equal(field in darkCmsConfig.body, false, field);
 
     // cms-spec works in safe mode (local data only) and still does not change site-config.
     const write = await json('/api/hub/sites/b1/cms-spec', {
@@ -134,6 +149,26 @@ test('local hub in safe mode: site-config unchanged while dark, cms-spec writes,
     assert.ok(prompt.body.length <= 12000);
     assert.deepEqual((await siteConfig('site_key=boot-key-shop')).body, darkKey.body);
 
+    // A Maker request meets the real Maker check in server.js first, then the switch.
+    const makerGet = (headers) => json('/api/hub/sites/b1/cms-spec', { headers });
+    assert.equal((await makerGet({ 'x-maker-callback-token': 'not-the-token' })).status, 401);
+    assert.equal((await makerGet({ 'x-maker-host-token': 'not-a-host-token' })).status, 401);
+    assert.equal((await makerGet({ 'x-maker-callback-token': MAKER_TOKEN })).status, 403, 'a valid token while makerAccess is off');
+    const access = await json('/api/admin/cms-features/settings', { method: 'PUT', headers: admin, body: JSON.stringify({ cmsSpec: { makerAccess: true } }) });
+    assert.equal(access.status, 200);
+    const makerRead = await makerGet({ 'x-maker-callback-token': MAKER_TOKEN });
+    assert.equal(makerRead.status, 200, JSON.stringify(makerRead.body).slice(0, 300));
+    assert.equal(makerRead.body.cmsSpec.rev, 1);
+    assert.equal((await makerGet({ 'x-maker-callback-token': 'not-the-token' })).status, 401, 'still 401 with access on');
+    const makerHeaders = { 'content-type': 'application/json', 'x-sales-callback-token': MAKER_TOKEN };
+    const makerGrant = await json('/api/hub/sites/b1/cms-spec', { method: 'PUT', headers: makerHeaders, body: JSON.stringify({ featureSpec: { grantServices: ['email'] } }) });
+    assert.equal(makerGrant.status, 403);
+    const makerWrite = await json('/api/hub/sites/b1/cms-spec', { method: 'PUT', headers: makerHeaders, body: JSON.stringify({ sections: { blog: { categories: ['Nyheter'] } } }) });
+    assert.equal(makerWrite.status, 200, JSON.stringify(makerWrite.body));
+    assert.equal(makerWrite.body.cmsSpecRev, 2);
+    await json('/api/admin/cms-features/settings', { method: 'PUT', headers: admin, body: JSON.stringify({ cmsSpec: { makerAccess: false } }) });
+    assert.equal((await makerGet({ 'x-maker-callback-token': MAKER_TOKEN })).status, 403);
+
     // Switch on for the shop only.
     const on = await json('/api/admin/cms-features/settings', { method: 'PUT', headers: admin, body: JSON.stringify({ siteConfig: { mode: 'on', siteIds: ['b1'] } }) });
     assert.equal(on.status, 200);
@@ -142,25 +177,30 @@ test('local hub in safe mode: site-config unchanged while dark, cms-spec writes,
     assert.ok(lit.body.featureTree.entitled.includes('shop.subscriptions'));
     assert.equal(lit.body.features.socialSync, false);
     assert.equal(lit.body.ecommerceCatalogType, 'menu');
-    assert.equal(lit.body.pendingSettings.rev, 1);
+    assert.equal(lit.body.pendingSettings.rev, 2);
+    // The open /api/cms/config gets the tree but never pendingSettings or admin fields.
+    const litCmsConfig = await json('/api/cms/config');
+    assert.ok(litCmsConfig.body.featureTree);
+    for (const field of ['clientAdmin', 'pendingAdmin', 'pendingSettings']) assert.equal(field in litCmsConfig.body, false, field);
+    assert.equal(JSON.stringify(litCmsConfig.body).includes('Nyheter'), false);
     const litDomain = await siteConfig('domain=boot-shop.test');
     assert.ok(litDomain.body.featureTree);
     for (const field of ['pendingSettings', 'pendingAdmin', 'clientAdmin']) assert.equal(field in litDomain.body, false, field);
     const plain = await siteConfig('site_key=boot-key-plain');
     assert.equal('featureTree' in plain.body, false, 'a site that is not listed stays as it was');
 
-    // The CMS reports that it applied rev 1: pendingSettings stops, the report is stored.
+    // The CMS reports that it applied rev 2: pendingSettings stops, the report is stored.
     const today = new Date().toISOString().slice(0, 10);
     const beat = await json('/api/hub/heartbeat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ site_key: 'boot-key-shop', packageVersion: '2.3.0', settingsRevApplied: 1, featuresRev: 2, effective: ['users', 'shop'], featureBlocksDaily: { date: today, count: 3 } }),
+      body: JSON.stringify({ site_key: 'boot-key-shop', packageVersion: '2.3.0', settingsRevApplied: 2, featuresRev: 2, effective: ['users', 'shop'], featureBlocksDaily: [{ date: today, count: 3 }, { date: '2099-01-01', count: 7 }] }),
     });
     assert.equal(beat.status, 200);
     assert.equal('pendingSettings' in (await siteConfig('site_key=boot-key-shop')).body, false);
     const spec = await json('/api/hub/sites/b1/cms-spec', { headers: admin });
-    assert.equal(spec.body.cmsReported.settingsRevApplied, 1);
-    assert.deepEqual(spec.body.cmsReported.blockHistory, [{ date: today, count: 3, top: [] }]);
+    assert.equal(spec.body.cmsReported.settingsRevApplied, 2);
+    assert.deepEqual(spec.body.cmsReported.blockHistory, [{ date: today, count: 3, top: [] }], 'a day far ahead is not kept');
 
     // Off again: the old answer comes back.
     await json('/api/admin/cms-features/settings', { method: 'PUT', headers: admin, body: JSON.stringify({ siteConfig: { mode: 'off' } }) });

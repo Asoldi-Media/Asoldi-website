@@ -12869,7 +12869,12 @@ registerCmsSsoRoutes(app, { adminAuth, getSiteById: hub.getSiteById, getSiteByKe
 registerSafeModeRoutes(app, { adminAuth });
 registerDeliveryRoutes(app, { adminAuth, sales, hub, salesOffers });
 // WS6.7/WS6.8: feature tree and cms-spec. Dark until Superadmin switches it on (cms-feature-settings.json).
-const cmsFeatures = registerCmsFeatureRoutes(app, { adminAuth, hub, sales, isMakerAuthorized: (req) => isMakerStatusCallbackAuthorized(req) });
+const cmsFeatures = registerCmsFeatureRoutes(app, {
+  adminAuth,
+  hub,
+  sales,
+  makerAuth: (req, res, next) => (isMakerStatusCallbackAuthorized(req) ? next() : res.status(401).json({ message: 'Unauthorized' })),
+});
 
 // --- Hub API (public: site config for client CMS)
 app.get('/api/hub/site-config', (req, res) => {

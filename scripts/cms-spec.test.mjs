@@ -34,11 +34,18 @@ const adminAuth = (req, res, next) => {
   req.admin = { username: 'superadmin' };
   next();
 };
+// The Maker check is injected middleware, as server.js passes it: next() for a valid credential,
+// its own 401/403 otherwise (here a callback token and a per-host token, the latter without the scope as 403).
+const makerAuth = (req, res, next) => {
+  if (req.get('x-maker-callback-token') === 'maker-ok' || req.get('x-maker-host-token') === 'host-ok') return next();
+  if (req.get('x-maker-host-token') === 'host-other-scope') return res.status(403).json({ message: 'scope' });
+  return res.status(401).json({ message: 'Unauthorized' });
+};
 registerCmsFeatureRoutes(app, {
   adminAuth,
   hub,
   sales: { getSalesClients: () => [] },
-  isMakerAuthorized: (req) => req.get('x-maker-callback-token') === 'maker-ok',
+  makerAuth,
   log: quiet,
 });
 const server = app.listen(0);
@@ -322,3 +329,49 @@ test('only own section and field names count, and __proto__, constructor and pro
   assert.deepEqual(paths(forced), ['force[0]']);
   assert.equal('cmsSpec' in storedSite(), false);
 });
+
+test('a Maker request goes through the injected Maker check: the per-host header counts, its own 401 or 403 stands, and only then the switch decides', async () => {
+  seedSites();
+  const body = { sections: { blog: { categories: ['a'] } } };
+  assert.equal((await put(body, { 'x-maker-host-token': 'wrong' })).status, 401);
+  const scope = await put(body, { 'x-maker-host-token': 'host-other-scope' });
+  assert.equal(scope.status, 403);
+  assert.equal(scope.body.message, 'scope', 'the Maker check answers, not the switch');
+  const off = await put(body, { 'x-maker-host-token': 'host-ok' });
+  assert.equal(off.status, 403);
+  assert.match(off.body.message, /switched off/);
+  assert.equal('cmsSpec' in storedSite(), false);
+  await call('PUT', '/api/admin/cms-features/settings', { cmsSpec: { makerAccess: true } });
+  try {
+    const on = await put(body, { 'x-maker-host-token': 'host-ok' });
+    assert.equal(on.status, 200, JSON.stringify(on.body));
+    assert.equal(storedSite().cmsSpec.updatedBy, 'maker');
+  } finally {
+    await call('PUT', '/api/admin/cms-features/settings', { cmsSpec: { makerAccess: false } });
+  }
+});
+
+test('the Maker sets only sections, force and featureSpec defaults and values; services, keys and locks stay with Superadmin', async () => {
+  seedSites();
+  const maker = { 'x-maker-callback-token': 'maker-ok' };
+  await call('PUT', '/api/admin/cms-features/settings', { cmsSpec: { makerAccess: true } });
+  try {
+    for (const [field, value] of [['grantServices', ['ecom']], ['revokeServices', ['ecom']], ['grant', ['shop.subscriptions']], ['revoke', ['shop.checkout']], ['locks', ['shop.checkout']]]) {
+      const res = await put({ featureSpec: { [field]: value }, sections: { blog: { categories: ['a'] } } }, maker);
+      assert.equal(res.status, 403, field);
+      assert.deepEqual(paths(res), [`featureSpec.${field}`]);
+    }
+    const site = storedSite();
+    for (const field of ['featureSpec', 'cmsSpec', 'cmsSpecHistory']) assert.equal(field in site, false, `${field}: nothing stored`);
+    const allowed = await put({ featureSpec: { defaults: { 'blog.autoPosts': false }, values: { 'shop.catalog': 'menu' } }, sections: { blog: { categories: ['a'] } }, force: ['blog'] }, maker);
+    assert.equal(allowed.status, 200, JSON.stringify(allowed.body));
+    assert.deepEqual(storedSite().featureSpec.values, { 'shop.catalog': 'menu' });
+    assert.equal(storedSite().featureSpec.updatedBy, 'maker');
+  } finally {
+    await call('PUT', '/api/admin/cms-features/settings', { cmsSpec: { makerAccess: false } });
+  }
+  const admin = await put({ featureSpec: { grantServices: ['email'] } });
+  assert.equal(admin.status, 200, JSON.stringify(admin.body));
+  assert.deepEqual(storedSite().featureSpec.grantServices, ['email']);
+});
+
