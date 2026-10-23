@@ -12958,7 +12958,7 @@ app.patch('/api/hub/sites/:id/website-due', adminAuth, (req, res) => {
 
 app.put('/api/hub/sites/:id/client-admin', adminAuth, async (req, res) => {
   const result = await hub.updateClientAdmin(req.params.id, req.body || {});
-  if (!result.ok) return res.status(404).json({ message: result.error });
+  if (!result.ok) return res.status(result.status || 404).json({ message: result.error });
   res.json(result.site);
 });
 

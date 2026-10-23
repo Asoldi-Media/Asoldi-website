@@ -278,7 +278,23 @@ export function recordHeartbeat(siteKey, { packageVersion, adminUrl, name, admin
   return { ok: true, site: publicSite(sites[i]) };
 }
 
+/** Passwords a client CMS refuses or replaces at start; the hub refuses them too, so a synced admin is never locked out. */
+export const WEAK_CLIENT_ADMIN_PASSWORDS = Object.freeze(['changeme', 'change-me', 'admin', 'password', 'passord', '12345678', '123456789', 'administrator']);
+export const MIN_CLIENT_ADMIN_PASSWORD_LENGTH = 8;
+
+/** Why a new client admin password is refused, or '' when it is fine. */
+export function clientAdminPasswordProblem(password) {
+  const value = String(password ?? '');
+  if (value.length < MIN_CLIENT_ADMIN_PASSWORD_LENGTH) return `Password must be at least ${MIN_CLIENT_ADMIN_PASSWORD_LENGTH} characters.`;
+  if (WEAK_CLIENT_ADMIN_PASSWORDS.includes(value.trim().toLowerCase())) return 'Choose a password that is not a common default.';
+  return '';
+}
+
 export async function updateClientAdmin(id, patch = {}) {
+  if (patch.password) {
+    const problem = clientAdminPasswordProblem(patch.password);
+    if (problem) return { ok: false, status: 400, error: problem };
+  }
   const sites = readSites();
   const i = sites.findIndex((s) => s.id === id);
   if (i === -1) return { ok: false, error: 'Site not found' };
