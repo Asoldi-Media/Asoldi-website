@@ -5,8 +5,10 @@ import { API, authHeaders } from '../shared';
 type ProviderState = { configured: boolean; dead: boolean; probe?: { ok: boolean; error?: string; checkedAt?: string } };
 type RouteRow = { task: string; kind: string; dataClass: string; route: string; source?: string; shadowRoute?: string; configured: boolean; owner?: string; error?: string };
 type Alert = { at: string; task: string; scope: string; expectedUsd: number; projectedUsd: number; salesClientId?: string };
+type FacadeState = { registered: boolean; enabled: boolean; callSites: 'facade' | 'direct' };
 type AiStatus = {
   contract: string;
+  facade?: FacadeState;
   profile: string;
   profileSource: string;
   legacyPassthrough: boolean;
@@ -34,10 +36,15 @@ function when(iso = '') {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('nb-NO', { dateStyle: 'short', timeStyle: 'short' });
 }
 
+function errorText(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
 /**
  * Superadmin → System safety → AI. The hub LLM facade: active profile and where it comes from, provider
  * keys, the route per task (with the route the prod profile would take), spend from the AI ledger and
- * budget alerts. The profile switch writes the data-dir override (PUT /api/admin/ai/routes); no env change.
+ * budget alerts. The profile switch and the facade off switch write the data-dir override
+ * (PUT /api/admin/ai/routes); no env change.
  */
 export function AiStatusCard() {
   const [status, setStatus] = useState<AiStatus | null>(null);
@@ -57,6 +64,8 @@ export function AiStatusCard() {
         return;
       }
       setStatus(body);
+    } catch (err) {
+      setError(errorText(err, 'Could not reach the hub.'));
     } finally {
       setLoading(false);
     }
@@ -66,19 +75,14 @@ export function AiStatusCard() {
     void load(false);
   }, [load]);
 
-  async function switchProfile(profile: string) {
-    if (!status || profile === status.profile) return;
-    const note = profile === 'legacy'
-      ? 'Switch the hub back to the legacy profile? Every AI call site sends its own request again.'
-      : `Switch the hub to the ${profile} profile? AI calls follow the routes and data policy (transcripts and personal data go to Claude).`;
-    if (!window.confirm(note)) return;
+  async function saveRoutes(payload: Record<string, unknown>) {
     setSaving(true);
     setError('');
     try {
       const res = await fetch(`${API}/admin/ai/routes`, {
         method: 'PUT',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profile }),
+        body: JSON.stringify(payload),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -86,9 +90,28 @@ export function AiStatusCard() {
         return;
       }
       await load(false);
+    } catch (err) {
+      setError(errorText(err, 'Could not reach the hub.'));
     } finally {
       setSaving(false);
     }
+  }
+
+  async function switchProfile(profile: string) {
+    if (!status || profile === status.profile) return;
+    const note = profile === 'legacy'
+      ? 'Switch the hub back to the legacy profile? Every AI call site sends its own request again.'
+      : `Switch the hub to the ${profile} profile? AI calls follow the routes and data policy (transcripts and personal data go to Claude).`;
+    if (!window.confirm(note)) return;
+    await saveRoutes({ profile });
+  }
+
+  async function switchFacade(on: boolean) {
+    const note = on
+      ? 'Turn the LLM facade back on? Call sites go through it again and every call is recorded.'
+      : 'Turn the LLM facade off? Call sites send their requests directly to the providers they used before, nothing is recorded and the profile has no effect.';
+    if (!window.confirm(note)) return;
+    await saveRoutes({ facade: on });
   }
 
   if (!status) {
@@ -101,6 +124,8 @@ export function AiStatusCard() {
   }
 
   const topTasks = (Object.entries(status.spend.byTask || {}) as [string, number][]).sort((a, b) => b[1] - a[1]).slice(0, 6);
+  const facade = status.facade;
+  const direct = facade?.callSites === 'direct';
   return (
     <div className={card}>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
@@ -119,16 +144,29 @@ export function AiStatusCard() {
             <span className="text-gray-500"> ({status.profileSource})</span>
           </p>
           <p className="text-gray-400 text-xs mt-1">
-            {status.legacyPassthrough
-              ? 'Legacy: every call site sends its own request unchanged; the ledger records it.'
-              : 'Routes and the data policy decide the provider for each call.'}
+            {direct
+              ? 'Facade off: every call site sends its own request directly; nothing is recorded and the profile has no effect.'
+              : status.legacyPassthrough
+                ? 'Legacy: every call site sends its own request unchanged; the ledger records it.'
+                : 'Routes and the data policy decide the provider for each call.'}
           </p>
+          {facade && (
+            <p className="text-gray-500 text-xs mt-1">
+              Facade: <span className={direct ? 'text-amber-400' : 'text-green-400'}>{direct ? 'off' : 'on'}</span>
+              {!facade.registered && ' (HUB_LLM_FACADE=0)'}
+              {facade.registered && (
+                <button type="button" disabled={saving} onClick={() => void switchFacade(!facade.enabled)} className="ml-2 underline disabled:opacity-50">
+                  {facade.enabled ? 'Turn off' : 'Turn on'}
+                </button>
+              )}
+            </p>
+          )}
           <div className="flex gap-2 mt-2">
             {PROFILES.map((profile) => (
               <button
                 key={profile}
                 type="button"
-                disabled={saving || status.profileSource === 'env'}
+                disabled={saving || status.profileSource === 'env' || direct}
                 onClick={() => void switchProfile(profile)}
                 className={`px-2 py-1 rounded text-xs ${status.profile === profile ? 'bg-white text-black' : 'bg-white/10 text-white'} disabled:opacity-50`}
               >

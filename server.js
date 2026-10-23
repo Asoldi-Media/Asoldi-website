@@ -102,7 +102,7 @@ import { assertSafeModeAllows, hubListenHost, isSafeModeActive, isSafeModeError,
 import { registerSafeModeRoutes } from './lib/safe-mode-routes.js';
 import { registerAiAdminRoutes } from './lib/llm/routes.js';
 import { applyRunAiSpendCallback } from './lib/llm/spend-callback.js';
-import { aiTaskConfigured } from './lib/llm-hooks.js';
+import { aiTaskConfigured, aiUnavailableMessage } from './lib/llm-hooks.js';
 import { safeModeMakerCallbackUrl, safeModeMakerPreviewPushUrl } from './lib/safe-mode-maker-urls.js';
 import { applyProxyKeepAlive, describeProxyTimeouts, proxyHttpServerOptions } from './lib/http-server-timeouts.js';
 import {
@@ -17159,7 +17159,7 @@ app.post('/api/admin/sales/:id/offer/fill', salesAuth, async (req, res) => {
   let client = sales.getSalesClientById(req.params.id);
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
-  if (!aiTaskConfigured('offer.fill-from-transcript', isDeepseekConfigured)) return res.status(503).json({ message: 'DeepSeek er ikke konfigurert (DEEPSEEK_API_KEY mangler).' });
+  if (!aiTaskConfigured('offer.fill-from-transcript', isDeepseekConfigured)) return res.status(503).json({ message: aiUnavailableMessage('offer.fill-from-transcript', 'DeepSeek er ikke konfigurert (DEEPSEEK_API_KEY mangler).') });
   let current = await ensureOfferDraft(client, req);
   if (!salesOffers.offerLetterCanFill(current)) {
     return res.status(409).json({ message: 'Tilbudet er låst. Innholdet kan ikke skrives om fra transkriptet.' });
@@ -17767,7 +17767,7 @@ app.post('/api/admin/offers/:id/reflect-contract', salesAuth, async (req, res) =
   if (!requireOfferAdmin(req, res)) return;
   const current = salesOffers.getSalesOfferById(req.params.id);
   if (!current) return res.status(404).json({ message: 'Offer not found.' });
-  if (!aiTaskConfigured('offer.reflect-contract', isDeepseekConfigured)) return res.status(503).json({ message: 'DeepSeek er ikke konfigurert (DEEPSEEK_API_KEY mangler).' });
+  if (!aiTaskConfigured('offer.reflect-contract', isDeepseekConfigured)) return res.status(503).json({ message: aiUnavailableMessage('offer.reflect-contract', 'DeepSeek er ikke konfigurert (DEEPSEEK_API_KEY mangler).') });
   const patched = salesOffers.updateSalesOffer(current.id, offerPatchFromBody(req.body || {}, current), { actor: offerActor(req), action: '' });
   if (!patched.products.length) return res.status(400).json({ message: 'Legg til minst ett produkt (tier eller skreddersydd) før kontrakten kan speiles.' });
   try {
