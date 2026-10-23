@@ -5,6 +5,13 @@ import { CUSTOM_TIER_ID, tierById } from '../lib/website-tiers.js';
 import { normalizeDueDate } from '../lib/website-due.js';
 import { normalizeOfferMeetingIds } from '../lib/offer-meetings.js';
 import { normalizeContractLanguage } from '../lib/offer-contract-copy.js';
+import {
+  carryFutureKeys,
+  FUTURE_OFFER_ALTERNATIVE_KEYS,
+  FUTURE_OFFER_KEYS,
+  FUTURE_OFFER_PRODUCT_KEYS,
+  withoutKeys,
+} from './normalize-ext.js';
 
 /**
  * Offer (tilbud) drafts: the offer email + product blocks + contract summary for one sales client.
@@ -60,6 +67,12 @@ export function offersDataRevision() {
   return offersRevision;
 }
 
+/** Call after sales-offers.json was replaced outside writeOffersFile (snapshot restore). */
+export function noteOffersStoreReplaced() {
+  offersRevision += 1;
+  return offersRevision;
+}
+
 function writeOffersFile(list) {
   offersRevision += 1;
   ensurePersistentDataDir();
@@ -78,12 +91,14 @@ export function normalizeOfferTierId(value = '') {
   return tierById(id) ? id : '';
 }
 
-export function normalizeOfferProduct(raw = {}) {
+// `strict` drops the forward-compatible keys (WS8.44). offerContentHash uses it, so the
+// fingerprint of an offer never depends on keys this code does not understand.
+export function normalizeOfferProduct(raw = {}, { strict = false } = {}) {
   const source = raw && typeof raw === 'object' ? raw : {};
   const kind = sanitizeText(source.kind) === 'tier' ? 'tier' : 'custom';
   const tierId = kind === 'tier' ? normalizeOfferTierId(source.tierId) : '';
   const pages = Math.max(0, Math.round(toNumber(source.pages, 0)));
-  return {
+  const product = {
     id: sanitizeText(source.id) || `prod-${Math.random().toString(36).slice(2, 8)}`,
     kind,
     tierId,
@@ -95,11 +110,14 @@ export function normalizeOfferProduct(raw = {}) {
     deliveryWeeks: Math.max(0, Math.round(toNumber(source.deliveryWeeks, 0))),
     deliveryWorkDays: Math.max(0, Math.round(toNumber(source.deliveryWorkDays, 0))),
   };
+  return strict ? product : carryFutureKeys(product, source, FUTURE_OFFER_PRODUCT_KEYS);
 }
 
-export function normalizeOfferProducts(list) {
+export function normalizeOfferProducts(list, { strict = false } = {}) {
   if (!Array.isArray(list)) return [];
-  return list.map(normalizeOfferProduct).filter((item) => item.name || item.priceExMva || item.includes.length);
+  return list
+    .map((item) => normalizeOfferProduct(item, { strict }))
+    .filter((item) => item.name || item.priceExMva || item.includes.length);
 }
 
 export function normalizeOfferFee(raw = {}) {
@@ -110,28 +128,31 @@ export function normalizeOfferFee(raw = {}) {
   return { name, price };
 }
 
-export function normalizeOfferAlternative(raw = {}) {
+export function normalizeOfferAlternative(raw = {}, { strict = false } = {}) {
   const source = raw && typeof raw === 'object' ? raw : {};
-  const products = normalizeOfferProducts(source.products);
+  const products = normalizeOfferProducts(source.products, { strict });
   if (!products.length) return null;
   const billing = source.billing === 'once' ? 'once' : 'month';
   const oneTimeFees = Array.isArray(source.oneTimeFees)
     ? source.oneTimeFees.map(normalizeOfferFee).filter(Boolean)
     : [];
   const fromProduct = products[0]?.kind === 'tier' ? products[0].tierId : CUSTOM_TIER_ID;
-  return {
+  const alternative = {
     products,
     billing,
     oneTimeFees,
     tierId: normalizeOfferTierId(source.tierId) || fromProduct || '',
   };
+  return strict ? alternative : carryFutureKeys(alternative, source, FUTURE_OFFER_ALTERNATIVE_KEYS);
 }
 
-export function normalizeOfferAlternatives(list, fallback = {}) {
-  const raw = Array.isArray(list) ? list.map(normalizeOfferAlternative).filter(Boolean) : [];
+export function normalizeOfferAlternatives(list, fallback = {}, { strict = false } = {}) {
+  const raw = Array.isArray(list)
+    ? list.map((item) => normalizeOfferAlternative(item, { strict })).filter(Boolean)
+    : [];
   if (raw.length >= 2) return raw.slice(0, 2);
   if (raw.length === 1) return raw;
-  const products = normalizeOfferProducts(fallback.products);
+  const products = normalizeOfferProducts(fallback.products, { strict });
   if (!products.length) return [];
   const billing = fallback.billing === 'once' ? 'once' : 'month';
   const oneTimeFees = Array.isArray(fallback.oneTimeFees)
@@ -260,7 +281,7 @@ export function offerLetterCanFill(offer = {}) {
 export function normalizeSalesOffer(raw = {}) {
   const createdAt = sanitizeText(raw.createdAt) || nowIso();
   const contract = raw.contract && typeof raw.contract === 'object' ? raw.contract : {};
-  return {
+  const offer = {
     id: sanitizeText(raw.id) || makeId(),
     salesClientId: sanitizeText(raw.salesClientId),
     ownerId: sanitizeText(raw.ownerId),
@@ -309,6 +330,8 @@ export function normalizeSalesOffer(raw = {}) {
     createdAt,
     updatedAt: sanitizeText(raw.updatedAt) || createdAt,
   };
+  // WS8.44: keys a later batch writes (plan, pricing, dpaVersion) survive this code.
+  return carryFutureKeys(offer, raw, FUTURE_OFFER_KEYS);
 }
 
 function readAll() {
@@ -354,9 +377,14 @@ export function getOfferForClient(salesClientId) {
   return readAll().filter((offer) => offer.salesClientId === target).sort(byUpdatedDesc)[0] || null;
 }
 
-export function countOffersByStatus() {
+/** Offer counts per status. `excludeSalesClientIds` leaves out test clients (WS8.56). */
+export function countOffersByStatus({ excludeSalesClientIds = null } = {}) {
+  const skip = excludeSalesClientIds instanceof Set ? excludeSalesClientIds : new Set(excludeSalesClientIds || []);
   const counts = Object.fromEntries(OFFER_STATUSES.map((status) => [status, 0]));
-  for (const offer of readAll()) counts[offer.status] = (counts[offer.status] || 0) + 1;
+  for (const offer of readAll()) {
+    if (skip.has(offer.salesClientId)) continue;
+    counts[offer.status] = (counts[offer.status] || 0) + 1;
+  }
   return counts;
 }
 
@@ -381,11 +409,72 @@ export function createSalesOffer(input = {}, { actor = '' } = {}) {
   return offer;
 }
 
-export function updateSalesOffer(id, patch = {}, { actor = '', action = 'updated', note = '' } = {}) {
+function isPlainRecord(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/** Stored products by id: the offer's own, each alternative's and the contract summary's. */
+function storedProductsById(current = {}) {
+  const byId = new Map();
+  const add = (list) => {
+    for (const item of Array.isArray(list) ? list : []) {
+      const id = sanitizeText(item?.id);
+      if (id && !byId.has(id)) byId.set(id, item);
+    }
+  };
+  add(current?.products);
+  for (const alternative of Array.isArray(current?.alternatives) ? current.alternatives : []) add(alternative?.products);
+  add(current?.contract?.summary?.products);
+  return byId;
+}
+
+function guardPatchProducts(list, stored) {
+  if (!Array.isArray(list)) return list;
+  return list.map((item) => {
+    if (!isPlainRecord(item)) return item;
+    const clean = withoutKeys(item, FUTURE_OFFER_PRODUCT_KEYS);
+    const prior = stored.get(sanitizeText(item.id));
+    return prior ? carryFutureKeys(clean, prior, FUTURE_OFFER_PRODUCT_KEYS) : clean;
+  });
+}
+
+/**
+ * WS8.44: keys a later batch owns on an offer (plan, pricing, dpaVersion, products[].services,
+ * products[].oneTimeAddOns, ext) come only from the stored offer, never from a patch. A rep's
+ * composer body therefore cannot grant services, and a product edit by this code keeps the keys
+ * the stored product with the same id carries (alternatives: the stored one at the same index).
+ * Returns a new patch.
+ */
+export function withoutFutureOfferPatchKeys(patch = {}, current = {}) {
+  if (!isPlainRecord(patch)) return {};
+  const stored = storedProductsById(current);
+  const out = withoutKeys(patch, FUTURE_OFFER_KEYS);
+  if (Array.isArray(out.products)) out.products = guardPatchProducts(out.products, stored);
+  if (Array.isArray(out.alternatives)) {
+    const priorAlternatives = Array.isArray(current?.alternatives) ? current.alternatives : [];
+    out.alternatives = out.alternatives.map((alternative, index) => {
+      if (!isPlainRecord(alternative)) return alternative;
+      const clean = withoutKeys(alternative, FUTURE_OFFER_ALTERNATIVE_KEYS);
+      if (Array.isArray(clean.products)) clean.products = guardPatchProducts(clean.products, stored);
+      const prior = priorAlternatives[index];
+      return isPlainRecord(prior) ? carryFutureKeys(clean, prior, FUTURE_OFFER_ALTERNATIVE_KEYS) : clean;
+    });
+  }
+  if (isPlainRecord(out.contract) && isPlainRecord(out.contract.summary) && Array.isArray(out.contract.summary.products)) {
+    out.contract = {
+      ...out.contract,
+      summary: { ...out.contract.summary, products: guardPatchProducts(out.contract.summary.products, stored) },
+    };
+  }
+  return out;
+}
+
+export function updateSalesOffer(id, rawPatch = {}, { actor = '', action = 'updated', note = '' } = {}) {
   const list = readAll();
   const index = list.findIndex((offer) => offer.id === sanitizeText(id));
   if (index === -1) return null;
   const current = list[index];
+  const patch = withoutFutureOfferPatchKeys(rawPatch, current);
   const merged = normalizeSalesOffer({
     ...current,
     ...patch,
@@ -548,12 +637,12 @@ export function offerContentHash(offer = {}, { includeParty = true } = {}) {
     subject: sanitizeText(offer?.email?.subject),
     preheader: sanitizeText(offer?.email?.preheader),
     html: String(offer?.email?.html || ''),
-    products: normalizeOfferProducts(offer?.products),
+    products: normalizeOfferProducts(offer?.products, { strict: true }),
     mvaIncluded: Boolean(offer?.mvaIncluded),
     tierId: sanitizeText(offer?.tierId),
     summary: offer?.contract?.summary || null,
   };
-  const alternatives = normalizeOfferAlternatives(offer?.alternatives, { products: [] });
+  const alternatives = normalizeOfferAlternatives(offer?.alternatives, { products: [] }, { strict: true });
   if (alternatives.length >= 2) payload.alternatives = alternatives;
   if (offer?.chosenOfferIndex === 0 || offer?.chosenOfferIndex === 1) payload.chosenOfferIndex = offer.chosenOfferIndex;
   if (includeParty) payload.party = partyOverrides(offer?.party);

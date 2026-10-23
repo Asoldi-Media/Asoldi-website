@@ -17,6 +17,7 @@ import {
 } from './hub-model.js';
 import { hashLocalBlogToken, localBlogTokensMatch } from '../lib/local-blog-token.js';
 import { normalizeDeliveryPhase, normalizeDevelopment, resolveSiteDeliveryPhase } from '../lib/development-phase.js';
+import { FUTURE_SITE_CMS_KEYS, withoutKeys } from './normalize-ext.js';
 
 const SITES_PATH = getDataFilePath('sites.json');
 
@@ -42,8 +43,10 @@ function writeSites(sites) {
 
 function publicSite(site) {
   if (!site) return null;
+  // blogQueue (WS9.49) holds a token hash; it is kept on disk but never returned.
+  const { blogQueue, ...rest } = site;
   return {
-    ...site,
+    ...rest,
     clientAdmin: publicClientAdmin(site.clientAdmin),
     localBlog: publicLocalBlog(site.localBlog),
   };
@@ -226,7 +229,9 @@ export function updateSite(id, patch = {}) {
   if (patch.githubRepo !== undefined || patch.cms !== undefined) {
     current.cms = normalizeCmsMeta({
       ...current.cms,
-      ...(patch.cms || {}),
+      // WS8.44: heartbeat-derived keys a later batch owns (effective, featuresRev, ...) come only
+      // from the stored site, never from a request body.
+      ...(withoutKeys(patch.cms, FUTURE_SITE_CMS_KEYS) || {}),
       ...(patch.githubRepo !== undefined ? { githubRepo: patch.githubRepo } : {}),
     });
   }
@@ -241,6 +246,9 @@ export function updateSite(id, patch = {}) {
   }
   if (patch.websiteDueOverride !== undefined) {
     current.websiteDueOverride = patch.websiteDueOverride;
+  }
+  if (patch.isTest !== undefined) {
+    current.isTest = patch.isTest === true;
   }
   sites[i] = normalizeSite(current);
   writeSites(sites);

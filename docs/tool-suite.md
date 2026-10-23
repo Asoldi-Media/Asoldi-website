@@ -6,7 +6,7 @@ One media categorizer, one mail/document/facts core, used by website-maker and b
 
 | Layer | Path | May import | Holds |
 |---|---|---|---|
-| **Core** | `packages/suite/core/` | `node:*`, other core files, optional deps (`sharp`, `image-size`, `adm-zip`, `xlsx`) via lazy/dynamic import | Format conversion, Gemini vision client, merge math, IMAP/MIME, document text, inbox pipeline |
+| **Core** | `packages/suite/core/` | `node:*`, other core files, optional deps (`sharp`, `image-size`, `adm-zip`, `xlsx`) via lazy/dynamic import | Format conversion, Gemini vision client, merge math, IMAP/MIME, document text, inbox pipeline, delivery vocabulary |
 | **Harness** | `packages/suite/harness/asoldi/` | core + its own folder only | Data and prompt text: Kundedata schema, maker field map, Norwegian rules, inbox kinds, tone brief |
 | **App** | `lib/ai-assistant/*`, `lib/inbox-bot/*`, website-maker `lib/media-transcript.js` | core + harness + the rest of that app | I/O, storage, sales match, send, calendar, contracts |
 
@@ -32,6 +32,7 @@ website-maker tests that load the suite run **inside the Docker app container** 
 - **Mail:** `core/mail` (MIME, IMAP with credentials passed in, thread trim, zip/TNEF). Env lookup `INBOX_IMAP_*` stays in the app.
 - **Documents:** `core/documents` (kind sniff + text). PDF subprocess and product OCR stay injected from the app.
 - **Facts:** `core/facts` (add/replace/delete merge, English default prompt) + `harness/asoldi/facts.js` (Kundedata schema + Norwegian prompt text, shipped verbatim).
+- **Delivery:** `core/delivery/vocab.js` (pure, append-only ids shared by the hub and the Maker: services and tiers, feature anchors, job kinds, blocking and warning codes, stages, gate lines, email kinds, automation modes and settings keys). Hub docs: `docs/delivery-flow.md`.
 - **Inbox:** `core/inbox/pipeline.js` (adapters) + `harness/asoldi/inbox.js` (kinds, brief, categorize/decide prompt text). Sales match, `write.js`, contracts, calendar, Resend stay in the app.
 
 ## Standalone bot later (option B)

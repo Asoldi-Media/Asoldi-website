@@ -173,6 +173,8 @@ export type Site = {
   deliveryPhase?: DeliveryPhase;
   development?: SalesDevelopment;
   websiteDueOverride?: string;
+  /** WS8.56: test site, left out of reports and social proof. */
+  isTest?: boolean;
 };
 
 export type ManageClientsView = 'clients' | 'development' | 'sales' | 'admin';
@@ -759,6 +761,8 @@ export type SalesOffer = {
 
 export type SalesClient = {
   id: string;
+  /** WS8.56: test client, left out of reports, Myphoner sync and social proof. */
+  isTest?: boolean;
   product: SalesProduct;
   businessName: string;
   contactPerson: string;

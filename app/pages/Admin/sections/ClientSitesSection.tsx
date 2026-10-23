@@ -13,6 +13,7 @@ import {
 import { WebsiteDueField } from './WebsiteDueField';
 import { ShopPaymentsPlatformCard } from './ShopPaymentsPlatformCard';
 import { SecurityCard } from './SecurityCard';
+import { TestFlagToggle } from './TestFlagToggle';
 
 type Props = {
   sites: Site[];
@@ -113,6 +114,9 @@ export function ClientSitesSection({
                 <Globe size={14} /> {site.domain || '—'}
               </p>
               <p className="text-gray-500 text-xs mt-1">{planLabel(site.websitePlan)}</p>
+              <div className="mt-1">
+                <TestFlagToggle kind="site" id={site.id} initial={site.isTest === true} />
+              </div>
               <div className="mt-2">
                 <WebsiteDueField
                   siteId={site.id}

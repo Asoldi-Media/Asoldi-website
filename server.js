@@ -32,6 +32,9 @@ import {
 import * as hub from './data/hub.js';
 import { registerShopPaymentsRoutes, registerShopPaymentsWebhook } from './lib/shop-payments-routes.js';
 import { registerCmsSsoRoutes } from './lib/cms-sso.js';
+import { registerDeliveryRoutes } from './lib/routes/delivery-routes.js';
+import { runDeliverySchemaStartupSnapshot } from './lib/delivery-snapshots.js';
+import { myphonerMatchCandidates, myphonerSyncSkipReason, testClientIdSet } from './lib/test-clients.js';
 import * as employees from './data/employees.js';
 import * as sales from './data/sales.js';
 import { SALES_CONTACT_CORRECTIONS } from './data/sales-contact-corrections.js';
@@ -402,6 +405,7 @@ import {
   workshopDeskEmailIsDue,
   workshopDeskEmailKindAutosends,
   workshopDeskEmailStampKey,
+  workshopReminderClients,
   workshopReminderScheduleAt,
 } from './lib/workshop-desk-emails.js';
 import {
@@ -469,6 +473,12 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 applyPersistentProductionEnv();
+// WS8.44: snapshot the delivery stores once per schema bump, before any code below writes to them.
+try {
+  runDeliverySchemaStartupSnapshot();
+} catch (error) {
+  console.error('[delivery] startup snapshot failed (will retry next boot):', error?.message || error);
+}
 console.log(`[mail] transport=${emailLib.resolveMailTransport()}`);
 
 process.on('unhandledRejection', (reason) => {
@@ -5909,7 +5919,7 @@ function buildMyphonerMetaPatch({
 function findSalesClientByPhone(phone = '') {
   const targetDigits = normalizePhoneDigits(phone);
   if (!targetDigits) return null;
-  const all = sales.getSalesClients();
+  const all = myphonerMatchCandidates(sales.getSalesClients());
   return (
     all.find((client) => {
       const currentDigits = normalizePhoneDigits(client.contactPhone);
@@ -5931,7 +5941,7 @@ function findSalesClientForMyphonerLead(lead = {}, resourcePath = '') {
     // We only allow fallback matching to rows that are not already linked to another lead ID.
     const email = normalizeEmail(pickMyphonerLeadEmail(source, leadDataMap, commentText));
     if (email) {
-      const byUnlinkedEmail = sales.getSalesClients().find((client) => {
+      const byUnlinkedEmail = myphonerMatchCandidates(sales.getSalesClients()).find((client) => {
         const clientEmail = normalizeEmail(client.contactEmail);
         const linkedLeadId = sanitizeText(client.myphoner?.leadId);
         return clientEmail === email && !linkedLeadId;
@@ -5941,7 +5951,7 @@ function findSalesClientForMyphonerLead(lead = {}, resourcePath = '') {
     const phone = pickMyphonerLeadPhone(source, leadDataMap, commentText) || normalizePhoneCandidate(source.destination_number);
     if (phone) {
       const targetDigits = normalizePhoneDigits(phone);
-      const byUnlinkedPhone = sales.getSalesClients().find((client) => {
+      const byUnlinkedPhone = myphonerMatchCandidates(sales.getSalesClients()).find((client) => {
         const linkedLeadId = sanitizeText(client.myphoner?.leadId);
         if (linkedLeadId) return false;
         const currentDigits = normalizePhoneDigits(client.contactPhone);
@@ -5966,7 +5976,7 @@ function findSalesClientForMyphonerLead(lead = {}, resourcePath = '') {
           source.secondary_identifier,
         ])
       );
-      const byLinkedDuplicate = sales.getSalesClients().find((client) => {
+      const byLinkedDuplicate = myphonerMatchCandidates(sales.getSalesClients()).find((client) => {
         const linkedLeadId = sanitizeText(client.myphoner?.leadId);
         if (!linkedLeadId || linkedLeadId === leadId) return false;
         const currentDigits = normalizePhoneDigits(client.contactPhone);
@@ -5998,7 +6008,7 @@ function findSalesClientForMyphonerLead(lead = {}, resourcePath = '') {
   }
   const email = normalizeEmail(pickMyphonerLeadEmail(source, leadDataMap, commentText));
   if (email) {
-    const byEmail = sales.getSalesClients().find((client) => normalizeEmail(client.contactEmail) === email);
+    const byEmail = myphonerMatchCandidates(sales.getSalesClients()).find((client) => normalizeEmail(client.contactEmail) === email);
     if (byEmail) return byEmail;
   }
   const phone = pickMyphonerLeadPhone(source, leadDataMap, commentText) || normalizePhoneCandidate(source.destination_number);
@@ -6046,6 +6056,7 @@ async function upsertSalesClientFromMyphonerLead({
   const source = lead && typeof lead === 'object' ? lead : {};
   const leadId = getMyphonerLeadId(source, resourcePath);
   const existing = findSalesClientForMyphonerLead(source, resourcePath);
+  if (myphonerSyncSkipReason(existing)) return { client: existing, created: false, warnings: [], skipped: 'test-client' };
   const incomingInput = buildSalesInputFromMyphonerLead(source, resourcePath);
   const leadDataMap = getLeadDataMap(source);
   const winnerCommentText = pickFirstNonEmpty([
@@ -6175,6 +6186,10 @@ async function processMyphonerWinnerFromResource(resourcePath = '', { winnerCate
     winnerCategory,
     winnerComment,
   });
+  if (upserted.skipped === 'test-client') {
+    console.warn(`[myphoner] winner for lead ${getMyphonerLeadId(leadPayload, normalizedResource) || '?'} skipped: linked to test client ${sanitizeText(upserted.client?.id)}`);
+    return { ok: true, skipped: 'test-client', clientId: sanitizeText(upserted.client?.id) };
+  }
   let client = upserted.client;
   const recordingAttach = await attachCachedOrPendingRecordingToClient(client, {
     syncReason: 'winner-recording-attached',
@@ -6571,6 +6586,7 @@ function resolveCachedRecordingForClient(client = {}) {
 async function attachCachedOrPendingRecordingToClient(client = {}, options = {}) {
   const current = client && typeof client === 'object' ? client : null;
   if (!current?.id) return { attached: false, reason: 'missing-client' };
+  if (myphonerSyncSkipReason(current)) return { attached: false, reason: 'test-client', client: current };
   if (sanitizeText(current?.myphoner?.latestRecordingUrl) && !options.force) {
     scheduleBookerPreview(current);
     return { attached: false, reason: 'already-has-recording', client: current };
@@ -6641,6 +6657,7 @@ async function ingestMyphonerCallRecording(callPayload = {}, options = {}) {
       recordingUrl: recordingMeta.recordingUrl || '',
     };
   }
+  if (myphonerSyncSkipReason(targetClient)) return { ok: true, updated: false, pending: false, leadId, callId: recordingMeta.callId, clientId: sanitizeText(targetClient.id), reason: 'test-client' };
   const syncReason = recordingMeta.recordingUrl
     ? options.syncReason || 'recording-url-synced'
     : options.pendingReason || 'call-without-recording-url';
@@ -6757,6 +6774,7 @@ async function processMyphonerRecordingFromResource(resourcePath = '', payload =
       // Official docs describe resource_url as a lead URL. Recover by phone cache /
       // previously seen call ids for this lead, and keep waiting for a call webhook.
       const leadClient = leadId ? sales.getSalesClientByMyphonerLeadId(leadId) : null;
+      if (myphonerSyncSkipReason(leadClient)) return { ok: true, updated: false, leadId, clientId: sanitizeText(leadClient.id), reason: 'test-client' };
       const leadPhone =
         sanitizeText(leadClient?.contactPhone) ||
         sanitizeText(leadClient?.myphoner?.latestCallDestinationNumber);
@@ -10462,11 +10480,16 @@ app.post('/api/admin/integrations/myphoner/retry-recordings', adminAuth, async (
       enqueued: 0,
       skippedHasRecording: 0,
       skippedNoCallId: 0,
+      skippedTestClient: 0,
       attachedFromCache: 0,
       pendingRetry: null,
     };
     if (enqueueMissing) {
       for (const client of sales.getSalesClients()) {
+        if (myphonerSyncSkipReason(client)) {
+          summary.skippedTestClient += 1;
+          continue;
+        }
         if (sanitizeText(client?.myphoner?.latestRecordingUrl)) {
           summary.skippedHasRecording += 1;
           continue;
@@ -12785,6 +12808,7 @@ app.patch('/api/client-portal/state', clientAuthV2, async (req, res) => {
 registerShopPaymentsRoutes(app, { adminAuth });
 registerCmsSsoRoutes(app, { adminAuth, getSiteById: hub.getSiteById });
 registerSafeModeRoutes(app, { adminAuth });
+registerDeliveryRoutes(app, { adminAuth, sales, hub, salesOffers });
 
 // --- Hub API (public: site config for client CMS)
 app.get('/api/hub/site-config', (req, res) => {
@@ -15079,8 +15103,7 @@ async function sendDueWorkshopDeskEmails() {
   if (!workshopDeskEmailAutosendEnabled()) return;
   if (!emailLib.canSendEmail()) return;
   const nowMs = Date.now();
-  for (const client of sales.getSalesClients()) {
-    if (sanitizeText(client.status) !== 'active') continue;
+  for (const client of workshopReminderClients(sales.getSalesClients())) {
     const action = getWorkshopAction(client);
     const record = getWorkshopRecord(client);
     try {
@@ -16593,7 +16616,7 @@ function offerPatchFromBody(body = {}, current = {}) {
   const mvaIncluded = mvaChanged ? body.mvaIncluded : Boolean(current.mvaIncluded);
   if (mvaChanged) patch.mvaIncluded = mvaIncluded;
 
-  let products = Array.isArray(body.products) ? salesOffers.normalizeOfferProducts(body.products) : null;
+  let products = Array.isArray(body.products) ? salesOffers.normalizeOfferProducts(body.products, { strict: true }) : null;
   const tierChanged = typeof body.tierId === 'string' && sanitizeText(body.tierId) !== sanitizeText(current.tierId);
   if (tierChanged) {
     const tierId = salesOffers.normalizeOfferTierId(body.tierId) || (sanitizeText(body.tierId) === '' ? '' : current.tierId);
@@ -17575,7 +17598,7 @@ app.get('/api/admin/offers', salesAuth, async (req, res) => {
   for (const offer of offers) rows.push(await offerListRow(offer, ownerNames));
   res.json({
     offers: rows,
-    counts: salesOffers.countOffersByStatus(),
+    counts: salesOffers.countOffersByStatus({ excludeSalesClientIds: testClientIdSet(sales.getSalesClients()) }),
     unmatchedMeetings: listStoredFirefliesMeetings({ unmatchedOnly: true }).length,
   });
 });

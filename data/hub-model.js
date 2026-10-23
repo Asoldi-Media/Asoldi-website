@@ -1,6 +1,7 @@
 import { normalizeDeliveryPhase, normalizeDevelopment } from '../lib/development-phase.js';
 import { analyticsLevelFromFlags } from '../lib/website-tiers.js';
 import { normalizeDueDate } from '../lib/website-due.js';
+import { carryFutureKeys, FUTURE_SITE_CMS_KEYS, FUTURE_SITE_KEYS } from './normalize-ext.js';
 
 export const WEBSITE_PLANS = [
   { id: 'tier-1-standard', name: 'Tier 1: Standard' },
@@ -154,13 +155,13 @@ export function emptyCmsMeta() {
 export function normalizeCmsMeta(cms) {
   const base = emptyCmsMeta();
   if (!cms || typeof cms !== 'object') return base;
-  return {
+  return carryFutureKeys({
     githubRepo: String(cms.githubRepo || ''),
     lastSeenAt: String(cms.lastSeenAt || ''),
     packageVersion: String(cms.packageVersion || ''),
     adminUrl: String(cms.adminUrl || ''),
     desiredPackageVersion: String(cms.desiredPackageVersion || ''),
-  };
+  }, cms, FUTURE_SITE_CMS_KEYS);
 }
 
 export function resolveCatalogTypeForSite({ features, ecommerceCatalogType }) {
@@ -173,7 +174,7 @@ export function normalizeSite(site) {
   if (!site || typeof site !== 'object') return null;
   const websitePlan = normalizeWebsitePlan(site.websitePlan);
   const features = normalizeFeatures(site.features || featuresFromPlan(websitePlan));
-  return {
+  const out = {
     id: String(site.id || ''),
     site_key: String(site.site_key || ''),
     domain: String(site.domain || ''),
@@ -193,6 +194,12 @@ export function normalizeSite(site) {
     createdAt: site.createdAt || new Date().toISOString(),
     analyticsLevel: analyticsLevelFromFlags({ planId: websitePlan, features }),
   };
+  // WS8.56: stored only when true, so existing sites keep their shape.
+  if (site.isTest === true) out.isTest = true;
+  // WS8.44: keys a later batch writes survive this code (see data/normalize-ext.js).
+  carryFutureKeys(out, site, FUTURE_SITE_KEYS);
+  if (out.isTest !== true) delete out.isTest;
+  return out;
 }
 
 export function desiredCmsVersion(site) {
