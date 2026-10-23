@@ -59,7 +59,8 @@ function harness({ fetchDelayMs = 0, failFetch = false } = {}) {
     notify: (payload) => ff.notifyFirefliesRecording(payload, CONFIG, deps),
     persistMedia: async (id) => {
       media.push(id);
-      ff.updateStoredFirefliesMeeting(id, { media: { savedAt: new Date().toISOString(), video: { bytes: 1 }, audio: { bytes: 1 } } });
+      // What a real save of a finished meeting leaves: both files and the final text.
+      ff.updateStoredFirefliesMeeting(id, { media: { savedAt: new Date().toISOString(), video: { bytes: 1 }, audio: { bytes: 1 }, textFinal: true } });
     },
   };
 }
@@ -84,7 +85,7 @@ test('a meeting that only came through the pull ingest gets one notify e-mail an
   // The next ingest tick does nothing more for it.
   const second = await followUp.runFirefliesPullFollowUp({ notify: h.notify, persistMedia: h.persistMedia, log: quiet });
   await settle();
-  assert.deepEqual(second, { notified: [], mediaStarted: [] });
+  assert.deepEqual(second, { notified: [], mediaStarted: [], textStarted: [] });
   assert.equal(h.emails.length, 1);
   assert.deepEqual(h.media, ['PULLONLY1']);
 
@@ -108,7 +109,7 @@ test('the webhook and the pull follow-up racing on one meeting send exactly one 
   assert.equal(ff.wasFirefliesMeetingNotified('RACE1'), true);
 });
 
-test('old, undated, transcript-less and live: meetings are not e-mailed; media needs a URL', () => {
+test('old, undated, transcript-less and live: meetings are not e-mailed; media needs a URL; text is rewritten once final', () => {
   const now = Date.now();
   const recent = new Date(now - HOUR).toISOString();
   const rows = [
@@ -121,7 +122,8 @@ test('old, undated, transcript-less and live: meetings are not e-mailed; media n
     { meetingId: 'DONE', startedAt: recent, transcript: 'x' },
   ];
   const picked = followUp.firefliesFollowUpCandidates(rows, { nowMs: now, isNotified: (id) => id === 'DONE' });
-  assert.deepEqual(picked, { notify: ['SAVED', 'NOURL'], media: ['NOTALK'] });
+  // SAVED kept its files before the final summary: only its text files are written again.
+  assert.deepEqual(picked, { notify: ['SAVED', 'NOURL'], media: ['NOTALK'], text: ['SAVED'] });
 });
 
 test('a failing fetch is retried after a pause, not on every ingest tick', async () => {

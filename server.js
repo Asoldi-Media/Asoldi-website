@@ -235,7 +235,7 @@ import { extractOfferLetterBody } from './lib/offer-letter-html.js';
 import { isDeepseekConfigured } from './lib/deepseek.js';
 import { clientIntentSourceHash, fillOfferFromTranscript, meetingContextIsTooThin, reflectContractFromEmail, summarizeClientIntent } from './lib/offer-ai.js';
 import { clientOwnedMeetLinks, emptyFirefliesLiveJoinStamp, firefliesJoinedCurrentMeet, firefliesMeetLinksDiffer, firefliesNeedsFreshMeetOnReschedule, matchMeetingToClients, normalizeFirefliesMeetLink, planFirefliesMeetLinkBackfill, recordingMatchesSalesMeeting, shouldDropLiveJoinStub } from './lib/fireflies-client-match.js';
-import { describeFirefliesMedia, firefliesMediaFilePath, persistFirefliesMedia } from './lib/fireflies-media.js';
+import { describeFirefliesMedia, firefliesMediaFilePath, saveFirefliesMediaForMeeting } from './lib/fireflies-media.js';
 import { runFirefliesPullFollowUp } from './lib/fireflies-pull-followup.js';
 import { storeFetchedFirefliesMeeting, storedMeetingIsFinal } from './lib/fireflies-webhook.js';
 import {
@@ -12211,23 +12211,30 @@ function firefliesClientDeps() {
 
 const firefliesMediaInFlight = new Set();
 
+/**
+ * Copy one meeting's video, audio and text to the data dir as its media plan says
+ * (lib/fireflies-media.js): a retry fetches fresh signed URLs first, savedAt only when a file
+ * is on disk, and the text files once more when the final summary is in.
+ */
 async function persistFirefliesMediaInBackground(meetingId) {
   const id = sanitizeText(meetingId);
   if (!id || firefliesMediaInFlight.has(id)) return;
   firefliesMediaInFlight.add(id);
   try {
-    const record = readStoredFirefliesMeeting(id);
-    if (!record) return;
-    const result = await persistFirefliesMedia(record);
-    updateStoredFirefliesMeeting(id, {
-      media: {
-        savedAt: new Date().toISOString(),
-        video: result.video?.path ? { bytes: result.video.bytes } : { skipped: result.video?.skipped || 'unknown' },
-        audio: result.audio?.path ? { bytes: result.audio.bytes } : { skipped: result.audio?.skipped || 'unknown' },
-        hasTranscript: Boolean(sanitizeText(record.transcript)),
+    const result = await saveFirefliesMediaForMeeting(id, {
+      readRecord: readStoredFirefliesMeeting,
+      refetchRecord: async (meeting) => {
+        const fetched = await hydrateFirefliesTranscript(meeting, { apiKey: readFirefliesWebhookConfig().apiKey });
+        if (fetched.outcome !== 'fetched') throw fetched.error || new Error('Fireflies gave no transcript.');
+        return fetched.record;
       },
+      updateMedia: (meeting, media) => updateStoredFirefliesMeeting(meeting, { media }),
+      isFinal: (record) => storedMeetingIsFinal(record),
     });
-    console.log(`[fireflies] media saved id=${id} video=${result.video?.bytes || result.video?.skipped} audio=${result.audio?.bytes || result.audio?.skipped}`);
+    const media = result.media || {};
+    if (!['done', 'waiting', 'no-url', 'empty', 'missing', 'not-a-recording'].includes(result.status)) {
+      console.log(`[fireflies] media id=${id} ${result.status} video=${media.video?.bytes || media.video?.skipped || '-'} audio=${media.audio?.bytes || media.audio?.skipped || '-'}`);
+    }
   } catch (error) {
     console.error('[fireflies] media download failed', id, sanitizeText(error?.message) || error);
   } finally {
