@@ -325,10 +325,14 @@ test('only transcripts Fireflies has not finished are fetched again, longest-wai
     { meetingId: 'ff-gave-up', startedAt: '2026-10-01T11:00:00.000Z', summaryStatus: 'processing', fetch: { attempts: 20, gaveUpAt: '2026-10-08T11:00:00.000Z' } },
     // The list showed a new summary_status: one full fetch even past give-up.
     { meetingId: 'ff-queued', startedAt: '2026-10-01T11:00:00.000Z', summaryStatus: 'processing', fetch: { gaveUpAt: '2026-10-08T11:00:00.000Z', queuedAt: '2026-10-09T12:29:00.000Z' } },
-    // No status at all (stored before it was): talk that has sat for 30 minutes is final.
+    // Stored before the hub kept Fireflies' state. Talk without a summary is the old first fetch
+    // during processing: one fetch learns the status (it waited longest). With a summary it is done.
     { meetingId: 'ff-legacy', startedAt: '2026-10-09T11:00:00.000Z', meetingLink: link, transcript: 'Kunde: hei' },
+    { meetingId: 'ff-legacy-done', startedAt: '2026-10-09T11:00:00.000Z', meetingLink: link, transcript: 'Kunde: hei', summary: 'Kort.' },
+    // Fetched, and Fireflies gave no status: talk that has sat for 30 minutes is final.
+    { meetingId: 'ff-no-status', startedAt: '2026-10-09T11:00:00.000Z', fetchedAt: '2026-10-09T11:55:00.000Z', firstSeenAt: '2026-10-09T11:55:00.000Z', transcript: 'Kunde: hei' },
   ], { nowMs: now });
-  assert.deepEqual(rows.map((row) => row.meetingId), ['ff-processing', 'ff-new', 'ff-queued']);
+  assert.deepEqual(rows.map((row) => row.meetingId), ['ff-legacy', 'ff-processing', 'ff-new', 'ff-queued']);
 });
 
 test('live-join retries wait 6 minutes after an attempt', () => {
@@ -430,9 +434,16 @@ test('live and processing copies are never final; a finished silent one is empty
   for (const status of ['processed', 'skipped', 'failed']) {
     assert.equal(ff.storedMeetingIsFinal({ summaryStatus: status }, { nowMs: T }), true, status);
   }
-  assert.equal(ff.storedMeetingIsFinal({ transcript: 'x', firstSeenAt: iso(T - 29 * MIN) }, { nowMs: T }), false);
-  assert.equal(ff.storedMeetingIsFinal({ transcript: 'x', firstSeenAt: iso(T - 31 * MIN) }, { nowMs: T }), true);
+  // Fetched talk that Fireflies gave no status for: final 30 minutes after the hub had it.
+  assert.equal(ff.storedMeetingIsFinal({ transcript: 'x', fetchedAt: iso(T - 29 * MIN), firstSeenAt: iso(T - 29 * MIN) }, { nowMs: T }), false);
+  assert.equal(ff.storedMeetingIsFinal({ transcript: 'x', fetchedAt: iso(T - 31 * MIN), firstSeenAt: iso(T - 31 * MIN) }, { nowMs: T }), true);
+  // Stored before the hub kept the state: done only with a summary, else one fetch learns it.
+  assert.equal(ff.storedMeetingIsFinal({ transcript: 'x', firstSeenAt: iso(T - 300 * MIN) }, { nowMs: T }), false);
+  assert.equal(ff.storedMeetingIsFinal({ transcript: 'x', summary: 'Kort.', firstSeenAt: iso(T - 300 * MIN) }, { nowMs: T }), true);
   assert.equal(ff.storedMeetingIsFinal({ firstSeenAt: iso(T - 300 * MIN) }, { nowMs: T }), false, 'no talk and no status');
+  // Live captions kept after the call are never final without Fireflies' word.
+  assert.equal(ff.storedMeetingIsFinal({ transcript: 'x', partial: true, isLive: false, fetchedAt: iso(T - 300 * MIN), firstSeenAt: iso(T - 300 * MIN) }, { nowMs: T }), false);
+  assert.equal(ff.storedMeetingIsFinal({ transcript: 'x', partial: true, summaryStatus: 'skipped' }, { nowMs: T }), true);
   assert.equal(ff.storedMeetingIsEmptyFinal({ summaryStatus: 'skipped', silent: true }, { nowMs: T }), true);
   assert.equal(ff.storedMeetingIsEmptyFinal({ summaryStatus: 'processed', transcript: 'x' }, { nowMs: T }), false);
 });
@@ -633,4 +644,90 @@ test('the transcripts list pages through a date window, at most 50 rows a page',
   assert.equal('toDate' in body.variables, false, 'a filter that is not used is not sent');
   assert.match(body.query, /is_live/);
   assert.match(body.query, /meeting_info\s*\{\s*summary_status\s*\}/);
+});
+
+test('live captions pasted during the call stay partial after it, until the finished copy replaces them', () => {
+  const id = 'FF-LIVEPASTE';
+  const end = T + 60 * MIN;
+  const lines = (count) => Array.from({ length: count }, (_, i) => ({ speaker_name: 'Kari Test', text: `Setning ${i}.` }));
+  const live = (count) => ff.buildFirefliesMeetingRecord({ meeting_id: id }, answer({
+    id, is_live: true, duration: null, meeting_info: { summary_status: null }, summary: {}, sentences: lines(count),
+  }));
+  // Pasted on Tilbud 20 minutes in, then polled every 3 minutes while it runs.
+  let row = ff.storeFetchedFirefliesMeeting(live(10), { nowMs: T + 20 * MIN });
+  assert.equal(row.partial, true);
+  assert.equal(Date.parse(row.fetch.nextFetchAt) - (T + 20 * MIN), 3 * MIN);
+  for (let m = 23; m <= 59; m += 3) row = ff.storeFetchedFirefliesMeeting(live(m), { nowMs: T + m * MIN });
+  assert.equal(row.fetch.attempts, 0, 'polls of a running meeting do not count toward the backoff');
+
+  // Just after the call Fireflies answers with no sentences and no status for a few minutes.
+  const t1 = end + MIN;
+  row = ff.storeFetchedFirefliesMeeting(ff.buildFirefliesMeetingRecord({ meeting_id: id }, answer({
+    id, duration: 60, meeting_info: { summary_status: 'default', silent_meeting: false }, sentences: [], summary: {},
+  })), { nowMs: t1 });
+  assert.equal(row.isLive, false);
+  assert.equal(row.partial, true, 'the captions are kept, still marked partial');
+  assert.equal(row.liveEndedAt, new Date(t1).toISOString());
+  for (const later of [0, 30 * MIN, 5 * 60 * MIN]) {
+    assert.equal(ff.storedMeetingIsFinal(row, { nowMs: t1 + later }), false, `never final from captions (+${later / MIN} min)`);
+    assert.equal(ff.storedMeetingIsPartial(row), true);
+  }
+  assert.equal(Date.parse(row.fetch.nextFetchAt) - t1, 2 * MIN, 'the first fetch after the call waits the shortest step');
+
+  // Fireflies has the full transcript while it writes the summary: it replaces the captions.
+  const full = [{ speaker_name: 'Kari Test', text: 'Hele møtet.' }, { speaker_name: 'Damian', text: 'Takk for i dag.' }];
+  row = ff.storeFetchedFirefliesMeeting(ff.buildFirefliesMeetingRecord({ meeting_id: id }, answer({
+    id, meeting_info: { summary_status: 'processing' }, summary: {}, sentences: full,
+  })), { nowMs: end + 4 * MIN });
+  assert.equal(row.partial, undefined);
+  assert.equal(row.transcript, 'Kari Test: Hele møtet.\nDamian: Takk for i dag.');
+  assert.equal(ff.storedMeetingIsFinal(row, { nowMs: end + 5 * MIN }), false, 'still processing');
+  row = ff.storeFetchedFirefliesMeeting(ff.buildFirefliesMeetingRecord({ meeting_id: id }, answer({ id, sentences: full })), { nowMs: end + 6 * MIN });
+  assert.equal(ff.storedMeetingIsFinal(row, { nowMs: end + 6 * MIN }), true);
+  assert.equal(row.summary, 'Kunden vil ha ny nettside.');
+});
+
+test('captions are all there is when Fireflies finishes a meeting without sentences', () => {
+  const id = 'FF-LIVESHORT';
+  ff.storeFetchedFirefliesMeeting(ff.buildFirefliesMeetingRecord({ meeting_id: id }, answer({
+    id, is_live: true, meeting_info: { summary_status: null }, summary: {},
+  })), { nowMs: T });
+  const row = ff.storeFetchedFirefliesMeeting(ff.buildFirefliesMeetingRecord({ meeting_id: id }, answer({
+    id, sentences: [], summary: {}, meeting_info: { summary_status: 'skipped', silent_meeting: false },
+  })), { nowMs: T + 10 * MIN });
+  assert.equal(row.partial, undefined, 'Fireflies is done: nothing better is coming');
+  assert.equal(ff.storedMeetingIsFinal(row, { nowMs: T + 10 * MIN }), true);
+  assert.match(row.transcript, /ny nettside/);
+});
+
+test('a row the old ingest stored while Fireflies was processing gets one fetch, then is final', () => {
+  const id = 'FF-OLDPROC';
+  // As the old ingest left it: talk, no summary, no state, three weeks ago.
+  ff.updateStoredFirefliesMeeting(id, {
+    title: 'Testfirma AS · Kari Test',
+    startedAt: new Date(T - 21 * 24 * 60 * MIN).toISOString(),
+    at: new Date(T - 21 * 24 * 60 * MIN).toISOString(),
+    meetingLink: MEET,
+    transcript: 'Kari Test: Vi trenger en ny nettside.',
+    summary: '',
+  }, { nowMs: T - 21 * 24 * 60 * MIN });
+  const legacy = ff.readStoredFirefliesMeeting(id);
+  assert.equal(ff.storedMeetingIsFinal(legacy, { nowMs: T }), false);
+  assert.equal(ff.firefliesFetchDue(legacy, { nowMs: T }), true);
+  const done = ff.storeFetchedFirefliesMeeting(ff.buildFirefliesMeetingRecord({ meeting_id: id }, answer({ id })), { nowMs: T });
+  assert.equal(done.summary, 'Kunden vil ha ny nettside.');
+  assert.equal(ff.firefliesFetchDue(done, { nowMs: T + 60 * MIN }), false);
+  // The same old row with its summary was already complete: no fetch.
+  assert.equal(ff.storedMeetingIsFinal({ ...legacy, fetchedAt: undefined, summary: 'Kort.' }, { nowMs: T }), true);
+});
+
+test('a person waiting skips the pause, but not a pause after a failed fetch', () => {
+  const processing = { meetingId: 'FF-WAIT1', title: 'A', summaryStatus: 'processing', transcript: 'x', fetch: { attempts: 3, nextFetchAt: new Date(T + 60 * MIN).toISOString(), lastError: '' } };
+  assert.equal(ff.firefliesFetchDue(processing, { nowMs: T }), false);
+  assert.equal(ff.firefliesFetchDue(processing, { nowMs: T, onDemand: true }), true);
+  const failing = { ...processing, fetch: { ...processing.fetch, lastError: 'Object not found' } };
+  assert.equal(ff.firefliesFetchDue(failing, { nowMs: T, onDemand: true }), false);
+  const gaveUp = { ...processing, fetch: { gaveUpAt: new Date(T).toISOString() } };
+  assert.equal(ff.firefliesFetchDue(gaveUp, { nowMs: T, onDemand: true }), false);
+  assert.equal(ff.firefliesFetchDue({ ...processing, summaryStatus: 'processed' }, { nowMs: T, onDemand: true }), false);
 });

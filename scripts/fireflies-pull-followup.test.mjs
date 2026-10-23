@@ -117,7 +117,7 @@ test('old, undated, transcript-less and live: meetings are not e-mailed; media n
     { meetingId: 'UNDATED', transcript: 'x', videoDownloadUrl: 'https://cdn.example.com/b.mp4' },
     { meetingId: 'NOTALK', startedAt: recent, videoDownloadUrl: 'https://cdn.example.com/c.mp4' },
     { meetingId: 'live:abc', startedAt: recent, transcript: 'x', videoDownloadUrl: 'https://cdn.example.com/d.mp4' },
-    { meetingId: 'SAVED', startedAt: recent, transcript: 'x', videoDownloadUrl: 'https://cdn.example.com/e.mp4', media: { savedAt: recent } },
+    { meetingId: 'SAVED', startedAt: recent, transcript: 'x', summaryStatus: 'processed', videoDownloadUrl: 'https://cdn.example.com/e.mp4', media: { savedAt: recent } },
     { meetingId: 'NOURL', startedAt: recent, summary: 'x' },
     { meetingId: 'DONE', startedAt: recent, transcript: 'x' },
   ];
@@ -198,6 +198,21 @@ test('a failed recording e-mail is sent again by the follow-up ten minutes later
   assert.equal(sent.length, 1);
   assert.equal(ff.readFirefliesNotifyState('RETRY1').state, 'sent');
   assert.equal(ff.readStoredFirefliesMeeting('RETRY1').notifyError, '', 'the error is cleared once it went out');
+});
+
+test('live captions are never e-mailed, and the twenty minutes count from the end of the call', () => {
+  const now = Date.now();
+  const ago = (minutes) => new Date(now - minutes * 60 * 1000).toISOString();
+  const pastedLive = { startedAt: ago(70), firstSeenAt: ago(50), fetchedAt: ago(1), isLive: false };
+  const rows = [
+    // The call ended half an hour ago and Fireflies has not replaced the captions yet.
+    { ...pastedLive, meetingId: 'CAPTIONS1', transcript: 'Kari Test: halve møtet', partial: true, liveEndedAt: ago(30), summaryStatus: 'default' },
+    // The full transcript is in, the summary is not: the call ended 10 minutes ago.
+    { ...pastedLive, meetingId: 'ENDED10', transcript: 'Kari Test: hele møtet', liveEndedAt: ago(10), summaryStatus: 'processing' },
+    { ...pastedLive, meetingId: 'ENDED25', transcript: 'Kari Test: hele møtet', liveEndedAt: ago(25), summaryStatus: 'processing' },
+  ];
+  assert.deepEqual(followUp.firefliesFollowUpCandidates(rows, { nowMs: now, isNotified: () => false }).notify, ['ENDED25']);
+  assert.equal(followUp.readyToNotify(rows[0], now + 24 * HOUR), false, 'captions wait for the finished copy');
 });
 
 test('an old meeting whose notified entry was pruned is never e-mailed again', () => {

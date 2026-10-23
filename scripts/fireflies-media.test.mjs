@@ -151,6 +151,40 @@ test('a rate-limited refetch is no attempt, and a full disk is never written to'
   assert.equal(ff.readStoredFirefliesMeeting(id).media.lastSkip, 'low-disk');
 });
 
+test('nothing is downloaded while the meeting runs; captions saved after the call are rewritten once it is finished', async () => {
+  const id = 'FFMEDIA4';
+  const base = { id, title: 'Testfirma AS · Kari Test', dateString: '2026-10-23T13:00:00.000Z', meeting_link: 'https://meet.google.com/abc-defg-hij' };
+  const live = ff.storeFetchedFirefliesMeeting(ff.buildFirefliesMeetingRecord({ meeting_id: id }, {
+    ...base,
+    is_live: true,
+    meeting_info: { summary_status: null },
+    video_url: 'https://cdn.example.com/live.mp4?sig=live',
+    sentences: [{ speaker_name: 'Kari Test', text: 'Første halvdel.' }],
+  }), { nowMs: T - 40 * MIN });
+  assert.equal(media.firefliesMediaPlan(live, { nowMs: T - 40 * MIN }).reason, 'live');
+  const early = cdn();
+  assert.equal((await media.saveFirefliesMediaForMeeting(id, deps({ fetchImpl: early.fetchImpl, nowMs: T - 40 * MIN }))).status, 'live');
+  assert.equal(early.calls.length, 0);
+
+  // Right after the call: the files exist, the transcript is still the captions.
+  ff.storeFetchedFirefliesMeeting(ff.buildFirefliesMeetingRecord({ meeting_id: id }, {
+    ...base, duration: 60, is_live: false, meeting_info: { summary_status: 'default' }, sentences: [], summary: {},
+    video_url: `https://cdn.example.com/${id}.mp4?sig=after`, audio_url: `https://cdn.example.com/${id}.mp3?sig=after`,
+  }), { nowMs: T + MIN });
+  const saved = await media.saveFirefliesMediaForMeeting(id, deps({ fetchImpl: cdn().fetchImpl, refetch: async () => ff.readStoredFirefliesMeeting(id), nowMs: T + MIN }));
+  assert.equal(saved.status, 'saved');
+  assert.equal(saved.media.textFinal, undefined, 'captions are not the final text');
+
+  // Fireflies finishes: transcript.txt and summary.json are written again from the finished copy.
+  ff.storeFetchedFirefliesMeeting(ff.buildFirefliesMeetingRecord({ meeting_id: id }, {
+    ...answer(id, 'after'), sentences: [{ speaker_name: 'Kari Test', text: 'Første halvdel.' }, { speaker_name: 'Kari Test', text: 'Andre halvdel.' }],
+  }), { nowMs: T + 5 * MIN });
+  const text = await media.saveFirefliesMediaForMeeting(id, deps({ fetchImpl: cdn().fetchImpl, nowMs: T + 6 * MIN }));
+  assert.equal(text.status, 'text');
+  assert.equal(readFileSync(join(dataDir, 'fireflies-media', id, 'transcript.txt'), 'utf8'), 'Kari Test: Første halvdel.\nKari Test: Andre halvdel.');
+  assert.equal(JSON.parse(readFileSync(join(dataDir, 'fireflies-media', id, 'summary.json'), 'utf8')).summary, 'Kunden vil ha ny nettside.');
+});
+
 test('a file over the size cap is a final skip; the text files are written again once the summary is in', async () => {
   const id = 'FFMEDIA3';
   store(id, 'ok', T, { status: 'processing' });
