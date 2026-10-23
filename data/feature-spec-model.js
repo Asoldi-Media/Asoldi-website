@@ -154,11 +154,17 @@ const BLOCK_TOP_MAX_BYTES = 2048;
 export const MIGRATIONS_REPORT_MAX_BYTES = 16 * 1024;
 const MIGRATION_ITEMS_MAX = 40;
 
+/** 'YYYY-MM-DD' that names a real day (not 2026-02-31). */
+function calendarDate(date) {
+  const ms = Date.parse(`${date}T00:00:00.000Z`);
+  return Number.isFinite(ms) && new Date(ms).toISOString().slice(0, 10) === date;
+}
+
 function normalizeBlockDay(raw) {
   if (!isPlainObject(raw)) return null;
   const date = text(raw.date, 10);
   const count = wholeNumber(raw.count);
-  if (!DATE_RE.test(date) || count === null) return null;
+  if (!DATE_RE.test(date) || !calendarDate(date) || count === null) return null;
   const top = Array.isArray(raw.top) ? withinBytes(boundedClone(raw.top.slice(0, 10)), BLOCK_TOP_MAX_BYTES) : [];
   return { date, count, top };
 }
@@ -282,10 +288,25 @@ function blockDaysFromReport(raw) {
   return Object.entries(raw).map(([date, count]) => ({ date, count }));
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * The block-history dates a heartbeat at `nowIso` may hold, by the hub's clock: the 14 days up to
+ * today, plus tomorrow for a CMS whose day starts earlier. A CMS clock far ahead or behind cannot
+ * keep rows that push the real days out.
+ */
+export function blockDayWindow(nowIso) {
+  const ms = Date.parse(String(nowIso || ''));
+  const base = Number.isFinite(ms) ? ms : Date.now();
+  const day = (offset) => new Date(base + offset * DAY_MS).toISOString().slice(0, 10);
+  return { from: day(-(BLOCK_HISTORY_DAYS - 1)), to: day(1) };
+}
+
 /**
  * Picks the reported fields out of a heartbeat body (unknown fields are ignored) and returns the
  * site.cms patch: the typed fields, the day rows merged into blockHistory (a day reported again
- * replaces its row; 14 days kept) and lastHeartbeatAt when anything was reported.
+ * replaces its row; only dates in blockDayWindow are kept, stored ones included) and
+ * lastHeartbeatAt when anything was reported.
  */
 export function cmsPatchFromHeartbeat(currentCms, body, nowIso = new Date().toISOString()) {
   if (!isPlainObject(body)) return {};
@@ -295,9 +316,15 @@ export function cmsPatchFromHeartbeat(currentCms, body, nowIso = new Date().toIS
   }
   const patch = normalizeCmsReportedFields(picked);
   const days = blockDaysFromReport(body.featureBlocksDaily);
-  if (days.length) {
-    const current = normalizeBlockHistory(isPlainObject(currentCms) ? currentCms.blockHistory : []);
-    patch.blockHistory = normalizeBlockHistory([...current, ...days]);
+  const current = normalizeBlockHistory(isPlainObject(currentCms) ? currentCms.blockHistory : []);
+  const window = blockDayWindow(nowIso);
+  const inWindow = (row) => {
+    const day = normalizeBlockDay(row);
+    return Boolean(day) && day.date >= window.from && day.date <= window.to;
+  };
+  const kept = current.filter(inWindow);
+  if (days.length || kept.length !== current.length) {
+    patch.blockHistory = normalizeBlockHistory([...kept, ...days.filter(inWindow)]);
   }
   if (Object.keys(patch).length) patch.lastHeartbeatAt = text(nowIso, 40);
   return patch;

@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from 'fs';
 import { randomBytes } from 'crypto';
 import bcrypt from 'bcryptjs';
 import { getDataFilePath, ensurePersistentDataDir, writeDataJson } from './storage-path.js';
+import { withFileLock } from './atomic-json.js';
 import {
   desiredCmsVersion,
   featuresFromPlan,
@@ -78,18 +79,23 @@ export function getSiteByDomain(domain) {
 }
 
 /**
- * Site config for a client CMS. `withFeatures(config, site, { byDomain })` (WS6.7) may return a
- * config with the feature tree; without it, or when it returns nothing, the answer is unchanged.
+ * Site config for a client CMS. `includeAdmin` says the caller may see site admin data: the client
+ * admin sync fields and, with the feature tree, pendingSettings. It defaults to a site_key lookup;
+ * a caller that holds only a public value (a domain, a Host header, a site key from the
+ * environment) passes false. `withFeatures(config, site, { byDomain, includeAdmin })` (WS6.7) may
+ * return a config with the feature tree; without it, or when it returns nothing, the answer is
+ * unchanged.
  */
-export function getSiteConfig(siteKeyOrDomain, byDomain = false, { withFeatures = null } = {}) {
+export function getSiteConfig(siteKeyOrDomain, byDomain = false, { withFeatures = null, includeAdmin = !byDomain } = {}) {
   const site = byDomain ? getSiteByDomain(siteKeyOrDomain) : getSiteByKey(siteKeyOrDomain);
   if (!site) return null;
-  const config = baseSiteConfig(site, byDomain);
+  const trusted = !byDomain && includeAdmin === true;
+  const config = baseSiteConfig(site, byDomain, trusted);
   if (typeof withFeatures !== 'function') return config;
-  return withFeatures(config, site, { byDomain }) || config;
+  return withFeatures(config, site, { byDomain, includeAdmin: trusted }) || config;
 }
 
-function baseSiteConfig(site, byDomain) {
+function baseSiteConfig(site, byDomain, includeAdmin) {
   const config = {
     id: site.id,
     name: site.name,
@@ -101,8 +107,8 @@ function baseSiteConfig(site, byDomain) {
     analyticsLevel: site.analyticsLevel || 'none',
   };
   // A domain (or Host header) is public, so domain lookups never carry admin data.
-  // Only a caller holding the site key (the client CMS) gets the admin sync fields.
-  if (byDomain) return config;
+  // Only a caller trusted with the site's admin data gets the admin sync fields.
+  if (byDomain || !includeAdmin) return config;
   const clientAdmin = normalizeClientAdmin(site.clientAdmin);
   return {
     ...config,
@@ -280,33 +286,51 @@ export function updateSite(id, patch = {}) {
 }
 
 /**
+ * Read-modify-write of sites.json under the `<sites.json>.lock` file (data/atomic-json.js), so a
+ * heartbeat and a cms-spec write in two hub processes never overwrite each other. `fn(sites)`
+ * changes the list in place and returns { result, write }. The other site writers in this file
+ * do not take the lock yet.
+ */
+function withSitesLocked(fn) {
+  ensureDataDir();
+  return withFileLock(SITES_PATH, () => {
+    const sites = readSites();
+    const { result, write } = fn(sites);
+    if (write) writeSites(sites);
+    return result;
+  });
+}
+
+/**
  * `report` is the heartbeat body (WS6.7): the feature and settings revs, the effective keys, the
  * daily block counts, the migration summary and the sign-in report fields are kept in site.cms
- * (data/feature-spec-model.js cmsPatchFromHeartbeat picks and bounds them).
+ * (data/feature-spec-model.js cmsPatchFromHeartbeat picks and bounds them). The report is applied
+ * only to a verified heartbeat (`verified`, default true), since it says which settings revision
+ * the CMS applied and that stops pendingSettings.
  */
-export function recordHeartbeat(siteKey, { packageVersion, adminUrl, name, adminApplied, report = null } = {}) {
+export function recordHeartbeat(siteKey, { packageVersion, adminUrl, name, adminApplied, report = null } = {}, { verified = true } = {}) {
   const key = String(siteKey || '').trim();
   if (!key) return { ok: false, error: 'site_key required' };
-  const sites = readSites();
-  const i = sites.findIndex((s) => s.site_key === key);
-  if (i === -1) return { ok: false, error: 'Site not found' };
-  const nowIso = new Date().toISOString();
-  sites[i].cms = normalizeCmsMeta({
-    ...sites[i].cms,
-    ...cmsPatchFromHeartbeat(sites[i].cms, report, nowIso),
-    lastSeenAt: nowIso,
-    packageVersion: packageVersion || sites[i].cms.packageVersion,
-    adminUrl: adminUrl || sites[i].cms.adminUrl,
-  });
-  if (name && !sites[i].name) sites[i].name = name;
-  if (adminApplied) {
-    sites[i].clientAdmin = normalizeClientAdmin({
-      ...sites[i].clientAdmin,
-      pendingSync: false,
+  return withSitesLocked((sites) => {
+    const i = sites.findIndex((s) => s.site_key === key);
+    if (i === -1) return { result: { ok: false, error: 'Site not found' }, write: false };
+    const nowIso = new Date().toISOString();
+    sites[i].cms = normalizeCmsMeta({
+      ...sites[i].cms,
+      ...(verified === true ? cmsPatchFromHeartbeat(sites[i].cms, report, nowIso) : {}),
+      lastSeenAt: nowIso,
+      packageVersion: packageVersion || sites[i].cms.packageVersion,
+      adminUrl: adminUrl || sites[i].cms.adminUrl,
     });
-  }
-  writeSites(sites);
-  return { ok: true, site: publicSite(sites[i]) };
+    if (name && !sites[i].name) sites[i].name = name;
+    if (adminApplied) {
+      sites[i].clientAdmin = normalizeClientAdmin({
+        ...sites[i].clientAdmin,
+        pendingSync: false,
+      });
+    }
+    return { result: { ok: true, site: publicSite(sites[i]) }, write: true };
+  });
 }
 
 /**
@@ -345,23 +369,24 @@ export async function updateClientAdmin(id, patch = {}) {
 }
 
 /**
- * Changes a site's feature spec fields (WS6.8) in one read-modify-write. `mutate(site)` returns
- * { ok:false, ... } to stop, or { ok:true, featureSpec?, cmsSpec?, cmsSpecHistory?, featureEnforcement?, ... };
- * only those four fields are taken from it. Returns mutate's result with the saved public site.
+ * Changes a site's feature spec fields (WS6.8) in one locked read-modify-write (withSitesLocked).
+ * `mutate(site)` returns { ok:false, ... } to stop, or { ok:true, featureSpec?, cmsSpec?,
+ * cmsSpecHistory?, featureEnforcement?, ... }; only those four fields are taken from it. Returns
+ * mutate's result with the saved public site.
  */
 export function updateSiteSpecs(id, mutate) {
-  const sites = readSites();
-  const i = sites.findIndex((s) => s.id === id);
-  if (i === -1) return { ok: false, status: 404, error: 'Site not found' };
-  const result = mutate(structuredClone(sites[i])) || { ok: false, status: 500, error: 'No result' };
-  if (!result.ok) return result;
-  const fields = ['featureSpec', 'cmsSpec', 'cmsSpecHistory', 'featureEnforcement'].filter((field) => result[field] !== undefined);
-  if (!fields.length) return { ...result, site: publicSite(sites[i]), record: sites[i] };
-  const next = { ...sites[i] };
-  for (const field of fields) next[field] = result[field];
-  sites[i] = normalizeSite(next);
-  writeSites(sites);
-  return { ...result, site: publicSite(sites[i]), record: sites[i] };
+  return withSitesLocked((sites) => {
+    const i = sites.findIndex((s) => s.id === id);
+    if (i === -1) return { result: { ok: false, status: 404, error: 'Site not found' }, write: false };
+    const result = mutate(structuredClone(sites[i])) || { ok: false, status: 500, error: 'No result' };
+    if (!result.ok) return { result, write: false };
+    const fields = ['featureSpec', 'cmsSpec', 'cmsSpecHistory', 'featureEnforcement'].filter((field) => result[field] !== undefined);
+    if (!fields.length) return { result: { ...result, site: publicSite(sites[i]), record: sites[i] }, write: false };
+    const next = { ...sites[i] };
+    for (const field of fields) next[field] = result[field];
+    sites[i] = normalizeSite(next);
+    return { result: { ...result, site: publicSite(sites[i]), record: sites[i] }, write: true };
+  });
 }
 
 export function deleteSite(id) {

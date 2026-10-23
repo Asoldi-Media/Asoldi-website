@@ -12950,7 +12950,8 @@ app.post('/api/hub/sites/:id/local-blog-token', adminAuth, (req, res) => {
 app.get('/api/cms/config', (req, res) => {
   const siteKey = process.env.CMS_SITE_KEY;
   if (siteKey) {
-    const config = hub.getSiteConfig(siteKey, false, { withFeatures: cmsFeatures.siteConfigFeatures });
+    // An open route: the site key comes from the environment, not from the caller, so no admin data.
+    const config = hub.getSiteConfig(siteKey, false, { withFeatures: cmsFeatures.siteConfigFeatures, includeAdmin: false });
     if (config) return res.json(config);
   }
   const host = (req.get('host') || '').split(':')[0];

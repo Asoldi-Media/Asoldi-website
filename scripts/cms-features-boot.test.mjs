@@ -150,16 +150,17 @@ test('local hub in safe mode: site-config unchanged while dark, cms-spec writes,
     assert.equal('featureTree' in plain.body, false, 'a site that is not listed stays as it was');
 
     // The CMS reports that it applied rev 1: pendingSettings stops, the report is stored.
+    const today = new Date().toISOString().slice(0, 10);
     const beat = await json('/api/hub/heartbeat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ site_key: 'boot-key-shop', packageVersion: '2.3.0', settingsRevApplied: 1, featuresRev: 2, effective: ['users', 'shop'], featureBlocksDaily: { date: '2026-11-02', count: 3 } }),
+      body: JSON.stringify({ site_key: 'boot-key-shop', packageVersion: '2.3.0', settingsRevApplied: 1, featuresRev: 2, effective: ['users', 'shop'], featureBlocksDaily: { date: today, count: 3 } }),
     });
     assert.equal(beat.status, 200);
     assert.equal('pendingSettings' in (await siteConfig('site_key=boot-key-shop')).body, false);
     const spec = await json('/api/hub/sites/b1/cms-spec', { headers: admin });
     assert.equal(spec.body.cmsReported.settingsRevApplied, 1);
-    assert.deepEqual(spec.body.cmsReported.blockHistory, [{ date: '2026-11-02', count: 3, top: [] }]);
+    assert.deepEqual(spec.body.cmsReported.blockHistory, [{ date: today, count: 3, top: [] }]);
 
     // Off again: the old answer comes back.
     await json('/api/admin/cms-features/settings', { method: 'PUT', headers: admin, body: JSON.stringify({ siteConfig: { mode: 'off' } }) });
