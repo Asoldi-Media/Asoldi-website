@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   MAX_EVENTS_PER_CALL,
+  addressGroup,
   createSiteRequestLimits,
   createWindowLimiter,
   formFieldsProblem,
@@ -9,6 +10,7 @@ import {
   sanitizeCommercePayload,
 } from '../lib/site-public-guards.js';
 import { assertClientFormAllowed, assertClientFormSize, resetClientFormLimitsForTests } from '../lib/client-forms.js';
+import { resetSecurityCounters, securityCounters } from '../lib/security-counters.js';
 
 test('the window limiter counts per key, refuses without counting and frees slots as the window moves', () => {
   let t = 0;
@@ -26,17 +28,42 @@ test('the window limiter counts per key, refuses without counting and frees slot
   assert.equal(small.size(), 3, 'memory stays bounded');
 });
 
-test('site request limits: per site and address for anonymous calls, per site for the credentialed server', () => {
+test('an address counts by its IPv6 /64, an IPv4-mapped address as its IPv4 address', () => {
+  assert.equal(addressGroup('2001:db8:1:2::1'), '2001:db8:1:2::/64');
+  assert.equal(addressGroup('2001:DB8:1:2:ffff:1:2:3'), '2001:db8:1:2::/64');
+  assert.equal(addressGroup('[2001:db8:1:3::1]'), '2001:db8:1:3::/64');
+  assert.equal(addressGroup('2001:db8::192.0.2.1'), '2001:db8:0:0::/64');
+  assert.equal(addressGroup('fe80::1%eth0'), 'fe80:0:0:0::/64');
+  assert.equal(addressGroup('::ffff:198.51.100.7'), '198.51.100.7');
+  assert.equal(addressGroup('198.51.100.7'), '198.51.100.7');
+  assert.equal(addressGroup(''), '');
+  assert.equal(addressGroup('x'.repeat(100)).length, 64);
+});
+
+test('site request limits: per site and address without a credential; the credentialed server has a bucket of its own', () => {
   let t = 0;
   const limits = createSiteRequestLimits({ windowMs: 60_000, perSiteAddress: 3, perSite: 5, now: () => t });
   for (let i = 0; i < 3; i += 1) assert.equal(limits.take({ siteId: 's1', address: '192.0.2.1' }).ok, true);
   assert.equal(limits.take({ siteId: 's1', address: '192.0.2.1' }).ok, false);
   assert.equal(limits.take({ siteId: 's1', address: '192.0.2.2' }).ok, true);
   assert.equal(limits.take({ siteId: 's2', address: '192.0.2.1' }).ok, true, 'another site is not held up');
-  assert.equal(limits.take({ siteId: 's1', address: '192.0.2.1', credentialValid: true }).ok, true, 'the site server skips the address bucket');
-  assert.equal(limits.take({ siteId: 's1', address: '192.0.2.3' }).ok, false, 'the site bucket (5) is full');
+  assert.equal(limits.take({ siteId: 's1', address: '192.0.2.3' }).ok, true);
+  assert.equal(limits.take({ siteId: 's1', address: '192.0.2.4' }).ok, false, 'the site bucket for calls without a credential (5) is full');
+  for (let i = 0; i < 5; i += 1) assert.equal(limits.take({ siteId: 's1', address: '192.0.2.1', credentialValid: true }).ok, true, 'calls without the credential cannot use up the bucket of the site server');
+  assert.equal(limits.take({ siteId: 's1', address: '192.0.2.1', credentialValid: true }).ok, false, 'the site server has its own per-site cap');
   t = 60_000;
   assert.equal(limits.take({ siteId: 's1', address: '192.0.2.1' }).ok, true);
+  const v6 = createSiteRequestLimits({ windowMs: 60_000, perSiteAddress: 2, perSite: 100, now: () => t });
+  assert.equal(v6.take({ siteId: 's1', address: '2001:db8:7:7::1' }).ok, true);
+  assert.equal(v6.take({ siteId: 's1', address: '2001:db8:7:7::2' }).ok, true);
+  assert.equal(v6.take({ siteId: 's1', address: '2001:db8:7:7::3' }).ok, false, 'new addresses in the same /64 do not reset the limit');
+});
+
+test('a soft site cap lets calls through past it, says so, and refuses only at the hard cap', () => {
+  const limits = createSiteRequestLimits({ windowMs: 60_000, perSiteAddress: 1, perSite: 2, perSiteHard: 4, now: () => 0 });
+  const answers = ['192.0.2.1', '192.0.2.2', '192.0.2.3', '192.0.2.4', '192.0.2.5'].map((address) => limits.take({ siteId: 's1', address }));
+  assert.deepEqual(answers.map((a) => a.ok), [true, true, true, true, false]);
+  assert.deepEqual(answers.map((a) => a.overSoft), [false, false, true, true, true]);
 });
 
 test('traffic events keep the fields the CMS stores, with its lengths, and drop the rest', () => {
@@ -95,4 +122,34 @@ test('visitor forms are limited per site and address with the proxy-aware addres
   assertClientFormAllowed(req('198.51.100.7'), { siteId: 'site-2' });
   assertClientFormAllowed(req('198.51.100.7'), { siteId: 'site-1', credentialValid: true });
   resetClientFormLimitsForTests();
+});
+
+test('visitor forms from many addresses are still delivered past the soft site cap, counted, up to the hard ceiling', () => {
+  resetClientFormLimitsForTests();
+  resetSecurityCounters();
+  const req = (address) => ({ headers: { 'x-forwarded-for': address }, socket: { remoteAddress: '127.0.0.1' }, get: () => '' });
+  const warn = console.warn;
+  const warnings = [];
+  console.warn = (...args) => warnings.push(args.join(' '));
+  try {
+    let delivered = 0;
+    let refused = 0;
+    for (let i = 0; i < 1010; i += 1) {
+      try {
+        assertClientFormAllowed(req(`198.18.${Math.floor(i / 250)}.${i % 250}`), { siteId: 'busy-site' });
+        delivered += 1;
+      } catch (error) {
+        assert.equal(error.status, 429);
+        refused += 1;
+      }
+    }
+    assert.equal(delivered, 1000, 'callers from many addresses cannot switch the form off at 120');
+    assert.equal(refused, 10, 'the hard ceiling protects the inbox');
+    assert.equal(securityCounters()['client-form-site-busy'].total, 890, 'every form past 120 is counted');
+    assert.equal(warnings.filter((line) => line.includes('[client-forms]')).length, 1, 'logged once per site and window');
+    assertClientFormAllowed(req('198.51.100.200'), { siteId: 'busy-site', credentialValid: true });
+  } finally {
+    console.warn = warn;
+    resetClientFormLimitsForTests();
+  }
 });
