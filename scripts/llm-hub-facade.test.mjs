@@ -4,6 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
+import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,6 +18,7 @@ Object.assign(process.env, {
   ANTHROPIC_API_KEY: 'test-anthropic-key',
   GEMINI_API_KEY: 'test-gemini-key',
   CLIENT_MEDIA_VISION: '1',
+  GEMINI_VISION_RPM: '60',
 });
 delete process.env.DEEPSEEK_MODEL;
 delete process.env.ANTHROPIC_MODEL;
@@ -26,15 +28,15 @@ delete process.env.SALES_LINK_GEMINI_MODEL;
 delete process.env.CLIENT_MEDIA_VISION_MODEL;
 
 // Last line of defence: a socket to anything but loopback is refused and recorded.
-const leakedSockets = [];
+const outsideSockets = [];
 const realConnect = net.Socket.prototype.connect;
 net.Socket.prototype.connect = function testNetSpy(...args) {
   let first = args[0];
   if (Array.isArray(first)) first = first[0];
   const host = String((first && typeof first === 'object' ? first.host : args[1]) || 'localhost');
   if (/^(127\.\d+\.\d+\.\d+|localhost|::1)$/.test(host)) return realConnect.apply(this, args);
-  leakedSockets.push(host);
-  process.nextTick(() => this.destroy(Object.assign(new Error(`test spy refused ${host}`), { code: 'ETESTLEAK' })));
+  outsideSockets.push(host);
+  process.nextTick(() => this.destroy(Object.assign(new Error(`test spy refused ${host}`), { code: 'ETESTOUTSIDE' })));
   return this;
 };
 
@@ -82,6 +84,8 @@ const UNIVERSAL_JSON = {
 const providerCalls = [];
 const claudeScript = []; // queued Anthropic responses (objects); default end_turn with UNIVERSAL_JSON
 let failDeepseek = null;
+let deepseekContent = null; // a DeepSeek answer text to send instead of UNIVERSAL_JSON
+const geminiFailures = []; // queued HTTP statuses: the next Gemini requests fail with them
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -112,7 +116,7 @@ globalThis.fetch = async (input, init = {}) => {
     if (failDeepseek) return jsonResponse({ error: { message: 'mock failure' } }, failDeepseek);
     return jsonResponse({
       model: body.model,
-      choices: [{ message: { content: JSON.stringify(UNIVERSAL_JSON) }, finish_reason: 'stop' }],
+      choices: [{ message: { content: deepseekContent ?? JSON.stringify(UNIVERSAL_JSON) }, finish_reason: deepseekContent ? 'length' : 'stop' }],
       usage: { prompt_tokens: 1000, completion_tokens: 200, prompt_cache_hit_tokens: 100 },
     });
   }
@@ -122,6 +126,7 @@ globalThis.fetch = async (input, init = {}) => {
   }
   if (url.startsWith('https://generativelanguage.googleapis.com/')) {
     providerCalls.push({ provider: 'gemini', url, body, headers });
+    if (geminiFailures.length) return jsonResponse({ error: { code: geminiFailures[0], message: 'mock failure', status: 'FAILED_PRECONDITION' } }, geminiFailures.shift());
     return jsonResponse({
       candidates: [{
         content: { role: 'model', parts: [{ text: JSON.stringify({ ...UNIVERSAL_JSON, depiction: 'A cup of coffee on a table.', primaryWhy: 'Shows the product.', primarySection: 'hero' }) }] },
@@ -448,7 +453,7 @@ test('the ledger records 100% of calls in a scripted run of every hub task (lega
   assert.equal(providersByTask['sales-link.discover'], 'gemini');
   assert.equal(providersByTask['infokort.agent'], 'claude');
   assert.equal(providersByTask['brief.map'], 'claude');
-  assert.deepEqual(leakedSockets, []);
+  assert.deepEqual(outsideSockets, []);
 });
 
 test('legacy Infokort turns send today\'s Claude request: raw tools as written, configured model and effort', async () => {
@@ -526,8 +531,21 @@ test('safe mode: legacy and prod-profile calls never reach a provider; each is g
     assert.deepEqual(prod.data, {});
     const turn = await facade.turn({ task: 'infokort.agent', system: 's', messages: [{ role: 'user', content: 'hi' }], tools: [] });
     assert.equal(turn.stopReason, 'end_turn');
+    // The Gemini call sites on the legacy profile: their own key check refuses and records the intent.
+    facade.setRoutesOverride({ profile: 'legacy' });
+    const intentsBefore = safeMode.readRecentIntents(200).filter((intent) => intent.kind === 'aiCalls').length;
+    const png = await tinyPng();
+    await extractIngestText({ buffer: png, originalName: 'meny.png', mimeType: 'image/png' });
+    assert.equal(await askVisionIfSigned({ bytes: png, mimeType: 'image/png' }), null);
+    const links = await askGeminiForLinks({ businessName: CLIENT.businessName, city: 'Bergen' }, ['instagramUrl'], { fetchImpl: globalThis.fetch });
+    assert.equal(links.reason, 'no-gemini-key');
     registerHubLlm(null);
     assert.equal(providerCalls.length, 0, 'no provider request left the process');
+    const allIntents = safeMode.readRecentIntents(200).filter((intent) => intent.kind === 'aiCalls');
+    const geminiIntents = allIntents.slice(0, allIntents.length - intentsBefore); // newest first
+    for (const site of ['products-ingest', 'inspect-contract', 'link-discovery']) {
+      assert.ok(geminiIntents.some((intent) => String(intent.detail || '').includes(site)), `${site}: ${JSON.stringify(geminiIntents)}`);
+    }
     const intents = safeMode.readRecentIntents(50).filter((intent) => intent.kind === 'aiCalls');
     assert.ok(intents.length >= 3, JSON.stringify(intents));
     const rows = ledgerRows(dir);
@@ -561,6 +579,218 @@ test('safe-mode cassette keys tell different inputs apart (Gemini images, provid
     (error) => error.code === 'route_unavailable',
   );
   assert.equal(ledgerRows(dir).length, 0, 'no call, no row');
-  const native = await import('../lib/llm/index.js');
-  assert.match(String(native.createHubLlm), /payload: request\.payload \|\| null/);
+
+  // A provider-specific call that its route allows: the guard's cassette key follows the payload.
+  const { aiCassetteKey } = await import('../lib/safe-mode-ai.js');
+  const keys = [];
+  const recordingGuard = async ({ provider, request, real }) => {
+    keys.push(aiCassetteKey(provider, request));
+    return real();
+  };
+  const guarded = facadeAt(freshDir('native-guard'), { guard: recordingGuard });
+  guarded.setRoutesOverride({ profile: 'prod' });
+  const run = async () => ({ text: '{}', usage: { inputTokens: 10, outputTokens: 2 }, servedModel: 'claude-haiku-5-5' });
+  for (const user of ['Find links for business A.', 'Find links for business B.', 'Find links for business A.']) {
+    await guarded.native({ task: 'sales-link.discover', provider: 'claude', payload: { user }, run });
+  }
+  assert.equal(keys.length, 3);
+  assert.notEqual(keys[0], keys[1], 'different payloads never share a cassette');
+  assert.equal(keys[0], keys[2], 'the same payload replays the same cassette');
+});
+
+// ---------------------------------------------------------------- one row per attempt, shared data dir, alerts
+test('a legacy call that tries twice writes a ledger row for each attempt (grounded search retry, next media model)', async () => {
+  const dir = freshDir('attempts');
+  registerHubLlm(facadeAt(dir));
+  providerCalls.length = 0;
+  try {
+    // The grounded call with thinkingConfig fails once; the retry without it answers.
+    geminiFailures.push(400);
+    const links = await askGeminiForLinks({ businessName: CLIENT.businessName, city: 'Bergen', salesClientId: 'c-att' }, ['instagramUrl'], { fetchImpl: globalThis.fetch });
+    assert.equal(links.reason, 'gemini');
+    // The media brief's first model answers 503; the helper moves on to the next model.
+    geminiFailures.push(503);
+    const brief = await transcribeClientMedia({ buffer: await tinyJpeg(), fileName: 'kaffe.jpg', context: { businessName: CLIENT.businessName } });
+    assert.ok(brief, 'the second model gave the brief');
+  } finally {
+    registerHubLlm(null);
+    geminiFailures.length = 0;
+  }
+  const rows = ledgerRows(dir);
+  assert.equal(rows.length, providerCalls.length, `one row per provider call (${rows.length} rows, ${providerCalls.length} calls)`);
+  const links = rows.filter((row) => row.task === 'sales-link.discover');
+  assert.deepEqual(links.map((row) => [row.status, row.attempt]), [['error', 1], ['ok', 2]]);
+  assert.equal(links[0].salesClientId, 'c-att');
+  assert.ok(links[0].error?.message, 'the failed attempt keeps its error');
+  const media = rows.filter((row) => row.task === 'assistant.media-brief');
+  assert.deepEqual(media.map((row) => [row.status, row.attempt]), [['error', 1], ['ok', 2]]);
+  assert.deepEqual(media.map((row) => row.requestedModel), ['gemini-2.5-flash-lite', 'gemini-2.5-flash']);
+  assert.ok(media[1].inputTokens > 0, 'the answer that was used is priced');
+});
+
+test('a DeepSeek answer that is not JSON is recorded as an error row with its tokens and price', async () => {
+  const dir = freshDir('bad-json');
+  registerHubLlm(facadeAt(dir));
+  deepseekContent = '{"need": "en ny nettside", "project": [';
+  try {
+    await assert.rejects(
+      () => deepseekChatJson({ task: 'inbox.categorize', system: 's', user: 'u', ctx: { salesClientId: 'c-bad' } }),
+      (error) => error instanceof DeepseekError && error.code === 'bad-json',
+    );
+  } finally {
+    deepseekContent = null;
+    registerHubLlm(null);
+  }
+  const [row] = ledgerRows(dir);
+  assert.equal(row.status, 'error');
+  assert.equal(row.error.code, 'bad-json');
+  assert.equal(row.inputTokens, 900);
+  assert.equal(row.outputTokens, 200);
+  assert.ok(row.usd > 0, 'billed tokens are priced');
+  assert.equal(row.stopReason, 'max_tokens', 'the cut-off answer says why');
+});
+
+test('two hub processes on one data dir: totals, budgets and spend-summary.json count every process\'s rows', async () => {
+  const dir = freshDir('two-process');
+  const { createHubLedger } = await import('../lib/llm/ledger.js');
+  const row = (task, salesClientId) => core.buildLedgerRow({ at: new Date().toISOString(), repo: 'hub', task, provider: 'deepseek', requestedModel: 'deepseek-chat', profile: 'legacy', ctx: { salesClientId }, usage: { inputTokens: 1_000_000, outputTokens: 0 } });
+  const parent = createHubLedger({ dataDir: dir, log: null });
+  parent.append(row('offer.reflect-contract', 'c-parent'));
+  const one = parent.summary();
+  assert.equal(one.calls, 1);
+
+  // Another process appends three rows for another client.
+  const ledgerUrl = new URL('../lib/llm/ledger.js', import.meta.url).href;
+  const coreUrl = new URL('../packages/suite/core/llm/index.js', import.meta.url).href;
+  const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    const { createHubLedger } = await import(${JSON.stringify(ledgerUrl)});
+    const core = await import(${JSON.stringify(coreUrl)});
+    const ledger = createHubLedger({ dataDir: process.argv[1], log: null });
+    for (let i = 0; i < 3; i += 1) ledger.append(core.buildLedgerRow({ at: new Date().toISOString(), repo: 'hub', task: 'inbox.categorize', provider: 'deepseek', requestedModel: 'deepseek-chat', profile: 'legacy', ctx: { salesClientId: 'c-child' }, usage: { inputTokens: 1000000, outputTokens: 0 } }));
+  `, dir], { encoding: 'utf8' });
+  assert.equal(child.status, 0, child.stderr);
+
+  const unit = one.monthUsd;
+  const seen = parent.summary();
+  assert.equal(seen.calls, 4, 'the parent counts the other process\'s rows');
+  assert.ok(Math.abs(seen.monthUsd - unit * 4) < 1e-9);
+  assert.ok(Math.abs(parent.spentUsd({ scope: 'clientMonth', ctx: { salesClientId: 'c-child' } }) - unit * 3) < 1e-9, 'budgets see the other process\'s client spend');
+  assert.ok(Math.abs(parent.spentUsd({ scope: 'hubDay', ctx: {} }) - unit * 4) < 1e-9);
+  parent.append(row('offer.reflect-contract', 'c-parent'));
+  const file = JSON.parse(readFileSync(join(dir, 'ai', 'spend-summary.json'), 'utf8'));
+  assert.equal(file.calls, 5, 'spend-summary.json holds every row on disk');
+  assert.ok(Math.abs(file.monthUsd - unit * 5) < 1e-9);
+  assert.deepEqual(createHubLedger({ dataDir: dir, log: null }).summary().calls, 5);
+});
+
+test('budget alerts: five calls over the cap write one alert per scope and client for the day', async () => {
+  const dir = freshDir('alert-dedupe');
+  writeFileSync(join(dir, 'ai-budgets.override.json'), JSON.stringify({ periodic: { hubDayUsd: 0.000001, clientMonthUsd: 0.000001 } }));
+  const warnings = [];
+  const facade = createHubLlm({ dataDir: dir, env: process.env, fetch: globalThis.fetch, log: { warn: (line) => warnings.push(line), log() {} } });
+  registerHubLlm(facade);
+  try {
+    for (let i = 0; i < 5; i += 1) await deepseekChatJson({ task: 'inbox.categorize', system: 's', user: `u${i}`, ctx: { salesClientId: 'c-cap' } });
+  } finally {
+    registerHubLlm(null);
+  }
+  const month = new Date().toISOString().slice(0, 7);
+  const alerts = readFileSync(join(dir, 'ai', `alerts-${month}.jsonl`), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+  assert.deepEqual(alerts.map((alert) => alert.scope).sort(), ['clientMonth', 'hubDay']);
+  assert.equal(warnings.filter((line) => /budget alert/.test(line)).length, 2);
+  // A second process (a fresh ledger on the same dir) does not write the same alerts again.
+  const other = createHubLlm({ dataDir: dir, env: process.env, fetch: globalThis.fetch, log: { warn() {}, log() {} } });
+  registerHubLlm(other);
+  try {
+    await deepseekChatJson({ task: 'inbox.categorize', system: 's', user: 'again', ctx: { salesClientId: 'c-cap' } });
+  } finally {
+    registerHubLlm(null);
+  }
+  assert.equal(readFileSync(join(dir, 'ai', `alerts-${month}.jsonl`), 'utf8').split('\n').filter(Boolean).length, 2);
+  assert.equal((await other.status()).spend.alerts.length, 2, 'status reads the alerts every process wrote');
+  assert.equal(ledgerRows(dir).length, 6, 'alerts never stop a call');
+});
+
+test('the data-dir off switch sends every call site directly: no facade, no ledger row, today\'s provider even on prod', async () => {
+  const dir = freshDir('off-switch');
+  const facade = facadeAt(dir);
+  facade.setRoutesOverride({ profile: 'prod' });
+  registerHubLlm(facade);
+  providerCalls.length = 0;
+  try {
+    assert.equal(hubLlm(), facade);
+    const off = facade.setRoutesOverride({ facade: false }, { by: 'admin:test' });
+    assert.equal(off.ok, true);
+    assert.equal(off.profile, 'prod', 'the saved profile stays');
+    assert.equal(facade.enabled(), false);
+    assert.equal(hubLlm(), null);
+    await offerAi.fillOfferFromTranscript({ client: CLIENT, meeting: MEETING, meetings: [MEETING] });
+    assert.deepEqual(providerCalls.map((call) => call.provider), ['deepseek'], 'the call site ran its own request');
+    assert.equal(ledgerRows(dir).length, 0, 'nothing is recorded while the facade is off');
+    assert.equal(aiTaskConfigured('offer.fill-from-transcript', () => true), true, 'gates use the call site\'s own check');
+    assert.equal(facade.setRoutesOverride({ profile: 'legacy' }).code, 'facade_off');
+    // A broken override does not stop the off switch.
+    writeFileSync(join(dir, 'ai-routes.override.json'), JSON.stringify({ version: 1, profile: 'prod', facade: false, profiles: { prod: { default: 'claude:claude-haiku-9' } } }));
+    facade.reload();
+    assert.equal(facade.enabled(), false);
+    assert.equal(facade.setRoutesOverride({ facade: true }).ok, true);
+    assert.equal(hubLlm(), facade);
+    writeFileSync(join(dir, 'ai-routes.override.json'), JSON.stringify({ version: 1, profile: 'prod' }));
+    facade.reload();
+    providerCalls.length = 0;
+    await offerAi.fillOfferFromTranscript({ client: CLIENT, meeting: MEETING, meetings: [MEETING] });
+    assert.deepEqual(providerCalls.map((call) => call.provider), ['claude'], 'back on: the prod route applies again');
+    assert.equal(ledgerRows(dir).length, 1);
+  } finally {
+    registerHubLlm(null);
+  }
+});
+
+test('the override may choose test, replay or record only in safe mode or a local run with AI_PROFILE', () => {
+  const dir = freshDir('profile-allowlist');
+  const facade = facadeAt(dir);
+  for (const profile of ['record', 'replay', 'test']) {
+    const result = facade.setRoutesOverride({ profile });
+    assert.equal(result.ok, false, profile);
+    assert.match(result.errors.join(' '), /safe mode/);
+  }
+  assert.equal(existsSync(join(dir, 'ai-routes.override.json')), false);
+  const local = createHubLlm({ dataDir: dir, env: { ...process.env, AI_PROFILE: 'test' }, fetch: globalThis.fetch, log: { warn() {} } });
+  assert.equal(local.setRoutesOverride({ profile: 'record' }).ok, true, 'a local run may save it');
+  facade.reload();
+  assert.equal(facade.profile(), 'legacy', 'outside safe mode a saved record profile is not applied');
+});
+
+test('aiUnavailableMessage keeps the call site\'s message on legacy and names no provider on other profiles', async () => {
+  const { aiUnavailableMessage } = await import('../lib/llm-hooks.js');
+  const legacyMessage = 'DeepSeek er ikke konfigurert (DEEPSEEK_API_KEY mangler).';
+  assert.equal(aiUnavailableMessage('offer.fill-from-transcript', legacyMessage), legacyMessage, 'no facade');
+  const facade = facadeAt(freshDir('message'));
+  registerHubLlm(facade);
+  try {
+    assert.equal(aiUnavailableMessage('offer.fill-from-transcript', legacyMessage), legacyMessage, 'legacy profile');
+    facade.setRoutesOverride({ profile: 'prod' });
+    assert.doesNotMatch(aiUnavailableMessage('offer.fill-from-transcript', legacyMessage), /DeepSeek/);
+  } finally {
+    registerHubLlm(null);
+  }
+});
+
+test('status probes run side by side and each gives up after its time limit', { timeout: 10_000 }, async () => {
+  const { createHealth } = await import('../lib/llm/health.js');
+  const started = [];
+  const hang = (name) => () => {
+    started.push(name);
+    return new Promise(() => {});
+  };
+  const health = createHealth({
+    env: { ANTHROPIC_API_KEY: 'k', DEEPSEEK_API_KEY: 'k', GEMINI_API_KEY: 'k' },
+    probes: { claude: hang('claude'), deepseek: hang('deepseek'), gemini: hang('gemini') },
+    timeoutMs: 40,
+  });
+  const pending = health.providers({ runProbe: true });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(started.sort(), ['claude', 'deepseek', 'gemini'], 'all three started before any finished');
+  const out = await pending;
+  for (const name of ['claude', 'deepseek', 'gemini']) assert.equal(out[name].probe.error, 'timeout', name);
 });

@@ -159,7 +159,8 @@ test('the safe-mode guard (aiCalls) is on every provider call path', () => {
     assert.match(read(file), /guard = guardAiCall/, `${file} defaults to the hub guard`);
   }
   const facade = read('lib/llm/index.js');
-  assert.match(facade, /async function native[\s\S]*?guardAiCall\(\{/, 'native calls go through the guard');
+  assert.match(facade, /guard = guardAiCall,/, 'the facade defaults to the hub guard');
+  assert.match(facade, /async function native[\s\S]*?await guard\(\{/, 'native calls go through the guard');
   // Gemini legacy calls keep their key check, which records the aiCalls intent in safe mode.
   for (const file of ['lib/ai-assistant/products-ingest.js', 'lib/inbox-bot/inspect-contract.js', 'lib/sales-link-discovery.js', 'lib/ai-assistant/media-transcript.js']) {
     assert.match(read(file), /aiKeyOrBlank\('gemini'/, file);
@@ -218,6 +219,8 @@ test('the only server.js changes for the facade are the boot import, the admin r
   assert.match(server, /if \(event === 'run\.ai\.spend'\) \{\n\s+const spend = applyRunAiSpendCallback\(\{ sales, client, runId: nextRunId, body: req\.body \}\);/);
   assert.doesNotMatch(server, /isDeepseekConfigured\(\)/, 'every DeepSeek gate asks the facade for its task');
   assert.equal((server.match(/aiTaskConfigured\('offer\.(fill-from-transcript|reflect-contract)', isDeepseekConfigured\)/g) || []).length, 5);
+  // The two 503 answers name no provider once the hub runs another profile.
+  assert.equal((server.match(/aiUnavailableMessage\('offer\.(fill-from-transcript|reflect-contract)', 'DeepSeek er ikke konfigurert \(DEEPSEEK_API_KEY mangler\)\.'\)/g) || []).length, 2);
 });
 
 test('Superadmin System safety shows the AI card, which reads only the AI admin endpoints', () => {
