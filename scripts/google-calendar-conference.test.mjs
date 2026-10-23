@@ -90,8 +90,18 @@ function bookedEvent(id, { start = OLD_START, conferenceData = ROOM_CONFERENCE }
   };
 }
 
-/** Google Calendar v3 events stub with just enough behaviour for upsertMeetingEvent. */
-function fakeCalendar({ events = {}, organizer = HOST, refuseConferenceCopy = false, patchKeepsStart = false } = {}) {
+/**
+ * Google Calendar v3 events stub with just enough behaviour for upsertMeetingEvent.
+ * `attachOtherRoom` makes Google put that room on an event sent with a kept conference.
+ */
+function fakeCalendar({
+  events = {},
+  organizer = HOST,
+  refuseConferenceCopy = false,
+  patchKeepsStart = false,
+  attachOtherRoom = '',
+  failDeletes = false,
+} = {}) {
   const store = new Map(Object.entries(events).map(([id, event]) => [id, structuredClone(event)]));
   const calls = [];
   let created = 0;
@@ -105,6 +115,9 @@ function fakeCalendar({ events = {}, organizer = HOST, refuseConferenceCopy = fa
       return { conferenceId: `new-mint-00${minted}`, conferenceSolution: { key: { type: 'hangoutsMeet' } }, entryPoints: [{ entryPointType: 'video', uri }] };
     }
     if (refuseConferenceCopy) throw googleError(Number(refuseConferenceCopy), 'Invalid conference data.');
+    if (attachOtherRoom) {
+      return { conferenceId: attachOtherRoom.split('/').pop(), conferenceSolution: { key: { type: 'hangoutsMeet' } }, entryPoints: [{ entryPointType: 'video', uri: attachOtherRoom }] };
+    }
     return structuredClone(data);
   };
   const save = (event, conferenceData) => {
@@ -126,6 +139,7 @@ function fakeCalendar({ events = {}, organizer = HOST, refuseConferenceCopy = fa
       },
       async delete({ eventId, sendUpdates }) {
         calls.push({ op: 'delete', eventId, sendUpdates });
+        if (failDeletes) throw googleError(500, 'Backend Error');
         const event = store.get(eventId);
         if (!event) throw googleError(410, 'Resource has been deleted');
         store.set(eventId, { ...event, status: 'cancelled' });
@@ -243,6 +257,48 @@ test('a patch that leaves the old start is replaced by an insert that keeps the 
   assert.equal(insert.conferenceDataVersion, 1);
   assert.deepEqual(insert.requestBody.conferenceData, ROOM_COPY);
   assert.equal(meta.meetLink, ROOM);
+});
+
+test('a patch that minted a room but left the old start is replaced by an insert with that same room', async () => {
+  const fake = fakeCalendar({ events: { 'evt-6': bookedEvent('evt-6', { conferenceData: null }) }, patchKeepsStart: true });
+  useFakes({ calendarApi: fake.api });
+  const meta = await calendar.upsertMeetingEvent(bookedClient({ calendar: { eventId: 'evt-6', meetLink: '' } }), 'evt-6', 'sales:rep-1', { sendUpdates: 'none' });
+  const patch = fake.calls.find((call) => call.op === 'patch');
+  assert.ok(patch.requestBody.conferenceData.createRequest, 'the patch asks for a room');
+  assert.ok(fake.ops().includes('delete:evt-6'));
+  const [insert] = insertsOf(fake);
+  assert.equal(insert.conferenceDataVersion, 1);
+  assert.equal(insert.requestBody.conferenceData.createRequest, undefined, 'no second room is requested');
+  assert.equal(insert.requestBody.conferenceData.conferenceId, 'new-mint-001');
+  assert.equal(insert.requestBody.location, 'https://meet.google.com/new-mint-001');
+  assert.equal(meta.meetLink, 'https://meet.google.com/new-mint-001');
+  assert.equal(fake.store.get(meta.eventId).hangoutLink, 'https://meet.google.com/new-mint-001');
+});
+
+test('if Google attaches another room than the kept one, the event is inserted again with the kept link in location', async () => {
+  const otherRoom = 'https://meet.google.com/zzz-yyyy-xxx';
+  const fake = fakeCalendar({ attachOtherRoom: otherRoom });
+  useFakes({ calendarApi: fake.api });
+  const meta = await calendar.upsertMeetingEvent(bookedClient(), '', 'sales:rep-1', { sendUpdates: 'all', includeAttendees: true, lockedMeetLink: ROOM });
+  const [withConference, plain] = insertsOf(fake);
+  assert.deepEqual(withConference.requestBody.conferenceData, ROOM_FROM_CODE);
+  assert.ok(
+    fake.calls.some((call) => call.op === 'delete' && call.eventId === 'evt-new-1' && call.sendUpdates === 'all'),
+    'the event with the other room is taken back, and the guests are told',
+  );
+  assert.equal(plain.conferenceDataVersion, 0);
+  assert.equal(plain.requestBody.conferenceData, undefined);
+  assert.equal(plain.requestBody.location, ROOM);
+  assert.deepEqual([meta.eventId, meta.meetLink], ['evt-new-2', ROOM]);
+  await meet.settleMeetRoomOpensForTests();
+  mock.restoreAll();
+
+  // If that event cannot be taken back it stays (one event beats two); the hub keeps the mailed room.
+  const stuck = fakeCalendar({ attachOtherRoom: otherRoom, failDeletes: true });
+  useFakes({ calendarApi: stuck.api });
+  const kept = await calendar.upsertMeetingEvent(bookedClient(), '', 'sales:rep-1', { sendUpdates: 'all', includeAttendees: true, lockedMeetLink: ROOM });
+  assert.equal(insertsOf(stuck).length, 1);
+  assert.deepEqual([kept.eventId, kept.meetLink], ['evt-new-1', ROOM]);
 });
 
 test('an event that is gone (or lived on another mailbox) is re-inserted with the room built from its code', async () => {
