@@ -16,7 +16,7 @@ const golden = JSON.parse(readFileSync(join(root, 'scripts', 'fixtures', 'delive
 const vocab = await import('../packages/suite/core/delivery/vocab.js');
 const tiers = await import('../lib/website-tiers.js');
 const { featuresFromPlan } = await import('../data/hub-model.js');
-const { buildOfferFromMeetingQuote } = await import('../lib/offer-from-quote.js');
+const { buildOfferFromMeetingQuote, isStructuralIncludeLine } = await import('../lib/offer-from-quote.js');
 const sitePlan = await import('../lib/site-plan.js');
 const model = await import('../lib/site-plan-model.js');
 const { planIdForProfile, analyticsAccessFor } = await import('../lib/client-analytics-service.js');
@@ -120,6 +120,46 @@ test('legacy offers: a plan is derived from exact service lines; unknown lines a
   assert.deepEqual(custom.services, ['site', 'blog', 'ecom']);
   assert.equal(custom.derived, true);
   assert.equal(custom.needsConfirmation, true);
+});
+
+// Quotes whose packages carry every line kind the calculator writes: extra pages, the one-time
+// note, one-time fees and ticked services on top of a tier.
+const LINE_QUOTES = {
+  extraPagesMonthly: { tierId: 'seo', selected: ['email'], pages: 9 },
+  extraPagesOnce: { tierId: 'seo', oneTime: true, selected: [], pages: 9, oneTimeAddOns: ['pos'] },
+  oneExtraPage: { tierId: 'starter', selected: ['seo'], pages: 6 },
+  shopOnceDual: { tierId: 'nettbutikk', oneTime: true, selected: [], pages: 14, oneTimeAddOns: ['thirdpartyhost'], altQuote: { tierId: 'starter', oneTime: true, selected: ['blog'], pages: 8 } },
+  customOnce: { tierId: 'custom', customMode: true, oneTime: true, selected: ['hosting', 'contact', 'ecom', 'seo'], pages: 12, oneTimeAddOns: ['pos'] },
+};
+const comparable = (plan) => ({ tierId: plan.tierId, services: plan.services, pages: plan.pages, oneTimeAddOns: plan.oneTimeAddOns, billing: plan.billing });
+
+test('legacy offers: lines the calculator writes (extra pages, one-time note and fees) are neutral', () => {
+  for (const line of ['1 ekstra side utover 5 inkludert', '2 ekstra sider utover 7 inkludert', 'Engangsbetaling (månedspris × 9)', 'Engangsbetaling (månedspris × 9,5)']) {
+    assert.equal(isStructuralIncludeLine(line), true, line);
+  }
+  for (const line of ['d ekstra sider utover d inkludert', 'Engangsbetaling månedspris × 9', 'Something agreed in the meeting']) {
+    assert.equal(isStructuralIncludeLine(line), false, line);
+  }
+  for (const [name, input] of Object.entries(LINE_QUOTES)) {
+    const built = buildOfferFromMeetingQuote(input);
+    built.alternatives.forEach((alternative, index) => {
+      const { plan, pricing: _pricing, ...legacy } = alternative;
+      const derived = sitePlan.derivePlanFromOfferAlternative(legacy, { tierId: legacy.tierId, billing: legacy.billing });
+      assert.deepEqual(derived.unknownLines, [], `${name}[${index}]: every line is read`);
+      assert.equal(derived.needsConfirmation, plan.tierId === 'custom', `${name}[${index}]: only custom offers need a confirmation click`);
+      assert.deepEqual(comparable(derived), comparable(plan), `${name}[${index}]: the derived plan equals the quote's plan`);
+    });
+  }
+});
+
+test('legacy offers: every package built before offer plans derives without unread lines', () => {
+  for (const [name, built] of Object.entries(golden.quotes)) {
+    for (const [index, alternative] of built.alternatives.entries()) {
+      const derived = sitePlan.derivePlanFromOfferAlternative(alternative, { tierId: alternative.tierId, billing: alternative.billing });
+      assert.deepEqual(derived.unknownLines, [], `${name}[${index}]`);
+      assert.equal(derived.needsConfirmation, derived.tierId === 'custom', `${name}[${index}]`);
+    }
+  }
 });
 
 const NOW = '2026-10-23T12:00:00.000Z';
