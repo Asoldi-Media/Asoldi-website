@@ -323,6 +323,19 @@ test('HS-4: the redeem route looks the key up across all sites without stopping 
   }, { getAllSites: () => all });
 });
 
+test('HS-4: registering the routes without the all-sites lookup throws instead of answering every redeem with 401', () => {
+  const app = { get() {}, post() {}, put() {}, delete() {} };
+  const adminAuth = (_req, _res, next) => next();
+  const getSiteById = () => null;
+  assert.throws(() => registerCmsSsoRoutes(app, { adminAuth, getSiteById }), /getAllSites are required/);
+  assert.throws(() => registerCmsSsoRoutes(app, { adminAuth, getSiteById, getSiteByKey: () => site }), /getAllSites are required/,
+    'the earlier single-site lookup is no longer enough');
+  assert.throws(() => registerCmsSsoRoutes(app, { adminAuth, getSiteById, getAllSites: ALL }), /getAllSites are required/, 'a list, not a function');
+  assert.throws(() => registerCmsSsoRoutes(app, { getSiteById, getAllSites: () => ALL }), /required/);
+  assert.throws(() => registerCmsSsoRoutes(app, { adminAuth, getAllSites: () => ALL }), /required/);
+  assert.doesNotThrow(() => registerCmsSsoRoutes(app, { adminAuth, getSiteById, getAllSites: () => ALL }));
+});
+
 test('HS-4: limiter counts pairs and addresses in a sliding window with bounded memory', () => {
   let t = 0;
   const limiter = createRedeemLimiter({ windowMs: 1000, maxPerPair: 3, maxPerIp: 5, maxKeys: 50, now: () => t });
