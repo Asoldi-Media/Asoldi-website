@@ -537,3 +537,30 @@ test('safe mode: legacy and prod-profile calls never reach a provider; each is g
     safeMode.installSafeMode({ env: { HOSTINGER: '1' }, dataDir: safeDir, log: null, egress: false });
   }
 });
+
+test('safe-mode cassette keys tell different inputs apart (Gemini images, provider-specific calls)', async () => {
+  const { createGeminiAdapter } = await import('../lib/llm/providers/gemini.js');
+  const seen = [];
+  const guard = async ({ request }) => {
+    seen.push(JSON.stringify(request));
+    return { text: '{}', usage: {}, servedModel: 'gemini-2.5-flash', response: {} };
+  };
+  const adapter = createGeminiAdapter({ env: { GEMINI_API_KEY: 'k' }, guard });
+  const call = { task: 'assistant.media-brief', model: 'gemini-2.5-flash', kind: 'json', user: 'Describe.', maxTokens: 1200 };
+  await adapter({ ...call, images: [{ mime: 'image/jpeg', base64: (await tinyJpeg()).toString('base64') }] });
+  await adapter({ ...call, images: [{ mime: 'image/png', base64: (await tinyPng()).toString('base64') }] });
+  assert.notEqual(seen[0], seen[1]);
+  assert.doesNotMatch(seen[0], /\/9j\//, 'the key holds a hash, not the image');
+
+  const dir = freshDir('native-key');
+  const facade = facadeAt(dir);
+  facade.setRoutesOverride({ profile: 'prod' });
+  // sales-link.discover is business data; Gemini is not paid-confirmed, so the route has no Gemini.
+  await assert.rejects(
+    () => facade.native({ task: 'sales-link.discover', provider: 'gemini', payload: { user: 'Find links for one business.' }, run: async () => ({}) }),
+    (error) => error.code === 'route_unavailable',
+  );
+  assert.equal(ledgerRows(dir).length, 0, 'no call, no row');
+  const native = await import('../lib/llm/index.js');
+  assert.match(String(native.createHubLlm), /payload: request\.payload \|\| null/);
+});
