@@ -178,6 +178,46 @@ test('holder: get({ fresh: true }) re-reads the file at once, at most once per f
   }
 });
 
+test('holder: a clock that steps back an hour still re-reads the file (injected clock)', () => {
+  const dir = tempDir();
+  let clock = 9_000_000;
+  const reader = hardening.createHubSecretHolder({ dataDir: dir, name: 'admin-secret', now: () => clock });
+  const writer = hardening.createHubSecretHolder({ dataDir: dir, name: 'admin-secret', now: () => 0 });
+  const before = reader.get();
+  clock -= 3_600_000;
+  const after = writer.rotate();
+  assert.notEqual(after, before);
+  assert.equal(reader.get(), after, 'a step back counts as a re-read being due, not as an hour to wait');
+  // From the new time on, the normal interval applies again.
+  const third = writer.rotate();
+  clock += 500;
+  assert.equal(reader.get(), after, 'within refreshMs of the last read: no read');
+  clock += 600;
+  assert.equal(reader.get(), third);
+  // The rate limit of fresh reads also restarts after a step back.
+  const fourth = writer.rotate();
+  clock -= 10_000;
+  assert.equal(reader.get({ fresh: true }), fourth);
+});
+
+test('holder: the default clock is monotonic, so a wall-clock step back neither pauses nor floods the re-reads', async () => {
+  const dir = tempDir();
+  const reader = hardening.createHubSecretHolder({ dataDir: dir, name: 'admin-secret', refreshMs: 300 });
+  const writer = hardening.createHubSecretHolder({ dataDir: dir, name: 'admin-secret' });
+  const before = reader.get();
+  const wallClock = Date.now;
+  Date.now = () => wallClock() - 3_600_000;
+  try {
+    const after = writer.rotate();
+    assert.equal(reader.get(), before, 'within refreshMs of the last read: no read, whatever the wall clock says');
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    assert.equal(reader.get(), after, 'refreshMs later the rotation is picked up');
+  } finally {
+    Date.now = wallClock;
+  }
+  assert.equal(typeof hardening.monotonicMs(), 'number');
+});
+
 test('password confirmer: wrong passwords count toward the limit, the right one clears them', async () => {
   const limiter = hardening.createLoginLimiter();
   const confirm = hardening.createPasswordConfirmer({
