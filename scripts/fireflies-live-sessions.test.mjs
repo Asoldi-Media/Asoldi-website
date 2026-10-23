@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -9,6 +9,7 @@ process.env.APP_DATA_DIR = dataDir;
 test.after(() => rmSync(dataDir, { recursive: true, force: true }));
 
 const live = await import('../lib/fireflies-live-sessions.js');
+const { mergeRecordingState } = await import('../lib/fireflies-recording-state.js');
 const { liveJoinMeetingId } = await import('../data/sales.js');
 const { FIREFLIES_LIVE_JOIN_DURATION_MINUTES } = await import('../lib/fireflies-webhook.js');
 const { clearJsonCacheForTests } = await import('../data/atomic-json.js');
@@ -276,8 +277,10 @@ test('seen then gone early: one rejoin; gone again or near the end: ended', () =
   assert.deepEqual(dispatches(gone).map((row) => row.kind), ['rejoin']);
   assert.equal(gone.session.message, live.LIVE_JOIN_MESSAGES.dropped);
   session = applyLiveJoinAttempt(gone.session, { at: iso(20), kind: 'rejoin', ok: true });
-  assert.equal(session.state, 'dispatched');
+  assert.equal(session.state, 'ended', 'a rejoin knock does not claim the bot is on its way in');
+  assert.equal(session.message, live.LIVE_JOIN_MESSAGES.rejoined);
   session = planAt(22, session, { active: [activeRow(ROOM, { id: 'ff-meeting-2' })] }).session;
+  assert.equal(session.state, 'recording');
   assert.deepEqual(session.ffMeetingIds, ['ff-meeting-1', 'ff-meeting-2']);
   session = planAt(30, session, { active: [] }).session;
   const again = planAt(32, session, { active: [] });
@@ -363,13 +366,50 @@ test('a rate-limited send is not counted as a knock: the session stays a first d
   assert.deepEqual(dispatches(planAt(-2, session)).map((row) => row.kind), ['first']);
 });
 
-test('the bot leaves one minute before the next booked meeting is sent in', () => {
+function otherRoom(id, minutes, link, { confirmed = true } = {}) {
+  return sessionFor(salesClient({
+    id,
+    meetingAt: iso(minutes),
+    calendar: { meetLink: link, confirmedMeetLink: link },
+    reminders: confirmed ? { thankYouSentAt: iso(-24 * 60) } : {},
+  }), at(minutes - 60));
+}
+
+test('the bot is asked to stay 120 minutes whatever else is booked', () => {
   const session = sessionFor(salesClient());
-  const next = sessionFor(salesClient({ id: 'client-2', meetingAt: iso(60), calendar: { meetLink: ROOM_B, confirmedMeetLink: ROOM_B } }));
-  const plan = planAt(-3, session, { others: [next] });
-  assert.equal(dispatches(plan)[0].durationMinutes, 59);
-  const soon = sessionFor(salesClient({ id: 'client-3', meetingAt: iso(10), calendar: { meetLink: ROOM_C, confirmedMeetLink: ROOM_C } }));
-  assert.equal(dispatches(planAt(-3, session, { others: [soon] }))[0].durationMinutes, 15, 'never under the minimum');
+  const durations = (others) => dispatches(planAt(-3, session, { others })).map((row) => row.durationMinutes);
+  assert.deepEqual(durations([otherRoom('client-2', 60, ROOM_B)]), [120], 'back to back');
+  assert.deepEqual(durations([otherRoom('client-2', 0, ROOM_B)]), [120, 120], 'two at the same time');
+  assert.deepEqual(durations([otherRoom('client-2', 30, ROOM_B)]), [120], 'overlapping');
+  assert.equal(live.liveJoinDurationMinutes(session, [otherRoom('client-2', 60, ROOM_B)], at(-3)), 120);
+  // server.js passes the optional one-bot switch; it is off unless FIREFLIES_LIVE_JOIN_ONE_BOT is set.
+  const server = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  assert.match(server, /parseBoolean\(process\.env\.FIREFLIES_LIVE_JOIN_ONE_BOT, false\)/);
+  assert.match(server, /oneBot: firefliesLiveJoinOneBot\(\)/);
+});
+
+test('two meetings at the same time in other rooms both keep 120 minutes and both get their continuation', () => {
+  let a = dispatched(sessionFor(salesClient()), -3);
+  let b = dispatched(otherRoom('client-2', 0, ROOM_B), -3);
+  const rows = [activeRow(ROOM, { endTime: iso(117) }), activeRow(ROOM_B, { id: 'ff-meeting-b', endTime: iso(117) })];
+  for (const minutes of [0, 60, 110]) {
+    const plan = planLiveSessionTick({ sessions: [a, b], activeMeetings: rows, nowMs: at(minutes), oneBot: true });
+    [a, b] = plan.sessions;
+  }
+  const plan = planLiveSessionTick({ sessions: [a, b], activeMeetings: rows, nowMs: at(114), oneBot: true });
+  assert.deepEqual(dispatches(plan).map((row) => `${row.kind}:${row.durationMinutes}`), ['continuation:120', 'continuation:120']);
+});
+
+test('one-bot plans (opt-in): the bot leaves before the next meeting that starts after this one\'s booked time', () => {
+  const session = sessionFor(salesClient());
+  const duration = (others, minutes = -3) => live.liveJoinDurationMinutes(session, others, at(minutes), { oneBot: true });
+  assert.equal(duration([otherRoom('client-2', 60, ROOM_B)]), 59, 'back to back: gone one minute before the next first send');
+  assert.equal(duration([otherRoom('client-2', 0, ROOM_B)]), 120, 'a meeting at the same time never shortens this one');
+  assert.equal(duration([otherRoom('client-2', 30, ROOM_B)]), 120, 'nor one that overlaps it');
+  assert.equal(duration([otherRoom('client-2', 60, ROOM_B, { confirmed: false })]), 120, 'nor a booking nobody was e-mailed');
+  assert.equal(duration([otherRoom('client-2', 60, ROOM_B)], 50), 15, 'never under the minimum');
+  const plan = planLiveSessionTick({ sessions: [session, otherRoom('client-2', 60, ROOM_B)], nowMs: at(-3), oneBot: true });
+  assert.equal(dispatches(plan).find((row) => row.key === session.key).durationMinutes, 59);
 });
 
 test('a queued manual send goes through the limiter, is not counted in the cap, and is dropped once the bot is in', () => {
@@ -397,6 +437,195 @@ test('a rep who marked the meeting held without recording stops every automatic 
   const session = { ...dispatched(sessionFor(salesClient()), -3), declinedAt: iso(0) };
   assert.equal(dispatches(planAt(1, session, { active: [] })).length, 0);
   assert.deepEqual(sessionsNeedingVerification([session], at(1)), []);
+});
+
+test('a bot in the room before the first-send window belongs to the earlier meeting there', () => {
+  // 13:00 moved to 13:30 in the same room while the 13:00 bot is still in: the 13:30 session must not adopt it.
+  const moved = sessionFor(salesClient({ meetingAt: iso(30) }), at(0));
+  const early = planAt(5, moved, { active: [activeRow()] });
+  assert.equal(early.session.state, 'scheduled');
+  assert.equal(early.session.firstSeenActiveAt, '');
+  assert.equal(planAt(8, early.session, { active: [] }).session.state, 'scheduled', 'and so nothing "left" either');
+  assert.deepEqual(dispatches(planAt(27, early.session, { active: [] })).map((row) => row.kind), ['first'], 'it gets its own T-3 knock');
+  // From T-3 the bot in the room is this meeting's too.
+  assert.equal(planAt(27, early.session, { active: [activeRow()] }).session.state, 'recording');
+});
+
+test('one knock per room: two sessions on one room never send in the same tick', () => {
+  // The 10:00 bot drops out at 10:15; the 10:20 meeting in the same room is due its first knock at 10:17.
+  let first = dispatched(sessionFor(salesClient()), -3);
+  first = planAt(0, first, { active: [activeRow()] }).session;
+  first = planAt(15, first, { active: [activeRow()] }).session;
+  const second = sessionFor(salesClient({ id: 'client-2', meetingAt: iso(20) }), at(0));
+  const plan = planLiveSessionTick({ sessions: [first, second], activeMeetings: [], nowMs: at(17) });
+  assert.deepEqual(dispatches(plan).map((row) => `${row.kind}:${row.key}`), [`first:${second.key}`]);
+  assert.deepEqual(plan.deferred, [{ key: first.key, kind: 'rejoin', reason: 'room' }]);
+  assert.equal(plan.sessions.find((row) => row.key === first.key).nextAttemptAt, iso(21));
+});
+
+test('a rep\'s "send again" waits four minutes after a knock', () => {
+  resetStore();
+  const client = salesClient();
+  live.upsertLiveSessionsForClient(client, { nowMs: at(-10) });
+  updateLiveSessionStore((store) => {
+    store.sessions[`${ROOM}|${T}`] = dispatched(store.sessions[`${ROOM}|${T}`], -3);
+    return store;
+  }, { nowMs: at(-3) });
+  const early = live.requestManualLiveJoin({ client, slotKey: `sales:${T}`, nowMs: at(-2) });
+  assert.equal(early.queued, false);
+  assert.equal(early.reason, 'just-sent');
+  assert.match(early.message, /fire minutter/);
+  assert.equal(early.recording.canResend, false);
+  assert.equal(live.presentLiveRecordings(client, { nowMs: at(1) })[0].canResend, true, 'four minutes later it may');
+  // A request already queued is held by the planner until the room is free.
+  const queued = { ...dispatched(sessionFor(client), -3), manualRequestedAt: iso(-2) };
+  const held = planAt(-2, queued, { active: [] });
+  assert.equal(dispatches(held).length, 0);
+  assert.deepEqual(held.deferred, [{ key: queued.key, kind: 'manual', reason: 'room' }]);
+  assert.equal(held.session.nextAttemptAt, iso(1));
+  assert.deepEqual(dispatches(planAt(1, queued, { active: [] })).map((row) => row.kind), ['manual']);
+});
+
+test('a late "send again" is followed through its lobby wait', () => {
+  let session = dispatched(sessionFor(salesClient()), -3);
+  for (const minutes of [1, 5, 15, 25]) session = dispatched(session, minutes, 'retry');
+  session = planAt(36, session, { active: [] }).session;
+  assert.equal(session.state, 'not-admitted');
+  // The meeting started 45 minutes late; the rep sends Fireflies at T+95 (the resend window runs to T+120).
+  const plan = planAt(95, { ...session, manualRequestedAt: iso(95) }, { active: [] });
+  assert.deepEqual(dispatches(plan).map((row) => row.kind), ['manual']);
+  session = applyLiveJoinAttempt(plan.session, { at: iso(95), kind: 'manual', ok: true });
+  assert.equal(session.state, 'dispatched');
+  assert.deepEqual(sessionsNeedingVerification([session], at(100)), [session.key]);
+  assert.equal(planAt(100, session, { active: [] }).session.state, 'dispatched', 'still inside its lobby wait');
+  assert.equal(planAt(96, session, { active: [activeRow(ROOM, { id: 'ff-late', startTime: iso(95), endTime: iso(215) })] }).session.state, 'recording');
+  assert.equal(planAt(106, session, { active: [] }).session.state, 'not-admitted');
+});
+
+test('a bot that leaves an early-ended meeting gets one quiet rejoin, and the card says ended again', () => {
+  let session = dispatched(sessionFor(salesClient()), -3);
+  session = planAt(-2, session, { active: [activeRow()] }).session;
+  session = planAt(29, session, { active: [activeRow()] }).session;
+  const gone = planAt(31, session, { active: [] });
+  assert.deepEqual(dispatches(gone).map((row) => row.kind), ['rejoin']);
+  session = applyLiveJoinAttempt(gone.session, { at: iso(31), kind: 'rejoin', ok: true });
+  assert.equal(session.state, 'ended');
+  assert.equal(session.message, live.LIVE_JOIN_MESSAGES.rejoined);
+  session = planAt(35, session, { active: [] }).session;
+  assert.equal(session.state, 'ended');
+  assert.equal(session.message, live.LIVE_JOIN_MESSAGES.rejoined, 'the knock still has its lobby wait');
+  session = planAt(44, session, { active: [] }).session;
+  assert.equal(session.state, 'ended');
+  assert.equal(session.message, live.LIVE_JOIN_MESSAGES.ended);
+  assert.equal(dispatches(planAt(45, session, { active: [] })).length, 0);
+});
+
+test('at the same start, a meeting the client was e-mailed gets the last free send first', () => {
+  const unconfirmed = dispatched(sessionFor(salesClient()), -3);
+  const confirmed = dispatched(otherRoom('client-2', 0, ROOM_B), -3);
+  assert.equal(unconfirmed.confirmed, false);
+  assert.equal(confirmed.confirmed, true);
+  const limiter = { calls: [{ at: iso(-3), key: unconfirmed.key, kind: 'first' }, { at: iso(-3), key: confirmed.key, kind: 'first' }] };
+  const plan = planLiveSessionTick({ sessions: [unconfirmed, confirmed], activeMeetings: [], nowMs: at(1), limiter });
+  assert.deepEqual(dispatches(plan).map((row) => row.key), [confirmed.key]);
+  assert.deepEqual(plan.deferred.map((row) => `${row.key}:${row.reason}`), [`${unconfirmed.key}:limit`]);
+});
+
+test('a continuation bot is announced until it is the one in the room', () => {
+  let session = dispatched(sessionFor(salesClient()), -3);
+  const oldBot = activeRow(ROOM, { startTime: iso(-3), endTime: iso(117) });
+  session = planAt(0, session, { active: [oldBot] }).session;
+  const due = planAt(114, session, { active: [oldBot] });
+  assert.deepEqual(dispatches(due).map((row) => row.kind), ['continuation']);
+  session = applyLiveJoinAttempt(due.session, { at: iso(114), kind: 'continuation', ok: true });
+  assert.equal(session.message, live.LIVE_JOIN_MESSAGES.continuation);
+  assert.equal(planAt(115, session, { active: [oldBot] }).session.message, live.LIVE_JOIN_MESSAGES.continuation);
+  const newBot = activeRow(ROOM, { id: 'ff-meeting-2', startTime: iso(115), endTime: iso(235) });
+  const both = planAt(116, session, { active: [oldBot, newBot] }).session;
+  assert.equal(both.message, live.LIVE_JOIN_MESSAGES.recording);
+  assert.equal(both.ffMeetingId, 'ff-meeting-2');
+});
+
+test('a send an older hub (or a lost store) made is followed up, not reported as never sent', () => {
+  const stub = `live:client-1:${T}`;
+  const client = salesClient({
+    calendar: { meetLink: ROOM, confirmedMeetLink: ROOM, firefliesLiveJoinedAt: iso(-3), firefliesLiveJoinedMeetLink: ROOM },
+    meetings: [{ meetingId: stub, liveJoinedAt: iso(-3), hasTranscript: false }],
+  });
+  const [fact] = collectLiveSessions([client], at(40));
+  assert.equal(fact.legacyDispatchedAt, iso(-3));
+  assert.deepEqual(fact.placeholderIds, [stub]);
+  const session = syncLiveSessions({}, [fact], { nowMs: at(40) })[fact.key];
+  assert.equal(session.state, 'dispatched');
+  assert.equal(session.dispatchedAt, iso(-3));
+  assert.deepEqual(session.attempts.map((row) => `${row.kind}:${row.ok}`), ['first:true']);
+  assert.deepEqual(sessionsNeedingVerification([session], at(40)), [session.key], 'it is looked for');
+  assert.equal(planAt(40, session, { active: [activeRow()] }).session.state, 'recording');
+  const missed = planAt(40, session, { active: [] }).session;
+  assert.equal(missed.state, 'not-admitted');
+  assert.equal(missed.message, live.LIVE_JOIN_MESSAGES.notAdmitted);
+  // A stamp from another day or another room is not this meeting's send.
+  const stale = salesClient({ calendar: { meetLink: ROOM, confirmedMeetLink: ROOM, firefliesLiveJoinedAt: iso(-24 * 60), firefliesLiveJoinedMeetLink: ROOM } });
+  assert.equal(collectLiveSessions([stale], at(-10))[0].legacyDispatchedAt, '');
+  const elsewhere = salesClient({ calendar: { meetLink: ROOM, confirmedMeetLink: ROOM, firefliesLiveJoinedAt: iso(-3), firefliesLiveJoinedMeetLink: ROOM_B } });
+  assert.equal(collectLiveSessions([elsewhere], at(0))[0].legacyDispatchedAt, '');
+});
+
+test('one malformed client record is skipped, not the whole tick or the card list', () => {
+  const broken = salesClient({ id: 'client-broken' });
+  Object.defineProperty(broken, 'workshopAction', { get() { throw new Error('bad record'); } });
+  const good = salesClient({ id: 'client-2', calendar: { meetLink: ROOM_B, confirmedMeetLink: ROOM_B } });
+  const sessions = collectLiveSessions([broken, good], at(-10));
+  assert.deepEqual(sessions.map((row) => row.slots[0].clientId), ['client-2']);
+  assert.deepEqual(live.presentLiveRecordings(broken, { nowMs: at(-10), store: { sessions: {} } }), []);
+  assert.equal(live.currentSessionKeyForSlot(broken, { kind: 'sales' }, at(-10)), '');
+});
+
+test('capture never overwrites intake\'s missing/empty or a rep\'s declined', () => {
+  const session = dispatched(sessionFor(salesClient()), -3);
+  const recording = planAt(0, session, { active: [activeRow()] }).session;
+  const row = (state) => ({ recording: { state, message: `intake ${state}` } });
+  const merged = (current, patch) => mergeRecordingState(current.recording, patch);
+  assert.equal(live.placeholderRecordingPatch({}, session).state, 'dispatched', 'no state on the row yet: capture writes it');
+  for (const state of ['missing', 'empty', 'declined']) {
+    const patch = live.placeholderRecordingPatch(row(state), session);
+    assert.equal('state' in patch, false, state);
+    assert.equal(merged(row(state), patch).state, state);
+    assert.equal(merged(row(state), patch).message, `intake ${state}`);
+    assert.equal(merged(row(state), patch).dispatchedAt, iso(-3), 'capture still adds its facts');
+  }
+  // The bot back in the room, or a rep's accepted "send again", outrank intake; never a rep's declined.
+  assert.equal(merged(row('missing'), live.placeholderRecordingPatch(row('missing'), recording)).state, 'recording');
+  assert.equal(merged(row('empty'), live.placeholderRecordingPatch(row('empty'), session, { reopen: true })).state, 'dispatched');
+  assert.equal(merged(row('declined'), live.placeholderRecordingPatch(row('declined'), recording, { reopen: true })).state, 'declined');
+  // The card follows the same rule.
+  const client = salesClient({ meetings: [{ meetingId: `live:client-1:${T}`, ...row('missing') }] });
+  const store = { sessions: { [session.key]: recording } };
+  assert.equal(live.presentLiveRecordings(client, { nowMs: at(1), store })[0].state, 'recording');
+  assert.equal(live.presentLiveRecordings(client, { nowMs: at(1), store: { sessions: { [session.key]: session } } })[0].state, 'missing');
+});
+
+test('a placeholder is written once per session: one intake dropped never comes back', () => {
+  resetStore();
+  const client = salesClient();
+  const [key] = live.upsertLiveSessionsForClient(client, { nowMs: at(-10) });
+  const slot = { stubMeetingId: `live:client-1:${T}` };
+  assert.equal(live.shouldCreateLivePlaceholder(readLiveSessionStore().sessions[key], slot, client), false, 'not before a dispatch');
+  updateLiveSessionStore((store) => {
+    store.sessions[key] = dispatched(store.sessions[key], -3);
+    return store;
+  }, { nowMs: at(-3) });
+  assert.equal(live.shouldCreateLivePlaceholder(readLiveSessionStore().sessions[key], slot, client), true);
+  live.noteLivePlaceholderCreated(key, slot.stubMeetingId, { nowMs: at(-3) });
+  assert.deepEqual(readLiveSessionStore().sessions[key].placeholderIds, [slot.stubMeetingId]);
+  assert.equal(live.shouldCreateLivePlaceholder(readLiveSessionStore().sessions[key], slot, client), false, 'dropped later: stays dropped');
+  // An older hub's placeholder (or its stamp) counts as written.
+  const legacy = salesClient({ meetings: [{ meetingId: slot.stubMeetingId, liveJoinedAt: iso(-3) }] });
+  const [fact] = collectLiveSessions([legacy], at(5));
+  assert.equal(live.shouldCreateLivePlaceholder(syncLiveSessions({}, [fact], { nowMs: at(5) })[fact.key], slot, legacy), false);
+  // Nor when the client already has this meeting's recording.
+  const linked = salesClient({ meetings: [{ meetingId: 'ff-real', hasTranscript: true, meetLink: ROOM, startedAt: iso(1) }] });
+  assert.equal(live.shouldCreateLivePlaceholder(dispatched(sessionFor(linked), -3), slot, linked), false);
 });
 
 // ── store ────────────────────────────────────────────────────────────────────
@@ -565,6 +794,37 @@ test('engine: no API key means no look and no send; a stuck tick is let go after
   assert.equal(live.firefliesLiveJoinStatus({ nowMs: at(1) }).running, false);
 });
 
+test('engine: a tick kicked seconds after a look reuses it, unless that tick may send', async () => {
+  resetStore();
+  const soon = salesClient({ id: 'client-2', meetingAt: iso(2), calendar: { meetLink: ROOM_B, confirmedMeetLink: ROOM_B } });
+  const state = engineState([salesClient(), soon]);
+  state.now = at(-1) - 20_000;
+  await runFirefliesLiveJoinTick(engineDeps(state));
+  assert.equal(state.verifyCalls, 1);
+  assert.equal(state.sent.length, 1, 'the 10:00 knock');
+  state.now = at(-1) - 10_000;
+  await runFirefliesLiveJoinTick(engineDeps(state));
+  assert.equal(state.verifyCalls, 1, 'a card save 10 s later: nothing due, no second look');
+  state.now = at(-1);
+  await runFirefliesLiveJoinTick(engineDeps(state));
+  assert.equal(state.verifyCalls, 2, 'the 10:02 first knock is due: look first, even 20 s after the last look');
+  assert.equal(state.sent.length, 2);
+  state.now = at(0);
+  await runFirefliesLiveJoinTick(engineDeps(state));
+  assert.equal(state.verifyCalls, 3, 'the minute loop looks again');
+});
+
+test('engine: a rep\'s "declined" saved after the tick read the clients still stops the send', async () => {
+  resetStore();
+  const state = engineState([salesClient()]);
+  const declined = salesClient({ meetings: [{ meetingId: `live:client-1:${T}`, recording: { state: 'declined' } }] });
+  await runFirefliesLiveJoinTick(engineDeps(state, { getClient: () => declined }));
+  assert.equal(state.sent.length, 0);
+  const session = readLiveSessionStore().sessions[`${ROOM}|${T}`];
+  assert.equal(session.declinedAt, iso(-3));
+  assert.equal(readLiveSessionStore().limiter.calls.length, 0);
+});
+
 test('a bot_joined webhook marks the session on that room as recording', async () => {
   resetStore();
   live.upsertLiveSessionsForClient(salesClient(), { nowMs: at(-10) });
@@ -577,6 +837,15 @@ test('a bot_joined webhook marks the session on that room as recording', async (
   const session = readLiveSessionStore().sessions[`${ROOM}|${T}`];
   assert.equal(session.state, 'recording');
   assert.equal(session.ffMeetingId, 'ff-meeting-9');
+  // A bot joining the room 30 minutes before a later meeting there is that earlier meeting's bot.
+  live.upsertLiveSessionsForClient(salesClient({ meetingAt: iso(60) }), { nowMs: at(0) });
+  const early = await live.noteFirefliesBotJoined({
+    meetingId: 'ff-meeting-10',
+    nowMs: at(30),
+    fetchPresence: async (id) => ({ id, meetingLink: ROOM }),
+  });
+  assert.deepEqual(early.map((row) => row.key), [`${ROOM}|${T}`]);
+  assert.equal(readLiveSessionStore().sessions[`${ROOM}|${at(60)}`].state, 'scheduled');
 });
 
 // ── card data and the manual route ───────────────────────────────────────────
@@ -621,26 +890,36 @@ test('a manual send is queued for the slot, not while the bot is in the room', (
 
 test('a manual request made while a tick runs survives the tick\'s own writes', async () => {
   resetStore();
+  live.upsertLiveSessionsForClient(salesClient(), { nowMs: at(-10) });
+  // Five knocks nobody let in: the tick at T+40 only looks, and sends nothing on its own.
+  updateLiveSessionStore((store) => {
+    let session = store.sessions[`${ROOM}|${T}`];
+    for (const [minutes, kind] of [[-3, 'first'], [1, 'retry'], [5, 'retry'], [15, 'retry'], [25, 'retry']]) {
+      session = applyLiveJoinAttempt(session, { at: iso(minutes), kind, ok: true });
+    }
+    store.sessions[session.key] = { ...session, state: 'not-admitted' };
+    return store;
+  }, { nowMs: at(30) });
   const state = engineState([salesClient()]);
-  await runFirefliesLiveJoinTick(engineDeps(state));
-  assert.equal(state.sent.length, 1);
-  // The rep presses "send again" while the next tick is looking at the room.
-  state.now = at(-2);
+  state.now = at(40);
+  // The rep presses "send again" while that tick is looking at the room.
   await runFirefliesLiveJoinTick(engineDeps(state, {
     fetchActiveMeetings: async () => {
-      const queued = live.requestManualLiveJoin({ client: salesClient(), slotKey: `sales:${T}`, nowMs: at(-2) });
+      const queued = live.requestManualLiveJoin({ client: salesClient(), slotKey: `sales:${T}`, nowMs: at(40) });
       assert.equal(queued.queued, true);
       return [];
     },
   }));
+  assert.equal(state.sent.length, 0);
   let session = readLiveSessionStore().sessions[`${ROOM}|${T}`];
-  assert.equal(session.manualRequestedAt, iso(-2), 'the tick wrote its look without dropping the request');
-  assert.equal(session.checkedAt, iso(-2));
-  state.now = at(-1);
+  assert.equal(session.manualRequestedAt, iso(40), 'the tick wrote its look without dropping the request');
+  assert.equal(session.checkedAt, iso(40));
+  state.now = at(41);
   await runFirefliesLiveJoinTick(engineDeps(state));
-  assert.equal(state.sent.length, 2);
+  assert.equal(state.sent.length, 1);
   session = readLiveSessionStore().sessions[`${ROOM}|${T}`];
-  assert.deepEqual(session.attempts.map((row) => row.kind), ['first', 'manual']);
+  assert.equal(session.attempts.at(-1).kind, 'manual');
+  assert.equal(session.state, 'dispatched');
   assert.equal(session.manualRequestedAt, '');
 });
 

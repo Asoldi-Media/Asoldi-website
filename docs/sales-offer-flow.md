@@ -129,24 +129,32 @@ For an offer: tier contract when only a tier is present; admin-verified summary 
   meeting, workshop or iteration Møte and recorded Møte action with a real Meet link is one session (room +
   start time), built from the booking itself: no confirmation, calendar guest, "Møtet hatt" tick or done mark
   inside the meeting's window stops it. Two slots on one room and start share one bot.
-  * The bot goes in with `addToLiveMeeting` (duration 120 min, the documented maximum, or until one minute
-    before the next booked meeting's send) from 3 minutes before start. Fireflies' answer only means
-    "dispatched": the bot is an anonymous guest someone in the Meet has to let in.
+  * The bot goes in with `addToLiveMeeting` (duration 120 min, the documented maximum) from 3 minutes before
+    start. Fireflies' answer only means "dispatched": the bot is an anonymous guest someone in the Meet has to
+    let in. Optional `FIREFLIES_LIVE_JOIN_ONE_BOT=1` (default off) is for a Fireflies plan that runs one bot at
+    a time: the bot then leaves one minute before the next booked meeting's send, counting only meetings that
+    start after this one's booked time.
   * From the first send the loop looks at Fireflies `active_meetings` once a minute. A bot not seen is sent
     again at T+1, T+5 and then every 10 minutes until T+30 (at most 5 sends), once more if it drops out early,
-    and once near its end time while the meeting runs on. Never seen: `not-admitted`.
+    and once near its end time while the meeting runs on. Never seen: `not-admitted`. A bot in the room before
+    T-3 belongs to an earlier meeting there; one room gets at most one knock per 4 minutes, a rep's "send
+    again" included. A rejoin after an early leave keeps the card on "ended" unless the bot is seen again.
   * Every send shares one account-wide budget of 3 calls per rolling 20 minutes (Fireflies' limit), kept with
     the sessions in `fireflies-live-sessions.json`. First sends go before retries; a retry or manual send waits
-    while first sends due in the next 20 minutes need the budget.
+    while first sends due in the next 20 minutes need the budget. At the same start, a meeting the client was
+    e-mailed goes first.
   * Request handlers only record the booking and kick the loop. A moved meeting keeps its Meet room; the new
     time is a new session, so the bot is sent in again.
   * The card gets `client.liveRecordings` (state per slot); `POST /api/admin/sales/:id/fireflies/live-join`
     (`{ slotKey }`) queues "send Fireflies again" through the same budget. The `live:` placeholder in
-    `client.meetings` is written only after an accepted send and carries the same `recording` state.
-* Fred (`fred@fireflies.ai`) goes on a Google Calendar event only when the mailbox hosting it owns the hub's
-  Fireflies key (`lib/fireflies-key-owner.js`; asked once per 6 hours, damian@asoldi.com until then). On another
-  rep's event he would start that rep's own Fireflies, whose recording the hub cannot read. He is still only
-  added when the confirmation is actually sent, and recording never depends on him.
+    `client.meetings` is written once per session, only after an accepted send, and carries the same
+    `recording` state; intake's `missing`/`empty` and a rep's `declined` on it are never overwritten (only the
+    bot back in the room, or an accepted "send again", reopens `missing`/`empty`). A send an older hub made
+    (the slot's stamp or placeholder) is picked up and checked, not reported as never sent.
+* Fred (`fred@fireflies.ai`) goes on a Google Calendar event only when the mailbox hosting it is known and owns
+  the hub's Fireflies key (`lib/fireflies-key-owner.js`; asked once per 6 hours, damian@asoldi.com until then).
+  On another rep's event he would start that rep's own Fireflies, whose recording the hub cannot read. He is
+  still only added when the confirmation is actually sent, and recording never depends on him.
 * Webhook `POST /api/webhooks/fireflies?token=…` (`lib/fireflies-webhook.js`) stores the meeting record and runs
   `lib/fireflies-client-match.js`: attendee e-mail = `contactEmail` (+70), attendee domain = client website (+30),
   host = client’s rep (+15), start within 45 min / 3 h of `meetingAt` (+35 / +25), contact name / business name in

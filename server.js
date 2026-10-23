@@ -237,17 +237,19 @@ import { clientIntentSourceHash, fillOfferFromTranscript, meetingContextIsTooThi
 import { clientOwnedMeetLinks, emptyFirefliesLiveJoinStamp, firefliesMeetLinksDiffer, matchMeetingToClients, normalizeFirefliesMeetLink, planFirefliesMeetLinkBackfill, recordingMatchesSalesMeeting, shouldDropLiveJoinStub } from './lib/fireflies-client-match.js';
 import { firefliesNotetakerAllowedForOrganizer, refreshFirefliesKeyOwnerEmail } from './lib/fireflies-key-owner.js';
 import {
-  clientHasTranscriptForSession,
   currentSessionKeyForSlot,
   findLiveSessionForSlot,
   liveJoinTitleForClient,
   liveRecordingsRevision,
   noteFirefliesBotJoined,
+  noteLivePlaceholderCreated,
+  placeholderRecordingPatch,
   presentLiveRecordings,
   readLiveSessionStore,
   recordingForLiveSession,
   requestManualLiveJoin,
   runFirefliesLiveJoinTick,
+  shouldCreateLivePlaceholder,
   upsertLiveSessionsForClient,
 } from './lib/fireflies-live-sessions.js';
 import { describeFirefliesMedia, firefliesMediaFilePath, persistFirefliesMedia } from './lib/fireflies-media.js';
@@ -8675,7 +8677,8 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
         && (calendarMeta.replacedForeignMeet || firefliesMeetLinksDiffer(lockedMeet, nextMeetLink))
       ) {
         // A room Google just put on this event (minted, or replacing a foreign one) is the client's room,
-        // whether or not the host could be verified, so the bot and the e-mail follow it.
+        // whether or not the host could be verified, so the bot and the e-mail follow it. (A sync that throws
+        // after Google already recreated the event never gets here.)
         calendarMeta.confirmedMeetLink = nextMeetLink;
       }
       const meetLinkChanged = firefliesMeetLinksDiffer(previousMeetLink, nextMeetLink);
@@ -9462,23 +9465,24 @@ function writeLiveJoinStamps(slot, session, attempt) {
 
 /**
  * The client.meetings placeholder ('live:...', sales.liveJoinMeetingId) of one slot, once Fireflies accepted a
- * dispatch. Created once, then only patched: intake drops it when the real transcript is linked and it must
- * not come back. Never created without an accepted dispatch; liveJoinedAt is that dispatch's time.
+ * dispatch. Created once per session, then only patched: intake drops it when the real transcript is linked
+ * and it must not come back. Never created without an accepted dispatch; liveJoinedAt is that dispatch's time.
+ * Intake's missing/empty and a rep's declined keep their word (placeholderRecordingPatch); `reopen` is a rep's
+ * accepted "send again".
  */
-function recordLiveJoinMeeting(slot, session) {
+function recordLiveJoinMeeting(slot, session, { reopen = false } = {}) {
   const client = sales.getSalesClientById(slot.clientId);
   if (!client) return null;
-  const recording = recordingForLiveSession(session);
   const existing = (client.meetings || []).find((row) => sanitizeText(row.meetingId) === slot.stubMeetingId);
   if (existing) {
     return sales.patchSalesClientMeeting(client.id, slot.stubMeetingId, {
-      recording,
+      recording: placeholderRecordingPatch(existing, session, { reopen }),
       slotKey: slot.slotKey,
       ...(sanitizeText(existing.liveJoinedAt) || !session.dispatchedAt ? {} : { liveJoinedAt: session.dispatchedAt }),
     });
   }
-  if (!session.dispatchedAt || session.transcriptSeenAt || clientHasTranscriptForSession(client, session)) return null;
-  return sales.linkMeetingToSalesClient(client.id, {
+  if (!shouldCreateLivePlaceholder(session, slot, client)) return null;
+  const created = sales.linkMeetingToSalesClient(client.id, {
     meetingId: slot.stubMeetingId,
     title: session.title || firefliesLiveJoinTitle(client),
     when: formatOfferMeetingWhen(session.startAt),
@@ -9491,8 +9495,10 @@ function recordLiveJoinMeeting(slot, session) {
     forSalesMeeting: slot.kind === 'sales',
     purpose: slot.purpose,
     slotKey: slot.slotKey,
-    recording,
+    recording: recordingForLiveSession(session),
   });
+  if (created) noteLivePlaceholderCreated(session.key, slot.stubMeetingId);
+  return created;
 }
 
 /** After every addToLiveMeeting attempt: the legacy stamps, and the placeholder once a dispatch was accepted. */
@@ -9504,7 +9510,7 @@ function recordLiveJoinDispatch({ session, attempt }) {
   for (const slot of session.slots) {
     try {
       writeLiveJoinStamps(slot, session, attempt);
-      if (attempt.ok) recordLiveJoinMeeting(slot, session);
+      if (attempt.ok) recordLiveJoinMeeting(slot, session, { reopen: attempt.kind === 'manual' });
     } catch (error) {
       console.warn(`[fireflies] live-join stamps id=${slot.clientId} failed: ${sanitizeText(error?.message) || error}`);
     }
@@ -9517,18 +9523,26 @@ function syncLiveJoinPlaceholders({ session }) {
   for (const slot of session.slots) {
     try {
       const client = sales.getSalesClientById(slot.clientId);
-      if (!(client?.meetings || []).some((row) => sanitizeText(row.meetingId) === slot.stubMeetingId)) continue;
-      sales.patchSalesClientMeeting(client.id, slot.stubMeetingId, { recording: recordingForLiveSession(session) });
+      const row = (client?.meetings || []).find((item) => sanitizeText(item.meetingId) === slot.stubMeetingId);
+      if (!row) continue;
+      sales.patchSalesClientMeeting(client.id, slot.stubMeetingId, { recording: placeholderRecordingPatch(row, session) });
     } catch (error) {
       console.warn(`[fireflies] live-join placeholder id=${slot.clientId} failed: ${sanitizeText(error?.message) || error}`);
     }
   }
 }
 
+/** Optional FIREFLIES_LIVE_JOIN_ONE_BOT=1: the Fireflies plan runs one bot at a time (default off). */
+function firefliesLiveJoinOneBot() {
+  return parseBoolean(process.env.FIREFLIES_LIVE_JOIN_ONE_BOT, false);
+}
+
 function firefliesLiveJoinDeps() {
   const apiKey = () => resolveFirefliesApiKey().apiKey;
   return {
     listClients: () => sales.getSalesClients(),
+    getClient: (id) => sales.getSalesClientById(id),
+    oneBot: firefliesLiveJoinOneBot(),
     apiKey,
     fetchActiveMeetings: () => fetchActiveFirefliesMeetings({ apiKey: apiKey() }),
     addToLive: ({ meetingLink, title, durationMinutes }) => addFirefliesToLiveMeeting({
@@ -15842,8 +15856,9 @@ function formatOfferMeetingWhen(value = '') {
 
 /**
  * The offer page shows the booked sales meeting's placeholder only once Fireflies accepted a dispatch for it
- * (the live-join loop normally writes it right then). It never invents a "Fireflies is in the meeting" row for
- * a meeting the bot was not sent to, and never moves a placeholder off the room the bot was sent into.
+ * (the live-join loop normally writes it right then; this only repairs a write that never happened). It never
+ * invents a "Fireflies is in the meeting" row for a meeting the bot was not sent to, never brings back one
+ * intake dropped, and never moves a placeholder off the room the bot was sent into.
  */
 function ensureOfferMeetingHistory(client) {
   if (!client?.id) return client;
