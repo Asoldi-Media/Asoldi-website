@@ -9,7 +9,7 @@
 //
 // Owner decisions applied here (2026-10-23):
 // - Blog on every tier: `blog` is part of every tier, and `site` implies `blog` for custom plans.
-//   Auto-written posts belong to the `seo` service (tier 2+).
+//   Auto-written posts (WS6 feature `blog.localPosts`) belong to the `seo` service (tier 2+).
 // - The backlink network is a service of its own (`backlinks`), on by default for tier 2+.
 // - Cancellation stops hub services. There is no standalone mode: no id in this file
 //   may describe one, and `thirdpartyhost` never means a CMS that runs without the hub.
@@ -84,13 +84,33 @@ export const TIER_SERVICES = Object.freeze({
 
 export const CHANGES_PER_MONTH = 4;
 
-// Feature keys (WS6 feature registry naming) that each service must entitle. The WS6 bundles
-// may entitle more, never less. These pin the owner decisions above.
+// Feature keys (WS6 feature registry names) that each service must entitle. The WS6 bundles may
+// entitle more, never less, with one exception: `blog.localPosts` (automatic posts) belongs to the
+// `seo` service only. The client-written blog is the `blog` key on every tier; WS6.4 therefore
+// moves `blog.localPosts` from its `blog` bundle to the `seo` bundle (WS9 already lists it in tier 2).
 export const SERVICE_FEATURE_ANCHORS = Object.freeze({
-  blog: Object.freeze(['blog', 'blog.posts']),
-  seo: Object.freeze(['blog.autoPosts']),
+  blog: Object.freeze(['blog']),
+  seo: Object.freeze(['blog.localPosts']),
   backlinks: Object.freeze(['seo.linkNetwork']),
 });
+
+// Feature keys only the listed services may entitle (no other service's bundle may carry them).
+export const SERVICE_EXCLUSIVE_FEATURES = Object.freeze({
+  'blog.localPosts': Object.freeze(['seo']),
+});
+
+// The MASTER-PLAN owner-decision table names the blog features `blog.posts` and `blog.autoPosts`.
+// They are the WS6 registry keys `blog` and `blog.localPosts`; no second key is introduced.
+export const FEATURE_KEY_ALIASES = Object.freeze({
+  'blog.posts': 'blog',
+  'blog.autoPosts': 'blog.localPosts',
+});
+
+/** A feature key with the plan's alias names resolved to the WS6 registry key. */
+export function canonicalFeatureKey(value) {
+  const raw = String(value ?? '').trim();
+  return FEATURE_KEY_ALIASES[raw] || raw;
+}
 
 export const LEGACY_FEATURE_FLAGS = Object.freeze([
   'users', 'analytics', 'ecommerce', 'blog', 'socialSync', 'emailMarketing', 'general',

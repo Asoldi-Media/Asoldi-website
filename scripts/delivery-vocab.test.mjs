@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as vocab from '../packages/suite/core/delivery/vocab.js';
@@ -107,10 +107,28 @@ test('owner decisions: blog on all tiers, auto posts and backlinks in tier 2+, n
   }
   // A custom plan with a site still gets the blog.
   assert.ok(vocab.expandServices(['site', 'changes', 'ecom']).includes('blog'));
-  assert.deepEqual(vocab.SERVICE_FEATURE_ANCHORS.blog, ['blog', 'blog.posts']);
-  assert.deepEqual(vocab.SERVICE_FEATURE_ANCHORS.seo, ['blog.autoPosts']);
+  // WS6 registry names: the client-written blog is `blog` (every tier); automatic posts are
+  // `blog.localPosts` and belong to `seo` only. WS6.4 must move blog.localPosts out of its `blog`
+  // bundle into the `seo` bundle, otherwise blog on every tier would give tier 1 auto posts.
+  assert.deepEqual(vocab.SERVICE_FEATURE_ANCHORS.blog, ['blog']);
+  assert.deepEqual(vocab.SERVICE_FEATURE_ANCHORS.seo, ['blog.localPosts']);
   assert.deepEqual(vocab.SERVICE_FEATURE_ANCHORS.backlinks, ['seo.linkNetwork']);
+  assert.deepEqual(vocab.SERVICE_EXCLUSIVE_FEATURES['blog.localPosts'], ['seo']);
   for (const id of Object.keys(vocab.SERVICE_FEATURE_ANCHORS)) assert.ok(vocab.isServiceId(id));
+  // No auto-post key may be anchored to a service that tier 1 has.
+  const tier1 = vocab.servicesForTier('tier-1-standard');
+  for (const [feature, owners] of Object.entries(vocab.SERVICE_EXCLUSIVE_FEATURES)) {
+    for (const [service, anchors] of Object.entries(vocab.SERVICE_FEATURE_ANCHORS)) {
+      if (anchors.includes(feature)) assert.ok(owners.includes(service), `${feature} anchored to ${service}`);
+    }
+    assert.equal(owners.some((service) => tier1.includes(service)), false, `${feature} must stay out of tier 1`);
+  }
+  // The plan's names resolve to the registry keys; there is one key per concept.
+  assert.equal(vocab.canonicalFeatureKey('blog.posts'), 'blog');
+  assert.equal(vocab.canonicalFeatureKey('blog.autoPosts'), 'blog.localPosts');
+  assert.equal(vocab.canonicalFeatureKey('seo.linkNetwork'), 'seo.linkNetwork');
+  const anchored = Object.values(vocab.SERVICE_FEATURE_ANCHORS).flat();
+  for (const alias of Object.keys(vocab.FEATURE_KEY_ALIASES)) assert.equal(anchored.includes(alias), false, alias);
   const everyId = [
     ...vocab.SERVICE_IDS, ...vocab.ONE_TIME_ADDON_IDS, ...vocab.JOB_KINDS, ...vocab.STAGES,
     ...vocab.STAGE_OVERLAYS, ...vocab.EMAIL_KIND_IDS, ...Object.values(vocab.SETTINGS_KEYS),
@@ -184,4 +202,42 @@ test('the Maker imports the same vocabulary module (synced suite copy)', { skip:
     assert.deepEqual(maker[key], vocab[key], key);
   }
   assert.throws(() => maker.assertJobKind('change-request'), (error) => error.code === 'unknown-job-kind');
+});
+
+// WS8.45 deferred criterion: enqueueJob (WS8.26) and registerJobHandler (WS8.29) do not exist yet.
+// Whichever file defines them must reject kinds outside JOB_KINDS with assertJobKind. This test
+// stays green while nothing defines them and turns red when a definition skips the check.
+const JOB_API_DEFINITION = /function\s*\*?\s*(?:enqueueJob|registerJobHandler)\s*\(|(?:const|let|var)\s+(?:enqueueJob|registerJobHandler)\s*=|^\s*(?:async\s+)?(?:enqueueJob|registerJobHandler)\s*\([^)]*\)\s*\{/m;
+const SKIP_DIRS = new Set(['node_modules', '.git', '.next', 'build', 'dist', '.generated-runs']);
+
+function sourceFiles(entry, out = []) {
+  if (!existsSync(entry)) return out;
+  if (statSync(entry).isFile()) {
+    out.push(entry);
+    return out;
+  }
+  for (const item of readdirSync(entry, { withFileTypes: true })) {
+    if (SKIP_DIRS.has(item.name)) continue;
+    const full = join(entry, item.name);
+    if (item.isDirectory()) sourceFiles(full, out);
+    else if (/\.(?:m|c)?[jt]sx?$/.test(item.name) && !/\.test\.(?:m|c)?[jt]sx?$/.test(item.name)) out.push(full);
+  }
+  return out;
+}
+
+test('every definition of enqueueJob or registerJobHandler checks the kind with assertJobKind', () => {
+  assert.ok(JOB_API_DEFINITION.test('export async function enqueueJob(kind, payload) {'));
+  assert.ok(JOB_API_DEFINITION.test('const registerJobHandler = (kind, handler) => {}'));
+  assert.ok(JOB_API_DEFINITION.test('  registerJobHandler(kind, handler) {'));
+  assert.equal(JOB_API_DEFINITION.test('await enqueueJob("continue", {})'), false, 'a call is not a definition');
+  assert.equal(JOB_API_DEFINITION.test('  enqueueJob("continue", payload);'), false, 'a call is not a definition');
+  const files = ['lib', 'data', 'app', 'src', 'packages', 'scripts', 'server.js']
+    .flatMap((entry) => sourceFiles(join(root, entry)))
+    .filter((file) => file !== sourceFile);
+  assert.ok(files.length > 20, `scanned ${files.length} files`);
+  const missing = files.filter((file) => {
+    const text = readFileSync(file, 'utf8');
+    return JOB_API_DEFINITION.test(text) && !text.includes('assertJobKind');
+  });
+  assert.deepEqual(missing, []);
 });
