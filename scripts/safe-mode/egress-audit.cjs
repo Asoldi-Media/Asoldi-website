@@ -71,6 +71,8 @@ function target(args) {
 
 try {
   fs.mkdirSync(path.dirname(file), { recursive: true });
+  // Liveness marker: proves the recorder ran inside this process (the soak checks the hub's pid).
+  fs.appendFileSync(file, `${JSON.stringify({ at: new Date().toISOString(), event: 'audit-start', pid: process.pid, enforce, allow: allow.length })}\n`);
 } catch {
   // reported on first write
 }

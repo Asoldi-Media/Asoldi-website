@@ -65,6 +65,33 @@ test('plan: --egress-audit preloads the recorder into the API only', () => {
   assert.equal(plan.uiEnv.NODE_OPTIONS, undefined);
 });
 
+test('egress-audit.cjs records every connection, marks loopback listed, and refuses unlisted hosts in enforce mode', { timeout: 60_000 }, async () => {
+  const { spawnSync } = await import('node:child_process');
+  const dir = mkdtempSync(join(tmpdir(), 'asoldi-audit-'));
+  const file = join(dir, 'egress.jsonl');
+  const script = [
+    "const http = require('node:http');",
+    "const srv = http.createServer((q, r) => r.end('ok')).listen(0, '127.0.0.1', async () => {",
+    "  const port = srv.address().port;",
+    "  console.log('local', await (await fetch('http://127.0.0.1:' + port + '/')).text());",
+    "  try { await fetch('https://unlisted.example.invalid/'); console.log('unlisted reached'); } catch (e) { console.log('unlisted', e.cause && e.cause.code); }",
+    "  srv.close();",
+    "});",
+  ].join(String.fromCharCode(10));
+  const result = spawnSync(process.execPath, ['-e', script], {
+    env: { ...process.env, NODE_OPTIONS: `--require="${AUDIT}"`, EGRESS_AUDIT_FILE: file, EGRESS_AUDIT_ALLOW: ALLOWLIST, EGRESS_AUDIT_ENFORCE: '1' },
+    encoding: 'utf8',
+    timeout: 30_000,
+  });
+  assert.match(result.stdout, /local ok/);
+  assert.match(result.stdout, /unlisted EEGRESSAUDIT/);
+  const rows = readFileSync(file, 'utf8').split(/\r?\n/).filter(Boolean).map((line) => JSON.parse(line));
+  assert.ok(rows.some((row) => row.event === 'audit-start'));
+  assert.ok(rows.some((row) => row.host === '127.0.0.1' && row.listed === true && row.blocked === false));
+  assert.ok(rows.some((row) => row.host === 'unlisted.example.invalid' && row.listed === false && row.blocked === true));
+  rmSync(dir, { recursive: true, force: true });
+});
+
 function freePort() {
   return new Promise((resolve) => {
     const server = net.createServer();
@@ -128,7 +155,8 @@ test('server.js with a live-looking .env and no HUB_SAFE_MODE boots in safe mode
     assert.match(hub.log(), /\[mail\] transport=outbox/);
     assert.equal(existsSync(join(hub.dataDir, 'production.env')), false, 'production.env not written');
     const egress = existsSync(join(hub.dataDir, 'egress.jsonl')) ? readFileSync(join(hub.dataDir, 'egress.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
-    assert.deepEqual(egress.filter((row) => !row.listed), [], 'no unlisted egress');
+    assert.ok(egress.some((row) => row.event === 'audit-start'), 'the egress recorder ran inside the hub process');
+    assert.deepEqual(egress.filter((row) => !row.event && !row.listed), [], 'no unlisted egress');
     const unauth = await fetch(`${hub.base}/api/admin/system/safe-mode`);
     assert.equal(unauth.status, 401);
   } finally {

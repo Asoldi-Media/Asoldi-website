@@ -67,13 +67,15 @@ export function seedSoakData(dataDir, now = new Date()) {
 }
 
 export function analyzeEgress(lines = []) {
-  const rows = lines.map((line) => {
+  const parsed = lines.map((line) => {
     try {
       return JSON.parse(line);
     } catch {
       return null;
     }
   }).filter(Boolean);
+  const startedPids = parsed.filter((row) => row.event === 'audit-start').map((row) => row.pid);
+  const rows = parsed.filter((row) => !row.event);
   const byHost = {};
   for (const row of rows) {
     const key = `${row.host}:${row.port}`;
@@ -81,7 +83,7 @@ export function analyzeEgress(lines = []) {
     byHost[key].count += 1;
   }
   const unlisted = Object.values(byHost).filter((row) => !row.listed);
-  return { total: rows.length, hosts: Object.values(byHost), unlisted };
+  return { total: rows.length, hosts: Object.values(byHost), unlisted, startedPids };
 }
 
 async function waitForHealth(base, timeoutMs = 60_000) {
@@ -185,6 +187,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
   const lines = existsSync(auditFile) ? readFileSync(auditFile, 'utf8').split('\n').filter(Boolean) : [];
   report.egress = analyzeEgress(lines);
+  report.checks.recorderActiveInHub = report.egress.startedPids.includes(child.pid);
   report.checks.zeroUnlistedEgress = report.egress.unlisted.length === 0;
   report.checks.outboxHasReminder = report.outbox >= 1;
   report.checks.prodPublishIntent = Boolean(report.intents.prodPublish);
