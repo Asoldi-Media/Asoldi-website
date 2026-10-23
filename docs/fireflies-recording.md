@@ -19,7 +19,7 @@ before start to 2 hours after the booked end) and on the meeting's placeholder r
 | `not-admitted` | The bot was never seen in the room: sent but never let in, sent but nobody could look at the room after (the hub was down, or an older hub sent it), or never sent at all (`message` says why: no Fireflies key, the rate limit, Fireflies refused, or the hub did not try in time). | capture |
 | `missing` | Session end + 90 minutes and no recording. | watchdog |
 | `empty` | By then Fireflies only has a recording with no talk, or too little to be the meeting (silent, or a few sentences). | watchdog |
-| `declined` | A person marked the meeting held without a recording, or not held. | rep |
+| `declined` | A person marked the meeting held without a recording, or not held. One room at one start is one call, so it stops the bot for every card booked on it: another card says so on its live card and, after T+30, gets a `not-admitted` row with that reason, followed to `missing` like any other. | rep |
 
 The placeholder row is written at the first send Fireflies accepts. A session that ends with no
 bot in the room and no such send (never sent, every send refused or rate-limited, or the hub was

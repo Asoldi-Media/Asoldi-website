@@ -1465,6 +1465,34 @@ test('declined stops the engine for that session, and open lets it send again', 
   assert.equal(readLiveSessionStore().sessions[KEY].declinedAt, '');
 });
 
+test('one card\'s "uten opptak" on a shared room stops the bot, and the other card says why and is followed', async () => {
+  resetAll();
+  // Two clients of two reps in one Meet room at one start: one call, one bot.
+  const first = salesClient();
+  const other = salesClient({ id: 'client-2', businessName: 'Annenfirma AS', contactPerson: 'Ola Test', ownerId: 'sales:rep-2' });
+  const state = { clients: [first, other], active: [], sent: [], reply: null };
+  await tickAt(state, -20);
+  // The first client does not want a recording; its rep marks it.
+  const decision = watchdog.recordingDecision({ client: first, slotKey: `sales:${T}`, state: 'declined', by: 'Kari Test', nowMs: at(-15) });
+  rowWriter(state.clients)(decision.create);
+  live.setLiveSessionDeclined(decision.sessionKey, true, { nowMs: at(-15) });
+  for (const minutes of [-3, 1, 5, 15, 25, 31]) await tickAt(state, minutes);
+  assert.equal(state.sent.length, 0, 'one party said no: no bot in the room');
+  const [entry] = live.presentLiveRecordings(other, { nowMs: at(-10) });
+  assert.deepEqual([entry.message, entry.nextAttemptAt, entry.canResend], [LIVE_JOIN_MESSAGES.declinedElsewhere, '', false]);
+  // After the first-send window the other card gets a row that says why, and the meeting is followed.
+  const created = live.ensureLivePlaceholders({ clients: state.clients, writePlaceholder: rowWriter(state.clients), nowMs: at(31), log: quiet });
+  assert.deepEqual(created.map((row) => [row.clientId, row.state]), [['client-2', 'not-admitted']]);
+  assert.equal(other.meetings[0].recording.message, LIVE_JOIN_MESSAGES.declinedElsewhere);
+  assert.equal(first.meetings.length, 1, 'the card that said no keeps its own row');
+  const listed = watchdog.missingRecordingRows(state.clients, { nowMs: at(4 * 60) });
+  assert.deepEqual(listed.rows.map((row) => row.clientId), ['client-2']);
+  const hub = watchdogHub(state.clients);
+  await hub.run(4 * 60);
+  assert.deepEqual(hub.sent.map((mail) => mail.subject), ['Fireflies: ingen opptak av salgsmøtet med Annenfirma AS']);
+  assert.ok(hub.sent[0].text.includes(LIVE_JOIN_MESSAGES.declinedElsewhere));
+});
+
 // ── server glue ──────────────────────────────────────────────────────────────
 
 test('server.js wires the alerts, the placeholders and the routes', () => {
