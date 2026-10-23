@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const dataDir = mkdtempSync(join(tmpdir(), 'asoldi-ff-ingest-'));
 process.env.APP_DATA_DIR = dataDir;
@@ -455,6 +456,30 @@ test('rows the old ingest stored while Fireflies was processing are caught up on
   assert.equal(result.record.summary, 'Kunden vil ha nettside.');
   const next = ingest.planFirefliesHydration({ storedRows: [ff.readStoredFirefliesMeeting(id)], clientRows: card, readStored: ff.readStoredFirefliesMeeting, nowMs: nowMs + MIN });
   assert.deepEqual(next, { fetch: [], relink: [{ clientId: 'c-old', meetingId: id }] }, 'then only the card is brought up to date');
+});
+
+test('server.js: the paste route, the backfill, Fyll ut and the letter fill follow the intake rules', () => {
+  const server = readFileSync(fileURLToPath(new URL('../server.js', import.meta.url)), 'utf8');
+  const between = (from, to) => server.slice(server.indexOf(from), server.indexOf(to, server.indexOf(from) + from.length));
+  const paste = between("app.post('/api/admin/sales/:id/offer/use-meeting'", "app.post('/api/admin/sales/:id/offer/request-review'");
+  // The route re-reads the client after each link: a const there threw after linking.
+  assert.match(paste, /^\s*let client = sales\.getSalesClientById\(req\.params\.id\);/m);
+  assert.doesNotMatch(paste, /const client = /);
+  assert.match(paste, /if \(isTryLaterError\(error\)\) askedToWait = true;/);
+  assert.match(paste, /if \(!matches\.length && askedToWait\) \{\s*return res\.status\(503\)/);
+  const backfill = between('function ensureFirefliesMeetLinkBackfill(', 'function clientAfterFirefliesBackfill(');
+  assert.match(backfill, /if \(firefliesStoreSource\('meetings'\) === 'unreadable'\) return firefliesMeetLinkBackfillSummary;[^]*applyFirefliesMeetLinkBackfill\(\)/);
+  const offer = between('async function hydrateOfferMeetings(', 'function selectedOfferMeetingIds(');
+  assert.match(offer, /if \(stored && !firefliesFetchDue\(stored, \{ onDemand: true \}\)\) continue;/);
+  const link = between('function linkFetchedFirefliesTranscript(', 'async function hydrateRecentStoredTranscripts(');
+  assert.match(link, /if \(!ref && storedMeetingIsPartial\(record\)\) return null;/);
+  const fill = between('async function fillPendingContractLetters(', 'async function autoFillOfferIfReady(');
+  assert.match(fill, /storedMeetingIsPartial\(readStoredFirefliesMeeting\(row\.meetingId\)\)\)\) continue;/);
+  const declined = between("app.post('/api/admin/sales/:id/fireflies/recording'", "app.get('/api/admin/fireflies/meetings/:meetingId'");
+  assert.match(declined, /canAccessSalesClient\(req, client\)/);
+  assert.match(declined, /declinedRecordingPatch\(row, \{ by: workshopAuthorLabel\(req\) \}\)/);
+  assert.match(declined, /isPlaceholderMeetingId\(item\.meetingId\)/, 'a slot key picks the placeholder, not a recording in that slot');
+  assert.match(declined, /sales\.patchSalesClientMeeting\(client\.id, row\.meetingId, \{ recording: decided\.recording \}\)/);
 });
 
 test('a keyed backoff doubles while nothing changes and ends when the input changes', () => {

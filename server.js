@@ -237,19 +237,21 @@ import { clientIntentSourceHash, fillOfferFromTranscript, meetingContextIsTooThi
 import { clientOwnedMeetLinks, emptyFirefliesLiveJoinStamp, firefliesJoinedCurrentMeet, firefliesMeetLinksDiffer, firefliesNeedsFreshMeetOnReschedule, matchMeetingToClients, normalizeFirefliesMeetLink, planFirefliesMeetLinkBackfill, recordingMatchesSalesMeeting, shouldDropLiveJoinStub } from './lib/fireflies-client-match.js';
 import { describeFirefliesMedia, firefliesMediaFilePath, saveFirefliesMediaForMeeting } from './lib/fireflies-media.js';
 import { runFirefliesPullFollowUp } from './lib/fireflies-pull-followup.js';
-import { storeFetchedFirefliesMeeting, storedMeetingIsFinal } from './lib/fireflies-webhook.js';
+import { firefliesFetchDue, storeFetchedFirefliesMeeting, storedMeetingIsFinal, storedMeetingIsPartial } from './lib/fireflies-webhook.js';
+import { firefliesStoreSource } from './lib/fireflies-store.js';
 import {
   clientMeetingRefIsStale,
   createKeyedBackoff,
   firefliesIngestStatus,
   hydrateFirefliesTranscript,
   ingestFirefliesTranscriptList,
+  isTryLaterError,
   maybeAlertFirefliesIngest,
   planFirefliesHydration,
   runFirefliesHydration,
   runFirefliesIngestTick,
 } from './lib/fireflies-ingest.js';
-import { runFirefliesRecordingWatchdog } from './lib/fireflies-recording-watchdog.js';
+import { declinedRecordingPatch, runFirefliesRecordingWatchdog } from './lib/fireflies-recording-watchdog.js';
 import { CUSTOM_TIER_ID, WEBSITE_TIERS, formatKr, resolveTier, tierById, toClientWebsitePlan } from './lib/website-tiers.js';
 import { buildSalesSender, normalizeAsoldiFromEmail } from './lib/sales-sender.js';
 import {
@@ -12233,7 +12235,7 @@ async function persistFirefliesMediaInBackground(meetingId) {
       isFinal: (record) => storedMeetingIsFinal(record),
     });
     const media = result.media || {};
-    if (!['done', 'waiting', 'no-url', 'empty', 'missing', 'not-a-recording'].includes(result.status)) {
+    if (!['done', 'waiting', 'no-url', 'empty', 'missing', 'not-a-recording', 'live'].includes(result.status)) {
       console.log(`[fireflies] media id=${id} ${result.status} video=${media.video?.bytes || media.video?.skipped || '-'} audio=${media.audio?.bytes || media.audio?.skipped || '-'}`);
     }
   } catch (error) {
@@ -16127,6 +16129,9 @@ let firefliesMeetLinkBackfillSummary = { scanned: 0, linked: 0, detached: 0 };
 function ensureFirefliesMeetLinkBackfill({ force = false } = {}) {
   const now = Date.now();
   if (!force && now - firefliesMeetLinkBackfillAt < 15_000) return firefliesMeetLinkBackfillSummary;
+  // An archive that does not parse (and has no readable backup) reads as empty: the backfill would
+  // take that as proof and unlink every recording. The store has already raised the alarm.
+  if (firefliesStoreSource('meetings') === 'unreadable') return firefliesMeetLinkBackfillSummary;
   firefliesMeetLinkBackfillAt = now;
   const plan = applyFirefliesMeetLinkBackfill();
   firefliesMeetLinkBackfillSummary = {
@@ -16183,6 +16188,9 @@ function linkFetchedFirefliesTranscript(record) {
   if (!ownerId) return null;
   const owner = sanitizeText(holder?.id) === ownerId ? holder : sales.getSalesClientById(ownerId);
   const ref = (owner?.meetings || []).find((row) => sanitizeText(row.meetingId) === id);
+  // Live captions only refresh a card that already holds them (a pasted live link): a new link
+  // would drop the placeholder while the bot is still recording.
+  if (!ref && storedMeetingIsPartial(record)) return null;
   if (ref && !clientMeetingRefIsStale(ref, record)) return owner;
   return linkStoredTranscriptToClient(record, {
     clientId: ownerId,
@@ -16456,7 +16464,9 @@ async function hydrateOfferMeetings(client, offer) {
     if (!id || seen.has(id) || isPlaceholderMeetingId(id)) continue;
     seen.add(id);
     const stored = readStoredFirefliesMeeting(id);
-    if (storedMeetingIsFinal(stored)) continue;
+    // A rep is waiting (Fyll ut): what is not final is fetched now, but not ids whose last fetch
+    // failed and are still in their pause, nor ones Fireflies was given up on.
+    if (stored && !firefliesFetchDue(stored, { onDemand: true })) continue;
     if (fetched >= 4) break;
     await persistFetchedFirefliesTranscript(id);
     fetched += 1;
@@ -16922,6 +16932,8 @@ async function fillPendingContractLetters() {
       stampOfferLetterFilled(client.id, offer);
       continue;
     }
+    // Live captions of a meeting still under way are no basis for the letter: wait for the real transcript.
+    if ((client.meetings || []).some((row) => storedMeetingIsPartial(readStoredFirefliesMeeting(row.meetingId)))) continue;
     const fingerprint = offerLetterFillFingerprint(client, offer);
     if (!offerLetterFillBackoff.due(client.id, fingerprint, now)) continue;
     pending.push({ client, offer, fingerprint, sent: offer.status === 'sent' });
@@ -17238,7 +17250,8 @@ app.post('/api/admin/sales/:id/offer/fill', salesAuth, async (req, res) => {
 });
 
 app.post('/api/admin/sales/:id/offer/use-meeting', salesAuth, async (req, res) => {
-  const client = sales.getSalesClientById(req.params.id);
+  // Reassigned below after each link, to read the fresh client.
+  let client = sales.getSalesClientById(req.params.id);
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
   const current = await ensureOfferDraft(client, req);
@@ -17283,6 +17296,7 @@ app.post('/api/admin/sales/:id/offer/use-meeting', salesAuth, async (req, res) =
   if (!record) {
     const stored = listStoredFirefliesMeetings({});
     let matches = rankMeetingsByTitle(stored, pasted);
+    let askedToWait = false;
     if (!matches.length) {
       const config = readFirefliesWebhookConfig();
       for (const id of firefliesGraphqlIdsFromPaste(pasted)) {
@@ -17300,10 +17314,14 @@ app.post('/api/admin/sales/:id/offer/use-meeting', salesAuth, async (req, res) =
             matches = [storeFetchedFirefliesMeeting(built) || built];
             break;
           }
-        } catch {
-          // Try the next GraphQL id if Fireflies rejected this form.
+        } catch (error) {
+          // A rate limit or a timeout says nothing about the link; anything else: try the next id form.
+          if (isTryLaterError(error)) askedToWait = true;
         }
       }
+    }
+    if (!matches.length && askedToWait) {
+      return res.status(503).json({ message: 'Fireflies ber oss vente litt. Prøv igjen om et minutt.' });
     }
     if (!matches.length) {
       return res.status(404).json({ message: 'Fant ikke møtet i Fireflies. Sjekk navnet eller lenken, eller vent til opptaket er sendt inn.' });
@@ -17904,6 +17922,25 @@ app.get('/api/admin/fireflies/ingest-status', salesAuth, (req, res) => {
   if (!requireOfferAdmin(req, res)) return;
   res.setHeader('Cache-Control', 'no-store');
   res.json(firefliesIngestStatus());
+});
+
+// "Marker uten opptak" from the missing-recording e-mail: { meetingId | slotKey, state: 'declined' }
+// on a placeholder ends the watchdog's search for it.
+app.post('/api/admin/sales/:id/fireflies/recording', salesAuth, (req, res) => {
+  const client = sales.getSalesClientById(req.params.id);
+  if (!client) return res.status(404).json({ message: 'Sales client not found.' });
+  if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
+  if (sanitizeText(req.body?.state) !== 'declined') return res.status(400).json({ message: 'Bare «uten opptak» kan settes her.' });
+  const meetingId = sanitizeText(req.body?.meetingId);
+  const slotKey = sanitizeText(req.body?.slotKey);
+  const row = (client.meetings || []).find((item) => (meetingId
+    ? sanitizeText(item.meetingId) === meetingId
+    : Boolean(slotKey) && sanitizeText(item.slotKey) === slotKey && isPlaceholderMeetingId(item.meetingId)));
+  const decided = declinedRecordingPatch(row, { by: workshopAuthorLabel(req) });
+  if (decided.error) return res.status(404).json({ message: 'Fant ikke et møte som venter på opptak.' });
+  const updated = sales.patchSalesClientMeeting(client.id, row.meetingId, { recording: decided.recording });
+  const meeting = (updated?.meetings || []).find((item) => item.meetingId === row.meetingId) || null;
+  res.json({ meetingId: row.meetingId, recording: meeting?.recording || null });
 });
 
 app.get('/api/admin/fireflies/meetings/:meetingId', salesAuth, (req, res) => {
