@@ -344,7 +344,27 @@ test('local hub boot: tokens signed with an old default secret, stale tokens, pa
     assert.equal(sourceLines.filter((line) => line.includes('X-Forwarded-For entry 1 from the right')).length, 1, sourceLines.join('\n'));
     assert.equal(sourceLines.some((line) => /\d+\.\d+\.\d+\.\d+/.test(line)), false, 'no address is logged');
 
-    // 12. No live system was touched: no Myphoner reconcile, no Fireflies pull, and nothing
+    // 12. Only the hub admin (admin.json) confirms a rotation. An admin token of a users.json user
+    //     (it carries a user id) gets 403 before any password check, even with the hub admin's
+    //     password, and never counts toward the login limits.
+    const attemptsBefore = (await (await fetch(`${base}/api/admin/system/security`, { headers: admin() })).json()).loginAddresses.attemptsLastHour;
+    for (const username of ['staff-admin', 'asoldi.com']) {
+      const usersJsonAdmin = forge(diskSecret, { role: 'admin', userId: `boot-user-${username}`, username, at: Date.now() });
+      for (let i = 0; i < 3; i += 1) {
+        const refused = await fetch(`${base}/api/admin/security/signing-secret/rotate`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${usersJsonAdmin}`, 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.60' },
+          body: JSON.stringify({ currentPassword: newPassword, confirm: 'ROTER' }),
+        });
+        assert.equal(refused.status, 403, `${username} attempt ${i}`);
+        assert.equal((await refused.json()).code, 'hub-admin-only');
+      }
+    }
+    const afterRefusals = (await (await fetch(`${base}/api/admin/system/security`, { headers: admin() })).json()).loginAddresses.attemptsLastHour;
+    assert.equal(afterRefusals, attemptsBefore, 'the refusals never reached the login limits');
+    assert.equal(readFileSync(join(dataDir, 'secrets', 'admin-secret'), 'utf8').trim(), diskSecret, 'nothing rotated');
+
+    // 13. No live system was touched: no Myphoner reconcile, no Fireflies pull, and nothing
     //     but loopback was even attempted.
     assert.doesNotMatch(logs, /\[myphoner\] webhook reconcile complete/);
     assert.doesNotMatch(logs, /\[fireflies\] recent-transcripts/);

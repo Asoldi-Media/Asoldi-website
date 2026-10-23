@@ -37,6 +37,11 @@ Admin → Manage clients → Security → **Rotate secrets** makes a new value o
 - Both need the admin's current password (`currentPassword`; wrong passwords count toward the
   login limits, and the right one clears the count for that address, as a sign-in does) and the
   typed word `ROTER` (`confirm`).
+- Only the hub admin (`admin.json`) can rotate. Any other admin token (one that carries a
+  `users.json` user id, or names another username) gets 403 with code `hub-admin-only` and a
+  Norwegian message, before any password check, and the refusal counts toward no login limit.
+  Such a user cannot confirm with their own password: the rotation answer signs a fresh hub
+  admin token for the caller, and the hub admin's password is the one that guards the secrets.
 - When the env value wins (`ADMIN_SECRET` of 16+ characters that is not a known default, or
   `WEBSITE_MAKER_STATUS_CALLBACK_TOKEN` / `SALES_MAKER_STATUS_CALLBACK_TOKEN`), the route answers
   409 with a Norwegian explanation and changes nothing: rotate the env value where it is set.

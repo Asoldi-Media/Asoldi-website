@@ -258,7 +258,7 @@ function sign(secret, payload) {
   return Buffer.from(JSON.stringify({ data, sig: createHmac('sha256', secret).update(data).digest('hex') })).toString('base64url');
 }
 
-async function withApp({ adminSecretHolder, makerCallbackTokenHolder, recordRotation, loginLimiter }, fn) {
+async function withApp({ adminSecretHolder, makerCallbackTokenHolder, recordRotation, loginLimiter, canConfirm }, fn) {
   const app = express();
   app.use(express.json());
   // The real hub verifies with the holder's current value, like server.js verifyToken.
@@ -284,6 +284,7 @@ async function withApp({ adminSecretHolder, makerCallbackTokenHolder, recordRota
     limiter: loginLimiter || hardening.createLoginLimiter(),
     accountFor: (req) => `admin:${req.admin.username}`,
     verifyPassword: async (_req, password) => password === PASSWORD,
+    ...(canConfirm ? { canConfirm } : {}),
   });
   routes.registerSecurityAdminRoutes(app, {
     ...(loginLimiter ? { loginLimiter } : {}),
@@ -564,4 +565,82 @@ test('routes: an admin sets the trusted proxy hops; the setting survives other w
   } finally {
     settings.updateSecuritySettings({ maxTokenAgeDays: null, loginTrustedHops: null }, { by: 'admin:tester' });
   }
+});
+
+test('password confirmer: a signed-in user that may not confirm gets 403 before any password check, and no limiter key counts it', async () => {
+  const limiter = hardening.createLoginLimiter({ log: () => {} });
+  const hubAdmin = { username: 'tester', passwordHash: 'x' };
+  let checks = 0;
+  const confirm = hardening.createPasswordConfirmer({
+    limiter,
+    accountFor: (req) => `admin:${req.admin.username}`,
+    verifyPassword: async (_req, password) => {
+      checks += 1;
+      return password === PASSWORD;
+    },
+    canConfirm: async (req) => hardening.isHubAdminPayload(req.admin, hubAdmin),
+  });
+  const attempt = async (admin, password) => {
+    const res = {
+      statusCode: 200,
+      body: null,
+      headers: {},
+      setHeader(name, value) { this.headers[name] = value; },
+      status(code) { this.statusCode = code; return this; },
+      json(body) { this.body = body; return this; },
+    };
+    const ok = await confirm({ admin, headers: { 'x-forwarded-for': '203.0.113.4' }, socket: { remoteAddress: '127.0.0.1' } }, res, password);
+    return ok ? 'ok' : `${res.statusCode} ${res.body?.code || ''}`.trim();
+  };
+  const usersJsonAdmin = { role: 'admin', userId: 'u-1', username: 'tester' };
+  for (let i = 0; i < 15; i += 1) {
+    assert.equal(await attempt(usersJsonAdmin, i % 2 ? PASSWORD : `guess-${i}`), `403 ${hardening.HUB_ADMIN_ONLY_CODE}`, `attempt ${i}`);
+  }
+  assert.equal(await attempt({ role: 'admin', username: 'someone-else' }, PASSWORD), '403 hub-admin-only', 'an admin token for another username');
+  assert.equal(checks, 0, 'no password was checked');
+  assert.deepEqual(limiter.keys(), [], 'no limiter key counted the refusals');
+  assert.equal(await attempt({ role: 'admin', username: 'tester' }, 'wrong'), '401 wrong-password');
+  assert.equal(await attempt({ role: 'admin', username: 'tester' }, PASSWORD), 'ok', 'the hub admin confirms as before');
+
+  for (const [payload, admin, expected] of [
+    [{ role: 'admin', username: 'tester' }, hubAdmin, true],
+    [{ role: 'Admin', username: 'tester' }, hubAdmin, true],
+    [{ role: 'admin', username: 'tester', userId: 'u-1' }, hubAdmin, false],
+    [{ role: 'admin', username: 'tester', userId: 0 }, hubAdmin, false],
+    [{ role: 'admin', username: 'Tester' }, hubAdmin, false],
+    [{ role: 'sales', username: 'tester' }, hubAdmin, false],
+    [{ role: 'admin', username: '' }, { username: '' }, false],
+    [{ role: 'admin', username: 'tester' }, null, false],
+    [null, hubAdmin, false],
+  ]) {
+    assert.equal(hardening.isHubAdminPayload(payload, admin), expected, JSON.stringify([payload, admin]));
+  }
+});
+
+test('routes: an admin token of a users.json user cannot rotate; it gets 403 and never reaches the login limits', async () => {
+  const dir = tempDir();
+  const adminSecretHolder = hardening.createHubSecretHolder({ dataDir: dir, name: 'admin-secret' });
+  const makerCallbackTokenHolder = hardening.createHubSecretHolder({ envRule: 'any', lazy: true, dataDir: dir, name: 'maker-callback-token', bytes: 32 });
+  const loginLimiter = hardening.createLoginLimiter({ log: () => {} });
+  const hubAdmin = { username: 'tester' };
+  const canConfirm = async (req) => hardening.isHubAdminPayload(req.admin, hubAdmin);
+  await withApp({ adminSecretHolder, makerCallbackTokenHolder, loginLimiter, canConfirm }, async (base, { adminToken }) => {
+    const usersJsonAdmin = sign(adminSecretHolder.get(), { role: 'admin', userId: 'u-7', username: 'tester', at: Date.now() });
+    const oldSecret = adminSecretHolder.get();
+    const oldMaker = makerCallbackTokenHolder.get();
+    for (const path of ['/api/admin/security/signing-secret/rotate', '/api/admin/security/maker-callback-token/rotate']) {
+      for (let i = 0; i < 12; i += 1) {
+        const res = await post(base, path, usersJsonAdmin, { currentPassword: i % 3 ? `guess-${i}` : PASSWORD, confirm: 'ROTER' });
+        assert.equal(res.status, 403, `${path} attempt ${i}`);
+        const body = await res.json();
+        assert.equal(body.code, 'hub-admin-only');
+        assert.equal(body.message, hardening.HUB_ADMIN_ONLY_MESSAGE);
+      }
+    }
+    assert.deepEqual(loginLimiter.keys(), [], 'no limiter key counted the refusals');
+    assert.equal(adminSecretHolder.get(), oldSecret, 'nothing rotated');
+    assert.equal(makerCallbackTokenHolder.get(), oldMaker);
+    const good = { currentPassword: PASSWORD, confirm: 'ROTER' };
+    assert.equal((await post(base, '/api/admin/security/maker-callback-token/rotate', adminToken(), good)).status, 200, 'the hub admin still rotates');
+  });
 });

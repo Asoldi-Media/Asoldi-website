@@ -85,6 +85,7 @@ import {
   createPasswordConfirmer,
   createStaffMediaGate,
   createHubSecretHolder,
+  isHubAdminPayload,
   readOrCreateDiskSecret,
   safeEqual,
   secretRefreshMs,
@@ -10090,12 +10091,14 @@ app.get('/api/admin/system/maker-callback-token', adminAuth, (_req, res) => {
 /**
  * Re-checks the signed-in admin's password before a sensitive action (secret rotation). Wrong
  * passwords count toward the normal login limit for that admin; the right one clears the
- * admin's failures, like a sign-in. On false the response is sent.
+ * admin's failures, like a sign-in. Only the hub admin (admin.json) may confirm: any other admin
+ * token gets 403 without a password check. On false the response is sent.
  */
 const confirmAdminPassword = createPasswordConfirmer({
   limiter: loginLimiter,
   accountFor: (req) => `admin:${sanitizeText(req.admin?.username)}`,
   verifyPassword: (req, password) => store.verifyAdmin(sanitizeText(req.admin?.username), password),
+  canConfirm: async (req) => isHubAdminPayload(req.admin, await store.getAdmin()),
 });
 
 // Security status, Fireflies webhook secret (disk), token revocation, client "log out everywhere",
