@@ -72,11 +72,13 @@ test('workshop Møte builds a 30-minute invite with the client, Fireflies, Meet,
   assert.equal(invite.client.meetingMode, 'online');
   assert.equal(invite.client.meetingAt, DUE);
   assert.equal(invite.client.calendar?.eventId || '', action.calendarEventId);
+  // Damian hosts workshops; fred@ goes only on events of the Fireflies key owner.
   const includeFireflies = shouldIncludeFireflies({
     isOnline: true,
     addFireflies: true,
     sendUpdates: 'all',
     alreadyOnEvent: false,
+    organizerEmail: 'damian@asoldi.com',
   });
   const attendees = buildMeetingAttendees(invite.client, { includeAttendees: true, includeFireflies });
   assert.equal(attendees.some((entry) => entry.email === 'daracha777@gmail.com'), true);
@@ -269,8 +271,19 @@ test('Sales persist stays a draft; Admin Save is the send gate', () => {
   assert.match(serverSrc, /organizerEmail: DAMIAN_WORKSHOP_CALENDAR_EMAIL/);
   assert.match(serverSrc, /if \(sync\.error\) \{/);
   assert.match(serverSrc, /status\(409\)\.json/);
-  assert.match(serverSrc, /maybeJoinFirefliesLiveDeskSlot\(stamped \|\| client, 'workshop'\)/);
-  assert.match(serverSrc, /maybeJoinFirefliesLiveDeskSlot\(client, 'iteration'\)/);
+  // Desk saves only record the booking and kick the live-join loop; it sends Fireflies at the start.
+  const workshopRoute = serverSrc.slice(
+    serverSrc.indexOf("app.patch('/api/admin/sales/:id/workshop-action'"),
+    serverSrc.indexOf("app.patch('/api/admin/sales/:id/workshop/goal-actions'"),
+  );
+  assert.match(workshopRoute, /kickFirefliesLiveJoins\(client\)/);
+  assert.doesNotMatch(workshopRoute, /addFirefliesToLiveMeeting|maybeJoinFirefliesLive/);
+  const iterationRoute = serverSrc.slice(
+    serverSrc.indexOf("app.post('/api/admin/sales/:id/workshop/iteration-meeting'"),
+    serverSrc.indexOf("app.post('/api/admin/sales/:id/workshop/invoice-request'"),
+  );
+  assert.match(iterationRoute, /kickFirefliesLiveJoins\(client\)/);
+  assert.doesNotMatch(iterationRoute, /addFirefliesToLiveMeeting|maybeJoinFirefliesLive/);
   assert.equal(WORKSHOP_PRIMARY_CALENDAR_ID, 'primary');
 
   const dataSrc = readFileSync(new URL('../data/sales.js', import.meta.url), 'utf8');
@@ -302,7 +315,7 @@ test('T08 workshop email builder is used when it exists', async () => {
   }
 });
 
-test('workshop Meet host check requires Damian, a real Meet, and Fireflies', () => {
+test('workshop Meet host check requires Damian and a real Meet; the fred@ guest is optional', () => {
   const ok = {
     googleEmail: 'damian@asoldi.com',
     organizerEmail: 'damian@asoldi.com',
@@ -325,7 +338,8 @@ test('workshop Meet host check requires Damian, a real Meet, and Fireflies', () 
   assert.equal(workshopInviteHostOk({ ...ok, meetLink: '' }), false);
   assert.equal(workshopInviteShouldDeleteFailedEvent({ ...ok, meetLink: '' }), true);
 
-  assert.equal(workshopInviteHostOk({ ...ok, firefliesInvited: false }), false);
+  // Recording comes from the hub's live join, so a dropped fred@ no longer blocks the invite.
+  assert.equal(workshopInviteHostOk({ ...ok, firefliesInvited: false }), true);
   assert.equal(workshopInviteShouldDeleteFailedEvent({ ...ok, firefliesInvited: false }), false);
 
   assert.equal(workshopInviteHostOk({

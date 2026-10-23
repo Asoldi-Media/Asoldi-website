@@ -67,29 +67,35 @@ test('Fireflies is added only when the sales meeting asks for it', () => {
 });
 
 test('silent calendar creates do not add Fred until the invite is actually sent', () => {
+  // The Fireflies key owner hosts these events (fred@ never goes on anyone else's; see below).
+  const organizerEmail = 'damian@asoldi.com';
   assert.equal(shouldIncludeFireflies({
     isOnline: true,
     addFireflies: true,
     sendUpdates: 'none',
     alreadyOnEvent: false,
+    organizerEmail,
   }), false);
   assert.equal(shouldIncludeFireflies({
     isOnline: true,
     addFireflies: true,
     sendUpdates: 'all',
     alreadyOnEvent: false,
+    organizerEmail,
   }), true);
   assert.equal(shouldIncludeFireflies({
     isOnline: true,
     addFireflies: false,
     sendUpdates: 'all',
     alreadyOnEvent: false,
+    organizerEmail,
   }), false);
   assert.equal(shouldIncludeFireflies({
     isOnline: false,
     addFireflies: true,
     sendUpdates: 'all',
     alreadyOnEvent: false,
+    organizerEmail,
   }), false);
 });
 
@@ -123,18 +129,64 @@ test('recorded extra Møte plans Meet plus Fireflies and no client email', () =>
   assert.equal(resolveSalesReminderDurationMinutes(), 15);
 });
 
+test('fred@ only goes on events the Fireflies key owner hosts; other reps\' events never carry him', () => {
+  // Fireflies answers fred@ for the ORGANIZER's own account, which the hub key cannot read.
+  assert.equal(shouldIncludeFireflies({
+    isOnline: true,
+    addFireflies: true,
+    sendUpdates: 'all',
+    organizerEmail: 'alexander@asoldi.com',
+  }), false);
+  assert.equal(shouldIncludeFireflies({
+    isOnline: true,
+    addFireflies: false,
+    sendUpdates: 'none',
+    alreadyOnEvent: true,
+    organizerEmail: 'alexander@asoldi.com',
+  }), false);
+  assert.equal(shouldIncludeFireflies({
+    isOnline: true,
+    addFireflies: true,
+    sendUpdates: 'all',
+    organizerEmail: 'Damian@asoldi.com',
+  }), true);
+  // A host we cannot name fails closed: it might be another rep (a token with no e-mail, a shared calendar).
+  assert.equal(shouldIncludeFireflies({ isOnline: true, addFireflies: true, sendUpdates: 'all', organizerEmail: '' }), false);
+  assert.equal(shouldIncludeFireflies({ isOnline: true, addFireflies: true, sendUpdates: 'all' }), false);
+  const repHosted = buildMeetingAttendees(client, { includeAttendees: true, includeFireflies: true, organizerEmail: 'alexander@asoldi.com' });
+  assert.equal(repHosted.some((entry) => entry.email.endsWith('@fireflies.ai')), false);
+  const unknownHost = buildMeetingAttendees(client, { includeAttendees: false, includeFireflies: true, organizerEmail: '' });
+  assert.deepEqual(unknownHost, [], 'the extra Møte of a mailbox we cannot name gets no fred@');
+  const ownerHosted = buildMeetingAttendees(client, { includeAttendees: false, includeFireflies: true, organizerEmail: 'damian@asoldi.com' });
+  assert.deepEqual(ownerHosted.map((entry) => entry.email), [firefliesNotetakerEmail()]);
+  // The calendar writes pass the mailbox that hosts the event.
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../lib/google-calendar.js'), 'utf8');
+  const upsert = src.slice(src.indexOf('export async function upsertMeetingEvent'));
+  assert.match(upsert.slice(0, 9000), /shouldIncludeFireflies\(\{[^}]*organizerEmail: auth\.googleEmail/);
+  const recorded = src.slice(src.indexOf('export async function upsertRecordedSalesActionEvent'));
+  assert.match(recorded.slice(0, 2500), /buildMeetingAttendees\(client, \{[^}]*organizerEmail: auth\.googleEmail/);
+  const server = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../server.js'), 'utf8');
+  const syncFn = server.slice(server.indexOf('async function maybeSyncCalendar'), server.indexOf('async function maybeSyncNextActionCalendars'));
+  assert.match(syncFn, /firefliesNotetakerAllowedForOrganizer\(syncCalendarStatus\.googleEmail\)/);
+  assert.match(syncFn, /addFireflies: isOnline && firefliesWanted/);
+  // Card saves after the confirmation no longer re-sync the event to add him (that re-sent the client's invite).
+  assert.equal(server.includes('inviteFirefliesAfterConfirmation'), false);
+});
+
 test('silent updates keep Fred after he was already invited', () => {
   assert.equal(shouldIncludeFireflies({
     isOnline: true,
     addFireflies: false,
     sendUpdates: 'none',
     alreadyOnEvent: true,
+    organizerEmail: 'damian@asoldi.com',
   }), true);
   assert.equal(shouldIncludeFireflies({
     isOnline: true,
     addFireflies: true,
     sendUpdates: 'none',
     alreadyOnEvent: false,
+    organizerEmail: 'damian@asoldi.com',
   }), false);
 });
 
@@ -372,9 +424,12 @@ test('after confirmation the sales Meet button does not force a second room at c
   const thankYouSync = server.slice(server.indexOf('async function syncCalendarInviteForThankYou'));
   assert.match(thankYouSync.slice(0, 1200), /forceOwnerMeet: true/);
   assert.equal(server.includes('forceOwnerMeet && isOnline && Boolean(eventIdForUpsert)'), false);
-  assert.match(server, /lockedMeetLink: forceNewMeet \? '' : salesInboxMeetLink\(nextClient\)/);
-  const liveJoin = server.slice(server.indexOf('async function maybeJoinFirefliesLive'));
-  assert.match(liveJoin.slice(0, 1400), /salesInboxMeetLink\(client\)/);
+  // A moved meeting keeps the room the client was e-mailed; live join treats the new time as a new session.
+  assert.match(server, /lockedMeetLink: salesInboxMeetLink\(nextClient\)/);
+  // The bot goes into that same room: live-join sessions take the sales room from salesInboxMeetLink.
+  const liveSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../lib/fireflies-live-sessions.js'), 'utf8');
+  const bookedSlots = liveSrc.slice(liveSrc.indexOf('export function bookedLiveSlots'));
+  assert.match(bookedSlots.slice(0, 1600), /salesInboxMeetLink\(client\)/);
   assert.match(server, /shouldRescheduleSalesReminders\(/);
   assert.match(server, /salesReminderCatchUpIsDue\('24h'/);
   assert.match(server, /overlaySalesInboxMeetOnEvents\(/);
