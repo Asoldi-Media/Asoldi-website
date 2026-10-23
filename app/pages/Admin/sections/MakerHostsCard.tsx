@@ -155,7 +155,7 @@ export function MakerHostsCard() {
 
       {fresh && (
         <div className="rounded-lg border border-amber-400/40 bg-amber-400/5 p-3 mb-3 text-sm">
-          <p className="text-amber-300 mb-1">Token for “{fresh.label}” ({fresh.hostId}). It is shown only now; copy it into the Maker .env.</p>
+          <p className="text-amber-300 mb-1">Token for “{fresh.label}” ({fresh.hostId}). It is shown only now; copy it into the Maker .env, then recreate the Maker container (make dev-up): a plain restart keeps the old value.</p>
           <div className="flex flex-wrap items-center gap-2">
             <code className="text-white break-all bg-black/40 rounded px-2 py-1">{fresh.token}</code>
             <button type="button" onClick={() => void copyToken()} className={`${button} bg-white/10 text-white`}>{copied ? 'Copied' : 'Copy'}</button>
