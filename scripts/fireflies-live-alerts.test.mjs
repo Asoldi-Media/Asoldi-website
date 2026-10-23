@@ -1183,6 +1183,29 @@ test('health: the owner alert stamp is claimed under the store lock, so a hub pr
   assert.equal(ingest.claimFirefliesLiveJoinAlert({ nowMs: at(12 * 60 + 2) }), false, 'once');
 });
 
+test('health: each kind of live-join trouble has its own 12 hours, so a new one is told at once', async () => {
+  resetAll();
+  const owner = [];
+  const sendEmail = async (message) => { owner.push(message); };
+  const client = salesClient();
+  // The key was missing an hour before the meeting: told.
+  assert.equal((await alerts.maybeAlertFirefliesLiveJoin({ sendEmail, clients: [client], apiKeyPresent: false, nowMs: at(-60), env: {}, log: quiet }))?.reason, 'no-api-key');
+  // The key is back, and Fireflies refuses every send: told too, though the first e-mail is an hour old.
+  const state = { clients: [client], active: [], sent: [], reply: () => ({ ok: false, error: { code: 'paid_required', message: 'paid_required: upgrade your plan' } }) };
+  await tickAt(state, -3);
+  const refused = await alerts.maybeAlertFirefliesLiveJoin({ sendEmail, clients: [client], apiKeyPresent: true, nowMs: at(-2), env: {}, log: quiet });
+  assert.equal(refused?.reason, 'sends-refused');
+  assert.equal(owner.length, 2);
+  assert.match(owner[1].text, /Samme varsel sendes høyst én gang hver 12. time/);
+  assert.equal(ingest.firefliesIngestStatus({ nowMs: at(-2) }).lastLiveJoinAlertAt, iso(-2), 'the status shows the latest alert of any kind');
+  // The same trouble again, after a restart: not again within 12 hours.
+  ingest.resetFirefliesIngestForTests();
+  assert.equal(await alerts.maybeAlertFirefliesLiveJoin({ sendEmail, clients: [client], apiKeyPresent: true, nowMs: at(-1), env: {}, log: quiet }), null);
+  assert.equal(ingest.claimFirefliesLiveJoinAlert({ nowMs: at(0), reason: 'no-api-key' }), false, 'each reason keeps its own stamp');
+  assert.equal(ingest.claimFirefliesLiveJoinAlert({ nowMs: at(0), reason: 'loop-stalled' }), true);
+  assert.equal(owner.length, 2);
+});
+
 test('health: a live-join loop that stopped is reported by the ingest tick watching it', async () => {
   resetAll();
   const sent = [];
