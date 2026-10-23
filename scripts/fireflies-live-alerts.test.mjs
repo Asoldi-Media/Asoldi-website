@@ -661,6 +661,50 @@ test('the rep gets one lobby e-mail, stamped on the session, also across a resta
   assert.equal(sent.length, 1, 'never twice');
 });
 
+test('a workshop knock also reaches the room\'s host, who is in the meeting; one address gets one copy', async () => {
+  resetAll();
+  const WORKSHOP_KEY = `${ROOM_B}|${T}`;
+  const client = salesClient({
+    agreedTime: false,
+    workshopAction: { name: 'Workshop', format: 'mote', dueAt: iso(0), meetLink: ROOM_B, status: 'confirmed' },
+  });
+  live.upsertLiveSessionsForClient(client, { nowMs: at(-10) });
+  updateLiveSessionStore((store) => {
+    store.sessions[WORKSHOP_KEY] = { ...applyLiveJoinAttempt(store.sessions[WORKSHOP_KEY], { at: iso(-3), kind: 'first', ok: true }), checkedAt: iso(3) };
+    return store;
+  }, { nowMs: at(-3) });
+  // As server.js liveSessionMeetHost: Damian's workshop calendar hosts workshop and iteration rooms.
+  const meetHostFor = (session) => (session.slots.some((slot) => slot.kind === 'workshop' || slot.kind === 'iteration') ? 'Damian@asoldi.com' : '');
+  const sent = [];
+  const base = { nowMs: at(3), log: quiet, meetHostFor, sendEmail: async (message) => { sent.push(message); } };
+  await alerts.runFirefliesLobbyAlerts({ ...base, clients: [client], recipientsFor: async () => ['alexander@asoldi.com'] });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].to, 'alexander@asoldi.com, damian@asoldi.com');
+
+  // The host is the rep: one copy. A client with no rep: the host still hears. A test client: nobody.
+  const again = async (patch) => {
+    sent.length = 0;
+    updateLiveSessionStore((store) => {
+      store.sessions[WORKSHOP_KEY] = { ...store.sessions[WORKSHOP_KEY], lobbyAlertAt: '' };
+      return store;
+    }, { nowMs: at(3) });
+    return alerts.runFirefliesLobbyAlerts({ ...base, clients: [client], ...patch });
+  };
+  await again({ recipientsFor: async () => ['damian@asoldi.com'] });
+  assert.deepEqual(sent.map((mail) => mail.to), ['damian@asoldi.com']);
+  await again({ recipientsFor: async () => [] });
+  assert.deepEqual(sent.map((mail) => mail.to), ['damian@asoldi.com']);
+  const testClient = await again({ clients: [{ ...client, isTest: true }], recipientsFor: async () => ['alexander@asoldi.com'] });
+  assert.deepEqual(testClient.skipped, [{ key: WORKSHOP_KEY, reason: 'excluded' }]);
+  assert.equal(sent.length, 0);
+
+  // server.js hands the lib the room's host: the sales calendar's, or Damian's for workshops and iterations.
+  const server = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  assert.match(server, /meetHostFor: \(session\) => liveSessionMeetHost\(session\)\.ownerEmail,/);
+  const host = server.slice(server.indexOf('function liveSessionMeetHost('), server.indexOf('async function openLiveSessionMeetRoom('));
+  assert.match(host, /if \(slot\.kind === 'workshop' \|\| slot\.kind === 'iteration'\) \{\s*return \{ accountKey: resolveDamianWorkshopAccountKey\(\), ownerEmail: DAMIAN_WORKSHOP_CALENDAR_EMAIL \};/);
+});
+
 test('no lobby e-mail for a test client, a client with no rep, when switched off, or when the bot got in', async () => {
   resetAll();
   knockedSession();

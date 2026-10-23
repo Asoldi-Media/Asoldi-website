@@ -9660,6 +9660,8 @@ async function sendDueFirefliesLiveJoins() {
       clients,
       enabled: firefliesLobbyAlertEnabled(),
       recipientsFor: firefliesLobbyRecipientsFor(),
+      // Only someone in the meeting can let the bot in: the room's host too (Damian for workshops and iterations).
+      meetHostFor: (session) => liveSessionMeetHost(session).ownerEmail,
       mayAlert: firefliesAlertAllowedFor,
       sendEmail: (message) => emailLib.sendEmail(message),
     });
@@ -9692,8 +9694,9 @@ async function firefliesRepEmailFor(client, owners) {
 }
 
 /**
- * Lobby alert recipients: the owning rep; the team address only when the rep is set but has no e-mail; nobody
- * (skipped) when the client has no rep. The owner map is read once per run.
+ * Lobby alert recipients: the owning rep; the team address only when the rep is set but has no e-mail; no rep
+ * address when the client has no rep. The room's host is added by the lib (meetHostFor), once per address.
+ * The owner map is read once per run.
  */
 function firefliesLobbyRecipientsFor() {
   let owners = null;
