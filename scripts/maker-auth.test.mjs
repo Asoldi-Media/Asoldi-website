@@ -147,6 +147,36 @@ test('another process sees a revocation within a second and a new host at once',
   assert.equal(host.hostId.length, 11);
 });
 
+test('host rows are cleaned once per file version and frozen, so a large hosts file keeps token checks cheap', () => {
+  const dir = tempDir();
+  hosts.resetMakerHostsMemoForTests();
+  clearJsonCacheForTests();
+  const rows = Array.from({ length: hosts.MAX_MAKER_HOSTS }, (_, i) => ({
+    hostId: `mh_${i.toString(16).padStart(8, '0')}`,
+    label: `host ${i}`,
+    tokenHash: `sha256:${'a'.repeat(64)}`,
+    scopes: ['callback'],
+    runIds: Array.from({ length: hosts.MAX_HOST_RUN_IDS }, (_, j) => `run-${i}-${j}`),
+  }));
+  writeFileSync(hostsFile(dir), JSON.stringify({ version: 1, hosts: rows }));
+  const first = hosts.readMakerHosts({ dataDir: dir });
+  assert.equal(first.hosts.length, hosts.MAX_MAKER_HOSTS);
+  assert.equal(hosts.readMakerHosts({ dataDir: dir }), first, 'the same cleaned file until the file changes');
+  assert.ok(Object.isFrozen(first.hosts[0]) && Object.isFrozen(first.hosts[0].runIds) && Object.isFrozen(first.hosts[0].scopes));
+  assert.throws(() => first.hosts[0].runIds.push('x'), TypeError);
+
+  // Unknown-host tokens are what anyone can send; 2000 of them must not rebuild 100 x 500 rows each.
+  const now = Date.now();
+  hosts.verifyMakerHostToken(`mkr_ffff0000_${'b'.repeat(43)}`, { dataDir: dir, scope: 'callback', now });
+  const budgetMs = 1500;
+  const start = Date.now();
+  for (let i = 1; i < 2000; i += 1) {
+    const token = `mkr_ffff${i.toString(16).padStart(4, '0')}_${'b'.repeat(43)}`;
+    assert.equal(hosts.verifyMakerHostToken(token, { dataDir: dir, scope: 'callback', now }).reason, 'unknown-host');
+    if (i % 100 === 0) assert.ok(Date.now() - start < budgetMs, `over ${budgetMs} ms after ${i} checks`);
+  }
+});
+
 // ── lib/maker-auth.js: verifyMakerRequest ───────────────────────────────────────
 
 test('verifyMakerRequest: no credential is refused even with nothing configured (fail closed)', () => {
@@ -473,6 +503,92 @@ test('failure limiter: more than 30 failures in 10 minutes raises one alert per 
   assert.ok(persisted.some((delta) => delta.makerFailureAlerts?.total === 1));
   clock += 11 * 60_000;
   assert.equal(auth.status().failures.alertActive, false);
+  assert.equal(auth.status().failures.failures, 0, 'failures older than the window no longer count');
+});
+
+const hex8 = (n) => n.toString(16).padStart(8, '0');
+
+test('failure limiter: per-key state is capped and only host tokens get any; the global count never counts past the window', () => {
+  let clock = Date.parse('2026-10-24T12:00:00.000Z');
+  const limiter = makerAuthLib.createMakerFailureLimiter({ now: () => clock, maxKeys: 3, perKey: 2 });
+  for (const key of ['a', 'b', 'c']) limiter.fail(key);
+  assert.equal(limiter.trackedKeys(), 3);
+  limiter.fail('a'); // a is now the most recent
+  limiter.fail('d'); // past the cap: b (failed longest ago) is dropped
+  assert.equal(limiter.trackedKeys(), 3);
+  assert.equal(limiter.fail('a').limited, true, 'a kept its count: 3 failures > 2');
+  assert.equal(limiter.fail('b').limited, false, 'b started over');
+  for (let i = 0; i < 1000; i += 1) limiter.fail('c');
+  const verdict = limiter.fail('c');
+  assert.equal(verdict.limited, true);
+  assert.ok(verdict.retryAfterSec >= 1 && verdict.retryAfterSec <= 600);
+  assert.equal(limiter.fail(null).limited, false, 'null keeps no per-key state');
+  assert.equal(limiter.trackedKeys(), 3);
+  assert.equal(limiter.status().failures, 1009);
+  clock += 10 * 60_000;
+  assert.equal(limiter.status().failures, 0);
+  assert.equal(limiter.fail('c').limited, false, 'old stamps leave the window');
+});
+
+test('failure limiter: work per refused request stays bounded however many distinct credentials arrive', () => {
+  const dir = tempDir();
+  hosts.resetMakerHostsMemoForTests();
+  counters.resetSecurityCounters();
+  const valid = hosts.createMakerHost({ label: 'valid' }, { dataDir: dir });
+  const disk = legacyHolder(dir);
+  let clock = Date.parse('2026-10-24T12:00:00.000Z');
+  const alerts = [];
+  const limiter = makerAuthLib.createMakerFailureLimiter({ now: () => clock, onAlert: (info) => alerts.push(info) });
+  const auth = makerAuthLib.createMakerAuth({
+    legacyHolder: disk,
+    dataDir: dir,
+    env: { WEBSITE_MAKER_API_KEY: 'k-123' },
+    now: () => clock,
+    limiter,
+    counters: makerAuthLib.createPersistedMakerCounters({ dataDir: dir, now: () => clock, write: () => {} }),
+  });
+  const handler = auth.requireMakerHost('preview-push', { allowApiKey: true });
+  const run = (headers) => {
+    let status = 200;
+    let passed = false;
+    const res = { setHeader() {}, status(code) { status = code; return this; }, json() { return this; } };
+    handler(req(headers), res, () => { passed = true; });
+    return { status, passed };
+  };
+
+  // 50k distinct legacy-style tokens, then 50k distinct host-shaped tokens, all inside one window
+  // (1 ms apart). Each chunk is timed so a limiter whose cost grows stops the test early.
+  const perKind = 50_000;
+  const budgetMs = 15_000; // about 3 s on a laptop; a limiter whose work grows with its keys needs minutes
+  const start = Date.now();
+  const statuses = new Set();
+  for (let i = 0; i < 2 * perKind; i += 1) {
+    clock += 1;
+    const headers = i < perKind
+      ? { 'x-sales-callback-token': `stale-run-token-${i}` }
+      : { 'x-maker-host-token': `mkr_${hex8(i)}_${'z'.repeat(43)}` };
+    statuses.add(run(headers).status);
+    if (i % 1000 === 999) assert.ok(Date.now() - start < budgetMs, `over ${budgetMs} ms after ${i + 1} refused requests`);
+    if (i === perKind - 1) assert.equal(limiter.trackedKeys(), 0, 'legacy-style tokens keep no per-key state');
+  }
+  assert.deepEqual([...statuses], [401], 'every refusal is a plain 401');
+  assert.ok(limiter.trackedKeys() <= makerAuthLib.FAILURE_LIMITER_MAX_KEYS, `tracked keys ${limiter.trackedKeys()}`);
+  assert.equal(limiter.status().failures, 2 * perKind);
+  assert.equal(alerts.length, 1, 'one alert per window');
+
+  // The limiter alone: 100k more failures, half of them with keys (about 0.1 s).
+  const pureStart = Date.now();
+  for (let i = 0; i < 100_000; i += 1) {
+    clock += 1;
+    limiter.fail(i % 2 ? makerAuthLib.failureKeyFor(`mkr_${hex8(i)}_${'y'.repeat(43)}`) : null);
+    if (i % 5000 === 4999) assert.ok(Date.now() - pureStart < 2000, `limiter over 2000 ms after ${i + 1} failures`);
+  }
+  assert.ok(limiter.trackedKeys() <= makerAuthLib.FAILURE_LIMITER_MAX_KEYS);
+
+  // Valid credentials still pass during the flood.
+  assert.equal(run({ 'x-maker-host-token': valid.token }).passed, true);
+  assert.equal(run({ 'x-sales-callback-token': disk.get() }).passed, true);
+  assert.equal(run({ 'x-api-key': 'k-123' }).passed, true);
 });
 
 test('persisted counters: batched, merged across writers, and the settings record is untouched', () => {

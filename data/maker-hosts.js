@@ -160,9 +160,34 @@ export function publicMakerHost(host) {
   return { ...rest, revoked: Boolean(host.revokedAt), runIdCount: host.runIds.length };
 }
 
+function freezeHosts(file) {
+  for (const host of file.hosts) {
+    Object.freeze(host.scopes);
+    Object.freeze(host.runIds);
+    Object.freeze(host.capabilities.handlers);
+    Object.freeze(host.capabilities);
+    Object.freeze(host);
+  }
+  Object.freeze(file.hosts);
+  return Object.freeze(file);
+}
+
+// Token checks run for any request that carries a host-shaped token, so the cleaned rows are
+// kept per parsed file object (the JSON cache hands back the same object until the file changes)
+// instead of being rebuilt from up to MAX_MAKER_HOSTS × MAX_HOST_RUN_IDS entries on every call.
+// The rows are frozen: callers copy before they change anything.
+const normalizedByRaw = new WeakMap();
+
 export function readMakerHosts({ dataDir, fresh = false } = {}) {
   const path = makerHostsPath(dataDir);
-  return normalizeFile(fresh ? readJsonFresh(path) : readJsonCached(path));
+  const raw = fresh ? readJsonFresh(path) : readJsonCached(path);
+  if (!raw || typeof raw !== 'object') return normalizeFile(raw);
+  let file = normalizedByRaw.get(raw);
+  if (!file) {
+    file = freezeHosts(normalizeFile(raw));
+    normalizedByRaw.set(raw, file);
+  }
+  return file;
 }
 
 export function listMakerHosts({ dataDir } = {}) {
