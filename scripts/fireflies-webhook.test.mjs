@@ -238,6 +238,23 @@ test('bot-joined events are ignored', async () => {
   });
 });
 
+test('the bot_joined pre-hook never keeps the webhook from answering, and a bad record never fails a card', () => {
+  const serverSrc = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  const hook = serverSrc.slice(serverSrc.indexOf('async function noteFirefliesBotJoinedWebhook'));
+  const body = hook.slice(0, hook.search(/\r?\n\}\r?\n/));
+  // A body of `null` parses fine but has no fields: it must not throw before the notify path's own try.
+  assert.match(body, /if \(!payload \|\| typeof payload !== 'object'\) return;/);
+  const tryAt = body.indexOf('try {');
+  assert.ok(tryAt > 0 && tryAt < body.indexOf('eventFromPayload(payload)'), 'the event is read inside the try');
+  assert.ok(tryAt < body.indexOf('meetingIdFromPayload(payload)'));
+  const handler = serverSrc.slice(serverSrc.indexOf('async function handleFirefliesWebhook'));
+  assert.ok(handler.indexOf('await noteFirefliesBotJoinedWebhook(payload)') < handler.indexOf('notifyFirefliesRecording('));
+  // jsonSalesClient builds liveRecordings behind a try, so one malformed client cannot fail the sales list.
+  assert.match(serverSrc, /liveRecordings: liveRecordingsForClient\(client\)/);
+  const cardFn = serverSrc.slice(serverSrc.indexOf('function liveRecordingsForClient'), serverSrc.indexOf('function jsonSalesClient'));
+  assert.match(cardFn, /try \{[^]*presentLiveRecordings\([^]*\} catch/);
+});
+
 test('live join goes in from 3 minutes before start and, if never sent, stops 30 minutes after', () => {
   // The per-slot window moved into the session planner (lib/fireflies-live-sessions.js).
   const meetingAt = '2026-09-26T10:00:00.000Z';

@@ -8063,6 +8063,20 @@ function canAccessSalesClient(req, client) {
   return salesUserOwnerKeys(req.salesUser).has(ownerId);
 }
 
+/** Is Fireflies in each booked online meeting (lib/fireflies-live-sessions.js). A bad record never fails the card. */
+function liveRecordingsForClient(client) {
+  try {
+    return presentLiveRecordings(client, {
+      store: readLiveSessionStore(),
+      liveJoinEnabled: safeModeAllows('firefliesLiveJoin'),
+      apiKeyPresent: Boolean(resolveFirefliesApiKey().apiKey),
+    });
+  } catch (error) {
+    console.warn(`[fireflies] liveRecordings id=${sanitizeText(client?.id)} failed: ${sanitizeText(error?.message) || error}`);
+    return [];
+  }
+}
+
 function jsonSalesClient(client, storedMap = null) {
   if (!client) return client;
   const inbox = salesInboxMeetLink(client);
@@ -8078,12 +8092,7 @@ function jsonSalesClient(client, storedMap = null) {
     calendar,
     meetings: presentClientMeetings(client, storedMap),
     inboxBot: presentInboxForClient(client.id),
-    // Is Fireflies in each booked online meeting (lib/fireflies-live-sessions.js presentLiveRecordings).
-    liveRecordings: presentLiveRecordings(client, {
-      store: readLiveSessionStore(),
-      liveJoinEnabled: safeModeAllows('firefliesLiveJoin'),
-      apiKeyPresent: Boolean(resolveFirefliesApiKey().apiKey),
-    }),
+    liveRecordings: liveRecordingsForClient(client),
   };
 }
 
@@ -9547,14 +9556,17 @@ async function sendDueFirefliesLiveJoins() {
 
 /**
  * Fireflies' meeting.bot_joined webhook: one cheap read finds the meeting's room, and the sessions on that
- * room are marked as recording. Never throws, so the webhook still answers 200.
+ * room are marked as recording. Never throws (a body of `null` or a malformed replay included), so the
+ * webhook still answers.
  */
 async function noteFirefliesBotJoinedWebhook(payload = {}) {
-  if (!isFirefliesBotJoinedEvent(eventFromPayload(payload))) return;
-  const meetingId = meetingIdFromPayload(payload);
-  const apiKey = resolveFirefliesApiKey().apiKey;
-  if (!meetingId || !apiKey) return;
+  if (!payload || typeof payload !== 'object') return;
+  let meetingId = '';
   try {
+    if (!isFirefliesBotJoinedEvent(eventFromPayload(payload))) return;
+    meetingId = meetingIdFromPayload(payload);
+    const apiKey = resolveFirefliesApiKey().apiKey;
+    if (!meetingId || !apiKey) return;
     const changed = await noteFirefliesBotJoined({
       meetingId,
       fetchPresence: (id) => fetchFirefliesTranscriptPresence(id, { apiKey }),
@@ -9562,7 +9574,7 @@ async function noteFirefliesBotJoinedWebhook(payload = {}) {
     for (const session of changed) syncLiveJoinPlaceholders({ session });
     console.log(`[fireflies] bot joined id=${meetingId} sessions=${changed.map((session) => session.key).join(',') || '-'}`);
   } catch (error) {
-    console.warn(`[fireflies] bot joined id=${meetingId} lookup failed: ${sanitizeText(error?.message) || error}`);
+    console.warn(`[fireflies] bot joined id=${meetingId || '-'} lookup failed: ${sanitizeText(error?.message) || error}`);
   }
 }
 
