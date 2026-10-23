@@ -178,18 +178,90 @@ test('verifyMakerRequest: host token, legacy disk token, legacy env token, host 
   assert.equal(envAuth.verifyMakerRequest(req({ 'x-maker-host-token': token }), { scope: 'callback' }).ok, true, 'host tokens work beside env');
 });
 
-test('verifyMakerRequest: a revoked or out-of-scope host token is refused unless a valid legacy token comes with it', () => {
+test('verifyMakerRequest: a revoked or out-of-scope host token is refused even when a valid legacy token or API key comes with it', () => {
   const dir = tempDir();
   const { host, token } = hosts.createMakerHost({ label: 'A', scopes: ['callback'] }, { dataDir: dir });
   const disk = legacyHolder(dir);
-  const auth = makerAuthLib.createMakerAuth({ legacyHolder: disk, dataDir: dir, env: {} });
+  const auth = makerAuthLib.createMakerAuth({ legacyHolder: disk, dataDir: dir, env: { WEBSITE_MAKER_API_KEY: 'maker-api-key-value' } });
+  // The header set a Maker sends for a run the hub started: its host token plus the run's legacy token.
+  const makerHeaders = { 'x-maker-host-token': token, 'x-sales-callback-token': disk.get() };
   assert.deepEqual(auth.verifyMakerRequest(req({ 'x-maker-host-token': token }), { scope: 'jobs' }), { ok: false, reason: 'scope', hostId: host.hostId });
+  assert.deepEqual(auth.verifyMakerRequest(req(makerHeaders), { scope: 'jobs' }), { ok: false, reason: 'scope', hostId: host.hostId }, 'the legacy token does not widen the scopes');
+  assert.deepEqual(
+    auth.verifyMakerRequest(req({ ...makerHeaders, 'x-api-key': 'maker-api-key-value' }), { scope: 'preview-push', allowApiKey: true }),
+    { ok: false, reason: 'scope', hostId: host.hostId },
+    'nor does the API key'
+  );
+  assert.equal(auth.verifyMakerRequest(req(makerHeaders), { scope: 'callback' }).via, 'host', 'before the revoke the host token is used');
+
   hosts.revokeMakerHost(host.hostId, { dataDir: dir });
   assert.equal(auth.verifyMakerRequest(req({ 'x-maker-host-token': token })).reason, 'revoked');
   assert.equal(auth.verifyMakerRequest(req({ 'x-sales-callback-token': token })).reason, 'revoked', 'also in the legacy header');
-  const both = auth.verifyMakerRequest(req({ 'x-maker-host-token': token, 'x-sales-callback-token': disk.get() }));
-  assert.equal(both.ok, true, 'the legacy token still works while it is configured');
-  assert.equal(both.via, 'legacy');
+  assert.deepEqual(auth.verifyMakerRequest(req(makerHeaders), { scope: 'callback' }), { ok: false, reason: 'revoked', hostId: host.hostId }, 'host token plus legacy token after the revoke');
+  assert.equal(
+    auth.verifyMakerRequest(req({ ...makerHeaders, 'x-api-key': 'maker-api-key-value' }), { scope: 'preview-push', allowApiKey: true }).reason,
+    'revoked',
+    'the API key does not stand in for a revoked host'
+  );
+  assert.deepEqual(
+    auth.verifyMakerRequest(req({ 'x-sales-callback-token': disk.get() }), { scope: 'callback' }),
+    { ok: true, via: 'legacy', source: 'disk' },
+    'the legacy token alone is not tied to a host and keeps working until it is rotated'
+  );
+});
+
+test('verifyMakerRequest: an unknown host id or a wrong secret is not final, so the legacy token still carries the request', () => {
+  const dir = tempDir();
+  const { token } = hosts.createMakerHost({ label: 'A' }, { dataDir: dir });
+  const disk = legacyHolder(dir);
+  const auth = makerAuthLib.createMakerAuth({ legacyHolder: disk, dataDir: dir, env: {} });
+  const unknownHost = `mkr_0badc0de_${'b'.repeat(43)}`;
+  const wrongSecret = `${token.slice(0, -1)}${token.at(-1) === 'A' ? 'B' : 'A'}`;
+  for (const hostToken of [unknownHost, wrongSecret, 'not-a-host-token']) {
+    assert.deepEqual(
+      auth.verifyMakerRequest(req({ 'x-maker-host-token': hostToken, 'x-sales-callback-token': disk.get() }), { scope: 'callback' }),
+      { ok: true, via: 'legacy', source: 'disk' },
+      `legacy fallback for ${hostToken.slice(0, 12)}`
+    );
+  }
+  assert.equal(auth.verifyMakerRequest(req({ 'x-maker-host-token': unknownHost })).reason, 'unknown-host');
+  assert.equal(auth.verifyMakerRequest(req({ 'x-maker-host-token': wrongSecret })).reason, 'mismatch');
+  // A hub whose maker-hosts.json is gone: the Maker keeps working through the legacy token.
+  rmSync(hostsFile(dir));
+  clearJsonCacheForTests();
+  hosts.resetMakerHostsMemoForTests();
+  assert.equal(auth.verifyMakerRequest(req({ 'x-maker-host-token': token, 'x-sales-callback-token': disk.get() }), { scope: 'callback' }).via, 'legacy');
+});
+
+test('checkMakerRequest: the yes/no form counts refusals like the middleware and stamps lastSeenAt', () => {
+  const dir = tempDir();
+  hosts.resetMakerHostsMemoForTests();
+  counters.resetSecurityCounters();
+  const { host, token } = hosts.createMakerHost({ label: 'A', scopes: ['callback'] }, { dataDir: dir });
+  const pending = [];
+  const auth = makerAuthLib.createMakerAuth({
+    legacyHolder: legacyHolder(dir),
+    dataDir: dir,
+    env: {},
+    counters: makerAuthLib.createPersistedMakerCounters({ dataDir: dir, flushMs: 0, write: (deltas) => pending.push(deltas) }),
+  });
+  assert.equal(auth.checkMakerRequest(req({ 'x-maker-host-token': token })).ok, true);
+  assert.ok(JSON.parse(readHostsRaw(dir)).hosts[0].lastSeenAt, 'lastSeenAt stamped');
+  assert.equal(auth.checkMakerRequest(req({ 'x-maker-host-token': token }), { scope: 'jobs' }).reason, 'scope');
+  assert.equal(auth.checkMakerRequest(req({})).ok, false);
+  assert.equal(auth.checkMakerRequest(req({ 'x-sales-callback-token': 'wrong' }), { count: false }).ok, false);
+  const memory = counters.securityCounters();
+  assert.equal(memory['maker-callback-rejected'].total, 1, 'the scope refusal is counted; count:false is not');
+  assert.equal(memory['maker-callback-missing-token'].total, 1);
+  assert.deepEqual(pending.flatMap((delta) => Object.keys(delta.makerRejected?.byReason || {})).sort(), ['missing', 'scope']);
+  hosts.revokeMakerHost(host.hostId, { dataDir: dir });
+  assert.equal(auth.checkMakerRequest(req({ 'x-maker-host-token': token })).ok, false);
+  // server.js keeps the old yes/no helper name for route modules that take an isMakerAuthorized callback.
+  const server = readFileSync(new URL('../server.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(
+    server,
+    /function isMakerStatusCallbackAuthorized\(req, \{ scope = 'callback', count = true \} = \{\}\) \{\n  return makerAuth\.checkMakerRequest\(req, \{ scope, count \}\)\.ok;\n\}/
+  );
 });
 
 test('verifyMakerRequest: the Maker API key counts only where allowApiKey is set', () => {
@@ -256,6 +328,65 @@ test('requireMakerHost: 401 without a header, 200 with a host token (and lastSee
   const fileText = readFileSync(join(dir, 'security-settings.json'), 'utf8');
   assert.equal(fileText.includes(token), false, 'counters never hold a token');
   assert.equal(fileText.includes(disk.get()), false);
+});
+
+test('requireMakerHost: with the Maker header set (host token plus legacy run token) a revoke gives 401 and a missing scope 403', async (t) => {
+  const dir = tempDir();
+  hosts.resetMakerHostsMemoForTests();
+  const callbackOnly = hosts.createMakerHost({ label: 'callback only', scopes: ['callback'] }, { dataDir: dir });
+  const full = hosts.createMakerHost({ label: 'all scopes' }, { dataDir: dir });
+  const disk = legacyHolder(dir);
+  const auth = makerAuthLib.createMakerAuth({ legacyHolder: disk, dataDir: dir, env: { WEBSITE_MAKER_API_KEY: 'k-123' } });
+  const { base, close } = await serve(callbackApp(auth));
+  t.after(close);
+  const post = (path, headers) => fetch(`${base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: '{}' });
+  const withRun = (token) => ({ 'x-maker-host-token': token, 'x-sales-callback-token': disk.get() });
+
+  assert.equal((await post('/cb', withRun(full.token))).status, 200);
+  assert.equal((await post('/push', withRun(full.token))).status, 200);
+  const scoped = await post('/push', { ...withRun(callbackOnly.token), 'x-api-key': 'k-123' });
+  assert.equal(scoped.status, 403, 'a callback-only host may not push previews, legacy token and API key or not');
+  assert.equal((await scoped.json()).code, 'maker-scope');
+
+  hosts.revokeMakerHost(full.host.hostId, { dataDir: dir });
+  const refused = await post('/cb', withRun(full.token));
+  assert.equal(refused.status, 401);
+  assert.deepEqual(await refused.json(), { message: 'Unauthorized callback.' });
+  assert.equal((await post('/push', { ...withRun(full.token), 'x-api-key': 'k-123' })).status, 401);
+  assert.equal((await post('/cb', { 'x-sales-callback-token': disk.get() })).status, 200, 'the legacy token alone still works');
+});
+
+test('failure limiter: a stale legacy run token keeps getting 401, never 429, so the Maker fallback on 401 still runs', () => {
+  const dir = tempDir();
+  const disk = legacyHolder(dir);
+  const stale = disk.get();
+  disk.rotate();
+  let clock = Date.parse('2026-10-24T12:00:00.000Z');
+  const auth = makerAuthLib.createMakerAuth({
+    legacyHolder: disk,
+    dataDir: dir,
+    env: { WEBSITE_MAKER_API_KEY: 'k-123' },
+    now: () => clock,
+    counters: makerAuthLib.createPersistedMakerCounters({ dataDir: dir, now: () => clock, write: () => {} }),
+  });
+  const call = (handler, headers) => {
+    let code = 200;
+    const res = { setHeader() {}, status(c) { code = c; return this; }, json() { return this; } };
+    handler(req(headers), res, () => {});
+    return code;
+  };
+  const callback = auth.requireMakerHost('callback');
+  const push = auth.requireMakerHost('preview-push', { allowApiKey: true, message: 'Unauthorized preview push.' });
+  const codes = [];
+  for (let i = 0; i < 25; i += 1) {
+    codes.push(call(callback, { 'x-sales-callback-token': stale }));
+    clock += 1000;
+  }
+  assert.ok(codes.every((code) => code === 401), `status callbacks: ${codes.join(',')}`);
+  assert.equal(call(push, { 'x-sales-callback-token': stale }), 401, 'the preview push with the same stale run token still gets 401');
+  for (let i = 0; i < 25; i += 1) call(push, { 'x-api-key': 'k-wrong' });
+  assert.equal(call(push, { 'x-api-key': 'k-wrong' }), 401, 'a wrong API key keeps getting 401');
+  assert.equal(call(callback, { 'x-sales-callback-token': disk.get() }), 200, 'the current token passes');
 });
 
 test('requireMakerHost: 403 for a host without the scope, and the preview push message and API key', async (t) => {

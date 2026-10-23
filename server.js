@@ -2877,6 +2877,12 @@ function getMakerCallbackToken() {
 const makerAuth = createMakerAuth({ legacyHolder: MAKER_CALLBACK_TOKEN_HOLDER, dataDir: getPersistentDataDir() });
 const { requireMakerHost } = makerAuth;
 
+// Yes/no form of the same check for code that answers the refusal itself (route modules that take
+// an isMakerAuthorized callback). Same rules and counters as requireMakerHost.
+function isMakerStatusCallbackAuthorized(req, { scope = 'callback', count = true } = {}) {
+  return makerAuth.checkMakerRequest(req, { scope, count }).ok;
+}
+
 function secureStringEqual(left = '', right = '') {
   const a = String(left || '');
   const b = String(right || '');

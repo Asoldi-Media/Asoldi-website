@@ -196,11 +196,31 @@ test('real hub: per-host tokens on Maker callbacks, revoke, legacy disk token, h
     assert.ok(row.lastHeartbeatAt);
     assert.equal(JSON.stringify(listed).includes(token), false);
 
-    // 5. A revoked token gets 401.
+    // 5. A revoked token gets 401, also with the header set a Maker sends for a run the hub
+    //    started (its host token plus the run's legacy token).
+    const runHeaders = { 'x-maker-host-token': token, 'x-sales-callback-token': legacy };
+    assert.equal((await fieldsCallback(base, runHeaders)).status, 200, 'before the revoke');
     const revoke = await fetch(`${base}/api/admin/maker-hosts/${hostId}`, { method: 'DELETE', headers: hub.admin() });
     assert.equal(revoke.status, 200);
     assert.equal((await fieldsCallback(base, { 'x-maker-host-token': token })).status, 401);
     assert.equal((await fieldsCallback(base, { 'x-sales-callback-token': token })).status, 401, 'also in the legacy header');
+    assert.equal((await fieldsCallback(base, runHeaders)).status, 401, 'the run token does not stand in for a revoked host');
+    const push = await fetch(`${base}/api/admin/sales/maker-preview-push`, { method: 'POST', headers: { ...runHeaders, 'x-sales-client-id': CLIENT_ID } });
+    assert.equal(push.status, 401, 'nor on the preview push');
+    assert.equal((await fieldsCallback(base, { 'x-sales-callback-token': legacy })).status, 200, 'the legacy token alone still works');
+
+    // 5b. A host limited to the callback scope cannot push previews, legacy token or not.
+    const narrow = await (await fetch(`${base}/api/admin/maker-hosts`, {
+      method: 'POST',
+      headers: hub.admin({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ label: 'Callback-only Maker', scopes: ['callback'] }),
+    })).json();
+    const narrowPush = await fetch(`${base}/api/admin/sales/maker-preview-push`, {
+      method: 'POST',
+      headers: { 'x-maker-host-token': narrow.token, 'x-sales-callback-token': legacy, 'x-sales-client-id': CLIENT_ID },
+    });
+    assert.equal(narrowPush.status, 403);
+    assert.equal((await narrowPush.json()).code, 'maker-scope');
 
     // 6. Counters: in memory under the existing names, and persisted without any token.
     const security = await (await fetch(`${base}/api/admin/system/security`, { headers: hub.admin() })).json();
