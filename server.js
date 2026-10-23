@@ -34,6 +34,7 @@ import { registerShopPaymentsRoutes, registerShopPaymentsWebhook } from './lib/s
 import { registerCmsSsoRoutes } from './lib/cms-sso.js';
 import { registerDeliveryRoutes } from './lib/routes/delivery-routes.js';
 import { runDeliverySchemaStartupSnapshot } from './lib/delivery-snapshots.js';
+import { chosenWebsiteTier, makerSitePlanPayload, websiteTierIdForClient } from './lib/site-plan.js';
 import { myphonerMatchCandidates, myphonerSyncSkipReason, testClientIdSet } from './lib/test-clients.js';
 import * as employees from './data/employees.js';
 import * as sales from './data/sales.js';
@@ -17420,10 +17421,6 @@ app.post('/api/admin/sales/:id/offer/approve-preview', salesAuth, async (req, re
   res.json({ offer: presentOffer(updated) });
 });
 
-function chosenWebsiteTier(client, offer) {
-  return resolveTier(offer?.tierId) || resolveTier(client?.details?.meetingQuote?.tierId) || resolveTier(client?.portalTierId) || null;
-}
-
 async function findClientUserByEmail(email) {
   const target = normalizeEmail(email);
   if (!isValidEmail(target)) return null;
@@ -18671,6 +18668,9 @@ app.post('/api/admin/sales/:id/create-maker-run', salesOrDevelopmentAuth, async 
       productionDomain: sanitizeSalesWebsiteDomain(client.websiteDomain),
       quickFillLinks,
     };
+    // WS8.3: a plan in force travels with the run (contract site-plan/1, read by the Maker).
+    const sitePlanPayload = makerSitePlanPayload(client.sitePlan);
+    if (sitePlanPayload) requestBody.sitePlan = sitePlanPayload;
 
     const browserCreated = req.body?.browserCreated && typeof req.body.browserCreated === 'object' ? req.body.browserCreated : null;
     const browserCreatedRunId = sanitizeText(browserCreated?.runId);
@@ -19098,7 +19098,7 @@ function clientsWithWebsiteDue(clients = []) {
   const offers = salesOffers.latestOffersByClient();
   return clients.map((client) => {
     const offer = offers.get(client.id) || null;
-    const tierId = offer?.tierId || client.portalTierId || client.details?.meetingQuote?.tierId || '';
+    const tierId = websiteTierIdForClient(client, offer);
     const products = offer?.products || [];
     const dueOverride = offer?.dueDate || client.websiteDueOverride || '';
     const custom = isCustomWebsiteOffer({ tierId, products });
@@ -19153,7 +19153,7 @@ function persistWebsiteDue({ salesClientId = '', siteId = '', dueDate = '', acto
 
 function websiteDueView(client) {
   const offer = salesOffers.getOfferForClient(client.id);
-  const tierId = offer?.tierId || client.portalTierId || client.details?.meetingQuote?.tierId || '';
+  const tierId = websiteTierIdForClient(client, offer);
   const products = offer?.products || [];
   const dueOverride = offer?.dueDate || client.websiteDueOverride || '';
   const weeks = weeksForDeveloperBoard({ tierId, products, dueOverride });

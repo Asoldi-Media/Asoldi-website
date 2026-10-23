@@ -43,6 +43,48 @@ import {
   FUTURE_MAKERRUN_KEYS,
   FUTURE_MAKERRUN_STEP_KEYS,
 } from './normalize-ext.js';
+import { normalizeSitePlan, withPlanHistory } from '../lib/site-plan-model.js';
+import {
+  deliveryEmailStampPatch,
+  mergeDelivery,
+  normalizeDelivery,
+  planStageWrite,
+} from '../lib/delivery-state.js';
+import { normalizeMakerAutopilot, normalizeMakerMaterials, normalizePreviewPush } from '../lib/maker-events.js';
+import { appendDeliveryAudit } from '../lib/delivery-audit.js';
+
+// Client keys only their own writers set (setSalesSitePlan, setSalesDelivery and friends):
+// updateSalesClient and patchSalesClientsById never take them from an update, so no request body
+// that reaches those functions can write a plan or a delivery state.
+export const OWNED_CLIENT_KEYS = Object.freeze(['sitePlan', 'delivery']);
+// makerRun keys only setSalesMakerRunOwned writes (Maker delivery events, WS8.28).
+export const OWNED_MAKERRUN_KEYS = Object.freeze(['materials', 'autopilot', 'previewPush']);
+
+function withoutOwnedKeys(updates = {}, keys = OWNED_CLIENT_KEYS) {
+  if (!updates || typeof updates !== 'object' || Array.isArray(updates)) return {};
+  const out = { ...updates };
+  for (const key of keys) delete out[key];
+  if (out.makerRun && typeof out.makerRun === 'object' && !Array.isArray(out.makerRun)) {
+    const makerRun = { ...out.makerRun };
+    for (const key of OWNED_MAKERRUN_KEYS) delete makerRun[key];
+    out.makerRun = makerRun;
+  }
+  return out;
+}
+
+/**
+ * Sets an owned key from its normalizer (call it after carryFutureKeys). null clears the key; a
+ * stored value the normalizer cannot read stays as it is, so a later batch's shape survives.
+ */
+function applyOwned(target, raw, key, normalize) {
+  if (!raw || typeof raw !== 'object' || !Object.prototype.hasOwnProperty.call(raw, key) || raw[key] === undefined) return;
+  if (raw[key] === null) {
+    delete target[key];
+    return;
+  }
+  const value = normalize(raw[key]);
+  target[key] = value || raw[key];
+}
 
 function persistWorkshopAction(raw) {
   if (!raw || typeof raw !== 'object') return null;
@@ -291,8 +333,8 @@ function normalizeMakerRun(value = {}) {
     quickFillCompletedAt: sanitizeText(input.quickFillCompletedAt),
     mediaGatherCompletedAt: sanitizeText(input.mediaGatherCompletedAt),
   };
-  if (!runId) return carryFutureKeys(base, input, FUTURE_MAKERRUN_KEYS);
-  return carryFutureKeys({
+  if (!runId) return withOwnedMakerRunKeys(carryFutureKeys(base, input, FUTURE_MAKERRUN_KEYS), input);
+  return withOwnedMakerRunKeys(carryFutureKeys({
     ...base,
     steps: normalizeMakerRunSteps(input.steps),
     step2Substeps: normalizeMakerStep2Substeps(input.step2Substeps),
@@ -307,7 +349,15 @@ function normalizeMakerRun(value = {}) {
     },
     productionDomain: sanitizeText(input.productionDomain),
     websiteDomain: sanitizeText(input.websiteDomain),
-  }, input, FUTURE_MAKERRUN_KEYS);
+  }, input, FUTURE_MAKERRUN_KEYS), input);
+}
+
+// WS8.28 owns materials and autopilot; previewPush has its shape here for WS8.17.
+function withOwnedMakerRunKeys(out, input) {
+  applyOwned(out, input, 'materials', normalizeMakerMaterials);
+  applyOwned(out, input, 'autopilot', normalizeMakerAutopilot);
+  applyOwned(out, input, 'previewPush', normalizePreviewPush);
+  return out;
 }
 
 function normalizeHubSite(value = {}) {
@@ -380,7 +430,7 @@ function normalizeMeetingQuotePackage(value = {}, fallback = {}) {
     : [];
   const pages = Number(input.pages);
   const fallbackPages = Number(fallback.pages);
-  return {
+  const pkg = {
     tierId: sanitizeText(input.tierId) || sanitizeText(fallback.tierId) || 'starter',
     customMode: Boolean(input.customMode),
     oneTime: Boolean(input.oneTime),
@@ -390,6 +440,10 @@ function normalizeMeetingQuotePackage(value = {}, fallback = {}) {
     selected,
     oneTimeAddOns,
   };
+  // WS8.3: the rep picked the tier (not the starter default). Stored only when true, so existing
+  // quotes keep their shape; the plan resolver trusts a quote's tier only with this flag.
+  if (input.tierExplicit === true) pkg.tierExplicit = true;
+  return pkg;
 }
 
 function normalizeMeetingQuote(value = {}) {
@@ -657,8 +711,10 @@ function normalizeSalesClient(raw = {}) {
   };
   // WS8.56: stored only when true, so existing records keep their shape.
   if (raw.isTest === true) client.isTest = true;
-  // WS8.44: keys a later batch writes survive this code (see data/normalize-ext.js).
+  // WS8.44: keys a later batch writes survive this code; WS8.3 / WS8.9 own sitePlan and delivery.
   carryFutureKeys(client, raw, FUTURE_CLIENT_KEYS);
+  applyOwned(client, raw, 'sitePlan', normalizeSitePlan);
+  applyOwned(client, raw, 'delivery', normalizeDelivery);
   if (client.isTest !== true) delete client.isTest;
   const inboxPatch = planConfirmedMeetBackfill(client);
   if (inboxPatch) client.calendar = { ...client.calendar, ...inboxPatch };
@@ -806,7 +862,8 @@ export function getSalesClientByMyphonerLeadId(leadId) {
   );
 }
 
-export function createSalesClient(input = {}) {
+export function createSalesClient(rawInput = {}) {
+  const input = withoutOwnedKeys(rawInput);
   const state = readState();
   const now = nowIso();
   const client = normalizeSalesClient({
@@ -822,7 +879,12 @@ export function createSalesClient(input = {}) {
   return client;
 }
 
+/** Generic client update. sitePlan and delivery are never taken from `updates` (OWNED_CLIENT_KEYS). */
 export function updateSalesClient(id, updates = {}) {
+  return updateSalesClientInternal(id, withoutOwnedKeys(updates));
+}
+
+function updateSalesClientInternal(id, updates = {}) {
   const state = readState();
   const index = state.findIndex((entry) => entry.id === id);
   if (index === -1) return null;
@@ -923,7 +985,7 @@ export function patchSalesClientsById(entries = []) {
   for (const entry of entries) {
     const id = sanitizeText(entry?.id);
     if (!id || !entry?.patch || typeof entry.patch !== 'object') continue;
-    byId.set(id, entry.patch);
+    byId.set(id, withoutOwnedKeys(entry.patch));
   }
   if (!byId.size) return { total: 0, updated: 0 };
   const state = readState();
@@ -1460,6 +1522,99 @@ export function setSalesTestFlag(id, isTest) {
 export function setSalesMakerRun(id, makerPatch = {}) {
   const current = getSalesClientById(id);
   return updateSalesClient(id, { makerRun: mergeMakerRunPatch(current?.makerRun || {}, makerPatch) });
+}
+
+/**
+ * WS8.28: writes the makerRun keys the Maker's delivery events own (materials, autopilot,
+ * previewPush), normalized. Only the authenticated callback handler calls this.
+ */
+export function setSalesMakerRunOwned(id, ownedPatch = {}) {
+  const patch = {};
+  for (const key of OWNED_MAKERRUN_KEYS) {
+    if (ownedPatch && Object.prototype.hasOwnProperty.call(ownedPatch, key)) patch[key] = ownedPatch[key];
+  }
+  if (!Object.keys(patch).length) return getSalesClientById(id);
+  return updateSalesClientInternal(id, { makerRun: patch });
+}
+
+/**
+ * WS8.3: stores client.sitePlan (normalized) with a history entry when the tier, services, billing
+ * or status change. Returns the client, or null when the client or the plan is not valid.
+ */
+export function setSalesSitePlan(id, plan, { by = '', reason = '', now = nowIso() } = {}) {
+  const current = getSalesClientById(id);
+  if (!current) return null;
+  const next = withPlanHistory(plan, current.sitePlan, { at: now, by, reason });
+  if (!next) return null;
+  if (JSON.stringify(normalizeSitePlan(current.sitePlan)) === JSON.stringify(next)) return current;
+  const updated = updateSalesClientInternal(id, { sitePlan: next });
+  appendDeliveryAudit({ at: now, kind: 'site-plan', clientId: id, by, reason, to: next.tierId, status: next.status });
+  return updated;
+}
+
+/**
+ * WS8.9: merges a delivery patch (events and emails shallow, every other key replaces) and
+ * writes only when something changed. Returns the client.
+ */
+export function setSalesDelivery(id, patch = {}, { by = '', reason = '' } = {}) {
+  const current = getSalesClientById(id);
+  if (!current) return null;
+  const next = mergeDelivery(current.delivery, patch);
+  if (current.delivery && JSON.stringify(normalizeDelivery(current.delivery)) === JSON.stringify(next)) return current;
+  const updated = updateSalesClientInternal(id, { delivery: next });
+  if (by || reason) appendDeliveryAudit({ kind: 'delivery', clientId: id, by, reason, keys: Object.keys(patch || {}) });
+  return updated;
+}
+
+/**
+ * WS8.9: one email stamp in delivery.emails and its legacy mirror in workshop.deskEmails, in one
+ * write, so the two never diverge. `key` is a delivery email key or `dataReminders`.
+ */
+export function stampDeliveryEmail(id, key, at = nowIso(), { by = '' } = {}) {
+  return stampDeliveryEmails(id, { [key]: at }, { by });
+}
+
+/**
+ * Several stamps in one write ({ key: at }). `backfilled` records the keys in
+ * delivery.emails.backfilled (the backfill stamps clients already past those emails).
+ */
+export function stampDeliveryEmails(id, stamps = {}, { by = '', backfilled = false } = {}) {
+  const current = getSalesClientById(id);
+  if (!current) return null;
+  const keys = Object.keys(stamps || {});
+  if (!keys.length) return current;
+  let delivery = normalizeDelivery(current.delivery);
+  const deskEmails = {};
+  for (const key of keys) {
+    const patch = deliveryEmailStampPatch({ ...current, delivery }, key, stamps[key]);
+    delivery = mergeDelivery(delivery, { emails: patch.emails });
+    Object.assign(deskEmails, patch.deskEmails);
+  }
+  if (backfilled) {
+    delivery = mergeDelivery(delivery, { emails: { backfilled: [...new Set([...delivery.emails.backfilled, ...keys])] } });
+  }
+  const updates = { delivery };
+  if (Object.keys(deskEmails).length) {
+    const workshop = current.workshop && typeof current.workshop === 'object' ? current.workshop : {};
+    updates.workshop = { ...workshop, deskEmails: { ...(workshop.deskEmails || {}), ...deskEmails } };
+  }
+  const updated = updateSalesClientInternal(id, updates);
+  appendDeliveryAudit({ kind: 'email-stamp', clientId: id, by, keys, backfilled });
+  return updated;
+}
+
+/**
+ * WS8.9: derives the client's stage and stores it (with one history entry) only when it changed.
+ * Idempotent. Returns { client, changed, derived, change }.
+ */
+export function syncSalesDeliveryStage(id, { by = '', reason = '', now = Date.now(), jobs } = {}) {
+  const current = getSalesClientById(id);
+  if (!current) return { client: null, changed: false, derived: null };
+  const plan = planStageWrite(current, { now, by, reason, jobs });
+  if (!plan.changed) return { client: current, changed: false, derived: plan.derived };
+  const client = updateSalesClientInternal(id, { delivery: plan.delivery });
+  appendDeliveryAudit({ kind: 'stage', clientId: id, by, reason, from: plan.change.from, to: plan.change.to, overlay: plan.change.overlay });
+  return { client, changed: true, derived: plan.derived, change: plan.change };
 }
 
 /** Replace makerRun instead of merging, so a client can be unlinked for a new run. */
