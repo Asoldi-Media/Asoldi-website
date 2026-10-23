@@ -18,7 +18,7 @@ before start to 2 hours after the booked end) and on the meeting's placeholder r
 | `ended` | The bot was in and has left; the transcript is on its way. | capture |
 | `not-admitted` | The bot was never in the room: sent but never let in, or never sent at all (`message` says why: no Fireflies key, the rate limit, Fireflies refused, or the hub did not try in time). | capture |
 | `missing` | Session end + 90 minutes and no recording. | watchdog |
-| `empty` | By then Fireflies only has a recording with no talk (silent, or too short). | watchdog |
+| `empty` | By then Fireflies only has a recording with no talk, or too little to be the meeting (silent, or a few sentences). | watchdog |
 | `declined` | A person marked the meeting held without a recording, or not held. | rep |
 
 The placeholder row is written at the first send Fireflies accepts. A session that ends with no
@@ -27,10 +27,19 @@ down) gets its row once the first-send window (T+30) is over, in `not-admitted` 
 `message` and no `liveJoinedAt`. A session whose bot the hub did not send (someone added Fireflies
 by hand) gets its row as soon as that bot is seen, as `recording`. A row is written once per
 session: one that intake dropped after linking the recording never comes back, and none is written
-when a recording with talk is already linked for the slot. A silent fragment does not count as the
-recording. A ticked "Møtet hatt" or a done Møte stops only a meeting that has not begun: once it
-has begun it stays booked, so a hub that was down through the meeting still writes its row when it
-comes back (within 12 hours of the start, the engine's collect horizon).
+when the slot's recording is already linked. A ticked "Møtet hatt" or a done Møte stops only a
+meeting that has not begun: once it has begun it stays booked, so a hub that was down through the
+meeting still writes its row when it comes back (within 12 hours of the start, the engine's collect
+horizon).
+
+"The slot's recording is linked" is one rule everywhere (`lib/fireflies-cover.js`, the card's own
+rule): a recording on the card with talk that is not live captions and at least 10 sentences (or
+talk from before sentences were counted), on that slot by its room and window, by this meeting's own
+bot, or put there by a person. Capture uses it to stop sending the bot back and to skip the
+placeholder, "Marker uten opptak" to answer 409, the watchdog to stop following a placeholder, and
+"Møter uten opptak" to leave a row out. A "hallo?" from a bot that sat alone in an open room, a
+silent copy, or live captions linked while the meeting runs never count: the bot is still sent back
+while the first-send window lasts, and the meeting is still followed to `missing` or `empty`.
 
 A reused room can still hold the bot of an earlier meeting that ran over. A bot that started more
 than 30 minutes before the booked start is that meeting's: the card says so ("Fireflies fra møtet
@@ -39,7 +48,14 @@ recording as a candidate, so it is never moved off the client it belongs to.
 
 The watchdog (`lib/fireflies-recording-watchdog.js`) follows every placeholder after the meeting:
 it links the recording when it turns up, and at the deadline (session end + 90 minutes) sets
-`missing` or `empty`. `empty` is never decided earlier: a notetaker that sat alone in an open room
+`missing` or `empty`. It takes a recording as found only when it would cover the placeholder once
+linked (the rule above, with the card at hand: one that would land on another booked slot in the
+same room is offered as a candidate). A finished recording with only a few sentences is linked so
+the rep sees it, but counts as `empty` at the deadline. A recording a person excluded from this
+client ("Ikke denne kunden"), pinned to another client or holds as their link on another card is
+never found or offered, and a link the hub refuses (`linkStoredTranscriptToClient` answers null)
+counts as nothing found: no "funnet og koblet", and a missing meeting stays missing. `empty` is
+never decided earlier: a notetaker that sat alone in an open room
 before the meeting leaves a silent fragment in many meetings that are recorded after all. Missing
 and empty rows are looked for hourly for 48 hours, so a late recording still links. A recording is
 taken by the bot's id, or on the room, only when it started between 30 minutes before the booked
@@ -51,11 +67,11 @@ could not look in Fireflies), and one a bot may have recorded waits for the key.
 
 | E-mail | When | To | What to do |
 |---|---|---|---|
-| **Slipp inn Fireflies – \<bedrift>** | Fireflies accepted a send, and by max(T+3, the first accepted send + 4 minutes) a look at the room since that send finds no bot (one seen only before it, such as an earlier meeting's, does not count), while the first-send window (to T+30) lasts. Once per session. | The client's owning rep; `FIREFLIES_NOTIFY_EMAIL` (ansatte@) only when that rep has no e-mail. Nobody when the client has no rep, or is a test client that is not an automation pilot. | In the meeting: admit «Fireflies.ai Notetaker» (Meet may list it under «Med potensielle risikoer»), and only one if two knock. Nobody there yet: nothing, the hub knocks again; the e-mail says so only while another automatic knock is due before T+30, and otherwise asks to admit it now. |
+| **Slipp inn Fireflies – \<bedrift>** | Fireflies accepted a send, and by max(T+3, the first accepted send + 4 minutes) a look at the room since that send finds no bot (one seen only before it, such as an earlier meeting's, does not count), while the first-send window (to T+30) lasts. Once per session. | The client's owning rep (`FIREFLIES_NOTIFY_EMAIL`, ansatte@, only when that rep has no e-mail), and the room's Meet host when that is someone else: only someone in the meeting can admit the bot, and Damian's calendar hosts workshops and iterations (server.js `liveSessionMeetHost`). One copy per address. Only the host when the client has no rep; nobody for a test client that is not an automation pilot. | In the meeting: admit «Fireflies.ai Notetaker» (Meet may list it under «Med potensielle risikoer»), and only one if two knock. Nobody there yet: nothing, the hub knocks again; the e-mail says so only while another automatic knock is due before T+30, and otherwise asks to admit it now. |
 | **Fireflies: ingen opptak av \<møtet> med \<bedrift>** | The deadline passed with no recording (also for a meeting the bot was never sent to, and also without a Fireflies key for one no bot was sent to). Once. | `FIREFLIES_NOTIFY_EMAIL` and the owning rep. None for a test client that is not an automation pilot (its row is still marked). | Paste a Fireflies link under Bytt opptak on Tilbud if someone recorded it (a recording from the same room at another time is listed), write product notes on the card, or mark the meeting "uten opptak". |
-| **Fireflies: tomt opptak av \<møtet> med \<bedrift>** | At the deadline Fireflies only has a recording with no talk. Once (it shares the stamp with the missing e-mail, so a meeting is reported one way). | Same as above. | Same as above. Usually the notetaker sat alone, or the meeting was held somewhere else. |
+| **Fireflies: tomt opptak av \<møtet> med \<bedrift>** | At the deadline Fireflies only has a recording with no talk, or a few sentences. Once (it shares the stamp with the missing e-mail, so a meeting is reported one way). | Same as above. | Same as above. Usually the notetaker sat alone, or the meeting was held somewhere else. |
 | **Fireflies: live-join står stille / live-join feiler / nøkkelen mangler, ingen opptak av møtene** | The live-join loop has not run for 10 minutes while a booked meeting is in its window, every round has failed for 15 minutes, or the Fireflies key is missing while a booked meeting starts within 2 hours. At most once per 12 hours. | `FIREFLIES_ALERT_EMAIL` (default damian@asoldi.com). | Check that the hub runs and logs `[fireflies] live-join …`, that the key is set and valid, and that Fireflies answers. |
-| **Fireflies: opptak hentes ikke inn** (and the other ingest alerts) | The transcript pull keeps failing (`docs/sales-offer-flow.md`, intake). | `FIREFLIES_ALERT_EMAIL`. | As the e-mail says. |
+| **Fireflies: opptak hentes ikke inn** (and the other ingest alerts) | The transcript pull keeps failing (`docs/sales-offer-flow.md`, intake). **Fireflies: arkivet er tomt**: the archive reads empty while cards hold recordings, so the meet-link backfill stands still; once each time it happens. | `FIREFLIES_ALERT_EMAIL`. | As the e-mail says. |
 
 The lobby stamp (`lobbyAlertAt`) lives on the session in `fireflies-live-sessions.json` and is
 taken before the send, so a restart or a second hub process never sends it twice; a failed send is
@@ -82,12 +98,12 @@ Optional `FIREFLIES_LOBBY_ALERT=0` turns the lobby e-mail off (default on).
   without a second e-mail, otherwise to capture's state (`scheduled` for one the engine has no
   session for yet, more than 36 hours ahead), and the engine takes the session up again. `400` for
   another state, `404` when no placeholder or booked slot matches, `409` when the slot's recording
-  with talk is already linked.
+  is already linked (the rule above: a fragment does not count).
 - `GET /api/admin/fireflies/missing-recordings` (a rep sees their own clients, admin all) →
   `{ rows: [{ clientId, businessName, ownerId, meetingId, slotKey, kind, startedAt, meetLink, title,
   state: 'missing' | 'empty' | 'not-admitted', message, missingAt, alertedAt }], count }`: placeholders
-  with no recording with talk that are past their deadline (later while Fireflies is still processing
-  a recording from the room) or already `missing` or `empty`, not declined, newest first, the last 60
+  no linked recording covers (the rule above) that are past their deadline (later while Fireflies is
+  still processing a recording from the room) or already `missing` or `empty`, not declined, newest first, the last 60
   days. A row past its deadline that the watchdog has not reached yet keeps `not-admitted` and its
   why; any other state lists as `missing`.
 - `GET /api/admin/fireflies/live-join-status` (admin) → `firefliesLiveJoinStatus()` (last tick, last

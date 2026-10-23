@@ -200,10 +200,19 @@ the watchdog) goes through `linkFirefliesMeeting` in server.js, which hands it t
   another slot or of none never do, and a placeholder past its deadline stays (the watchdog marks it
   missing). A placeholder from before slots and start times (`live:<client>:open`) goes once a recording of
   its purpose has that much talk. A placeholder has no Fireflies link and is left out of meeting counts.
+  This one "covered" rule (`lib/fireflies-cover.js`, read with the stored copies) decides everywhere:
+  the card, capture (a covered session gets no rejoin and no new placeholder), "Marker uten opptak" (409
+  only when covered), the watchdog and "Møter uten opptak". A fragment or live captions on the card leave
+  the meeting followed and reported.
 * **Card rows.** `presentClientMeetings` adds `placeholder`, `duplicateOf`, `partial` (live captions),
   `emptyFinal` (Fireflies finished it and nothing was said), `pendingTranscript` (still on its way, never
   for ever: `meetingTranscriptPending`, shared with the offer page) and the stored copy's `sentenceCount`.
   The activity log uses the card's `duplicateOf` as it is and gives placeholders `firefliesUrl` and `url` ''.
+  Tilbudsgjennomgang and the Tilbud page get the same rows (`compactOfferClient`, placeholders left out;
+  Bytt opptak's list carries `duplicateOf`, `emptyFinal` and `pendingTranscript` too). Every screen hides
+  copies (lists of recordings behind "Vis duplikater") and says "tomt opptak", "venter på transkript" or
+  "ingen transkript" (given up, or too old to wait for) from the row itself; a placeholder the hub still
+  lists is never hidden by the app.
 * **One meeting, two recordings.** Recordings in one room that start within 20 minutes, overlap, or follow
   within 5 minutes of the other's end are one meeting, unless they are two booked slots (the sales
   meeting and a Møte right after it); the one with the most talk (sentences, then minutes) is the primary
@@ -214,7 +223,8 @@ the watchdog) goes through `linkFirefliesMeeting` in server.js, which hands it t
   recording within three hours of its time.
 * **People win.** The backfill never moves or unlinks a person's link, a pin brings a recording back to
   its client, and with no stored record nothing but the old hub's title and name links is cleaned up. A
-  store with no records while cards hold recordings is not read as proof: the run is skipped (logged once).
+  store with no records while cards hold recordings is not read as proof: the run is skipped (logged once,
+  and the owner is e-mailed once, see Health).
 * **Moves clean up.** The client a recording leaves loses it from its slots, actions, open offer and offer
   lock. The lock never names a placeholder or a recording without talk: it follows the sales recording
   with talk (one a person picked as the sales meeting first), and the backfill re-points a lock left on a
@@ -241,7 +251,7 @@ brings every recording in; the webhook only makes it sooner.
   Every 10 minutes, or at once when that page holds nothing known, it pages through
   `transcripts(fromDate)` from a day before the last good scan (14 days on the first run) until a
   page holds only known, unchanged ids, so an outage of any length is caught up.
-  `fireflies-ingest-state.json` keeps where the scan left off.
+  `fireflies-ingest-state.json` keeps where the scan left off, and the owner-alert stamps.
 * **Final copies.** Each stored meeting keeps Fireflies' `isLive`, `summaryStatus`, `silent` and a
   `final` flag. A copy is final when it is not live and `summary_status` is processed, skipped or
   failed. Without a status: a row stored before the hub kept this state is final only with a
@@ -272,13 +282,18 @@ brings every recording in; the webhook only makes it sooner.
   `lastSeenAt` under 10 minutes old) the meeting is on, however long it runs. It looks by the bot's
   id, else by the booked Meet link with a start between 30 minutes before the booked start and the
   session's end (sales rooms are reused, so a later meeting there is only offered as a candidate,
-  like a same-title recording in another room). A transcript with talk is linked; live captions
-  are only "not yet" and are not stored from here. The session ends at start + booked
-  (`durationMinutes` on the placeholder, else 60) or later when capture saw the bot later
+  like a same-title recording in another room). A transcript that would cover the placeholder by the
+  card's rule is linked (one that would land on another booked slot in the room is only offered); live
+  captions are only "not yet" and are not stored from here. A finished one with only a few sentences
+  is linked so the rep sees it, but the meeting is not recorded. A recording a person excluded from this
+  client, pinned to another client or holds as their link on another card is neither found nor offered,
+  and a link the hub refuses counts as nothing found (no "funnet og koblet"). The session ends at
+  start + booked (`durationMinutes` on the placeholder, else 60) or later when capture saw the bot later
   (`lastSeenAt`, `endedAt`); nothing by that end + 90 minutes sets `'missing'` and e-mails
   `FIREFLIES_NOTIFY_EMAIL` and the owning rep once, and so does a recording Fireflies has still not
-  finished three hours after that. Only a silent recording on the room by then sets `'empty'`, with
-  its own one e-mail (never sooner: a bot that sat alone before the meeting leaves such a fragment).
+  finished three hours after that. Only a silent or too short recording on the room by then sets
+  `'empty'`, with its own one e-mail (never sooner: a bot that sat alone before the meeting leaves such a
+  fragment).
   A missing or empty meeting is looked for hourly for 48 hours, so a late transcript still links.
   Rate limits and network errors never make a meeting missing. Meetings the bot never got into
   have a `not-admitted` placeholder too, and are followed the same way.
@@ -293,7 +308,10 @@ brings every recording in; the webhook only makes it sooner.
   gets one e-mail per 12 hours when the pull fails more than 10 times in a row, has not succeeded
   for 30 minutes, the catch-up scan or the watchdog lookups have failed for an hour (try-later
   pauses do not count), or the archive or the e-mail list cannot be read. The stamp is kept in
-  memory and on disk, so a disk that refuses the write does not repeat the e-mail.
+  memory and on disk, so a disk that refuses the write does not repeat the e-mail. An archive that reads
+  empty while cards hold recordings (the meet-link backfill stands still) is e-mailed once each time it
+  happens ("Fireflies: arkivet er tomt", its own stamp `archiveEmptyAlertAt`, cleared once the archive
+  holds meetings again), never once per tick.
 * While the archive cannot be read at all, the meet-link backfill does not run: an empty read would
   unlink every recording. Pasting a link on Tilbud while Fireflies asks the hub to wait answers
   "Fireflies ber oss vente litt" instead of "Fant ikke møtet".

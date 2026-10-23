@@ -78,8 +78,10 @@ reads use the newest readable backup, the next write rebuilds the file from it a
 unreadable copy as `backups/<file>.unreadable-<time>`, and with no readable backup the write is
 refused, the meet-link backfill stops (an empty archive would unlink every recording) and the
 owner is e-mailed (`FIREFLIES_ALERT_EMAIL`, default `damian@asoldi.com`, at most every 12 hours).
-`fireflies-ingest-state.json` only says where the pull left off, so an unreadable one starts
-over (one 14-day scan) and keeps the bad copy the same way.
+`fireflies-ingest-state.json` says where the pull left off and holds the owner-alert stamps
+(`lastHealthAlertAt`, `lastLiveJoinAlertAt`, `archiveEmptyAlertAt`). It is derived state, so an
+unreadable one starts over (one 14-day scan, and an owner alert may go out once more) and keeps the
+bad copy the same way.
 
 To switch the push webhook to the new secret, whenever convenient:
 1. Admin → Manage clients → Security → **Show secret for Fireflies**.
