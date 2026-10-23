@@ -8,6 +8,8 @@ import {
   embeddedIPv4,
   parseRobotsTxt,
   robotsAllows,
+  robotsPatternMatches,
+  ROBOTS_LIMITS,
   quoteAsData,
   SafeFetchError,
 } from '../lib/seo-ops/safe-fetch.js';
@@ -21,6 +23,13 @@ const endless = { bytes: 0, closedAt: 0, started: 0 };
 test.before(async () => {
   server = http.createServer((req, res) => {
     hits.push(req.url);
+    const host = String(req.headers.host || '').split(':')[0];
+    if (req.url === '/robots.txt' && host === 'slowrobots.test') return; // never answers
+    if (req.url === '/robots.txt' && host === 'robots503.test') {
+      res.writeHead(503);
+      res.end();
+      return;
+    }
     if (req.url === '/ok') {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       res.end('<h1>Hei</h1>');
@@ -94,7 +103,9 @@ test.after(() => {
 function fakeLookup(calls = []) {
   return async (host) => {
     calls.push(host);
-    if (host === 'public.test') return [{ address: '127.0.0.1', family: 4 }];
+    if (host === 'public.test' || host === 'slowrobots.test' || host === 'robots503.test' || /^h\d+\.public\.test$/.test(host)) {
+      return [{ address: '127.0.0.1', family: 4 }];
+    }
     if (host === 'intranet.test') return [{ address: '10.1.2.3', family: 4 }];
     if (host === 'mixed.test') return [{ address: '93.184.216.34', family: 4 }, { address: '192.168.1.10', family: 4 }];
     if (host === 'v6private.test') return [{ address: 'fd00::1', family: 6 }];
@@ -238,4 +249,112 @@ test('quoteAsData wraps fetched text as nonce-tagged data and neutralises fake d
   assert.equal(out.split('<<<END DATA').length - 1, 1, 'only the real closing delimiter remains');
   const long = quoteAsData('x'.repeat(50), { maxChars: 10, nonce: 'n' });
   assert.match(long, /truncated to 10 characters/);
+});
+
+/** The previous RegExp matcher, used only as a reference on short inputs (it is exponential on long ones). */
+function regexReference(pattern, path) {
+  const anchored = pattern.endsWith('$');
+  const body = anchored ? pattern.slice(0, -1) : pattern;
+  const re = new RegExp(`^${body.split('*').map((part) => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}${anchored ? '$' : ''}`);
+  return re.test(path);
+}
+
+test('a wildcard-heavy robots rule cannot freeze the hub (no RegExp backtracking)', () => {
+  const groups = parseRobotsTxt('User-agent: *\nDisallow: /*a*a*a*a*a*a*a*a*a*a*a*a*b$\n');
+  for (const n of [31, 41, 2000]) {
+    const path = `/${'a'.repeat(n - 1)}`;
+    let started = performance.now();
+    assert.equal(robotsAllows(groups, path), true, `${n} chars without a final b: the rule does not match`);
+    assert.ok(performance.now() - started < 50, `${n}-char path took ${performance.now() - started} ms`);
+    started = performance.now();
+    assert.equal(robotsAllows(groups, `${path.slice(0, -1)}b`), false, `${n} chars ending in b: disallowed`);
+    assert.ok(performance.now() - started < 50, `${n}-char path ending in b took ${performance.now() - started} ms`);
+  }
+});
+
+test('the worst quadratic rule set is held by the step budget and counts as disallow', () => {
+  // "*aaa…ab" against "aaaa…" is the |rule| x |path| worst case of a glob matcher;
+  // 200 of them would be 800M steps without the shared budget.
+  const rule = `/*${'a'.repeat(1990)}b`;
+  const text = ['User-agent: *', ...Array.from({ length: 200 }, () => `Disallow: ${rule}`)].join('\n');
+  const groups = parseRobotsTxt(text);
+  const path = `/${'a'.repeat(2040)}`;
+  const started = performance.now();
+  assert.equal(robotsAllows(groups, path), false, 'budget exhausted: complete disallow');
+  const ms = performance.now() - started;
+  assert.ok(ms < 250, `budgeted check took ${ms} ms`);
+  const budget = { left: 10 };
+  assert.equal(robotsPatternMatches(rule, path, budget), false);
+  assert.equal(budget.exhausted, true);
+  // A generous budget still gives the true answer for one such rule.
+  const one = parseRobotsTxt(`User-agent: *\nDisallow: ${rule}\n`);
+  assert.equal(robotsAllows(one, path, 'otherbot', { ...ROBOTS_LIMITS, maxSteps: 50_000_000 }), true);
+});
+
+test('the glob matcher agrees with the RFC 9309 regex semantics on random short rules', () => {
+  let seed = 9309;
+  const rand = (n) => {
+    seed = (seed * 1103515245 + 12345) % 2147483648;
+    return seed % n;
+  };
+  const alphabet = ['a', 'b', '/', '.', '?', '=', '*', '$'];
+  for (let i = 0; i < 6000; i += 1) {
+    const plen = rand(8);
+    let pattern = '/';
+    for (let k = 0; k < plen; k += 1) pattern += alphabet[rand(alphabet.length)];
+    const slen = rand(10);
+    let path = '/';
+    for (let k = 0; k < slen; k += 1) path += alphabet[rand(alphabet.length - 2)];
+    if (rand(4) === 0) path += '$';
+    assert.equal(robotsPatternMatches(pattern, path), regexReference(pattern, path), `${pattern} vs ${path}`);
+  }
+  // Hand-picked RFC examples.
+  assert.equal(robotsPatternMatches('/fish', '/fish.html'), true);
+  assert.equal(robotsPatternMatches('/fish$', '/fish.html'), false);
+  assert.equal(robotsPatternMatches('/*.php$', '/folder/filename.php'), true);
+  assert.equal(robotsPatternMatches('/*.php$', '/filename.php?parameters'), false);
+  assert.equal(robotsPatternMatches('/fish*.php', '/fishheads/catfish.php?parameters'), true);
+  assert.equal(robotsPatternMatches('/a$b', '/a$b/c'), true, 'a $ inside a rule is literal');
+  assert.equal(robotsPatternMatches('', '/anything'), true);
+  assert.equal(robotsPatternMatches('/***x', '/yyx'), true, 'runs of * collapse');
+});
+
+test('over-long robots rules are ignored and over-long paths are not crawled when rules apply', () => {
+  // Without the cap this rule collapses to /a* and would block /a/page.
+  const longRule = `/a${'*'.repeat(ROBOTS_LIMITS.maxRuleChars)}`;
+  const groups = parseRobotsTxt(`User-agent: *\nDisallow: ${longRule}\nDisallow: /tmp\n`);
+  assert.equal(robotsAllows(groups, '/a/page'), true, 'a rule over 2 KB is ignored');
+  assert.equal(robotsAllows(groups, '/tmp/x'), false);
+  const longPath = `/${'p'.repeat(ROBOTS_LIMITS.maxPathChars)}`;
+  assert.equal(robotsAllows(groups, longPath), false, 'a path over 2 KB is not crawled when rules apply');
+  assert.equal(robotsAllows(parseRobotsTxt(''), longPath), true, 'no rules: nothing to match');
+});
+
+test('a robots.txt fetch cut off by our own timeout is not cached as disallow', async () => {
+  const robotsCache = new Map();
+  await assert.rejects(
+    () => safeFetch(`http://slowrobots.test:${port}/ok`, viaPublic({ respectRobots: true, robotsCache, timeoutMs: 300 })),
+    { code: 'timeout' }
+  );
+  assert.equal(robotsCache.size, 0, 'nothing remembered for a slow site');
+  // A 5xx robots.txt is complete disallow, remembered only briefly.
+  await assert.rejects(
+    () => safeFetch(`http://robots503.test:${port}/ok`, viaPublic({ respectRobots: true, robotsCache })),
+    { code: 'robots-disallowed' }
+  );
+  const entry = robotsCache.get(`http://robots503.test:${port}`);
+  assert.ok(entry, '5xx result cached');
+  assert.equal(entry.ttl, 5 * 60 * 1000);
+});
+
+test('the robots cache keeps at most robotsCacheMax origins, least recently used out first', async () => {
+  const robotsCache = new Map();
+  const fetchHost = (i) => safeFetch(`http://h${i}.public.test:${port}/ok`, viaPublic({ respectRobots: true, robotsCache, robotsCacheMax: 3 }));
+  for (const i of [1, 2, 3]) await fetchHost(i);
+  await fetchHost(1); // touch h1: h2 is now the oldest
+  await fetchHost(4);
+  await fetchHost(5);
+  assert.equal(robotsCache.size, 3);
+  assert.deepEqual([...robotsCache.keys()].map((o) => new URL(o).hostname), ['h1.public.test', 'h4.public.test', 'h5.public.test']);
+  assert.equal(ROBOTS_LIMITS.cacheMaxOrigins, 500, 'default bound');
 });
