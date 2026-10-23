@@ -116,7 +116,7 @@ test('the boot env blanks every credential and the child cwd has no .env', () =>
   assert.equal(env.HUB_SAFE_MODE, '1');
 });
 
-test('local hub boot: tokens signed with an old default secret, stale tokens, password change, logout everywhere, Fireflies rotation, counters', { timeout: 120_000 }, async (t) => {
+test('local hub boot: tokens signed with an old default secret, stale tokens, password change, logout everywhere, Fireflies rotation, counters, login limits per address', { timeout: 120_000 }, async (t) => {
   const dataDir = mkdtempSync(join(tmpdir(), 'asoldi-security-boot-'));
   const home = mkdtempSync(join(tmpdir(), 'asoldi-security-home-'));
   // Empty working directory: dotenv reads <cwd>/.env, and there must be none.
@@ -317,7 +317,22 @@ test('local hub boot: tokens signed with an old default secret, stale tokens, pa
     }
     assert.equal(byId.fireflies.ok, false);
 
-    // 11. No live system was touched: no Myphoner reconcile, no Fireflies pull, and nothing
+    // 11. Login limits per account and address: ten failures for the admin from ten addresses do
+    //     not keep the admin out of an eleventh; ten from one address block that address only.
+    const loginFrom = (address, password) => fetch(`${base}/api/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': address },
+      body: JSON.stringify({ username: 'asoldi.com', password }),
+    });
+    for (let i = 1; i <= 10; i += 1) assert.equal((await loginFrom(`203.0.113.${i}`, `wrong-${i}`)).status, 401);
+    assert.equal((await loginFrom('203.0.113.50', newPassword)).status, 200, 'the right password from another address gets in');
+    for (let i = 0; i < 10; i += 1) assert.equal((await loginFrom('198.51.100.7', `wrong-again-${i}`)).status, 401);
+    const limitedHere = await loginFrom('198.51.100.7', newPassword);
+    assert.equal(limitedHere.status, 429, 'ten failures from one address limit that address');
+    assert.ok(Number(limitedHere.headers.get('retry-after')) > 0);
+    assert.equal((await loginFrom('203.0.113.51', newPassword)).status, 200, 'and only that address');
+
+    // 12. No live system was touched: no Myphoner reconcile, no Fireflies pull, and nothing
     //     but loopback was even attempted.
     assert.doesNotMatch(logs, /\[myphoner\] webhook reconcile complete/);
     assert.doesNotMatch(logs, /\[fireflies\] recent-transcripts/);

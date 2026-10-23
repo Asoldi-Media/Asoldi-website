@@ -35,8 +35,8 @@ Admin → Manage clients → Security → **Rotate secrets** makes a new value o
 | Make a new Maker token | `POST /api/admin/security/maker-callback-token/rotate` | `secrets/maker-callback-token` is replaced and shown on the card (`callbackToken`, no-store); an admin can read the current token again with `GET /api/admin/system/maker-callback-token`. Paste it into the Maker `.env` as `WEBSITE_MAKER_STATUS_CALLBACK_TOKEN` and `SALES_MAKER_STATUS_CALLBACK_TOKEN`. Callbacks and preview pushes with the old token get 401, also from runs that were started with it. |
 
 - Both need the admin's current password (`currentPassword`; wrong passwords count toward the
-  login limit, and the right one clears the count, as a sign-in does) and the typed word `ROTER`
-  (`confirm`).
+  login limits, and the right one clears the count for that address, as a sign-in does) and the
+  typed word `ROTER` (`confirm`).
 - When the env value wins (`ADMIN_SECRET` of 16+ characters that is not a known default, or
   `WEBSITE_MAKER_STATUS_CALLBACK_TOKEN` / `SALES_MAKER_STATUS_CALLBACK_TOKEN`), the route answers
   409 with a Norwegian explanation and changes nothing: rotate the env value where it is set.
@@ -82,8 +82,25 @@ hash or the sync flag.
   several processes boot together, and never moves a later cutoff backwards.
 - Admin → Manage clients → Security can log out all clients, all staff, all admins (the admin
   pressing it gets a fresh token) or everyone.
-- Failed logins are limited per account (10 per 15 minutes) and per client address (50). The
-  address is the right-most `X-Forwarded-For` entry that is not an internal proxy address
+- Failed logins (admin, staff and client portal sign-ins, and the password re-check of a
+  rotation) are counted per 15 minutes under three keys (`lib/auth-hardening.js`
+  `createLoginLimiter`, the same structure as the client CMS 2.2):
+
+  | Key | Counts | Limit |
+  |---|---|---|
+  | `p:` | one account from one client address | 10 |
+  | `a:` | one account from every address | 100 |
+  | `i:` | one client address, every account | 50 |
+
+  A sign-in is refused with 429 while any of its three keys is full. So the right password from
+  an address that is not blocked by its own `p:` or `i:` key gets in while the account's `a:` key
+  is under 100: failures from other addresses cannot keep an account out on their own. A right
+  password clears only the `p:` key of that account and address. Accounts are kept as short
+  hashes and the table holds at most 10 000 keys; when it is full, keys of accounts that do not
+  exist in `admin.json` / `users.json` go first, then address keys, and keys of real accounts
+  stay for their whole window (`lib/login-limits.js`). The counts live in memory, so a restart
+  clears them.
+- The address is the right-most `X-Forwarded-For` entry that is not an internal proxy address
   (`lib/auth-hardening.js` `clientIpFromRequest`): the left entries come from the client, so
   changing them does not reset the count.
 - Tokens are stamped with the user's token version from a fresh read of

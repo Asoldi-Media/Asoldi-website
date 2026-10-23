@@ -80,17 +80,16 @@ import * as offers from './data/offers.js';
 import * as resetTokens from './data/reset-tokens.js';
 import { getPersistentDataDir, pruneAllDataBackups } from './data/storage-path.js';
 import {
+  beginLogin,
   checkWithFreshSecret,
-  createLoginLimiter,
   createPasswordConfirmer,
   createStaffMediaGate,
-  guardLogin,
-  clientIpFromRequest,
   createHubSecretHolder,
   readOrCreateDiskSecret,
   safeEqual,
   secretRefreshMs,
 } from './lib/auth-hardening.js';
+import { createHubLoginLimiter } from './lib/login-limits.js';
 import { isTokenAccepted, runTokenPolicyBootMigrations, stampTokenVersion } from './lib/token-policy.js';
 import { noteSecurityEvent } from './lib/security-counters.js';
 import { registerSecurityAdminRoutes } from './lib/security-admin-routes.js';
@@ -550,7 +549,7 @@ function signatureMatchesHubSecret(given, sign) {
 }
 // One-time boot migrations (a reset of admin and staff sessions; see data/security-settings.js).
 runTokenPolicyBootMigrations();
-const loginLimiter = createLoginLimiter();
+const loginLimiter = createHubLoginLimiter({ dataDir: getPersistentDataDir() });
 
 function signToken(payload) {
   const data = JSON.stringify(stampTokenVersion(payload));
@@ -665,13 +664,14 @@ app.post('/api/admin/login', async (req, res) => {
   if (!username || !password) {
     return res.status(400).json({ message: 'Username and password required' });
   }
-  if (!guardLogin(loginLimiter, req, res, `admin:${username}`)) return;
+  const attempt = beginLogin(loginLimiter, req, res, `admin:${username}`);
+  if (!attempt) return;
   const valid = await store.verifyAdmin(username, password);
   if (!valid) {
-    loginLimiter.fail(`admin:${username}`, clientIpFromRequest(req));
+    attempt.fail();
     return res.status(401).json({ message: 'Invalid credentials' });
   }
-  loginLimiter.succeed(`admin:${username}`);
+  attempt.succeed();
   const token = signToken({ role: 'admin', username, at: Date.now() });
   res.json({ token });
 });
@@ -10619,13 +10619,14 @@ app.post('/api/auth/login', async (req, res) => {
   if (!username || !password) {
     return res.status(400).json({ message: 'Username and password required' });
   }
-  if (!guardLogin(loginLimiter, req, res, `staff:${username}`)) return;
+  const attempt = beginLogin(loginLimiter, req, res, `staff:${username}`);
+  if (!attempt) return;
   const result = await store.verifyStaff(username, password);
   if (!result.ok) {
-    loginLimiter.fail(`staff:${username}`, clientIpFromRequest(req));
+    attempt.fail();
     return res.status(401).json({ message: 'Invalid username or password' });
   }
-  loginLimiter.succeed(`staff:${username}`);
+  attempt.succeed();
   const token = signToken({ role: result.user.role, userId: result.user.id, username: result.user.username, at: Date.now() });
   res.json({
     token,
@@ -10802,13 +10803,14 @@ app.post('/api/client/auth/login', async (req, res) => {
   if (!isValidEmail(email) || !password) {
     return res.status(400).json({ message: 'E-post og passord er påkrevd.' });
   }
-  if (!guardLogin(loginLimiter, req, res, `client:${email}`)) return;
+  const attempt = beginLogin(loginLimiter, req, res, `client:${email}`);
+  if (!attempt) return;
   const result = await store.verifyClient(email, password);
   if (!result.ok) {
-    loginLimiter.fail(`client:${email}`, clientIpFromRequest(req));
+    attempt.fail();
     return res.status(401).json({ message: 'Ugyldig e-post eller passord.' });
   }
-  loginLimiter.succeed(`client:${email}`);
+  attempt.succeed();
   const user = await store.getUserById(result.user.id);
   const token = signToken({ role: 'client', userId: result.user.id, at: Date.now() });
   res.json({
@@ -12666,13 +12668,14 @@ app.post('/api/client-auth/login', async (req, res) => {
   if (!email || !password) {
     return res.status(400).json({ message: 'E-post og passord er påkrevd.' });
   }
-  if (!guardLogin(loginLimiter, req, res, `client:${email}`)) return;
+  const attempt = beginLogin(loginLimiter, req, res, `client:${email}`);
+  if (!attempt) return;
   const result = await store.verifyClient(email, password);
   if (!result.ok) {
-    loginLimiter.fail(`client:${email}`, clientIpFromRequest(req));
+    attempt.fail();
     return res.status(401).json({ message: 'Ugyldig e-post eller passord.' });
   }
-  loginLimiter.succeed(`client:${email}`);
+  attempt.succeed();
   const token = signToken({ role: 'client', userId: result.user.id, at: Date.now() });
   const profile = clientPortal.getClientProfile(result.user.id) || clientPortal.upsertClientProfile(result.user.id, {
     userId: result.user.id,
