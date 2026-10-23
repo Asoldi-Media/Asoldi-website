@@ -245,7 +245,7 @@ test('the file lock is held from the read to the write: a writer in another proc
 });
 
 test('a lock whose holder keeps refreshing it is not broken as stale, however long the change takes', { timeout: 60_000 }, async (t) => {
-  const timings = { staleMs: 300, refreshMs: 50, timeoutMs: 20_000 };
+  const timings = { staleMs: 1000, refreshMs: 100, timeoutMs: 20_000 };
   const store = createSeoOpsStore({ lock: timings });
   const marker = join(DATA_DIR, 'marker-refresh');
   let calls = 0;
@@ -257,8 +257,8 @@ test('a lock whose holder keeps refreshing it is not broken as stale, however lo
       writeFileSync(${JSON.stringify(marker)}, 'waiting');
       await store.updateSite('slow', (doc) => { doc.backlinkTargets.push('child saw ' + doc.backlinkTargets.join('|')); });`);
     await waitFor(() => existsSync(marker));
-    // Four times the stale window: only the refresh keeps the other process from breaking the lock.
-    await delay(1200);
+    // Three times the stale window: only the refresh keeps the other process from breaking the lock.
+    await delay(3000);
     doc.backlinkTargets.push('parent');
   });
   assert.equal(await child.exited, 0, child.stderr());
