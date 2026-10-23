@@ -106,17 +106,37 @@ test('dry run: the report lists every case and the stores stay byte-identical', 
   const stamps = Object.fromEntries(dryReport.emailStamps.map((entry) => [entry.clientId, entry.keys]));
   assert.deepEqual(stamps, {
     'live-legacy': ['preWorkshopSentAt', 'postWorkshopSentAt', 'previewReadySentAt', 'stagingReadySentAt', 'siteLiveSentAt'],
-    'signed-offer': ['preWorkshopSentAt'],
-  });
+  }, 'a client in gathering with a booked workshop still has the pre-workshop email due');
   assert.ok(dryReport.file && existsSync(join(DATA_DIR, 'migrations', dryReport.file)), 'the report is written');
   assert.doesNotMatch(readFileSync(join(DATA_DIR, 'migrations', dryReport.file), 'utf8'), /Legacy AS|Offer AS|example/, 'the report holds ids, not names or addresses');
+  assert.equal(existsSync(join(DATA_DIR, 'delivery-audit')), false, 'a dry run adds nothing to the audit log');
+  backfill.runDeliveryBackfill({ mode: 'dry-run', now: NOW, by: 'test', writeReport: false });
+  assert.equal(existsSync(join(DATA_DIR, 'delivery-audit')), false, 'nor does a dry run without a report');
+  assert.equal(backfill.lastBackfillApply(), null, 'a dry run is not an apply');
+});
+
+test('email pre-stamps: only keys whose stage is strictly past the last stage the email can be due', () => {
+  const keys = (stage, subState = '') => backfill.prestampKeys({ stage, subState }, {});
+  assert.deepEqual(keys('signed'), []);
+  assert.deepEqual(keys('gathering', 'workshop-booked'), [], 'the pre-workshop email is still due');
+  assert.deepEqual(keys('workshop_held'), ['preWorkshopSentAt']);
+  assert.deepEqual(keys('gate'), ['preWorkshopSentAt'], 'the post-workshop email can still be due at the gate');
+  assert.deepEqual(keys('developing'), ['preWorkshopSentAt', 'postWorkshopSentAt']);
+  assert.deepEqual(keys('client_preview'), ['preWorkshopSentAt', 'postWorkshopSentAt'], 'the preview email can still be due');
+  assert.deepEqual(keys('iterating'), ['preWorkshopSentAt', 'postWorkshopSentAt', 'previewReadySentAt']);
+  assert.deepEqual(keys('publishing', 'staging-live'), ['preWorkshopSentAt', 'postWorkshopSentAt', 'previewReadySentAt']);
+  assert.deepEqual(keys('live'), ['preWorkshopSentAt', 'postWorkshopSentAt', 'previewReadySentAt', 'stagingReadySentAt'], 'a verified go-live still has the site-live email due');
+  assert.deepEqual(keys('live', 'legacy'), ['preWorkshopSentAt', 'postWorkshopSentAt', 'previewReadySentAt', 'stagingReadySentAt', 'siteLiveSentAt']);
+  assert.deepEqual(keys('maintenance'), ['preWorkshopSentAt', 'postWorkshopSentAt', 'previewReadySentAt', 'stagingReadySentAt', 'siteLiveSentAt']);
+  assert.deepEqual(backfill.prestampKeys({ stage: 'developing' }, { preWorkshopSentAt: NOW }), ['postWorkshopSentAt'], 'sent keys are skipped');
+  assert.deepEqual(backfill.prestampKeys({ stage: '' }, {}), []);
 });
 
 test('apply: snapshot first, then plans, planSource, stamps and stages; site config unchanged; second apply changes nothing', () => {
   const sitesBefore = hub.getAllSites();
   const report = backfill.runDeliveryBackfill({ mode: 'apply', now: NOW, by: 'test' });
   assert.ok(report.snapshotId && existsSync(join(DATA_DIR, 'snapshots', report.snapshotId)), 'snapshot taken before writing');
-  assert.deepEqual(report.applied, { sitePlans: 3, planSources: 1, emailStamps: 2, stages: 5, errors: [] });
+  assert.deepEqual(report.applied, { sitePlans: 3, planSources: 1, emailStamps: 1, stages: 5, errors: [] });
   assert.deepEqual(report.remaining, { sitePlans: 0, planSources: 0, emailStamps: 0, stages: 0 });
 
   const portal = sales.getSalesClientById('signed-portal');
@@ -135,7 +155,13 @@ test('apply: snapshot first, then plans, planSource, stamps and stages; site con
   assert.deepEqual(live.delivery.emails.backfilled.sort(), ['postWorkshopSentAt', 'preWorkshopSentAt', 'previewReadySentAt', 'siteLiveSentAt', 'stagingReadySentAt']);
   assert.equal(live.workshop.deskEmails.preWorkshopSentAt, NOW, 'legacy mirror stamped in the same write');
   assert.equal(live.progression.live, true, 'progression is not rewritten');
-  assert.equal(sales.getSalesClientById('signed-offer').delivery.stage, 'gathering');
+  const gathering = sales.getSalesClientById('signed-offer');
+  assert.equal(gathering.delivery.stage, 'gathering');
+  assert.equal(gathering.delivery.emails.preWorkshopSentAt || '', '', 'the due pre-workshop email is not marked as sent');
+  assert.equal(gathering.workshop?.deskEmails?.preWorkshopSentAt, undefined, 'nor its legacy mirror');
+  const audit = readdirSync(join(DATA_DIR, 'delivery-audit')).flatMap((name) => readFileSync(join(DATA_DIR, 'delivery-audit', name), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line)));
+  assert.equal(audit.filter((entry) => entry.kind === 'backfill').length, 1, 'one audit line for the apply');
+  assert.equal(backfill.lastBackfillApply().snapshotId, report.snapshotId, 'the apply is recorded');
 
   const sitesAfter = hub.getAllSites();
   for (const site of sitesBefore) {
@@ -153,6 +179,33 @@ test('apply: snapshot first, then plans, planSource, stamps and stages; site con
   assert.equal(second.snapshotId, undefined, 'no snapshot without changes');
   assert.equal(second.counts.sitePlans.write + second.counts.planSources.write + second.counts.stages.write + second.counts.emailStamps.keys, 0);
   assert.deepEqual(readStores(), storesAfterFirst, 'a second apply makes 0 changes');
+});
+
+test('boot hook: apply is one-time; clients that progress after an apply get no plan or stamp at the next boot', () => {
+  settings.saveAutomationSettings({ migrations: { deliveryBackfill: 'apply' } }, { by: 'test' });
+  // After the apply: a lead signs (it has a sent offer) and the gathering client holds its workshop.
+  sales.updateSalesClient('lead', { progression: signedProgression });
+  sales.updateSalesClient('signed-offer', { workshop: { heldAt: '2026-11-21T09:00:00.000Z' } });
+  assert.equal(backfill.runDeliveryBackfill({ mode: 'dry-run', now: NOW, writeReport: false }).counts.sitePlans.write, 1, 'a fresh run would plan the new client');
+  const stores = readStores();
+  const reports = backfill.listBackfillReports().length;
+  const result = backfill.runDeliveryBackfillAtBoot({ now: '2026-11-22T08:00:00.000Z' });
+  assert.equal(result.skipped, 'applied');
+  assert.deepEqual(readStores(), stores, 'the boot after an apply writes nothing');
+  assert.equal(backfill.listBackfillReports().length, reports, 'and no report');
+  assert.equal(sales.getSalesClientById('lead').sitePlan, undefined, 'no plan for the newly signed client');
+  assert.equal(sales.getSalesClientById('signed-offer').delivery.emails.preWorkshopSentAt || '', '', 'no stamp for the client that moved on');
+  assert.equal(backfill.runDeliveryBackfillAtBoot({ now: '2026-11-22T09:00:00.000Z' }).skipped, 'applied', 'every later boot skips too');
+
+  // A later delivery schema version runs the boot apply once more.
+  const stateFile = join(DATA_DIR, 'migrations', backfill.BACKFILL_STATE_FILE);
+  const state = JSON.parse(readFileSync(stateFile, 'utf8'));
+  writeFileSync(stateFile, JSON.stringify({ ...state, lastApply: { ...state.lastApply, codeSchemaVersion: 1 } }));
+  const rerun = backfill.runDeliveryBackfillAtBoot({ now: '2026-11-22T10:00:00.000Z' });
+  assert.equal(rerun.mode, 'apply');
+  assert.equal(rerun.applied.sitePlans, 1);
+  assert.equal(backfill.runDeliveryBackfillAtBoot({ now: '2026-11-22T11:00:00.000Z' }).skipped, 'applied');
+  settings.saveAutomationSettings({ migrations: { deliveryBackfill: 'off' } }, { by: 'test' });
 });
 
 test('no email is queued or sent and no external call is made by the backfill', () => {

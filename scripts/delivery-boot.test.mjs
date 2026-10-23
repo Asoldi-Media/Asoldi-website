@@ -7,10 +7,13 @@
 //    delivery event takes the old step-status path.
 // 2. A backfill dry run through the route writes only its report.
 // 3. development.makerEvents = record: the event is stored, without URLs.
-// 4. migrations.deliveryBackfill = apply: the next boot applies; the boot after that changes nothing.
+// 4. migrations.deliveryBackfill = apply: the next boot applies; the boot after that skips (one-time),
+//    also for a client that signs in between.
+// 5. create-maker-run sends the plan in force to the Maker (a fake Maker on 127.0.0.1).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import { copyFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -197,6 +200,7 @@ test('batch 2 on the real hub: switches off change nothing; dry run, Maker event
   assert.equal(dry.mode, 'dry-run');
   assert.deepEqual(readStores(dataDir), storesBeforeDry, 'the dry run writes only its report');
   assert.ok(existsSync(join(dataDir, 'migrations', dry.file)));
+  assert.equal(existsSync(join(dataDir, 'delivery-audit')), false, 'a dry run adds nothing to the audit log');
   const signedWebsite = before.clients.filter((client) => client?.product !== 'ssu' && client?.progression?.contractSigned === true).length;
   assert.equal(dry.counts.signedWebsiteClients, signedWebsite);
   assert.equal(dry.counts.sitePlans.write + dry.counts.sitePlans.needsChoice + dry.counts.sitePlans.noEvidence, signedWebsite, 'every signed website client is planned or listed');
@@ -242,9 +246,64 @@ test('batch 2 on the real hub: switches off change nothing; dry run, Maker event
 
   hub = await startHub(dataDir);
   assert.ok(hub.up);
-  assert.match(hub.log(), /\[delivery\] backfill apply \(unchanged, no new report\)/);
+  assert.match(hub.log(), /\[delivery\] backfill apply skipped: already applied/);
   assert.deepEqual(readStores(dataDir), storesAfterApply, 'the second boot changes nothing');
   assert.equal(readdirSync(join(dataDir, 'migrations')).filter((name) => name.endsWith('-apply.json')).length, 1);
+  await hub.stop();
+
+  // A client signs between two boots (the switch still says apply): the boot plans nothing for it.
+  const clientsNow = readJson(dataDir, 'sales-clients.json');
+  const newcomer = clientsNow.find((client) => client && client.product !== 'ssu' && client.progression?.contractSigned !== true && !client.sitePlan);
+  if (newcomer) {
+    newcomer.progression = { ...(newcomer.progression || {}), contractSigned: true };
+    writeFileSync(join(dataDir, 'sales-clients.json'), JSON.stringify(clientsNow, null, 2));
+  }
+  hub = await startHub(dataDir);
+  assert.ok(hub.up);
+  assert.match(hub.log(), /\[delivery\] backfill apply skipped: already applied/);
+  if (newcomer) {
+    const stored = readJson(dataDir, 'sales-clients.json').find((client) => client.id === newcomer.id);
+    assert.equal(stored.sitePlan, undefined, 'no plan for a client that signed after the apply');
+    assert.equal(stored.delivery, undefined, 'no stage or email stamp either');
+  }
+  assert.equal(readdirSync(join(dataDir, 'migrations')).filter((name) => name.endsWith('-apply.json')).length, 1);
+
+  // ---- 5. create-maker-run: the request body carries the plan in force (contract site-plan/1)
+  const makerBodies = [];
+  const fakeMaker = createServer((req, res) => {
+    let raw = '';
+    req.on('data', (chunk) => { raw += chunk; });
+    req.on('end', () => {
+      res.setHeader('content-type', 'application/json');
+      if (req.method === 'POST' && req.url === '/api/runs/v2') {
+        const body = JSON.parse(raw || '{}');
+        makerBodies.push(body);
+        res.end(JSON.stringify({ runId: body.existingRunId || `fake-run-${makerBodies.length}` }));
+        return;
+      }
+      res.end('{}');
+    });
+  });
+  await new Promise((resolve) => fakeMaker.listen(0, '127.0.0.1', resolve));
+  t.after(() => fakeMaker.close());
+  const makerBase = `http://127.0.0.1:${fakeMaker.address().port}`;
+  const withPlan = readJson(dataDir, 'sales-clients.json').find((client) => client.sitePlan && client.product !== 'ssu');
+  const withoutPlan = readJson(dataDir, 'sales-clients.json').find((client) => !client.sitePlan && client.product !== 'ssu');
+  assert.ok(withPlan, 'the apply stored at least one plan');
+  const created = await hub.call('POST', `/api/admin/sales/${encodeURIComponent(withPlan.id)}/create-maker-run`, { websiteMakerBaseUrl: makerBase });
+  assert.equal(created.status, 200, await created.clone().text());
+  assert.equal(makerBodies.length, 1);
+  assert.equal(makerBodies[0].salesClientId, withPlan.id);
+  assert.equal(makerBodies[0].sitePlan?.schema, 'site-plan/1');
+  assert.equal(makerBodies[0].sitePlan.tierId, withPlan.sitePlan.tierId);
+  assert.deepEqual(makerBodies[0].sitePlan.services, withPlan.sitePlan.services);
+  assert.match(makerBodies[0].sitePlan.planHash, /^[a-f0-9]{16}$/);
+  if (withoutPlan) {
+    const plain = await hub.call('POST', `/api/admin/sales/${encodeURIComponent(withoutPlan.id)}/create-maker-run`, { websiteMakerBaseUrl: makerBase });
+    assert.equal(plain.status, 200, await plain.clone().text());
+    assert.equal(makerBodies.length, 2);
+    assert.equal(Object.hasOwn(makerBodies[1], 'sitePlan'), false, 'no plan, no sitePlan key');
+  }
   const egress = readdirSync(dataDir).filter((name) => name.startsWith('egress-'))
     .flatMap((name) => readFileSync(join(dataDir, name), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line)))
     .filter((row) => row.blocked === true || row.listed === false);

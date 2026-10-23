@@ -107,7 +107,7 @@ recording, erase request, payment not connected) are added by the batch that shi
 
 **Check.** The apply report (`GET /api/admin/system/delivery-backfill/reports/<file>`) names the evidence per client and the `snapshotId` taken before writing; `GET /api/admin/system/delivery-snapshots` lists that snapshot.
 
-**Fix.** Restore the snapshot (dry run first): `POST /api/admin/system/delivery-snapshots/<snapshotId>/restore` with `{"dryRun": true}`, then `{"dryRun": false}`. Set `migrations.deliveryBackfill` back to `off` (`PUT /api/admin/automation-settings`), correct the evidence (offer, accepted alternative, hub site plan) and run the dry run again before the next apply. Live site flags are never changed by the backfill, so no client site needs a fix.
+**Fix.** Restore the snapshot (dry run first): `POST /api/admin/system/delivery-snapshots/<snapshotId>/restore` with `{"dryRun": true}`, then `{"dryRun": false}`. Set `migrations.deliveryBackfill` back to `off` (`PUT /api/admin/automation-settings`), correct the evidence (offer, accepted alternative, hub site plan) and run the dry run again before the next apply. The next apply goes through `POST /api/admin/system/delivery-backfill {"dryRun": false}`: a boot apply is one-time and skips while an apply is recorded in `migrations/delivery-backfill-state.json` (`lastApply`). Live site flags are never changed by the backfill, so no client site needs a fix.
 
 ---
 
