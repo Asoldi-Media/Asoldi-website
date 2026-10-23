@@ -265,14 +265,16 @@ test('readers: analytics follows the applied hub site first, then the plan in fo
   assert.equal(analyticsAccessFor(profile, null, { sitePlan: plan }).level, 'advanced');
 });
 
-test('readers: the development board shows the plan only for clients that have one', () => {
-  const withPlan = { id: 'c1', product: 'asoldi', businessName: 'Plan AS', progression: { contractSigned: true }, sitePlan: { tierId: 'tier-2-seo', services: ['site', 'seo'], source: 'backfill', status: 'active' }, delivery: { stage: 'gathering' } };
+test('readers: the development board shows the plan and the derived stage only for clients that have a plan or delivery record', () => {
+  // The stored stage says gathering, but the workshop has been held since: the board shows the stage now.
+  const withPlan = { id: 'c1', product: 'asoldi', businessName: 'Plan AS', progression: { contractSigned: true }, sitePlan: { tierId: 'tier-2-seo', services: ['site', 'seo'], source: 'backfill', status: 'active' }, delivery: { stage: 'gathering' }, workshopAction: { name: 'Workshop', dueAt: '2026-10-30T10:00:00.000Z' }, workshop: { heldAt: '2026-10-30T12:00:00.000Z' } };
   const without = { id: 'c2', product: 'asoldi', businessName: 'Plain AS', progression: { contractSigned: true } };
   const items = buildDevelopmentItems([withPlan, without], []);
   const a = items.find((item) => item.salesClientId === 'c1');
   const b = items.find((item) => item.salesClientId === 'c2');
   assert.equal(a.sitePlan.tierId, 'tier-2-seo');
-  assert.equal(a.deliveryStage, 'gathering');
+  assert.equal(a.deliveryStage, 'workshop_held', 'derived, not the stale stored stage');
+  assert.equal(a.deliveryOverlay, '');
   assert.equal(Object.hasOwn(b, 'sitePlan'), false);
   assert.equal(Object.hasOwn(b, 'deliveryStage'), false);
 });
