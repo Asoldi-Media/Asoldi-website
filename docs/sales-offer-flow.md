@@ -170,42 +170,67 @@ For an offer: tier contract when only a tier is present; admin-verified summary 
 ### Fireflies matching
 
 Every link path (webhook, pull ingest, Tilbud paste, calendar session, admin, the meet-link backfill,
-the watchdog) goes through `linkFirefliesMeeting` in server.js. `client.meetings` is the one record of
-who holds a recording; the stored record's `match` says the same.
+the watchdog) goes through `linkFirefliesMeeting` in server.js, which hands it to
+`lib/fireflies-linking.js` (the same module unlinks, excludes, sets a purpose and runs the backfill).
+`client.meetings` is the one record of who holds a recording; the stored record's `match` says the same.
 
 * **Client.** `lib/fireflies-client-match.js`: a person's link first (a card that holds it as `manual`,
   `admin:*`, `sales:*` or `developer:*`, or with a picked purpose; else the stored `pin`), then the client
   whose booked Meet room Fireflies' `meeting_link` is. A room two clients hold goes to the one whose
   booked slot the recording started in; with none, existing links stay. A client in the stored
-  `excludedClientIds` never gets it back automatically. Title, e-mail and host are never used.
+  `excludedClientIds` never gets it back automatically. Title, e-mail and host are never used. An
+  automatic link that would break one of these rules is refused (`linkStoredTranscriptToClient` then
+  answers null).
 * **Slot and purpose.** `lib/fireflies-slots.js`: each booked meeting is a slot (`sales:<ms>`,
   `workshop:<ms>`, `iteration:<ms>`, `action:<id>`). The room decides the purpose; time only picks between
   slots sharing a room. A recording gets the slot key only when it starts inside the slot's session window
-  (half an hour before the booked start to the session's end, as the watchdog). Without a booked room it
-  keeps the purpose it was linked with; an earlier room of the client is the sales meeting's only for a
+  (half an hour before the booked start to the session's end, as the watchdog). A room booked again days
+  later (more than three hours from the recording and outside its window) does not take a recording off
+  the purpose and slot it was linked with. The recording of the bot capture saw in a placeholder's session
+  (`recording.ffMeetingId`) is that slot's. Without a booked room it keeps the purpose it was linked with;
+  a person's link (Tilbud paste, admin) inside exactly one slot's window is that slot's, so a meeting held
+  in another room covers its placeholder; an earlier room of the client is the sales meeting's only for a
   recording with no purpose; one with nothing takes the nearest slot's purpose within three hours, without
   a key. Purpose and `slotKey` are stored on the row and in `match`; the backfill re-tags rows linked
   before these rules.
 * **Placeholders.** A live-join placeholder is dropped (and hidden on the card) only by a recording with
-  talk on its own slot that starts in its window, or one a person put on that slot. Live captions, a silent
-  copy, a recording of another slot or of none never do, and a placeholder past its deadline stays (the
-  watchdog marks it missing). A placeholder has no Fireflies link and is left out of meeting counts.
+  talk on its own slot that starts in its window, one a person put on that slot, or the bot's own
+  recording, and only when it has at least 10 sentences (the offer's `MIN_MEETING_CONTEXT_LINES`): a
+  "hallo?" in an open room is a fragment, not the meeting. Live captions, a silent copy, a recording of
+  another slot or of none never do, and a placeholder past its deadline stays (the watchdog marks it
+  missing). A placeholder from before slots and start times (`live:<client>:open`) goes once a recording of
+  its purpose has that much talk. A placeholder has no Fireflies link and is left out of meeting counts.
+* **Card rows.** `presentClientMeetings` adds `placeholder`, `duplicateOf`, `partial` (live captions),
+  `emptyFinal` (Fireflies finished it and nothing was said), `pendingTranscript` (still on its way, never
+  for ever: `meetingTranscriptPending`, shared with the offer page) and the stored copy's `sentenceCount`.
+  The activity log uses the card's `duplicateOf` as it is and gives placeholders `firefliesUrl` and `url` ''.
 * **One meeting, two recordings.** Recordings in one room that start within 20 minutes, overlap, or follow
-  within 5 minutes of the other's end are one meeting; the one with the most talk (sentences, then
-  minutes) is the primary and the rest carry `duplicateOf`. Offers seed one per meeting and only sales
-  recordings (workshop and iteration ones are listed, not ticked), auto-fill counts meetings, and the
-  workshop / iteration slots, Møte actions and the offer lock never move to a copy with less talk.
+  within 5 minutes of the other's end are one meeting, unless they are two booked slots (the sales
+  meeting and a Møte right after it); the one with the most talk (sentences, then minutes) is the primary
+  and the rest carry `duplicateOf`. Offers seed one per meeting and only sales recordings (workshop and
+  iteration ones are listed, not ticked), auto-fill and the meeting counts count meetings, and the
+  workshop / iteration slots, Møte actions and the offer lock never move to a copy with less talk; the
+  backfill moves a slot that already names a copy to its primary. A booked Møte action only takes a
+  recording within three hours of its time.
 * **People win.** The backfill never moves or unlinks a person's link, a pin brings a recording back to
   its client, and with no stored record nothing but the old hub's title and name links is cleaned up. A
-  store with no records while cards hold recordings is not read as proof: the run is skipped.
+  store with no records while cards hold recordings is not read as proof: the run is skipped (logged once).
 * **Moves clean up.** The client a recording leaves loses it from its slots, actions, open offer and offer
-  lock. The lock never names a placeholder: it follows the sales recording with talk once one is linked.
+  lock. The lock never names a placeholder or a recording without talk: it follows the sales recording
+  with talk (one a person picked as the sales meeting first), and the backfill re-points a lock left on a
+  silent fragment or on a recording the old hub moved to another client. The offer page only honours a
+  lock that is on the card.
 * **Routes.** `POST /api/admin/sales/:id/meetings/:meetingId/purpose` `{ purpose: 'sales' | 'workshop' |
   'iteration' | '' }` (the client's rep or admin) is a person's purpose pick, kept by every automatic pass
-  (`''` goes back to automatic). `POST /api/admin/fireflies/meetings/:meetingId/exclude` `{ clientId }`
-  ("Ikke denne kunden", the client's rep or admin) takes it off that client for good; the admin unlink
-  does the same for the client that held it. A rep's Tilbud paste of a recording on another client answers
-  409 with that client's name, and a rep's title search only sees recordings on no card or this one.
+  (`''` goes back to automatic). It puts the recording on the booked slot of that purpose the same day (12
+  hours either way, so it covers that slot's placeholder); a recording days from any such slot gets the
+  purpose and no slot, so a follow-up never hides a booked meeting that was not recorded. A "Salgsmøte"
+  pick of a recording with talk moves the offer lock to it. `POST
+  /api/admin/fireflies/meetings/:meetingId/exclude` `{ clientId }` ("Ikke denne kunden", the client's rep
+  or admin) takes it off that client for good, also a card row that was never stored (a bare stored record
+  keeps the exclusion); the admin unlink does the same for the client that held it. A rep's Tilbud paste
+  of a recording on another client answers 409 with that client's name, and a rep's title search only
+  sees recordings on no card or this one.
 
 ### Fireflies transcript intake
 
