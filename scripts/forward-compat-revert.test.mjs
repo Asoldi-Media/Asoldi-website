@@ -31,6 +31,8 @@ import {
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const writer = join(root, 'scripts', 'fixtures', 'forward-compat-writer.mjs');
 
+// When a batch starts owning a key (normalizing it itself), give the key a realistic sample here,
+// so the default working-tree run keeps passing; the sample must survive that batch's normalizer.
 function sampleFor(key) {
   if (key === 'isTest') return true;
   if (key === 'ext') return { futureBatch: { note: `ext kept (${key})`, n: 7 } };
