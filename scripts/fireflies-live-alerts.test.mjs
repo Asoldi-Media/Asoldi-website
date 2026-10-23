@@ -837,7 +837,7 @@ test('a workshop knock also reaches the room\'s host, who is in the meeting; one
   const again = async (patch) => {
     sent.length = 0;
     updateLiveSessionStore((store) => {
-      store.sessions[WORKSHOP_KEY] = { ...store.sessions[WORKSHOP_KEY], lobbyAlertAt: '' };
+      store.sessions[WORKSHOP_KEY] = { ...store.sessions[WORKSHOP_KEY], lobbyAlertAt: '', lobbyAlertKnockAt: '' };
       return store;
     }, { nowMs: at(3) });
     return alerts.runFirefliesLobbyAlerts({ ...base, clients: [client], ...patch });
@@ -978,6 +978,58 @@ test('the engine keeps the lobby stamp through its own writes', async () => {
   await tickAt(state, 5);
   await tickAt(state, 6);
   assert.equal(readLiveSessionStore().sessions[KEY].lobbyAlertAt, iso(3));
+});
+
+test('a knock to let the bot in again after it dropped out gets its own lobby e-mail, once per knock', async () => {
+  resetAll();
+  const client = salesClient();
+  const state = { clients: [client], active: [], sent: [], reply: null };
+  const mails = [];
+  const runAlerts = (minutes) => alerts.runFirefliesLobbyAlerts({
+    clients: [client],
+    nowMs: at(minutes),
+    log: quiet,
+    recipientsFor: async () => ['alexander@asoldi.com'],
+    sendEmail: async (message) => { mails.push({ at: minutes, ...message }); },
+  });
+  const bot = { id: 'FFOWN001', meetingLink: ROOM, startTime: iso(1), endTime: iso(121) };
+  // A knock room: the rep lets the first bot in at 10:01; it drops out at 10:15 and is never let in again.
+  for (let minutes = -3; minutes <= 45; minutes += 1) {
+    state.active = minutes >= 1 && minutes < 15 ? [bot] : [];
+    await tickAt(state, minutes);
+    await runAlerts(minutes);
+  }
+  const rejoins = readLiveSessionStore().sessions[KEY].attempts.filter((attempt) => attempt.kind === 'rejoin' && attempt.ok);
+  assert.deepEqual(rejoins.map((attempt) => attempt.at), [iso(16), iso(29)], 'sent back after it dropped out, and once more before T+30');
+  assert.deepEqual(mails.map((mail) => mail.at), [20, 33], 'one e-mail 4 minutes after each knock nobody answers, none for the first');
+  const [mail] = mails;
+  assert.equal(mail.subject, 'Slipp inn Fireflies igjen – Testfirma AS');
+  assert.match(mail.text, /^Fireflies\.ai Notetaker banker på igjen i Google Meet-møtet med Testfirma AS kl\. 11:00, men er ikke sluppet inn\./);
+  assert.match(mail.text, /gikk ut før tiden og er sendt inn på nytt\./);
+  assert.match(mail.text, /slipp den inn igjen/);
+  assert.equal(readLiveSessionStore().sessions[KEY].lobbyAlertKnockAt, rejoins.at(-1).at);
+});
+
+test('a continuation knock is due its e-mail while only the old bot is in the room', () => {
+  resetAll();
+  let session = knockedSession({ seen: true });
+  session = applyLiveJoinAttempt(live.normalizeLiveSession({
+    ...session,
+    lastSeenActiveAt: iso(118),
+    ffStartTime: iso(-2),
+    checkedAt: iso(118),
+  }), { at: iso(115), kind: 'continuation', ok: true });
+  session = { ...session, state: 'recording', lastSeenActiveAt: iso(120), checkedAt: iso(120) };
+  assert.equal(alerts.planLobbyAlert(session, at(118)).reason, 'not-yet');
+  const due = alerts.planLobbyAlert(session, at(119));
+  assert.deepEqual([due.due, due.knock?.kind], [true, 'continuation'], 'the bot in the room is the old one');
+  const email = alerts.buildLobbyAlertEmail({ client: salesClient(), session, to: ['alexander@asoldi.com'], knock: due.knock });
+  assert.match(email.text, /er snart ute av tid og er sendt inn på nytt for å fortsette opptaket/);
+  assert.equal(alerts.planLobbyAlert(session, at(126)).reason, 'window-over', 'it has left the lobby by then');
+  // The new bot (started after the knock) is in: nothing to do.
+  assert.equal(alerts.planLobbyAlert({ ...session, ffStartTime: iso(116) }, at(119)).reason, 'seen');
+  // Sent: not again for the same knock.
+  assert.equal(alerts.planLobbyAlert({ ...session, lobbyAlertAt: iso(119), lobbyAlertKnockAt: iso(115) }, at(120)).reason, 'sent');
 });
 
 // ── 6. owner health alert ────────────────────────────────────────────────────
