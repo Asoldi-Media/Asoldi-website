@@ -104,7 +104,7 @@ function fakeCalendar({ events = {}, organizer = HOST, refuseConferenceCopy = fa
       const uri = `https://meet.google.com/new-mint-00${minted}`;
       return { conferenceId: `new-mint-00${minted}`, conferenceSolution: { key: { type: 'hangoutsMeet' } }, entryPoints: [{ entryPointType: 'video', uri }] };
     }
-    if (refuseConferenceCopy) throw googleError(400, 'Invalid conference data.');
+    if (refuseConferenceCopy) throw googleError(Number(refuseConferenceCopy), 'Invalid conference data.');
     return structuredClone(data);
   };
   const save = (event, conferenceData) => {
@@ -263,17 +263,29 @@ test('an event that is gone (or lived on another mailbox) is re-inserted with th
 });
 
 test('if Google refuses the kept conference, the insert falls back to the link in location', async () => {
-  const fake = fakeCalendar({ refuseConferenceCopy: true });
-  useFakes({ calendarApi: fake.api });
-  const meta = await calendar.upsertMeetingEvent(bookedClient(), '', 'sales:rep-1', { sendUpdates: 'all', includeAttendees: true, lockedMeetLink: ROOM });
-  const [refused, plain] = insertsOf(fake);
-  assert.equal(refused.conferenceDataVersion, 1);
-  assert.equal(plain.conferenceDataVersion, 0);
-  assert.equal(plain.requestBody.conferenceData, undefined);
-  assert.equal(plain.requestBody.location, ROOM);
-  assert.equal(insertsOf(fake).length, 2, 'one refused attempt, one plain insert');
-  assert.equal(meta.meetLink, ROOM);
-  assert.equal(meta.eventId, 'evt-new-1');
+  for (const status of [400, 403]) {
+    const fake = fakeCalendar({ refuseConferenceCopy: status });
+    useFakes({ calendarApi: fake.api });
+    const meta = await calendar.upsertMeetingEvent(bookedClient(), '', 'sales:rep-1', { sendUpdates: 'all', includeAttendees: true, lockedMeetLink: ROOM });
+    const [refused, plain] = insertsOf(fake);
+    assert.equal(refused.conferenceDataVersion, 1, `${status}`);
+    assert.equal(plain.conferenceDataVersion, 0);
+    assert.equal(plain.requestBody.conferenceData, undefined);
+    assert.equal(plain.requestBody.location, ROOM);
+    assert.equal(insertsOf(fake).length, 2, 'one refused attempt, one plain insert');
+    assert.equal(meta.meetLink, ROOM);
+    assert.equal(meta.eventId, 'evt-new-1');
+    await meet.settleMeetRoomOpensForTests();
+    mock.restoreAll();
+  }
+  // Any other failure is the sync's own error, as before: no second insert.
+  const broken = fakeCalendar({ refuseConferenceCopy: 500 });
+  useFakes({ calendarApi: broken.api });
+  await assert.rejects(
+    () => calendar.upsertMeetingEvent(bookedClient(), '', 'sales:rep-1', { sendUpdates: 'all', includeAttendees: true, lockedMeetLink: ROOM }),
+    /Invalid conference data/,
+  );
+  assert.equal(insertsOf(broken).length, 1);
 });
 
 test('a booking without a room still mints a new one, and forceNewMeet never copies the old room', async () => {
