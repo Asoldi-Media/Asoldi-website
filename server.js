@@ -86,8 +86,9 @@ import {
   safeEqual,
 } from './lib/auth-hardening.js';
 import { applyPersistentProductionEnv } from './lib/persistent-env.js';
-import { assertSafeModeAllows, isSafeModeActive, runBackgroundJobs, safeModeAllows } from './lib/safe-mode.js';
+import { assertSafeModeAllows, hubListenHost, isSafeModeActive, isSafeModeError, runBackgroundJobs, safeModeAllows } from './lib/safe-mode.js';
 import { registerSafeModeRoutes } from './lib/safe-mode-routes.js';
+import { safeModeMakerCallbackUrl, safeModeMakerPreviewPushUrl } from './lib/safe-mode-maker-urls.js';
 import { applyProxyKeepAlive, describeProxyTimeouts, proxyHttpServerOptions } from './lib/http-server-timeouts.js';
 import {
   cookieHeaderBytes,
@@ -2713,6 +2714,7 @@ function rewriteOffersToPublicPreview(clientId) {
 function httpStatusFromError(error, fallback = 500) {
   const status = Number(error?.status);
   if (Number.isFinite(status) && status >= 400 && status <= 599) return status;
+  if (isSafeModeError(error)) return 423;
   return fallback;
 }
 
@@ -2783,6 +2785,8 @@ function normalizeAbsoluteHttpUrl(value = '') {
 }
 
 function resolveSalesMakerCallbackUrl(req) {
+  // Hub safe mode: the Maker calls back to this hub on a local address, never asoldi.com.
+  if (!safeModeAllows('prodPublish')) return safeModeMakerCallbackUrl(process.env);
   const explicit = normalizeAbsoluteHttpUrl(process.env.WEBSITE_MAKER_STATUS_CALLBACK_URL || process.env.SALES_MAKER_STATUS_CALLBACK_URL || '');
   if (explicit) return explicit;
   const appBase = normalizeHttpBaseUrl(process.env.APP_URL || `${req.protocol}://${req.get('host')}`);
@@ -2792,10 +2796,7 @@ function resolveSalesMakerCallbackUrl(req) {
 
 function resolveSalesPreviewPushUrl() {
   // Hub safe mode: never hand the Maker a production push target; previews come back to this hub.
-  if (!safeModeAllows('prodPublish')) {
-    const localBase = normalizeHttpBaseUrl(process.env.HUB_PUBLIC_URL_FOR_MAKER || process.env.APP_URL || '');
-    return localBase ? `${localBase}/api/admin/sales/maker-preview-push` : '';
-  }
+  if (!safeModeAllows('prodPublish')) return safeModeMakerPreviewPushUrl(process.env);
   const explicit = normalizeAbsoluteHttpUrl(process.env.SALES_PREVIEW_PUSH_URL || '');
   if (explicit) return explicit;
   return `${salesPreview.getPublicPreviewOrigin()}/api/admin/sales/maker-preview-push`;
@@ -13277,7 +13278,7 @@ app.post('/api/admin/sales/maker-tunnel/start', salesAuth, async (req, res) => {
       startedAt: tunnel.startedAt,
     });
   } catch (error) {
-    res.status(500).json({ message: error.message || 'Failed to start Website Maker tunnel.' });
+    res.status(httpStatusFromError(error, 500)).json({ message: error.message || 'Failed to start Website Maker tunnel.' });
   }
 });
 
@@ -18095,6 +18096,9 @@ app.post('/api/admin/sales/:id/link-maker-run', salesOrDevelopmentAuth, async (r
 });
 
 function requestIsPublicInternetHost(req) {
+  // Hub safe mode: a local hub is never "asoldi.com", whatever APP_URL says, so no browser
+  // handoff carries production push, callback or upload URLs.
+  if (!safeModeAllows('prodPublish')) return false;
   const host = String(req.get('host') || '').split(':')[0];
   let appHost = '';
   try {
@@ -21078,7 +21082,7 @@ applyProxyKeepAlive(server);
 server.on('error', (error) => {
   console.error('[http] server error', error);
 });
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, hubListenHost(), () => {
   console.log(`Server running on port ${PORT}`);
   console.log(describeProxyTimeouts(server));
   console.log(`[audio] persistent=${MYPHONER_AUDIO_DIR} extra=${extraMyphonerAudioDirs().join('|') || '(none)'}`);

@@ -2,30 +2,11 @@
 // independent egress recorder in enforce mode, so nothing can leave the PC even if a guard fails.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
-import net from 'node:net';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { DEFAULT_API_PORT, DEFAULT_UI_PORT, planDevSafe } from './dev-safe.mjs';
-
-const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
-const AUDIT = join(REPO, 'scripts', 'safe-mode', 'egress-audit.cjs').replace(/\\/g, '/');
-const ALLOWLIST = join(REPO, 'scripts', 'safe-mode', 'soak-allowlist.json');
-
-const LIVE_LIKE = {
-  APP_URL: 'https://asoldi.com',
-  RESEND_API_KEY: 're_fake_live_like',
-  SMTP_HOST: 'smtp.hostinger.com',
-  SMTP_USER: 'contact@asoldi.com',
-  SMTP_PASS: 'fake',
-  PROD_ADMIN_URL: 'https://asoldi.com',
-  PROD_ADMIN_PASSWORD: 'fake-prod-password',
-  FIREFLIES_API_KEY: 'fake-ff',
-  DEEPSEEK_API_KEY: 'fake-ds',
-  ADMIN_SECRET: 'must-not-reach-the-child',
-};
+import { ALLOWLIST, AUDIT, LIVE_LIKE, REPO, bootHub } from './safe-mode/hub-boot.mjs';
 
 test('plan: API 3101, UI 3100, data in .local-data/<profile>, safe mode on by default', () => {
   const plan = planDevSafe({ argv: ['--profile', 'golden'], shellEnv: {}, fileEnv: LIVE_LIKE, repoRoot: '/repo' });
@@ -42,6 +23,8 @@ test('plan: API 3101, UI 3100, data in .local-data/<profile>, safe mode on by de
   assert.equal(plan.state.on, true);
   assert.equal(plan.uiEnv.API_PROXY_TARGET, 'http://127.0.0.1:3101');
   assert.equal(plan.uiEnv.RESEND_API_KEY, undefined, 'Vite never sees .env secrets');
+  assert.equal(plan.uiEnv.HUB_DEV_SAFE, '1', 'vite.config.ts skips its .env define');
+  assert.equal(plan.apiEnv.HUB_PUBLIC_URL_FOR_MAKER, 'http://host.docker.internal:3101', 'the Maker in Docker reaches this hub');
 });
 
 test('plan: HUB_SAFE_MODE=0 refuses without --unsafe-i-know', () => {
@@ -91,60 +74,6 @@ test('egress-audit.cjs records every connection, marks loopback listed, and refu
   assert.ok(rows.some((row) => row.host === 'unlisted.example.invalid' && row.listed === false && row.blocked === true));
   rmSync(dir, { recursive: true, force: true });
 });
-
-function freePort() {
-  return new Promise((resolve) => {
-    const server = net.createServer();
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address();
-      server.close(() => resolve(port));
-    });
-  });
-}
-
-async function bootHub(extraEnv) {
-  const port = await freePort();
-  const dataDir = mkdtempSync(join(tmpdir(), 'asoldi-hub-boot-'));
-  const shell = { ...process.env };
-  for (const key of Object.keys(shell)) if (/^(HUB_SAFE_MODE|HOSTINGER|EMAIL_REDIRECT_TO)/.test(key)) delete shell[key];
-  const env = {
-    ...shell,
-    ...extraEnv,
-    PORT: String(port),
-    APP_DATA_DIR: dataDir,
-    NODE_OPTIONS: `--require="${AUDIT}"`,
-    EGRESS_AUDIT_FILE: join(dataDir, 'egress.jsonl'),
-    EGRESS_AUDIT_ALLOW: ALLOWLIST,
-    EGRESS_AUDIT_ENFORCE: '1',
-  };
-  const child = spawn(process.execPath, ['server.js'], { cwd: REPO, env, stdio: ['ignore', 'pipe', 'pipe'] });
-  let log = '';
-  child.stdout.on('data', (chunk) => { log += chunk; });
-  child.stderr.on('data', (chunk) => { log += chunk; });
-  const base = `http://127.0.0.1:${port}`;
-  let health = null;
-  for (let i = 0; i < 120 && !health; i += 1) {
-    try {
-      const res = await fetch(`${base}/api/health`);
-      if (res.ok) health = await res.json();
-    } catch {
-      await new Promise((r) => setTimeout(r, 500));
-    }
-  }
-  return {
-    base,
-    dataDir,
-    health,
-    log: () => log,
-    async stop() {
-      child.kill('SIGTERM');
-      await new Promise((r) => setTimeout(r, 800));
-      if (child.exitCode === null) child.kill('SIGKILL');
-      await new Promise((r) => setTimeout(r, 300));
-      rmSync(dataDir, { recursive: true, force: true });
-    },
-  };
-}
 
 test('server.js with a live-looking .env and no HUB_SAFE_MODE boots in safe mode, writes no production.env, no egress', { timeout: 120_000 }, async () => {
   const hub = await bootHub({ ...LIVE_LIKE, ADMIN_SECRET: '' });
