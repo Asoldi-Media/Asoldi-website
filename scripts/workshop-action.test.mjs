@@ -313,7 +313,7 @@ test('T08 workshop email builder is used when it exists', async () => {
   }
 });
 
-test('workshop Meet host check requires Damian, a real Meet, and Fireflies', () => {
+test('workshop Meet host check requires Damian and a real Meet; the fred@ guest is optional', () => {
   const ok = {
     googleEmail: 'damian@asoldi.com',
     organizerEmail: 'damian@asoldi.com',
@@ -336,7 +336,8 @@ test('workshop Meet host check requires Damian, a real Meet, and Fireflies', () 
   assert.equal(workshopInviteHostOk({ ...ok, meetLink: '' }), false);
   assert.equal(workshopInviteShouldDeleteFailedEvent({ ...ok, meetLink: '' }), true);
 
-  assert.equal(workshopInviteHostOk({ ...ok, firefliesInvited: false }), false);
+  // Recording comes from the hub's live join, so a dropped fred@ no longer blocks the invite.
+  assert.equal(workshopInviteHostOk({ ...ok, firefliesInvited: false }), true);
   assert.equal(workshopInviteShouldDeleteFailedEvent({ ...ok, firefliesInvited: false }), false);
 
   assert.equal(workshopInviteHostOk({

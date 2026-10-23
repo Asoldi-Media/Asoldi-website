@@ -143,11 +143,10 @@ For an offer: tier contract when only a tier is present; admin-verified summary 
   * The card gets `client.liveRecordings` (state per slot); `POST /api/admin/sales/:id/fireflies/live-join`
     (`{ slotKey }`) queues "send Fireflies again" through the same budget. The `live:` placeholder in
     `client.meetings` is written only after an accepted send and carries the same `recording` state.
-* Fred (`fred@fireflies.ai`) is invited on the Google Calendar event only when the
-  confirmation is actually sent — after a sales rep is assigned. Silent MyPhoner /
-  unassigned calendar creates keep him off the attendee list so Google does not
-  save-without-sending. If he was already saved on the event, confirmation send
-  removes and re-adds him so Fireflies gets a real invite.
+* Fred (`fred@fireflies.ai`) goes on a Google Calendar event only when the mailbox hosting it owns the hub's
+  Fireflies key (`lib/fireflies-key-owner.js`; asked once per 6 hours, damian@asoldi.com until then). On another
+  rep's event he would start that rep's own Fireflies, whose recording the hub cannot read. He is still only
+  added when the confirmation is actually sent, and recording never depends on him.
 * Webhook `POST /api/webhooks/fireflies?token=…` (`lib/fireflies-webhook.js`) stores the meeting record and runs
   `lib/fireflies-client-match.js`: attendee e-mail = `contactEmail` (+70), attendee domain = client website (+30),
   host = client’s rep (+15), start within 45 min / 3 h of `meetingAt` (+35 / +25), contact name / business name in

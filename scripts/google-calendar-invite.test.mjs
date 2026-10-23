@@ -123,6 +123,45 @@ test('recorded extra Møte plans Meet plus Fireflies and no client email', () =>
   assert.equal(resolveSalesReminderDurationMinutes(), 15);
 });
 
+test('fred@ only goes on events the Fireflies key owner hosts; other reps\' events never carry him', () => {
+  // Fireflies answers fred@ for the ORGANIZER's own account, which the hub key cannot read.
+  assert.equal(shouldIncludeFireflies({
+    isOnline: true,
+    addFireflies: true,
+    sendUpdates: 'all',
+    organizerEmail: 'alexander@asoldi.com',
+  }), false);
+  assert.equal(shouldIncludeFireflies({
+    isOnline: true,
+    addFireflies: false,
+    sendUpdates: 'none',
+    alreadyOnEvent: true,
+    organizerEmail: 'alexander@asoldi.com',
+  }), false);
+  assert.equal(shouldIncludeFireflies({
+    isOnline: true,
+    addFireflies: true,
+    sendUpdates: 'all',
+    organizerEmail: 'Damian@asoldi.com',
+  }), true);
+  const repHosted = buildMeetingAttendees(client, { includeAttendees: true, includeFireflies: true, organizerEmail: 'alexander@asoldi.com' });
+  assert.equal(repHosted.some((entry) => entry.email.endsWith('@fireflies.ai')), false);
+  const ownerHosted = buildMeetingAttendees(client, { includeAttendees: false, includeFireflies: true, organizerEmail: 'damian@asoldi.com' });
+  assert.deepEqual(ownerHosted.map((entry) => entry.email), [firefliesNotetakerEmail()]);
+  // The calendar writes pass the mailbox that hosts the event.
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../lib/google-calendar.js'), 'utf8');
+  const upsert = src.slice(src.indexOf('export async function upsertMeetingEvent'));
+  assert.match(upsert.slice(0, 9000), /shouldIncludeFireflies\(\{[^}]*organizerEmail: auth\.googleEmail/);
+  const recorded = src.slice(src.indexOf('export async function upsertRecordedSalesActionEvent'));
+  assert.match(recorded.slice(0, 2500), /buildMeetingAttendees\(client, \{[^}]*organizerEmail: auth\.googleEmail/);
+  const server = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../server.js'), 'utf8');
+  const syncFn = server.slice(server.indexOf('async function maybeSyncCalendar'), server.indexOf('async function maybeSyncNextActionCalendars'));
+  assert.match(syncFn, /firefliesNotetakerAllowedForOrganizer\(syncCalendarStatus\.googleEmail\)/);
+  assert.match(syncFn, /addFireflies: isOnline && firefliesWanted/);
+  // Card saves after the confirmation no longer re-sync the event to add him (that re-sent the client's invite).
+  assert.equal(server.includes('inviteFirefliesAfterConfirmation'), false);
+});
+
 test('silent updates keep Fred after he was already invited', () => {
   assert.equal(shouldIncludeFireflies({
     isOnline: true,

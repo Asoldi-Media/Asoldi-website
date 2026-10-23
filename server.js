@@ -235,6 +235,7 @@ import { extractOfferLetterBody } from './lib/offer-letter-html.js';
 import { isDeepseekConfigured } from './lib/deepseek.js';
 import { clientIntentSourceHash, fillOfferFromTranscript, meetingContextIsTooThin, reflectContractFromEmail, summarizeClientIntent } from './lib/offer-ai.js';
 import { clientOwnedMeetLinks, emptyFirefliesLiveJoinStamp, firefliesMeetLinksDiffer, matchMeetingToClients, normalizeFirefliesMeetLink, planFirefliesMeetLinkBackfill, recordingMatchesSalesMeeting, shouldDropLiveJoinStub } from './lib/fireflies-client-match.js';
+import { firefliesNotetakerAllowedForOrganizer, refreshFirefliesKeyOwnerEmail } from './lib/fireflies-key-owner.js';
 import {
   clientHasTranscriptForSession,
   currentSessionKeyForSlot,
@@ -284,6 +285,7 @@ import {
 import {
   eventFromPayload,
   fetchActiveFirefliesMeetings,
+  fetchFirefliesKeyOwnerEmail,
   fetchFirefliesTranscriptPresence,
   isFirefliesBotJoinedEvent,
   meetingIdFromPayload,
@@ -8593,6 +8595,9 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
         ? ((storedCalendarId && !isUnacceptableMeetingHostEmail(storedCalendarId)) ? storedCalendarId : targetCalendarId)
         : targetCalendarId;
       const previousMeetLink = sanitizeText(previousClient?.calendar?.meetLink || nextClient?.calendar?.meetLink);
+      // fred@ makes the organizer's own Fireflies join, so he only goes on events the hub's Fireflies key
+      // owner hosts. On other reps' events the hub's live join is the one recorder.
+      const firefliesWanted = firefliesNotetakerAllowedForOrganizer(syncCalendarStatus.googleEmail);
       const calendarMeta = await upsertMeetingEvent(
         nextClient,
         eventIdForUpsert,
@@ -8607,8 +8612,8 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
           // Fred only when the confirmation invite is actually sent. Silent
           // MyPhoner/unassigned creates must not save him without emailing him.
           // Silent moves keep him on the new event without emailing the client.
-          addFireflies: isOnline && !Boolean(nextClient?.progression?.meetingHeld) && (notifyAttendees || firefliesAlreadyInvited),
-          keepFireflies: firefliesAlreadyInvited,
+          addFireflies: isOnline && firefliesWanted && !Boolean(nextClient?.progression?.meetingHeld) && (notifyAttendees || firefliesAlreadyInvited),
+          keepFireflies: firefliesWanted && firefliesAlreadyInvited,
           forceRecreate,
           forceOwnerMeet,
           expectedOwnerEmail,
@@ -8705,7 +8710,7 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
       if (requireMeetLink && isOnline && !isRealGoogleMeetLink(nextClient?.calendar?.meetLink)) {
         warnings.push('Google Calendar sync ran but did not return a real Google Meet link.');
       }
-      if (notifyAttendees && isOnline && firefliesNotetakerEmail() && !calendarMeta.firefliesInvited) {
+      if (notifyAttendees && isOnline && firefliesWanted && firefliesNotetakerEmail() && !calendarMeta.firefliesInvited) {
         warnings.push(
           'Google did not keep fred@fireflies.ai on the event. Fireflies is still sent into the Meet when the meeting starts.'
         );
@@ -9522,6 +9527,9 @@ function firefliesLiveJoinDeps() {
       title,
       durationMinutes,
       apiKey: apiKey(),
+    }),
+    refreshKeyOwner: () => refreshFirefliesKeyOwnerEmail({
+      fetchOwnerEmail: () => fetchFirefliesKeyOwnerEmail({ apiKey: apiKey() }),
     }),
     onDispatch: recordLiveJoinDispatch,
     onSessionChange: syncLiveJoinPlaceholders,
