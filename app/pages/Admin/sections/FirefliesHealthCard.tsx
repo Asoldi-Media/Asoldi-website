@@ -31,7 +31,7 @@ type IngestStatus = {
   watchdog?: PartStatus;
   lastHealthAlertAt?: string;
   stateError?: string;
-  store?: Record<string, { source?: string; error?: string }>;
+  store?: Record<string, { source?: string; error?: string; backupFile?: string }>;
 };
 
 /** lib/fireflies-live-sessions.js firefliesLiveJoinStatus(), plus the transport's rate limit. */
@@ -52,6 +52,8 @@ type LiveJoinStatus = {
 type Loaded<T> = { status: 'loading' } | { status: 'missing' } | { status: 'error'; message: string } | { status: 'ok'; data: T };
 
 const REFRESH_MS = 60_000;
+// The live-join engine ticks every minute; three missed ticks is a stopped engine, not a slow one.
+const LIVE_TICK_STALE_MS = 3 * 60_000;
 
 const STORE_FILES: Record<string, string> = {
   meetings: 'fireflies-meetings.json',
@@ -150,8 +152,24 @@ export function FirefliesHealthCard() {
       alarms.push(`${file} kan ikke leses, og ingen sikkerhetskopi kan leses. Se backups/ i datamappen.`);
     }
   }
+  // The engine ticks every minute: meetings near now and no tick for a while means no bot goes in.
+  const tickMs = Date.parse(liveData?.lastTickAt || '');
+  const tickStale = !Number.isFinite(tickMs) || nowMs - tickMs > LIVE_TICK_STALE_MS;
+  const engineStopped = Boolean(liveData) && count(liveData?.sessionsInWindow) > 0 && !liveData?.running && tickStale;
+  // Safe mode and a missing key already have their own alarm above; this one is for a hub that should be sending.
+  const sendingOff = Boolean(ingestData?.safeModeBlocked || liveData?.safeModeBlocking)
+    || ingestData?.keyConfigured === false || liveData?.apiKeyPresent === false;
+  if (engineStopped && !sendingOff) {
+    alarms.push(`Live-join har ikke kjørt ${liveData?.lastTickAt ? `siden ${when(liveData.lastTickAt)}` : 'ennå'}, selv om ${count(liveData?.sessionsInWindow)} møte(r) er nær nå. Fireflies sendes ikke inn før huben kjører igjen.`);
+  }
 
   const warnings: string[] = [];
+  for (const [name, file] of Object.entries(STORE_FILES)) {
+    const store = ingestData?.store?.[name];
+    if (store?.source === 'backup') {
+      warnings.push(`${file} kunne ikke leses, så huben bruker sikkerhetskopien${store.backupFile ? ` ${store.backupFile}` : ''}. Det som ble lagret etter den, kan mangle.`);
+    }
+  }
   const pausedUntil = [rate?.pausedUntil?.api, rate?.pausedUntil?.join].filter((iso) => future(iso, nowMs)).sort()[0] || '';
   if (pausedUntil) warnings.push(`Fireflies har bedt huben vente til ${when(pausedUntil)} (fartsgrense). Henting og innsending venter til da.`);
   if (count(ingestData?.consecutiveFailures) > 0) {
@@ -233,7 +251,11 @@ export function FirefliesHealthCard() {
           <div>
             <h4 className="text-white font-medium mb-2">Fireflies inn i møtene (live-join)</h4>
             <ul className="text-xs space-y-1">
-              <Row label="Sist kjørt" value={liveData.running ? 'kjører nå' : when(liveData.lastTickAt) || 'ikke ennå'} />
+              <Row
+                label="Sist kjørt"
+                value={liveData.running ? 'kjører nå' : when(liveData.lastTickAt) || 'ikke ennå'}
+                warn={engineStopped}
+              />
               <Row label="Møter i vinduet nå" value={count(liveData.sessionsInWindow)} />
               {limiter ? (
                 <Row

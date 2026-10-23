@@ -32,3 +32,10 @@ test('only the app shell or a 404 page means a route is missing, never a proxy e
   // One bad answer must not hide "Møter uten opptak" for the rest of the session.
   assert.doesNotMatch(read('app/pages/Admin/sections/MissingRecordingsPanel.tsx'), /setSupported/);
 });
+
+test('the health card warns about a restored backup and a live-join engine that stopped', () => {
+  const card = read('app/pages/Admin/sections/FirefliesHealthCard.tsx');
+  assert.match(card, /source === 'backup'/);
+  assert.match(card, /Live-join har ikke kjørt/);
+  assert.match(card, /LIVE_TICK_STALE_MS = 3 \* 60_000/);
+});
