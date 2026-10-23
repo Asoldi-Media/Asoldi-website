@@ -12863,7 +12863,7 @@ app.patch('/api/client-portal/state', clientAuthV2, async (req, res) => {
 });
 
 registerShopPaymentsRoutes(app, { adminAuth });
-registerCmsSsoRoutes(app, { adminAuth, getSiteById: hub.getSiteById });
+registerCmsSsoRoutes(app, { adminAuth, getSiteById: hub.getSiteById, getSiteByKey: hub.getSiteByKey });
 registerSafeModeRoutes(app, { adminAuth });
 registerDeliveryRoutes(app, { adminAuth, sales, hub, salesOffers });
 
