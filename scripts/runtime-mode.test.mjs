@@ -27,6 +27,9 @@ test('isHostingerRuntime: 6-case matrix', () => {
   assert.equal(isHostingerRuntime({ env: {}, cwd: '/home/ubuntu/asoldi', home: '/home/ubuntu' }), false);
   // APP_URL=https://asoldi.com is no signal at all
   assert.equal(isHostingerRuntime({ env: { APP_URL: 'https://asoldi.com' }, ...PC }), false);
+  // A data dir on the Hostinger account is a third, independent signal
+  assert.equal(isHostingerRuntime({ env: { APP_DATA_DIR: '/home/u123456789/domains/asoldi.com/.asoldi-website-data' }, cwd: '/srv/x', home: '/root' }), true);
+  assert.equal(isHostingerRuntime({ env: { APP_DATA_DIR: 'C:/Asoldi/asoldi code/asoldi-website/.local-data/default' }, ...PC }), false);
 });
 
 test('safeModeState: on by default on a PC, even with the live APP_URL', () => {
