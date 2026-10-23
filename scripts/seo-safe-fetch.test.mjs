@@ -15,6 +15,8 @@ import {
 let server;
 let port;
 const hits = [];
+/** Server-side view of the endless redirect body: bytes written and when its socket closed. */
+const endless = { bytes: 0, closedAt: 0, started: 0 };
 
 test.before(async () => {
   server = http.createServer((req, res) => {
@@ -48,6 +50,24 @@ test.before(async () => {
       const n = Number(req.url.split('/')[2]) || 0;
       res.writeHead(302, { location: `/loop/${n + 1}` });
       res.end();
+    } else if (req.url === '/endless-302') {
+      // A hostile redirect: Location points to /ok, but the body never ends.
+      endless.started += 1;
+      res.writeHead(302, { location: '/ok', 'content-type': 'text/plain' });
+      const chunk = Buffer.alloc(64 * 1024, 98);
+      let open = true;
+      res.on('close', () => {
+        open = false;
+        endless.closedAt = Date.now();
+      });
+      res.on('error', () => {});
+      const pump = () => {
+        while (open) {
+          endless.bytes += chunk.length;
+          if (!res.write(chunk)) return res.once('drain', pump);
+        }
+      };
+      pump();
     } else if (req.url === '/slow') {
       // never answers
     } else if (req.url === '/robots.txt') {
@@ -150,6 +170,25 @@ test('a 5 MB body is cut at the 2 MB cap', async () => {
   assert.equal(res.body.length, 2 * 1024 * 1024);
 });
 
+test('a redirect with an endless body is never read: the socket closes and the caps hold', async () => {
+  endless.bytes = 0;
+  endless.closedAt = 0;
+  const res = await safeFetch(`http://public.test:${port}/endless-302`, viaPublic());
+  const returnedAt = Date.now();
+  assert.equal(res.status, 200);
+  assert.equal(res.url, `http://public.test:${port}/ok`);
+  assert.equal(endless.started, 1);
+  // The server sees its socket close right away (before the fix it kept streaming
+  // hundreds of MB into the hub after safeFetch returned).
+  const deadline = returnedAt + 500;
+  while (!endless.closedAt && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+  assert.ok(endless.closedAt, 'redirect socket closed within 500 ms of safeFetch returning');
+  const bytesAtClose = endless.bytes;
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(endless.bytes, bytesAtClose, 'nothing more is streamed after the close');
+  assert.ok(endless.bytes <= 2 * 1024 * 1024, `server wrote ${endless.bytes} bytes, more than the 2 MB cap`);
+});
+
 test('the whole fetch times out', async () => {
   const started = Date.now();
   await assert.rejects(() => safeFetch(`http://public.test:${port}/slow`, viaPublic({ timeoutMs: 300 })), { code: 'timeout' });
@@ -176,6 +215,17 @@ test('robots.txt is respected for crawling jobs (RFC 9309 longest match)', async
   assert.equal(robotsAllows(groups, '/doc.pdf', 'otherbot'), false);
   assert.equal(robotsAllows(groups, '/doc.pdf?x=1', 'otherbot'), true);
   assert.equal(robotsAllows(parseRobotsTxt(''), '/x'), true);
+});
+
+test('robots groups match our product token exactly (case-insensitive), never as a substring', () => {
+  const substring = parseRobotsTxt(['User-agent: bot', 'Allow: /', '', 'User-agent: *', 'Disallow: /'].join('\n'));
+  assert.equal(robotsAllows(substring, '/x'), false, '"bot" is not our group; the * group applies');
+  const seobot = parseRobotsTxt(['User-agent: seobot', 'User-agent: s', 'Allow: /', '', 'User-agent: *', 'Disallow: /'].join('\n'));
+  assert.equal(robotsAllows(seobot, '/x'), false);
+  const ours = parseRobotsTxt(['User-agent: ASOLDISEOBOT/1.0', 'Disallow: /kun-oss', '', 'User-agent: *', 'Disallow: /'].join('\n'));
+  assert.equal(robotsAllows(ours, '/x'), true, 'our group (any case, with a version) wins over *');
+  assert.equal(robotsAllows(ours, '/kun-oss/side'), false);
+  assert.equal(robotsAllows(ours, '/x', 'AsoldiSeoBot/1.0 (+https://asoldi.com)'), true, 'a full UA string reduces to its product token');
 });
 
 test('quoteAsData wraps fetched text as nonce-tagged data and neutralises fake delimiters', () => {
