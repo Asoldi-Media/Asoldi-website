@@ -11,6 +11,7 @@ import {
   cmsOrigin,
   cmsSsoFormatForVersion,
   cmsSsoOrigin,
+  cmsSsoVersionForSite,
   createCmsSsoStore,
   createQuietCounter,
   createRedeemLimiter,
@@ -27,7 +28,9 @@ const legacySite = { id: '44', site_key: 'key-44', domain: 'https://legacy.examp
 const oldSite = { id: '45', site_key: 'key-45', domain: 'https://old.example', cms: { packageVersion: '1.7.1' } };
 const newSite = { id: '46', site_key: 'key-46', domain: 'https://new.example', cms: { packageVersion: '' } };
 const noDomainSite = { id: '47', site_key: 'key-47', domain: '', cms: { adminUrl: 'https://cms.example.net/admin', packageVersion: '2.2.1' } };
-const ALL = [site, otherSite, legacySite, oldSite, newSite, noDomainSite, { id: '7', site_key: 'k7' }];
+// Trusted 2.1.3; its last heartbeat without a credential reports 2.2.2 (moved to 2.2.2 before it enrolled).
+const movedSite = { id: '48', site_key: 'key-48', domain: 'https://moved.example', cms: { packageVersion: '2.1.3', unverified: { packageVersion: '2.2.2', at: '2026-10-23T00:00:00.000Z' } } };
+const ALL = [site, otherSite, legacySite, oldSite, newSite, noDomainSite, movedSite, { id: '7', site_key: 'k7' }];
 const byId = (id) => ALL.find((s) => s.id === id) || null;
 const byKey = (key) => ALL.find((s) => s.site_key === key) || null;
 
@@ -109,6 +112,22 @@ test('HS-1: the link format follows the CMS version from the heartbeat', () => {
   assert.equal(cmsSsoFormatForVersion('2.0.0'), 'site-key');
   assert.equal(cmsSsoFormatForVersion('2.2.1-rc.1'), 'site-key', 'a prerelease sorts before its release');
   assert.equal(cmsSsoFormatForVersion('1.7.1'), 'none');
+});
+
+test('HS-1: the link format follows the newer of the trusted version and a report without the credential', async () => {
+  assert.deepEqual(cmsSsoVersionForSite(movedSite), { packageVersion: '2.2.2', from: 'unverified-heartbeat' });
+  assert.deepEqual(cmsSsoVersionForSite({ cms: { packageVersion: '2.2.2', unverified: { packageVersion: '2.1.3' } } }), { packageVersion: '2.2.2', from: 'heartbeat' }, 'an older report never lowers it');
+  assert.deepEqual(cmsSsoVersionForSite({ cms: { packageVersion: '', unverified: { packageVersion: '2.1.3' } } }), { packageVersion: '2.1.3', from: 'unverified-heartbeat' });
+  assert.deepEqual(cmsSsoVersionForSite({ cms: { packageVersion: '2.1.3', unverified: { packageVersion: 'junk' } } }), { packageVersion: '2.1.3', from: 'heartbeat' });
+  assert.deepEqual(cmsSsoVersionForSite(legacySite), { packageVersion: '2.1.3', from: 'heartbeat' });
+  await withHub(async (hub) => {
+    const res = await link(hub.base, '48');
+    assert.equal(res.status, 200);
+    assert.equal(res.body.format, 'redeem', 'a site that moved to 2.2.2 before it enrolled gets a link 2.2.x accepts');
+    const row = hub.registered.store().auditLog().at(-1);
+    assert.equal(row.packageVersion, '2.2.2');
+    assert.equal(row.versionFrom, 'unverified-heartbeat');
+  });
 });
 
 test('HS-1: the site-key format is kept for CMS 2.0.0 up to 2.2.0 (60 s, fresh nonce)', () => {
