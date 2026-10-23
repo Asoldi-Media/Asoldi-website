@@ -1,7 +1,100 @@
 # Fireflies recording
 
 How the hub makes sure every booked online meeting (sales, workshop, iteration, recorded Møte) is
-recorded by the Fireflies notetaker.
+recorded by the Fireflies notetaker, and says so plainly when it is not.
+
+## Recording states and alerts
+
+Every booked online meeting is a live-join session (`lib/fireflies-live-sessions.js`): one Meet
+room at one start time. Its state shows on the card (`client.liveRecordings`, from 30 minutes
+before start to 2 hours after the booked end) and on the meeting's placeholder row in
+`client.meetings` (`live:…`, its `recording` object) until the real recording replaces it.
+
+| State | Meaning | Written by |
+|---|---|---|
+| `scheduled` | Booked; the notetaker goes in 3 minutes before start. | capture |
+| `dispatched` | Fireflies accepted a send. That only means the bot is at the door. | capture |
+| `recording` | The bot is in the room (Fireflies `active_meetings`). | capture |
+| `ended` | The bot was in and has left; the transcript is on its way. | capture |
+| `not-admitted` | The bot was never in the room: sent but never let in, or never sent at all (`message` says why: no Fireflies key, the rate limit, Fireflies refused, or the hub did not try in time). | capture |
+| `missing` | Session end + 90 minutes and no recording. | watchdog |
+| `empty` | By then Fireflies only has a recording with no talk (silent, or too short). | watchdog |
+| `declined` | A person marked the meeting held without a recording, or not held. | rep |
+
+The placeholder row is written at the first send Fireflies accepts. A session that ends with no
+bot in the room and no such send (never sent, every send refused or rate-limited, or the hub was
+down) gets its row once the first-send window (T+30) is over, in `not-admitted` with the reason in
+`message` and no `liveJoinedAt`. A session whose bot the hub did not send (someone added Fireflies
+by hand) gets its row as soon as that bot is seen, as `recording`. A row is written once per
+session: one that intake dropped after linking the recording never comes back, and none is written
+when a recording with talk is already linked for the slot. A silent fragment does not count as the
+recording. A ticked "Møtet hatt" or a done Møte stops only a meeting that has not begun: once it
+has begun it stays booked, so a hub that was down through the meeting still writes its row when it
+comes back (within 12 hours of the start, the engine's collect horizon).
+
+A reused room can still hold the bot of an earlier meeting that ran over. A bot that started more
+than 30 minutes before the booked start is that meeting's: the card says so ("Fireflies fra møtet
+før …"), its id never goes on this meeting's placeholder, and the watchdog only offers its
+recording as a candidate, so it is never moved off the client it belongs to.
+
+The watchdog (`lib/fireflies-recording-watchdog.js`) follows every placeholder after the meeting:
+it links the recording when it turns up, and at the deadline (session end + 90 minutes) sets
+`missing` or `empty`. `empty` is never decided earlier: a notetaker that sat alone in an open room
+before the meeting leaves a silent fragment in many meetings that are recorded after all. Missing
+and empty rows are looked for hourly for 48 hours, so a late recording still links. A recording is
+taken by the bot's id, or on the room, only when it started between 30 minutes before the booked
+start and the session's end. Without a Fireflies key nothing is looked up: a meeting no bot of the
+hub's was sent to or seen in is still followed to its deadline and reported (the e-mail says the hub
+could not look in Fireflies), and one a bot may have recorded waits for the key.
+
+### E-mails, who gets them, and what to do
+
+| E-mail | When | To | What to do |
+|---|---|---|---|
+| **Slipp inn Fireflies – \<bedrift>** | Fireflies accepted a send, and by max(T+3, the first accepted send + 4 minutes) a look at the room since that send finds no bot (one seen only before it, such as an earlier meeting's, does not count), while the first-send window (to T+30) lasts. Once per session. | The client's owning rep; `FIREFLIES_NOTIFY_EMAIL` (ansatte@) only when that rep has no e-mail. Nobody when the client has no rep, or is a test client that is not an automation pilot. | In the meeting: admit «Fireflies.ai Notetaker» (Meet may list it under «Med potensielle risikoer»), and only one if two knock. Nobody there yet: nothing, the hub knocks again; the e-mail says so only while another automatic knock is due before T+30, and otherwise asks to admit it now. |
+| **Fireflies: ingen opptak av \<møtet> med \<bedrift>** | The deadline passed with no recording (also for a meeting the bot was never sent to, and also without a Fireflies key for one no bot was sent to). Once. | `FIREFLIES_NOTIFY_EMAIL` and the owning rep. None for a test client that is not an automation pilot (its row is still marked). | Paste a Fireflies link under Bytt opptak on Tilbud if someone recorded it (a recording from the same room at another time is listed), write product notes on the card, or mark the meeting "uten opptak". |
+| **Fireflies: tomt opptak av \<møtet> med \<bedrift>** | At the deadline Fireflies only has a recording with no talk. Once (it shares the stamp with the missing e-mail, so a meeting is reported one way). | Same as above. | Same as above. Usually the notetaker sat alone, or the meeting was held somewhere else. |
+| **Fireflies: live-join står stille / live-join feiler / nøkkelen mangler, ingen opptak av møtene** | The live-join loop has not run for 10 minutes while a booked meeting is in its window, every round has failed for 15 minutes, or the Fireflies key is missing while a booked meeting starts within 2 hours. At most once per 12 hours. | `FIREFLIES_ALERT_EMAIL` (default damian@asoldi.com). | Check that the hub runs and logs `[fireflies] live-join …`, that the key is set and valid, and that Fireflies answers. |
+| **Fireflies: opptak hentes ikke inn** (and the other ingest alerts) | The transcript pull keeps failing (`docs/sales-offer-flow.md`, intake). | `FIREFLIES_ALERT_EMAIL`. | As the e-mail says. |
+
+The lobby stamp (`lobbyAlertAt`) lives on the session in `fireflies-live-sessions.json` and is
+taken before the send, so a restart or a second hub process never sends it twice; a failed send is
+tried again after 2 minutes while the window lasts. The missing/empty stamp (`alertedAt`) is on the
+placeholder. The health stamp (`lastLiveJoinAlertAt`, like the ingest alert's `lastHealthAlertAt`)
+is in `fireflies-ingest-state.json`, checked and written under the store's lock so two hub
+processes send it once, and kept in memory too. The health check runs from both the live-join loop
+and the ingest loop, so a live-join loop that died is still reported. Nothing alerts while safe
+mode keeps live join off on purpose.
+
+All of it goes through the hub mailer, so a safe-mode hub writes these e-mails to its outbox.
+Optional `FIREFLIES_LOBBY_ALERT=0` turns the lobby e-mail off (default on).
+
+### Routes
+
+- `POST /api/admin/sales/:id/fireflies/live-join` `{ slotKey }`: send Fireflies again (capture).
+- `POST /api/admin/sales/:id/fireflies/recording` `{ meetingId | slotKey, state: 'declined' | 'open' }`
+  (the rep's own clients, or admin) → `200 { meetingId, recording, client }`. `declined` is "Marker
+  uten opptak": the engine stops sending and the watchdog stops looking. A `slotKey` names the slot's
+  current booking: a booked slot with no placeholder yet (a client who cancelled before the meeting)
+  gets one, in `declined`. A moved Møte keeps its slot key, so the row of the time it was moved from
+  is marked by its `meetingId`; a key that is no longer booked finds its newest placeholder.
+  `open` undoes a rep's `declined`: a meeting already reported missing goes back to `missing`
+  without a second e-mail, otherwise to capture's state (`scheduled` for one the engine has no
+  session for yet, more than 36 hours ahead), and the engine takes the session up again. `400` for
+  another state, `404` when no placeholder or booked slot matches, `409` when the slot's recording
+  with talk is already linked.
+- `GET /api/admin/fireflies/missing-recordings` (a rep sees their own clients, admin all) →
+  `{ rows: [{ clientId, businessName, ownerId, meetingId, slotKey, kind, startedAt, meetLink, title,
+  state: 'missing' | 'empty' | 'not-admitted', message, missingAt, alertedAt }], count }`: placeholders
+  with no recording with talk that are past their deadline (later while Fireflies is still processing
+  a recording from the room) or already `missing` or `empty`, not declined, newest first, the last 60
+  days. A row past its deadline that the watchdog has not reached yet keeps `not-admitted` and its
+  why; any other state lists as `missing`.
+- `GET /api/admin/fireflies/live-join-status` (admin) → `firefliesLiveJoinStatus()` (last tick, last
+  tick without errors, `failingSince`, sessions in their window with `unsentReason` and
+  `lobbyAlertAt`, the limiter, `apiKeyPresent`, `safeModeBlocking`), plus `rateLimit`
+  (Fireflies' pauses), `liveJoinEnabled`, `lobbyAlertsEnabled` and `alert: { reason, lastAlertAt }`.
+- `GET /api/admin/fireflies/ingest-status` (admin): the transcript pull's health.
 
 ## Meet rooms: let the notetaker in without anyone admitting it
 

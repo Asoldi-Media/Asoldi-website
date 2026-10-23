@@ -273,15 +273,18 @@ brings every recording in; the webhook only makes it sooner.
   id, else by the booked Meet link with a start between 30 minutes before the booked start and the
   session's end (sales rooms are reused, so a later meeting there is only offered as a candidate,
   like a same-title recording in another room). A transcript with talk is linked; live captions
-  are only "not yet" and are not stored from here; a silent one sets `recording.state = 'empty'`,
-  unless a recording on the room is still processing. The session ends at start + booked
+  are only "not yet" and are not stored from here. The session ends at start + booked
   (`durationMinutes` on the placeholder, else 60) or later when capture saw the bot later
   (`lastSeenAt`, `endedAt`); nothing by that end + 90 minutes sets `'missing'` and e-mails
   `FIREFLIES_NOTIFY_EMAIL` and the owning rep once, and so does a recording Fireflies has still not
-  finished three hours after that. A missing meeting is looked for hourly for 48 hours, so a late
-  transcript still links. Rate limits and network errors never make a meeting missing.
-  `POST /api/admin/sales/:id/fireflies/recording` `{ meetingId | slotKey, state: 'declined' }` is
-  "Marker uten opptak" from the e-mail: the meeting was held without a recording, or not held.
+  finished three hours after that. Only a silent recording on the room by then sets `'empty'`, with
+  its own one e-mail (never sooner: a bot that sat alone before the meeting leaves such a fragment).
+  A missing or empty meeting is looked for hourly for 48 hours, so a late transcript still links.
+  Rate limits and network errors never make a meeting missing. Meetings the bot never got into
+  have a `not-admitted` placeholder too, and are followed the same way.
+  `POST /api/admin/sales/:id/fireflies/recording` `{ meetingId | slotKey, state: 'declined' | 'open' }`
+  is "Marker uten opptak" from the e-mail and its undo. The states, every e-mail (the rep's lobby
+  alert included), who gets it and the routes are in `docs/fireflies-recording.md`.
 * **Health.** `GET /api/admin/fireflies/ingest-status` (admin) returns `firefliesIngestStatus()`: last
   tick, last good pull, last error, failures in a row, the Fireflies rate-limit state, pending
   fetches, summaries still processing, missing recordings, the catch-up scan's and the watchdog

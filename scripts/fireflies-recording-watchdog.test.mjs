@@ -122,7 +122,12 @@ test('a placeholder is left alone until its session is over, and then checked at
   assert.equal(plan.overdue, false);
   assert.equal(watchdog.planPlaceholderCheck(row, { nowMs: start + 65 * MIN, checkedMs: start + 61 * MIN }).reason, 'checked-lately');
   assert.equal(watchdog.planPlaceholderCheck({ ...row, recording: { state: 'ended' } }, { nowMs: start + 20 * MIN }).action, 'lookup', 'the bot left early: look at once');
-  assert.equal(watchdog.planPlaceholderCheck({ ...row, recording: { state: 'empty' } }, { nowMs: start + 200 * MIN }).reason, 'done');
+  assert.equal(watchdog.planPlaceholderCheck({ ...row, recording: { state: 'declined' } }, { nowMs: start + 200 * MIN }).reason, 'done');
+  // Empty, like missing, is looked at hourly within the watch: a recording with talk may still turn up.
+  const empty = (checkedAt) => ({ ...row, recording: { state: 'empty', checkedAt: iso(checkedAt) } });
+  assert.equal(watchdog.planPlaceholderCheck(empty(start + 170 * MIN), { nowMs: start + 200 * MIN }).reason, 'checked-lately');
+  assert.equal(watchdog.planPlaceholderCheck(empty(start + 130 * MIN), { nowMs: start + 200 * MIN }).action, 'lookup');
+  assert.equal(watchdog.planPlaceholderCheck(empty(start + 130 * MIN), { nowMs: start + (150 + 49 * 60) * MIN }).reason, 'watch-over');
   assert.equal(watchdog.planPlaceholderCheck({ ...row, meetingId: 'FFREAL01' }, { nowMs: start + 200 * MIN }).reason, 'not-a-placeholder');
 });
 
@@ -217,7 +222,7 @@ test('a rate limit or network error never makes a meeting missing', async () => 
   assert.equal(h.sent.length, 0);
 });
 
-test('a finished silent recording on the room sets empty, and a processing one keeps it waiting', async () => {
+test('a finished silent recording on the room sets empty at the deadline with one alert, and a processing one keeps it waiting', async () => {
   const start = Date.parse('2026-10-23T15:00:00.000Z');
   const silent = booking(start);
   const processing = booking(start + MIN);
@@ -237,10 +242,18 @@ test('a finished silent recording on the room sets empty, and a processing one k
   await run(h, fake, start + 160 * MIN);
   assert.equal(silent.meetings[0].recording.state, 'empty');
   assert.equal(silent.meetings[0].recording.ffMeetingId, 'FFSILENT');
+  assert.ok(Date.parse(silent.meetings[0].recording.alertedAt) >= Date.parse(silent.meetings[0].recording.missingAt));
   assert.equal(processing.meetings[0].recording.state, 'dispatched', 'Fireflies is still working: not missing');
-  assert.equal(h.sent.length, 0);
+  assert.equal(h.sent.length, 1, 'one e-mail, about the empty one');
+  assert.equal(h.sent[0].subject, `Fireflies: tomt opptak av salgsmøtet med ${silent.businessName}`);
+  assert.match(h.sent[0].text, /Fireflies var med på salgsmøtet med .*, men opptaket er tomt/);
+  assert.match(h.sent[0].text, /Marker møtet som uten opptak/);
+  // Looked at hourly for a late recording with talk, without a second e-mail.
   const again = await run(h, fake, start + 400 * MIN);
-  assert.equal(again.checked.includes(silent.meetings[0].meetingId), false, 'empty is final');
+  assert.equal(again.checked.includes(silent.meetings[0].meetingId), true);
+  assert.equal(silent.meetings[0].recording.state, 'empty');
+  assert.equal(h.sent.filter((mail) => mail.subject.endsWith(silent.businessName)).length, 1);
+  assert.equal(fake.calls.fetch.filter((id) => id === 'FFSILENT').length, 1, 'a finished silent copy is never fetched again');
 });
 
 test('a meeting that runs past its booking: no lookup while capture sees the bot, and live captions are never linked or stored', async () => {
