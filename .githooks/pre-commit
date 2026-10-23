@@ -1,0 +1,5 @@
+#!/bin/sh
+# This repo is public. Refuse a commit that adds a secret, a value from a local
+# .env, a retired (rotated) secret, client personal data or a client-data file.
+# Installed with: npm run hooks:install
+exec node scripts/security/secret-scan.mjs --staged

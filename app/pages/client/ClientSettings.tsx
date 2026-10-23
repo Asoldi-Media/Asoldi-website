@@ -486,6 +486,27 @@ export const ClientSettings = () => {
     }
   }
 
+  async function logoutEverywhere() {
+    if (!token) return;
+    if (!window.confirm('Logge ut på alle enheter, også denne?')) return;
+    setBusyAction('logout-everywhere');
+    setError('');
+    try {
+      const response = await fetch('/api/client/account/logout-everywhere', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.message || 'Kunne ikke logge ut alle enheter.');
+      clearClientSession();
+      navigate('/login/kunde', { replace: true });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Kunne ikke logge ut alle enheter.');
+    } finally {
+      setBusyAction('');
+    }
+  }
+
   async function deleteAccount() {
     if (!token) return;
     if (deleteConfirm.trim().toUpperCase() !== 'SLETT') {
@@ -763,6 +784,15 @@ export const ClientSettings = () => {
                     </div>
                     <button type="button" onClick={() => void changeLoginEmail()} disabled={busyAction === 'change-email' || !loginEmail || !loginPassword} className="mt-3 rounded-lg bg-[#111827] px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
                       {busyAction === 'change-email' ? 'Lagrer...' : 'Oppdater e-post'}
+                    </button>
+                  </section>
+                  <section className="rounded-2xl border border-[#E5E7EB] bg-white p-5">
+                    <h2 className="text-lg font-semibold text-[#111827]">Logg ut på alle enheter</h2>
+                    <p className="mt-1 text-sm text-[#6B7280]">
+                      Avslutter innloggingen på alle telefoner, nettbrett og PC-er, også denne. Bruk dette hvis du har logget inn på en enhet du ikke har lenger. Å bytte passord gjør det samme.
+                    </p>
+                    <button type="button" onClick={() => void logoutEverywhere()} disabled={busyAction === 'logout-everywhere'} className="mt-3 rounded-lg border border-[#E5E7EB] px-4 py-2 text-sm font-medium hover:bg-[#F9FAFB] disabled:opacity-50">
+                      {busyAction === 'logout-everywhere' ? 'Logger ut...' : 'Logg ut overalt'}
                     </button>
                   </section>
                   <section className="rounded-2xl border border-[#E5E7EB] bg-white p-5">

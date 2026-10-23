@@ -4,8 +4,11 @@ import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  clientIpFromRequest,
   createLoginLimiter,
   createStaffMediaGate,
+  guardLogin,
+  isInternalAddress,
   isTokenFresh,
   readOrCreateDiskSecret,
   safeEqual,
@@ -82,6 +85,42 @@ test('login limiter blocks one IP spraying many accounts', () => {
   for (let i = 0; i < 5; i += 1) limiter.fail(`user${i}`, '9.9.9.9');
   assert.equal(limiter.check('fresh-user', '9.9.9.9').ok, false);
   assert.equal(limiter.check('fresh-user', '8.8.8.8').ok, true);
+});
+
+function fakeLimitRes() {
+  return {
+    statusCode: 200,
+    headers: {},
+    setHeader(name, value) { this.headers[name] = value; },
+    status(code) { this.statusCode = code; return this; },
+    json(body) { this.body = body; return this; },
+  };
+}
+
+test('a forged leading X-Forwarded-For entry cannot reset the per-IP login counter', () => {
+  const limiter = createLoginLimiter({ maxPerAccount: 100, maxPerIp: 3, windowMs: 60_000 });
+  // The client sends a new fake address each time; the hosting proxy appends the real one,
+  // and an internal hop may follow it.
+  const request = (i) => ({
+    headers: { 'x-forwarded-for': `198.51.100.${i}, 1.2.3.${i}, 203.0.113.7${i % 2 ? ', 10.0.0.5' : ''}` },
+    socket: { remoteAddress: '127.0.0.1' },
+  });
+  for (let i = 0; i < 3; i += 1) {
+    const req = request(i);
+    assert.equal(clientIpFromRequest(req), '203.0.113.7');
+    assert.equal(guardLogin(limiter, req, fakeLimitRes(), `account${i}`), true);
+    limiter.fail(`account${i}`, clientIpFromRequest(req));
+  }
+  const res = fakeLimitRes();
+  assert.equal(guardLogin(limiter, request(99), res, 'another-account'), false, 'the fourth try from that address is throttled');
+  assert.equal(res.statusCode, 429);
+
+  assert.equal(clientIpFromRequest({ headers: {}, socket: { remoteAddress: '::ffff:192.0.2.9' } }), '::ffff:192.0.2.9');
+  assert.equal(clientIpFromRequest({ headers: { 'x-forwarded-for': '10.1.2.3' }, socket: { remoteAddress: '127.0.0.1' } }), '10.1.2.3');
+  for (const ip of ['127.0.0.1', '10.0.0.1', '172.16.0.1', '172.31.255.1', '192.168.1.1', '100.64.0.1', '::1', 'fd00::1', '::ffff:10.0.0.1']) {
+    assert.equal(isInternalAddress(ip), true, ip);
+  }
+  for (const ip of ['203.0.113.7', '172.32.0.1', '100.128.0.1', '8.8.8.8', '2001:db8::1']) assert.equal(isInternalAddress(ip), false, ip);
 });
 
 function fakeRes() {

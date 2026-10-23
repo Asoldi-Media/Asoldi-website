@@ -79,10 +79,13 @@ import {
   createStaffMediaGate,
   guardLogin,
   clientIpFromRequest,
-  isTokenFresh,
   readOrCreateDiskSecret,
+  resolveHubSecret,
   safeEqual,
 } from './lib/auth-hardening.js';
+import { isTokenAccepted, runTokenPolicyBootMigrations, stampTokenVersion } from './lib/token-policy.js';
+import { noteSecurityEvent } from './lib/security-counters.js';
+import { registerSecurityAdminRoutes } from './lib/security-admin-routes.js';
 import { applyPersistentProductionEnv } from './lib/persistent-env.js';
 import { applyProxyKeepAlive, describeProxyTimeouts, proxyHttpServerOptions } from './lib/http-server-timeouts.js';
 import {
@@ -224,6 +227,7 @@ import { isDeepseekConfigured } from './lib/deepseek.js';
 import { clientIntentSourceHash, fillOfferFromTranscript, meetingContextIsTooThin, reflectContractFromEmail, summarizeClientIntent } from './lib/offer-ai.js';
 import { clientOwnedMeetLinks, emptyFirefliesLiveJoinStamp, firefliesJoinedCurrentMeet, firefliesMeetLinksDiffer, firefliesNeedsFreshMeetOnReschedule, matchMeetingToClients, normalizeFirefliesMeetLink, planFirefliesMeetLinkBackfill, recordingMatchesSalesMeeting, shouldDropLiveJoinStub } from './lib/fireflies-client-match.js';
 import { describeFirefliesMedia, firefliesMediaFilePath, persistFirefliesMedia } from './lib/fireflies-media.js';
+import { runFirefliesPullFollowUp } from './lib/fireflies-pull-followup.js';
 import { CUSTOM_TIER_ID, WEBSITE_TIERS, formatKr, resolveTier, tierById, toClientWebsitePlan } from './lib/website-tiers.js';
 import { buildSalesSender, normalizeAsoldiFromEmail } from './lib/sales-sender.js';
 import {
@@ -502,12 +506,15 @@ app.use((req, res, next) => {
 const PORT = process.env.PORT || 3000;
 const distPath = join(__dirname, 'dist');
 const publicPath = join(__dirname, 'public');
-// Env wins; otherwise a random secret generated once in <dataDir>/secrets/ (no literal default).
-const ADMIN_SECRET = String(process.env.ADMIN_SECRET || '').trim() || readOrCreateDiskSecret(getPersistentDataDir(), 'admin-secret');
+// Env wins unless it is a known default or shorter than 16; otherwise a random secret kept in <dataDir>/secrets/.
+const ADMIN_SECRET_SOURCE = resolveHubSecret({ envValue: process.env.ADMIN_SECRET, dataDir: getPersistentDataDir(), name: 'admin-secret' });
+const ADMIN_SECRET = ADMIN_SECRET_SOURCE.secret;
+// One-time boot migrations (a reset of admin and staff sessions; see data/security-settings.js).
+runTokenPolicyBootMigrations();
 const loginLimiter = createLoginLimiter();
 
 function signToken(payload) {
-  const data = JSON.stringify(payload);
+  const data = JSON.stringify(stampTokenVersion(payload));
   const sig = createHmac('sha256', ADMIN_SECRET).update(data).digest('hex');
   return Buffer.from(JSON.stringify({ data, sig })).toString('base64url');
 }
@@ -518,7 +525,8 @@ function verifyToken(token) {
     const expect = createHmac('sha256', ADMIN_SECRET).update(String(raw.data)).digest('hex');
     if (!safeEqual(expect, raw.sig)) return null;
     const payload = JSON.parse(raw.data);
-    if (!isTokenFresh(payload)) return null;
+    // Age (security-settings.json, default 30 days) plus revokedBefore and per-user tokenVersion.
+    if (!isTokenAccepted(payload)) return null;
     return payload;
   } catch {
     return null;
@@ -2800,10 +2808,20 @@ function getMakerCallbackToken() {
   return makerCallbackTokenCache;
 }
 
-function isMakerStatusCallbackAuthorized(req) {
-  const requiredToken = getMakerCallbackToken();
-  const provided = sanitizeText(req.headers['x-sales-callback-token'] || req.headers['x-maker-callback-token']);
-  return Boolean(provided) && safeEqual(provided, requiredToken);
+function makerCallbackTokenFrom(req) {
+  return sanitizeText(req.headers['x-sales-callback-token'] || req.headers['x-maker-callback-token']);
+}
+
+// Header-less calls are counted too: that is what unauthenticated probing looks like.
+function noteMakerCallbackRejected(req) {
+  noteSecurityEvent(makerCallbackTokenFrom(req) ? 'maker-callback-rejected' : 'maker-callback-missing-token');
+}
+
+function isMakerStatusCallbackAuthorized(req, { count = true } = {}) {
+  const provided = makerCallbackTokenFrom(req);
+  const ok = Boolean(provided) && safeEqual(provided, getMakerCallbackToken());
+  if (!ok && count) noteMakerCallbackRejected(req);
+  return ok;
 }
 
 function secureStringEqual(left = '', right = '') {
@@ -9991,8 +10009,9 @@ app.post('/api/admin/change-password', adminAuth, async (req, res) => {
   if (!valid) return res.status(401).json({ message: 'Current password is wrong' });
   const admin = await store.getAdmin();
   if (!admin) return res.status(500).json({ message: 'Admin not found' });
+  // Logs the admin out on every device (data/store.js); this browser gets a fresh token.
   await store.setAdminCredentials(admin.username, newPassword);
-  res.json({ ok: true });
+  res.json({ ok: true, token: signToken({ role: 'admin', username: admin.username, at: Date.now() }) });
 });
 
 // The Maker sends this token as x-sales-callback-token on status callbacks and preview pushes.
@@ -10000,6 +10019,9 @@ app.get('/api/admin/system/maker-callback-token', adminAuth, (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.json({ token: getMakerCallbackToken() });
 });
+
+// Security status, Fireflies webhook secret (disk), token revocation, client "log out everywhere".
+registerSecurityAdminRoutes(app, { adminAuth, clientAuth, signToken, adminSecret: ADMIN_SECRET_SOURCE });
 
 app.get('/api/admin/employees/overview', adminAuth, async (_req, res) => {
   const users = await store.getAllUsers();
@@ -16139,6 +16161,8 @@ function scheduleFirefliesTranscriptIngest({ force = false } = {}) {
       await hydrateRecentStoredTranscripts({ max: 8 });
       ensureFirefliesMeetLinkBackfill({ force: true });
       await hydratePendingClientTranscripts({ max: 6 });
+      // Webhook-only steps (notify e-mail, media copy) for meetings the pull ingest brought in.
+      await runFirefliesPullFollowUp({ notify: (payload) => notifyFirefliesRecording(payload, readFirefliesWebhookConfig(), firefliesClientDeps()), persistMedia: persistFirefliesMediaInBackground });
       await fillPendingContractLetters();
     } catch (error) {
       console.warn(`[fireflies] transcript ingest ${sanitizeText(error?.message) || error}`);
@@ -18260,10 +18284,11 @@ function readRequestZipBuffer(req) {
 }
 
 function isMakerPreviewPushAuthorized(req) {
-  if (isMakerStatusCallbackAuthorized(req)) return true;
+  if (isMakerStatusCallbackAuthorized(req, { count: false })) return true;
   const apiKey = sanitizeText(process.env.WEBSITE_MAKER_API_KEY || process.env.WEBSITEMAKER_API_KEY);
   const providedKey = sanitizeText(req.headers['x-api-key']);
   if (apiKey && providedKey && secureStringEqual(providedKey, apiKey)) return true;
+  noteMakerCallbackRejected(req);
   return false;
 }
 

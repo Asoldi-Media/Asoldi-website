@@ -1,0 +1,18 @@
+#!/bin/sh
+# A push to main deploys asoldi.com. Refuse it when any commit being pushed (its lines, its
+# message or the lines written while resolving a merge) adds a secret or client data, or when
+# npm test fails. git passes the refs on stdin.
+# Installed with: npm run hooks:install
+node scripts/security/secret-scan.mjs --pre-push
+status=$?
+if [ "$status" -eq 1 ]; then
+  echo "pre-push: the secret scan found something; push refused."
+  exit 1
+elif [ "$status" -ne 0 ]; then
+  echo "pre-push: the secret scan could not run (exit $status); push refused."
+  exit 1
+fi
+npm test || {
+  echo "pre-push: npm test failed; push refused."
+  exit 1
+}

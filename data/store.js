@@ -1,6 +1,7 @@
 import { readFileSync, existsSync } from 'fs';
 import bcrypt from 'bcryptjs';
 import { getDataFilePath, ensurePersistentDataDir, writeDataJson } from './storage-path.js';
+import { adminSubject, bumpSubjectTokenVersion } from './security-settings.js';
 
 const USERS_PATH = getDataFilePath('users.json');
 const ADMIN_PATH = getDataFilePath('admin.json');
@@ -58,6 +59,12 @@ export async function setAdminCredentials(username, password) {
   // Keep the sender profile (name / fromEmail / phone) — only the credentials change here.
   const current = readAdmin() || {};
   writeAdmin({ ...current, username, passwordHash: hash });
+  // Replacing existing credentials logs the admin out on every device (old and new username).
+  if (current.passwordHash) {
+    for (const subject of new Set([adminSubject(current.username), adminSubject(username)])) {
+      if (subject) revokeSubjectSessions(subject, 'admin-password-changed');
+    }
+  }
 }
 
 export async function verifyAdmin(username, password) {
@@ -350,12 +357,26 @@ export async function updateAdminSender(patch = {}) {
   return publicAdminSender(admin);
 }
 
+// A password change, role change or deactivation logs the user out on every device.
+function revokeSubjectSessions(subject, reason) {
+  try {
+    bumpSubjectTokenVersion(subject, { reason });
+  } catch (error) {
+    console.warn(`[security] could not revoke sessions (${reason}): ${error?.code || error?.message || error}`);
+  }
+}
+
+function revokeUserSessions(id, reason) {
+  revokeSubjectSessions(`u:${id}`, reason);
+}
+
 export async function updateUserPassword(id, newPassword) {
   const users = readUsers();
   const i = users.findIndex((u) => u.id === id);
   if (i === -1) return { ok: false, error: 'User not found' };
   users[i].passwordHash = await hashPassword(newPassword);
   writeUsers(users);
+  revokeUserSessions(id, 'password-changed');
   return { ok: true };
 }
 
@@ -374,6 +395,7 @@ export async function updateUserRole(id, role) {
   const users = readUsers();
   const i = users.findIndex((u) => u.id === id);
   if (i === -1) return { ok: false, error: 'User not found' };
+  const previousRole = users[i].role;
   users[i].role = normalizeRole(role);
   if (users[i].role === 'employee') {
     if (!EMPLOYEE_PRODUCTS.includes(users[i].employeeProduct)) {
@@ -383,6 +405,7 @@ export async function updateUserRole(id, role) {
     delete users[i].employeeProduct;
   }
   writeUsers(users);
+  if (normalizeRole(previousRole) !== users[i].role) revokeUserSessions(id, 'role-changed');
   return { ok: true };
 }
 
@@ -406,6 +429,7 @@ export async function deleteUser(id) {
   const filtered = users.filter((u) => u.id !== id);
   if (filtered.length === users.length) return { ok: false, error: 'User not found' };
   writeUsers(filtered);
+  revokeUserSessions(id, 'deleted');
   return { ok: true };
 }
 
@@ -422,6 +446,7 @@ export async function deactivateUserKeepingData(id, reason = 'self-service-deact
     previousRole: existing.previousRole || existing.role || 'none',
   };
   writeUsers(users);
+  revokeUserSessions(id, 'deactivated');
   return { ok: true };
 }
 

@@ -429,7 +429,7 @@ test('progress chips stay in the locked order and enqueue only through T03', () 
   assert.match(card, /DeveloperLanguageLockPopup/);
   assert.match(card, /DeveloperPagesPopup/);
   assert.match(card, /Custom edit/);
-  assert.match(card, /Tools & details/);
+  assert.match(card, /Details & tools/); // renamed from "Tools & details" in 5816ad1
   assert.match(card, /variant="tools"/);
   assert.match(card, /primaryDeveloperDocument/);
   const labels = readFileSync(join(here, '../lib/developer-card.js'), 'utf8');
@@ -501,11 +501,13 @@ test('Development card still mounts one request thread and the queue bar', () =>
   assert.match(section, /Siste måned/);
   assert.match(section, /Nåværende steg/);
   assert.match(section, /Velg alle/);
-  const manage = readFileSync(join(here, '../app/pages/Admin/sections/ManageClientsSection.tsx'), 'utf8');
-  assert.match(manage, /Klar for preview/);
-  assert.match(manage, /Klar for deployment/);
+  // The Manage clients help text was dropped in 2b7605b; the board labels live with the goals.
+  const goalLabels = readFileSync(join(here, '../lib/developer-goals.js'), 'utf8');
+  assert.match(goalLabels, /Klar for preview/);
+  assert.match(goalLabels, /Klar for deployment/);
   const sales = readFileSync(join(here, '../app/pages/Admin/sections/SalesClientsSection.tsx'), 'utf8');
-  assert.match(sales, /ligger under Utvikling/);
+  // The manual "Solgt nettside → ligger under Utvikling" button was removed in 2b7605b.
+  assert.equal(sales.includes('onMovedToDevelopment'), false);
   assert.equal(sales.includes("persistDevelopmentBoard('deployment')"), false);
   const server = readFileSync(join(here, '../server.js'), 'utf8');
   assert.match(server, /app\.get\('\/api\/admin\/development\/:id\/workshop-needs', developmentAuth/);
@@ -524,7 +526,7 @@ test('Development card still mounts one request thread and the queue bar', () =>
   assert.match(section, /revealBucket\(`\$\{prefix\}:noNextAction`\)/);
   assert.match(section, /'website'/);
   assert.match(card, /showFoldDueDate/);
-  assert.match(card, /sett neste handling/);
+  // The red "sett neste handling" hint left the card in 5816ad1; the board's noNextAction bucket (above) covers it.
   assert.match(card, /Vis mer på dette kortet/);
   assert.match(card, /applyDeveloperGoalToggle/);
   assert.match(server, /app\.delete\('\/api\/admin\/development\/:id\/media\/client\/:fileName', developmentAuth/);

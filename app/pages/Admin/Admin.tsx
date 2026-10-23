@@ -355,10 +355,12 @@ export const Admin = () => {
       flashNotice('err', data.message || 'Could not change password');
       return;
     }
+    // Every other admin session was logged out; this browser keeps working with the fresh token.
+    if (typeof data.token === 'string' && data.token) setToken(data.token);
     setChangePasswordOpen(false);
     setCurrentPassword('');
     setNewPassword('');
-    flashNotice('ok', 'Your password was changed.');
+    flashNotice('ok', 'Your password was changed. Other devices are logged out.');
   }
 
   async function handleAddSite(e: React.FormEvent) {

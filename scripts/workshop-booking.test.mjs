@@ -245,7 +245,9 @@ test('booking helper and Admin UI never treat startDate as a booking or copy Sal
 
   const manageSrc = readNearby('../app/pages/Admin/sections/ManageClientsSection.tsx');
   assert.match(manageSrc, /view === 'admin'/);
-  assert.match(manageSrc, />\s*Admin\s*</);
+  // The Admin / Sales / Development / Clients tabs moved to the admin sidebar (2b7605b).
+  const adminPageSrc = readNearby('../app/pages/Admin/Admin.tsx');
+  assert.match(adminPageSrc, /openClientsView\('admin'\)[^\n]*label="Admin"/);
 
   const serverSrc = readNearby('../server.js');
   assert.match(serverSrc, /isAdminBoardCalendarQuery/);

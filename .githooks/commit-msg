@@ -1,0 +1,5 @@
+#!/bin/sh
+# Commit messages are published with the repo. Refuse one that carries a secret, a value from a
+# local .env, a retired secret or client personal data. git passes the message file as $1.
+# Installed with: npm run hooks:install
+exec node scripts/security/secret-scan.mjs --commit-msg "$1"

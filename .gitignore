@@ -15,6 +15,28 @@ data/sites.json
 data/reset-tokens.json
 .builds/data/
 
+# Local EOD notes (Ultra may still read them; do not commit)
+docs/daily-logs/
+
+# This repo is public: secrets, client data and scratch files stay out of Git.
+# The pre-commit and pre-push secret scan (npm run hooks:install) enforces it.
+gen-lang-client-*.json
+*service-account*.json
+*.sa.json
+*.pem
+*.p12
+secrets/
+production.env
+fixtures-private/
+.golden-reports/
+.ai-cassettes/
+.local-data/
+/tmp/
+tmp-*.mjs
+tmp-*.json
+tmp-*.jso
+tmp-*.html
+
 # Media lives on the Hostinger disk (Admin -> Manage website -> Media), not in Git.
 # Small marketing images/SVGs under public/media stay tracked; audio/video does not.
 # Fetch the AV files for local dev with `npm run media:pull`.
