@@ -107,7 +107,7 @@ hash or the sync flag.
   attempt meanwhile gets 429 with `Retry-After: 1`. A wrong password keeps the attempt counted.
   The right one takes it back and clears the `p:` key of that account and address; the `a:`
   and `i:` keys keep their other attempts. A request that ends without a verdict (an error, a
-  closed connection) counts as a wrong password, and a check still running after 30 seconds
+  closed connection) counts as a wrong password, and a check still running after 10 seconds
   stops holding its place.
 - Accounts are kept as short hashes and the table holds at most 10 000 keys; when it is full,
   keys of accounts that do not exist in `admin.json` / `users.json` go first, then address keys,

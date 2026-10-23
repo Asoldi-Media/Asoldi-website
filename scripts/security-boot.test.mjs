@@ -362,6 +362,24 @@ test('local hub boot: tokens signed with an old default secret, stale tokens, pa
     for (let i = 0; i < 10; i += 1) assert.equal((await changeFrom('203.0.113.90', `wrong-current-${i}`)).status, 401);
     assert.equal((await changeFrom('203.0.113.90', newPassword)).status, 429, 'ten wrong current passwords from one address');
     assert.equal((await loginWith(newPassword)).status, 200, 'the password did not change');
+    // A name or password that is not text gets 400 before any check, so it never leaves a check
+    // running without an answer; the right password from that address then gets in at once.
+    const sendFrom95 = (path, body, headers = {}) => fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.95', ...headers },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(5000),
+    });
+    for (const [path, body] of [
+      ['/api/admin/login', { username: 'asoldi.com', password: 12345 }],
+      ['/api/admin/login', { username: ['asoldi.com'], password: 'x' }],
+      ['/api/auth/login', { username: { name: 'staff' }, password: 'x' }],
+      ['/api/auth/login', { username: 'staff', password: 12345 }],
+    ]) {
+      assert.equal((await sendFrom95(path, body)).status, 400, `${path} ${JSON.stringify(body)}`);
+    }
+    assert.equal((await sendFrom95('/api/admin/change-password', { currentPassword: 12345, newPassword: 'x' }, admin())).status, 400);
+    assert.equal((await loginFrom('203.0.113.95', newPassword)).status, 200, 'that address has no check left running');
 
     // 13. Only the hub admin (admin.json) confirms a rotation. An admin token of a users.json user
     //     (it carries a user id) gets 403 before any password check, even with the hub admin's

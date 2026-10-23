@@ -662,7 +662,8 @@ function rateLimitForgotPassword(ip) {
 
 app.post('/api/admin/login', async (req, res) => {
   const { username, password } = req.body || {};
-  if (!username || !password) {
+  // Text only: anything else would make the password check throw and leave the request unanswered.
+  if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
     return res.status(400).json({ message: 'Username and password required' });
   }
   const attempt = beginLogin(loginLimiter, req, res, `admin:${username}`);
@@ -10070,7 +10071,7 @@ app.delete('/api/admin/media/*', adminAuth, (req, res) => {
 
 app.post('/api/admin/change-password', adminAuth, async (req, res) => {
   const { currentPassword, newPassword } = req.body || {};
-  if (!currentPassword || !newPassword) {
+  if (typeof currentPassword !== 'string' || typeof newPassword !== 'string' || !currentPassword || !newPassword) {
     return res.status(400).json({ message: 'Current and new password required' });
   }
   // A wrong current password counts toward the same login limits as an admin sign-in.
@@ -10627,7 +10628,8 @@ app.post('/api/admin/employees/sync/luca', adminAuth, async (_req, res) => {
 
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body || {};
-  if (!username || !password) {
+  // Text only: anything else would make the password check throw and leave the request unanswered.
+  if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
     return res.status(400).json({ message: 'Username and password required' });
   }
   const attempt = beginLogin(loginLimiter, req, res, `staff:${username}`);
