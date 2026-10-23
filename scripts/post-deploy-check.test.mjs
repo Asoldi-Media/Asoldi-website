@@ -67,7 +67,7 @@ test('each failure is reported by name', async () => {
     [{ '/api/hub/site-config': { status: 404, contentType: 'application/json', body: '{"message":"Site not found"}' } }, ['site-config'], /HTTP 404/],
     [{ '/myphoner-recordings': { status: 404, contentType: 'text/plain', body: 'Not found' } }, ['recordings'], /HTTP 404/],
     [{ '/myphoner-audio': { status: 200, contentType: 'audio/mpeg', body: 'ID3' } }, ['audio'], /HTTP 200/],
-    // An older build answers the GET with the SPA page.
+    // A route that no longer checks anything (for example a page fallback) is caught.
     [{ '/api/admin/sales/maker-status-callback': { status: 200, contentType: 'text/html', body: '<!doctype html>' } }, ['maker-callback'], /HTTP 200/],
   ];
   for (const [overrides, ids, pattern] of cases) {

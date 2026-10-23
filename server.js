@@ -13390,8 +13390,8 @@ app.get('/api/admin/sales/maker-tunnel/status', salesAuth, (_req, res) => {
 
 // GET does nothing but check the callback token: 401 without a valid one, { ok: true } with it.
 // The post-deploy check reads the 401 (scripts/post-deploy-check.mjs); after a token rotation the
-// Maker or the operator can check a pasted token this way. Before this route a GET fell through
-// to the SPA page (200 HTML).
+// Maker or the operator can check a pasted token this way. Before this route the GET was answered
+// by GET /api/admin/sales/:id (staff login, so 401 without one and 404 with one).
 app.get('/api/admin/sales/maker-status-callback', (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   if (!isMakerStatusCallbackAuthorized(req)) return res.status(401).json({ message: 'Unauthorized callback.' });
