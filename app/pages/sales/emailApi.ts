@@ -1,4 +1,11 @@
-import { API, salesAuthHeaders, type SalesOffer } from '../Admin/shared';
+import {
+  API,
+  salesAuthHeaders,
+  type SalesClient,
+  type SalesLiveRecording,
+  type SalesMeetingRecording,
+  type SalesOffer,
+} from '../Admin/shared';
 
 export type EmailTemplate = {
   id: string;
@@ -15,8 +22,37 @@ export type EmailTemplate = {
 
 export type MergeField = { token: string; label: string; sample?: string };
 
-async function emailRequest(path: string, init?: RequestInit & { timeoutMs?: number }) {
-  const { timeoutMs, ...rest } = init || {};
+/** A failed hub request, with the status and JSON body the server answered. */
+export class HubRequestError extends Error {
+  status: number;
+  data: Record<string, unknown>;
+  /** The route is not on this server yet: no JSON came back (a 404 page, or the app shell on a GET). */
+  missingRoute: boolean;
+
+  constructor(message: string, status: number, data: Record<string, unknown>, missingRoute: boolean) {
+    super(message);
+    this.name = 'HubRequestError';
+    this.status = status;
+    this.data = data;
+    this.missingRoute = missingRoute;
+  }
+}
+
+export function isMissingRoute(error: unknown) {
+  return error instanceof HubRequestError && error.missingRoute;
+}
+
+type HubRequestInit = RequestInit & {
+  timeoutMs?: number;
+  timeoutMessage?: string;
+  /** A newer route an older hub may not have: a non-JSON answer then throws with missingRoute. */
+  optionalRoute?: boolean;
+};
+
+const SLOW_HUB_MESSAGE = 'Serveren svarte ikke i tide. Prøv igjen.';
+
+async function emailRequest(path: string, init?: HubRequestInit) {
+  const { timeoutMs, timeoutMessage, optionalRoute, ...rest } = init || {};
   const headers: Record<string, string> = {
     ...salesAuthHeaders(),
     ...(rest.headers as Record<string, string> || {}),
@@ -30,14 +66,24 @@ async function emailRequest(path: string, init?: RequestInit & { timeoutMs?: num
       headers,
       signal: controller?.signal || rest.signal,
     });
-    const data = await response.json().catch(() => ({} as Record<string, unknown>));
-    if (!response.ok) {
-      throw new Error(String((data as { message?: string }).message || `Request failed (${response.status})`));
+    let parsed = true;
+    const data = await response.json().catch(() => {
+      parsed = false;
+      return {} as Record<string, unknown>;
+    });
+    // An unknown GET falls through to the app shell (HTML, or a text 500 without a build); an unknown POST is a 404 page.
+    const isGet = !rest.method || rest.method.toUpperCase() === 'GET';
+    const missingRoute = Boolean(optionalRoute) && !parsed && (isGet || response.status === 404);
+    if (!response.ok || missingRoute) {
+      const message = String((data as { message?: string }).message || (missingRoute
+        ? 'Dette finnes ikke på serveren ennå.'
+        : `Request failed (${response.status})`));
+      throw new HubRequestError(message, response.status, data as Record<string, unknown>, missingRoute);
     }
     return data;
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') {
-      throw new Error('Forespørselen tok for lang tid. Prøv igjen, eller lim inn Fireflies-lenken på nytt.');
+      throw new Error(timeoutMessage || 'Forespørselen tok for lang tid. Prøv igjen, eller lim inn Fireflies-lenken på nytt.');
     }
     throw error;
   } finally {
@@ -255,4 +301,121 @@ export function refreshFirefliesMeeting(meetingId: string) {
 export function firefliesMediaUrl(meetingId: string, kind: 'video' | 'audio' | 'transcript') {
   const token = (salesAuthHeaders() as { Authorization?: string }).Authorization?.replace(/^Bearer\s+/i, '') || '';
   return `${API}/admin/fireflies/meetings/${encodeURIComponent(meetingId)}/media/${kind}?token=${encodeURIComponent(token)}`;
+}
+
+/* ------------------------------------------------------ Fireflies recording state */
+
+/** One sales client as jsonSalesClient presents it (liveRecordings, presented meetings). */
+export function getSalesClient(clientId: string) {
+  return emailRequest(`/admin/sales/${encodeURIComponent(clientId)}`, {
+    cache: 'no-store',
+    timeoutMs: 15_000,
+    timeoutMessage: SLOW_HUB_MESSAGE,
+  }) as Promise<{ client?: SalesClient }>;
+}
+
+export type LiveJoinAnswer = {
+  ok?: boolean;
+  queued?: boolean;
+  reason?: string;
+  message?: string;
+  recording?: SalesLiveRecording | null;
+  nextAllowedAt?: string;
+  client?: SalesClient;
+};
+
+/**
+ * "Send Fireflies inn nå" for one entry of client.liveRecordings. A refusal (409, or 423 in safe mode)
+ * throws a HubRequestError whose data is the same LiveJoinAnswer.
+ */
+export function requestFirefliesLiveJoin(clientId: string, slotKey: string) {
+  return emailRequest(`/admin/sales/${encodeURIComponent(clientId)}/fireflies/live-join`, {
+    method: 'POST',
+    body: JSON.stringify({ slotKey }),
+    timeoutMs: 20_000,
+    timeoutMessage: SLOW_HUB_MESSAGE,
+  }) as Promise<LiveJoinAnswer>;
+}
+
+/** "Marker uten opptak" (declined) or "Angre" (open) on a placeholder row (meetingId) or a booked slot (slotKey). */
+export function setFirefliesRecordingState(
+  clientId: string,
+  target: { meetingId?: string; slotKey?: string },
+  state: 'declined' | 'open',
+) {
+  return emailRequest(`/admin/sales/${encodeURIComponent(clientId)}/fireflies/recording`, {
+    method: 'POST',
+    body: JSON.stringify({ ...target, state }),
+    timeoutMs: 20_000,
+    timeoutMessage: SLOW_HUB_MESSAGE,
+    optionalRoute: true,
+  }) as Promise<{ meetingId?: string; recording?: SalesMeetingRecording | null; client?: SalesClient }>;
+}
+
+export type MeetingPurposePick = '' | 'sales' | 'workshop' | 'iteration';
+
+/** A rep's purpose pick for one recording; '' gives the choice back to the hub. */
+export function setClientMeetingPurpose(clientId: string, meetingId: string, purpose: MeetingPurposePick) {
+  return emailRequest(`/admin/sales/${encodeURIComponent(clientId)}/meetings/${encodeURIComponent(meetingId)}/purpose`, {
+    method: 'POST',
+    body: JSON.stringify({ purpose }),
+    timeoutMs: 20_000,
+    timeoutMessage: SLOW_HUB_MESSAGE,
+    optionalRoute: true,
+  }) as Promise<{ client?: SalesClient }>;
+}
+
+/** "Ikke denne kunden": unlink the recording from this client and keep every later match from adding it back. */
+export function excludeFirefliesMeeting(meetingId: string, clientId: string) {
+  return emailRequest(`/admin/fireflies/meetings/${encodeURIComponent(meetingId)}/exclude`, {
+    method: 'POST',
+    body: JSON.stringify({ clientId }),
+    timeoutMs: 20_000,
+    timeoutMessage: SLOW_HUB_MESSAGE,
+    optionalRoute: true,
+  }) as Promise<{ ok?: boolean; client?: SalesClient }>;
+}
+
+export type MissingRecordingRow = {
+  clientId: string;
+  businessName: string;
+  ownerId: string;
+  meetingId: string;
+  slotKey: string;
+  kind: string;
+  startedAt: string;
+  meetLink: string;
+  title: string;
+  state: 'missing' | 'empty' | 'not-admitted';
+  message: string;
+  missingAt: string;
+  alertedAt: string;
+};
+
+/** Booked meetings of the last 60 days that ended without a recording (a rep sees only their own clients). */
+export function listMissingFirefliesRecordings() {
+  return emailRequest('/admin/fireflies/missing-recordings', {
+    cache: 'no-store',
+    timeoutMs: 15_000,
+    timeoutMessage: SLOW_HUB_MESSAGE,
+    optionalRoute: true,
+  }) as Promise<{ rows?: MissingRecordingRow[]; count?: number }>;
+}
+
+export function getFirefliesIngestStatus() {
+  return emailRequest('/admin/fireflies/ingest-status', {
+    cache: 'no-store',
+    timeoutMs: 15_000,
+    timeoutMessage: SLOW_HUB_MESSAGE,
+    optionalRoute: true,
+  }) as Promise<Record<string, unknown>>;
+}
+
+export function getFirefliesLiveJoinStatus() {
+  return emailRequest('/admin/fireflies/live-join-status', {
+    cache: 'no-store',
+    timeoutMs: 15_000,
+    timeoutMessage: SLOW_HUB_MESSAGE,
+    optionalRoute: true,
+  }) as Promise<Record<string, unknown>>;
 }
