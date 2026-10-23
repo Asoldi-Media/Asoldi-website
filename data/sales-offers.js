@@ -1,7 +1,12 @@
 import { readFileSync, existsSync } from 'fs';
 import { createHash } from 'crypto';
 import { getDataFilePath, ensurePersistentDataDir, writeDataJson } from './storage-path.js';
-import { CUSTOM_TIER_ID, tierById } from '../lib/website-tiers.js';
+import {
+  CUSTOM_TIER_ID,
+  expandServices,
+  normalizeOneTimeAddOns,
+  tierById,
+} from '../lib/website-tiers.js';
 import { normalizeDueDate } from '../lib/website-due.js';
 import { normalizeOfferMeetingIds } from '../lib/offer-meetings.js';
 import { normalizeContractLanguage } from '../lib/offer-contract-copy.js';
@@ -91,6 +96,65 @@ export function normalizeOfferTierId(value = '') {
   return tierById(id) ? id : '';
 }
 
+// ---------------------------------------------------------------- plan and pricing (WS8.2)
+
+const PLAN_CATALOG_TYPES = ['menu', 'tiers', 'normal'];
+const MAX_PLAN_PAGES = 500;
+
+/**
+ * An offer alternative's machine-readable plan, or null when `raw` is not one. Services are the
+ * shared vocabulary's ids (aliases resolved, implied services added); a plan must name at least
+ * one service and a known tier id (or custom).
+ */
+export function normalizeOfferPlan(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const tierId = normalizeOfferTierId(raw.tierId);
+  const services = expandServices(Array.isArray(raw.services) ? raw.services : []);
+  if (!tierId || !services.length) return null;
+  const pages = Math.round(toNumber(raw.pages, 0));
+  const catalogType = PLAN_CATALOG_TYPES.includes(sanitizeText(raw.catalogType)) ? sanitizeText(raw.catalogType) : null;
+  return {
+    tierId,
+    services,
+    pages: pages >= 1 && pages <= MAX_PLAN_PAGES ? pages : 0,
+    oneTimeAddOns: normalizeOneTimeAddOns(raw.oneTimeAddOns),
+    billing: raw.billing === 'once' ? 'once' : 'month',
+    catalogType,
+    derived: raw.derived === true,
+    needsConfirmation: raw.needsConfirmation === true,
+  };
+}
+
+/** The pricing snapshot taken when the offer was built, or null. */
+export function normalizeOfferPricing(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const multiplier = toNumber(raw.oneTimeMultiplier, NaN);
+  if (!Number.isFinite(multiplier) || multiplier < 1 || multiplier > 36) return null;
+  return {
+    oneTimeMultiplier: multiplier,
+    source: sanitizeText(raw.source).slice(0, 80),
+  };
+}
+
+/**
+ * Carries the forward-compatible keys, then normalizes the owned plan keys. A stored plan or
+ * pricing this code cannot read stays as stored (a later batch's shape survives) and is ignored by
+ * readers and by the content hash; null clears it.
+ */
+function withPlanKeys(target, source, futureKeys) {
+  carryFutureKeys(target, source, futureKeys);
+  for (const [key, normalize] of [['plan', normalizeOfferPlan], ['pricing', normalizeOfferPricing]]) {
+    if (!Object.prototype.hasOwnProperty.call(source, key) || source[key] === undefined) continue;
+    if (source[key] === null) {
+      delete target[key];
+      continue;
+    }
+    const value = normalize(source[key]);
+    if (value) target[key] = value;
+  }
+  return target;
+}
+
 // `strict` drops the forward-compatible keys (WS8.44). offerContentHash uses it, so the
 // fingerprint of an offer never depends on keys this code does not understand.
 export function normalizeOfferProduct(raw = {}, { strict = false } = {}) {
@@ -143,7 +207,7 @@ export function normalizeOfferAlternative(raw = {}, { strict = false } = {}) {
     oneTimeFees,
     tierId: normalizeOfferTierId(source.tierId) || fromProduct || '',
   };
-  return strict ? alternative : carryFutureKeys(alternative, source, FUTURE_OFFER_ALTERNATIVE_KEYS);
+  return strict ? alternative : withPlanKeys(alternative, source, FUTURE_OFFER_ALTERNATIVE_KEYS);
 }
 
 export function normalizeOfferAlternatives(list, fallback = {}, { strict = false } = {}) {
@@ -182,7 +246,7 @@ export function flattenOfferToChosen(offer = {}, index = 0) {
   const alts = normalizeOfferAlternatives(offer?.alternatives, offer);
   const chosen = alts[index];
   if (!chosen) return null;
-  return {
+  const flattened = {
     chosenOfferIndex: index,
     tierId: chosen.tierId,
     products: chosen.products,
@@ -190,6 +254,12 @@ export function flattenOfferToChosen(offer = {}, index = 0) {
     oneTimeFees: chosen.oneTimeFees,
     alternatives: alts,
   };
+  // WS8.2: the chosen alternative's plan, pricing and DPA version travel with it. A stored offer
+  // keeps them per alternative; updateSalesOffer never takes them from a patch.
+  for (const key of ['plan', 'pricing', 'dpaVersion']) {
+    if (chosen[key] !== undefined) flattened[key] = chosen[key];
+  }
+  return flattened;
 }
 
 export function normalizeContractSummary(raw) {
@@ -330,8 +400,8 @@ export function normalizeSalesOffer(raw = {}) {
     createdAt,
     updatedAt: sanitizeText(raw.updatedAt) || createdAt,
   };
-  // WS8.44: keys a later batch writes (plan, pricing, dpaVersion) survive this code.
-  return carryFutureKeys(offer, raw, FUTURE_OFFER_KEYS);
+  // WS8.2 owns plan and pricing; WS8.44: keys a later batch writes (dpaVersion, ext) survive this code.
+  return withPlanKeys(offer, raw, FUTURE_OFFER_KEYS);
 }
 
 function readAll() {
@@ -469,12 +539,44 @@ export function withoutFutureOfferPatchKeys(patch = {}, current = {}) {
   return out;
 }
 
-export function updateSalesOffer(id, rawPatch = {}, { actor = '', action = 'updated', note = '' } = {}) {
+/**
+ * WS8.2: plans and pricing snapshots come from the server's own quote build, never from a body.
+ * Copies plan and pricing of each `built` alternative (buildOfferFromMeetingQuote output) onto
+ * the patch's alternative at the same index, and the top-level ones onto the patch.
+ */
+function withQuotePlans(patch, built) {
+  if (!built || typeof built !== 'object') return patch;
+  const out = { ...patch };
+  const builtAlternatives = Array.isArray(built.alternatives) ? built.alternatives : [];
+  if (Array.isArray(out.alternatives)) {
+    out.alternatives = out.alternatives.map((alternative, index) => {
+      const source = builtAlternatives[index];
+      if (!isPlainRecord(alternative) || !isPlainRecord(source)) return alternative;
+      const next = { ...alternative };
+      const plan = normalizeOfferPlan(source.plan);
+      const pricing = normalizeOfferPricing(source.pricing);
+      if (plan) next.plan = plan;
+      if (pricing) next.pricing = pricing;
+      return next;
+    });
+  }
+  const plan = normalizeOfferPlan(built.plan);
+  const pricing = normalizeOfferPricing(built.pricing);
+  if (plan) out.plan = plan;
+  if (pricing) out.pricing = pricing;
+  return out;
+}
+
+/**
+ * `quotePlans`: the buildOfferFromMeetingQuote result this patch was made from. Only server code
+ * that rebuilds an offer from the stored meeting quote passes it; its plans replace the stored ones.
+ */
+export function updateSalesOffer(id, rawPatch = {}, { actor = '', action = 'updated', note = '', quotePlans = null } = {}) {
   const list = readAll();
   const index = list.findIndex((offer) => offer.id === sanitizeText(id));
   if (index === -1) return null;
   const current = list[index];
-  const patch = withoutFutureOfferPatchKeys(rawPatch, current);
+  const patch = withQuotePlans(withoutFutureOfferPatchKeys(rawPatch, current), quotePlans);
   const merged = normalizeSalesOffer({
     ...current,
     ...patch,
@@ -648,7 +750,29 @@ export function offerContentHash(offer = {}, { includeParty = true } = {}) {
   if (includeParty) payload.party = partyOverrides(offer?.party);
   const contractLanguage = normalizeContractLanguage(offer?.contractLanguage);
   if (contractLanguage !== 'nb') payload.contractLanguage = contractLanguage;
+  // WS8.2: plan, pricing and DPA version count only when stored, so offers without them (every
+  // offer sent before this batch) keep their hash.
+  const planData = offerPlanFingerprint(offer);
+  if (planData) payload.planData = planData;
   return createHash('sha1').update(JSON.stringify(payload)).digest('hex');
+}
+
+/** Stored plan, pricing and DPA version of an offer and its alternatives, or null when it has none. */
+export function offerPlanFingerprint(offer = {}) {
+  const rawAlternatives = Array.isArray(offer?.alternatives) ? offer.alternatives : [];
+  const alternatives = rawAlternatives.map((alternative) => ({
+    plan: normalizeOfferPlan(alternative?.plan),
+    pricing: normalizeOfferPricing(alternative?.pricing),
+    dpaVersion: sanitizeText(alternative?.dpaVersion),
+  }));
+  const top = {
+    plan: normalizeOfferPlan(offer?.plan),
+    pricing: normalizeOfferPricing(offer?.pricing),
+    dpaVersion: sanitizeText(offer?.dpaVersion),
+  };
+  const has = (entry) => Boolean(entry.plan || entry.pricing || entry.dpaVersion);
+  if (!has(top) && !alternatives.some(has)) return null;
+  return { offer: top, alternatives };
 }
 
 export function offerPreviewIsCurrent(offer = {}) {

@@ -1,0 +1,494 @@
+{
+  "_captured": "Computed by commit b5fe3a7 (before the tier matrix and offer plans): featuresFromPlan, quote-built packages (they had no plan or pricing then) and the content hash of offers without plans. scripts/offer-plan.test.mjs and scripts/site-plan.test.mjs compare the current code with it.",
+  "featuresFromPlan": {
+    "tier-1-standard": {
+      "users": true,
+      "analytics": false,
+      "ecommerce": false,
+      "blog": false,
+      "socialSync": false,
+      "emailMarketing": false,
+      "general": false
+    },
+    "tier-2-seo": {
+      "users": true,
+      "analytics": true,
+      "ecommerce": false,
+      "blog": true,
+      "socialSync": true,
+      "emailMarketing": true,
+      "general": false
+    },
+    "tier-3-ecommerce": {
+      "users": true,
+      "analytics": true,
+      "ecommerce": true,
+      "blog": true,
+      "socialSync": true,
+      "emailMarketing": true,
+      "general": true
+    },
+    "custom": {
+      "users": true,
+      "analytics": false,
+      "ecommerce": false,
+      "blog": false,
+      "socialSync": false,
+      "emailMarketing": false,
+      "general": false
+    },
+    "(empty)": {
+      "users": true,
+      "analytics": false,
+      "ecommerce": false,
+      "blog": false,
+      "socialSync": false,
+      "emailMarketing": false,
+      "general": false
+    }
+  },
+  "quotes": {
+    "starterAddSeo": {
+      "tierId": "tier-1-standard",
+      "billing": "month",
+      "oneTimeFees": [],
+      "products": [
+        {
+          "id": "prod-tier-1-standard",
+          "kind": "tier",
+          "tierId": "tier-1-standard",
+          "name": "Nettside – Standard",
+          "pages": 6,
+          "includes": [
+            "Full nettsideutvikling",
+            "Koble til eget domene",
+            "Hosting og vedlikehold",
+            "Kontaktskjema & standard seksjoner",
+            "HTML-basert side med sitemap",
+            "Opptil 4 innholdsendringer/mnd",
+            "Innledende veiledningsmøte",
+            "1 ekstra side utover 5 inkludert",
+            "SEO-optimalisering (Google, Google Maps og AI-søk)"
+          ],
+          "note": "",
+          "priceExMva": 889,
+          "deliveryWeeks": 2,
+          "deliveryWorkDays": 14
+        }
+      ],
+      "alternatives": [
+        {
+          "tierId": "tier-1-standard",
+          "billing": "month",
+          "oneTimeFees": [],
+          "products": [
+            {
+              "id": "prod-tier-1-standard",
+              "kind": "tier",
+              "tierId": "tier-1-standard",
+              "name": "Nettside – Standard",
+              "pages": 6,
+              "includes": [
+                "Full nettsideutvikling",
+                "Koble til eget domene",
+                "Hosting og vedlikehold",
+                "Kontaktskjema & standard seksjoner",
+                "HTML-basert side med sitemap",
+                "Opptil 4 innholdsendringer/mnd",
+                "Innledende veiledningsmøte",
+                "1 ekstra side utover 5 inkludert",
+                "SEO-optimalisering (Google, Google Maps og AI-søk)"
+              ],
+              "note": "",
+              "priceExMva": 889,
+              "deliveryWeeks": 2,
+              "deliveryWorkDays": 14
+            }
+          ]
+        }
+      ]
+    },
+    "seoOnce": {
+      "tierId": "tier-2-seo",
+      "billing": "once",
+      "oneTimeFees": [],
+      "products": [
+        {
+          "id": "prod-tier-2-seo",
+          "kind": "tier",
+          "tierId": "tier-2-seo",
+          "name": "Nettside – SEO",
+          "pages": 7,
+          "includes": [
+            "Full nettsideutvikling",
+            "Koble til eget domene",
+            "Hosting og vedlikehold",
+            "Kontaktskjema & standard seksjoner",
+            "HTML-basert side med sitemap",
+            "Opptil 4 innholdsendringer/mnd",
+            "Innledende veiledningsmøte",
+            "SEO optimalisering for 1–3 søkeord",
+            "Rangering på Google, Google Maps og AI-søk",
+            "Stedstilpassede blogginnlegg (inntil 3/uke ved ønske)",
+            "Asoldi-nettverk for internlenker",
+            "Anmeldelser & sosiale medier synk",
+            "E-postliste innsamling",
+            "Analyse-dashbord med egne rangeringer",
+            "Bi-ukentlig grunrapport",
+            "Ubegrensede innholdsendringer i 6 måneder",
+            "Engangsbetaling (månedspris × 9)",
+            "Koble opp til kassasystem (6 000 kr engang)"
+          ],
+          "note": "Engangsbetaling",
+          "priceExMva": 25491,
+          "deliveryWeeks": 2,
+          "deliveryWorkDays": 14
+        }
+      ],
+      "alternatives": [
+        {
+          "tierId": "tier-2-seo",
+          "billing": "once",
+          "oneTimeFees": [],
+          "products": [
+            {
+              "id": "prod-tier-2-seo",
+              "kind": "tier",
+              "tierId": "tier-2-seo",
+              "name": "Nettside – SEO",
+              "pages": 7,
+              "includes": [
+                "Full nettsideutvikling",
+                "Koble til eget domene",
+                "Hosting og vedlikehold",
+                "Kontaktskjema & standard seksjoner",
+                "HTML-basert side med sitemap",
+                "Opptil 4 innholdsendringer/mnd",
+                "Innledende veiledningsmøte",
+                "SEO optimalisering for 1–3 søkeord",
+                "Rangering på Google, Google Maps og AI-søk",
+                "Stedstilpassede blogginnlegg (inntil 3/uke ved ønske)",
+                "Asoldi-nettverk for internlenker",
+                "Anmeldelser & sosiale medier synk",
+                "E-postliste innsamling",
+                "Analyse-dashbord med egne rangeringer",
+                "Bi-ukentlig grunrapport",
+                "Ubegrensede innholdsendringer i 6 måneder",
+                "Engangsbetaling (månedspris × 9)",
+                "Koble opp til kassasystem (6 000 kr engang)"
+              ],
+              "note": "Engangsbetaling",
+              "priceExMva": 25491,
+              "deliveryWeeks": 2,
+              "deliveryWorkDays": 14
+            }
+          ]
+        }
+      ]
+    },
+    "shopDual": {
+      "tierId": "tier-3-ecommerce",
+      "billing": "month",
+      "oneTimeFees": [],
+      "products": [
+        {
+          "id": "alt0-prod-tier-3-ecommerce",
+          "kind": "tier",
+          "tierId": "tier-3-ecommerce",
+          "name": "Nettside – Nettbutikk",
+          "pages": 12,
+          "includes": [
+            "Full nettsideutvikling",
+            "Koble til eget domene",
+            "Hosting og vedlikehold",
+            "Kontaktskjema & standard seksjoner",
+            "HTML-basert side med sitemap",
+            "Opptil 4 innholdsendringer/mnd",
+            "Innledende veiledningsmøte",
+            "SEO optimalisering for 1–3 søkeord",
+            "Rangering på Google, Google Maps og AI-søk",
+            "Stedstilpassede blogginnlegg (inntil 3/uke ved ønske)",
+            "Asoldi-nettverk for internlenker",
+            "Anmeldelser & sosiale medier synk",
+            "E-postliste innsamling",
+            "Analyse-dashbord med egne rangeringer",
+            "Ukentlig avansert rapport",
+            "Nettbutikk-funksjonalitet",
+            "Flerspråklig funksjonalitet",
+            "Nettbutikk-analyse (konvertering, AOV)",
+            "Gjennomgangsmøte",
+            "2 ekstra sider utover 10 inkludert"
+          ],
+          "note": "",
+          "priceExMva": 2317,
+          "deliveryWeeks": 3,
+          "deliveryWorkDays": 21
+        }
+      ],
+      "alternatives": [
+        {
+          "tierId": "tier-3-ecommerce",
+          "billing": "month",
+          "oneTimeFees": [],
+          "products": [
+            {
+              "id": "alt0-prod-tier-3-ecommerce",
+              "kind": "tier",
+              "tierId": "tier-3-ecommerce",
+              "name": "Nettside – Nettbutikk",
+              "pages": 12,
+              "includes": [
+                "Full nettsideutvikling",
+                "Koble til eget domene",
+                "Hosting og vedlikehold",
+                "Kontaktskjema & standard seksjoner",
+                "HTML-basert side med sitemap",
+                "Opptil 4 innholdsendringer/mnd",
+                "Innledende veiledningsmøte",
+                "SEO optimalisering for 1–3 søkeord",
+                "Rangering på Google, Google Maps og AI-søk",
+                "Stedstilpassede blogginnlegg (inntil 3/uke ved ønske)",
+                "Asoldi-nettverk for internlenker",
+                "Anmeldelser & sosiale medier synk",
+                "E-postliste innsamling",
+                "Analyse-dashbord med egne rangeringer",
+                "Ukentlig avansert rapport",
+                "Nettbutikk-funksjonalitet",
+                "Flerspråklig funksjonalitet",
+                "Nettbutikk-analyse (konvertering, AOV)",
+                "Gjennomgangsmøte",
+                "2 ekstra sider utover 10 inkludert"
+              ],
+              "note": "",
+              "priceExMva": 2317,
+              "deliveryWeeks": 3,
+              "deliveryWorkDays": 21
+            }
+          ]
+        },
+        {
+          "tierId": "tier-1-standard",
+          "billing": "month",
+          "oneTimeFees": [],
+          "products": [
+            {
+              "id": "alt1-prod-tier-1-standard",
+              "kind": "tier",
+              "tierId": "tier-1-standard",
+              "name": "Nettside – Standard",
+              "pages": 5,
+              "includes": [
+                "Full nettsideutvikling",
+                "Koble til eget domene",
+                "Hosting og vedlikehold",
+                "Kontaktskjema & standard seksjoner",
+                "HTML-basert side med sitemap",
+                "Opptil 4 innholdsendringer/mnd",
+                "Innledende veiledningsmøte",
+                "E-postliste"
+              ],
+              "note": "",
+              "priceExMva": 599,
+              "deliveryWeeks": 2,
+              "deliveryWorkDays": 14
+            }
+          ]
+        }
+      ]
+    },
+    "custom": {
+      "tierId": "custom",
+      "billing": "once",
+      "oneTimeFees": [],
+      "products": [
+        {
+          "id": "prod-custom",
+          "kind": "custom",
+          "tierId": "custom",
+          "name": "Skreddersydd nettside",
+          "pages": 8,
+          "includes": [
+            "Skreddersydd utvalg av tjenester",
+            "3 ekstra sider utover 5 inkludert",
+            "SEO-optimalisering (Google, Google Maps og AI-søk)",
+            "Nettbutikk",
+            "Flerspråklig nettside",
+            "Engangsbetaling (månedspris × 9)",
+            "Koble til tredjeparts host og domene (2 500 kr engang)"
+          ],
+          "note": "Engangsbetaling",
+          "priceExMva": 32794,
+          "deliveryWeeks": 0,
+          "deliveryWorkDays": 0
+        }
+      ],
+      "alternatives": [
+        {
+          "tierId": "custom",
+          "billing": "once",
+          "oneTimeFees": [],
+          "products": [
+            {
+              "id": "prod-custom",
+              "kind": "custom",
+              "tierId": "custom",
+              "name": "Skreddersydd nettside",
+              "pages": 8,
+              "includes": [
+                "Skreddersydd utvalg av tjenester",
+                "3 ekstra sider utover 5 inkludert",
+                "SEO-optimalisering (Google, Google Maps og AI-søk)",
+                "Nettbutikk",
+                "Flerspråklig nettside",
+                "Engangsbetaling (månedspris × 9)",
+                "Koble til tredjeparts host og domene (2 500 kr engang)"
+              ],
+              "note": "Engangsbetaling",
+              "priceExMva": 32794,
+              "deliveryWeeks": 0,
+              "deliveryWorkDays": 0
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "offerHashes": {
+    "single": "b17b60b80f20156598bafd42bc275611380dabca",
+    "dual": "4a24b5794979cad4bb9416efda90546464738c4c",
+    "customParty": "8fdd3e9a377a136445b2ff40832b36a44316a257"
+  },
+  "legacyOffers": {
+    "single": {
+      "id": "o-single",
+      "salesClientId": "c",
+      "status": "sent",
+      "tierId": "tier-2-seo",
+      "email": {
+        "subject": "Tilbud",
+        "html": "<p>x</p>"
+      },
+      "products": [
+        {
+          "id": "p1",
+          "kind": "tier",
+          "tierId": "tier-2-seo",
+          "name": "Nettside – SEO",
+          "pages": 7,
+          "includes": [
+            "Full nettsideutvikling"
+          ],
+          "priceExMva": 1499
+        }
+      ],
+      "alternatives": [
+        {
+          "products": [
+            {
+              "id": "p1",
+              "kind": "tier",
+              "tierId": "tier-2-seo",
+              "name": "Nettside – SEO",
+              "pages": 7,
+              "includes": [
+                "Full nettsideutvikling"
+              ],
+              "priceExMva": 1499
+            }
+          ],
+          "billing": "month",
+          "tierId": "tier-2-seo"
+        }
+      ]
+    },
+    "dual": {
+      "id": "o-dual",
+      "salesClientId": "c",
+      "status": "sent",
+      "tierId": "tier-1-standard",
+      "chosenOfferIndex": 1,
+      "email": {
+        "subject": "To valg",
+        "html": "<p>y</p>"
+      },
+      "products": [
+        {
+          "id": "a",
+          "kind": "tier",
+          "tierId": "tier-1-standard",
+          "name": "A",
+          "priceExMva": 499
+        }
+      ],
+      "alternatives": [
+        {
+          "products": [
+            {
+              "id": "a",
+              "kind": "tier",
+              "tierId": "tier-1-standard",
+              "name": "A",
+              "priceExMva": 499
+            }
+          ],
+          "billing": "month"
+        },
+        {
+          "products": [
+            {
+              "id": "b",
+              "kind": "custom",
+              "name": "B",
+              "priceExMva": 1899,
+              "includes": [
+                "Nettbutikk"
+              ]
+            }
+          ],
+          "billing": "once"
+        }
+      ]
+    },
+    "customParty": {
+      "id": "o-custom",
+      "salesClientId": "c",
+      "status": "draft",
+      "tierId": "custom",
+      "party": {
+        "businessName": "Example Business AS",
+        "orgNumber": "123 456 789"
+      },
+      "contractLanguage": "en",
+      "email": {
+        "subject": "S",
+        "preheader": "P",
+        "html": "<p>z</p>"
+      },
+      "products": [
+        {
+          "id": "c1",
+          "kind": "custom",
+          "name": "Skreddersydd",
+          "priceExMva": 2500,
+          "includes": [
+            "Skreddersydd utvalg av tjenester",
+            "Nettbutikk"
+          ]
+        }
+      ],
+      "contract": {
+        "summary": {
+          "title": "Avtale",
+          "products": [
+            {
+              "id": "c1",
+              "kind": "custom",
+              "name": "Skreddersydd",
+              "priceExMva": 2500
+            }
+          ]
+        }
+      }
+    }
+  }
+}

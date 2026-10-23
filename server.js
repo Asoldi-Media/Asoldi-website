@@ -16637,7 +16637,7 @@ function applyMeetingQuoteToOffer(offer, client, { forceProducts = false } = {})
     alternatives: built.alternatives,
     reviewRequested: custom ? true : (salesOffers.offerNeedsVerification({ ...offer, reviewRequested: false }) ? false : offer.reviewRequested),
     email: { html },
-  }, { actor: 'meeting-quote', action: '' }) || offer;
+  }, { actor: 'meeting-quote', action: '', quotePlans: built }) || offer;
 }
 
 async function ensureOfferDraft(client, req) {

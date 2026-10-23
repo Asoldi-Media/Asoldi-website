@@ -33,9 +33,19 @@ const writer = join(root, 'scripts', 'fixtures', 'forward-compat-writer.mjs');
 
 // When a batch starts owning a key (normalizing it itself), give the key a realistic sample here,
 // so the default working-tree run keeps passing; the sample must survive that batch's normalizer.
+// Batch 2 (WS8.2) owns these keys; their samples are normalized records.
+const OWNED_SAMPLES = {
+  plan: {
+    tierId: 'custom', services: ['site', 'changes', 'blog', 'ecom'], pages: 5, oneTimeAddOns: [], billing: 'month',
+    catalogType: null, derived: false, needsConfirmation: false,
+  },
+  pricing: { oneTimeMultiplier: 9, source: 'code-default' },
+};
+
 function sampleFor(key) {
   if (key === 'isTest') return true;
   if (key === 'ext') return { futureBatch: { note: `ext kept (${key})`, n: 7 } };
+  if (Object.hasOwn(OWNED_SAMPLES, key)) return OWNED_SAMPLES[key];
   return { kept: key, nested: { list: [1, 2, 3], at: '2026-11-01T10:00:00.000Z' } };
 }
 
