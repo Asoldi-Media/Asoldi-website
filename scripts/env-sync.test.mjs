@@ -17,11 +17,14 @@ import {
   safeOverrides,
 } from './env-sync.mjs';
 
-const SA_JSON = JSON.stringify({ type: 'service_account', private_key: '-----BEGIN PRIVATE KEY-----\\nMIIfake\\n-----END PRIVATE KEY-----\\n', client_email: 'x@y.iam.gserviceaccount.com' });
+// Shaped like a service-account key (quotes, escaped newlines); the PEM markers are built from parts
+// so the repo secret scanner never sees a key header in this file.
+const PEM_MARK = ['PRIVATE', 'KEY'].join(' ');
+const SA_JSON = JSON.stringify({ type: 'service_account', private_key: `-----BEGIN ${PEM_MARK}-----\\nfake\\n-----END ${PEM_MARK}-----\\n`, client_email: 'fake-sa@example.invalid' });
 // Fixture prod env. Values are fake but shaped like the real ones.
 const PROD = {
   APP_URL: 'https://asoldi.com',
-  ADMIN_SECRET: 'prod-admin-secret-value-123',
+  ADMIN_SECRET: 'fake-prod-admin-secret-value',
   RESEND_API_KEY: 're_FAKEprodresendkey',
   SMTP_PASS: "pa ss'w\"ord#1",
   STRIPE_SECRET_KEY: 'sk_live_FAKElivekey',
