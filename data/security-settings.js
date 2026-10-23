@@ -30,6 +30,14 @@ const MAX_TOKEN_AGE_DAYS_LIMIT = 365;
  * and staff sign in again once after the deploy, with no owner step.
  */
 export const ADMIN_SESSION_RESET_MIGRATION = 'adminSessionReset2026_10';
+
+/**
+ * Disk secrets the Security card can rotate. secretRotations.<name> = { at, by } is the latest
+ * rotation; secretRotationHistory keeps the last SECRET_ROTATION_HISTORY_LIMIT rotations of
+ * either, newest first, as { name, at, by }. Never a value.
+ */
+export const SECRET_ROTATION_NAMES = Object.freeze(['admin-secret', 'maker-callback-token']);
+export const SECRET_ROTATION_HISTORY_LIMIT = 50;
 const BOOT_MIGRATIONS = [{ name: ADMIN_SESSION_RESET_MIGRATION, revokeScopes: ['admin', 'staff'] }];
 
 // The data dir is fixed for the life of the process; resolve it once (this runs on every token check).
@@ -74,12 +82,31 @@ function normalizeSettings(raw) {
     const iso = cleanIso(at);
     if (iso) migrations[name] = iso;
   }
+  const rotationsRaw = source.secretRotations && typeof source.secretRotations === 'object' && !Array.isArray(source.secretRotations)
+    ? source.secretRotations
+    : {};
+  const secretRotations = {};
+  for (const name of SECRET_ROTATION_NAMES) {
+    const row = rotationsRaw[name];
+    const at = cleanIso(row?.at);
+    if (at) secretRotations[name] = { at, by: typeof row.by === 'string' ? row.by.slice(0, 80) : null };
+  }
+  const historyRaw = Array.isArray(source.secretRotationHistory) ? source.secretRotationHistory : [];
+  const secretRotationHistory = [];
+  for (const row of historyRaw) {
+    const at = cleanIso(row?.at);
+    if (!at || !SECRET_ROTATION_NAMES.includes(row?.name)) continue;
+    secretRotationHistory.push({ name: row.name, at, by: typeof row.by === 'string' ? row.by.slice(0, 80) : null });
+    if (secretRotationHistory.length >= SECRET_ROTATION_HISTORY_LIMIT) break;
+  }
   return {
     version: 1,
     maxTokenAgeDays: cleanDays(source.maxTokenAgeDays) || DEFAULT_MAX_TOKEN_AGE_DAYS,
     maxTokenAgeDaysStored: cleanDays(source.maxTokenAgeDays),
     revokedBefore: Object.fromEntries(REVOKE_SCOPES.map((scope) => [scope, cleanIso(revoked[scope])])),
     migrations,
+    secretRotations,
+    secretRotationHistory,
     updatedAt: cleanIso(source.updatedAt),
     updatedBy: typeof source.updatedBy === 'string' ? source.updatedBy : null,
   };
@@ -126,6 +153,21 @@ export function updateSecuritySettings(patch = {}, { dataDir, by, now } = {}) {
   return changeSettings(
     (current) => (stored === undefined ? current : { ...current, maxTokenAgeDaysStored: stored }),
     { dataDir, by, now }
+  );
+}
+
+/** Records when and by whom a disk secret was rotated (the audit trail on the Security card). */
+export function recordSecretRotation(name, { dataDir, by, now } = {}) {
+  if (!SECRET_ROTATION_NAMES.includes(name)) throw new Error(`unknown secret ${name}`);
+  const at = isoAt(now);
+  const who = String(by || 'admin').slice(0, 80);
+  return changeSettings(
+    (current) => ({
+      ...current,
+      secretRotations: { ...current.secretRotations, [name]: { at, by: who } },
+      secretRotationHistory: [{ name, at, by: who }, ...current.secretRotationHistory].slice(0, SECRET_ROTATION_HISTORY_LIMIT),
+    }),
+    { dataDir, by: who, now }
   );
 }
 

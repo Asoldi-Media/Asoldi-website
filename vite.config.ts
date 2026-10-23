@@ -1,9 +1,26 @@
 import path from 'path';
-import { existsSync, rmSync } from 'fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { defineConfig, loadEnv } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import { BUILD_INFO_FILE, buildInfoForBuild } from './lib/build-info.js';
+
+// dist/build-info.json: the commit this build came from (read from the git checkout, never the
+// env) and when it was built. /api/health reports it, so a deploy can be checked from outside.
+function writeBuildInfo() {
+  return {
+    name: 'write-build-info',
+    apply: 'build' as const,
+    writeBundle(options: { dir?: string }) {
+      const outDir = options.dir || path.resolve(__dirname, 'dist');
+      mkdirSync(outDir, { recursive: true });
+      const info = buildInfoForBuild({ repoRoot: __dirname });
+      writeFileSync(path.join(outDir, BUILD_INFO_FILE), `${JSON.stringify(info, null, 2)}\n`);
+      console.log(`[build] ${BUILD_INFO_FILE}: commit ${info.commit ? info.commit.slice(0, 12) : 'unknown'}`);
+    },
+  };
+}
 
 function stripLeftoverDistMedia() {
   return {
@@ -28,7 +45,7 @@ export default defineConfig(({ command, mode }) => {
     // folder into dist (that filled the disk and produced 31k-line logs).
     publicDir: command === 'serve' ? path.resolve(__dirname, 'public') : false,
     cacheDir: path.join(homedir(), 'Library', 'Caches', 'asoldi-website', 'vite'),
-    plugins: [react(), tailwindcss(), stripLeftoverDistMedia()],
+    plugins: [react(), tailwindcss(), stripLeftoverDistMedia(), writeBuildInfo()],
     // npm run dev:safe (HUB_DEV_SAFE=1) never inlines .env values into the bundle.
     define: process.env.HUB_DEV_SAFE === '1' ? {} : {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),

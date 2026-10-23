@@ -17,10 +17,15 @@ type FirefliesStatus = {
   pullIngest: boolean;
   counters: Record<string, Counter>;
 };
+type Rotation = { at: string; by: string | null };
+type RotationName = 'admin-secret' | 'maker-callback-token';
 type SecurityStatus = {
   adminSecretSource: string;
   adminSecretEnvRejected: string | null;
   makerCallbackTokenSource: string;
+  secretRotations?: Partial<Record<RotationName, Rotation>>;
+  secretRotationHistory?: Array<Rotation & { name: RotationName }>;
+  rotateConfirmWord?: string;
   tokens: {
     maxTokenAgeDays: number;
     maxTokenAgeSource: 'env' | 'data' | 'default';
@@ -31,6 +36,23 @@ type SecurityStatus = {
   counters: Record<string, Counter>;
 };
 type Reveal = { webhookUrl: string; secret: string; tokenUrl: string | null; rotatedAt: string };
+type RotateKind = 'signing-secret' | 'maker-callback-token';
+type MakerTokenReveal = { token: string; envKeys: string[]; rotatedAt: string | null };
+
+const ROTATE_TEXT: Record<RotateKind, { title: string; button: string; effect: string; done: string }> = {
+  'signing-secret': {
+    title: 'Token signing secret',
+    button: 'Make a new signing secret',
+    effect: 'Every admin, staff and client portal login is signed out at once (you get a new login here). Google sign-ins that are half-way also have to start again.',
+    done: 'New signing secret made. Everyone else has to sign in again.',
+  },
+  'maker-callback-token': {
+    title: 'Maker callback token',
+    button: 'Make a new Maker token',
+    effect: 'Maker status callbacks and preview pushes with the old token get 401 at once, also for runs that were started before. Paste the new token into the Maker .env right away.',
+    done: 'New Maker token made. It is shown below.',
+  },
+};
 
 const input = 'px-3 py-2 rounded-lg bg-[#1a1a1a] border border-white/20 text-white text-sm';
 const button = 'px-3 py-1.5 rounded-lg text-sm disabled:opacity-50';
@@ -59,6 +81,10 @@ export function SecurityCard() {
   const [open, setOpen] = useState(false);
   const [data, setData] = useState<SecurityStatus | null>(null);
   const [reveal, setReveal] = useState<Reveal | null>(null);
+  const [rotating, setRotating] = useState<RotateKind | null>(null);
+  const [rotatePassword, setRotatePassword] = useState('');
+  const [rotateConfirm, setRotateConfirm] = useState('');
+  const [makerToken, setMakerToken] = useState<MakerTokenReveal | null>(null);
   const [days, setDays] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -115,8 +141,51 @@ export function SecurityCard() {
     if (json) setReveal(json as Reveal);
   }
 
+  function startRotate(kind: RotateKind) {
+    setRotating(kind);
+    setRotatePassword('');
+    setRotateConfirm('');
+    setMakerToken(null);
+    setError('');
+    setMessage('');
+  }
+
+  async function rotate(kind: RotateKind) {
+    const json = await send(
+      'POST',
+      `/api/admin/security/${kind}/rotate`,
+      { currentPassword: rotatePassword, confirm: rotateConfirm },
+      ROTATE_TEXT[kind].done,
+    );
+    setRotatePassword('');
+    if (!json) return;
+    setRotating(null);
+    setRotateConfirm('');
+    if (json.auditSaved === false) {
+      setError('The secret was rotated, but the rotation record could not be saved on the hub disk (see the server log).');
+    }
+    if (kind === 'maker-callback-token' && typeof json.callbackToken === 'string') {
+      setMakerToken({ token: json.callbackToken, envKeys: Array.isArray(json.envKeys) ? json.envKeys : [], rotatedAt: json.rotatedAt || null });
+    }
+  }
+
   const ff = data?.firefliesWebhook;
   const counters = data ? (Object.entries(data.counters) as Array<[string, Counter]>) : [];
+  const confirmWord = data?.rotateConfirmWord || 'ROTER';
+  const rotations = data?.secretRotations || {};
+  const fromEnv: Record<RotateKind, boolean> = {
+    'signing-secret': data?.adminSecretSource === 'env',
+    'maker-callback-token': data?.makerCallbackTokenSource === 'env',
+  };
+  const history = data?.secretRotationHistory || [];
+  const rotationTitle: Record<RotationName, string> = {
+    'admin-secret': ROTATE_TEXT['signing-secret'].title,
+    'maker-callback-token': ROTATE_TEXT['maker-callback-token'].title,
+  };
+  const rotationKey: Record<RotateKind, RotationName> = {
+    'signing-secret': 'admin-secret',
+    'maker-callback-token': 'maker-callback-token',
+  };
 
   return (
     <div className="mb-6 rounded-xl bg-[#2a2a2a] border border-white/10">
@@ -142,6 +211,109 @@ export function SecurityCard() {
                   <Dot ok />
                   Maker callback token: {data.makerCallbackTokenSource === 'env' ? 'env value' : 'generated on the hub disk'}.
                 </p>
+              </section>
+
+              <section className="space-y-2">
+                <h3 className="text-white font-medium">Rotate secrets</h3>
+                <p className="text-xs text-gray-500">
+                  Makes a new value on the hub disk at once, without FTP or a deploy. Needs your password and the word {confirmWord}.
+                </p>
+                {(['signing-secret', 'maker-callback-token'] as const).map((kind) => {
+                  const last = rotations[rotationKey[kind]];
+                  return (
+                    <div key={kind} className="rounded-lg border border-white/10 p-3 space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-sm text-gray-200">
+                          {ROTATE_TEXT[kind].title}
+                          <span className="text-xs text-gray-500"> · last rotated {last ? `${when(last.at)}${last.by ? ` by ${last.by}` : ''}` : 'never'}</span>
+                        </span>
+                        {rotating !== kind && (
+                          <button
+                            type="button"
+                            disabled={busy || fromEnv[kind]}
+                            onClick={() => startRotate(kind)}
+                            className={`${button} border border-white/20 text-gray-200 hover:bg-white/10`}
+                          >
+                            {ROTATE_TEXT[kind].button}
+                          </button>
+                        )}
+                      </div>
+                      {fromEnv[kind] && (
+                        <p className="text-xs text-amber-300">
+                          {kind === 'signing-secret'
+                            ? 'Kommer fra ADMIN_SECRET i miljøvariablene, og den vinner over nøkkelen på disken. Bytt den der i stedet.'
+                            : 'Kommer fra WEBSITE_MAKER_STATUS_CALLBACK_TOKEN / SALES_MAKER_STATUS_CALLBACK_TOKEN i miljøvariablene. Bytt den der i stedet.'}
+                        </p>
+                      )}
+                      {rotating === kind && (
+                        <form
+                          className="space-y-2"
+                          onSubmit={(event) => {
+                            event.preventDefault();
+                            void rotate(kind);
+                          }}
+                        >
+                          <p className="text-xs text-amber-300">{ROTATE_TEXT[kind].effect}</p>
+                          <div className="flex flex-wrap gap-2">
+                            <input
+                              className={`${input} w-56`}
+                              type="password"
+                              autoComplete="current-password"
+                              placeholder="Your password"
+                              value={rotatePassword}
+                              onChange={(e) => setRotatePassword(e.target.value)}
+                              required
+                            />
+                            <input
+                              className={`${input} w-40`}
+                              type="text"
+                              autoComplete="off"
+                              placeholder={`Type ${confirmWord}`}
+                              aria-label={`Type ${confirmWord} to confirm`}
+                              value={rotateConfirm}
+                              onChange={(e) => setRotateConfirm(e.target.value)}
+                              required
+                            />
+                          </div>
+                          <div className="flex gap-2">
+                            <button
+                              type="submit"
+                              disabled={busy || !rotatePassword || rotateConfirm.trim().toUpperCase() !== confirmWord}
+                              className={`${button} bg-red-600 text-white`}
+                            >
+                              {ROTATE_TEXT[kind].button}
+                            </button>
+                            <button type="button" disabled={busy} onClick={() => setRotating(null)} className={`${button} text-gray-400 hover:text-white`}>
+                              Cancel
+                            </button>
+                          </div>
+                        </form>
+                      )}
+                      {kind === 'maker-callback-token' && makerToken && (
+                        <div className="rounded-lg border border-white/10 bg-[#1a1a1a] p-3 space-y-2 text-sm">
+                          <p className="text-gray-300">
+                            Put it in the Maker <code>.env</code> as {makerToken.envKeys.join(' and ')}, then restart the Maker. This box shows it
+                            until you hide it; an admin can read the current token again with <code>GET /api/admin/system/maker-callback-token</code>.
+                          </p>
+                          <input className={`${input} w-full font-mono`} readOnly value={makerToken.token} onFocus={(e) => e.currentTarget.select()} />
+                          <button type="button" onClick={() => setMakerToken(null)} className="text-xs text-gray-400 hover:text-white">Hide</button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {history.length > 0 && (
+                  <details className="text-xs text-gray-400">
+                    <summary className="cursor-pointer">Rotation history ({history.length})</summary>
+                    <ul className="mt-1 space-y-0.5">
+                      {history.slice(0, 20).map((row) => (
+                        <li key={`${row.name}-${row.at}`}>
+                          {when(row.at)} · {rotationTitle[row.name] || row.name}{row.by ? ` · ${row.by}` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
               </section>
 
               <section className="space-y-2">

@@ -16,7 +16,13 @@ Audio, video, and CRM JSON live in `~/.asoldi-website-data`, not in Git. A Git d
 
 Settings: Express, Node **22**, entry `server.js`, build script `build`, Vite in dependencies, `postinstall` → `vite build`, `publicDir: false` on production Vite.
 
-After a push, confirm the Hostinger Git build completed, live JS is a new `assets/index-*.js`, and `/sales` + `/superadmin` return 200.
+After a push, confirm the Hostinger Git build completed, live JS is a new `assets/index-*.js`, and `/sales` + `/superadmin` return 200. Then run the read-only check (GET requests only, no login, no token):
+
+```bash
+node scripts/post-deploy-check.mjs --domain <a live client domain> [--expect-commit <pushed sha>]
+```
+
+It wants `/api/health` with `safeMode:false` and a build id (the commit from `dist/build-info.json`, written by the Vite build), the home page, a site config for that domain without `clientAdmin`/`pendingAdmin`/`passwordHash`, and 401 for `/myphoner-recordings/…`, `/myphoner-audio/…` and the Maker status callback without a token. It exits 1 with the failed checks listed. A domain with æ, ø or å can be given in either spelling: the check asks for the spelling given, then the other one (punycode `xn--…` or Unicode), because the hub matches the domain exactly as `sites.json` stores it.
 
 The `backups/` subfolder is only historical copies of those JSON files. The app never reads it. If Hostinger inodes are full, delete timestamped files in `backups/` (keep the sibling live `*.json` files, and keep `myphoner-audio` if present). After deploy, the app keeps at most `DATA_BACKUP_KEEP` dated copies per file (default 5).
 

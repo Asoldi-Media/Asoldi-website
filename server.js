@@ -80,17 +80,21 @@ import * as offers from './data/offers.js';
 import * as resetTokens from './data/reset-tokens.js';
 import { getPersistentDataDir, pruneAllDataBackups } from './data/storage-path.js';
 import {
+  checkWithFreshSecret,
   createLoginLimiter,
+  createPasswordConfirmer,
   createStaffMediaGate,
   guardLogin,
   clientIpFromRequest,
+  createHubSecretHolder,
   readOrCreateDiskSecret,
-  resolveHubSecret,
   safeEqual,
+  secretRefreshMs,
 } from './lib/auth-hardening.js';
 import { isTokenAccepted, runTokenPolicyBootMigrations, stampTokenVersion } from './lib/token-policy.js';
 import { noteSecurityEvent } from './lib/security-counters.js';
 import { registerSecurityAdminRoutes } from './lib/security-admin-routes.js';
+import { readBuildInfo } from './lib/build-info.js';
 import { applyPersistentProductionEnv } from './lib/persistent-env.js';
 import { assertSafeModeAllows, hubListenHost, isSafeModeActive, isSafeModeError, runBackgroundJobs, safeModeAllows } from './lib/safe-mode.js';
 import { registerSafeModeRoutes } from './lib/safe-mode-routes.js';
@@ -523,23 +527,43 @@ const PORT = process.env.PORT || 3000;
 const distPath = join(__dirname, 'dist');
 const publicPath = join(__dirname, 'public');
 // Env wins unless it is a known default or shorter than 16; otherwise a random secret kept in <dataDir>/secrets/.
-const ADMIN_SECRET_SOURCE = resolveHubSecret({ envValue: process.env.ADMIN_SECRET, dataDir: getPersistentDataDir(), name: 'admin-secret' });
-const ADMIN_SECRET = ADMIN_SECRET_SOURCE.secret;
+// Admin → Security can rotate the disk secret while the hub runs. Every hub process re-reads the
+// file within a second, so tokens signed with the old secret stop everywhere. Signers (sign-ins,
+// OAuth starts: hubSigningSecret) re-read it first, so no process signs with a replaced secret,
+// and a verifier whose signature does not match re-reads it once (signatureMatchesHubSecret), so
+// a token another process signed right after a rotation is accepted at once. Both re-reads are
+// limited to ten a second per process.
+const ADMIN_SECRET_HOLDER = createHubSecretHolder({
+  envValue: process.env.ADMIN_SECRET,
+  dataDir: getPersistentDataDir(),
+  name: 'admin-secret',
+  refreshMs: secretRefreshMs(),
+});
+const ADMIN_SECRET_SOURCE = { source: ADMIN_SECRET_HOLDER.source, envRejected: ADMIN_SECRET_HOLDER.envRejected };
+/** The secret to sign a new token or OAuth state with (re-read from the file first). */
+function hubSigningSecret() {
+  return ADMIN_SECRET_HOLDER.get({ fresh: true });
+}
+/** sign(secret) → the expected signature; compared in constant time with the given one. */
+function signatureMatchesHubSecret(given, sign) {
+  return checkWithFreshSecret(ADMIN_SECRET_HOLDER, (secret) => safeEqual(sign(secret), given));
+}
 // One-time boot migrations (a reset of admin and staff sessions; see data/security-settings.js).
 runTokenPolicyBootMigrations();
 const loginLimiter = createLoginLimiter();
 
 function signToken(payload) {
   const data = JSON.stringify(stampTokenVersion(payload));
-  const sig = createHmac('sha256', ADMIN_SECRET).update(data).digest('hex');
+  const sig = createHmac('sha256', hubSigningSecret()).update(data).digest('hex');
   return Buffer.from(JSON.stringify({ data, sig })).toString('base64url');
 }
 
 function verifyToken(token) {
   try {
     const raw = JSON.parse(Buffer.from(token, 'base64url').toString());
-    const expect = createHmac('sha256', ADMIN_SECRET).update(String(raw.data)).digest('hex');
-    if (!safeEqual(expect, raw.sig)) return null;
+    if (typeof raw?.sig !== 'string' || !raw.sig) return null;
+    const data = String(raw.data);
+    if (!signatureMatchesHubSecret(raw.sig, (secret) => createHmac('sha256', secret).update(data).digest('hex'))) return null;
     const payload = JSON.parse(raw.data);
     // Age (security-settings.json, default 30 days) plus revokedBefore and per-user tokenVersion.
     if (!isTokenAccepted(payload)) return null;
@@ -581,8 +605,17 @@ app.post(
   express.raw({ type: 'application/json', limit: '8mb' }),
   handleFirefliesWebhook
 );
+// The running build: dist/build-info.json from the Vite build, else the git checkout; never the env.
+const BUILD_INFO = readBuildInfo({ distDir: distPath, repoRoot: __dirname });
+console.log(`[build] commit ${BUILD_INFO.commit ? BUILD_INFO.commit.slice(0, 12) : 'unknown'} (${BUILD_INFO.source})`);
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, uptime: Math.round(process.uptime()), safeMode: isSafeModeActive(), http: httpRequestSummary() });
+  res.json({
+    ok: true,
+    uptime: Math.round(process.uptime()),
+    safeMode: isSafeModeActive(),
+    build: BUILD_INFO,
+    http: httpRequestSummary(),
+  });
 });
 app.post('/api/diag/browser', express.json({ limit: '32kb' }), (req, res) => {
   const body = req.body && typeof req.body === 'object' ? req.body : {};
@@ -2821,13 +2854,19 @@ function resolveSalesPreviewPushUrl() {
   return `${salesPreview.getPublicPreviewOrigin()}/api/admin/sales/maker-preview-push`;
 }
 
-let makerCallbackTokenCache = '';
-// Env wins; otherwise one random token kept in <dataDir>/secrets/. Callbacks never run unauthenticated.
+// Env wins; otherwise one random token kept in <dataDir>/secrets/ (made on first use). Callbacks never
+// run unauthenticated. Admin → Security can rotate the disk token; other hub processes follow within a second.
+const MAKER_CALLBACK_TOKEN_HOLDER = createHubSecretHolder({
+  envValue: sanitizeText(process.env.WEBSITE_MAKER_STATUS_CALLBACK_TOKEN) || sanitizeText(process.env.SALES_MAKER_STATUS_CALLBACK_TOKEN),
+  envRule: 'any',
+  lazy: true,
+  dataDir: getPersistentDataDir(),
+  name: 'maker-callback-token',
+  bytes: 32,
+  refreshMs: secretRefreshMs(),
+});
 function getMakerCallbackToken() {
-  const fromEnv = sanitizeText(process.env.WEBSITE_MAKER_STATUS_CALLBACK_TOKEN || process.env.SALES_MAKER_STATUS_CALLBACK_TOKEN || '');
-  if (fromEnv) return fromEnv;
-  if (!makerCallbackTokenCache) makerCallbackTokenCache = readOrCreateDiskSecret(getPersistentDataDir(), 'maker-callback-token', 32);
-  return makerCallbackTokenCache;
+  return MAKER_CALLBACK_TOKEN_HOLDER.get();
 }
 
 function makerCallbackTokenFrom(req) {
@@ -2841,7 +2880,8 @@ function noteMakerCallbackRejected(req) {
 
 function isMakerStatusCallbackAuthorized(req, { count = true } = {}) {
   const provided = makerCallbackTokenFrom(req);
-  const ok = Boolean(provided) && safeEqual(provided, getMakerCallbackToken());
+  // A token rotated in another hub process is accepted here at once (one re-read of the file).
+  const ok = Boolean(provided) && checkWithFreshSecret(MAKER_CALLBACK_TOKEN_HOLDER, (token) => safeEqual(provided, token));
   if (!ok && count) noteMakerCallbackRejected(req);
   return ok;
 }
@@ -7867,7 +7907,7 @@ function getMeetingMinutes(client) {
   return client?.meetingMode === 'in-person' ? 60 : 30;
 }
 
-// Stateless OAuth state. Signed with ADMIN_SECRET (same value across every
+// Stateless OAuth state. Signed with the token signing secret (same value across every
 // worker process) so the callback can validate a state issued by any process
 // and it survives app restarts — unlike an in-memory store, which breaks under
 // Passenger/PM2 multi-process or idle-restart hosting.
@@ -7882,7 +7922,7 @@ function signOAuthState(purpose, payload = {}) {
       n: randomBytes(8).toString('hex'),
     })
   ).toString('base64url');
-  const sig = createHmac('sha256', ADMIN_SECRET).update(`${purpose}.${body}`).digest('base64url');
+  const sig = createHmac('sha256', hubSigningSecret()).update(`${purpose}.${body}`).digest('base64url');
   return `${body}.${sig}`;
 }
 
@@ -7893,11 +7933,7 @@ function verifyOAuthState(purpose, state, maxAgeMs = OAUTH_STATE_TTL_MS) {
   if (dot <= 0) return null;
   const body = raw.slice(0, dot);
   const sig = raw.slice(dot + 1);
-  const expect = createHmac('sha256', ADMIN_SECRET).update(`${purpose}.${body}`).digest('base64url');
-  if (sig.length !== expect.length) return null;
-  let diff = 0;
-  for (let i = 0; i < sig.length; i += 1) diff |= sig.charCodeAt(i) ^ expect.charCodeAt(i);
-  if (diff !== 0) return null;
+  if (!signatureMatchesHubSecret(sig, (secret) => createHmac('sha256', secret).update(`${purpose}.${body}`).digest('base64url'))) return null;
   let parsed;
   try {
     parsed = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
@@ -10051,8 +10087,28 @@ app.get('/api/admin/system/maker-callback-token', adminAuth, (_req, res) => {
   res.json({ token: getMakerCallbackToken() });
 });
 
-// Security status, Fireflies webhook secret (disk), token revocation, client "log out everywhere".
-registerSecurityAdminRoutes(app, { adminAuth, clientAuth, signToken, adminSecret: ADMIN_SECRET_SOURCE });
+/**
+ * Re-checks the signed-in admin's password before a sensitive action (secret rotation). Wrong
+ * passwords count toward the normal login limit for that admin; the right one clears the
+ * admin's failures, like a sign-in. On false the response is sent.
+ */
+const confirmAdminPassword = createPasswordConfirmer({
+  limiter: loginLimiter,
+  accountFor: (req) => `admin:${sanitizeText(req.admin?.username)}`,
+  verifyPassword: (req, password) => store.verifyAdmin(sanitizeText(req.admin?.username), password),
+});
+
+// Security status, Fireflies webhook secret (disk), token revocation, client "log out everywhere",
+// and rotation of the token signing secret and the Maker callback token.
+registerSecurityAdminRoutes(app, {
+  adminAuth,
+  clientAuth,
+  signToken,
+  adminSecret: ADMIN_SECRET_SOURCE,
+  adminSecretHolder: ADMIN_SECRET_HOLDER,
+  makerCallbackTokenHolder: MAKER_CALLBACK_TOKEN_HOLDER,
+  confirmAdminPassword,
+});
 
 app.get('/api/admin/employees/overview', adminAuth, async (_req, res) => {
   const users = await store.getAllUsers();
@@ -12956,9 +13012,10 @@ app.patch('/api/hub/sites/:id/website-due', adminAuth, (req, res) => {
   res.json(websiteDueViewForTarget(saved));
 });
 
+// A new CMS password must have 8+ characters and not be a known default (400 with a Norwegian message).
 app.put('/api/hub/sites/:id/client-admin', adminAuth, async (req, res) => {
   const result = await hub.updateClientAdmin(req.params.id, req.body || {});
-  if (!result.ok) return res.status(404).json({ message: result.error });
+  if (!result.ok) return res.status(result.status || 404).json({ message: result.error });
   res.json(result.site);
 });
 
@@ -13338,6 +13395,16 @@ app.get('/api/admin/sales/maker-tunnel/status', salesAuth, (_req, res) => {
     targetUrl: makerTunnelTargetUrl,
     startedAt: makerTunnelStartedAt,
   });
+});
+
+// GET does nothing but check the callback token: 401 without a valid one, { ok: true } with it.
+// The post-deploy check reads the 401 (scripts/post-deploy-check.mjs); after a token rotation the
+// Maker or the operator can check a pasted token this way. Before this route the GET was answered
+// by GET /api/admin/sales/:id (staff login, so 401 without one and 404 with one).
+app.get('/api/admin/sales/maker-status-callback', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  if (!isMakerStatusCallbackAuthorized(req)) return res.status(401).json({ message: 'Unauthorized callback.' });
+  return res.json({ ok: true });
 });
 
 app.post('/api/admin/sales/maker-status-callback', async (req, res) => {

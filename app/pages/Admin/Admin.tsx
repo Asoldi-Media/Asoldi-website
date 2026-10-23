@@ -27,6 +27,7 @@ import {
   WEBSITE_PLAN_OPTIONS,
   featuresFromPlan,
 } from './shared';
+import { clientAdminPasswordProblem } from '../../../lib/client-admin-password.js';
 
 const EmailTemplateStudio = lazy(() =>
   import('../sales/EmailTemplateStudio').then((m) => ({ default: m.EmailTemplateStudio }))
@@ -113,6 +114,7 @@ export const Admin = () => {
     createdAt: '',
     passwordSet: false,
   });
+  const [clientAdminError, setClientAdminError] = useState('');
 
   const fetchUsers = useCallback(async () => {
     const res = await fetch(`${API}/admin/users`, { headers: authHeaders() });
@@ -467,6 +469,10 @@ export const Admin = () => {
 
   async function handleSaveClientAdmin() {
     if (!clientAdminSiteId) return;
+    // Same rules as the server (lib/client-admin-password.js): checked before anything is saved.
+    const passwordProblem = clientAdminForm.password ? clientAdminPasswordProblem(clientAdminForm.password) : null;
+    setClientAdminError(passwordProblem || '');
+    if (passwordProblem) return;
     setLoading(true);
     try {
       const featureRes = await fetch(`${API}/hub/sites/${clientAdminSiteId}`, {
@@ -492,9 +498,11 @@ export const Admin = () => {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
+        if (res.status === 400) setClientAdminError(data.message || 'Could not save client admin');
         flashNotice('err', data.message || 'Could not save client admin');
         return;
       }
+      setClientAdminError('');
       flashNotice('ok', 'Client admin saved.');
       setClientAdminSiteId(null);
       setClientAdminForm((form) => ({ ...form, password: '' }));
@@ -656,6 +664,7 @@ export const Admin = () => {
               onIssueLocalBlogToken={handleIssueLocalBlogToken}
               onEditAdmin={(site) => {
                 setClientAdminSiteId(site.id);
+                setClientAdminError('');
                 setClientAdminForm({
                   name: site.clientAdmin?.name || '',
                   email: site.clientAdmin?.email || '',
@@ -841,7 +850,22 @@ export const Admin = () => {
               <input type="text" value={clientAdminForm.username} onChange={(e) => setClientAdminForm((f) => ({ ...f, username: e.target.value }))} placeholder="CMS username" className="w-full px-4 py-2 rounded-lg bg-[#1a1a1a] border border-white/20 text-white" />
               <input type="url" value={clientAdminForm.avatarUrl} onChange={(e) => setClientAdminForm((f) => ({ ...f, avatarUrl: e.target.value }))} placeholder="Avatar URL" className="w-full px-4 py-2 rounded-lg bg-[#1a1a1a] border border-white/20 text-white" />
               {clientAdminForm.avatarUrl && <img src={clientAdminForm.avatarUrl} alt="" className="h-16 w-16 rounded-full object-cover" />}
-              <input type="password" value={clientAdminForm.password} onChange={(e) => setClientAdminForm((f) => ({ ...f, password: e.target.value }))} placeholder={clientAdminForm.passwordSet ? 'New CMS password (leave blank to keep)' : 'CMS password'} className="w-full px-4 py-2 rounded-lg bg-[#1a1a1a] border border-white/20 text-white" />
+              <input
+                type="password"
+                value={clientAdminForm.password}
+                onChange={(e) => {
+                  const password = e.target.value;
+                  setClientAdminForm((f) => ({ ...f, password }));
+                  if (clientAdminError) setClientAdminError(password ? clientAdminPasswordProblem(password) || '' : '');
+                }}
+                placeholder={clientAdminForm.passwordSet ? 'New CMS password (leave blank to keep)' : 'CMS password'}
+                aria-invalid={Boolean(clientAdminError)}
+                aria-describedby="client-admin-password-rule"
+                className={`w-full px-4 py-2 rounded-lg bg-[#1a1a1a] border text-white ${clientAdminError ? 'border-red-400' : 'border-white/20'}`}
+              />
+              <p id="client-admin-password-rule" role={clientAdminError ? 'alert' : undefined} className={`text-xs ${clientAdminError ? 'text-red-400' : 'text-gray-500'}`}>
+                {clientAdminError || 'Minst 8 og høyst 1024 tegn. Vanlige standardpassord (changeme, admin, password, 12345678 …) avvises.'}
+              </p>
               <p className="text-xs text-gray-500">Created {clientAdminForm.createdAt ? new Date(clientAdminForm.createdAt).toLocaleString() : 'when first saved'}</p>
               <div className="flex flex-wrap gap-3 pt-2">
                 <label className="flex items-center gap-2 text-white text-sm"><input type="checkbox" checked={!!editSiteFeatures.users} onChange={(e) => setEditSiteFeatures((prev) => ({ ...prev, users: e.target.checked }))} /> Users</label>

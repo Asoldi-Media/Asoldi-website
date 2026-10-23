@@ -191,6 +191,33 @@ function acquireLock(path, { timeoutMs = 5000, staleMs = 2000 } = {}) {
 }
 
 /**
+ * Runs fn() while holding the same `<path>.lock` file updateJsonLocked uses, so a change to a
+ * non-JSON file (a secret) is serialized with other hub processes. Returns fn's result.
+ */
+export function withFileLock(path, fn, { dirMode = 0o700 } = {}) {
+  mkdirSync(dirname(path), { recursive: true, mode: dirMode });
+  const release = acquireLock(path);
+  try {
+    return fn();
+  } finally {
+    release();
+  }
+}
+
+/** Replaces a text file in one step (temp file + rename): readers see the old or the new text. */
+export function writeTextAtomic(path, text, { mode = 0o600, dirMode = 0o700 } = {}) {
+  mkdirSync(dirname(path), { recursive: true, mode: dirMode });
+  const tmp = tmpPathFor(path);
+  writeFileSync(tmp, String(text), { mode });
+  try {
+    renameWithRetry(tmp, path);
+  } catch (error) {
+    try { unlinkSync(tmp); } catch { /* ignore */ }
+    throw error;
+  }
+}
+
+/**
  * Read-modify-write under a lock, so writers in other processes are never lost:
  * `mutate(current)` gets a fresh parse (null when missing) and returns the next object,
  * or undefined to leave the file as it is. Returns what the file holds afterwards.

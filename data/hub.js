@@ -16,8 +16,17 @@ import {
   resolveCatalogTypeForSite,
 } from './hub-model.js';
 import { hashLocalBlogToken, localBlogTokensMatch } from '../lib/local-blog-token.js';
+import { clientAdminPasswordProblem } from '../lib/client-admin-password.js';
 import { normalizeDeliveryPhase, normalizeDevelopment, resolveSiteDeliveryPhase } from '../lib/development-phase.js';
 import { FUTURE_SITE_CMS_KEYS, withoutKeys } from './normalize-ext.js';
+
+// The one client admin password rule (lib/client-admin-password.js), also under the names that
+// other hub code and tests import from here. Never define a second copy of it in this file.
+export {
+  clientAdminPasswordProblem,
+  CLIENT_ADMIN_MIN_PASSWORD_LENGTH as MIN_CLIENT_ADMIN_PASSWORD_LENGTH,
+  CLIENT_ADMIN_KNOWN_DEFAULT_PASSWORDS as WEAK_CLIENT_ADMIN_PASSWORDS,
+} from '../lib/client-admin-password.js';
 
 const SITES_PATH = getDataFilePath('sites.json');
 
@@ -236,7 +245,11 @@ export function updateSite(id, patch = {}) {
     });
   }
   if (patch.clientAdmin !== undefined) {
-    current.clientAdmin = normalizeClientAdmin({ ...current.clientAdmin, ...patch.clientAdmin });
+    // The CMS admin password changes only through updateClientAdmin (password rules, then bcrypt):
+    // a hash or a pending flag in a site patch is ignored.
+    const { passwordHash: _hash, pendingSync: _pending, ...adminPatch } =
+      patch.clientAdmin && typeof patch.clientAdmin === 'object' ? patch.clientAdmin : {};
+    current.clientAdmin = normalizeClientAdmin({ ...current.clientAdmin, ...adminPatch });
   }
   if (patch.deliveryPhase !== undefined) {
     current.deliveryPhase = normalizeDeliveryPhase(patch.deliveryPhase, current.deliveryPhase || 'client');
@@ -278,10 +291,20 @@ export function recordHeartbeat(siteKey, { packageVersion, adminUrl, name, admin
   return { ok: true, site: publicSite(sites[i]) };
 }
 
+/**
+ * Sets the client CMS admin. A new password (anything but undefined, null or '') must pass
+ * clientAdminPasswordProblem; otherwise nothing is stored and { ok: false, status: 400 } comes
+ * back with the Norwegian reason. The hub keeps only the bcrypt hash.
+ */
 export async function updateClientAdmin(id, patch = {}) {
+  const passwordGiven = patch.password !== undefined && patch.password !== null && patch.password !== '';
+  if (passwordGiven) {
+    const problem = clientAdminPasswordProblem(patch.password);
+    if (problem) return { ok: false, status: 400, error: problem };
+  }
   const sites = readSites();
   const i = sites.findIndex((s) => s.id === id);
-  if (i === -1) return { ok: false, error: 'Site not found' };
+  if (i === -1) return { ok: false, status: 404, error: 'Site not found' };
   const current = normalizeClientAdmin(sites[i].clientAdmin);
   const now = new Date().toISOString();
   const next = normalizeClientAdmin({
@@ -293,8 +316,8 @@ export async function updateClientAdmin(id, patch = {}) {
     createdAt: current.createdAt || now,
     updatedAt: now,
   });
-  if (patch.password) {
-    next.passwordHash = await bcrypt.hash(String(patch.password), 12);
+  if (passwordGiven) {
+    next.passwordHash = await bcrypt.hash(patch.password, 12);
     next.pendingSync = true;
   }
   sites[i].clientAdmin = next;

@@ -236,12 +236,52 @@ function globToRegExp(glob) {
   return new RegExp(`^${out}$`);
 }
 
+// A commit-pinned entry never lets these through: a value from a local .env file or a retired
+// secret stays a finding in every commit, and '*' would not be precise.
+const COMMIT_ENTRY_FORBIDDEN_RULES = new Set(['*', 'known-value', 'retired-secret']);
+
+/**
+ * commitEntries pin one finding in one historical commit: { commit: <40-hex sha>, path: <exact
+ * path, no glob>, line: <line in that commit's version of the file>, rule, reason }. A commit is
+ * immutable, so an entry covers exactly one line of one blob; the same line in any other commit,
+ * in the staged changes or in the tracked files is still reported. Invalid entries are dropped.
+ */
+export function normalizeCommitEntries(raw = []) {
+  return (Array.isArray(raw) ? raw : [])
+    .filter((row) => {
+      if (!row || typeof row !== 'object') return false;
+      if (!/^[0-9a-f]{40}$/i.test(String(row.commit || ''))) return false;
+      if (typeof row.path !== 'string' || !row.path.trim() || /[*?]/.test(row.path)) return false;
+      if (!Number.isInteger(row.line) || row.line < 1) return false;
+      if (typeof row.rule !== 'string' || !row.rule || COMMIT_ENTRY_FORBIDDEN_RULES.has(row.rule) || row.rule.startsWith('path:')) return false;
+      return String(row.reason || '').trim().length > 0;
+    })
+    .map((row) => ({
+      commit: row.commit.toLowerCase(),
+      path: row.path.trim().replace(/\\/g, '/'),
+      line: row.line,
+      rule: row.rule,
+      reason: String(row.reason),
+    }));
+}
+
+/** The commit-pinned entry that covers `finding` ({ path, line, rule }) in `commit`, or null. */
+export function commitEntryFor(allowlist, commit, finding) {
+  const sha = String(commit || '').toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(sha) || !finding?.line) return null;
+  const path = String(finding.path || '').replace(/\\/g, '/');
+  return (allowlist?.commitEntries || []).find((row) => (
+    row.commit === sha && row.path === path && row.line === finding.line && row.rule === finding.rule
+  )) || null;
+}
+
 export function normalizeAllowlist(raw = {}) {
   const entries = (Array.isArray(raw.entries) ? raw.entries : [])
     .filter((row) => row && typeof row.path === 'string' && typeof row.rule === 'string' && String(row.reason || '').trim())
     .map((row) => ({ path: row.path, rule: row.rule, reason: String(row.reason), re: globToRegExp(row.path) }));
   return {
     entries,
+    commitEntries: normalizeCommitEntries(raw.commitEntries),
     emailDomains: [...DEFAULT_ALLOWED_EMAIL_DOMAINS, ...(Array.isArray(raw.emailDomains) ? raw.emailDomains : [])].map((d) => String(d).toLowerCase()),
     emails: new Set((Array.isArray(raw.emails) ? raw.emails : []).map((e) => String(e).toLowerCase())),
     phones: new Set((Array.isArray(raw.phones) ? raw.phones : []).map(nationalPhone)),
