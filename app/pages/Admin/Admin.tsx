@@ -864,7 +864,7 @@ export const Admin = () => {
                 className={`w-full px-4 py-2 rounded-lg bg-[#1a1a1a] border text-white ${clientAdminError ? 'border-red-400' : 'border-white/20'}`}
               />
               <p id="client-admin-password-rule" role={clientAdminError ? 'alert' : undefined} className={`text-xs ${clientAdminError ? 'text-red-400' : 'text-gray-500'}`}>
-                {clientAdminError || 'Minst 8 tegn. Vanlige standardpassord (changeme, admin, password, 12345678 …) avvises.'}
+                {clientAdminError || 'Minst 8 og høyst 1024 tegn. Vanlige standardpassord (changeme, admin, password, 12345678 …) avvises.'}
               </p>
               <p className="text-xs text-gray-500">Created {clientAdminForm.createdAt ? new Date(clientAdminForm.createdAt).toLocaleString() : 'when first saved'}</p>
               <div className="flex flex-wrap gap-3 pt-2">

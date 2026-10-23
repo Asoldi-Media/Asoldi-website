@@ -20,6 +20,14 @@ import { clientAdminPasswordProblem } from '../lib/client-admin-password.js';
 import { normalizeDeliveryPhase, normalizeDevelopment, resolveSiteDeliveryPhase } from '../lib/development-phase.js';
 import { FUTURE_SITE_CMS_KEYS, withoutKeys } from './normalize-ext.js';
 
+// The one client admin password rule (lib/client-admin-password.js), also under the names that
+// other hub code and tests import from here. Never define a second copy of it in this file.
+export {
+  clientAdminPasswordProblem,
+  CLIENT_ADMIN_MIN_PASSWORD_LENGTH as MIN_CLIENT_ADMIN_PASSWORD_LENGTH,
+  CLIENT_ADMIN_KNOWN_DEFAULT_PASSWORDS as WEAK_CLIENT_ADMIN_PASSWORDS,
+} from '../lib/client-admin-password.js';
+
 const SITES_PATH = getDataFilePath('sites.json');
 
 function ensureDataDir() {
