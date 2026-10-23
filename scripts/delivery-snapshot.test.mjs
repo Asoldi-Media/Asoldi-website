@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -79,6 +79,55 @@ test('only the newest 3 snapshots are kept, and only allowlisted stores are copi
   assert.deepEqual(list.map((entry) => entry.label), ['n4', 'n3', 'n2']);
   const copied = readdirSync(join(dir, 'snapshots', list[0].id)).sort();
   assert.deepEqual(copied, ['manifest.json', 'sales-clients.json', 'sites.json']);
+});
+
+test('a failed snapshot leaves no temporary directory, however often a boot retries it', () => {
+  const dir = freshDir('fail');
+  writeStores(dir, baseClients);
+  let calls = 0;
+  const failingCopy = (source, target) => {
+    calls += 1;
+    if (calls === 2) throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+    copyFileSync(source, target);
+  };
+  for (let boot = 0; boot < 3; boot += 1) {
+    calls = 0;
+    assert.throws(
+      () => snapshots.createDeliverySnapshot({
+        dataDir: dir,
+        label: 'batch-1',
+        now: new Date(Date.parse('2026-11-01T00:00:00.000Z') + boot * 60_000),
+        copyFile: failingCopy,
+      }),
+      /ENOSPC/,
+    );
+  }
+  assert.deepEqual(readdirSync(join(dir, 'snapshots')), [], 'no .tmp-* directory and no half snapshot is left');
+  assert.equal(snapshots.listDeliverySnapshots({ dataDir: dir }).length, 0);
+
+  const ok = snapshots.createDeliverySnapshot({ dataDir: dir, label: 'batch-1', now: new Date('2026-11-01T01:00:00.000Z') });
+  assert.equal(ok.files.length, 2);
+  assert.deepEqual(readdirSync(join(dir, 'snapshots')), [ok.id]);
+});
+
+test('prune removes stale .tmp-* directories and keeps one that may still be in progress', () => {
+  const dir = freshDir('stale');
+  writeStores(dir, baseClients);
+  const root = join(dir, 'snapshots');
+  mkdirSync(join(root, '.tmp-batch-1-old'), { recursive: true });
+  writeFileSync(join(root, '.tmp-batch-1-old', 'sales-clients.json'), '[]');
+  mkdirSync(join(root, '.tmp-batch-1-fresh'), { recursive: true });
+  const twoHoursAgo = (Date.now() - 2 * 60 * 60 * 1000) / 1000;
+  utimesSync(join(root, '.tmp-batch-1-old'), twoHoursAgo, twoHoursAgo);
+
+  assert.deepEqual(snapshots.removeStaleSnapshotTemps({ dataDir: dir }), ['.tmp-batch-1-old']);
+  assert.deepEqual(readdirSync(root).sort(), ['.tmp-batch-1-fresh']);
+
+  // createDeliverySnapshot prunes too, so an orphan from an earlier crash goes with the next snapshot.
+  mkdirSync(join(root, '.tmp-batch-1-crash'), { recursive: true });
+  utimesSync(join(root, '.tmp-batch-1-crash'), twoHoursAgo, twoHoursAgo);
+  const created = snapshots.createDeliverySnapshot({ dataDir: dir, label: 'manual', now: new Date('2026-11-02T00:00:00.000Z') });
+  assert.deepEqual(readdirSync(root).sort(), ['.tmp-batch-1-fresh', created.id].sort());
 });
 
 test('restore: the dry run lists the diff and writes nothing; the real restore keeps a pre-restore copy', () => {
