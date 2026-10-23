@@ -29,6 +29,7 @@ import { persistPreviewDocument } from '../lib/booker-preview-document.js';
 import { normalizeWorkshopAction, offerStartDateFromWorkshopDueAt } from '../lib/workshop-action.js';
 import { getWorkshopRecord, markProjectTodoDone, persistWorkshopRecord } from '../lib/workshop-record.js';
 import { collectRecordedMeetLinks, firefliesMeetLinksDiffer } from '../lib/fireflies-client-match.js';
+import { mergeRecordingState, normalizeRecordingState } from '../lib/fireflies-recording-state.js';
 import { planConfirmedMeetBackfill } from '../lib/sales-calendar-owner.js';
 import { clampClientActionsToDueDate, ensureFeedbackAction, ensureInformasjonAction } from '../lib/workshop-desk-actions.js';
 import { mergeMakerRunPatch, normalizeDeveloperQa } from '../lib/developer-card.js';
@@ -511,6 +512,10 @@ function normalizeMeetings(list) {
       purpose: ['sales', 'workshop', 'iteration'].includes(sanitizeText(raw.purpose))
         ? sanitizeText(raw.purpose)
         : '',
+      // Which booked slot this row belongs to (lib/fireflies-recording-state.js slotKeyFor).
+      slotKey: sanitizeText(raw.slotKey),
+      // Recording state of a live-join placeholder (null on ordinary transcript rows).
+      recording: normalizeRecordingState(raw.recording),
     });
   }
   return out
@@ -1003,6 +1008,37 @@ export function linkMeetingToSalesClient(clientId, meetingRef = {}) {
   const current = state[index];
   const rest = current.meetings.filter((entry) => entry.meetingId !== meetingId);
   state[index] = normalizeSalesClient({ ...current, meetings: [meetingRef, ...rest], updatedAt: nowIso() });
+  writeState(state);
+  return state[index];
+}
+
+/**
+ * Merge a patch into one client.meetings row on fresh data. `patch.recording` is merged into the
+ * row's current recording state, not replaced (null clears it). Returns the updated client, or null
+ * when the client or the row does not exist.
+ */
+export function patchSalesClientMeeting(clientId, meetingId, patch = {}) {
+  const id = sanitizeText(meetingId);
+  if (!id || !patch || typeof patch !== 'object') return null;
+  const state = readState();
+  const index = state.findIndex((entry) => entry.id === sanitizeText(clientId));
+  if (index === -1) return null;
+  const current = state[index];
+  const rowIndex = current.meetings.findIndex((entry) => entry.meetingId === id);
+  if (rowIndex === -1) return null;
+  const row = current.meetings[rowIndex];
+  const { recording, ...rest } = patch;
+  const nextRow = {
+    ...row,
+    ...rest,
+    meetingId: id,
+    recording: recording === undefined
+      ? row.recording
+      : (recording === null ? null : mergeRecordingState(row.recording, recording)),
+  };
+  const meetings = current.meetings.slice();
+  meetings[rowIndex] = nextRow;
+  state[index] = normalizeSalesClient({ ...current, meetings, updatedAt: nowIso() });
   writeState(state);
   return state[index];
 }
