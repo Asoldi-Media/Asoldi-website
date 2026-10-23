@@ -148,6 +148,10 @@ type Props = {
   /** Open this goal's list first (Tilbud when the card sits in that category). */
   preferredGoalKey?: SalesGoalKey;
   nowMs?: number;
+  /** A client the log's recording buttons sent back (purpose pick, "Marker uten opptak"). */
+  onClient?: (client: SalesClient) => void;
+  /** Admin sees "Ikke denne kunden" on linked recordings in the log. */
+  isAdmin?: boolean;
 };
 
 function toDateTimeLocal(value = '') {
@@ -191,6 +195,8 @@ export function SalesGoalTimeline({
   focusRowId = '',
   preferredGoalKey,
   nowMs = Date.now(),
+  onClient,
+  isAdmin = false,
 }: Props) {
   const [draft, setDraft] = useState<DraftState | null>(null);
   const [edit, setEdit] = useState<EditState | null>(null);
@@ -848,9 +854,11 @@ export function SalesGoalTimeline({
             </div>
             );
             return currentAction.presetKey === 'meeting' ? (
-              <MeetingVideoHover key={currentAction.id} meetingId={salesHover.meetingId} hasVideo={salesHover.hasVideo}>
-                {row}
-              </MeetingVideoHover>
+              <React.Fragment key={currentAction.id}>
+                <MeetingVideoHover meetingId={salesHover.meetingId} hasVideo={salesHover.hasVideo}>
+                  {row}
+                </MeetingVideoHover>
+              </React.Fragment>
             ) : row;
           })}
           </div>
@@ -943,7 +951,7 @@ export function SalesGoalTimeline({
         </div>
       ) : null}
       {logOpen ? (
-        <ClientActivityLogCover client={client} onClose={() => setLogOpen(false)} />
+        <ClientActivityLogCover client={client} onClose={() => setLogOpen(false)} onClient={onClient} isAdmin={isAdmin} />
       ) : null}
     </div>
   );
