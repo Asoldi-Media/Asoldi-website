@@ -25,7 +25,7 @@ await updateLedger('2026-11', (doc) => { doc.entries.push(entry); });
 
 - The updater changes the draft or returns a new document; `null` skips the write.
 - Keys become file-safe (`[a-z0-9_-]`): a key that already is stays as it is, anything else is cleaned and gets a short hash, so two keys never share a file and no key reaches outside the folder.
-- One writer per key at a time in this process (async updaters included), a lock file against other processes, and a re-read: when another process changed the file meanwhile, the update runs again on the new content (up to 4 times).
+- One writer per key at a time in this process (async updaters included), and a lock file (`<file>.lock`) against other processes, held from the read to the write. Writers in other processes wait for it (up to 60 s, then the update fails with code `busy`), so the updater normally runs once. The holder refreshes the lock while it works; a lock nobody refreshed for 30 s was left by a process that stopped, and the next writer removes it. Only if a lock was removed that way while its holder still worked does the holder's update run again on the new content (up to 3 times). An updater should not wait on network calls, since other writers of the file wait for it.
 - A file that is not a JSON object stops the update with code `corrupt` and is left for a person.
 - Files are written whole (temp file and rename) as compact JSON.
 
@@ -39,7 +39,7 @@ Each site and client file keeps its own backups under a path-qualified name in `
 
 | Data | Kept |
 |---|---|
-| Rank snapshots | 12 months in full; older ones become monthly aggregates (average and best organic position, average Maps position, AI Overview citations per keyword); aggregates go after 24 months |
+| Rank snapshots | 12 months in full; older ones become monthly aggregates (average and best organic position, average Maps position, AI Overview citations per keyword, with the sums and counts behind the averages, so a month aggregated over several writes gets the same averages as in one); aggregates go after 24 months |
 | Reports | The last 26 |
 | Blog queue | Every open item, plus the last 50 finished ones (`delivered`, `published`, `expired`, `failed`) |
 | AI visibility checks | 12 months |

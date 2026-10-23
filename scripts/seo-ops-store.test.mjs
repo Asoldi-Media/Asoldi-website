@@ -1,20 +1,52 @@
 // WS9.48: the seo-ops store (lib/seo-ops/store.js) and the path-qualified backups in
 // data/storage-path.js. Runs on a temp data dir with an injected clock.
-import test from 'node:test';
+import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { dirname, join } from 'node:path';
 
 const DATA_DIR = mkdtempSync(join(tmpdir(), 'asoldi-seo-ops-store-'));
 process.env.APP_DATA_DIR = DATA_DIR;
 delete process.env.DATA_BACKUP_KEEP;
+after(() => rmSync(DATA_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
 
 const storeModule = await import('../lib/seo-ops/store.js');
 const storage = await import('../data/storage-path.js');
-const { createSeoOpsStore, sanitizeSeoOpsKey, seoOpsSafeModeGate, RETENTION, MAX_SITE_FILE_BYTES } = storeModule;
+const { applySiteRetention, createSeoOpsStore, sanitizeSeoOpsKey, seoOpsSafeModeGate, RETENTION, MAX_SITE_FILE_BYTES } = storeModule;
+const STORE_URL = new URL('../lib/seo-ops/store.js', import.meta.url).href;
+
+const delay = (ms) => new Promise((resolve) => { setTimeout(resolve, ms); });
+
+async function waitFor(check, timeoutMs = 20_000) {
+  const started = Date.now();
+  while (!check()) {
+    if (Date.now() - started > timeoutMs) throw new Error('timed out waiting');
+    await delay(10);
+  }
+}
+
+/**
+ * A writer in another process on the same data dir. `body` runs after `createSeoOpsStore` is
+ * imported. The child is stopped and awaited when the test ends, so a failure never leaves it
+ * writing into the next test.
+ */
+function runChild(t, body) {
+  const script = `const { createSeoOpsStore } = await import(${JSON.stringify(STORE_URL)});\n${body}`;
+  const child = spawn(process.execPath, ['--input-type=module', '-e', script], {
+    env: { ...process.env, APP_DATA_DIR: DATA_DIR },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stderr = '';
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  const exited = new Promise((resolve) => { child.on('exit', (code, signal) => resolve(code ?? signal)); });
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+    await exited;
+  });
+  return { exited, stderr: () => stderr };
+}
 
 const SITES = Number(process.env.SEO_OPS_SIM_SITES || 50);
 const DAY = 24 * 60 * 60 * 1000;
@@ -101,7 +133,7 @@ test('a simulated year for 50 sites and 50 clients stays within the file budget,
   const counted = [...filesUnder(join(DATA_DIR, 'seo-ops')), ...seoBackups()];
   const budget = SITES * 2 * (1 + keep) + 30;
   assert.ok(counted.length <= budget, `${counted.length} files, budget ${budget}`);
-  assert.equal(counted.filter((f) => /\.(lock|tmp)$/.test(f)).length, 0, 'no lock or temp files left');
+  assert.equal(counted.filter((f) => /\.(lock|reap|tmp)$/.test(f)).length, 0, 'no lock or temp files left');
   for (const key of siteKeys) {
     const size = statSync(store.sitePath(key)).size;
     assert.ok(size < MAX_SITE_FILE_BYTES, `${key} is ${size} bytes`);
@@ -180,21 +212,96 @@ test('writers of one key in this process are serialized, async writers included'
   assert.deepEqual(store.readSite('busy').backlinkTargets.sort((a, b) => a - b), Array.from({ length: 25 }, (_, i) => i));
 });
 
-test('a writer in another process is not lost: the file lock and the re-read keep both sets of changes', { timeout: 120_000 }, async () => {
+test('a writer in another process is not lost: the file lock keeps both sets of changes', { timeout: 120_000 }, async (t) => {
   const store = createSeoOpsStore();
-  const moduleUrl = pathToFileURL(join(process.cwd(), 'lib', 'seo-ops', 'store.js')).href;
-  const script = `const { createSeoOpsStore } = await import(${JSON.stringify(moduleUrl)});
-    const store = createSeoOpsStore();
-    for (let i = 0; i < 40; i += 1) await store.updateSite('shared', (doc) => { doc.backlinkTargets.push('child-' + i); });`;
-  const child = spawn(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, APP_DATA_DIR: DATA_DIR }, stdio: ['ignore', 'pipe', 'pipe'] });
-  let err = '';
-  child.stderr.on('data', (chunk) => { err += chunk; });
-  const done = new Promise((resolve) => child.on('exit', resolve));
+  const child = runChild(t, `const store = createSeoOpsStore();
+    for (let i = 0; i < 40; i += 1) await store.updateSite('shared', (doc) => { doc.backlinkTargets.push('child-' + i); });`);
   for (let i = 0; i < 40; i += 1) await store.updateSite('shared', (doc) => { doc.backlinkTargets.push(`parent-${i}`); });
-  assert.equal(await done, 0, err);
+  assert.equal(await child.exited, 0, child.stderr());
   const targets = store.readSite('shared').backlinkTargets;
-  assert.equal(targets.filter((t) => t.startsWith('parent-')).length, 40);
-  assert.equal(targets.filter((t) => t.startsWith('child-')).length, 40);
+  assert.equal(targets.filter((x) => x.startsWith('parent-')).length, 40);
+  assert.equal(targets.filter((x) => x.startsWith('child-')).length, 40);
+});
+
+test('the file lock is held from the read to the write: a writer in another process waits, and the change runs once', { timeout: 60_000 }, async (t) => {
+  const store = createSeoOpsStore();
+  const marker = join(DATA_DIR, 'marker-cycle');
+  let calls = 0;
+  let child = null;
+  await store.updateSite('cycle', async (doc) => {
+    calls += 1;
+    child ||= runChild(t, `const { writeFileSync } = await import('node:fs');
+      const store = createSeoOpsStore();
+      writeFileSync(${JSON.stringify(marker)}, 'waiting');
+      await store.updateSite('cycle', (doc) => { doc.backlinkTargets.push('child saw ' + doc.backlinkTargets.join('|')); });`);
+    await waitFor(() => existsSync(marker));
+    // The other process is now waiting for the lock while this change is still being made.
+    await delay(400);
+    doc.backlinkTargets.push('parent');
+  });
+  assert.equal(await child.exited, 0, child.stderr());
+  assert.equal(calls, 1, 'the change was not made a second time');
+  assert.deepEqual(store.readSite('cycle').backlinkTargets, ['parent', 'child saw parent']);
+});
+
+test('a lock whose holder keeps refreshing it is not broken as stale, however long the change takes', { timeout: 60_000 }, async (t) => {
+  const timings = { staleMs: 300, refreshMs: 50, timeoutMs: 20_000 };
+  const store = createSeoOpsStore({ lock: timings });
+  const marker = join(DATA_DIR, 'marker-refresh');
+  let calls = 0;
+  let child = null;
+  await store.updateSite('slow', async (doc) => {
+    calls += 1;
+    child ||= runChild(t, `const { writeFileSync } = await import('node:fs');
+      const store = createSeoOpsStore({ lock: ${JSON.stringify(timings)} });
+      writeFileSync(${JSON.stringify(marker)}, 'waiting');
+      await store.updateSite('slow', (doc) => { doc.backlinkTargets.push('child saw ' + doc.backlinkTargets.join('|')); });`);
+    await waitFor(() => existsSync(marker));
+    // Four times the stale window: only the refresh keeps the other process from breaking the lock.
+    await delay(1200);
+    doc.backlinkTargets.push('parent');
+  });
+  assert.equal(await child.exited, 0, child.stderr());
+  assert.equal(calls, 1);
+  assert.deepEqual(store.readSite('slow').backlinkTargets, ['parent', 'child saw parent']);
+});
+
+test('a lock left by a writer that stopped is broken after the stale window; a live lock makes a writer fail as busy', async () => {
+  const store = createSeoOpsStore({ lock: { staleMs: 200, refreshMs: 50, timeoutMs: 5000 } });
+  const lockPath = `${store.sitePath('stale')}.lock`;
+  mkdirSync(dirname(lockPath), { recursive: true });
+  writeFileSync(lockPath, JSON.stringify({ pid: 0, nonce: 'stopped' }));
+  const old = new Date(Date.now() - 60_000);
+  utimesSync(lockPath, old, old);
+  await store.updateSite('stale', (doc) => { doc.reports.push({ summary: 'after' }); });
+  assert.equal(store.readSite('stale').reports.length, 1);
+  assert.equal(existsSync(lockPath), false, 'the update removed its own lock');
+
+  const busy = createSeoOpsStore({ lock: { staleMs: 60_000, refreshMs: 50, timeoutMs: 300 } });
+  writeFileSync(lockPath, JSON.stringify({ pid: 0, nonce: 'live' }));
+  await assert.rejects(busy.updateSite('stale', (doc) => { doc.reports.push({}); }), (error) => error.code === 'busy');
+  assert.equal(JSON.parse(readFileSync(lockPath, 'utf8')).nonce, 'live', 'a live lock is left alone');
+  assert.equal(store.readSite('stale').reports.length, 1);
+  rmSync(lockPath);
+});
+
+test('monthly rank aggregates are the same whether a month reaches the 12-month line in one write or in several', () => {
+  const snapshots = () => [10, 20, 30, 40].map((position, i) => ({
+    ranAt: new Date(Date.UTC(2025, 0, 1 + i * 7, 8)).toISOString(),
+    keywords: [{ keyword: 'tjeneste testby', organic: { position }, maps: { position: position / 10 }, aiOverview: { cited: i === 0 } }],
+  }));
+  const oneWrite = applySiteRetention({ ranks: { snapshots: snapshots(), monthly: [] } }, new Date('2026-02-15T00:00:00.000Z'));
+  let stepwise = { ranks: { snapshots: snapshots(), monthly: [] } };
+  // Each write moves one more weekly snapshot of January 2025 past the 12-month line.
+  for (let i = 0; i < 4; i += 1) stepwise = applySiteRetention(stepwise, new Date(Date.UTC(2026, 0, 2 + i * 7, 9)));
+  assert.equal(stepwise.ranks.snapshots.length, 0);
+  assert.deepEqual(stepwise.ranks.monthly, oneWrite.ranks.monthly);
+  const month = oneWrite.ranks.monthly[0];
+  const [row] = month.keywords;
+  assert.deepEqual(
+    [month.month, month.runs, row.runs, row.avgOrganic, row.bestOrganic, row.avgMaps, row.aiOverviewCited],
+    ['2025-01', 4, 4, 25, 10, 2.5, 1],
+  );
 });
 
 test('a broken file stops the update and is left as it was; null from the updater writes nothing', async () => {
@@ -273,4 +380,29 @@ test('deleting a site removes its file and every backup of it', async () => {
   assert.equal(seoBackups().filter((n) => n.startsWith('seo-ops__sites__gone.json')).length, 0);
   assert.ok(store.listSites().includes('busy'));
   assert.equal(store.listSites().includes('gone'), false);
+});
+
+test('several processes booking into one ledger month at the same time lose no entry', { timeout: 180_000 }, async (t) => {
+  const store = createSeoOpsStore();
+  const per = 30;
+  const children = [0, 1, 2].map((k) => runChild(t, `const store = createSeoOpsStore();
+    for (let i = 0; i < ${per}; i += 1) {
+      await store.updateLedger('2026-10', async (doc) => {
+        await new Promise((resolve) => setTimeout(resolve, i % 3));
+        doc.entries.push({ by: 'child-${k}', i });
+      });
+    }`));
+  for (let i = 0; i < per; i += 1) {
+    await store.updateLedger('2026-10', async (doc) => {
+      await delay(i % 3);
+      doc.entries.push({ by: 'parent', i });
+    });
+  }
+  for (const child of children) assert.equal(await child.exited, 0, child.stderr());
+  // Earlier tests booked into this month too; only this test's entries carry `by`.
+  const entries = store.readLedger('2026-10').entries.filter((e) => e.by);
+  assert.equal(entries.length, 4 * per);
+  for (const by of ['parent', 'child-0', 'child-1', 'child-2']) {
+    assert.deepEqual(entries.filter((e) => e.by === by).map((e) => e.i), Array.from({ length: per }, (_, i) => i), by);
+  }
 });
