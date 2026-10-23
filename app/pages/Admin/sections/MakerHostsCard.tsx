@@ -44,7 +44,8 @@ function when(iso: string | null | undefined) {
 /**
  * Superadmin → System safety → Maker hosts. Each Website Maker install gets its own token
  * (x-maker-host-token); a token is shown once, right after it is made, and can be revoked here.
- * The legacy Maker callback token (Security card) keeps working beside host tokens.
+ * The legacy Maker callback token (Security card) keeps working beside host tokens. A revoked or
+ * out-of-scope host token is refused even when that legacy token comes with it.
  */
 export function MakerHostsCard() {
   const [data, setData] = useState<HostsResponse | null>(null);
@@ -103,7 +104,7 @@ export function MakerHostsCard() {
   }
 
   async function revoke(host: MakerHost) {
-    if (!window.confirm(`Revoke "${host.label}" (${host.hostId})? Its Maker gets 401 at once; this cannot be undone.`)) return;
+    if (!window.confirm(`Revoke "${host.label}" (${host.hostId})? Its Maker gets 401 at once, also when it sends the legacy callback token beside its host token; this cannot be undone. Anyone holding the legacy callback token can still call until it is rotated in the Security card.`)) return;
     setBusy(true);
     setError('');
     try {
@@ -142,7 +143,7 @@ export function MakerHostsCard() {
         Each Website Maker gets its own token. Put it in the Maker <code>.env</code> as{' '}
         <code>{data?.tokenEnv?.prod || 'MAKER_HUB_TOKEN'}</code> (this hub on asoldi.com) or{' '}
         <code>{data?.tokenEnv?.local || 'MAKER_LOCAL_HUB_TOKEN'}</code> (a local hub), or run{' '}
-        <code>node scripts/security/provision-maker-host.mjs</code> in the Maker. The legacy callback token ({data?.legacyTokenSource || '…'}) keeps working.
+        <code>node scripts/security/provision-maker-host.mjs</code> in the Maker. The legacy callback token ({data?.legacyTokenSource || '…'}) keeps working; it is not tied to a host, so rotate it (Security card) after revoking a host you no longer use.
       </p>
       {error && <p className="text-red-400 text-sm mb-2">{error}</p>}
 

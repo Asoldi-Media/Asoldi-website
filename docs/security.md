@@ -59,15 +59,15 @@ Admin → Manage clients → Security → **Rotate secrets** makes a new value o
 
 ## Maker hosts (per-host tokens)
 
-Every Website Maker install can get its own token, so one Maker can be revoked without
-touching the others (`lib/maker-auth.js`, `data/maker-hosts.js`). Superadmin → System safety →
-**Maker hosts** lists, creates and revokes them:
+Every Website Maker install can get its own token, so one Maker can be revoked or limited to some
+scopes without touching the others (`lib/maker-auth.js`, `data/maker-hosts.js`). Superadmin →
+System safety → **Maker hosts** lists, creates and revokes them:
 
 | Route (admin token) | Effect |
 |---|---|
 | `GET /api/admin/maker-hosts` | hosts without hashes, the scopes, the legacy token source, refusal counters |
 | `POST /api/admin/maker-hosts` `{ label, scopes? }` | 201 `{ hostId, token }`, no-store. The token (`mkr_<hex>_<43 chars>`) is shown only in this answer; the file keeps its sha256 |
-| `DELETE /api/admin/maker-hosts/:hostId` | revoke: that token gets 401 from now on (in other hub processes within a second) |
+| `DELETE /api/admin/maker-hosts/:hostId` | revoke: that token gets 401 from now on, even when the request also carries the legacy token (in other hub processes within a second) |
 | `GET /api/admin/maker-hosts/access-log` | Maker access log rows (ids only) |
 
 Scopes: `callback` (`maker-status-callback`), `preview-push` (`maker-preview-push`),
@@ -76,20 +76,36 @@ all four unless the admin picks fewer.
 
 How a Maker request is checked (`verifyMakerRequest`, never open when nothing is configured):
 
-1. `x-maker-host-token` with a host token: sha256 match (constant-time), not revoked, scope allowed.
+1. A host token in `x-maker-host-token` (or in the legacy headers): sha256 match (constant-time),
+   not revoked, scope allowed. A known host whose token is revoked or lacks the scope is refused
+   here, whatever else the request carries: the legacy token and the API key never stand in for
+   it. Every Maker with a host token also sends the legacy run token, so without this rule a
+   revoke or a narrower scope would change nothing for it. A host id the hub does not know (for
+   example after `maker-hosts.json` was restored from an older backup) or a wrong secret is not
+   final: the next steps still apply.
 2. `x-sales-callback-token` / `x-maker-callback-token` equal to the legacy Maker token
    (`WEBSITE_MAKER_STATUS_CALLBACK_TOKEN` / `SALES_MAKER_STATUS_CALLBACK_TOKEN`, else
    `secrets/maker-callback-token`). Runs started by the hub carry this token, so it keeps working
    beside host tokens.
-3. The same legacy headers carrying a host token.
-4. Preview push only: `x-api-key` equal to `WEBSITE_MAKER_API_KEY`.
+3. Preview push only: `x-api-key` equal to `WEBSITE_MAKER_API_KEY`.
+
+The legacy token is not tied to a host: a request that carries only the legacy token is still
+accepted, whoever sends it, until the token is rotated (Security card). After revoking a host
+you no longer use, rotate the legacy token as well; Makers with a valid host token keep working
+through the rotation, because their host token is checked first.
+
+`server.js` `isMakerStatusCallbackAuthorized(req, { scope })` is the same check as a yes/no
+(`checkMakerRequest`, with the same counters) for route modules that answer the refusal
+themselves.
 
 A missing or wrong credential gets 401, a valid host token without the scope 403. A request
 from a host stamps `lastSeenAt` at most every 5 minutes. Refusals are counted in memory
 (`maker-callback-rejected`, `maker-callback-missing-token`) and in `security-settings.json`
 `counters.makerRejected` by reason (written at most every 30 seconds; never a token). A
 credential that keeps failing (more than 20 times in 10 minutes, keyed on a hash of its first
-characters, because `req.ip` is the hosting proxy) gets 429 instead of 401; a request without
+characters, because `req.ip` is the hosting proxy) gets 429 instead of 401 when it is a host
+token. A legacy token or API key that keeps failing (for example the old run token of runs created
+before a rotation) keeps getting 401, which the Maker's own fallbacks act on; a request without
 any credential always gets a plain 401, and a valid credential is never refused because another
 one fails. More than 30 refusals in 10 minutes across all keys counts one
 `maker-auth-failure-alert` (and `counters.makerFailureAlerts`) per window.
