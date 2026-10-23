@@ -15,6 +15,9 @@ data/sites.json
 data/reset-tokens.json
 .builds/data/
 
+# Local safe-mode hub data (npm run dev:safe, soak, golden profiles): outbox, intents, seeded clients.
+.local-data/
+
 # Media lives on the Hostinger disk (Admin -> Manage website -> Media), not in Git.
 # Small marketing images/SVGs under public/media stay tracked; audio/video does not.
 # Fetch the AV files for local dev with `npm run media:pull`.

@@ -9,11 +9,21 @@
  *   node scripts/sync-prod-runtime.mjs --out-dir "$HOME/.asoldi-website-data"
  *   node scripts/sync-prod-runtime.mjs --out-dir C:\hosted\asoldi-data
  *   node scripts/sync-prod-runtime.mjs --out-dir C:\hosted\asoldi-data --only sales
+ *
+ * Never copies secrets/ (signing secrets, webhook secrets) or production.env: a local
+ * copy of the prod data must not hold the prod signing secret or the prod env.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { dirname, join, resolve } from 'path';
+import { basename, dirname, join, resolve } from 'path';
 import { homedir } from 'os';
+import { pathToFileURL } from 'url';
 import bcrypt from 'bcryptjs';
+
+/** True for paths a local runtime copy must never write: secrets/ and production.env. */
+export function isProtectedRuntimePath(filePath = '') {
+  const normalized = String(filePath || '').replace(/\\/g, '/');
+  return /(^|\/)secrets(\/|$)/i.test(normalized) || /^production\.env$/i.test(basename(normalized)) || /(^|\/)cms\/private(\/|$)/i.test(normalized);
+}
 
 const DEFAULT_PROD_URL = 'https://asoldi.com';
 const DEFAULT_OUT_DIR = resolve(homedir(), '.asoldi-website-data');
@@ -56,6 +66,7 @@ function readJsonArray(filePath) {
 }
 
 function writeJson(filePath, data) {
+  if (isProtectedRuntimePath(filePath)) throw new Error(`refusing to write a protected path: ${basename(filePath)}`);
   mkdirSync(dirname(filePath), { recursive: true });
   writeFileSync(filePath, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
 }
@@ -174,7 +185,17 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err.message || err);
-  process.exit(1);
-});
+function isDirectRun() {
+  try {
+    return Boolean(process.argv[1]) && import.meta.url === pathToFileURL(process.argv[1]).href;
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectRun()) {
+  main().catch((err) => {
+    console.error(err.message || err);
+    process.exit(1);
+  });
+}
