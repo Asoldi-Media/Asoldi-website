@@ -258,7 +258,7 @@ function sign(secret, payload) {
   return Buffer.from(JSON.stringify({ data, sig: createHmac('sha256', secret).update(data).digest('hex') })).toString('base64url');
 }
 
-async function withApp({ adminSecretHolder, makerCallbackTokenHolder, recordRotation }, fn) {
+async function withApp({ adminSecretHolder, makerCallbackTokenHolder, recordRotation, loginLimiter }, fn) {
   const app = express();
   app.use(express.json());
   // The real hub verifies with the holder's current value, like server.js verifyToken.
@@ -281,11 +281,12 @@ async function withApp({ adminSecretHolder, makerCallbackTokenHolder, recordRota
   const clientAuth = (_req, res) => res.status(401).json({ message: 'Unauthorized' });
   // The same confirmer server.js uses, with a fixed password.
   const confirmAdminPassword = hardening.createPasswordConfirmer({
-    limiter: hardening.createLoginLimiter(),
+    limiter: loginLimiter || hardening.createLoginLimiter(),
     accountFor: (req) => `admin:${req.admin.username}`,
     verifyPassword: async (_req, password) => password === PASSWORD,
   });
   routes.registerSecurityAdminRoutes(app, {
+    ...(loginLimiter ? { loginLimiter } : {}),
     adminAuth,
     clientAuth,
     signToken: (payload) => sign(adminSecretHolder.get(), payload),
@@ -472,4 +473,95 @@ test('routes: when the rotation record cannot be saved, the answer still carries
   }
   assert.equal(errors.filter((line) => /rotation record could not be saved: ELOCKED/.test(line)).length, 2, errors.join('\n'));
   assert.equal(errors.join('\n').includes(adminSecretHolder.get()), false, 'no secret in the log');
+});
+
+test('routes: the security status shows where login addresses come from, never an address', async () => {
+  const dir = tempDir();
+  const adminSecretHolder = hardening.createHubSecretHolder({ dataDir: dir, name: 'admin-secret' });
+  const makerCallbackTokenHolder = hardening.createHubSecretHolder({ envRule: 'any', lazy: true, dataDir: dir, name: 'maker-callback-token', bytes: 32 });
+  const lines = [];
+  const loginLimiter = hardening.createLoginLimiter({ log: (line) => lines.push(line) });
+  await withApp({ adminSecretHolder, makerCallbackTokenHolder, loginLimiter }, async (base, { adminToken }) => {
+    const token = adminToken();
+    const status = async () => (await fetch(`${base}/api/admin/system/security`, { headers: { authorization: `Bearer ${token}` } })).json();
+    const before = await status();
+    assert.equal(before.loginAddressMode, 'none');
+    assert.equal(before.loginAddresses.distinctLastHour, 0);
+    for (const client of ['203.0.113.1', '203.0.113.2', '203.0.113.2']) {
+      const res = await fetch(`${base}/api/admin/security/maker-callback-token/rotate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, 'x-forwarded-for': client },
+        body: JSON.stringify({ currentPassword: 'wrong-password', confirm: 'ROTER' }),
+      });
+      assert.equal(res.status, 401);
+    }
+    const after = await status();
+    assert.equal(after.loginAddressMode, 'forwarded');
+    assert.deepEqual(after.loginAddresses, {
+      mode: 'forwarded',
+      modesLastHour: { forwarded: 3 },
+      attemptsLastHour: 3,
+      distinctLastHour: 2,
+      hopFromRight: 1,
+      peer: 'internal',
+      trustedHops: null,
+    });
+    assert.equal(JSON.stringify(after).includes('203.0.113.'), false, 'no address in the status');
+  });
+  assert.equal(lines.length, 1);
+  assert.equal(/203\.0\.113\./.test(lines[0]), false, 'no address in the log');
+});
+
+test('routes: an admin sets the trusted proxy hops; the setting survives other writes and changes the counted address', async () => {
+  const { createHubLoginLimiter, readLoginTrustedHops } = await import('../lib/login-limits.js');
+  const dir = tempDir();
+  const adminSecretHolder = hardening.createHubSecretHolder({ dataDir: dir, name: 'admin-secret' });
+  const makerCallbackTokenHolder = hardening.createHubSecretHolder({ envRule: 'any', lazy: true, dataDir: dir, name: 'maker-callback-token', bytes: 32 });
+  // The routes write security-settings.json in this file's APP_DATA_DIR (dataDir).
+  const loginLimiter = createHubLoginLimiter({ dataDir, log: () => {} });
+  const viaCdn = { headers: { 'x-forwarded-for': '198.51.100.1, 192.0.2.50' }, socket: { remoteAddress: '127.0.0.1' } };
+  try {
+    await withApp({ adminSecretHolder, makerCallbackTokenHolder, loginLimiter }, async (base, { adminToken }) => {
+      const token = adminToken();
+      const put = (body, auth = token) => fetch(`${base}/api/admin/security/login-address`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', ...(auth ? { authorization: `Bearer ${auth}` } : {}) },
+        body: JSON.stringify(body),
+      });
+      assert.equal((await put({ trustedHops: 2 }, '')).status, 401, 'admins only');
+      assert.equal((await put({})).status, 400, 'the field is required');
+      for (const bad of [0, 6, 2.5, '2.5', 'x', true, -1]) {
+        const res = await put({ trustedHops: bad });
+        assert.equal(res.status, 400, String(bad));
+        assert.match((await res.json()).message, /whole number from 1 to 5/);
+      }
+      assert.equal(loginLimiter.addressOf(viaCdn), '192.0.2.50', 'default: the right-most public entry');
+
+      const set = await put({ trustedHops: 2 });
+      assert.equal(set.status, 200);
+      const body = await set.json();
+      assert.equal(body.trustedHops, 2);
+      assert.equal(body.loginAddresses.trustedHops, 2);
+      assert.equal(settings.readSecuritySettings().loginTrustedHops, 2);
+      assert.equal(readLoginTrustedHops(dataDir), 2);
+      assert.equal(loginLimiter.addressOf(viaCdn), '198.51.100.1', 'two trusted public hops: the client behind the second proxy');
+
+      // Other writers keep the setting.
+      settings.updateSecuritySettings({ maxTokenAgeDays: 9 }, { by: 'admin:tester' });
+      settings.recordSecretRotation('admin-secret', { by: 'admin:tester' });
+      settings.revokeTokensBefore('client', { by: 'admin:tester', now: Date.now() - 60_000 });
+      assert.equal(settings.readSecuritySettings().loginTrustedHops, 2);
+      assert.equal(settings.readSecuritySettings().maxTokenAgeDays, 9);
+
+      assert.equal((await (await put({ trustedHops: ' 3 ' })).json()).trustedHops, 3);
+      const reset = await (await put({ trustedHops: null })).json();
+      assert.equal(reset.trustedHops, null);
+      assert.equal(loginLimiter.addressOf(viaCdn), '192.0.2.50', 'back to the default');
+      const overview = await (await fetch(`${base}/api/admin/system/security`, { headers: { authorization: `Bearer ${token}` } })).json();
+      assert.equal(overview.loginAddresses.trustedHops, null);
+      assert.equal(overview.tokens.maxTokenAgeDays, 9);
+    });
+  } finally {
+    settings.updateSecuritySettings({ maxTokenAgeDays: null, loginTrustedHops: null }, { by: 'admin:tester' });
+  }
 });

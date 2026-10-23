@@ -331,6 +331,18 @@ test('local hub boot: tokens signed with an old default secret, stale tokens, pa
     assert.equal(limitedHere.status, 429, 'ten failures from one address limit that address');
     assert.ok(Number(limitedHere.headers.get('retry-after')) > 0);
     assert.equal((await loginFrom('203.0.113.51', newPassword)).status, 200, 'and only that address');
+    // Where the limits took the addresses from: shown on the status route and logged once per
+    // kind of source, never with an address.
+    const loginStatus = await (await fetch(`${base}/api/admin/system/security`, { headers: admin() })).json();
+    assert.equal(loginStatus.loginAddressMode, 'forwarded');
+    assert.equal(loginStatus.loginAddresses.hopFromRight, 1);
+    assert.equal(loginStatus.loginAddresses.peer, 'internal');
+    assert.equal(loginStatus.loginAddresses.trustedHops, null);
+    assert.ok(loginStatus.loginAddresses.distinctLastHour >= 14, `distinct addresses: ${loginStatus.loginAddresses.distinctLastHour}`);
+    assert.ok(loginStatus.loginAddresses.modesLastHour.socket >= 1, 'the sign-ins without X-Forwarded-For are a second source');
+    const sourceLines = logs.split(/\r?\n/).filter((line) => line.startsWith('[security] login limits count each client by'));
+    assert.equal(sourceLines.filter((line) => line.includes('X-Forwarded-For entry 1 from the right')).length, 1, sourceLines.join('\n'));
+    assert.equal(sourceLines.some((line) => /\d+\.\d+\.\d+\.\d+/.test(line)), false, 'no address is logged');
 
     // 12. No live system was touched: no Myphoner reconcile, no Fireflies pull, and nothing
     //     but loopback was even attempted.

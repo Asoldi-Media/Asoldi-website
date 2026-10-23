@@ -5,12 +5,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   beginLogin,
+  cleanTrustedHops,
   clientIpFromRequest,
   createLoginLimiter,
   createStaffMediaGate,
   guardLogin,
   isInternalAddress,
   isTokenFresh,
+  MAX_TRUSTED_HOPS,
+  readClientAddress,
   readOrCreateDiskSecret,
   safeEqual,
   DEFAULT_TOKEN_MAX_AGE_MS,
@@ -256,6 +259,78 @@ function fakeRes() {
   };
 }
 
+test('client address: the source mode, the X-Forwarded-For position used and a trusted-hop count', () => {
+  const req = (xff, socket = '127.0.0.1') => ({ headers: xff === undefined ? {} : { 'x-forwarded-for': xff }, socket: { remoteAddress: socket } });
+  assert.deepEqual(readClientAddress(req(undefined)), { address: '127.0.0.1', mode: 'socket', hopFromRight: 0, peer: 'internal' });
+  assert.deepEqual(readClientAddress(req(undefined, '203.0.113.9')), { address: '203.0.113.9', mode: 'socket', hopFromRight: 0, peer: 'public' });
+  const chain = '198.51.100.1, 203.0.113.7, 10.0.0.5';
+  assert.deepEqual(readClientAddress(req(chain)), { address: '203.0.113.7', mode: 'forwarded', hopFromRight: 2, peer: 'internal' });
+  assert.deepEqual(readClientAddress(req(chain), { trustedHops: 2 }), { address: '198.51.100.1', mode: 'forwarded', hopFromRight: 3, peer: 'internal' });
+  assert.equal(clientIpFromRequest(req(chain), { trustedHops: 3 }), '198.51.100.1', 'fewer public entries than trusted hops: the left-most public one');
+  assert.deepEqual(readClientAddress(req('10.0.0.1, 10.0.0.2')), { address: '10.0.0.2', mode: 'forwarded-internal', hopFromRight: 1, peer: 'internal' });
+  for (const junk of [null, 0, 6, '2.5', 2.5, 'x', true, -1, '']) {
+    assert.equal(clientIpFromRequest(req(chain), { trustedHops: junk }), '203.0.113.7', `trustedHops ${String(junk)} counts as the default`);
+  }
+  assert.equal(cleanTrustedHops(' 3 '), 3);
+  assert.equal(cleanTrustedHops(MAX_TRUSTED_HOPS), MAX_TRUSTED_HOPS);
+  assert.equal(cleanTrustedHops(MAX_TRUSTED_HOPS + 1), null);
+  assert.equal(clientIpFromRequest(req(chain)), clientIpFromRequest(req(chain), { trustedHops: 1 }), 'the default is one trusted hop');
+});
+
+test('login limiter: last-hour address figures and a once-per-source log line without addresses', () => {
+  let clock = 1_000_000_000;
+  const lines = [];
+  let hops = null;
+  const limiter = createLoginLimiter({ now: () => clock, log: (line) => lines.push(line), trustedHops: () => hops });
+  const via = (client, proxy = '192.0.2.50') => ({ headers: { 'x-forwarded-for': `${client}, ${proxy}` }, socket: { remoteAddress: '10.0.0.3' } });
+  assert.deepEqual(limiter.addressStats(), { mode: 'none', modesLastHour: {}, attemptsLastHour: 0, distinctLastHour: 0, hopFromRight: null, peer: null, trustedHops: null });
+
+  // A public proxy in front of the hosting proxy appends its own address: with the default rule
+  // every client counts as that one address, and the figures show it.
+  for (let i = 1; i <= 6; i += 1) assert.equal(limiter.addressOf(via(`198.51.100.${i}`)), '192.0.2.50');
+  let stats = limiter.addressStats();
+  assert.equal(stats.mode, 'forwarded');
+  assert.equal(stats.attemptsLastHour, 6);
+  assert.equal(stats.distinctLastHour, 1, 'six attempts, one address: the operator signal');
+  assert.equal(stats.hopFromRight, 1);
+  assert.equal(stats.peer, 'internal');
+
+  // Trusting two public hops counts the clients again.
+  hops = 2;
+  for (let i = 1; i <= 6; i += 1) assert.equal(limiter.addressOf(via(`198.51.100.${i}`)), `198.51.100.${i}`);
+  stats = limiter.addressStats();
+  assert.equal(stats.distinctLastHour, 7);
+  assert.equal(stats.attemptsLastHour, 12);
+  assert.equal(stats.hopFromRight, 2);
+  assert.equal(stats.trustedHops, 2);
+
+  // A request without the header is another source; the most common source of the hour stays the mode.
+  hops = null;
+  limiter.addressOf({ headers: {}, socket: { remoteAddress: '127.0.0.1' } });
+  stats = limiter.addressStats();
+  assert.deepEqual(stats.modesLastHour, { forwarded: 12, socket: 1 });
+  assert.equal(stats.mode, 'forwarded');
+  assert.equal(stats.hopFromRight, 0);
+
+  assert.equal(lines.length, 3, `one line per kind of source:\n${lines.join('\n')}`);
+  assert.match(lines[0], /^\[security\] login limits count each client by X-Forwarded-For entry 1 from the right \(public entry 1 from the right; the connection comes from an internal address\)/);
+  assert.match(lines[1], /X-Forwarded-For entry 2 from the right \(public entry 2 from the right/);
+  assert.match(lines[2], /the connecting address \(no X-Forwarded-For header/);
+  assert.equal(lines.some((line) => /\d+\.\d+\.\d+\.\d+/.test(line)), false, 'no address is logged');
+
+  clock += 61 * 60 * 1000;
+  stats = limiter.addressStats();
+  assert.equal(stats.distinctLastHour, 0, 'addresses leave after an hour');
+  assert.equal(stats.attemptsLastHour, 0);
+  assert.equal(stats.mode, 'none');
+
+  // At most eight source lines per process, however many shapes arrive; a throwing setting is the default.
+  const capped = [];
+  const many = createLoginLimiter({ log: (line) => capped.push(line), trustedHops: () => { throw new Error('unreadable'); } });
+  for (let n = 1; n <= 20; n += 1) many.addressOf({ headers: { 'x-forwarded-for': ['203.0.113.1', ...Array(n).fill('10.0.0.1')].join(', ') }, socket: {} });
+  assert.equal(capped.length, 8);
+  assert.equal(many.addressStats().trustedHops, null);
+});
 test('staff media gate lets only signed-in staff through', () => {
   const tokens = { staff: { role: 'sales' }, client: { role: 'client' } };
   const gate = createStaffMediaGate((token) => tokens[token] || null);

@@ -10108,6 +10108,7 @@ registerSecurityAdminRoutes(app, {
   adminSecretHolder: ADMIN_SECRET_HOLDER,
   makerCallbackTokenHolder: MAKER_CALLBACK_TOKEN_HOLDER,
   confirmAdminPassword,
+  loginLimiter,
 });
 
 app.get('/api/admin/employees/overview', adminAuth, async (_req, res) => {

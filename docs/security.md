@@ -13,7 +13,7 @@ change here needs a new Hostinger env variable.
 | `secrets/maker-callback-token` | Maker callback token when no env token is set; rotatable from the Security card | `server.js` `getMakerCallbackToken` |
 | `secrets/initial-admin-password` | first admin password on an empty install | `ensureAdminExists` |
 | `secrets/webhooks.json` | Fireflies webhook signing secret and URL token | `data/webhook-secrets.js` |
-| `security-settings.json` | max token age, `revokedBefore` per class, one-time `migrations` | `data/security-settings.js` |
+| `security-settings.json` | max token age, `revokedBefore` per class, one-time `migrations`, `loginTrustedHops` | `data/security-settings.js` |
 | `token-revocations.json` | per-user token versions ("log out everywhere") | `data/security-settings.js` |
 
 Files are created in one step (temp file + hard link or rename), mode 0600, so two processes
@@ -101,8 +101,22 @@ hash or the sync flag.
   stay for their whole window (`lib/login-limits.js`). The counts live in memory, so a restart
   clears them.
 - The address is the right-most `X-Forwarded-For` entry that is not an internal proxy address
-  (`lib/auth-hardening.js` `clientIpFromRequest`): the left entries come from the client, so
+  (`lib/auth-hardening.js` `readClientAddress`): the left entries come from the client, so
   changing them does not reset the count.
+- Which source the limits use is logged once per process for each kind of source
+  (`[security] login limits count each client by X-Forwarded-For entry 1 from the right …`,
+  never an address). `GET /api/admin/system/security` adds `loginAddressMode` (the most common
+  source of the last hour: `forwarded`, `forwarded-internal`, `socket`, or `none`) and
+  `loginAddresses` (`distinctLastHour`, `attemptsLastHour`, `modesLastHour`, and `hopFromRight`
+  and `peer` of the latest attempt, `trustedHops`); the Security card shows it in one line.
+  Addresses are kept only as short hashes, for an hour. Many attempts with `distinctLastHour` 1
+  mean every client reaches the hub through one public proxy (a CDN in front of the hosting
+  proxy, for example), so all of them share one per-address count.
+- Then `PUT /api/admin/security/login-address` with `{ "trustedHops": 2 }` (1 to 5; `null` is
+  the default, 1) makes the limits count the second public entry from the right. Raise it only
+  when every request passes that many public proxies: a request that skips one decides which
+  entry it is counted by. The value is `security-settings.json` `loginTrustedHops`, and every
+  hub process reads it within a second.
 - Tokens are stamped with the user's token version from a fresh read of
   `token-revocations.json`, so a login served by one hub process right after a "log out
   everywhere" in another is not refused a second later.
@@ -110,6 +124,7 @@ hash or the sync flag.
   a fraction of a second; the boot migration then logs a warning and the hub starts.
 
 Routes (admin token): `GET /api/admin/system/security`, `PUT /api/admin/security/token-settings`,
+`PUT /api/admin/security/login-address` (`{trustedHops}`),
 `POST /api/admin/security/revoke-tokens` (`{scope}` or `{userId}`). Client token:
 `POST /api/client/account/logout-everywhere`.
 
