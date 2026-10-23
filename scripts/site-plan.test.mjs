@@ -152,6 +152,22 @@ test('legacy offers: lines the calculator writes (extra pages, one-time note and
   }
 });
 
+test('legacy offers: a line describing a tier is neutral only in an offer whose tier covers that tier', () => {
+  const tier2Feature = tiers.WEBSITE_TIERS.find((tier) => tier.id === 'tier-2-seo').planFeatures.find((line) => !tiers.WEBSITE_TIERS.find((tier) => tier.id === 'tier-1-standard').planFeatures.includes(line) && !/^Alt i|^Opp til/.test(line));
+  assert.ok(tier2Feature);
+  const offerLine = (tierId) => sitePlan.derivePlanFromOfferAlternative({ products: [{ kind: 'tier', tierId, includes: ['Full nettsideutvikling', tier2Feature] }] }, { tierId });
+  for (const tierId of ['tier-2-seo', 'tier-3-ecommerce']) {
+    assert.deepEqual(offerLine(tierId).unknownLines, [], tierId);
+    assert.equal(offerLine(tierId).needsConfirmation, false, tierId);
+  }
+  assert.deepEqual(offerLine('tier-1-standard').unknownLines, [tier2Feature], 'a tier 2 line in a tier 1 offer needs a look');
+  assert.equal(offerLine('tier-1-standard').needsConfirmation, true);
+  const tier3Line = tiers.WEBSITE_TIERS.find((tier) => tier.id === 'tier-3-ecommerce').includes.find((line) => !tiers.WEBSITE_TIERS.find((tier) => tier.id === 'tier-2-seo').includes.includes(line));
+  assert.equal(isStructuralIncludeLine(tier3Line), true, 'without a tier any base line counts, as before');
+  assert.equal(isStructuralIncludeLine(tier3Line, { tierId: 'tier-2-seo' }), false);
+  assert.equal(isStructuralIncludeLine(tier3Line, { tierId: 'tier-3-ecommerce' }), true);
+});
+
 test('legacy offers: every package built before offer plans derives without unread lines', () => {
   for (const [name, built] of Object.entries(golden.quotes)) {
     for (const [index, alternative] of built.alternatives.entries()) {
