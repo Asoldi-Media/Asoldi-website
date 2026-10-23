@@ -106,7 +106,9 @@ CMS (`lib/cms-sso.js`). The format follows the CMS version from the site's last 
   `<dataDir>/cms-sso/tokens.json` (private folder, locked writes). The CMS checks it with
   `POST /api/cms/sso/redeem` (site key in the `x-site-key` header or the body, `{ token }`
   in the body) before it opens a session. The hub answers `{ ok: true, by }` once, for that
-  site only, before expiry; anything else gets the same 401. Calls without a known site key
+  site only, before expiry; anything else gets the same 401. The site key is compared with
+  every site's key, as sha256 digests in constant time and without stopping at a match
+  (`findSiteByKeyConstantTime`), so the answer time says nothing about the keys. Calls without a known site key
   are limited per address (30 per 15 minutes), and a known key with a live token of another
   site per site and address (10), with 429 and Retry-After above that. A known key with an
   unknown, used or expired token is not limited: a CMS passes on all its visitors' links from

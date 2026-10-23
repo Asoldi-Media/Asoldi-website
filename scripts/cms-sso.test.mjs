@@ -15,6 +15,7 @@ import {
   createQuietCounter,
   createRedeemLimiter,
   hashCmsSsoToken,
+  findSiteByKeyConstantTime,
   mintSiteKeyCmsSsoToken,
   parseCmsVersion,
   registerCmsSsoRoutes,
@@ -29,18 +30,17 @@ const newSite = { id: '46', site_key: 'key-46', domain: 'https://new.example', c
 const noDomainSite = { id: '47', site_key: 'key-47', domain: '', cms: { adminUrl: 'https://cms.example.net/admin', packageVersion: '2.2.1' } };
 const ALL = [site, otherSite, legacySite, oldSite, newSite, noDomainSite, { id: '7', site_key: 'k7' }];
 const byId = (id) => ALL.find((s) => s.id === id) || null;
-const byKey = (key) => ALL.find((s) => s.site_key === key) || null;
 
 function tempDir() {
   return mkdtempSync(path.join(tmpdir(), 'hub-cms-sso-'));
 }
 
-async function boot({ dataDir, clock, quiet } = {}) {
+async function boot({ dataDir, clock, quiet, getAllSites = () => ALL } = {}) {
   const app = express();
   app.use(express.json());
   const adminAuth = (req, res, next) => (req.get('authorization') === 'Bearer ok' ? ((req.admin = { username: 'staff-one' }), next()) : res.status(401).end());
   const now = clock ? () => clock.t : undefined;
-  const registered = registerCmsSsoRoutes(app, { adminAuth, getSiteById: byId, getSiteByKey: byKey, dataDir, now, quiet });
+  const registered = registerCmsSsoRoutes(app, { adminAuth, getSiteById: byId, getAllSites, dataDir, now, quiet });
   const server = await new Promise((r) => { const s = app.listen(0, '127.0.0.1', () => r(s)); });
   const base = `http://127.0.0.1:${server.address().port}`;
   return { base, registered, close: () => new Promise((r) => server.close(r)) };
@@ -285,6 +285,44 @@ test('HS-4: live tokens of another site are limited per (site, address)', async 
   });
 });
 
+/** Sites whose site_key reads are counted, so a test can see that a lookup compares every key. */
+function countingSites(count) {
+  const reads = new Array(count).fill(0);
+  const sites = Array.from({ length: count }, (_, i) => {
+    const row = { id: String(100 + i), domain: `https://s${i}.example`, cms: { packageVersion: '2.2.1' } };
+    Object.defineProperty(row, 'site_key', { enumerable: true, get() { reads[i] += 1; return `key-${100 + i}`; } });
+    return row;
+  });
+  return { sites, reads, reset: () => reads.fill(0) };
+}
+
+test('HS-4: the site-key lookup compares every site, whichever one matches or none', () => {
+  const { sites, reads, reset } = countingSites(6);
+  for (const [key, expected] of [['key-100', '100'], ['key-103', '103'], ['key-105', '105'], ['key-999', null], ['key-10', null], ['', null], [undefined, null]]) {
+    reset();
+    assert.equal(findSiteByKeyConstantTime(sites, key)?.id ?? null, expected, String(key));
+    assert.deepEqual(reads, Array(6).fill(1), `every key is read exactly once for ${String(key)}`);
+  }
+  assert.equal(findSiteByKeyConstantTime(sites, '  key-102 ')?.id, '102', 'the given key is trimmed, as the route does');
+  assert.equal(findSiteByKeyConstantTime([{ id: 'x' }, null, { id: 'y', site_key: '' }], ''), null, 'a site without a key never matches an empty key');
+  assert.equal(findSiteByKeyConstantTime(null, 'key-100'), null);
+});
+
+test('HS-4: the redeem route looks the key up across all sites without stopping at the match', async () => {
+  const { sites, reads, reset } = countingSites(5);
+  const all = [...sites, site];
+  await withHub(async (hub) => {
+    const token = tokenOf((await link(hub.base, '42')).body.url);
+    reset();
+    const first = await redeem(hub.base, { token: junkToken(), siteKey: 'key-100' });
+    assert.equal(first.status, 401, 'a junk token for the first site');
+    assert.ok(reads.every((n) => n >= 1), `the first site matched, and every other key was still compared (reads ${reads})`);
+    reset();
+    assert.equal((await redeem(hub.base, { token, siteKey: 'key-42' })).status, 200, 'the last site in the list');
+    assert.deepEqual(reads, Array(5).fill(1));
+  }, { getAllSites: () => all });
+});
+
 test('HS-4: limiter counts pairs and addresses in a sliding window with bounded memory', () => {
   let t = 0;
   const limiter = createRedeemLimiter({ windowMs: 1000, maxPerPair: 3, maxPerIp: 5, maxKeys: 50, now: () => t });
@@ -341,7 +379,7 @@ test('HS-1: a heartbeat from a site-key holder cannot move the sign-in link to a
   const app = express();
   app.use(express.json());
   const adminAuth = (req, _res, next) => { req.admin = { username: 'staff-one' }; next(); };
-  const registered = registerCmsSsoRoutes(app, { adminAuth, getSiteById: hub.getSiteById, getSiteByKey: hub.getSiteByKey, dataDir });
+  const registered = registerCmsSsoRoutes(app, { adminAuth, getSiteById: hub.getSiteById, getAllSites: hub.getAllSites, dataDir });
   const server = await new Promise((r) => { const x = app.listen(0, '127.0.0.1', () => r(x)); });
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
@@ -356,6 +394,10 @@ test('HS-1: a heartbeat from a site-key holder cannot move the sign-in link to a
     hub.recordHeartbeat(key, { adminUrl: 'http://www.shop.example/admin' });
     const www = await (await fetch(`${base}/api/hub/sites/${id}/cms-sso`, { method: 'POST' })).json();
     assert.equal(new URL(www.url).origin, 'https://www.shop.example', 'a plain-http report on the same host still gives https');
+    // The redeem route finds the site among the hub's real site list.
+    const redeemed = await redeem(base, { token: tokenOf(www.url), siteKey: key });
+    assert.equal(redeemed.status, 200);
+    assert.equal(redeemed.body.ok, true);
   } finally {
     await new Promise((r) => server.close(r));
     if (saved === undefined) delete process.env.APP_DATA_DIR;
