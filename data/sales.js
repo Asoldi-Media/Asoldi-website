@@ -295,8 +295,9 @@ function normalizeMakerRun(value = {}) {
     mediaGatherCompletedAt: sanitizeText(input.mediaGatherCompletedAt),
   };
   // WS0.19 owns aiSpend (the Maker's run.ai.spend callback); only setSalesMakerRunAiSpend writes it.
+  // It belongs to one run: after a relink to another run it is dropped (ai/maker-spend.json keeps it).
   const aiSpend = input.aiSpend ? normalizeRunAiSpend(input.aiSpend, { runId }) : null;
-  if (aiSpend) base.aiSpend = aiSpend;
+  if (aiSpend && runId && aiSpend.runId === runId) base.aiSpend = aiSpend;
   if (!runId) return carryFutureKeys(base, input, FUTURE_MAKERRUN_KEYS);
   return carryFutureKeys({
     ...base,
@@ -1472,7 +1473,8 @@ export function setSalesMakerRun(id, makerPatch = {}) {
 /**
  * WS0.19: the only writer of makerRun.aiSpend (the Maker's run.ai.spend callback, after its token and
  * linked-run checks). Stores the run's spend snapshot when it belongs to the linked run and is not older
- * than the stored one. Returns { client, stored, reason }.
+ * than the stored one. The snapshot's own `at` is required, so a delayed retry is never taken for the
+ * newest; at the same `at`, a snapshot with fewer calls is the older one. Returns { client, stored, reason }.
  */
 export function setSalesMakerRunAiSpend(id, aiSpend = {}) {
   const state = readState();
@@ -1480,11 +1482,15 @@ export function setSalesMakerRunAiSpend(id, aiSpend = {}) {
   if (index === -1) return { client: null, stored: false, reason: 'not-found' };
   const current = state[index];
   const runId = sanitizeText(current.makerRun?.runId);
+  if (!Number.isFinite(Date.parse(sanitizeText(aiSpend?.at)))) return { client: current, stored: false, reason: 'missing-at' };
   const next = normalizeRunAiSpend(aiSpend, { runId, receivedAt: nowIso() });
   if (!next) return { client: current, stored: false, reason: 'invalid' };
   if (!runId || next.runId !== runId) return { client: current, stored: false, reason: 'not-linked-run' };
   const previous = current.makerRun?.aiSpend;
-  if (previous?.runId === runId && previous.at && next.at && previous.at > next.at) return { client: current, stored: false, reason: 'older' };
+  if (previous?.runId === runId && previous.at && next.at) {
+    const fewerCallsAtSameTime = previous.at === next.at && Number.isInteger(previous.calls) && (!Number.isInteger(next.calls) || next.calls < previous.calls);
+    if (previous.at > next.at || fewerCallsAtSameTime) return { client: current, stored: false, reason: 'older' };
+  }
   const updated = normalizeSalesClient({
     ...current,
     makerRun: { ...current.makerRun, aiSpend: next },
