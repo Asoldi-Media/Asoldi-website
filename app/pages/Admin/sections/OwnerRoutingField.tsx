@@ -7,10 +7,23 @@ type RoutingMode = '' | 'owner' | 'owner+asoldi-bcc';
 type RoutingView = {
   ownerRouting: RoutingMode;
   ownerRoutingSetAt: string;
-  ownerRecipients: { email: string; status: string; source: string }[];
+  ownerRecipients: { email: string; status: string; source: string; confirmedAt?: string }[];
   owner: { recipients: string[]; source: string };
   routing: { to: string; bcc: string; subjectPrefix: string; bccUntil: string };
 };
+
+/** Only confirmed addresses are shown and edited here; pending ones wait for their own confirmation. */
+function confirmedEmails(view: RoutingView | null) {
+  return (view?.ownerRecipients || [])
+    .filter((row) => row.status === 'confirmed')
+    .map((row) => row.email)
+    .join(', ');
+}
+
+function sameEmailList(a: string, b: string) {
+  const norm = (value: string) => value.split(/[,;\s]+/).map((part) => part.trim().toLowerCase()).filter(Boolean).sort().join(',');
+  return norm(a) === norm(b);
+}
 
 const MODE_LABELS: Record<RoutingMode, string> = {
   '': 'Asoldi-innboksen (som før)',
@@ -43,7 +56,7 @@ export function OwnerRoutingField({ siteId, authHeaders }: { siteId: string; aut
   function apply(data: RoutingView) {
     setView(data);
     setMode(data.ownerRouting || '');
-    setEmails((data.ownerRecipients || []).map((row) => row.email).join(', '));
+    setEmails(confirmedEmails(data));
   }
 
   useEffect(() => {
@@ -66,10 +79,13 @@ export function OwnerRoutingField({ siteId, authHeaders }: { siteId: string; aut
     setBusy(true);
     setError('');
     try {
+      // Send the addresses only when they were edited, so a mode change never rewrites them.
+      const body: { ownerRouting: RoutingMode; ownerEmails?: string } = { ownerRouting: mode };
+      if (!sameEmailList(emails, confirmedEmails(view))) body.ownerEmails = emails;
       const response = await fetch(endpoint, {
         method: 'PUT',
         headers: { ...headers, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ownerRouting: mode, ownerEmails: emails }),
+        body: JSON.stringify(body),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || 'Kunne ikke lagre e-postrutingen.');
@@ -81,8 +97,8 @@ export function OwnerRoutingField({ siteId, authHeaders }: { siteId: string; aut
     }
   }
 
-  const savedEmails = (view?.ownerRecipients || []).map((row) => row.email).join(', ');
-  const dirty = Boolean(view) && (mode !== (view?.ownerRouting || '') || emails.trim() !== savedEmails);
+  const dirty = Boolean(view) && (mode !== (view?.ownerRouting || '') || !sameEmailList(emails, confirmedEmails(view)));
+  const pending = (view?.ownerRecipients || []).filter((row) => row.status !== 'confirmed').map((row) => row.email);
   const owner = view?.owner;
 
   return (
@@ -101,7 +117,7 @@ export function OwnerRoutingField({ siteId, authHeaders }: { siteId: string; aut
         </select>
       </label>
       <label className="block text-[11px] text-gray-400">
-        Eier-e-post (valgfritt, maks 3, kommaseparert)
+        Bekreftet eier-e-post (valgfritt, maks 3, kommaseparert)
         <input
           type="text"
           value={emails}
@@ -123,6 +139,9 @@ export function OwnerRoutingField({ siteId, authHeaders }: { siteId: string; aut
       ) : (
         <p className="text-[11px] text-gray-500">Leser rutingen…</p>
       )}
+      {pending.length ? (
+        <p className="text-[11px] text-gray-500">Venter på bekreftelse (får ingenting ennå): {pending.join(', ')}</p>
+      ) : null}
       <button
         type="button"
         disabled={busy || !dirty}

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
@@ -229,13 +229,58 @@ test('WS7.39: Superadmin reads and sets the routing per site', async () => {
     const withOwner = await call('PUT', '/api/hub/sites/site_9/owner-routing', { ownerRouting: 'owner+asoldi-bcc', ownerEmails: 'Eier@Example.no' });
     assert.equal(withOwner.status, 200);
     assert.deepEqual(withOwner.body.owner, { recipients: ['eier@example.no'], source: 'ownerRecipients' });
-    assert.deepEqual(withOwner.body.ownerRecipients, [{ email: 'eier@example.no', status: 'confirmed', source: 'superadmin' }]);
+    assert.deepEqual(withOwner.body.ownerRecipients, [{ email: 'eier@example.no', status: 'confirmed', source: 'superadmin', confirmedAt: new Date(NOW + DAY).toISOString() }]);
 
     const off = await call('PUT', '/api/hub/sites/site_9/owner-routing', { ownerRouting: '' });
     assert.equal(off.body.ownerRouting, '');
     assert.equal(off.body.routing.to, 'booking@asoldi.test');
     assert.equal(off.body.ownerRoutingSetAt, new Date(NOW + DAY).toISOString(), 'every switch restarts the window');
   });
+});
+
+test('WS7.39: a mode change never confirms a pending owner or rewrites confirmed rows (3.3.9 change control)', async () => {
+  const confirmedAt = '2026-10-01T09:00:00.000Z';
+  await store.patchEmailSite('site_9', {
+    ownerRouting: '',
+    ownerRecipients: [
+      { email: 'eier@example.no', status: 'confirmed', confirmedAt, source: 'cms-owner' },
+      { email: 'ny-eier@example.no', status: 'pending', confirmedAt: '', source: 'cms-owner-change' },
+    ],
+  });
+  await withServer(async ({ call, tick }) => {
+    tick(2 * DAY);
+    const modeOnly = await call('PUT', '/api/hub/sites/site_9/owner-routing', { ownerRouting: 'owner' });
+    assert.equal(modeOnly.status, 200);
+    assert.deepEqual(store.readEmailSite('site_9').ownerRecipients, [
+      { email: 'eier@example.no', status: 'confirmed', confirmedAt, source: 'cms-owner' },
+      { email: 'ny-eier@example.no', status: 'pending', confirmedAt: '', source: 'cms-owner-change' },
+    ], 'nothing about the owners changed');
+    assert.deepEqual(modeOnly.body.owner.recipients, ['eier@example.no'], 'the pending address receives nothing');
+
+    // The confirmed set is sent back unchanged plus one new address: old provenance stays, the pending row stays pending.
+    const added = await call('PUT', '/api/hub/sites/site_9/owner-routing', { ownerRouting: 'owner', ownerEmails: 'eier@example.no, kontor@example.no' });
+    assert.equal(added.status, 200);
+    const rows = store.readEmailSite('site_9').ownerRecipients;
+    assert.deepEqual(rows[0], { email: 'eier@example.no', status: 'confirmed', confirmedAt, source: 'cms-owner' });
+    assert.deepEqual(rows[1], { email: 'kontor@example.no', status: 'confirmed', confirmedAt: new Date(NOW + 2 * DAY).toISOString(), source: 'superadmin' });
+    assert.deepEqual(rows[2], { email: 'ny-eier@example.no', status: 'pending', confirmedAt: '', source: 'cms-owner-change' });
+    assert.deepEqual(added.body.owner.recipients, ['eier@example.no', 'kontor@example.no']);
+
+    // Only an explicit listing promotes the pending address.
+    const promoted = await call('PUT', '/api/hub/sites/site_9/owner-routing', { ownerRouting: 'owner', ownerEmails: ['ny-eier@example.no'] });
+    assert.equal(promoted.status, 200);
+    assert.deepEqual(store.readEmailSite('site_9').ownerRecipients, [
+      { email: 'ny-eier@example.no', status: 'confirmed', confirmedAt: new Date(NOW + 2 * DAY).toISOString(), source: 'superadmin' },
+    ]);
+  });
+  await store.patchEmailSite('site_9', { ownerRecipients: [], ownerRouting: '' });
+});
+
+test('WS7.39: the Superadmin field shows and sends only confirmed addresses, and only when edited', () => {
+  const source = readFileSync(new URL('../app/pages/Admin/sections/OwnerRoutingField.tsx', import.meta.url), 'utf8');
+  assert.match(source, /filter\(\(row\) => row\.status === 'confirmed'\)/, 'pending rows are not put in the input');
+  assert.match(source, /if \(!sameEmailList\(emails, confirmedEmails\(view\)\)\) body\.ownerEmails = emails;/, 'ownerEmails only when the field changed');
+  assert.doesNotMatch(source, /JSON\.stringify\(\{ ownerRouting: mode, ownerEmails: emails \}\)/);
 });
 
 test.after(() => {
