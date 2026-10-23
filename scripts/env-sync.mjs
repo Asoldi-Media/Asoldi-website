@@ -34,8 +34,14 @@ export const SECTION_OVERRIDES = '# ---- LOCAL SAFE OVERRIDES (scripts/env-sync.
 export const NEVER_COPY = new Set(['ADMIN_SECRET']);
 export const STRAY_PATTERNS = [/^\.env\.bak-/, /^\.env\.before-live-/, /^\.env\.starred-/, /^\.env\.hostinger-import$/];
 
-/** The block that makes a PC hub safe. APP_DATA_DIR is filled with the repo path. */
+/**
+ * The block that makes a PC hub safe. It holds no host path: docker-compose.lan.yml loads
+ * this .env into a Linux container, where a Windows APP_DATA_DIR would silently turn into
+ * a relative (empty) data dir. dev:safe sets APP_DATA_DIR per profile instead, and a plain
+ * `node server.js` keeps the usual ~/.asoldi-website-data.
+ */
 export function safeOverrides(repoRoot = REPO_ROOT) {
+  void repoRoot;
   return {
     HUB_SAFE_MODE: '1',
     APP_URL: 'http://127.0.0.1:3100',
@@ -44,7 +50,6 @@ export function safeOverrides(repoRoot = REPO_ROOT) {
     SALES_EMAIL_AUTOSEND: '0',
     WORKSHOP_DESK_EMAIL_AUTOSEND: '0',
     LAN_PREVIEW_AUTOPUBLISH: '0',
-    APP_DATA_DIR: join(repoRoot, '.local-data', 'default').replace(/\\/g, '/'),
     WEBSITE_MAKER_LOCAL_URL: 'http://127.0.0.1:3000',
     HUB_PUBLIC_URL_FOR_MAKER: 'http://host.docker.internal:3101',
   };
@@ -54,16 +59,46 @@ export function parseEnvText(text = '') {
   return dotenv.parse(String(text || ''));
 }
 
-/** Quote so that dotenv.parse gives the exact value back. */
-export function quoteEnvValue(value = '') {
+// Lines placed after a candidate while checking it, so a quote that runs on into the next
+// line (dotenv's multi-line match) is caught.
+const ROUND_TRIP_TAIL = ['', "ZZ_ENV_SYNC_NEXT1='a'", 'ZZ_ENV_SYNC_NEXT2="b"', 'ZZ_ENV_SYNC_NEXT3=`c`', 'ZZ_ENV_SYNC_NEXT4=d', ''].join('\n');
+
+function roundTrips(candidate, text) {
+  const parsed = dotenv.parse(`ZZ_ENV_SYNC_VALUE=${candidate}${ROUND_TRIP_TAIL}`);
+  return parsed.ZZ_ENV_SYNC_VALUE === text
+    && parsed.ZZ_ENV_SYNC_NEXT1 === 'a'
+    && parsed.ZZ_ENV_SYNC_NEXT2 === 'b'
+    && parsed.ZZ_ENV_SYNC_NEXT3 === 'c'
+    && parsed.ZZ_ENV_SYNC_NEXT4 === 'd';
+}
+
+/**
+ * Quote so that dotenv.parse gives the exact value back. The first candidate that
+ * round-trips wins:
+ *   bare; 'single' and `backtick` (kept literally by dotenv, may span lines);
+ *   "double" with real newlines written as \n (dotenv expands \n and \r inside double
+ *   quotes, so only when the text has no literal backslash-n or backslash-r).
+ * A multi-line service-account JSON whose private_key holds literal \n escapes therefore
+ * goes out single-quoted. Throws, naming the key and never the value, when none fits.
+ */
+export function quoteEnvValue(value = '', key = '') {
   const text = String(value ?? '');
   if (text === '') return '';
-  if (/^[A-Za-z0-9_./:@,+=%-]+$/.test(text)) return text;
-  if (!/[\r\n]/.test(text)) {
-    if (!text.includes("'")) return `'${text}'`;
-    if (!text.includes('`')) return `\`${text}\``;
+  const candidates = [];
+  if (/^[A-Za-z0-9_./:@,+=%-]+$/.test(text)) candidates.push(text);
+  const trailingBackslash = text.endsWith('\\');
+  if (!text.includes("'") && !trailingBackslash) candidates.push(`'${text}'`);
+  if (!text.includes('`') && !trailingBackslash) candidates.push(`\`${text}\``);
+  if (!text.includes('"') && !trailingBackslash && !/\\[nr]/.test(text)) {
+    candidates.push(`"${text.replace(/\r/g, '\\r').replace(/\n/g, '\\n')}"`);
   }
-  return `"${text.replace(/\r/g, '\\r').replace(/\n/g, '\\n')}"`;
+  // Last resort for one-line values holding all three quote characters: unquoted, which
+  // dotenv reads up to a '#' and trims (the round-trip check decides).
+  if (!/[\r\n]/.test(text)) candidates.push(text);
+  for (const candidate of candidates) {
+    if (roundTrips(candidate, text)) return candidate;
+  }
+  throw new Error(`env-sync: the value of ${key || 'a key'} cannot be written so that dotenv reads it back unchanged; set it by hand.`);
 }
 
 export function orderedProdKeys(prodEnv = {}) {
@@ -71,6 +106,11 @@ export function orderedProdKeys(prodEnv = {}) {
   const known = PRODUCTION_ENV_KEYS.filter((key) => keys.includes(key));
   const rest = keys.filter((key) => !PRODUCTION_ENV_KEYS.includes(key)).sort();
   return [...known, ...rest];
+}
+
+/** An override an older env-sync wrote that must not survive as LOCAL EXTRA (the per-repo APP_DATA_DIR). */
+function isRetiredOverride(key, value) {
+  return key === 'APP_DATA_DIR' && /[\\/]\.local-data[\\/]default\/?$/.test(String(value || ''));
 }
 
 function isLiveStripeKey(key, value) {
@@ -107,28 +147,29 @@ export function buildEnvFile({ prodEnv = {}, currentEnv = {}, repoRoot = REPO_RO
       const testKey = String(prodEnv.STRIPE_CONNECT_TEST_SECRET_KEY || '');
       if (/^(sk|rk)_test_/.test(testKey) && /^STRIPE_(SECRET_KEY|CONNECT_SECRET_KEY)$/.test(key)) {
         lines.push(`# ${key}: live key replaced by STRIPE_CONNECT_TEST_SECRET_KEY (--substitute-test-keys)`);
-        lines.push(`${key}=${quoteEnvValue(testKey)}`);
+        lines.push(`${key}=${quoteEnvValue(testKey, key)}`);
       } else {
         lines.push(`# ${key}: live key withheld (--substitute-test-keys)`);
       }
       report.substituted.push(key);
       continue;
     }
-    lines.push(`${key}=${quoteEnvValue(value)}`);
+    lines.push(`${key}=${quoteEnvValue(value, key)}`);
     report.prod.push(key);
   }
   const extraKeys = Object.keys(currentEnv)
     .filter((key) => !Object.prototype.hasOwnProperty.call(prodEnv, key))
     .filter((key) => !Object.prototype.hasOwnProperty.call(overrides, key))
     .filter((key) => !NEVER_COPY.has(key))
+    .filter((key) => !isRetiredOverride(key, currentEnv[key]))
     .sort();
   lines.push('', SECTION_EXTRA);
   for (const key of extraKeys) {
-    lines.push(`${key}=${quoteEnvValue(currentEnv[key])}`);
+    lines.push(`${key}=${quoteEnvValue(currentEnv[key], key)}`);
     report.extra.push(key);
   }
   lines.push('', SECTION_OVERRIDES);
-  for (const [key, value] of Object.entries(overrides)) lines.push(`${key}=${quoteEnvValue(value)}`);
+  for (const [key, value] of Object.entries(overrides)) lines.push(`${key}=${quoteEnvValue(value, key)}`);
   void now;
   return { text: `${lines.join('\n')}\n`, report };
 }

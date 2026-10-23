@@ -43,11 +43,47 @@ function tempRepo() {
   return dir;
 }
 
-test('quoteEnvValue round-trips through dotenv for awkward values', () => {
-  for (const value of ['plain', 'with space', "it's", 'say "hi"', SA_JSON, "both ' and \"", 'line1\nline2', 'a#b', '']) {
-    const parsed = dotenv.parse(`K=${quoteEnvValue(value)}\n`);
+test('quoteEnvValue round-trips through dotenv for awkward values, followed by more lines', () => {
+  const values = [
+    'plain', 'with space', "it's", 'say "hi"', SA_JSON, "both ' and \"", 'line1\nline2', 'a#b', '',
+    // multi-line JSON whose private_key holds literal backslash-n escapes (dotenv must not expand them)
+    '{"private_key":"A\\nB"}\nsecond line',
+    `${SA_JSON}\n${SA_JSON}`,
+    'ends with a backslash \\',
+    'crlf\r\nline',
+    "all three ' \" ` on one line",
+    "multi\nline with ' and \"",
+    '  leading and trailing spaces  ',
+    '\\n literal only',
+    "'starts and ends with quotes'",
+  ];
+  for (const value of values) {
+    const quoted = quoteEnvValue(value, 'K');
+    const parsed = dotenv.parse(`A=1\nK=${quoted}\nNEXT='x'\nNEXT2="y"\nNEXT3=z\n`);
     assert.equal(parsed.K ?? '', value, JSON.stringify(value));
+    assert.deepEqual([parsed.A, parsed.NEXT, parsed.NEXT2, parsed.NEXT3], ['1', 'x', 'y', 'z'], `neighbours intact for ${JSON.stringify(value)}`);
   }
+});
+
+test('quoteEnvValue refuses a value no quoting can carry, naming the key and never the value', () => {
+  const impossible = "secret-part ' \" ` \n second line \\n";
+  assert.throws(() => quoteEnvValue(impossible, 'GOOGLE_WORKSPACE_SERVICE_ACCOUNT_JSON'), (error) => {
+    assert.match(error.message, /GOOGLE_WORKSPACE_SERVICE_ACCOUNT_JSON/);
+    assert.equal(error.message.includes('secret-part'), false);
+    return true;
+  });
+});
+
+test('safe overrides hold no host path (the LAN compose loads .env into Linux)', () => {
+  const overrides = safeOverrides('C:/Asoldi/asoldi code/asoldi-website');
+  assert.equal(overrides.APP_DATA_DIR, undefined);
+  for (const [key, value] of Object.entries(overrides)) {
+    assert.doesNotMatch(value, /^([A-Za-z]:[\\/]|\/)/, `${key} must not be an absolute path`);
+  }
+  const { text } = buildEnvFile({ prodEnv: PROD, currentEnv: { APP_DATA_DIR: 'C:/Asoldi/asoldi code/asoldi-website/.local-data/default', KEEP_ME: 'x' }, repoRoot: tempRepo() });
+  const parsed = dotenv.parse(text);
+  assert.equal(parsed.APP_DATA_DIR, undefined, 'an older generated APP_DATA_DIR is not carried into LOCAL EXTRA');
+  assert.equal(parsed.KEEP_ME, 'x');
 });
 
 test('buildEnvFile: prod keys in order, ADMIN_SECRET never copied, overrides withhold prod values', () => {
@@ -65,7 +101,8 @@ test('buildEnvFile: prod keys in order, ADMIN_SECRET never copied, overrides wit
   assert.equal(parsed.HUB_SAFE_MODE, '1');
   assert.equal(parsed.PERSIST_PRODUCTION_ENV, '0');
   assert.equal(parsed.PORT, '3101');
-  assert.equal(parsed.APP_DATA_DIR, safeOverrides(repo).APP_DATA_DIR);
+  assert.equal(parsed.APP_DATA_DIR, undefined, 'dev:safe sets the data dir per profile');
+  assert.equal(parsed.HUB_PUBLIC_URL_FOR_MAKER, 'http://host.docker.internal:3101');
   assert.equal(parsed.GOOGLE_WORKSPACE_SERVICE_ACCOUNT_JSON, SA_JSON);
   assert.equal(parsed.SMTP_PASS, PROD.SMTP_PASS);
   assert.ok(text.indexOf('RESEND_API_KEY=') < text.indexOf('STRIPE_SECRET_KEY='), 'PRODUCTION_ENV_KEYS order');
