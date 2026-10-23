@@ -2,6 +2,9 @@
 // - a new signing secret refuses every admin, staff and client token signed before it, in the
 //   process that rotated and in the other one within about a second;
 // - a new Maker callback token refuses the old one in both processes;
+// - a third process that would not re-read the files for ten minutes (HUB_SECRET_REFRESH_MS)
+//   still accepts the fresh admin token and the new Maker token at once: a token that does not
+//   match makes it re-read the file once, and from then on it refuses the old ones too;
 // - with ADMIN_SECRET / a Maker token in the env, both rotations answer 409 and change nothing.
 // Each child runs from an empty working folder (no .env), with the egress recorder enforcing.
 import test from 'node:test';
@@ -20,7 +23,7 @@ async function startHub(dataDir, extraEnv = {}) {
   const runDir = mkdtempSync(join(tmpdir(), 'asoldi-rotation-cwd-'));
   const shell = { ...process.env };
   for (const key of Object.keys(shell)) {
-    if (/^(HUB_SAFE_MODE|HUB_LISTEN_HOST|HOSTINGER|EMAIL_REDIRECT_TO|WEBSITE_MAKER_|SALES_MAKER_STATUS|SALES_PREVIEW_PUSH_URL|ADMIN_SECRET|AUTH_TOKEN_MAX_AGE_DAYS)/.test(key)) delete shell[key];
+    if (/^(HUB_SAFE_MODE|HUB_LISTEN_HOST|HUB_SECRET_REFRESH_MS|HOSTINGER|EMAIL_REDIRECT_TO|WEBSITE_MAKER_|SALES_MAKER_STATUS|SALES_PREVIEW_PUSH_URL|ADMIN_SECRET|AUTH_TOKEN_MAX_AGE_DAYS)/.test(key)) delete shell[key];
   }
   const child = spawn(process.execPath, [join(REPO, 'server.js')], {
     cwd: runDir,
@@ -98,6 +101,10 @@ test('two hub processes on one data dir: a rotation refuses every old token in b
   const b = await startHub(dataDir);
   t.after(() => b.stop());
   assert.ok(b.up, `hub B did not start:\n${b.log().slice(-3000)}`);
+  // Hub C only re-reads the secret files on a mismatch (its timer is ten minutes).
+  const c = await startHub(dataDir, { HUB_SECRET_REFRESH_MS: '600000' });
+  t.after(() => c.stop());
+  assert.ok(c.up, 'hub C did not start: ' + c.log().slice(-3000));
   const status = async (hub, path, token, headers = {}) => (await fetch(`${hub.base}${path}`, { headers: { ...headers, ...(token ? { authorization: `Bearer ${token}` } : {}) } })).status;
 
   // A staff user (developer role) and a client portal user.
@@ -110,8 +117,8 @@ test('two hub processes on one data dir: a rotation refuses every old token in b
   assert.equal(signup.status, 201);
   const clientToken = (await signup.json()).token;
 
-  // Every token works in both processes before the rotation.
-  for (const hub of [a, b]) {
+  // Every token works in every process before the rotation.
+  for (const hub of [a, b, c]) {
     assert.equal(await status(hub, '/api/hub/sites', adminA), 200);
     assert.equal(await status(hub, '/myphoner-recordings/none.mp3', staffToken), 404, 'staff passes the media gate (file missing)');
     assert.equal(await status(hub, '/api/client/profile', clientToken), 200);
@@ -122,6 +129,7 @@ test('two hub processes on one data dir: a rotation refuses every old token in b
   const callback = (hub, token) => status(hub, '/api/admin/sales/maker-status-callback', '', { 'x-sales-callback-token': token });
   assert.equal(await callback(a, oldMaker), 200);
   assert.equal(await callback(b, oldMaker), 200);
+  assert.equal(await callback(c, oldMaker), 200);
   const refused = await fetch(`${a.base}/api/admin/security/maker-callback-token/rotate`, bearer(adminA, json({ currentPassword: 'wrong', confirm: 'ROTER' })));
   assert.equal(refused.status, 401);
   assert.equal(await callback(a, oldMaker), 200, 'a refused rotation changes nothing');
@@ -129,6 +137,9 @@ test('two hub processes on one data dir: a rotation refuses every old token in b
   assert.equal(makerRes.status, 200);
   const newMaker = (await makerRes.json()).callbackToken;
   assert.equal(readFileSync(join(dataDir, 'secrets', 'maker-callback-token'), 'utf8').trim(), newMaker);
+  // C still holds the old token, but the new one does not match it, so C re-reads the file once.
+  assert.equal(await callback(c, newMaker), 200, 'new Maker token accepted by hub C at once');
+  assert.equal(await callback(c, oldMaker), 401, 'and from then on C refuses the old one');
   assert.equal(await callback(a, oldMaker), 401, 'old Maker token refused at once');
   assert.equal(await callback(a, newMaker), 200);
   const makerLag = await waitUntil(async () => (await callback(b, oldMaker)) === 401, 'hub B refuses the old Maker token');
@@ -140,6 +151,13 @@ test('two hub processes on one data dir: a rotation refuses every old token in b
   assert.equal(rotateRes.status, 200);
   const rotated = await rotateRes.json();
   assert.ok(rotated.token);
+  // The admin UI goes on with the fresh token at once, and its next request may reach another
+  // process that has not re-read the secret yet: C must accept it now, not ten minutes later.
+  assert.equal(await status(c, '/api/hub/sites', rotated.token), 200, 'fresh admin token accepted by hub C at once');
+  assert.equal(await status(c, '/api/hub/sites', adminA), 401, 'old admin token, process C');
+  assert.equal(await status(c, '/myphoner-recordings/none.mp3', staffToken), 401, 'old staff token, process C');
+  assert.equal(await status(c, '/api/client/profile', clientToken), 401, 'old client token, process C');
+  assert.equal(rotated.auditSaved, true);
   const secretAfter = readFileSync(join(dataDir, 'secrets', 'admin-secret'), 'utf8').trim();
   assert.notEqual(secretAfter, secretBefore);
   assert.equal(JSON.stringify(rotated).includes(secretAfter), false);
@@ -168,9 +186,11 @@ test('two hub processes on one data dir: a rotation refuses every old token in b
   assert.equal(overview.secretRotations['maker-callback-token'].by, `admin:${ADMIN}`);
   assert.equal(overview.counters['admin-secret-rotated'].total, 1);
   assert.match(a.log(), /\[security\] token signing secret rotated by admin:rotation-admin/);
-  assert.equal(a.log().includes(secretAfter) || b.log().includes(secretAfter), false, 'the secret is never logged');
-  assert.equal(a.log().includes(newMaker) || b.log().includes(newMaker), false, 'the Maker token is never logged');
-  for (const hub of [a, b]) {
+  for (const hub of [a, b, c]) {
+    assert.equal(hub.log().includes(secretAfter), false, 'the secret is never logged');
+    assert.equal(hub.log().includes(newMaker), false, 'the Maker token is never logged');
+  }
+  for (const hub of [a, b, c]) {
     const file = join(dataDir, `egress-${new URL(hub.base).port}.jsonl`);
     if (!existsSync(file)) continue;
     const rows = readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));

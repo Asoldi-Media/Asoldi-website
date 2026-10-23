@@ -80,13 +80,16 @@ import * as offers from './data/offers.js';
 import * as resetTokens from './data/reset-tokens.js';
 import { getPersistentDataDir, pruneAllDataBackups } from './data/storage-path.js';
 import {
+  checkWithFreshSecret,
   createLoginLimiter,
+  createPasswordConfirmer,
   createStaffMediaGate,
   guardLogin,
   clientIpFromRequest,
   createHubSecretHolder,
   readOrCreateDiskSecret,
   safeEqual,
+  secretRefreshMs,
 } from './lib/auth-hardening.js';
 import { isTokenAccepted, runTokenPolicyBootMigrations, stampTokenVersion } from './lib/token-policy.js';
 import { noteSecurityEvent } from './lib/security-counters.js';
@@ -526,11 +529,22 @@ const publicPath = join(__dirname, 'public');
 // Env wins unless it is a known default or shorter than 16; otherwise a random secret kept in <dataDir>/secrets/.
 // Admin → Security can rotate the disk secret while the hub runs: every token signer and verifier
 // (admin, staff, client portal, OAuth state) reads it through hubSigningSecret(), and other hub
-// processes pick the new value up from the file within a second.
-const ADMIN_SECRET_HOLDER = createHubSecretHolder({ envValue: process.env.ADMIN_SECRET, dataDir: getPersistentDataDir(), name: 'admin-secret' });
+// processes pick the new value up from the file within a second. A verifier whose signature does
+// not match re-reads the file once (signatureMatchesHubSecret), so a token signed by another
+// process right after a rotation is accepted at once.
+const ADMIN_SECRET_HOLDER = createHubSecretHolder({
+  envValue: process.env.ADMIN_SECRET,
+  dataDir: getPersistentDataDir(),
+  name: 'admin-secret',
+  refreshMs: secretRefreshMs(),
+});
 const ADMIN_SECRET_SOURCE = { source: ADMIN_SECRET_HOLDER.source, envRejected: ADMIN_SECRET_HOLDER.envRejected };
 function hubSigningSecret() {
   return ADMIN_SECRET_HOLDER.get();
+}
+/** sign(secret) → the expected signature; compared in constant time with the given one. */
+function signatureMatchesHubSecret(given, sign) {
+  return checkWithFreshSecret(ADMIN_SECRET_HOLDER, (secret) => safeEqual(sign(secret), given));
 }
 // One-time boot migrations (a reset of admin and staff sessions; see data/security-settings.js).
 runTokenPolicyBootMigrations();
@@ -545,8 +559,9 @@ function signToken(payload) {
 function verifyToken(token) {
   try {
     const raw = JSON.parse(Buffer.from(token, 'base64url').toString());
-    const expect = createHmac('sha256', hubSigningSecret()).update(String(raw.data)).digest('hex');
-    if (!safeEqual(expect, raw.sig)) return null;
+    if (typeof raw?.sig !== 'string' || !raw.sig) return null;
+    const data = String(raw.data);
+    if (!signatureMatchesHubSecret(raw.sig, (secret) => createHmac('sha256', secret).update(data).digest('hex'))) return null;
     const payload = JSON.parse(raw.data);
     // Age (security-settings.json, default 30 days) plus revokedBefore and per-user tokenVersion.
     if (!isTokenAccepted(payload)) return null;
@@ -2846,6 +2861,7 @@ const MAKER_CALLBACK_TOKEN_HOLDER = createHubSecretHolder({
   dataDir: getPersistentDataDir(),
   name: 'maker-callback-token',
   bytes: 32,
+  refreshMs: secretRefreshMs(),
 });
 function getMakerCallbackToken() {
   return MAKER_CALLBACK_TOKEN_HOLDER.get();
@@ -2862,7 +2878,8 @@ function noteMakerCallbackRejected(req) {
 
 function isMakerStatusCallbackAuthorized(req, { count = true } = {}) {
   const provided = makerCallbackTokenFrom(req);
-  const ok = Boolean(provided) && safeEqual(provided, getMakerCallbackToken());
+  // A token rotated in another hub process is accepted here at once (one re-read of the file).
+  const ok = Boolean(provided) && checkWithFreshSecret(MAKER_CALLBACK_TOKEN_HOLDER, (token) => safeEqual(provided, token));
   if (!ok && count) noteMakerCallbackRejected(req);
   return ok;
 }
@@ -7914,11 +7931,7 @@ function verifyOAuthState(purpose, state, maxAgeMs = OAUTH_STATE_TTL_MS) {
   if (dot <= 0) return null;
   const body = raw.slice(0, dot);
   const sig = raw.slice(dot + 1);
-  const expect = createHmac('sha256', hubSigningSecret()).update(`${purpose}.${body}`).digest('base64url');
-  if (sig.length !== expect.length) return null;
-  let diff = 0;
-  for (let i = 0; i < sig.length; i += 1) diff |= sig.charCodeAt(i) ^ expect.charCodeAt(i);
-  if (diff !== 0) return null;
+  if (!signatureMatchesHubSecret(sig, (secret) => createHmac('sha256', secret).update(`${purpose}.${body}`).digest('base64url'))) return null;
   let parsed;
   try {
     parsed = JSON.parse(Buffer.from(body, 'base64url').toString('utf8'));
@@ -10074,20 +10087,14 @@ app.get('/api/admin/system/maker-callback-token', adminAuth, (_req, res) => {
 
 /**
  * Re-checks the signed-in admin's password before a sensitive action (secret rotation). Wrong
- * passwords count toward the normal login limit for that admin. On false the response is sent.
+ * passwords count toward the normal login limit for that admin; the right one clears the
+ * admin's failures, like a sign-in. On false the response is sent.
  */
-async function confirmAdminPassword(req, res, password) {
-  const username = sanitizeText(req.admin?.username);
-  const account = `admin:${username}`;
-  if (!guardLogin(loginLimiter, req, res, account)) return false;
-  const valid = typeof password === 'string' && password.length > 0 && (await store.verifyAdmin(username, password));
-  if (!valid) {
-    loginLimiter.fail(account, clientIpFromRequest(req));
-    res.status(401).json({ code: 'wrong-password', message: 'Feil passord.' });
-    return false;
-  }
-  return true;
-}
+const confirmAdminPassword = createPasswordConfirmer({
+  limiter: loginLimiter,
+  accountFor: (req) => `admin:${sanitizeText(req.admin?.username)}`,
+  verifyPassword: (req, password) => store.verifyAdmin(sanitizeText(req.admin?.username), password),
+});
 
 // Security status, Fireflies webhook secret (disk), token revocation, client "log out everywhere",
 // and rotation of the token signing secret and the Maker callback token.

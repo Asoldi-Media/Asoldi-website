@@ -113,6 +113,102 @@ test('security-settings keeps a rotation record (when and who, never a value)', 
   assert.throws(() => settings.recordSecretRotation('webhooks.json', { dataDir: dir }));
 });
 
+test('security-settings keeps a capped rotation history, newest first', () => {
+  const dir = tempDir();
+  const start = Date.parse('2026-10-23T12:00:00Z');
+  const limit = settings.SECRET_ROTATION_HISTORY_LIMIT;
+  for (let i = 0; i < limit + 5; i += 1) {
+    const name = i % 2 ? 'maker-callback-token' : 'admin-secret';
+    settings.recordSecretRotation(name, { dataDir: dir, by: `admin:a${i}`, now: start + i * 60_000 });
+  }
+  const read = settings.readSecuritySettings({ dataDir: dir });
+  assert.equal(read.secretRotationHistory.length, limit);
+  assert.deepEqual(read.secretRotationHistory[0], { name: 'admin-secret', at: new Date(start + (limit + 4) * 60_000).toISOString(), by: `admin:a${limit + 4}` });
+  assert.equal(read.secretRotationHistory[1].name, 'maker-callback-token');
+  assert.equal(read.secretRotationHistory.at(-1).by, 'admin:a5', 'the oldest rows are dropped');
+  // The latest-per-secret record and the history agree; other writers keep the history.
+  assert.equal(read.secretRotations['admin-secret'].at, read.secretRotationHistory[0].at);
+  settings.updateSecuritySettings({ maxTokenAgeDays: 3 }, { dataDir: dir, by: 'admin:tester' });
+  assert.equal(settings.readSecuritySettings({ dataDir: dir }).secretRotationHistory.length, limit);
+  // Junk rows in the file are dropped, never shown (a fresh folder: reads are cached per file).
+  const raw = JSON.parse(readFileSync(join(dir, 'security-settings.json'), 'utf8'));
+  raw.secretRotationHistory = [{ name: 'webhooks.json', at: raw.secretRotationHistory[0].at }, { name: 'admin-secret', at: 'not a date' }, 'x', null, ...raw.secretRotationHistory.slice(0, 2)];
+  const junkDir = tempDir();
+  writeFileSync(join(junkDir, 'security-settings.json'), JSON.stringify(raw));
+  const cleaned = settings.readSecuritySettings({ dataDir: junkDir }).secretRotationHistory;
+  assert.equal(cleaned.length, 2);
+  assert.equal(JSON.stringify(cleaned).includes('webhooks.json'), false);
+});
+
+test('holder: get({ fresh: true }) re-reads the file at once, at most once per freshMs', () => {
+  const dir = tempDir();
+  let clockA = 5_000_000;
+  let clockB = 5_000_000;
+  const a = hardening.createHubSecretHolder({ dataDir: dir, name: 'admin-secret', now: () => clockA });
+  const b = hardening.createHubSecretHolder({ dataDir: dir, name: 'admin-secret', now: () => clockB });
+  const before = b.get();
+  const after = a.rotate();
+  assert.equal(b.get(), before, 'a plain get waits for refreshMs');
+  assert.equal(b.get({ fresh: true }), after, 'a fresh get reads the file now');
+  // Rate limit: a second rotation right after is only seen by a fresh get once freshMs has passed.
+  const third = a.rotate();
+  clockB += 50;
+  assert.equal(b.get({ fresh: true }), after, 'within freshMs no second read');
+  clockB += 60;
+  assert.equal(b.get({ fresh: true }), third);
+
+  // checkWithFreshSecret: one re-read on a mismatch, and only a changed value is tried again.
+  clockA += 10_000;
+  const c = hardening.createHubSecretHolder({ dataDir: dir, name: 'admin-secret', now: () => clockA });
+  const tried = [];
+  const fourth = a.rotate();
+  clockA += 1; // c read the file 1 ms ago, so a plain get still has the old value
+  assert.equal(hardening.checkWithFreshSecret(c, (secret) => { tried.push(secret); return secret === fourth; }), true);
+  assert.deepEqual(tried, [third, fourth]);
+  tried.length = 0;
+  clockA += 1000;
+  assert.equal(hardening.checkWithFreshSecret(c, (secret) => { tried.push(secret); return false; }), false);
+  assert.deepEqual(tried, [fourth], 'unchanged after the re-read: not tried twice');
+
+  // The re-read interval: 1 s unless a test sets HUB_SECRET_REFRESH_MS (100 ms to one hour).
+  assert.equal(hardening.secretRefreshMs({}), 1000);
+  assert.equal(hardening.secretRefreshMs({ HUB_SECRET_REFRESH_MS: '600000' }), 600_000);
+  for (const value of ['', '5', '99', 'abc', '3600001', '-1']) {
+    assert.equal(hardening.secretRefreshMs({ HUB_SECRET_REFRESH_MS: value }), 1000, value);
+  }
+});
+
+test('password confirmer: wrong passwords count toward the limit, the right one clears them', async () => {
+  const limiter = hardening.createLoginLimiter();
+  const confirm = hardening.createPasswordConfirmer({
+    limiter,
+    accountFor: (req) => `admin:${req.admin.username}`,
+    verifyPassword: async (_req, password) => password === PASSWORD,
+  });
+  const attempt = async (password) => {
+    const res = {
+      statusCode: 200,
+      body: null,
+      headers: {},
+      setHeader(name, value) { this.headers[name] = value; },
+      status(code) { this.statusCode = code; return this; },
+      json(body) { this.body = body; return this; },
+    };
+    const ok = await confirm({ admin: { username: 'tester' }, headers: {}, socket: { remoteAddress: '127.0.0.1' } }, res, password);
+    return ok ? 'ok' : res.statusCode;
+  };
+  const statuses = [];
+  for (let i = 0; i < 9; i += 1) statuses.push(await attempt(`guess-${i}`));
+  statuses.push(await attempt(PASSWORD));
+  for (let i = 0; i < 9; i += 1) statuses.push(await attempt(`again-${i}`));
+  assert.deepEqual(statuses, [...Array(9).fill(401), 'ok', ...Array(9).fill(401)], 'the right password resets the count');
+  assert.equal(await attempt(PASSWORD), 'ok');
+  // Without a right password in between, the 11th try is refused with 429 (even the right one).
+  for (let i = 0; i < 10; i += 1) assert.equal(await attempt(`more-${i}`), 401);
+  assert.equal(await attempt(PASSWORD), 429);
+  for (const empty of ['', undefined, null, 42]) assert.notEqual(await attempt(empty), 'ok');
+});
+
 // ------------------------------------------------------------------ routes (a small express app)
 
 const PASSWORD = `pw-${Date.now()}`;
@@ -122,15 +218,16 @@ function sign(secret, payload) {
   return Buffer.from(JSON.stringify({ data, sig: createHmac('sha256', secret).update(data).digest('hex') })).toString('base64url');
 }
 
-async function withApp({ adminSecretHolder, makerCallbackTokenHolder }, fn) {
+async function withApp({ adminSecretHolder, makerCallbackTokenHolder, recordRotation }, fn) {
   const app = express();
   app.use(express.json());
   // The real hub verifies with the holder's current value, like server.js verifyToken.
   const verify = (token) => {
     try {
       const raw = JSON.parse(Buffer.from(token, 'base64url').toString());
-      const expect = createHmac('sha256', adminSecretHolder.get()).update(String(raw.data)).digest('hex');
-      return hardening.safeEqual(expect, raw.sig) ? JSON.parse(raw.data) : null;
+      const ok = hardening.checkWithFreshSecret(adminSecretHolder, (secret) =>
+        hardening.safeEqual(createHmac('sha256', secret).update(String(raw.data)).digest('hex'), raw.sig));
+      return ok ? JSON.parse(raw.data) : null;
     } catch {
       return null;
     }
@@ -142,17 +239,12 @@ async function withApp({ adminSecretHolder, makerCallbackTokenHolder }, fn) {
     return next();
   };
   const clientAuth = (_req, res) => res.status(401).json({ message: 'Unauthorized' });
-  const limiter = hardening.createLoginLimiter();
-  const confirmAdminPassword = async (req, res, password) => {
-    const account = `admin:${req.admin.username}`;
-    if (!hardening.guardLogin(limiter, req, res, account)) return false;
-    if (password !== PASSWORD) {
-      limiter.fail(account, '127.0.0.1');
-      res.status(401).json({ code: 'wrong-password', message: 'Feil passord.' });
-      return false;
-    }
-    return true;
-  };
+  // The same confirmer server.js uses, with a fixed password.
+  const confirmAdminPassword = hardening.createPasswordConfirmer({
+    limiter: hardening.createLoginLimiter(),
+    accountFor: (req) => `admin:${req.admin.username}`,
+    verifyPassword: async (_req, password) => password === PASSWORD,
+  });
   routes.registerSecurityAdminRoutes(app, {
     adminAuth,
     clientAuth,
@@ -161,6 +253,7 @@ async function withApp({ adminSecretHolder, makerCallbackTokenHolder }, fn) {
     adminSecretHolder,
     makerCallbackTokenHolder,
     confirmAdminPassword,
+    ...(recordRotation ? { recordRotation } : {}),
     env: {},
   });
   const server = app.listen(0, '127.0.0.1');
@@ -177,6 +270,8 @@ const post = (base, path, token, body) => fetch(`${base}${path}`, {
   method: 'POST',
   headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
   body: JSON.stringify(body ?? {}),
+  // A route that never answers fails the test instead of hanging it.
+  signal: AbortSignal.timeout(10_000),
 });
 
 test('routes: rotation needs an admin, the word ROTER and the current password; old tokens stop at once', async () => {
@@ -234,6 +329,7 @@ test('routes: rotation needs an admin, the word ROTER and the current password; 
     const overview = await overviewRes.json();
     assert.equal(overview.secretRotations['admin-secret'].by, 'admin:tester');
     assert.equal(overview.secretRotations['maker-callback-token'].by, 'admin:tester');
+    assert.deepEqual(overview.secretRotationHistory.slice(0, 2).map((row) => [row.name, row.by]), [['admin-secret', 'admin:tester'], ['maker-callback-token', 'admin:tester']]);
     assert.equal(overview.rotateConfirmWord, 'ROTER');
     assert.equal(overview.makerCallbackTokenSource, 'disk');
     assert.equal(overview.counters['admin-secret-rotated'].total, 1);
@@ -280,4 +376,60 @@ test('routes: wrong passwords count toward the login limit', async () => {
     // Even the right password waits for the window now.
     assert.equal((await post(base, '/api/admin/security/signing-secret/rotate', token, { currentPassword: PASSWORD, confirm: 'ROTER' })).status, 429);
   });
+});
+
+test('routes: a right password after wrong ones resets the count, as a sign-in does', async () => {
+  const dir = tempDir();
+  const adminSecretHolder = hardening.createHubSecretHolder({ dataDir: dir, name: 'admin-secret' });
+  const makerCallbackTokenHolder = hardening.createHubSecretHolder({ envRule: 'any', lazy: true, dataDir: dir, name: 'maker-callback-token', bytes: 32 });
+  await withApp({ adminSecretHolder, makerCallbackTokenHolder }, async (base, { adminToken }) => {
+    const path = '/api/admin/security/maker-callback-token/rotate';
+    const token = adminToken();
+    const statuses = [];
+    for (let i = 0; i < 9; i += 1) statuses.push((await post(base, path, token, { currentPassword: `guess-${i}`, confirm: 'ROTER' })).status);
+    statuses.push((await post(base, path, token, { currentPassword: PASSWORD, confirm: 'ROTER' })).status);
+    for (let i = 0; i < 9; i += 1) statuses.push((await post(base, path, token, { currentPassword: `again-${i}`, confirm: 'ROTER' })).status);
+    assert.deepEqual(statuses, [...Array(9).fill(401), 200, ...Array(9).fill(401)]);
+  });
+});
+
+test('routes: when the rotation record cannot be saved, the answer still carries the new token', async () => {
+  const dir = tempDir();
+  const adminSecretHolder = hardening.createHubSecretHolder({ dataDir: dir, name: 'admin-secret' });
+  const makerCallbackTokenHolder = hardening.createHubSecretHolder({ envRule: 'any', lazy: true, dataDir: dir, name: 'maker-callback-token', bytes: 32 });
+  const recordRotation = () => {
+    throw Object.assign(new Error('lock timeout'), { code: 'ELOCKED' });
+  };
+  const errors = [];
+  const savedError = console.error;
+  console.error = (...args) => errors.push(args.join(' '));
+  try {
+    await withApp({ adminSecretHolder, makerCallbackTokenHolder, recordRotation }, async (base, { adminToken }) => {
+      const oldSecret = adminSecretHolder.get();
+      const oldMaker = makerCallbackTokenHolder.get();
+      const good = { currentPassword: PASSWORD, confirm: 'ROTER' };
+      const makerRes = await post(base, '/api/admin/security/maker-callback-token/rotate', adminToken(), good);
+      assert.equal(makerRes.status, 200);
+      assert.equal(makerRes.headers.get('cache-control'), 'no-store');
+      const maker = await makerRes.json();
+      assert.equal(maker.auditSaved, false);
+      assert.equal(maker.callbackToken, makerCallbackTokenHolder.get(), 'the one-time token is shown');
+      assert.notEqual(maker.callbackToken, oldMaker);
+      assert.ok(maker.rotatedAt);
+
+      const oldAdmin = adminToken();
+      const signingRes = await post(base, '/api/admin/security/signing-secret/rotate', oldAdmin, good);
+      assert.equal(signingRes.status, 200);
+      const signing = await signingRes.json();
+      assert.equal(signing.auditSaved, false);
+      assert.notEqual(adminSecretHolder.get(), oldSecret);
+      const status = (token) => fetch(`${base}/api/admin/system/security`, { headers: { authorization: `Bearer ${token}` } });
+      assert.equal((await status(oldAdmin)).status, 401);
+      assert.equal((await status(signing.token)).status, 200, 'the admin keeps a working login');
+    });
+  } finally {
+    console.error = savedError;
+  }
+  assert.equal(errors.filter((line) => /rotation record could not be saved: ELOCKED/.test(line)).length, 2, errors.join('\n'));
+  assert.equal(errors.join('\n').includes(adminSecretHolder.get()), false, 'no secret in the log');
 });

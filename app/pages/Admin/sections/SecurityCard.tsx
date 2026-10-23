@@ -18,11 +18,13 @@ type FirefliesStatus = {
   counters: Record<string, Counter>;
 };
 type Rotation = { at: string; by: string | null };
+type RotationName = 'admin-secret' | 'maker-callback-token';
 type SecurityStatus = {
   adminSecretSource: string;
   adminSecretEnvRejected: string | null;
   makerCallbackTokenSource: string;
-  secretRotations?: Partial<Record<'admin-secret' | 'maker-callback-token', Rotation>>;
+  secretRotations?: Partial<Record<RotationName, Rotation>>;
+  secretRotationHistory?: Array<Rotation & { name: RotationName }>;
   rotateConfirmWord?: string;
   tokens: {
     maxTokenAgeDays: number;
@@ -48,7 +50,7 @@ const ROTATE_TEXT: Record<RotateKind, { title: string; button: string; effect: s
     title: 'Maker callback token',
     button: 'Make a new Maker token',
     effect: 'Maker status callbacks and preview pushes with the old token get 401 at once, also for runs that were started before. Paste the new token into the Maker .env right away.',
-    done: 'New Maker token made. It is shown below once.',
+    done: 'New Maker token made. It is shown below.',
   },
 };
 
@@ -159,6 +161,9 @@ export function SecurityCard() {
     if (!json) return;
     setRotating(null);
     setRotateConfirm('');
+    if (json.auditSaved === false) {
+      setError('The secret was rotated, but the rotation record could not be saved on the hub disk (see the server log).');
+    }
     if (kind === 'maker-callback-token' && typeof json.callbackToken === 'string') {
       setMakerToken({ token: json.callbackToken, envKeys: Array.isArray(json.envKeys) ? json.envKeys : [], rotatedAt: json.rotatedAt || null });
     }
@@ -172,7 +177,12 @@ export function SecurityCard() {
     'signing-secret': data?.adminSecretSource === 'env',
     'maker-callback-token': data?.makerCallbackTokenSource === 'env',
   };
-  const rotationKey: Record<RotateKind, 'admin-secret' | 'maker-callback-token'> = {
+  const history = data?.secretRotationHistory || [];
+  const rotationTitle: Record<RotationName, string> = {
+    'admin-secret': ROTATE_TEXT['signing-secret'].title,
+    'maker-callback-token': ROTATE_TEXT['maker-callback-token'].title,
+  };
+  const rotationKey: Record<RotateKind, RotationName> = {
     'signing-secret': 'admin-secret',
     'maker-callback-token': 'maker-callback-token',
   };
@@ -282,7 +292,8 @@ export function SecurityCard() {
                       {kind === 'maker-callback-token' && makerToken && (
                         <div className="rounded-lg border border-white/10 bg-[#1a1a1a] p-3 space-y-2 text-sm">
                           <p className="text-gray-300">
-                            Shown once. Put it in the Maker <code>.env</code> as {makerToken.envKeys.join(' and ')}, then restart the Maker.
+                            Put it in the Maker <code>.env</code> as {makerToken.envKeys.join(' and ')}, then restart the Maker. This box shows it
+                            until you hide it; an admin can read the current token again with <code>GET /api/admin/system/maker-callback-token</code>.
                           </p>
                           <input className={`${input} w-full font-mono`} readOnly value={makerToken.token} onFocus={(e) => e.currentTarget.select()} />
                           <button type="button" onClick={() => setMakerToken(null)} className="text-xs text-gray-400 hover:text-white">Hide</button>
@@ -291,6 +302,18 @@ export function SecurityCard() {
                     </div>
                   );
                 })}
+                {history.length > 0 && (
+                  <details className="text-xs text-gray-400">
+                    <summary className="cursor-pointer">Rotation history ({history.length})</summary>
+                    <ul className="mt-1 space-y-0.5">
+                      {history.slice(0, 20).map((row) => (
+                        <li key={`${row.name}-${row.at}`}>
+                          {when(row.at)} · {rotationTitle[row.name] || row.name}{row.by ? ` · ${row.by}` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
               </section>
 
               <section className="space-y-2">
