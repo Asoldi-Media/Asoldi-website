@@ -66,7 +66,7 @@ A hub that runs on a PC (or the office LAN box) has the same keys as asoldi.com.
 | `emailRedirect` | Real sends, rewritten to `EMAIL_REDIRECT_TO`. The bcc is dropped and the subject becomes `[SAFE→original recipients] …`. |
 | `brevoSend` | Brevo API |
 | `calendarWrite` | Google Calendar writes |
-| `firefliesLiveJoin` | Fireflies `addToLive` |
+| `firefliesLiveJoin` | Fireflies `addToLive` and the live-join loop's read-only checks (`active_meetings`, the `bot_joined` lookup, the key owner). Those reads also pass under `firefliesIngest`; a refused one is logged as `firefliesIngest`. |
 | `firefliesIngest` | Fireflies transcript queries, the ingest loop and its follow-ups |
 | `myphonerWrite` / `myphonerSync` | Myphoner writes / the Myphoner loops |
 | `paymentsLive` | Stripe live keys, PayPal live |

@@ -16,9 +16,14 @@ const {
   firefliesLiveJoinWindow,
   buildFirefliesNotifyEmail,
   eventFromPayload,
+  fetchActiveFirefliesMeetings,
+  fetchFirefliesKeyOwnerEmail,
   fetchFirefliesTranscript,
+  fetchFirefliesTranscriptPresence,
+  firefliesLiveJoinDuration,
   formatFirefliesActionItems,
   formatFirefliesTranscript,
+  isFirefliesBotJoinedEvent,
   isFirefliesTranscriptReadyEvent,
   meetingIdFromPayload,
   mergeStoredFirefliesRecord,
@@ -28,6 +33,7 @@ const {
   storedMeetingsNeedingHydration,
   verifyFirefliesSignature,
 } = await import('../lib/fireflies-webhook.js');
+const { resetFirefliesGraphqlStateForTests } = await import('../lib/fireflies-graphql.js');
 import {
   firefliesJoinedCurrentMeet,
   firefliesMeetLinksDiffer,
@@ -343,26 +349,125 @@ test('live-join retries wait 6 minutes after an attempt', () => {
   assert.equal(firefliesLiveJoinShouldWait({ attemptAt: '', nowMs: now }), false);
 });
 
-test('addToLiveMeeting posts the Meet link to Fireflies GraphQL', async () => {
+function liveReply(payload) {
+  return { ok: true, status: 200, json: async () => payload };
+}
+
+test('addToLiveMeeting posts the Meet link with duration 120 and no language', async () => {
+  resetFirefliesGraphqlStateForTests();
   let captured;
   const result = await addFirefliesToLiveMeeting({
-    meetingLink: 'https://meet.google.com/pfk-wrzo-qfy',
+    meetingLink: 'https://meet.google.com/abc-defg-hij',
     title: 'Asoldi · Online møte · Test',
     apiKey: 'ff-key',
     fetchImpl: async (url, options) => {
       captured = { url, options };
-      return {
-        ok: true,
-        json: async () => ({ data: { addToLiveMeeting: { success: true, message: 'ok' } } }),
-      };
+      return liveReply({ data: { addToLiveMeeting: { success: true, message: 'ok' } } });
     },
   });
   assert.equal(result.ok, true);
   assert.equal(captured.url, 'https://api.fireflies.ai/graphql');
   const body = JSON.parse(captured.options.body);
-  assert.match(body.query, /addToLiveMeeting/);
-  assert.equal(body.variables.meetingLink, 'https://meet.google.com/pfk-wrzo-qfy');
+  assert.match(body.query, /addToLiveMeeting\(meeting_link: \$meetingLink, title: \$title, duration: \$duration\)/);
+  assert.equal(body.variables.meetingLink, 'https://meet.google.com/abc-defg-hij');
+  assert.equal(body.variables.duration, 120);
+  assert.equal('language' in body.variables, false);
+  assert.doesNotMatch(body.query, /language/);
   assert.equal(captured.options.headers.Authorization, 'Bearer ff-key');
+  // Never above Fireflies' documented maximum, never under its minimum.
+  assert.equal(firefliesLiveJoinDuration(150), 120);
+  assert.equal(firefliesLiveJoinDuration(5), 15);
+  assert.equal(firefliesLiveJoinDuration(59), 59);
+  assert.equal(firefliesLiveJoinDuration(undefined), 120);
+});
+
+test('addToLiveMeeting counts only an explicit success and keeps Fireflies\' error code', async () => {
+  resetFirefliesGraphqlStateForTests();
+  const empty = await addFirefliesToLiveMeeting({
+    meetingLink: 'https://meet.google.com/abc-defg-hij',
+    apiKey: 'ff-key',
+    fetchImpl: async () => liveReply({ data: { addToLiveMeeting: null } }),
+  });
+  assert.equal(empty.ok, false);
+  const exceeded = await addFirefliesToLiveMeeting({
+    meetingLink: 'https://meet.google.com/abc-defg-hij',
+    apiKey: 'ff-key',
+    fetchImpl: async () => liveReply({ data: { addToLiveMeeting: { success: true, message: 'Limit exceeded' } } }),
+  });
+  assert.equal(exceeded.ok, false);
+  await assert.rejects(
+    () => addFirefliesToLiveMeeting({
+      meetingLink: 'https://meet.google.com/abc-defg-hij',
+      apiKey: 'ff-key',
+      fetchImpl: async () => liveReply({ data: null, errors: [{ message: 'The meeting platform is not supported.', code: 'unsupported_platform' }] }),
+    }),
+    (error) => error.code === 'unsupported_platform',
+  );
+});
+
+test('active_meetings is read on the live lane and parsed by room', async () => {
+  resetFirefliesGraphqlStateForTests();
+  let body;
+  const rows = await fetchActiveFirefliesMeetings({
+    apiKey: 'ff-key',
+    fetchImpl: async (_url, options) => {
+      body = JSON.parse(options.body);
+      return liveReply({
+        data: {
+          active_meetings: [
+            {
+              id: 'ff-active-1',
+              title: 'Testfirma AS · Kari Test',
+              organizer_email: 'Damian@Asoldi.com',
+              meeting_link: 'https://meet.google.com/abc-defg-hij',
+              start_time: '2026-10-23T09:57:02.000Z',
+              end_time: '2026-10-23T11:57:02.000Z',
+              state: 'active',
+            },
+            { id: 'no-link', meeting_link: '', state: 'paused' },
+            null,
+          ],
+        },
+      });
+    },
+  });
+  assert.match(body.query, /active_meetings\(input: \{ states: \[active, paused\] \}\)/);
+  assert.deepEqual(rows, [{
+    id: 'ff-active-1',
+    title: 'Testfirma AS · Kari Test',
+    organizerEmail: 'damian@asoldi.com',
+    meetingLink: 'https://meet.google.com/abc-defg-hij',
+    startTime: '2026-10-23T09:57:02.000Z',
+    endTime: '2026-10-23T11:57:02.000Z',
+    state: 'active',
+  }]);
+  await assert.rejects(
+    () => fetchActiveFirefliesMeetings({ apiKey: 'ff-key', fetchImpl: async () => liveReply({ data: null, errors: [{ message: 'nope' }] }) }),
+    /nope/,
+  );
+});
+
+test('a bot_joined event resolves its room with one cheap read; the key owner is one more', async () => {
+  resetFirefliesGraphqlStateForTests();
+  assert.equal(isFirefliesBotJoinedEvent('meeting.bot_joined'), true);
+  assert.equal(isFirefliesBotJoinedEvent('bot_joined'), true);
+  assert.equal(isFirefliesBotJoinedEvent('meeting.transcribed'), false);
+  let query = '';
+  const presence = await fetchFirefliesTranscriptPresence('ff-active-1', {
+    apiKey: 'ff-key',
+    fetchImpl: async (_url, options) => {
+      query = JSON.parse(options.body).query;
+      return liveReply({ data: { transcript: { id: 'ff-active-1', meeting_link: 'https://meet.google.com/abc-defg-hij', is_live: true } } });
+    },
+  });
+  assert.match(query, /meeting_link/);
+  assert.doesNotMatch(query, /sentences/);
+  assert.deepEqual(presence, { id: 'ff-active-1', meetingLink: 'https://meet.google.com/abc-defg-hij', isLive: true });
+  const owner = await fetchFirefliesKeyOwnerEmail({
+    apiKey: 'ff-key',
+    fetchImpl: async () => liveReply({ data: { user: { email: 'Damian@asoldi.com' } } }),
+  });
+  assert.equal(owner, 'damian@asoldi.com');
 });
 
 test('storing a metadata-only Fireflies row does not wipe an existing transcript', () => {
