@@ -643,7 +643,7 @@ test('failure limiter: work per refused request stays bounded however many disti
   // 50k distinct legacy-style tokens, then 50k distinct host-shaped tokens, all inside one window
   // (1 ms apart). Each chunk is timed so a limiter whose cost grows stops the test early.
   const perKind = 50_000;
-  const budgetMs = 15_000; // about 3 s on a laptop; a limiter whose work grows with its keys needs minutes
+  const budgetMs = 30_000; // 3 to 6 s on a laptop, also in a busy full run; a limiter whose work grows with its keys needs minutes
   const start = Date.now();
   const statuses = new Set();
   for (let i = 0; i < 2 * perKind; i += 1) {
