@@ -6,6 +6,7 @@ import {
   type SalesMeetingRecording,
   type SalesOffer,
 } from '../Admin/shared';
+import { answerMeansMissingRoute } from './hubRoute';
 
 export type EmailTemplate = {
   id: string;
@@ -26,7 +27,7 @@ export type MergeField = { token: string; label: string; sample?: string };
 export class HubRequestError extends Error {
   status: number;
   data: Record<string, unknown>;
-  /** The route is not on this server yet: no JSON came back (a 404 page, or the app shell on a GET). */
+  /** The route is not on this server yet (hubRoute.ts): a 404 page, or the app shell on a GET. */
   missingRoute: boolean;
 
   constructor(message: string, status: number, data: Record<string, unknown>, missingRoute: boolean) {
@@ -45,7 +46,7 @@ export function isMissingRoute(error: unknown) {
 type HubRequestInit = RequestInit & {
   timeoutMs?: number;
   timeoutMessage?: string;
-  /** A newer route an older hub may not have: a non-JSON answer then throws with missingRoute. */
+  /** A newer route an older hub may not have: its "no such route" answer throws with missingRoute. */
   optionalRoute?: boolean;
 };
 
@@ -71,9 +72,8 @@ async function emailRequest(path: string, init?: HubRequestInit) {
       parsed = false;
       return {} as Record<string, unknown>;
     });
-    // An unknown GET falls through to the app shell (HTML, or a text 500 without a build); an unknown POST is a 404 page.
-    const isGet = !rest.method || rest.method.toUpperCase() === 'GET';
-    const missingRoute = Boolean(optionalRoute) && !parsed && (isGet || response.status === 404);
+    const missingRoute = Boolean(optionalRoute)
+      && answerMeansMissingRoute({ parsed, status: response.status, method: rest.method || '' });
     if (!response.ok || missingRoute) {
       const message = String((data as { message?: string }).message || (missingRoute
         ? 'Dette finnes ikke på serveren ennå.'

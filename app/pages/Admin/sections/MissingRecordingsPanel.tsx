@@ -26,7 +26,6 @@ export function MissingRecordingsPanel({ active = true, nowMs, refreshKey = 0, o
 }) {
   const [rows, setRows] = useState<MissingRecordingRow[]>([]);
   const [open, setOpen] = useState(false);
-  const [supported, setSupported] = useState(true);
   const loadingRef = useRef(false);
 
   const load = useCallback(async () => {
@@ -36,23 +35,24 @@ export function MissingRecordingsPanel({ active = true, nowMs, refreshKey = 0, o
       const data = await listMissingFirefliesRecordings();
       setRows(Array.isArray(data.rows) ? data.rows.filter((row) => row && row.clientId) : []);
     } catch (error) {
-      // An older hub: no route, so no list. Anything else keeps the last list until the next try.
-      if (isMissingRoute(error)) setSupported(false);
+      // An older hub has no list (so none is shown). Anything else, such as a proxy page while the hub
+      // restarts, keeps the last list until the next try: the list must never vanish for good on one bad answer.
+      if (isMissingRoute(error)) setRows([]);
     } finally {
       loadingRef.current = false;
     }
   }, []);
 
   useEffect(() => {
-    if (!active || !supported) return undefined;
+    if (!active) return undefined;
     void load();
     const timer = window.setInterval(() => {
       if (document.visibilityState !== 'hidden') void load();
     }, REFRESH_MS);
     return () => window.clearInterval(timer);
-  }, [active, supported, load, refreshKey]);
+  }, [active, load, refreshKey]);
 
-  if (!supported || !rows.length) return null;
+  if (!rows.length) return null;
 
   return (
     <div className="relative rounded-2xl border border-red-500/40 bg-red-900/30 p-3 sm:p-4">
