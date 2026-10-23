@@ -8,7 +8,7 @@ import {
   type ThreadKindFilter,
 } from '../../developer/DeveloperRequestThread';
 import type { SalesClientMeeting } from '../shared';
-import { isDuplicateRow, isPlaceholderRow, recordingStateLabel } from './firefliesRecording';
+import { isDuplicateRow, isPlaceholderRow, realRowWaitingNote, recordingStateLabel } from './firefliesRecording';
 
 type LogRow = {
   id: string;
@@ -62,7 +62,8 @@ export function clientFeedMessages(
       return ` · ${label || 'Ingen opptak koblet ennå'}`;
     }
     if (isDuplicateRow(row)) return ' · duplikat';
-    return meeting.hasTranscript ? '' : ' · venter på transkript';
+    if (meeting.hasTranscript) return '';
+    return ` · ${realRowWaitingNote(row || meeting, [...clientRows.values()]) || 'venter på transkript'}`;
   };
   const rows: ExtraMessage[] = [];
   for (const section of log.sections) {

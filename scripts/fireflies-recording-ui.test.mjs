@@ -203,3 +203,36 @@ test('the knock reaches the rep on every sales screen, and hidden boards do not 
   // A rep in the Meet tab learns about the knock from the tab title, so the refresh keeps going there.
   assert.doesNotMatch(read('app/pages/Admin/sections/useLiveRecordingRefresh.ts'), /visibilityState/);
 });
+
+test('meeting rows: superseded placeholders, duplicates and empty recordings', () => {
+  const placeholder = { meetingId: 'live:c1:1', slotKey: 'workshop:1', recording: { state: 'ended', ffMeetingId: 'REC1' } };
+  const real = { meetingId: 'REC1', hasTranscript: true };
+  const dup = { meetingId: 'REC2', hasTranscript: false, duplicateOf: 'REC1' };
+  const other = { meetingId: 'live:c1:2', slotKey: 'iteration:2', recording: { state: 'missing' } };
+  assert.equal(h.placeholderIsSuperseded(placeholder, [placeholder, real]), true);
+  assert.equal(h.placeholderIsSuperseded(placeholder, [placeholder, { ...real, hasTranscript: false }]), false);
+  assert.equal(h.placeholderIsSuperseded(other, [other, real]), false);
+  assert.equal(h.placeholderIsSuperseded({ meetingId: 'live:c1:3', slotKey: 'sales:3' }, [{ meetingId: 'R3', slotKey: 'sales:3', hasTranscript: true }]), true);
+  assert.deepEqual(h.visibleMeetingRows([placeholder, real, dup, other]).map((row) => row.meetingId), ['REC1', 'live:c1:2']);
+  assert.deepEqual(h.visibleMeetingRows([placeholder, real, dup, other], { showDuplicates: true }).map((row) => row.meetingId), ['REC1', 'REC2', 'live:c1:2']);
+  const silent = { meetingId: 'REC9', hasTranscript: false };
+  const judged = { meetingId: 'live:c1:9', recording: { state: 'empty', ffMeetingId: 'REC9' } };
+  assert.equal(h.realRowWaitingNote(silent, [silent, judged]), 'tomt opptak');
+  assert.equal(h.realRowWaitingNote(silent, [silent]), 'venter på transkript');
+  assert.equal(h.realRowWaitingNote(real, [real]), '');
+});
+
+test('recording buttons keep unsaved offer edits, Tilbud reads the card\'s fresher rows, and admins get the buttons', () => {
+  const review = read('app/pages/Admin/sections/OfferReviewSection.tsx');
+  const meetings = review.slice(review.indexOf("detailTab === 'meetings'"));
+  assert.match(meetings, /reloadDetailMeetings\(offer\.id\)/);
+  assert.doesNotMatch(meetings, /onDone=\{\(\) => void loadDetail|onClient=\{\(\) => void loadDetail/);
+  assert.match(review, /visibleMeetingRows<OfferMeetingRef>/);
+  const sales = read('app/pages/Admin/sections/SalesClientsSection.tsx');
+  assert.match(sales, /liveClient=\{flowClient\}/);
+  assert.match(read('app/pages/Admin/sections/AdminBoardSection.tsx'), /<ClientRecordingsPanel client=\{client\}/);
+  // Picking the type that is already shown still saves it (the select sits on a hidden entry).
+  const controls = read('app/pages/Admin/sections/MeetingRecordingControls.tsx');
+  assert.match(controls, /value=\{SHOWN_PURPOSE\}/);
+  assert.match(controls, /<option value=\{SHOWN_PURPOSE\} hidden>/);
+});

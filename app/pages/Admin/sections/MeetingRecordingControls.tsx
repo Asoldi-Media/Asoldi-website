@@ -162,7 +162,13 @@ function purposePick(value = ''): MeetingPurposePick {
   return value === 'sales' || value === 'workshop' || value === 'iteration' ? value : '';
 }
 
-/** Which booked meeting a recording is: the hub's guess until a rep picks. Automatisk hands it back. */
+// The select always sits on this hidden entry, so picking the type already shown still saves it.
+const SHOWN_PURPOSE = 'shown';
+
+/**
+ * Which booked meeting a recording is: the hub's guess until a rep picks. Picking the type that is shown
+ * locks the hub's guess as the rep's own; Automatisk hands it back.
+ */
 export function MeetingPurposePicker({ clientId, meetingId, purpose = '', onClient }: {
   clientId: string;
   meetingId: string;
@@ -175,6 +181,7 @@ export function MeetingPurposePicker({ clientId, meetingId, purpose = '', onClie
   const hidden = useMissingRoute('purpose');
   if (!clientId || !meetingId || (hidden && !error)) return null;
   const shown = value ?? purposePick(purpose);
+  const shownLabel = PURPOSE_OPTIONS.find((option) => option.value === shown)?.label || 'Automatisk';
 
   async function pick(next: MeetingPurposePick) {
     setValue(next);
@@ -199,12 +206,15 @@ export function MeetingPurposePicker({ clientId, meetingId, purpose = '', onClie
       {hidden ? null : (
         <select
           aria-label="Møtetype"
-          title="Hva slags møte opptaket er. Automatisk lar huben velge ut fra Meet-rommet og tiden."
-          value={shown}
+          title="Hva slags møte opptaket er. Velg typen for å låse den; Automatisk lar huben velge ut fra Meet-rommet og tiden."
+          value={SHOWN_PURPOSE}
           disabled={busy}
-          onChange={(event) => void pick(purposePick(event.target.value))}
+          onChange={(event) => {
+            if (event.target.value !== SHOWN_PURPOSE) void pick(purposePick(event.target.value));
+          }}
           className="rounded-md bg-black/30 border border-white/10 text-gray-200 text-[11px] px-1.5 py-1 disabled:opacity-50"
         >
+          <option value={SHOWN_PURPOSE} hidden>{shownLabel}</option>
           {PURPOSE_OPTIONS.map((option) => (
             <option key={option.value || 'auto'} value={option.value}>{option.label}</option>
           ))}

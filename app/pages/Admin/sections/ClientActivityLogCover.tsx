@@ -3,7 +3,7 @@ import { ExternalLink } from 'lucide-react';
 import type { SalesClient, SalesClientMeeting } from '../shared';
 import { buildClientActivityLog } from '../../../../lib/sales-activity-log.js';
 import { MeetingVideoHover } from './MeetingVideoHover';
-import { isDuplicateRow, isPlaceholderRow } from './firefliesRecording';
+import { isDuplicateRow, isPlaceholderRow, realRowWaitingNote } from './firefliesRecording';
 import {
   ExcludeMeetingButton,
   MeetingPurposePicker,
@@ -106,7 +106,7 @@ export function ClientActivityLogCover({ client, onClose, onClient, isAdmin = fa
           meeting.hasTranscript ? 'bg-[#FF5B00]/20 text-white' : 'bg-white/10 text-gray-300'
         }`}>
           {meeting.title}{meeting.when ? ` · ${meeting.when}` : ''}
-          {meeting.hasTranscript ? '' : ' · venter på transkript'}
+          {meeting.hasTranscript ? '' : ` · ${realRowWaitingNote(row || meeting, current.meetings || []) || 'venter på transkript'}`}
         </span>
         {isDuplicateRow(row) ? (
           <span className="px-1.5 py-0.5 rounded bg-white/10 text-[10px] text-gray-400" title="Kortere eller tom kopi av et annet opptak av samme møte">duplikat</span>

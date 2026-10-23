@@ -4674,7 +4674,13 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
               />
             )}
             {inClientFlow && flowStep === 3 && flowClient && (
-              <SalesOfferComposer embedded clientId={flowClient.id} onSent={applySavedClient} />
+              <SalesOfferComposer
+                embedded
+                clientId={flowClient.id}
+                onSent={applySavedClient}
+                liveClient={flowClient}
+                onClient={applyUserClient}
+              />
             )}
           </div>
           {inClientFlow && (

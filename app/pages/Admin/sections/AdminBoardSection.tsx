@@ -26,6 +26,7 @@ import {
   normalizeClientSearchText,
 } from '../clientSearch';
 import { AdminRequestInbox } from './AdminRequestInbox';
+import { ClientRecordingsPanel } from './ClientRecordingsPanel';
 import { FirefliesKnockStrip, useKnockTitle } from './FirefliesKnockStrip';
 import { FirefliesLiveStatus } from './FirefliesLiveStatus';
 import { freshClientIsStale, knockingMeetings, mergeFreshClient } from './firefliesRecording';
@@ -219,6 +220,7 @@ function AdminCardDetails({
       />
       <InboxBotPanel client={client} />
       <WorkshopNeedsPanel clientId={client.id} />
+      <ClientRecordingsPanel client={client} onClient={onClient} isAdmin />
       <div className="flex flex-wrap items-center gap-2">
         <button
           type="button"

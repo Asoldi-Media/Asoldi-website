@@ -28,7 +28,7 @@ import {
 } from '../shared';
 import { ClientMeetingCard, MeetingCard, type StoredMeetingRow } from './MeetingDataPanel';
 import { WebsiteDueField } from './WebsiteDueField';
-import { isDuplicateRow, isPlaceholderRow } from './firefliesRecording';
+import { isDuplicateRow, isPlaceholderRow, visibleMeetingRows } from './firefliesRecording';
 import { ExcludeMeetingButton, MeetingPurposePicker, PlaceholderRecordingActions } from './MeetingRecordingControls';
 
 type OfferRow = SalesOffer & {
@@ -66,6 +66,8 @@ type OfferDetail = {
 };
 
 type ClientOption = { id: string; businessName: string };
+
+type OfferMeetingRef = NonNullable<OfferDetail['client']>['meetings'][number];
 
 type DetailTab = 'email' | 'contract' | 'meetings';
 
@@ -233,6 +235,22 @@ export function OfferReviewSection({ hideHeader = false }: { hideHeader?: boolea
       setDetailLoading(false);
     }
   }, [applyDetail]);
+
+  /**
+   * After a recording button in Møtedata: read the offer again but take only the client's meeting rows, so
+   * unsaved edits to the e-mail, note and contract stay where they are.
+   */
+  const reloadDetailMeetings = useCallback(async (id: string) => {
+    if (!id) return;
+    try {
+      const data = await getAdminOffer(id) as OfferDetail;
+      setDetail((current) => (current && current.offer.id === id && current.client && data.client
+        ? { ...current, client: { ...current.client, meetings: data.client.meetings || [] } }
+        : current));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Kunne ikke hente møtedata');
+    }
+  }, []);
 
   useEffect(() => {
     void loadList();
@@ -896,10 +914,12 @@ export function OfferReviewSection({ hideHeader = false }: { hideHeader?: boolea
                             : `Vis duplikater (${detail.client.meetings.filter((ref) => isDuplicateRow(ref)).length})`}
                         </button>
                       ) : null}
-                      {detail.client.meetings
-                        .filter((ref) => showDuplicateMeetings || !isDuplicateRow(ref))
+                      {/* A placeholder whose real recording is in is left out, as on the sales card. */}
+                      {visibleMeetingRows<OfferMeetingRef>(detail.client.meetings, { showDuplicates: showDuplicateMeetings })
                         .map((ref) => {
                           const clientId = detail.client?.id || '';
+                          // These buttons only change meeting rows: unsaved edits above must survive them.
+                          const reloadMeetings = () => void reloadDetailMeetings(offer.id);
                           if (isPlaceholderRow(ref)) {
                             // A booked meeting with no Fireflies record: its state and the decline, no fetch.
                             return (
@@ -909,7 +929,7 @@ export function OfferReviewSection({ hideHeader = false }: { hideHeader?: boolea
                                   clientId={clientId}
                                   meetingId={ref.meetingId}
                                   state={ref.recording?.state || ''}
-                                  onDone={() => void loadDetail(offer.id)}
+                                  onDone={reloadMeetings}
                                 />
                               </div>
                             );
@@ -922,14 +942,14 @@ export function OfferReviewSection({ hideHeader = false }: { hideHeader?: boolea
                                   clientId={clientId}
                                   meetingId={ref.meetingId}
                                   purpose={ref.purpose || ''}
-                                  onClient={() => void loadDetail(offer.id)}
+                                  onClient={reloadMeetings}
                                 />
                                 <ExcludeMeetingButton
                                   clientId={clientId}
                                   meetingId={ref.meetingId}
                                   title={ref.title}
                                   businessName={detail.client?.businessName || ''}
-                                  onDone={() => void loadDetail(offer.id)}
+                                  onDone={reloadMeetings}
                                 />
                               </div>
                               <ClientMeetingCard
