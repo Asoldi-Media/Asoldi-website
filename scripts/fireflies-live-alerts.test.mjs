@@ -221,12 +221,19 @@ test('no placeholder when the recording with talk is linked; a silent fragment d
   const linked = { clients: [talk], active: [], sent: [], reply: null };
   await tickAt(linked, 31, { apiKey: () => '' });
   assert.deepEqual(live.ensureLivePlaceholders({ clients: linked.clients, writePlaceholder: rowWriter(linked.clients), nowMs: at(31), log: quiet }), []);
-  // Recorded in another room but resolved to this slot (by a person, or Track C's matching): linked too.
+  // Recorded in another room but put on this slot (a person's link, or Track C's matching, which also
+  // gives the row its purpose): linked too.
   resetAll();
-  const elsewhere = salesClient({ meetings: [{ meetingId: 'FFSLOT01', meetLink: ROOM_C, slotKey: `sales:${T}`, startedAt: iso(3), hasTranscript: true }] });
+  const elsewhere = salesClient({ meetings: [{ meetingId: 'FFSLOT01', meetLink: ROOM_C, slotKey: `sales:${T}`, purpose: 'sales', forSalesMeeting: true, startedAt: iso(3), hasTranscript: true }] });
   const slotLinked = { clients: [elsewhere], active: [], sent: [], reply: null };
   await tickAt(slotLinked, 31, { apiKey: () => '' });
   assert.deepEqual(live.ensureLivePlaceholders({ clients: slotLinked.clients, writePlaceholder: rowWriter(slotLinked.clients), nowMs: at(31), log: quiet }), []);
+  // A "hallo?" of a few sentences in the room is a fragment, not the recording: the placeholder is written.
+  resetAll();
+  const hello = salesClient({ meetings: [{ meetingId: 'FFHALLO1', meetLink: ROOM, startedAt: iso(1), hasTranscript: true, sentenceCount: 2 }] });
+  const fragmentOnly = { clients: [hello], active: [], sent: [], reply: null };
+  await tickAt(fragmentOnly, 31, { apiKey: () => '' });
+  assert.equal(live.ensureLivePlaceholders({ clients: fragmentOnly.clients, writePlaceholder: rowWriter(fragmentOnly.clients), nowMs: at(31), log: quiet }).length, 1);
 });
 
 test('no placeholder for a moved, declined or old session; a bot the hub did not send gets one too', async () => {
@@ -513,6 +520,7 @@ test('a silent fragment before the deadline decides nothing; the recording with 
     linkTranscript: (clientId, record) => {
       linked.push(record.meetingId);
       client.meetings = client.meetings.filter((row) => !row.meetingId.startsWith('live:'));
+      return client;
     },
     recipientsFor: async () => ['ansatte@asoldi.com'],
     sendEmail: async (message) => { sent.push(message); },
@@ -1006,6 +1014,11 @@ test('a slot whose recording with talk is linked is not marked "uten opptak"', (
   resetAll();
   const client = salesClient({ meetings: [{ meetingId: 'FFTALK09', meetLink: ROOM, startedAt: iso(2), hasTranscript: true }] });
   assert.deepEqual(watchdog.recordingDecision({ client, slotKey: `sales:${T}`, state: 'declined', nowMs: at(90) }), { error: 'has-recording' });
+  // A "hallo?" of a few sentences is no recording of the meeting: the rep may still mark it.
+  const fragment = salesClient({ meetings: [{ meetingId: 'FFHALLO9', meetLink: ROOM, startedAt: iso(2), hasTranscript: true, sentenceCount: 3 }] });
+  const marked = watchdog.recordingDecision({ client: fragment, slotKey: `sales:${T}`, state: 'declined', nowMs: at(90) });
+  assert.equal(marked.declined, true);
+  assert.equal(marked.create.recording.state, 'declined');
 });
 
 test('open undoes declined: missing stays reported, otherwise capture\'s state comes back', () => {
@@ -1086,6 +1099,9 @@ test('server.js wires the alerts, the placeholders and the routes', () => {
   assert.doesNotMatch(step, /if \(!config\.apiKey\) return/);
   assert.match(step, /apiKey: config\.apiKey,/);
   assert.match(step, /mayAlert: firefliesAlertAllowedFor,/);
+  // The watchdog hears a refused link (null) and looks up with the client, so exclusions and pins hold.
+  assert.match(step, /linkTranscript: \(clientId, record, placeholder\) => linkStoredTranscriptToClient\(record, \{/);
+  assert.doesNotMatch(step, /lookup:/, 'the default lookup passes the client and the clients');
   assert.match(server, /await maybeAlertFirefliesIngest\(\{[^\n]*\}\);\s*\/\/[^\n]*\n\s*await maybeAlertFirefliesLiveJoinHealth\(\);/);
   const status = between("app.get('/api/admin/fireflies/live-join-status'", "app.get('/api/admin/fireflies/missing-recordings'");
   assert.match(status, /requireOfferAdmin\(req, res\)/);

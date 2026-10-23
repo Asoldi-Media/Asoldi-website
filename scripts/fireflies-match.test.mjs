@@ -393,6 +393,36 @@ test('the card rows: placeholders have no link, a covered one is hidden, live ca
   assert.equal(missing[0].placeholder, true);
 });
 
+test('one "covered" rule: the card, capture, the "uten opptak" mark and the watchdog agree about every recording', async () => {
+  const live = await import('../lib/fireflies-live-sessions.js');
+  const watchdog = await import('../lib/fireflies-recording-watchdog.js');
+  const cover = await import('../lib/fireflies-cover.js');
+  ff.storeFetchedFirefliesMeeting({ meetingId: 'ff-one-hallo', startedAt: iso(SALES_AT + MIN), meetingLink: SALES_ROOM, isLive: false, summaryStatus: 'processed', transcript: talk(3), summary: 'Hallo?' });
+  ff.storeFetchedFirefliesMeeting({ meetingId: 'ff-one-capt', startedAt: iso(SALES_AT + MIN), meetingLink: SALES_ROOM, isLive: true, transcript: talk(30) });
+  ff.storeFetchedFirefliesMeeting({ meetingId: 'ff-one-real', startedAt: iso(SALES_AT + 2 * MIN), meetingLink: SALES_ROOM, isLive: false, summaryStatus: 'processed', transcript: talk(12), summary: 'Ny nettside.' });
+  const stub = placeholder('sales', SALES_AT, SALES_ROOM, { recording: { state: 'ended' } });
+  const nowMs = SALES_AT + 4 * HOUR;
+  const verdicts = (id) => {
+    const client = bookedClient({ meetings: [stub, recording(id, SALES_ROOM, SALES_AT + MIN, { hasTranscript: true })] });
+    const [session] = live.collectLiveSessions([client], SALES_AT - HOUR).filter((entry) => entry.slots.some((slot) => slot.kind === 'sales'));
+    const decision = watchdog.recordingDecision({ client: { ...client, meetings: client.meetings.filter((row) => row !== stub) }, slotKey: `sales:${SALES_AT}`, state: 'declined', nowMs });
+    return [
+      meetings.clientMeetingRowsView(client).superseded.has(stub.meetingId),
+      cover.clientCoveredPlaceholderIds(client).has(stub.meetingId),
+      live.clientHasTranscriptForSession(client, session),
+      decision.error === 'has-recording',
+      watchdog.missingRecordingRows([client], { nowMs }).count === 0,
+    ];
+  };
+  assert.deepEqual(verdicts('ff-one-hallo'), [false, false, false, false, false], 'a "hallo?" fragment covers nothing anywhere');
+  assert.deepEqual(verdicts('ff-one-capt'), [false, false, false, false, false], 'live captions cover nothing anywhere');
+  assert.deepEqual(verdicts('ff-one-real'), [true, true, true, true, true], 'the recording with talk covers it everywhere');
+  assert.equal(cover.storedRecordCovers(ff.readStoredFirefliesMeeting('ff-one-real')), true);
+  assert.equal(cover.storedRecordCovers(ff.readStoredFirefliesMeeting('ff-one-hallo')), false);
+  assert.equal(cover.storedRecordIsFragment(ff.readStoredFirefliesMeeting('ff-one-hallo')), true);
+  assert.equal(cover.storedRecordCovers(ff.readStoredFirefliesMeeting('ff-one-capt')), false);
+});
+
 test('M6/M12: the workshop slot keeps the recording with talk, ignores ids no longer on the card, and follows a purpose change', () => {
   ff.storeFirefliesMeeting({ meetingId: 'ff-ws-real', title: 'Workshop', startedAt: iso(WORKSHOP_AT), meetingLink: WORKSHOP_ROOM, transcript: 'A\nB\nC\nD', sentenceCount: 4, durationMinutes: 30 });
   ff.storeFirefliesMeeting({ meetingId: 'ff-ws-frag', title: 'Workshop', startedAt: iso(WORKSHOP_AT + 2 * MIN), meetingLink: WORKSHOP_ROOM, transcript: '', summaryStatus: 'skipped', sentenceCount: 0, durationMinutes: 1 });

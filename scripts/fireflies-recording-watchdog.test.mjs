@@ -63,6 +63,7 @@ function hub(clients) {
       // The real link drops the placeholder for the same room.
       client.meetings = client.meetings.filter((row) => !row.meetingId.startsWith('live:'));
       client.meetings.push({ meetingId: record.meetingId, meetLink: record.meetingLink, startedAt: record.startedAt, hasTranscript: true });
+      return client;
     },
     recipientsFor: async () => ['ansatte@asoldi.com', 'alexander@asoldi.com'],
     sendEmail: async (message) => { sent.push(message); },
@@ -75,9 +76,11 @@ function fireflies({ list = [], transcripts = {} } = {}) {
   const calls = { list: 0, fetch: [] };
   return {
     calls,
-    lookupWith: (nowMs) => (placeholder) => watchdog.lookupPlaceholderTranscript(placeholder, {
+    lookupWith: (nowMs) => (placeholder, client, clients) => watchdog.lookupPlaceholderTranscript(placeholder, {
       apiKey: 'fake-key',
       nowMs,
+      clientId: client?.id,
+      clients,
       listTranscripts: async () => {
         calls.list += 1;
         if (list instanceof Error) throw list;
@@ -94,7 +97,8 @@ function fireflies({ list = [], transcripts = {} } = {}) {
   };
 }
 
-function answer(id, { start, meet, status = 'processed', talk = true }) {
+/** Fireflies' transcript(id) answer: a meeting's worth of talk (12 sentences) unless `sentences` says less. */
+function answer(id, { start, meet, status = 'processed', talk = true, sentences = 12 }) {
   return {
     id,
     title: 'Opptak',
@@ -103,7 +107,7 @@ function answer(id, { start, meet, status = 'processed', talk = true }) {
     meeting_link: meet,
     is_live: false,
     meeting_info: { summary_status: status, silent_meeting: !talk },
-    sentences: talk ? [{ speaker_name: 'Kari Test', text: 'Vi vil ha en ny nettside.' }] : [],
+    sentences: talk ? Array.from({ length: sentences }, (_, index) => ({ speaker_name: 'Kari Test', text: `Vi vil ha en ny nettside, del ${index + 1}.` })) : [],
     summary: talk && status === 'processed' ? { overview: 'Ny nettside.' } : {},
   };
 }
@@ -382,4 +386,166 @@ test('a placeholder from long ago is decided once, quietly; a linked session is 
   const later = await run(h, fake, nowMs + 2 * 60 * MIN);
   assert.deepEqual(later.checked, []);
   assert.equal(later.health.missingPlaceholders, 1);
+});
+
+/** Store Fireflies' answer as the pull ingest would (final when its summary is processed or skipped). */
+function storeAnswer(id, options, nowMs) {
+  return ff.storeFetchedFirefliesMeeting(ff.buildFirefliesMeetingRecord({ meeting_id: id }, answer(id, options)), { nowMs });
+}
+
+test('a placeholder whose only linked recording is a "hallo?" fragment is still followed, and turns empty once, at the deadline', async () => {
+  const start = Date.parse('2026-10-24T10:00:00.000Z');
+  const client = booking(start, { state: 'ended' });
+  const [row] = client.meetings;
+  // The bot sat alone in the open room at T+1, someone said "hallo?" twice, and intake linked it.
+  storeAnswer('FFHALLO1', { start, meet: row.meetLink, sentences: 2 }, start + 30 * MIN);
+  client.meetings.push({ meetingId: 'FFHALLO1', meetLink: row.meetLink, startedAt: iso(start + MIN), hasTranscript: true, sentenceCount: 2 });
+  const h = hub([client]);
+  const fake = fireflies({ list: [{ id: 'FFHALLO1', title: 'Opptak', dateString: iso(start + MIN), meeting_link: row.meetLink }] });
+
+  const early = await run(h, fake, start + 70 * MIN);
+  assert.deepEqual(early.checked, [row.meetingId], 'the fragment does not count as the meeting\'s recording');
+  assert.equal(row.recording.state, 'ended', 'nothing is decided before the deadline');
+  assert.match(row.recording.message, /bare et veldig kort opptak/);
+  assert.doesNotMatch(row.recording.message, /funnet og koblet/);
+  assert.deepEqual(early.linked, []);
+  assert.deepEqual(h.linked, [], 'already on the card: not linked again');
+  assert.equal(watchdog.missingRecordingRows([client], { nowMs: start + 70 * MIN }).count, 0, 'not listed before its deadline');
+
+  const due = await run(h, fake, start + 151 * MIN);
+  assert.equal(row.recording.state, 'empty');
+  assert.equal(row.recording.ffMeetingId, 'FFHALLO1');
+  assert.match(row.recording.message, /ingen tale, eller for kort/);
+  assert.deepEqual(due.empty, [row.meetingId]);
+  assert.equal(h.sent.length, 1);
+  assert.equal(h.sent[0].subject, `Fireflies: tomt opptak av salgsmøtet med ${client.businessName}`);
+  assert.deepEqual(watchdog.missingRecordingRows([client], { nowMs: start + 152 * MIN }).rows.map((entry) => entry.state), ['empty']);
+
+  await run(h, fake, start + 215 * MIN);
+  assert.equal(row.recording.state, 'empty');
+  assert.equal(h.sent.length, 1, 'one e-mail');
+  assert.deepEqual(h.linked, []);
+});
+
+test('a finished recording with only a few sentences is linked for the rep to see, but the meeting still turns empty', async () => {
+  const start = Date.parse('2026-10-24T12:00:00.000Z');
+  const client = booking(start, { state: 'ended' });
+  const [row] = client.meetings;
+  const h = hub([client]);
+  const linked = [];
+  // The real link keeps a placeholder a fragment does not cover.
+  h.deps.linkTranscript = (clientId, record) => {
+    linked.push(record.meetingId);
+    client.meetings.push({ meetingId: record.meetingId, meetLink: record.meetingLink, startedAt: record.startedAt, hasTranscript: true, sentenceCount: 3 });
+    return client;
+  };
+  const fake = fireflies({
+    list: [{ id: 'FFSHORT1', title: 'Opptak', dateString: iso(start + MIN), meeting_link: row.meetLink }],
+    transcripts: { FFSHORT1: answer('FFSHORT1', { start, meet: row.meetLink, sentences: 3 }) },
+  });
+  const early = await run(h, fake, start + 62 * MIN);
+  assert.deepEqual(linked, ['FFSHORT1'], 'on the card');
+  assert.deepEqual(early.linked, [], 'but not the meeting\'s recording');
+  assert.equal(row.recording.state, 'ended');
+  assert.match(row.recording.message, /bare et veldig kort opptak/);
+  assert.equal(h.sent.length, 0);
+
+  await run(h, fake, start + 151 * MIN);
+  assert.equal(row.recording.state, 'empty');
+  assert.equal(row.recording.ffMeetingId, 'FFSHORT1');
+  assert.equal(h.sent.length, 1);
+  await run(h, fake, start + 215 * MIN);
+  assert.deepEqual(linked, ['FFSHORT1'], 'linked once');
+  assert.equal(h.sent.length, 1, 'one e-mail');
+});
+
+test('a recording a person said is not this client\'s, or pinned to another client, is never found or offered', async () => {
+  const start = Date.parse('2026-10-24T14:00:00.000Z');
+  const client = booking(start);
+  const other = booking(start + 6 * 60 * MIN);
+  const [row] = client.meetings;
+  storeAnswer('FFNOTME1', { start, meet: row.meetLink }, start + 30 * MIN);
+  ff.setStoredFirefliesClientLink('FFNOTME1', { exclude: client.id }, { nowMs: start + 40 * MIN });
+  storeAnswer('FFPINNED', { start: start + 2 * MIN, meet: row.meetLink }, start + 30 * MIN);
+  ff.setStoredFirefliesClientLink('FFPINNED', { pin: { clientId: other.id, linkedBy: 'admin:ansatt', at: iso(start + 40 * MIN) } }, { nowMs: start + 40 * MIN });
+  const h = hub([client, other]);
+  const fake = fireflies({
+    list: [
+      { id: 'FFNOTME1', title: row.title, dateString: iso(start + MIN), meeting_link: row.meetLink, transcript_url: 'https://app.fireflies.ai/view/FFNOTME1' },
+      { id: 'FFPINNED', title: row.title, dateString: iso(start + 3 * MIN), meeting_link: row.meetLink, transcript_url: 'https://app.fireflies.ai/view/FFPINNED' },
+    ],
+  });
+  const result = await run(h, fake, start + 151 * MIN);
+  assert.ok(result.checked.includes(row.meetingId));
+  assert.deepEqual(h.linked, []);
+  assert.equal(row.recording.state, 'missing');
+  assert.doesNotMatch(row.recording.message, /FFNOTME1|FFPINNED/);
+  const mail = h.sent.find((message) => message.subject.endsWith(client.businessName));
+  assert.ok(mail);
+  assert.doesNotMatch(mail.text, /FFNOTME1|FFPINNED/, 'neither is offered as a candidate');
+});
+
+test('a link the hub refuses is not a link: no "funnet og koblet", and a missing meeting stays missing', async () => {
+  const start = Date.parse('2026-10-24T16:00:00.000Z');
+  const client = booking(start, { state: 'missing', missingAt: iso(start + 150 * MIN), alertedAt: iso(start + 150 * MIN), message: 'Ingen Fireflies-opptak etter møtet.' });
+  const [row] = client.meetings;
+  const h = hub([client]);
+  const tried = [];
+  h.deps.linkTranscript = (clientId, record) => {
+    tried.push(record.meetingId);
+    return null;
+  };
+  const fake = fireflies({
+    list: [{ id: 'FFREFUSE', title: 'Opptak', dateString: iso(start + MIN), meeting_link: row.meetLink }],
+    transcripts: { FFREFUSE: answer('FFREFUSE', { start, meet: row.meetLink }) },
+  });
+  const result = await run(h, fake, start + 215 * MIN);
+  assert.deepEqual(tried, ['FFREFUSE']);
+  assert.deepEqual(result.linked, []);
+  assert.equal(row.recording.state, 'missing');
+  assert.doesNotMatch(row.recording.message, /funnet og koblet/);
+  assert.equal(h.sent.length, 0, 'already reported once');
+});
+
+test('a recording of the next booked meeting in the same room is that meeting\'s: offered here, found there', async () => {
+  const start = Date.parse('2026-10-25T10:00:00.000Z');
+  const room = 'https://meet.google.com/abc-2001-hij';
+  const clientId = 'c-shared-room';
+  const next = start + 60 * MIN;
+  const stub = (meetingId, slotKey, at, purpose) => ({
+    meetingId,
+    title: 'Testfirma Delt AS · Kari Test',
+    startedAt: iso(at),
+    meetLink: room,
+    hasTranscript: false,
+    linkedBy: 'live-join',
+    purpose,
+    forSalesMeeting: purpose === 'sales',
+    slotKey,
+    recording: mergeRecordingState(null, { state: 'ended', dispatchedAt: iso(at - 2 * MIN) }),
+  });
+  const sales = stub(`live:${clientId}:${start}`, `sales:${start}`, start, 'sales');
+  const followUp = stub(`live:${clientId}:act-next:${next}`, 'action:act-next', next, '');
+  const client = {
+    id: clientId,
+    businessName: 'Testfirma Delt AS',
+    ownerId: 'sales:rep-1',
+    agreedTime: true,
+    meetingAt: iso(start),
+    meetingMode: 'online',
+    calendar: { meetLink: room },
+    nextActions: [{ id: 'act-next', presetKey: 'custom', goalKey: 'offerSent', name: 'Oppfølging', format: 'mote', addToCalendar: true, dueAt: iso(next), meetLink: room }],
+    meetings: [sales, followUp],
+  };
+  // The follow-up started two minutes early, inside the sales meeting's hour too.
+  const fake = fireflies({
+    list: [{ id: 'FFNEXT02', title: 'Opptak', dateString: iso(next - 2 * MIN), meeting_link: room, transcript_url: 'https://app.fireflies.ai/view/FFNEXT02' }],
+    transcripts: { FFNEXT02: answer('FFNEXT02', { start: next - 3 * MIN, meet: room }) },
+  });
+  const lookup = fake.lookupWith(next + 70 * MIN);
+  const forSales = await lookup(sales, client, [client]);
+  assert.equal(forSales.found, null, 'the card would put it on the follow-up, so it is not the sales meeting\'s recording');
+  assert.deepEqual(forSales.candidates.map((row) => [row.meetingId, row.why]), [['FFNEXT02', 'room']]);
+  const forFollowUp = await lookup(followUp, client, [client]);
+  assert.equal(forFollowUp.found?.meetingId, 'FFNEXT02');
 });

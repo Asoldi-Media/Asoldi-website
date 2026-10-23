@@ -925,6 +925,77 @@ test('liveRecordings shows the card state from T-30 to T+booked+2h', () => {
   }
 });
 
+/**
+ * The bot sat alone in the open room from T+1 and left at T+11; by T+13 intake has linked `linked` to the
+ * card. Returns the engine's state after the T+13 tick and the session as stored.
+ */
+async function botLeftAloneWith(linked) {
+  resetStore();
+  const client = salesClient();
+  const state = engineState([client]);
+  await runFirefliesLiveJoinTick(engineDeps(state));
+  const bot = activeRow(ROOM, { startTime: iso(1) });
+  for (const minutes of [1, 6, 11]) {
+    state.now = at(minutes);
+    state.active = [bot];
+    await runFirefliesLiveJoinTick(engineDeps(state));
+  }
+  client.meetings.push(linked);
+  state.now = at(13);
+  state.active = [];
+  await runFirefliesLiveJoinTick(engineDeps(state));
+  return { state, client, session: readLiveSessionStore().sessions[`${ROOM}|${T}`] };
+}
+
+test('a "hallo?" fragment or live captions on the card are not the meeting\'s recording: the bot is sent back', async () => {
+  const ff = await import('../lib/fireflies-webhook.js');
+  const lastKind = (state) => state.dispatchEvents.at(-1)?.attempt?.kind;
+  // Two sentences from the empty room, linked by intake: not the recording.
+  const fragment = await botLeftAloneWith({ meetingId: 'FFHALLO2', meetLink: ROOM, startedAt: iso(1), hasTranscript: true, sentenceCount: 2 });
+  assert.equal(fragment.session.transcriptSeenAt, '');
+  assert.equal(lastKind(fragment.state), 'rejoin', 'the bot goes back for the real meeting');
+  const [card] = live.presentLiveRecordings(fragment.client, { nowMs: at(13) });
+  assert.equal(card.hasTranscript, false, 'the card does not say the recording is in');
+
+  // Live captions of a meeting that is still on, linked mid-meeting: not the recording either.
+  ff.storeFetchedFirefliesMeeting(ff.buildFirefliesMeetingRecord({ meeting_id: 'FFCAPT01' }, {
+    id: 'FFCAPT01',
+    title: 'Opptak',
+    dateString: iso(1),
+    meeting_link: ROOM,
+    is_live: true,
+    sentences: Array.from({ length: 30 }, (_, index) => ({ speaker_name: 'Kari Test', text: `Setning ${index + 1}.` })),
+  }), { nowMs: at(12) });
+  const captions = await botLeftAloneWith({ meetingId: 'FFCAPT01', meetLink: ROOM, startedAt: iso(1), hasTranscript: true, sentenceCount: 30 });
+  assert.equal(captions.session.transcriptSeenAt, '');
+  assert.equal(lastKind(captions.state), 'rejoin');
+
+  // The meeting's recording (a meeting's worth of talk) stops the rejoin.
+  const real = await botLeftAloneWith({ meetingId: 'FFREAL10', meetLink: ROOM, startedAt: iso(1), hasTranscript: true, sentenceCount: 40 });
+  assert.equal(real.session.transcriptSeenAt, iso(13));
+  assert.notEqual(lastKind(real.state), 'rejoin');
+  assert.equal(live.presentLiveRecordings(real.client, { nowMs: at(13) })[0].hasTranscript, true);
+});
+
+test('the session rule is the card\'s rule: a slot covered on the card is covered for capture, with or without its row', () => {
+  resetStore();
+  const [fact] = collectLiveSessions([salesClient()], at(-60));
+  const session = syncLiveSessions({}, [fact], { nowMs: at(-60) })[fact.key];
+  const stub = `live:client-1:${T}`;
+  const placeholder = { meetingId: stub, slotKey: `sales:${T}`, startedAt: iso(0), meetLink: ROOM, hasTranscript: false, recording: { state: 'ended' } };
+  const real = { meetingId: 'FFREAL11', meetLink: ROOM, startedAt: iso(2), hasTranscript: true, sentenceCount: 25 };
+  for (const meetings of [[real], [placeholder, real]]) {
+    assert.equal(live.clientHasTranscriptForSession(salesClient({ meetings }), session), true);
+  }
+  // Another room at the same time, put there by nobody: not this slot's recording.
+  assert.equal(live.clientHasTranscriptForSession(salesClient({ meetings: [{ ...real, meetLink: ROOM_C }] }), session), false);
+  // A recording two hours after the booked hour in the same room is a later meeting there.
+  assert.equal(live.clientHasTranscriptForSession(salesClient({ meetings: [{ ...real, startedAt: iso(150) }] }), session), false);
+  // Its stored copy decides over the row: a silent copy is no recording.
+  const silentCopy = (id) => (id === 'FFREAL11' ? { meetingId: id, transcript: '', summary: '', summaryStatus: 'skipped' } : null);
+  assert.equal(live.clientHasTranscriptForSession(salesClient({ meetings: [real] }), session, { storedOf: silentCopy }), false);
+});
+
 test('a manual send is queued for the slot, not while the bot is in the room', () => {
   resetStore();
   const client = salesClient();
