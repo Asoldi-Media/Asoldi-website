@@ -16244,7 +16244,11 @@ function scheduleFirefliesTranscriptIngest({ force = false } = {}) {
         ['backfill', () => ensureFirefliesMeetLinkBackfill({ force: true })],
         ['relink', () => hydratePendingClientTranscripts()],
         // Webhook-only steps (notify e-mail, media copy) for meetings the pull ingest brought in.
-        ['follow-up', () => runFirefliesPullFollowUp({ notify: (payload) => notifyFirefliesRecording(payload, readFirefliesWebhookConfig(), firefliesClientDeps()), persistMedia: persistFirefliesMediaInBackground })],
+        // The follow-up picks meetings that are ready to send, from the copy the ingest just stored.
+        ['follow-up', () => runFirefliesPullFollowUp({
+          notify: (payload) => notifyFirefliesRecording(payload, readFirefliesWebhookConfig(), { ...firefliesClientDeps(), useStored: true, deferUntilFinal: false }),
+          persistMedia: persistFirefliesMediaInBackground,
+        })],
       ]);
       await maybeAlertFirefliesIngest({ sendEmail: (message) => emailLib.sendEmail(message) });
     } catch (error) {
