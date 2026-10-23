@@ -527,11 +527,12 @@ const PORT = process.env.PORT || 3000;
 const distPath = join(__dirname, 'dist');
 const publicPath = join(__dirname, 'public');
 // Env wins unless it is a known default or shorter than 16; otherwise a random secret kept in <dataDir>/secrets/.
-// Admin → Security can rotate the disk secret while the hub runs: every token signer and verifier
-// (admin, staff, client portal, OAuth state) reads it through hubSigningSecret(), and other hub
-// processes pick the new value up from the file within a second. A verifier whose signature does
-// not match re-reads the file once (signatureMatchesHubSecret), so a token signed by another
-// process right after a rotation is accepted at once.
+// Admin → Security can rotate the disk secret while the hub runs. Every hub process re-reads the
+// file within a second, so tokens signed with the old secret stop everywhere. Signers (sign-ins,
+// OAuth starts: hubSigningSecret) re-read it first, so no process signs with a replaced secret,
+// and a verifier whose signature does not match re-reads it once (signatureMatchesHubSecret), so
+// a token another process signed right after a rotation is accepted at once. Both re-reads are
+// limited to ten a second per process.
 const ADMIN_SECRET_HOLDER = createHubSecretHolder({
   envValue: process.env.ADMIN_SECRET,
   dataDir: getPersistentDataDir(),
@@ -539,8 +540,9 @@ const ADMIN_SECRET_HOLDER = createHubSecretHolder({
   refreshMs: secretRefreshMs(),
 });
 const ADMIN_SECRET_SOURCE = { source: ADMIN_SECRET_HOLDER.source, envRejected: ADMIN_SECRET_HOLDER.envRejected };
+/** The secret to sign a new token or OAuth state with (re-read from the file first). */
 function hubSigningSecret() {
-  return ADMIN_SECRET_HOLDER.get();
+  return ADMIN_SECRET_HOLDER.get({ fresh: true });
 }
 /** sign(secret) → the expected signature; compared in constant time with the given one. */
 function signatureMatchesHubSecret(given, sign) {

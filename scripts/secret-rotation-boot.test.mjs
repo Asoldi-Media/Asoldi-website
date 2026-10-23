@@ -190,6 +190,17 @@ test('two hub processes on one data dir: a rotation refuses every old token in b
     assert.equal(hub.log().includes(secretAfter), false, 'the secret is never logged');
     assert.equal(hub.log().includes(newMaker), false, 'the Maker token is never logged');
   }
+
+  // A second rotation, then a sign-in on C before C has seen any new token: C re-reads the secret
+  // before it signs, so the token it issues works in A at once (never signed with a replaced secret).
+  const second = await fetch(`${a.base}/api/admin/security/signing-secret/rotate`, bearer(rotated.token, json({ currentPassword: ADMIN_PASSWORD, confirm: 'ROTER' })));
+  assert.equal(second.status, 200);
+  const clientOnC = (await (await fetch(`${c.base}/api/client/auth/login`, json({ email: 'rotation-client@example.com', password: 'rotation-client-pw-1' }))).json()).token;
+  assert.equal(await status(a, '/api/client/profile', clientOnC), 200, 'a token C signs right after a rotation works in A');
+  assert.equal(await status(c, '/api/client/profile', clientAgain), 401, 'and C refuses the tokens from before it');
+  const history = (await (await fetch(`${a.base}/api/admin/system/security`, bearer((await second.json()).token))).json()).secretRotationHistory;
+  assert.deepEqual(history.map((row) => row.name), ['admin-secret', 'admin-secret', 'maker-callback-token']);
+
   for (const hub of [a, b, c]) {
     const file = join(dataDir, `egress-${new URL(hub.base).port}.jsonl`);
     if (!existsSync(file)) continue;
