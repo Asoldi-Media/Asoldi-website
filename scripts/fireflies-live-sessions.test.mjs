@@ -249,6 +249,13 @@ test('never seen: retries at T+1, T+5, then every 10 minutes, at most 5 sends, t
   assert.equal(late.session.state, 'recording', 'a late admission still counts');
 });
 
+test('when Fireflies cannot be asked who is in the room, a due retry still goes out after 5 minutes', () => {
+  const sent = { ...dispatched(sessionFor(salesClient()), -3), checkedAt: iso(-2) };
+  assert.equal(dispatches(planAt(1, sent, { active: null })).length, 0, 'last look 3 minutes ago: wait');
+  assert.equal(planAt(1, sent, { active: null }).reasons[sent.key], 'unverified');
+  assert.deepEqual(dispatches(planAt(3, sent, { active: null })).map((row) => row.kind), ['retry']);
+});
+
 test('a failed send does not need a look before the next one, and a bad link stops the schedule', () => {
   const failed = applyLiveJoinAttempt(sessionFor(salesClient()), { at: iso(-3), kind: 'first', ok: false, message: 'network down' });
   assert.equal(dispatches(planAt(1, failed, { active: null })).length, 1);
@@ -496,6 +503,23 @@ test('engine: a rate-limit answer blocks the limiter; a safe-mode refusal is not
   store = readLiveSessionStore();
   assert.equal(store.limiter.calls.length, 0);
   assert.equal(store.sessions[`${ROOM}|${T}`].attempts.length, 0);
+});
+
+test('engine: a send another hub process has out stands this one back (one knock, not two)', async () => {
+  resetStore();
+  live.upsertLiveSessionsForClient(salesClient(), { nowMs: at(-10) });
+  updateLiveSessionStore((store) => {
+    store.sessions[`${ROOM}|${T}`].dispatchingAt = iso(-3.5);
+    return store;
+  }, { nowMs: at(-10) });
+  const state = engineState([salesClient()]);
+  await runFirefliesLiveJoinTick(engineDeps(state));
+  assert.equal(state.sent.length, 0);
+  assert.equal(readLiveSessionStore().limiter.calls.length, 0, 'a send that did not happen is not counted');
+  state.now = at(-1);
+  await runFirefliesLiveJoinTick(engineDeps(state));
+  assert.equal(state.sent.length, 1, 'a mark older than 2 minutes no longer holds the session');
+  assert.equal(readLiveSessionStore().sessions[`${ROOM}|${T}`].dispatchingAt, '');
 });
 
 test('engine: one failing session does not stop the others', async () => {
