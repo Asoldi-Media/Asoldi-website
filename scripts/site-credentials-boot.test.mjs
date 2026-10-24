@@ -84,10 +84,11 @@ test('real hub: site config, heartbeat, money routes, enrollment switch, revoke 
   await waitFor(() => logs.includes('Server running on port'), { what: 'server start' });
   const passwordFile = join(dataDir, 'secrets', 'initial-admin-password');
   await waitFor(() => existsSync(passwordFile) && existsSync(join(dataDir, 'admin.json')), { what: 'initial admin' });
+  const adminPassword = readFileSync(passwordFile, 'utf8').trim();
   const login = await fetch(`${base}/api/admin/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ username: 'asoldi.com', password: readFileSync(passwordFile, 'utf8').trim() }),
+    body: JSON.stringify({ username: 'asoldi.com', password: adminPassword }),
   });
   assert.equal(login.status, 200);
   const admin = { authorization: `Bearer ${(await login.json()).token}`, 'content-type': 'application/json' };
@@ -232,7 +233,9 @@ test('real hub: site config, heartbeat, money routes, enrollment switch, revoke 
   assert.equal(await beatFrom('198.51.100.42'), 429, 'by default a second visitor behind the CDN shares its heartbeat count');
   for (let i = 0; i < 8; i += 1) assert.equal(await formFrom('198.51.100.41'), 200);
   assert.equal(await formFrom('198.51.100.42'), 429, 'and its form count');
-  const hops = await json('/api/admin/security/login-address', { method: 'PUT', headers: admin, body: JSON.stringify({ trustedHops: 2 }) });
+  // With the admin's current password: a hub that confirms it for this setting needs it, and one
+  // that does not ignores the field.
+  const hops = await json('/api/admin/security/login-address', { method: 'PUT', headers: admin, body: JSON.stringify({ trustedHops: 2, currentPassword: adminPassword }) });
   assert.equal(hops.status, 200);
   assert.equal(hops.body.trustedHops, 2);
   for (let i = 0; i < 30; i += 1) assert.equal(await beatFrom('198.51.100.42'), 200, 'with 2 trusted hops the visitor has a heartbeat count of its own');
