@@ -31,7 +31,7 @@
     "test:delivery": "node --test scripts/delivery-vocab.test.mjs scripts/suite-boundary.test.mjs scripts/suite-drift.test.mjs scripts/forward-compat-revert.test.mjs scripts/forward-compat-patch-guard.test.mjs scripts/delivery-snapshot.test.mjs scripts/automation-settings.test.mjs scripts/delivery-routes.test.mjs scripts/test-client-flag.test.mjs scripts/docs-delivery-coverage.test.mjs scripts/local-blog-brief.test.mjs data/hub-model.test.js scripts/ai-assistant-intake.test.mjs scripts/site-plan.test.mjs scripts/offer-plan.test.mjs scripts/delivery-state.test.mjs scripts/maker-events.test.mjs scripts/backfill-site-plans.test.mjs scripts/delivery-boot.test.mjs",
     "test:laptop-preview": "node scripts/test-laptop-preview.mjs",
     "test:llm-core": "node --test scripts/llm-core.test.mjs scripts/llm-contract.test.mjs scripts/llm-harness.test.mjs scripts/suite-boundary.test.mjs scripts/suite-drift.test.mjs",
-    "test:llm-hub": "node --test scripts/llm-hub-facade.test.mjs scripts/llm-hub-callsites.test.mjs scripts/ai-spend-callback.test.mjs",
+    "test:llm-hub": "node --test scripts/llm-hub-facade.test.mjs scripts/llm-hub-callsites.test.mjs scripts/ai-spend-callback.test.mjs scripts/llm-ledger-retention.test.mjs",
     "publish:previews": "node scripts/publish-previews-from-office.mjs",
     "sync:prod-users": "node scripts/sync-prod-users.mjs",
     "sync:prod-runtime": "node scripts/sync-prod-runtime.mjs",
