@@ -107,13 +107,16 @@ test('owner decisions: blog on all tiers, auto posts and backlinks in tier 2+, n
   }
   // A custom plan with a site still gets the blog.
   assert.ok(vocab.expandServices(['site', 'changes', 'ecom']).includes('blog'));
-  // WS6 registry names: the client-written blog is `blog` (every tier); automatic posts are
-  // `blog.localPosts` and belong to `seo` only. WS6.4 must move blog.localPosts out of its `blog`
-  // bundle into the `seo` bundle, otherwise blog on every tier would give tier 1 auto posts.
+  // WS6 registry names: the client-written blog is `blog` and `blog.posts` (every tier); automatic
+  // posts are `blog.autoPosts` and belong to `seo` only, so blog on every tier never gives tier 1
+  // auto posts. The older name `blog.localPosts` is read as an alias.
   assert.deepEqual(vocab.SERVICE_FEATURE_ANCHORS.blog, ['blog']);
-  assert.deepEqual(vocab.SERVICE_FEATURE_ANCHORS.seo, ['blog.localPosts']);
+  assert.deepEqual(vocab.SERVICE_FEATURE_ANCHORS.seo, ['blog.autoPosts']);
   assert.deepEqual(vocab.SERVICE_FEATURE_ANCHORS.backlinks, ['seo.linkNetwork']);
-  assert.deepEqual(vocab.SERVICE_EXCLUSIVE_FEATURES['blog.localPosts'], ['seo']);
+  assert.deepEqual(vocab.SERVICE_EXCLUSIVE_FEATURES['blog.autoPosts'], ['seo']);
+  assert.deepEqual(vocab.exclusiveServicesFor('blog.autoPosts'), ['seo']);
+  assert.deepEqual(vocab.exclusiveServicesFor('blog.localPosts'), ['seo'], 'the older name reads the same entry');
+  assert.deepEqual(vocab.exclusiveServicesFor('blog'), []);
   for (const id of Object.keys(vocab.SERVICE_FEATURE_ANCHORS)) assert.ok(vocab.isServiceId(id));
   // No auto-post key may be anchored to a service that tier 1 has.
   const tier1 = vocab.servicesForTier('tier-1-standard');
@@ -124,9 +127,13 @@ test('owner decisions: blog on all tiers, auto posts and backlinks in tier 2+, n
     assert.equal(owners.some((service) => tier1.includes(service)), false, `${feature} must stay out of tier 1`);
   }
   // The plan's names resolve to the registry keys; there is one key per concept.
-  assert.equal(vocab.canonicalFeatureKey('blog.posts'), 'blog');
-  assert.equal(vocab.canonicalFeatureKey('blog.autoPosts'), 'blog.localPosts');
+  assert.equal(vocab.canonicalFeatureKey('blog.posts'), 'blog.posts');
+  assert.equal(vocab.canonicalFeatureKey('blog.autoPosts'), 'blog.autoPosts');
+  assert.equal(vocab.canonicalFeatureKey('blog.localPosts'), 'blog.autoPosts');
+  assert.equal(vocab.canonicalFeatureKey('seo.backlinkNetwork'), 'seo.linkNetwork');
   assert.equal(vocab.canonicalFeatureKey('seo.linkNetwork'), 'seo.linkNetwork');
+  // The blog.autoPosts rename came with version 2; later changes only raise the number.
+  assert.ok(Number.isInteger(vocab.VOCAB_VERSION) && vocab.VOCAB_VERSION >= 2, `VOCAB_VERSION ${vocab.VOCAB_VERSION}`);
   const anchored = Object.values(vocab.SERVICE_FEATURE_ANCHORS).flat();
   for (const alias of Object.keys(vocab.FEATURE_KEY_ALIASES)) assert.equal(anchored.includes(alias), false, alias);
   const everyId = [

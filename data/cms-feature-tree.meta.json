@@ -1,0 +1,26 @@
+{
+  "source": "website-cms",
+  "ref": "wf/w1b-cms-integration",
+  "sourceCommit": "c8e237b457c30c44db8f479b356d9da161f391a9",
+  "registryVersion": "2.3.0",
+  "v": 1,
+  "keyCount": 85,
+  "files": {
+    "data/cms-feature-tree.json": {
+      "from": "server/feature-tree.json",
+      "sha256": "sha256:6e726298b4c7283024f828c5bb47377c8f2fc70d5cde912fe16f1b239ff4e474"
+    },
+    "lib/cms-features.js": {
+      "from": "server/features.js",
+      "sha256": "sha256:d29d06c1c808ba3a83243f4f12235d498991a241a82237366368f1271d7827e8"
+    },
+    "lib/cms-spec-schema.js": {
+      "from": null,
+      "note": "hub copy; the CMS has no source file yet"
+    },
+    "scripts/fixtures/cms-feature-matrix.json": {
+      "from": "test/fixtures/feature-matrix.json",
+      "sha256": "sha256:6ece83fda410b06efc418e798ede3c9d77f2c4c75acf85fae18c42060202a4b9"
+    }
+  }
+}

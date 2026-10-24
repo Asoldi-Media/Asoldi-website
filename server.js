@@ -34,6 +34,8 @@ import { registerShopPaymentsRoutes, registerShopPaymentsWebhook } from './lib/s
 import { registerCmsSsoRoutes } from './lib/cms-sso.js';
 import { createHeartbeatLimits, heartbeatMarksSeen, registerSiteCredentialRoutes, siteCredentialState } from './lib/site-credentials.js';
 import { registerDeliveryRoutes } from './lib/routes/delivery-routes.js';
+import { registerCmsFeatureRoutes } from './lib/routes/cms-feature-routes.js';
+import { websitePlanForNewSite } from './lib/cms-entitlements.js';
 import { runDeliverySchemaStartupSnapshot } from './lib/delivery-snapshots.js';
 import { chosenWebsiteTier, makerSitePlanPayload, websiteTierIdForClient } from './lib/site-plan.js';
 import { isMakerDeliveryEvent, makerEventsRecording, makerRunFetchWithMaterials, recordMakerDeliveryEvent } from './lib/maker-events-hub.js';
@@ -12951,6 +12953,13 @@ registerCmsSsoRoutes(app, { adminAuth, getSiteById: hub.getSiteById, getAllSites
 registerSiteCredentialRoutes(app, { adminAuth, getSiteByKey: hub.getSiteByKey, getSiteById: hub.getSiteById, getAllSites: hub.getAllSites, setTrustedCmsVersion: (id, packageVersion) => hub.updateSite(id, { cms: { packageVersion } }).ok });
 registerSafeModeRoutes(app, { adminAuth });
 registerDeliveryRoutes(app, { adminAuth, sales, hub, salesOffers });
+// WS6.7/WS6.8: feature tree and cms-spec. Dark until Superadmin switches it on (cms-feature-settings.json).
+const cmsFeatures = registerCmsFeatureRoutes(app, {
+  adminAuth,
+  hub,
+  sales,
+  makerAuth: requireMakerHost('jobs', { message: 'Unauthorized' }),
+});
 
 // --- Hub API (public: site config for client CMS)
 // The site key is public, so a key lookup gets the public fields only. The client admin contact and
@@ -12966,13 +12975,13 @@ app.get('/api/hub/site-config', (req, res) => {
     const site = hub.getSiteByKey(siteKey);
     if (!site) return res.status(404).json({ message: 'Site not found' });
     const credential = siteCredentialState(req, site, { res });
-    const config = hub.getSiteConfig(siteKey, false, { includeAdmin: credential === 'valid' });
+    const config = hub.getSiteConfig(siteKey, false, { includeAdmin: credential === 'valid', withFeatures: cmsFeatures.siteConfigFeatures });
     if (!config) return res.status(404).json({ message: 'Site not found' });
     res.set('Cache-Control', 'no-store');
     return res.json(withGoals(config, siteKey));
   }
   if (domain) {
-    const config = hub.getSiteConfig(domain, true);
+    const config = hub.getSiteConfig(domain, true, { withFeatures: cmsFeatures.siteConfigFeatures });
     if (!config) return res.status(404).json({ message: 'Site not found' });
     const site = hub.getSiteByDomain(domain);
     return res.json(withGoals(config, site?.site_key));
@@ -13001,6 +13010,7 @@ app.post('/api/hub/heartbeat', (req, res) => {
     adminUrl: sanitizeText(req.body?.adminUrl).slice(0, 300),
     name: sanitizeText(req.body?.name).slice(0, 120),
     adminApplied: req.body?.adminApplied === true || req.body?.adminApplied === 'true',
+    report: req.body,
   }, { verified: credential === 'valid', marksSeen: heartbeatMarksSeen(credential) });
   if (!result.ok) {
     const status = result.error === 'Site not found' ? 404 : 400;
@@ -13051,12 +13061,12 @@ app.post('/api/hub/sites/:id/local-blog-token', adminAuth, (req, res) => {
 app.get('/api/cms/config', (req, res) => {
   const siteKey = process.env.CMS_SITE_KEY;
   if (siteKey) {
-    // Public route: never the admin fields.
-    const config = hub.getSiteConfig(siteKey, false, { includeAdmin: false });
+    // An open route: the site key comes from the environment, not from the caller, so no admin data.
+    const config = hub.getSiteConfig(siteKey, false, { withFeatures: cmsFeatures.siteConfigFeatures, includeAdmin: false });
     if (config) return res.json(config);
   }
   const host = (req.get('host') || '').split(':')[0];
-  const config = hub.getSiteConfig(host, true);
+  const config = hub.getSiteConfig(host, true, { withFeatures: cmsFeatures.siteConfigFeatures });
   if (config) return res.json(config);
   res.json({
     features: { users: true, analytics: false, ecommerce: false, blog: false, socialSync: false, emailMarketing: false, general: false },
@@ -19386,7 +19396,7 @@ app.post('/api/admin/sales/:id/got-client', salesAuth, async (req, res) => {
       name: client.businessName || 'New client',
       domain: client.websiteDomain || '',
       site_key: client.hubSite?.siteKey || '',
-      websitePlan: req.body?.websitePlan,
+      websitePlan: websitePlanForNewSite(client, req.body?.websitePlan),
       ecommerceCatalogType: req.body?.ecommerceCatalogType,
       githubRepo: req.body?.githubRepo,
       features: req.body?.features,

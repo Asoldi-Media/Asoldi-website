@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, copyFileSync, writeFileSync, readdirSync, unlinkSync, readFileSync } from 'fs';
+import { writeTextAtomic } from './atomic-json.js';
 import { homedir } from 'os';
 import { join, dirname, basename } from 'path';
 import { fileURLToPath } from 'url';
@@ -131,30 +132,57 @@ export function getDataFilePath(filename) {
   return persistentPath;
 }
 
-export function writeDataJson(filePath, data) {
+function newestStampedBackup(fileName, backupDir) {
+  const stamped = listBackupNames(backupDir)
+    .filter((entry) => entry !== `${fileName}.latest.json` && sourceFileNameFromBackup(entry) === fileName)
+    .sort();
+  if (!stamped.length) return '';
+  try {
+    return readFileSync(join(backupDir, stamped[stamped.length - 1]), 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Writes a data file and keeps backups of it in <dataDir>/backups. Options (all additive):
+ * - backupName: the name the backups are kept under instead of the file's basename, so two files
+ *   with the same basename in different folders (seo-ops sites/<key>.json, clients/<key>.json)
+ *   never share or prune each other's backups (WS9.48: seo-ops__sites__<key>.json);
+ * - latest: false skips the <name>.latest.json copy (one file less per data file); an unchanged
+ *   write is then recognised against the newest stamped backup;
+ * - atomic: true writes a temp file and renames it, so readers never see half a file;
+ * - keep: stamped backups to keep for this file (default DATA_BACKUP_KEEP, 5); 0 keeps none;
+ * - previous: the text the file held before (a caller that just read it), used instead of reading a
+ *   backup to tell whether this write changed anything.
+ */
+export function writeDataJson(filePath, data, { backupName = '', latest = true, atomic = false, keep: keepOverride, previous } = {}) {
   ensurePersistentDataDir();
   const serialized = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
 
-  writeFileSync(filePath, serialized, 'utf8');
+  if (atomic) writeTextAtomic(filePath, serialized, { mode: 0o600 });
+  else writeFileSync(filePath, serialized, 'utf8');
 
   const backupDir = getBackupDir();
-  const fileName = basename(filePath);
+  const fileName = String(backupName || '').trim() || basename(filePath);
   const latestPath = join(backupDir, `${fileName}.latest.json`);
-  const keep = resolveDataBackupKeep();
+  const keep = resolveDataBackupKeep(keepOverride);
 
   // Free inodes before writing another snapshot — Hostinger plans cap file count.
   pruneDataBackupsForFile(fileName, { keep, backupDir });
 
   let previousLatest = '';
-  if (existsSync(latestPath)) {
+  if (latest && existsSync(latestPath)) {
     try {
       previousLatest = readFileSync(latestPath, 'utf8');
     } catch {
       previousLatest = '';
     }
+  } else if (!latest) {
+    previousLatest = typeof previous === 'string' ? previous : newestStampedBackup(fileName, backupDir);
   }
 
-  writeFileSync(latestPath, serialized, 'utf8');
+  if (latest) writeFileSync(latestPath, serialized, 'utf8');
 
   if (keep > 0 && serialized !== previousLatest) {
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');

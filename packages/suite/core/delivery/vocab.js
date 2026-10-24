@@ -9,7 +9,8 @@
 //
 // Owner decisions applied here (2026-10-23):
 // - Blog on every tier: `blog` is part of every tier, and `site` implies `blog` for custom plans.
-//   Auto-written posts (WS6 feature `blog.localPosts`) belong to the `seo` service (tier 2+).
+//   Auto-written posts (WS6 feature `blog.autoPosts`; older name `blog.localPosts`) belong to the
+//   `seo` service (tier 2+).
 // - The backlink network is a service of its own (`backlinks`), on by default for tier 2+.
 // - Cancellation stops hub services. There is no standalone mode: no id in this file
 //   may describe one, and `thirdpartyhost` never means a CMS that runs without the hub.
@@ -18,7 +19,8 @@
 // - Soft budgets never block. Only a runaway (more than 5x expected) or a detected loop stops work.
 
 // 1: batch 0 (WS8.45). 2: tier service matrix, site plan contract, Maker events (WS8.1/8.3/8.28).
-export const VOCAB_VERSION = 2;
+// 3: automatic posts named blog.autoPosts, blog.localPosts read as an alias (WS6.7).
+export const VOCAB_VERSION = 3;
 
 function freezeList(list) {
   return Object.freeze(list.map((item) => (item && typeof item === 'object' ? Object.freeze({ ...item }) : item)));
@@ -86,31 +88,41 @@ export const TIER_SERVICES = Object.freeze({
 export const CHANGES_PER_MONTH = 4;
 
 // Feature keys (WS6 feature registry names) that each service must entitle. The WS6 bundles may
-// entitle more, never less, with one exception: `blog.localPosts` (automatic posts) belongs to the
-// `seo` service only. The client-written blog is the `blog` key on every tier; WS6.4 therefore
-// moves `blog.localPosts` from its `blog` bundle to the `seo` bundle (WS9 already lists it in tier 2).
+// entitle more, never less, with one exception: `blog.autoPosts` (automatic posts) belongs to the
+// `seo` service only. The client-written blog is `blog` and `blog.posts` on every tier.
+// Version 2: the WS6 registry (website-cms server/feature-tree.json) names automatic posts
+// `blog.autoPosts`. Version 1 used the older name `blog.localPosts`, which stays a read alias, and
+// mapped `blog.posts` onto `blog`; `blog.posts` is a registry key of its own now.
 export const SERVICE_FEATURE_ANCHORS = Object.freeze({
   blog: Object.freeze(['blog']),
-  seo: Object.freeze(['blog.localPosts']),
+  seo: Object.freeze(['blog.autoPosts']),
   backlinks: Object.freeze(['seo.linkNetwork']),
 });
 
 // Feature keys only the listed services may entitle (no other service's bundle may carry them).
+// Look keys up with exclusiveServicesFor(), which also reads the alias names.
 export const SERVICE_EXCLUSIVE_FEATURES = Object.freeze({
-  'blog.localPosts': Object.freeze(['seo']),
+  'blog.autoPosts': Object.freeze(['seo']),
 });
 
-// The MASTER-PLAN owner-decision table names the blog features `blog.posts` and `blog.autoPosts`.
-// They are the WS6 registry keys `blog` and `blog.localPosts`; no second key is introduced.
+// Older or alternative names that resolve to a WS6 registry key. They are read, never written; the
+// registry's own `aliases` table has the same rows (the hub's cms-feature-tree test checks this).
 export const FEATURE_KEY_ALIASES = Object.freeze({
-  'blog.posts': 'blog',
-  'blog.autoPosts': 'blog.localPosts',
+  'blog.localPosts': 'blog.autoPosts',
+  'seo.backlinkNetwork': 'seo.linkNetwork',
+  'seo.meta': 'seo.contentHead',
 });
 
-/** A feature key with the plan's alias names resolved to the WS6 registry key. */
+/** A feature key with its alias names resolved to the WS6 registry key. */
 export function canonicalFeatureKey(value) {
   const raw = String(value ?? '').trim();
   return FEATURE_KEY_ALIASES[raw] || raw;
+}
+
+/** The services that alone may entitle a feature key (alias names are read too); [] when any may. */
+export function exclusiveServicesFor(featureKey) {
+  const list = SERVICE_EXCLUSIVE_FEATURES[canonicalFeatureKey(featureKey)];
+  return list ? [...list] : [];
 }
 
 export const LEGACY_FEATURE_FLAGS = Object.freeze([

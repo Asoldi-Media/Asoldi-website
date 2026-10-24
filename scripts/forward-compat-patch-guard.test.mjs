@@ -50,7 +50,7 @@ writeFileSync(join(DATA_DIR, 'sales-offers.json'), JSON.stringify([
 ], null, 2));
 
 // Hub sites: heartbeat-derived cms keys belong to WS6.7.
-const storedEffective = { features: { blog: true }, at: '2026-11-03T08:00:00.000Z' };
+const storedEffective = 'users,site,blog';
 writeFileSync(join(DATA_DIR, 'sites.json'), JSON.stringify([
   { id: 'site-fresh', site_key: 'key-fresh', name: 'Fresh', domain: 'fresh.test', cms: { githubRepo: 'org/fresh' } },
   { id: 'site-stored', site_key: 'key-stored', name: 'Stored', domain: 'stored.test', cms: { githubRepo: 'org/stored', effective: storedEffective, effectiveHash: 'stored-hash' } },

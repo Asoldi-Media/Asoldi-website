@@ -2,6 +2,7 @@ import { readFileSync, existsSync } from 'fs';
 import { randomBytes } from 'crypto';
 import bcrypt from 'bcryptjs';
 import { getDataFilePath, ensurePersistentDataDir, writeDataJson } from './storage-path.js';
+import { withFileLock } from './atomic-json.js';
 import {
   desiredCmsVersion,
   featuresFromPlan,
@@ -20,6 +21,7 @@ import { hashLocalBlogToken, localBlogTokensMatch } from '../lib/local-blog-toke
 import { clientAdminPasswordProblem } from '../lib/client-admin-password.js';
 import { normalizeDeliveryPhase, normalizeDevelopment, resolveSiteDeliveryPhase } from '../lib/development-phase.js';
 import { FUTURE_SITE_CMS_KEYS, withoutKeys } from './normalize-ext.js';
+import { CMS_REPORTED_KEYS, cmsPatchFromHeartbeat } from './feature-spec-model.js';
 
 // The one client admin password rule (lib/client-admin-password.js), also under the names that
 // other hub code and tests import from here. Never define a second copy of it in this file.
@@ -78,13 +80,23 @@ export function getSiteByDomain(domain) {
 }
 
 /**
- * Config a client CMS reads. includeAdmin (off unless a caller turns it on) adds the client admin
- * contact and a pending admin password hash; HTTP callers turn it on only for a request that
- * carries the site's valid credential (lib/site-credentials.js), never for a site key or domain alone.
+ * Site config for a client CMS. includeAdmin (off unless a caller turns it on) adds the client admin
+ * contact, a pending admin password hash and, with the feature tree, pendingSettings; HTTP callers
+ * turn it on only for a request that carries the site's valid credential (lib/site-credentials.js),
+ * never for a site key or domain alone. `withFeatures(config, site, { byDomain, includeAdmin })`
+ * (WS6.7) may return a config with the feature tree; without it, or when it returns nothing, the
+ * answer is unchanged.
  */
-export function getSiteConfig(siteKeyOrDomain, byDomain = false, { includeAdmin = false } = {}) {
+export function getSiteConfig(siteKeyOrDomain, byDomain = false, { withFeatures = null, includeAdmin = false } = {}) {
   const site = byDomain ? getSiteByDomain(siteKeyOrDomain) : getSiteByKey(siteKeyOrDomain);
   if (!site) return null;
+  const trusted = !byDomain && includeAdmin === true;
+  const config = baseSiteConfig(site, byDomain, trusted);
+  if (typeof withFeatures !== 'function') return config;
+  return withFeatures(config, site, { byDomain, includeAdmin: trusted }) || config;
+}
+
+function baseSiteConfig(site, byDomain, includeAdmin) {
   const config = {
     id: site.id,
     name: site.name,
@@ -245,7 +257,7 @@ export function updateSite(id, patch = {}) {
       ...current.cms,
       // WS8.44: heartbeat-derived keys a later batch owns (effective, featuresRev, ...) come only
       // from the stored site, never from a request body.
-      ...(withoutKeys(patch.cms, FUTURE_SITE_CMS_KEYS) || {}),
+      ...(withoutKeys(patch.cms, [...FUTURE_SITE_CMS_KEYS, ...CMS_REPORTED_KEYS]) || {}),
       ...(patch.githubRepo !== undefined ? { githubRepo: patch.githubRepo } : {}),
     });
   }
@@ -289,57 +301,77 @@ export function setSitePlanSource(id, planSource) {
   return { ok: true, site: publicSite(sites[i]) };
 }
 
+/**
+ * Read-modify-write of sites.json under the `<sites.json>.lock` file (data/atomic-json.js), so a
+ * heartbeat and a cms-spec write in two hub processes never overwrite each other. `fn(sites)`
+ * changes the list in place and returns { result, write }. The other site writers in this file
+ * do not take the lock yet.
+ */
+function withSitesLocked(fn) {
+  ensureDataDir();
+  return withFileLock(SITES_PATH, () => {
+    const sites = readSites();
+    const { result, write } = fn(sites);
+    if (write) writeSites(sites);
+    return result;
+  });
+}
+
 /** An unverified heartbeat that repeats the last report this soon is not written again. */
 const UNVERIFIED_HEARTBEAT_WRITE_GAP_MS = 60_000;
 
 /**
  * A client CMS heartbeat. A verified heartbeat (the HTTP route sets verified only when the call
  * carried the site's valid credential) updates the version and admin address the hub acts on, the
- * name of an unnamed site and the pending admin flag. An unverified one (the default) keeps what it
- * reported in cms.unverified, for display, and marks the site as seen when marksSeen is on (the
- * route turns it off for an enrolled site). An unverified heartbeat that repeats the last report
- * within a minute is not written again.
+ * name of an unnamed site and the pending admin flag, and applies `report`, the heartbeat body
+ * (WS6.7): the feature and settings revs, the effective keys, the daily block counts, the migration
+ * summary and the sign-in report fields (data/feature-spec-model.js cmsPatchFromHeartbeat picks and
+ * bounds them). An unverified one (the default) never applies the report, since it says which
+ * settings revision the CMS applied and that stops pendingSettings; it keeps what it reported in
+ * cms.unverified, for display, and marks the site as seen when marksSeen is on (the route turns it
+ * off for an enrolled site). An unverified heartbeat that repeats the last report within a minute
+ * is not written again. Runs under the sites.json lock.
  */
-export function recordHeartbeat(siteKey, { packageVersion, adminUrl, name, adminApplied } = {}, { verified = false, marksSeen = true } = {}) {
+export function recordHeartbeat(siteKey, { packageVersion, adminUrl, name, adminApplied, report = null } = {}, { verified = false, marksSeen = true } = {}) {
   const key = String(siteKey || '').trim();
   if (!key) return { ok: false, error: 'site_key required' };
-  const sites = readSites();
-  const i = sites.findIndex((s) => s.site_key === key);
-  if (i === -1) return { ok: false, error: 'Site not found' };
-  const at = new Date().toISOString();
-  if (!verified) {
-    const previous = sites[i].cms.unverified || null;
-    const report = normalizeUnverifiedCms({ packageVersion, adminUrl, name, at });
-    const same = Boolean(previous) && ['packageVersion', 'adminUrl', 'name'].every((field) => previous[field] === report?.[field]);
-    const lastWrite = Date.parse(marksSeen ? sites[i].cms.lastSeenAt || '' : previous?.at || '');
-    if (same && Number.isFinite(lastWrite) && Date.now() - lastWrite < UNVERIFIED_HEARTBEAT_WRITE_GAP_MS) {
-      return { ok: true, verified: false, written: false, site: publicSite(sites[i]) };
+  return withSitesLocked((sites) => {
+    const i = sites.findIndex((s) => s.site_key === key);
+    if (i === -1) return { result: { ok: false, error: 'Site not found' }, write: false };
+    const at = new Date().toISOString();
+    if (verified !== true) {
+      const previous = sites[i].cms.unverified || null;
+      const shown = normalizeUnverifiedCms({ packageVersion, adminUrl, name, at });
+      const same = Boolean(previous) && ['packageVersion', 'adminUrl', 'name'].every((field) => previous[field] === shown?.[field]);
+      const lastWrite = Date.parse(marksSeen ? sites[i].cms.lastSeenAt || '' : previous?.at || '');
+      if (same && Number.isFinite(lastWrite) && Date.now() - lastWrite < UNVERIFIED_HEARTBEAT_WRITE_GAP_MS) {
+        return { result: { ok: true, verified: false, written: false, site: publicSite(sites[i]) }, write: false };
+      }
+      sites[i].cms = normalizeCmsMeta({
+        ...sites[i].cms,
+        ...(marksSeen ? { lastSeenAt: at } : {}),
+        unverified: shown,
+      });
+      return { result: { ok: true, verified: false, written: true, site: publicSite(sites[i]) }, write: true };
     }
     sites[i].cms = normalizeCmsMeta({
       ...sites[i].cms,
-      ...(marksSeen ? { lastSeenAt: at } : {}),
-      unverified: report,
+      ...cmsPatchFromHeartbeat(sites[i].cms, report, at),
+      lastSeenAt: at,
+      lastVerifiedAt: at,
+      unverified: null,
+      packageVersion: packageVersion || sites[i].cms.packageVersion,
+      adminUrl: adminUrl || sites[i].cms.adminUrl,
     });
-    writeSites(sites);
-    return { ok: true, verified: false, written: true, site: publicSite(sites[i]) };
-  }
-  sites[i].cms = normalizeCmsMeta({
-    ...sites[i].cms,
-    lastSeenAt: at,
-    lastVerifiedAt: at,
-    unverified: null,
-    packageVersion: packageVersion || sites[i].cms.packageVersion,
-    adminUrl: adminUrl || sites[i].cms.adminUrl,
+    if (name && !sites[i].name) sites[i].name = name;
+    if (adminApplied) {
+      sites[i].clientAdmin = normalizeClientAdmin({
+        ...sites[i].clientAdmin,
+        pendingSync: false,
+      });
+    }
+    return { result: { ok: true, verified: true, site: publicSite(sites[i]) }, write: true };
   });
-  if (name && !sites[i].name) sites[i].name = name;
-  if (adminApplied) {
-    sites[i].clientAdmin = normalizeClientAdmin({
-      ...sites[i].clientAdmin,
-      pendingSync: false,
-    });
-  }
-  writeSites(sites);
-  return { ok: true, verified: true, site: publicSite(sites[i]) };
 }
 
 /**
@@ -375,6 +407,27 @@ export async function updateClientAdmin(id, patch = {}) {
   sites[i] = normalizeSite(sites[i]);
   writeSites(sites);
   return { ok: true, site: publicSite(sites[i]) };
+}
+
+/**
+ * Changes a site's feature spec fields (WS6.8) in one locked read-modify-write (withSitesLocked).
+ * `mutate(site)` returns { ok:false, ... } to stop, or { ok:true, featureSpec?, cmsSpec?,
+ * cmsSpecHistory?, featureEnforcement?, ... }; only those four fields are taken from it. Returns
+ * mutate's result with the saved public site.
+ */
+export function updateSiteSpecs(id, mutate) {
+  return withSitesLocked((sites) => {
+    const i = sites.findIndex((s) => s.id === id);
+    if (i === -1) return { result: { ok: false, status: 404, error: 'Site not found' }, write: false };
+    const result = mutate(structuredClone(sites[i])) || { ok: false, status: 500, error: 'No result' };
+    if (!result.ok) return { result, write: false };
+    const fields = ['featureSpec', 'cmsSpec', 'cmsSpecHistory', 'featureEnforcement'].filter((field) => result[field] !== undefined);
+    if (!fields.length) return { result: { ...result, site: publicSite(sites[i]), record: sites[i] }, write: false };
+    const next = { ...sites[i] };
+    for (const field of fields) next[field] = result[field];
+    sites[i] = normalizeSite(next);
+    return { result: { ...result, site: publicSite(sites[i]), record: sites[i] }, write: true };
+  });
 }
 
 export function deleteSite(id) {
