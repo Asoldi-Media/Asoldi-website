@@ -1,5 +1,7 @@
 // Must stay first: decides hub safe mode and installs the egress guard before any other module loads.
 import './lib/safe-mode-boot.js';
+// The hub LLM facade (lib/llm): registered for the AI call sites; the legacy profile changes no request.
+import './lib/llm/boot.js';
 import express from 'express';
 import { createHmac, randomBytes, randomUUID } from 'crypto';
 import { createServer } from 'http';
@@ -107,6 +109,9 @@ import { readBuildInfo } from './lib/build-info.js';
 import { applyPersistentProductionEnv } from './lib/persistent-env.js';
 import { assertSafeModeAllows, hubListenHost, isSafeModeActive, isSafeModeError, runBackgroundJobs, safeModeAllows } from './lib/safe-mode.js';
 import { registerSafeModeRoutes } from './lib/safe-mode-routes.js';
+import { registerAiAdminRoutes } from './lib/llm/routes.js';
+import { applyRunAiSpendCallback } from './lib/llm/spend-callback.js';
+import { aiTaskConfigured, aiUnavailableMessage } from './lib/llm-hooks.js';
 import { safeModeMakerCallbackUrl, safeModeMakerPreviewPushUrl } from './lib/safe-mode-maker-urls.js';
 import { applyProxyKeepAlive, describeProxyTimeouts, proxyHttpServerOptions } from './lib/http-server-timeouts.js';
 import {
@@ -12960,6 +12965,7 @@ const cmsFeatures = registerCmsFeatureRoutes(app, {
   sales,
   makerAuth: requireMakerHost('jobs', { message: 'Unauthorized' }),
 });
+registerAiAdminRoutes(app, { adminAuth, sales });
 
 // --- Hub API (public: site config for client CMS)
 // The site key is public, so a key lookup gets the public fields only. The client admin contact and
@@ -13572,6 +13578,12 @@ app.post('/api/admin/sales/maker-status-callback', requireMakerHost('callback'),
       linkedRunId,
       callbackRunId: nextRunId,
     });
+  }
+
+  // WS0.19: the Maker's AI spend for this run (makerRun.aiSpend; GET /api/admin/ai/spend adds it up).
+  if (event === 'run.ai.spend') {
+    const spend = applyRunAiSpendCallback({ sales, client, runId: nextRunId, body: req.body });
+    return res.status(spend.status).json(spend.body);
   }
 
   // WS8.28: Maker delivery events are stored on makerRun while development.makerEvents is 'record'.
@@ -17131,7 +17143,7 @@ async function fillOpenOfferSlotsFromSalesMeeting(offer, client, req) {
   if (decision.action !== 'fill') return offer;
   const meetings = decision.meetings;
   const meeting = meetings[0] || primaryMeetingForOffer(client, offer);
-  if (!isDeepseekConfigured()) return offer;
+  if (!aiTaskConfigured('offer.fill-from-transcript', isDeepseekConfigured)) return offer;
   const nuances = await fillOfferFromTranscript({
     client: clientForOfferFill(client),
     meeting: meeting || {},
@@ -17234,7 +17246,7 @@ app.get('/api/admin/sales/:id/offer', salesAuth, async (req, res) => {
     tiers: compactTiers(),
     mergeFields: mergeFieldsMeta(),
     sender,
-    deepseek: isDeepseekConfigured(),
+    deepseek: aiTaskConfigured('offer.fill-from-transcript', isDeepseekConfigured),
     meeting: presentMeetingForOffer(meeting, offer, client),
     meetings: presentOfferMeetings(client, offer),
     canSendEmail: emailLib.canSendEmail(),
@@ -17328,7 +17340,7 @@ app.post('/api/admin/sales/:id/offer/fill', salesAuth, async (req, res) => {
   let client = sales.getSalesClientById(req.params.id);
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
-  if (!isDeepseekConfigured()) return res.status(503).json({ message: 'DeepSeek er ikke konfigurert (DEEPSEEK_API_KEY mangler).' });
+  if (!aiTaskConfigured('offer.fill-from-transcript', isDeepseekConfigured)) return res.status(503).json({ message: aiUnavailableMessage('offer.fill-from-transcript', 'DeepSeek er ikke konfigurert (DEEPSEEK_API_KEY mangler).') });
   let current = await ensureOfferDraft(client, req);
   if (!salesOffers.offerLetterCanFill(current)) {
     return res.status(409).json({ message: 'Tilbudet er låst. Innholdet kan ikke skrives om fra transkriptet.' });
@@ -17912,7 +17924,7 @@ app.get('/api/admin/offers/:id', salesAuth, async (req, res) => {
     tiers: compactTiers(),
     mergeFields: mergeFieldsMeta(),
     meetings,
-    deepseek: isDeepseekConfigured(),
+    deepseek: aiTaskConfigured('offer.reflect-contract', isDeepseekConfigured),
   });
 });
 
@@ -17955,11 +17967,11 @@ app.post('/api/admin/offers/:id/reflect-contract', salesAuth, async (req, res) =
   if (!requireOfferAdmin(req, res)) return;
   const current = salesOffers.getSalesOfferById(req.params.id);
   if (!current) return res.status(404).json({ message: 'Offer not found.' });
-  if (!isDeepseekConfigured()) return res.status(503).json({ message: 'DeepSeek er ikke konfigurert (DEEPSEEK_API_KEY mangler).' });
+  if (!aiTaskConfigured('offer.reflect-contract', isDeepseekConfigured)) return res.status(503).json({ message: aiUnavailableMessage('offer.reflect-contract', 'DeepSeek er ikke konfigurert (DEEPSEEK_API_KEY mangler).') });
   const patched = salesOffers.updateSalesOffer(current.id, offerPatchFromBody(req.body || {}, current), { actor: offerActor(req), action: '' });
   if (!patched.products.length) return res.status(400).json({ message: 'Legg til minst ett produkt (tier eller skreddersydd) før kontrakten kan speiles.' });
   try {
-    const summary = await reflectContractFromEmail({ emailHtml: patched.email.html, products: patched.products });
+    const summary = await reflectContractFromEmail({ emailHtml: patched.email.html, products: patched.products, client: { id: patched.salesClientId } });
     const updated = salesOffers.updateSalesOffer(patched.id, {
       contract: { summary, generatedAt: new Date().toISOString() },
     }, { actor: offerActor(req), action: 'contract-reflected' });

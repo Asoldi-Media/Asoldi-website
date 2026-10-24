@@ -75,6 +75,9 @@ export const ASOLDI_LLM_TASKS = {
     'assistant.chat': t('json', false, 'personal', 4000, { family: 'copy', repo: H }),
     'assistant.gather': t('json', false, 'personal', 4000, { family: 'extraction', repo: H }),
     'assistant.products-ingest': t('json', true, 'business', 8000, { family: 'extraction', repo: H }),
+    // Hub: a price list or menu photo read as plain text lines, and a client media file's placement brief.
+    'assistant.products-image': t('text', true, 'business', 4000, { family: 'extraction', repo: H }),
+    'assistant.media-brief': t('json', true, 'business', 2000, { family: 'media', repo: H }),
     'inbox.categorize': t('json', false, 'personal', 2000, { family: 'classification', effort: 'low', repo: H }),
     'inbox.decide': t('json', false, 'personal', 4000, { family: 'extraction', repo: H }),
     'inbox.inspect-contract': t('json', true, 'personal', 4000, { family: 'extraction', repo: H }),

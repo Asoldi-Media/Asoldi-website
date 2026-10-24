@@ -44,7 +44,10 @@ import {
   FUTURE_HUBSITE_KEYS,
   FUTURE_MAKERRUN_KEYS,
   FUTURE_MAKERRUN_STEP_KEYS,
+  WRITER_ONLY_MAKERRUN_KEYS,
+  withoutKeys,
 } from './normalize-ext.js';
+import { normalizeRunAiSpend } from '../lib/ai-spend.js';
 import { normalizeSitePlan, withPlanHistory } from '../lib/site-plan-model.js';
 import {
   deliveryEmailStampPatch,
@@ -335,6 +338,10 @@ function normalizeMakerRun(value = {}) {
     quickFillCompletedAt: sanitizeText(input.quickFillCompletedAt),
     mediaGatherCompletedAt: sanitizeText(input.mediaGatherCompletedAt),
   };
+  // WS0.19 owns aiSpend (the Maker's run.ai.spend callback); only setSalesMakerRunAiSpend writes it.
+  // It belongs to one run: after a relink to another run it is dropped (ai/maker-spend.json keeps it).
+  const aiSpend = input.aiSpend ? normalizeRunAiSpend(input.aiSpend, { runId }) : null;
+  if (aiSpend && runId && aiSpend.runId === runId) base.aiSpend = aiSpend;
   if (!runId) return withOwnedMakerRunKeys(carryFutureKeys(base, input, FUTURE_MAKERRUN_KEYS), input);
   return withOwnedMakerRunKeys(carryFutureKeys({
     ...base,
@@ -943,8 +950,9 @@ function updateSalesClientInternal(id, updates = {}) {
     websiteImport: updates.websiteImport
       ? { ...current.websiteImport, ...updates.websiteImport }
       : current.websiteImport,
+    // Writer-only keys (makerRun.aiSpend) keep their stored value here; their own writer sets them.
     makerRun: updates.makerRun
-      ? { ...current.makerRun, ...updates.makerRun }
+      ? { ...current.makerRun, ...withoutKeys(updates.makerRun, WRITER_ONLY_MAKERRUN_KEYS) }
       : current.makerRun,
     hubSite: updates.hubSite
       ? { ...current.hubSite, ...updates.hubSite }
@@ -1744,6 +1752,37 @@ export function syncSalesDeliveryStage(id, { by = '', reason = '', now = Date.no
   return { client, changed: true, derived: plan.derived, change: plan.change };
 }
 
+/**
+ * WS0.19: the only writer of makerRun.aiSpend (the Maker's run.ai.spend callback, after its token and
+ * linked-run checks). Stores the run's spend snapshot when it belongs to the linked run and is not older
+ * than the stored one. The snapshot's own `at` is required, so a delayed retry is never taken for the
+ * newest; at the same `at`, a snapshot with fewer calls is the older one. Returns { client, stored, reason }.
+ */
+export function setSalesMakerRunAiSpend(id, aiSpend = {}) {
+  const state = readState();
+  const index = state.findIndex((entry) => entry.id === id);
+  if (index === -1) return { client: null, stored: false, reason: 'not-found' };
+  const current = state[index];
+  const runId = sanitizeText(current.makerRun?.runId);
+  if (!Number.isFinite(Date.parse(sanitizeText(aiSpend?.at)))) return { client: current, stored: false, reason: 'missing-at' };
+  const next = normalizeRunAiSpend(aiSpend, { runId, receivedAt: nowIso() });
+  if (!next) return { client: current, stored: false, reason: 'invalid' };
+  if (!runId || next.runId !== runId) return { client: current, stored: false, reason: 'not-linked-run' };
+  const previous = current.makerRun?.aiSpend;
+  if (previous?.runId === runId && previous.at && next.at) {
+    const fewerCallsAtSameTime = previous.at === next.at && Number.isInteger(previous.calls) && (!Number.isInteger(next.calls) || next.calls < previous.calls);
+    if (previous.at > next.at || fewerCallsAtSameTime) return { client: current, stored: false, reason: 'older' };
+  }
+  const updated = normalizeSalesClient({
+    ...current,
+    makerRun: { ...current.makerRun, aiSpend: next },
+    updatedAt: nowIso(),
+  });
+  state[index] = updated;
+  writeState(state);
+  return { client: updated, stored: true, reason: '' };
+}
+
 /** Replace makerRun instead of merging, so a client can be unlinked for a new run. */
 export function replaceSalesMakerRun(id, makerRun = {}) {
   const state = readState();
@@ -1752,7 +1791,7 @@ export function replaceSalesMakerRun(id, makerRun = {}) {
   const current = state[index];
   const next = normalizeSalesClient({
     ...current,
-    makerRun: makerRun && typeof makerRun === 'object' ? makerRun : {},
+    makerRun: makerRun && typeof makerRun === 'object' ? withoutKeys(makerRun, WRITER_ONLY_MAKERRUN_KEYS) : {},
     updatedAt: nowIso(),
   });
   state[index] = next;

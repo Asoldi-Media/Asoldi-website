@@ -3,6 +3,7 @@ import { RefreshCw, ShieldCheck, ShieldOff } from 'lucide-react';
 import { API, authHeaders } from '../shared';
 import { FirefliesHealthCard } from './FirefliesHealthCard';
 import { MakerHostsCard } from './MakerHostsCard';
+import { AiStatusCard } from './AiStatusCard';
 
 type EgressRule = { key: string; label: string; on: boolean; readOnly: boolean; hosts: string[] };
 type Intent = { at: string; kind: string; detail: string; layer?: string; host?: string };
@@ -163,6 +164,7 @@ export function SystemSafetySection() {
 
       <div key="fireflies-health"><FirefliesHealthCard /></div>
       <MakerHostsCard />
+      <AiStatusCard />
 
       {snapshot.safeMode && (
         <div className="grid gap-4 md:grid-cols-3">
