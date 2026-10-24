@@ -115,7 +115,17 @@ const adminAuth = (req, _res, next) => {
   next();
 };
 registerShopPaymentsRoutes(app, { adminAuth });
-mountClientAnalyticsRoutes(app, { clientAuth: (_req, res) => res.status(401).end(), loadClientUser: async () => null, clientPortal: {} });
+/** Sites whose paid maps refresh ran (a stub instead of the provider call). */
+const mapsRefreshes = [];
+mountClientAnalyticsRoutes(app, {
+  clientAuth: (_req, res) => res.status(401).end(),
+  loadClientUser: async () => null,
+  clientPortal: {},
+  runMapsRanking: async (_profile, site) => {
+    mapsRefreshes.push(site?.id || '');
+    return { ok: true };
+  },
+});
 let limiter = sc.createEnrollLimiter();
 const routes = sc.registerSiteCredentialRoutes(app, {
   adminAuth,
@@ -567,6 +577,36 @@ test('analytics: the spend summary needs the credential; an enrolled site must s
   assert.equal(dashOld.status, 200, 'a never-enrolled site on CMS 2.1.3 keeps its dashboard');
   const dashNoVersion = await send('GET', `/api/hub/analytics?site_key=${siteOther.site_key}`);
   assert.equal(dashNoVersion.status, 401, 'a site with no CMS 2.0.0–2.2.1 version needs the credential');
+});
+
+test('the paid maps refresh runs only for refresh=1 with a valid credential (maps runner stubbed)', async () => {
+  mapsRefreshes.length = 0;
+  const refresh = (site, extra = {}) => send('GET', `/api/hub/analytics?site_key=${site.site_key}&refresh=1`, extra);
+
+  const legacyKeyOnly = await refresh(siteLegacy);
+  assert.equal(legacyKeyOnly.status, 200, 'a never-enrolled shop on CMS 2.1.3 keeps its dashboard');
+  assert.equal(legacyKeyOnly.data.mapsRefreshSkipped, 'site-credential-required');
+  assert.equal((await refresh(siteA)).status, 401, 'an enrolled site needs its credential');
+  assert.deepEqual(mapsRefreshes, [], 'refresh=1 with the site key alone never runs the refresh');
+
+  const legacyMadeUp = await refresh(siteLegacy, { credential: value() });
+  assert.equal(legacyMadeUp.status, 200);
+  assert.equal(legacyMadeUp.headers.get('x-site-credential-status'), 'not-enrolled');
+  assert.equal(legacyMadeUp.data.mapsRefreshSkipped, 'site-credential-required');
+  const wrong = await refresh(siteA, { credential: value() });
+  assert.equal(wrong.status, 401);
+  assert.equal(wrong.headers.get('x-site-credential-status'), 'invalid');
+  assert.deepEqual(mapsRefreshes, [], 'refresh=1 with a credential that is not valid never runs the refresh');
+
+  const noRefresh = await send('GET', `/api/hub/analytics?site_key=${siteA.site_key}`, { credential: siteA.credential });
+  assert.equal(noRefresh.status, 200);
+  assert.deepEqual(mapsRefreshes, [], 'without refresh=1 the stored ranking is shown');
+
+  const valid = await refresh(siteA, { credential: siteA.credential });
+  assert.equal(valid.status, 200, JSON.stringify(valid.data).slice(0, 200));
+  assert.equal(valid.headers.get('x-site-credential-status'), 'valid');
+  assert.equal(valid.data.mapsRefreshSkipped, undefined);
+  assert.deepEqual(mapsRefreshes, [siteA.id], 'refresh=1 with the valid credential runs the refresh once');
 });
 
 test('analytics collect keeps only the known event fields and limits calls per site and address', async () => {
