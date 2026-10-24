@@ -215,7 +215,7 @@ test('site-config is unchanged while the switch is off or in shadow, and carries
     if (key === 'key-f4' || key === 'shop-two.test') assert.notEqual(after[i], before[i], key);
     else assert.equal(after[i], before[i], `${key} is not listed and stays as it was`);
   });
-  const listed = hub.getSiteConfig('key-f4', false, { withFeatures: hook.siteConfigFeatures });
+  const listed = hub.getSiteConfig('key-f4', false, { withFeatures: hook.siteConfigFeatures, includeAdmin: true });
   assert.equal(listed.featureTree.registryVersion, registry.tree.registryVersion);
   assert.equal(listed.featureTree.source, 'websitePlan');
   assert.equal(listed.featureTree.plan, 'tier-3-ecommerce');
@@ -228,13 +228,13 @@ test('site-config is unchanged while the switch is off or in shadow, and carries
   assert.ok(listed.featureTree.entitled.includes('shop.checkout'));
 });
 
-test('pendingSettings goes only to site_key lookups, only while the CMS has not applied that rev, and never to a domain lookup', () => {
+test('pendingSettings goes only to trusted site_key lookups, only while the CMS has not applied that rev, and never to a domain lookup', () => {
   writeFileSync(join(DATA_DIR, 'sites.json'), JSON.stringify(FLEET.map((site) => (site.id === 'f4'
     ? { ...site, cmsSpec: { rev: 3, sections: { 'shop.seller': { legalName: 'Shop Two AS' } }, force: [] } }
     : site)), null, 2));
   settingsStore.saveCmsFeatureSettings({ siteConfig: { mode: 'on', allSites: true } }, { dataDir: DATA_DIR, by: 'test' });
   const hook = routesHook();
-  const byKey = hub.getSiteConfig('key-f4', false, { withFeatures: hook.siteConfigFeatures });
+  const byKey = hub.getSiteConfig('key-f4', false, { withFeatures: hook.siteConfigFeatures, includeAdmin: true });
   assert.deepEqual(byKey.pendingSettings, { rev: 3, sections: { 'shop.seller': { legalName: 'Shop Two AS' } }, force: [] });
   const byDomain = hub.getSiteConfig('shop-two.test', true, { withFeatures: hook.siteConfigFeatures });
   for (const field of ['pendingSettings', 'pendingAdmin', 'clientAdmin']) assert.equal(field in byDomain, false, field);
@@ -247,16 +247,17 @@ test('pendingSettings goes only to site_key lookups, only while the CMS has not 
   assert.deepEqual(Object.keys(widened).sort(), ['ecommerceCatalogType', 'analyticsLevel', 'featureEnforcement', 'featureTree', 'features', 'id'].sort());
   const keyed = ent.siteConfigWithTree({ id: 'f4', features: {}, pendingAdmin: null }, site, result, { byDomain: false });
   assert.equal('pendingAdmin' in keyed, true, 'a site_key lookup keeps the admin sync fields');
-  hub.recordHeartbeat('key-f4', { packageVersion: '2.3.0', report: { settingsRevApplied: 3 } });
-  assert.equal('pendingSettings' in hub.getSiteConfig('key-f4', false, { withFeatures: hook.siteConfigFeatures }), false);
+  hub.recordHeartbeat('key-f4', { packageVersion: '2.3.0', report: { settingsRevApplied: 3 } }, { verified: true });
+  assert.equal('pendingSettings' in hub.getSiteConfig('key-f4', false, { withFeatures: hook.siteConfigFeatures, includeAdmin: true }), false);
   settingsStore.saveCmsFeatureSettings({ siteConfig: { mode: 'off', allSites: false, siteIds: [] } }, { dataDir: DATA_DIR, by: 'test' });
 });
 
 test('the heartbeat keeps the reported fields, bounded, and 14 days of block counts; an older CMS heartbeat changes nothing new', () => {
   writeFileSync(join(DATA_DIR, 'sites.json'), JSON.stringify(FLEET, null, 2));
-  hub.recordHeartbeat('key-f2', { packageVersion: '1.7.0', report: { site_key: 'key-f2', packageVersion: '1.7.0' } });
+  hub.recordHeartbeat('key-f2', { packageVersion: '1.7.0', report: { site_key: 'key-f2', packageVersion: '1.7.0' } }, { verified: true });
   const old = hub.getSiteById('f2').cms;
-  assert.deepEqual(Object.keys(old).sort(), ['adminUrl', 'desiredPackageVersion', 'githubRepo', 'lastSeenAt', 'packageVersion']);
+  // lastVerifiedAt is the site credential stamp of a verified heartbeat, not a reported field.
+  assert.deepEqual(Object.keys(old).sort(), ['adminUrl', 'desiredPackageVersion', 'githubRepo', 'lastSeenAt', 'lastVerifiedAt', 'packageVersion']);
 
   // 20 days up to today (the hub keeps the 14 up to today, by its own clock).
   const days = Array.from({ length: 20 }, (_, i) => ({ date: dayIso(i - 19), count: i, top: [{ key: 'shop.discounts', count: i }] }));
@@ -278,7 +279,7 @@ test('the heartbeat keeps the reported fields, bounded, and 14 days of block cou
       loginAddressFrom: 'sign-in',
       unrelated: 'ignored',
     },
-  });
+  }, { verified: true });
   let cms = hub.getSiteById('f2').cms;
   assert.equal(cms.featuresRev, 7);
   assert.equal(cms.settingsRevApplied, 4);
@@ -290,7 +291,7 @@ test('the heartbeat keeps the reported fields, bounded, and 14 days of block cou
   assert.ok(cms.lastHeartbeatAt);
   assert.equal('unrelated' in cms, false);
 
-  hub.recordHeartbeat('key-f2', { report: { featureBlocksDaily: [...days.slice(0, 6), ...days.slice(16), { date: days[19].date, count: 99 }], effective: 'x'.repeat(20000) } });
+  hub.recordHeartbeat('key-f2', { report: { featureBlocksDaily: [...days.slice(0, 6), ...days.slice(16), { date: days[19].date, count: 99 }], effective: 'x'.repeat(20000) } }, { verified: true });
   cms = hub.getSiteById('f2').cms;
   assert.equal(cms.blockHistory.length, 14);
   assert.equal(cms.blockHistory[0].date, dayIso(-13), 'days older than the 14 kept are not stored');
@@ -302,7 +303,7 @@ test('the heartbeat keeps the reported fields, bounded, and 14 days of block cou
   const updated = hub.getSiteById('f2').cms;
   assert.deepEqual([updated.packageBuild, updated.initialAdminPending, updated.featuresRev, updated.githubRepo], ['abc123', false, 7, 'org/repo']);
   // A site_key holder cannot set admin data through the heartbeat.
-  hub.recordHeartbeat('key-f2', { report: { featureSpec: { grantServices: ['ecom'] }, cmsSpec: { rev: 9 }, featureEnforcement: 'off' } });
+  hub.recordHeartbeat('key-f2', { report: { featureSpec: { grantServices: ['ecom'] }, cmsSpec: { rev: 9 }, featureEnforcement: 'off' } }, { verified: true });
   const site = hub.getSiteById('f2');
   for (const field of ['featureSpec', 'cmsSpec', 'featureEnforcement']) assert.equal(field in site, false, field);
 });
@@ -334,7 +335,7 @@ test('a heartbeat migrations report keeps its typed shape and stays under 16 kB,
   };
   assert.ok(JSON.stringify(huge).length > 1_400_000);
   const days = [{ date: dayIso(0), count: 3, top: Array.from({ length: 10 }, (_, i) => ({ key: `k${i}`, note: 'n'.repeat(300), more: { a: 'a'.repeat(300) } })) }];
-  hub.recordHeartbeat('key-f2', { report: { migrations: huge, featureBlocksDaily: days } });
+  hub.recordHeartbeat('key-f2', { report: { migrations: huge, featureBlocksDaily: days } }, { verified: true });
   const cms = hub.getSiteById('f2').cms;
   assert.ok(Buffer.byteLength(JSON.stringify(cms.migrations)) <= specModel.MIGRATIONS_REPORT_MAX_BYTES, 'migrations is at most 16 kB');
   assert.equal('unknown' in cms.migrations, false);
@@ -388,7 +389,7 @@ test('pendingSettings and the admin sync fields go only to a caller trusted with
   fleetWithSpec();
   const hook = routesHook();
   try {
-    const trusted = hub.getSiteConfig('key-f4', false, { withFeatures: hook.siteConfigFeatures });
+    const trusted = hub.getSiteConfig('key-f4', false, { withFeatures: hook.siteConfigFeatures, includeAdmin: true });
     assert.equal(trusted.pendingSettings.rev, 3);
     assert.equal(trusted.pendingAdmin.username, 'owner');
     const keyOnly = hub.getSiteConfig('key-f4', false, { withFeatures: hook.siteConfigFeatures, includeAdmin: false });
@@ -412,7 +413,7 @@ test('pendingSettings and the admin sync fields go only to a caller trusted with
   }
   // Dark, includeAdmin false only leaves out the admin sync fields.
   const dark = hub.getSiteConfig('key-f4', false, { includeAdmin: false });
-  const trustedDark = hub.getSiteConfig('key-f4', false);
+  const trustedDark = hub.getSiteConfig('key-f4', false, { includeAdmin: true });
   assert.deepEqual(Object.keys(dark).sort(), Object.keys(trustedDark).filter((key) => key !== 'clientAdmin' && key !== 'pendingAdmin').sort());
 });
 
@@ -436,10 +437,10 @@ test('an unverified heartbeat changes none of the CMS-reported fields, so it can
     assert.equal(result.ok, true);
     const cms = hub.getSiteById('f4').cms;
     for (const key of specModel.CMS_REPORTED_KEYS) assert.equal(key in cms, key in before, `site.cms.${key}`);
-    assert.equal(hub.getSiteConfig('key-f4', false, { withFeatures: hook.siteConfigFeatures }).pendingSettings.rev, 3);
+    assert.equal(hub.getSiteConfig('key-f4', false, { withFeatures: hook.siteConfigFeatures, includeAdmin: true }).pendingSettings.rev, 3);
     hub.recordHeartbeat('key-f4', { report: { settingsRevApplied: 3 } }, { verified: true });
     assert.equal(hub.getSiteById('f4').cms.settingsRevApplied, 3);
-    assert.equal('pendingSettings' in hub.getSiteConfig('key-f4', false, { withFeatures: hook.siteConfigFeatures }), false);
+    assert.equal('pendingSettings' in hub.getSiteConfig('key-f4', false, { withFeatures: hook.siteConfigFeatures, includeAdmin: true }), false);
   } finally {
     settingsStore.saveCmsFeatureSettings({ siteConfig: { mode: 'off', allSites: false, siteIds: [] } }, { dataDir: DATA_DIR, by: 'test' });
   }
@@ -449,7 +450,7 @@ test('block counts are kept only for the 14 days up to tomorrow by the hub clock
   // Through the hub: 20 heartbeats that each report a far-future day keep the real days.
   writeFileSync(join(DATA_DIR, 'sites.json'), JSON.stringify(FLEET, null, 2));
   for (let i = 0; i < 20; i += 1) {
-    hub.recordHeartbeat('key-f2', { report: { featureBlocksDaily: [{ date: `2099-01-${String(i + 1).padStart(2, '0')}`, count: 50 }, { date: dayIso(-(i % 14)), count: i }] } });
+    hub.recordHeartbeat('key-f2', { report: { featureBlocksDaily: [{ date: `2099-01-${String(i + 1).padStart(2, '0')}`, count: 50 }, { date: dayIso(-(i % 14)), count: i }] } }, { verified: true });
   }
   const dates = hub.getSiteById('f2').cms.blockHistory.map((row) => row.date);
   assert.equal(dates.some((date) => date.startsWith('2099')), false, dates.join(', '));
@@ -487,7 +488,7 @@ test('heartbeats and cms-spec writes from several processes at once never overwr
   const children = [
     `for (let i = 0; i < ${per}; i += 1) hub.updateSiteSpecs('f2', (site) => ({ ok: true, cmsSpec: { rev: (site.cmsSpec?.rev || 0) + 1, sections: { blog: { categories: ['a' + i] } }, force: [] } }));`,
     `for (let i = 0; i < ${per}; i += 1) hub.updateSiteSpecs('f2', (site) => ({ ok: true, cmsSpec: { rev: (site.cmsSpec?.rev || 0) + 1, sections: { blog: { categories: ['b' + i] } }, force: [] } }));`,
-    `for (let i = 0; i < ${per}; i += 1) { const r = hub.recordHeartbeat('key-f2', { packageVersion: '2.3.0', report: { featuresRev: i } }); if (!r.ok) throw new Error(r.error); }`,
+    `for (let i = 0; i < ${per}; i += 1) { const r = hub.recordHeartbeat('key-f2', { packageVersion: '2.3.0', report: { featuresRev: i } }, { verified: true }); if (!r.ok) throw new Error(r.error); }`,
   ].map((body) => {
     const script = `const hub = await import(${JSON.stringify(hubUrl)});\nwhile (Date.now() < ${startAt}) await new Promise((r) => setTimeout(r, 5));\n${body}`;
     const child = spawn(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, APP_DATA_DIR: DATA_DIR }, stdio: ['ignore', 'pipe', 'pipe'] });

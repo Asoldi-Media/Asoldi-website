@@ -1,7 +1,8 @@
 // WS6.7 / WS6.8 on the real hub: boots server.js in safe mode on 127.0.0.1 with a throwaway data dir
 // and no credentials (same isolation as scripts/security-boot.test.mjs: empty cwd, blanked keys,
 // loopback-only egress), then checks over HTTP that site-config is unchanged while the feature switch
-// is off, that cms-spec works in safe mode, and what the switch changes.
+// is off, that cms-spec works in safe mode, and what the switch changes. The shop site holds a site
+// credential (lib/site-credentials.js), so its admin data and pendingSettings go only to calls that carry it.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -13,6 +14,7 @@ import net from 'node:net';
 import { randomBytes } from 'node:crypto';
 import { PRODUCTION_ENV_KEYS } from '../lib/persistent-env.js';
 import { PUBLIC_SITE_CONFIG_FIELDS } from '../lib/cms-entitlements.js';
+import { createSiteCredentialStore } from '../lib/site-credentials.js';
 
 // A Maker callback token made for this boot only, and a site key served by /api/cms/config.
 const MAKER_TOKEN = randomBytes(24).toString('hex');
@@ -115,13 +117,22 @@ test('local hub in safe mode: site-config unchanged while dark, cms-spec writes,
       const res = await fetch(`${base}${path}`, init);
       return { status: res.status, body: await res.json() };
     };
-    const siteConfig = (query) => json(`/api/hub/site-config?${query}`);
+    const siteConfig = (query, headers = {}) => json(`/api/hub/site-config?${query}`, { headers });
+    // The shop site's CMS holds a site credential (written to the store the hub reads; the proof is
+    // covered in scripts/site-credentials.test.mjs).
+    const credential = randomBytes(32).toString('base64url');
+    createSiteCredentialStore({ dataDir }).enroll('b1', credential, { proofDomain: 'boot-shop.test', proofOrigin: 'https://boot-shop.test' });
+    const withCredential = { 'x-site-credential': credential };
 
-    // Dark: the site-config answer has exactly the fields it has today.
+    // Dark: the site-config answer has exactly the fields it has today: the admin fields only with the
+    // site credential, never for the site key alone.
     const darkKey = await siteConfig('site_key=boot-key-shop');
+    const darkTrusted = await siteConfig('site_key=boot-key-shop', withCredential);
     const darkDomain = await siteConfig('domain=boot-shop.test');
     assert.equal(darkKey.status, 200);
-    assert.deepEqual(Object.keys(darkKey.body).sort(), ['analyticsGoals', 'analyticsLevel', 'clientAdmin', 'desiredCmsVersion', 'domain', 'ecommerceCatalogType', 'features', 'id', 'name', 'pendingAdmin', 'websitePlan']);
+    assert.deepEqual(Object.keys(darkKey.body).sort(), ['analyticsGoals', 'analyticsLevel', 'desiredCmsVersion', 'domain', 'ecommerceCatalogType', 'features', 'id', 'name', 'websitePlan']);
+    assert.equal(darkTrusted.status, 200);
+    assert.deepEqual(Object.keys(darkTrusted.body).sort(), ['analyticsGoals', 'analyticsLevel', 'clientAdmin', 'desiredCmsVersion', 'domain', 'ecommerceCatalogType', 'features', 'id', 'name', 'pendingAdmin', 'websitePlan']);
     assert.deepEqual(Object.keys(darkDomain.body).sort(), ['analyticsGoals', 'analyticsLevel', 'desiredCmsVersion', 'domain', 'ecommerceCatalogType', 'features', 'id', 'name', 'websitePlan']);
     assert.equal(darkKey.body.features.socialSync, true);
     // Every field of the dark domain answer is public, so switching a site on keeps all of them.
@@ -148,6 +159,7 @@ test('local hub in safe mode: site-config unchanged while dark, cms-spec writes,
     assert.equal(prompt.status, 200);
     assert.ok(prompt.body.length <= 12000);
     assert.deepEqual((await siteConfig('site_key=boot-key-shop')).body, darkKey.body);
+    assert.deepEqual((await siteConfig('site_key=boot-key-shop', withCredential)).body, darkTrusted.body);
 
     // A Maker request meets the real Maker check in server.js first, then the switch.
     const makerGet = (headers) => json('/api/hub/sites/b1/cms-spec', { headers });
@@ -172,12 +184,16 @@ test('local hub in safe mode: site-config unchanged while dark, cms-spec writes,
     // Switch on for the shop only.
     const on = await json('/api/admin/cms-features/settings', { method: 'PUT', headers: admin, body: JSON.stringify({ siteConfig: { mode: 'on', siteIds: ['b1'] } }) });
     assert.equal(on.status, 200);
-    const lit = await siteConfig('site_key=boot-key-shop');
+    const lit = await siteConfig('site_key=boot-key-shop', withCredential);
     assert.equal(lit.body.featureTree.plan, 'tier-3-ecommerce');
     assert.ok(lit.body.featureTree.entitled.includes('shop.subscriptions'));
     assert.equal(lit.body.features.socialSync, false);
     assert.equal(lit.body.ecommerceCatalogType, 'menu');
     assert.equal(lit.body.pendingSettings.rev, 2);
+    // The site key alone gets the tree, never pendingSettings or the admin fields.
+    const litKeyOnly = await siteConfig('site_key=boot-key-shop');
+    assert.ok(litKeyOnly.body.featureTree);
+    for (const field of ['pendingSettings', 'pendingAdmin', 'clientAdmin']) assert.equal(field in litKeyOnly.body, false, field);
     // The open /api/cms/config gets the tree but never pendingSettings or admin fields.
     const litCmsConfig = await json('/api/cms/config');
     assert.ok(litCmsConfig.body.featureTree);
@@ -189,15 +205,25 @@ test('local hub in safe mode: site-config unchanged while dark, cms-spec writes,
     const plain = await siteConfig('site_key=boot-key-plain');
     assert.equal('featureTree' in plain.body, false, 'a site that is not listed stays as it was');
 
-    // The CMS reports that it applied rev 2: pendingSettings stops, the report is stored.
+    // A heartbeat with the site key alone cannot stop pendingSettings.
     const today = new Date().toISOString().slice(0, 10);
-    const beat = await json('/api/hub/heartbeat', {
+    const keyOnlyBeat = await json('/api/hub/heartbeat', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ site_key: 'boot-key-shop', packageVersion: '2.3.0', settingsRevApplied: 2, featuresRev: 2 }),
+    });
+    assert.equal(keyOnlyBeat.status, 200);
+    assert.equal(keyOnlyBeat.body.verified, false);
+    assert.equal((await siteConfig('site_key=boot-key-shop', withCredential)).body.pendingSettings.rev, 2);
+    // The CMS reports with its credential that it applied rev 2: pendingSettings stops, the report is stored.
+    const beat = await json('/api/hub/heartbeat', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...withCredential },
       body: JSON.stringify({ site_key: 'boot-key-shop', packageVersion: '2.3.0', settingsRevApplied: 2, featuresRev: 2, effective: ['users', 'shop'], featureBlocksDaily: [{ date: today, count: 3 }, { date: '2099-01-01', count: 7 }] }),
     });
     assert.equal(beat.status, 200);
-    assert.equal('pendingSettings' in (await siteConfig('site_key=boot-key-shop')).body, false);
+    assert.equal(beat.body.verified, true);
+    assert.equal('pendingSettings' in (await siteConfig('site_key=boot-key-shop', withCredential)).body, false);
     const spec = await json('/api/hub/sites/b1/cms-spec', { headers: admin });
     assert.equal(spec.body.cmsReported.settingsRevApplied, 2);
     assert.deepEqual(spec.body.cmsReported.blockHistory, [{ date: today, count: 3, top: [] }], 'a day far ahead is not kept');

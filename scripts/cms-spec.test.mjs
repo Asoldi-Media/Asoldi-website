@@ -261,7 +261,7 @@ test('every route needs Superadmin, or the Maker token once Superadmin allows it
 
 test('GET cms-spec returns the spec (lazily migrated when none is stored), the resolved tree and what the CMS reported', async () => {
   seedSites();
-  hub.recordHeartbeat('key-t1', { packageVersion: '2.3.0', report: { featuresRev: 1, effective: 'users,site', settingsRevApplied: 0 } });
+  hub.recordHeartbeat('key-t1', { packageVersion: '2.3.0', report: { featuresRev: 1, effective: 'users,site', settingsRevApplied: 0 } }, { verified: true });
   const res = await call('GET', '/api/hub/sites/t1/cms-spec');
   assert.equal(res.status, 200);
   assert.equal(res.body.featureSpecMigrated, true);
