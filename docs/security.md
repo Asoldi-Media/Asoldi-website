@@ -106,9 +106,8 @@ accepted, whoever sends it, until the token is rotated (Security card). After re
 you no longer use, rotate the legacy token as well; Makers with a valid host token keep working
 through the rotation, because their host token is checked first.
 
-`server.js` `isMakerStatusCallbackAuthorized(req, { scope })` is the same check as a yes/no
-(`checkMakerRequest`, with the same counters) for route modules that answer the refusal
-themselves.
+`makerAuth.checkMakerRequest(req, { scope })` (`lib/maker-auth.js`) is the same check as a yes/no,
+with the same counters, for code that answers the refusal itself.
 
 A missing or wrong credential gets 401, a valid host token without the scope 403. A request
 from a host stamps `lastSeenAt` at most every 5 minutes. Refusals are counted in memory
