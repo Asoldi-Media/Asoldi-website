@@ -137,6 +137,11 @@ hash or the sync flag.
   when every request passes that many public proxies: a request that skips one decides which
   entry it is counted by. The value is `security-settings.json` `loginTrustedHops`, and every
   hub process reads it within a second.
+- The Security card sets it with **Set trusted proxy hops**. Like a rotation, it needs the hub
+  admin's current password (`currentPassword`): any other admin token gets 403 `hub-admin-only`
+  before any password check and counts toward no login limit, and a wrong or missing password
+  gets 401 and counts toward the login limits like a failed sign-in. A value that is not 1 to 5
+  or `null` gets 400 before the password check.
 - Tokens are stamped with the user's token version from a fresh read of
   `token-revocations.json`, so a login served by one hub process right after a "log out
   everywhere" in another is not refused a second later.
@@ -144,7 +149,7 @@ hash or the sync flag.
   a fraction of a second; the boot migration then logs a warning and the hub starts.
 
 Routes (admin token): `GET /api/admin/system/security`, `PUT /api/admin/security/token-settings`,
-`PUT /api/admin/security/login-address` (`{trustedHops}`),
+`PUT /api/admin/security/login-address` (`{trustedHops, currentPassword}`, hub admin only),
 `POST /api/admin/security/revoke-tokens` (`{scope}` or `{userId}`). Client token:
 `POST /api/client/account/logout-everywhere`.
 

@@ -10140,7 +10140,8 @@ app.get('/api/admin/system/maker-callback-token', adminAuth, (_req, res) => {
 });
 
 /**
- * Re-checks the signed-in admin's password before a sensitive action (secret rotation). Wrong
+ * Re-checks the signed-in admin's password before a sensitive action (secret rotation, the
+ * trusted proxy hops of the login limits). Wrong
  * passwords count toward the normal login limit for that admin; the right one clears the
  * admin's failures, like a sign-in. Only the hub admin (admin.json) may confirm: any other admin
  * token gets 403 without a password check. On false the response is sent.
