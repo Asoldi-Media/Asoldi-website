@@ -228,7 +228,8 @@ hash or the sync flag.
   counted entry may be written by the client; the Security card then warns, and the proxy in
   front of the hub needs checking.
 - Then `PUT /api/admin/security/login-address` with `{ "trustedHops": 2 }` (1 to 5; `null` is
-  the default, 1) makes the limits count the second public entry from the right. Raise it only
+  the default, 1) and the hub admin's `currentPassword` (see the Security card bullet below)
+  makes the limits count the second public entry from the right. Raise it only
   when every request passes that many public proxies: a request that skips one decides which
   entry it is counted by. The value is `security-settings.json` `loginTrustedHops`, and every
   hub process reads it within a second.
