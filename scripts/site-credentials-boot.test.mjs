@@ -1,8 +1,8 @@
 // Boots the real hub (server.js) on 127.0.0.1 with a throwaway data dir, an empty working
 // directory (no .env), blank credentials, safe mode and the loopback-only egress guard, then checks
 // the site credential rules over HTTP: site config, heartbeat, a money route, the enrollment switch,
-// the admin list and revoke, the visitor form limit, and the trusted-hop setting on the heartbeat
-// and form limits.
+// the admin list and revoke, the visitor form limit, the trusted-hop setting on the heartbeat
+// and form limits, and the manual correction of a trusted CMS version.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -241,5 +241,18 @@ test('real hub: site config, heartbeat, money routes, enrollment switch, revoke 
   for (let i = 0; i < 8; i += 1) assert.equal(await formFrom('198.51.100.42'), 200, 'a form count of its own too');
   assert.equal(await formFrom('198.51.100.42'), 429);
   assert.equal(await formFrom('198.51.100.43'), 200);
+
+  // 10. Correcting a trusted CMS version by hand: PUT with a partial cms body keeps the other cms
+  //     fields. The path has no PATCH.
+  const cmsBefore = (await json('/api/hub/sites', { headers: admin })).body.find((r) => r.id === site.id).cms;
+  const corrected = await json(`/api/hub/sites/${site.id}`, { method: 'PUT', headers: admin, body: JSON.stringify({ cms: { packageVersion: '2.2.1' } }) });
+  assert.equal(corrected.status, 200);
+  assert.equal(corrected.body.cms.packageVersion, '2.2.1');
+  assert.equal(corrected.body.cms.adminUrl, cmsBefore.adminUrl, 'the other cms fields are kept');
+  assert.equal(corrected.body.cms.lastSeenAt, cmsBefore.lastSeenAt);
+  assert.equal(corrected.body.name, 'Boot shop');
+  const patched = await json(`/api/hub/sites/${site.id}`, { method: 'PATCH', headers: admin, body: JSON.stringify({ cms: { packageVersion: '2.1.3' } }) });
+  assert.equal(patched.status, 404, 'no PATCH route on /api/hub/sites/:id');
+  assert.equal((await json('/api/hub/sites', { headers: admin })).body.find((r) => r.id === site.id).cms.packageVersion, '2.2.1');
   assert.equal(logs.includes(credential), false, 'the credential never reaches the log');
 });

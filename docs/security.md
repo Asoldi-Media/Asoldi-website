@@ -375,6 +375,11 @@ without a credential becomes the trusted version; money routes still need a cred
 `POST /api/hub/site-credentials/set-aside-unreadable`. Manage clients shows the state per site,
 with Revoke and Reset buttons. Every action is audited and counted.
 
+To correct a site's trusted CMS version by hand (for example right after a deploy, when the last
+heartbeat before it left a wrong one): `PUT /api/hub/sites/:id` with
+`{"cms":{"packageVersion":"x.y.z"}}` (admin token). The other `cms` fields are kept. The hub has
+only `PUT` and `DELETE` on that path; a `PATCH` gets 404.
+
 **Older client CMS versions** send no credential. They keep their public config and liveness. A
 never-enrolled shop on 2.0.0 up to 2.2.1 keeps its shop status, documents, dashboard and shop
 summary on the site key alone; CMS 1.x never calls those routes. None of them gets a client admin password from the hub
