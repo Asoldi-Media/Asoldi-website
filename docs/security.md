@@ -15,6 +15,7 @@ change here needs a new Hostinger env variable.
 | `secrets/webhooks.json` | Fireflies webhook signing secret and URL token | `data/webhook-secrets.js` |
 | `security-settings.json` | max token age, `revokedBefore` per class, one-time `migrations`, `loginTrustedHops`, persisted `counters` (Maker refusals) | `data/security-settings.js` |
 | `maker-hosts.json` | one row per Maker host: label, scopes, the sha256 of its token (never the token), `lastSeenAt`, `revokedAt`, heartbeat fields | `data/maker-hosts.js` |
+| `site-credentials/` | `credentials.json` (per site id the sha256 of its site credential, never the value), `nonces.json` (used enrollment nonces), `audit.json`, `settings.json` (the enrollment switch, off by default) | `lib/site-credentials.js` |
 | `token-revocations.json` | per-user token versions ("log out everywhere") | `data/security-settings.js` |
 
 Files are created in one step (temp file + hard link or rename), mode 0600, so two processes
@@ -76,9 +77,11 @@ System safety → **Maker hosts** lists, creates and revokes them:
 | `DELETE /api/admin/maker-hosts/:hostId` | revoke: that token gets 401 from now on, even when the request also carries the legacy token (in other hub processes within a second) |
 | `GET /api/admin/maker-hosts/access-log` | Maker access log rows (ids only) |
 
-Scopes: `callback` (`maker-status-callback`), `preview-push` (`maker-preview-push`),
-`client-bundle` (`/api/internal/maker/client-bundle`), `jobs` (`/api/maker/*`). A new host gets
-all four unless the admin picks fewer. A client bundle sent through the status callback
+Scopes: `callback` (`maker-status-callback`, including the run spend event `run.ai.spend` and the
+Maker delivery events), `preview-push` (`maker-preview-push`), `client-bundle`
+(`/api/internal/maker/client-bundle`), `jobs` (`/api/maker/*`, and Maker access to
+`/api/hub/sites/:id/cms-spec` once `cmsSpec.makerAccess` is on, docs/cms-feature-tree.md). A new
+host gets all four unless the admin picks fewer. A client bundle sent through the status callback
 (`run.client-bundle.updated`) is the same portal write as the client-bundle route, so a host token
 needs both `callback` and `client-bundle` for it (403 `maker-scope` otherwise); the legacy token
 carries no scopes.
@@ -316,8 +319,9 @@ client CMS 2.2.2 and 1.7.2):
 | `GET /api/hub/shop/status`, `POST /api/hub/shop/document`, `GET /api/hub/analytics` | allowed only for a site that has never enrolled and whose trusted CMS version is 2.0.0 up to 2.2.1 (the versions that call these without a credential), for the shop routes only with the shop feature on; otherwise 401. A revoked site stays closed until it enrolls again | allowed |
 | `GET /api/hub/analytics?refresh=1` (paid maps refresh) | stored ranking only, with `mapsRefreshSkipped: 'site-credential-required'` | refresh runs |
 | `GET /api/hub/analytics/spend` | 401 | allowed |
-| `GET /api/hub/site-config` (site key in `x-site-key` or `?site_key=`) | public fields only | adds `pendingAdmin` and the client admin contact |
-| `POST /api/hub/heartbeat` | 30 a minute per (site, address); marks a site that has never enrolled as seen; version, admin address and name kept as `cms.unverified` (shown, not used; the same report within a minute is not written again); `adminApplied` ignored. An enrolled or revoked site is marked as seen only with its credential | acted on (`cms.packageVersion`, `cms.adminUrl`, `cms.lastVerifiedAt`) |
+| `GET /api/hub/site-config` (site key in `x-site-key` or `?site_key=`) | public fields only (with the feature tree switched on, also `featureTree` and `featureEnforcement`) | adds `pendingAdmin`, the client admin contact and, with the feature tree on, `pendingSettings` (docs/cms-feature-tree.md) |
+| `GET /api/cms/config` (site key from `CMS_SITE_KEY` or the Host header) | public fields only | – (never admin data) |
+| `POST /api/hub/heartbeat` | 30 a minute per (site, address); marks a site that has never enrolled as seen; version, admin address and name kept as `cms.unverified` (shown, not used; the same report within a minute is not written again); `adminApplied` ignored. An enrolled or revoked site is marked as seen only with its credential | acted on (`cms.packageVersion`, `cms.adminUrl`, `cms.lastVerifiedAt`), and the CMS report fields of docs/cms-feature-tree.md (`settingsRevApplied`, feature revs, block counts, migrations) are stored |
 
 A wrong credential on site config or the heartbeat still gets the public answer. Every answer
 carries `x-site-credential-status` (`valid`, `missing`, `invalid`, `not-enrolled`,
