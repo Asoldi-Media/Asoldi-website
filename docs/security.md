@@ -321,7 +321,7 @@ client CMS 2.2.2 and 1.7.2):
 | Route | Site key alone | With a valid credential |
 |---|---|---|
 | `/api/hub/shop/*` that move money, change a payee or read payment details (Stripe/PayPal connect, checkout, order, capture, session, invoice, subscription, cancel, refund, disconnect) | 401 `site-credential-required` | allowed |
-| `GET /api/hub/shop/status`, `POST /api/hub/shop/document`, `GET /api/hub/analytics` | allowed only for a site that has never enrolled and whose trusted CMS version is 2.0.0 up to 2.2.1 (the versions that call these without a credential), for the shop routes only with the shop feature on; otherwise 401. A revoked site stays closed until it enrolls again | allowed |
+| `GET /api/hub/shop/status`, `POST /api/hub/shop/document`, `GET /api/hub/analytics`, `POST /api/hub/analytics/commerce` | allowed only for a site that has never enrolled and whose trusted CMS version is 2.0.0 up to 2.2.1 (the versions that call these without a credential), for the shop routes only with the shop feature on; otherwise 401. A revoked site stays closed until it enrolls again | allowed |
 | `GET /api/hub/analytics?refresh=1` (paid maps refresh) | stored ranking only, with `mapsRefreshSkipped: 'site-credential-required'` | refresh runs |
 | `GET /api/hub/analytics/spend` | 401 | allowed |
 | `GET /api/hub/site-config` (site key in `x-site-key` or `?site_key=`) | public fields only (with the feature tree switched on, also `featureTree` and `featureEnforcement`) | adds `pendingAdmin`, the client admin contact and, with the feature tree on, `pendingSettings` (docs/cms-feature-tree.md) |
@@ -356,13 +356,16 @@ calls without the credential cannot use up:
 - `POST /api/hub/analytics/collect`: 120 per (site, address) and 1200 per site a minute (the site's
   server with its credential: 1200 of its own, so others cannot crowd out an enrolled site); at most
   100 events per call, only the fields the CMS stores, with its lengths, and times in the last 35 days.
-- `POST /api/hub/analytics/commerce`: 20 per (site, address) and 60 per site a minute; only the
-  known summary fields, with bounded depth, list length, string length and finite numbers; 64 KB
-  at most (413 above).
+- `POST /api/hub/analytics/commerce`: the shop summary for the dashboard. Only the CMS server sends
+  it (client CMS 2.0.0 and later, from its admin analytics page, through the request helper that adds
+  the credential; no browser code calls it), so it also needs the site credential, as in the table
+  above: the site key alone works only for a never-enrolled site on a trusted 2.0.0 to 2.2.1.
+  20 per (site, address) and 60 per site a minute; only the known summary fields, with bounded
+  depth, list length, string length and finite numbers; 64 KB at most (413 above).
 
 **Admin** (admin token): `GET /api/hub/site-credentials` (per site: enrolled or revoked, enrolled
 at, proof domain and whether it still matches the stored domain, counts, whether the site key alone
-still opens shop status, documents or the dashboard; never a hash; and whether the store can be
+still opens shop status, documents or the dashboard and its shop summary; never a hash; and whether the store can be
 read), `PUT /api/hub/site-credentials/settings` (`{ enrollment: 'on' | 'off' }`),
 `POST /api/hub/sites/:id/site-credential/revoke` (the site stays closed until its CMS makes a new
 credential and enrolls again, which 2.2.2 and 1.7.2 do on their own),
@@ -373,8 +376,8 @@ without a credential becomes the trusted version; money routes still need a cred
 with Revoke and Reset buttons. Every action is audited and counted.
 
 **Older client CMS versions** send no credential. They keep their public config and liveness. A
-never-enrolled shop on 2.0.0 up to 2.2.1 keeps its shop status, documents and dashboard on the site
-key alone; CMS 1.x never calls those routes. None of them gets a client admin password from the hub
+never-enrolled shop on 2.0.0 up to 2.2.1 keeps its shop status, documents, dashboard and shop
+summary on the site key alone; CMS 1.x never calls those routes. None of them gets a client admin password from the hub
 or can use the money routes until it runs 1.7.2 or 2.2.2 and has enrolled. Switch enrollment on
 together with the first rollout of 2.2.2 or 1.7.2.
 

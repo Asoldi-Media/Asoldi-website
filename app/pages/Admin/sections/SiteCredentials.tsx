@@ -159,7 +159,7 @@ export function SiteCredentialStatus({
           <span className="inline-block w-2 h-2 rounded-full mr-2 bg-amber-400" />
           Server credential: not enrolled · payments and the client admin password sync need CMS 2.2.2 or later (1.7.2 on 1.7 sites)
           {legacy?.shop || legacy?.analytics
-            ? ` · site key still accepted for ${[legacy.shop ? 'shop status and documents' : '', legacy.analytics ? 'the dashboard' : ''].filter(Boolean).join(' and ')} (CMS ${site.cms?.packageVersion || ''})`
+            ? ` · site key still accepted for ${[legacy.shop ? 'shop status and documents' : '', legacy.analytics ? 'the dashboard and shop summary' : ''].filter(Boolean).join(' and ')} (CMS ${site.cms?.packageVersion || ''})`
             : ''}
         </p>
       )}

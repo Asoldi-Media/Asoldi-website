@@ -641,24 +641,55 @@ test('analytics collect keeps only the known event fields and limits calls per s
   assert.equal(last.status, 200, 'the site server with its credential is limited per site only');
 });
 
-test('analytics commerce keeps the known summary fields, bounded, and refuses large bodies', async () => {
+test('analytics commerce keeps the known summary fields, bounded, and refuses large bodies (a never-enrolled CMS 2.1.3 shop on its site key)', async () => {
   resetHubAnalyticsLimitsForTests();
   const ok = await send('POST', '/api/hub/analytics/commerce', {
-    body: { site_key: siteOther.site_key, orders: 3, revenue: 1e30, topProducts: Array.from({ length: 1000 }, (_, i) => ({ name: `p${i}`, units: i })), injected: 'x' },
+    body: { site_key: siteLegacy.site_key, orders: 3, revenue: 1e30, topProducts: Array.from({ length: 1000 }, (_, i) => ({ name: `p${i}`, units: i })), injected: 'x' },
   });
   assert.equal(ok.status, 200);
   const snaps = JSON.parse(readFileSync(join(dataDir, 'client-commerce-snapshots.json'), 'utf8'));
-  const snap = snaps[siteOther.site_key];
+  const snap = snaps[siteLegacy.site_key];
   assert.equal(snap.orders, 3);
   assert.equal(snap.revenue, null, 'numbers out of range are dropped');
   assert.equal(snap.topProducts.length, 400);
   assert.equal(snap.injected, undefined);
-  const big = await send('POST', '/api/hub/analytics/commerce', { body: { site_key: siteOther.site_key, series: Array.from({ length: 300 }, () => 'y'.repeat(250)) } });
+  const big = await send('POST', '/api/hub/analytics/commerce', { body: { site_key: siteLegacy.site_key, series: Array.from({ length: 300 }, () => 'y'.repeat(250)) } });
   assert.equal(big.status, 413);
   const headers = { 'x-forwarded-for': '192.0.2.60' };
   let last;
-  for (let i = 0; i < 21; i += 1) last = await send('POST', '/api/hub/analytics/commerce', { body: { site_key: siteOther.site_key, orders: i }, headers });
+  for (let i = 0; i < 21; i += 1) last = await send('POST', '/api/hub/analytics/commerce', { body: { site_key: siteLegacy.site_key, orders: i }, headers });
   assert.equal(last.status, 429);
+});
+
+test('analytics commerce needs the credential, except for a never-enrolled site on CMS 2.0.0 to 2.2.1', async () => {
+  resetHubAnalyticsLimitsForTests();
+  const snapshotOf = (site) => JSON.parse(readFileSync(join(dataDir, 'client-commerce-snapshots.json'), 'utf8'))[site.site_key];
+  const post = (site, orders, extra = {}) => send('POST', '/api/hub/analytics/commerce', { body: { site_key: site.site_key, orders }, ...extra });
+
+  const keyOnly = await post(siteA, 41);
+  assert.equal(keyOnly.status, 401, 'an enrolled site needs its credential');
+  assert.equal(keyOnly.data.code, 'site-credential-required');
+  assert.equal(keyOnly.headers.get('x-site-credential-status'), 'missing');
+  const wrong = await post(siteA, 42, { credential: value() });
+  assert.equal(wrong.status, 401);
+  assert.equal(wrong.data.code, 'site-credential-invalid');
+  assert.notEqual(snapshotOf(siteA)?.orders, 41, 'a refused summary is not stored');
+  assert.notEqual(snapshotOf(siteA)?.orders, 42);
+  const withCredential = await post(siteA, 43, { credential: siteA.credential });
+  assert.equal(withCredential.status, 200);
+  assert.equal(withCredential.headers.get('x-site-credential-status'), 'valid');
+  assert.equal(snapshotOf(siteA).orders, 43);
+
+  const legacy = await post(siteLegacy, 44);
+  assert.equal(legacy.status, 200, 'a never-enrolled shop on CMS 2.1.3 keeps sending it on its site key');
+  assert.equal(snapshotOf(siteLegacy).orders, 44);
+  for (const site of [siteOther, site17, site222]) {
+    const res = await post(site, 45);
+    assert.equal(res.status, 401, `${site.name}: never enrolled and not on CMS 2.0.0 to 2.2.1`);
+    assert.equal(res.data.code, 'site-credential-required');
+    assert.equal(res.headers.get('x-site-credential-status'), 'not-enrolled', 'a CMS 2.2.2 learns that it must enroll');
+    assert.notEqual(snapshotOf(site)?.orders, 45);
+  }
 });
 
 test('collect, commerce and enrollment use the trusted-hop setting of the sign-in limits: with 2 hops visitors behind one CDN are counted apart', async () => {
@@ -674,7 +705,7 @@ test('collect, commerce and enrollment use the trusted-hop setting of the sign-i
   try {
     for (const [path, perAddress, body] of [
       ['/api/hub/analytics/collect', 120, { site_key: siteOther.site_key, events: [] }],
-      ['/api/hub/analytics/commerce', 20, { site_key: siteOther.site_key, orders: 1 }],
+      ['/api/hub/analytics/commerce', 20, { site_key: siteLegacy.site_key, orders: 1 }],
     ]) {
       setHops(null);
       resetHubAnalyticsLimitsForTests();
