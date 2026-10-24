@@ -213,6 +213,7 @@ export function MeetingNotesModal({
       customMode: false,
       selected: presetIds(tierId),
       pages,
+      tierExplicit: true,
     });
   }
 
@@ -221,6 +222,7 @@ export function MeetingNotesModal({
       tierId: 'custom',
       customMode: true,
       selected: customBaselineIds(),
+      tierExplicit: true,
     });
   }
 

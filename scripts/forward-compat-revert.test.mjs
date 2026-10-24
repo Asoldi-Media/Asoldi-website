@@ -27,15 +27,49 @@ import {
   FUTURE_SITE_CMS_KEYS,
   FUTURE_SITE_KEYS,
 } from '../data/normalize-ext.js';
+import { normalizeSitePlan } from '../lib/site-plan-model.js';
+import { normalizeDelivery } from '../lib/delivery-state.js';
+import { normalizeMakerAutopilot, normalizeMakerMaterials, normalizePreviewPush } from '../lib/maker-events.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const writer = join(root, 'scripts', 'fixtures', 'forward-compat-writer.mjs');
 
 // When a batch starts owning a key (normalizing it itself), give the key a realistic sample here,
 // so the default working-tree run keeps passing; the sample must survive that batch's normalizer.
+// Batch 2 (WS8.2, WS8.3, WS8.9, WS8.28) owns these keys; their samples are normalized records.
+const OWNED_SAMPLES = {
+  sitePlan: normalizeSitePlan({
+    status: 'active', tierId: 'tier-3-ecommerce', services: ['site', 'changes', 'seo', 'ecom'], pages: 10, billing: 'month',
+    priceExMva: 1999, catalogType: 'normal', source: 'portal-accept', offerId: 'fc-offer', alternativeIndex: 0,
+    signedAt: '2026-10-28T10:02:11.000Z', conflicts: [{ source: 'payment', tierId: 'tier-1-standard', at: '2026-10-28T10:02:12.000Z' }],
+    history: [{ at: '2026-10-28T10:02:11.000Z', by: 'client', from: null, to: { tierId: 'tier-3-ecommerce' }, reason: 'portal-accept' }],
+  }),
+  delivery: normalizeDelivery({
+    stage: 'gathering', stageAt: '2026-10-28T10:05:00.000Z',
+    history: [{ from: 'signed', to: 'gathering', at: '2026-10-28T10:05:00.000Z', by: 'loop', reason: 'pre-workshop-sent' }],
+    events: { previewReady: { at: '2026-11-01T10:00:00.000Z', previewHash: 'abc', variant: 'first' } },
+    emails: { preWorkshopSentAt: '2026-10-28T10:04:00.000Z' },
+    job: { id: 'job-1', kind: 'continue', status: 'running', hostId: 'mh_1', at: '2026-11-01T09:00:00.000Z' },
+    gate: { version: 4, devComplete: false },
+  }),
+  materials: normalizeMakerMaterials({
+    logo: { present: true, source: 'upload' }, uploads: { heroImages: 3 }, uploadsTotal: 8, products: 6,
+    pageKinds: [{ route: '/prosjekter', kind: 'portfolio' }], step1Qa: { status: 'warn', score: 0.82 },
+    at: '2026-11-01T10:00:00.000Z', receivedAt: '2026-11-01T10:00:01.000Z',
+  }),
+  autopilot: normalizeMakerAutopilot({ phase: 'pipeline', status: 'running', at: '2026-11-01T10:00:00.000Z' }),
+  previewPush: normalizePreviewPush({ at: '2026-11-01T11:00:00.000Z', sha256: 'a'.repeat(64), sourceStep: '2', runId: 'run-forward-compat', sessionId: 's-1' }),
+  plan: {
+    tierId: 'custom', services: ['site', 'changes', 'blog', 'ecom'], pages: 5, oneTimeAddOns: [], billing: 'month',
+    catalogType: null, derived: false, needsConfirmation: false,
+  },
+  pricing: { oneTimeMultiplier: 9, source: 'code-default' },
+};
+
 function sampleFor(key) {
   if (key === 'isTest') return true;
   if (key === 'ext') return { futureBatch: { note: `ext kept (${key})`, n: 7 } };
+  if (Object.hasOwn(OWNED_SAMPLES, key)) return OWNED_SAMPLES[key];
   return { kept: key, nested: { list: [1, 2, 3], at: '2026-11-01T10:00:00.000Z' } };
 }
 

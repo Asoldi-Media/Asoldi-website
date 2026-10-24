@@ -1,5 +1,5 @@
 import { normalizeDeliveryPhase, normalizeDevelopment } from '../lib/development-phase.js';
-import { analyticsLevelFromFlags } from '../lib/website-tiers.js';
+import { analyticsLevelFromFlags, legacyTierFlagsForServices, servicesForTier } from '../lib/website-tiers.js';
 import { normalizeDueDate } from '../lib/website-due.js';
 import { carryFutureKeys, FUTURE_SITE_CMS_KEYS, FUTURE_SITE_KEYS } from './normalize-ext.js';
 
@@ -45,34 +45,17 @@ export function normalizeFeatures(features) {
   };
 }
 
+/**
+ * The 7 legacy CMS flags for a website plan id. Delegates to the shared tier service matrix
+ * (WS8.1): the flags of the tier's services, with the legacy meaning of `blog` (automatic posts,
+ * part of the seo service). The output is unchanged for every plan; a custom plan has no services
+ * by tier, so it keeps the defaults. Plan-based flags with blog on every tier come from
+ * featuresFromServices (lib/website-tiers.js) once a site's plan carries services.
+ */
 export function featuresFromPlan(planId) {
-  switch (normalizeWebsitePlan(planId)) {
-    case 'tier-2-seo':
-      return {
-        users: true,
-        analytics: true,
-        ecommerce: false,
-        blog: true,
-        socialSync: true,
-        emailMarketing: true,
-        general: false,
-      };
-    case 'tier-3-ecommerce':
-      return {
-        users: true,
-        analytics: true,
-        ecommerce: true,
-        blog: true,
-        socialSync: true,
-        emailMarketing: true,
-        general: true,
-      };
-    case 'custom':
-      return { ...DEFAULT_FEATURES };
-    case 'tier-1-standard':
-    default:
-      return { ...DEFAULT_FEATURES };
-  }
+  const plan = normalizeWebsitePlan(planId);
+  if (plan === 'custom') return { ...DEFAULT_FEATURES };
+  return legacyTierFlagsForServices(servicesForTier(plan));
 }
 
 export function emptyClientAdmin() {

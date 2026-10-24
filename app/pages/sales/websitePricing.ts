@@ -1,4 +1,4 @@
-import { WEBSITE_TIERS, deliveryWorkDaysPhrase } from '../../../lib/website-tiers.js';
+import { WEBSITE_TIERS, calculatorServiceIdsForTier, deliveryWorkDaysPhrase } from '../../../lib/website-tiers.js';
 
 export type PricingService = {
   id: string;
@@ -15,6 +15,8 @@ export type MeetingQuotePackage = {
   pages: number;
   selected: string[];
   oneTimeAddOns: string[];
+  /** The rep picked this package (not the starter default). The plan resolver trusts the tier only then. */
+  tierExplicit?: boolean;
 };
 
 export type MeetingQuoteState = MeetingQuotePackage & {
@@ -31,12 +33,11 @@ export type MeetingQuoteState = MeetingQuotePackage & {
   activeOfferIndex?: 0 | 1;
 };
 
-// Service ids each named package bundles in (prices and page counts come from lib/website-tiers.js).
-const TIER_SERVICE_IDS: Record<string, string[]> = {
-  starter: ['blog'],
-  seo: ['seo', 'social', 'email', 'blog'],
-  nettbutikk: ['seo', 'social', 'email', 'ecom', 'dashboard', 'blog', 'multilingual'],
-};
+// Service ids each named package bundles in: the tier's services from the shared tier matrix
+// (lib/website-tiers.js), limited to the calculator's add-on ids. Prices and page counts come from there too.
+const TIER_SERVICE_IDS: Record<string, string[]> = Object.fromEntries(
+  WEBSITE_TIERS.map((tier) => [tier.marketingId, calculatorServiceIdsForTier(tier)]),
+);
 
 export const PRICING = {
   oneTimeMultiplier: 9,
@@ -130,6 +131,7 @@ export function normalizeMeetingQuotePackage(value: unknown, fallback?: MeetingQ
     pages: Number.isFinite(pages) && pages >= 1 ? Math.round(pages) : base.pages,
     selected,
     oneTimeAddOns,
+    ...(input.tierExplicit === true ? { tierExplicit: true } : {}),
   };
 }
 
@@ -158,6 +160,7 @@ export function activeMeetingQuotePackage(quote: MeetingQuoteState): MeetingQuot
     pages: quote.pages,
     selected: quote.selected,
     oneTimeAddOns: quote.oneTimeAddOns,
+    ...(quote.tierExplicit === true ? { tierExplicit: true } : {}),
   };
 }
 

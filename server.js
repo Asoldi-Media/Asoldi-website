@@ -35,6 +35,9 @@ import { registerCmsSsoRoutes } from './lib/cms-sso.js';
 import { createHeartbeatLimits, heartbeatMarksSeen, registerSiteCredentialRoutes, siteCredentialState } from './lib/site-credentials.js';
 import { registerDeliveryRoutes } from './lib/routes/delivery-routes.js';
 import { runDeliverySchemaStartupSnapshot } from './lib/delivery-snapshots.js';
+import { chosenWebsiteTier, makerSitePlanPayload, websiteTierIdForClient } from './lib/site-plan.js';
+import { isMakerDeliveryEvent, makerEventsRecording, makerRunFetchWithMaterials, recordMakerDeliveryEvent } from './lib/maker-events-hub.js';
+import { runDeliveryBackfillAtBoot } from './lib/delivery-backfill.js';
 import { myphonerMatchCandidates, myphonerSyncSkipReason, testClientIdSet } from './lib/test-clients.js';
 import * as employees from './data/employees.js';
 import * as sales from './data/sales.js';
@@ -539,6 +542,12 @@ try {
   runDeliverySchemaStartupSnapshot();
 } catch (error) {
   console.error('[delivery] startup snapshot failed (will retry next boot):', error?.message || error);
+}
+// WS8.41: the delivery backfill runs at boot only when migrations.deliveryBackfill is dry-run or apply.
+try {
+  runDeliveryBackfillAtBoot();
+} catch (error) {
+  console.error('[delivery] backfill at boot failed:', error?.message || error);
 }
 console.log(`[mail] transport=${emailLib.resolveMailTransport()}`);
 
@@ -13555,6 +13564,12 @@ app.post('/api/admin/sales/maker-status-callback', requireMakerHost('callback'),
     });
   }
 
+  // WS8.28: Maker delivery events are stored on makerRun while development.makerEvents is 'record'.
+  // With the switch off they take the step-status path below, as before.
+  if (isMakerDeliveryEvent(event) && makerEventsRecording()) {
+    return res.json(recordMakerDeliveryEvent({ event, body: req.body || {}, client, sales, runId: nextRunId }));
+  }
+
   // Maker → Sales field sync (links + core parameters edited in Website Maker).
   if (event === 'run.fields.updated') {
     const links = fields.quickFillLinks && typeof fields.quickFillLinks === 'object' ? fields.quickFillLinks : {};
@@ -14373,7 +14388,9 @@ app.get('/api/admin/sales/:id', salesAuth, (req, res) => {
 });
 
 async function workshopNeedsMakerFetch(client) {
-  return async (runId) => {
+  // WS8.28: the live Maker run first; a fresh materials snapshot of the linked run stands in only
+  // when that fetch fails (and only while development.makerEvents is 'record').
+  return makerRunFetchWithMaterials(client, async (runId) => {
     const websiteMakerBaseUrl = resolveWebsiteMakerBaseUrl('', client);
     if (!websiteMakerBaseUrl) return { failed: true };
     try {
@@ -14382,7 +14399,7 @@ async function workshopNeedsMakerFetch(client) {
     } catch {
       return { failed: true };
     }
-  };
+  });
 }
 
 async function loadDeskNeedLines(client, templateKey = '') {
@@ -16767,7 +16784,7 @@ function applyMeetingQuoteToOffer(offer, client, { forceProducts = false } = {})
     alternatives: built.alternatives,
     reviewRequested: custom ? true : (salesOffers.offerNeedsVerification({ ...offer, reviewRequested: false }) ? false : offer.reviewRequested),
     email: { html },
-  }, { actor: 'meeting-quote', action: '' }) || offer;
+  }, { actor: 'meeting-quote', action: '', quotePlans: built }) || offer;
 }
 
 async function ensureOfferDraft(client, req) {
@@ -17593,10 +17610,6 @@ app.post('/api/admin/sales/:id/offer/approve-preview', salesAuth, async (req, re
   const updated = salesOffers.markOfferPreviewed(offer.id, { actor: offerActor(req) });
   res.json({ offer: presentOffer(updated) });
 });
-
-function chosenWebsiteTier(client, offer) {
-  return resolveTier(offer?.tierId) || resolveTier(client?.details?.meetingQuote?.tierId) || resolveTier(client?.portalTierId) || null;
-}
 
 async function findClientUserByEmail(email) {
   const target = normalizeEmail(email);
@@ -18979,6 +18992,9 @@ app.post('/api/admin/sales/:id/create-maker-run', salesOrDevelopmentAuth, async 
       productionDomain: sanitizeSalesWebsiteDomain(client.websiteDomain),
       quickFillLinks,
     };
+    // WS8.3: a plan in force travels with the run (contract site-plan/1, read by the Maker).
+    const sitePlanPayload = makerSitePlanPayload(client.sitePlan);
+    if (sitePlanPayload) requestBody.sitePlan = sitePlanPayload;
 
     const browserCreated = req.body?.browserCreated && typeof req.body.browserCreated === 'object' ? req.body.browserCreated : null;
     const browserCreatedRunId = sanitizeText(browserCreated?.runId);
@@ -19405,7 +19421,7 @@ function clientsWithWebsiteDue(clients = []) {
   const offers = salesOffers.latestOffersByClient();
   return clients.map((client) => {
     const offer = offers.get(client.id) || null;
-    const tierId = offer?.tierId || client.portalTierId || client.details?.meetingQuote?.tierId || '';
+    const tierId = websiteTierIdForClient(client, offer);
     const products = offer?.products || [];
     const dueOverride = offer?.dueDate || client.websiteDueOverride || '';
     const custom = isCustomWebsiteOffer({ tierId, products });
@@ -19460,7 +19476,7 @@ function persistWebsiteDue({ salesClientId = '', siteId = '', dueDate = '', acto
 
 function websiteDueView(client) {
   const offer = salesOffers.getOfferForClient(client.id);
-  const tierId = offer?.tierId || client.portalTierId || client.details?.meetingQuote?.tierId || '';
+  const tierId = websiteTierIdForClient(client, offer);
   const products = offer?.products || [];
   const dueOverride = offer?.dueDate || client.websiteDueOverride || '';
   const weeks = weeksForDeveloperBoard({ tierId, products, dueOverride });

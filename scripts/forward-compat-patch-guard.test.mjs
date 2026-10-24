@@ -24,8 +24,12 @@ writeFileSync(join(DATA_DIR, 'sales-clients.json'), JSON.stringify([
   },
 ], null, 2));
 
-// Offers: one without later-batch keys, one with the keys WS8.2 / WS8.3 / WS8.57 will store.
+// Offers: one without later-batch keys, one with the keys WS8.2 / WS8.3 / WS8.57 store. Plan and
+// pricing are owned by WS8.2 (normalized records); products[].services stays a passthrough key.
 const storedServices = ['site', 'changes', 'blog'];
+const planOf = (tierId, services) => ({ tierId, services, pages: 5, oneTimeAddOns: [], billing: 'month', catalogType: null, derived: false, needsConfirmation: false });
+const tier1Plan = planOf('tier-1-standard', storedServices);
+const tier2Plan = planOf('tier-2-seo', ['site', 'changes', 'seo', 'blog']);
 const storedOffer = {
   id: 'offer-stored',
   salesClientId: 'stored',
@@ -33,11 +37,11 @@ const storedOffer = {
   tierId: 'tier-1-standard',
   products: [{ id: 'p-site', kind: 'tier', tierId: 'tier-1-standard', name: 'Nettside', priceExMva: 1499, services: storedServices, oneTimeAddOns: ['pos'], ext: { note: 'kept' } }],
   alternatives: [
-    { products: [{ id: 'alt0-p-site', kind: 'tier', tierId: 'tier-1-standard', name: 'Nettside', priceExMva: 1499, services: storedServices }], billing: 'month', plan: { tierId: 'tier-1-standard' } },
-    { products: [{ id: 'alt1-p-seo', kind: 'tier', tierId: 'tier-2-seo', name: 'Nettside + SEO', priceExMva: 2499, services: ['site', 'changes', 'blog', 'seo'] }], billing: 'month', plan: { tierId: 'tier-2-seo' } },
+    { products: [{ id: 'alt0-p-site', kind: 'tier', tierId: 'tier-1-standard', name: 'Nettside', priceExMva: 1499, services: storedServices }], billing: 'month', plan: tier1Plan },
+    { products: [{ id: 'alt1-p-seo', kind: 'tier', tierId: 'tier-2-seo', name: 'Nettside + SEO', priceExMva: 2499, services: ['site', 'changes', 'blog', 'seo'] }], billing: 'month', plan: tier2Plan },
   ],
-  plan: { tierId: 'tier-1-standard', services: storedServices },
-  pricing: { monthlyExMva: 1499 },
+  plan: tier1Plan,
+  pricing: { oneTimeMultiplier: 9, source: 'code-default' },
   dpaVersion: '2026-11',
 };
 writeFileSync(join(DATA_DIR, 'sales-offers.json'), JSON.stringify([
@@ -180,7 +184,7 @@ test('offers: choosing an alternative keeps the services stored on it', () => {
   const chosen = salesOffers.updateSalesOffer('offer-stored', flattened, { actor: 'client', action: 'chosen-offer' });
   assert.equal(chosen.chosenOfferIndex, 1);
   assert.deepEqual(chosen.products[0].services, ['site', 'changes', 'blog', 'seo']);
-  assert.deepEqual(chosen.alternatives[1].plan, { tierId: 'tier-2-seo' });
+  assert.deepEqual(chosen.alternatives[1].plan, tier2Plan);
 });
 
 test('offers: an admin contract summary cannot add services to its products', () => {

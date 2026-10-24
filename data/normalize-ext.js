@@ -8,7 +8,10 @@
 //
 // Rules:
 // - Append-only. A later batch that starts owning a key normalizes it itself; the normalizer's own
-//   value always wins over the passthrough.
+//   value always wins over the passthrough. Owned keys stay listed, so the batch before still keeps
+//   them and the patch guards still keep them out of request bodies.
+// - Owned since batch 2: client sitePlan and delivery (data/sales.js), offer and alternative plan and
+//   pricing (data/sales-offers.js), makerRun materials, autopilot and previewPush (data/sales.js).
 // - Pure module (no Node imports): the browser bundle imports development-phase.js, which uses it.
 
 export const EXT_KEY = 'ext';
