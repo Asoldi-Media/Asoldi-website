@@ -582,31 +582,37 @@ test('analytics: the spend summary needs the credential; an enrolled site must s
 test('the paid maps refresh runs only for refresh=1 with a valid credential (maps runner stubbed)', async () => {
   mapsRefreshes.length = 0;
   const refresh = (site, extra = {}) => send('GET', `/api/hub/analytics?site_key=${site.site_key}&refresh=1`, extra);
+  // A site of its own, enrolled here, so this test does not depend on the enrollment tests above.
+  const enrolled = hub.createSite({ name: 'Maps shop', domain: 'maps-shop.example', websitePlan: 'tier-3-ecommerce' });
+  trustVersion(enrolled, '2.2.2');
+  const enrolledCredential = value();
+  store.enroll(enrolled.id, enrolledCredential, { proofDomain: 'maps-shop.example', proofOrigin: 'https://maps-shop.example' });
+  assert.equal(store.state(enrolled.id, enrolledCredential), 'valid');
 
   const legacyKeyOnly = await refresh(siteLegacy);
   assert.equal(legacyKeyOnly.status, 200, 'a never-enrolled shop on CMS 2.1.3 keeps its dashboard');
   assert.equal(legacyKeyOnly.data.mapsRefreshSkipped, 'site-credential-required');
-  assert.equal((await refresh(siteA)).status, 401, 'an enrolled site needs its credential');
+  assert.equal((await refresh(enrolled)).status, 401, 'an enrolled site needs its credential');
   assert.deepEqual(mapsRefreshes, [], 'refresh=1 with the site key alone never runs the refresh');
 
   const legacyMadeUp = await refresh(siteLegacy, { credential: value() });
   assert.equal(legacyMadeUp.status, 200);
   assert.equal(legacyMadeUp.headers.get('x-site-credential-status'), 'not-enrolled');
   assert.equal(legacyMadeUp.data.mapsRefreshSkipped, 'site-credential-required');
-  const wrong = await refresh(siteA, { credential: value() });
+  const wrong = await refresh(enrolled, { credential: value() });
   assert.equal(wrong.status, 401);
   assert.equal(wrong.headers.get('x-site-credential-status'), 'invalid');
   assert.deepEqual(mapsRefreshes, [], 'refresh=1 with a credential that is not valid never runs the refresh');
 
-  const noRefresh = await send('GET', `/api/hub/analytics?site_key=${siteA.site_key}`, { credential: siteA.credential });
+  const noRefresh = await send('GET', `/api/hub/analytics?site_key=${enrolled.site_key}`, { credential: enrolledCredential });
   assert.equal(noRefresh.status, 200);
   assert.deepEqual(mapsRefreshes, [], 'without refresh=1 the stored ranking is shown');
 
-  const valid = await refresh(siteA, { credential: siteA.credential });
+  const valid = await refresh(enrolled, { credential: enrolledCredential });
   assert.equal(valid.status, 200, JSON.stringify(valid.data).slice(0, 200));
   assert.equal(valid.headers.get('x-site-credential-status'), 'valid');
   assert.equal(valid.data.mapsRefreshSkipped, undefined);
-  assert.deepEqual(mapsRefreshes, [siteA.id], 'refresh=1 with the valid credential runs the refresh once');
+  assert.deepEqual(mapsRefreshes, [enrolled.id], 'refresh=1 with the valid credential runs the refresh once');
 });
 
 test('analytics collect keeps only the known event fields and limits calls per site and address', async () => {
@@ -663,26 +669,46 @@ test('analytics commerce keeps the known summary fields, bounded, and refuses la
 
 test('analytics commerce needs the credential, except for a never-enrolled site on CMS 2.0.0 to 2.2.1', async () => {
   resetHubAnalyticsLimitsForTests();
-  const snapshotOf = (site) => JSON.parse(readFileSync(join(dataDir, 'client-commerce-snapshots.json'), 'utf8'))[site.site_key];
+  const snapshotOf = (site) => {
+    try {
+      return JSON.parse(readFileSync(join(dataDir, 'client-commerce-snapshots.json'), 'utf8'))[site.site_key];
+    } catch (error) {
+      if (error?.code === 'ENOENT') return undefined;
+      throw error;
+    }
+  };
   const post = (site, orders, extra = {}) => send('POST', '/api/hub/analytics/commerce', { body: { site_key: site.site_key, orders }, ...extra });
+  // A site of its own, enrolled here, so this test does not depend on the enrollment tests above.
+  const enrolled = hub.createSite({ name: 'Commerce shop', domain: 'commerce-shop.example', websitePlan: 'tier-3-ecommerce' });
+  trustVersion(enrolled, '2.2.2');
+  const enrolledCredential = value();
+  store.enroll(enrolled.id, enrolledCredential, { proofDomain: 'commerce-shop.example', proofOrigin: 'https://commerce-shop.example' });
 
-  const keyOnly = await post(siteA, 41);
+  const keyOnly = await post(enrolled, 41);
   assert.equal(keyOnly.status, 401, 'an enrolled site needs its credential');
   assert.equal(keyOnly.data.code, 'site-credential-required');
   assert.equal(keyOnly.headers.get('x-site-credential-status'), 'missing');
-  const wrong = await post(siteA, 42, { credential: value() });
+  const wrong = await post(enrolled, 42, { credential: value() });
   assert.equal(wrong.status, 401);
   assert.equal(wrong.data.code, 'site-credential-invalid');
-  assert.notEqual(snapshotOf(siteA)?.orders, 41, 'a refused summary is not stored');
-  assert.notEqual(snapshotOf(siteA)?.orders, 42);
-  const withCredential = await post(siteA, 43, { credential: siteA.credential });
+  assert.equal(snapshotOf(enrolled), undefined, 'a refused summary is not stored');
+  const withCredential = await post(enrolled, 43, { credential: enrolledCredential });
   assert.equal(withCredential.status, 200);
   assert.equal(withCredential.headers.get('x-site-credential-status'), 'valid');
-  assert.equal(snapshotOf(siteA).orders, 43);
+  assert.equal(snapshotOf(enrolled).orders, 43);
 
   const legacy = await post(siteLegacy, 44);
   assert.equal(legacy.status, 200, 'a never-enrolled shop on CMS 2.1.3 keeps sending it on its site key');
   assert.equal(snapshotOf(siteLegacy).orders, 44);
+  // The dashboard rule, not the shop-route rule: the summary is shown by analytics level, so the
+  // shop feature is not asked for (shop status on the same site key is refused without it).
+  const noShop = hub.createSite({ name: 'Legacy site without the shop feature', domain: 'legacy-plain.example', websitePlan: 'tier-1-standard' });
+  trustVersion(noShop, '2.1.3');
+  assert.notEqual(hub.getSiteById(noShop.id).features?.ecommerce, true);
+  assert.equal((await send('GET', '/api/hub/shop/status', { siteKey: noShop.site_key })).status, 401, 'shop status needs the shop feature');
+  const plainLegacy = await post(noShop, 46);
+  assert.equal(plainLegacy.status, 200, 'a never-enrolled CMS 2.1.3 site without the shop feature still sends its summary on its site key');
+  assert.equal(snapshotOf(noShop).orders, 46);
   for (const site of [siteOther, site17, site222]) {
     const res = await post(site, 45);
     assert.equal(res.status, 401, `${site.name}: never enrolled and not on CMS 2.0.0 to 2.2.1`);
@@ -719,7 +745,9 @@ test('collect, commerce and enrollment use the trusted-hop setting of the sign-i
       assert.equal((await send('POST', path, { body, headers: viaCdn('198.51.100.32') })).status, 200, `${path}: with 2 hops the second visitor has a count of its own`);
     }
 
-    // Enrollment: the address its limits are asked about.
+    // Enrollment: the address its limits are asked about (switched on here too, so the test also
+    // runs on its own).
+    assert.equal((await send('PUT', '/api/hub/site-credentials/settings', { body: { enrollment: 'on' } })).status, 200);
     const asked = [];
     limiter = {
       unknownSite: (address) => (asked.push(address), { ok: true, retryAfterSec: 0 }),
