@@ -151,7 +151,9 @@ Routes (admin token): `GET /api/admin/system/security`, `PUT /api/admin/security
 ## Open CMS as Asoldi
 
 `POST /api/hub/sites/:id/cms-sso` (admin token) returns a one-time sign-in link into a client
-CMS (`lib/cms-sso.js`). The format follows the CMS version from the site's last heartbeat:
+CMS (`lib/cms-sso.js`). The format follows the CMS version from the site's heartbeats: the newer
+of the trusted version (from a heartbeat with the site credential) and the version the last
+heartbeat without it reported. The format only decides whether the link works on that CMS:
 
 - CMS 2.2.1 and later, and sites with no reported version: a random 32-byte token. The hub stores
   only its sha256 with the site id, who asked and the expiry (60 s) in
@@ -181,6 +183,98 @@ never issued are only counted in memory and logged at most once a minute.
 
 The client admin password set from the hub follows the same rule as the CMS (see
 "Client CMS admin password" above), so a synced admin is never replaced at the CMS's next start.
+
+## Site credential (client CMS → hub)
+
+The site key is a public identifier: the Maker writes it into each site's form HTML
+(`/api/client-forms/<siteKey>`). A client CMS proves that a call comes from its own server with a
+second value, its site credential (`lib/site-credentials.js`): 32 random bytes the CMS makes once
+on its data disk and sends only to its configured hub, in the `x-site-credential` header. The hub
+keeps `sha256` of it per site id in `<dataDir>/site-credentials/credentials.json` (private
+folder, locked atomic writes), never the value.
+
+**Enrollment** (`POST /api/hub/site-credential/enroll`, `{ siteKey, credential, nonce }`,
+client CMS 2.2.2 and 1.7.2):
+
+- Off until a superadmin switches it on (Manage clients → Security → Site credentials), because the
+  proof is an outgoing call: 503 `enrollment-off` until then. In safe mode the proof call goes
+  through the egress guard like any other.
+- The site needs a public domain in the hub (409 `no-domain`; loopback, private and single-label
+  hosts do not count).
+- The hub asks `https://<stored domain>/api/cms/hub-enroll-proof?nonce=<nonce>` (5 s for the whole
+  call, at most two redirects and only to https on the same host or its www twin, same port, path
+  and nonce, 4 KB answer cap) and expects `HMAC-SHA256(credential, nonce)`. The CMS answers only
+  for a nonce it sent itself in the last two minutes, so a site key holder elsewhere cannot enroll
+  a credential of their own.
+- Each nonce is accepted once (409 `nonce-used`). Attempts are limited per (site, address) (6 per
+  15 minutes; an IPv6 address counts by its /64) and, for unknown site keys, per address (30 per
+  15 minutes). An address whose proof for the site failed in the last hour also needs a share of
+  20 retries an hour per site; an address without a failed proof never waits for that share, so
+  callers who cannot prove anything cannot use up the enrollment of the site's own CMS.
+- Proof calls for one site run one at a time. Later callers wait their turn (up to 10 s, then 429
+  `enroll-busy` with Retry-After) instead of being turned away.
+- A match stores the hash and is audited in `<dataDir>/site-credentials/audit.json` (site id,
+  origin, address; never the credential or nonce). A new proof replaces an older credential
+  (re-enrollment), which is audited and counted on the Security card, as are refusals and revokes.
+
+**What needs it:**
+
+| Route | Site key alone | With a valid credential |
+|---|---|---|
+| `/api/hub/shop/*` that move money, change a payee or read payment details (Stripe/PayPal connect, checkout, order, capture, session, invoice, subscription, cancel, refund, disconnect) | 401 `site-credential-required` | allowed |
+| `GET /api/hub/shop/status`, `POST /api/hub/shop/document`, `GET /api/hub/analytics` | allowed only for a site that has never enrolled and whose trusted CMS version is 2.0.0 up to 2.2.1 (the versions that call these without a credential), for the shop routes only with the shop feature on; otherwise 401. A revoked site stays closed until it enrolls again | allowed |
+| `GET /api/hub/analytics?refresh=1` (paid maps refresh) | stored ranking only, with `mapsRefreshSkipped: 'site-credential-required'` | refresh runs |
+| `GET /api/hub/analytics/spend` | 401 | allowed |
+| `GET /api/hub/site-config` (site key in `x-site-key` or `?site_key=`) | public fields only | adds `pendingAdmin` and the client admin contact |
+| `POST /api/hub/heartbeat` | 30 a minute per (site, address); marks a site that has never enrolled as seen; version, admin address and name kept as `cms.unverified` (shown, not used; the same report within a minute is not written again); `adminApplied` ignored. An enrolled or revoked site is marked as seen only with its credential | acted on (`cms.packageVersion`, `cms.adminUrl`, `cms.lastVerifiedAt`) |
+
+A wrong credential on site config or the heartbeat still gets the public answer. Every answer
+carries `x-site-credential-status` (`valid`, `missing`, `invalid`, `not-enrolled`,
+`unavailable`; a revoked site reads `not-enrolled`), so the CMS knows when to make a new
+credential and enroll again. The shop's server notices go to the stored domain over https, like
+sign-in links. In the data layer, `getSiteConfig` adds the admin fields and `recordHeartbeat` acts
+on a report only when the caller asks for it (`includeAdmin`, `verified`); both are off by default.
+
+A credentials file that exists but cannot be read is never taken as "nobody enrolled": every check
+answers `unavailable` (503 where a credential is needed), enrollment and revoke refuse, the event is
+counted (`site-credential-store-unreadable`) and logged, and the Security card offers to set the
+file aside (`credentials.json.unreadable-<time>`, kept for repair) and start an empty store, after
+which enrolled sites enroll again on their own.
+
+Public endpoints stay on the site key, with payload checks and limits per site and address
+(`lib/site-public-guards.js`; an IPv6 address counts by its /64). A call with the site's valid
+credential (the CMS passing on its visitors) is limited per site only, in a bucket of its own that
+calls without the credential cannot use up:
+
+- `POST /api/client-forms/:siteKey`: 8 per (site, address) in 10 minutes. Past 120 forms for one
+  site in 10 minutes they are still delivered, counted (`client-form-site-busy`) and logged once,
+  so callers from many addresses cannot switch a site's form off; 1000 is the hard ceiling that
+  protects the owner's inbox and the hub's mail sender. The site's server with its credential has
+  600. At most 40 fields, 100 characters per name, 5000 per value, 20 000 in all (413 above).
+- `POST /api/hub/analytics/collect`: 120 per (site, address) and 1200 per site a minute (the site's
+  server with its credential: 1200 of its own, so others cannot crowd out an enrolled site); at most
+  100 events per call, only the fields the CMS stores, with its lengths, and times in the last 35 days.
+- `POST /api/hub/analytics/commerce`: 20 per (site, address) and 60 per site a minute; only the
+  known summary fields, with bounded depth, list length, string length and finite numbers; 64 KB
+  at most (413 above).
+
+**Admin** (admin token): `GET /api/hub/site-credentials` (per site: enrolled or revoked, enrolled
+at, proof domain and whether it still matches the stored domain, counts, whether the site key alone
+still opens shop status, documents or the dashboard; never a hash; and whether the store can be
+read), `PUT /api/hub/site-credentials/settings` (`{ enrollment: 'on' | 'off' }`),
+`POST /api/hub/sites/:id/site-credential/revoke` (the site stays closed until its CMS makes a new
+credential and enrolls again, which 2.2.2 and 1.7.2 do on their own),
+`POST /api/hub/sites/:id/site-credential/reset` (for a site whose CMS went back to a version
+without a credential: the row is forgotten, and a 2.0.0–2.2.1 version from the last heartbeat
+without a credential becomes the trusted version; money routes still need a credential) and
+`POST /api/hub/site-credentials/set-aside-unreadable`. Manage clients shows the state per site,
+with Revoke and Reset buttons. Every action is audited and counted.
+
+**Older client CMS versions** send no credential. They keep their public config and liveness. A
+never-enrolled shop on 2.0.0 up to 2.2.1 keeps its shop status, documents and dashboard on the site
+key alone; CMS 1.x never calls those routes. None of them gets a client admin password from the hub
+or can use the money routes until it runs 1.7.2 or 2.2.2 and has enrolled. Switch enrollment on
+together with the first rollout of 2.2.2 or 1.7.2.
 
 ## Fireflies webhook
 

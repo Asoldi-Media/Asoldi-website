@@ -14,6 +14,7 @@ import {
 import { WebsiteDueField } from './WebsiteDueField';
 import { ShopPaymentsPlatformCard } from './ShopPaymentsPlatformCard';
 import { SecurityCard } from './SecurityCard';
+import { SiteCredentialStatus, useSiteCredentials } from './SiteCredentials';
 import { TestFlagToggle } from './TestFlagToggle';
 
 type Props = {
@@ -76,6 +77,7 @@ export function ClientSitesSection({
   hideHeader = false,
 }: Props) {
   const fleet = useCmsFleet(sites);
+  const credentials = useSiteCredentials(sites);
   return (
     <div className="max-w-4xl">
       {!hideHeader && (
@@ -143,6 +145,7 @@ export function ClientSitesSection({
                   {fleetItem?.status ? ` · ${cmsFleetStatusLabel(fleetItem.status)}` : ''}
                 </p>
                 {fleetItem?.error ? <p className="text-red-400 text-xs">{fleetItem.error}</p> : null}
+                <SiteCredentialStatus site={site} info={credentials.byId.get(String(site.id))} busy={credentials.busy} onRevoke={(s) => void credentials.revoke(s)} onReset={(s) => void credentials.reset(s)} />
                 {repo ? (
                   <label className="inline-flex items-center gap-2 text-gray-300 text-xs">
                     <input

@@ -32,6 +32,7 @@ import {
 import * as hub from './data/hub.js';
 import { registerShopPaymentsRoutes, registerShopPaymentsWebhook } from './lib/shop-payments-routes.js';
 import { registerCmsSsoRoutes } from './lib/cms-sso.js';
+import { createHeartbeatLimits, heartbeatMarksSeen, registerSiteCredentialRoutes, siteCredentialState } from './lib/site-credentials.js';
 import { registerDeliveryRoutes } from './lib/routes/delivery-routes.js';
 import { runDeliverySchemaStartupSnapshot } from './lib/delivery-snapshots.js';
 import { myphonerMatchCandidates, myphonerSyncSkipReason, testClientIdSet } from './lib/test-clients.js';
@@ -12940,20 +12941,27 @@ app.patch('/api/client-portal/state', clientAuthV2, async (req, res) => {
 
 registerShopPaymentsRoutes(app, { adminAuth });
 registerCmsSsoRoutes(app, { adminAuth, getSiteById: hub.getSiteById, getAllSites: hub.getAllSites });
+registerSiteCredentialRoutes(app, { adminAuth, getSiteByKey: hub.getSiteByKey, getSiteById: hub.getSiteById, getAllSites: hub.getAllSites, setTrustedCmsVersion: (id, packageVersion) => hub.updateSite(id, { cms: { packageVersion } }).ok });
 registerSafeModeRoutes(app, { adminAuth });
 registerDeliveryRoutes(app, { adminAuth, sales, hub, salesOffers });
 
 // --- Hub API (public: site config for client CMS)
+// The site key is public, so a key lookup gets the public fields only. The client admin contact and
+// a pending admin password go to a call with the site's valid credential (lib/site-credentials.js).
 app.get('/api/hub/site-config', (req, res) => {
-  const siteKey = req.query.site_key;
+  const siteKey = sanitizeText(req.get('x-site-key') || req.query.site_key);
   const domain = req.query.domain;
   function withGoals(config, key) {
     const { profile } = findProfileForSiteKey(key);
     return { ...config, analyticsGoals: analyticsGoalsFromBank(profile?.clientDataBank) };
   }
   if (siteKey) {
-    const config = hub.getSiteConfig(siteKey, false);
+    const site = hub.getSiteByKey(siteKey);
+    if (!site) return res.status(404).json({ message: 'Site not found' });
+    const credential = siteCredentialState(req, site, { res });
+    const config = hub.getSiteConfig(siteKey, false, { includeAdmin: credential === 'valid' });
     if (!config) return res.status(404).json({ message: 'Site not found' });
+    res.set('Cache-Control', 'no-store');
     return res.json(withGoals(config, siteKey));
   }
   if (domain) {
@@ -12965,20 +12973,35 @@ app.get('/api/hub/site-config', (req, res) => {
   return res.status(400).json({ message: 'Provide site_key or domain' });
 });
 
+// Liveness from any caller with the site key of a site that has never enrolled (30 a minute per
+// site and address). The version, admin address, name and the pending admin flag are acted on only
+// for a heartbeat with the site's valid credential; otherwise they are kept in cms.unverified and
+// shown, never used. An enrolled site is marked as seen only by heartbeats with its credential.
+const heartbeatLimits = createHeartbeatLimits();
 app.post('/api/hub/heartbeat', (req, res) => {
-  const siteKey = sanitizeText(req.body?.site_key || req.query?.site_key);
+  const siteKey = sanitizeText(req.get('x-site-key') || req.body?.site_key || req.query?.site_key);
+  const site = siteKey ? hub.getSiteByKey(siteKey) : null;
+  const credential = site ? siteCredentialState(req, site, { res }) : 'not-enrolled';
+  if (site) {
+    const gate = heartbeatLimits.take({ siteId: site.id, address: clientIpFromRequest(req), credentialValid: credential === 'valid' });
+    if (!gate.ok) {
+      res.set('Retry-After', String(gate.retryAfterSec));
+      return res.status(429).json({ message: 'Too many requests.' });
+    }
+  }
   const result = hub.recordHeartbeat(siteKey, {
-    packageVersion: sanitizeText(req.body?.packageVersion),
-    adminUrl: sanitizeText(req.body?.adminUrl),
-    name: sanitizeText(req.body?.name),
+    packageVersion: sanitizeText(req.body?.packageVersion).slice(0, 40),
+    adminUrl: sanitizeText(req.body?.adminUrl).slice(0, 300),
+    name: sanitizeText(req.body?.name).slice(0, 120),
     adminApplied: req.body?.adminApplied === true || req.body?.adminApplied === 'true',
-  });
+  }, { verified: credential === 'valid', marksSeen: heartbeatMarksSeen(credential) });
   if (!result.ok) {
     const status = result.error === 'Site not found' ? 404 : 400;
     return res.status(status).json({ message: result.error });
   }
   return res.json({
     ok: true,
+    verified: result.verified === true,
     lastSeenAt: result.site.cms?.lastSeenAt || '',
     packageVersion: result.site.cms?.packageVersion || '',
   });
@@ -13021,7 +13044,8 @@ app.post('/api/hub/sites/:id/local-blog-token', adminAuth, (req, res) => {
 app.get('/api/cms/config', (req, res) => {
   const siteKey = process.env.CMS_SITE_KEY;
   if (siteKey) {
-    const config = hub.getSiteConfig(siteKey, false);
+    // Public route: never the admin fields.
+    const config = hub.getSiteConfig(siteKey, false, { includeAdmin: false });
     if (config) return res.json(config);
   }
   const host = (req.get('host') || '').split(':')[0];
@@ -20661,8 +20685,9 @@ app.post(
       return res.status(404).json({ ok: false, message: 'Unknown site.' });
     }
     try {
-      clientForms.assertClientFormAllowed(req);
+      clientForms.assertClientFormAllowed(req, { siteId: site.id, credentialValid: siteCredentialState(req, site) === 'valid' });
     } catch (error) {
+      if (error.retryAfterSec) res.set('Retry-After', String(error.retryAfterSec));
       return res.status(error.status || 429).json({ ok: false, message: error.message });
     }
     if (clientForms.looksLikeBot(req.body || {})) {
@@ -20674,6 +20699,11 @@ app.post(
     const fields = clientForms.extractFormFields(req.body || {});
     if (!Object.keys(fields).length) {
       return res.status(400).json({ ok: false, message: 'The form was empty.' });
+    }
+    try {
+      clientForms.assertClientFormSize(fields);
+    } catch (error) {
+      return res.status(error.status || 413).json({ ok: false, message: error.message });
     }
     const pageUrl = sanitizeText(req.get('referer'));
     const routing = resolveFormRouting(site, { getSalesClients: sales.getSalesClients });

@@ -152,16 +152,36 @@ export function emptyCmsMeta() {
   };
 }
 
+/**
+ * What a heartbeat without a valid site credential reported (shown, never acted on), or null.
+ * Values are capped; the hub never follows the address.
+ */
+export function normalizeUnverifiedCms(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const row = {
+    packageVersion: String(raw.packageVersion || '').slice(0, 40),
+    adminUrl: String(raw.adminUrl || '').slice(0, 300),
+    name: String(raw.name || '').slice(0, 120),
+    at: String(raw.at || '').slice(0, 40),
+  };
+  return row.packageVersion || row.adminUrl || row.name || row.at ? row : null;
+}
+
 export function normalizeCmsMeta(cms) {
   const base = emptyCmsMeta();
   if (!cms || typeof cms !== 'object') return base;
-  return carryFutureKeys({
+  const out = carryFutureKeys({
     githubRepo: String(cms.githubRepo || ''),
     lastSeenAt: String(cms.lastSeenAt || ''),
     packageVersion: String(cms.packageVersion || ''),
     adminUrl: String(cms.adminUrl || ''),
     desiredPackageVersion: String(cms.desiredPackageVersion || ''),
   }, cms, FUTURE_SITE_CMS_KEYS);
+  // Site credential (lib/site-credentials.js): kept only when present, so other sites keep their shape.
+  if (cms.lastVerifiedAt) out.lastVerifiedAt = String(cms.lastVerifiedAt).slice(0, 40);
+  const unverified = normalizeUnverifiedCms(cms.unverified);
+  if (unverified) out.unverified = unverified;
+  return out;
 }
 
 export function resolveCatalogTypeForSite({ features, ecommerceCatalogType }) {

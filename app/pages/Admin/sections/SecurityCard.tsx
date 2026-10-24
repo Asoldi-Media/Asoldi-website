@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ShieldCheck } from 'lucide-react';
 import { authHeaders } from '../shared';
+import { SiteCredentialsPanel } from './SiteCredentials';
 
 type Counter = { total: number; lastHour: number; lastDay: number; lastAt: string | null };
 type FirefliesStatus = {
@@ -227,7 +228,7 @@ export function SecurityCard() {
     <div className="mb-6 rounded-xl bg-[#2a2a2a] border border-white/10">
       <button type="button" onClick={() => setOpen((v) => !v)} className="w-full flex items-center justify-between p-4 text-left">
         <span className="flex items-center gap-2 text-white font-semibold">
-          <ShieldCheck size={18} /> Security (logins, tokens, Fireflies webhook)
+          <ShieldCheck size={18} /> Security (logins, tokens, site credentials, Fireflies webhook)
         </span>
         <span className="text-gray-400 text-sm">{open ? 'Hide' : 'Show'}</span>
       </button>
@@ -435,6 +436,8 @@ export function SecurityCard() {
                   )}
                 </section>
               )}
+
+              <SiteCredentialsPanel />
 
               {counters.length > 0 && (
                 <section className="space-y-1">

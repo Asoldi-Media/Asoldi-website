@@ -11,6 +11,7 @@ import {
   cmsOrigin,
   cmsSsoFormatForVersion,
   cmsSsoOrigin,
+  cmsSsoVersionForSite,
   createCmsSsoStore,
   createQuietCounter,
   createRedeemLimiter,
@@ -28,7 +29,9 @@ const legacySite = { id: '44', site_key: 'key-44', domain: 'https://legacy.examp
 const oldSite = { id: '45', site_key: 'key-45', domain: 'https://old.example', cms: { packageVersion: '1.7.1' } };
 const newSite = { id: '46', site_key: 'key-46', domain: 'https://new.example', cms: { packageVersion: '' } };
 const noDomainSite = { id: '47', site_key: 'key-47', domain: '', cms: { adminUrl: 'https://cms.example.net/admin', packageVersion: '2.2.1' } };
-const ALL = [site, otherSite, legacySite, oldSite, newSite, noDomainSite, { id: '7', site_key: 'k7' }];
+// Trusted 2.1.3; its last heartbeat without a credential reports 2.2.2 (moved to 2.2.2 before it enrolled).
+const movedSite = { id: '48', site_key: 'key-48', domain: 'https://moved.example', cms: { packageVersion: '2.1.3', unverified: { packageVersion: '2.2.2', at: '2026-10-23T00:00:00.000Z' } } };
+const ALL = [site, otherSite, legacySite, oldSite, newSite, noDomainSite, movedSite, { id: '7', site_key: 'k7' }];
 const byId = (id) => ALL.find((s) => s.id === id) || null;
 
 function tempDir() {
@@ -94,7 +97,7 @@ test('HS-1: a sign-in link goes to the stored domain over https; a reported addr
   assert.equal(at('localhost:4100', 'http://127.0.0.1:4200/admin'), 'http://localhost:4100');
   assert.deepEqual(cmsSsoOrigin(noDomainSite), { origin: '', source: '', ignoredHost: 'cms.example.net' }, 'no domain, no link');
   assert.equal(cmsSsoOrigin({}).origin, '');
-  assert.equal(cmsOrigin(site), 'https://snow.example.com', 'server-to-server notices keep using the reported address');
+  assert.equal(cmsOrigin(site), 'https://snow.example.com', 'cmsOrigin still prefers the reported address');
 });
 
 test('HS-1: the link format follows the CMS version from the heartbeat', () => {
@@ -109,6 +112,22 @@ test('HS-1: the link format follows the CMS version from the heartbeat', () => {
   assert.equal(cmsSsoFormatForVersion('2.0.0'), 'site-key');
   assert.equal(cmsSsoFormatForVersion('2.2.1-rc.1'), 'site-key', 'a prerelease sorts before its release');
   assert.equal(cmsSsoFormatForVersion('1.7.1'), 'none');
+});
+
+test('HS-1: the link format follows the newer of the trusted version and a report without the credential', async () => {
+  assert.deepEqual(cmsSsoVersionForSite(movedSite), { packageVersion: '2.2.2', from: 'unverified-heartbeat' });
+  assert.deepEqual(cmsSsoVersionForSite({ cms: { packageVersion: '2.2.2', unverified: { packageVersion: '2.1.3' } } }), { packageVersion: '2.2.2', from: 'heartbeat' }, 'an older report never lowers it');
+  assert.deepEqual(cmsSsoVersionForSite({ cms: { packageVersion: '', unverified: { packageVersion: '2.1.3' } } }), { packageVersion: '2.1.3', from: 'unverified-heartbeat' });
+  assert.deepEqual(cmsSsoVersionForSite({ cms: { packageVersion: '2.1.3', unverified: { packageVersion: 'junk' } } }), { packageVersion: '2.1.3', from: 'heartbeat' });
+  assert.deepEqual(cmsSsoVersionForSite(legacySite), { packageVersion: '2.1.3', from: 'heartbeat' });
+  await withHub(async (hub) => {
+    const res = await link(hub.base, '48');
+    assert.equal(res.status, 200);
+    assert.equal(res.body.format, 'redeem', 'a site that moved to 2.2.2 before it enrolled gets a link 2.2.x accepts');
+    const row = hub.registered.store().auditLog().at(-1);
+    assert.equal(row.packageVersion, '2.2.2');
+    assert.equal(row.versionFrom, 'unverified-heartbeat');
+  });
 });
 
 test('HS-1: the site-key format is kept for CMS 2.0.0 up to 2.2.0 (60 s, fresh nonce)', () => {
@@ -388,7 +407,7 @@ test('HS-1: a heartbeat from a site-key holder cannot move the sign-in link to a
   const created = hub.createSite({ name: 'Example shop', domain: 'shop.example' });
   const id = created.site?.id || created.id;
   const key = hub.getSiteById(id).site_key;
-  assert.equal(hub.recordHeartbeat(key, { packageVersion: '2.2.1', adminUrl: 'https://elsewhere.example/admin' }).ok, true);
+  assert.equal(hub.recordHeartbeat(key, { packageVersion: '2.2.1', adminUrl: 'https://elsewhere.example/admin' }, { verified: true }).ok, true);
   const app = express();
   app.use(express.json());
   const adminAuth = (req, _res, next) => { req.admin = { username: 'staff-one' }; next(); };
@@ -404,7 +423,7 @@ test('HS-1: a heartbeat from a site-key holder cannot move the sign-in link to a
     const row = registered.store().auditLog().at(-1);
     assert.equal(row.originFrom, 'domain');
     assert.equal(row.ignoredAdminHost, 'elsewhere.example', 'the ignored report is noted');
-    hub.recordHeartbeat(key, { adminUrl: 'http://www.shop.example/admin' });
+    hub.recordHeartbeat(key, { adminUrl: 'http://www.shop.example/admin' }, { verified: true });
     const www = await (await fetch(`${base}/api/hub/sites/${id}/cms-sso`, { method: 'POST' })).json();
     assert.equal(new URL(www.url).origin, 'https://www.shop.example', 'a plain-http report on the same host still gives https');
     // The redeem route finds the site among the hub's real site list.
