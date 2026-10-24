@@ -104,7 +104,9 @@ hash or the sync flag.
 - An attempt is counted when it starts, before the password check (`beginLogin`, no await in
   between), so requests sent at the same moment cannot all pass a limit before the first wrong
   password lands. At most 2 password checks run at once per account and per address; another
-  attempt meanwhile gets 429 with `Retry-After: 1`. A wrong password keeps the attempt counted.
+  attempt meanwhile gets 429 with `Retry-After: 1`. So a burst of sign-in attempts against one
+  account can delay that account's right password by about a second: it gets 429 with
+  `Retry-After: 1`, and the retry gets in. A wrong password keeps the attempt counted.
   The right one takes it back and clears the `p:` key of that account and address; the `a:`
   and `i:` keys keep their other attempts. A request that ends without a verdict (an error, a
   closed connection) counts as a wrong password, and a check still running after 10 seconds
