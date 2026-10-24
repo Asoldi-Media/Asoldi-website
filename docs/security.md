@@ -13,7 +13,8 @@ change here needs a new Hostinger env variable.
 | `secrets/maker-callback-token` | Maker callback token when no env token is set; rotatable from the Security card | `server.js` `getMakerCallbackToken` |
 | `secrets/initial-admin-password` | first admin password on an empty install | `ensureAdminExists` |
 | `secrets/webhooks.json` | Fireflies webhook signing secret and URL token | `data/webhook-secrets.js` |
-| `security-settings.json` | max token age, `revokedBefore` per class, one-time `migrations`, `loginTrustedHops` | `data/security-settings.js` |
+| `security-settings.json` | max token age, `revokedBefore` per class, one-time `migrations`, `loginTrustedHops`, persisted `counters` (Maker refusals) | `data/security-settings.js` |
+| `maker-hosts.json` | one row per Maker host: label, scopes, the sha256 of its token (never the token), `lastSeenAt`, `revokedAt`, heartbeat fields | `data/maker-hosts.js` |
 | `token-revocations.json` | per-user token versions ("log out everywhere") | `data/security-settings.js` |
 
 Files are created in one step (temp file + hard link or rename), mode 0600, so two processes
@@ -61,6 +62,96 @@ Admin → Manage clients → Security → **Rotate secrets** makes a new value o
   (in memory), and a `[security]` log line. No value is ever logged or stored outside
   `secrets/`. If the record cannot be written, the rotation still answers 200 with the new token
   and `auditSaved: false`, and the error is logged.
+
+## Maker hosts (per-host tokens)
+
+Every Website Maker install can get its own token, so one Maker can be revoked or limited to some
+scopes without touching the others (`lib/maker-auth.js`, `data/maker-hosts.js`). Superadmin →
+System safety → **Maker hosts** lists, creates and revokes them:
+
+| Route (admin token) | Effect |
+|---|---|
+| `GET /api/admin/maker-hosts` | hosts without hashes, `hostsFile` (`missing`, `ok` or `unreadable`), the scopes, the legacy token source, refusal counters |
+| `POST /api/admin/maker-hosts` `{ label, scopes? }` | 201 `{ hostId, token }`, no-store. The token (`mkr_<hex>_<43 chars>`) is shown only in this answer; the file keeps its sha256 |
+| `DELETE /api/admin/maker-hosts/:hostId` | revoke: that token gets 401 from now on, even when the request also carries the legacy token (in other hub processes within a second) |
+| `GET /api/admin/maker-hosts/access-log` | Maker access log rows (ids only) |
+
+Scopes: `callback` (`maker-status-callback`), `preview-push` (`maker-preview-push`),
+`client-bundle` (`/api/internal/maker/client-bundle`), `jobs` (`/api/maker/*`). A new host gets
+all four unless the admin picks fewer. A client bundle sent through the status callback
+(`run.client-bundle.updated`) is the same portal write as the client-bundle route, so a host token
+needs both `callback` and `client-bundle` for it (403 `maker-scope` otherwise); the legacy token
+carries no scopes.
+
+How a Maker request is checked (`verifyMakerRequest`, never open when nothing is configured):
+
+1. A host token in `x-maker-host-token` (or in the legacy headers): sha256 match (constant-time),
+   not revoked, scope allowed. A known host whose token is revoked or lacks the scope is refused
+   here, whatever else the request carries: the legacy token and the API key never stand in for
+   it. Every Maker with a host token also sends the legacy run token, so without this rule a
+   revoke or a narrower scope would change nothing for it. A host id the hub does not know (for
+   example after `maker-hosts.json` was restored from an older backup) or a wrong secret is not
+   final: the next steps still apply.
+2. `x-sales-callback-token` / `x-maker-callback-token` equal to the legacy Maker token
+   (`WEBSITE_MAKER_STATUS_CALLBACK_TOKEN` / `SALES_MAKER_STATUS_CALLBACK_TOKEN`, else
+   `secrets/maker-callback-token`). Runs started by the hub carry this token, so it keeps working
+   beside host tokens.
+3. Preview push only: `x-api-key` equal to `WEBSITE_MAKER_API_KEY`.
+
+The legacy token is not tied to a host: a request that carries only the legacy token is still
+accepted, whoever sends it, until the token is rotated (Security card). After revoking a host
+you no longer use, rotate the legacy token as well; Makers with a valid host token keep working
+through the rotation, because their host token is checked first.
+
+`server.js` `isMakerStatusCallbackAuthorized(req, { scope })` is the same check as a yes/no
+(`checkMakerRequest`, with the same counters) for route modules that answer the refusal
+themselves.
+
+A missing or wrong credential gets 401, a valid host token without the scope 403. A request
+from a host stamps `lastSeenAt` at most every 5 minutes. Refusals are counted in memory
+(`maker-callback-rejected`, `maker-callback-missing-token`) and in `security-settings.json`
+`counters.makerRejected` by reason (written at most every 30 seconds; never a token). A host
+token that keeps failing (more than 20 times in 10 minutes, keyed on a hash of its first
+characters, because `req.ip` is the hosting proxy) gets 429 instead of 401. A legacy token or API
+key that keeps failing (for example the old run token of runs created before a rotation) keeps
+getting 401, which the Maker's own fallbacks act on; a request without any credential always gets
+a plain 401, and a valid credential is never refused because another one fails. More than 30
+refusals in 10 minutes across all requests counts one `maker-auth-failure-alert` (and
+`counters.makerFailureAlerts`) per window.
+
+Anyone can send refused requests, so the failure limiter does a fixed amount of work per request
+and holds bounded memory: only host-shaped tokens get per-key state, at most 2000 keys (the key
+that failed longest ago is dropped first) with at most 21 time stamps each, and the window-wide
+count lives in ten fixed one-minute slices. The cleaned host rows are kept per version of
+`maker-hosts.json`, so checking an unknown host token does not rebuild them.
+
+When `maker-hosts.json` exists but cannot be read (not JSON, no `hosts` list, or a row that does
+not validate), the hub treats it as holding no hosts for checks and refuses every write to it
+(create, revoke, `lastSeenAt`, heartbeat fields) with `maker-hosts-unreadable`, so no row is lost.
+The admin list shows `hostsFile: 'unreadable'`. Until the file is fixed or restored, host tokens
+are not accepted, and a Maker that also sends the legacy token (a revoked one included) gets in
+through that token; rotate it if that matters.
+
+The Maker side puts the token in its `.env`: `MAKER_HUB_TOKEN` for this hub on asoldi.com,
+`MAKER_LOCAL_HUB_TOKEN` for a local hub (website-maker `scripts/security/provision-maker-host.mjs`
+creates the host through this API and writes the variable without printing it). The Maker
+container must then be recreated, not only restarted, to read the new value.
+
+Host heartbeat (`POST /api/maker/hosts/heartbeat`, a host token with the `jobs` scope; the
+legacy token gets 403 because it names no host): stores `runIds`, `capabilities.handlers` (known
+job kinds only), `version` and `makerPort` in `maker-hosts.json` only when a value changed, and
+the heartbeat time and count in `delivery-hot/host-heartbeats.json` (at most one write a
+minute). The answer is `{ pollAfterMs, hubCapabilities, hubLoopLastTickAt }`.
+
+Client data for a Maker (`lib/maker-host-meta.js` `makerClientAccess`, for the
+`/api/maker/clients/:id/*` routes): a host may read a client's data only when a live job for that
+client is routed to it or one of the run ids it reports is the client's run. Everything else,
+unknown clients included, gets the same 403. Every decision is appended to
+`maker-access-log/<YYYY-MM>.jsonl` with ids only; month files older than 12 months are dropped.
+Those client routes (brief, transcripts, link-run) are not mounted yet: whoever adds them mounts
+`requireMakerHost('jobs', { hostOnly: true })` and then `makerClientAccess` on each of them.
+Until then `hubCapabilities` is empty and `hubLoopLastTickAt` stays null (nothing writes
+`delivery-hot/loop-health.json` yet).
 
 ## Client CMS admin password (set from the hub)
 

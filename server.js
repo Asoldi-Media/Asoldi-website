@@ -96,6 +96,8 @@ import { createHubLoginLimiter } from './lib/login-limits.js';
 import { isTokenAccepted, runTokenPolicyBootMigrations, stampTokenVersion } from './lib/token-policy.js';
 import { noteSecurityEvent } from './lib/security-counters.js';
 import { registerSecurityAdminRoutes } from './lib/security-admin-routes.js';
+import { createMakerAuth } from './lib/maker-auth.js';
+import { registerMakerHostRoutes } from './lib/routes/maker-host-routes.js';
 import { readBuildInfo } from './lib/build-info.js';
 import { applyPersistentProductionEnv } from './lib/persistent-env.js';
 import { assertSafeModeAllows, hubListenHost, isSafeModeActive, isSafeModeError, runBackgroundJobs, safeModeAllows } from './lib/safe-mode.js';
@@ -2925,21 +2927,16 @@ function getMakerCallbackToken() {
   return MAKER_CALLBACK_TOKEN_HOLDER.get();
 }
 
-function makerCallbackTokenFrom(req) {
-  return sanitizeText(req.headers['x-sales-callback-token'] || req.headers['x-maker-callback-token']);
-}
+// Maker → hub requests (lib/maker-auth.js): a per-host token from <dataDir>/maker-hosts.json
+// (x-maker-host-token), or the legacy token above (x-sales-callback-token). Never open; refusals
+// are counted (also header-less ones: that is what unauthenticated probing looks like).
+const makerAuth = createMakerAuth({ legacyHolder: MAKER_CALLBACK_TOKEN_HOLDER, dataDir: getPersistentDataDir() });
+const { requireMakerHost } = makerAuth;
 
-// Header-less calls are counted too: that is what unauthenticated probing looks like.
-function noteMakerCallbackRejected(req) {
-  noteSecurityEvent(makerCallbackTokenFrom(req) ? 'maker-callback-rejected' : 'maker-callback-missing-token');
-}
-
-function isMakerStatusCallbackAuthorized(req, { count = true } = {}) {
-  const provided = makerCallbackTokenFrom(req);
-  // A token rotated in another hub process is accepted here at once (one re-read of the file).
-  const ok = Boolean(provided) && checkWithFreshSecret(MAKER_CALLBACK_TOKEN_HOLDER, (token) => safeEqual(provided, token));
-  if (!ok && count) noteMakerCallbackRejected(req);
-  return ok;
+// Yes/no form of the same check for code that answers the refusal itself (route modules that take
+// an isMakerAuthorized callback). Same rules and counters as requireMakerHost.
+function isMakerStatusCallbackAuthorized(req, { scope = 'callback', count = true } = {}) {
+  return makerAuth.checkMakerRequest(req, { scope, count }).ok;
 }
 
 function secureStringEqual(left = '', right = '') {
@@ -10167,6 +10164,9 @@ registerSecurityAdminRoutes(app, {
   loginLimiter,
 });
 
+// Maker hosts: per-host tokens (Superadmin → System safety) and the host heartbeat.
+registerMakerHostRoutes(app, { adminAuth, makerAuth, getDataDir: getPersistentDataDir });
+
 app.get('/api/admin/employees/overview', adminAuth, async (_req, res) => {
   const users = await store.getAllUsers();
   employees.ensureWorkersForUsers(users);
@@ -11385,10 +11385,7 @@ app.get('/client-media/:userId/:fileName', clientAuth, async (req, res) => {
   return res.send(stored.buffer);
 });
 
-app.post('/api/internal/maker/client-bundle', async (req, res) => {
-  if (!isMakerStatusCallbackAuthorized(req)) {
-    return res.status(401).json({ message: 'Unauthorized callback.' });
-  }
+app.post('/api/internal/maker/client-bundle', requireMakerHost('client-bundle'), async (req, res) => {
   const result = applyMakerBundleToPortal({
     portalUserId: sanitizeText(req.body?.portalUserId),
     salesClientId: sanitizeText(req.body?.salesClientId),
@@ -13502,18 +13499,16 @@ app.get('/api/admin/sales/maker-tunnel/status', salesAuth, (_req, res) => {
 // The post-deploy check reads the 401 (scripts/post-deploy-check.mjs); after a token rotation the
 // Maker or the operator can check a pasted token this way. Before this route the GET was answered
 // by GET /api/admin/sales/:id (staff login, so 401 without one and 404 with one).
-app.get('/api/admin/sales/maker-status-callback', (req, res) => {
+app.get('/api/admin/sales/maker-status-callback', requireMakerHost('callback'), (req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  if (!isMakerStatusCallbackAuthorized(req)) return res.status(401).json({ message: 'Unauthorized callback.' });
   return res.json({ ok: true });
 });
 
-app.post('/api/admin/sales/maker-status-callback', async (req, res) => {
-  if (!isMakerStatusCallbackAuthorized(req)) {
-    return res.status(401).json({ message: 'Unauthorized callback.' });
-  }
+app.post('/api/admin/sales/maker-status-callback', requireMakerHost('callback'), async (req, res) => {
   const event = sanitizeText(req.body?.event) || 'run.step.updated';
   if (event === 'run.client-bundle.updated' && req.body?.bundle) {
+    // The same portal write as /api/internal/maker/client-bundle: a host token needs that scope too.
+    if (!makerAuth.hostScopeAllows(req, res, 'client-bundle')) return;
     const result = applyMakerBundleToPortal({
       portalUserId: sanitizeText(req.body?.portalUserId),
       salesClientId: sanitizeText(req.body?.salesClientId),
@@ -18725,15 +18720,6 @@ function readRequestZipBuffer(req) {
   return null;
 }
 
-function isMakerPreviewPushAuthorized(req) {
-  if (isMakerStatusCallbackAuthorized(req, { count: false })) return true;
-  const apiKey = sanitizeText(process.env.WEBSITE_MAKER_API_KEY || process.env.WEBSITEMAKER_API_KEY);
-  const providedKey = sanitizeText(req.headers['x-api-key']);
-  if (apiKey && providedKey && secureStringEqual(providedKey, apiKey)) return true;
-  noteMakerCallbackRejected(req);
-  return false;
-}
-
 async function ingestPreviewZipFromRequest(req, client) {
   const zipBuffer = readRequestZipBuffer(req);
   if (!zipBuffer?.length) {
@@ -19277,10 +19263,9 @@ app.post('/api/admin/sales/:id/import-website-push', salesPreviewZipParser, sale
   }
 });
 
-app.post('/api/admin/sales/maker-preview-push', salesPreviewZipParser, async (req, res) => {
-  if (!isMakerPreviewPushAuthorized(req)) {
-    return res.status(401).json({ message: 'Unauthorized preview push.' });
-  }
+// Host token with the preview-push scope, the legacy callback token, or the Maker API key (env).
+const requireMakerPreviewPush = requireMakerHost('preview-push', { allowApiKey: true, message: 'Unauthorized preview push.' });
+app.post('/api/admin/sales/maker-preview-push', salesPreviewZipParser, requireMakerPreviewPush, async (req, res) => {
   const salesClientId = sanitizeText(req.headers['x-sales-client-id'] || req.query?.salesClientId);
   const runId = sanitizeText(req.headers['x-run-id'] || req.query?.runId);
   let client = salesClientId ? sales.getSalesClientById(salesClientId) : null;

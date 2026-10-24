@@ -7,6 +7,7 @@
  *   migrations.<name>: when a one-time boot migration ran (see runSecurityBootMigrations).
  *   loginTrustedHops: 1–5 public proxies whose X-Forwarded-For entries the login limits trust
  *     (lib/auth-hardening.js readClientAddress), or null for the default (1).
+ *   counters.<name>: persisted counts (Maker request refusals by reason), see addSecurityCounters.
  *
  * <dataDir>/token-revocations.json
  *   { version, subjects: { "u:<userId>" | "admin:<username>": { tokenVersion, revokedAt, reason } } }
@@ -74,6 +75,42 @@ function isoAt(now) {
   return new Date(now ?? Date.now()).toISOString();
 }
 
+/**
+ * Persistent security counters (they survive restarts, unlike lib/security-counters.js):
+ *   counters.<name> = { total, byReason: { <reason>: n }, lastAt }
+ * Used for Maker request rejections (makerRejected) and failure alerts (makerFailureAlerts).
+ * Names, reasons and numbers only: never a token or a request value.
+ */
+export const PERSISTED_COUNTER_NAMES = Object.freeze(['makerRejected', 'makerFailureAlerts']);
+const COUNTER_REASON_RE = /^[a-z][a-z0-9-]{0,39}$/;
+const MAX_COUNTER_REASONS = 20;
+
+function cleanCount(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+function normalizeCounter(row) {
+  const source = row && typeof row === 'object' && !Array.isArray(row) ? row : {};
+  const byReason = {};
+  const reasons = source.byReason && typeof source.byReason === 'object' && !Array.isArray(source.byReason) ? source.byReason : {};
+  for (const [reason, count] of Object.entries(reasons)) {
+    if (!COUNTER_REASON_RE.test(reason) || Object.keys(byReason).length >= MAX_COUNTER_REASONS) continue;
+    const n = cleanCount(count);
+    if (n) byReason[reason] = n;
+  }
+  return { total: cleanCount(source.total), byReason, lastAt: cleanIso(source.lastAt) };
+}
+
+function normalizeCounters(raw) {
+  const source = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+  const out = {};
+  for (const name of PERSISTED_COUNTER_NAMES) {
+    if (source[name]) out[name] = normalizeCounter(source[name]);
+  }
+  return out;
+}
+
 function normalizeSettings(raw) {
   const source = raw && typeof raw === 'object' ? raw : {};
   const revoked = source.revokedBefore && typeof source.revokedBefore === 'object' ? source.revokedBefore : {};
@@ -111,6 +148,7 @@ function normalizeSettings(raw) {
     secretRotations,
     secretRotationHistory,
     loginTrustedHops: cleanTrustedHops(source.loginTrustedHops),
+    counters: normalizeCounters(source.counters),
     updatedAt: cleanIso(source.updatedAt),
     updatedBy: typeof source.updatedBy === 'string' ? source.updatedBy : null,
   };
@@ -191,6 +229,34 @@ export function recordSecretRotation(name, { dataDir, by, now } = {}) {
     }),
     { dataDir, by: who, now }
   );
+}
+
+/**
+ * Adds counter deltas: { <name>: { total, byReason: { <reason>: n }, lastAt } }. Unknown names
+ * are ignored. updatedAt / updatedBy stay as they are (they record settings changes by a person).
+ */
+export function addSecurityCounters(deltas = {}, { dataDir } = {}) {
+  const names = PERSISTED_COUNTER_NAMES.filter((name) => deltas?.[name]);
+  if (!names.length) return readSecuritySettings({ dataDir });
+  updateJsonLocked(
+    securitySettingsPath(dataDir),
+    (raw) => {
+      const current = normalizeSettings(raw);
+      const counters = { ...current.counters };
+      for (const name of names) {
+        const delta = normalizeCounter(deltas[name]);
+        const row = counters[name] || { total: 0, byReason: {}, lastAt: null };
+        const byReason = { ...row.byReason };
+        for (const [reason, n] of Object.entries(delta.byReason)) byReason[reason] = (byReason[reason] || 0) + n;
+        const lastAt = [row.lastAt, delta.lastAt].filter(Boolean).sort().pop() || null;
+        counters[name] = normalizeCounter({ total: row.total + delta.total, byReason, lastAt });
+      }
+      const { maxTokenAgeDaysStored, maxTokenAgeDays: _effective, ...rest } = { ...current, counters };
+      return { ...rest, maxTokenAgeDays: maxTokenAgeDaysStored ?? null };
+    },
+    { mode: 0o600 }
+  );
+  return readSecuritySettings({ dataDir });
 }
 
 /** Every token of `scope` issued before now stops working. */
