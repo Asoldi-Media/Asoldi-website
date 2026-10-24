@@ -16,6 +16,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bootHub } from '../safe-mode/hub-boot.mjs';
 import { assertLocalDataDir, resolveFixtureValue, sentencesFromText } from './seed-hub.mjs';
+import { buildPreWorkshopEmail } from '../../lib/sales-email.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SEED = join(HERE, 'seed-hub.mjs');
@@ -123,8 +124,12 @@ test('a safe-mode hub on the seeded data: health, the developer board, and the p
       if (existsSync(indexFile)) rows = readFileSync(indexFile, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
       if (!rows.length) await new Promise((r) => setTimeout(r, 250));
     }
-    const toClient = rows.filter((row) => JSON.stringify(row).includes('owner@example.com'));
-    assert.ok(toClient.length >= 1, `the pre-workshop email is in the outbox (${rows.length} outbox rows)`);
+    // Exactly one mail to the client, and it is the pre-workshop mail (its subject, not any other kind).
+    const expectedSubject = buildPreWorkshopEmail({ businessName: 'Example Bakery AS' }, {}, { hasTime: false }).subject;
+    const toClient = rows.filter((row) => (row.to || []).some((address) => String(address).toLowerCase().includes('owner@example.com')));
+    assert.equal(toClient.length, 1, `one mail to the client in the outbox (${rows.length} outbox rows)`);
+    assert.equal(toClient[0].subject, expectedSubject, 'the mail to the client is the pre-workshop email');
+    assert.equal(rows.filter((row) => row.subject === expectedSubject).length, 1, 'the pre-workshop email went out once');
     assert.ok(readdirSync(join(hub.dataDir, 'outbox')).length >= 1);
     const egress = hub.egressRows();
     assert.ok(egress.some((row) => row.event === 'audit-start'), 'the egress recorder ran inside the hub process');
