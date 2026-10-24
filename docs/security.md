@@ -234,8 +234,9 @@ hash or the sync flag.
   forms, analytics collect and commerce, heartbeats, site credential enrollment and the CMS
   sign-in redeem (`lib/client-address.js`, the same rule as above). So with a CDN in front of the
   hosting proxy, `{ "trustedHops": 2 }` also stops those limits from counting every visitor
-  behind the CDN as one address. Each request reads the value from the same one-second cache as
-  the sign-in limits, never from the disk.
+  behind the CDN as one address. The value comes from the same cache of `security-settings.json`
+  as the sign-in limits: each hub process checks the file (one stat) at most once a second and
+  reads it again only when it has changed.
 - Tokens are stamped with the user's token version from a fresh read of
   `token-revocations.json`, so a login served by one hub process right after a "log out
   everywhere" in another is not refused a second later.
