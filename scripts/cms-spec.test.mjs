@@ -153,7 +153,7 @@ test('merge rules: lists replace, a grant clears the same revoke, null removes, 
   assert.deepEqual(merged.defaults, { 'shop.upsell': true, 'shop.discounts': false });
   assert.deepEqual(merged.locks, []);
   const sections = mergeSections(
-    { email: { recovery: { enabled: true, steps: [{ delayMinutes: 60 }, { delayMinutes: 1440 }] }, sender: { name: 'A', replyTo: 'a@b.no' } }, blog: { categories: ['x'] } },
+    { email: { recovery: { enabled: true, steps: [{ delayMinutes: 60 }, { delayMinutes: 1440 }] }, sender: { name: 'A', replyTo: 'a@example.no' } }, blog: { categories: ['x'] } },
     { email: { recovery: { steps: [{ delayMinutes: 60 }] }, sender: { replyTo: null } }, blog: null, social: { facebook: 'https://facebook.com/x' } },
   );
   assert.deepEqual(sections, {
