@@ -93,6 +93,14 @@ npm run dev:safe                                           # API http://127.0.0.
 npm run dev:safe -- --profile golden                       # data .local-data/golden
 ```
 
+### Golden data
+
+`npm run golden:seed -- --data-dir .local-data/golden --clients all --fixtures-dir ../website-maker/fixtures/golden` fills the `golden` profile's data folder from the Maker's golden fixtures (they stay in the Maker repo and are read at run time):
+- one sales client per fixture (`golden_<id>`) with its site plan, a draft offer, the fixture's meetings as stored meeting records, and a site for clients with a domain;
+- a local admin with a random password in `<data dir>/secrets/local-admin.json` (user-only file).
+
+It refuses any folder that is not below a `.local-data` directory. Values a fixture keeps private are read from `--private-dir` (the Maker's `fixtures-private`); without it those clients are skipped. `--signed id,id` marks clients contract-signed while seeding; no email is sent by the seed. `npm run test:golden` boots a safe-mode hub on seeded data and checks the health flag, the developer board and the pre-workshop email landing in the outbox.
+
 How the generated `.env` is built:
 - It contains every prod key except `ADMIN_SECRET`. The local hub makes its own secret on disk.
 - Keys the previous `.env` had are kept under `LOCAL EXTRA`.
