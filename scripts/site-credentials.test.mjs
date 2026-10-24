@@ -18,6 +18,8 @@ const sc = await import('../lib/site-credentials.js');
 const { registerShopPaymentsRoutes } = await import('../lib/shop-payments-routes.js');
 const { mountClientAnalyticsRoutes, resetHubAnalyticsLimitsForTests } = await import('../lib/client-analytics-http.js');
 const { resetSecurityCounters, securityCounters } = await import('../lib/security-counters.js');
+const { useClientAddressSettingsFrom } = await import('../lib/client-address.js');
+const { updateSecuritySettings } = await import('../data/security-settings.js');
 
 const value = () => randomBytes(32).toString('base64url');
 const proofOf = (credential, nonce) => createHmac('sha256', credential).update(nonce).digest('hex');
@@ -113,7 +115,17 @@ const adminAuth = (req, _res, next) => {
   next();
 };
 registerShopPaymentsRoutes(app, { adminAuth });
-mountClientAnalyticsRoutes(app, { clientAuth: (_req, res) => res.status(401).end(), loadClientUser: async () => null, clientPortal: {} });
+/** Sites whose paid maps refresh ran (a stub instead of the provider call). */
+const mapsRefreshes = [];
+mountClientAnalyticsRoutes(app, {
+  clientAuth: (_req, res) => res.status(401).end(),
+  loadClientUser: async () => null,
+  clientPortal: {},
+  runMapsRanking: async (_profile, site) => {
+    mapsRefreshes.push(site?.id || '');
+    return { ok: true };
+  },
+});
 let limiter = sc.createEnrollLimiter();
 const routes = sc.registerSiteCredentialRoutes(app, {
   adminAuth,
@@ -567,6 +579,42 @@ test('analytics: the spend summary needs the credential; an enrolled site must s
   assert.equal(dashNoVersion.status, 401, 'a site with no CMS 2.0.0–2.2.1 version needs the credential');
 });
 
+test('the paid maps refresh runs only for refresh=1 with a valid credential (maps runner stubbed)', async () => {
+  mapsRefreshes.length = 0;
+  const refresh = (site, extra = {}) => send('GET', `/api/hub/analytics?site_key=${site.site_key}&refresh=1`, extra);
+  // A site of its own, enrolled here, so this test does not depend on the enrollment tests above.
+  const enrolled = hub.createSite({ name: 'Maps shop', domain: 'maps-shop.example', websitePlan: 'tier-3-ecommerce' });
+  trustVersion(enrolled, '2.2.2');
+  const enrolledCredential = value();
+  store.enroll(enrolled.id, enrolledCredential, { proofDomain: 'maps-shop.example', proofOrigin: 'https://maps-shop.example' });
+  assert.equal(store.state(enrolled.id, enrolledCredential), 'valid');
+
+  const legacyKeyOnly = await refresh(siteLegacy);
+  assert.equal(legacyKeyOnly.status, 200, 'a never-enrolled shop on CMS 2.1.3 keeps its dashboard');
+  assert.equal(legacyKeyOnly.data.mapsRefreshSkipped, 'site-credential-required');
+  assert.equal((await refresh(enrolled)).status, 401, 'an enrolled site needs its credential');
+  assert.deepEqual(mapsRefreshes, [], 'refresh=1 with the site key alone never runs the refresh');
+
+  const legacyMadeUp = await refresh(siteLegacy, { credential: value() });
+  assert.equal(legacyMadeUp.status, 200);
+  assert.equal(legacyMadeUp.headers.get('x-site-credential-status'), 'not-enrolled');
+  assert.equal(legacyMadeUp.data.mapsRefreshSkipped, 'site-credential-required');
+  const wrong = await refresh(enrolled, { credential: value() });
+  assert.equal(wrong.status, 401);
+  assert.equal(wrong.headers.get('x-site-credential-status'), 'invalid');
+  assert.deepEqual(mapsRefreshes, [], 'refresh=1 with a credential that is not valid never runs the refresh');
+
+  const noRefresh = await send('GET', `/api/hub/analytics?site_key=${enrolled.site_key}`, { credential: enrolledCredential });
+  assert.equal(noRefresh.status, 200);
+  assert.deepEqual(mapsRefreshes, [], 'without refresh=1 the stored ranking is shown');
+
+  const valid = await refresh(enrolled, { credential: enrolledCredential });
+  assert.equal(valid.status, 200, JSON.stringify(valid.data).slice(0, 200));
+  assert.equal(valid.headers.get('x-site-credential-status'), 'valid');
+  assert.equal(valid.data.mapsRefreshSkipped, undefined);
+  assert.deepEqual(mapsRefreshes, [enrolled.id], 'refresh=1 with the valid credential runs the refresh once');
+});
+
 test('analytics collect keeps only the known event fields and limits calls per site and address', async () => {
   resetHubAnalyticsLimitsForTests();
   const now = new Date().toISOString();
@@ -599,24 +647,124 @@ test('analytics collect keeps only the known event fields and limits calls per s
   assert.equal(last.status, 200, 'the site server with its credential is limited per site only');
 });
 
-test('analytics commerce keeps the known summary fields, bounded, and refuses large bodies', async () => {
+test('analytics commerce keeps the known summary fields, bounded, and refuses large bodies (a never-enrolled CMS 2.1.3 shop on its site key)', async () => {
   resetHubAnalyticsLimitsForTests();
   const ok = await send('POST', '/api/hub/analytics/commerce', {
-    body: { site_key: siteOther.site_key, orders: 3, revenue: 1e30, topProducts: Array.from({ length: 1000 }, (_, i) => ({ name: `p${i}`, units: i })), injected: 'x' },
+    body: { site_key: siteLegacy.site_key, orders: 3, revenue: 1e30, topProducts: Array.from({ length: 1000 }, (_, i) => ({ name: `p${i}`, units: i })), injected: 'x' },
   });
   assert.equal(ok.status, 200);
   const snaps = JSON.parse(readFileSync(join(dataDir, 'client-commerce-snapshots.json'), 'utf8'));
-  const snap = snaps[siteOther.site_key];
+  const snap = snaps[siteLegacy.site_key];
   assert.equal(snap.orders, 3);
   assert.equal(snap.revenue, null, 'numbers out of range are dropped');
   assert.equal(snap.topProducts.length, 400);
   assert.equal(snap.injected, undefined);
-  const big = await send('POST', '/api/hub/analytics/commerce', { body: { site_key: siteOther.site_key, series: Array.from({ length: 300 }, () => 'y'.repeat(250)) } });
+  const big = await send('POST', '/api/hub/analytics/commerce', { body: { site_key: siteLegacy.site_key, series: Array.from({ length: 300 }, () => 'y'.repeat(250)) } });
   assert.equal(big.status, 413);
   const headers = { 'x-forwarded-for': '192.0.2.60' };
   let last;
-  for (let i = 0; i < 21; i += 1) last = await send('POST', '/api/hub/analytics/commerce', { body: { site_key: siteOther.site_key, orders: i }, headers });
+  for (let i = 0; i < 21; i += 1) last = await send('POST', '/api/hub/analytics/commerce', { body: { site_key: siteLegacy.site_key, orders: i }, headers });
   assert.equal(last.status, 429);
+});
+
+test('analytics commerce needs the credential, except for a never-enrolled site on CMS 2.0.0 to 2.2.1', async () => {
+  resetHubAnalyticsLimitsForTests();
+  const snapshotOf = (site) => {
+    try {
+      return JSON.parse(readFileSync(join(dataDir, 'client-commerce-snapshots.json'), 'utf8'))[site.site_key];
+    } catch (error) {
+      if (error?.code === 'ENOENT') return undefined;
+      throw error;
+    }
+  };
+  const post = (site, orders, extra = {}) => send('POST', '/api/hub/analytics/commerce', { body: { site_key: site.site_key, orders }, ...extra });
+  // A site of its own, enrolled here, so this test does not depend on the enrollment tests above.
+  const enrolled = hub.createSite({ name: 'Commerce shop', domain: 'commerce-shop.example', websitePlan: 'tier-3-ecommerce' });
+  trustVersion(enrolled, '2.2.2');
+  const enrolledCredential = value();
+  store.enroll(enrolled.id, enrolledCredential, { proofDomain: 'commerce-shop.example', proofOrigin: 'https://commerce-shop.example' });
+
+  const keyOnly = await post(enrolled, 41);
+  assert.equal(keyOnly.status, 401, 'an enrolled site needs its credential');
+  assert.equal(keyOnly.data.code, 'site-credential-required');
+  assert.equal(keyOnly.headers.get('x-site-credential-status'), 'missing');
+  const wrong = await post(enrolled, 42, { credential: value() });
+  assert.equal(wrong.status, 401);
+  assert.equal(wrong.data.code, 'site-credential-invalid');
+  assert.equal(snapshotOf(enrolled), undefined, 'a refused summary is not stored');
+  const withCredential = await post(enrolled, 43, { credential: enrolledCredential });
+  assert.equal(withCredential.status, 200);
+  assert.equal(withCredential.headers.get('x-site-credential-status'), 'valid');
+  assert.equal(snapshotOf(enrolled).orders, 43);
+
+  const legacy = await post(siteLegacy, 44);
+  assert.equal(legacy.status, 200, 'a never-enrolled shop on CMS 2.1.3 keeps sending it on its site key');
+  assert.equal(snapshotOf(siteLegacy).orders, 44);
+  // The dashboard rule, not the shop-route rule: the summary is shown by analytics level, so the
+  // shop feature is not asked for (shop status on the same site key is refused without it).
+  const noShop = hub.createSite({ name: 'Legacy site without the shop feature', domain: 'legacy-plain.example', websitePlan: 'tier-1-standard' });
+  trustVersion(noShop, '2.1.3');
+  assert.notEqual(hub.getSiteById(noShop.id).features?.ecommerce, true);
+  assert.equal((await send('GET', '/api/hub/shop/status', { siteKey: noShop.site_key })).status, 401, 'shop status needs the shop feature');
+  const plainLegacy = await post(noShop, 46);
+  assert.equal(plainLegacy.status, 200, 'a never-enrolled CMS 2.1.3 site without the shop feature still sends its summary on its site key');
+  assert.equal(snapshotOf(noShop).orders, 46);
+  for (const site of [siteOther, site17, site222]) {
+    const res = await post(site, 45);
+    assert.equal(res.status, 401, `${site.name}: never enrolled and not on CMS 2.0.0 to 2.2.1`);
+    assert.equal(res.data.code, 'site-credential-required');
+    assert.equal(res.headers.get('x-site-credential-status'), 'not-enrolled', 'a CMS 2.2.2 learns that it must enroll');
+    assert.notEqual(snapshotOf(site)?.orders, 45);
+  }
+});
+
+test('collect, commerce and enrollment use the trusted-hop setting of the sign-in limits: with 2 hops visitors behind one CDN are counted apart', async () => {
+  // The hosting proxy (the loopback peer here) appends the CDN's address; the CDN appended the visitor's.
+  const viaCdn = (visitor) => ({ 'x-forwarded-for': `${visitor}, 203.0.113.250` });
+  const setHops = (loginTrustedHops) => updateSecuritySettings({ loginTrustedHops }, { dataDir, by: 'admin:tester' });
+  async function burst(path, count, visitor, body) {
+    let last;
+    for (let i = 0; i < count; i += 1) last = await send('POST', path, { body, headers: viaCdn(visitor) });
+    return last;
+  }
+  useClientAddressSettingsFrom(dataDir);
+  try {
+    for (const [path, perAddress, body] of [
+      ['/api/hub/analytics/collect', 120, { site_key: siteOther.site_key, events: [] }],
+      ['/api/hub/analytics/commerce', 20, { site_key: siteLegacy.site_key, orders: 1 }],
+    ]) {
+      setHops(null);
+      resetHubAnalyticsLimitsForTests();
+      assert.equal((await burst(path, perAddress, '198.51.100.31', body)).status, 200);
+      assert.equal((await send('POST', path, { body, headers: viaCdn('198.51.100.32') })).status, 429, `${path}: by default every visitor behind the CDN shares its entry, as before`);
+
+      setHops(2);
+      resetHubAnalyticsLimitsForTests();
+      assert.equal((await burst(path, perAddress, '198.51.100.31', body)).status, 200);
+      assert.equal((await send('POST', path, { body, headers: viaCdn('198.51.100.31') })).status, 429, `${path}: the busy visitor is still limited`);
+      assert.equal((await send('POST', path, { body, headers: viaCdn('198.51.100.32') })).status, 200, `${path}: with 2 hops the second visitor has a count of its own`);
+    }
+
+    // Enrollment: the address its limits are asked about (switched on here too, so the test also
+    // runs on its own).
+    assert.equal((await send('PUT', '/api/hub/site-credentials/settings', { body: { enrollment: 'on' } })).status, 200);
+    const asked = [];
+    limiter = {
+      unknownSite: (address) => (asked.push(address), { ok: true, retryAfterSec: 0 }),
+      site: () => ({ ok: true, retryAfterSec: 0 }),
+      proofFailed: () => {},
+    };
+    setHops(null);
+    assert.equal((await enroll({ site_key: 'no-such-site' }, value(), value(), { headers: viaCdn('198.51.100.33') })).status, 401);
+    setHops(2);
+    assert.equal((await enroll({ site_key: 'no-such-site' }, value(), value(), { headers: viaCdn('198.51.100.33') })).status, 401);
+    assert.deepEqual(asked, ['203.0.113.250', '198.51.100.33'], 'enrollment is counted by the CDN entry by default and by the visitor with 2 hops');
+  } finally {
+    setHops(null);
+    useClientAddressSettingsFrom('');
+    resetHubAnalyticsLimitsForTests();
+    freshLimits();
+  }
 });
 
 test('a heartbeat without a valid credential is kept as unverified and changes nothing the hub acts on', async () => {

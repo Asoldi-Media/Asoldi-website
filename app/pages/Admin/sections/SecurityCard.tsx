@@ -94,7 +94,7 @@ function loginAddressLine(login: LoginAddresses) {
     socket: 'the connecting address (no X-Forwarded-For)',
   };
   const source = sources[login.mode] || login.mode;
-  const hops = login.trustedHops ? ` Trusted proxy hops: ${login.trustedHops}.` : '';
+  const hops = login.trustedHops ? ` Trusted proxy hops (sign-ins and the public form, analytics, heartbeat and enrollment limits): ${login.trustedHops}.` : '';
   const shared = login.attemptsLastHour >= 10 && login.distinctLastHour === 1
     ? ' Every attempt counted as one address: check the proxy in front of the hub.'
     : '';
@@ -421,7 +421,8 @@ export function SecurityCard() {
                   >
                     <p className="text-xs text-amber-300">
                       How many public proxies (a CDN in front of the hosting proxy, for example) every request passes. Raise it only when
-                      every request passes that many: the login limits then count the client by that X-Forwarded-For entry from the right.
+                      every request passes that many: the sign-in limits and the public form, analytics, heartbeat, enrollment and CMS
+                      sign-in redeem limits then count the client by that X-Forwarded-For entry from the right.
                       Needs your password.
                     </p>
                     <div className="flex flex-wrap gap-2">

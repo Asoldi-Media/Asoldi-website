@@ -7,7 +7,13 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import express from 'express';
-import {
+
+// data/storage-path.js fixes the data dir when it is first loaded, and lib/cms-sso.js loads it. So
+// this file's own data dir is set before any hub module is imported: run on its own, without
+// APP_DATA_DIR, the file then never writes into the local hub data folder.
+const fileDataDir = mkdtempSync(path.join(tmpdir(), 'hub-cms-sso-data-'));
+process.env.APP_DATA_DIR = fileDataDir;
+const {
   cmsOrigin,
   cmsSsoFormatForVersion,
   cmsSsoOrigin,
@@ -20,7 +26,11 @@ import {
   mintSiteKeyCmsSsoToken,
   parseCmsVersion,
   registerCmsSsoRoutes,
-} from '../lib/cms-sso.js';
+} = await import('../lib/cms-sso.js');
+const { useClientAddressSettingsFrom } = await import('../lib/client-address.js');
+const { updateSecuritySettings } = await import('../data/security-settings.js');
+const { getPersistentDataDir } = await import('../data/storage-path.js');
+test.after(() => rmSync(fileDataDir, { recursive: true, force: true }));
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const site = { id: '42', site_key: 'key-42', domain: 'https://shop.example/', cms: { adminUrl: 'https://snow.example.com/admin', packageVersion: '2.2.1' } };
@@ -289,6 +299,27 @@ test('HS-4: calls without a known site key are limited per address; a known key 
   });
 });
 
+test('redeem: the per-address limit uses the trusted-hop setting of the sign-in limits, so visitors behind one CDN can be counted apart', async () => {
+  const settingsDir = tempDir();
+  const setHops = (loginTrustedHops) => updateSecuritySettings({ loginTrustedHops }, { dataDir: settingsDir, by: 'admin:tester' });
+  // The hosting proxy (the loopback peer here) appends the CDN's address; the CDN appended the caller's.
+  const viaCdn = (caller) => `${caller}, 203.0.113.250`;
+  useClientAddressSettingsFrom(settingsDir);
+  try {
+    await withHub(async (hub) => {
+      for (let i = 0; i < 30; i += 1) assert.equal((await redeem(hub.base, { token: junkToken(), siteKey: `guess-${i}`, ip: viaCdn('198.51.100.71') })).status, 401);
+      assert.equal((await redeem(hub.base, { token: junkToken(), siteKey: 'guess-x', ip: viaCdn('198.51.100.72') })).status, 429, 'by default every caller behind the CDN shares its entry, as before');
+      setHops(2);
+      for (let i = 0; i < 30; i += 1) assert.equal((await redeem(hub.base, { token: junkToken(), siteKey: `guess-${i}`, ip: viaCdn('198.51.100.73') })).status, 401, 'with 2 hops the CDN entry no longer counts');
+      assert.equal((await redeem(hub.base, { token: junkToken(), siteKey: 'guess-x', ip: viaCdn('198.51.100.73') })).status, 429, 'the busy caller is still limited');
+      assert.equal((await redeem(hub.base, { token: junkToken(), siteKey: 'guess-y', ip: viaCdn('198.51.100.74') })).status, 401, 'another caller behind the CDN has a count of its own');
+    });
+  } finally {
+    useClientAddressSettingsFrom('');
+    rmSync(settingsDir, { recursive: true, force: true });
+  }
+});
+
 test('HS-4: live tokens of another site are limited per (site, address)', async () => {
   await withHub(async (hub) => {
     for (let i = 0; i < 10; i += 1) {
@@ -399,10 +430,14 @@ test('HS-4: junk redeems are not written to the audit; they are counted and logg
   }, { clock, quiet });
 });
 
+test('the hub records this file writes go to its own data dir, also when it runs without APP_DATA_DIR', () => {
+  assert.equal(getPersistentDataDir(), fileDataDir);
+});
+
 test('HS-1: a heartbeat from a site-key holder cannot move the sign-in link to another host', async () => {
   const dataDir = tempDir();
-  const saved = process.env.APP_DATA_DIR;
-  process.env.APP_DATA_DIR = dataDir;
+  // data/hub.js keeps its sites in the file's data dir (set before the first import above).
+  assert.equal(getPersistentDataDir(), fileDataDir);
   const hub = await import('../data/hub.js');
   const created = hub.createSite({ name: 'Example shop', domain: 'shop.example' });
   const id = created.site?.id || created.id;
@@ -432,8 +467,6 @@ test('HS-1: a heartbeat from a site-key holder cannot move the sign-in link to a
     assert.equal(redeemed.body.ok, true);
   } finally {
     await new Promise((r) => server.close(r));
-    if (saved === undefined) delete process.env.APP_DATA_DIR;
-    else process.env.APP_DATA_DIR = saved;
     rmSync(dataDir, { recursive: true, force: true });
   }
 });

@@ -331,12 +331,6 @@ test('checkMakerRequest: the yes/no form counts refusals like the middleware and
   assert.deepEqual(pending.flatMap((delta) => Object.keys(delta.makerRejected?.byReason || {})).sort(), ['missing', 'scope']);
   hosts.revokeMakerHost(host.hostId, { dataDir: dir });
   assert.equal(auth.checkMakerRequest(req({ 'x-maker-host-token': token })).ok, false);
-  // server.js keeps the old yes/no helper name for route modules that take an isMakerAuthorized callback.
-  const server = readFileSync(new URL('../server.js', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-  assert.match(
-    server,
-    /function isMakerStatusCallbackAuthorized\(req, \{ scope = 'callback', count = true \} = \{\}\) \{\n  return makerAuth\.checkMakerRequest\(req, \{ scope, count \}\)\.ok;\n\}/
-  );
 });
 
 test('verifyMakerRequest: the Maker API key counts only where allowApiKey is set', () => {

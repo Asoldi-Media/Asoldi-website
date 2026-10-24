@@ -90,7 +90,6 @@ import { getPersistentDataDir, pruneAllDataBackups } from './data/storage-path.j
 import {
   beginLogin,
   checkWithFreshSecret,
-  clientIpFromRequest,
   createPasswordConfirmer,
   createStaffMediaGate,
   createHubSecretHolder,
@@ -100,6 +99,7 @@ import {
   secretRefreshMs,
 } from './lib/auth-hardening.js';
 import { createHubLoginLimiter } from './lib/login-limits.js';
+import { publicClientAddress, useClientAddressSettingsFrom } from './lib/client-address.js';
 import { isTokenAccepted, runTokenPolicyBootMigrations, stampTokenVersion } from './lib/token-policy.js';
 import { noteSecurityEvent } from './lib/security-counters.js';
 import { registerSecurityAdminRoutes } from './lib/security-admin-routes.js';
@@ -623,6 +623,9 @@ function signatureMatchesHubSecret(given, sign) {
 // One-time boot migrations (a reset of admin and staff sessions; see data/security-settings.js).
 runTokenPolicyBootMigrations();
 const loginLimiter = createHubLoginLimiter({ dataDir: getPersistentDataDir() });
+// The address-keyed limits on public routes (forms, analytics, heartbeats, enrollment, CMS sign-in
+// redeem) count each client with the same trusted-hop setting as the sign-in limits.
+useClientAddressSettingsFrom(getPersistentDataDir());
 
 function signToken(payload) {
   const data = JSON.stringify(stampTokenVersion(payload));
@@ -2948,12 +2951,6 @@ function getMakerCallbackToken() {
 // are counted (also header-less ones: that is what unauthenticated probing looks like).
 const makerAuth = createMakerAuth({ legacyHolder: MAKER_CALLBACK_TOKEN_HOLDER, dataDir: getPersistentDataDir() });
 const { requireMakerHost } = makerAuth;
-
-// Yes/no form of the same check for code that answers the refusal itself (route modules that take
-// an isMakerAuthorized callback). Same rules and counters as requireMakerHost.
-function isMakerStatusCallbackAuthorized(req, { scope = 'callback', count = true } = {}) {
-  return makerAuth.checkMakerRequest(req, { scope, count }).ok;
-}
 
 function secureStringEqual(left = '', right = '') {
   const a = String(left || '');
@@ -13006,7 +13003,7 @@ app.post('/api/hub/heartbeat', (req, res) => {
   const site = siteKey ? hub.getSiteByKey(siteKey) : null;
   const credential = site ? siteCredentialState(req, site, { res }) : 'not-enrolled';
   if (site) {
-    const gate = heartbeatLimits.take({ siteId: site.id, address: clientIpFromRequest(req), credentialValid: credential === 'valid' });
+    const gate = heartbeatLimits.take({ siteId: site.id, address: publicClientAddress(req), credentialValid: credential === 'valid' });
     if (!gate.ok) {
       res.set('Retry-After', String(gate.retryAfterSec));
       return res.status(429).json({ message: 'Too many requests.' });

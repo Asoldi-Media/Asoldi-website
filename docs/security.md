@@ -106,9 +106,8 @@ accepted, whoever sends it, until the token is rotated (Security card). After re
 you no longer use, rotate the legacy token as well; Makers with a valid host token keep working
 through the rotation, because their host token is checked first.
 
-`server.js` `isMakerStatusCallbackAuthorized(req, { scope })` is the same check as a yes/no
-(`checkMakerRequest`, with the same counters) for route modules that answer the refusal
-themselves.
+`makerAuth.checkMakerRequest(req, { scope })` (`lib/maker-auth.js`) is the same check as a yes/no,
+with the same counters, for code that answers the refusal itself.
 
 A missing or wrong credential gets 401, a valid host token without the scope 403. A request
 from a host stamps `lastSeenAt` at most every 5 minutes. Refusals are counted in memory
@@ -233,6 +232,13 @@ hash or the sync flag.
   when every request passes that many public proxies: a request that skips one decides which
   entry it is counted by. The value is `security-settings.json` `loginTrustedHops`, and every
   hub process reads it within a second.
+- The same setting decides the address for every address-keyed limit on a public route: visitor
+  forms, analytics collect and commerce, heartbeats, site credential enrollment and the CMS
+  sign-in redeem (`lib/client-address.js`, the same rule as above). So with a CDN in front of the
+  hosting proxy, `{ "trustedHops": 2 }` also stops those limits from counting every visitor
+  behind the CDN as one address. The value comes from the same cache of `security-settings.json`
+  as the sign-in limits: each hub process checks the file (one stat) at most once a second and
+  reads it again only when it has changed.
 - The Security card sets it with **Set trusted proxy hops**. Like a rotation, it needs the hub
   admin's current password (`currentPassword`): any other admin token gets 403 `hub-admin-only`
   before any password check and counts toward no login limit, and a wrong or missing password
@@ -323,7 +329,7 @@ client CMS 2.2.2 and 1.7.2):
 | Route | Site key alone | With a valid credential |
 |---|---|---|
 | `/api/hub/shop/*` that move money, change a payee or read payment details (Stripe/PayPal connect, checkout, order, capture, session, invoice, subscription, cancel, refund, disconnect) | 401 `site-credential-required` | allowed |
-| `GET /api/hub/shop/status`, `POST /api/hub/shop/document`, `GET /api/hub/analytics` | allowed only for a site that has never enrolled and whose trusted CMS version is 2.0.0 up to 2.2.1 (the versions that call these without a credential), for the shop routes only with the shop feature on; otherwise 401. A revoked site stays closed until it enrolls again | allowed |
+| `GET /api/hub/shop/status`, `POST /api/hub/shop/document`, `GET /api/hub/analytics`, `POST /api/hub/analytics/commerce` | allowed only for a site that has never enrolled and whose trusted CMS version is 2.0.0 up to 2.2.1 (the versions that call these without a credential); otherwise 401. `/api/hub/shop/status` and `/api/hub/shop/document` also need the shop feature on. The dashboard and its shop summary (`/api/hub/analytics/commerce`) do not, because the dashboard shows the summary for its analytics level whatever the shop feature says. A revoked site stays closed until it enrolls again | allowed |
 | `GET /api/hub/analytics?refresh=1` (paid maps refresh) | stored ranking only, with `mapsRefreshSkipped: 'site-credential-required'` | refresh runs |
 | `GET /api/hub/analytics/spend` | 401 | allowed |
 | `GET /api/hub/site-config` (site key in `x-site-key` or `?site_key=`) | public fields only (with the feature tree switched on, also `featureTree` and `featureEnforcement`) | adds `pendingAdmin`, the client admin contact and, with the feature tree on, `pendingSettings` (docs/cms-feature-tree.md) |
@@ -344,7 +350,9 @@ file aside (`credentials.json.unreadable-<time>`, kept for repair) and start an 
 which enrolled sites enroll again on their own.
 
 Public endpoints stay on the site key, with payload checks and limits per site and address
-(`lib/site-public-guards.js`; an IPv6 address counts by its /64). A call with the site's valid
+(`lib/site-public-guards.js`; an IPv6 address counts by its /64). The address is the one the
+sign-in limits use, with the same trusted-hop setting (`PUT /api/admin/security/login-address`,
+see [Login tokens](#login-tokens); `lib/client-address.js`). A call with the site's valid
 credential (the CMS passing on its visitors) is limited per site only, in a bucket of its own that
 calls without the credential cannot use up:
 
@@ -356,13 +364,16 @@ calls without the credential cannot use up:
 - `POST /api/hub/analytics/collect`: 120 per (site, address) and 1200 per site a minute (the site's
   server with its credential: 1200 of its own, so others cannot crowd out an enrolled site); at most
   100 events per call, only the fields the CMS stores, with its lengths, and times in the last 35 days.
-- `POST /api/hub/analytics/commerce`: 20 per (site, address) and 60 per site a minute; only the
-  known summary fields, with bounded depth, list length, string length and finite numbers; 64 KB
-  at most (413 above).
+- `POST /api/hub/analytics/commerce`: the shop summary for the dashboard. Only the CMS server sends
+  it (client CMS 2.0.0 and later, from its admin analytics page, through the request helper that adds
+  the credential; no browser code calls it), so it also needs the site credential, as in the table
+  above: the site key alone works only for a never-enrolled site on a trusted 2.0.0 to 2.2.1.
+  20 per (site, address) and 60 per site a minute; only the known summary fields, with bounded
+  depth, list length, string length and finite numbers; 64 KB at most (413 above).
 
 **Admin** (admin token): `GET /api/hub/site-credentials` (per site: enrolled or revoked, enrolled
 at, proof domain and whether it still matches the stored domain, counts, whether the site key alone
-still opens shop status, documents or the dashboard; never a hash; and whether the store can be
+still opens shop status, documents or the dashboard and its shop summary; never a hash; and whether the store can be
 read), `PUT /api/hub/site-credentials/settings` (`{ enrollment: 'on' | 'off' }`),
 `POST /api/hub/sites/:id/site-credential/revoke` (the site stays closed until its CMS makes a new
 credential and enrolls again, which 2.2.2 and 1.7.2 do on their own),
@@ -372,9 +383,14 @@ without a credential becomes the trusted version; money routes still need a cred
 `POST /api/hub/site-credentials/set-aside-unreadable`. Manage clients shows the state per site,
 with Revoke and Reset buttons. Every action is audited and counted.
 
+To correct a site's trusted CMS version by hand (for example right after a deploy, when the last
+heartbeat before it left a wrong one): `PUT /api/hub/sites/:id` with
+`{"cms":{"packageVersion":"x.y.z"}}` (admin token). The other `cms` fields are kept. The hub has
+only `PUT` and `DELETE` on that path; a `PATCH` gets 404.
+
 **Older client CMS versions** send no credential. They keep their public config and liveness. A
-never-enrolled shop on 2.0.0 up to 2.2.1 keeps its shop status, documents and dashboard on the site
-key alone; CMS 1.x never calls those routes. None of them gets a client admin password from the hub
+never-enrolled shop on 2.0.0 up to 2.2.1 keeps its shop status, documents, dashboard and shop
+summary on the site key alone; CMS 1.x never calls those routes. None of them gets a client admin password from the hub
 or can use the money routes until it runs 1.7.2 or 2.2.2 and has enrolled. Switch enrollment on
 together with the first rollout of 2.2.2 or 1.7.2.
 

@@ -66,6 +66,17 @@ change is refused with 409.
   the inbox sender's or the matched client), so a client's hub spend is complete.
 - Several hub processes may share the data dir. Totals (the card, budgets, `spend-summary.json`) are
   always counted from the ledger file on disk, so rows from every process are included.
+- Retention: ledger files are kept for this month and the 12 before it (13 months, UTC). Older
+  `ledger-YYYY-MM.jsonl` files are deleted by the ledger's own clock, never by the month of a row: a
+  row dated in a later month cannot move the window, and this month and last month are never
+  deleted. Each hub process checks once per month of its clock, on its first AI call of that month.
+  Files whose name is not a ledger month are left alone. So the hub's own rows in
+  `GET /api/admin/ai/spend` reach back at most those 13 months. The other AI files keep their own
+  bounds and are not pruned by month: the Maker's run spend (`maker-spend.json`, added to the spend
+  answer with `salesClientId`) keeps the newest 50 runs per client whatever their month, so an older
+  range can still show Maker runs, and the budget alerts (`alerts-YYYY-MM.jsonl`) hold at most one row
+  per budget and UTC day. This month's totals, `spend-summary.json` and the budgets read only this
+  month's ledger file, so a prune never changes them (`lib/llm/ledger.js` `pruneLedgers`).
 - `<dataDir>/ai/spend-summary.json`: today and this month, by task and provider.
 - `<dataDir>/ai/alerts-YYYY-MM.jsonl`: budget alerts, one per budget and UTC day: the hub day cap once
   a day, the client month cap once a day per client, a run or session budget once a day per run or
