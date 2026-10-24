@@ -5,6 +5,8 @@
  *   { version, maxTokenAgeDays, revokedBefore: { all, admin, staff, client }, migrations, updatedAt, updatedBy }
  *   revokedBefore.<scope>: tokens of that class issued before this ISO time are refused.
  *   migrations.<name>: when a one-time boot migration ran (see runSecurityBootMigrations).
+ *   loginTrustedHops: 1–5 public proxies whose X-Forwarded-For entries the login limits trust
+ *     (lib/auth-hardening.js readClientAddress), or null for the default (1).
  *
  * <dataDir>/token-revocations.json
  *   { version, subjects: { "u:<userId>" | "admin:<username>": { tokenVersion, revokedAt, reason } } }
@@ -19,6 +21,7 @@
 import { join } from 'path';
 import { readJsonCached, readJsonFresh, updateJsonLocked } from './atomic-json.js';
 import { getPersistentDataDir } from './storage-path.js';
+import { cleanTrustedHops, MAX_TRUSTED_HOPS } from '../lib/auth-hardening.js';
 
 export const DEFAULT_MAX_TOKEN_AGE_DAYS = 30;
 export const REVOKE_SCOPES = ['all', 'admin', 'staff', 'client'];
@@ -107,6 +110,7 @@ function normalizeSettings(raw) {
     migrations,
     secretRotations,
     secretRotationHistory,
+    loginTrustedHops: cleanTrustedHops(source.loginTrustedHops),
     updatedAt: cleanIso(source.updatedAt),
     updatedBy: typeof source.updatedBy === 'string' ? source.updatedBy : null,
   };
@@ -139,10 +143,15 @@ function changeSettings(change, { dataDir, by, now }) {
   return readSecuritySettings({ dataDir });
 }
 
-/** maxTokenAgeDays: a number of days (0 < d ≤ 365), or null to go back to the default. */
+/**
+ * maxTokenAgeDays: a number of days (0 < d ≤ 365), or null to go back to the default.
+ * loginTrustedHops: a whole number from 1 to 5, or null to go back to the default (1).
+ * Only the fields present in the patch change.
+ */
 export function updateSecuritySettings(patch = {}, { dataDir, by, now } = {}) {
+  const has = (key) => Object.prototype.hasOwnProperty.call(patch, key);
   let stored;
-  if (Object.prototype.hasOwnProperty.call(patch, 'maxTokenAgeDays')) {
+  if (has('maxTokenAgeDays')) {
     if (patch.maxTokenAgeDays === null || patch.maxTokenAgeDays === '') {
       stored = null;
     } else {
@@ -150,8 +159,21 @@ export function updateSecuritySettings(patch = {}, { dataDir, by, now } = {}) {
       if (!stored) throw new Error('maxTokenAgeDays must be a number of days between 0 and 365.');
     }
   }
+  let hops;
+  if (has('loginTrustedHops')) {
+    if (patch.loginTrustedHops === null || patch.loginTrustedHops === '') {
+      hops = null;
+    } else {
+      hops = cleanTrustedHops(patch.loginTrustedHops);
+      if (hops === null) throw new Error(`loginTrustedHops must be a whole number from 1 to ${MAX_TRUSTED_HOPS}, or null for the default (1).`);
+    }
+  }
   return changeSettings(
-    (current) => (stored === undefined ? current : { ...current, maxTokenAgeDaysStored: stored }),
+    (current) => ({
+      ...current,
+      ...(stored === undefined ? {} : { maxTokenAgeDaysStored: stored }),
+      ...(hops === undefined ? {} : { loginTrustedHops: hops }),
+    }),
     { dataDir, by, now }
   );
 }

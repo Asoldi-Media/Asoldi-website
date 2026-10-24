@@ -116,7 +116,7 @@ test('the boot env blanks every credential and the child cwd has no .env', () =>
   assert.equal(env.HUB_SAFE_MODE, '1');
 });
 
-test('local hub boot: tokens signed with an old default secret, stale tokens, password change, logout everywhere, Fireflies rotation, counters', { timeout: 120_000 }, async (t) => {
+test('local hub boot: tokens signed with an old default secret, stale tokens, password change, logout everywhere, Fireflies rotation, counters, login limits per address', { timeout: 120_000 }, async (t) => {
   const dataDir = mkdtempSync(join(tmpdir(), 'asoldi-security-boot-'));
   const home = mkdtempSync(join(tmpdir(), 'asoldi-security-home-'));
   // Empty working directory: dotenv reads <cwd>/.env, and there must be none.
@@ -317,7 +317,91 @@ test('local hub boot: tokens signed with an old default secret, stale tokens, pa
     }
     assert.equal(byId.fireflies.ok, false);
 
-    // 11. No live system was touched: no Myphoner reconcile, no Fireflies pull, and nothing
+    // 11. Login limits per account and address: ten failures for the admin from ten addresses do
+    //     not keep the admin out of an eleventh; ten from one address block that address only.
+    const loginFrom = (address, password) => fetch(`${base}/api/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': address },
+      body: JSON.stringify({ username: 'asoldi.com', password }),
+    });
+    for (let i = 1; i <= 10; i += 1) assert.equal((await loginFrom(`203.0.113.${i}`, `wrong-${i}`)).status, 401);
+    assert.equal((await loginFrom('203.0.113.50', newPassword)).status, 200, 'the right password from another address gets in');
+    for (let i = 0; i < 10; i += 1) assert.equal((await loginFrom('198.51.100.7', `wrong-again-${i}`)).status, 401);
+    const limitedHere = await loginFrom('198.51.100.7', newPassword);
+    assert.equal(limitedHere.status, 429, 'ten failures from one address limit that address');
+    assert.ok(Number(limitedHere.headers.get('retry-after')) > 0);
+    assert.equal((await loginFrom('203.0.113.51', newPassword)).status, 200, 'and only that address');
+    // Where the limits took the addresses from: shown on the status route and logged once per
+    // kind of source, never with an address.
+    const loginStatus = await (await fetch(`${base}/api/admin/system/security`, { headers: admin() })).json();
+    assert.equal(loginStatus.loginAddressMode, 'forwarded');
+    assert.equal(loginStatus.loginAddresses.hopFromRight, 1);
+    assert.equal(loginStatus.loginAddresses.peer, 'internal');
+    assert.equal(loginStatus.loginAddresses.trustedHops, null);
+    assert.ok(loginStatus.loginAddresses.distinctLastHour >= 14, `distinct addresses: ${loginStatus.loginAddresses.distinctLastHour}`);
+    assert.ok(loginStatus.loginAddresses.modesLastHour.socket >= 1, 'the sign-ins without X-Forwarded-For are a second source');
+    const sourceLines = logs.split(/\r?\n/).filter((line) => line.startsWith('[security] login limits count each client by'));
+    assert.equal(sourceLines.filter((line) => line.includes('X-Forwarded-For entry 1 from the right')).length, 1, sourceLines.join('\n'));
+    assert.equal(sourceLines.some((line) => /\d+\.\d+\.\d+\.\d+/.test(line)), false, 'no address is logged');
+
+    // 12. Attempts are counted when they start: forty wrong admin logins sent at once from one
+    //     address get at most ten password checks, and the right password from another address
+    //     still gets in. A wrong current password on the password change counts the same way.
+    const burst = await Promise.all(Array.from({ length: 40 }, (_, i) => loginFrom('203.0.113.77', `burst-${i}`)));
+    const burstChecked = burst.filter((res) => res.status !== 429);
+    assert.ok(burstChecked.length >= 1 && burstChecked.length <= 10, `password checks in the burst: ${burstChecked.length}`);
+    assert.ok(burstChecked.every((res) => res.status === 401));
+    for (let i = 0; i < 20; i += 1) await loginFrom('203.0.113.77', `burst-after-${i}`);
+    assert.equal((await loginFrom('203.0.113.77', newPassword)).status, 429, 'that address used its ten tries');
+    assert.equal((await loginFrom('203.0.113.80', newPassword)).status, 200, 'the right password from another address gets in');
+    const changeFrom = (address, currentPassword) => fetch(`${base}/api/admin/change-password`, {
+      method: 'POST',
+      headers: { ...admin(), 'content-type': 'application/json', 'x-forwarded-for': address },
+      body: JSON.stringify({ currentPassword, newPassword: 'boot-unused-new-password-2' }),
+    });
+    for (let i = 0; i < 10; i += 1) assert.equal((await changeFrom('203.0.113.90', `wrong-current-${i}`)).status, 401);
+    assert.equal((await changeFrom('203.0.113.90', newPassword)).status, 429, 'ten wrong current passwords from one address');
+    assert.equal((await loginWith(newPassword)).status, 200, 'the password did not change');
+    // A name or password that is not text gets 400 before any check, so it never leaves a check
+    // running without an answer; the right password from that address then gets in at once.
+    const sendFrom95 = (path, body, headers = {}) => fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.95', ...headers },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(5000),
+    });
+    for (const [path, body] of [
+      ['/api/admin/login', { username: 'asoldi.com', password: 12345 }],
+      ['/api/admin/login', { username: ['asoldi.com'], password: 'x' }],
+      ['/api/auth/login', { username: { name: 'staff' }, password: 'x' }],
+      ['/api/auth/login', { username: 'staff', password: 12345 }],
+    ]) {
+      assert.equal((await sendFrom95(path, body)).status, 400, `${path} ${JSON.stringify(body)}`);
+    }
+    assert.equal((await sendFrom95('/api/admin/change-password', { currentPassword: 12345, newPassword: 'x' }, admin())).status, 400);
+    assert.equal((await loginFrom('203.0.113.95', newPassword)).status, 200, 'that address has no check left running');
+
+    // 13. Only the hub admin (admin.json) confirms a rotation. An admin token of a users.json user
+    //     (it carries a user id) gets 403 before any password check, even with the hub admin's
+    //     password, and never counts toward the login limits.
+    const attemptsBefore = (await (await fetch(`${base}/api/admin/system/security`, { headers: admin() })).json()).loginAddresses.attemptsLastHour;
+    for (const username of ['staff-admin', 'asoldi.com']) {
+      const usersJsonAdmin = forge(diskSecret, { role: 'admin', userId: `boot-user-${username}`, username, at: Date.now() });
+      for (let i = 0; i < 3; i += 1) {
+        const refused = await fetch(`${base}/api/admin/security/signing-secret/rotate`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${usersJsonAdmin}`, 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.60' },
+          body: JSON.stringify({ currentPassword: newPassword, confirm: 'ROTER' }),
+        });
+        assert.equal(refused.status, 403, `${username} attempt ${i}`);
+        assert.equal((await refused.json()).code, 'hub-admin-only');
+      }
+    }
+    const afterRefusals = (await (await fetch(`${base}/api/admin/system/security`, { headers: admin() })).json()).loginAddresses.attemptsLastHour;
+    assert.equal(afterRefusals, attemptsBefore, 'the refusals never reached the login limits');
+    assert.equal(readFileSync(join(dataDir, 'secrets', 'admin-secret'), 'utf8').trim(), diskSecret, 'nothing rotated');
+
+    // 14. No live system was touched: no Myphoner reconcile, no Fireflies pull, and nothing
     //     but loopback was even attempted.
     assert.doesNotMatch(logs, /\[myphoner\] webhook reconcile complete/);
     assert.doesNotMatch(logs, /\[fireflies\] recent-transcripts/);

@@ -178,6 +178,46 @@ test('holder: get({ fresh: true }) re-reads the file at once, at most once per f
   }
 });
 
+test('holder: a clock that steps back an hour still re-reads the file (injected clock)', () => {
+  const dir = tempDir();
+  let clock = 9_000_000;
+  const reader = hardening.createHubSecretHolder({ dataDir: dir, name: 'admin-secret', now: () => clock });
+  const writer = hardening.createHubSecretHolder({ dataDir: dir, name: 'admin-secret', now: () => 0 });
+  const before = reader.get();
+  clock -= 3_600_000;
+  const after = writer.rotate();
+  assert.notEqual(after, before);
+  assert.equal(reader.get(), after, 'a step back counts as a re-read being due, not as an hour to wait');
+  // From the new time on, the normal interval applies again.
+  const third = writer.rotate();
+  clock += 500;
+  assert.equal(reader.get(), after, 'within refreshMs of the last read: no read');
+  clock += 600;
+  assert.equal(reader.get(), third);
+  // The rate limit of fresh reads also restarts after a step back.
+  const fourth = writer.rotate();
+  clock -= 10_000;
+  assert.equal(reader.get({ fresh: true }), fourth);
+});
+
+test('holder: the default clock is monotonic, so a wall-clock step back neither pauses nor floods the re-reads', async () => {
+  const dir = tempDir();
+  const reader = hardening.createHubSecretHolder({ dataDir: dir, name: 'admin-secret', refreshMs: 300 });
+  const writer = hardening.createHubSecretHolder({ dataDir: dir, name: 'admin-secret' });
+  const before = reader.get();
+  const wallClock = Date.now;
+  Date.now = () => wallClock() - 3_600_000;
+  try {
+    const after = writer.rotate();
+    assert.equal(reader.get(), before, 'within refreshMs of the last read: no read, whatever the wall clock says');
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    assert.equal(reader.get(), after, 'refreshMs later the rotation is picked up');
+  } finally {
+    Date.now = wallClock;
+  }
+  assert.equal(typeof hardening.monotonicMs(), 'number');
+});
+
 test('password confirmer: wrong passwords count toward the limit, the right one clears them', async () => {
   const limiter = hardening.createLoginLimiter();
   const confirm = hardening.createPasswordConfirmer({
@@ -209,6 +249,45 @@ test('password confirmer: wrong passwords count toward the limit, the right one 
   for (const empty of ['', undefined, null, 42]) assert.notEqual(await attempt(empty), 'ok');
 });
 
+test('password confirmer: password checks that start together are counted at once, and a check that throws stays counted without blocking the next', async () => {
+  const limiter = hardening.createLoginLimiter({ log: () => {} });
+  const fakeRes = () => ({
+    statusCode: 200,
+    headers: {},
+    setHeader(name, value) { this.headers[name] = value; },
+    status(code) { this.statusCode = code; return this; },
+    json(body) { this.body = body; return this; },
+  });
+  const req = { admin: { username: 'tester' }, headers: { 'x-forwarded-for': '203.0.113.30' }, socket: { remoteAddress: '127.0.0.1' } };
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const slow = hardening.createPasswordConfirmer({
+    limiter,
+    accountFor: (r) => `admin:${r.admin.username}`,
+    verifyPassword: async () => { await gate; return false; },
+  });
+  const responses = Array.from({ length: 12 }, fakeRes);
+  const pending = responses.map((res) => slow(req, res, 'wrong'));
+  release();
+  await Promise.all(pending);
+  const codes = responses.map((res) => res.statusCode);
+  assert.equal(codes.filter((code) => code === 401).length, 2, `two checks ran, the rest waited: ${codes}`);
+  assert.equal(codes.filter((code) => code === 429).length, 10);
+  assert.equal(limiter.running(), 0);
+
+  const throwing = hardening.createPasswordConfirmer({
+    limiter,
+    accountFor: (r) => `admin:${r.admin.username}`,
+    verifyPassword: async () => { throw new Error('store read failed'); },
+  });
+  for (let i = 0; i < 3; i += 1) await assert.rejects(throwing(req, fakeRes(), 'pw'), /store read failed/, `attempt ${i} is checked, not refused as busy`);
+  assert.equal(limiter.running(), 0, 'a check that threw no longer runs');
+  const counted = fakeRes();
+  for (let i = 0; i < 5; i += 1) await slow(req, fakeRes(), 'wrong');
+  assert.equal(await slow(req, counted, 'wrong'), false);
+  assert.equal(counted.statusCode, 429, 'two failures, three checks that threw and five failures fill the ten tries of that address');
+});
+
 // ------------------------------------------------------------------ routes (a small express app)
 
 const PASSWORD = `pw-${Date.now()}`;
@@ -218,7 +297,7 @@ function sign(secret, payload) {
   return Buffer.from(JSON.stringify({ data, sig: createHmac('sha256', secret).update(data).digest('hex') })).toString('base64url');
 }
 
-async function withApp({ adminSecretHolder, makerCallbackTokenHolder, recordRotation }, fn) {
+async function withApp({ adminSecretHolder, makerCallbackTokenHolder, recordRotation, loginLimiter, canConfirm }, fn) {
   const app = express();
   app.use(express.json());
   // The real hub verifies with the holder's current value, like server.js verifyToken.
@@ -241,11 +320,13 @@ async function withApp({ adminSecretHolder, makerCallbackTokenHolder, recordRota
   const clientAuth = (_req, res) => res.status(401).json({ message: 'Unauthorized' });
   // The same confirmer server.js uses, with a fixed password.
   const confirmAdminPassword = hardening.createPasswordConfirmer({
-    limiter: hardening.createLoginLimiter(),
+    limiter: loginLimiter || hardening.createLoginLimiter(),
     accountFor: (req) => `admin:${req.admin.username}`,
     verifyPassword: async (_req, password) => password === PASSWORD,
+    ...(canConfirm ? { canConfirm } : {}),
   });
   routes.registerSecurityAdminRoutes(app, {
+    ...(loginLimiter ? { loginLimiter } : {}),
     adminAuth,
     clientAuth,
     signToken: (payload) => sign(adminSecretHolder.get(), payload),
@@ -432,4 +513,178 @@ test('routes: when the rotation record cannot be saved, the answer still carries
   }
   assert.equal(errors.filter((line) => /rotation record could not be saved: ELOCKED/.test(line)).length, 2, errors.join('\n'));
   assert.equal(errors.join('\n').includes(adminSecretHolder.get()), false, 'no secret in the log');
+});
+
+test('routes: the security status shows where login addresses come from, never an address', async () => {
+  const dir = tempDir();
+  const adminSecretHolder = hardening.createHubSecretHolder({ dataDir: dir, name: 'admin-secret' });
+  const makerCallbackTokenHolder = hardening.createHubSecretHolder({ envRule: 'any', lazy: true, dataDir: dir, name: 'maker-callback-token', bytes: 32 });
+  const lines = [];
+  const loginLimiter = hardening.createLoginLimiter({ log: (line) => lines.push(line) });
+  await withApp({ adminSecretHolder, makerCallbackTokenHolder, loginLimiter }, async (base, { adminToken }) => {
+    const token = adminToken();
+    const status = async () => (await fetch(`${base}/api/admin/system/security`, { headers: { authorization: `Bearer ${token}` } })).json();
+    const before = await status();
+    assert.equal(before.loginAddressMode, 'none');
+    assert.equal(before.loginAddresses.distinctLastHour, 0);
+    for (const client of ['203.0.113.1', '203.0.113.2', '203.0.113.2']) {
+      const res = await fetch(`${base}/api/admin/security/maker-callback-token/rotate`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, 'x-forwarded-for': client },
+        body: JSON.stringify({ currentPassword: 'wrong-password', confirm: 'ROTER' }),
+      });
+      assert.equal(res.status, 401);
+    }
+    const after = await status();
+    assert.equal(after.loginAddressMode, 'forwarded');
+    assert.deepEqual(after.loginAddresses, {
+      mode: 'forwarded',
+      modesLastHour: { forwarded: 3 },
+      attemptsLastHour: 3,
+      distinctLastHour: 2,
+      hopFromRight: 1,
+      peer: 'internal',
+      trustedHops: null,
+      processId: process.pid,
+      processStartedAt: after.loginAddresses.processStartedAt,
+    });
+    const startedAt = Date.parse(after.loginAddresses.processStartedAt);
+    assert.ok(startedAt <= Date.now() && Date.now() - startedAt < 24 * 60 * 60 * 1000, 'the figures name the process that answered');
+    assert.equal(before.loginAddresses.processStartedAt, after.loginAddresses.processStartedAt);
+    assert.equal(JSON.stringify(after).includes('203.0.113.'), false, 'no address in the status');
+  });
+  assert.equal(lines.length, 1);
+  assert.equal(/203\.0\.113\./.test(lines[0]), false, 'no address in the log');
+});
+
+test('routes: an admin sets the trusted proxy hops; the setting survives other writes and changes the counted address', async () => {
+  const { createHubLoginLimiter, readLoginTrustedHops } = await import('../lib/login-limits.js');
+  const dir = tempDir();
+  const adminSecretHolder = hardening.createHubSecretHolder({ dataDir: dir, name: 'admin-secret' });
+  const makerCallbackTokenHolder = hardening.createHubSecretHolder({ envRule: 'any', lazy: true, dataDir: dir, name: 'maker-callback-token', bytes: 32 });
+  // The routes write security-settings.json in this file's APP_DATA_DIR (dataDir).
+  const loginLimiter = createHubLoginLimiter({ dataDir, log: () => {} });
+  const viaCdn = { headers: { 'x-forwarded-for': '198.51.100.1, 192.0.2.50' }, socket: { remoteAddress: '127.0.0.1' } };
+  try {
+    await withApp({ adminSecretHolder, makerCallbackTokenHolder, loginLimiter }, async (base, { adminToken }) => {
+      const token = adminToken();
+      const put = (body, auth = token) => fetch(`${base}/api/admin/security/login-address`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', ...(auth ? { authorization: `Bearer ${auth}` } : {}) },
+        body: JSON.stringify(body),
+      });
+      assert.equal((await put({ trustedHops: 2 }, '')).status, 401, 'admins only');
+      assert.equal((await put({})).status, 400, 'the field is required');
+      for (const bad of [0, 6, 2.5, '2.5', 'x', true, -1]) {
+        const res = await put({ trustedHops: bad });
+        assert.equal(res.status, 400, String(bad));
+        assert.match((await res.json()).message, /whole number from 1 to 5/);
+      }
+      assert.equal(loginLimiter.addressOf(viaCdn), '192.0.2.50', 'default: the right-most public entry');
+
+      const set = await put({ trustedHops: 2 });
+      assert.equal(set.status, 200);
+      const body = await set.json();
+      assert.equal(body.trustedHops, 2);
+      assert.equal(body.loginAddresses.trustedHops, 2);
+      assert.equal(settings.readSecuritySettings().loginTrustedHops, 2);
+      assert.equal(readLoginTrustedHops(dataDir), 2);
+      assert.equal(loginLimiter.addressOf(viaCdn), '198.51.100.1', 'two trusted public hops: the client behind the second proxy');
+
+      // Other writers keep the setting.
+      settings.updateSecuritySettings({ maxTokenAgeDays: 9 }, { by: 'admin:tester' });
+      settings.recordSecretRotation('admin-secret', { by: 'admin:tester' });
+      settings.revokeTokensBefore('client', { by: 'admin:tester', now: Date.now() - 60_000 });
+      assert.equal(settings.readSecuritySettings().loginTrustedHops, 2);
+      assert.equal(settings.readSecuritySettings().maxTokenAgeDays, 9);
+
+      assert.equal((await (await put({ trustedHops: ' 3 ' })).json()).trustedHops, 3);
+      const reset = await (await put({ trustedHops: null })).json();
+      assert.equal(reset.trustedHops, null);
+      assert.equal(loginLimiter.addressOf(viaCdn), '192.0.2.50', 'back to the default');
+      const overview = await (await fetch(`${base}/api/admin/system/security`, { headers: { authorization: `Bearer ${token}` } })).json();
+      assert.equal(overview.loginAddresses.trustedHops, null);
+      assert.equal(overview.tokens.maxTokenAgeDays, 9);
+    });
+  } finally {
+    settings.updateSecuritySettings({ maxTokenAgeDays: null, loginTrustedHops: null }, { by: 'admin:tester' });
+  }
+});
+
+test('password confirmer: a signed-in user that may not confirm gets 403 before any password check, and no limiter key counts it', async () => {
+  const limiter = hardening.createLoginLimiter({ log: () => {} });
+  const hubAdmin = { username: 'tester', passwordHash: 'x' };
+  let checks = 0;
+  const confirm = hardening.createPasswordConfirmer({
+    limiter,
+    accountFor: (req) => `admin:${req.admin.username}`,
+    verifyPassword: async (_req, password) => {
+      checks += 1;
+      return password === PASSWORD;
+    },
+    canConfirm: async (req) => hardening.isHubAdminPayload(req.admin, hubAdmin),
+  });
+  const attempt = async (admin, password) => {
+    const res = {
+      statusCode: 200,
+      body: null,
+      headers: {},
+      setHeader(name, value) { this.headers[name] = value; },
+      status(code) { this.statusCode = code; return this; },
+      json(body) { this.body = body; return this; },
+    };
+    const ok = await confirm({ admin, headers: { 'x-forwarded-for': '203.0.113.4' }, socket: { remoteAddress: '127.0.0.1' } }, res, password);
+    return ok ? 'ok' : `${res.statusCode} ${res.body?.code || ''}`.trim();
+  };
+  const usersJsonAdmin = { role: 'admin', userId: 'u-1', username: 'tester' };
+  for (let i = 0; i < 15; i += 1) {
+    assert.equal(await attempt(usersJsonAdmin, i % 2 ? PASSWORD : `guess-${i}`), `403 ${hardening.HUB_ADMIN_ONLY_CODE}`, `attempt ${i}`);
+  }
+  assert.equal(await attempt({ role: 'admin', username: 'someone-else' }, PASSWORD), '403 hub-admin-only', 'an admin token for another username');
+  assert.equal(checks, 0, 'no password was checked');
+  assert.deepEqual(limiter.keys(), [], 'no limiter key counted the refusals');
+  assert.equal(await attempt({ role: 'admin', username: 'tester' }, 'wrong'), '401 wrong-password');
+  assert.equal(await attempt({ role: 'admin', username: 'tester' }, PASSWORD), 'ok', 'the hub admin confirms as before');
+
+  for (const [payload, admin, expected] of [
+    [{ role: 'admin', username: 'tester' }, hubAdmin, true],
+    [{ role: 'Admin', username: 'tester' }, hubAdmin, true],
+    [{ role: 'admin', username: 'tester', userId: 'u-1' }, hubAdmin, false],
+    [{ role: 'admin', username: 'tester', userId: 0 }, hubAdmin, false],
+    [{ role: 'admin', username: 'Tester' }, hubAdmin, false],
+    [{ role: 'sales', username: 'tester' }, hubAdmin, false],
+    [{ role: 'admin', username: '' }, { username: '' }, false],
+    [{ role: 'admin', username: 'tester' }, null, false],
+    [null, hubAdmin, false],
+  ]) {
+    assert.equal(hardening.isHubAdminPayload(payload, admin), expected, JSON.stringify([payload, admin]));
+  }
+});
+
+test('routes: an admin token of a users.json user cannot rotate; it gets 403 and never reaches the login limits', async () => {
+  const dir = tempDir();
+  const adminSecretHolder = hardening.createHubSecretHolder({ dataDir: dir, name: 'admin-secret' });
+  const makerCallbackTokenHolder = hardening.createHubSecretHolder({ envRule: 'any', lazy: true, dataDir: dir, name: 'maker-callback-token', bytes: 32 });
+  const loginLimiter = hardening.createLoginLimiter({ log: () => {} });
+  const hubAdmin = { username: 'tester' };
+  const canConfirm = async (req) => hardening.isHubAdminPayload(req.admin, hubAdmin);
+  await withApp({ adminSecretHolder, makerCallbackTokenHolder, loginLimiter, canConfirm }, async (base, { adminToken }) => {
+    const usersJsonAdmin = sign(adminSecretHolder.get(), { role: 'admin', userId: 'u-7', username: 'tester', at: Date.now() });
+    const oldSecret = adminSecretHolder.get();
+    const oldMaker = makerCallbackTokenHolder.get();
+    for (const path of ['/api/admin/security/signing-secret/rotate', '/api/admin/security/maker-callback-token/rotate']) {
+      for (let i = 0; i < 12; i += 1) {
+        const res = await post(base, path, usersJsonAdmin, { currentPassword: i % 3 ? `guess-${i}` : PASSWORD, confirm: 'ROTER' });
+        assert.equal(res.status, 403, `${path} attempt ${i}`);
+        const body = await res.json();
+        assert.equal(body.code, 'hub-admin-only');
+        assert.equal(body.message, hardening.HUB_ADMIN_ONLY_MESSAGE);
+      }
+    }
+    assert.deepEqual(loginLimiter.keys(), [], 'no limiter key counted the refusals');
+    assert.equal(adminSecretHolder.get(), oldSecret, 'nothing rotated');
+    assert.equal(makerCallbackTokenHolder.get(), oldMaker);
+    const good = { currentPassword: PASSWORD, confirm: 'ROTER' };
+    assert.equal((await post(base, '/api/admin/security/maker-callback-token/rotate', adminToken(), good)).status, 200, 'the hub admin still rotates');
+  });
 });

@@ -34,6 +34,19 @@ type SecurityStatus = {
   };
   firefliesWebhook: FirefliesStatus;
   counters: Record<string, Counter>;
+  loginAddressMode?: string;
+  loginAddresses?: LoginAddresses;
+};
+type LoginAddresses = {
+  mode: string;
+  modesLastHour: Record<string, number>;
+  attemptsLastHour: number;
+  distinctLastHour: number;
+  hopFromRight: number | null;
+  peer: string | null;
+  trustedHops: number | null;
+  processId?: number;
+  processStartedAt?: string;
 };
 type Reveal = { webhookUrl: string; secret: string; tokenUrl: string | null; rotatedAt: string };
 type RotateKind = 'signing-secret' | 'maker-callback-token';
@@ -65,6 +78,29 @@ function when(value: string | null | undefined) {
   if (!value) return 'never';
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleString('nb-NO');
+}
+
+/**
+ * One line on where the login limits took client addresses from in the last hour (never an
+ * address). The figures and the limits are kept per hub process: the one that answered this page.
+ */
+function loginAddressLine(login: LoginAddresses) {
+  const scope = `in this hub process${login.processId ? ` (pid ${login.processId}, started ${when(login.processStartedAt)})` : ''}`;
+  if (!login.attemptsLastHour) return `Sign-in addresses ${scope}: no sign-in attempts in the last hour.`;
+  const sources: Record<string, string> = {
+    forwarded: `X-Forwarded-For entry ${login.hopFromRight ?? 1} from the right`,
+    'forwarded-internal': 'an internal proxy address (every client behind it shares one count)',
+    socket: 'the connecting address (no X-Forwarded-For)',
+  };
+  const source = sources[login.mode] || login.mode;
+  const hops = login.trustedHops ? ` Trusted proxy hops: ${login.trustedHops}.` : '';
+  const shared = login.attemptsLastHour >= 10 && login.distinctLastHour === 1
+    ? ' Every attempt counted as one address: check the proxy in front of the hub.'
+    : '';
+  const publicPeer = login.mode === 'forwarded' && login.peer === 'public'
+    ? ' The connection comes from a public address, so X-Forwarded-For may be written by the client: check the proxy in front of the hub.'
+    : '';
+  return `Sign-in addresses ${scope}, last hour: ${login.distinctLastHour} different over ${login.attemptsLastHour} attempts, counted by ${source}.${hops}${shared}${publicPeer}`;
 }
 
 function storeAdminToken(token: string) {
@@ -344,6 +380,7 @@ export function SecurityCard() {
                 <p className="text-xs text-gray-500">
                   Last forced logout: clients {when(data.tokens.revokedBefore.client)} · staff {when(data.tokens.revokedBefore.staff)} · admins {when(data.tokens.revokedBefore.admin)} · everyone {when(data.tokens.revokedBefore.all)}
                 </p>
+                {data.loginAddresses && <p className="text-xs text-gray-500">{loginAddressLine(data.loginAddresses)}</p>}
               </section>
 
               {ff && (

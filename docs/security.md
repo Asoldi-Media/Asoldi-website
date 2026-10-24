@@ -13,7 +13,7 @@ change here needs a new Hostinger env variable.
 | `secrets/maker-callback-token` | Maker callback token when no env token is set; rotatable from the Security card | `server.js` `getMakerCallbackToken` |
 | `secrets/initial-admin-password` | first admin password on an empty install | `ensureAdminExists` |
 | `secrets/webhooks.json` | Fireflies webhook signing secret and URL token | `data/webhook-secrets.js` |
-| `security-settings.json` | max token age, `revokedBefore` per class, one-time `migrations` | `data/security-settings.js` |
+| `security-settings.json` | max token age, `revokedBefore` per class, one-time `migrations`, `loginTrustedHops` | `data/security-settings.js` |
 | `token-revocations.json` | per-user token versions ("log out everywhere") | `data/security-settings.js` |
 
 Files are created in one step (temp file + hard link or rename), mode 0600, so two processes
@@ -35,8 +35,13 @@ Admin → Manage clients → Security → **Rotate secrets** makes a new value o
 | Make a new Maker token | `POST /api/admin/security/maker-callback-token/rotate` | `secrets/maker-callback-token` is replaced and shown on the card (`callbackToken`, no-store); an admin can read the current token again with `GET /api/admin/system/maker-callback-token`. Paste it into the Maker `.env` as `WEBSITE_MAKER_STATUS_CALLBACK_TOKEN` and `SALES_MAKER_STATUS_CALLBACK_TOKEN`. Callbacks and preview pushes with the old token get 401, also from runs that were started with it. |
 
 - Both need the admin's current password (`currentPassword`; wrong passwords count toward the
-  login limit, and the right one clears the count, as a sign-in does) and the typed word `ROTER`
-  (`confirm`).
+  login limits, and the right one clears the count for that address, as a sign-in does) and the
+  typed word `ROTER` (`confirm`).
+- Only the hub admin (`admin.json`) can rotate. Any other admin token (one that carries a
+  `users.json` user id, or names another username) gets 403 with code `hub-admin-only` and a
+  Norwegian message, before any password check, and the refusal counts toward no login limit.
+  Such a user cannot confirm with their own password: the rotation answer signs a fresh hub
+  admin token for the caller, and the hub admin's password is the one that guards the secrets.
 - When the env value wins (`ADMIN_SECRET` of 16+ characters that is not a known default, or
   `WEBSITE_MAKER_STATUS_CALLBACK_TOKEN` / `SALES_MAKER_STATUS_CALLBACK_TOKEN`), the route answers
   409 with a Norwegian explanation and changes nothing: rotate the env value where it is set.
@@ -48,7 +53,8 @@ Admin → Manage clients → Security → **Rotate secrets** makes a new value o
   Maker token work in every process at once. Sign-ins and Google sign-in starts re-read the file
   before they sign (same limit), so no process signs with a replaced secret. A damaged or
   missing file never replaces a good value in memory. `HUB_SECRET_REFRESH_MS` changes the
-  one-second interval; only tests set it.
+  one-second interval; only tests set it. The interval runs on a monotonic clock, so a step of
+  the server's wall clock (an NTP correction, for example) never delays a re-read.
 - Audit: `security-settings.json` `secretRotations.<name>` = `{ at, by }` (the latest, shown on
   the card) and `secretRotationHistory` (the last 50 rotations of either, newest first, as
   `{ name, at, by }`), the counters `admin-secret-rotated` / `maker-callback-token-rotated`
@@ -81,10 +87,56 @@ hash or the sync flag.
   several processes boot together, and never moves a later cutoff backwards.
 - Admin → Manage clients → Security can log out all clients, all staff, all admins (the admin
   pressing it gets a fresh token) or everyone.
-- Failed logins are limited per account (10 per 15 minutes) and per client address (50). The
-  address is the right-most `X-Forwarded-For` entry that is not an internal proxy address
-  (`lib/auth-hardening.js` `clientIpFromRequest`): the left entries come from the client, so
+- Sign-in attempts (admin, staff and client portal sign-ins, the password re-check of a
+  rotation, and the current password of an admin password change) are counted per 15 minutes
+  under three keys (`lib/auth-hardening.js` `createLoginLimiter`, the same structure as the
+  client CMS 2.2):
+
+  | Key | Counts | Limit |
+  |---|---|---|
+  | `p:` | one account from one client address | 10 |
+  | `a:` | one account from every address | 100 |
+  | `i:` | one client address, every account | 50 |
+
+  A sign-in is refused with 429 while any of its three keys is full. So the right password from
+  an address that is not blocked by its own `p:` or `i:` key gets in while the account's `a:` key
+  is under 100: failures from other addresses cannot keep an account out on their own.
+- An attempt is counted when it starts, before the password check (`beginLogin`, no await in
+  between), so requests sent at the same moment cannot all pass a limit before the first wrong
+  password lands. At most 2 password checks run at once per account and per address; another
+  attempt meanwhile gets 429 with `Retry-After: 1`. A wrong password keeps the attempt counted.
+  The right one takes it back and clears the `p:` key of that account and address; the `a:`
+  and `i:` keys keep their other attempts. A request that ends without a verdict (an error, a
+  closed connection) counts as a wrong password, and a check still running after 10 seconds
+  stops holding its place.
+- Accounts are kept as short hashes and the table holds at most 10 000 keys; when it is full,
+  keys of accounts that do not exist in `admin.json` / `users.json` go first, then address keys,
+  and keys of real accounts stay for their whole window (`lib/login-limits.js`). The counts live
+  in memory per hub process: a restart clears them, and with several hub processes each one
+  counts on its own (the limits are then per process).
+- The address is the right-most `X-Forwarded-For` entry that is not an internal proxy address
+  (`lib/auth-hardening.js` `readClientAddress`): the left entries come from the client, so
   changing them does not reset the count.
+- Which source the limits use is logged once per process for each kind of source
+  (`[security] login limits count each client by X-Forwarded-For entry 1 from the right …`,
+  never an address). `GET /api/admin/system/security` adds `loginAddressMode` (the most common
+  source of the last hour: `forwarded`, `forwarded-internal`, `socket`, or `none`) and
+  `loginAddresses` (`distinctLastHour`, `attemptsLastHour`, `modesLastHour`, and `hopFromRight`
+  and `peer` of the latest attempt, `trustedHops`, and `processId` / `processStartedAt`); the
+  Security card shows it in one line. These figures belong to the hub process that answered the
+  request, like the counts. Addresses are kept only as short hashes, for an hour. Many attempts
+  with `distinctLastHour` 1 mean every client reaches the hub through one public proxy (a CDN in
+  front of the hosting proxy, for example), so all of them share one per-address count.
+- After a deploy, expect `loginAddressMode` `forwarded` with `peer` `internal`: the hosting proxy
+  connects from an internal address and appends the client's address. `peer` `public` with
+  `forwarded` means the hub is reached from a public address that sends `X-Forwarded-For`, so the
+  counted entry may be written by the client; the Security card then warns, and the proxy in
+  front of the hub needs checking.
+- Then `PUT /api/admin/security/login-address` with `{ "trustedHops": 2 }` (1 to 5; `null` is
+  the default, 1) makes the limits count the second public entry from the right. Raise it only
+  when every request passes that many public proxies: a request that skips one decides which
+  entry it is counted by. The value is `security-settings.json` `loginTrustedHops`, and every
+  hub process reads it within a second.
 - Tokens are stamped with the user's token version from a fresh read of
   `token-revocations.json`, so a login served by one hub process right after a "log out
   everywhere" in another is not refused a second later.
@@ -92,6 +144,7 @@ hash or the sync flag.
   a fraction of a second; the boot migration then logs a warning and the hub starts.
 
 Routes (admin token): `GET /api/admin/system/security`, `PUT /api/admin/security/token-settings`,
+`PUT /api/admin/security/login-address` (`{trustedHops}`),
 `POST /api/admin/security/revoke-tokens` (`{scope}` or `{userId}`). Client token:
 `POST /api/client/account/logout-everywhere`.
 
@@ -105,7 +158,9 @@ CMS (`lib/cms-sso.js`). The format follows the CMS version from the site's last 
   `<dataDir>/cms-sso/tokens.json` (private folder, locked writes). The CMS checks it with
   `POST /api/cms/sso/redeem` (site key in the `x-site-key` header or the body, `{ token }`
   in the body) before it opens a session. The hub answers `{ ok: true, by }` once, for that
-  site only, before expiry; anything else gets the same 401. Calls without a known site key
+  site only, before expiry; anything else gets the same 401. The site key is compared with
+  every site's key, as sha256 digests in constant time and without stopping at a match
+  (`findSiteByKeyConstantTime`), so the answer time says nothing about the keys. Calls without a known site key
   are limited per address (30 per 15 minutes), and a known key with a live token of another
   site per site and address (10), with 429 and Retry-After above that. A known key with an
   unknown, used or expired token is not limited: a CMS passes on all its visitors' links from
