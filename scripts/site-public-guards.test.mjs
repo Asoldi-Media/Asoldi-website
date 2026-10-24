@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   MAX_EVENTS_PER_CALL,
   addressGroup,
@@ -11,6 +14,8 @@ import {
 } from '../lib/site-public-guards.js';
 import { assertClientFormAllowed, assertClientFormSize, resetClientFormLimitsForTests } from '../lib/client-forms.js';
 import { resetSecurityCounters, securityCounters } from '../lib/security-counters.js';
+import { publicTrustedHops, useClientAddressSettingsFrom } from '../lib/client-address.js';
+import { updateSecuritySettings } from '../data/security-settings.js';
 
 test('the window limiter counts per key, refuses without counting and frees slots as the window moves', () => {
   let t = 0;
@@ -151,5 +156,36 @@ test('visitor forms from many addresses are still delivered past the soft site c
   } finally {
     console.warn = warn;
     resetClientFormLimitsForTests();
+  }
+});
+
+test('visitor forms use the trusted-hop setting of the sign-in limits: by default visitors behind one CDN share its entry, with 2 hops each has a count of its own', () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'asoldi-public-hops-'));
+  // The hosting proxy (internal peer) appends the CDN's address; the CDN appended the visitor's.
+  const viaCdn = (visitor) => ({ headers: { 'x-forwarded-for': `${visitor}, 203.0.113.250` }, socket: { remoteAddress: '127.0.0.1' }, get: () => '' });
+  const refused = (error) => error.status === 429;
+  useClientAddressSettingsFrom(dataDir);
+  try {
+    resetClientFormLimitsForTests();
+    assert.equal(publicTrustedHops(), null, 'no setting: the default, 1');
+    for (let i = 0; i < 8; i += 1) assertClientFormAllowed(viaCdn('198.51.100.21'), { siteId: 'cdn-site' });
+    assert.throws(() => assertClientFormAllowed(viaCdn('198.51.100.22'), { siteId: 'cdn-site' }), refused, 'by default the second visitor is counted by the CDN entry, as before');
+
+    updateSecuritySettings({ loginTrustedHops: 2 }, { dataDir, by: 'admin:tester' });
+    assert.equal(publicTrustedHops(), 2);
+    resetClientFormLimitsForTests();
+    for (let i = 0; i < 8; i += 1) assertClientFormAllowed(viaCdn('198.51.100.21'), { siteId: 'cdn-site' });
+    assert.throws(() => assertClientFormAllowed(viaCdn('198.51.100.21'), { siteId: 'cdn-site' }), refused, 'the busy visitor is still limited');
+    assertClientFormAllowed(viaCdn('198.51.100.22'), { siteId: 'cdn-site' });
+    assertClientFormAllowed(viaCdn('198.51.100.22'), { siteId: 'cdn-site' });
+
+    updateSecuritySettings({ loginTrustedHops: null }, { dataDir, by: 'admin:tester' });
+    resetClientFormLimitsForTests();
+    for (let i = 0; i < 8; i += 1) assertClientFormAllowed(viaCdn('198.51.100.21'), { siteId: 'cdn-site' });
+    assert.throws(() => assertClientFormAllowed(viaCdn('198.51.100.23'), { siteId: 'cdn-site' }), refused, 'back to the default, the CDN entry counts again');
+  } finally {
+    useClientAddressSettingsFrom('');
+    resetClientFormLimitsForTests();
+    rmSync(dataDir, { recursive: true, force: true });
   }
 });

@@ -18,6 +18,8 @@ const sc = await import('../lib/site-credentials.js');
 const { registerShopPaymentsRoutes } = await import('../lib/shop-payments-routes.js');
 const { mountClientAnalyticsRoutes, resetHubAnalyticsLimitsForTests } = await import('../lib/client-analytics-http.js');
 const { resetSecurityCounters, securityCounters } = await import('../lib/security-counters.js');
+const { useClientAddressSettingsFrom } = await import('../lib/client-address.js');
+const { updateSecuritySettings } = await import('../data/security-settings.js');
 
 const value = () => randomBytes(32).toString('base64url');
 const proofOf = (credential, nonce) => createHmac('sha256', credential).update(nonce).digest('hex');
@@ -617,6 +619,53 @@ test('analytics commerce keeps the known summary fields, bounded, and refuses la
   let last;
   for (let i = 0; i < 21; i += 1) last = await send('POST', '/api/hub/analytics/commerce', { body: { site_key: siteOther.site_key, orders: i }, headers });
   assert.equal(last.status, 429);
+});
+
+test('collect, commerce and enrollment use the trusted-hop setting of the sign-in limits: with 2 hops visitors behind one CDN are counted apart', async () => {
+  // The hosting proxy (the loopback peer here) appends the CDN's address; the CDN appended the visitor's.
+  const viaCdn = (visitor) => ({ 'x-forwarded-for': `${visitor}, 203.0.113.250` });
+  const setHops = (loginTrustedHops) => updateSecuritySettings({ loginTrustedHops }, { dataDir, by: 'admin:tester' });
+  async function burst(path, count, visitor, body) {
+    let last;
+    for (let i = 0; i < count; i += 1) last = await send('POST', path, { body, headers: viaCdn(visitor) });
+    return last;
+  }
+  useClientAddressSettingsFrom(dataDir);
+  try {
+    for (const [path, perAddress, body] of [
+      ['/api/hub/analytics/collect', 120, { site_key: siteOther.site_key, events: [] }],
+      ['/api/hub/analytics/commerce', 20, { site_key: siteOther.site_key, orders: 1 }],
+    ]) {
+      setHops(null);
+      resetHubAnalyticsLimitsForTests();
+      assert.equal((await burst(path, perAddress, '198.51.100.31', body)).status, 200);
+      assert.equal((await send('POST', path, { body, headers: viaCdn('198.51.100.32') })).status, 429, `${path}: by default every visitor behind the CDN shares its entry, as before`);
+
+      setHops(2);
+      resetHubAnalyticsLimitsForTests();
+      assert.equal((await burst(path, perAddress, '198.51.100.31', body)).status, 200);
+      assert.equal((await send('POST', path, { body, headers: viaCdn('198.51.100.31') })).status, 429, `${path}: the busy visitor is still limited`);
+      assert.equal((await send('POST', path, { body, headers: viaCdn('198.51.100.32') })).status, 200, `${path}: with 2 hops the second visitor has a count of its own`);
+    }
+
+    // Enrollment: the address its limits are asked about.
+    const asked = [];
+    limiter = {
+      unknownSite: (address) => (asked.push(address), { ok: true, retryAfterSec: 0 }),
+      site: () => ({ ok: true, retryAfterSec: 0 }),
+      proofFailed: () => {},
+    };
+    setHops(null);
+    assert.equal((await enroll({ site_key: 'no-such-site' }, value(), value(), { headers: viaCdn('198.51.100.33') })).status, 401);
+    setHops(2);
+    assert.equal((await enroll({ site_key: 'no-such-site' }, value(), value(), { headers: viaCdn('198.51.100.33') })).status, 401);
+    assert.deepEqual(asked, ['203.0.113.250', '198.51.100.33'], 'enrollment is counted by the CDN entry by default and by the visitor with 2 hops');
+  } finally {
+    setHops(null);
+    useClientAddressSettingsFrom('');
+    resetHubAnalyticsLimitsForTests();
+    freshLimits();
+  }
 });
 
 test('a heartbeat without a valid credential is kept as unverified and changes nothing the hub acts on', async () => {

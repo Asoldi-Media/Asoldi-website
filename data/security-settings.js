@@ -5,8 +5,9 @@
  *   { version, maxTokenAgeDays, revokedBefore: { all, admin, staff, client }, migrations, updatedAt, updatedBy }
  *   revokedBefore.<scope>: tokens of that class issued before this ISO time are refused.
  *   migrations.<name>: when a one-time boot migration ran (see runSecurityBootMigrations).
- *   loginTrustedHops: 1–5 public proxies whose X-Forwarded-For entries the login limits trust
- *     (lib/auth-hardening.js readClientAddress), or null for the default (1).
+ *   loginTrustedHops: 1–5 public proxies whose X-Forwarded-For entries the sign-in limits and the
+ *     address-keyed limits on public routes trust (lib/auth-hardening.js readClientAddress,
+ *     lib/client-address.js), or null for the default (1).
  *   counters.<name>: persisted counts (Maker request refusals by reason), see addSecurityCounters.
  *
  * <dataDir>/token-revocations.json

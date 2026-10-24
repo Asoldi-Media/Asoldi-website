@@ -1,7 +1,8 @@
 // Boots the real hub (server.js) on 127.0.0.1 with a throwaway data dir, an empty working
 // directory (no .env), blank credentials, safe mode and the loopback-only egress guard, then checks
 // the site credential rules over HTTP: site config, heartbeat, a money route, the enrollment switch,
-// the admin list and revoke, and the visitor form limit.
+// the admin list and revoke, the visitor form limit, and the trusted-hop setting on the heartbeat
+// and form limits.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
@@ -64,7 +65,7 @@ async function waitFor(check, { timeoutMs = 60_000, stepMs = 150, what = 'condit
   throw new Error(`timed out waiting for ${what}`);
 }
 
-test('real hub: site config, heartbeat, money routes, enrollment switch, revoke and form limits follow the site credential', { timeout: 180_000 }, async (t) => {
+test('real hub: site config, heartbeat, money routes, enrollment switch, revoke and form limits follow the site credential and the trusted-hop setting', { timeout: 180_000 }, async (t) => {
   const dataDir = mkdtempSync(join(tmpdir(), 'asoldi-site-cred-boot-'));
   const home = mkdtempSync(join(tmpdir(), 'asoldi-site-cred-home-'));
   const runDir = mkdtempSync(join(tmpdir(), 'asoldi-site-cred-cwd-'));
@@ -220,5 +221,25 @@ test('real hub: site config, heartbeat, money routes, enrollment switch, revoke 
   }
   assert.deepEqual(statuses.slice(0, 8), Array(8).fill(200));
   assert.equal(statuses[8], 429);
+
+  // 9. A CDN in front of the hosting proxy: by default every visitor behind it is counted by the
+  //    CDN's entry. With the Security setting the sign-in limits use (trustedHops 2), heartbeats
+  //    and visitor forms count each visitor apart.
+  const viaCdn = (visitor, extra) => ({ 'x-forwarded-for': `${visitor}, 203.0.113.250`, ...extra });
+  const beatFrom = async (visitor) => (await json('/api/hub/heartbeat', { method: 'POST', headers: viaCdn(visitor, { 'content-type': 'application/json' }), body: JSON.stringify({ site_key: key }) })).status;
+  const formFrom = async (visitor) => (await fetch(`${base}/api/client-forms/${key}`, { method: 'POST', headers: viaCdn(visitor, { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }), body: 'name=Kari&message=Hei' })).status;
+  for (let i = 0; i < 30; i += 1) assert.equal(await beatFrom('198.51.100.41'), 200);
+  assert.equal(await beatFrom('198.51.100.42'), 429, 'by default a second visitor behind the CDN shares its heartbeat count');
+  for (let i = 0; i < 8; i += 1) assert.equal(await formFrom('198.51.100.41'), 200);
+  assert.equal(await formFrom('198.51.100.42'), 429, 'and its form count');
+  const hops = await json('/api/admin/security/login-address', { method: 'PUT', headers: admin, body: JSON.stringify({ trustedHops: 2 }) });
+  assert.equal(hops.status, 200);
+  assert.equal(hops.body.trustedHops, 2);
+  for (let i = 0; i < 30; i += 1) assert.equal(await beatFrom('198.51.100.42'), 200, 'with 2 trusted hops the visitor has a heartbeat count of its own');
+  assert.equal(await beatFrom('198.51.100.42'), 429, 'which is still limited');
+  assert.equal(await beatFrom('198.51.100.43'), 200, 'and another visitor behind the CDN is not');
+  for (let i = 0; i < 8; i += 1) assert.equal(await formFrom('198.51.100.42'), 200, 'a form count of its own too');
+  assert.equal(await formFrom('198.51.100.42'), 429);
+  assert.equal(await formFrom('198.51.100.43'), 200);
   assert.equal(logs.includes(credential), false, 'the credential never reaches the log');
 });

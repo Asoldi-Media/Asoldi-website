@@ -231,6 +231,12 @@ hash or the sync flag.
   when every request passes that many public proxies: a request that skips one decides which
   entry it is counted by. The value is `security-settings.json` `loginTrustedHops`, and every
   hub process reads it within a second.
+- The same setting decides the address for every address-keyed limit on a public route: visitor
+  forms, analytics collect and commerce, heartbeats, site credential enrollment and the CMS
+  sign-in redeem (`lib/client-address.js`, the same rule as above). So with a CDN in front of the
+  hosting proxy, `{ "trustedHops": 2 }` also stops those limits from counting every visitor
+  behind the CDN as one address. Each request reads the value from the same one-second cache as
+  the sign-in limits, never from the disk.
 - Tokens are stamped with the user's token version from a fresh read of
   `token-revocations.json`, so a login served by one hub process right after a "log out
   everywhere" in another is not refused a second later.
@@ -337,7 +343,9 @@ file aside (`credentials.json.unreadable-<time>`, kept for repair) and start an 
 which enrolled sites enroll again on their own.
 
 Public endpoints stay on the site key, with payload checks and limits per site and address
-(`lib/site-public-guards.js`; an IPv6 address counts by its /64). A call with the site's valid
+(`lib/site-public-guards.js`; an IPv6 address counts by its /64). The address is the one the
+sign-in limits use, with the same trusted-hop setting (`PUT /api/admin/security/login-address`,
+see [Login tokens](#login-tokens); `lib/client-address.js`). A call with the site's valid
 credential (the CMS passing on its visitors) is limited per site only, in a bucket of its own that
 calls without the credential cannot use up:
 

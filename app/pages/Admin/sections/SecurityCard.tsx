@@ -94,7 +94,7 @@ function loginAddressLine(login: LoginAddresses) {
     socket: 'the connecting address (no X-Forwarded-For)',
   };
   const source = sources[login.mode] || login.mode;
-  const hops = login.trustedHops ? ` Trusted proxy hops: ${login.trustedHops}.` : '';
+  const hops = login.trustedHops ? ` Trusted proxy hops (sign-ins and the public form, analytics, heartbeat and enrollment limits): ${login.trustedHops}.` : '';
   const shared = login.attemptsLastHour >= 10 && login.distinctLastHour === 1
     ? ' Every attempt counted as one address: check the proxy in front of the hub.'
     : '';
