@@ -182,6 +182,17 @@ function changeSettings(change, { dataDir, by, now }) {
 }
 
 /**
+ * A loginTrustedHops value as stored: 1–5, or null (from null or '') for the default (1).
+ * Throws on anything else, so a caller can refuse a bad value before it writes or checks more.
+ */
+export function parseLoginTrustedHops(value) {
+  if (value === null || value === '') return null;
+  const hops = cleanTrustedHops(value);
+  if (hops === null) throw new Error(`loginTrustedHops must be a whole number from 1 to ${MAX_TRUSTED_HOPS}, or null for the default (1).`);
+  return hops;
+}
+
+/**
  * maxTokenAgeDays: a number of days (0 < d ≤ 365), or null to go back to the default.
  * loginTrustedHops: a whole number from 1 to 5, or null to go back to the default (1).
  * Only the fields present in the patch change.
@@ -197,15 +208,7 @@ export function updateSecuritySettings(patch = {}, { dataDir, by, now } = {}) {
       if (!stored) throw new Error('maxTokenAgeDays must be a number of days between 0 and 365.');
     }
   }
-  let hops;
-  if (has('loginTrustedHops')) {
-    if (patch.loginTrustedHops === null || patch.loginTrustedHops === '') {
-      hops = null;
-    } else {
-      hops = cleanTrustedHops(patch.loginTrustedHops);
-      if (hops === null) throw new Error(`loginTrustedHops must be a whole number from 1 to ${MAX_TRUSTED_HOPS}, or null for the default (1).`);
-    }
-  }
+  const hops = has('loginTrustedHops') ? parseLoginTrustedHops(patch.loginTrustedHops) : undefined;
   return changeSettings(
     (current) => ({
       ...current,

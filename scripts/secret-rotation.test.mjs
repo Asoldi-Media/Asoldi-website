@@ -297,7 +297,7 @@ function sign(secret, payload) {
   return Buffer.from(JSON.stringify({ data, sig: createHmac('sha256', secret).update(data).digest('hex') })).toString('base64url');
 }
 
-async function withApp({ adminSecretHolder, makerCallbackTokenHolder, recordRotation, loginLimiter, canConfirm }, fn) {
+async function withApp({ adminSecretHolder, makerCallbackTokenHolder, recordRotation, loginLimiter, canConfirm, verifyPassword }, fn) {
   const app = express();
   app.use(express.json());
   // The real hub verifies with the holder's current value, like server.js verifyToken.
@@ -322,7 +322,7 @@ async function withApp({ adminSecretHolder, makerCallbackTokenHolder, recordRota
   const confirmAdminPassword = hardening.createPasswordConfirmer({
     limiter: loginLimiter || hardening.createLoginLimiter(),
     accountFor: (req) => `admin:${req.admin.username}`,
-    verifyPassword: async (_req, password) => password === PASSWORD,
+    verifyPassword: verifyPassword || (async (_req, password) => password === PASSWORD),
     ...(canConfirm ? { canConfirm } : {}),
   });
   routes.registerSecurityAdminRoutes(app, {
@@ -571,7 +571,7 @@ test('routes: an admin sets the trusted proxy hops; the setting survives other w
       const put = (body, auth = token) => fetch(`${base}/api/admin/security/login-address`, {
         method: 'PUT',
         headers: { 'content-type': 'application/json', ...(auth ? { authorization: `Bearer ${auth}` } : {}) },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ currentPassword: PASSWORD, ...body }),
       });
       assert.equal((await put({ trustedHops: 2 }, '')).status, 401, 'admins only');
       assert.equal((await put({})).status, 400, 'the field is required');
@@ -608,6 +608,91 @@ test('routes: an admin sets the trusted proxy hops; the setting survives other w
     });
   } finally {
     settings.updateSecuritySettings({ maxTokenAgeDays: null, loginTrustedHops: null }, { by: 'admin:tester' });
+  }
+});
+
+test('routes: only the hub admin sets the trusted proxy hops, with the current password; wrong passwords count toward the login limits', async () => {
+  const dir = tempDir();
+  const adminSecretHolder = hardening.createHubSecretHolder({ dataDir: dir, name: 'admin-secret' });
+  const makerCallbackTokenHolder = hardening.createHubSecretHolder({ envRule: 'any', lazy: true, dataDir: dir, name: 'maker-callback-token', bytes: 32 });
+  const loginLimiter = hardening.createLoginLimiter({ log: () => {} });
+  const hubAdmin = { username: 'tester' };
+  const canConfirm = async (req) => hardening.isHubAdminPayload(req.admin, hubAdmin);
+  let checks = 0;
+  const verifyPassword = async (_req, password) => {
+    checks += 1;
+    return password === PASSWORD;
+  };
+  // The route writes security-settings.json in this file's APP_DATA_DIR (dataDir).
+  const stored = () => settings.readSecuritySettings().loginTrustedHops;
+  try {
+    await withApp({ adminSecretHolder, makerCallbackTokenHolder, loginLimiter, canConfirm, verifyPassword }, async (base, { adminToken }) => {
+      const put = (token, body, address = '203.0.113.20') => fetch(`${base}/api/admin/security/login-address`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}`, 'x-forwarded-for': address },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(10_000),
+      });
+      assert.equal(stored(), null);
+
+      // Any other admin token gets 403 before any password check, even with the right password.
+      const usersJsonAdmin = sign(adminSecretHolder.get(), { role: 'admin', userId: 'u-7', username: 'tester', at: Date.now() });
+      const otherAdmin = sign(adminSecretHolder.get(), { role: 'admin', username: 'someone-else', at: Date.now() });
+      for (const [label, token] of [['users.json admin', usersJsonAdmin], ['another username', otherAdmin]]) {
+        for (let i = 0; i < 12; i += 1) {
+          const res = await put(token, { trustedHops: 2, currentPassword: i % 3 ? `guess-${i}` : PASSWORD });
+          assert.equal(res.status, 403, `${label} attempt ${i}`);
+          const body = await res.json();
+          assert.equal(body.code, 'hub-admin-only');
+          assert.equal(body.message, hardening.HUB_ADMIN_ONLY_MESSAGE);
+        }
+      }
+      assert.equal(checks, 0, 'no password was checked');
+      assert.deepEqual(loginLimiter.keys(), [], 'no limiter key counted the refusals');
+      assert.equal(stored(), null, 'nothing stored');
+
+      // The hub admin: a missing or wrong password gets 401 and counts toward the login limits.
+      const token = adminToken();
+      const missing = await put(token, { trustedHops: 2 });
+      assert.equal(missing.status, 401);
+      assert.equal((await missing.json()).code, 'wrong-password');
+      for (let i = 0; i < 9; i += 1) {
+        const wrong = await put(token, { trustedHops: 2, currentPassword: `wrong-${i}` });
+        assert.equal(wrong.status, 401, `wrong password ${i}`);
+        assert.equal((await wrong.json()).message, 'Feil passord.');
+      }
+      assert.ok(loginLimiter.keys().length > 0, 'the wrong passwords are counted');
+      const limited = await put(token, { trustedHops: 2, currentPassword: PASSWORD });
+      assert.equal(limited.status, 429, 'ten failures from one address: that address waits, right password or not');
+      assert.ok(Number(limited.headers.get('retry-after')) > 0);
+      assert.equal(stored(), null, 'nothing stored');
+
+      // The right password from an address that is not limited gets 200 and stores the value.
+      const set = await put(token, { trustedHops: 2, currentPassword: PASSWORD }, '203.0.113.21');
+      assert.equal(set.status, 200);
+      assert.equal(set.headers.get('cache-control'), 'no-store');
+      const setBody = await set.json();
+      assert.equal(setBody.trustedHops, 2);
+      assert.equal(stored(), 2);
+
+      // A value outside 1–5 is refused as before, before any password check; null is the default.
+      const checksBefore = checks;
+      for (const bad of [0, 6, 2.5, '2.5', 'x', true, -1, {}, []]) {
+        for (const body of [{ trustedHops: bad, currentPassword: PASSWORD }, { trustedHops: bad }]) {
+          const res = await put(token, body, '203.0.113.21');
+          assert.equal(res.status, 400, JSON.stringify(body));
+          assert.match((await res.json()).message, /whole number from 1 to 5/);
+        }
+      }
+      assert.equal(checks, checksBefore, 'a bad value never reaches the password check');
+      assert.equal(stored(), 2, 'a bad value changes nothing');
+      const reset = await put(token, { trustedHops: null, currentPassword: PASSWORD }, '203.0.113.21');
+      assert.equal(reset.status, 200);
+      assert.equal((await reset.json()).trustedHops, null);
+      assert.equal(stored(), null);
+    });
+  } finally {
+    settings.updateSecuritySettings({ loginTrustedHops: null }, { by: 'admin:tester' });
   }
 });
 

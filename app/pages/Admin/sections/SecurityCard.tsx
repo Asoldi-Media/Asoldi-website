@@ -123,6 +123,9 @@ export function SecurityCard() {
   const [rotateConfirm, setRotateConfirm] = useState('');
   const [makerToken, setMakerToken] = useState<MakerTokenReveal | null>(null);
   const [days, setDays] = useState('');
+  const [editingHops, setEditingHops] = useState(false);
+  const [hops, setHops] = useState('');
+  const [hopsPassword, setHopsPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -136,6 +139,7 @@ export function SecurityCard() {
     }
     setData(body);
     setDays(body.tokens?.maxTokenAgeSource === 'data' ? String(body.tokens.maxTokenAgeDays) : '');
+    setHops(body.loginAddresses?.trustedHops ? String(body.loginAddresses.trustedHops) : '');
   }, []);
 
   useEffect(() => {
@@ -204,6 +208,26 @@ export function SecurityCard() {
     if (kind === 'maker-callback-token' && typeof json.callbackToken === 'string') {
       setMakerToken({ token: json.callbackToken, envKeys: Array.isArray(json.envKeys) ? json.envKeys : [], rotatedAt: json.rotatedAt || null });
     }
+  }
+
+  function startHops() {
+    setEditingHops(true);
+    setHops(data?.loginAddresses?.trustedHops ? String(data.loginAddresses.trustedHops) : '');
+    setHopsPassword('');
+    setError('');
+    setMessage('');
+  }
+
+  // Only the hub admin, with the current password (wrong ones count toward the login limits).
+  async function saveHops() {
+    const json = await send(
+      'PUT',
+      '/api/admin/security/login-address',
+      { trustedHops: hops ? Number(hops) : null, currentPassword: hopsPassword },
+      'Trusted proxy hops saved.',
+    );
+    setHopsPassword('');
+    if (json) setEditingHops(false);
   }
 
   const ff = data?.firefliesWebhook;
@@ -382,6 +406,51 @@ export function SecurityCard() {
                   Last forced logout: clients {when(data.tokens.revokedBefore.client)} · staff {when(data.tokens.revokedBefore.staff)} · admins {when(data.tokens.revokedBefore.admin)} · everyone {when(data.tokens.revokedBefore.all)}
                 </p>
                 {data.loginAddresses && <p className="text-xs text-gray-500">{loginAddressLine(data.loginAddresses)}</p>}
+                {!editingHops && (
+                  <button type="button" disabled={busy} onClick={startHops} className={`${button} border border-white/20 text-gray-200 hover:bg-white/10`}>
+                    Set trusted proxy hops
+                  </button>
+                )}
+                {editingHops && (
+                  <form
+                    className="rounded-lg border border-white/10 p-3 space-y-2"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      void saveHops();
+                    }}
+                  >
+                    <p className="text-xs text-amber-300">
+                      How many public proxies (a CDN in front of the hosting proxy, for example) every request passes. Raise it only when
+                      every request passes that many: the login limits then count the client by that X-Forwarded-For entry from the right.
+                      Needs your password.
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <select className={`${input} w-40`} aria-label="Trusted proxy hops" value={hops} onChange={(e) => setHops(e.target.value)}>
+                        <option value="">Default (1)</option>
+                        {[1, 2, 3, 4, 5].map((n) => (
+                          <option key={n} value={String(n)}>{n}</option>
+                        ))}
+                      </select>
+                      <input
+                        className={`${input} w-56`}
+                        type="password"
+                        autoComplete="current-password"
+                        placeholder="Your password"
+                        value={hopsPassword}
+                        onChange={(e) => setHopsPassword(e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <button type="submit" disabled={busy || !hopsPassword} className={`${button} bg-[#FF5B00] text-white`}>
+                        Save
+                      </button>
+                      <button type="button" disabled={busy} onClick={() => setEditingHops(false)} className={`${button} text-gray-400 hover:text-white`}>
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                )}
               </section>
 
               {ff && (
