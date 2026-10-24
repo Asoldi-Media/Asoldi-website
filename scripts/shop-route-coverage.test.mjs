@@ -14,7 +14,7 @@ test('every hub shop, payments-platform and CMS SSO route is called by a test', 
   const noop = (_req, _res, next) => next();
   registerShopPaymentsWebhook(app);
   registerShopPaymentsRoutes(app, { adminAuth: noop });
-  registerCmsSsoRoutes(app, { adminAuth: noop, getSiteById: () => null });
+  registerCmsSsoRoutes(app, { adminAuth: noop, getSiteById: () => null, getAllSites: () => [] });
   assert.ok(routes.length >= 19, `expected the full hub shop surface, found ${routes.length}`);
   const dir = path.dirname(fileURLToPath(import.meta.url));
   const sources = TESTS.map((f) => readFileSync(path.join(dir, f), 'utf8')).join('\n');

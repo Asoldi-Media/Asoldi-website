@@ -80,17 +80,17 @@ import * as offers from './data/offers.js';
 import * as resetTokens from './data/reset-tokens.js';
 import { getPersistentDataDir, pruneAllDataBackups } from './data/storage-path.js';
 import {
+  beginLogin,
   checkWithFreshSecret,
-  createLoginLimiter,
   createPasswordConfirmer,
   createStaffMediaGate,
-  guardLogin,
-  clientIpFromRequest,
   createHubSecretHolder,
+  isHubAdminPayload,
   readOrCreateDiskSecret,
   safeEqual,
   secretRefreshMs,
 } from './lib/auth-hardening.js';
+import { createHubLoginLimiter } from './lib/login-limits.js';
 import { isTokenAccepted, runTokenPolicyBootMigrations, stampTokenVersion } from './lib/token-policy.js';
 import { noteSecurityEvent } from './lib/security-counters.js';
 import { registerSecurityAdminRoutes } from './lib/security-admin-routes.js';
@@ -602,7 +602,7 @@ function signatureMatchesHubSecret(given, sign) {
 }
 // One-time boot migrations (a reset of admin and staff sessions; see data/security-settings.js).
 runTokenPolicyBootMigrations();
-const loginLimiter = createLoginLimiter();
+const loginLimiter = createHubLoginLimiter({ dataDir: getPersistentDataDir() });
 
 function signToken(payload) {
   const data = JSON.stringify(stampTokenVersion(payload));
@@ -714,16 +714,18 @@ function rateLimitForgotPassword(ip) {
 
 app.post('/api/admin/login', async (req, res) => {
   const { username, password } = req.body || {};
-  if (!username || !password) {
+  // Text only: anything else would make the password check throw and leave the request unanswered.
+  if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
     return res.status(400).json({ message: 'Username and password required' });
   }
-  if (!guardLogin(loginLimiter, req, res, `admin:${username}`)) return;
+  const attempt = beginLogin(loginLimiter, req, res, `admin:${username}`);
+  if (!attempt) return;
   const valid = await store.verifyAdmin(username, password);
   if (!valid) {
-    loginLimiter.fail(`admin:${username}`, clientIpFromRequest(req));
+    attempt.fail();
     return res.status(401).json({ message: 'Invalid credentials' });
   }
-  loginLimiter.succeed(`admin:${username}`);
+  attempt.succeed();
   const token = signToken({ role: 'admin', username, at: Date.now() });
   res.json({ token });
 });
@@ -10112,11 +10114,18 @@ app.delete('/api/admin/media/*', adminAuth, (req, res) => {
 
 app.post('/api/admin/change-password', adminAuth, async (req, res) => {
   const { currentPassword, newPassword } = req.body || {};
-  if (!currentPassword || !newPassword) {
+  if (typeof currentPassword !== 'string' || typeof newPassword !== 'string' || !currentPassword || !newPassword) {
     return res.status(400).json({ message: 'Current and new password required' });
   }
+  // A wrong current password counts toward the same login limits as an admin sign-in.
+  const attempt = beginLogin(loginLimiter, req, res, `admin:${sanitizeText(req.admin?.username)}`);
+  if (!attempt) return;
   const valid = await store.verifyAdmin(req.admin.username, currentPassword);
-  if (!valid) return res.status(401).json({ message: 'Current password is wrong' });
+  if (!valid) {
+    attempt.fail();
+    return res.status(401).json({ message: 'Current password is wrong' });
+  }
+  attempt.succeed();
   const admin = await store.getAdmin();
   if (!admin) return res.status(500).json({ message: 'Admin not found' });
   // Logs the admin out on every device (data/store.js); this browser gets a fresh token.
@@ -10133,12 +10142,14 @@ app.get('/api/admin/system/maker-callback-token', adminAuth, (_req, res) => {
 /**
  * Re-checks the signed-in admin's password before a sensitive action (secret rotation). Wrong
  * passwords count toward the normal login limit for that admin; the right one clears the
- * admin's failures, like a sign-in. On false the response is sent.
+ * admin's failures, like a sign-in. Only the hub admin (admin.json) may confirm: any other admin
+ * token gets 403 without a password check. On false the response is sent.
  */
 const confirmAdminPassword = createPasswordConfirmer({
   limiter: loginLimiter,
   accountFor: (req) => `admin:${sanitizeText(req.admin?.username)}`,
   verifyPassword: (req, password) => store.verifyAdmin(sanitizeText(req.admin?.username), password),
+  canConfirm: async (req) => isHubAdminPayload(req.admin, await store.getAdmin()),
 });
 
 // Security status, Fireflies webhook secret (disk), token revocation, client "log out everywhere",
@@ -10151,6 +10162,7 @@ registerSecurityAdminRoutes(app, {
   adminSecretHolder: ADMIN_SECRET_HOLDER,
   makerCallbackTokenHolder: MAKER_CALLBACK_TOKEN_HOLDER,
   confirmAdminPassword,
+  loginLimiter,
 });
 
 app.get('/api/admin/employees/overview', adminAuth, async (_req, res) => {
@@ -10659,16 +10671,18 @@ app.post('/api/admin/employees/sync/luca', adminAuth, async (_req, res) => {
 
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body || {};
-  if (!username || !password) {
+  // Text only: anything else would make the password check throw and leave the request unanswered.
+  if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
     return res.status(400).json({ message: 'Username and password required' });
   }
-  if (!guardLogin(loginLimiter, req, res, `staff:${username}`)) return;
+  const attempt = beginLogin(loginLimiter, req, res, `staff:${username}`);
+  if (!attempt) return;
   const result = await store.verifyStaff(username, password);
   if (!result.ok) {
-    loginLimiter.fail(`staff:${username}`, clientIpFromRequest(req));
+    attempt.fail();
     return res.status(401).json({ message: 'Invalid username or password' });
   }
-  loginLimiter.succeed(`staff:${username}`);
+  attempt.succeed();
   const token = signToken({ role: result.user.role, userId: result.user.id, username: result.user.username, at: Date.now() });
   res.json({
     token,
@@ -10845,13 +10859,14 @@ app.post('/api/client/auth/login', async (req, res) => {
   if (!isValidEmail(email) || !password) {
     return res.status(400).json({ message: 'E-post og passord er påkrevd.' });
   }
-  if (!guardLogin(loginLimiter, req, res, `client:${email}`)) return;
+  const attempt = beginLogin(loginLimiter, req, res, `client:${email}`);
+  if (!attempt) return;
   const result = await store.verifyClient(email, password);
   if (!result.ok) {
-    loginLimiter.fail(`client:${email}`, clientIpFromRequest(req));
+    attempt.fail();
     return res.status(401).json({ message: 'Ugyldig e-post eller passord.' });
   }
-  loginLimiter.succeed(`client:${email}`);
+  attempt.succeed();
   const user = await store.getUserById(result.user.id);
   const token = signToken({ role: 'client', userId: result.user.id, at: Date.now() });
   res.json({
@@ -12726,13 +12741,14 @@ app.post('/api/client-auth/login', async (req, res) => {
   if (!email || !password) {
     return res.status(400).json({ message: 'E-post og passord er påkrevd.' });
   }
-  if (!guardLogin(loginLimiter, req, res, `client:${email}`)) return;
+  const attempt = beginLogin(loginLimiter, req, res, `client:${email}`);
+  if (!attempt) return;
   const result = await store.verifyClient(email, password);
   if (!result.ok) {
-    loginLimiter.fail(`client:${email}`, clientIpFromRequest(req));
+    attempt.fail();
     return res.status(401).json({ message: 'Ugyldig e-post eller passord.' });
   }
-  loginLimiter.succeed(`client:${email}`);
+  attempt.succeed();
   const token = signToken({ role: 'client', userId: result.user.id, at: Date.now() });
   const profile = clientPortal.getClientProfile(result.user.id) || clientPortal.upsertClientProfile(result.user.id, {
     userId: result.user.id,
@@ -12923,7 +12939,7 @@ app.patch('/api/client-portal/state', clientAuthV2, async (req, res) => {
 });
 
 registerShopPaymentsRoutes(app, { adminAuth });
-registerCmsSsoRoutes(app, { adminAuth, getSiteById: hub.getSiteById, getSiteByKey: hub.getSiteByKey });
+registerCmsSsoRoutes(app, { adminAuth, getSiteById: hub.getSiteById, getAllSites: hub.getAllSites });
 registerSafeModeRoutes(app, { adminAuth });
 registerDeliveryRoutes(app, { adminAuth, sales, hub, salesOffers });
 
