@@ -30,6 +30,8 @@ test('Maker API URLs stay on this computer port 3000', () => {
   assert.equal(canThisPageFetchLocalMaker('127.0.0.1'), true);
   assert.match(makerPublicPageCannotFetchMessage(), /cannot fetch the Maker/i);
   const clientSrc = readFileSync(join(here, '../lib/maker-browser-client.js'), 'utf8');
+  assert.match(clientSrc, /export async function fetchLocalMakerBlob/);
+  assert.match(clientSrc, /formData/);
   assert.match(clientSrc, /if \(!canThisPageFetchLocalMaker\(\)\) return false;/);
   assert.match(clientSrc, /makerPublicPageCannotFetchMessage/);
   assert.doesNotMatch(

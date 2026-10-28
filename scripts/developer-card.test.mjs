@@ -13,6 +13,8 @@ import {
   developerCardTimeline,
   developerMaterialsView,
   developerMediaLibraryView,
+  flattenMakerUploadsForLibrary,
+  makerLibraryFilesFromRun,
   developerSummaryView,
   developerChipVisual,
   draftPhaseView,
@@ -419,6 +421,19 @@ test('Maker error does not fake an empty client media library', () => {
   assert.match(view.makerError, /unreachable/);
 });
 
+test('Maker library files come from the live run, not Hostinger', () => {
+  const flattened = flattenMakerUploadsForLibrary({
+    logo: ['C:\\\\runs\\\\r1\\\\uploads\\\\logo-mark.png'],
+    mainMedia: ['hero.jpg', { fileName: '' }],
+  }, 'run');
+  assert.equal(flattened.length, 2);
+  assert.equal(flattened[0].fileName, 'logo-mark.png');
+  const files = makerLibraryFilesFromRun('run-1', { logo: ['C:/runs/r1/uploads/logo-mark.png'] });
+  assert.equal(files[0].viaLocalMaker, true);
+  assert.equal(files[0].url, '/api/runs/run-1/upload?field=logo&index=0');
+  assert.equal(makerLibraryFilesFromRun('', { logo: ['x.png'] }).length, 0);
+});
+
 test('progress chips stay in the locked order and enqueue only through T03', () => {
   assert.deepEqual(
     DEVELOPER_PROGRESS_CHIPS.map((chip) => chip.id),
@@ -429,7 +444,7 @@ test('progress chips stay in the locked order and enqueue only through T03', () 
   assert.match(card, /DeveloperLanguageLockPopup/);
   assert.match(card, /DeveloperPagesPopup/);
   assert.match(card, /Custom edit/);
-  assert.match(card, /Tools & details/);
+  assert.match(card, /Details & tools/);
   assert.match(card, /variant="tools"/);
   assert.match(card, /primaryDeveloperDocument/);
   const labels = readFileSync(join(here, '../lib/developer-card.js'), 'utf8');
@@ -443,6 +458,10 @@ test('progress chips stay in the locked order and enqueue only through T03', () 
   assert.match(card, /sync-maker-run/);
   assert.match(card, /findMakerRunBySalesClientId/);
   assert.match(card, /Maker preview/);
+  assert.match(card, /fetchLocalMakerJson/);
+  assert.match(card, /fetchLocalMakerBlob/);
+  assert.match(card, /makerLibraryFilesFromRun/);
+  assert.doesNotMatch(card, /media\/maker/);
   assert.equal(card.includes('actionPage'), false);
   assert.equal(card.includes('1 / 2'), false);
   assert.equal(card.includes('Open preview'), false);
@@ -451,6 +470,10 @@ test('progress chips stay in the locked order and enqueue only through T03', () 
   const brief = readFileSync(join(here, '../app/pages/developer/DeveloperClientBrief.tsx'), 'utf8');
   assert.match(brief, /Fra kunden/);
   assert.match(brief, /Fra Website Maker/);
+  assert.match(brief, /Last opp/);
+  assert.match(brief, /Last ned/);
+  assert.match(brief, /Kopier/);
+  assert.match(brief, /makerError/);
   assert.match(brief, /Oppgaver/);
   assert.match(brief, /Klientdokumentasjon/);
   assert.equal(brief.includes('Checklist'), false);
@@ -501,11 +524,11 @@ test('Development card still mounts one request thread and the queue bar', () =>
   assert.match(section, /Siste måned/);
   assert.match(section, /Nåværende steg/);
   assert.match(section, /Velg alle/);
-  const manage = readFileSync(join(here, '../app/pages/Admin/sections/ManageClientsSection.tsx'), 'utf8');
-  assert.match(manage, /Klar for preview/);
-  assert.match(manage, /Klar for deployment/);
+  const goals = readFileSync(join(here, '../lib/developer-goals.js'), 'utf8');
+  assert.match(goals, /Klar for preview/);
+  assert.match(goals, /Klar for deployment/);
   const sales = readFileSync(join(here, '../app/pages/Admin/sections/SalesClientsSection.tsx'), 'utf8');
-  assert.match(sales, /ligger under Utvikling/);
+  assert.match(sales, /utvikler publiserer preview/);
   assert.equal(sales.includes("persistDevelopmentBoard('deployment')"), false);
   const server = readFileSync(join(here, '../server.js'), 'utf8');
   assert.match(server, /app\.get\('\/api\/admin\/development\/:id\/workshop-needs', developmentAuth/);
@@ -524,7 +547,7 @@ test('Development card still mounts one request thread and the queue bar', () =>
   assert.match(section, /revealBucket\(`\$\{prefix\}:noNextAction`\)/);
   assert.match(section, /'website'/);
   assert.match(card, /showFoldDueDate/);
-  assert.match(card, /sett neste handling/);
+  assert.match(sales, /sett neste handling/);
   assert.match(card, /Vis mer på dette kortet/);
   assert.match(card, /applyDeveloperGoalToggle/);
   assert.match(server, /app\.delete\('\/api\/admin\/development\/:id\/media\/client\/:fileName', developmentAuth/);

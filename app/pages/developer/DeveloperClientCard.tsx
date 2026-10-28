@@ -21,6 +21,7 @@ import {
   DEVELOPER_PROGRESS_CHIPS,
   developerCardTimeline,
   developerMediaLibraryView,
+  makerLibraryFilesFromRun,
   developerSummaryView,
   primaryDeveloperDocument,
   makerCustomEditUrl,
@@ -39,6 +40,7 @@ import {
   resolveLatestMakerPreviewStep,
   scoreMakerRunProgress,
 } from '../../../lib/developer-card.js';
+import { fetchLocalMakerBlob, fetchLocalMakerJson, makerBrowserUnreachableMessage } from '../../../lib/maker-browser-client.js';
 import { LOCAL_EDITOR_ORIGIN, editorMakerOrigin, makerUnreachableIsLocal } from '../../../lib/maker-editor-origin.js';
 import {
   buildMakerRunUrl,
@@ -169,6 +171,11 @@ export function DeveloperClientCard({
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [mediaReload, setMediaReload] = useState(0);
   const [deletingMedia, setDeletingMedia] = useState('');
+  const [copyingMedia, setCopyingMedia] = useState('');
+  const [downloadingMedia, setDownloadingMedia] = useState('');
+  const [uploadingMedia, setUploadingMedia] = useState(false);
+  const [uploadField, setUploadField] = useState('mainMedia');
+  const [makerLiveError, setMakerLiveError] = useState('');
   const [media, setMedia] = useState<{ fromClient: MediaFile[]; fromMaker: MediaFile[]; makerError: string }>({
     fromClient: [],
     fromMaker: [],
@@ -268,17 +275,21 @@ export function DeveloperClientCard({
           setMedia((prev) => developerMediaLibraryView({
             fromClient: Array.isArray(data.fromClient) ? data.fromClient : prev.fromClient,
             fromMaker: [],
-            makerError: String(data.makerError || data.message || 'Kunne ikke lese mediabiblioteket.'),
+            makerError: '',
           }));
           return;
         }
-        setMedia(developerMediaLibraryView(data));
+        setMedia(developerMediaLibraryView({
+          fromClient: data.fromClient,
+          fromMaker: [],
+          makerError: '',
+        }));
       })
-      .catch((error) => {
+      .catch(() => {
         setMedia((prev) => developerMediaLibraryView({
           fromClient: prev.fromClient,
           fromMaker: [],
-          makerError: error instanceof Error ? error.message : 'Kunne ikke lese mediabiblioteket.',
+          makerError: '',
         }));
       });
   }, [item.id, salesClientId, websiteMakerBaseUrl, makerRunId, mediaReload]);
@@ -323,22 +334,34 @@ export function DeveloperClientCard({
         else if (foundId !== runId && foundScore > linkedScore) runId = foundId;
       }
       if (!runId || !websiteMakerBaseUrl) {
-        if (!cancelled) setLiveStatus(null);
+        if (!cancelled) {
+          setLiveStatus(null);
+          setMakerLiveError(salesClientId ? 'Ingen Website Maker-kjøring er knyttet.' : '');
+        }
         return;
       }
       try {
         const data = await fetchMakerRunStatus(websiteMakerBaseUrl, runId, developmentAuthHeaders());
         if (cancelled) return;
+        setMakerLiveError('');
         await persistLiveRun(runId, data as Record<string, unknown>);
-      } catch {
+      } catch (error) {
         if (foundId && foundId !== runId) {
           try {
             const data = await fetchMakerRunStatus(websiteMakerBaseUrl, foundId, developmentAuthHeaders());
             if (cancelled) return;
+            setMakerLiveError('');
             await persistLiveRun(foundId, data as Record<string, unknown>);
-          } catch {
-            // Keep the last live chips, or the stored sales copy if this was the first fetch.
+            return;
+          } catch (second) {
+            if (!cancelled) {
+              setMakerLiveError(second instanceof Error ? second.message : makerBrowserUnreachableMessage());
+            }
+            return;
           }
+        }
+        if (!cancelled) {
+          setMakerLiveError(error instanceof Error ? error.message : makerBrowserUnreachableMessage());
         }
       }
     }
@@ -397,9 +420,14 @@ export function DeveloperClientCard({
   const dotSummary = summarizeMaterialDots(dots);
   const workshopHeld = summary.ready || Boolean(item.workshopHeldAt);
   const shortDescription = (summary.ready ? summary.intro : item.notes || '').replace(/\s+/g, ' ').trim();
+  const liveUploads = liveStatus?.run && typeof liveStatus.run === 'object'
+    ? (liveStatus.run as { uploads?: Record<string, unknown> }).uploads
+    : {};
+  const fromMaker = liveRunId ? makerLibraryFilesFromRun(liveRunId, liveUploads) : [];
+  const libraryMakerError = makerLiveError;
   const libraryFiles: BriefMediaFile[] = [
     ...media.fromClient.map((file) => ({ ...file, source: file.source || 'client' })),
-    ...media.fromMaker.map((file) => ({ ...file, source: file.source || 'run' })),
+    ...fromMaker,
   ];
   const imageFiles = libraryFiles.filter((file) => (
     String(file.mime || '').startsWith('image/')
@@ -726,27 +754,48 @@ export function DeveloperClientCard({
     }
   }
 
+  function mediaKey(file: BriefMediaFile) {
+    return `${file.source}-${file.field || ''}-${file.index ?? ''}-${file.fileName}`;
+  }
+
+  async function refreshLiveUploads() {
+    if (!liveRunId) return;
+    const data = await fetchMakerRunStatus(websiteMakerBaseUrl, liveRunId, developmentAuthHeaders());
+    setLiveStatus(data as Record<string, unknown>);
+    setMakerLiveError('');
+  }
+
+  async function readLibraryBlob(file: BriefMediaFile) {
+    if (file.viaLocalMaker) {
+      return fetchLocalMakerBlob(String(file.url || ''), { allowPublicOrigin: true });
+    }
+    const response = await fetch(String(file.url || ''), { headers: developmentAuthHeaders() });
+    if (!response.ok) throw new Error('Kunne ikke hente filen.');
+    return {
+      blob: await response.blob(),
+      fileName: file.fileName,
+      contentType: response.headers.get('content-type') || '',
+    };
+  }
+
   async function deleteMedia(file: BriefMediaFile) {
     if (!canWork) return;
     if (!window.confirm(`Slette ${file.fileName || 'filen'}?`)) return;
-    const key = `${file.source}-${file.field || ''}-${file.index ?? ''}-${file.fileName}`;
+    const key = mediaKey(file);
     setDeletingMedia(key);
     onError('');
     try {
-      const makerFile = file.source === 'run' || file.source === 'bundle';
-      const response = makerFile
-        ? await fetch(`${API}/admin/development/${encodeURIComponent(item.id)}/media/maker`, {
-            method: 'DELETE',
-            headers: { ...developmentAuthHeaders(), 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              source: file.source,
-              field: file.field,
-              index: file.index,
-              bundleId: file.bundleId,
-              websiteMakerBaseUrl,
-            }),
-          })
-        : await fetch(String(file.url || ''), { method: 'DELETE', headers: developmentAuthHeaders() });
+      if (file.viaLocalMaker || file.source === 'run' || file.source === 'bundle') {
+        if (!liveRunId) throw new Error('Ingen Website Maker-kjøring er knyttet.');
+        await fetchLocalMakerJson(`/api/runs/${encodeURIComponent(liveRunId)}/uploads`, {
+          method: 'DELETE',
+          allowPublicOrigin: true,
+          body: { field: file.field, index: file.index },
+        });
+        await refreshLiveUploads();
+        return;
+      }
+      const response = await fetch(String(file.url || ''), { method: 'DELETE', headers: developmentAuthHeaders() });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.message || 'Kunne ikke slette filen.');
       setMediaReload((value) => value + 1);
@@ -754,6 +803,68 @@ export function DeveloperClientCard({
       onError(error instanceof Error ? error.message : 'Kunne ikke slette filen.');
     } finally {
       setDeletingMedia('');
+    }
+  }
+
+  async function uploadMakerMedia(fileList: FileList) {
+    if (!canWork || !liveRunId) {
+      onError(liveRunId ? 'Du kan ikke laste opp her.' : 'Ingen Website Maker-kjøring er knyttet.');
+      return;
+    }
+    setUploadingMedia(true);
+    onError('');
+    try {
+      const form = new FormData();
+      Array.from(fileList).forEach((file) => form.append(uploadField || 'mainMedia', file));
+      await fetchLocalMakerJson(`/api/runs/${encodeURIComponent(liveRunId)}/uploads`, {
+        method: 'POST',
+        allowPublicOrigin: true,
+        formData: form,
+      });
+      await refreshLiveUploads();
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Kunne ikke laste opp filen.');
+    } finally {
+      setUploadingMedia(false);
+    }
+  }
+
+  async function downloadMedia(file: BriefMediaFile) {
+    const key = mediaKey(file);
+    setDownloadingMedia(key);
+    onError('');
+    try {
+      const { blob, fileName } = await readLibraryBlob(file);
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = href;
+      link.download = fileName || file.fileName || 'fil';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(href);
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Kunne ikke laste ned filen.');
+    } finally {
+      setDownloadingMedia('');
+    }
+  }
+
+  async function copyMedia(file: BriefMediaFile) {
+    const key = mediaKey(file);
+    setCopyingMedia(key);
+    onError('');
+    try {
+      const { blob } = await readLibraryBlob(file);
+      if (blob.type.startsWith('image/') && navigator.clipboard?.write) {
+        await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
+      } else if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(file.fileName || '');
+      }
+    } catch (error) {
+      onError(error instanceof Error ? error.message : 'Kunne ikke kopiere filen.');
+    } finally {
+      setCopyingMedia('');
     }
   }
 
@@ -993,6 +1104,9 @@ export function DeveloperClientCard({
             >
               <span className="block text-[11px] uppercase tracking-wide text-gray-500">Mediefiler</span>
               <span className="text-sm text-white tabular-nums">{libraryFiles.length}</span>
+              {libraryMakerError ? (
+                <span className="block text-[10px] text-amber-200 max-w-[220px]">{libraryMakerError}</span>
+              ) : null}
             </button>
             <div className="flex items-center gap-1.5">
               {previewImages.map((file) => (
@@ -1005,6 +1119,7 @@ export function DeveloperClientCard({
                   <DeveloperAuthImage
                     url={file.url}
                     authHeaders={developmentAuthHeaders()}
+                    viaLocalMaker={Boolean(file.viaLocalMaker)}
                     alt={file.fileName}
                     className="h-full w-full object-cover"
                   />
@@ -1305,6 +1420,7 @@ export function DeveloperClientCard({
         files={libraryFiles}
         authHeaders={developmentAuthHeaders()}
         dots={dots}
+        makerError={libraryMakerError}
         onOpenLibrary={() => setLibraryOpen(true)}
         itemId={item.id}
         latestRecordingUrl={item.latestRecordingUrl || ''}
@@ -1346,7 +1462,17 @@ export function DeveloperClientCard({
         files={libraryFiles}
         authHeaders={developmentAuthHeaders()}
         deletingKey={deletingMedia}
+        copyingKey={copyingMedia}
+        downloadingKey={downloadingMedia}
+        uploading={uploadingMedia}
+        canUpload={canWork && Boolean(liveRunId)}
+        makerError={libraryMakerError}
+        uploadField={uploadField}
+        onUploadFieldChange={setUploadField}
+        onUpload={(fileList) => void uploadMakerMedia(fileList)}
         onDelete={(file) => void deleteMedia(file)}
+        onDownload={(file) => void downloadMedia(file)}
+        onCopy={(file) => void copyMedia(file)}
       />
       {langOpen && liveRunId ? (
         <DeveloperLanguageLockPopup
