@@ -33,6 +33,10 @@ fixtures-private/
 # Local safe-mode hub data (npm run dev:safe, soak, golden profiles): outbox, intents, seeded clients.
 .local-data/
 /tmp/
+# Originals a secret-scan --redact --apply run keeps next to each file it changed.
+*.bak-redact
+# Names the secret scan refuses (client names): kept outside the repo, never committed.
+scan-names.txt
 tmp-*.mjs
 tmp-*.json
 tmp-*.jso
