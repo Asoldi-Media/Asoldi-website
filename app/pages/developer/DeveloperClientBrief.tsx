@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
-import { DOCUMENT_LABELS } from '../../../lib/developer-card.js';
+import { DEVELOPER_MAKER_UPLOAD_FIELDS, DOCUMENT_LABELS } from '../../../lib/developer-card.js';
+import { fetchLocalMakerBlob } from '../../../lib/maker-browser-client.js';
 import { DeveloperClientIdentityFull, DeveloperKundedata, type KundekortDraft } from './DeveloperKundedata';
 
 const TODO_CATEGORIES = [
@@ -29,6 +30,7 @@ export type BriefMediaFile = {
   field?: string;
   index?: number;
   bundleId?: string;
+  viaLocalMaker?: boolean;
 };
 
 type SummaryView = {
@@ -85,11 +87,13 @@ export function DeveloperAuthImage({
   authHeaders,
   alt = '',
   className = '',
+  viaLocalMaker = false,
 }: {
   url?: string;
   authHeaders: AuthHeaders;
   alt?: string;
   className?: string;
+  viaLocalMaker?: boolean;
 }) {
   const [src, setSrc] = useState('');
   const authKey = String(authHeaders?.Authorization || '');
@@ -98,19 +102,24 @@ export function DeveloperAuthImage({
     if (!url) return undefined;
     let cancelled = false;
     let objectUrl = '';
-    void fetch(url, { headers: authHeaders })
-      .then(async (response) => {
-        if (!response.ok || cancelled) return;
-        const blob = await response.blob();
+    const load = viaLocalMaker
+      ? fetchLocalMakerBlob(url, { allowPublicOrigin: true }).then((result) => result.blob)
+      : fetch(url, { headers: authHeaders }).then(async (response) => {
+        if (!response.ok) throw new Error(`media ${response.status}`);
+        return response.blob();
+      });
+    void load
+      .then((blob) => {
+        if (cancelled) return;
         objectUrl = URL.createObjectURL(blob);
-        if (!cancelled) setSrc(objectUrl);
+        setSrc(objectUrl);
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [url, authKey]);
+  }, [url, authKey, viaLocalMaker]);
 
   if (!src) return <div className={`bg-white/5 ${className}`} />;
   return <img src={src} alt={alt} className={className} />;
@@ -122,18 +131,91 @@ export function DeveloperMediaLibrary({
   files,
   authHeaders,
   deletingKey = '',
+  copyingKey = '',
+  downloadingKey = '',
+  uploading = false,
+  canUpload = false,
+  makerError = '',
+  uploadField = 'mainMedia',
+  onUploadFieldChange,
+  onUpload,
   onDelete,
+  onDownload,
+  onCopy,
 }: {
   open: boolean;
   onClose: () => void;
   files: BriefMediaFile[];
   authHeaders: AuthHeaders;
   deletingKey?: string;
+  copyingKey?: string;
+  downloadingKey?: string;
+  uploading?: boolean;
+  canUpload?: boolean;
+  makerError?: string;
+  uploadField?: string;
+  onUploadFieldChange?: (field: string) => void;
+  onUpload?: (files: FileList) => void;
   onDelete: (file: BriefMediaFile) => void;
+  onDownload?: (file: BriefMediaFile) => void;
+  onCopy?: (file: BriefMediaFile) => void;
 }) {
   if (!open) return null;
   const clientFiles = files.filter((file) => file.source !== 'maker' && file.source !== 'bundle' && file.source !== 'run');
   const makerFiles = files.filter((file) => file.source === 'maker' || file.source === 'bundle' || file.source === 'run');
+
+  function tile(file: BriefMediaFile) {
+    const key = `${file.source}-${file.field || ''}-${file.index ?? ''}-${file.fileName}`;
+    const busy = deletingKey === key || copyingKey === key || downloadingKey === key;
+    return (
+      <div key={key} className="rounded-xl border border-white/10 bg-black/30 p-2 space-y-2">
+        {isImageFile(file) && file.url ? (
+          <DeveloperAuthImage
+            url={file.url}
+            authHeaders={authHeaders}
+            viaLocalMaker={Boolean(file.viaLocalMaker)}
+            alt={file.fileName}
+            className="h-28 w-full rounded-lg object-cover bg-black/40"
+          />
+        ) : (
+          <div className="h-28 rounded-lg bg-white/5 flex items-center justify-center text-[11px] text-gray-400 px-2 text-center">
+            {file.fileName}
+          </div>
+        )}
+        <p className="text-[11px] text-gray-300 truncate">{file.fileName}</p>
+        <div className="flex flex-wrap gap-2">
+          {onDownload ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onDownload(file)}
+              className="text-[11px] text-gray-300 hover:text-white disabled:opacity-50"
+            >
+              {downloadingKey === key ? 'Laster…' : 'Last ned'}
+            </button>
+          ) : null}
+          {onCopy ? (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onCopy(file)}
+              className="text-[11px] text-gray-300 hover:text-white disabled:opacity-50"
+            >
+              {copyingKey === key ? 'Kopierer…' : 'Kopier'}
+            </button>
+          ) : null}
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onDelete(file)}
+            className="text-[11px] text-red-300 hover:text-red-200 disabled:opacity-50"
+          >
+            {deletingKey === key ? 'Sletter…' : 'Slett'}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   function column(title: string, rows: BriefMediaFile[], empty: string) {
     return (
@@ -141,34 +223,7 @@ export function DeveloperMediaLibrary({
         <h3 className="text-sm font-medium text-white">{title}</h3>
         {rows.length ? (
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-            {rows.map((file) => {
-              const key = `${file.source}-${file.field || ''}-${file.index ?? ''}-${file.fileName}`;
-              return (
-                <div key={key} className="rounded-xl border border-white/10 bg-black/30 p-2 space-y-2">
-                  {isImageFile(file) && file.url ? (
-                    <DeveloperAuthImage
-                      url={file.url}
-                      authHeaders={authHeaders}
-                      alt={file.fileName}
-                      className="h-28 w-full rounded-lg object-cover bg-black/40"
-                    />
-                  ) : (
-                    <div className="h-28 rounded-lg bg-white/5 flex items-center justify-center text-[11px] text-gray-400 px-2 text-center">
-                      {file.fileName}
-                    </div>
-                  )}
-                  <p className="text-[11px] text-gray-300 truncate">{file.fileName}</p>
-                  <button
-                    type="button"
-                    disabled={deletingKey === key}
-                    onClick={() => onDelete(file)}
-                    className="text-[11px] text-red-300 hover:text-red-200 disabled:opacity-50"
-                  >
-                    {deletingKey === key ? 'Sletter…' : 'Slett'}
-                  </button>
-                </div>
-              );
-            })}
+            {rows.map(tile)}
           </div>
         ) : (
           <p className="text-xs text-gray-500">{empty}</p>
@@ -198,7 +253,47 @@ export function DeveloperMediaLibrary({
           </button>
         </div>
         {column('Fra kunden', clientFiles, 'Ingen filer i Kundedata ennå.')}
-        {column('Fra Website Maker', makerFiles, 'Ingen Maker-filer ennå.')}
+        <section className="space-y-3">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <h3 className="text-sm font-medium text-white">Fra Website Maker</h3>
+            {canUpload && onUpload ? (
+              <label className="inline-flex items-center gap-2 text-xs text-gray-300">
+                <select
+                  value={uploadField}
+                  onChange={(event) => onUploadFieldChange?.(event.target.value)}
+                  className="rounded-md bg-black/40 border border-white/10 px-2 py-1 text-xs text-white"
+                >
+                  {DEVELOPER_MAKER_UPLOAD_FIELDS.map((field) => (
+                    <option key={field.key} value={field.key}>{field.label}</option>
+                  ))}
+                </select>
+                <span className="inline-flex items-center px-3 py-1.5 rounded-lg bg-white/10 text-white hover:bg-white/15 cursor-pointer">
+                  {uploading ? 'Laster opp…' : 'Last opp'}
+                  <input
+                    type="file"
+                    multiple
+                    className="sr-only"
+                    disabled={uploading}
+                    onChange={(event) => {
+                      if (event.target.files?.length) onUpload(event.target.files);
+                      event.target.value = '';
+                    }}
+                  />
+                </span>
+              </label>
+            ) : null}
+          </div>
+          {makerError ? <p className="text-xs text-amber-200">{makerError}</p> : null}
+          {makerFiles.length ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+              {makerFiles.map(tile)}
+            </div>
+          ) : (
+            <p className="text-xs text-gray-500">
+              {makerError ? 'Maker-filene vises når Website Creator svarer på denne PC-en.' : 'Ingen Maker-filer ennå.'}
+            </p>
+          )}
+        </section>
       </div>
     </div>
   );
@@ -224,6 +319,7 @@ export function DeveloperClientBrief({
   files,
   authHeaders,
   dots,
+  makerError = '',
   onOpenLibrary,
   kundekortSource = {},
   itemId = '',
@@ -240,6 +336,7 @@ export function DeveloperClientBrief({
   files: BriefMediaFile[];
   authHeaders: AuthHeaders;
   dots: MaterialDot[];
+  makerError?: string;
   onOpenLibrary: () => void;
   kundekortSource?: Record<string, unknown>;
   itemId?: string;
@@ -340,6 +437,7 @@ export function DeveloperClientBrief({
                       <DeveloperAuthImage
                         url={file.url}
                         authHeaders={authHeaders}
+                        viaLocalMaker={Boolean(file.viaLocalMaker)}
                         alt={file.fileName}
                         className="h-full w-full object-cover"
                       />
@@ -347,7 +445,11 @@ export function DeveloperClientBrief({
                   ))}
                 </div>
               ) : (
-                <p className="text-xs text-gray-500">Ingen bilder ennå. Hele biblioteket viser også andre filer.</p>
+                <p className="text-xs text-gray-500">
+                  {makerError
+                    ? makerError
+                    : 'Ingen bilder ennå. Hele biblioteket viser også andre filer.'}
+                </p>
               )}
             </section>
 

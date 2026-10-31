@@ -6,6 +6,7 @@ import {
 } from '../../../lib/sales-next-actions.js';
 import { ActionDateTimeInput } from '../Admin/sections/ActionDateTimeInput';
 import { WORKSHOP_FORMATS, offerStartDateFromWorkshopDueAt } from '../../../lib/workshop-action-shared.js';
+import { SalesProjectsPopup } from './SalesProjectsPopup';
 import {
   PRICING,
   type MeetingQuoteState,
@@ -78,10 +79,16 @@ function workshopDraftFromAction(action?: Props['workshopAction']): WorkshopDraf
   };
 }
 
-const SALES_MEETING_SCRIPT: { title: string; goal?: string; lines: { text?: string; quote?: string }[] }[] = [
+type ScriptItem = { lead?: string; text?: string; quote?: string };
+type ScriptLine = { text?: string; quote?: string; action?: 'projects'; items?: ScriptItem[] };
+
+const SALES_MEETING_SCRIPT: { title: string; goal?: string; lines: ScriptLine[] }[] = [
   {
     title: 'Bli kjent',
     lines: [
+      { text: 'Introduksjon av oss generelt' },
+      { text: 'Anmeldelser og', action: 'projects' },
+      { text: 'Spør om det er en andrepart som bør være med:', quote: 'Er det en andrepart som du føler bør være med på beslutningsprosessen her?' },
       { quote: 'Hvorfor sa dere ja til et møte med oss?' },
       { quote: 'Hvor lenge har dere drevet bedriften, og hvorfor startet dere? Fortell litt mer.' },
       { quote: 'Hva er en kunde verdt for dere over en livstid?' },
@@ -105,16 +112,40 @@ const SALES_MEETING_SCRIPT: { title: string; goal?: string; lines: { text?: stri
   {
     title: 'Pris',
     lines: [
-      { text: 'Oppsummer samtalen og painpoints' },
+      { text: 'Oppsummer samtalen (hvilken tier funksjonalitet)' },
+      {
+        text: 'Oppsummer painpoints',
+        items: [
+          { text: 'Bruker mye tid' },
+          { text: 'Færre kvalifiserte kunder som finner dere' },
+          { text: 'Mindre selvstendig markedsføring (de får e-postliste)' },
+          { text: 'Utsettelse av fremgang' },
+        ],
+      },
       { text: 'Sammenlign med andre aktører i bransjen (kvalitet og kost)' },
       { text: 'Si prisen:', quote: 'Så en investering fra deres side, med [funksjonalitet], hadde vært [sum]. Hva synes du om dette tallet?' },
-      { text: 'Håndter innvendinger' },
+      {
+        text: 'Håndter innvendinger',
+        items: [
+          { lead: 'For dyrt', text: 'Nettside koster [sum], et salg fra deg er [sum], nettside gir [antall salg]' },
+          { lead: 'Jeg kan gjøre det selv', text: 'Hvorfor er det ikke gjort før? Spare tid, få gjort det nå, vokse bedriften' },
+          { lead: 'Må snakke med noen', text: 'Vi spurte om alle beslutningstagere var på møtet, er det noe de vet om produktet som du ikke gjør?' },
+          { lead: 'Må tenke på det', text: 'Vi har akkurat bekreftet at dette passer for deg — du sa ja til X, ja til Y, ja til Z. Er det noe spesifikt du trenger å tenke på?' },
+        ],
+      },
     ],
   },
   {
     title: 'Signatur',
     goal: 'mål: signert avtale',
     lines: [
+      { text: 'Få kunde inn på signatursiden:', quote: 'Da har jeg sendt en liten lenke her i møtet som du kan gå inn på' },
+      {
+        text: 'Klargjør veien fremover',
+        items: [
+          { text: 'Så etter signering starter vi med en workshop hvor vi går gjennom innhold, sider og det dere ellers ønsker på nettsiden. Deretter bygger vi fortløpende.' },
+        ],
+      },
       { quote: 'For å starte prosjektet trenger vi en signatur som lar oss sette i gang. Den dekker tjenesten deres, prisen og forventet leveringstid, og dere betaler ikke noe før prosjektet er levert.' },
       { text: 'Signerer de nå: gå videre til steg 5' },
       { text: 'Vil de ha tilbud på e-post: send tilbud med kontraktkopi innen 2 timer, og avtal et telefonmøte innen 48 timer for å få signaturen' },
@@ -142,6 +173,7 @@ export function MeetingNotesModal({
 }: Props) {
   const [state, setState] = useState<MeetingQuoteState>(() => normalizeMeetingQuote(quote || emptyMeetingQuote()));
   const [workshop, setWorkshop] = useState<WorkshopDraft>(() => workshopDraftFromAction(workshopAction));
+  const [projectsOpen, setProjectsOpen] = useState(false);
   const persistRef = useRef(onPersist);
   persistRef.current = onPersist;
   const persistWorkshopRef = useRef(onPersistWorkshop);
@@ -483,8 +515,28 @@ export function MeetingNotesModal({
                     <ul className="mt-1.5 list-disc space-y-1.5 pl-4 text-[13px] leading-snug text-[#374151]">
                       {stage.lines.map((line, lineIndex) => (
                         <li key={`${stage.title}-${lineIndex}`}>
-                          {line.text ? <span>{line.text}{line.quote ? ' ' : ''}</span> : null}
+                          {line.text ? <span>{line.text}{line.quote || line.action ? ' ' : ''}</span> : null}
+                          {line.action === 'projects' ? (
+                            <button
+                              type="button"
+                              onClick={() => setProjectsOpen(true)}
+                              className="text-[#FF5B00] font-medium underline underline-offset-2 hover:text-[#e55200]"
+                            >
+                              tidligere prosjekter
+                            </button>
+                          ) : null}
                           {line.quote ? <span className="text-[#111827]">«{line.quote}»</span> : null}
+                          {line.items?.length ? (
+                            <ul className="mt-1 list-disc space-y-1 pl-4">
+                              {line.items.map((item, itemIndex) => (
+                                <li key={`${stage.title}-${lineIndex}-${itemIndex}`}>
+                                  {item.lead ? <span className="font-medium text-[#111827]">{item.lead}: </span> : null}
+                                  {item.text ? <span>{item.text}</span> : null}
+                                  {item.quote ? <span className="text-[#111827]">«{item.quote}»</span> : null}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
                         </li>
                       ))}
                     </ul>
@@ -631,19 +683,27 @@ export function MeetingNotesModal({
     </>
   );
 
+  const popup = projectsOpen ? <SalesProjectsPopup onClose={() => setProjectsOpen(false)} /> : null;
+
   if (embedded) {
     return (
-      <div className="h-full min-h-0 overflow-hidden bg-white text-[#111827] flex flex-col">
-        {shell}
-      </div>
+      <>
+        <div className="h-full min-h-0 overflow-hidden bg-white text-[#111827] flex flex-col">
+          {shell}
+        </div>
+        {popup}
+      </>
     );
   }
 
   return (
-    <div className="fixed inset-0 z-[70] bg-black/75 flex items-center justify-center p-3">
-      <div className="w-full max-w-[1180px] max-h-[94vh] overflow-hidden rounded-2xl bg-white text-[#111827] border border-[#E6E9EF] flex flex-col shadow-2xl">
-        {shell}
+    <>
+      <div className="fixed inset-0 z-[70] bg-black/75 flex items-center justify-center p-3">
+        <div className="w-full max-w-[1180px] max-h-[94vh] overflow-hidden rounded-2xl bg-white text-[#111827] border border-[#E6E9EF] flex flex-col shadow-2xl">
+          {shell}
+        </div>
       </div>
-    </div>
+      {popup}
+    </>
   );
 }

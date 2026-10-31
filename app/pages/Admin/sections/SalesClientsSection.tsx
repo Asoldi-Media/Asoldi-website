@@ -39,6 +39,7 @@ import { SalesFlowSteps } from '../../sales/SalesFlowSteps';
 import { SalesScriptsDock } from '../../sales/SalesScriptsDock';
 import { offerMissingFields, offerReadinessMessage } from '../../../../lib/offer-readiness.js';
 import { SalesGoalTimeline } from './SalesGoalTimeline';
+import { SignedContractPill } from './InboxBotPanel';
 import { SalesFocusBoard, type SalesFocusCategoryId } from './SalesFocusBoard';
 import { SalesCalendarWeek } from './SalesCalendarWeek';
 import { BookerRecordingPlayer } from '../../developer/DeveloperKundedata';
@@ -736,8 +737,8 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
   const calendarCombined = Boolean(isSalesAdmin) && !calendarPreviewOwnerId;
   const calendarPreviewIsOwn = !calendarPreviewOwnerId
     || calendarPreviewOwnerId === String(calendarStatus?.loginAccountKey || '');
-  /** Focus board ignores the Alle kunder search/filters; admin is scoped by the rep filter only. */
-  const focusBoardClients = useMemo(
+  /** Board without search: used so a search does not jump the selected tab. */
+  const focusBoardClientsAll = useMemo(
     () => (isSsuBracket ? [] : productClients.filter((client) => {
       if (client.status === 'not-sold') return false;
       if (!isSalesAdmin) return true;
@@ -745,6 +746,29 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
       return !ownerFilter || String(client.ownerId || '') === ownerFilter;
     })),
     [productClients, isSsuBracket, isSalesAdmin, ownerFilter]
+  );
+  const hasActiveFilters = Boolean(
+    normalizedClientSearchQuery
+    || (isSalesAdmin && ownerFilter)
+    || pipelineFilter
+    || meetingModeFilter
+    || nextActionFromDate
+    || nextActionToDate
+  );
+  /** Tab counts and the open category follow search/status/date, not the selected tab. */
+  const focusBoardClients = useMemo(
+    () => focusBoardClientsAll.filter((client) => {
+      if (!clientMatchesNameSearch(client)) return false;
+      if (pipelineFilter && classifySalesPipelineState(client, meetingNowMs) !== pipelineFilter) return false;
+      if (!clientMatchesMeetingModeFilter(client, meetingModeFilter)) return false;
+      if (!clientNextActionInDateRange(client, nextActionFromDate, nextActionToDate)) return false;
+      return true;
+    }),
+    [focusBoardClientsAll, normalizedClientSearchQuery, pipelineFilter, meetingModeFilter, nextActionFromDate, nextActionToDate, meetingNowMs]
+  );
+  const focusQueuesAll = useMemo(
+    () => groupSalesFocusQueues(focusBoardClientsAll, meetingNowMs, { isAdmin: isSalesAdmin }),
+    [focusBoardClientsAll, meetingNowMs, isSalesAdmin]
   );
   const focusQueues = useMemo(
     () => groupSalesFocusQueues(focusBoardClients, meetingNowMs, { isAdmin: isSalesAdmin }),
@@ -756,15 +780,17 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
   );
   const activeFocusCategory = (
     normalizeSalesFocusCategory(focusCategory, { isAdmin: isSalesAdmin })
-    || defaultSalesFocusCategory(focusQueues, { isAdmin: isSalesAdmin })
+    || defaultSalesFocusCategory(focusQueuesAll, { isAdmin: isSalesAdmin })
     || boardCategories[0]?.id
     || 'confirm'
   ) as SalesFocusCategoryId;
-  const effectiveListCategory = listCategoryOverride === null ? activeFocusCategory : listCategoryOverride;
+  const effectiveListCategory = listCategoryOverride === null
+    ? (hasActiveFilters ? '' : activeFocusCategory)
+    : listCategoryOverride;
   const categoryFilterTouched = listCategoryOverride !== null;
   const listPreviewCount = !isSsuBracket && effectiveListCategory
     ? (focusQueues[effectiveListCategory] || []).length
-    : productClients.length;
+    : (hasActiveFilters ? focusBoardClients.length : productClients.length);
   const clientMatchesFilters = (client: SalesClient) => {
     if (!clientMatchesNameSearch(client)) return false;
     if (isSalesAdmin) {
@@ -780,14 +806,6 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
     }
     return true;
   };
-  const hasActiveFilters = Boolean(
-    normalizedClientSearchQuery
-    || (isSalesAdmin && ownerFilter)
-    || pipelineFilter
-    || meetingModeFilter
-    || nextActionFromDate
-    || nextActionToDate
-  );
   /** Website: the board covers the screen and the full list opens on demand or when filtering. */
   const allClientsOpen = isSsuBracket || showAllClients || hasActiveFilters;
   const timelineClients = useMemo(
@@ -3118,6 +3136,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                         <span className="shrink-0 text-[11px] px-2 py-0.5 rounded bg-emerald-900/40 text-emerald-200 border border-emerald-700/40">Solgt</span>
                       ) : null}
                       {showCompact ? <FirefliesLiveChip client={client} /> : null}
+                      <SignedContractPill client={client} className="shrink-0" />
                       {interestLabel ? (
                         <span className={`shrink-0 px-2 py-0.5 rounded text-[11px] bg-violet-500/15 border border-violet-400/40 text-violet-100 truncate ${showCompact ? 'max-w-[52%]' : 'max-w-[46%]'}`}>
                           {interestLabel}

@@ -421,6 +421,12 @@ import {
   resolveInboxContractPath,
   tickInboxBot,
 } from './lib/inbox-bot/index.js';
+import {
+  backfillRecognizedSignedContracts,
+  markClientSoldFromSignedContract,
+  runSignedContractBackfillOnce,
+  storePreviewAcceptedContract,
+} from './lib/sales-signed-contract.js';
 import { flattenMakerUploadsForLibrary, makerProgressPatchFromHandoff, normalizeDeveloperQa } from './lib/developer-card.js';
 import {
   ADMIN_DEVELOPER_OWNER_ID,
@@ -12548,7 +12554,7 @@ app.get('/api/client/offer', clientAuth, async (req, res) => {
   return res.json({ offer: presentClientOffer(offer) });
 });
 
-function acceptPortalOfferForUser(offer, user, req) {
+async function acceptPortalOfferForUser(offer, user, req) {
   const salesOffer = offer.salesOfferId ? salesOffers.getSalesOfferById(offer.salesOfferId) : null;
   const dual = salesOffers.offerHasDualAlternatives(salesOffer);
   const choice = salesOffers.parseChosenOfferIndex(req.body?.chosenOfferIndex, dual ? 2 : 1);
@@ -12584,16 +12590,15 @@ function acceptPortalOfferForUser(offer, user, req) {
   });
   if (working.salesClientId) {
     const salesClient = sales.getSalesClientById(working.salesClientId);
-    if (salesClient?.progression?.meetingHeld && salesClient?.progression?.offerSent && !salesClient.progression.contractSigned) {
+    if (salesClient) {
+      markClientSoldFromSignedContract(salesClient.id);
       try {
-        const signed = sales.setSalesProgress(salesClient.id, 'contractSigned', true);
-        if (signed) {
-          sendPreWorkshopAfterContractSigned(signed, { previousSigned: false }).catch((error) => {
-            console.error('Pre-workshop email after portal accept failed:', salesClient.id, error);
-          });
-        }
-      } catch {
-        // Acceptance is stored even if the sales checklist cannot move yet.
+        await storePreviewAcceptedContract(sales.getSalesClientById(salesClient.id) || salesClient, {
+          email: user?.username || saved?.acceptance?.email || '',
+          acceptedAt: saved?.acceptance?.acceptedAt || '',
+        });
+      } catch (error) {
+        console.error('[signed-contract] preview PDF store failed', salesClient.id, error?.message || error);
       }
     }
   }
@@ -12605,7 +12610,7 @@ app.post('/api/client/offer/accept', clientAuth, async (req, res) => {
   if (!user || user.role !== 'client') return res.status(401).json({ message: 'Unauthorized' });
   const offer = stampOfferBusiness(offers.getActiveOfferForUser(clientOfferLookup(user)), user);
   if (!offer) return res.status(404).json({ message: 'Fant ingen tilbud på denne kontoen.' });
-  const result = acceptPortalOfferForUser(offer, user, req);
+  const result = await acceptPortalOfferForUser(offer, user, req);
   if (result.error) return res.status(result.error.status).json({ message: result.error.message });
   return res.json({ offer: presentClientOffer(result.offer) });
 });
@@ -15111,6 +15116,20 @@ app.get('/api/admin/inbox-bot/peek', adminAuth, async (req, res) => {
   } catch (error) {
     console.error('[inbox-bot] peek failed', error?.message || error);
     res.status(500).json({ message: 'Kunne ikke lese innboksen.' });
+  }
+});
+
+app.post('/api/admin/sales/signed-contract-backfill', adminAuth, async (req, res) => {
+  const apply = Boolean(req.body?.apply);
+  if (apply && String(req.body?.confirm || '') !== 'backfill-once') {
+    return res.status(400).json({ message: 'Confirm backfill-once to apply.' });
+  }
+  try {
+    const payload = await backfillRecognizedSignedContracts({ apply });
+    res.json(payload);
+  } catch (error) {
+    console.error('[signed-contract] backfill failed', error?.message || error);
+    res.status(500).json({ message: 'Kunne ikke kjøre signert-kontrakt-backfill.' });
   }
 });
 
@@ -21011,7 +21030,7 @@ app.post('/api/public/sales-preview/:id/contract/accept', async (req, res) => {
   });
   if (!signed.ok) return res.status(signed.status).json({ message: signed.message });
   const stamped = stampOfferBusiness(offer, signed.user);
-  const result = acceptPortalOfferForUser(stamped, signed.user, req);
+  const result = await acceptPortalOfferForUser(stamped, signed.user, req);
   if (result.error) return res.status(result.error.status).json({ message: result.error.message });
   return res.json(salesPreviewContractPayload(client));
 });
@@ -21500,6 +21519,9 @@ function startBackgroundJobs() {
       sendDueFirefliesLiveJoins().catch((error) => console.error('[fireflies] initial live-join failed:', error));
     },
     inboxBot: () => startInboxBotLoop(),
+    signedContractBackfill: () => runSignedContractBackfillOnce().catch((error) => {
+      console.error('[signed-contract] startup backfill failed', sanitizeText(error?.message) || error);
+    }),
     myphonerWebhookReconcile: () => startMyphonerWebhookReconcileLoop(),
     myphonerRecordingRetry: () => startMyphonerRecordingRetryLoop(),
     salesGeocodeWarmup: () => startSalesGeocodeWarmupLoop(),
