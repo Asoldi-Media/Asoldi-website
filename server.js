@@ -37,6 +37,7 @@ import { registerCmsSsoRoutes } from './lib/cms-sso.js';
 import { createHeartbeatLimits, heartbeatMarksSeen, registerSiteCredentialRoutes, siteCredentialState } from './lib/site-credentials.js';
 import { registerDeliveryRoutes } from './lib/routes/delivery-routes.js';
 import { registerCmsFeatureRoutes } from './lib/routes/cms-feature-routes.js';
+import { registerOptionalRoutes } from './lib/routes/optional-routes.js';
 import { websitePlanForNewSite } from './lib/cms-entitlements.js';
 import { runDeliverySchemaStartupSnapshot } from './lib/delivery-snapshots.js';
 import { chosenWebsiteTier, makerSitePlanPayload, websiteTierIdForClient } from './lib/site-plan.js';
@@ -12969,6 +12970,7 @@ const cmsFeatures = registerCmsFeatureRoutes(app, {
   makerAuth: requireMakerHost('jobs', { message: 'Unauthorized' }),
 });
 registerAiAdminRoutes(app, { adminAuth, sales });
+await registerOptionalRoutes(app, { adminAuth, makerAuth, salesAuth, developmentAuth, salesOrDevelopmentAuth, clientAuth, sales, hub, salesOffers, getDataDir: getPersistentDataDir });
 
 // --- Hub API (public: site config for client CMS)
 // The site key is public, so a key lookup gets the public fields only. The client admin contact and
