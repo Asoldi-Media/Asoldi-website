@@ -107,7 +107,7 @@
         inset: 0;
         z-index: 2147483647;
         display: none;
-        align-items: center;
+        align-items: stretch;
         justify-content: center;
         width: 100%;
         height: 100%;
@@ -115,7 +115,7 @@
         max-height: none;
         margin: 0;
         border: 0;
-        padding: 24px 16px;
+        padding: 10px;
         background: rgba(0,0,0,.5);
         overflow: hidden;
         overscroll-behavior: none;
@@ -138,9 +138,12 @@
       .panel {
         display: flex;
         flex-direction: column;
-        width: min(1020px, 100%);
-        max-height: min(92dvh, 92vh, 920px);
+        width: 100%;
+        max-width: none;
+        height: auto;
+        max-height: none;
         min-height: 0;
+        align-self: stretch;
         overflow: hidden;
         overscroll-behavior: contain;
         border-radius: 16px;
@@ -174,7 +177,7 @@
         background: #F3F4F6; color: #111; cursor: pointer; font-size: 20px; line-height: 1;
       }
       .scroller {
-        min-height: 0;
+        min-height: 50%;
         flex: 1 1 auto;
         overflow-x: hidden;
         overflow-y: auto;
@@ -183,8 +186,8 @@
         touch-action: pan-y;
       }
       .paper {
-        margin: 24px auto;
-        max-width: 680px;
+        margin: 20px auto;
+        max-width: 760px;
         background: #fff;
         padding: 40px 48px;
         box-shadow: 0 1px 2px rgba(17,24,39,.06);
@@ -211,23 +214,58 @@
       .offer-contract-sign-line { min-height: 56px; border-bottom: 1px solid #222; display: flex; align-items: flex-end; }
       .offer-contract-stamp { height: 52px; width: auto; max-width: 100%; object-fit: contain; }
       .foot {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: end;
+        column-gap: 20px;
         flex: 0 0 auto;
-        max-height: 50%;
         min-height: 0;
+        overflow: hidden;
+        padding: 10px 16px 12px;
+        border-top: 1px solid #E5E1D8;
+        background: rgba(255,255,255,.95);
+        transition: padding .4s ease;
+      }
+      .foot.at-bottom {
+        max-height: 42%;
         overflow-x: hidden;
         overflow-y: auto;
         overscroll-behavior: contain;
         touch-action: pan-y;
-        padding: 16px 20px 18px;
-        border-top: 1px solid #E5E1D8;
-        background: rgba(255,255,255,.95);
+        padding-top: 14px;
       }
+      .reveal {
+        grid-column: 1;
+        grid-row: 1;
+        display: grid;
+        grid-template-rows: 0fr;
+        opacity: 0;
+        visibility: hidden;
+        overflow: hidden;
+        margin: 0;
+        max-height: 0;
+        pointer-events: none;
+        transition: grid-template-rows .45s cubic-bezier(.22,.7,.2,1), opacity .28s ease, visibility 0s linear .45s, max-height .45s ease;
+      }
+      .reveal-inner {
+        min-height: 0;
+        overflow: hidden;
+        transform: translateY(12px);
+        transition: transform .45s cubic-bezier(.22,.7,.2,1);
+      }
+      .foot.at-bottom .reveal {
+        grid-template-rows: 1fr;
+        opacity: 1;
+        visibility: visible;
+        max-height: 480px;
+        pointer-events: auto;
+        transition: grid-template-rows .45s cubic-bezier(.22,.7,.2,1), opacity .28s ease, visibility 0s, max-height .45s ease;
+      }
+      .foot.at-bottom .reveal-inner { transform: translateY(0); }
       .alts { display: grid; gap: 8px; margin-bottom: 12px; }
       .alt { display: flex; gap: 10px; padding: 10px 12px; border: 1px solid #E5E7EB; border-radius: 12px; cursor: pointer; font-size: 14px; }
       .alt input { margin-top: 3px; }
-      .fields { display: grid; gap: 8px; margin-bottom: 10px; }
-      .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-      label.field { display: grid; gap: 4px; font-size: 12px; color: #6B7280; }
+      .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
       input[type="text"], input[type="email"], input[type="password"] {
         width: 100%; height: 40px; padding: 0 12px; border: 1px solid #E5E7EB; border-radius: 10px;
         font-size: 14px; color: #111827; background: #fff;
@@ -237,15 +275,29 @@
       .accept + .accept { margin-top: 8px; }
       .accept input { margin-top: 3px; flex: 0 0 auto; }
       .accept a { color: #FF5B00; font-weight: 650; }
-      .accepts { margin: 8px 0 12px; display: grid; gap: 0; }
+      .accepts { margin: 0 0 2px; display: grid; gap: 0; }
+      .sign-row {
+        grid-column: 2;
+        grid-row: 1;
+        display: flex;
+        justify-content: flex-end;
+        align-items: center;
+        gap: 8px;
+      }
+      .sign-row [name="password"] { width: min(280px, 100%); flex: 0 1 280px; }
       .go {
-        width: 100%; height: 46px; border: 0; border-radius: 12px;
-        background: #FF5B00; color: #fff; font-size: 14px; font-weight: 650; cursor: pointer;
+        width: auto; min-width: 120px; height: 40px; padding: 0 18px; border: 0; border-radius: 12px;
+        background: #FF5B00; color: #fff; font-size: 14px; font-weight: 650; cursor: pointer; flex: 0 0 auto;
       }
       .go.wait { background: #E5E7EB; color: #9CA3AF; }
-      .hint, .err { margin: 8px 0 0; text-align: center; font-size: 12px; }
-      .hint { color: #9CA3AF; }
-      .err { color: #DC2626; }
+      .err {
+        grid-column: 1 / -1;
+        grid-row: 2;
+        margin: 8px 0 0;
+        text-align: right;
+        font-size: 12px;
+        color: #DC2626;
+      }
       .account-note {
         margin: 0 0 12px;
         font-size: 13px;
@@ -256,6 +308,12 @@
       @media (max-width: 640px) {
         .paper { padding: 28px 20px; }
         .offer-contract-parties, .offer-contract-sign, .pair { grid-template-columns: 1fr; }
+        .foot { grid-template-columns: 1fr; }
+        .reveal, .sign-row { grid-column: 1; }
+        .sign-row { grid-row: 2; flex-wrap: wrap; }
+        .sign-row [name="password"] { flex: 1 1 160px; }
+        .go { flex: 1 1 auto; }
+        .err { grid-row: 3; }
       }
     </style>
     <button class="btn" type="button" data-status="idle" aria-label="Kontrakt">
@@ -479,6 +537,17 @@
   function syncBottom() {
     const reached = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 28;
     atBottom = reached || scroller.scrollHeight <= scroller.clientHeight + 8;
+    foot.classList.toggle('at-bottom', atBottom);
+    const reveal = foot.querySelector('.reveal');
+    if (reveal) {
+      reveal.setAttribute('aria-hidden', atBottom ? 'false' : 'true');
+      if (atBottom) reveal.removeAttribute('inert');
+      else reveal.setAttribute('inert', '');
+    }
+    foot.querySelectorAll('.reveal input').forEach((input) => {
+      if (atBottom) input.removeAttribute('tabindex');
+      else input.setAttribute('tabindex', '-1');
+    });
     refreshSubmit();
   }
 
@@ -503,37 +572,34 @@
     const alts = Array.isArray(state.alternatives) && state.alternatives.length >= 2 ? state.alternatives : [];
     const nameLocked = Boolean(state.name);
     foot.innerHTML = `
-      <p class="account-note">For \u00e5 signere m\u00e5 du lage en Asoldi-konto. Passordet du skriver inn blir innloggingen din p\u00e5 asoldi.com.</p>
-      ${alts.length ? `<div class="alts">${alts.map((alt) => `
-        <label class="alt">
-          <input type="radio" name="chosen" value="${alt.index === 1 ? 1 : 0}">
-          <span><strong>${escapeHtml(alt.label || '')}</strong>${alt.name ? ` — ${escapeHtml(alt.name)}` : ''}${alt.price ? `<br><small>${escapeHtml(alt.price)}</small>` : ''}</span>
-        </label>`).join('')}</div>` : ''}
-      <div class="fields">
-        <label class="field">Navn
-          <input name="name" type="text" value="${escapeAttr(state.name)}" ${nameLocked ? 'readonly' : ''} autocomplete="name">
-        </label>
-        <div class="pair">
-          <label class="field">E-post
-            <input name="email" type="email" value="${escapeAttr(state.email)}" readonly autocomplete="email">
-          </label>
-          <label class="field">Nytt Asoldi-passord
-            <input name="password" type="password" minlength="8" autocomplete="new-password" placeholder="Minst 8 tegn">
-          </label>
+      <div class="reveal" aria-hidden="true" inert>
+        <div class="reveal-inner">
+          <p class="account-note">For \u00e5 signere m\u00e5 du lage en Asoldi-konto. Passordet du skriver inn blir innloggingen din p\u00e5 asoldi.com.</p>
+          ${alts.length ? `<div class="alts">${alts.map((alt) => `
+            <label class="alt">
+              <input type="radio" name="chosen" value="${alt.index === 1 ? 1 : 0}">
+              <span><strong>${escapeHtml(alt.label || '')}</strong>${alt.name ? ` — ${escapeHtml(alt.name)}` : ''}${alt.price ? `<br><small>${escapeHtml(alt.price)}</small>` : ''}</span>
+            </label>`).join('')}</div>` : ''}
+          <div class="pair">
+            <input name="name" type="text" value="${escapeAttr(state.name)}" ${nameLocked ? 'readonly' : ''} autocomplete="name" placeholder="Navn" aria-label="Navn">
+            <input name="email" type="email" value="${escapeAttr(state.email)}" readonly autocomplete="email" placeholder="E-post" aria-label="E-post">
+          </div>
+          <div class="accepts">
+            <label class="accept">
+              <input name="terms" type="checkbox">
+              <span>Jeg godtar <a href="https://asoldi.com/vilkar" target="_blank" rel="noopener">vilk\u00e5r og betingelser</a>.</span>
+            </label>
+            <label class="accept">
+              <input name="binding" type="checkbox">
+              <span>Jeg anerkjenner at avtalen har bindingstid p\u00e5 6 m\u00e5neder.</span>
+            </label>
+          </div>
         </div>
       </div>
-      <div class="accepts">
-        <label class="accept">
-          <input name="terms" type="checkbox">
-          <span>Jeg godtar <a href="https://asoldi.com/vilkar" target="_blank" rel="noopener">vilk\u00e5r og betingelser</a>.</span>
-        </label>
-        <label class="accept">
-          <input name="binding" type="checkbox">
-          <span>Jeg anerkjenner at avtalen har bindingstid p\u00e5 6 m\u00e5neder.</span>
-        </label>
+      <div class="sign-row">
+        <input name="password" type="password" minlength="8" autocomplete="new-password" placeholder="passord: minst 8 tegn" aria-label="passord: minst 8 tegn">
+        <button class="go wait" type="button">Signer</button>
       </div>
-      <button class="go wait" type="button">Signer</button>
-      <p class="hint">Signering oppretter Asoldi-kontoen og binder dere i 6 m\u00e5neder.</p>
       <p class="err" hidden></p>
     `;
     foot.querySelectorAll('[name="chosen"]').forEach((input) => {
@@ -587,6 +653,8 @@
     delete btn.dataset.call;
     paper.innerHTML = state.contractHtml || '<p>Kontraktteksten kommer n\u00e5r tilbudet er sendt.</p>';
     chosen = null;
+    atBottom = false;
+    foot.classList.remove('at-bottom');
     renderFooter();
     overlay.classList.add('open');
     if (typeof overlay.showModal === 'function') {
@@ -690,6 +758,11 @@
   overlay.addEventListener('touchmove', trapTouch, { passive: false });
   scroller.addEventListener('scroll', syncBottom, { passive: true });
   window.addEventListener('resize', () => { if (isModalOpen()) syncBottom(); });
+  if (typeof ResizeObserver === 'function') {
+    const resizeSync = new ResizeObserver(() => { if (isModalOpen()) syncBottom(); });
+    resizeSync.observe(scroller);
+    resizeSync.observe(paper);
+  }
   void load().then(() => {
     if (fromContractLink && state.status === 'ready') openModal();
   });

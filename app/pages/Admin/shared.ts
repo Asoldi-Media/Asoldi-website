@@ -911,6 +911,13 @@ export type SalesClient = {
   inboxBot?: {
     pendingContracts: number;
     stagedElements: number;
+    signed?: {
+      fileName: string;
+      receivedAt: string;
+      summary: string;
+      status: string;
+      signedVerdict?: string;
+    } | null;
     contracts: {
       id: string;
       fileName: string;

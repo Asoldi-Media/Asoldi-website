@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useState } from 'react';
-import { FileText, Loader2 } from 'lucide-react';
+import { Check, FileText, Loader2 } from 'lucide-react';
 import { API, salesAuthHeaders, type SalesClient } from '../shared';
 
 const PdfPreviewOverlay = lazy(() =>
@@ -9,6 +9,61 @@ const PdfPreviewOverlay = lazy(() =>
 type Props = {
   client: SalesClient;
 };
+
+export function SignedContractPill({ client, className = '' }: { client: SalesClient; className?: string }) {
+  const signed = client.inboxBot?.signed;
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  if (!signed?.fileName) return null;
+
+  async function openPdf(event: React.MouseEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+    setBusy(true);
+    try {
+      const response = await fetch(
+        `${API}/admin/sales/${encodeURIComponent(client.id)}/inbox-contracts/${encodeURIComponent(signed.fileName)}`,
+        { headers: salesAuthHeaders(), cache: 'no-store' }
+      );
+      if (!response.ok) throw new Error('Kunne ikke åpne kontrakten.');
+      const blob = await response.blob();
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      setPreviewUrl(URL.createObjectURL(blob));
+    } catch {
+      setPreviewUrl('');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={(event) => void openPdf(event)}
+        disabled={busy}
+        title={signed.summary || 'Åpne signert kontrakt'}
+        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-emerald-400/50 bg-emerald-500/20 text-emerald-100 text-[11px] font-medium hover:bg-emerald-500/30 disabled:opacity-60 ${className}`}
+      >
+        {busy ? <Loader2 size={11} className="animate-spin" /> : <Check size={11} strokeWidth={3} />}
+        Signert
+      </button>
+      {previewUrl ? (
+        <Suspense fallback={null}>
+          <PdfPreviewOverlay
+            url={previewUrl}
+            title="Signert kontrakt"
+            onClose={() => {
+              URL.revokeObjectURL(previewUrl);
+              setPreviewUrl('');
+            }}
+          />
+        </Suspense>
+      ) : null}
+    </>
+  );
+}
 
 export function InboxBotPanel({ client }: Props) {
   const contracts = client.inboxBot?.contracts || [];
@@ -47,13 +102,17 @@ export function InboxBotPanel({ client }: Props) {
           <div className="min-w-0">
             <p className="text-xs text-white truncate">{row.summary || row.subject || 'Kontrakt mottatt'}</p>
             <p className="text-[11px] text-gray-500 truncate">
-              {row.signedVerdict === 'likely'
-                ? 'Signert (sjekket bunnen)'
-                : row.signedVerdict === 'possible'
-                  ? 'Mulig signert — sjekk bunnen'
-                  : row.signedVerdict === 'unsigned' || row.status === 'unsigned_copy'
-                    ? 'Usignert kopi'
-                    : 'Kontrakt'}
+              {row.signedVerdict === 'preview_accept'
+                ? 'Signert på forhåndsvisningen'
+                : row.signedVerdict === 'email' || row.status === 'accepted'
+                  ? 'Signert (e-post)'
+                  : row.signedVerdict === 'likely'
+                    ? 'Signert (sjekket bunnen)'
+                    : row.signedVerdict === 'possible'
+                      ? 'Mulig signert — sjekk bunnen'
+                      : row.signedVerdict === 'unsigned' || row.status === 'unsigned_copy'
+                        ? 'Usignert kopi'
+                        : 'Kontrakt'}
               {row.from ? ` · ${row.from}` : ''}
               {row.receivedAt ? ` · ${new Date(row.receivedAt).toLocaleString('nb-NO')}` : ''}
             </p>

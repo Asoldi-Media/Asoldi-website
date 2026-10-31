@@ -13,7 +13,9 @@ const clientPortal = await import('../data/client-portal.js');
 const { categorizeEmailHeuristic, normalizeMediaBucket } = await import('../lib/inbox-bot/categorize.js');
 const { matchSalesClient, parseEmailAddress } = await import('../lib/inbox-bot/match-client.js');
 const { pdfLooksLikeAsoldiContract } = await import('../lib/inbox-bot/pdf-text.js');
-const { fingerprintPdfBuffer, scoreContractSigning, inspectInboundContract, clientDateSignals } = await import('../lib/inbox-bot/inspect-contract.js');
+const { fingerprintPdfBuffer, scoreContractSigning, inspectInboundContract, clientDateSignals, inboundContractAcceptedByEmail } = await import('../lib/inbox-bot/inspect-contract.js');
+const { backfillRecognizedSignedContracts } = await import('../lib/sales-signed-contract.js');
+const offers = await import('../data/offers.js');
 const { resolveMailboxSource } = await import('../lib/inbox-bot/mail.js');
 const {
   backfillInboxReplies,
@@ -123,7 +125,7 @@ test('tiny bounced PDF is stored as unsigned copy and does not set contractSigne
   assert.equal(readFileSync(full).equals(pdf), true);
 });
 
-test('scan-sized inbound contract notifies pending without ticking Kontrakt', async () => {
+test('scan-sized inbound contract from the client email marks Solgt', async () => {
   const client = seedClient({
     id: 'sale-contract-scan',
     contactEmail: 'scan@nordlys.no',
@@ -150,8 +152,80 @@ test('scan-sized inbound contract notifies pending without ticking Kontrakt', as
     attachments: [{ filename: 'Asoldi-kontrakt-Tier-1-Cafe-Nordlys.pdf', mimeType: 'application/pdf', buffer: pdf }],
   });
   assert.equal(result.inspection.verdict, 'likely');
-  assert.equal(presentInboxForClient(client.id).pendingContracts, 1);
+  const inbox = presentInboxForClient(client.id);
+  assert.equal(inbox.pendingContracts, 0);
+  assert.equal(inbox.contracts[0].status, 'accepted');
+  assert.ok(inbox.signed?.fileName);
+  assert.equal(Boolean(sales.getSalesClientById(client.id).progression?.contractSigned), true);
+});
+
+test('email-matched downloaded contract PDF marks Solgt even when identical to sent', async () => {
+  const client = seedClient({
+    id: 'sale-contract-download',
+    contactEmail: 'last@nordlys.no',
+  });
+  const buffer = await buildContractPdf({
+    client: {
+      businessName: 'Cafe Nordlys',
+      orgNumber: '123456789',
+      contactPerson: 'Ola Nord',
+      contactEmail: 'last@nordlys.no',
+      businessAddress: 'Gate 1',
+    },
+    tierId: 'tier-1-standard',
+    date: new Date('2026-10-01'),
+  });
+  sales.updateSalesClient(client.id, {
+    sentContractFingerprint: fingerprintPdfBuffer(buffer, 'Asoldi-kontrakt.pdf'),
+  });
+  const result = await ingestInboxMessage({
+    id: 'imap-download-1',
+    mailbox: 'alexander@asoldi.com',
+    from: 'last@nordlys.no',
+    subject: 'Avtale',
+    text: 'Her er pdf-en',
+    mailAt: '2026-10-10T12:00:00.000Z',
+    attachmentNames: ['Asoldi-kontrakt-Tier-1-Cafe-Nordlys.pdf'],
+    attachments: [{ filename: 'Asoldi-kontrakt-Tier-1-Cafe-Nordlys.pdf', mimeType: 'application/pdf', buffer }],
+  });
+  assert.equal(result.inspection.verdict, 'unsigned');
+  assert.equal(result.item.status, 'accepted');
+  assert.equal(Boolean(sales.getSalesClientById(client.id).progression?.contractSigned), true);
+  assert.ok(presentInboxForClient(client.id).signed?.fileName);
+});
+
+test('org-only match does not auto-mark Solgt', () => {
+  assert.equal(inboundContractAcceptedByEmail({
+    inspection: { isAsoldiContract: true, inboundBytes: 80000 },
+    matched: { via: 'org', client: { id: 'x' } },
+  }), false);
+  assert.equal(inboundContractAcceptedByEmail({
+    inspection: { isAsoldiContract: true, inboundBytes: 80000 },
+    matched: { via: 'email', client: { id: 'x' } },
+  }), true);
+  assert.equal(inboundContractAcceptedByEmail({
+    inspection: { isAsoldiContract: true, inboundBytes: 200 },
+    matched: { via: 'email', client: { id: 'x' } },
+  }), false);
+});
+
+test('preview acceptance backfill marks Solgt', async () => {
+  const client = seedClient({
+    id: 'sale-preview-bf',
+    contactEmail: 'preview@nordlys.no',
+  });
+  const offer = offers.upsertPortalOffer({
+    salesClientId: client.id,
+    salesOfferId: 'offer-preview-bf',
+    targetEmail: 'preview@nordlys.no',
+    contractHtml: '<article>Avtale</article>',
+  });
+  offers.recordOfferAcceptance(offer.id, { email: 'preview@nordlys.no' });
+  const dry = await backfillRecognizedSignedContracts({ apply: false });
+  assert.ok(dry.results.some((row) => row.id === client.id && row.needsSold));
   assert.equal(Boolean(sales.getSalesClientById(client.id).progression?.contractSigned), false);
+  await backfillRecognizedSignedContracts({ apply: true });
+  assert.equal(Boolean(sales.getSalesClientById(client.id).progression?.contractSigned), true);
 });
 
 test('identical sent PDF is unsigned even if the email says signed', async () => {

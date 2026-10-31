@@ -28,6 +28,7 @@ test('safe mode default: only the outbox loops and local backfills start', () =>
     'nyAssignmentBackfill',
     'salesBookingFactsBackfill',
     'salesReminders',
+    'signedContractBackfill',
     'workshopDeskEmails',
   ]);
 });
