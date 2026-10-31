@@ -1,0 +1,32 @@
+{
+  "schema": "asoldi.delivery-brief/1",
+  "version": 1,
+  "hash": "sha256:e0ef56d6eb603d9ffe87e74c28b8210b0ea93839e2ea4fb64f1fc2c66e95e391",
+  "generatedAt": "2026-10-25T09:00:00.000Z",
+  "salesClientId": "fixture-no-transcripts",
+  "inputs": { "meetings": [], "offerHash": "offer-plain", "bankRevision": "bank-9", "reviewsRevision": 0, "promptHash": "prompt-1" },
+  "sitePlan": { "tierId": "tier-1-standard", "services": ["site", "changes", "blog"], "pages": 5, "billing": "once", "signedAt": "2026-10-06T10:00:00.000Z" },
+  "facts": {
+    "schema": "asoldi.brief.facts/1",
+    "language": "no",
+    "identity": { "brandName": "Eksempel Snekker", "legalName": "Eksempel Snekker", "orgNumber": "012345674", "source": { "kind": "client" } },
+    "contact": { "email": "snekker@example.com", "scope": "public", "phone": "+47 0000 0404", "address": "", "town": "Eksempelby", "addressVisibility": "town-only", "onlineOnly": false },
+    "positioning": { "businessWhat": "Snekkerarbeid og tilbygg.", "services": ["Tilbygg", "Terrasse"], "audience": "", "differentiators": [], "priorities": [], "brandCues": [], "toneOfVoice": "", "story": "" },
+    "products": { "catalogs": [], "focusProductId": null, "productFacts": [], "salesStatus": "" }
+  },
+  "factSources": {
+    "identity.brandName": { "kind": "client", "status": "client-confirmed" },
+    "contact.email": { "kind": "client", "status": "client-confirmed" }
+  },
+  "directives": [],
+  "iterations": [],
+  "todos": [],
+  "openDecisions": [],
+  "outOfScope": [],
+  "transcripts": [],
+  "promises": [],
+  "unbuiltPromises": [],
+  "followUps": [],
+  "delivery": { "stage": "gathering", "targetLaunchAt": "" },
+  "stats": { "extractedItems": 0, "droppedUnverifiedQuotes": 0, "costUsd": 0 }
+}

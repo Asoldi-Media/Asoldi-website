@@ -1,0 +1,36 @@
+{
+  "schema": "asoldi.delivery-brief/1",
+  "version": 4,
+  "hash": "sha256:239509dd2a319b9be2e1e2d6282cb668ac799d55b014c1a8b42c4a648b917ab5",
+  "generatedAt": "2026-10-24T09:00:00.000Z",
+  "salesClientId": "fixture-regulated",
+  "inputs": {
+    "meetings": [ { "meetingId": "fixture-regulated-workshop", "purpose": "workshop", "sha256": "06ada57c26aa5cf429e9f2c0a99e3e4a42daecd45fc4c955d7c1399ab4227ae8" } ],
+    "reviewsRevision": 2,
+    "promptHash": "prompt-1"
+  },
+  "sitePlan": { "tierId": "tier-3-ecommerce", "services": ["site", "changes", "blog", "seo", "social", "email", "backlinks", "ecom", "dashboard", "multilingual"], "pages": 10, "billing": "month", "signedAt": "2026-10-04T10:00:00.000Z" },
+  "facts": {
+    "schema": "asoldi.brief.facts/1",
+    "language": "no",
+    "identity": { "brandName": "Eksempel Helse", "legalName": "Eksempel Helse AS", "orgNumber": "012345673" },
+    "claims": {
+      "stats": [ { "id": "s1", "value": 90, "unit": "percent", "label": "fornøyde kunder", "status": "rejected", "quoteVerified": true, "source": { "kind": "transcript", "meeting": "workshop", "quote": "90 prosent er fornøyde" } } ],
+      "regulated": {
+        "domain": "food-supplement",
+        "approvedClaims": [ { "id": "rc_1", "ingredient": "vitamin D", "wording": "Vitamin D bidrar til normal funksjon av immunsystemet", "conditions": "Minst 15 % av referanseinntaket per dagsdose", "registerRef": "example-register-1", "status": "accepted", "source": { "kind": "admin" } } ],
+        "mentions": [ { "text": "Kunden vil si at produktet styrker immunforsvaret", "quote": "det styrker immunforsvaret", "meetingId": "fixture-regulated-workshop" } ]
+      }
+    },
+    "products": { "catalogs": [], "focusProductId": "prod-1", "focusProduct": "Vitamin D-dråper", "productFacts": [], "salesStatus": "selling" }
+  },
+  "factSources": {
+    "claims.stats[0]": { "kind": "transcript", "quote": "90 prosent er fornøyde", "meetingId": "fixture-regulated-workshop", "purpose": "workshop", "speaker": "Kunde", "confidence": 0.7, "status": "rejected", "quoteVerified": true, "reviewedBy": "admin", "reviewedAt": "2026-10-24T08:00:00.000Z" }
+  },
+  "directives": [],
+  "iterations": [],
+  "transcripts": [ { "meetingId": "fixture-regulated-workshop", "purpose": "workshop", "startedAt": "2026-10-12T10:00:00.000Z", "sha256": "06ada57c26aa5cf429e9f2c0a99e3e4a42daecd45fc4c955d7c1399ab4227ae8", "chars": 40000 } ],
+  "promises": [],
+  "unbuiltPromises": [],
+  "delivery": { "stage": "development", "targetLaunchAt": "" }
+}

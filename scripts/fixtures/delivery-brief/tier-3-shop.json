@@ -1,0 +1,92 @@
+{
+  "schema": "asoldi.delivery-brief/1",
+  "version": 7,
+  "hash": "sha256:230e1de308185d47ed35b55335dbd7dfe49e208fb556f3473b50199029ac5e47",
+  "generatedAt": "2026-10-22T09:00:00.000Z",
+  "salesClientId": "fixture-tier3",
+  "inputs": {
+    "meetings": [
+      { "meetingId": "fixture-tier3-sales", "purpose": "sales", "sha256": "582711b7f4ee5035abe267d50baed535678ac98fce20d82364528224d7d5242f" },
+      { "meetingId": "fixture-tier3-iteration", "purpose": "iteration", "sha256": "125b21ca79356b030acfaef0d487f3f3d5667fa89667e20689d928fe941a1ce7" }
+    ],
+    "offerHash": "offer-tier3",
+    "bankRevision": "bank-3",
+    "gateHash": "gate-3",
+    "reviewsRevision": 3,
+    "seoRevision": 5,
+    "promptHash": "prompt-1"
+  },
+  "sitePlan": { "tierId": "tier-3-ecommerce", "services": ["site", "changes", "blog", "seo", "social", "email", "backlinks", "ecom", "dashboard", "multilingual"], "pages": 10, "billing": "month", "catalogType": "normal", "signedAt": "2026-10-03T10:00:00.000Z" },
+  "offer": { "id": "offer-fixture-tier3", "status": "sent", "acceptedAt": "2026-10-03T10:00:00.000Z", "title": "Nettside – Nettbutikk", "includes": ["Nettbutikk", "Betaling", "Frakt"], "contractSummary": "Nettbutikk med betaling og frakt.", "clientIntent": { "headline": "Selge produktene på nett.", "wants": ["Rask kasse"] } },
+  "facts": {
+    "schema": "asoldi.brief.facts/1",
+    "language": "no",
+    "identity": { "brandName": "Eksempel Ull", "legalName": "Eksempelhandel AS", "orgNumber": "012345672" },
+    "logo": { "status": "missing", "mediaId": null, "wordmarkSpec": { "text": "Eksempel Ull", "case": "upper", "weight": 700, "letterSpacingEm": 0.28 } },
+    "contact": { "email": "", "phone": "+47 0000 0303", "address": "", "town": "Eksempelby", "addressVisibility": "town-only", "onlineOnly": true },
+    "socials": { "instagram": "https://instagram.com/example.shop" },
+    "positioning": { "businessWhat": "Klær i ull.", "services": [], "audience": "Voksne som går på tur", "differentiators": ["Norsk ull"], "priorities": ["quality-over-price"], "brandCues": ["nordic"], "toneOfVoice": "Rolig", "story": "" },
+    "claims": { "stats": [], "regulated": { "domain": "", "approvedClaims": [] } },
+    "products": {
+      "catalogs": [ { "layout": "normal", "categories": [ { "name": "Gensere", "products": [ { "name": "Ullgenser", "price": "1299" } ] } ] } ],
+      "focusProductId": null,
+      "productFacts": [ { "text": "Gensere strikkes i Norge", "product": "Ullgenser", "quote": "alt strikkes her i landet", "meetingId": "fixture-tier3-sales" } ],
+      "salesStatus": "pre-launch"
+    },
+    "shop": { "shipping": "Fri frakt over 1000 kr", "returns": "30 dagers retur" },
+    "timeline": { "targetLaunchAt": "2026-12-15" },
+    "content": { "density": "concise", "structure": "landing+checkout", "pagesRequested": [], "pagesExcluded": ["Blogg i menyen"], "keepAsIs": [], "mediaPlan": "", "reuseOldSite": { "url": "", "quote": "" } },
+    "previewFeedback": [ { "text": "Logoen ser feil ut", "quote": "logoen ser litt rar ut", "meetingId": "fixture-tier3-iteration" } ],
+    "media": { "manifest": [ { "id": "kd_1", "bucket": "products", "fileName": "genser.jpg", "mime": "image/jpeg", "bytes": 482113, "sha256": "4e77e7038bb6e169a4a84284f1f6596fc9ce1755229be7f483eb68eb75bd1971", "url": "", "source": "portal", "rightsConfirmed": true, "credit": "" } ] }
+  },
+  "factSources": {},
+  "directives": [
+    {
+      "id": "dir-2a3b4c5d6e7f",
+      "kind": "change",
+      "target": { "scope": "section", "area": "chrome.header", "route": null, "pageKind": null, "sectionKind": "header" },
+      "ask": "Samme bakgrunnsfarge over hele menylinjen",
+      "quote": "menyen skal ha samme farge hele veien",
+      "meetingId": "fixture-tier3-sales",
+      "source": "sales",
+      "speaker": "Kunde",
+      "confidence": 0.84,
+      "priority": "must",
+      "status": "superseded",
+      "supersededBy": "dir-3a4b5c6d7e8f",
+      "appliedInJobs": []
+    },
+    {
+      "id": "dir-3a4b5c6d7e8f",
+      "kind": "keep",
+      "target": { "scope": "section", "area": "chrome.header", "route": null, "pageKind": null, "sectionKind": "header" },
+      "ask": "Behold menylinjen slik den er nå",
+      "quote": "menyen er bra som den er nå",
+      "meetingId": "fixture-tier3-iteration",
+      "source": "iteration",
+      "speaker": "Kunde",
+      "confidence": 0.9,
+      "priority": "must",
+      "status": "open",
+      "appliedInJobs": []
+    }
+  ],
+  "iterations": [ { "id": "it-1a2b3c4d5e6f", "area": "products", "route": null, "ask": "Behold produktene", "keepAsIs": true, "quote": "produktene er perfekte", "meetingId": "fixture-tier3-iteration", "status": "open" } ],
+  "clientApproved": false,
+  "changeRequests": [ { "id": "cr_1", "type": "image", "title": "Bytt forsidebilde", "status": "accepted" } ],
+  "todos": [],
+  "openDecisions": [ { "id": "todo-2", "category": "Åpne beslutninger", "title": "Velg fraktleverandør", "detail": "", "done": false } ],
+  "outOfScope": [ { "id": "todo-3", "category": "Utenfor scope", "title": "Kassesystem", "detail": "", "done": false } ],
+  "transcripts": [
+    { "meetingId": "fixture-tier3-sales", "purpose": "sales", "startedAt": "2026-09-29T10:00:00.000Z", "sha256": "582711b7f4ee5035abe267d50baed535678ac98fce20d82364528224d7d5242f", "chars": 61234 },
+    { "meetingId": "fixture-tier3-iteration", "purpose": "iteration", "startedAt": "2026-10-20T10:00:00.000Z", "sha256": "125b21ca79356b030acfaef0d487f3f3d5667fa89667e20689d928fe941a1ce7", "chars": 20000 }
+  ],
+  "promises": [ { "id": "pr-3", "featureKey": "email.automations.abandonedCart", "text": "Påminnelse om forlatt handlekurv", "quote": "mail til folk som legger igjen ting i kurven", "meetingId": "fixture-tier3-sales", "availability": "partial" } ],
+  "unbuiltPromises": ["email.automations.abandonedCart"],
+  "followUps": [],
+  "seo": { "agreedKeywords": [ { "keyword": "ullgenser", "status": "approved", "source": "transcript", "quote": "folk søker på ullgenser" } ] },
+  "cmsSetup": { "siteId": "site-fixture-3", "productionDomain": "example.com", "seller": { "legalName": "Eksempelhandel AS", "orgNumber": "012345672", "vatRegistered": true, "vatSource": "client" }, "approval": { "clientApprovedAt": "" } },
+  "gate": { "devComplete": false, "missingDev": ["logo"], "lines": [] },
+  "delivery": { "stage": "development", "targetLaunchAt": "2026-12-15" },
+  "stats": { "extractedItems": 63, "droppedUnverifiedQuotes": 4, "costUsd": 0.07, "route": "claude:claude-haiku-5-5:medium" }
+}
