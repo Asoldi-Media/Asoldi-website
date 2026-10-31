@@ -38,13 +38,13 @@ test('disk secret is created once and reused', () => {
   }
 });
 
-test('disk secret replaces a truncated file and refuses path names', () => {
+test('disk secret never replaces a truncated file and refuses path names', () => {
   const dir = tempDir();
   try {
     mkdirSync(join(dir, 'secrets'), { recursive: true });
     writeFileSync(join(dir, 'secrets', 'admin-secret'), 'short\n');
-    const value = readOrCreateDiskSecret(dir, 'admin-secret');
-    assert.ok(value.length >= 32);
+    assert.throws(() => readOrCreateDiskSecret(dir, 'admin-secret'), (error) => error.code === 'ESECRET_UNUSABLE');
+    assert.equal(readFileSync(join(dir, 'secrets', 'admin-secret'), 'utf8'), 'short\n');
     assert.throws(() => readOrCreateDiskSecret(dir, '../escape'));
   } finally {
     rmSync(dir, { recursive: true, force: true });

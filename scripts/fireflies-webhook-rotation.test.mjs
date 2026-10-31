@@ -165,13 +165,16 @@ test('rotation replaces the secret: the old disk secret stops working', () => {
   assert.equal(fresh.ok, true);
 });
 
-test('a corrupt webhooks.json is replaced with fresh credentials', () => {
+test('a corrupt webhooks.json is left as it is until a rotation replaces it', () => {
   const dir = mkdtempSync(join(tmpdir(), 'asoldi-ff-corrupt-'));
   try {
     mkdirSync(join(dir, 'secrets'), { recursive: true });
     writeFileSync(join(dir, 'secrets', 'webhooks.json'), '{"fireflies":{"secret":"short"}}');
-    const row = secrets.ensureFirefliesWebhookSecrets({ dataDir: dir });
+    assert.equal(secrets.ensureFirefliesWebhookSecrets({ dataDir: dir }), null);
+    assert.equal(readFileSync(join(dir, 'secrets', 'webhooks.json'), 'utf8'), '{"fireflies":{"secret":"short"}}');
+    const row = secrets.rotateFirefliesWebhookSecrets({ dataDir: dir, by: 'test' });
     assert.match(row.secret, /^[0-9a-f]{64}$/);
+    assert.equal(secrets.ensureFirefliesWebhookSecrets({ dataDir: dir }).secret, row.secret);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

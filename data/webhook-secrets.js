@@ -14,20 +14,28 @@
  *
  * Every change is a locked read-modify-write on a fresh read: a rotation made by
  * another hub process is never overwritten by this process's cached copy.
+ *
+ * The file is made through the disk secret store (data/secret-store.js), only when it
+ * does not exist. A file that cannot be read, or whose Fireflies entry is damaged, is
+ * never replaced on the read path (ensure returns null, the pull ingest keeps working);
+ * a rotation by an admin writes a fresh entry.
  */
 import { randomBytes } from 'crypto';
-import { dirname, join } from 'path';
-import { createJsonOnce, readJsonCached, updateJsonLocked } from './atomic-json.js';
-import { ensurePrivateDir } from './private-dir.js';
+import { readJsonCached, readJsonFresh, updateJsonLocked } from './atomic-json.js';
+import { secretStoreFor } from './secret-store.js';
 import { getPersistentDataDir } from './storage-path.js';
 
 const FILE_NAME = 'webhooks.json';
 
 let defaultDataDir = '';
 
-export function webhookSecretsPath(dataDir) {
+function dataDirOf(dataDir) {
   if (!dataDir && !defaultDataDir) defaultDataDir = getPersistentDataDir();
-  return join(dataDir || defaultDataDir, 'secrets', FILE_NAME);
+  return dataDir || defaultDataDir;
+}
+
+export function webhookSecretsPath(dataDir) {
+  return secretStoreFor(dataDirOf(dataDir)).pathOf(FILE_NAME);
 }
 
 function nowIso(now) {
@@ -51,34 +59,49 @@ function validFireflies(row) {
 }
 
 function privatePath(dataDir) {
-  const path = webhookSecretsPath(dataDir);
-  ensurePrivateDir(dirname(path));
-  return path;
+  const store = secretStoreFor(dataDirOf(dataDir));
+  store.folder();
+  return store.pathOf(FILE_NAME);
 }
 
+let unusableNoticed = '';
+
 /**
- * Returns the trusted Fireflies credentials, generating them on first use.
- * Returns null only when the data dir cannot be written.
+ * Returns the trusted Fireflies credentials, generating them on first use (the file does not
+ * exist yet), or adding them to an older file that has no Fireflies entry at all.
+ * Returns null when the data dir cannot be written, or when the file or its Fireflies entry
+ * exists but is damaged: that file is left as it is (a rotation replaces it).
  */
 export function ensureFirefliesWebhookSecrets({ dataDir, now } = {}) {
   const path = webhookSecretsPath(dataDir);
   const cached = readJsonCached(path);
   if (cached && validFireflies(cached.fireflies)) return cached.fireflies;
   try {
-    const target = privatePath(dataDir);
-    if (!cached) {
-      const created = createJsonOnce(target, { version: 1, fireflies: newFirefliesCredentials(now) });
-      if (created && validFireflies(created.fireflies)) return created.fireflies;
+    const stored = secretStoreFor(dataDirOf(dataDir)).readOrCreateJson(FILE_NAME, {
+      create: () => ({ version: 1, fireflies: newFirefliesCredentials(now) }),
+    });
+    if (validFireflies(stored.fireflies)) {
+      // The file may have just been made: keep the hot-path read cache in step with it.
+      readJsonFresh(path);
+      return stored.fireflies;
     }
-    // The file exists without a usable Fireflies entry (older layout, hand edit, truncated file).
-    const state = updateJsonLocked(target, (fresh) => (
-      fresh && validFireflies(fresh.fireflies)
-        ? undefined
-        : { ...(fresh || {}), version: 1, fireflies: newFirefliesCredentials(now) }
-    ));
-    return state.fireflies;
+    if (stored.fireflies === undefined) {
+      // An older layout without a Fireflies entry: add one, under the lock, on a fresh read.
+      // Nothing is written when the fresh read fails or another process added an entry.
+      const state = updateJsonLocked(privatePath(dataDir), (fresh) => (
+        fresh && fresh.fireflies === undefined
+          ? { ...fresh, version: 1, fireflies: newFirefliesCredentials(now) }
+          : undefined
+      ));
+      if (state && validFireflies(state.fireflies)) return state.fireflies;
+    }
+    if (unusableNoticed !== path) {
+      unusableNoticed = path;
+      console.warn(`[security] secrets/${FILE_NAME} has a damaged Fireflies entry; it is left as it is until an admin rotates it`);
+    }
+    return null;
   } catch (error) {
-    console.warn(`[security] could not create ${FILE_NAME}: ${error?.code || error?.message || error}`);
+    console.warn(`[security] could not read or create ${FILE_NAME}: ${error?.code || error?.message || error}`);
     return null;
   }
 }
