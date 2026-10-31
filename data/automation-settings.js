@@ -122,6 +122,17 @@ export function defaultAutomationSettings() {
     },
     storage: { budgetFiles: 20000, budgetMb: 2048 },
     alerts: { to: 'ansatte@asoldi.com', hostOfflineHours: 2, jobBlockedHours: 24, digestAt: '08:00' },
+    // seo
+    // jobGating: off = the old gates decide automatic posts and Maps ranking; shadow = the old gates
+    // still decide and every site where the feature-key gate would decide differently is logged; auto =
+    // the feature-key gate decides. dfsLedger: DataForSEO spend is also booked into the monthly seo-ops
+    // ledger, which alerts at a cap and never stops a call. recordPull: the Maker may read a client's
+    // SEO record.
+    seo: {
+      jobGating: { enabled: false, mode: 'shadow' },
+      dfsLedger: { enabled: false },
+      recordPull: { enabled: false },
+    },
     // Written only by recordReleasePass (the pre-release suite), never by PUT.
     releases: {},
   };
@@ -235,6 +246,8 @@ const ENUMS = {
   'changeRequests.countAt': ['accepted'],
   'development.makerEvents': [...MAKER_EVENT_MODES],
   'migrations.deliveryBackfill': [...BACKFILL_MODES],
+  // seo
+  'seo.jobGating.mode': ['shadow', 'auto'],
 };
 
 const RANGES = {
@@ -276,6 +289,10 @@ const BOOLEANS = new Set([
   'development.previewJobs',
   'development.seoJobs',
   'promotion.auto',
+  // seo
+  'seo.jobGating.enabled',
+  'seo.dfsLedger.enabled',
+  'seo.recordPull.enabled',
 ]);
 
 function knownPaths() {

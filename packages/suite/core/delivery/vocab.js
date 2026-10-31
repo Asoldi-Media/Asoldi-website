@@ -495,6 +495,11 @@ export const SETTINGS_KEYS = Object.freeze({
   // v2
   makerEvents: 'development.makerEvents',
   deliveryBackfill: 'migrations.deliveryBackfill',
+  // seo
+  seoJobGating: 'seo.jobGating.enabled',
+  seoJobGatingMode: 'seo.jobGating.mode',
+  seoDfsLedger: 'seo.dfsLedger.enabled',
+  seoRecordPull: 'seo.recordPull.enabled',
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);
