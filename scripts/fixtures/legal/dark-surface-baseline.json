@@ -1,0 +1,1222 @@
+{
+  "contracts": {
+    "tier1": {
+      "htmlSha256": "d0f8488294702199fa18cb760a61f94999c299905cb4cb5adf3c1ed78d1ca95d",
+      "articleSha256": "4323ba8c71f40a9ad0f488eadb47ef2c571ba73d2ae41bc98bcd429fdca3a59e",
+      "pdfSha256": "946fb48d2e060a1aa52303f1eed0e76ea57ea23937d549a268800ad9a8400e1a"
+    },
+    "tier2": {
+      "htmlSha256": "429b3fa2850c71cce651caf70b9eb1ce1a6f60bd5e65561bbb80a7c84e85139e",
+      "articleSha256": "091520ccbe46166bc6946a630c40be871f24199f938973f11c5f819112b51c3e",
+      "pdfSha256": "5d9ec49f224ab4f55f97122597861a39ed9268ed67a62c14aa4a9942a4340003"
+    },
+    "tier3": {
+      "htmlSha256": "4c282be59e0710d7c48ab561d09a81bf1d34bbf6de8b7aa0b6b1b17bda3142e4",
+      "articleSha256": "466f76f696c5228cf7af7f5e675b478119260f9add807dfb0141a7de185bc718",
+      "pdfSha256": "fdcddadba6d0175b21d0ffacdfc677c633dd4c667c9e501ff626f29204405ad1"
+    },
+    "tier2En": {
+      "htmlSha256": "855259e1f8ee72adc1035edf29c78e5f19c06d62a60af4bcef71186053d25a1f",
+      "articleSha256": "26bb78e49e053c996ada69ff20132496404e2b8bee29110892c6e19dd6a798d4",
+      "pdfSha256": "77d9104d681d9eba2da40f4964efe0fdd899f35dd8e10dc7b26b5506817990b2"
+    },
+    "tier1Fees": {
+      "htmlSha256": "abc24cd9cb5657b97b94df64bd11e5414cb1ee8014b039d90bc7381402119ce2",
+      "articleSha256": "12d591afca5670821146aca46b994b8e7f2f6afafa2be82310a5831fde7516d9",
+      "pdfSha256": "703ecd616f78c163c0f675e2a57b01126b616b797b4f552f0dc47d6596c93f65"
+    },
+    "tier2Mva": {
+      "htmlSha256": "62987a9a96295c3d012390dc813feb54063ee92506321cce71d9e0e28dec8343",
+      "articleSha256": "2249d56fbb473c10afffb301faaaa74e2dcaef0002dbc36f12bb99bb2ff5591f",
+      "pdfSha256": "c0b56438ee4899c2dd8a9e4409eb6aa076ee2dd42b2486cb0c782d75ca52f2b6"
+    },
+    "custom": {
+      "htmlSha256": "0bc43575946b7a94029e215c81c1db8a05fa1c9c75e2624551b044f7907d52da",
+      "articleSha256": "96b31361ab94c2a0f1d39a800cc50e3cd29c03298929f8766c33dfd38fd4ee95",
+      "pdfSha256": "87aa12b770e94c8a81d5b20c08acb041ad341da85474e23570b805a136a33ce2"
+    },
+    "dual": {
+      "htmlSha256": "1433eb6d242a4d9803e5f54f89dc06bd6b8e5a1276357d367ca0cabcb9474209",
+      "articleSha256": "13bae6e33f362994312cb726edb83707c1534e40173ba6b642ebb7388548a1a5",
+      "pdfSha256": "c48f1784a38b26d17f9c1af473b4787a0c6197b2a3e35f61e00db49c0aa809d9"
+    }
+  },
+  "copy": {
+    "nb": "982b97e1791c1fa8a169cf269c445ccef9caa9c0bd9efd6cec64ee05efd6d1e3",
+    "en": "39fd2016bf1e40e02503930ad82e7a46c51c02e020510e9ec3a6aa56c344ce9d"
+  },
+  "tiers": {
+    "tier-1-standard": {
+      "pricingCard": {
+        "id": "starter",
+        "name": "Starter",
+        "price": "499,-/mnd",
+        "description": "Simpel og funksjonell nettside.",
+        "includedFeatures": [
+          "Full nettsideutvikling",
+          "Opp til 5 hovedsider",
+          "Koble til eget domene",
+          "Hosting og vedlikehold",
+          "Kontaktskjema & standard seksjoner",
+          "HTML-basert side med sitemap",
+          "Opptil 4 innholdsendringer/mnd",
+          "Innledende veiledningsmøte",
+          "Leveringstid: 14 arbeidsdager"
+        ],
+        "notIncludedFeatures": [
+          "SEO optimalisering for 1–3 søkeord",
+          "Rangering på Google, Google Maps og AI-søk",
+          "Stedstilpassede blogginnlegg (inntil 3/uke ved ønske)",
+          "Asoldi-nettverk for internlenker",
+          "Anmeldelser & sosiale medier synk",
+          "E-postliste innsamling",
+          "Analyse-dashbord med egne rangeringer",
+          "SEO-rapportering",
+          "Nettbutikk-funksjonalitet",
+          "Flerspråklig funksjonalitet",
+          "Nettbutikk-analyse (konvertering, AOV)",
+          "Gjennomgangsmøte"
+        ],
+        "popular": false
+      },
+      "clientPlan": {
+        "id": "tier-1-standard",
+        "name": "Tier 1: Standard",
+        "price": "499,-/mnd",
+        "setupFee": "999,- /engang",
+        "domainPrice": "79,-/mnd",
+        "emailPrice": "49,-/mnd",
+        "description": "Simpel og funksjonell nettside.",
+        "features": [
+          "Full nettsideutvikling",
+          "Opp til 5 hovedsider",
+          "Koble til eget domene",
+          "Hosting og vedlikehold",
+          "Kontaktskjema & standard seksjoner",
+          "HTML-basert side med sitemap"
+        ],
+        "includedFeatures": [
+          "Full nettsideutvikling",
+          "Opp til 5 hovedsider",
+          "Koble til eget domene",
+          "Hosting og vedlikehold",
+          "Kontaktskjema & standard seksjoner",
+          "HTML-basert side med sitemap",
+          "Opptil 4 innholdsendringer/mnd",
+          "Innledende veiledningsmøte",
+          "Leveringstid: 14 arbeidsdager"
+        ],
+        "notIncludedFeatures": [
+          "SEO optimalisering for 1–3 søkeord",
+          "Rangering på Google, Google Maps og AI-søk",
+          "Stedstilpassede blogginnlegg (inntil 3/uke ved ønske)",
+          "Asoldi-nettverk for internlenker",
+          "Anmeldelser & sosiale medier synk",
+          "E-postliste innsamling",
+          "Analyse-dashbord med egne rangeringer",
+          "SEO-rapportering",
+          "Nettbutikk-funksjonalitet",
+          "Flerspråklig funksjonalitet",
+          "Nettbutikk-analyse (konvertering, AOV)",
+          "Gjennomgangsmøte"
+        ],
+        "popular": false,
+        "category": "website"
+      },
+      "offerProduct": {
+        "kind": "tier",
+        "tierId": "tier-1-standard",
+        "name": "Nettside – Standard",
+        "pages": 5,
+        "includes": [
+          "Full nettsideutvikling",
+          "Koble til eget domene",
+          "Hosting og vedlikehold",
+          "Kontaktskjema & standard seksjoner",
+          "HTML-basert side med sitemap",
+          "Opptil 4 innholdsendringer/mnd",
+          "Innledende veiledningsmøte"
+        ],
+        "note": "",
+        "priceExMva": 499,
+        "deliveryWeeks": 2,
+        "deliveryWorkDays": 14
+      },
+      "productsWithTier": [
+        {
+          "kind": "tier",
+          "tierId": "tier-1-standard",
+          "name": "Nettside – Standard",
+          "pages": 5,
+          "includes": [
+            "Full nettsideutvikling",
+            "Koble til eget domene",
+            "Hosting og vedlikehold",
+            "Kontaktskjema & standard seksjoner",
+            "HTML-basert side med sitemap",
+            "Opptil 4 innholdsendringer/mnd",
+            "Innledende veiledningsmøte"
+          ],
+          "note": "",
+          "priceExMva": 499,
+          "deliveryWeeks": 2,
+          "deliveryWorkDays": 14,
+          "id": "prod-tier-1-standard"
+        }
+      ],
+      "contractNb": {
+        "title": "Nivå 1 – Nettsidepakke",
+        "lead": "Inkluderer:",
+        "includes": [
+          "Full nettsidedesign og utvikling (responsivt oppsett, utvikling og sidemal) for en enkel nettside uten nettbutikk, inntil fem (5) hovedsider",
+          "HTML-basert nettside med sitemap",
+          "Domenekobling: kunden eier domenet; Asoldi kobler det til inkludert hosting. Kunden kjøper domenet selv hvis de ikke allerede har ett",
+          "Hosting og vedlikehold på Asoldis Hostinger-nettverk så lenge abonnementet er aktivt",
+          "Kontaktskjema og vanlige bedriftsseksjoner (uten nettbutikk og visning av anmeldelser)",
+          "Inntil fire (4) mindre innholdsendringer per måned (for eksempel priser, bilder eller tekst). Ingen tillegg eller fjerning av seksjoner",
+          "Ett veiledningsmøte: hvordan bruke kunde-CMS. Møtet holdes én gang",
+          "Ingen avansert funksjonalitet, SEO-program, bloggskriving eller nettbutikk",
+          "Ingen analyseside i kunde-CMS og ingen rangerings- eller resultatrapportering"
+        ],
+        "kpis": {
+          "lead": "Rapportering og analyse:",
+          "bullets": [
+            "Dette nivået inkluderer ikke analyseside i kunde-CMS.",
+            "Dette nivået inkluderer ikke rangeringsrapporter, resultatsammendrag eller annen planlagt analyserapportering."
+          ]
+        }
+      },
+      "contractEn": {
+        "title": "Tier 1 – Website Package",
+        "lead": "Includes:",
+        "includes": [
+          "Full website design and development (responsive layout, development and page layout) for a simple, non-ecommerce website, up to five (5) main pages",
+          "HTML-based website with sitemap",
+          "Domain connection: the Client owns their domain; Asoldi connects it to the included hosting. The Client buys a domain if they do not already have one",
+          "Hosting and maintenance on the Asoldi / Hostinger network while the subscription is active",
+          "Contact form and standard business sections (excluding ecommerce and reviews display)",
+          "Up to four (4) smaller content changes per month (for example prices, images or text). No adding or removing sections",
+          "One guidance meeting: how to use the Client CMS. The meeting is held once",
+          "No advanced functionality, SEO programme, blog writing or ecommerce",
+          "No analytics page in the Client CMS and no ranking or performance reporting"
+        ],
+        "kpis": {
+          "lead": "Reporting and analytics:",
+          "bullets": [
+            "This tier does not include an analytics page in the Client CMS.",
+            "This tier does not include ranking reports, performance summaries or other scheduled analytics reporting."
+          ]
+        }
+      }
+    },
+    "tier-2-seo": {
+      "pricingCard": {
+        "id": "seo",
+        "name": "SEO",
+        "price": "1 499,-/mnd",
+        "description": "Optimalisert nettside for økt synlighet og konvertering.",
+        "includedFeatures": [
+          "Full nettsideutvikling",
+          "Opp til 7 hovedsider",
+          "Koble til eget domene",
+          "Hosting og vedlikehold",
+          "Kontaktskjema & standard seksjoner",
+          "HTML-basert side med sitemap",
+          "Opptil 4 innholdsendringer/mnd",
+          "Innledende veiledningsmøte",
+          "SEO optimalisering for 1–3 søkeord",
+          "Rangering på Google, Google Maps og AI-søk",
+          "Stedstilpassede blogginnlegg (inntil 3/uke ved ønske)",
+          "Asoldi-nettverk for internlenker",
+          "Anmeldelser & sosiale medier synk",
+          "E-postliste innsamling",
+          "Analyse-dashbord med egne rangeringer",
+          "Bi-ukentlig grunrapport",
+          "Leveringstid: 14 arbeidsdager"
+        ],
+        "notIncludedFeatures": [
+          "Nettbutikk-funksjonalitet",
+          "Flerspråklig funksjonalitet",
+          "Nettbutikk-analyse (konvertering, AOV)",
+          "Gjennomgangsmøte"
+        ],
+        "popular": true
+      },
+      "clientPlan": {
+        "id": "tier-2-seo",
+        "name": "Tier 2: SEO",
+        "price": "1 499,-/mnd",
+        "setupFee": "999,- /engang",
+        "domainPrice": "79,-/mnd",
+        "emailPrice": "49,-/mnd",
+        "description": "Optimalisert nettside for økt synlighet og konvertering.",
+        "features": [
+          "Alt i Tier 1",
+          "Opp til 7 hovedsider",
+          "SEO optimalisering",
+          "Rangering på Google, Google Maps og AI-søk",
+          "Bi-ukentlig grunrapport",
+          "E-postliste innsamling"
+        ],
+        "includedFeatures": [
+          "Full nettsideutvikling",
+          "Opp til 7 hovedsider",
+          "Koble til eget domene",
+          "Hosting og vedlikehold",
+          "Kontaktskjema & standard seksjoner",
+          "HTML-basert side med sitemap",
+          "Opptil 4 innholdsendringer/mnd",
+          "Innledende veiledningsmøte",
+          "SEO optimalisering for 1–3 søkeord",
+          "Rangering på Google, Google Maps og AI-søk",
+          "Stedstilpassede blogginnlegg (inntil 3/uke ved ønske)",
+          "Asoldi-nettverk for internlenker",
+          "Anmeldelser & sosiale medier synk",
+          "E-postliste innsamling",
+          "Analyse-dashbord med egne rangeringer",
+          "Bi-ukentlig grunrapport",
+          "Leveringstid: 14 arbeidsdager"
+        ],
+        "notIncludedFeatures": [
+          "Nettbutikk-funksjonalitet",
+          "Flerspråklig funksjonalitet",
+          "Nettbutikk-analyse (konvertering, AOV)",
+          "Gjennomgangsmøte"
+        ],
+        "popular": true,
+        "category": "website"
+      },
+      "offerProduct": {
+        "kind": "tier",
+        "tierId": "tier-2-seo",
+        "name": "Nettside – SEO",
+        "pages": 7,
+        "includes": [
+          "Full nettsideutvikling",
+          "Koble til eget domene",
+          "Hosting og vedlikehold",
+          "Kontaktskjema & standard seksjoner",
+          "HTML-basert side med sitemap",
+          "Opptil 4 innholdsendringer/mnd",
+          "Innledende veiledningsmøte",
+          "SEO optimalisering for 1–3 søkeord",
+          "Rangering på Google, Google Maps og AI-søk",
+          "Stedstilpassede blogginnlegg (inntil 3/uke ved ønske)",
+          "Asoldi-nettverk for internlenker",
+          "Anmeldelser & sosiale medier synk",
+          "E-postliste innsamling",
+          "Analyse-dashbord med egne rangeringer",
+          "Bi-ukentlig grunrapport"
+        ],
+        "note": "",
+        "priceExMva": 1499,
+        "deliveryWeeks": 2,
+        "deliveryWorkDays": 14
+      },
+      "productsWithTier": [
+        {
+          "kind": "tier",
+          "tierId": "tier-2-seo",
+          "name": "Nettside – SEO",
+          "pages": 7,
+          "includes": [
+            "Full nettsideutvikling",
+            "Koble til eget domene",
+            "Hosting og vedlikehold",
+            "Kontaktskjema & standard seksjoner",
+            "HTML-basert side med sitemap",
+            "Opptil 4 innholdsendringer/mnd",
+            "Innledende veiledningsmøte",
+            "SEO optimalisering for 1–3 søkeord",
+            "Rangering på Google, Google Maps og AI-søk",
+            "Stedstilpassede blogginnlegg (inntil 3/uke ved ønske)",
+            "Asoldi-nettverk for internlenker",
+            "Anmeldelser & sosiale medier synk",
+            "E-postliste innsamling",
+            "Analyse-dashbord med egne rangeringer",
+            "Bi-ukentlig grunrapport"
+          ],
+          "note": "",
+          "priceExMva": 1499,
+          "deliveryWeeks": 2,
+          "deliveryWorkDays": 14,
+          "id": "prod-tier-2-seo"
+        }
+      ],
+      "contractNb": {
+        "title": "Nivå 2 – Nettside + SEO + e-post + analyse",
+        "lead": "Inkluderer alt i nivå 1, pluss:",
+        "includes": [
+          "Inntil syv (7) hovedsider",
+          "Søkeordsoptimalisert tekst på siden",
+          "SEO-optimalisering for 1–3 søkeord, inkludert arbeid mot rangering i Google Søk, Google Maps og AI-søk",
+          "Visning av anmeldelser og synk mot sosiale medier (kunden logger inn for å koble kontoene; Asoldi lagrer ikke disse passordene i kundens asoldi.com-profil)",
+          "Innsamling og lagring av e-postlister til markedsføring",
+          "Det ene veiledningsmøtet dekker også hvor e-postlistene finnes og hvordan de brukes",
+          "Analyseside i Asoldi CMS med kundens egne rangeringsdata",
+          "Grunrapport hver fjortende (14) dag i CMS-analysesiden (rangering og et sammendrag av perioden)"
+        ],
+        "monthlyWork": {
+          "lead": "Månedlig SEO-arbeid som inngår i dette nivået:",
+          "bullets": [
+            "Løpende on-page og teknisk SEO: søkeordsfokusert tekst, HTML-struktur, sitemap og domenespesifikke forbedringer",
+            "Valgfrie steds- og søkeordsrelaterte blogginnlegg, inntil tre (3) per uke når kunden ønsker det (typisk for lokale tjenestebedrifter)",
+            "Deltakelse i Asoldis internlenkenettverk: andre Asoldi-kundersider kan peke mot kunden og omvendt. Antall lenker varierer med kundebasen",
+            "Løpende arbeid mot avtalte 1–3 søkeord i Google Søk, Google Maps og AI-søk"
+          ]
+        },
+        "kpis": {
+          "lead": "Rapportering og KPI-er (grunrapport, hver 14. dag):",
+          "bullets": [
+            "Kunden får analysesiden i Asoldi CMS, med egne søkeordsrangeringer og kjerne-nøkkeltall (trafikk, avvisningsrate, konvertering og tilhørende målinger)",
+            "Asoldi lager en grunrapport hver fjortende (14) dag. Rapporten leveres i CMS-analysesiden og inneholder rangering og et sammendrag av perioden",
+            "En separat PDF-rapport inngår ikke med mindre det er avtalt skriftlig",
+            "Asoldi garanterer ikke bestemte rangeringer, trafikk- eller omsetningstall. SEO er løpende arbeid uten lovet kommersielt resultat"
+          ]
+        }
+      },
+      "contractEn": {
+        "title": "Tier 2 – Website + SEO + Email + Analytics",
+        "lead": "Includes everything in Tier 1 plus:",
+        "includes": [
+          "Up to seven (7) main pages",
+          "Keyword-optimized on-site copy",
+          "SEO optimization for 1–3 keywords, including ranking work for Google Search, Google Maps and AI search assistants",
+          "Reviews showcase and social-media sync (the Client logs in to connect the accounts; Asoldi does not store those passwords on the Client asoldi.com profile)",
+          "Email list gathering and storage for marketing purposes",
+          "The one-time guidance meeting also covers where to find and use email lists",
+          "Analytics page in the Asoldi CMS, with client-specific ranking data",
+          "Basic analytics report every fourteen (14) days in the CMS analytics page (ranking data and a summary of the period)"
+        ],
+        "monthlyWork": {
+          "lead": "Monthly SEO work included in this tier:",
+          "bullets": [
+            "Ongoing on-page and technical SEO: keyword-focused copy, HTML structure, sitemap and domain-specific improvements",
+            "Optional location- and keyword-related blog posts, up to three (3) per week when the Client wants this (typical for local service businesses)",
+            "Participation in the Asoldi client backlink network: other Asoldi client sites may link to the Client and vice versa. The number of links varies with the size of the Asoldi client base",
+            "Ongoing work toward the agreed 1–3 keywords in Google Search, Google Maps and AI search assistants"
+          ]
+        },
+        "kpis": {
+          "lead": "Reporting and KPIs (basic report, every 14 days):",
+          "bullets": [
+            "The Client gets the analytics page in the Asoldi CMS, with client-specific keyword rankings and core performance data (traffic, bounce rate, conversion rate and related metrics)",
+            "Asoldi prepares a basic report every fourteen (14) days. The report is delivered in the CMS analytics page and includes ranking data and a summary of the period",
+            "A separate PDF report is not included unless agreed in writing",
+            "Asoldi does not guarantee specific ranking, traffic or revenue numbers. SEO is ongoing work without a promised commercial outcome"
+          ]
+        }
+      }
+    },
+    "tier-3-ecommerce": {
+      "pricingCard": {
+        "id": "nettbutikk",
+        "name": "Nettbutikk",
+        "price": "1 999,-/mnd",
+        "description": "Full nettbutikk-funksjonalitet og analyse.",
+        "includedFeatures": [
+          "Full nettsideutvikling",
+          "Opp til 10 hovedsider",
+          "Koble til eget domene",
+          "Hosting og vedlikehold",
+          "Kontaktskjema & standard seksjoner",
+          "HTML-basert side med sitemap",
+          "Opptil 4 innholdsendringer/mnd",
+          "Innledende veiledningsmøte",
+          "SEO optimalisering for 1–3 søkeord",
+          "Rangering på Google, Google Maps og AI-søk",
+          "Stedstilpassede blogginnlegg (inntil 3/uke ved ønske)",
+          "Asoldi-nettverk for internlenker",
+          "Anmeldelser & sosiale medier synk",
+          "E-postliste innsamling",
+          "Analyse-dashbord med egne rangeringer",
+          "Ukentlig avansert rapport",
+          "Nettbutikk-funksjonalitet",
+          "Flerspråklig funksjonalitet",
+          "Nettbutikk-analyse (konvertering, AOV)",
+          "Gjennomgangsmøte",
+          "Leveringstid: 21 arbeidsdager"
+        ],
+        "notIncludedFeatures": [],
+        "popular": false
+      },
+      "clientPlan": {
+        "id": "tier-3-ecommerce",
+        "name": "Tier 3: Nettbutikk",
+        "price": "1 999,-/mnd",
+        "setupFee": "999,- /engang",
+        "domainPrice": "79,-/mnd",
+        "emailPrice": "49,-/mnd",
+        "description": "Full nettbutikk-funksjonalitet og analyse.",
+        "features": [
+          "Alt i Tier 2",
+          "Opp til 10 hovedsider",
+          "Nettbutikk-funksjonalitet",
+          "Flerspråklig funksjonalitet",
+          "Ukentlig avansert rapport"
+        ],
+        "includedFeatures": [
+          "Full nettsideutvikling",
+          "Opp til 10 hovedsider",
+          "Koble til eget domene",
+          "Hosting og vedlikehold",
+          "Kontaktskjema & standard seksjoner",
+          "HTML-basert side med sitemap",
+          "Opptil 4 innholdsendringer/mnd",
+          "Innledende veiledningsmøte",
+          "SEO optimalisering for 1–3 søkeord",
+          "Rangering på Google, Google Maps og AI-søk",
+          "Stedstilpassede blogginnlegg (inntil 3/uke ved ønske)",
+          "Asoldi-nettverk for internlenker",
+          "Anmeldelser & sosiale medier synk",
+          "E-postliste innsamling",
+          "Analyse-dashbord med egne rangeringer",
+          "Ukentlig avansert rapport",
+          "Nettbutikk-funksjonalitet",
+          "Flerspråklig funksjonalitet",
+          "Nettbutikk-analyse (konvertering, AOV)",
+          "Gjennomgangsmøte",
+          "Leveringstid: 21 arbeidsdager"
+        ],
+        "notIncludedFeatures": [],
+        "popular": false,
+        "category": "website"
+      },
+      "offerProduct": {
+        "kind": "tier",
+        "tierId": "tier-3-ecommerce",
+        "name": "Nettside – Nettbutikk",
+        "pages": 10,
+        "includes": [
+          "Full nettsideutvikling",
+          "Koble til eget domene",
+          "Hosting og vedlikehold",
+          "Kontaktskjema & standard seksjoner",
+          "HTML-basert side med sitemap",
+          "Opptil 4 innholdsendringer/mnd",
+          "Innledende veiledningsmøte",
+          "SEO optimalisering for 1–3 søkeord",
+          "Rangering på Google, Google Maps og AI-søk",
+          "Stedstilpassede blogginnlegg (inntil 3/uke ved ønske)",
+          "Asoldi-nettverk for internlenker",
+          "Anmeldelser & sosiale medier synk",
+          "E-postliste innsamling",
+          "Analyse-dashbord med egne rangeringer",
+          "Ukentlig avansert rapport",
+          "Nettbutikk-funksjonalitet",
+          "Flerspråklig funksjonalitet",
+          "Nettbutikk-analyse (konvertering, AOV)",
+          "Gjennomgangsmøte"
+        ],
+        "note": "",
+        "priceExMva": 1999,
+        "deliveryWeeks": 3,
+        "deliveryWorkDays": 21
+      },
+      "productsWithTier": [
+        {
+          "kind": "tier",
+          "tierId": "tier-3-ecommerce",
+          "name": "Nettside – Nettbutikk",
+          "pages": 10,
+          "includes": [
+            "Full nettsideutvikling",
+            "Koble til eget domene",
+            "Hosting og vedlikehold",
+            "Kontaktskjema & standard seksjoner",
+            "HTML-basert side med sitemap",
+            "Opptil 4 innholdsendringer/mnd",
+            "Innledende veiledningsmøte",
+            "SEO optimalisering for 1–3 søkeord",
+            "Rangering på Google, Google Maps og AI-søk",
+            "Stedstilpassede blogginnlegg (inntil 3/uke ved ønske)",
+            "Asoldi-nettverk for internlenker",
+            "Anmeldelser & sosiale medier synk",
+            "E-postliste innsamling",
+            "Analyse-dashbord med egne rangeringer",
+            "Ukentlig avansert rapport",
+            "Nettbutikk-funksjonalitet",
+            "Flerspråklig funksjonalitet",
+            "Nettbutikk-analyse (konvertering, AOV)",
+            "Gjennomgangsmøte"
+          ],
+          "note": "",
+          "priceExMva": 1999,
+          "deliveryWeeks": 3,
+          "deliveryWorkDays": 21,
+          "id": "prod-tier-3-ecommerce"
+        }
+      ],
+      "contractNb": {
+        "title": "Nivå 3 – Nettside + nettbutikk",
+        "lead": "Inkluderer alt i nivå 2, pluss:",
+        "includes": [
+          "Inntil ti (10) hovedsider",
+          "Nettbutikkfunksjonalitet (butikkoppsett, produktsider, utsjekk, kunderegistrering)",
+          "Flerspråklig funksjonalitet (nettside og butikk kan vises på flere språk)",
+          "Analyseside i Asoldi CMS med kundens egne rangeringsdata og dypere nettbutikk-nøkkeltall",
+          "Avansert rapport hver sjuende (7) dag i CMS-analysesiden (rangering og et dypere sammendrag enn nivå 2)",
+          "Det ene veiledningsmøtet dekker også nettbutikk: legge inn produkter, legge til kunder og koble til betalingsløsning, pluss analysesiden"
+        ],
+        "monthlyWork": {
+          "lead": "Månedlig SEO-arbeid som inngår i dette nivået:",
+          "bullets": [
+            "Løpende on-page og teknisk SEO: søkeordsfokusert tekst, HTML-struktur, sitemap og domenespesifikke forbedringer",
+            "Valgfrie steds- og søkeordsrelaterte blogginnlegg, inntil tre (3) per uke når kunden ønsker det (typisk for lokale tjenestebedrifter)",
+            "Deltakelse i Asoldis internlenkenettverk: andre Asoldi-kundersider kan peke mot kunden og omvendt. Antall lenker varierer med kundebasen",
+            "Løpende arbeid mot avtalte 1–3 søkeord i Google Søk, Google Maps og AI-søk"
+          ]
+        },
+        "kpis": {
+          "lead": "Rapportering og KPI-er (avansert rapport, hver 7. dag):",
+          "bullets": [
+            "Kunden får analysesiden i Asoldi CMS, med egne søkeordsrangeringer og dypere nøkkeltall (trafikk, avvisningsrate, konvertering, nettbutikk-målinger og tilhørende data)",
+            "Asoldi lager en avansert rapport hver sjuende (7) dag. Rapporten leveres i CMS-analysesiden og inneholder rangering og et dypere sammendrag enn grunrapporten på nivå 2",
+            "Nettbutikk-nøkkeltall som kjøp, konverteringsrate og gjennomsnittlig ordreverdi (AOV) inngår i samme ukentlige rapport",
+            "En separat PDF-rapport inngår ikke med mindre det er avtalt skriftlig",
+            "Asoldi garanterer ikke bestemte rangeringer, trafikk- eller omsetningstall. SEO er løpende arbeid uten lovet kommersielt resultat"
+          ]
+        },
+        "extraBlocks": [
+          {
+            "lead": "Månedlig nettbutikkarbeid som inngår i dette nivået:",
+            "bullets": [
+              "Butikk, produktsider, utsjekk og kunderegistrering holdes tilgjengelig og vedlikeholdt så lenge abonnementet er aktivt",
+              "Rimelige justeringer i katalog og utsjekk innenfor den månedlige endringskvoten, med mindre en større ombygging avtales særskilt"
+            ]
+          }
+        ]
+      },
+      "contractEn": {
+        "title": "Tier 3 – Website + Ecommerce",
+        "lead": "Includes everything in Tier 2 plus:",
+        "includes": [
+          "Up to ten (10) main pages",
+          "Ecommerce functionality (store setup, product pages, checkout, customer registration)",
+          "Multilingual functionality (the website and store can be presented in several languages)",
+          "Analytics page in the Asoldi CMS, with client-specific ranking data and in-depth ecommerce metrics",
+          "Advanced analytics report every seven (7) days in the CMS analytics page (ranking data and a deeper summary than Tier 2)",
+          "The one-time guidance meeting also covers ecommerce: adding products, adding customers, and connecting a payment processor, plus the analytics page"
+        ],
+        "monthlyWork": {
+          "lead": "Monthly SEO work included in this tier:",
+          "bullets": [
+            "Ongoing on-page and technical SEO: keyword-focused copy, HTML structure, sitemap and domain-specific improvements",
+            "Optional location- and keyword-related blog posts, up to three (3) per week when the Client wants this (typical for local service businesses)",
+            "Participation in the Asoldi client backlink network: other Asoldi client sites may link to the Client and vice versa. The number of links varies with the size of the Asoldi client base",
+            "Ongoing work toward the agreed 1–3 keywords in Google Search, Google Maps and AI search assistants"
+          ]
+        },
+        "kpis": {
+          "lead": "Reporting and KPIs (advanced report, every 7 days):",
+          "bullets": [
+            "The Client gets the analytics page in the Asoldi CMS, with client-specific keyword rankings and in-depth performance data (traffic, bounce rate, conversion rate, ecommerce metrics and related data)",
+            "Asoldi prepares an advanced report every seven (7) days. The report is delivered in the CMS analytics page and includes ranking data and a deeper summary of the period than the Tier 2 basic report",
+            "Ecommerce metrics such as purchases, conversion rate and average order value (AOV) are included in the same weekly report",
+            "A separate PDF report is not included unless agreed in writing",
+            "Asoldi does not guarantee specific ranking, traffic or revenue numbers. SEO is ongoing work without a promised commercial outcome"
+          ]
+        },
+        "extraBlocks": [
+          {
+            "lead": "Monthly ecommerce work included in this tier:",
+            "bullets": [
+              "Store, product pages, checkout and customer registration remain available and maintained while the subscription is active",
+              "Reasonable catalogue and checkout adjustments within the monthly change allowance, unless a larger rebuild is agreed separately"
+            ]
+          }
+        ]
+      }
+    }
+  },
+  "quotes": {
+    "starter": {
+      "tierId": "tier-1-standard",
+      "billing": "month",
+      "oneTimeFees": [],
+      "products": [
+        {
+          "id": "prod-tier-1-standard",
+          "kind": "tier",
+          "tierId": "tier-1-standard",
+          "name": "Nettside – Standard",
+          "pages": 5,
+          "includes": [
+            "Full nettsideutvikling",
+            "Koble til eget domene",
+            "Hosting og vedlikehold",
+            "Kontaktskjema & standard seksjoner",
+            "HTML-basert side med sitemap",
+            "Opptil 4 innholdsendringer/mnd",
+            "Innledende veiledningsmøte"
+          ],
+          "note": "",
+          "priceExMva": 499,
+          "deliveryWeeks": 2,
+          "deliveryWorkDays": 14
+        }
+      ],
+      "plan": {
+        "tierId": "tier-1-standard",
+        "services": [
+          "site",
+          "changes",
+          "blog"
+        ],
+        "pages": 5,
+        "oneTimeAddOns": [],
+        "billing": "month",
+        "catalogType": null,
+        "derived": false,
+        "needsConfirmation": false
+      },
+      "pricing": {
+        "oneTimeMultiplier": 9,
+        "source": "code-default"
+      },
+      "alternatives": [
+        {
+          "tierId": "tier-1-standard",
+          "billing": "month",
+          "oneTimeFees": [],
+          "products": [
+            {
+              "id": "prod-tier-1-standard",
+              "kind": "tier",
+              "tierId": "tier-1-standard",
+              "name": "Nettside – Standard",
+              "pages": 5,
+              "includes": [
+                "Full nettsideutvikling",
+                "Koble til eget domene",
+                "Hosting og vedlikehold",
+                "Kontaktskjema & standard seksjoner",
+                "HTML-basert side med sitemap",
+                "Opptil 4 innholdsendringer/mnd",
+                "Innledende veiledningsmøte"
+              ],
+              "note": "",
+              "priceExMva": 499,
+              "deliveryWeeks": 2,
+              "deliveryWorkDays": 14
+            }
+          ],
+          "plan": {
+            "tierId": "tier-1-standard",
+            "services": [
+              "site",
+              "changes",
+              "blog"
+            ],
+            "pages": 5,
+            "oneTimeAddOns": [],
+            "billing": "month",
+            "catalogType": null,
+            "derived": false,
+            "needsConfirmation": false
+          },
+          "pricing": {
+            "oneTimeMultiplier": 9,
+            "source": "code-default"
+          }
+        }
+      ]
+    },
+    "seo": {
+      "tierId": "tier-2-seo",
+      "billing": "month",
+      "oneTimeFees": [],
+      "products": [
+        {
+          "id": "prod-tier-2-seo",
+          "kind": "tier",
+          "tierId": "tier-2-seo",
+          "name": "Nettside – SEO",
+          "pages": 7,
+          "includes": [
+            "Full nettsideutvikling",
+            "Koble til eget domene",
+            "Hosting og vedlikehold",
+            "Kontaktskjema & standard seksjoner",
+            "HTML-basert side med sitemap",
+            "Opptil 4 innholdsendringer/mnd",
+            "Innledende veiledningsmøte",
+            "SEO optimalisering for 1–3 søkeord",
+            "Rangering på Google, Google Maps og AI-søk",
+            "Stedstilpassede blogginnlegg (inntil 3/uke ved ønske)",
+            "Asoldi-nettverk for internlenker",
+            "Anmeldelser & sosiale medier synk",
+            "E-postliste innsamling",
+            "Analyse-dashbord med egne rangeringer",
+            "Bi-ukentlig grunrapport"
+          ],
+          "note": "",
+          "priceExMva": 1499,
+          "deliveryWeeks": 2,
+          "deliveryWorkDays": 14
+        }
+      ],
+      "plan": {
+        "tierId": "tier-2-seo",
+        "services": [
+          "site",
+          "changes",
+          "seo",
+          "social",
+          "email",
+          "blog",
+          "backlinks"
+        ],
+        "pages": 7,
+        "oneTimeAddOns": [],
+        "billing": "month",
+        "catalogType": null,
+        "derived": false,
+        "needsConfirmation": false
+      },
+      "pricing": {
+        "oneTimeMultiplier": 9,
+        "source": "code-default"
+      },
+      "alternatives": [
+        {
+          "tierId": "tier-2-seo",
+          "billing": "month",
+          "oneTimeFees": [],
+          "products": [
+            {
+              "id": "prod-tier-2-seo",
+              "kind": "tier",
+              "tierId": "tier-2-seo",
+              "name": "Nettside – SEO",
+              "pages": 7,
+              "includes": [
+                "Full nettsideutvikling",
+                "Koble til eget domene",
+                "Hosting og vedlikehold",
+                "Kontaktskjema & standard seksjoner",
+                "HTML-basert side med sitemap",
+                "Opptil 4 innholdsendringer/mnd",
+                "Innledende veiledningsmøte",
+                "SEO optimalisering for 1–3 søkeord",
+                "Rangering på Google, Google Maps og AI-søk",
+                "Stedstilpassede blogginnlegg (inntil 3/uke ved ønske)",
+                "Asoldi-nettverk for internlenker",
+                "Anmeldelser & sosiale medier synk",
+                "E-postliste innsamling",
+                "Analyse-dashbord med egne rangeringer",
+                "Bi-ukentlig grunrapport"
+              ],
+              "note": "",
+              "priceExMva": 1499,
+              "deliveryWeeks": 2,
+              "deliveryWorkDays": 14
+            }
+          ],
+          "plan": {
+            "tierId": "tier-2-seo",
+            "services": [
+              "site",
+              "changes",
+              "seo",
+              "social",
+              "email",
+              "blog",
+              "backlinks"
+            ],
+            "pages": 7,
+            "oneTimeAddOns": [],
+            "billing": "month",
+            "catalogType": null,
+            "derived": false,
+            "needsConfirmation": false
+          },
+          "pricing": {
+            "oneTimeMultiplier": 9,
+            "source": "code-default"
+          }
+        }
+      ]
+    },
+    "shop": {
+      "tierId": "tier-3-ecommerce",
+      "billing": "month",
+      "oneTimeFees": [],
+      "products": [
+        {
+          "id": "prod-tier-3-ecommerce",
+          "kind": "tier",
+          "tierId": "tier-3-ecommerce",
+          "name": "Nettside – Nettbutikk",
+          "pages": 10,
+          "includes": [
+            "Full nettsideutvikling",
+            "Koble til eget domene",
+            "Hosting og vedlikehold",
+            "Kontaktskjema & standard seksjoner",
+            "HTML-basert side med sitemap",
+            "Opptil 4 innholdsendringer/mnd",
+            "Innledende veiledningsmøte",
+            "SEO optimalisering for 1–3 søkeord",
+            "Rangering på Google, Google Maps og AI-søk",
+            "Stedstilpassede blogginnlegg (inntil 3/uke ved ønske)",
+            "Asoldi-nettverk for internlenker",
+            "Anmeldelser & sosiale medier synk",
+            "E-postliste innsamling",
+            "Analyse-dashbord med egne rangeringer",
+            "Ukentlig avansert rapport",
+            "Nettbutikk-funksjonalitet",
+            "Flerspråklig funksjonalitet",
+            "Nettbutikk-analyse (konvertering, AOV)",
+            "Gjennomgangsmøte"
+          ],
+          "note": "",
+          "priceExMva": 1999,
+          "deliveryWeeks": 3,
+          "deliveryWorkDays": 21
+        }
+      ],
+      "plan": {
+        "tierId": "tier-3-ecommerce",
+        "services": [
+          "site",
+          "changes",
+          "seo",
+          "social",
+          "email",
+          "blog",
+          "ecom",
+          "dashboard",
+          "multilingual",
+          "backlinks"
+        ],
+        "pages": 10,
+        "oneTimeAddOns": [],
+        "billing": "month",
+        "catalogType": null,
+        "derived": false,
+        "needsConfirmation": false
+      },
+      "pricing": {
+        "oneTimeMultiplier": 9,
+        "source": "code-default"
+      },
+      "alternatives": [
+        {
+          "tierId": "tier-3-ecommerce",
+          "billing": "month",
+          "oneTimeFees": [],
+          "products": [
+            {
+              "id": "prod-tier-3-ecommerce",
+              "kind": "tier",
+              "tierId": "tier-3-ecommerce",
+              "name": "Nettside – Nettbutikk",
+              "pages": 10,
+              "includes": [
+                "Full nettsideutvikling",
+                "Koble til eget domene",
+                "Hosting og vedlikehold",
+                "Kontaktskjema & standard seksjoner",
+                "HTML-basert side med sitemap",
+                "Opptil 4 innholdsendringer/mnd",
+                "Innledende veiledningsmøte",
+                "SEO optimalisering for 1–3 søkeord",
+                "Rangering på Google, Google Maps og AI-søk",
+                "Stedstilpassede blogginnlegg (inntil 3/uke ved ønske)",
+                "Asoldi-nettverk for internlenker",
+                "Anmeldelser & sosiale medier synk",
+                "E-postliste innsamling",
+                "Analyse-dashbord med egne rangeringer",
+                "Ukentlig avansert rapport",
+                "Nettbutikk-funksjonalitet",
+                "Flerspråklig funksjonalitet",
+                "Nettbutikk-analyse (konvertering, AOV)",
+                "Gjennomgangsmøte"
+              ],
+              "note": "",
+              "priceExMva": 1999,
+              "deliveryWeeks": 3,
+              "deliveryWorkDays": 21
+            }
+          ],
+          "plan": {
+            "tierId": "tier-3-ecommerce",
+            "services": [
+              "site",
+              "changes",
+              "seo",
+              "social",
+              "email",
+              "blog",
+              "ecom",
+              "dashboard",
+              "multilingual",
+              "backlinks"
+            ],
+            "pages": 10,
+            "oneTimeAddOns": [],
+            "billing": "month",
+            "catalogType": null,
+            "derived": false,
+            "needsConfirmation": false
+          },
+          "pricing": {
+            "oneTimeMultiplier": 9,
+            "source": "code-default"
+          }
+        }
+      ]
+    },
+    "starterOnce": {
+      "tierId": "tier-1-standard",
+      "billing": "once",
+      "oneTimeFees": [],
+      "products": [
+        {
+          "id": "prod-tier-1-standard",
+          "kind": "tier",
+          "tierId": "tier-1-standard",
+          "name": "Nettside – Standard",
+          "pages": 5,
+          "includes": [
+            "Full nettsideutvikling",
+            "Koble til eget domene",
+            "Hosting og vedlikehold",
+            "Kontaktskjema & standard seksjoner",
+            "HTML-basert side med sitemap",
+            "Opptil 4 innholdsendringer/mnd",
+            "Innledende veiledningsmøte",
+            "Engangsbetaling (månedspris × 9)"
+          ],
+          "note": "Engangsbetaling",
+          "priceExMva": 4491,
+          "deliveryWeeks": 2,
+          "deliveryWorkDays": 14
+        }
+      ],
+      "plan": {
+        "tierId": "tier-1-standard",
+        "services": [
+          "site",
+          "changes",
+          "blog"
+        ],
+        "pages": 5,
+        "oneTimeAddOns": [],
+        "billing": "once",
+        "catalogType": null,
+        "derived": false,
+        "needsConfirmation": false
+      },
+      "pricing": {
+        "oneTimeMultiplier": 9,
+        "source": "code-default"
+      },
+      "alternatives": [
+        {
+          "tierId": "tier-1-standard",
+          "billing": "once",
+          "oneTimeFees": [],
+          "products": [
+            {
+              "id": "prod-tier-1-standard",
+              "kind": "tier",
+              "tierId": "tier-1-standard",
+              "name": "Nettside – Standard",
+              "pages": 5,
+              "includes": [
+                "Full nettsideutvikling",
+                "Koble til eget domene",
+                "Hosting og vedlikehold",
+                "Kontaktskjema & standard seksjoner",
+                "HTML-basert side med sitemap",
+                "Opptil 4 innholdsendringer/mnd",
+                "Innledende veiledningsmøte",
+                "Engangsbetaling (månedspris × 9)"
+              ],
+              "note": "Engangsbetaling",
+              "priceExMva": 4491,
+              "deliveryWeeks": 2,
+              "deliveryWorkDays": 14
+            }
+          ],
+          "plan": {
+            "tierId": "tier-1-standard",
+            "services": [
+              "site",
+              "changes",
+              "blog"
+            ],
+            "pages": 5,
+            "oneTimeAddOns": [],
+            "billing": "once",
+            "catalogType": null,
+            "derived": false,
+            "needsConfirmation": false
+          },
+          "pricing": {
+            "oneTimeMultiplier": 9,
+            "source": "code-default"
+          }
+        }
+      ]
+    },
+    "dual": {
+      "tierId": "tier-1-standard",
+      "billing": "month",
+      "oneTimeFees": [],
+      "products": [
+        {
+          "id": "alt0-prod-tier-1-standard",
+          "kind": "tier",
+          "tierId": "tier-1-standard",
+          "name": "Nettside – Standard",
+          "pages": 5,
+          "includes": [
+            "Full nettsideutvikling",
+            "Koble til eget domene",
+            "Hosting og vedlikehold",
+            "Kontaktskjema & standard seksjoner",
+            "HTML-basert side med sitemap",
+            "Opptil 4 innholdsendringer/mnd",
+            "Innledende veiledningsmøte"
+          ],
+          "note": "",
+          "priceExMva": 499,
+          "deliveryWeeks": 2,
+          "deliveryWorkDays": 14
+        }
+      ],
+      "plan": {
+        "tierId": "tier-1-standard",
+        "services": [
+          "site",
+          "changes",
+          "blog"
+        ],
+        "pages": 5,
+        "oneTimeAddOns": [],
+        "billing": "month",
+        "catalogType": null,
+        "derived": false,
+        "needsConfirmation": false
+      },
+      "pricing": {
+        "oneTimeMultiplier": 9,
+        "source": "code-default"
+      },
+      "alternatives": [
+        {
+          "tierId": "tier-1-standard",
+          "billing": "month",
+          "oneTimeFees": [],
+          "products": [
+            {
+              "id": "alt0-prod-tier-1-standard",
+              "kind": "tier",
+              "tierId": "tier-1-standard",
+              "name": "Nettside – Standard",
+              "pages": 5,
+              "includes": [
+                "Full nettsideutvikling",
+                "Koble til eget domene",
+                "Hosting og vedlikehold",
+                "Kontaktskjema & standard seksjoner",
+                "HTML-basert side med sitemap",
+                "Opptil 4 innholdsendringer/mnd",
+                "Innledende veiledningsmøte"
+              ],
+              "note": "",
+              "priceExMva": 499,
+              "deliveryWeeks": 2,
+              "deliveryWorkDays": 14
+            }
+          ],
+          "plan": {
+            "tierId": "tier-1-standard",
+            "services": [
+              "site",
+              "changes",
+              "blog"
+            ],
+            "pages": 5,
+            "oneTimeAddOns": [],
+            "billing": "month",
+            "catalogType": null,
+            "derived": false,
+            "needsConfirmation": false
+          },
+          "pricing": {
+            "oneTimeMultiplier": 9,
+            "source": "code-default"
+          }
+        },
+        {
+          "tierId": "tier-3-ecommerce",
+          "billing": "month",
+          "oneTimeFees": [],
+          "products": [
+            {
+              "id": "alt1-prod-tier-3-ecommerce",
+              "kind": "tier",
+              "tierId": "tier-3-ecommerce",
+              "name": "Nettside – Nettbutikk",
+              "pages": 10,
+              "includes": [
+                "Full nettsideutvikling",
+                "Koble til eget domene",
+                "Hosting og vedlikehold",
+                "Kontaktskjema & standard seksjoner",
+                "HTML-basert side med sitemap",
+                "Opptil 4 innholdsendringer/mnd",
+                "Innledende veiledningsmøte",
+                "SEO optimalisering for 1–3 søkeord",
+                "Rangering på Google, Google Maps og AI-søk",
+                "Stedstilpassede blogginnlegg (inntil 3/uke ved ønske)",
+                "Asoldi-nettverk for internlenker",
+                "Anmeldelser & sosiale medier synk",
+                "E-postliste innsamling",
+                "Analyse-dashbord med egne rangeringer",
+                "Ukentlig avansert rapport",
+                "Nettbutikk-funksjonalitet",
+                "Flerspråklig funksjonalitet",
+                "Nettbutikk-analyse (konvertering, AOV)",
+                "Gjennomgangsmøte"
+              ],
+              "note": "",
+              "priceExMva": 1999,
+              "deliveryWeeks": 3,
+              "deliveryWorkDays": 21
+            }
+          ],
+          "plan": {
+            "tierId": "tier-3-ecommerce",
+            "services": [
+              "site",
+              "changes",
+              "seo",
+              "social",
+              "email",
+              "blog",
+              "ecom",
+              "dashboard",
+              "multilingual",
+              "backlinks"
+            ],
+            "pages": 10,
+            "oneTimeAddOns": [],
+            "billing": "month",
+            "catalogType": null,
+            "derived": false,
+            "needsConfirmation": false
+          },
+          "pricing": {
+            "oneTimeMultiplier": 9,
+            "source": "code-default"
+          }
+        }
+      ]
+    }
+  }
+}
