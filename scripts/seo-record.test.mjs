@@ -1,0 +1,196 @@
+// The SEO record (lib/seo-ops/record.js): the Maker's plan summary is kept without a portal user,
+// a push keeps the other bank seo fields, agreed keywords round-trip through approve and block, and
+// the limits hold. Every business here is made up.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+const dataDir = mkdtempSync(join(tmpdir(), 'asoldi-seo-record-'));
+process.env.APP_DATA_DIR = dataDir;
+writeFileSync(join(dataDir, 'sales-clients.json'), JSON.stringify([
+  { id: 'sc-record-1', businessName: 'Fjordlys Frisør AS', product: 'asoldi', status: 'active' },
+  { id: 'sc-record-2', businessName: 'Testbakeriet', product: 'asoldi', status: 'active' },
+], null, 2));
+
+const record = await import('../lib/seo-ops/record.js');
+const { applyMakerBundleToPortal } = await import('../lib/maker-bundle-sync.js');
+const { makerBundleToClientDataBank } = await import('../lib/maker-bundle-to-bank.js');
+const { agreedKeywordsContractText } = await import('../lib/seo-ops/contract-text.js');
+
+function summary(extra = {}) {
+  return {
+    planVersion: 1,
+    builtAt: '2026-10-30T10:00:00.000Z',
+    language: { code: 'nb', name: 'Norwegian' },
+    locale: { locationCode: 2578, languageCode: 'nb', country: 'Norway' },
+    town: 'Eksempelby',
+    counts: { primary: 2, secondary: 3, local: 1, questions: 0, brand: 1, rejected: 4, candidates: 40 },
+    primaries: [{ keyword: 'frisør eksempelby', volume: 320, intent: 'commercial' }, { keyword: 'herreklipp eksempelby', volume: 90 }],
+    candidates: [
+      { keyword: 'frisør eksempelby', volume: 320, intent: 'commercial', role: 'home' },
+      { keyword: 'balayage eksempelby', volume: 40, intent: 'commercial', role: 'services' },
+      { keyword: 'hårfarge', volume: 900 },
+    ],
+    brand: [{ keyword: 'fjordlys frisør' }],
+    spendUsd: 0.31,
+    // Fields a summary never keeps.
+    raw: { tasks: [{ result: [{ items: [{ keyword_info: { search_volume: 320 } }] }] }] },
+    diagnostics: { calls: [{ endpoint: 'dataforseo_labs', costUsd: 0.1 }] },
+    ...extra,
+  };
+}
+
+test('a plan summary is recorded for a sales client without a portal user', async () => {
+  const pushed = await record.recordPlanSummaryFromPush('sc-record-1', summary());
+  assert.deepEqual(pushed, { seoRecorded: true });
+  const portal = applyMakerBundleToPortal({ salesClientId: 'sc-record-1', bundle: { id: 'b1', data: { businessName: 'Fjordlys Frisør AS' } } });
+  assert.equal(portal.ok, false);
+  assert.equal(portal.status, 404, 'the portal sync still has no match; the SEO record does not need one');
+  const stored = record.readSeoRecord('sc-record-1');
+  assert.ok(stored);
+  assert.deepEqual(stored.planSummary.candidates.map((row) => row.phrase), ['frisør eksempelby', 'balayage eksempelby', 'hårfarge']);
+  assert.deepEqual(stored.planSummary.primaries[0], { phrase: 'frisør eksempelby', volume: 320, intent: 'commercial' });
+  assert.deepEqual(stored.planSummary.brand, ['fjordlys frisør']);
+  assert.equal(stored.planSummary.locale.locationCode, 2578);
+  const text = readFileSync(join(dataDir, 'seo-ops', 'clients', 'sc-record-1.json'), 'utf8');
+  assert.equal(text.includes('search_volume'), false, 'no raw provider payload is stored');
+  assert.equal(text.includes('dataforseo_labs'), false);
+  assert.equal(stored.history.filter((row) => row.action === 'plan-summary').length, 1);
+});
+
+test('the same summary pushed again writes nothing, and a new plan keeps the agreed keywords', async () => {
+  await record.approveAgreedKeyword('sc-record-1', 'herreklipp eksempelby', { by: 'dev-a' });
+  const path = join(dataDir, 'seo-ops', 'clients', 'sc-record-1.json');
+  const before = readFileSync(path, 'utf8');
+  const mtime = statSync(path).mtimeMs;
+  assert.deepEqual(await record.recordPlanSummaryFromPush('sc-record-1', summary()), { seoRecorded: true });
+  assert.equal(readFileSync(path, 'utf8'), before);
+  assert.equal(statSync(path).mtimeMs, mtime);
+  assert.deepEqual(await record.recordPlanSummaryFromPush('sc-record-1', summary({ builtAt: '2026-11-01T08:00:00.000Z' })), { seoRecorded: true });
+  const stored = record.readSeoRecord('sc-record-1');
+  assert.equal(stored.planSummary.builtAt, '2026-11-01T08:00:00.000Z');
+  assert.deepEqual(record.agreedKeywordsFor(stored), ['herreklipp eksempelby']);
+  assert.equal(stored.history.filter((row) => row.action === 'plan-summary').length, 2);
+});
+
+test('a push without a summary changes nothing and adds no response field', async () => {
+  assert.equal(await record.recordPlanSummaryFromPush('sc-record-2', undefined), null);
+  assert.deepEqual(record.seoPushResponseFields(null), {});
+  assert.equal(existsSync(join(dataDir, 'seo-ops', 'clients', 'sc-record-2.json')), false);
+});
+
+test('unknown or missing sales clients are not recorded', async () => {
+  assert.deepEqual(await record.recordPlanSummaryFromPush('sc-nobody', summary()), { seoRecorded: false, seoReason: 'unknown-sales-client' });
+  assert.deepEqual(await record.recordPlanSummaryFromPush('', summary()), { seoRecorded: false, seoReason: 'no-sales-client' });
+  assert.deepEqual(await record.recordPlanSummaryFromPush('sc-record-2', 'not an object'), { seoRecorded: false, seoReason: 'invalid-summary' });
+  assert.deepEqual(record.seoPushResponseFields({ seoRecorded: false, seoReason: 'unknown-sales-client' }), { seoRecorded: false, seoReason: 'unknown-sales-client' });
+  assert.equal(existsSync(join(dataDir, 'seo-ops', 'clients', 'sc-nobody.json')), false);
+});
+
+test('a bundle push keeps the other bank seo fields and replaces only the keyword plan', () => {
+  const plan = { primary: [{ keyword: 'baker eksempelby' }] };
+  const fallback = { seo: { keywordPlan: { primary: [] }, searchConsole: { property: 'sc-domain:example.com' }, notes: 'kept' } };
+  const bank = makerBundleToClientDataBank({ keywordPlan: plan, data: { businessName: 'Testbakeriet' } }, fallback);
+  assert.deepEqual(bank.seo, { keywordPlan: plan, searchConsole: { property: 'sc-domain:example.com' }, notes: 'kept' });
+  const noPlan = makerBundleToClientDataBank({ data: { businessName: 'Testbakeriet' } }, fallback);
+  assert.deepEqual(noPlan.seo.keywordPlan, { primary: [] }, 'no plan in the bundle keeps the stored plan');
+  assert.equal(noPlan.seo.notes, 'kept');
+  // The common case today: a bank whose seo holds only the plan gives the same object as before.
+  assert.deepEqual(makerBundleToClientDataBank({ data: {} }, { seo: { keywordPlan: plan } }).seo, { keywordPlan: plan });
+  assert.deepEqual(makerBundleToClientDataBank({ data: {} }, {}).seo, { keywordPlan: null });
+});
+
+test('approve and block round-trip, with history', async () => {
+  const id = 'sc-record-2';
+  await record.approveAgreedKeyword(id, '  Bakeri   Eksempelby ', { by: 'dev-a', source: 'developer' });
+  let stored = record.readSeoRecord(id);
+  assert.deepEqual(stored.agreedKeywords.map((row) => [row.phrase, row.status]), [['Bakeri Eksempelby', 'approved']]);
+  await record.blockAgreedKeyword(id, 'bakeri eksempelby', { by: 'dev-b', reason: 'not a target' });
+  stored = record.readSeoRecord(id);
+  assert.deepEqual(stored.agreedKeywords.map((row) => [row.phrase, row.status, row.by]), [['bakeri eksempelby', 'blocked', 'dev-b']]);
+  await record.approveAgreedKeyword(id, 'bakeri eksempelby', { by: 'dev-a' });
+  stored = record.readSeoRecord(id);
+  assert.equal(stored.agreedKeywords[0].status, 'approved');
+  assert.deepEqual(stored.history.map((row) => [row.action, row.from]), [['approve', null], ['block', 'approved'], ['approve', 'blocked']]);
+  assert.equal(record.recordGuidesConsumers(stored), true);
+  // The same status again writes nothing.
+  const path = join(dataDir, 'seo-ops', 'clients', `${id}.json`);
+  const before = readFileSync(path, 'utf8');
+  await record.approveAgreedKeyword(id, 'BAKERI EKSEMPELBY', { by: 'dev-c' });
+  assert.equal(readFileSync(path, 'utf8'), before);
+});
+
+test('limits: at most three approved, 1-6 words, no prescription-only substance', async () => {
+  const id = 'sc-record-2';
+  await assert.rejects(
+    record.updateClientSeo(id, { agreedKeywords: ['a b', 'c d', 'e f', 'g h'].map((phrase) => ({ phrase, status: 'approved' })) }, { by: 'dev-a' }),
+    (error) => error.code === 'too-many-approved' && error.status === 400,
+  );
+  await assert.rejects(record.approveAgreedKeyword(id, 'en to tre fire fem seks sju'), (error) => error.code === 'too-many-words');
+  await assert.rejects(record.approveAgreedKeyword(id, 'kjøp melatonin på nett'), (error) => error.code === 'regulated');
+  await assert.rejects(record.approveAgreedKeyword(id, 'melatonintabletter'), (error) => error.code === 'regulated');
+  await assert.rejects(record.approveAgreedKeyword(id, '   '), (error) => error.code === 'empty-phrase');
+  await record.updateClientSeo(id, { agreedKeywords: [
+    { phrase: 'bakeri eksempelby', status: 'approved' },
+    { phrase: 'brød eksempelby', status: 'approved' },
+    { phrase: 'kaker til selskap', status: 'approved' },
+    { phrase: 'Kaker til selskap', status: 'blocked' },
+    { phrase: 'surdeigsbrød', status: 'proposed', source: 'sales' },
+  ] }, { by: 'dev-a' });
+  const stored = record.readSeoRecord(id);
+  assert.deepEqual(stored.agreedKeywords.map((row) => [row.phrase, row.status]), [
+    ['bakeri eksempelby', 'approved'],
+    ['brød eksempelby', 'approved'],
+    ['Kaker til selskap', 'blocked'],
+    ['surdeigsbrød', 'proposed'],
+  ], 'duplicates collapse to the strongest status');
+  await assert.rejects(
+    record.updateClientSeo(id, { agreedKeywords: [{ phrase: 'x y', status: 'maybe' }] }),
+    (error) => error.code === 'invalid-status',
+  );
+  assert.deepEqual(record.readSeoRecord(id).agreedKeywords.length, 4, 'a refused change writes nothing');
+});
+
+test('brand phrases are flagged, not refused', async () => {
+  await record.approveAgreedKeyword('sc-record-1', 'fjordlys frisør', { by: 'dev-a', brandName: 'Fjordlys Frisør AS' });
+  const row = record.readSeoRecord('sc-record-1').agreedKeywords.find((entry) => entry.phrase === 'fjordlys frisør');
+  assert.deepEqual(row.flags, ['brand']);
+});
+
+test('contract text, agreedKeywordsFor and freezeAgreedKeywords', async () => {
+  const id = 'sc-record-2';
+  const stored = record.readSeoRecord(id);
+  assert.equal(agreedKeywordsContractText(stored), 'Avtalte søkeord: bakeri eksempelby, brød eksempelby');
+  assert.equal(agreedKeywordsContractText(null), null);
+  assert.equal(agreedKeywordsContractText({ agreedKeywords: [{ phrase: 'x', status: 'proposed' }] }), null);
+  assert.deepEqual(record.agreedKeywordsFor(id), ['bakeri eksempelby', 'brød eksempelby']);
+  assert.deepEqual(record.agreedKeywordsFor(id, { status: 'blocked' }), ['Kaker til selskap']);
+  assert.deepEqual(record.agreedKeywordsFor('sc-nobody'), []);
+  const frozen = await record.freezeAgreedKeywords(id, { ref: 'offer-1' });
+  assert.deepEqual([...frozen.phrases], ['bakeri eksempelby', 'brød eksempelby']);
+  assert.equal(frozen.contractText, 'Avtalte søkeord: bakeri eksempelby, brød eksempelby');
+  assert.ok(Object.isFrozen(frozen));
+  assert.equal(record.readSeoRecord(id).history.at(-1).action, 'freeze');
+  assert.deepEqual(record.tickSteps, []);
+  assert.ok(Object.isFrozen(record.tickSteps));
+});
+
+test('views: the Maker sees decided keywords only', () => {
+  const view = record.makerSeoRecordView(record.readSeoRecord('sc-record-2'));
+  assert.deepEqual(view.agreedKeywords.map((row) => row.status).sort(), ['approved', 'approved', 'blocked']);
+  const admin = record.seoRecordView(record.readSeoRecord('sc-record-2'));
+  assert.equal(admin.guidesConsumers, true);
+  assert.equal(admin.contractText, 'Avtalte søkeord: bakeri eksempelby, brød eksempelby');
+  assert.equal(record.seoRecordView(null), null);
+});
+
+test('a client with no record file reads as no record', () => {
+  assert.equal(record.readSeoRecord('sc-none'), null);
+  assert.equal(record.seoRecordForBank({ makerLink: { salesClientId: 'sc-none' } }), null);
+  assert.equal(record.seoRecordForBank({}), null);
+  assert.ok(record.seoRecordForBank({ makerLink: { salesClientId: 'sc-record-1' } }));
+  assert.equal(record.recordGuidesConsumers(null), false);
+  assert.equal(record.recordGuidesConsumers({ agreedKeywords: [{ phrase: 'x', status: 'proposed' }] }), false);
+});

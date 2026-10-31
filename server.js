@@ -85,6 +85,7 @@ import {
   serpApiKeyLabel,
 } from './lib/serpapi-keys.js';
 import { applyMakerBundleToPortal } from './lib/maker-bundle-sync.js';
+import { recordPlanSummaryFromPush, seoPushResponseFields } from './lib/seo-ops/record.js';
 import * as offers from './data/offers.js';
 import * as resetTokens from './data/reset-tokens.js';
 import { getPersistentDataDir, pruneAllDataBackups } from './data/storage-path.js';
@@ -11407,6 +11408,8 @@ app.get('/client-media/:userId/:fileName', clientAuth, async (req, res) => {
 });
 
 app.post('/api/internal/maker/client-bundle', requireMakerHost('client-bundle'), async (req, res) => {
+  // The SEO plan summary is kept before the portal sync, so it needs no portal user ({} without one).
+  const seo = seoPushResponseFields(await recordPlanSummaryFromPush(sanitizeText(req.body?.salesClientId), req.body?.bundle?.keywordPlanSummary, { sales }));
   const result = applyMakerBundleToPortal({
     portalUserId: sanitizeText(req.body?.portalUserId),
     salesClientId: sanitizeText(req.body?.salesClientId),
@@ -11417,8 +11420,8 @@ app.post('/api/internal/maker/client-bundle', requireMakerHost('client-bundle'),
     publicPreviewUrl: sanitizeText(req.body?.publicPreviewUrl),
     tunnelUrl: sanitizeText(req.body?.tunnelUrl),
   });
-  if (!result.ok) return res.status(result.status || 400).json({ message: result.message });
-  return res.json(result);
+  if (!result.ok) return res.status(result.status || 400).json({ message: result.message, ...seo });
+  return res.json({ ...result, ...seo });
 });
 
 app.get('/api/client/billing/overview', clientAuth, async (req, res) => {
@@ -13539,6 +13542,7 @@ app.post('/api/admin/sales/maker-status-callback', requireMakerHost('callback'),
   if (event === 'run.client-bundle.updated' && req.body?.bundle) {
     // The same portal write as /api/internal/maker/client-bundle: a host token needs that scope too.
     if (!makerAuth.hostScopeAllows(req, res, 'client-bundle')) return;
+    const seo = seoPushResponseFields(await recordPlanSummaryFromPush(sanitizeText(req.body?.salesClientId), req.body.bundle?.keywordPlanSummary, { sales }));
     const result = applyMakerBundleToPortal({
       portalUserId: sanitizeText(req.body?.portalUserId),
       salesClientId: sanitizeText(req.body?.salesClientId),
@@ -13549,8 +13553,8 @@ app.post('/api/admin/sales/maker-status-callback', requireMakerHost('callback'),
       publicPreviewUrl: sanitizeText(req.body?.publicPreviewUrl),
       tunnelUrl: sanitizeText(req.body?.tunnelUrl),
     });
-    if (!result.ok) return res.status(result.status || 400).json({ message: result.message });
-    return res.json(result);
+    if (!result.ok) return res.status(result.status || 400).json({ message: result.message, ...seo });
+    return res.json({ ...result, ...seo });
   }
   const runId = sanitizeText(req.body?.runId);
   const salesClientId = sanitizeText(req.body?.salesClientId);
