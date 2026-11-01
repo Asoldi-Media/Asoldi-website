@@ -18,6 +18,8 @@ is compared with the release that is live (base) on a copy of the live data. The
      --secrets --fake-secrets --rollback --out <report.json>
    ```
 
+   Large media folders that no flow reads can be left out of the copies with
+   `--skip-data <folder,folder>` (top-level folder names; `secrets` is never left out).
    It must exit 0. Exit 1 means a difference that the intended file does not list, a changed or
    new secret file, or data that the older release loses. Exit 2 means it could not run (read the
    message; nothing was compared).

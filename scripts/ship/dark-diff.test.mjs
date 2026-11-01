@@ -131,6 +131,7 @@ test('arguments: the three inputs are required; unknown options are refused', ()
   assert.throws(() => parseArgs(['--base', 'a', '--head', 'b', '--data', 'd', '--bogus']), /unknown option/);
   const opts = parseArgs(['--base', 'a', '--head', 'b', '--data', 'd', '--intended', 'i.json', '--secrets', '--rollback']);
   assert.equal(opts.secrets && opts.rollback, true);
+  assert.deepEqual(parseArgs(['--base', 'a', '--head', 'b', '--data', 'd', '--skip-data', 'media, recordings']).skipData, ['media', 'recordings']);
   assert.equal(pick({ status: 200, json: { a: [{ b: 'x' }] } }, 'body.a.0.b'), 'x');
 });
 

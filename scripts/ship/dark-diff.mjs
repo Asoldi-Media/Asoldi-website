@@ -7,6 +7,7 @@
  *   node scripts/ship/dark-diff.mjs --base <ref> --head <ref> --data <dir> [--intended <json>]
  *        [--secrets] [--rollback] [--flows <dir>] [--out <report.json>] [--keep] [--json]
  *        [--repo <git dir>] [--node-modules <dir>] [--clock-start <iso>] [--no-inventory] [--fake-secrets]
+ *        [--skip-data <folder,folder>]   top-level data folders left out of the copies (large media)
  *
  * <ref> is any git revision of --repo (default: this checkout), or dir:<path> for a hub tree that is
  * already on disk. Each ref is checked out into a temp folder with a private git index (the repo's
@@ -99,6 +100,7 @@ export function parseArgs(argv = []) {
     else if (arg === '--json') opts.json = true;
     else if (arg === '--no-inventory') opts.inventory = false;
     else if (arg === '--fake-secrets') opts.fakeSecrets = true;
+    else if (arg === '--skip-data') opts.skipData = value(i++, arg).split(',').map((s) => s.trim()).filter(Boolean);
     else if (arg === '--debug') opts.debug = true;
     else throw new HarnessError(`unknown option ${arg}`);
   }
@@ -678,8 +680,18 @@ function sourceFingerprint(dir) {
   }).join('\n');
 }
 
-function copyData(from, to) {
-  cpSync(from, to, { recursive: true, dereference: false, preserveTimestamps: true });
+/** Copies a data folder, leaving out the top-level folders in `skip` (large media the flows never read). */
+function copyData(from, to, skip = []) {
+  const left = new Set(skip);
+  cpSync(from, to, {
+    recursive: true,
+    dereference: false,
+    preserveTimestamps: true,
+    filter: (src) => {
+      const rel = relative(from, src);
+      return !rel || !left.has(rel.split(sep)[0]);
+    },
+  });
 }
 
 /**
@@ -740,7 +752,9 @@ export async function runDarkDiff(options) {
 
     // Prep: one copy gets local credentials through the base release's own modules, then two copies of it.
     const prep = join(root, 'data', 'prep');
-    copyData(source, prep);
+    const skipData = (Array.isArray(opts.skipData) ? opts.skipData : []).filter((name) => /^[^/\\]+$/.test(name) && name !== 'secrets');
+    if (skipData.length) report.warnings.push(`left out of the copies: ${skipData.join(', ')}`);
+    copyData(source, prep, skipData);
     const fakeAdded = new Set();
     if (opts.fakeSecrets) {
       const added = addFakeSecrets(prep);
