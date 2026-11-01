@@ -34,6 +34,7 @@ import {
   QUEUE_UNTIL_CHAIN,
   clickableQueueTargetsForOrder,
   isAcceptedQueueTarget,
+  step2SubstepOrderForQueueRequest,
   summarizeMakerRunForQueue,
   targetsUntil,
 } from '../lib/maker-queue.js';
@@ -145,7 +146,17 @@ test('a makerRun without extra substeps gets the same chips, status keys and sco
 });
 
 test('the queue knows the 2.5 target and puts it after Maps only for a Maker that sent the order', () => {
-  assert.equal(isAcceptedQueueTarget('bind-cta-data'), true);
+  assert.equal(isAcceptedQueueTarget('bind-cta-data'), false, 'without an order the target is unknown, as before');
+  assert.equal(isAcceptedQueueTarget('bind-cta-data', { step2SubstepOrder: ORDER }), true);
+  assert.equal(isAcceptedQueueTarget('maps-embed-sync'), true);
+  const clients = {
+    withOrder: { makerRun: { runId: 'r2', ext: { step2SubstepOrder: ORDER } } },
+    withoutOrder: { makerRun: { runId: 'r1' } },
+  };
+  const lookup = (id) => clients[id] || null;
+  assert.deepEqual(step2SubstepOrderForQueueRequest({ salesClientIds: ['withOrder', 'withoutOrder'] }, lookup), ORDER);
+  assert.equal(step2SubstepOrderForQueueRequest({ salesClientIds: ['withoutOrder', 'missing'] }, lookup), null);
+  assert.equal(step2SubstepOrderForQueueRequest({ runIds: ['r9'] }, lookup), null);
   assert.deepEqual(targetsUntil('3'), [...QUEUE_UNTIL_CHAIN]);
   assert.deepEqual(targetsUntil('3', { step2SubstepOrder: ORDER }), ['1', '1.5', ...ORDER, '3']);
   assert.deepEqual(targetsUntil('bind-cta-data', { step2SubstepOrder: ORDER }), ['1', '1.5', ...ORDER]);
@@ -156,7 +167,13 @@ test('the queue knows the 2.5 target and puts it after Maps only for a Maker tha
   const oldRun = { id: 'r1', steps: { 2: { status: 'ready', substeps: { 'maps-embed-sync': { status: 'ready' } } } } };
   assert.equal(Object.prototype.hasOwnProperty.call(summarizeMakerRunForQueue(oldRun), 'bindCtaDataReady'), false);
   const newRun = { id: 'r2', steps: { 2: { status: 'ready', substeps: { 'maps-embed-sync': { status: 'ready' }, 'bind-cta-data': { status: 'ready' } } } } };
-  assert.equal(summarizeMakerRunForQueue(newRun).bindCtaDataReady, true);
+  assert.equal(
+    JSON.stringify(summarizeMakerRunForQueue(newRun)),
+    JSON.stringify(summarizeMakerRunForQueue(oldRun)).replace('"runId":"r1"', '"runId":"r2"'),
+    'without an order a run that reports 2.5 gets the same summary fields as before'
+  );
+  assert.equal(summarizeMakerRunForQueue(newRun, { step2SubstepOrder: ORDER }).bindCtaDataReady, true);
+  assert.equal(summarizeMakerRunForQueue(oldRun, { step2SubstepOrder: ORDER }).bindCtaDataReady, false);
 });
 
 // --- Stored data, this tree against the older commit ------------------------------------------------

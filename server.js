@@ -67,6 +67,7 @@ import {
 import {
   isAcceptedQueueTarget,
   resolveMakerQueueRunRequests,
+  step2SubstepOrderForQueueRequest,
   summarizeMakerRunForQueue,
 } from './lib/maker-queue.js';
 import {
@@ -20087,7 +20088,8 @@ app.post('/api/admin/development/maker-queue', developmentAuth, async (req, res)
   const base = resolveDevelopmentMakerBase();
   const untilTarget = sanitizeText(req.body?.untilTarget);
   const target = sanitizeText(req.body?.target || untilTarget);
-  if (!isAcceptedQueueTarget(target) && !isAcceptedQueueTarget(untilTarget)) {
+  const queueOrder = { step2SubstepOrder: step2SubstepOrderForQueueRequest(req.body || {}, (id) => sales.getSalesClientById(id)) };
+  if (!isAcceptedQueueTarget(target, queueOrder) && !isAcceptedQueueTarget(untilTarget, queueOrder)) {
     return res.status(400).json({ message: 'Unknown pipeline queue target.' });
   }
   const salesClientIds = Array.isArray(req.body?.salesClientIds) ? req.body.salesClientIds : [];
