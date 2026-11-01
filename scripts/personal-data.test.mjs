@@ -308,3 +308,28 @@ test('routes: export is superadmin only; erase answers 403 while privacy.purge i
     server.close();
   }
 });
+
+test('an erase and a purge run one at a time across processes (a held lease means busy)', async () => {
+  const { acquireLease } = await import('../data/email-store.js');
+  const held = await acquireLease('privacy-erase', 60_000);
+  try {
+    const busy = await personalData.eraseClient('pd-other', { dryRun: false });
+    assert.equal(busy.blocked, 'busy');
+    assert.equal(busy.erased, false);
+    assert.ok(sales.getSalesClientById('pd-other'), 'nothing erased while another erase runs');
+    const plan = await personalData.eraseClient('pd-other');
+    assert.equal(plan.dryRun, true, 'a plan needs no lease');
+    assert.ok(plan.stores.length > 10);
+  } finally {
+    await held.release();
+  }
+  assert.equal(settingsStore.saveAutomationSettings({ privacy: { purge: { enabled: true } } }).ok, true);
+  const purgeLease = await acquireLease('retention-purge', 60_000);
+  try {
+    const busy = await retention.runRetentionPurge({ settings: settingsStore.getAutomationSettings({ fresh: true }), force: true });
+    assert.deepEqual(busy, { ran: false, reason: 'busy' });
+  } finally {
+    await purgeLease.release();
+  }
+  assert.equal(settingsStore.saveAutomationSettings({ privacy: { purge: { enabled: false } } }).ok, true);
+});
