@@ -24,6 +24,9 @@ const clients = [
   { id: 'cnone', product: 'asoldi', businessName: 'No Plan AS', status: 'active', progression: { contractSigned: true } },
   { id: 'cvoid', product: 'asoldi', businessName: 'Void Example AS', status: 'active', progression: { contractSigned: true }, sitePlan: plan('tier-2-seo', { status: 'void' }) },
   { id: 'cgo', product: 'asoldi', businessName: 'Golive Example AS', status: 'active', makerRun: { runId: 'run-go' }, progression: { contractSigned: true }, sitePlan: plan('tier-2-seo') },
+  // A second lead with another client's domain, and one whose link names another client's site id.
+  { id: 'cdup', product: 'asoldi', businessName: 'Duplicate Lead AS', status: 'active', websiteDomain: 'plain.example.com', progression: { contractSigned: true }, sitePlan: plan('tier-3-ecommerce') },
+  { id: 'cid', product: 'asoldi', businessName: 'Copied Link AS', status: 'active', hubSite: { id: 'site-spec' }, progression: { contractSigned: true }, sitePlan: plan('tier-3-ecommerce') },
 ];
 const sites = [
   { id: 'site-plain', site_key: 'key-plain', name: 'Plain Example AS', domain: 'plain.example.com', websitePlan: 'tier-1-standard', features: { users: true, analytics: true }, planSource: 'admin' },
@@ -193,4 +196,31 @@ test('go-live handler: off without the switch; with it a needs_import task opens
     rmSync(join(DATA_DIR, 'automation-settings.json'), { force: true });
     settingsStore.invalidateAutomationSettingsCache();
   }
+});
+
+test('a site found by domain or linked id that belongs to another client is left alone, with a task for a person', () => {
+  const plainBefore = hub.getSiteById('site-plain');
+  const specBefore = hub.getSiteById('site-spec');
+  assert.equal(plainBefore.planSource.salesClientId, 'c1', 'site-plain is c1\'s');
+  const byDomain = apply.applySitePlanToHub('cdup', { by: 'test', now: AT });
+  assert.equal(byDomain.ok, false);
+  assert.equal(byDomain.reason, 'site-owned-elsewhere');
+  assert.equal(byDomain.owner, 'c1');
+  const byId = apply.applySitePlanToHub('cid', { by: 'test', now: AT });
+  assert.equal(byId.reason, 'site-owned-elsewhere');
+  assert.equal(byId.owner, 'cspec', 'linked to cspec by its key');
+  assert.deepEqual(hub.getSiteById('site-plain'), plainBefore, 'the other client\'s site is unchanged');
+  assert.deepEqual(hub.getSiteById('site-spec'), specBefore);
+  assert.equal(allSites().filter((site) => ['cdup', 'cid'].includes(site.planSource?.salesClientId)).length, 0, 'no site made');
+  for (const id of ['cdup', 'cid']) {
+    const client = sales.getSalesClientById(id);
+    assert.ok(client.delivery.tasks.some((task) => task.kind === 'site_owner_conflict' && task.status === 'open'), id);
+    assert.equal(client.sitePlan.appliedSiteId, '', `${id}: not applied`);
+    assert.equal(apply.findSiteForClient(client), null, `${id}: readers do not see the other client's site`);
+  }
+  // A second try adds no second task.
+  apply.applySitePlanToHub('cdup', { by: 'test', now: AT });
+  assert.equal(sales.getSalesClientById('cdup').delivery.tasks.filter((task) => task.kind === 'site_owner_conflict').length, 1);
+  // Control: the owner itself still finds and applies to its site.
+  assert.equal(apply.applySitePlanToHub('c1', { by: 'test', now: AT }).site.id, 'site-plain');
 });
