@@ -6,7 +6,9 @@
 // Run it in a child process with APP_DATA_DIR set to a fresh folder (and an optional
 // automation-settings.json in it). The mail transport is a stand-in: fetch is replaced before any
 // hub module loads, so a send to the mail API is recorded and answered locally; nothing leaves the
-// process. Prints one JSON line: { sends: [...], built: {...} }.
+// process. Prints one JSON line: { sends: [...], results, built: {...}, network, shadow: [...] }, where
+// `shadow` lists the gate's shadow mails the run recorded ('<kind>:<clientId>', sorted).
+import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { join, resolve } from 'node:path';
 
@@ -74,4 +76,12 @@ built.composedData2 = { subject: composed.subject, html: composed.html, text: co
 const thankYouStyle = templates.composeEmailForClient(view, 'post-workshop', null, { sender: SENDER }).message;
 built.postWorkshopKeyWithoutLines = { subject: thankYouStyle.subject, from: thankYouStyle.from, replyTo: thankYouStyle.replyTo, ics: Boolean(thankYouStyle.icalEvent) };
 
-console.log(JSON.stringify({ sends, results, built, network }));
+let shadow = [];
+try {
+  const recorded = JSON.parse(readFileSync(join(process.env.APP_DATA_DIR || '.', 'delivery-email-shadow.json'), 'utf8'));
+  shadow = Object.values(recorded?.entries || {}).map((entry) => `${entry?.kind}:${entry?.clientId}`).sort();
+} catch {
+  shadow = [];
+}
+
+console.log(JSON.stringify({ sends, results, built, network, shadow }));

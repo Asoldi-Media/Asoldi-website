@@ -106,13 +106,18 @@ function baselineTree() {
   } catch {
     return null;
   }
-  const destination = join(root, 'build', `gate-baseline-${sha}`);
-  rmSync(destination, { recursive: true, force: true });
-  mkdirSync(destination, { recursive: true });
+  // Inside the checkout (the baseline's imports resolve this checkout's node_modules), in a folder of
+  // its own so two runs at once never remove each other's tree.
+  mkdirSync(join(root, 'build'), { recursive: true });
+  const destination = mkdtempSync(join(root, 'build', `gate-baseline-${sha}-`));
   const tar = execFileSync('git', ['archive', '--format=tar', sha, 'data', 'lib', 'packages', 'public/email'], { cwd: root, maxBuffer: 256 * 1024 * 1024 });
   untar(tar, destination);
   return { root: destination, sha, cleanup: () => rmSync(destination, { recursive: true, force: true }) };
 }
+
+// The baseline is required when a ref was named or in CI: a missing baseline then fails the test
+// instead of skipping the negative control without notice.
+const BASELINE_REQUIRED = Boolean(String(process.env.GATE_BASELINE_REF || '').trim()) || Boolean(String(process.env.CI || '').trim());
 
 function capture(codeRoot, settingsFile = null) {
   const dataDir = mkdtempSync(join(tmpdir(), 'asoldi-gate-capture-'));
@@ -128,75 +133,170 @@ function capture(codeRoot, settingsFile = null) {
   return JSON.parse(out.trim().split('\n').pop());
 }
 
-test(`negative control: with the gate off the pre-workshop and Datainnsamling mails equal ${BASELINE_REF}'s byte for byte`, (t) => {
+test(`negative control: with the gate off, or running in shadow, the pre-workshop and Datainnsamling mails equal ${BASELINE_REF}'s byte for byte`, (t) => {
   const baseline = baselineTree();
   if (!baseline) {
-    t.skip(`${BASELINE_REF} is not in this checkout`);
+    const message = `${BASELINE_REF} is not in this checkout: the byte-for-byte negative control did not run`;
+    assert.ok(!BASELINE_REQUIRED, `${message} (required because GATE_BASELINE_REF or CI is set)`);
+    console.warn(`\n!!! ${message}. Run the gate tests in a git checkout that has ${BASELINE_REF}. !!!\n`);
+    t.skip(message);
     return;
   }
   try {
     const expected = capture(baseline.root);
     assert.equal(expected.sends.length, 2, 'the deployed code sends both pre-workshop mails');
     assert.deepEqual(expected.network, []);
+    assert.deepEqual(expected.shadow, []);
     const defaults = settingsStore.defaultAutomationSettings();
+    const gateLines = { ...defaults.emails, preWorkshop: { ...defaults.emails.preWorkshop, lines: 'gate', mode: 'auto' } };
+    const bothShadowed = ['preWorkshop:capture-no-time', 'preWorkshop:capture-timed'];
     const variants = {
-      'defaults (gate off)': null,
-      'gate off, lines set to gate': { ...defaults, emails: { ...defaults.emails, preWorkshop: { ...defaults.emails.preWorkshop, lines: 'gate' } } },
-      'gate on, lines legacy': { ...defaults, gate: { enabled: true, mode: 'shadow', paused: null } },
+      'defaults (gate off)': [null, []],
+      'gate off, lines set to gate': [{ ...defaults, emails: gateLines }, []],
+      'gate on, lines legacy': [{ ...defaults, gate: { enabled: true, mode: 'shadow', paused: null } }, []],
+      // The gate in shadow with lines set to gate and the kind auto (as a recorded release pass
+      // leaves it): today's mails still go out unchanged, and the gate's versions are shadow records.
+      'gate in shadow, lines gate, kind auto': [{ ...defaults, gate: { enabled: true, mode: 'shadow', paused: null }, emails: gateLines }, bothShadowed],
+      // A pilot rollout: clients that are not on the pilot list keep today's mails.
+      'gate auto for another pilot, lines gate, kind auto': [{ ...defaults, pilotClientIds: ['someone-else'], gate: { enabled: true, mode: 'auto', paused: null }, emails: gateLines }, bothShadowed],
     };
-    for (const [label, settings] of Object.entries(variants)) {
+    for (const [label, [settings, shadow]] of Object.entries(variants)) {
       const actual = capture(root, settings);
       assert.deepEqual(actual.sends, expected.sends, `${label}: sends (body, headers, Reply-To)`);
       assert.deepEqual(actual.results, expected.results, `${label}: results`);
       assert.deepEqual(actual.built, expected.built, `${label}: built mails`);
       assert.deepEqual(actual.network, []);
+      assert.deepEqual(actual.shadow, shadow, `${label}: shadow records`);
     }
   } finally {
     baseline.cleanup();
   }
 });
 
-test('with lines set to gate and the gate in shadow, no pre-workshop mail reaches the transport', async () => {
+function shadowOutbox(id) {
+  return listOutbox(DATA_DIR, { limit: 500 }).items.filter((item) => item.channel === emails.SHADOW_CHANNEL && item.to.includes(`${id}@example.com`));
+}
+
+function sendsTo(id, from = 0) {
+  return transport.slice(from).filter((body) => JSON.stringify(body.to).includes(`${id}@example.com`));
+}
+
+// Today's pre-workshop mail for a client without a booked workshop, as the legacy path builds it.
+async function legacyPreWorkshop(client) {
+  const needLines = await prep.loadPrepNeedLines(client, deps);
+  return mail.buildPreWorkshopEmail(client, {}, { sender: SENDER, hasTime: false, needLines });
+}
+
+test('with lines set to gate and the gate in shadow, the gate\'s pre-workshop mail is only a shadow record', async () => {
   save({ gate: { enabled: true, mode: 'shadow' }, emails: { preWorkshop: { lines: 'gate', mode: 'shadow' } } });
   const client = seedSigned('pre-shadow-1');
   const before = transport.length;
   const result = await prep.sendPreWorkshopAfterContractSigned(client, { sender: SENDER, previousSigned: false, ...deps });
+  // emails.preWorkshop in shadow: today's flow sends nothing either (as the deployed code).
   assert.equal(result.sent, false);
-  assert.equal(result.shadow, true);
-  assert.equal(result.gateLines, true);
+  assert.equal(result.reason, 'automation-off');
+  assert.equal(result.gateShadow.status, 'shadow');
+  assert.ok(result.gateShadow.lines > 0 && result.gateShadow.lines <= 12);
   assert.equal(transport.length, before, 'nothing reached the transport');
-  const records = listOutbox(DATA_DIR).items.filter((item) => item.channel === emails.SHADOW_CHANNEL && item.to.includes('pre-shadow-1@example.com'));
+  const records = shadowOutbox('pre-shadow-1');
   assert.equal(records.length, 1);
   assert.equal(records[0].replyTo, 'alexander@asoldi.com');
   const body = readOutboxItem(DATA_DIR, records[0].id);
   for (const group of ['Merke', 'Innhold', 'Kontakt', 'Nettbutikk', 'Synlighet']) assert.match(body.html, new RegExp(`>${group}<`));
   assert.equal((body.text.match(/Logoen deres/g) || []).length, 1, 'one logo line');
-  assert.ok(result.needLines.length <= 12);
   const audit = readDeliveryAudit({ dataDir: DATA_DIR }).filter((row) => row.kind === 'email-shadow' && row.clientId === 'pre-shadow-1');
   assert.equal(audit.length, 1);
   assert.equal(sales.getSalesClientById('pre-shadow-1').workshop?.deskEmails?.preWorkshopSentAt || '', '', 'a shadow mail stamps nothing');
   // The same signing again records nothing new.
-  await prep.sendPreWorkshopAfterContractSigned(client, { sender: SENDER, previousSigned: false, ...deps });
+  const again = await prep.sendPreWorkshopAfterContractSigned(client, { sender: SENDER, previousSigned: false, ...deps });
+  assert.equal(again.gateShadow.status, 'already-recorded');
   assert.equal(listOutbox(DATA_DIR).items.filter((item) => item.to.includes('pre-shadow-1@example.com')).length, 1);
   assert.equal(transport.length, before);
 });
 
-test('with the pre-workshop kind released to auto, the gate in shadow still keeps the mail out of the transport', async () => {
+test('with the pre-workshop kind released to auto and the gate in shadow, today\'s mail and confirmation go out unchanged beside one shadow record', async () => {
   settingsStore.recordReleasePass('emails.preWorkshop.gate', { suite: 'test suite' });
   settingsStore.invalidateAutomationSettingsCache();
   const settings = settingsStore.getAutomationSettings({ fresh: true });
   assert.equal(settings.emails.preWorkshop.lines, 'gate');
   assert.equal(settings.emails.preWorkshop.mode, 'auto');
+  assert.equal(settings.gate.mode, 'shadow');
   const client = seedSigned('pre-shadow-2');
+  const expected = await legacyPreWorkshop(client);
   const before = transport.length;
   const result = await prep.sendPreWorkshopAfterContractSigned(client, { sender: SENDER, previousSigned: false, ...deps });
-  assert.equal(result.shadow, true);
-  assert.equal(transport.length, before);
-  // A stored gate in auto (not offered by the settings yet) would send through the transport.
+  assert.equal(result.sent, true);
+  assert.equal(result.gateShadow.status, 'shadow');
+  const sent = sendsTo('pre-shadow-2', before);
+  assert.equal(sent.length, 1, 'exactly one mail reached the transport');
+  assert.equal(transport.length, before + 1);
+  assert.equal(sent[0].subject, expected.subject);
+  assert.equal(sent[0].html, expected.html, 'today\'s mail, byte for byte');
+  assert.equal(sent[0].text, expected.text);
+  assert.doesNotMatch(sent[0].html, />Merke</, 'not the gate\'s grouped lines');
+  assert.ok(sales.getSalesClientById('pre-shadow-2').workshop?.deskEmails?.preWorkshopSentAt, 'today\'s stamp');
+  const records = shadowOutbox('pre-shadow-2');
+  assert.equal(records.length, 1, 'one shadow record');
+  assert.match(readOutboxItem(DATA_DIR, records[0].id).html, />Merke</);
+  // A booked workshop that was not confirmed yet: today's confirmation runs as before.
+  const booked = seedSigned('pre-shadow-booked', {
+    workshopAction: { name: 'Workshop', format: 'sms-ring', dueAt: '2026-11-25T09:00:00.000Z', status: 'draft' },
+  });
+  const beforeBooked = transport.length;
+  const confirmed = await prep.sendPreWorkshopAfterContractSigned(booked, { sender: SENDER, previousSigned: false, ...deps });
+  assert.equal(confirmed.sent, true);
+  assert.equal(confirmed.gateShadow.status, 'shadow');
+  assert.equal(sendsTo('pre-shadow-booked', beforeBooked).length, 1);
+  const action = sales.getSalesClientById('pre-shadow-booked').workshopAction;
+  assert.equal(action.status, 'confirmed');
+  assert.ok(action.confirmationSentAt, 'the workshop confirmation was stamped');
+  assert.equal(shadowOutbox('pre-shadow-booked').length, 1);
+  // The modes behind it.
   const auto = { ...settings, gate: { enabled: true, mode: 'auto', paused: null }, pilotClientIds: ['pre-shadow-3'] };
   assert.equal(emails.deliveryEmailMode('preWorkshop', { id: 'pre-shadow-3' }, { settings: auto }), 'auto');
   assert.equal(emails.deliveryEmailMode('preWorkshop', { id: 'not-a-pilot' }, { settings: auto }), 'shadow');
   assert.equal(emails.deliveryEmailMode('preWorkshop', { id: 'pre-shadow-3' }, { settings: { ...auto, gate: { enabled: false, mode: 'shadow', paused: null } } }), 'off');
+});
+
+test('a pilot rollout: a client that is not a pilot keeps today\'s mail; only the pilot gets the gate\'s mail', async () => {
+  const file = join(DATA_DIR, 'automation-settings.json');
+  const previous = existsSync(file) ? readFileSync(file, 'utf8') : null;
+  const defaults = settingsStore.defaultAutomationSettings();
+  // Written to the settings file directly: the settings route refuses a gate in auto for now.
+  writeFileSync(file, JSON.stringify({
+    ...defaults,
+    pilotClientIds: ['pre-pilot'],
+    gate: { enabled: true, mode: 'auto', paused: null },
+    emails: { ...defaults.emails, preWorkshop: { ...defaults.emails.preWorkshop, lines: 'gate', mode: 'auto' } },
+  }));
+  settingsStore.invalidateAutomationSettingsCache();
+  try {
+    const other = seedSigned('pre-nonpilot');
+    const expected = await legacyPreWorkshop(other);
+    const before = transport.length;
+    const result = await prep.sendPreWorkshopAfterContractSigned(other, { sender: SENDER, previousSigned: false, ...deps });
+    assert.equal(result.sent, true);
+    assert.equal(result.gateShadow.status, 'shadow');
+    const sent = sendsTo('pre-nonpilot', before);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].html, expected.html, 'today\'s mail, byte for byte');
+    assert.equal(shadowOutbox('pre-nonpilot').length, 1);
+
+    const pilot = seedSigned('pre-pilot');
+    const beforePilot = transport.length;
+    const piloted = await prep.sendPreWorkshopAfterContractSigned(pilot, { sender: SENDER, previousSigned: false, ...deps });
+    assert.equal(piloted.sent, true);
+    assert.equal(piloted.gateLines, true);
+    assert.equal(piloted.gateShadow, undefined);
+    const pilotSent = sendsTo('pre-pilot', beforePilot);
+    assert.equal(pilotSent.length, 1);
+    assert.match(pilotSent[0].html, />Merke</, 'the gate\'s grouped lines');
+    assert.equal(shadowOutbox('pre-pilot').length, 0);
+  } finally {
+    if (previous === null) rmSync(file, { force: true });
+    else writeFileSync(file, previous);
+    settingsStore.invalidateAutomationSettingsCache();
+  }
 });
 
 test('Reply-To on the gate path: the rep mailbox only when the inbox bot reads it', async () => {
