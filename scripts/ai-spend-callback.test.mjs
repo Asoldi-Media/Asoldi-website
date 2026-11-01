@@ -334,7 +334,12 @@ const ADMIN_PASSWORD = `ai-spend-${Date.now()}-pw`;
 const CALLBACK_TOKEN = `maker-callback-${Date.now()}-token-value`;
 
 test('server: run.ai.spend callback, AI spend and status endpoints, and the routes override', { timeout: 180_000 }, async () => {
-  const month = new Date().toISOString().slice(0, 7);
+  const nowMs = Date.now();
+  const monthStartMs = Date.UTC(new Date(nowMs).getUTCFullYear(), new Date(nowMs).getUTCMonth(), 1);
+  const month = new Date(monthStartMs).toISOString().slice(0, 7);
+  // Times inside this month that are never in the future, in a fixed order, on any day of the
+  // month: the spend endpoint's default range runs from the month start to now.
+  const inMonth = (fraction) => new Date(monthStartMs + Math.floor((nowMs - monthStartMs) * fraction)).toISOString();
   const hub = await bootHub({
     HUB_SAFE_MODE: '1',
     PERSIST_PRODUCTION_ENV: '0',
@@ -352,7 +357,7 @@ test('server: run.ai.spend callback, AI spend and status endpoints, and the rout
         { id: 'c-free', product: 'asoldi', businessName: 'Free AS', status: 'active' },
       ], null, 2));
       mkdirSync(join(dir, 'ai'), { recursive: true });
-      const row = { v: 2, kind: 'llm', at: `${month}-01T08:00:00.000Z`, repo: 'hub', task: 'offer.fill-from-transcript', provider: 'deepseek', requestedModel: 'deepseek-chat', model: 'deepseek-chat', profile: 'legacy', salesClientId: 'c-spend', usd: 0.25, status: 'ok' };
+      const row = { v: 2, kind: 'llm', at: inMonth(0.1), repo: 'hub', task: 'offer.fill-from-transcript', provider: 'deepseek', requestedModel: 'deepseek-chat', model: 'deepseek-chat', profile: 'legacy', salesClientId: 'c-spend', usd: 0.25, status: 'ok' };
       writeFileSync(join(dir, 'ai', `ledger-${month}.jsonl`), `${JSON.stringify(row)}\n`);
     },
   });
@@ -369,19 +374,19 @@ test('server: run.ai.spend callback, AI spend and status endpoints, and the rout
     });
     const onDisk = () => diskClient(hub.dataDir, 'c-spend').makerRun.aiSpend;
 
-    const at = `${month}-02T09:00:00.000Z`;
+    const at = inMonth(0.2);
     assert.equal((await callback({ totalUsd: 9, at }, {})).status, 401, 'no callback token');
     assert.equal((await callback({ totalUsd: 9, at }, { 'x-sales-callback-token': 'wrong-token' })).status, 401);
     assert.equal(onDisk(), undefined);
 
-    const first = await callback({ totalUsd: 1.5, byTask: { 'step2.copywriter': 1.2, 'seo.meta': 0.3 }, calls: 12, at: `${month}-02T10:00:00.000Z` });
+    const first = await callback({ totalUsd: 1.5, byTask: { 'step2.copywriter': 1.2, 'seo.meta': 0.3 }, calls: 12, at: inMonth(0.3) });
     assert.equal(first.status, 200);
     const firstBody = await first.json();
     assert.equal(firstBody.stored, true);
     assert.equal(onDisk().totalUsd, 1.5);
     assert.deepEqual(onDisk().byTask, { 'step2.copywriter': 1.2, 'seo.meta': 0.3 });
 
-    const older = await (await callback({ totalUsd: 0.1, at: `${month}-01T00:00:00.000Z` })).json();
+    const older = await (await callback({ totalUsd: 0.1, at: inMonth(0) })).json();
     assert.equal(older.stored, false);
     assert.equal(older.reason, 'older');
     const otherRun = await (await callback({ runId: 'run-x', totalUsd: 50, at })).json();
@@ -410,13 +415,13 @@ test('server: run.ai.spend callback, AI spend and status endpoints, and the rout
     assert.equal(spend.maker.totalUsd, 1.5);
     assert.equal(spend.totalUsd, 1.75);
     assert.deepEqual(Object.keys(spend.hub.groups), ['offer.fill-from-transcript']);
-    const newer = await (await callback({ totalUsd: 2, at: `${month}-03T10:00:00.000Z` })).json();
+    const newer = await (await callback({ totalUsd: 2, at: inMonth(0.5) })).json();
     assert.equal(newer.stored, true);
     const respend = await (await fetch(`${hub.base}/api/admin/ai/spend?salesClientId=c-spend`, { headers: admin })).json();
     assert.equal(respend.maker.totalUsd, 2, 'the run is counted once, with its newest snapshot');
     assert.equal(respend.totalUsd, 2.25);
     // The Maker's own body (ledger v2 groups): the per-task spend reaches the client, the history and the endpoint.
-    const makerBody = makerSpendBody({ runId: 'run-1', salesClientId: 'c-spend', at: `${month}-04T10:00:00.000Z` });
+    const makerBody = makerSpendBody({ runId: 'run-1', salesClientId: 'c-spend', at: inMonth(0.7) });
     const fromMaker = await callback(makerBody);
     assert.equal(fromMaker.status, 200);
     assert.equal((await fromMaker.json()).stored, true);
