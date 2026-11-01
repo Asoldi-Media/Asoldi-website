@@ -694,17 +694,34 @@ test('sources: transcripts come from linked meetings, live placeholders are skip
   assert.equal(archived.meetings.find((row) => row.meetingId === 'syn-m-sales').transcript, 'Kunde: Arkivert tekst.', 'the archive wins over the stored meeting');
 });
 
-test('erase and export cover every file of a client', async () => {
+/** Every file under `dir`, as paths inside it ('/'-separated). */
+function relativeFiles(dir, prefix = '') {
+  if (!existsSync(dir)) return [];
+  const out = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const name = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) out.push(...relativeFiles(join(dir, entry.name), name));
+    else out.push(name);
+  }
+  return out.sort();
+}
+
+test('erase and export cover every file of a client, the chunk cache and the rebuild state included', async () => {
   const dir = freshDir();
   await brief.rebuildBrief(clientRecord(), { llm: stubLlm(), dataDir: dir, deps: depsFor() });
+  const folder = store.clientBriefDir('syn-brief-1', { dataDir: dir });
+  const onDisk = relativeFiles(folder);
+  assert.ok(onDisk.includes('state.json') && onDisk.some((name) => name.startsWith('chunks/')));
   const exported = store.exportClientBriefs('syn-brief-1', { dataDir: dir });
   assert.equal(exported.versions.length, 1);
   assert.ok(exported.extraction);
+  assert.ok(exported.state && exported.state.builtInputHash);
+  assert.deepEqual(exported.files.map((file) => file.name).sort(), onDisk, 'the export lists every file');
   const dry = store.eraseClientBriefs('syn-brief-1', { dataDir: dir });
-  assert.ok(dry.files.includes('latest.json') && dry.files.some((name) => name.startsWith('chunks/')));
-  assert.ok(existsSync(store.clientBriefDir('syn-brief-1', { dataDir: dir })), 'a dry run deletes nothing');
+  assert.deepEqual([...dry.files].sort(), onDisk);
+  assert.ok(existsSync(folder), 'a dry run deletes nothing');
   store.eraseClientBriefs('syn-brief-1', { dataDir: dir, dryRun: false });
-  assert.equal(existsSync(store.clientBriefDir('syn-brief-1', { dataDir: dir })), false);
+  assert.equal(existsSync(folder), false);
   writeFileSync(join(dir, 'marker'), 'x');
 });
 
@@ -865,4 +882,180 @@ test('sources: credentials are left out of the CMS setup at every depth, inside 
   for (const value of ['pw-value', 'token-value', 'key-value', 'site-key-value']) assert.equal(text.includes(value), false, value);
   assert.equal(sources.cmsSetup.users[0].email, 'post@example.com');
   assert.equal(sources.cmsSetup.integrations[0].options[0].label, 'synlig');
+});
+
+// ---------------------------------------------------------------- privacy registry, erase and concurrent writes
+
+/**
+ * A personal-data registry that behaves like the hub's: registerStore adds or silently replaces a row,
+ * its own rows are added lazily and only for ids not registered yet, and an erase sums each store's
+ * { action, records, files } (an unknown action counts as 'none').
+ */
+function registryContract({ dataDir }) {
+  const stores = new Map();
+  let ownRowsLoaded = false;
+  const ownRow = {
+    id: 'delivery-briefs',
+    label: 'Leveransebrief',
+    dir: 'delivery-briefs',
+    clientKey: 'path',
+    retention: { rule: 'brief' },
+    ownRow: true,
+    export: () => ({ files: [] }),
+    erase: () => ({ action: 'none', records: 0, files: [] }),
+  };
+  const registry = {
+    registerStore(input) {
+      stores.set(input.id, { ...input });
+      return input;
+    },
+    getStore: (id) => stores.get(id) || null,
+    async loadStoreModules() {
+      if (!ownRowsLoaded) {
+        ownRowsLoaded = true;
+        if (!stores.has(ownRow.id)) stores.set(ownRow.id, ownRow);
+      }
+      return [...stores.values()];
+    },
+    async eraseClient(clientId, { dryRun = true } = {}) {
+      await registry.loadStoreModules();
+      const results = [];
+      for (const entry of stores.values()) {
+        let result;
+        try {
+          result = (await entry.erase(clientId, { dataDir, dryRun })) || { action: 'none' };
+        } catch (error) {
+          result = { action: 'none', error: error.message };
+        }
+        results.push({
+          id: entry.id,
+          action: ['delete', 'redact', 'hold', 'retain', 'none'].includes(result.action) ? result.action : 'none',
+          records: Number(result.records) || 0,
+          files: Array.isArray(result.files) ? result.files : [],
+          ...(result.error ? { error: result.error } : {}),
+        });
+      }
+      return { stores: results, audited: results.filter((row) => row.action === 'delete' || row.action === 'redact').map((row) => row.id) };
+    },
+  };
+  return registry;
+}
+
+test('privacy registry: a row the registry already has is kept; the brief\'s own row says the same, exports every file and reports what an erase deleted', async () => {
+  store.resetBriefStoreRegistrationForTests();
+  const early = registryContract({ dataDir: freshDir() });
+  await early.loadStoreModules();
+  assert.equal(await store.registerBriefStore({ registry: early }), false);
+  assert.equal(early.getStore('delivery-briefs').ownRow, true, 'the registry\'s row is not replaced');
+
+  store.resetBriefStoreRegistrationForTests();
+  const dir = freshDir();
+  const registry = registryContract({ dataDir: dir });
+  assert.equal(await store.registerBriefStore({ registry }), true, 'registered at boot, before the registry loads its rows');
+  await registry.loadStoreModules();
+  const row = registry.getStore('delivery-briefs');
+  assert.equal(row.ownRow, undefined);
+  assert.deepEqual(
+    [row.label, row.retention, row.clientKey, row.legalBasis, row.processors],
+    ['Leveransebrief', { rule: 'brief' }, 'path', 'Contract', ['Anthropic']],
+    'the same description and retention rule as the registry\'s own row',
+  );
+
+  await brief.rebuildBrief(clientRecord(), { llm: stubLlm(), dataDir: dir, deps: depsFor() });
+  const folder = store.clientBriefDir('syn-brief-1', { dataDir: dir });
+  const onDisk = relativeFiles(folder).map((name) => `delivery-briefs/syn-brief-1/${name}`);
+  const exported = await row.export('syn-brief-1', { dataDir: dir });
+  assert.deepEqual(exported.files.map((file) => file.path).sort(), onDisk, 'every file, paths inside the data dir');
+  assert.ok(exported.files.find((file) => file.path.endsWith('/latest.json')).content.hash, 'JSON files inline');
+  assert.ok(exported.files.some((file) => file.path.includes('/chunks/')) && exported.files.some((file) => file.path.endsWith('/state.json')));
+
+  const plan = await registry.eraseClient('syn-brief-1', { dryRun: true });
+  assert.deepEqual(plan.stores.map((entry) => [entry.id, entry.action, entry.files.length]), [['delivery-briefs', 'delete', onDisk.length]]);
+  assert.ok(existsSync(folder), 'a plan deletes nothing');
+  const done = await registry.eraseClient('syn-brief-1', { dryRun: false });
+  assert.deepEqual(done.audited, ['delivery-briefs'], 'the erase reports the store as deleted');
+  assert.equal(existsSync(folder), false);
+  assert.equal((await registry.eraseClient('syn-brief-1', { dryRun: false })).stores[0].action, 'none');
+  store.resetBriefStoreRegistrationForTests();
+});
+
+test('privacy erase holds the brief lease: it deletes nothing under a running rebuild and deletes once the rebuild is done', async () => {
+  const dir = freshDir();
+  const client = clientRecord({ id: 'syn-erase-1' });
+  await brief.rebuildBrief(client, { llm: stubLlm(), dataDir: dir, deps: depsFor() });
+  const folder = store.clientBriefDir('syn-erase-1', { dataDir: dir });
+  const descriptor = store.briefStoreDescriptor({ waitMs: 300 });
+  // A changed transcript makes the rebuild ask the model; the call waits until the erase has answered.
+  const changed = depsFor({ transcripts: { ...TRANSCRIPTS, 'syn-m-workshop': `${TRANSCRIPTS['syn-m-workshop']}\nKunde: En ny linje helt til slutt.` } });
+  let entered;
+  const inCall = new Promise((resolve) => {
+    entered = resolve;
+  });
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const inner = stubLlm();
+  const slow = { json: async (request) => { entered(); await gate; return inner.json(request); } };
+  const running = brief.rebuildBrief(client, { llm: slow, dataDir: dir, deps: changed });
+  await inCall;
+  const busy = await descriptor.erase('syn-erase-1', { dataDir: dir, dryRun: false });
+  assert.equal(busy.action, 'none');
+  assert.match(busy.error, /running/);
+  assert.ok(existsSync(join(folder, 'latest.json')), 'nothing deleted under the rebuild');
+  release();
+  assert.equal((await running).status, 'built');
+  const erased = await descriptor.erase('syn-erase-1', { dataDir: dir, dryRun: false });
+  assert.equal(erased.action, 'delete');
+  assert.equal(existsSync(folder), false);
+});
+
+test('a review saved while a rebuild runs is in the saved brief: the save assembles with the newest reviews', async () => {
+  const dir = freshDir();
+  const client = clientRecord({ id: 'syn-race-1' });
+  const deps = depsFor();
+  await brief.rebuildBrief(client, { llm: stubLlm(), dataDir: dir, deps });
+  // A changed stage: the next rebuild uses only cached chunks, so its lease renewals are the one before
+  // the merge and the one between assembling and saving. The review lands in the second.
+  const moved = clientRecord({ id: 'syn-race-1', delivery: { stage: 'development' } });
+  let renewals = 0;
+  const lease = {
+    async renew() {
+      renewals += 1;
+      if (renewals === 2) {
+        await brief.reviewBriefFact(client, 'positioning.toneOfVoice', { status: 'accepted', value: 'Rolig og saklig', by: 'dev' }, { dataDir: dir, deps });
+      }
+      return true;
+    },
+    async release() {
+      return true;
+    },
+  };
+  const llm = stubLlm();
+  const result = await brief.rebuildBrief(moved, { llm, dataDir: dir, deps, lease });
+  assert.equal(result.status, 'built');
+  assert.equal(llm.state.calls, 0);
+  assert.equal(renewals, 2);
+  const latest = store.readLatestBrief('syn-race-1', { dataDir: dir });
+  assert.equal(latest.delivery.stage, 'development', 'the rebuild\'s input');
+  assert.equal(latest.facts.positioning.toneOfVoice, 'Rolig og saklig', 'and the review saved during it');
+  assert.equal(latest.inputs.reviewsRevision, 1);
+});
+
+test('a complete rebuild removes cached answers no current transcript uses', async () => {
+  const dir = freshDir();
+  const client = clientRecord({ id: 'syn-prune-1' });
+  await brief.rebuildBrief(client, { llm: stubLlm(), dataDir: dir, deps: depsFor() });
+  const chunkDir = store.chunkCacheDir('syn-prune-1', { dataDir: dir });
+  const before = readdirSync(chunkDir).sort();
+  const edited = depsFor({ transcripts: { ...TRANSCRIPTS, 'syn-m-workshop': meetingText('Endret', 60, ['Kunde: Telefonnummeret på siden skal stå helt øverst i menyen.']) } });
+  const result = await brief.rebuildBrief(client, { llm: stubLlm(), dataDir: dir, deps: edited });
+  assert.equal(result.status, 'built');
+  const sources = await gatherBriefSources(client, { deps: edited });
+  const expected = sources.meetings.flatMap((meeting) => {
+    const prompt = promptFor(meeting.purpose, { featureKeys: sources.featureKeys });
+    return chunkTranscript(meeting.transcript).map((chunk) => `${chunk.sha}-${prompt.promptHash.slice(0, 16)}.json`);
+  }).sort();
+  assert.deepEqual(readdirSync(chunkDir).sort(), expected, 'only the chunks of the current transcripts');
+  assert.ok(before.some((name) => !expected.includes(name)), 'the old workshop chunks are gone');
 });

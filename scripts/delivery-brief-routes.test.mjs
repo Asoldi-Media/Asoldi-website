@@ -381,14 +381,22 @@ test('the brief store is registered with the personal-data registry when the rou
   const store = await import('../lib/delivery-brief/store.js');
   store.resetBriefStoreRegistrationForTests();
   const registered = [];
-  const hub = await setup(t, { extraDeps: { personalDataRegistry: { registerStore: (entry) => registered.push(entry) } } });
+  const hub = await setup(t, { extraDeps: { personalDataRegistry: { registerStore: (entry) => registered.push(entry), getStore: () => null } } });
   assert.equal(registered.length, 1);
   assert.equal(registered[0].id, 'delivery-briefs');
-  assert.equal(registered[0].clientKey, 'directory');
+  assert.equal(registered[0].clientKey, 'path');
+  assert.deepEqual(registered[0].retention, { rule: 'brief' });
   assert.equal(typeof registered[0].export, 'function');
   assert.equal(typeof registered[0].erase, 'function');
   assert.deepEqual(snapshot(join(hub.dir, 'delivery-briefs')), [], 'registering writes nothing');
   assert.equal(hub.llm.state.calls, 0);
+
+  // A registry that already lists the store keeps its row.
+  store.resetBriefStoreRegistrationForTests();
+  const kept = [];
+  await setup(t, { extraDeps: { personalDataRegistry: { registerStore: (entry) => kept.push(entry), getStore: (id) => (id === 'delivery-briefs' ? { id } : null) } } });
+  assert.deepEqual(kept, []);
+  store.resetBriefStoreRegistrationForTests();
 });
 
 test('media links: the build\'s signer signs hub media items only while the media switch is on, with the same links (and ETag) within the hour', async (t) => {
