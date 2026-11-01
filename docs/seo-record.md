@@ -1,6 +1,6 @@
 # SEO record, job gating and the DataForSEO ledger
 
-Three parts of the hub's SEO operations. Each switch is in the automation settings (`GET` and `PUT /api/admin/automation-settings`, in the `seo` block) and is off by default.
+Three parts of the hub's SEO operations. Each switch is in the automation settings (`GET` and `PUT /api/admin/automation-settings`, in the `seo` block) and is off by default. Each switch node also takes `paused` (`null`, or `{ reason }`); a paused switch counts as off.
 
 ## The SEO record
 
@@ -8,11 +8,11 @@ One record per sales client in `<dataDir>/seo-ops/clients/<salesClientId>.json`,
 
 | Field | What it holds |
 |---|---|
-| `agreedKeywords` | `[{ phrase, status, source, quoteRef?, flags?, at, by }]`; `status` is `proposed`, `approved` or `blocked`. At most 3 approved, 1-6 words each. A prescription-only substance is refused (400 `regulated`); a phrase with the business's own name is kept with `flags: ['brand']`. |
+| `agreedKeywords` | `[{ phrase, status, source, quoteRef?, flags?, at, by }]`; `status` is `proposed`, `approved` or `blocked`. At most 3 approved, 1-6 words each. A prescription-only substance is refused (400 `regulated`): a listed term matches at the start of a word, and a term of 8 letters or more also inside a compound (`melatonintabletter`), so `specialist` is not caught by `cialis`. Approving exactly the business name without its legal form, or a brand search from the plan, needs `allowBrand: true` (400 `brand` otherwise); a phrase that only resembles the name is approved as usual. Both are kept with `flags: ['brand']`. |
 | `planSummary` | The Maker's summary of its keyword plan: locale, town, counts, up to 10 primaries, up to 50 candidates (phrase, volume, intent, role), brand searches, QA and spend. Raw provider responses are never kept. |
 | `pageMap` | Optional `[{ route, kind, primary, indexable }]` from the Maker. |
 
-**Ingest.** Both bundle routes (`POST /api/internal/maker/client-bundle` and the `run.client-bundle.updated` event on `POST /api/admin/sales/maker-status-callback`) store `bundle.keywordPlanSummary` before the portal sync, so a client without a portal user still gets a record. The answer keeps its status (404 when the portal sync finds no account) and adds `seoRecorded: true`, or `seoRecorded: false` with `seoReason` (`no-sales-client`, `unknown-sales-client`, `invalid-summary`, `busy`, `error`). A push without a summary is answered exactly as before. An unchanged summary writes nothing; agreed keywords are never touched by a push.
+**Ingest.** Both bundle routes (`POST /api/internal/maker/client-bundle` and the `run.client-bundle.updated` event on `POST /api/admin/sales/maker-status-callback`) store `bundle.keywordPlanSummary` before the portal sync, so a client without a portal user still gets a record. The answer keeps its status (404 when the portal sync finds no account) and adds `seoRecorded: true`, or `seoRecorded: false` with `seoReason` (`no-sales-client`, `unknown-sales-client`, `invalid-summary`, `busy`, `error`). A push without a summary is answered exactly as before. An unchanged summary writes nothing; agreed keywords are never touched by a push. The push waits at most 3 s for the client file when another writer holds it, and then answers `busy` (the Maker gives up on a push after 12 s and retries `busy` and `error` once).
 
 **Bank merge.** A bundle push replaces only `bank.seo.keywordPlan`; other `bank.seo` fields are kept (`lib/maker-bundle-to-bank.js`). The portal normalizer (`data/client-portal.js`) still stores only `seo.keywordPlan`.
 
@@ -20,21 +20,21 @@ One record per sales client in `<dataDir>/seo-ops/clients/<salesClientId>.json`,
 
 | Route | Who | What |
 |---|---|---|
-| `GET /api/admin/sales-clients/:id/seo` | sales, developer, admin | the record, its contract line and the last 20 history rows |
-| `PUT /api/admin/sales-clients/:id/seo` | developer, admin | `{ agreedKeywords: [...] }` replaces the list (duplicates collapse to the strongest status) |
-| `POST /api/admin/sales-clients/:id/seo/approve` | developer, admin | `{ phrase, source?, quoteRef? }` |
-| `POST /api/admin/sales-clients/:id/seo/block` | developer, admin | `{ phrase, reason? }` |
+| `GET /api/admin/sales-clients/:id/seo` | the sales rep who owns the client, a developer who sees it on the developer page, admin | the record, its contract line and the last 20 history rows |
+| `PUT /api/admin/sales-clients/:id/seo` | the developer who works on the client, admin | `{ agreedKeywords: [...] }` replaces the list (duplicates collapse to the strongest status; a row may carry `allowBrand`) |
+| `POST /api/admin/sales-clients/:id/seo/approve` | the developer who works on the client, admin | `{ phrase, source?, quoteRef?, allowBrand? }` |
+| `POST /api/admin/sales-clients/:id/seo/block` | the developer who works on the client, admin | `{ phrase, reason? }` |
 | `GET /api/internal/maker/seo-record?salesClientId=` | Maker host (`client-bundle` scope) | approved and blocked keywords and the page map; 404 `{code:'disabled'}` for every caller while `seo.recordPull.enabled` is off |
 
-A developer sees and changes only the clients assigned to them. The developer page shows the record in the SEO panel (`app/pages/developer/DeveloperSeoPanel.tsx`, `AgreedKeywordsPicker.tsx`); the offer composer lists the agreed keywords read-only.
+Access matches the other sales-client and developer routes: another rep's client answers 403 (`Not your sales client.`); a developer who cannot see the client gets 404, and one who sees it but may not work on it now (another developer's client, or either side of a handoff that is not accepted yet) gets 403 on a change. The developer page shows the record in the SEO panel (`app/pages/developer/DeveloperSeoPanel.tsx`, `AgreedKeywordsPicker.tsx`); the offer composer lists the agreed keywords read-only.
 
 **For other code.** `agreedKeywordsFor(id)` (approved phrases), `freezeAgreedKeywords(id, { ref })` (a frozen snapshot with the contract line, noted in the history), `agreedKeywordsContractText(record)` in `lib/seo-ops/contract-text.js` (`Avtalte søkeord: a, b, c`, or `null`), and `tickSteps` (empty for now).
 
-**Consumers.** Maps keywords (`buildMapsKeywords`) and analytics goals (`analyticsGoalsFromBank`, also in `GET /api/hub/site-config`) read the record of the bank's `makerLink.salesClientId` once a developer has approved or blocked a keyword: approved keywords first, then the page map's primaries, then the bank's plan; blocked phrases, prescription-only substances and the business's own name are left out. Until a keyword is decided their output is exactly as without a record.
+**Consumers.** Maps keywords (`buildMapsKeywords`) and analytics goals (`analyticsGoalsFromBank`, also in `GET /api/hub/site-config`) read the record of the bank's `makerLink.salesClientId` once a developer has approved or blocked a keyword: approved keywords first, then the page map's primaries, then the bank's plan. Blocked phrases and prescription-only substances are left out everywhere; phrases that look like the business's own name are left out of the page map and the plan, never from the approved keywords, so Maps and the goals track exactly the keywords the contract line lists. Until a keyword is decided their output is exactly as without a record.
 
 ## Job gating
 
-`seo.jobGating` (`{ enabled, mode }`, mode `shadow` or `auto`) chooses who decides two jobs (`lib/seo-ops/job-gating.js`):
+`seo.jobGating` (`{ enabled, mode, paused }`, mode `shadow` or `auto`) chooses who decides two jobs (`lib/seo-ops/job-gating.js`):
 
 | Job | Old gate | Feature-key gate |
 |---|---|---|
