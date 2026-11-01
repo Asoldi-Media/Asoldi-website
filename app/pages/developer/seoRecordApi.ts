@@ -35,13 +35,22 @@ export type SeoRecordView = {
 
 export type SeoRecordAnswer = { seoRecorded: boolean; record: SeoRecordView | null };
 
+/** A refused call; `code` is the hub's reason (for example 'brand', 'regulated', 'too-many-approved'). */
+export class SeoRecordCallError extends Error {
+  code: string;
+  constructor(message: string, code = '') {
+    super(message);
+    this.code = code;
+  }
+}
+
 async function call(path: string, headers: Record<string, string>, init: RequestInit = {}): Promise<SeoRecordAnswer> {
   const response = await fetch(`${API}/admin/sales-clients/${path}`, {
     ...init,
     headers: { ...headers, ...(init.body ? { 'Content-Type': 'application/json' } : {}) },
   });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(String(data?.message || `Søkeordene kunne ikke lastes (${response.status}).`));
+  if (!response.ok) throw new SeoRecordCallError(String(data?.message || `Søkeordene kunne ikke lastes (${response.status}).`), String(data?.code || ''));
   return { seoRecorded: Boolean(data?.seoRecorded), record: (data?.record || null) as SeoRecordView | null };
 }
 
@@ -49,8 +58,12 @@ export function fetchSeoRecord(salesClientId: string, headers: Record<string, st
   return call(`${encodeURIComponent(salesClientId)}/seo`, headers);
 }
 
-export function approveSeoKeyword(salesClientId: string, phrase: string, headers: Record<string, string>, source = 'developer') {
-  return call(`${encodeURIComponent(salesClientId)}/seo/approve`, headers, { method: 'POST', body: JSON.stringify({ phrase, source }) });
+/** allowBrand confirms approving the business's own name (the hub answers 400 'brand' without it). */
+export function approveSeoKeyword(salesClientId: string, phrase: string, headers: Record<string, string>, source = 'developer', allowBrand = false) {
+  return call(`${encodeURIComponent(salesClientId)}/seo/approve`, headers, {
+    method: 'POST',
+    body: JSON.stringify({ phrase, source, ...(allowBrand ? { allowBrand: true } : {}) }),
+  });
 }
 
 export function blockSeoKeyword(salesClientId: string, phrase: string, headers: Record<string, string>) {

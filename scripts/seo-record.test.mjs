@@ -153,10 +153,43 @@ test('limits: at most three approved, 1-6 words, no prescription-only substance'
   assert.deepEqual(record.readSeoRecord(id).agreedKeywords.length, 4, 'a refused change writes nothing');
 });
 
-test('brand phrases are flagged, not refused', async () => {
-  await record.approveAgreedKeyword('sc-record-1', 'fjordlys frisør', { by: 'dev-a', brandName: 'Fjordlys Frisør AS' });
-  const row = record.readSeoRecord('sc-record-1').agreedKeywords.find((entry) => entry.phrase === 'fjordlys frisør');
-  assert.deepEqual(row.flags, ['brand']);
+test('the own name is approved only when confirmed; a phrase that only resembles it is approved and flagged', async () => {
+  const id = 'sc-record-1';
+  const brandName = 'Fjordlys Frisør AS';
+  // Exactly the name without its legal form (and the plan's brand search): refused without allowBrand.
+  await assert.rejects(
+    record.approveAgreedKeyword(id, 'Fjordlys Frisør', { by: 'dev-a', brandName }),
+    (error) => error.code === 'brand' && error.status === 400 && error.message.includes('firmanavnet'),
+  );
+  assert.equal(record.readSeoRecord(id).agreedKeywords.some((row) => row.phrase === 'Fjordlys Frisør'), false, 'a refused approval writes nothing');
+  await assert.rejects(
+    record.updateClientSeo(id, { agreedKeywords: [...record.readSeoRecord(id).agreedKeywords, { phrase: 'fjordlys frisør', status: 'approved' }] }, { by: 'dev-a', brandName }),
+    (error) => error.code === 'brand',
+  );
+  await record.approveAgreedKeyword(id, 'fjordlys frisør', { by: 'dev-a', brandName, allowBrand: true });
+  let rows = record.readSeoRecord(id).agreedKeywords;
+  const own = rows.find((entry) => entry.phrase === 'fjordlys frisør');
+  assert.equal(own.status, 'approved');
+  assert.deepEqual(own.flags, ['brand']);
+  assert.equal('allowBrand' in own, false, 'the confirmation is not stored on the row');
+  // A row that is already approved stays approved when the list is sent again without allowBrand.
+  await record.updateClientSeo(id, { agreedKeywords: rows }, { by: 'dev-b', brandName });
+  assert.equal(record.readSeoRecord(id).agreedKeywords.find((entry) => entry.phrase === 'fjordlys frisør').status, 'approved');
+  // The name words in another order are not the name: approved without a confirmation, flagged.
+  await record.approveAgreedKeyword(id, 'frisør fjordlys', { by: 'dev-a', brandName });
+  rows = record.readSeoRecord(id).agreedKeywords;
+  assert.deepEqual(rows.find((entry) => entry.phrase === 'frisør fjordlys').flags, ['brand']);
+  // Approved rows are what the contract lists, flagged or not.
+  assert.equal(agreedKeywordsContractText(record.readSeoRecord(id)), 'Avtalte søkeord: herreklipp eksempelby, fjordlys frisør, frisør fjordlys');
+});
+
+test('a short listed substance matches only at the start of a word; long ones also inside compounds', () => {
+  for (const phrase of ['dental specialist eksempelby', 'specialized clinic', 'socialist', 'commercialisation', 'spesialist eksempelby']) {
+    assert.equal(record.checkAgreedPhrase(phrase), phrase, `${phrase} is not regulated`);
+  }
+  for (const [phrase, term] of [['melatonintabletter', 'melatonin'], ['cialis eksempelby', 'cialis'], ['botoxbehandling', 'botox'], ['kjøp semaglutidpenn', 'semaglutid'], ['zopiklontabletter', 'zopiklon']]) {
+    assert.throws(() => record.checkAgreedPhrase(phrase), (error) => error.code === 'regulated' && error.message.includes(`«${term}»`), phrase);
+  }
 });
 
 test('contract text, agreedKeywordsFor and freezeAgreedKeywords', async () => {

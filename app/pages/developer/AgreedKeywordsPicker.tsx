@@ -85,7 +85,7 @@ export function AgreedKeywordsPicker({ record, canEdit, busyPhrase = '', onAppro
               <span className="font-medium text-white">{row.phrase}</span>
               <span className={`rounded-full border px-2 py-0.5 text-[10px] ${STATUS_TONE[row.status]}`}>{STATUS_LABEL[row.status]}</span>
               <span className="text-[10px] text-gray-500">{volumeLabel(planRows.get(seoPhraseKey(row.phrase)))}</span>
-              {row.flags?.includes('brand') ? <span className="rounded-full border border-amber-400/40 px-2 py-0.5 text-[10px] text-amber-200" title="Søk på eget navn rangerer av seg selv og brukes ikke som mål.">eget navn</span> : null}
+              {row.flags?.includes('brand') ? <span className="rounded-full border border-amber-400/40 px-2 py-0.5 text-[10px] text-amber-200" title="Ligner firmanavnet. Søk på eget navn rangerer som regel av seg selv. Et godkjent søkeord brukes likevel.">eget navn</span> : null}
               {canEdit ? (
                 <span className="ml-auto flex gap-1">
                   {busy(row.phrase) ? <Loader2 size={13} className="animate-spin text-gray-400" /> : null}

@@ -6,6 +6,7 @@ import {
   blockSeoKeyword,
   fetchSeoRecord,
   putAgreedKeywords,
+  SeoRecordCallError,
   type SeoRecordView,
 } from './seoRecordApi';
 import { seoPhraseKey } from '../../../lib/seo-ops/phrase-filters.js';
@@ -62,6 +63,25 @@ export function DeveloperSeoPanel({ salesClientId, authHeaders, canEdit = false 
     }
   }
 
+  /** Approves a phrase; the business's own name is approved only after the developer confirms it. */
+  async function approve(phrase: string, source: string) {
+    setBusyPhrase(phrase);
+    setError('');
+    try {
+      try {
+        setRecord((await approveSeoKeyword(salesClientId, phrase, authHeaders, source)).record);
+      } catch (err) {
+        if (!(err instanceof SeoRecordCallError) || err.code !== 'brand') throw err;
+        if (!window.confirm(`${err.message}\n\nGodkjenne «${phrase}» likevel?`)) return;
+        setRecord((await approveSeoKeyword(salesClientId, phrase, authHeaders, source, true)).record);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyPhrase('');
+    }
+  }
+
   const summary = record?.planSummary || null;
   const primaries = (record?.pageMap || []).filter((row) => row.indexable !== false && row.primary);
   return (
@@ -81,7 +101,7 @@ export function DeveloperSeoPanel({ salesClientId, authHeaders, canEdit = false 
         record={record}
         canEdit={canEdit}
         busyPhrase={busyPhrase}
-        onApprove={(phrase, source) => void act(phrase, () => approveSeoKeyword(salesClientId, phrase, authHeaders, source))}
+        onApprove={(phrase, source) => void approve(phrase, source)}
         onBlock={(phrase) => void act(phrase, () => blockSeoKeyword(salesClientId, phrase, authHeaders))}
         onRemove={(phrase) => void act(phrase, () => putAgreedKeywords(
           salesClientId,

@@ -1,9 +1,10 @@
 // Keyword consumers on the SEO record: phrasesFromKeywordPlan, buildMapsKeywords and
 // analyticsGoalsFromBank read approved agreed keywords first, then page-map primaries, then the
-// legacy bank fields, and drop blocked phrases, prescription-only substances and the business's own
-// name. Without a record that guides them their output equals the base release's (compared with the
-// base commit's own modules when git and the ref are available: SEO_BASE_REF, default 859429c).
-// Every business here is made up.
+// legacy bank fields, and drop blocked phrases and prescription-only substances; own-name phrases are
+// dropped from the page map and the plan, never from the approved keywords, so the consumers track
+// exactly what the contract line lists. Without a record that guides them their output equals the
+// base release's (compared with the base commit's own modules when git and the ref are available:
+// SEO_BASE_REF, default 859429c). Every business here is made up.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -20,6 +21,7 @@ const root = fileURLToPath(new URL('..', import.meta.url));
 const { phrasesFromKeywordPlan, analyticsGoalsFromBank } = await import('../lib/analytics-insights.js');
 const { buildMapsKeywords, buildMapsSubject } = await import('../lib/maps-ranking.js');
 const record = await import('../lib/seo-ops/record.js');
+const { agreedKeywordsContractText, approvedAgreedPhrases } = await import('../lib/seo-ops/contract-text.js');
 
 const BASE_REF = process.env.SEO_BASE_REF || '859429c';
 
@@ -127,6 +129,7 @@ test('a guiding record: approved first, then page-map primaries, then the plan; 
   const phrases = phrasesFromKeywordPlan(PLAN, 10, { record: GUIDING, brandName: 'Nordlys Sushi AS' });
   assert.deepEqual(phrases, [
     'sushi catering eksempelby',
+    'Nordlys Sushi',
     'japansk restaurant eksempelby',
     'sushi takeaway eksempelby',
     'restaurant sentrum eksempelby',
@@ -134,17 +137,52 @@ test('a guiding record: approved first, then page-map primaries, then the plan; 
     'poke bowl',
   ]);
   assert.ok(!phrases.includes('sushi eksempelby'), 'blocked');
-  assert.ok(!phrases.some((phrase) => /nordlys/i.test(phrase)), 'own name and brand searches');
+  assert.ok(!phrases.includes('nordlys sushi meny'), 'a brand search from the plan is dropped');
+  assert.deepEqual(phrases.filter((phrase) => /nordlys/i.test(phrase)), ['Nordlys Sushi'], 'only the approved own name, as the contract lists it');
   assert.ok(!phrases.includes('handlekurv'), 'a non-indexable page has no keyword');
-  assert.deepEqual(phrasesFromKeywordPlan(PLAN, 2, { record: GUIDING, brandName: 'Nordlys Sushi AS' }), ['sushi catering eksempelby', 'japansk restaurant eksempelby']);
+  assert.deepEqual(phrasesFromKeywordPlan(PLAN, 2, { record: GUIDING, brandName: 'Nordlys Sushi AS' }), ['sushi catering eksempelby', 'Nordlys Sushi']);
 });
 
 test('Maps keywords with a guiding record', () => {
   const subject = { ...SUBJECTS[1], seoRecord: GUIDING };
-  assert.deepEqual(buildMapsKeywords(subject), ['sushi catering eksempelby', 'japansk restaurant eksempelby', 'sushi takeaway eksempelby']);
+  assert.deepEqual(buildMapsKeywords(subject), ['sushi catering eksempelby', 'Nordlys Sushi', 'japansk restaurant eksempelby']);
   const goals = analyticsGoalsFromBank({ ...BANKS[1], generalInfo: { companyName: 'Nordlys Sushi AS' } }, { seoRecord: GUIDING });
-  assert.deepEqual(goals.mapsKeywords, ['sushi catering eksempelby', 'japansk restaurant eksempelby', 'sushi takeaway eksempelby', 'restaurant sentrum eksempelby', 'bestill sushi']);
+  assert.deepEqual(goals.mapsKeywords, ['sushi catering eksempelby', 'Nordlys Sushi', 'japansk restaurant eksempelby', 'sushi takeaway eksempelby', 'restaurant sentrum eksempelby']);
   assert.equal(goals.ctaPath, '/bestill');
+});
+
+test('a trade-plus-town business name: the approved trade keyword reaches Maps, the goals and the contract alike', () => {
+  // "<Town> <Trade> AS": its main trade keyword shares every identifying word with the name.
+  const name = 'Eksempelby Rørlegger AS';
+  const seoRecord = {
+    agreedKeywords: [
+      { phrase: 'rørlegger eksempelby', status: 'approved', flags: ['brand'] },
+      { phrase: 'baderom eksempelby', status: 'approved' },
+    ],
+    pageMap: [{ route: '/', primary: 'eksempelby rørlegger' }, { route: '/bad', primary: 'baderomsrenovering' }],
+  };
+  const plan = { primary: [{ keyword: 'rørlegger eksempelby døgnvakt' }, { keyword: 'varmepumpe' }] };
+  const contract = approvedAgreedPhrases(seoRecord);
+  assert.deepEqual(contract, ['rørlegger eksempelby', 'baderom eksempelby']);
+  assert.equal(agreedKeywordsContractText(seoRecord), 'Avtalte søkeord: rørlegger eksempelby, baderom eksempelby');
+  const maps = buildMapsKeywords({ name: 'Eksempelby Rørlegger', industry: 'rørlegger', town: 'Eksempelby', keywordPlan: plan, seoRecord });
+  const goals = analyticsGoalsFromBank({ seo: { keywordPlan: plan }, generalInfo: { companyName: name } }, { seoRecord });
+  const phrases = phrasesFromKeywordPlan(plan, 5, { record: seoRecord, brandName: name });
+  for (const [label, list] of [['maps', maps], ['goals', goals.mapsKeywords], ['phrases', phrases]]) {
+    assert.deepEqual(list.slice(0, contract.length), contract, `${label}: every contract keyword, first and in order`);
+    // The name heuristic still keeps own-name phrases out of what the consumers pick by themselves.
+    assert.ok(!list.includes('eksempelby rørlegger'), `${label}: the own name from the page map`);
+    assert.ok(!list.includes('rørlegger eksempelby døgnvakt'), `${label}: an own-name phrase from the plan`);
+  }
+  assert.deepEqual(maps, ['rørlegger eksempelby', 'baderom eksempelby', 'baderomsrenovering']);
+  assert.deepEqual(goals.mapsKeywords, ['rørlegger eksempelby', 'baderom eksempelby', 'baderomsrenovering', 'varmepumpe']);
+});
+
+test('a phrase is never dropped for a short listed term that only appears inside another word', () => {
+  const seoRecord = { agreedKeywords: [{ phrase: 'dental specialist eksempelby', status: 'approved' }] };
+  const plan = { primary: [{ keyword: 'specialized clinic' }, { keyword: 'cialis eksempelby' }, { keyword: 'melatonintabletter' }] };
+  assert.deepEqual(phrasesFromKeywordPlan(plan, 5, { record: seoRecord }), ['dental specialist eksempelby', 'specialized clinic']);
+  assert.equal(agreedKeywordsContractText(seoRecord), 'Avtalte søkeord: dental specialist eksempelby');
 });
 
 test('negative control: a blocked phrase never reaches the Maps keywords, by any path', () => {
