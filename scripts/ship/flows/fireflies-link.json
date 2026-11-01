@@ -4,12 +4,12 @@
   "steps": [
     { "name": "list the recordings", "method": "GET", "path": "/api/admin/fireflies/meetings", "auth": "admin", "expect": 200, "save": { "meetingId": "body.meetings.0.meetingId" } },
     { "name": "create a sales client", "method": "POST", "path": "/api/admin/sales", "auth": "admin", "expect": 201,
-      "body": { "businessName": "Dark Diff Recording AS", "contactPerson": "Kari Example", "contactEmail": "recording@example.com", "industry": "bakery" },
+      "body": { "businessName": "Dark Diff Recording {{run}} AS", "contactPerson": "Kari Example", "contactEmail": "recording-{{run}}@example.com", "industry": "bakery" },
       "save": { "clientId": "body.client.id" } },
     { "name": "unlink the recording", "method": "POST", "path": "/api/admin/fireflies/meetings/{{meetingId}}/unlink", "auth": "admin", "expect": 200, "body": {} },
-    { "name": "link it to the new client", "method": "POST", "path": "/api/admin/fireflies/meetings/{{meetingId}}/link", "auth": "admin", "expect": 200, "body": { "clientId": "{{clientId}}" } },
-    { "name": "the recordings of the new client", "method": "GET", "path": "/api/admin/fireflies/meetings?clientId={{clientId}}", "auth": "admin", "expect": 200 },
-    { "name": "unlink it again", "method": "POST", "path": "/api/admin/fireflies/meetings/{{meetingId}}/unlink", "auth": "admin", "expect": 200, "body": {} },
-    { "name": "the recording after unlinking", "method": "GET", "path": "/api/admin/fireflies/meetings/{{meetingId}}", "auth": "admin", "expect": 200 }
+    { "name": "link it to the new client", "replay": true, "method": "POST", "path": "/api/admin/fireflies/meetings/{{meetingId}}/link", "auth": "admin", "expect": 200, "body": { "clientId": "{{clientId}}" } },
+    { "name": "the recordings of the new client", "replay": true, "method": "GET", "path": "/api/admin/fireflies/meetings?clientId={{clientId}}", "auth": "admin", "expect": 200 },
+    { "name": "unlink it again", "replay": true, "method": "POST", "path": "/api/admin/fireflies/meetings/{{meetingId}}/unlink", "auth": "admin", "expect": 200, "body": {} },
+    { "name": "the recording after unlinking", "replay": true, "method": "GET", "path": "/api/admin/fireflies/meetings/{{meetingId}}", "auth": "admin", "expect": 200 }
   ]
 }

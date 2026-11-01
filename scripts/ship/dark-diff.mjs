@@ -7,13 +7,16 @@
  *   node scripts/ship/dark-diff.mjs --base <ref> --head <ref> --data <dir> [--intended <json>]
  *        [--secrets] [--rollback] [--flows <dir>] [--out <report.json>] [--keep] [--json]
  *        [--repo <git dir>] [--node-modules <dir>] [--clock-start <iso>] [--no-inventory] [--fake-secrets]
+ *        [--secret-names <file>]   names-only listing of the live secrets folder (implies --fake-secrets)
  *        [--skip-data <folder,folder>]   top-level data folders left out of the copies (large media)
  *
  * <ref> is any git revision of --repo (default: this checkout), or dir:<path> for a hub tree that is
  * already on disk. Each ref is checked out into a temp folder with a private git index (the repo's
  * own index, HEAD and work tree are never touched) and gets a link to --node-modules.
  *
- * The data dir is copied (never written): a prep copy gets a local admin password and a local Maker
+ * The data dir is copied, never written. A data dir that holds symbolic links or junctions is
+ * refused: a hub writing through a copied link would write to its target. A prep copy gets a local
+ * admin password and a local Maker
  * host token (through the base release's own data modules), and base and head each run on their own
  * copy of it. Both boot in safe mode (HUB_SAFE_MODE=1) with the egress recorder in enforce mode and
  * an empty allowlist (loopback only), from an empty working folder with a temp HOME, so no .env and
@@ -34,11 +37,20 @@
  *             new secret file appears (a file the source lacks that base creates as well is shared,
  *             not a failure; intended.allowNewSecrets lists others).
  * --fake-secrets  a local copy of the live data has no secrets/ (they never leave the server): this
- *             fills the live layout (signing secret, Maker token, e-mail keys, webhook file) with
- *             random values in the copies, so --secrets checks that both releases read them as they are.
- * --rollback  boots base on the data head wrote (after its flows): base must boot in safe mode and
- *             serve the site configs, keep every field head wrote (only intended.rollbackLost may be
- *             lost) and leave every reserved key head wrote unchanged.
+ *             fills the standard layout (signing secret, Maker token, e-mail keys, webhook file) with
+ *             random values in the copies. It checks the standard layout only, not the real files.
+ * --secret-names <file>  one name per line from a names-only listing of the live secrets folder
+ *             ("old-key", "archive/", "archive/x"): every name gets a fake file (or folder), so files
+ *             the standard layout does not know are checked too.
+ * --rollback  boots base on a copy of the data head wrote (after its flows) and drives base's write
+ *             paths: the flows again (new records, which makes most stores rewrite their whole file),
+ *             the steps marked "replay" with the values head's run saved (updates to head's own
+ *             records), the site configs and the clock ticks. Head does the same on a second copy
+ *             (the control). Both start their clock after the latest time head's run reached. Base
+ *             must boot in safe mode, answer every step with the status head answers, keep every
+ *             field head wrote that head keeps, change no reserved key in a way head does not, and
+ *             change no value head left as it was. intended.rollbackLost lists the rollback keys a
+ *             push accepts. When the control is refused what head's run accepted, exit 2.
  *
  * The intended file: { "changes": [{ "kind": "response|site-config|tick|route|outbox|data|secret",
  * "match": "<glob over the difference key>", "reason": "…" }], "ignore": [ …same… ],
@@ -52,14 +64,14 @@ import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import {
   copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync,
-  realpathSync, rmdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync,
+  readlinkSync, realpathSync, rmdirSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync,
 } from 'node:fs';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import {
-  canonical, classify, deepDiff, diffSnapshots, excerpt, extractRoutes, listFiles, loadIntended,
+  canonical, classify, deepDiff, diffSnapshots, extractRoutes, findLinks, globToRegExp, listFiles, loadIntended,
   makeTextScrubber, normalizeValue, probePath, rollbackLosses, secretManifest, secretViolations,
   snapshotData,
 } from './dark-diff-lib.mjs';
@@ -70,6 +82,12 @@ export const DEFAULT_FLOWS = join(HERE, 'flows');
 const EGRESS_AUDIT = join(REPO, 'scripts', 'safe-mode', 'egress-audit.cjs');
 const CLOCK_PRELOAD = join(HERE, 'clock-preload.cjs');
 const RUN_TAG = 'dd';
+// The rollback pass makes its own records ({{run}} in flow e-mails and names), so its sign-ups never
+// collide with the ones head's run made.
+const ROLLBACK_RUN_TAG = 'rb';
+// Ids stamped from the process clock inside this range around the clock start are random.
+const CLOCK_WINDOW_BEFORE_MS = 3_600_000;
+const CLOCK_WINDOW_AFTER_MS = 48 * 3_600_000;
 const ENV_PASSTHROUGH = ['PATH', 'Path', 'SystemRoot', 'SYSTEMROOT', 'windir', 'WINDIR', 'ComSpec', 'COMSPEC', 'PATHEXT', 'SystemDrive', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE', 'USERNAME', 'USERDOMAIN', 'LANG'];
 
 export class HarnessError extends Error {}
@@ -100,6 +118,10 @@ export function parseArgs(argv = []) {
     else if (arg === '--json') opts.json = true;
     else if (arg === '--no-inventory') opts.inventory = false;
     else if (arg === '--fake-secrets') opts.fakeSecrets = true;
+    else if (arg === '--secret-names') {
+      opts.secretNames = value(i++, arg);
+      opts.fakeSecrets = true;
+    }
     else if (arg === '--skip-data') opts.skipData = value(i++, arg).split(',').map((s) => s.trim()).filter(Boolean);
     else if (arg === '--debug') opts.debug = true;
     else throw new HarnessError(`unknown option ${arg}`);
@@ -265,14 +287,46 @@ export const LIVE_SECRET_LAYOUT = Object.freeze({
   'webhooks.json': () => `${JSON.stringify({ version: 1, fireflies: { secret: randomBytes(32).toString('hex'), token: randomBytes(24).toString('base64url'), acceptQueryToken: true, rotatedAt: new Date(0).toISOString(), lastVerified: null } }, null, 2)}\n`,
 });
 
-/** Fills the missing live secret files with random values (in a copy only). Returns the names added. */
-export function addFakeSecrets(dataDir) {
+/**
+ * Reads a names-only listing of the live secrets folder: one relative name per line, a folder ends
+ * with "/", blank lines and "#" comments are skipped. Names with "..", absolute paths or unusual
+ * characters are refused (exit 2), so a listing can never point outside the copy.
+ */
+export function readSecretNames(file) {
+  const names = [];
+  for (const raw of readFileSync(file, 'utf8').split(/\r?\n/)) {
+    const line = raw.trim().replace(/\\/g, '/').replace(/^secrets\//, '');
+    if (!line || line.startsWith('#')) continue;
+    const folder = line.endsWith('/');
+    const parts = line.replace(/\/+$/, '').split('/');
+    if (!parts.every((part) => /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(part) && part !== '..')) {
+      throw new HarnessError(`--secret-names: refused name ${JSON.stringify(line.slice(0, 80))}`);
+    }
+    names.push({ name: parts.join('/'), folder });
+  }
+  return names;
+}
+
+/**
+ * Fills the missing secret files with random values (in a copy only): the standard layout, or each
+ * name of a names-only listing (`names` from readSecretNames; known names get their usual shape,
+ * other files 64 random hex characters). Returns the names added.
+ */
+export function addFakeSecrets(dataDir, names = null) {
   const dir = join(dataDir, 'secrets');
   mkdirSync(dir, { recursive: true });
   const added = [];
-  for (const [name, make] of Object.entries(LIVE_SECRET_LAYOUT)) {
-    if (existsSync(join(dir, name))) continue;
-    writeFileSync(join(dir, name), make(), { mode: 0o600 });
+  const wanted = names || Object.keys(LIVE_SECRET_LAYOUT).map((name) => ({ name, folder: false }));
+  for (const { name, folder } of wanted) {
+    const target = join(dir, ...name.split('/'));
+    if (existsSync(target)) continue;
+    if (folder) {
+      mkdirSync(target, { recursive: true });
+      continue;
+    }
+    mkdirSync(dirname(target), { recursive: true });
+    const make = LIVE_SECRET_LAYOUT[name] || (() => `${randomBytes(32).toString('hex')}\n`);
+    writeFileSync(target, make(), { mode: 0o600 });
     added.push(name);
   }
   return added;
@@ -444,43 +498,68 @@ function authHeaders(auth, vars, credentials) {
   throw new HarnessError(`unknown auth role ${role}`);
 }
 
-async function runFlows(hub, flows, credentials, normalize, dataDir) {
+async function runStep(hub, step, key, vars, credentials, normalize, dataDir) {
+  if (step.settle) {
+    await settle(dataDir, { maxMs: Number(step.settle) || 10_000 });
+    return null;
+  }
+  const method = String(step.method || 'GET').toUpperCase();
+  const missing = [...missingVars([step.path, step.body, step.headers], vars)];
+  if (step.auth && String(step.auth).startsWith('bearer:') && vars[String(step.auth).slice(7)] === undefined) missing.push(String(step.auth).slice(7));
+  if (missing.length) return { key, name: step.name || '', method, path: step.path, skipped: `missing ${missing.join(', ')}` };
+  const res = await request(hub, {
+    method,
+    path: fill(step.path, vars),
+    headers: { ...fill(step.headers || {}, vars), ...authHeaders(step.auth, vars, credentials) },
+    body: step.body === undefined ? undefined : fill(step.body, vars),
+  });
+  for (const [name, path] of Object.entries(step.save || {})) {
+    const value = pick(res, path);
+    if (value !== undefined && value !== null && value !== '') vars[name] = value;
+  }
+  const expect = Array.isArray(step.expect) ? step.expect : step.expect ? [step.expect] : null;
+  return {
+    key,
+    name: step.name || '',
+    method,
+    path: step.path,
+    status: res.status,
+    body: res.json !== undefined ? normalize(res.json) : normalize(res.text.slice(0, 20_000)),
+    ...(expect && !expect.includes(res.status) ? { unexpected: `wanted ${expect.join('/')}, got ${res.status}` } : {}),
+  };
+}
+
+/**
+ * Runs every flow; returns { results, vars } where vars[flowName] holds the values the flow saved
+ * (the rollback pass replays steps on head's records with them).
+ */
+async function runFlows(hub, flows, credentials, normalize, dataDir, { runTag = RUN_TAG } = {}) {
+  const results = [];
+  const saved = {};
+  for (const flow of flows) {
+    const vars = { run: runTag };
+    for (let i = 0; i < flow.steps.length; i += 1) {
+      const row = await runStep(hub, flow.steps[i], `${flow.name}#${i}`, vars, credentials, normalize, dataDir);
+      if (row) results.push(row);
+    }
+    saved[flow.name] = vars;
+  }
+  return { results, vars: saved };
+}
+
+/**
+ * The steps marked "replay": true, run again with the values another run saved (head's records),
+ * in flow order. Keys are "<flow>#<step> replay".
+ */
+async function replayFlows(hub, flows, credentials, normalize, dataDir, savedVars = {}) {
   const results = [];
   for (const flow of flows) {
-    const vars = { run: RUN_TAG };
+    const vars = { ...(savedVars[flow.name] || {}) };
     for (let i = 0; i < flow.steps.length; i += 1) {
       const step = flow.steps[i];
-      const key = `${flow.name}#${i}`;
-      if (step.settle) {
-        await settle(dataDir, { maxMs: Number(step.settle) || 10_000 });
-        continue;
-      }
-      const missing = [...missingVars([step.path, step.body, step.headers], vars)];
-      if (step.auth && String(step.auth).startsWith('bearer:') && vars[String(step.auth).slice(7)] === undefined) missing.push(String(step.auth).slice(7));
-      if (missing.length) {
-        results.push({ key, name: step.name || '', method: step.method || 'GET', path: step.path, skipped: `missing ${missing.join(', ')}` });
-        continue;
-      }
-      const res = await request(hub, {
-        method: String(step.method || 'GET').toUpperCase(),
-        path: fill(step.path, vars),
-        headers: { ...fill(step.headers || {}, vars), ...authHeaders(step.auth, vars, credentials) },
-        body: step.body === undefined ? undefined : fill(step.body, vars),
-      });
-      for (const [name, path] of Object.entries(step.save || {})) {
-        const value = pick(res, path);
-        if (value !== undefined && value !== null && value !== '') vars[name] = value;
-      }
-      const expect = Array.isArray(step.expect) ? step.expect : step.expect ? [step.expect] : null;
-      results.push({
-        key,
-        name: step.name || '',
-        method: String(step.method || 'GET').toUpperCase(),
-        path: step.path,
-        status: res.status,
-        body: res.json !== undefined ? normalize(res.json) : normalize(res.text.slice(0, 20_000)),
-        ...(expect && !expect.includes(res.status) ? { unexpected: `wanted ${expect.join('/')}, got ${res.status}` } : {}),
-      });
+      if (step.replay !== true) continue;
+      const row = await runStep(hub, { ...step, save: undefined }, `${flow.name}#${i} replay`, vars, credentials, normalize, dataDir);
+      if (row) results.push(row);
     }
   }
   return results;
@@ -578,9 +657,29 @@ function readOutbox(dataDir, normalize) {
 
 /* ------------------------------------------------------------------ one side */
 
+function sideScrubber(dataDir, tree, home, clockStart) {
+  return makeTextScrubber([[dataDir, '<data>'], [tree, '<tree>'], [home, '<run>']], {
+    clockWindow: [clockStart - CLOCK_WINDOW_BEFORE_MS, clockStart + CLOCK_WINDOW_AFTER_MS],
+  });
+}
+
+/** What the egress recorder saw in one hub process; throws when it did not run at all. */
+function egressOf(label, home) {
+  let egress;
+  try {
+    const rows = readFileSync(join(home, 'egress.jsonl'), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    egress = { recorderRan: rows.some((row) => row.event === 'audit-start'), refused: rows.filter((row) => row.blocked).length, hosts: [...new Set(rows.filter((row) => row.blocked).map((row) => row.host))].sort() };
+  } catch {
+    egress = { recorderRan: false, refused: 0, hosts: [] };
+  }
+  // The egress recorder refused every connection that was not to this machine.
+  if (!egress.recorderRan) throw new HarnessError(`${label}: the egress recorder did not run inside the hub; nothing can be trusted`);
+  return egress;
+}
+
 async function runSide({ label, tree, dataDir, run, flows, clock, credentials, routes, inventory, secretRef }) {
   const sideRun = newRunFolder(run.root, label, run.shared);
-  const scrub = makeTextScrubber([[dataDir, '<data>'], [tree, '<tree>'], [sideRun.home, '<run>']]);
+  const scrub = sideScrubber(dataDir, tree, sideRun.home, run.shared.clockStart);
   const normalize = (value) => normalizeValue(value, { scrub });
   const hub = await bootHub(tree, dataDir, sideRun);
   const result = { label, scrub };
@@ -590,7 +689,9 @@ async function runSide({ label, tree, dataDir, run, flows, clock, credentials, r
     const login = await request(hub, { method: 'POST', path: '/api/admin/login', body: { username: credentials.username, password: credentials.password } });
     const sideCredentials = { adminToken: login.json?.token || '', makerToken: credentials.makerToken };
     if (!sideCredentials.adminToken) throw new HarnessError(`${label}: the prepared admin could not sign in (HTTP ${login.status})`);
-    result.flows = await runFlows(hub, flows, sideCredentials, normalize, dataDir);
+    const flowRun = await runFlows(hub, flows, sideCredentials, normalize, dataDir);
+    result.flows = flowRun.results;
+    result.flowVars = flowRun.vars;
     await settle(dataDir);
     result.siteConfig = await siteConfigProbes(hub, readSites(dataDir), normalize);
     result.ticks = await clockTicks(hub, clock, sideCredentials, normalize, run.shared.clockStart);
@@ -602,15 +703,92 @@ async function runSide({ label, tree, dataDir, run, flows, clock, credentials, r
   } finally {
     await hub.stop();
   }
-  // The egress recorder refused every connection that was not to this machine.
-  try {
-    const rows = readFileSync(join(sideRun.home, 'egress.jsonl'), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
-    result.egress = { recorderRan: rows.some((row) => row.event === 'audit-start'), refused: rows.filter((row) => row.blocked).length, hosts: [...new Set(rows.filter((row) => row.blocked).map((row) => row.host))].sort() };
-  } catch {
-    result.egress = { recorderRan: false, refused: 0, hosts: [] };
-  }
-  if (!result.egress.recorderRan) throw new HarnessError(`${label}: the egress recorder did not run inside the hub; nothing can be trusted`);
+  result.egress = egressOf(label, sideRun.home);
   return result;
+}
+
+/**
+ * One release on a copy of the data head wrote: sign in, the flows (with the rollback run tag),
+ * the replay steps on head's records, the site configs and the clock ticks. Statuses and the data
+ * left behind are what the rollback check compares. A boot failure throws (HarnessError).
+ */
+async function runRollbackSide({ label, tree, dataDir, run, flows, clock, credentials, headVars }) {
+  const sideRun = newRunFolder(run.root, label, run.shared);
+  const scrub = sideScrubber(dataDir, tree, sideRun.home, run.shared.clockStart);
+  const normalize = (value) => normalizeValue(value, { scrub });
+  const hub = await bootHub(tree, dataDir, sideRun);
+  const result = { label, login: 0, flows: [], replay: [], siteConfig: [], ticks: [] };
+  try {
+    await settle(dataDir, { quietMs: 800, maxMs: 8000 });
+    const login = await request(hub, { method: 'POST', path: '/api/admin/login', body: { username: credentials.username, password: credentials.password } });
+    result.login = login.status;
+    const sideCredentials = { adminToken: login.json?.token || '', makerToken: credentials.makerToken };
+    if (sideCredentials.adminToken) {
+      result.flows = (await runFlows(hub, flows, sideCredentials, normalize, dataDir, { runTag: ROLLBACK_RUN_TAG })).results;
+      await settle(dataDir);
+      result.replay = await replayFlows(hub, flows, sideCredentials, normalize, dataDir, headVars);
+      await settle(dataDir);
+      result.ticks = await clockTicks(hub, clock, sideCredentials, normalize, run.shared.clockStart);
+    }
+    result.siteConfig = await siteConfigProbes(hub, readSites(dataDir), normalize);
+    await settle(dataDir);
+  } finally {
+    await hub.stop();
+  }
+  result.egress = egressOf(label, sideRun.home);
+  return result;
+}
+
+/**
+ * Steps the control (head, in the rollback pass) was refused (sign-in failed, 401 or 403, or a
+ * step skipped for a missing value) although head's own run accepted them: ["<key> <method> <path>: …"].
+ */
+export function controlRefusals(headFlows = [], control = {}) {
+  const out = [];
+  if (control.login !== 200) out.push(`admin sign-in answered ${control.login}`);
+  const own = new Map(headFlows.map((row) => [row.key, row]));
+  for (const row of control.flows || []) {
+    const mine = own.get(row.key);
+    if (!mine || mine.skipped || !(mine.status >= 200 && mine.status < 300)) continue;
+    if (row.skipped) out.push(`${row.key} ${row.method} ${row.path}: skipped (${row.skipped})`);
+    else if (row.status === 401 || row.status === 403) out.push(`${row.key} ${row.method} ${row.path}: ${row.status}`);
+  }
+  for (const row of control.replay || []) {
+    const mine = own.get(row.key.replace(/ replay$/, ''));
+    if (!mine || mine.skipped || !(mine.status >= 200 && mine.status < 300)) continue;
+    if (row.status === 401 || row.status === 403) out.push(`${row.key} ${row.method} ${row.path}: ${row.status}`);
+  }
+  return out;
+}
+
+/** Status differences between base and the control in the rollback pass: [{ key, detail }]. */
+export function rollbackStatusDifferences(base, control) {
+  const out = [];
+  const statusOf = (row) => (row ? (row.skipped ? `skipped (${row.skipped})` : String(row.status)) : '(not run)');
+  const compare = (kind, a = [], b = [], { skipAbsentRoute = false } = {}) => {
+    const index = (list) => new Map(list.map((row) => [row.key, row]));
+    const x = index(a);
+    const y = index(b);
+    const absent = skipAbsentRoute ? new Set(a.filter((row) => /#0$/.test(row.key) && row.status === 404).map((row) => row.key.replace(/ #0$/, ''))) : new Set();
+    for (const key of [...new Set([...x.keys(), ...y.keys()])]) {
+      if (absent.has(key.replace(/ #\d+$/, ''))) continue;
+      const sa = statusOf(x.get(key));
+      const sb = statusOf(y.get(key));
+      if (sa === sb) continue;
+      const row = x.get(key) || y.get(key);
+      const label = row.method && row.path ? ` ${row.method} ${row.path}` : '';
+      out.push({ key: `rollback ${kind} ${key}${label} status`, detail: `base answers ${sa}, head answers ${sb} on the same data` });
+    }
+  };
+  compare('response', base.flows, control.flows);
+  compare('replay', base.replay, control.replay);
+  compare('site-config', base.siteConfig, control.siteConfig);
+  // A tick route base does not have (404 on the first tick) is a route difference, not a rollback one.
+  compare('tick', base.ticks, control.ticks, { skipAbsentRoute: true });
+  for (const row of base.siteConfig || []) {
+    if (row.status === 0 || row.status >= 500) out.push({ key: `rollback site-config ${row.key} server error`, detail: `HTTP ${row.status}` });
+  }
+  return out;
 }
 
 /* ------------------------------------------------------------------ comparisons */
@@ -674,10 +852,20 @@ function compareOutbox(base, head) {
 /* ------------------------------------------------------------------ the run */
 
 function sourceFingerprint(dir) {
-  return listFiles(dir).map((rel) => {
+  const files = listFiles(dir).map((rel) => {
     const stat = statSync(join(dir, ...rel.split('/')));
     return `${rel}:${stat.size}:${Math.round(stat.mtimeMs)}`;
-  }).join('\n');
+  });
+  const links = findLinks(dir).map((rel) => {
+    let target = '';
+    try {
+      target = readlinkSync(join(dir, ...rel.split('/')));
+    } catch {
+      target = '(unreadable)';
+    }
+    return `${rel}:link:${target}`;
+  });
+  return [...files, ...links].join('\n');
 }
 
 /** Copies a data folder, leaving out the top-level folders in `skip` (large media the flows never read). */
@@ -719,6 +907,13 @@ export async function runDarkDiff(options) {
   const opts = { flows: DEFAULT_FLOWS, repo: REPO, inventory: true, ...options };
   const source = resolve(String(opts.data || ''));
   if (!existsSync(source) || !statSync(source).isDirectory()) throw new HarnessError(`--data ${source} is not a folder`);
+  const skipData = (Array.isArray(opts.skipData) ? opts.skipData : []).filter((name) => /^[^/\\]+$/.test(name) && name !== 'secrets');
+  // A link in the copy would let a hub write through it to its target (possibly the source data).
+  const sourceLinks = findLinks(source).filter((rel) => !skipData.includes(rel.split('/')[0]));
+  if (sourceLinks.length) {
+    throw new HarnessError(`--data holds symbolic links or junctions (${sourceLinks.slice(0, 10).join(', ')}${sourceLinks.length > 10 ? ', …' : ''}); copy the data without links, or leave those top-level folders out with --skip-data`);
+  }
+  const secretNames = opts.secretNames ? readSecretNames(resolve(opts.secretNames)) : null;
   const intended = loadIntended(opts.intended ? resolve(opts.intended) : '');
   const { flows, clock } = loadFlows(resolve(opts.flows));
   const nodeModules = resolve(opts.nodeModules || join(opts.repo, 'node_modules'));
@@ -752,14 +947,13 @@ export async function runDarkDiff(options) {
 
     // Prep: one copy gets local credentials through the base release's own modules, then two copies of it.
     const prep = join(root, 'data', 'prep');
-    const skipData = (Array.isArray(opts.skipData) ? opts.skipData : []).filter((name) => /^[^/\\]+$/.test(name) && name !== 'secrets');
     if (skipData.length) report.warnings.push(`left out of the copies: ${skipData.join(', ')}`);
     copyData(source, prep, skipData);
     const fakeAdded = new Set();
     if (opts.fakeSecrets) {
-      const added = addFakeSecrets(prep);
+      const added = addFakeSecrets(prep, secretNames);
       for (const name of added) fakeAdded.add(`secrets/${name}`);
-      if (added.length) report.warnings.push(`fake secrets added to the copies (random values): ${added.join(', ')}`);
+      if (added.length) report.warnings.push(`fake secrets added to the copies (random values, ${secretNames ? 'from the names listing' : 'standard layout only'}): ${added.join(', ')}`);
     }
     const password = randomBytes(18).toString('base64url');
     const prepRun = newRunFolder(root, 'prep', run.shared);
@@ -785,8 +979,11 @@ export async function runDarkDiff(options) {
     })() : [];
 
     const sides = {};
+    let headElapsedMs = 0;
     for (const side of ['base', 'head']) {
+      const started = Date.now();
       sides[side] = await runSide({ label: side, tree: trees[side].dir, dataDir: dirs[side], run, flows, clock, credentials, routes, inventory: opts.inventory, secretRef: opts.secrets });
+      if (side === 'head') headElapsedMs = Date.now() - started;
     }
 
     const diffs = [
@@ -850,36 +1047,52 @@ export async function runDarkDiff(options) {
 
     report.rollbackFailures = [];
     if (opts.rollback) {
+      // Base runs on one copy of what head wrote; head runs on another (the control), so a change
+      // the flows make on purpose (an unlink, a status move) is never read as a loss.
       const rb = join(root, 'data', 'rollback');
+      const rbControl = join(root, 'data', 'rollback-control');
       copyData(dirs.head, rb);
+      copyData(dirs.head, rbControl);
       const written = parseJsonFiles(rb);
-      const rbRun = newRunFolder(root, 'rollback', run.shared);
-      let hub;
+      // The rollback pass starts its clock after the latest time head's run reached: data head
+      // wrote can hold times of that run (a session cut-off set at its first boot, for example),
+      // and a clock that went back before them would refuse sign-ins that head's run accepted.
+      const rollbackClockStart = Math.ceil((clockStart + headElapsedMs + 10 * 60_000) / 60_000) * 60_000;
+      const rollbackRun = { ...run, shared: { ...run.shared, clockStart: rollbackClockStart } };
+      report.rollbackClockStart = new Date(rollbackClockStart).toISOString();
+      const shared = { run: rollbackRun, flows, clock, credentials, headVars: sides.head.flowVars };
+      const failures = [];
+      let baseSide = null;
       try {
-        hub = await bootHub(trees.base.dir, rb, rbRun);
+        baseSide = await runRollbackSide({ label: 'rollback-base', tree: trees.base.dir, dataDir: rb, ...shared });
       } catch (error) {
-        report.rollbackFailures.push({ key: 'rollback boot', detail: `base did not boot on the data head wrote: ${error.message.slice(0, 600)}` });
+        if (!(error instanceof HarnessError)) throw error;
+        failures.push({ key: 'rollback boot', detail: `base did not boot on the data head wrote: ${error.message.slice(0, 600)}` });
       }
-      if (hub) {
-        try {
-          await settle(rb, { quietMs: 800, maxMs: 8000 });
-          const login = await request(hub, { method: 'POST', path: '/api/admin/login', body: { username: credentials.username, password: credentials.password } });
-          if (!login.json?.token) report.rollbackFailures.push({ key: 'rollback admin sign-in', detail: `HTTP ${login.status}` });
-          for (const site of readSites(rb)) {
-            const label = String(site.domain || '').trim() || 'a site without a domain';
-            const res = site.site_key ? await request(hub, { path: `/api/hub/site-config?site_key=${encodeURIComponent(site.site_key)}` }) : null;
-            if (res && (res.status === 0 || res.status >= 500)) report.rollbackFailures.push({ key: `rollback site-config ${label}`, detail: `HTTP ${res.status}` });
-          }
-          await settle(rb);
-        } finally {
-          await hub.stop();
+      if (baseSide) {
+        const controlSide = await runRollbackSide({ label: 'rollback-control', tree: trees.head.dir, dataDir: rbControl, ...shared });
+        // The control is head on its own data: when it cannot do what head's run did, the pass
+        // proves nothing (every step refused on both sides compares equal). That is a harness
+        // failure, never a pass.
+        const refusedInControl = controlRefusals(sides.head.flows, controlSide);
+        if (refusedInControl.length) {
+          throw new HarnessError(`the rollback pass did not run: head was refused steps on its own data that its run accepted (${refusedInControl.slice(0, 5).join('; ')})`);
         }
-        const after = parseJsonFiles(rb);
-        const lostAllowed = intended.rollbackLost.map((glob) => new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`, 's'));
-        for (const loss of rollbackLosses(written, after, { scrub: sides.head.scrub })) {
-          if (lostAllowed.some((re) => re.test(loss.key))) report.warnings.push(`${loss.key}: ${loss.detail} (listed)`);
-          else report.rollbackFailures.push(loss);
-        }
+        if (!baseSide.login || baseSide.login !== 200) failures.push({ key: 'rollback admin sign-in', detail: `HTTP ${baseSide.login}` });
+        failures.push(...rollbackStatusDifferences(baseSide, controlSide));
+        const scrub = makeTextScrubber([[rb, '<data>'], [rbControl, '<data>']], {
+          clockWindow: [clockStart - CLOCK_WINDOW_BEFORE_MS, clockStart + CLOCK_WINDOW_AFTER_MS],
+        });
+        failures.push(...rollbackLosses(written, parseJsonFiles(rb), { scrub, control: parseJsonFiles(rbControl) }));
+        report.counts.rollback = { steps: baseSide.flows.length, replayed: baseSide.replay.length, siteConfigs: baseSide.siteConfig.length, ticks: baseSide.ticks.length };
+        const statuses = (side) => [...side.flows, ...side.replay].map((row) => `${row.key} ${row.method} ${row.path} ${row.skipped ? `skipped (${row.skipped})` : row.status}`);
+        report.rollbackSteps = { base: statuses(baseSide), head: statuses(controlSide) };
+        if (baseSide.egress.refused) report.warnings.push(`rollback base: ${baseSide.egress.refused} outbound connection(s) refused (${baseSide.egress.hosts.join(', ')})`);
+      }
+      const accepted = intended.rollbackLost.map(globToRegExp);
+      for (const failure of failures) {
+        if (accepted.some((re) => re.test(failure.key))) report.warnings.push(`${failure.key}: ${failure.detail} (listed)`);
+        else report.rollbackFailures.push(failure);
       }
     }
 

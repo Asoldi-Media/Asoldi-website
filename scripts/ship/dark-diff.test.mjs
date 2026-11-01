@@ -16,10 +16,13 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  classify, extractRoutes, globToRegExp, loadIntended, makeTextScrubber, normalizeValue, probePath,
-  rollbackLosses, secretViolations, snapshotData, diffSnapshots,
+  classify, extractRoutes, findLinks, globToRegExp, isTimeKey, loadIntended, makeTextScrubber, normalizeString,
+  normalizeValue, probePath, rollbackLosses, secretViolations, snapshotData, diffSnapshots,
 } from './dark-diff-lib.mjs';
-import { addFakeSecrets, linkNodeModules, main, materializeRef, parseArgs, pick, removeLink, REPO, runDarkDiff } from './dark-diff.mjs';
+import {
+  addFakeSecrets, controlRefusals, HarnessError, linkNodeModules, main, materializeRef, parseArgs, pick, readSecretNames, removeLink,
+  REPO, rollbackStatusDifferences, runDarkDiff,
+} from './dark-diff.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const NODE_MODULES = join(REPO, 'node_modules');
@@ -49,6 +52,43 @@ test('normalization: times, dates, random ids, codes, hashes and temp paths read
   assert.equal(a.mail, 'owner@example.com');
   const changed = normalizeValue({ tier: 'tier-2-seo' }, { scrub: scrubA });
   assert.notDeepEqual(changed, normalizeValue({ tier: 'tier-1-standard' }, { scrub: scrubA }), 'a real value change stays visible');
+});
+
+test('ids stamped from the clock normalize alike even when their time part is all letters', () => {
+  // At 2026-11-01T04:00Z, Date.now().toString(36) starts "mvxa": a time part without a digit.
+  const start = Date.parse('2026-11-01T04:00:00Z');
+  const run = makeTextScrubber([], { clockWindow: [start - 3_600_000, start + 48 * 3_600_000] });
+  const plain = makeTextScrubber([]);
+  for (const scrub of [run, plain]) {
+    assert.equal(normalizeString('mem_mvxaxykl_df1b74a2', scrub), normalizeString('mem_mvxaxzla_9a3ae486', scrub));
+    assert.equal(normalizeString('biz_mvxaxykl_abcdef', scrub), 'biz_<id>', 'a hex part without a digit is still hex');
+    assert.equal(normalizeValue({ id: 'mem_mvxaxykl_df1b74a2' }, { scrub }).id, 'mem_<id>');
+  }
+  // Without a random suffix the clock window decides: an id from inside the run is random...
+  assert.equal(normalizeString('job_mvxaxykl', run), 'job_<id>');
+  assert.equal(normalizeString('em_MVXAXYKLADCFEBBA', run), 'em_<id>');
+  // ...and the same shape outside it is kept, as are plain words after a prefix.
+  assert.equal(normalizeString('job_mvxaxykl', plain), 'job_mvxaxykl');
+  for (const text of ['tier-standard', 'page-location', 'site-language', 'status-november', 'tier-1-standard']) {
+    assert.equal(normalizeString(text, run), text, text);
+  }
+  assert.equal(normalizeString('page-location-x1y2z3a4', run), 'page-location-<id>', 'a part that is not random can still prefix one');
+  // Tokens: random base64url without a digit is a token; a long camelCase name is not.
+  assert.equal(normalizeString('QwErTyUiOpAsDfGhJkLzXcVbNmQwErTy_-AbC', plain), '<token>');
+  assert.equal(normalizeString('createHubSecretHolderWithFallbackValue', plain), 'createHubSecretHolderWithFallbackValue');
+});
+
+test('time keys are whole words or camelCase / snake_case suffixes; counts and amounts keep their numbers', () => {
+  for (const key of ['at', 'ts', 'exp', 'iat', 'nbf', 'mtimeMs', 'createdAt', 'updated_at', 'expiresAt', 'sentTs', 'lastSeenAt', 'startDate', 'createdAtMs', 'until']) {
+    assert.equal(isTimeKey(key), true, key);
+  }
+  for (const key of ['attempts', 'counts', 'items', 'limits', 'slots', 'seats', 'credits', 'points', 'vat', 'lat', 'update', 'format', 'stats', 'rate']) {
+    assert.equal(isTimeKey(key), false, key);
+  }
+  const a = normalizeValue({ attempts: 3, counts: 5, items: 2, vat: 25, limits: 7, slots: 4, seats: 1, credits: 10, points: 3, lat: 59, createdAt: 1793491730948, sentTs: 17 });
+  const b = normalizeValue({ attempts: 9, counts: 0, items: 7, vat: 0, limits: 99, slots: 2, seats: 3, credits: 0, points: 8, lat: 60, createdAt: 1793499999999, sentTs: 18 });
+  const keys = Object.keys(a).filter((key) => a[key] !== b[key]).sort();
+  assert.deepEqual(keys, ['attempts', 'counts', 'credits', 'items', 'lat', 'limits', 'points', 'seats', 'slots', 'vat'], 'every count or amount change stays visible; only the times read alike');
 });
 
 test('the intended file: globs over difference keys, ignore entries, unused entries are reported', () => {
@@ -95,6 +135,97 @@ test('rollback check: a dropped field is lost, a reorder is not, a reserved key 
   const losses = rollbackLosses(written, after).map((l) => `${l.key}: ${l.detail}`);
   assert.deepEqual(losses.sort(), ['rollback sites.json:$.id=s1.ext.x: reserved field changed', 'rollback sites.json:$.id=s1.extra: field lost']);
   assert.deepEqual(rollbackLosses({ 'gone.json': { a: 1 } }, {}).map((l) => l.detail), ['file lost']);
+});
+
+test('rollback check with a control: only what head keeps and base drops is lost', () => {
+  const written = {
+    'sales-clients.json': [{ id: 'c1', industry: 'bakery', meetings: [{ id: 'm1' }], delivery: { stage: 'a', at: '2026-11-01T04:00:00.000Z' } }],
+    'gone-in-both.json': { a: 1 },
+  };
+  // Head itself unlinks the meeting and moves the stage (the flows did it); base does the same and
+  // also drops industry from a record it saved.
+  const control = { 'sales-clients.json': [{ id: 'c1', industry: 'bakery', meetings: [], delivery: { stage: 'b', at: '2026-11-01T05:00:00.000Z' } }, { id: 'c2' }] };
+  const after = { 'sales-clients.json': [{ id: 'c1', meetings: [], delivery: { stage: 'b', at: '2026-11-01T05:00:07.000Z' } }, { id: 'c3' }] };
+  const losses = rollbackLosses(written, after, { control }).map((l) => `${l.key}: ${l.detail}`);
+  assert.deepEqual(losses, ['rollback sales-clients.json:$.id=c1.industry: field lost']);
+  // A reserved key that base moves differently from head is reported.
+  const moved = { 'sales-clients.json': [{ id: 'c1', industry: 'bakery', meetings: [], delivery: { stage: 'c', at: '2026-11-01T05:00:00.000Z' } }] };
+  assert.deepEqual(rollbackLosses(written, moved, { control }).map((l) => `${l.key}: ${l.detail}`), ['rollback sales-clients.json:$.id=c1.delivery.stage: reserved field changed']);
+  // A field base drops and then writes back empty is a changed value: head left it as it was.
+  const emptied = { 'sales-clients.json': [{ id: 'c1', industry: '', meetings: [], delivery: { stage: 'b', at: '2026-11-01T05:00:03.000Z' } }] };
+  assert.deepEqual(rollbackLosses(written, emptied, { control }).map((l) => `${l.key}: ${l.detail}`), ['rollback sales-clients.json:$.id=c1.industry: value changed']);
+  // Without a control, only presence and reserved keys are checked (a value change is not judged).
+  assert.deepEqual(rollbackLosses(written, emptied).map((l) => l.detail).filter((d) => d === 'value changed'), []);
+});
+
+test('rollback statuses: base must answer what head answers on the same data; a tick route base lacks is skipped', () => {
+  const head = {
+    flows: [{ key: 'f#0', method: 'POST', path: '/x', status: 201 }, { key: 'f#1', method: 'GET', path: '/y', status: 200 }],
+    replay: [{ key: 'f#1 replay', method: 'GET', path: '/y', status: 200 }],
+    siteConfig: [{ key: 'a.example by-key', status: 200 }],
+    ticks: [{ key: 'POST /tick #0', status: 200 }, { key: 'POST /tick #1', status: 200 }],
+  };
+  const same = JSON.parse(JSON.stringify(head));
+  same.ticks = [{ key: 'POST /tick #0', status: 404 }];
+  assert.deepEqual(rollbackStatusDifferences(same, head), []);
+  const broken = JSON.parse(JSON.stringify(same));
+  broken.replay[0].status = 500;
+  broken.siteConfig[0].status = 502;
+  const keys = rollbackStatusDifferences(broken, head).map((d) => d.key).sort();
+  assert.deepEqual(keys, ['rollback replay f#1 replay GET /y status', 'rollback site-config a.example by-key server error', 'rollback site-config a.example by-key status']);
+});
+
+test('a rollback pass where head itself is refused what its run accepted does not count as a pass', () => {
+  const headFlows = [{ key: 'f#0', method: 'POST', path: '/x', status: 201 }, { key: 'f#1', method: 'GET', path: '/y', status: 200 }, { key: 'g#0', method: 'GET', path: '/z', skipped: 'missing id' }];
+  assert.deepEqual(controlRefusals(headFlows, { login: 200, flows: [{ key: 'f#0', status: 201 }, { key: 'f#1', status: 200 }, { key: 'g#0', skipped: 'missing id' }], replay: [{ key: 'f#1 replay', status: 200 }] }), []);
+  // Every step refused on both sides would compare equal: the control check catches it.
+  const refused = controlRefusals(headFlows, { login: 200, flows: [{ key: 'f#0', method: 'POST', path: '/x', status: 401 }, { key: 'f#1', method: 'GET', path: '/y', skipped: 'missing clientId' }], replay: [{ key: 'f#1 replay', method: 'GET', path: '/y', status: 403 }] });
+  assert.deepEqual(refused, ['f#0 POST /x: 401', 'f#1 GET /y: skipped (missing clientId)', 'f#1 replay GET /y: 403']);
+  assert.deepEqual(controlRefusals(headFlows, { login: 401, flows: [], replay: [] }), ['admin sign-in answered 401']);
+});
+
+test('a data dir with a symbolic link or junction is refused before anything is copied', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'dark-diff-links-'));
+  try {
+    const data = join(root, 'data');
+    const outside = join(root, 'outside');
+    mkdirSync(join(data, 'media'), { recursive: true });
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(data, 'sites.json'), '[]');
+    linkNodeModules(join(data, 'media'), outside);
+    assert.deepEqual(findLinks(data), ['media/node_modules']);
+    await assert.rejects(runDarkDiff({ base: 'HEAD', head: 'HEAD', data }), (error) => error instanceof HarnessError && /links or junctions \(media\/node_modules\)/.test(error.message));
+    assert.equal(await main(['--base', 'HEAD', '--head', 'HEAD', '--data', data]), 2);
+    // A skipped top-level folder is never copied, so its links do not matter (the run then stops later, for another reason).
+    await assert.rejects(runDarkDiff({ base: 'HEAD', head: 'HEAD', data, skipData: ['media'], flows: join(root, 'no-flows') }), /no flows folder/);
+    assert.equal(removeLink(join(data, 'media', 'node_modules')), true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('--secret-names: every name of a names-only listing gets a fake file or folder; bad names are refused', () => {
+  const root = mkdtempSync(join(tmpdir(), 'dark-diff-secret-names-'));
+  try {
+    const list = join(root, 'names.txt');
+    writeFileSync(list, '# names only\nadmin-secret\nsecrets/old-signing-key\narchive/\narchive/2025-key\r\nwebhooks.json\n');
+    const names = readSecretNames(list);
+    assert.deepEqual(names.map((n) => `${n.name}${n.folder ? '/' : ''}`), ['admin-secret', 'old-signing-key', 'archive/', 'archive/2025-key', 'webhooks.json']);
+    const data = join(root, 'data');
+    mkdirSync(join(data, 'secrets'), { recursive: true });
+    writeFileSync(join(data, 'secrets', 'admin-secret'), 'kept\n');
+    assert.deepEqual(addFakeSecrets(data, names).sort(), ['archive/2025-key', 'old-signing-key', 'webhooks.json']);
+    assert.equal(readFileSync(join(data, 'secrets', 'admin-secret'), 'utf8'), 'kept\n');
+    assert.match(readFileSync(join(data, 'secrets', 'old-signing-key'), 'utf8'), /^[0-9a-f]{64}\n$/);
+    assert.ok(JSON.parse(readFileSync(join(data, 'secrets', 'webhooks.json'), 'utf8')).fireflies, 'a known name keeps its shape');
+    for (const bad of ['../outside', '/etc/passwd', 'a/../../b', 'C:\\x']) {
+      writeFileSync(list, `${bad}\n`);
+      assert.throws(() => readSecretNames(list), /refused name/, bad);
+    }
+    assert.equal(parseArgs(['--base', 'a', '--head', 'b', '--data', 'd', '--secret-names', list]).fakeSecrets, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('data snapshots: secret folders compare by presence; a changed value is found', () => {
@@ -199,14 +330,17 @@ function copyTree(dest, patch = null) {
     },
   });
   if (patch) {
-    const file = join(dest, 'server.js');
-    let text = readFileSync(file, 'utf8');
-    for (const [anchor, replacement] of patch.replace || []) {
-      assert.ok(text.includes(anchor), `server.js anchor missing: ${anchor.slice(0, 60)}`);
-      text = text.replace(anchor, replacement);
+    const files = { 'server.js': { replace: patch.replace || [], append: patch.append }, ...(patch.files || {}) };
+    for (const [rel, edit] of Object.entries(files)) {
+      const file = join(dest, ...rel.split('/'));
+      let text = readFileSync(file, 'utf8');
+      for (const [anchor, replacement] of edit.replace || []) {
+        assert.ok(text.includes(anchor), `${rel} anchor missing: ${anchor.slice(0, 60)}`);
+        text = text.replace(anchor, replacement);
+      }
+      if (edit.append) text += `\n${edit.append}\n`;
+      writeFileSync(file, text);
     }
-    if (patch.append) text += `\n${patch.append}\n`;
-    writeFileSync(file, text);
   }
   // Linked here, not by the harness: two runs may share a tree, and each run unlinks what it linked.
   linkNodeModules(dest, NODE_MODULES);
@@ -290,6 +424,9 @@ describe('dark-diff on a seeded data folder', { skip: !canBoot && 'no hub depend
         '}',
       ].join('\n'),
     });
+    // An older release that drops a field of every site at boot, and drops one sales field from
+    // every client only when it creates a client. Nothing at boot creates one, so only the rollback
+    // pass, which drives base's write paths, can show that loss.
     trees.dropping = copyTree(join(root, 'tree-dropping'), {
       append: [
         '{',
@@ -299,6 +436,14 @@ describe('dark-diff on a seeded data folder', { skip: !canBoot && 'no hub depend
         '  seededFs.writeFileSync(sitesFile, JSON.stringify(seededSites.map(({ deliveryPhase, ...rest }) => rest), null, 2));',
         '}',
       ].join('\n'),
+      files: {
+        'data/sales.js': {
+          replace: [[
+            'state.push(client);',
+            'state.push(client);\n  writeSalesFile(state.map(normalizeSalesClient).map(({ industry, ...rest }) => rest));\n  return client;',
+          ]],
+        },
+      },
     });
   };
 
@@ -307,13 +452,20 @@ describe('dark-diff on a seeded data folder', { skip: !canBoot && 'no hub depend
     if (root) rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   });
 
-  test('the same release on both sides: no difference, secrets kept, base keeps what head wrote', { timeout: 900_000 }, async () => {
+  test('the same release on both sides: no difference, secrets kept, base keeps what head wrote', { timeout: 1_200_000 }, async () => {
     setup();
-    const report = await runDarkDiff({ base: trees.same, head: trees.same, data, secrets: true, rollback: true, nodeModules: NODE_MODULES });
+    // A clock start whose base-36 form begins with four letters: ids stamped from Date.now() then
+    // often have no digit at all, which the normalizer must still recognise.
+    const clockStart = allLetterClockStart();
+    assert.match(Date.parse(clockStart).toString(36).slice(0, 4), /^[a-z]{4}$/);
+    const report = await runDarkDiff({ base: trees.same, head: trees.same, data, secrets: true, rollback: true, nodeModules: NODE_MODULES, clockStart });
     assert.deepEqual(report.unlisted, [], JSON.stringify(report.unlisted.slice(0, 5), null, 2));
     assert.deepEqual(report.secretFailures, []);
-    assert.deepEqual(report.rollbackFailures, []);
+    assert.deepEqual(report.rollbackFailures, [], JSON.stringify(report.rollbackFailures.slice(0, 5), null, 2));
     assert.equal(report.ok, true);
+    // The rollback pass drove base's write paths: the flows again and the replays on head's records.
+    assert.ok(report.counts.rollback.steps >= 30, `${report.counts.rollback.steps} rollback steps`);
+    assert.ok(report.counts.rollback.replayed >= 15, `${report.counts.rollback.replayed} replayed steps`);
     // The flows really ran: every step answered as its flow expects, none was skipped.
     assert.ok(report.flows.length >= 30, `${report.flows.length} flow steps`);
     assert.deepEqual(report.flows.filter((row) => row.unexpected || row.skipped), []);
@@ -356,15 +508,34 @@ describe('dark-diff on a seeded data folder', { skip: !canBoot && 'no hub depend
     assert.ok(!JSON.stringify(report).includes('d'.repeat(48)), 'no secret value in the report');
   });
 
-  test('--rollback: an older release that drops a field head wrote fails unless the field is listed', { timeout: 900_000 }, async () => {
+  test('--rollback: an older release that drops a field head wrote, at boot or when it saves, fails unless the field is listed', { timeout: 900_000 }, async () => {
     setup();
     const flows = flowsDir(root, ['signing-admin']);
     const report = await runDarkDiff({ base: trees.dropping, head: trees.same, data, rollback: true, inventory: false, flows, nodeModules: NODE_MODULES });
     const lost = report.rollbackFailures.map((f) => f.key);
     assert.ok(lost.some((k) => /^rollback sites\.json:\$\.id=.*\.deliveryPhase$/.test(k)), lost.join('\n'));
+    // The sales field is dropped only when base creates a client, which happens because the
+    // rollback pass runs the flows against base. Later saves write it back empty, so it shows as a
+    // changed value (or as lost). Head's own client is among the records that lose it.
+    const salesLosses = lost.filter((k) => /^rollback sales-clients\.json:\$\.id=.*\.industry$/.test(k));
+    assert.ok(salesLosses.length >= 2, lost.join('\n'));
+    assert.ok(report.rollbackFailures.filter((f) => salesLosses.includes(f.key)).every((f) => ['field lost', 'value changed'].includes(f.detail)));
+    assert.deepEqual(lost.filter((k) => !salesLosses.includes(k) && !/deliveryPhase$/.test(k)), [], 'nothing else differs on the rollback');
     const intended = join(root, 'intended-rollback.json');
-    writeFileSync(intended, JSON.stringify({ rollbackLost: ['rollback sites.json:*.deliveryPhase'] }));
+    writeFileSync(intended, JSON.stringify({ rollbackLost: ['rollback sites.json:*.deliveryPhase', 'rollback sales-clients.json:*.industry'] }));
     const listed = await runDarkDiff({ base: trees.dropping, head: trees.same, data, rollback: true, inventory: false, flows, intended, nodeModules: NODE_MODULES });
     assert.deepEqual(listed.rollbackFailures, []);
+    assert.ok(listed.warnings.some((w) => /industry: (field lost|value changed) \(listed\)/.test(w)));
   });
 });
+
+/** The latest whole hour (at most two days back) whose base-36 time begins with four letters, for two hours on. */
+function allLetterClockStart(now = Date.now()) {
+  const hour = 3_600_000;
+  for (let at = Math.floor(now / hour) * hour; at > now - 48 * hour; at -= hour) {
+    if (/^[a-z]{4}$/.test(at.toString(36).slice(0, 4)) && /^[a-z]{4}$/.test((at + 2 * hour).toString(36).slice(0, 4))) {
+      return new Date(at).toISOString();
+    }
+  }
+  return '2026-11-01T04:00:00.000Z';
+}

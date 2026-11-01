@@ -15,11 +15,15 @@ is compared with the release that is live (base) on a copy of the live data. The
    ```
    node scripts/ship/dark-diff.mjs --base <live commit> --head <commit to push> \
      --data <local copy of the live data dir> --intended <intended.json> \
-     --secrets --fake-secrets --rollback --out <report.json>
+     --secrets --secret-names <names-only listing of the live secrets folder> \
+     --rollback --out <report.json>
    ```
 
    Large media folders that no flow reads can be left out of the copies with
-   `--skip-data <folder,folder>` (top-level folder names; `secrets` is never left out).
+   `--skip-data <folder,folder>` (top-level folder names; `secrets` is never left out). A data
+   copy that holds symbolic links or junctions is refused (exit 2): a hub writing through a copied
+   link would write to its target. Copy the data without links, or leave those top-level folders
+   out with `--skip-data`.
    It must exit 0. Exit 1 means a difference that the intended file does not list, a changed or
    new secret file, or data that the older release loses. Exit 2 means it could not run (read the
    message; nothing was compared).
@@ -49,6 +53,14 @@ is compared with the release that is live (base) on a copy of the live data. The
 - Compares the normalized responses, the safe-mode outbox (one row per mail with its text), the
   route inventory and the two data folders. Times, dates, random ids, tokens, password hashes and
   temp paths become placeholders; arrays are compared as sets. A PDF is compared by its page count.
+  - Ids are recognised by their shape, not by the characters they happen to hold: a prefixed part
+    that mixes letters and digits, a time part followed by a random hex part
+    (`mem_mvxaxykl_df1b74a2`), or a part whose base-36 reading is a time inside the run's clock
+    range. Plain words after a prefix (`tier-standard`) stay as they are.
+  - A number becomes a placeholder when it looks like epoch milliseconds or sits under a time key:
+    a whole-word key (`at`, `ts`, `exp`, `iat`, `mtimeMs`, …) or a camelCase or snake_case time
+    suffix (`createdAt`, `sentTs`, `expiresAt`, `updated_at`, `timeoutMs`, …). Counts and amounts
+    (`attempts`, `items`, `limits`, `slots`, `vat`, …) are compared as they are.
 
 ## Flows
 
@@ -68,6 +80,12 @@ A flow file is `{ "name", "description", "steps": [...] }`. A step is
   difference: the comparison is between the two releases.
 - `{ "settle": 10000 }` waits until the data folder stops changing (mails and other work that
   finish after the response).
+- `{{run}}` is a tag of the pass (`dd` for the comparison, `rb` for the rollback pass). Flows put
+  it in e-mail addresses, names and domains, so the rollback pass makes its own records and its
+  sign-ups never collide with the ones head made.
+- `"replay": true` marks a step the rollback pass runs again, with the values head's run saved, on
+  head's own records (an update, or a read of a record head made). Mark only steps that are safe
+  to repeat.
 
 The shipped flows cover the signing paths (staff marking a contract signed, the contract signed
 on the preview page, the offer accepted in the client portal, and the signed-contract backfill
@@ -101,18 +119,46 @@ paths with the same sha256, and no new file. A file that the source lacks and th
 as well is a note, not a failure. `allowNewSecrets` lists a secret a push adds on purpose. The
 report names paths only, never values or hashes.
 
-A local copy of the live data never holds `secrets/` (secrets stay on the server), so
-`--fake-secrets` fills the live layout with random values in the copies. The check then shows
-that both releases read existing secrets exactly as they are.
+A local copy of the live data never holds `secrets/` (secrets stay on the server), so the copies
+get fake files with random values:
+
+- `--fake-secrets` fills the standard layout only (signing secret, Maker token, e-mail keys,
+  webhook file). It shows that both releases read those files as they are. It says nothing about
+  the real files on the server: other names, extra files or older formats are not in it.
+- `--secret-names <file>` (implies `--fake-secrets`) makes a fake file for every name in a
+  names-only listing of the live secrets folder: one relative name per line, a folder ends with
+  `/`, `#` starts a comment. Take the listing with a tool that shows names only (for example the
+  hosting file manager's folder view); never download the contents. Known names keep their usual
+  shape; any other name gets 64 random hex characters. Names with `..`, absolute paths or unusual
+  characters are refused. Use it for every push that touches secret handling.
+
+Either way the check compares paths and hashes of fake values: it proves that a release leaves
+each listed file as it is and makes no new one, not that it can read the real values.
 
 ## --rollback
 
-Boots base on the data head wrote after its flows: base must start in safe mode, accept the
-prepared admin and answer the site configs without a server error. Every JSON field head wrote
-must still be there after base ran, and every field under a reserved key (`ext`, `delivery`,
-`sitePlan`, `seo`, …) must be unchanged. `rollbackLost` lists a field a push accepts losing on a
-rollback (`rollback <file>:<path glob>`). `backups/` is left out: every release prunes its own
-oldest copies at boot.
+Base is booted on a copy of the data head wrote after its flows, and its write paths are driven:
+
+1. the flows again (with the `rb` run tag, so they make new records; most stores then rewrite
+   their whole file, which is where an older release drops fields it does not know);
+2. every `"replay": true` step with the values head's run saved, so base updates and reads the
+   records head made;
+3. the site configs and the clock ticks.
+
+Head does exactly the same on a second copy (the control). Both start their clock after the latest
+time head's run reached, so times head wrote (a session cut-off set at its first boot, for
+example) are never in their future. Base must start in safe mode, accept the prepared admin,
+answer every step and site config with the status head answers (a tick route base does not have
+is skipped), and answer the site configs without a server error. A JSON field head wrote counts
+as lost when the control still has it and base's copy does not; a field under a reserved key
+(`ext`, `delivery`, `sitePlan`, `seo`, …) counts as changed when base leaves it different from the
+control; any other field counts as changed when the control left its value as it was and base did
+not (an older release that drops a field and writes it back empty). Times and ids are normalized
+first. So a change the flows make on purpose (an unlink, a status move) is never read as a loss.
+When the control itself is refused a step that head's run accepted (sign-in, 401, 403, or a step
+skipped for a missing value), the pass proves nothing and the run stops with exit 2. `rollbackLost` lists rollback keys a push accepts
+(`rollback <file>:<path glob>`, `rollback response <flow>#<step> * status`, …); a listed one is a
+note. `backups/` is left out: every release prunes its own oldest copies at boot.
 
 ## The report
 
