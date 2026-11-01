@@ -1,0 +1,23 @@
+{
+  "about": "Which rules scripts/security/secret-scan.mjs enforces in this repo, the offender lists the tracked files are checked against, and the files the two cleanup scripts leave alone.",
+  "profile": "public",
+  "ratchets": {
+    "plan": "scripts/security/plan-id-offenders.json",
+    "pii": "scripts/security/client-data-offenders.json"
+  },
+  "codemodSkipReason": "Copies of client CMS files whose sha256 data/cms-feature-tree.meta.json records. Reword them in website-cms and copy them again with scripts/sync-cms-feature-tree.mjs.",
+  "codemodSkip": [
+    "lib/cms-features.js",
+    "lib/cms-spec-schema.js",
+    "data/cms-feature-tree.json",
+    "scripts/fixtures/cms-feature-matrix.json"
+  ],
+  "scrubExcludeReason": "Files the client-data scrub leaves alone; their findings stay on the client-data offender list. The inbox bot, workshop prep and suite bot tests and lib/inbox-bot are being rewritten by another change set: run the scrub on them after it lands. The context-links test checks how links about one business are scored, so its fixture has to read like a whole business: replace it with a synthetic business by hand.",
+  "scrubExclude": [
+    "scripts/inbox-bot.test.mjs",
+    "scripts/workshop-prep.test.mjs",
+    "scripts/suite-bot-core.test.mjs",
+    "lib/inbox-bot/**",
+    "scripts/client-context-links.test.mjs"
+  ]
+}

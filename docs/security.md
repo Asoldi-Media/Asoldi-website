@@ -459,25 +459,57 @@ To switch the push webhook to the new secret, whenever convenient:
   numbers, 8-digit mobile numbers without `+47` (grouped like `9xx xx xxx`, or unbroken when
   quoted on their own or on a line about a phone), fødselsnummer, card numbers. Numbers that look
   like fixtures (`1234`, `0000`, `99887766`) are skipped;
+- client names listed one per line in `~/.asoldi-secrets/scan-names.txt` (or `--names <file>`,
+  or `SECRET_SCAN_NAMES`), matched as whole words in any case; the file stays outside the repo
+  (a tracked names file is an error) and a finding names its line, never the name;
+- internal planning words: task and area ids (two capital letters and a number), planning batch
+  and branch names, the planning documents' file names. Code, comments, tests, docs and commit
+  messages describe the behaviour instead;
 - paths for secrets and client data (`.env`, keys, data JSON, transcripts, `docs/daily-logs/`,
-  `tmp/`, private fixtures).
+  `tmp/`, private fixtures, `*.bak-redact`).
 
-Output names the path, line, rule and env key or retired label, never the value. Lines of any
-length are scanned (a JSON dump or a minified bundle is one line); every rule is linear in the
-line length.
+Output names the path, line, rule and env key, retired label or names-file line, never the
+value. Lines of any length are scanned (a JSON dump or a minified bundle is one line); every
+rule is linear in the line length.
+
+The same scanner runs in website-maker and website-cms. `scripts/security/scan-profile.json`
+picks the rules: `public` (this repo and the CMS) uses all of them; `private` (the Maker, whose
+fixtures hold real client data by design) checks secrets and secret paths only.
 
 ```bash
 npm run hooks:install       # once per clone: core.hooksPath=.githooks
 npm run scan:secrets        # tracked files, secrets only
-npm run scan:public         # tracked files, secrets + client data, counts per rule
+npm run scan:public         # tracked files, every rule, counts per rule
+npm run scan:ratchet        # tracked files against the offender lists (see below)
 node scripts/security/secret-scan.mjs --history --secrets-only   # every commit
+node scripts/security/secret-scan.mjs --commits origin/main..HEAD # every message about to ship, merges included
+node scripts/security/secret-scan.mjs --workspace <dir>           # a folder without git (exports, copies)
 ```
 
 - `pre-commit` scans the staged lines; `commit-msg` scans the message (commit messages are
-  public too; the e-mail of a `Co-authored-by:` style trailer is skipped).
-- `pre-push` scans every commit being pushed (a secret added and removed again is still
-  caught), its message, and the lines written while resolving a merge (`--cc`), then runs
-  `npm test`. A push to main deploys asoldi.com, so a failing test blocks it. When the remote
+  public too; the e-mail of a `Co-authored-by:` style trailer is skipped). While the committed
+  `scripts/security/scan-profile.json` says `public`, `pre-commit` uses the public rules and the
+  staged `.secret-scan-allowlist.json` whatever the working tree says, and refuses a staged
+  profile that names a weaker one.
+- `pre-push` takes the profile and the allowlist from each pushed commit, never from the working
+  tree. When the commit the push starts from has the public profile, the public rules apply and
+  a pushed profile that names a weaker one is refused.
+- Both refuse an allowlist change that lets more than one exact value through: a new `'*'` rule,
+  a new glob path, a new entry for a client-data or planning rule (it hides every such finding in
+  its file) or a new allowed e-mail domain. `SECRET_SCAN_ALLOWLIST_WIDEN=1` lets such a change
+  through on purpose and lists it. An exact value (`emails`, `phones`, `fixtureValues`) or a
+  one-file entry for a secret rule (whose hits must still look fake) is not broader. The commit that adds the allowlist file, or a push
+  from a commit without one, has nothing to compare with.
+- `pre-push` scans every commit being pushed (a secret or a planning word added and removed
+  again is still caught, because every pushed commit is published), the lines written while
+  resolving a merge (`--cc`), the message of every pushed commit, merge commits included (the
+  same check as `--commits` over the pushed range), and the message of a pushed annotated tag,
+  then runs `npm test`. A tag or a new branch at a commit that is already on a remote adds no
+  commits, so only its tag message is new. `SECRET_SCAN_PLAN_NET_DIFF=1` (or
+  `--plan-net-diff`) checks planning words in file lines on the pushed result instead (the diff
+  from the remote to the pushed tip); set it only when the planning words of earlier commits in
+  the push may become public, because the scan then lets them through and lists each one.
+  A push to main deploys asoldi.com, so a failing test blocks it. When the remote
   sha is not in this clone, it scans everything that is on no remote-tracking branch.
   `npm test` runs with a throwaway `APP_DATA_DIR` (removed afterwards) and
   `PERSIST_PRODUCTION_ENV=0`: some older tests fall back to `~/.asoldi-website-data`, which on
@@ -488,7 +520,12 @@ node scripts/security/secret-scan.mjs --history --secrets-only   # every commit
 
 Test fixtures use `example.com` addresses and values that look fake (`fake`, `test`,
 `0000` …). A fixture that must match a secret pattern goes in `.secret-scan-allowlist.json`
-with a reason; the scan still reports an allowlisted hit whose value looks real.
+with a reason; the scan still reports an allowlisted hit whose value looks real. An entry with
+rule `'*'` covers the secret and path rules only: client data and planning words need an entry
+that names the rule, on one file (`--ratchet` fails on such an entry with a glob path), or an
+exact value. A contact that only some files may hold goes in `fixtureValues` by the sha256 of
+the lowercase address or of the 8 national digits, with the path of the one file that needs it;
+tests import the value from that file.
 
 After rotating a secret, record the old value so the scan keeps catching it:
 
@@ -496,6 +533,88 @@ After rotating a secret, record the old value so the scan keeps catching it:
 node scripts/security/retire-secret.mjs --label "what it was" --stdin    # value on stdin
 node scripts/security/retire-secret.mjs --label "…" --env-file <path> --key NAME
 ```
+
+### Offender lists
+
+Older files still carry planning words and client data in test fixtures. Two lists hold today's
+count per file: `scripts/security/plan-id-offenders.json` and
+`scripts/security/client-data-offenders.json`. `scripts/project-docs.test.mjs` (part of
+`npm test`) fails when a file that is not listed gets a finding or a listed count grows, and when
+a secret or a blocked path is tracked. A lower count passes. Lower the lists after a cleanup:
+
+```bash
+node scripts/security/secret-scan.mjs --tracked --ratchet --shrink
+```
+
+Never add a file to a list or raise a count; reword the line or move the fixture to an
+`example.com` address or a fixture number instead.
+
+### Cleanup scripts
+
+Two deterministic scripts bring the counts down. Both have `--check` (exit 1 when a file would
+change) and `--write`, take `--root <dir>` for another checkout or an exported tree, lower their
+offender list after `--write`, and change nothing on a second run. Commit their output on its
+own, after the merges it applies to.
+
+- `scripts/security/neutralize-plan-ids.mjs` rewords planning words into area words in comments,
+  Markdown prose and test titles only. This public script holds only the area words; a more
+  precise word per task comes from a JSON file kept outside the public repos (`--words <file>`,
+  `PLAN_WORDS_FILE` or `~/.asoldi-secrets/plan-words.json`; a tracked words file is refused,
+  and the output depends on the words file used). An id whose words already follow it is dropped
+  rather than doubled. It parses JavaScript and TypeScript with the TypeScript
+  compiler and refuses a file whose code (names, values, structure) would change. It prints what
+  it leaves: values in code, JSON and Markdown code spans (task `owner` fields, assertion
+  messages) and ids quoted in comments, which stand for such values, for a separate reviewed
+  commit, because those values reach ledger rows, prompts and copies in other repos. It skips the copies of client CMS files listed under `codemodSkip`
+  (their sha256 is pinned in `data/cms-feature-tree.meta.json`): reword them in website-cms and
+  copy them again with `scripts/sync-cms-feature-tree.mjs`. When it changes files under
+  `packages/suite`, restamp the suite manifest with `scripts/sync-suite.mjs` and copy the suite
+  to the Maker again.
+- `scripts/security/scrub-client-data.mjs` replaces flagged e-mail addresses and phone numbers in
+  tests, fixtures, scripts and Markdown with reserved ones. A company domain becomes a neutral
+  word on the reserved `.test` domain (a plant name such as `maple.test`); in a file with a
+  flagged address on that domain, the domain also changes in URLs, host names and regular
+  expressions, and the company name taken from the domain changes to the same word inside
+  strings, comments and docs, so a website, its contact address and its business name still
+  match. Platform addresses become `<local>@example.com`; local parts keep a role word (`post`,
+  `hei`, `booking`) and anything else becomes `person-<hash>`; numbers keep their first digit and
+  layout with `0000` fixture digits. Production code, names in code, the scan tools and this doc
+  are never changed, and addresses the allowlist keeps (Asoldi's own contacts and placeholders)
+  keep their domain. A word that is already used on a `.test` domain in the tree (from an
+  earlier cleanup) is never given to another company, so a second run after more merges keeps
+  two businesses apart. Files under `scrubExclude` keep their findings on the list. The scrub knows
+  only addresses and numbers: it lists by path and line the company names, replaced domains used
+  elsewhere and name parts it leaves, and those fixtures still need a synthetic business written
+  by hand (org numbers, street addresses and people's names are not touched).
+  Run `npm test` on the result before committing it.
+
+### Redacting copies outside the repos
+
+`--redact <dir>` replaces every secret the scan finds under a folder with `<redacted:KEY>`
+(the env key name, the retired label or the rule id; a private key goes whole). It is a dry run
+that lists what it would replace unless `--apply` is given. `--apply` keeps each changed file's
+original once (never overwritten) outside the folder, as
+`<backup dir>/<folder>-<hash>/<path>.bak-redact` with the backup dir from `--backup-dir`,
+`ASOLDI_REDACT_BACKUPS` or `~/.asoldi-secrets/redact-backups`, so a `git add` in the folder
+cannot pick them up. Check the result, then delete the backups, which still hold the values. A
+folder that holds one of the env files the known values come from (a repo root or a parent
+folder), or the backup dir, is refused; any other env file (`.env`, `.env.*`, `production.env`) is listed
+and never changed. Client data and planning words are not touched.
+
+```bash
+node scripts/security/secret-scan.mjs --redact <dir>            # dry run
+node scripts/security/secret-scan.mjs --redact <dir> --apply    # write; originals go to the backup dir
+```
+
+`--workspace` and `--redact` read UTF-8 and UTF-16 text (PowerShell's `>` writes UTF-16 with a
+byte-order mark; a redacted UTF-16 file is written back as UTF-16). They print every file or
+folder they did not read as `<path>  not scanned: <reason>`: binary files or other encodings,
+files over the size limit (64 MiB, `--max-file-bytes N`), symbolic links and junctions (never
+followed; scan the target on its own), `.git` (run `--history` in that checkout and look at its
+`.git/config`), `node_modules`, folders that cannot be read, and for `--redact` env files and old
+`.bak-redact` copies left in the folder. When something was not read and nothing was found, the
+exit status is 3, not 0: the folder is not proven clean. Check the listed paths by hand, then
+pass `--allow-skipped` to accept them. A folder that does not exist is an error.
 
 ## Read-only probe
 

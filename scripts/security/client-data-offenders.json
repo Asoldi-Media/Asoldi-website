@@ -1,0 +1,30 @@
+{
+  "about": "Tracked files that still carry client personal data (e-mail addresses and phone numbers in test fixtures), with the number of findings each may have. A file that is not listed or a higher count fails the repo tests; a lower count passes. Lower the list with: node scripts/security/secret-scan.mjs --tracked --ratchet --shrink. Never add a file or raise a count.",
+  "kind": "pii",
+  "files": {
+    ".cursor-tasks.md": 2,
+    "data/hub-model.test.js": 1,
+    "scripts/ai-assistant-intake.test.mjs": 1,
+    "scripts/client-context-links.test.mjs": 2,
+    "scripts/client-identity.test.mjs": 15,
+    "scripts/client-product-catalog.test.mjs": 2,
+    "scripts/development-phase.test.mjs": 1,
+    "scripts/inbox-bot.test.mjs": 37,
+    "scripts/infokort-agent.test.mjs": 2,
+    "scripts/infokort-bakeoff.mjs": 1,
+    "scripts/maps-ranking.test.mjs": 4,
+    "scripts/onboarding-sources.test.mjs": 6,
+    "scripts/sales-baard-farkas-assign.test.mjs": 2,
+    "scripts/sales-client-links.test.mjs": 9,
+    "scripts/sales-email-invite.test.mjs": 1,
+    "scripts/sales-kundekort.test.mjs": 12,
+    "scripts/sales-link-discovery.test.mjs": 1,
+    "scripts/sales-next-actions.test.mjs": 1,
+    "scripts/sales-offers.test.mjs": 6,
+    "scripts/sales-preview-contract.test.mjs": 13,
+    "scripts/sales-website-email.test.mjs": 15,
+    "scripts/shop-documents.test.mjs": 2,
+    "scripts/suite-bot-core.test.mjs": 1,
+    "scripts/workshop-prep.test.mjs": 15
+  }
+}

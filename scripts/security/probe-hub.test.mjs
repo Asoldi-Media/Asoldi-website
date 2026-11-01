@@ -1,4 +1,4 @@
-// WS0.32: read-only hub probe. Runs against local fake servers only.
+// The read-only hub probe. Runs against local fake servers only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';

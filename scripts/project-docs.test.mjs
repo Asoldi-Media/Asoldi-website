@@ -11,6 +11,8 @@ import { applyWorkshopTranscriptToRecord } from '../lib/workshop-project-documen
 import { markProjectTodoDone, persistProjectDocument } from '../lib/workshop-record.js';
 import { primaryDeveloperDocument, DOCUMENT_LABELS } from '../lib/developer-card.js';
 import { workshopGoalHeld } from '../lib/workshop-goal-timeline.js';
+import { formatFinding } from './security/secret-scan-lib.mjs';
+import { loadProfileConfig, ratchetReport } from './security/secret-scan.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -305,4 +307,20 @@ test('test names and docs in this public repo use neutral, behaviour-describing 
     });
   }
   assert.deepEqual(found, [], 'reword these to describe the behaviour instead');
+});
+
+// Internal planning words and client personal data in tracked files only go down. The offender lists
+// (scripts/security/scan-profile.json `ratchets`) hold today's counts per file: a file that is not
+// listed must have none, and a listed count must not grow. A lower count passes; lower the list with
+// `node scripts/security/secret-scan.mjs --tracked --ratchet --shrink`. A secret or a blocked path
+// (daily logs, scratch files, data files) in a tracked file always fails.
+test('tracked files: planning words and client data only go down, and no secret or blocked path is tracked', () => {
+  assert.equal(loadProfileConfig(repoRoot).profile.name, 'public', 'this repo is public: scripts/security/scan-profile.json keeps the public profile');
+  const report = ratchetReport(repoRoot);
+  assert.deepEqual(report.hard.map(formatFinding), [], 'a secret or a blocked path is tracked');
+  assert.deepEqual(Object.keys(report.lists).sort(), ['pii', 'plan'], 'both offender lists are configured');
+  for (const [kind, row] of Object.entries(report.lists)) {
+    assert.deepEqual(row.unlisted.map((item) => `${item.path} (${item.count})`), [], `${kind}: files with findings that ${row.file} does not list`);
+    assert.deepEqual(row.grown.map((item) => `${item.path} (${item.count} > ${item.allowed})`), [], `${kind}: counts above ${row.file}`);
+  }
 });
