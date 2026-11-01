@@ -189,6 +189,17 @@ test('local hub in safe mode: legal routes are 404 while dark and serve the cata
     assert.deepEqual(update.body.clients.map((row) => [row.clientId, row.bound]), [['boot-dark', 'legacy']], 'only the client signed on the static texts is on an older version');
     assert.deepEqual(update.body.settingsDrift, []);
     assert.deepEqual(readdirSync(dataDir).filter((name) => /outbox/i.test(name)), [], 'nothing was queued');
+
+    // Switched off again: the versioned links in contracts sent while on keep answering; nothing else does.
+    const off = await json('/api/admin/automation-settings', { method: 'PUT', headers: admin, body: JSON.stringify({ settings: { legal: { catalogTexts: { enabled: false } } }, reason: 'boot test' }) });
+    assert.equal(off.status, 200, JSON.stringify(off.body).slice(0, 300));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const linked = await json('/api/legal/texts/vilkar?version=1');
+    assert.equal(linked.status, 200, 'a stamped contract links /vilkar?versjon=1');
+    assert.equal(linked.body.catalogVersion, 1);
+    for (const path of ['/api/legal/texts/vilkar', '/api/legal/texts/salg?version=1', '/api/admin/legal/terms-update']) {
+      assert.deepEqual((await json(path, { headers: admin })).body, { code: 'disabled' }, path);
+    }
   } catch (error) {
     error.message += `\n--- hub log ---\n${logs.slice(-4000)}`;
     throw error;

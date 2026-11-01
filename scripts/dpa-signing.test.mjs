@@ -19,7 +19,7 @@ const { DPA_VERSION, dpaMissingAtSigning, dpaSignPatch, dpaStatus } = await impo
 const { CATALOG_VERSION } = await import('../lib/legal/catalog.js');
 const { legalBindingForClient, legalSnapshotPatch, legalSourceForOffer, setAgreedKeywordsResolver } = await import('../lib/legal/binding.js');
 const { draftTermsUpdateNotice, termsNoticePatch } = await import('../lib/legal/terms-update.js');
-const { register } = await import('../lib/routes/legal-routes.js');
+const { register, sessionCanSignForBusiness } = await import('../lib/routes/legal-routes.js');
 const { productsWithTier } = await import('../lib/offer-email.js');
 const { contractHtmlForOffer } = await import('../lib/offer-contract-html.js');
 const { buildContractPdf, contractInputsForOffer } = await import('../lib/offer-contract-pdf.js');
@@ -64,6 +64,8 @@ function signedClient(name, offerOptions) {
 let server = null;
 let base = '';
 const portalUsers = new Map();
+// Portal users who are members of the business without the right to sign for it.
+const collaborators = new Set();
 
 test.before(async () => {
   const app = express();
@@ -78,7 +80,11 @@ test.before(async () => {
     },
     sales,
     salesOffers: offers,
-    resolvePortalClient: async (userId) => ({ user: { id: userId }, client: portalUsers.has(userId) ? sales.getSalesClientById(portalUsers.get(userId)) : null }),
+    resolvePortalClient: async (userId) => ({
+      user: { id: userId },
+      client: portalUsers.has(userId) ? sales.getSalesClientById(portalUsers.get(userId)) : null,
+      canSign: !collaborators.has(userId),
+    }),
   };
   await register(app, deps);
   await new Promise((resolve) => {
@@ -99,6 +105,8 @@ async function call(path, { method = 'GET', user = '', admin = false } = {}) {
 
 const ROUTES = [
   ['/api/legal/texts/vilkar', {}],
+  ['/api/legal/texts/vilkar?version=1', {}],
+  ['/api/legal/texts/databehandleravtale?version=1', {}],
   ['/api/legal/texts/salg', {}],
   ['/api/client/legal', { user: 'u-off' }],
   ['/api/client/dpa/sign', { user: 'u-off', method: 'POST' }],
@@ -262,6 +270,14 @@ test('a stamped offer signed while the switch is off binds and shows the version
     mock.timers.reset();
   }
 
+  // The versioned links in that contract keep answering while the switch is off.
+  const linked = await call(`/api/legal/texts/vilkar?version=${CATALOG_VERSION}`);
+  assert.equal(linked.status, 200);
+  assert.equal(linked.body.catalogVersion, CATALOG_VERSION);
+  assert.equal((await call(`/api/legal/texts/databehandleravtale?version=${CATALOG_VERSION}`)).status, 200);
+  for (const path of ['/api/legal/texts/vilkar', '/api/legal/texts/vilkar?version=legacy', `/api/legal/texts/salg?version=${CATALOG_VERSION}`, `/api/legal/texts/kontrakt?tier=tier-1-standard&version=${CATALOG_VERSION}`, '/api/admin/legal/terms-update']) {
+    assert.deepEqual((await call(path, { admin: true })).body, { code: 'disabled' }, path);
+  }
   setSwitch(true);
   assert.equal(dpaStatus(signed).status, 'accepted-with-contract');
 });
@@ -326,6 +342,17 @@ test('signing a stamped offer records the catalog and DPA versions; the DPA coun
   assert.equal(dpaStatus(client).missing, false);
   const stored = sales.getSalesClientById(client.id);
   assert.deepEqual(stored.ext.legal, client.ext.legal, 'the snapshot survives a read');
+});
+
+test('only the business owner or an admin may sign for it', () => {
+  const session = (role, status = 'active') => ({ businesses: [{ id: 'b1' }], activeBusinessId: 'b1', membership: { businessId: 'b1', role, status } });
+  assert.equal(sessionCanSignForBusiness(session('owner')), true);
+  assert.equal(sessionCanSignForBusiness(session('admin')), true);
+  assert.equal(sessionCanSignForBusiness(session('collaborator')), false);
+  assert.equal(sessionCanSignForBusiness(session('admin', 'pending')), false);
+  assert.equal(sessionCanSignForBusiness({ businesses: [], membership: null }), true, 'an account without businesses is its own holder');
+  assert.equal(sessionCanSignForBusiness({ businesses: [{ id: 'b1' }], membership: null }), false, 'no membership in the active business');
+  assert.equal(sessionCanSignForBusiness(null), true);
 });
 
 test('portal DPA signing is idempotent and keeps the other ext keys', () => {
@@ -393,6 +420,18 @@ test('switch on: the legal routes serve texts, the binding and DPA signing; term
   assert.equal(sales.getSalesClientById(legacy.id).ext.dpa.signedAt, signedAt, 'signing again keeps the first signature');
   assert.equal((await call('/api/client/dpa/sign', { user: 'u-nobody', method: 'POST' })).status, 404);
   assert.equal((await call('/api/client/dpa/sign', { method: 'POST' })).status, 401);
+
+  // A member who may not sign for the business (a collaborator) is refused, and the card says so.
+  const { client: shared } = signedClient('Shared AS');
+  portalUsers.set('u-collab', shared.id);
+  collaborators.add('u-collab');
+  const before = readData('sales-clients.json');
+  const refused = await call('/api/client/dpa/sign', { user: 'u-collab', method: 'POST' });
+  assert.equal(refused.status, 403);
+  assert.equal(refused.body.code, 'not-authorized');
+  assert.equal(readData('sales-clients.json'), before, 'nothing written');
+  assert.equal((await call('/api/client/legal', { user: 'u-collab' })).body.canSign, false);
+  assert.equal((await call('/api/client/legal', { user: 'u-legacy' })).body.canSign, true);
 
   const update = await call('/api/admin/legal/terms-update', { admin: true });
   assert.equal(update.status, 200);

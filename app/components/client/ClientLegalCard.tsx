@@ -3,6 +3,7 @@ import { clientAuthHeaders } from '../../pages/client/auth';
 
 type LegalState = {
   client: boolean;
+  canSign?: boolean;
   current: { catalogVersion: number; dpaVersion: string; date: string };
   binding: {
     mode: 'catalog' | 'legacy' | 'unsigned';
@@ -22,7 +23,8 @@ function dateLabel(value = '') {
 
 /**
  * The client's terms version and data processing agreement, with a button to sign the current
- * DPA when the client's DPA is not the current version. A client who signed the service agreement
+ * DPA when the client's DPA is not the current version. Only the business's owner or an admin may
+ * sign (canSign); other members are told so. A client who signed the service agreement
  * before the catalog has the DPA in force as published on the signing date, and is told so.
  * Renders nothing while the legal routes answer 404 (the legal switch is off) or on errors.
  */
@@ -82,7 +84,8 @@ export const ClientLegalCard: React.FC = () => {
           : dpa.missing
             ? 'Ikke signert. E-postfunksjonene på nettsiden er av til databehandleravtalen er signert.'
             : 'Gjelder fra du signerer tjenesteavtalen.';
-  const canSign = dpa.missing || (dpa.required && !dpa.upToDate);
+  const signable = dpa.missing || (dpa.required && !dpa.upToDate);
+  const allowed = state.canSign !== false;
 
   return (
     <section className="rounded-2xl border border-[#E5E7EB] bg-white p-5">
@@ -97,7 +100,10 @@ export const ClientLegalCard: React.FC = () => {
           <a href={links.databehandleravtale} className="text-[#FF5B00] hover:underline">Les avtalen</a>
         </p>
       </div>
-      {canSign ? (
+      {signable && !allowed ? (
+        <p className="mt-3 text-sm text-[#6B7280]">Bare eieren eller en administrator i bedriften kan signere databehandleravtalen.</p>
+      ) : null}
+      {signable && allowed ? (
         <div className="mt-3 flex flex-wrap items-center gap-3">
           <button type="button" onClick={() => void signDpa()} disabled={busy} className="rounded-lg bg-[#FF5B00] px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
             {busy ? 'Signerer...' : dpa.missing ? 'Signer databehandleravtale' : `Signer versjon ${dpa.current}`}
