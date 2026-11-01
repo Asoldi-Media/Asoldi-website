@@ -34,8 +34,41 @@ export function mergeCatalogSalesProducts(products, payload) {
   return changed ? next : products;
 }
 
-/** React hook: the pricing cards, with the catalog's copy once the API answers 200. */
-export function useCatalogSalesProducts(products) {
+/**
+ * The client portal's website plans (keyed by tier id) with the catalog's "what's included" in
+ * place of the static lists. Without a payload, or for a plan the payload does not name, the plan is
+ * returned unchanged (the same array when nothing changes).
+ */
+export function mergeCatalogPortalPlans(plans, payload) {
+  const tiers = payload && typeof payload === 'object' ? payload.tiers : null;
+  if (!tiers || typeof tiers !== 'object') return plans;
+  let changed = false;
+  const next = plans.map((plan) => {
+    const tier = tiers[plan.id];
+    if (!tier || !Array.isArray(tier.included) || !tier.included.length) return plan;
+    changed = true;
+    return {
+      ...plan,
+      features: [...tier.included],
+      includedFeatures: [...tier.included],
+      notIncludedFeatures: Array.isArray(tier.excluded) ? [...tier.excluded] : [],
+    };
+  });
+  return changed ? next : plans;
+}
+
+/**
+ * The checkout promises to show: all of them without a payload (the static page), else only those
+ * the payload's checkoutPromises names (promises the terms back).
+ */
+export function catalogCheckoutBenefits(benefits, payload) {
+  const allowed = payload && typeof payload === 'object' && Array.isArray(payload.checkoutPromises) ? payload.checkoutPromises : null;
+  if (!allowed) return benefits;
+  return benefits.filter((benefit) => allowed.includes(benefit.key));
+}
+
+/** React hook: the catalog's sales copy (GET /api/legal/texts/salg), or null until it answers 200. */
+export function useCatalogSalesCopy() {
   const [payload, setPayload] = useState(null);
   useEffect(() => {
     let alive = true;
@@ -46,7 +79,12 @@ export function useCatalogSalesProducts(products) {
       alive = false;
     };
   }, []);
-  return mergeCatalogSalesProducts(products, payload);
+  return payload;
+}
+
+/** React hook: the pricing cards, with the catalog's copy once the API answers 200. */
+export function useCatalogSalesProducts(products) {
+  return mergeCatalogSalesProducts(products, useCatalogSalesCopy());
 }
 
 /**

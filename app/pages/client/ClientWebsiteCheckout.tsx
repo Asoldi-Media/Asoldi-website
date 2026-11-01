@@ -7,6 +7,7 @@ import { ClientRouteGuard } from '../../components/client/ClientRouteGuard';
 import { ClientPortalLayout } from '../../components/client/ClientPortalLayout';
 import { useClientAuth } from '../../contexts/ClientAuthContext';
 import { CHECKOUT_BENEFITS, CLIENT_WEBSITE_PLANS } from '../../data/clientWebsitePlans';
+import { catalogCheckoutBenefits, mergeCatalogPortalPlans, useCatalogSalesCopy } from '../../data/catalogLegalTexts.js';
 import { formatPriceAmount, normalizeCouponCode, parsePriceAmount } from '../../data/coupons';
 import { requestClientApi } from './auth';
 import { useClientOffer } from './useClientOffer';
@@ -34,7 +35,7 @@ function formatPrice(value: unknown) {
   return text || 'Etter avtale';
 }
 
-function formatPlanFromProfile(profile: any) {
+function formatPlanFromProfile(profile: any, plans: typeof CLIENT_WEBSITE_PLANS = CLIENT_WEBSITE_PLANS) {
   if (!profile) return null;
   const type = profile?.websiteBuilder?.selectedPlanType;
   if (type === 'custom') {
@@ -45,7 +46,7 @@ function formatPlanFromProfile(profile: any) {
     };
   }
   const selectedId = String(profile?.websiteBuilder?.selectedPlanId || '');
-  const found = CLIENT_WEBSITE_PLANS.find((plan) => plan.id === selectedId) || CLIENT_WEBSITE_PLANS[0];
+  const found = plans.find((plan) => plan.id === selectedId) || plans[0];
   return {
     name: found.name,
     price: found.price,
@@ -193,7 +194,11 @@ export const ClientWebsiteCheckout = () => {
     void createCardSession();
   }, [method, cardConfigured, clientSecret, cardLoading, cardError, createCardSession]);
 
-  const selectedPlan = useMemo(() => formatPlanFromProfile(profile), [profile]);
+  // The legal clause catalog's "what's included" and checkout promises once its API answers; the static data until then.
+  const salesCopy = useCatalogSalesCopy();
+  const websitePlans = useMemo(() => mergeCatalogPortalPlans(CLIENT_WEBSITE_PLANS, salesCopy), [salesCopy]);
+  const checkoutBenefits = catalogCheckoutBenefits(CHECKOUT_BENEFITS, salesCopy);
+  const selectedPlan = useMemo(() => formatPlanFromProfile(profile, websitePlans), [profile, websitePlans]);
   const subtotalAmount = parsePriceAmount(selectedPlan?.price || '');
   const discountAmount = Math.min(
     subtotalAmount,
@@ -513,14 +518,16 @@ export const ClientWebsiteCheckout = () => {
                 )}
                 {couponError ? <p className="mt-2 text-xs text-red-500">{couponError}</p> : null}
               </div>
+              {checkoutBenefits.length ? (
               <div className="mt-5 rounded-xl border border-[#E5E7EB] bg-[#FAFAFA] p-3 grid grid-cols-3 gap-2">
-                {CHECKOUT_BENEFITS.map((benefit) => (
+                {checkoutBenefits.map((benefit) => (
                   <div key={benefit.key} className="text-center">
                     <img src={benefit.illustration} alt={benefit.label} className="mx-auto h-10 w-10 object-contain" />
                     <p className="mt-2 text-[11px] text-[#4B5563] leading-4">{benefit.label}</p>
                   </div>
                 ))}
               </div>
+              ) : null}
             </aside>
           </div>
         )}
