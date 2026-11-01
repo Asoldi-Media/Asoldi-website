@@ -445,25 +445,41 @@ To switch the push webhook to the new secret, whenever convenient:
   numbers, 8-digit mobile numbers without `+47` (grouped like `9xx xx xxx`, or unbroken when
   quoted on their own or on a line about a phone), fødselsnummer, card numbers. Numbers that look
   like fixtures (`1234`, `0000`, `99887766`) are skipped;
+- client names listed one per line in `~/.asoldi-secrets/scan-names.txt` (or `--names <file>`,
+  or `SECRET_SCAN_NAMES`), matched as whole words in any case; the file stays outside the repo
+  (a tracked names file is an error) and a finding names its line, never the name;
+- internal planning words: task and area ids (two capital letters and a number), planning batch
+  and branch names, the planning documents' file names. Code, comments, tests, docs and commit
+  messages describe the behaviour instead;
 - paths for secrets and client data (`.env`, keys, data JSON, transcripts, `docs/daily-logs/`,
-  `tmp/`, private fixtures).
+  `tmp/`, private fixtures, `*.bak-redact`).
 
-Output names the path, line, rule and env key or retired label, never the value. Lines of any
-length are scanned (a JSON dump or a minified bundle is one line); every rule is linear in the
-line length.
+Output names the path, line, rule and env key, retired label or names-file line, never the
+value. Lines of any length are scanned (a JSON dump or a minified bundle is one line); every
+rule is linear in the line length.
+
+The same scanner runs in website-maker and website-cms. `scripts/security/scan-profile.json`
+picks the rules: `public` (this repo and the CMS) uses all of them; `private` (the Maker, whose
+fixtures hold real client data by design) checks secrets and secret paths only.
 
 ```bash
 npm run hooks:install       # once per clone: core.hooksPath=.githooks
 npm run scan:secrets        # tracked files, secrets only
-npm run scan:public         # tracked files, secrets + client data, counts per rule
+npm run scan:public         # tracked files, every rule, counts per rule
+npm run scan:ratchet        # tracked files against the offender lists (see below)
 node scripts/security/secret-scan.mjs --history --secrets-only   # every commit
+node scripts/security/secret-scan.mjs --commits origin/main..HEAD # every message about to ship, merges included
+node scripts/security/secret-scan.mjs --workspace <dir>           # a folder without git (exports, copies)
 ```
 
 - `pre-commit` scans the staged lines; `commit-msg` scans the message (commit messages are
   public too; the e-mail of a `Co-authored-by:` style trailer is skipped).
 - `pre-push` scans every commit being pushed (a secret added and removed again is still
-  caught), its message, and the lines written while resolving a merge (`--cc`), then runs
-  `npm test`. A push to main deploys asoldi.com, so a failing test blocks it. When the remote
+  caught), the lines written while resolving a merge (`--cc`), and the message of every pushed
+  commit, merge commits included (the same check as `--commits` over the pushed range), then runs
+  `npm test`. Planning words in file lines are checked on the pushed result (the diff from the
+  remote to the pushed tip), so a line that a later commit in the same push rewords passes.
+  A push to main deploys asoldi.com, so a failing test blocks it. When the remote
   sha is not in this clone, it scans everything that is on no remote-tracking branch.
   `npm test` runs with a throwaway `APP_DATA_DIR` (removed afterwards) and
   `PERSIST_PRODUCTION_ENV=0`: some older tests fall back to `~/.asoldi-website-data`, which on
@@ -481,6 +497,60 @@ After rotating a secret, record the old value so the scan keeps catching it:
 ```bash
 node scripts/security/retire-secret.mjs --label "what it was" --stdin    # value on stdin
 node scripts/security/retire-secret.mjs --label "…" --env-file <path> --key NAME
+```
+
+### Offender lists
+
+Older files still carry planning words and client data in test fixtures. Two lists hold today's
+count per file: `scripts/security/plan-id-offenders.json` and
+`scripts/security/client-data-offenders.json`. `scripts/project-docs.test.mjs` (part of
+`npm test`) fails when a file that is not listed gets a finding or a listed count grows, and when
+a secret or a blocked path is tracked. A lower count passes. Lower the lists after a cleanup:
+
+```bash
+node scripts/security/secret-scan.mjs --tracked --ratchet --shrink
+```
+
+Never add a file to a list or raise a count; reword the line or move the fixture to an
+`example.com` address or a fixture number instead.
+
+### Cleanup scripts
+
+Two deterministic scripts bring the counts down. Both have `--check` (exit 1 when a file would
+change) and `--write`, take `--root <dir>` for another checkout or an exported tree, lower their
+offender list after `--write`, and change nothing on a second run. Commit their output on its
+own, after the merges it applies to.
+
+- `scripts/security/neutralize-plan-ids.mjs` rewords planning words into area words in comments,
+  Markdown prose and test titles only. It parses JavaScript and TypeScript with the TypeScript
+  compiler and refuses a file whose code (names, values, structure) would change. It prints what
+  it leaves: values in code, JSON and Markdown code spans (task `owner` fields, assertion
+  messages), for a separate reviewed commit, because those values reach ledger rows, prompts and
+  copies in other repos. It skips the copies of client CMS files listed under `codemodSkip`
+  (their sha256 is pinned in `data/cms-feature-tree.meta.json`): reword them in website-cms and
+  copy them again with `scripts/sync-cms-feature-tree.mjs`. When it changes files under
+  `packages/suite`, restamp the suite manifest with `scripts/sync-suite.mjs` and copy the suite
+  to the Maker again.
+- `scripts/security/scrub-client-data.mjs` replaces flagged e-mail addresses and phone numbers in
+  tests, fixtures, scripts and Markdown with reserved ones: company domains become
+  `site-<hash>.test` everywhere they appear (a website and its contact address still match),
+  platform addresses become `<local>@example.com`, names in local parts become `person-<hash>`,
+  and numbers keep their first digit and layout with `0000` fixture digits. Production code is
+  never changed; Asoldi's own contacts and form placeholders are in `.secret-scan-allowlist.json`.
+  Files under `scrubExclude` (work another change set is rewriting) keep their findings on the
+  list until that work lands.
+
+### Redacting copies outside the repos
+
+`--redact <dir>` replaces every secret the scan finds under a folder with `<redacted:KEY>`
+(the env key name, the retired label or the rule id; a private key goes whole). It is a dry run
+that lists what it would replace unless `--apply` is given. `--apply` keeps each changed file's
+original once as `<file>.bak-redact` (never overwritten); check the result, then delete the
+backups, which still hold the values. Client data and planning words are not touched.
+
+```bash
+node scripts/security/secret-scan.mjs --redact <dir>            # dry run
+node scripts/security/secret-scan.mjs --redact <dir> --apply    # write, keep .bak-redact copies
 ```
 
 ## Read-only probe
