@@ -131,7 +131,7 @@ recording, erase request, payment not connected) are added by the batch that shi
 
 **Symptom.** A job stays `queued` or `retrying`, or the alert `host-offline` or `job-blocked` is active.
 
-**Check.** `GET /api/admin/delivery/jobs?clientId=<id>` shows the job with its `hostId`, `notBefore`, `attempts`, `error`, `blocking` and the last 50 `log` lines. `GET /api/admin/maker-hosts` shows each host's handlers and last heartbeat: a job goes only to a host that lists its kind.
+**Check.** `GET /api/admin/delivery/jobs?clientId=<id>` shows the client's `mode` and the job with its `hostId`, `notBefore`, `attempts`, `error`, `blocking` and the last 50 `log` lines. A job is handed out only while the client runs in `auto`: with the loop paused or in `shadow`, or the client off `pilotClientIds`, it stays queued. `GET /api/admin/maker-hosts` shows each host's handlers and last heartbeat: a job goes only to a host that lists its kind.
 
 **Fix.** Start the Maker and its hub worker (the chip in the Maker header), or route the work by setting `development.defaultHostId`. A `retrying` job waits for its backoff (5, 15, 45 minutes). Clear a blocking code (table below), then `POST /api/admin/delivery/jobs/<jobId>/retry`; `POST …/cancel` drops the job.
 
