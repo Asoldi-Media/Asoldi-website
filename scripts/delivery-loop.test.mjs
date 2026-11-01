@@ -484,3 +484,40 @@ test('linkedSalesClientIndex finds the same client as findLinkedSalesClient for 
   for (const site of sites) assert.equal(linked(site)?.id ?? null, findLinkedSalesClient(site, clients)?.id ?? null, site.id);
   assert.equal(linked(sites[4]).id, 'k1', 'the first matching client wins, as in a scan');
 });
+
+test('the storage report walks the data dir without holding the event loop, one scan at a time', async () => {
+  resetData();
+  for (let folder = 0; folder < 6; folder += 1) {
+    const dir = join(dataDir, `store-${folder}`, 'nested');
+    mkdirSync(dir, { recursive: true });
+    for (let index = 0; index < 250; index += 1) writeFileSync(join(dir, `f${index}.json`), '{"x":1}');
+  }
+  // A timer keeps firing while the scan runs: the walk awaits its fs calls and yields.
+  let turns = 0;
+  const ticker = setInterval(() => {
+    turns += 1;
+  }, 0);
+  const first = loopLib.deliveryStorageReport({ dataDir, now: T0 });
+  const second = loopLib.deliveryStorageReport({ dataDir, now: T0 + 1 });
+  assert.ok(first instanceof Promise, 'the report is async');
+  const [a, b] = await Promise.all([first, second]);
+  clearInterval(ticker);
+  assert.ok(turns > 0, 'timers ran during the scan');
+  assert.equal(a, b, 'two calls during one scan share it');
+  assert.equal(a.total.files, 1500);
+  assert.equal(a.stores['store-0'].files, 250);
+  assert.equal(a.truncated, false);
+  assert.equal(await loopLib.deliveryStorageReport({ dataDir, now: T0 + 30_000 }), a, 'cached for a minute');
+  writeFileSync(join(dataDir, 'store-0', 'extra.json'), '{}');
+  const stale = await loopLib.deliveryStorageReport({ dataDir, now: T0 + 61_000 });
+  assert.equal(stale.total.files, 1500, 'an older report comes back at once');
+  assert.equal(stale.refreshing, true);
+  // The refresh started by that call finishes in the background; the next call gets it.
+  let fresh = stale;
+  for (let i = 0; i < 200 && fresh.total.files === 1500; i += 1) {
+    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
+    fresh = await loopLib.deliveryStorageReport({ dataDir, now: T0 + 62_000 });
+  }
+  assert.equal(fresh.total.files, 1501);
+  assert.equal(fresh.refreshing, undefined);
+});
