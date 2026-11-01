@@ -208,15 +208,16 @@ test('--secret-names: every name of a names-only listing gets a fake file or fol
   const root = mkdtempSync(join(tmpdir(), 'dark-diff-secret-names-'));
   try {
     const list = join(root, 'names.txt');
-    writeFileSync(list, '# names only\nadmin-secret\nsecrets/old-signing-key\narchive/\narchive/2025-key\r\nwebhooks.json\n');
+    writeFileSync(list, '# names only\nadmin-secret\nsecrets/old-signing-key\narchive/\narchive/2025-key\r\nwebhooks.json\nother-keys.json\n');
     const names = readSecretNames(list);
-    assert.deepEqual(names.map((n) => `${n.name}${n.folder ? '/' : ''}`), ['admin-secret', 'old-signing-key', 'archive/', 'archive/2025-key', 'webhooks.json']);
+    assert.deepEqual(names.map((n) => `${n.name}${n.folder ? '/' : ''}`), ['admin-secret', 'old-signing-key', 'archive/', 'archive/2025-key', 'webhooks.json', 'other-keys.json']);
     const data = join(root, 'data');
     mkdirSync(join(data, 'secrets'), { recursive: true });
     writeFileSync(join(data, 'secrets', 'admin-secret'), 'kept\n');
-    assert.deepEqual(addFakeSecrets(data, names).sort(), ['archive/2025-key', 'old-signing-key', 'webhooks.json']);
+    assert.deepEqual(addFakeSecrets(data, names).sort(), ['archive/2025-key', 'old-signing-key', 'other-keys.json', 'webhooks.json']);
     assert.equal(readFileSync(join(data, 'secrets', 'admin-secret'), 'utf8'), 'kept\n');
     assert.match(readFileSync(join(data, 'secrets', 'old-signing-key'), 'utf8'), /^[0-9a-f]{64}\n$/);
+    assert.match(JSON.parse(readFileSync(join(data, 'secrets', 'other-keys.json'), 'utf8')).fake, /^[0-9a-f]{64}$/, 'an unknown .json name gets a JSON object');
     assert.ok(JSON.parse(readFileSync(join(data, 'secrets', 'webhooks.json'), 'utf8')).fireflies, 'a known name keeps its shape');
     for (const bad of ['../outside', '/etc/passwd', 'a/../../b', 'C:\\x']) {
       writeFileSync(list, `${bad}\n`);

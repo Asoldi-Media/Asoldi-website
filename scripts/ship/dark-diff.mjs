@@ -310,7 +310,8 @@ export function readSecretNames(file) {
 /**
  * Fills the missing secret files with random values (in a copy only): the standard layout, or each
  * name of a names-only listing (`names` from readSecretNames; known names get their usual shape,
- * other files 64 random hex characters). Returns the names added.
+ * other .json names a JSON object with a random value, other files 64 random hex characters).
+ * Returns the names added.
  */
 export function addFakeSecrets(dataDir, names = null) {
   const dir = join(dataDir, 'secrets');
@@ -325,7 +326,8 @@ export function addFakeSecrets(dataDir, names = null) {
       continue;
     }
     mkdirSync(dirname(target), { recursive: true });
-    const make = LIVE_SECRET_LAYOUT[name] || (() => `${randomBytes(32).toString('hex')}\n`);
+    const make = LIVE_SECRET_LAYOUT[name]
+      || (name.endsWith('.json') ? () => `${JSON.stringify({ fake: randomBytes(32).toString('hex') }, null, 2)}\n` : () => `${randomBytes(32).toString('hex')}\n`);
     writeFileSync(target, make(), { mode: 0o600 });
     added.push(name);
   }
