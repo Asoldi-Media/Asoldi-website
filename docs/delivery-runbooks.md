@@ -121,6 +121,20 @@ recording, erase request, payment not connected) are added by the batch that shi
 
 ---
 
+## Gate line wrong or post-workshop mail missing
+
+**Symptom.** The developer gate panel shows a line as missing although the client sent it, or no post-workshop mail (or shadow record) appeared after a workshop.
+
+**Check.**
+- `GET /api/admin/automation-settings`: `settings.gate.enabled` must be `true`; `emails.postWorkshop` must not be off or paused.
+- `GET /api/admin/delivery/gate/<clientId>`: each line's `status`, `evidence` and `source`, `stale` (the stored gate is older than its inputs) and `info`.
+- The client's `delivery.emails.postWorkshopDueAt`; shadow records are in the safe-mode outbox with channel `delivery-shadow` and in `<dataDir>/delivery-audit/<YYYY-MM>.jsonl` (`email-shadow`).
+
+**Fix.**
+- Evidence the gate cannot see (sent by phone, for example): put it in Kundedata, or waive the line with `PUT /api/admin/delivery/gate/<clientId>/waivers/<lineId> {"option": "..."}`; then `POST /api/admin/delivery/gate/<clientId>/evaluate`.
+- No due time: `POST /api/admin/sales/<clientId>/workshop/held {"startedAt": "...", "endedAt": "..."}`.
+- To send the post-workshop mail at once, use the desk kind `post-workshop`.
+
 ## Blocking codes
 
 What each code means and how to clear it. Jobs and the board arrive in later batches; the codes are fixed now (`BLOCKING_CODES` in the vocabulary).
