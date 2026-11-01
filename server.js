@@ -19479,18 +19479,19 @@ app.post('/api/admin/sales/:id/got-client', salesAuth, async (req, res) => {
   const signingMode = signingModeForClient(client);
   let siteBody = req.body || {};
   if (signingMode === 'auto') {
-    const signed = await markContractSigned(client.id, {
+    const signed = await (async () => markContractSigned(client.id, {
       source: 'got-client',
       actor: offerActor(req),
       sender: await resolveSalesSenderForAccount(req.salesUser),
       superadminTierId: req.salesUser?.isAdmin ? sanitizeText(req.body?.websitePlan) : '',
       fastTrack: true,
-    }).catch((error) => ({ ok: false, status: 400, reason: sanitizeText(error?.message) }));
+    }))().catch((error) => ({ ok: false, status: 400, reason: sanitizeText(error?.message) }));
     if (signed.needsChoice) {
       return res.status(409).json({ message: 'Tilbudet har to alternativer. Velg hvilket kunden signerte.', needsChoice: true });
     }
     if (!signed.ok) return res.status(signed.status || 400).json({ message: signed.reason === 'busy' ? 'Signeringen pågår allerede. Prøv igjen om litt.' : 'Kunne ikke signere kontrakten.' });
     if (signed.site) {
+      hub.updateSite(signed.site.id, { deliveryPhase: 'development' });
       return res.json({
         ok: true,
         phase: 'development',

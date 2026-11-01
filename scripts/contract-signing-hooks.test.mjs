@@ -93,3 +93,34 @@ test('control: with legacy lines the gate is not asked and the mail keeps the ol
   assert.doesNotMatch(texts[0], /Gate line one/);
   assert.equal(sales.getSalesClientById('legacy').ext?.dpa, undefined, 'no DPA version on the offer, nothing copied');
 });
+
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+test('the signing lease is renewed while a slow signing runs, so a second process waits; control: an unrenewed lease runs out', async () => {
+  let second = 'not tried';
+  const result = await signing.withSigningLease('slow-client', async (held) => {
+    await pause(600);
+    second = await signing.takeSigningLease('slow-client', { waitMs: 0, leaseMs: 150 });
+    assert.equal(held.lost, false);
+    return 'done';
+  }, { leaseMs: 150 });
+  assert.equal(result, 'done');
+  assert.equal(second, null, 'still held after four lease times');
+  const after = await signing.takeSigningLease('slow-client', { waitMs: 0, leaseMs: 150 });
+  assert.ok(after, 'released at the end');
+  await after.release();
+  const { acquireLease } = await import('../data/email-store.js');
+  const plain = await acquireLease('sign:slow-control', 150);
+  assert.ok(plain);
+  await pause(600);
+  const other = await acquireLease('sign:slow-control', 150);
+  assert.ok(other, 'control: without renewal a second taker gets the lease');
+  await other.release();
+});
+
+test('the shadow record never throws into the path around it', async () => {
+  const note = { get broken() { throw new Error('note getter failed'); } };
+  const result = await signing.recordSigningShadow('legacy', { source: 'progression', note });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'error');
+});
