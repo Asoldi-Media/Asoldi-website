@@ -14,7 +14,7 @@ One record per sales client in `<dataDir>/seo-ops/clients/<salesClientId>.json`,
 
 **Ingest.** Both bundle routes (`POST /api/internal/maker/client-bundle` and the `run.client-bundle.updated` event on `POST /api/admin/sales/maker-status-callback`) store `bundle.keywordPlanSummary` before the portal sync, so a client without a portal user still gets a record. The answer keeps its status (404 when the portal sync finds no account) and adds `seoRecorded: true`, or `seoRecorded: false` with `seoReason` (`no-sales-client`, `unknown-sales-client`, `invalid-summary`, `busy`, `error`). A push without a summary is answered exactly as before. An unchanged summary writes nothing; agreed keywords are never touched by a push. The push waits at most 3 s for the client file when another writer holds it, and then answers `busy` (the Maker gives up on a push after 12 s and retries `busy` and `error` once).
 
-**Bank merge.** A bundle push replaces only `bank.seo.keywordPlan`; other `bank.seo` fields are kept (`lib/maker-bundle-to-bank.js`). The portal normalizer (`data/client-portal.js`) still stores only `seo.keywordPlan`.
+**Bank merge.** A bundle push replaces only `bank.seo.keywordPlan`; other `bank.seo` fields are kept (`lib/maker-bundle-to-bank.js`). The portal normalizer (`data/client-portal.js`) still stores only `seo.keywordPlan`, so today the merge changes nothing that is saved; it takes effect once the normalizer keeps other `seo` fields.
 
 **Routes** (`lib/routes/seo-record-routes.js`). Every answer carries `seoRecorded` (whether the client has a record).
 
