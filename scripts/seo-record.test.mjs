@@ -3,7 +3,7 @@
 // the limits hold. Every business here is made up.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -249,4 +249,25 @@ test('who may read or change a record: own sales clients, visible and workable d
   assert.equal(seoRecordAccess(admin, handoff, { work: true }), 'ok');
   assert.equal(seoRecordAccess(admin, null), 'not-found');
   assert.equal(seoRecordAccess({}, client), 'forbidden');
+});
+
+test('a push answers busy within seconds while another writer holds the client file', async () => {
+  const id = 'sc-record-2';
+  const lockPath = join(dataDir, 'seo-ops', 'clients', `${id}.json.lock`);
+  const before = readFileSync(join(dataDir, 'seo-ops', 'clients', `${id}.json`), 'utf8');
+  // A fresh lock of another process (an admin change in progress, or one that stopped a moment ago).
+  writeFileSync(lockPath, JSON.stringify({ pid: 1, host: 'elsewhere', at: new Date().toISOString(), nonce: 'held-by-test' }));
+  try {
+    const started = Date.now();
+    const pushed = await record.recordPlanSummaryFromPush(id, summary({ builtAt: '2026-11-02T08:00:00.000Z' }));
+    const tookMs = Date.now() - started;
+    assert.deepEqual(pushed, { seoRecorded: false, seoReason: 'busy' });
+    assert.ok(tookMs >= record.PUSH_LOCK_TIMEOUT_MS - 50 && tookMs < record.PUSH_LOCK_TIMEOUT_MS + 2500, `answered in ${tookMs} ms`);
+    assert.ok(record.PUSH_LOCK_TIMEOUT_MS <= 3000, 'well inside the 12 s the Maker waits for a push');
+    assert.equal(readFileSync(join(dataDir, 'seo-ops', 'clients', `${id}.json`), 'utf8'), before, 'nothing written');
+  } finally {
+    rmSync(lockPath, { force: true });
+  }
+  assert.deepEqual(await record.recordPlanSummaryFromPush(id, summary({ builtAt: '2026-11-02T08:00:00.000Z' })), { seoRecorded: true });
+  assert.equal(record.readSeoRecord(id).planSummary.builtAt, '2026-11-02T08:00:00.000Z');
 });
