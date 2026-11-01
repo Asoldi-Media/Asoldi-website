@@ -280,3 +280,17 @@ test('one-click as multipart form data is recorded too', async () => {
   assert.equal(await res.text(), 'unsubscribed');
   assert.equal(store.readEmailSuppressions().site_b['multipart@example.com'].source, 'one-click');
 });
+
+test('after mail went out, unsubscribe links keep working when the platform is switched off again', async () => {
+  const { mkdirSync, writeFileSync } = await import('node:fs');
+  await store.saveEmailSettings({ enabled: false });
+  const t = unsub.mintUnsubToken({ siteId: 'site_a', email: 'later@example.com', kind: 'welcome' });
+  assert.equal((await page('GET', `/api/hub/email/unsubscribe?t=${t}`)).status, 404, 'never sent: still dark');
+  mkdirSync(join(dataDir, 'email-log'), { recursive: true });
+  writeFileSync(join(dataDir, 'email-log', 'messages-202611.jsonl'), '{"id":"em_x","siteId":"site_a","kind":"welcome","status":"accepted"}\n');
+  assert.equal((await page('GET', `/api/hub/email/unsubscribe?t=${t}`)).status, 200);
+  assert.equal((await page('POST', `/api/hub/email/unsubscribe?t=${t}`, { body: 'List-Unsubscribe=One-Click' })).status, 200);
+  assert.equal(unsub.isSuppressed('site_a', 'later@example.com', 'welcome'), true);
+  assert.equal((await fetch(`${base}/api/hub/email/provision-request`, { method: 'POST' })).status, 404, 'other email routes stay closed');
+  await store.saveEmailSettings({ enabled: true });
+});

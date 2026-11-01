@@ -11,7 +11,9 @@ Each site therefore gets an **emailKey**: 32 random bytes, base64url (43 charact
 
 Everything here is off until a superadmin turns the email platform on (email setting `enabled`,
 default `false`). While it is off, every `/api/hub/email/*` route answers `404 {"code":"disabled"}`
-and writes nothing.
+and writes nothing. One exception: once the relay has sent mail (a message log file exists), the
+unsubscribe pages stay open even if the platform is switched off again, so the links in mail
+already sent keep working. To pause sending, use `killSwitch` instead.
 
 ## Provisioning is a pull
 
