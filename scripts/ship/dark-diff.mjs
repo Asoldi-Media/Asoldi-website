@@ -1410,6 +1410,10 @@ export async function runDarkDiff(options) {
     report.finishedAt = new Date().toISOString();
     return report;
   } finally {
+    // After an interrupt the signal handler stops the hubs, deletes the temp copies and exits with
+    // 130 or 143. A hub it stopped while starting fails this run first, so wait for that exit here
+    // instead of returning that failure.
+    if (interrupted) await new Promise(() => {});
     untrackRun(tracked);
     tracked.cleanup();
   }
