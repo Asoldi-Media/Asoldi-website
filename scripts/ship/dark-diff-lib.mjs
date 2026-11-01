@@ -170,21 +170,26 @@ export function normalizeValue(value, { scrub = (s) => s, keepOrder = false, key
     const items = value.map((item) => normalizeValue(item, { scrub, keepOrder, key }));
     return keepOrder ? items : items.map((item) => [canonical(item), item]).sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([, item]) => item);
   }
-  const out = {};
   const entries = Object.entries(value).map(([k, v]) => [normalizeString(k, scrub), k, v]);
   entries.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  // Keys that normalize alike (a map keyed by random ids) are grouped, and each group is sorted by
+  // content before it gets its #2, #3, … suffixes, so neither the ids nor the insertion order
+  // decide which value lands under which key.
+  const groups = new Map();
   for (const [nk, k, v] of entries) {
     const next = normalizeValue(v, { scrub, keepOrder, key: k });
-    if (Object.hasOwn(out, nk)) {
-      // Two keys that normalize alike (two random ids): keep both, in a stable order.
-      let i = 2;
-      while (Object.hasOwn(out, `${nk}#${i}`)) i += 1;
-      out[`${nk}#${i}`] = next;
-    } else {
-      out[nk] = next;
+    if (!groups.has(nk)) groups.set(nk, []);
+    groups.get(nk).push([canonical(next), next]);
+  }
+  const out = {};
+  for (const [nk, items] of groups) {
+    if (items.length > 1) items.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+    for (const [, next] of items) {
+      let name = nk;
+      for (let i = 2; Object.hasOwn(out, name); i += 1) name = `${nk}#${i}`;
+      out[name] = next;
     }
   }
-  // Keys that collided are re-sorted by content so their order does not depend on the ids.
   return out;
 }
 

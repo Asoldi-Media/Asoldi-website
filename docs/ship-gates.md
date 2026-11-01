@@ -25,8 +25,10 @@ is compared with the release that is live (base) on a copy of the live data. The
    link would write to its target. Copy the data without links, or leave those top-level folders
    out with `--skip-data`.
    It must exit 0. Exit 1 means a difference that the intended file does not list, a changed or
-   new secret file, or data that the older release loses. Exit 2 means it could not run (read the
-   message; nothing was compared).
+   new secret file, or data that the older release loses. Exit 2 means it could not run or proved
+   nothing (read the message): for example a clock start before the data's token cut-off, flows
+   that both releases refused, `--secrets` with no secret file to check, or a rollback control
+   that head itself refused. Leave `--clock-start` out unless a test needs a fixed one.
 4. After the push: the post-deploy check and the hub probe (`scripts/security/probe-hub.mjs`).
 
 ## What dark-diff does
@@ -38,9 +40,26 @@ is compared with the release that is live (base) on a copy of the live data. The
   A prep copy gets a local admin password and a local Maker host token through the base release's
   own data modules; base and head then each get their own copy of it.
 - Boots each release from an empty folder with a temp HOME, in safe mode (`HUB_SAFE_MODE=1`), with
-  the egress recorder refusing every connection that is not to this machine, and with the clock
-  of both starting at the same instant. No `.env` is read. A release that does not report safe
-  mode is stopped before anything is sent to it.
+  the egress recorder refusing every connection that is not to this machine, a loopback guard
+  refusing every connection to this machine except to the hub's own port (a dev Maker on
+  127.0.0.1:3000 or any other local service is never reached; each refused connection is a note
+  in the report), and with the clock of both starting at the same instant. No `.env` is read. A
+  release that does not report safe mode, or in which the egress recorder or the loopback guard
+  did not run, is stopped before anything is compared.
+- The clock starts at `--clock-start`, or by default at now rounded up to the minute. It never
+  starts before the data's latest token cut-off: `revokedBefore`, `migrations` and `updatedAt`
+  in `security-settings.json` and `revokedAt` in `token-revocations.json`. Tokens issued before a
+  cut-off are refused, so a run on such a clock would see every signed-in step refused on both
+  releases. The default moves past the cut-off; an explicit earlier `--clock-start` is exit 2.
+- When a signed-in step (auth `admin`, `maker` or `bearer:*`) is refused (401 or 403) on both
+  releases, or a step is skipped on both because the step that saves its value was refused or
+  failed, the flows did not run and the run stops with exit 2. Two releases that refuse every
+  step compare equal, so that is never a pass. A step that only one release refuses is a
+  difference. A skip whose saving step answered 2xx without the value (no recording in the data,
+  for example) is a note.
+- An interrupted run (Ctrl-C or SIGTERM) stops its hubs and deletes its temp folder, which holds
+  copies of the data. A temp folder that cannot be deleted is named in the report; delete it by
+  hand.
 - Runs, against each:
   - every flow in `scripts/ship/flows/*.json` (see below);
   - `GET /api/hub/site-config` by site key and by domain for every site in the data (the report
@@ -61,6 +80,9 @@ is compared with the release that is live (base) on a copy of the live data. The
     a whole-word key (`at`, `ts`, `exp`, `iat`, `mtimeMs`, …) or a camelCase or snake_case time
     suffix (`createdAt`, `sentTs`, `expiresAt`, `updated_at`, `timeoutMs`, …). Counts and amounts
     (`attempts`, `items`, `limits`, `slots`, `vat`, …) are compared as they are.
+  - Keys of a map keyed by random ids normalize alike; the values under them are put in order by
+    their content before they get `#2`, `#3`, … suffixes, so neither the ids nor the order the
+    entries were made in decide which value lands under which key.
 
 ## Flows
 
@@ -129,8 +151,13 @@ get fake files with random values:
   names-only listing of the live secrets folder: one relative name per line, a folder ends with
   `/`, `#` starts a comment. Take the listing with a tool that shows names only (for example the
   hosting file manager's folder view); never download the contents. Known names keep their usual
-  shape; any other name gets 64 random hex characters. Names with `..`, absolute paths or unusual
-  characters are refused. Use it for every push that touches secret handling.
+  shape; any other `.json` name gets a JSON object with a random value, and any other name 64
+  random hex characters. Names with `..`, absolute paths or unusual characters are refused. Use
+  it for every push that touches secret handling.
+
+`--secrets` on a copy with no secret file to check (no `secrets/`, and neither `--secret-names`
+nor `--fake-secrets`) is exit 2: both releases make the standard secrets at boot, and a file base
+makes too is excused, so the check would pass without having looked at one existing file.
 
 Either way the check compares paths and hashes of fake values: it proves that a release leaves
 each listed file as it is and makes no new one, not that it can read the real values.

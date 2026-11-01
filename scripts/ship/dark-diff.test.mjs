@@ -5,23 +5,27 @@
 //   - a seeded behaviour change (a response and a new public route) is reported, and the run exits 1
 //     when the intended file omits it;
 //   - a release that writes a secret file at boot fails --secrets;
-//   - an older release that drops a field on boot fails --rollback unless the field is listed.
+//   - an older release that drops a field on boot fails --rollback unless the field is listed;
+//   - two releases that refuse every signed-in step stop the run with exit 2 instead of passing;
+//   - a token cut-off after now moves the default clock start past it, so the flows really run;
+//   - an interrupted run stops its hubs and deletes its temp copies of the data.
 //
 //   node --test scripts/ship/dark-diff.test.mjs
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync, spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   classify, extractRoutes, findLinks, globToRegExp, isTimeKey, loadIntended, makeTextScrubber, normalizeString,
   normalizeValue, probePath, rollbackLosses, secretViolations, snapshotData, diffSnapshots,
 } from './dark-diff-lib.mjs';
 import {
-  addFakeSecrets, controlRefusals, HarnessError, linkNodeModules, main, materializeRef, parseArgs, pick, readSecretNames, removeLink,
-  REPO, rollbackStatusDifferences, runDarkDiff,
+  addFakeSecrets, chooseClockStart, controlRefusals, HarnessError, latestTokenCutoff, linkNodeModules, loopbackOf, main, materializeRef,
+  notRunOnBoth, notRunSteps, parseArgs, pick, readSecretNames, removeLink, REPO, rollbackStatusDifferences, runDarkDiff,
 } from './dark-diff.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -89,6 +93,194 @@ test('time keys are whole words or camelCase / snake_case suffixes; counts and a
   const b = normalizeValue({ attempts: 9, counts: 0, items: 7, vat: 0, limits: 99, slots: 2, seats: 3, credits: 0, points: 8, lat: 60, createdAt: 1793499999999, sentTs: 18 });
   const keys = Object.keys(a).filter((key) => a[key] !== b[key]).sort();
   assert.deepEqual(keys, ['attempts', 'counts', 'credits', 'items', 'lat', 'limits', 'points', 'seats', 'slots', 'vat'], 'every count or amount change stays visible; only the times read alike');
+});
+
+test('maps keyed by random ids normalize alike whatever the ids and the order their entries were made in', () => {
+  const run = (pairs) => canonicalOf(normalizeValue(Object.fromEntries(pairs)));
+  const a = run([['sc_aa9y8x7w6', { n: 2 }], ['sc_zz1b2c3d4', { n: 1 }]]);
+  const b = run([['sc_zz1b2c3d4', { n: 1 }], ['sc_aa9y8x7w6', { n: 2 }]]);
+  const c = run([['sc_qq5r4s3t2', { n: 1 }], ['sc_bb7c6d5e4', { n: 2 }]]);
+  assert.equal(a, b, 'insertion order');
+  assert.equal(a, c, 'other ids in the other order');
+  assert.deepEqual(normalizeValue({ sc_aa9y8x7w6: { n: 2 }, sc_zz1b2c3d4: { n: 1 } }), { 'sc_<id>': { n: 1 }, 'sc_<id>#2': { n: 2 } });
+  // Three alike, next to a key that already ends in #2: every value keeps its own key.
+  const three = normalizeValue({ 'sc_<id>#2': 'kept', sc_cc1d2e3f4: 3, sc_aa1b2c3d4: 1, sc_bb1c2d3e4: 2 });
+  assert.deepEqual(Object.values(three).map(String).sort(), ['1', '2', '3', 'kept']);
+  // A real change in one value is still a difference.
+  assert.notEqual(run([['sc_aa9y8x7w6', { n: 2 }], ['sc_zz1b2c3d4', { n: 1 }]]), run([['sc_aa9y8x7w6', { n: 3 }], ['sc_zz1b2c3d4', { n: 1 }]]));
+});
+
+/** Runs a process without blocking this one (the test's own servers must keep answering). */
+function runAsync(command, args, { env, timeoutMs = 60_000 } = {}) {
+  return new Promise((resolveRun) => {
+    const child = spawn(command, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk; });
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
+    child.on('exit', (status) => {
+      clearTimeout(timer);
+      resolveRun({ status, stdout, stderr });
+    });
+  });
+}
+
+function canonicalOf(value) {
+  return JSON.stringify(value, (_key, v) => (v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([x], [y]) => (x < y ? -1 : 1))) : v));
+}
+
+test('the flows did not run: a signed-in step refused, or a step skipped after its value was refused, on both releases', () => {
+  const flows = [
+    { name: 'f', steps: [
+      { method: 'POST', path: '/a', auth: 'admin', save: { id: 'body.id' } },
+      { method: 'GET', path: '/b/{{id}}', auth: 'admin' },
+      { method: 'POST', path: '/c', save: { token: 'body.token' } },
+      { method: 'GET', path: '/d', auth: 'bearer:token' },
+      { method: 'GET', path: '/e', auth: 'admin', expect: 403 },
+    ] },
+    { name: 'g', steps: [
+      { method: 'GET', path: '/list', auth: 'admin', save: { meetingId: 'body.meetings.0.id' } },
+      { method: 'POST', path: '/m/{{meetingId}}', auth: 'admin' },
+      { settle: 1000 },
+      { method: 'POST', path: '/m/{{meetingId}}/again', auth: 'maker' },
+    ] },
+  ];
+  const row = (key, extra) => ({ key, method: 'GET', path: `/${key}`, ...extra });
+  // Everything ran. The recording list was empty (the data's choice), so its steps were skipped.
+  const fine = [
+    row('f#0', { status: 201 }), row('f#1', { status: 200 }), row('f#2', { status: 201 }), row('f#3', { status: 200 }), row('f#4', { status: 403 }),
+    row('g#0', { status: 200 }), row('g#1', { skipped: 'missing meetingId' }), row('g#3', { skipped: 'missing meetingId' }),
+  ];
+  assert.deepEqual(notRunSteps(flows, fine), []);
+  // A token cut-off after the clock start: every signed-in step answers 401, and what depends on them is skipped.
+  const refused = [
+    row('f#0', { status: 401 }), row('f#1', { skipped: 'missing id' }), row('f#2', { status: 201 }), row('f#3', { status: 401 }), row('f#4', { status: 401 }),
+    row('g#0', { status: 401 }), row('g#1', { skipped: 'missing meetingId' }), row('g#3', { skipped: 'missing meetingId' }),
+  ];
+  assert.deepEqual(notRunSteps(flows, refused).map((r) => `${r.key}: ${r.reason}`), [
+    'f#0: refused (401)', 'f#1: skipped after f#0 answered 401', 'f#3: refused (401)', 'f#4: refused (401)',
+    'g#0: refused (401)', 'g#1: skipped after g#0 answered 401', 'g#3: skipped after g#0 answered 401',
+  ]);
+  // A save step that failed for another reason stops what depends on it too.
+  assert.deepEqual(notRunSteps(flows, [row('f#0', { status: 500 }), row('f#1', { skipped: 'missing id' })]).map((r) => r.reason), ['skipped after f#0 answered 500']);
+  // A bearer token that a skipped step should have saved.
+  const chain = [{ name: 'h', steps: [{ path: '/x', auth: 'admin', save: { a: 'body.a' } }, { path: '/y/{{a}}', save: { t: 'body.t' } }, { path: '/z', auth: 'bearer:t' }] }];
+  assert.deepEqual(notRunSteps(chain, [row('h#0', { status: 403 }), row('h#1', { skipped: 'missing a' }), row('h#2', { skipped: 'missing t' })]).map((r) => r.key), ['h#0', 'h#1', 'h#2']);
+  assert.deepEqual(notRunSteps(chain, [row('h#0', { status: 200 }), row('h#1', { skipped: 'missing a' }), row('h#2', { skipped: 'missing t' })]), [], 'the data had no value: a note, not a failure');
+  // A tick route that refuses its first tick did not run either; one a release lacks (404) is a route difference.
+  const clock = { ticks: [{ method: 'POST', path: '/tick' }] };
+  assert.deepEqual(notRunSteps([], [], [{ key: 'POST /tick #0', status: 401 }], clock).map((r) => r.reason), ['refused (401)']);
+  assert.deepEqual(notRunSteps([], [], [{ key: 'POST /tick #0', status: 404 }], clock), []);
+  // Only what both releases did not run stops the run; a step one release refuses is a difference.
+  assert.deepEqual(notRunOnBoth(notRunSteps(flows, refused), notRunSteps(flows, fine)), []);
+  assert.deepEqual(notRunOnBoth(notRunSteps(flows, fine), notRunSteps(flows, refused)), []);
+  assert.equal(notRunOnBoth(notRunSteps(flows, refused), notRunSteps(flows, refused)).length, 7);
+});
+
+test('the clock starts after the data\'s latest token cut-off; an explicit earlier start is refused', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'dark-diff-clock-'));
+  try {
+    const empty = join(root, 'empty');
+    mkdirSync(empty);
+    assert.deepEqual(latestTokenCutoff(empty), { at: 0, source: '' });
+    assert.equal(chooseClockStart('2026-01-01T00:00:00Z', { at: 0, source: '' }), Date.parse('2026-01-01T00:00:00Z'));
+    assert.equal(chooseClockStart('', { at: 0, source: '' }, Date.parse('2026-11-01T09:00:30.500Z')), Date.parse('2026-11-01T09:01:00Z'), 'now, to the next minute');
+    assert.throws(() => chooseClockStart('not a date', { at: 0 }), /not a date/);
+
+    const data = join(root, 'data');
+    mkdirSync(data);
+    writeFileSync(join(data, 'sites.json'), '[]');
+    writeFileSync(join(data, 'security-settings.json'), JSON.stringify({
+      version: 1, revokedBefore: { all: '2026-11-01T08:00:00.000Z', admin: '2026-10-31T10:00:00.000Z', staff: null, client: null },
+      migrations: { someMigration: '2026-10-31T10:00:00.000Z' }, updatedAt: '2026-11-01T07:00:00.000Z',
+    }));
+    assert.deepEqual(latestTokenCutoff(data), { at: Date.parse('2026-11-01T08:00:00Z'), source: 'security-settings.json revokedBefore.all' });
+    writeFileSync(join(data, 'token-revocations.json'), JSON.stringify({ version: 1, subjects: { 'u:1': { tokenVersion: 2, revokedAt: '2026-11-01T08:30:15.000Z', reason: 'logout-everywhere' } } }));
+    const cutoff = latestTokenCutoff(data);
+    assert.deepEqual(cutoff, { at: Date.parse('2026-11-01T08:30:15Z'), source: 'token-revocations.json revokedAt' });
+    // The default moves past the cut-off (to the next whole minute, plus one).
+    assert.equal(chooseClockStart('', cutoff, Date.parse('2026-11-01T06:00:00Z')), Date.parse('2026-11-01T08:32:00Z'));
+    assert.equal(chooseClockStart('', cutoff, Date.parse('2026-11-01T09:00:30Z')), Date.parse('2026-11-01T09:01:00Z'));
+    assert.equal(chooseClockStart('2026-11-01T09:00:00Z', cutoff), Date.parse('2026-11-01T09:00:00Z'));
+    assert.throws(() => chooseClockStart('2026-11-01T04:00:00Z', cutoff), (error) => error instanceof HarnessError && /before the data's token cut-off \(token-revocations\.json revokedAt 2026-11-01T08:30:15\.000Z\)/.test(error.message));
+    // The whole run stops with exit 2 before anything is copied or booted.
+    await assert.rejects(runDarkDiff({ base: 'HEAD', head: 'HEAD', data, clockStart: '2026-11-01T04:00:00Z' }), /before the data's token cut-off/);
+    assert.equal(await main(['--base', 'HEAD', '--head', 'HEAD', '--data', data, '--clock-start', '2026-11-01T04:00:00Z']), 2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('--secrets with no secret file to check (no secrets/, no --secret-names or --fake-secrets) stops with exit 2', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'dark-diff-no-secrets-'));
+  try {
+    const data = join(root, 'data');
+    mkdirSync(data);
+    writeFileSync(join(data, 'sites.json'), '[]');
+    await assert.rejects(runDarkDiff({ base: 'HEAD', head: 'HEAD', data, secrets: true }), (error) => error instanceof HarnessError && /no secret file to check/.test(error.message));
+    assert.equal(await main(['--base', 'HEAD', '--head', 'HEAD', '--data', data, '--secrets']), 2);
+    // A names listing with folders only fakes no file either.
+    const names = join(root, 'names.txt');
+    writeFileSync(names, '# nothing\narchive/\n');
+    await assert.rejects(runDarkDiff({ base: 'HEAD', head: 'HEAD', data, secrets: true, fakeSecrets: true, secretNames: names }), /no secret file to check/);
+    // With fake secrets, or a secrets folder in the copy, the run gets past that check (and stops later here: no flows folder).
+    const noFlows = join(root, 'no-flows');
+    await assert.rejects(runDarkDiff({ base: 'HEAD', head: 'HEAD', data, secrets: true, fakeSecrets: true, flows: noFlows }), /no flows folder/);
+    mkdirSync(join(data, 'secrets'));
+    writeFileSync(join(data, 'secrets', 'admin-secret'), `${'f'.repeat(96)}\n`);
+    await assert.rejects(runDarkDiff({ base: 'HEAD', head: 'HEAD', data, secrets: true, flows: noFlows }), /no flows folder/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the loopback guard lets a process reach its own port only; other local ports are refused and recorded', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'dark-diff-loopback-'));
+  const servers = [];
+  const listen = () => new Promise((resolveListen) => {
+    const server = net.createServer((socket) => socket.end('hello'));
+    servers.push(server);
+    server.listen(0, '127.0.0.1', () => resolveListen(server.address().port));
+  });
+  try {
+    const own = await listen();
+    const other = await listen();
+    const script = `
+      const net = require('node:net');
+      const tryConnect = (host, port) => new Promise((done) => {
+        const socket = net.connect({ host, port });
+        socket.on('data', () => { socket.destroy(); done('connected'); });
+        socket.on('error', (error) => done(error.code || 'error'));
+      });
+      (async () => {
+        const out = {
+          own: await tryConnect('127.0.0.1', ${own}),
+          other: await tryConnect('127.0.0.1', ${other}),
+          otherByName: await tryConnect('localhost', ${other}),
+          fetchOther: await fetch('http://127.0.0.1:${other}/').then(() => 'answered', (error) => (error.cause && error.cause.code) || 'refused'),
+        };
+        process.stdout.write(JSON.stringify(out));
+      })();`;
+    const env = { ...process.env, PORT: String(own), DARK_DIFF_LOOPBACK_FILE: join(root, 'loopback.jsonl') };
+    delete env.NODE_OPTIONS;
+    const preload = join(HERE, 'loopback-preload.cjs');
+    const out = await runAsync(process.execPath, ['--require', preload, '-e', script], { env });
+    assert.equal(out.status, 0, out.stderr);
+    assert.deepEqual(JSON.parse(out.stdout), { own: 'connected', other: 'ECONNREFUSED', otherByName: 'ECONNREFUSED', fetchOther: 'ECONNREFUSED' });
+    const seen = loopbackOf(root);
+    assert.equal(seen.guardRan, true);
+    assert.equal(seen.refused, 3);
+    assert.deepEqual(seen.targets, [`127.0.0.1:${other} (2x)`, `localhost:${other}`]);
+    // Negative control: without the guard the same process reaches the other port.
+    const off = await runAsync(process.execPath, ['--require', preload, '-e', script], { env: { ...env, DARK_DIFF_LOOPBACK_FILE: '' } });
+    assert.equal(off.status, 0, off.stderr);
+    assert.equal(JSON.parse(off.stdout).other, 'connected');
+    assert.deepEqual(loopbackOf(join(root, 'nowhere')), { guardRan: false, refused: 0, targets: [] });
+  } finally {
+    for (const server of servers) server.close();
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('the intended file: globs over difference keys, ignore entries, unused entries are reported', () => {
@@ -446,6 +638,18 @@ describe('dark-diff on a seeded data folder', { skip: !canBoot && 'no hub depend
         },
       },
     });
+    // A release that signs tokens but accepts none of them back: what a token cut-off after the
+    // clock start does to both releases. Every signed-in step answers 401 on both sides.
+    trees.refusing = copyTree(join(root, 'tree-refusing'), {
+      files: {
+        'lib/token-policy.js': {
+          replace: [[
+            'export function isTokenAccepted(payload, { now = Date.now(), env = process.env, dataDir } = {}) {',
+            'export function isTokenAccepted(payload, { now = Date.now(), env = process.env, dataDir } = {}) {\n  if (payload) return false;',
+          ]],
+        },
+      },
+    });
   };
 
   test.after(() => {
@@ -527,6 +731,85 @@ describe('dark-diff on a seeded data folder', { skip: !canBoot && 'no hub depend
     const listed = await runDarkDiff({ base: trees.dropping, head: trees.same, data, rollback: true, inventory: false, flows, intended, nodeModules: NODE_MODULES });
     assert.deepEqual(listed.rollbackFailures, []);
     assert.ok(listed.warnings.some((w) => /industry: (field lost|value changed) \(listed\)/.test(w)));
+  });
+
+  test('two releases that refuse every signed-in step stop the run with exit 2; they never compare equal and pass', { timeout: 900_000 }, async () => {
+    setup();
+    const flows = flowsDir(root, ['signing-admin', 'onboarding']);
+    await assert.rejects(
+      runDarkDiff({ base: trees.refusing, head: trees.refusing, data, inventory: false, flows, nodeModules: NODE_MODULES }),
+      (error) => {
+        assert.ok(error instanceof HarnessError, String(error?.stack || error));
+        assert.match(error.message, /^the flows did not run: 11 step\(s\) were refused or skipped on both releases/);
+        const rows = error.notRun.map((row) => `${row.key} ${row.method} ${row.path}: ${row.reason}`);
+        assert.ok(rows.includes('signing-admin#0 POST /api/admin/sales: refused (401)'), rows.join('\n'));
+        assert.ok(rows.includes('signing-admin#1 PATCH /api/admin/sales/{{clientId}}/progression: skipped after signing-admin#0 answered 401'), rows.join('\n'));
+        assert.ok(rows.includes('onboarding#1 GET /api/client-auth/me: refused (401)'), rows.join('\n'));
+        // The sign-ups need no token and ran: only what needs one is listed.
+        assert.ok(!rows.some((row) => row.startsWith('onboarding#0 ') || row.startsWith('onboarding#5 ')), rows.join('\n'));
+        return true;
+      },
+    );
+  });
+
+  test('a token cut-off after now: the default clock starts past it and the flows run; an earlier --clock-start is exit 2', { timeout: 900_000 }, async () => {
+    setup();
+    const revoked = join(root, 'data-revoked');
+    cpSync(data, revoked, { recursive: true });
+    const cutoff = new Date(Math.ceil(Date.now() / 3_600_000) * 3_600_000 + 2 * 3_600_000).toISOString();
+    const settingsFile = join(revoked, 'security-settings.json');
+    const settings = existsSync(settingsFile) ? JSON.parse(readFileSync(settingsFile, 'utf8')) : { version: 1 };
+    writeFileSync(settingsFile, JSON.stringify({ ...settings, revokedBefore: { ...(settings.revokedBefore || {}), all: cutoff } }, null, 2));
+    const flows = flowsDir(root, ['signing-admin']);
+    // The run that used to pass on 401s: a clock start before the cut-off.
+    assert.equal(await main(['--base', trees.same, '--head', trees.same, '--data', revoked, '--flows', flows, '--node-modules', NODE_MODULES, '--no-inventory', '--clock-start', new Date().toISOString()]), 2);
+    const report = await runDarkDiff({ base: trees.same, head: trees.same, data: revoked, inventory: false, flows, nodeModules: NODE_MODULES });
+    assert.ok(Date.parse(report.clockStart) > Date.parse(cutoff), `${report.clockStart} after ${cutoff}`);
+    assert.equal(report.tokenCutoff.source, 'security-settings.json revokedBefore.all');
+    assert.equal(report.ok, true, JSON.stringify(report.unlisted.slice(0, 5)));
+    assert.ok(report.flows.length >= 4);
+    assert.deepEqual(report.flows.filter((row) => row.skipped || row.unexpected || row.status === 401), [], 'every step ran and was accepted');
+  });
+
+  test('an interrupted run stops its hubs and deletes its temp copies of the data', { timeout: 600_000 }, async () => {
+    setup();
+    const childTmp = mkdtempSync(join(tmpdir(), 'dark-diff-interrupt-'));
+    try {
+      const script = `
+        import { existsSync, readdirSync } from 'node:fs';
+        import { join } from 'node:path';
+        import { tmpdir } from 'node:os';
+        const { runDarkDiff } = await import(${JSON.stringify(pathToFileURL(join(HERE, 'dark-diff.mjs')).href)});
+        // Interrupt once the base hub is up (its egress log exists), as Ctrl-C would.
+        const timer = setInterval(() => {
+          for (const name of readdirSync(tmpdir()).filter((n) => n.startsWith('dark-diff-'))) {
+            const runRoot = join(tmpdir(), name);
+            const side = existsSync(runRoot) ? readdirSync(runRoot).find((n) => n.startsWith('base-')) : null;
+            if (side && existsSync(join(runRoot, side, 'egress.jsonl'))) {
+              clearInterval(timer);
+              setTimeout(() => process.emit('SIGINT', 'SIGINT'), 1500);
+              return;
+            }
+          }
+        }, 200);
+        await runDarkDiff(${JSON.stringify({ base: trees.same, head: trees.same, data, inventory: false, flows: flowsDir(root, ['signing-admin']), nodeModules: NODE_MODULES })});
+        process.stdout.write('finished without the interrupt');
+      `;
+      const file = join(childTmp, 'interrupt.mjs');
+      writeFileSync(file, script);
+      const env = { ...process.env, TEMP: childTmp, TMP: childTmp, TMPDIR: childTmp };
+      delete env.NODE_OPTIONS;
+      const child = spawn(process.execPath, [file], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+      let output = '';
+      child.stdout.on('data', (chunk) => { output += chunk; });
+      child.stderr.on('data', (chunk) => { output += chunk; });
+      const code = await new Promise((resolveExit) => child.on('exit', (c) => resolveExit(c)));
+      assert.equal(code, 130, output);
+      assert.match(output, /SIGINT: stopping the hubs and deleting the temp copies of the data/);
+      assert.deepEqual(readdirSync(childTmp).filter((n) => n.startsWith('dark-diff-')), [], 'no temp copy of the data is left');
+    } finally {
+      rmSync(childTmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    }
   });
 });
 

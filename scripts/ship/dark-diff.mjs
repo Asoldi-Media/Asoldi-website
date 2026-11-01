@@ -20,7 +20,12 @@
  * host token (through the base release's own data modules), and base and head each run on their own
  * copy of it. Both boot in safe mode (HUB_SAFE_MODE=1) with the egress recorder in enforce mode and
  * an empty allowlist (loopback only), from an empty working folder with a temp HOME, so no .env and
- * nothing from the operator's home is read. Both start their clock at the same instant.
+ * nothing from the operator's home is read. A loopback guard refuses every connection to this
+ * machine except to the hub's own port (a dev Maker or another local service is never reached);
+ * each refused connection is a note. Both start their clock at the same instant: --clock-start, or
+ * by default now (to the next minute). The clock never starts before the data's latest token
+ * cut-off (security-settings.json revokedBefore, migrations and updatedAt; token-revocations.json
+ * revokedAt), since tokens issued earlier would be refused; an earlier --clock-start is exit 2.
  *
  * Against each it runs:
  *   - the flows in scripts/ship/flows/*.json (requests with an auth role and a body; see the README
@@ -30,12 +35,18 @@
  *     release has (a 404 means it has none);
  *   - the route inventory: every literal route of either release, without credentials, recorded only
  *     as 404 or not 404.
+ * When a step that signs in (auth admin, maker or bearer:*) is refused (401 or 403) on both
+ * releases, or a step is skipped on both because the step that saves its value was refused or
+ * failed, the flows did not run and the run stops with exit 2: two releases that refuse every step
+ * compare equal. A skip whose saving step answered 2xx without the value (no recording in the
+ * data, for example) is a note.
  * Then it compares the normalized responses (times, dates, ids and tokens become placeholders), the
  * safe-mode outbox (one row per mail, with its text), the route inventory and the data folders.
  *
  * --secrets   every file under secrets/ keeps its path and sha256 after boot and at the end, and no
  *             new secret file appears (a file the source lacks that base creates as well is shared,
- *             not a failure; intended.allowNewSecrets lists others).
+ *             not a failure; intended.allowNewSecrets lists others). A copy with no secret file
+ *             to check (no secrets/ and neither --secret-names nor --fake-secrets) is exit 2.
  * --fake-secrets  a local copy of the live data has no secrets/ (they never leave the server): this
  *             fills the standard layout (signing secret, Maker token, e-mail keys, webhook file) with
  *             random values in the copies. It checks the standard layout only, not the real files.
@@ -81,6 +92,7 @@ export const REPO = resolve(HERE, '..', '..');
 export const DEFAULT_FLOWS = join(HERE, 'flows');
 const EGRESS_AUDIT = join(REPO, 'scripts', 'safe-mode', 'egress-audit.cjs');
 const CLOCK_PRELOAD = join(HERE, 'clock-preload.cjs');
+const LOOPBACK_PRELOAD = join(HERE, 'loopback-preload.cjs');
 const RUN_TAG = 'dd';
 // The rollback pass makes its own records ({{run}} in flow e-mails and names), so its sign-ups never
 // collide with the ones head's run made.
@@ -128,6 +140,63 @@ export function parseArgs(argv = []) {
   }
   for (const name of ['base', 'head', 'data']) if (!opts[name]) throw new HarnessError(`--${name} is required`);
   return opts;
+}
+
+/* ------------------------------------------------------------------ the clock */
+
+const MINUTE_MS = 60_000;
+
+function readJsonQuiet(file) {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The latest time in the data that the token policy compares token times against, or set at the
+ * same moment: security-settings.json revokedBefore.*, migrations.* and updatedAt, and
+ * token-revocations.json subjects.*.revokedAt. { at: ms (0 when none), source: 'file key' }.
+ */
+export function latestTokenCutoff(dataDir) {
+  let at = 0;
+  let source = '';
+  const consider = (value, where) => {
+    const ms = Date.parse(String(value ?? ''));
+    if (Number.isFinite(ms) && ms > at) {
+      at = ms;
+      source = where;
+    }
+  };
+  const settings = readJsonQuiet(join(dataDir, 'security-settings.json'));
+  if (settings && typeof settings === 'object') {
+    for (const [scope, value] of Object.entries(settings.revokedBefore || {})) consider(value, `security-settings.json revokedBefore.${scope}`);
+    for (const [name, value] of Object.entries(settings.migrations || {})) consider(value, `security-settings.json migrations.${name}`);
+    consider(settings.updatedAt, 'security-settings.json updatedAt');
+  }
+  const revocations = readJsonQuiet(join(dataDir, 'token-revocations.json'));
+  for (const row of Object.values(revocations?.subjects || {})) consider(row?.revokedAt, 'token-revocations.json revokedAt');
+  return { at, source };
+}
+
+/**
+ * The clock start of a run: `explicit` (an ISO time), or now rounded up to the minute. Either way
+ * after the data's latest token cut-off (latestTokenCutoff): the default moves past it, and an
+ * explicit start before it is refused (HarnessError), since every token the run is issued would be
+ * refused and every signed-in step would compare equal.
+ */
+export function chooseClockStart(explicit, cutoff = { at: 0, source: '' }, now = Date.now()) {
+  const earliest = cutoff.at ? Math.ceil(cutoff.at / MINUTE_MS) * MINUTE_MS + MINUTE_MS : 0;
+  if (explicit) {
+    const ms = Date.parse(explicit);
+    if (!Number.isFinite(ms)) throw new HarnessError('--clock-start is not a date');
+    if (ms < earliest) {
+      throw new HarnessError(`--clock-start ${new Date(ms).toISOString()} is before the data's token cut-off (${cutoff.source} ${new Date(cutoff.at).toISOString()}): every token the run is issued would be refused. Start at ${new Date(earliest).toISOString()} or later, or leave --clock-start out`);
+    }
+    return ms;
+  }
+  return Math.max(Math.ceil(now / MINUTE_MS) * MINUTE_MS, earliest);
 }
 
 /* ------------------------------------------------------------------ trees */
@@ -206,6 +275,65 @@ export function freePort() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Hub processes that are running now, so an interrupted run can stop them before it cleans up.
+const ACTIVE_CHILDREN = new Set();
+// Runs in progress: each has cleanup(), which removes its dependency links and its temp folder.
+const ACTIVE_RUNS = new Set();
+let signalHandlersInstalled = false;
+// Set by an interrupt: no new process starts after it.
+let interrupted = false;
+
+function killActiveChildren() {
+  for (const child of ACTIVE_CHILDREN) {
+    try { child.kill('SIGKILL'); } catch { /* already gone */ }
+  }
+}
+
+/** Starts a child process that an interrupt stops; refuses to start one after an interrupt. */
+function spawnTracked(command, args, options) {
+  if (interrupted) throw new HarnessError('interrupted');
+  const child = spawn(command, args, options);
+  ACTIVE_CHILDREN.add(child);
+  child.on('exit', () => ACTIVE_CHILDREN.delete(child));
+  child.on('error', () => ACTIVE_CHILDREN.delete(child));
+  return child;
+}
+
+async function onInterrupt(signal) {
+  if (interrupted) return;
+  interrupted = true;
+  process.stderr.write(`dark-diff: ${signal}: stopping the hubs and deleting the temp copies of the data\n`);
+  killActiveChildren();
+  for (let i = 0; i < 25 && ACTIVE_CHILDREN.size; i += 1) await sleep(200);
+  killActiveChildren();
+  for (const run of [...ACTIVE_RUNS]) {
+    try {
+      run.cleanup();
+    } catch (error) {
+      process.stderr.write(`dark-diff: cleanup failed: ${error?.message || error}\n`);
+    }
+  }
+  process.exit(signal === 'SIGINT' ? 130 : 143);
+}
+
+function trackRun(run) {
+  ACTIVE_RUNS.add(run);
+  if (!signalHandlersInstalled) {
+    signalHandlersInstalled = true;
+    process.on('SIGINT', onInterrupt);
+    process.on('SIGTERM', onInterrupt);
+  }
+}
+
+function untrackRun(run) {
+  ACTIVE_RUNS.delete(run);
+  if (!ACTIVE_RUNS.size && signalHandlersInstalled) {
+    signalHandlersInstalled = false;
+    process.off('SIGINT', onInterrupt);
+    process.off('SIGTERM', onInterrupt);
+  }
+}
+
 /** The env of every child: a short pass-through list, a temp HOME, safe mode, enforced egress, the shared clock. */
 export function childEnv(run, extra = {}) {
   const env = {};
@@ -224,8 +352,9 @@ export function childEnv(run, extra = {}) {
     HUB_LISTEN_HOST: '127.0.0.1',
     DATA_DIR: '',
     PERSIST_PRODUCTION_ENV: '0',
-    NODE_OPTIONS: `--require=${run.egressAudit} --require=${run.clockPreload}`,
+    NODE_OPTIONS: `--require=${run.egressAudit} --require=${run.loopbackPreload} --require=${run.clockPreload}`,
     EGRESS_AUDIT_FILE: join(run.home, 'egress.jsonl'),
+    DARK_DIFF_LOOPBACK_FILE: join(run.home, 'loopback.jsonl'),
     EGRESS_AUDIT_ALLOW: run.allowList,
     EGRESS_AUDIT_ENFORCE: '1',
     DARK_DIFF_CLOCK_START: String(run.clockStart),
@@ -245,7 +374,13 @@ function runNodeScript(script, run, extraEnv, timeoutMs = 60_000) {
   const file = join(run.home, 'prep.mjs');
   writeFileSync(file, script);
   return new Promise((resolvePromise, reject) => {
-    const child = spawn(process.execPath, [file], { cwd: run.home, env: childEnv(run, extraEnv), stdio: ['ignore', 'pipe', 'pipe'] });
+    let child;
+    try {
+      child = spawnTracked(process.execPath, [file], { cwd: run.home, env: childEnv(run, extraEnv), stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (error) {
+      reject(error);
+      return;
+    }
     let out = '';
     let err = '';
     child.stdout.on('data', (chunk) => { out += chunk; });
@@ -337,7 +472,7 @@ export function addFakeSecrets(dataDir, names = null) {
 /** Boots server.js of `tree` on `dataDir`; resolves once /api/health answers. */
 async function bootHub(tree, dataDir, run, { timeoutMs = 120_000 } = {}) {
   const port = await freePort();
-  const child = spawn(process.execPath, [join(tree, 'server.js')], {
+  const child = spawnTracked(process.execPath, [join(tree, 'server.js')], {
     cwd: run.home,
     env: childEnv(run, { PORT: String(port), APP_DATA_DIR: dataDir }),
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -676,7 +811,30 @@ function egressOf(label, home) {
   }
   // The egress recorder refused every connection that was not to this machine.
   if (!egress.recorderRan) throw new HarnessError(`${label}: the egress recorder did not run inside the hub; nothing can be trusted`);
-  return egress;
+  // The loopback guard refused every connection to this machine other than to the hub's own port.
+  const local = loopbackOf(home);
+  if (!local.guardRan) throw new HarnessError(`${label}: the loopback guard did not run inside the hub; it could have reached local services`);
+  return { ...egress, loopbackRefused: local.refused, loopbackTargets: local.targets };
+}
+
+/** The connections to other local ports that the loopback guard refused in one hub process. */
+export function loopbackOf(home) {
+  try {
+    const rows = readFileSync(join(home, 'loopback.jsonl'), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    const refused = rows.filter((row) => row.event !== 'guard-start');
+    const counts = new Map();
+    for (const row of refused) {
+      const target = `${row.host || 'localhost'}:${row.port}`;
+      counts.set(target, (counts.get(target) || 0) + 1);
+    }
+    return {
+      guardRan: rows.some((row) => row.event === 'guard-start'),
+      refused: refused.length,
+      targets: [...counts.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([target, n]) => `${target}${n > 1 ? ` (${n}x)` : ''}`),
+    };
+  } catch {
+    return { guardRan: false, refused: 0, targets: [] };
+  }
 }
 
 async function runSide({ label, tree, dataDir, run, flows, clock, credentials, routes, inventory, secretRef }) {
@@ -761,6 +919,103 @@ export function controlRefusals(headFlows = [], control = {}) {
     if (row.status === 401 || row.status === 403) out.push(`${row.key} ${row.method} ${row.path}: ${row.status}`);
   }
   return out;
+}
+
+const SIGNED_IN = (auth) => {
+  const role = String(auth || 'none');
+  return role === 'admin' || role === 'maker' || role.startsWith('bearer:');
+};
+const OK = (status) => status >= 200 && status < 300;
+
+/**
+ * The steps of one release's run that did not run as their flow means them to:
+ *   - a signed-in step (auth admin, maker or bearer:*) answered 401 or 403 where its flow does not
+ *     expect that;
+ *   - a step was skipped because the step that saves its value was refused, failed (anything but
+ *     2xx) or was itself skipped for such a reason;
+ *   - a tick route answered 401 or 403 on its first tick.
+ * A skip whose saving step answered 2xx without the value is the data's choice (no recording to
+ * link) and is not listed. Returns [{ key, method, path, reason }].
+ */
+export function notRunSteps(flows = [], results = [], ticks = [], clock = {}) {
+  const defs = new Map();
+  for (const flow of flows) flow.steps.forEach((step, i) => defs.set(`${flow.name}#${i}`, { flow, i, step }));
+  const rows = new Map(results.map((row) => [row.key, row]));
+  const memo = new Map();
+  const expects = (step, status) => {
+    const list = Array.isArray(step?.expect) ? step.expect : step?.expect ? [step.expect] : [];
+    return list.includes(status);
+  };
+  const missingOf = (row) => String(row.skipped || '').replace(/^missing\s+/, '').split(',').map((s) => s.trim()).filter(Boolean);
+  // Why a row did not run, or '' when it ran (or was skipped for the data's sake).
+  const reasonOf = (key) => {
+    if (memo.has(key)) return memo.get(key);
+    memo.set(key, '');
+    const row = rows.get(key);
+    const def = defs.get(key);
+    let reason = '';
+    if (row && def) {
+      if (!row.skipped) {
+        if ((row.status === 401 || row.status === 403) && SIGNED_IN(def.step.auth) && !expects(def.step, row.status)) reason = `refused (${row.status})`;
+      } else {
+        for (const name of missingOf(row)) {
+          let saver = -1;
+          for (let j = def.i - 1; j >= 0; j -= 1) {
+            if (def.flow.steps[j]?.save && Object.hasOwn(def.flow.steps[j].save, name)) {
+              saver = j;
+              break;
+            }
+          }
+          if (saver < 0) {
+            reason = `skipped: no earlier step saves ${name}`;
+            break;
+          }
+          const saverKey = `${def.flow.name}#${saver}`;
+          const saverRow = rows.get(saverKey);
+          if (!saverRow) {
+            reason = `skipped: ${saverKey} did not run`;
+            break;
+          }
+          if (saverRow.skipped) {
+            if (reasonOf(saverKey)) {
+              reason = `skipped after ${saverKey} was skipped (${reasonOf(saverKey)})`;
+              break;
+            }
+            continue;
+          }
+          if (!OK(saverRow.status)) {
+            reason = `skipped after ${saverKey} answered ${saverRow.status}`;
+            break;
+          }
+        }
+      }
+    }
+    memo.set(key, reason);
+    return reason;
+  };
+  const out = [];
+  for (const row of results) {
+    const reason = reasonOf(row.key);
+    if (reason) out.push({ key: row.key, method: row.method, path: row.path, reason });
+  }
+  for (const tick of clock.ticks || []) {
+    const method = String(tick.method || 'POST').toUpperCase();
+    const first = ticks.find((row) => row.key === `${method} ${tick.path} #0`);
+    if (first && (first.status === 401 || first.status === 403) && SIGNED_IN(tick.auth || 'admin')) {
+      out.push({ key: first.key, method, path: tick.path, reason: `refused (${first.status})` });
+    }
+  }
+  return out;
+}
+
+/**
+ * The steps that did not run on both releases (notRunSteps of each, same key). Two releases that
+ * both refuse a step compare equal there, so such a run tested nothing on that path. A step that
+ * only one release refused is a difference and is reported as one.
+ */
+export function notRunOnBoth(base, head) {
+  const baseKeys = new Map(base.map((row) => [row.key, row]));
+  return head.filter((row) => baseKeys.has(row.key));
 }
 
 /** Status differences between base and the control in the rollback pass: [{ key, detail }]. */
@@ -916,27 +1171,66 @@ export async function runDarkDiff(options) {
     throw new HarnessError(`--data holds symbolic links or junctions (${sourceLinks.slice(0, 10).join(', ')}${sourceLinks.length > 10 ? ', …' : ''}); copy the data without links, or leave those top-level folders out with --skip-data`);
   }
   const secretNames = opts.secretNames ? readSecretNames(resolve(opts.secretNames)) : null;
+  if (opts.secrets) {
+    const existing = Object.keys(secretManifest(source)).length;
+    const faked = opts.fakeSecrets ? (secretNames ? secretNames.filter((row) => !row.folder).length : Object.keys(LIVE_SECRET_LAYOUT).length) : 0;
+    if (!existing && !faked) {
+      // Both releases make the standard secrets at boot, and a file base makes too is excused: the
+      // check would pass without having looked at one existing secret file.
+      throw new HarnessError('--secrets has no secret file to check: the data copy has no secrets/ (a copy of live data never does). Pass --secret-names <names-only listing of the live secrets folder>, or --fake-secrets for the standard layout only');
+    }
+  }
   const intended = loadIntended(opts.intended ? resolve(opts.intended) : '');
   const { flows, clock } = loadFlows(resolve(opts.flows));
+  const cutoff = latestTokenCutoff(source);
+  const clockStart = chooseClockStart(opts.clockStart, cutoff);
   const nodeModules = resolve(opts.nodeModules || join(opts.repo, 'node_modules'));
   if (!existsSync(nodeModules)) throw new HarnessError(`no dependency folder at ${nodeModules} (pass --node-modules)`);
-  const clockStart = opts.clockStart ? Date.parse(opts.clockStart) : Math.floor(Date.now() / 3_600_000) * 3_600_000;
-  if (!Number.isFinite(clockStart)) throw new HarnessError('--clock-start is not a date');
 
   const root = mkdtempSync(join(tmpdir(), 'dark-diff-'));
   const links = [];
   const report = { base: opts.base, head: opts.head, startedAt: new Date().toISOString(), clockStart: new Date(clockStart).toISOString(), warnings: [] };
+  if (cutoff.at) report.tokenCutoff = { at: new Date(cutoff.at).toISOString(), source: cutoff.source };
   const before = sourceFingerprint(source);
+  let cleaned = false;
+  const tracked = {
+    // Removes the dependency links, then the temp folder (copies of the data). Never throws.
+    cleanup() {
+      if (cleaned) return;
+      cleaned = true;
+      let keep = Boolean(opts.keep);
+      for (const link of links) {
+        if (!removeLink(link)) {
+          // Never delete a folder that still links to the dependency set.
+          keep = true;
+          report.warnings.push(`could not remove the link ${link}; the temp folder ${root} is kept`);
+        }
+      }
+      if (keep) {
+        report.tempDir = root;
+        return;
+      }
+      try {
+        rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 });
+      } catch (error) {
+        report.tempDir = root;
+        report.warnings.push(`could not delete the temp folder ${root} (${error?.code || error?.message || error}); it holds copies of the data: delete it by hand`);
+      }
+    },
+  };
+  trackRun(tracked);
   try {
     // Shared files for every child, in a temp folder (no spaces in the path NODE_OPTIONS quotes).
     const sharedDir = join(root, 'shared');
     mkdirSync(sharedDir, { recursive: true });
     copyFileSync(EGRESS_AUDIT, join(sharedDir, 'egress-audit.cjs'));
     copyFileSync(CLOCK_PRELOAD, join(sharedDir, 'clock-preload.cjs'));
+    copyFileSync(LOOPBACK_PRELOAD, join(sharedDir, 'loopback-preload.cjs'));
     writeFileSync(join(sharedDir, 'allow.json'), JSON.stringify({ note: 'loopback only', hosts: [] }));
+    const shared = (name) => join(sharedDir, name).split(sep).join('/');
     const run = {
       root,
-      shared: { egressAudit: join(sharedDir, 'egress-audit.cjs').split(sep).join('/'), clockPreload: join(sharedDir, 'clock-preload.cjs').split(sep).join('/'), allowList: join(sharedDir, 'allow.json'), clockStart },
+      shared: { egressAudit: shared('egress-audit.cjs'), loopbackPreload: shared('loopback-preload.cjs'), clockPreload: shared('clock-preload.cjs'), allowList: join(sharedDir, 'allow.json'), clockStart },
     };
 
     const trees = {};
@@ -957,11 +1251,11 @@ export async function runDarkDiff(options) {
       for (const name of added) fakeAdded.add(`secrets/${name}`);
       if (added.length) report.warnings.push(`fake secrets added to the copies (random values, ${secretNames ? 'from the names listing' : 'standard layout only'}): ${added.join(', ')}`);
     }
+    const sourceSecrets = opts.secrets ? secretManifest(source) : null;
     const password = randomBytes(18).toString('base64url');
     const prepRun = newRunFolder(root, 'prep', run.shared);
     const prepOut = JSON.parse(await runNodeScript(PREP_SCRIPT, prepRun, { APP_DATA_DIR: prep, DD_TREE: trees.base.dir, DD_ADMIN_PASSWORD: password }));
     const credentials = { username: prepOut.username, password, makerToken: prepOut.makerToken || '' };
-    const sourceSecrets = opts.secrets ? secretManifest(source) : null;
     const prepSecrets = opts.secrets ? secretManifest(prep) : null;
     if (opts.secrets) {
       for (const v of secretViolations(sourceSecrets, prepSecrets, { stage: 'prep' })) {
@@ -986,6 +1280,16 @@ export async function runDarkDiff(options) {
       const started = Date.now();
       sides[side] = await runSide({ label: side, tree: trees[side].dir, dataDir: dirs[side], run, flows, clock, credentials, routes, inventory: opts.inventory, secretRef: opts.secrets });
       if (side === 'head') headElapsedMs = Date.now() - started;
+    }
+
+    // Two releases that both refuse a signed-in step (a token cut-off after the clock start, a
+    // credential the data does not accept) compare equal there: the gate would pass without having
+    // run the flows. That is a harness failure, never a pass.
+    const notRun = { base: notRunSteps(flows, sides.base.flows, sides.base.ticks, clock), head: notRunSteps(flows, sides.head.flows, sides.head.ticks, clock) };
+    const notRunBoth = notRunOnBoth(notRun.base, notRun.head);
+    if (notRunBoth.length) {
+      const sample = notRunBoth.slice(0, 6).map((row) => `${row.key} ${row.method} ${row.path}: ${row.reason}`).join('; ');
+      throw Object.assign(new HarnessError(`the flows did not run: ${notRunBoth.length} step(s) were refused or skipped on both releases (${sample}${notRunBoth.length > 6 ? '; …' : ''}). Check the data's token policy (security-settings.json, token-revocations.json) and the clock start (${new Date(clockStart).toISOString()})`), { notRun: notRunBoth });
     }
 
     const diffs = [
@@ -1013,9 +1317,11 @@ export async function runDarkDiff(options) {
       routesProbed: Object.keys(sides.head.inventory).length,
       outbox: { base: sides.base.outbox.length, head: sides.head.outbox.length },
       egressRefused: { base: sides.base.egress.refused, head: sides.head.egress.refused },
+      loopbackRefused: { base: sides.base.egress.loopbackRefused, head: sides.head.egress.loopbackRefused },
     };
     for (const side of ['base', 'head']) {
       if (sides[side].egress.refused) report.warnings.push(`${side}: ${sides[side].egress.refused} outbound connection(s) refused (${sides[side].egress.hosts.join(', ')})`);
+      if (sides[side].egress.loopbackRefused) report.warnings.push(`${side}: ${sides[side].egress.loopbackRefused} connection(s) to other local ports refused (${sides[side].egress.loopbackTargets.join(', ')}); a hub under test reaches only its own port`);
     }
     if (opts.debug) report.sides = { base: { ...sides.base, scrub: undefined }, head: { ...sides.head, scrub: undefined } };
     report.listed = classified.listed;
@@ -1090,6 +1396,7 @@ export async function runDarkDiff(options) {
         const statuses = (side) => [...side.flows, ...side.replay].map((row) => `${row.key} ${row.method} ${row.path} ${row.skipped ? `skipped (${row.skipped})` : row.status}`);
         report.rollbackSteps = { base: statuses(baseSide), head: statuses(controlSide) };
         if (baseSide.egress.refused) report.warnings.push(`rollback base: ${baseSide.egress.refused} outbound connection(s) refused (${baseSide.egress.hosts.join(', ')})`);
+        if (baseSide.egress.loopbackRefused) report.warnings.push(`rollback base: ${baseSide.egress.loopbackRefused} connection(s) to other local ports refused (${baseSide.egress.loopbackTargets.join(', ')})`);
       }
       const accepted = intended.rollbackLost.map(globToRegExp);
       for (const failure of failures) {
@@ -1103,15 +1410,8 @@ export async function runDarkDiff(options) {
     report.finishedAt = new Date().toISOString();
     return report;
   } finally {
-    for (const link of links) {
-      if (!removeLink(link)) {
-        // Never delete a folder that still links to the dependency set.
-        opts.keep = true;
-        report.warnings.push(`could not remove the link ${link}; the temp folder ${root} is kept`);
-      }
-    }
-    if (opts.keep) report.tempDir = root;
-    else rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    untrackRun(tracked);
+    tracked.cleanup();
   }
 }
 
@@ -1121,6 +1421,7 @@ export function formatReport(report) {
   if (report.counts) {
     lines.push(`  ${report.counts.flowSteps} flow steps, ${report.counts.siteConfigs} site configs, ${report.counts.ticks} ticks, ${report.counts.routesProbed} routes, outbox ${report.counts.outbox.base}/${report.counts.outbox.head}`);
   }
+  if (report.clockStart) lines.push(`  clock start ${report.clockStart}${report.tokenCutoff ? ` (after the data's token cut-off, ${report.tokenCutoff.source} ${report.tokenCutoff.at})` : ''}`);
   for (const d of report.unlisted || []) lines.push(`  UNLISTED ${d.key}: ${d.detail}${d.base !== undefined ? ` (base ${d.base} | head ${d.head})` : ''}`);
   for (const d of report.listed || []) lines.push(`  listed   ${d.key}: ${d.detail} [${d.listedBy}]`);
   for (const d of report.secretFailures || []) lines.push(`  SECRET   ${d.key}: ${d.detail}`);
