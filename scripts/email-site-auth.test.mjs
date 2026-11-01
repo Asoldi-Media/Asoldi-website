@@ -273,6 +273,47 @@ test('the opt-out rebuild route merges into a readable record and writes nothing
   assert.equal((await call('post', '/api/admin/email/suppressions/rebuild', {}, {})).status, 401, 'superadmin only');
 });
 
+test('route coverage: every /api/hub/email/ route outside the public list needs the emailKey', async () => {
+  const { existsSync } = await import('node:fs');
+  const { PUBLIC_EMAIL_ROUTES } = await import('../lib/routes/email-hub-routes.js');
+  const probe = express();
+  registerEmailHubRoutes(probe, { adminAuth: (_q, _r, n) => n(), hub }, { startJobs: false });
+  const guard = auth.requireEmailKey({ getSiteById: hub.getSiteById, getSiteByKey: hub.getSiteByKey });
+  for (const [method, path] of EMAIL_SITE_ROUTES) probe[method](path, guard, (_q, r) => r.json({ ok: true }));
+  probe.post('/api/hub/email/unguarded-example', (_q, r) => r.json({ ok: true }));
+  const unguarded = auth.emailRouteGuards(probe).filter((r) => !r.guarded).map((r) => `${r.method} ${r.path}`);
+  assert.deepEqual(unguarded.sort(), [...PUBLIC_EMAIL_ROUTES, 'POST /api/hub/email/unguarded-example'].sort(), 'the walker finds a route without the guard');
+  assert.equal(auth.emailRouteGuards(probe).filter((r) => r.guarded).length, EMAIL_SITE_ROUTES.length);
+});
+
+const siteRoutesModule = new URL('../lib/routes/email-site-routes.js', import.meta.url);
+test('the CMS-facing email routes: each needs the emailKey, and the site key alone gets 401', {
+  skip: (await import('node:fs')).existsSync(siteRoutesModule) ? false : 'lib/routes/email-site-routes.js is not in this build; this check runs once it is',
+}, async () => {
+  const { PUBLIC_EMAIL_ROUTES } = await import('../lib/routes/email-hub-routes.js');
+  const mod = await import(siteRoutesModule.href);
+  const app = express();
+  app.use(express.json());
+  await mod.register(app, { adminAuth: (_q, r) => r.status(401).end(), hub, sales: { getSalesClients: () => [] } });
+  const routes = auth.emailRouteGuards(app).filter((r) => !PUBLIC_EMAIL_ROUTES.includes(`${r.method} ${r.path}`));
+  assert.ok(routes.length > 0, 'the module registers CMS-facing routes');
+  assert.deepEqual(routes.filter((r) => !r.guarded).map((r) => `${r.method} ${r.path}`), [], 'routes without requireEmailKey');
+  const srv = await new Promise((resolve) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
+  });
+  try {
+    for (const { method, path } of routes) {
+      const url = `http://127.0.0.1:${srv.address().port}${path.replace(/:[A-Za-z_]+/g, 'x')}`;
+      const res = await fetch(url, { method, headers: { ...cms1, ...(method === 'GET' ? {} : { 'content-type': 'application/json' }) }, ...(method === 'GET' ? {} : { body: '{}' }) });
+      await res.text();
+      assert.equal(res.status, 401, `${method} ${path} with the site key and credential only`);
+    }
+  } finally {
+    srv.closeAllConnections?.();
+    srv.close();
+  }
+});
+
 test('every email core route is called by a test', async () => {
   const { readFileSync } = await import('node:fs');
   const { dirname } = await import('node:path');
