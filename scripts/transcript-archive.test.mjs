@@ -194,3 +194,28 @@ test('the backfill is a dry run by default and archives what is missing with --a
   const step = archive.tickSteps[0];
   assert.deepEqual(await step.run({ settings: settingsStore.getAutomationSettings({ fresh: true }) }), { wrote: false }, 'the sync step does nothing while the switch is off');
 });
+
+test('nothing is archived for a client past its retention date, so the sync never writes back what the purge removed', async () => {
+  // A lead whose only activity is more than two years old; an automatic write bumped updatedAt today.
+  const clients = JSON.parse(readFileSync(join(DATA_DIR, 'sales-clients.json'), 'utf8'));
+  clients.push({ id: 'ta-expired', product: 'asoldi', businessName: 'Gammelbutikken AS', contactEmail: 'gammel@example.com', status: 'active', createdAt: iso(NOW - 800 * DAY), updatedAt: iso(NOW) });
+  writeFileSync(join(DATA_DIR, 'sales-clients.json'), JSON.stringify(clients, null, 2));
+  setSettings({ privacy: { archive: { enabled: true } } });
+  const stored = webhook.storeFirefliesMeeting({ ...record('ff-expired', 'Gammel: tekst.'), startedAt: iso(NOW - 790 * DAY) });
+  linker.link('ta-expired', personRef(stored, 'ta-expired'));
+  assert.ok(sales.getSalesClientById('ta-expired').meetings.some((row) => row.meetingId === 'ff-expired'), 'the link itself happened');
+  assert.deepEqual(archiveFiles('ta-expired'), [], 'past the retention date: not archived on link');
+  const sync = archive.syncTranscriptArchive({ apply: true });
+  assert.equal(sync.planned.some((row) => row.clientId === 'ta-expired'), false, 'the sync does not plan it');
+  const step = archive.tickSteps[0];
+  await step.run({ settings: settingsStore.getAutomationSettings({ fresh: true }), now: new Date() });
+  assert.deepEqual(archiveFiles('ta-expired'), [], 'nor does the 6-hour step write it');
+  // Control: a client inside its retention date is archived by the same sync.
+  const fresh = webhook.storeFirefliesMeeting(record('ff-fresh', 'Fersk: tekst.'));
+  setSettings({ privacy: { archive: { enabled: false } } });
+  linker.link('ta-lead', personRef(fresh, 'ta-lead'));
+  setSettings({ privacy: { archive: { enabled: true } } });
+  assert.ok(archive.syncTranscriptArchive({ apply: true }).planned.some((row) => row.meetingId === 'ff-fresh'));
+  assert.ok(archiveFiles('ta-lead').includes(`${archive.transcriptSha('Fersk: tekst.')}.json`));
+  setSettings({ privacy: { archive: { enabled: false } } });
+});
