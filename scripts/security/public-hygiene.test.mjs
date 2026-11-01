@@ -201,14 +201,14 @@ test("a '*' entry covers secrets only; client data and planning words need an en
   assert.deepEqual(lib.allowlistWidening(base, {
     ...base,
     emails: ['a@kunde.no', 'b@kunde.no'],
-    entries: [...base.entries, { path: 'src/a.js', rule: 'email', reason: 'one file' }],
+    entries: [...base.entries, { path: 'src/a.js', rule: 'secret-assignment', reason: 'one file, values must look fake' }],
     fixtureValues: [{ path: 'lib/*.js', rule: 'email', sha256: lib.sha256Hex('c@kunde.no'), reason: 'one value' }],
-  }), [], 'exact values and one-file entries are not broader');
+  }), [], 'exact values and one-file secret entries are not broader');
   assert.deepEqual(lib.allowlistWidening(base, {
     ...base,
-    entries: [...base.entries, { path: '**', rule: '*', reason: 'x' }, { path: 'docs/*.md', rule: 'email', reason: 'x' }],
+    entries: [...base.entries, { path: '**', rule: '*', reason: 'x' }, { path: 'docs/*.md', rule: 'email', reason: 'x' }, { path: 'src/a.js', rule: 'plan-id', reason: 'x' }],
     emailDomains: ['kunde.no'],
-  }), ['new entry: rule * on **', 'new entry: rule email on docs/*.md', '1 new allowed e-mail domain(s)']);
+  }), ['new entry: rule * on **', 'new entry: rule email on docs/*.md', 'new entry: rule plan-id on src/a.js', '1 new allowed e-mail domain(s)']);
 });
 
 // ------------------------------------------------------------------------- git modes
@@ -364,6 +364,13 @@ test('--staged in a public repo: the staged allowlist counts, not the working tr
   git(dir, ['add', ALLOW_FILE]);
   const exact = await runScan(['--staged'], { cwd: dir, env });
   assert.equal(exact.code, 0, exact.out);
+  // An entry for a client-data rule hides every such finding in its file: refused, even on one file.
+  write(dir, ALLOW_FILE, JSON.stringify({ entries: [{ path: 'tests/*.test.mjs', rule: '*', reason: 'scanner fixtures' }, { path: 'b.js', rule: 'email', reason: 'one file' }] }));
+  git(dir, ['add', ALLOW_FILE]);
+  const oneFile = await runScan(['--staged'], { cwd: dir, env });
+  assert.equal(oneFile.code, 1, oneFile.out);
+  assert.match(oneFile.out, /^\.secret-scan-allowlist\.json {2}path:allowlist-widened {2}\(new entry: rule email on b\.js\)$/m);
+  assert.doesNotMatch(oneFile.out, /^b\.js:1 {2}email$/m, 'the staged allowlist still applies to the staged lines');
 
   // A new '*' entry, a glob for a client-data rule and a new domain are refused; the '*' entry does not hide client data or planning words either.
   write(dir, ALLOW_FILE, JSON.stringify({

@@ -441,9 +441,11 @@ export function broadDataEntries(allowlist) {
 
 /**
  * What the allowlist `next` (raw JSON) lets through beyond `base` (raw JSON; {} when there was
- * none) that is broader than one value in one file: a new entry whose rule is '*' or whose path is
- * a glob, and a new allowed e-mail domain. Exact values (emails, phones, fixtureValues),
- * commit-pinned entries and one-file entries are not counted. Returns hints without values.
+ * none) that is broader than one exact value: a new entry whose rule is '*' or whose path is a
+ * glob, a new entry for a client-data or planning rule (it hides every such finding in its file),
+ * and a new allowed e-mail domain. Exact values (emails, phones, fixtureValues), commit-pinned
+ * entries and one-file entries for a secret rule (whose hits must still look fake) are not
+ * counted. Returns hints without values.
  */
 export function allowlistWidening(base = {}, next = {}) {
   const before = normalizeAllowlist(base || {});
@@ -453,7 +455,8 @@ export function allowlistWidening(base = {}, next = {}) {
   const out = [];
   for (const row of after.entries) {
     if (known.has(key(row))) continue;
-    if (row.rule === '*' || GLOB_CHARS.test(row.path)) out.push(`new entry: rule ${row.rule} on ${row.path}`);
+    const dataRule = PII_RULE_IDS.has(row.rule) || PLAN_RULE_IDS.has(row.rule);
+    if (row.rule === '*' || GLOB_CHARS.test(row.path) || dataRule) out.push(`new entry: rule ${row.rule} on ${row.path}`);
   }
   const domains = new Set(before.emailDomains);
   const added = after.emailDomains.filter((domain) => !domains.has(domain)).length;

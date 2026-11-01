@@ -480,10 +480,11 @@ node scripts/security/secret-scan.mjs --workspace <dir>           # a folder wit
 - `pre-push` takes the profile and the allowlist from each pushed commit, never from the working
   tree. When the commit the push starts from has the public profile, the public rules apply and
   a pushed profile that names a weaker one is refused.
-- Both refuse an allowlist change that lets more than one value in one file through: a new `'*'`
-  rule, a new glob path or a new allowed e-mail domain. `SECRET_SCAN_ALLOWLIST_WIDEN=1` lets such
-  a change through on purpose and lists it. An exact value (`emails`, `phones`, `fixtureValues`)
-  or an entry for one file is not broader. The commit that adds the allowlist file, or a push
+- Both refuse an allowlist change that lets more than one exact value through: a new `'*'` rule,
+  a new glob path, a new entry for a client-data or planning rule (it hides every such finding in
+  its file) or a new allowed e-mail domain. `SECRET_SCAN_ALLOWLIST_WIDEN=1` lets such a change
+  through on purpose and lists it. An exact value (`emails`, `phones`, `fixtureValues`) or a
+  one-file entry for a secret rule (whose hits must still look fake) is not broader. The commit that adds the allowlist file, or a push
   from a commit without one, has nothing to compare with.
 - `pre-push` scans every commit being pushed (a secret or a planning word added and removed
   again is still caught, because every pushed commit is published), the lines written while

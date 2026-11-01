@@ -53,9 +53,9 @@
  * staged allowlist (never the working tree's), and refuses a staged scan-profile.json that names a
  * weaker profile. --pre-push takes the profile and the allowlist from each pushed tip; when the
  * commit the push starts from has the public profile, the public rules apply and a weaker profile
- * is refused. Both refuse an allowlist change that lets more than one value in one file through (a
- * new '*' rule, a new glob path or a new allowed e-mail domain) unless
- * SECRET_SCAN_ALLOWLIST_WIDEN=1, which lists what it lets through. The commit that adds the
+ * is refused. Both refuse an allowlist change that lets more than one exact value through (a new
+ * '*' rule, a new glob path, a new client-data or planning entry, or a new allowed e-mail domain)
+ * unless SECRET_SCAN_ALLOWLIST_WIDEN=1, which lists what it lets through. The commit that adds the
  * allowlist file (or a push from before it existed) has nothing to compare with.
  * Fake test fixtures are allowed through .secret-scan-allowlist.json (path + rule + reason, or
  * the sha256 of one fixture value); an allowlisted secret hit must still look fake, so a real
@@ -297,8 +297,8 @@ function allowlistRawOf(text, { strict = true, where = ALLOWLIST_FILE } = {}) {
 }
 
 /**
- * The allowlist changes between two raw allowlists that let more than one value in one file
- * through (allowlistWidening) as path findings on `label`. With ctx.allowWiden
+ * The allowlist changes between two raw allowlists that let more than one exact value through
+ * (allowlistWidening) as path findings on `label`. With ctx.allowWiden
  * (SECRET_SCAN_ALLOWLIST_WIDEN=1) they are listed in ctx.widenedLetThrough instead. A base
  * without an allowlist file (null: the commit that adopts the scan) is nothing to compare with.
  */
@@ -537,7 +537,7 @@ function withRules(ctx, rules) {
 /**
  * --staged. In a repo whose committed profile is public: the public rules and the staged
  * allowlist (not the working tree's), a staged weaker profile is refused, and so is a staged
- * allowlist change broader than one value in one file (wideningFindings).
+ * allowlist change broader than one exact value (wideningFindings).
  */
 export function scanStaged(cwd, ctx) {
   const patch = gitText(['diff', '--cached', ...DIFF_ARGS, '--diff-filter=ACMR'], { cwd });
