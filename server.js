@@ -37,6 +37,7 @@ import { registerCmsSsoRoutes } from './lib/cms-sso.js';
 import { createHeartbeatLimits, heartbeatMarksSeen, registerSiteCredentialRoutes, siteCredentialState } from './lib/site-credentials.js';
 import { registerDeliveryRoutes } from './lib/routes/delivery-routes.js';
 import { registerCmsFeatureRoutes } from './lib/routes/cms-feature-routes.js';
+import { registerOptionalRoutes } from './lib/routes/optional-routes.js';
 import { websitePlanForNewSite } from './lib/cms-entitlements.js';
 import { runDeliverySchemaStartupSnapshot } from './lib/delivery-snapshots.js';
 import { chosenWebsiteTier, makerSitePlanPayload, websiteTierIdForClient } from './lib/site-plan.js';
@@ -105,6 +106,9 @@ import { noteSecurityEvent } from './lib/security-counters.js';
 import { registerSecurityAdminRoutes } from './lib/security-admin-routes.js';
 import { createMakerAuth } from './lib/maker-auth.js';
 import { registerMakerHostRoutes } from './lib/routes/maker-host-routes.js';
+import { developmentGetLoopScope, startDeliveryLoop } from './lib/delivery-loop.js';
+import { noteMakerAuthAlert } from './lib/delivery-alerts.js';
+import { noteDeveloperHandoffAccepted } from './lib/delivery-jobs.js';
 import { readBuildInfo } from './lib/build-info.js';
 import { applyPersistentProductionEnv } from './lib/persistent-env.js';
 import { assertSafeModeAllows, hubListenHost, isSafeModeActive, isSafeModeError, runBackgroundJobs, safeModeAllows } from './lib/safe-mode.js';
@@ -2955,7 +2959,7 @@ function getMakerCallbackToken() {
 // Maker → hub requests (lib/maker-auth.js): a per-host token from <dataDir>/maker-hosts.json
 // (x-maker-host-token), or the legacy token above (x-sales-callback-token). Never open; refusals
 // are counted (also header-less ones: that is what unauthenticated probing looks like).
-const makerAuth = createMakerAuth({ legacyHolder: MAKER_CALLBACK_TOKEN_HOLDER, dataDir: getPersistentDataDir() });
+const makerAuth = createMakerAuth({ legacyHolder: MAKER_CALLBACK_TOKEN_HOLDER, dataDir: getPersistentDataDir(), onAlert: noteMakerAuthAlert });
 const { requireMakerHost } = makerAuth;
 
 function secureStringEqual(left = '', right = '') {
@@ -12969,6 +12973,7 @@ const cmsFeatures = registerCmsFeatureRoutes(app, {
   makerAuth: requireMakerHost('jobs', { message: 'Unauthorized' }),
 });
 registerAiAdminRoutes(app, { adminAuth, sales });
+await registerOptionalRoutes(app, { adminAuth, makerAuth, salesAuth, developmentAuth, salesOrDevelopmentAuth, clientAuth, sales, hub, salesOffers, getDataDir: getPersistentDataDir });
 
 // --- Hub API (public: site config for client CMS)
 // The site key is public, so a key lookup gets the public fields only. The client admin contact and
@@ -19612,15 +19617,18 @@ const DEVELOPMENT_RECONCILE_MS = 20_000;
 
 app.get('/api/admin/development', developmentAuth, async (req, res) => {
   const now = Date.now();
+  // Clients the delivery loop runs in auto get these writes from the loop; with the loop off
+  // both options are undefined and this runs exactly as before.
+  const loopScope = developmentGetLoopScope(() => sales.getSalesClients());
   if (now - lastDeliveryReconcileAt >= DEVELOPMENT_RECONCILE_MS) {
     lastDeliveryReconcileAt = now;
-    hub.reconcileDeliveryPhases(sales.getSalesClients());
+    hub.reconcileDeliveryPhases(sales.getSalesClients(), loopScope.reconcile);
   }
-  sales.seedExistingDeveloperOwnersToAdmin();
+  sales.seedExistingDeveloperOwnersToAdmin(loopScope.owners);
   const caller = req.developmentUser || {};
   const developerOptions = await listDeveloperOwnerOptions(caller);
   const onlyAdmin = !developerOptions.some((row) => sanitizeText(row.accountKey).startsWith('developer:'));
-  if (onlyAdmin) sales.assignOpenDeveloperClientsToAdmin();
+  if (onlyAdmin) sales.assignOpenDeveloperClientsToAdmin(loopScope.owners);
   const developers = caller.isAdmin ? developerOptions : [];
   const parts = listDeveloperBoardParts();
   const developmentItems = parts.developmentItems.filter((item) => developmentItemVisible(caller, item));
@@ -19745,6 +19753,7 @@ app.post('/api/admin/development/:id/handoff/accepted', developmentAuth, (req, r
   if (!canAcceptDeveloperHandoff(req.developmentUser, target.client)) {
     return res.status(403).json({ message: 'This project is not ready to accept.' });
   }
+  noteDeveloperHandoffAccepted(target.client);
   deleteDevHandoff(target.client.id);
   const updated = sales.updateSalesClient(target.client.id, { developerHandoff: emptyDeveloperHandoff() });
   return res.json({ ok: true, client: updated });
@@ -21519,6 +21528,7 @@ function startBackgroundJobs() {
       sendDueFirefliesLiveJoins().catch((error) => console.error('[fireflies] initial live-join failed:', error));
     },
     inboxBot: () => startInboxBotLoop(),
+    delivery: () => startDeliveryLoop({ sales, hub, listDeveloperOwnerOptions: () => listDeveloperOwnerOptions({ isAdmin: true }) }),
     signedContractBackfill: () => runSignedContractBackfillOnce().catch((error) => {
       console.error('[signed-contract] startup backfill failed', sanitizeText(error?.message) || error);
     }),

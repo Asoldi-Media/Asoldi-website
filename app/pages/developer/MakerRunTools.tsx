@@ -17,6 +17,7 @@ import {
 import { asoldiLocalMakerPayload, LOCAL_EDITOR_ORIGIN } from '../../../lib/maker-editor-origin.js';
 import { asoldiPageIsOnThisComputer } from '../../../lib/maker-browser-client.js';
 import { fetchMakerRunStatus, findMakerRunBySalesClientId } from './makerQueue';
+import { PreviewJobButton } from './PreviewJobButton';
 import { makerHandoffFromLiveRun, pipelineStatusFromMakerRun, resolveLatestMakerPreviewStep } from '../../../lib/developer-card.js';
 
 type MakerClientLike = {
@@ -375,6 +376,9 @@ export function MakerRunTools({
           <Copy size={13} />
           Copy public URL
         </button>
+        {!toolsOnly && (
+          <PreviewJobButton salesClientId={salesClientId} authHeaders={authHeaders} onError={onError} onNotice={onNotice} />
+        )}
       </div>
       {localError ? (
         <p className="text-xs text-red-200">{localError}</p>
