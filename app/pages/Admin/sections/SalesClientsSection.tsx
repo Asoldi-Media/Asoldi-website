@@ -4630,7 +4630,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                 ))}
               </div>
 
-              {editingId && <SalesPlanCard clientId={editingId} />}
+              {editingId && <SalesPlanCard clientId={editingId} onClientSaved={applySavedClient} />}
               {editingId && (
                 <div className="md:col-span-2 flex flex-wrap items-center gap-2">
                   {isSalesAdmin && (

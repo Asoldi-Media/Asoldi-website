@@ -64,6 +64,13 @@ export async function runSigningFlows(hub, seed, { token }) {
   await call('progression-nonpilot', 'PATCH', `/api/admin/sales/${C.nonPilot}/progression`, { body: { key: 'contractSigned', value: true } });
   await call('got-client', 'POST', `/api/admin/sales/${C.gotClient}/got-client`, { body: {} });
   await call('got-client-same-domain', 'POST', `/api/admin/sales/${C.gotDup}/got-client`, { body: {} });
+  // The rep tries again after the answer, then ticks Kontrakt.
+  await call('got-client-same-domain-retry', 'POST', `/api/admin/sales/${C.gotDup}/got-client`, { body: {} });
+  await call('got-client-same-domain-third', 'POST', `/api/admin/sales/${C.gotDup}/got-client`, { body: {} });
+  await call('progression-same-domain', 'PATCH', `/api/admin/sales/${C.gotDup}/progression`, { body: { key: 'contractSigned', value: true } });
+  // A lead whose link holds the live client's site: Kontrakt, then got-client.
+  await call('progression-copied-link', 'PATCH', `/api/admin/sales/${C.copiedLink}/progression`, { body: { key: 'contractSigned', value: true } });
+  await call('got-client-copied-link', 'POST', `/api/admin/sales/${C.copiedLink}/got-client`, { body: {} });
   await call('preview-accept', 'POST', `/api/public/sales-preview/${C.preview}/contract/accept`, {
     headers: { 'content-type': 'application/json' },
     body: { accepted: true, termsAccepted: true, bindingAccepted: true, name: 'Kari Example', password: 'Preview-local-1234' },

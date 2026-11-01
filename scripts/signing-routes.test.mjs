@@ -196,3 +196,30 @@ test('superadmin plan edit: kind admin for an auto client\'s site; nothing for a
   assert.equal(signing.markAdminPlanEdit(otherBefore, otherAfter), null, 'not a pilot');
   setSettings(null);
 });
+
+test('entitlements: in auto a client\'s plan counts for a site only where it was applied (a copied link gives the other site nothing)', () => {
+  const pilot = sales.getSalesClientById('pilot');
+  const otherSite = hub.getSiteById('site-other');
+  setSettings(null);
+  assert.equal(entitlements.entitlementSitePlan(pilot, { site: otherSite }).status, 'active', 'control: off reads the plan for any linked site');
+  assert.equal(entitlements.servicesForSite(otherSite, pilot, { log: null }).source, 'sitePlan', 'control: off');
+  setSettings(AUTO);
+  assert.equal(entitlements.entitlementSitePlan(pilot, { site: otherSite }), null, 'auto: not applied to this site');
+  assert.equal(entitlements.servicesForSite(otherSite, pilot, { log: null }).source, 'websitePlan', 'the site keeps its own plan');
+  const applied = { ...pilot, sitePlan: { ...pilot.sitePlan, appliedSiteId: 'site-other' } };
+  assert.equal(entitlements.entitlementSitePlan(applied, { site: otherSite }).status, 'active', 'auto: the site it was applied to');
+  assert.equal(entitlements.servicesForSite(otherSite, applied, { log: null }).source, 'sitePlan');
+  assert.equal(entitlements.entitlementSitePlan(pilot).status, 'active', 'without a site: as before');
+  setSettings(null);
+});
+
+test('superadmin plan edit: a site two clients link, with no planSource, gets no planSource (a person decides)', () => {
+  sales.createSalesClient({ id: 'copy-other', product: 'asoldi', status: 'active', businessName: 'Copy Example AS', progression: { contractSigned: true }, hubSite: { id: 'site-other', siteKey: 'key-other' } });
+  setSettings({ ...AUTO, pilotClientIds: ['other', 'copy-other'] });
+  const before = hub.getSiteById('site-other');
+  assert.equal(before.planSource, undefined);
+  const after = hub.updateSite('site-other', { websitePlan: 'tier-2-seo' }).site;
+  assert.equal(signing.markAdminPlanEdit(before, after, { by: 'superadmin' }), null);
+  assert.equal(hub.getSiteById('site-other').planSource, undefined, 'no client is named on the site');
+  setSettings(null);
+});

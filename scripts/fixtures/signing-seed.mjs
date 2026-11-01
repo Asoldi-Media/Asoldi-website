@@ -36,6 +36,7 @@ const SIGNING_CLIENTS = Object.freeze({
   inboxDual: 'sg-inbox-dual',
   owner: 'sg-owner',
   gotDup: 'sg-gotclient-dup',
+  copiedLink: 'sg-copied-link',
 });
 
 function client(id, name, extra = {}) {
@@ -105,6 +106,13 @@ const clients = [
     hubSite: { id: 'site-owned', siteKey: 'key-owned', domain: 'owned.example.com', createdAt: T0 },
   }),
   client(C.gotDup, 'Samedomain Example AS', { websiteDomain: 'owned.example.com' }),
+  // A newer lead whose hub link was copied from the live client (as an older got-client wrote it).
+  client(C.copiedLink, 'Copylink Example AS', {
+    createdAt: '2026-10-22T09:00:00.000Z',
+    updatedAt: '2026-10-22T09:00:00.000Z',
+    websiteDomain: 'owned.example.com',
+    hubSite: { id: 'site-owned', siteKey: 'key-owned', domain: 'owned.example.com', createdAt: T0 },
+  }),
   client(C.upgrade, 'Upgrade Example AS', {
     progression: { meetingHeld: true, offerSent: true, contractSigned: true },
     contractSignedAt: T0,
@@ -143,6 +151,7 @@ const offers = [
   sentOffer('so-portal-fresh', C.portalFresh, tier3, { status: 'draft', sentAt: '' }),
   sentOffer('so-inbox-dual', C.inboxDual, { tierId: 'starter', selected: [], pages: 5, altQuote: tier2 }),
   sentOffer('so-gotclient-dup', C.gotDup, tier3),
+  sentOffer('so-copied-link', C.copiedLink, tier3),
 ];
 
 function portalOffer(id, salesClientId, salesOfferId, extra = {}) {

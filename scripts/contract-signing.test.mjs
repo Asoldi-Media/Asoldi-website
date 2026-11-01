@@ -46,7 +46,7 @@ function settingsFor(mode) {
   };
 }
 
-async function runMode(mode) {
+async function runMode(mode, { after = null } = {}) {
   const hub = await bootHub(flows.BOOT_ENV, {
     seed: (dir) => {
       cpSync(SEED_DIR, dir, { recursive: true });
@@ -69,18 +69,24 @@ async function runMode(mode) {
     const configs = await flows.siteConfigs(hub);
     const makerKey = await fetch(`${hub.base}/api/hub/site-config?site_key=maker-key-progress`);
     const egress = hub.egressRows().filter((row) => !row.event && !row.listed);
+    const snapshot = {
+      clients: flows.readJsonFile(hub.dataDir, 'sales-clients.json', []),
+      sites: flows.readJsonFile(hub.dataDir, 'sites.json', []),
+      files: listFiles(hub.dataDir),
+      audit: readAudit(hub.dataDir),
+    };
+    // Steps after the snapshot (the tests above read the state the flows left).
+    const extra = after ? await after(hub, token) : null;
     return {
       mode,
+      extra,
       steps,
       outbox,
       configs,
       egress,
       planRoute: { status: planRoute.status, body: await planRoute.json().catch(() => ({})) },
       makerKeyConfig: { status: makerKey.status, body: await makerKey.json().catch(() => ({})) },
-      clients: flows.readJsonFile(hub.dataDir, 'sales-clients.json', []),
-      sites: flows.readJsonFile(hub.dataDir, 'sites.json', []),
-      files: listFiles(hub.dataDir),
-      audit: readAudit(hub.dataDir),
+      ...snapshot,
       log: hub.log(),
     };
   } finally {
@@ -140,8 +146,33 @@ let auto;
 let shadow;
 let off;
 
+/**
+ * auto, after the flows: the sales card's choice for the two dual-offer clients, then the rep picks
+ * alternative 2 for the one whose contract came by e-mail.
+ */
+async function chooseAlternative(hub, token) {
+  const headers = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
+  const view = async (id) => {
+    const res = await fetch(`${hub.base}/api/admin/sales/${id}/site-plan`, { headers });
+    return { status: res.status, body: await res.json().catch(() => ({})) };
+  };
+  const out = { dualView: await view(C.dual), inboxDualView: await view(C.inboxDual) };
+  const mailsBefore = (await flows.settledOutbox(hub.dataDir)).length;
+  const res = await fetch(`${hub.base}/api/admin/sales/${C.inboxDual}/progression`, {
+    method: 'PATCH',
+    headers,
+    body: JSON.stringify({ key: 'contractSigned', value: true, fastTrack: true, chosenOfferIndex: 1 }),
+  });
+  out.choose = { status: res.status, body: await res.json().catch(() => ({})) };
+  out.newMails = (await flows.settledOutbox(hub.dataDir)).slice(mailsBefore);
+  out.inboxDualAfter = await view(C.inboxDual);
+  out.clients = flows.readJsonFile(hub.dataDir, 'sales-clients.json', []);
+  out.sites = flows.readJsonFile(hub.dataDir, 'sites.json', []);
+  return out;
+}
+
 test('auto: every website path ends in the same signed state with one plan, one site and one pre-workshop mail', { timeout: 240_000 }, async () => {
-  auto = await runMode('auto');
+  auto = await runMode('auto', { after: chooseAlternative });
   assert.deepEqual(auto.egress, [], 'no unlisted egress');
   for (const [id, source] of Object.entries(WEBSITE_PATHS)) {
     const v = view(auto, id);
@@ -341,7 +372,9 @@ test('auto: a dual offer signed by e-mail changes nothing and leaves an audit li
   assert.equal(a.client.delivery, undefined);
   assert.equal(a.mails.length, 0);
   assert.ok(auto.audit.some((row) => row.kind === 'signing-needs-choice' && row.clientId === C.inboxDual && row.source === 'inbox-contract'));
+  assert.ok((a.client.nextActions || []).some((action) => action.name === 'Velg tilbudsalternativ' && !action.doneAt), 'the rep gets "Velg tilbudsalternativ"');
   assert.equal(view(off, C.inboxDual).client.progression.contractSigned, true, 'control: the switch-off path signs');
+  assert.equal((view(off, C.inboxDual).client.nextActions || []).some((action) => action.name === 'Velg tilbudsalternativ'), false, 'control: no such action with the switch off');
   assert.equal(off.audit.length, 0, 'control: no audit line with the switch off');
 });
 
@@ -402,4 +435,88 @@ test('two processes signing one client at once yield one site, one plan entry an
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------- another client's site
+
+const seededSite = (id) => JSON.parse(readFileSync(join(SEED_DIR, 'sites.json'), 'utf8')).find((site) => site.id === id);
+
+/** The live client's site after a run: phase, plan, flags and planSource as seeded, site-config too. */
+function assertOwnedSiteUnchanged(run, label) {
+  const seeded = seededSite('site-owned');
+  const owned = run.sites.find((site) => site.id === 'site-owned');
+  assert.equal(owned.site_key, seeded.site_key, `${label}: key`);
+  assert.equal(owned.deliveryPhase, seeded.deliveryPhase, `${label}: delivery phase`);
+  assert.equal(owned.websitePlan, seeded.websitePlan, `${label}: websitePlan`);
+  assert.equal(owned.planSource, undefined, `${label}: no planSource`);
+  for (const flag of ['ecommerce', 'analytics', 'socialSync', 'emailMarketing']) assert.equal(Boolean(owned.features?.[flag]), Boolean(seeded.features?.[flag]), `${label}: ${flag}`);
+  const config = run.configs['site-owned'];
+  assert.equal(config.status, 200, label);
+  assert.equal(config.body.websitePlan, 'tier-1-standard', `${label}: site-config websitePlan`);
+  assert.equal(Boolean(config.body.features?.ecommerce), false, `${label}: site-config ecommerce`);
+  assert.equal(run.clients.find((entry) => entry.id === C.owner).hubSite.id, 'site-owned', `${label}: the owner keeps its link`);
+}
+
+test('auto: got-client retried twice and a later Kontrakt tick for the same-domain lead leave the other client\'s site alone; off links it as today', () => {
+  for (const name of ['got-client-same-domain', 'got-client-same-domain-retry', 'got-client-same-domain-third']) {
+    assert.equal(auto.steps[name].status, 409, name);
+    assert.equal(auto.steps[name].body.code, 'site-owned-elsewhere', name);
+  }
+  const tick = auto.steps['progression-same-domain'];
+  assert.equal(tick.status, 200);
+  assert.ok(tick.body.warnings.includes('plan-apply:site-owned-elsewhere'), 'the signer says why no site was applied');
+  const v = view(auto, C.gotDup);
+  assert.equal(v.client.hubSite?.id || '', '', 'the lead links no site');
+  assert.equal(v.client.hubSite?.siteKey || '', '', 'and holds no key');
+  assert.equal(v.client.sitePlan.appliedSiteId, '', 'its plan is applied nowhere');
+  assert.equal(v.client.delivery.tasks.filter((task) => task.kind === 'site_owner_conflict' && task.status === 'open').length, 1, 'one task for a person');
+  assert.equal(v.preWorkshopMails.length, 1, 'one pre-workshop mail over every call');
+  assertOwnedSiteUnchanged(auto, 'auto');
+  // Control: the switch-off build links the site on every call and moves it to development.
+  for (const name of ['got-client-same-domain', 'got-client-same-domain-retry', 'got-client-same-domain-third']) assert.equal(off.steps[name].status, 200, `control: ${name}`);
+  assert.equal(off.clients.find((entry) => entry.id === C.gotDup).hubSite.siteKey, 'key-owned', 'control: the lead holds the other client\'s key');
+  assert.equal(off.sites.find((site) => site.id === 'site-owned').deliveryPhase, 'development', 'control: the other client\'s site moves');
+});
+
+test('auto: a lead whose link was copied from the live client\'s site is signed, but that site and its site-config stay as they were', () => {
+  const tick = auto.steps['progression-copied-link'];
+  assert.equal(tick.status, 200);
+  assert.ok(tick.body.warnings.includes('plan-apply:site-owned-elsewhere'));
+  assert.equal(auto.steps['got-client-copied-link'].status, 409);
+  assert.equal(auto.steps['got-client-copied-link'].body.code, 'site-owned-elsewhere');
+  const lead = auto.clients.find((entry) => entry.id === C.copiedLink);
+  assert.equal(lead.progression.contractSigned, true, 'signed');
+  assert.equal(lead.sitePlan.status, 'active', 'with its plan');
+  assert.equal(lead.sitePlan.appliedSiteId, '', 'applied nowhere');
+  assert.ok(lead.delivery.tasks.some((task) => task.kind === 'site_owner_conflict' && task.siteId === 'site-owned' && task.status === 'open'));
+  assert.equal(auto.sites.filter((site) => site.planSource?.salesClientId === C.copiedLink).length, 0, 'no site carries its plan');
+  assertOwnedSiteUnchanged(auto, 'auto');
+  assert.ok(auto.audit.some((row) => row.kind === 'site-owner-conflict' && row.clientId === C.copiedLink && row.siteId === 'site-owned'));
+  // Control: the switch-off build answers got-client with the other client's site.
+  assert.equal(off.steps['got-client-copied-link'].status, 200, 'control');
+  assert.equal(off.steps['got-client-copied-link'].body.site.id, 'site-owned', 'control: the copied link wins today');
+});
+
+test('auto: a dual offer waits for a choice on the sales card; the chosen alternative signs once, with its plan', () => {
+  const dual = auto.steps['progression-dual'];
+  assert.equal(dual.status, 409);
+  assert.deepEqual(dual.body.alternatives.map((row) => [row.index, row.tierId]), [[0, 'tier-1-standard'], [1, 'tier-2-seo']], 'the 409 names both alternatives');
+  const x = auto.extra;
+  assert.equal(x.dualView.status, 200);
+  assert.deepEqual(x.dualView.body.choice.alternatives.map((row) => row.tierId), ['tier-1-standard', 'tier-2-seo']);
+  assert.equal(x.dualView.body.choice.contractReceived, false, 'no contract came in yet');
+  assert.equal(x.inboxDualView.body.choice.contractReceived, true, 'the contract by e-mail is waiting for the choice');
+  assert.equal(x.choose.status, 200, JSON.stringify(x.choose.body).slice(0, 300));
+  const client = x.clients.find((entry) => entry.id === C.inboxDual);
+  assert.equal(client.progression.contractSigned, true);
+  assert.equal(client.sitePlan.tierId, 'tier-2-seo', 'the chosen alternative\'s plan');
+  assert.equal(client.sitePlan.alternativeIndex, 1);
+  assert.equal(x.sites.filter((site) => site.planSource?.salesClientId === C.inboxDual).length, 1, 'one site');
+  const subject = preWorkshopSubject(client.businessName);
+  assert.equal(x.newMails.filter((row) => row.subject === subject && (row.to || []).includes(`${C.inboxDual}@example.com`)).length, 1, 'one pre-workshop mail');
+  assert.equal((client.nextActions || []).some((action) => action.name === 'Velg tilbudsalternativ' && !action.doneAt), false, 'the choice action is closed');
+  assert.equal(x.inboxDualAfter.body.choice, null, 'nothing left to choose');
+  // Control: with the switch off the card route is disabled and the e-mail path signed without a choice.
+  assert.equal(off.planRoute.status, 404);
+  assert.equal(view(off, C.inboxDual).client.sitePlan, undefined);
 });

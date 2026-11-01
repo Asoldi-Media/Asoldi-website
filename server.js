@@ -50,6 +50,7 @@ import {
   signFromStripeCheckout,
   signingModeForClient,
   signingTierForOffer,
+  siteForGotClient,
 } from './lib/contract-signing.js';
 import { goLiveCallbackV2 } from './lib/golive-callback.js';
 import { isMakerDeliveryEvent, makerEventsRecording, makerRunFetchWithMaterials, recordMakerDeliveryEvent } from './lib/maker-events-hub.js';
@@ -14972,7 +14973,7 @@ app.patch('/api/admin/sales/:id/progression', salesAuth, async (req, res) => {
         alternativeIndex: req.body?.chosenOfferIndex,
       });
       if (signed.needsChoice) {
-        return res.status(409).json({ message: 'Tilbudet har to alternativer. Velg hvilket kunden signerte.', needsChoice: true, client: existing });
+        return res.status(409).json({ message: 'Tilbudet har to alternativer. Velg hvilket kunden signerte.', needsChoice: true, offerId: signed.offerId || '', alternatives: signed.alternatives || [], client: existing });
       }
       if (!signed.ok) {
         return res.status(signed.status || 400).json({ message: signed.reason === 'busy' ? 'Signeringen pågår allerede. Prøv igjen om litt.' : 'Kunne ikke signere kontrakten.' });
@@ -19474,42 +19475,54 @@ app.post('/api/admin/sales/:id/got-client', salesAuth, async (req, res) => {
     });
   }
 
-  // Signing switch. auto: the signer signs and creates the one hub site from the plan; a plan in the
-  // body counts only for a superadmin. Without any plan the site below is created as before.
+  // Signing switch. auto: the signer signs and makes the one hub site from the plan; a plan in the body
+  // counts only for a superadmin. The site comes from siteForGotClient, never from the lookup below,
+  // which takes any site with this key or domain, also another client's.
   const signingMode = signingModeForClient(client);
-  let siteBody = req.body || {};
   if (signingMode === 'auto') {
     const signed = await (async () => markContractSigned(client.id, {
       source: 'got-client',
       actor: offerActor(req),
       sender: await resolveSalesSenderForAccount(req.salesUser),
       superadminTierId: req.salesUser?.isAdmin ? sanitizeText(req.body?.websitePlan) : '',
+      alternativeIndex: req.body?.chosenOfferIndex,
       fastTrack: true,
     }))().catch((error) => ({ ok: false, status: 400, reason: sanitizeText(error?.message) }));
     if (signed.needsChoice) {
-      return res.status(409).json({ message: 'Tilbudet har to alternativer. Velg hvilket kunden signerte.', needsChoice: true });
+      return res.status(409).json({ message: 'Tilbudet har to alternativer. Velg hvilket kunden signerte.', needsChoice: true, offerId: signed.offerId || '', alternatives: signed.alternatives || [] });
     }
     if (!signed.ok) return res.status(signed.status || 400).json({ message: signed.reason === 'busy' ? 'Signeringen pågår allerede. Prøv igjen om litt.' : 'Kunne ikke signere kontrakten.' });
-    if ((signed.warnings || []).includes('plan-apply:site-owned-elsewhere')) {
-      // The site found by domain or link is another client's: signed, but no site is linked here.
+    const body = req.salesUser?.isAdmin ? req.body || {} : {};
+    const placed = siteForGotClient(client.id, signed, {
+      create: (latest) => hub.createSite({
+        name: latest.businessName || 'New client',
+        domain: latest.websiteDomain || '',
+        site_key: latest.hubSite?.siteKey || '',
+        websitePlan: websitePlanForNewSite(latest, body.websitePlan),
+        ecommerceCatalogType: body.ecommerceCatalogType,
+        githubRepo: body.githubRepo,
+        features: body.features,
+        deliveryPhase: 'development',
+      }),
+    });
+    if (placed.owner) {
+      // The site found by key, link or domain is another client's: signed, but no site is linked here.
       return res.status(409).json({
         message: 'Kontrakten er signert, men nettstedet med dette domenet eller denne koblingen tilhører en annen kunde. Sjekk koblingen før kunden flyttes til utvikling.',
         code: 'site-owned-elsewhere',
         client: sales.getSalesClientById(client.id),
       });
     }
-    if (signed.site) {
-      hub.updateSite(signed.site.id, { deliveryPhase: 'development' });
-      return res.json({
-        ok: true,
-        phase: 'development',
-        site: hub.getAllSites().find((entry) => entry.id === signed.site.id) || signed.site,
-        client: sales.getSalesClientById(client.id),
-        movedClient: client,
-        warnings: signed.warnings || [],
-      });
-    }
-    if (!req.salesUser?.isAdmin) siteBody = {};
+    if (!placed.site?.id) return res.status(500).json({ message: 'Kunne ikke opprette nettstedet i hubben.' });
+    hub.updateSite(placed.site.id, { deliveryPhase: 'development' });
+    return res.json({
+      ok: true,
+      phase: 'development',
+      site: hub.getAllSites().find((entry) => entry.id === placed.site.id) || placed.site,
+      client: sales.getSalesClientById(client.id),
+      movedClient: client,
+      warnings: signed.warnings || [],
+    });
   } else if (signingMode === 'shadow') {
     await recordSigningShadow(client.id, {
       source: 'got-client',
@@ -19528,10 +19541,10 @@ app.post('/api/admin/sales/:id/got-client', salesAuth, async (req, res) => {
       name: client.businessName || 'New client',
       domain: client.websiteDomain || '',
       site_key: client.hubSite?.siteKey || '',
-      websitePlan: websitePlanForNewSite(client, siteBody.websitePlan),
-      ecommerceCatalogType: siteBody.ecommerceCatalogType,
-      githubRepo: siteBody.githubRepo,
-      features: siteBody.features,
+      websitePlan: websitePlanForNewSite(client, req.body?.websitePlan),
+      ecommerceCatalogType: req.body?.ecommerceCatalogType,
+      githubRepo: req.body?.githubRepo,
+      features: req.body?.features,
       deliveryPhase: 'development',
     });
   if (site?.id) {
