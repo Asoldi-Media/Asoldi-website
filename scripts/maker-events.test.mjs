@@ -143,7 +143,7 @@ test('materials snapshot: the logo dot turns green from a snapshot of the linked
   const without = Object.fromEntries(scoreClientMaterials({ client, bank: {}, maker: {} }).map((dot) => [dot.id, dot.mark]));
   assert.equal(without.logo, 'red');
   assert.deepEqual(events.materialsPageKinds(client.makerRun), [{ route: '/prosjekter', kind: 'portfolio' }]);
-  assert.deepEqual(events.materialsOpenNeeds(client.makerRun).map((item) => item.id), ['hero-1', 'contact.email'], 'open WS3 placeholder slots');
+  assert.deepEqual(events.materialsOpenNeeds(client.makerRun).map((item) => item.id), ['hero-1', 'contact.email'], 'open branding placeholder slots');
 });
 
 test('run fetch: the live run (with its answers) comes first; the snapshot stands in only when the fetch fails', async () => {

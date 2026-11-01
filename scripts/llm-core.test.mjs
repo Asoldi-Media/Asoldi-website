@@ -1528,7 +1528,7 @@ test('ledger: policy blocks and dead-provider skips are written as rows', async 
 });
 
 test('policy: exceptions record known calls outside the core and are validated', () => {
-  const ok = { ...POLICY, exceptions: [{ id: 'cms-local-blog-job', provider: 'deepseek', where: 'website-cms server/local-blog-job.js', dataClass: 'business', owner: 'WS9', reason: 'direct call until the relay exists' }] };
+  const ok = { ...POLICY, exceptions: [{ id: 'cms-local-blog-job', provider: 'deepseek', where: 'website-cms server/local-blog-job.js', dataClass: 'business', owner: 'SEO', reason: 'direct call until the relay exists' }] };
   assert.equal(core.validatePolicy(ok).ok, true);
   const bad = core.validatePolicy({ ...POLICY, exceptions: [{ id: 'Bad Id', provider: 'mistral', dataClass: 'secret' }] });
   assert.equal(bad.ok, false);

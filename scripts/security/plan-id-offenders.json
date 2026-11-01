@@ -6,15 +6,12 @@
     "data/cms-feature-tree.meta.json": 1,
     "lib/cms-features.js": 10,
     "lib/cms-spec-schema.js": 12,
-    "lib/seo-ops/features.js": 26,
     "packages/suite/core/llm/CONTRACT.md": 1,
     "packages/suite/core/llm/policy.js": 1,
     "packages/suite/core/llm/tasks-schema.js": 1,
     "packages/suite/harness/asoldi/llm.js": 21,
     "scripts/cms-spec.test.mjs": 1,
     "scripts/email-feature-keys.test.mjs": 1,
-    "scripts/llm-core.test.mjs": 1,
-    "scripts/llm-harness.test.mjs": 6,
-    "scripts/maker-events.test.mjs": 1
+    "scripts/llm-harness.test.mjs": 1
   }
 }

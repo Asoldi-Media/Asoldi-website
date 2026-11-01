@@ -57,11 +57,11 @@ test('Developer automation change requests are in: dev.copy and dev.locate exist
   assert.equal(t['dev.plan'].dataClass, 'personal');
   assert.equal(t['dev.copy'].dataClass, 'personal');
   assert.equal(t['dev.locate'].vision, true);
-  assert.equal(t['template-import.qa-vision'].vision, true, 'WS1 key');
-  assert.equal(t['siteintel.page-kind-vision'].vision, true, 'WS2 key');
+  assert.equal(t['template-import.qa-vision'].vision, true, 'import key');
+  assert.equal(t['siteintel.page-kind-vision'].vision, true, 'site intelligence key');
   for (const key of ['brief.map', 'brief.reduce', 'brief.iteration', 'followups.extract']) assert.equal(t[key].dataClass, 'transcript', key);
   assert.equal(t['change.classify'].dataClass, 'personal');
-  assert.equal(t['delivery.brief'], undefined, 'replaced by brief.map/reduce/iteration (WS8)');
+  assert.equal(t['delivery.brief'], undefined, 'replaced by brief.map/reduce/iteration (delivery)');
 });
 
 test('production starting routes follow the owner order (Haiku 5.5 first) and the plan table', () => {
@@ -94,7 +94,7 @@ test('test profile (Q5): DeepSeek for public, synthetic or redacted data; real c
   assert.equal(r.resolveRoute('workshop.summary', { profile: 'test', synthetic: true }).primary.provider, 'deepseek');
   assert.equal(r.resolveRoute('workshop.summary', { profile: 'test', synthetic: true }, { payload: { user: 'Kari Nordmann kari@firma.no 22 33 44 55' } }).primary.provider, 'claude');
   assert.equal(r.resolveRoute('step2.copywriter', { profile: 'test' }, { payload: { owner: { firstName: 'Kari' } } }).primary.provider, 'claude');
-  assert.equal(r.resolveRoute('step15.judge', { profile: 'test' }).primary.provider, 'claude', 'no Gemini until WS0.34 confirms the paid tier');
+  assert.equal(r.resolveRoute('step15.judge', { profile: 'test' }).primary.provider, 'claude', 'no Gemini until the paid tier is confirmed');
 });
 
 test('reference policy follows Q5 and the loop window is configured', () => {
@@ -104,7 +104,7 @@ test('reference policy follows Q5 and the loop window is configured', () => {
   assert.equal(ASOLDI_LLM_BUDGETS.loop.windowMinutes, 15);
   const paid = { ...ASOLDI_LLM_POLICY, providers: { ...ASOLDI_LLM_POLICY.providers, gemini: { ...ASOLDI_LLM_POLICY.providers.gemini, billingTier: 'paid', paidTierConfirmedAt: '2026-11-01' } } };
   const r = core.createRouter({ ...asoldiLlmConfig(), policy: paid, legacyRoute, now: NOW });
-  assert.equal(r.resolveRoute('dev.judge', { profile: 'prod', escalation: 1 }).route, 'claude:claude-sonnet-5-5:medium|gemini:gemini-2.5-pro', 'Gemini fallbacks switch on once WS0.34 records the paid tier');
+  assert.equal(r.resolveRoute('dev.judge', { profile: 'prod', escalation: 1 }).route, 'claude:claude-sonnet-5-5:medium|gemini:gemini-2.5-pro', 'Gemini fallbacks switch on once the paid tier is recorded');
 });
 
 test('reference budgets: expected cost by tier and size, hard stop only for a runaway', () => {
