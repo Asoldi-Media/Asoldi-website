@@ -888,10 +888,11 @@ test('sources: credentials are left out of the CMS setup at every depth, inside 
 
 /**
  * A personal-data registry that behaves like the hub's: registerStore adds or silently replaces a row,
- * its own rows are added lazily and only for ids not registered yet, and an erase sums each store's
- * { action, records, files } (an unknown action counts as 'none').
+ * its own rows are there from the start (or, with ownRowsAtLoad false, added later and only for ids
+ * not registered yet), and an erase sums each store's { action, records, files } (an unknown action
+ * counts as 'none').
  */
-function registryContract({ dataDir }) {
+function registryContract({ dataDir, ownRowsAtLoad = true }) {
   const stores = new Map();
   let ownRowsLoaded = false;
   const ownRow = {
@@ -900,21 +901,30 @@ function registryContract({ dataDir }) {
     dir: 'delivery-briefs',
     clientKey: 'path',
     retention: { rule: 'brief' },
+    personalData: 'Registry text for the brief',
+    purpose: 'Registry purpose for the brief',
+    legalBasis: 'Contract',
+    processors: ['Anthropic'],
+    order: 30,
     ownRow: true,
     export: () => ({ files: [] }),
     erase: () => ({ action: 'none', records: 0, files: [] }),
   };
+  const loadOwnRows = () => {
+    if (ownRowsLoaded) return;
+    ownRowsLoaded = true;
+    if (!stores.has(ownRow.id)) stores.set(ownRow.id, ownRow);
+  };
+  if (ownRowsAtLoad) loadOwnRows();
   const registry = {
+    ownRow,
     registerStore(input) {
       stores.set(input.id, { ...input });
       return input;
     },
     getStore: (id) => stores.get(id) || null,
     async loadStoreModules() {
-      if (!ownRowsLoaded) {
-        ownRowsLoaded = true;
-        if (!stores.has(ownRow.id)) stores.set(ownRow.id, ownRow);
-      }
+      loadOwnRows();
       return [...stores.values()];
     },
     async eraseClient(clientId, { dryRun = true } = {}) {
@@ -941,25 +951,29 @@ function registryContract({ dataDir }) {
   return registry;
 }
 
-test('privacy registry: a row the registry already has is kept; the brief\'s own row says the same, exports every file and reports what an erase deleted', async () => {
+test('privacy registry: the registry\'s own row keeps its description and gets the brief\'s export and erase; every file is exported and an erase reports what it deleted', async () => {
+  // A registry without a row of its own for the brief gets the brief's whole row, with the same description.
   store.resetBriefStoreRegistrationForTests();
-  const early = registryContract({ dataDir: freshDir() });
-  await early.loadStoreModules();
-  assert.equal(await store.registerBriefStore({ registry: early }), false);
-  assert.equal(early.getStore('delivery-briefs').ownRow, true, 'the registry\'s row is not replaced');
-
-  store.resetBriefStoreRegistrationForTests();
-  const dir = freshDir();
-  const registry = registryContract({ dataDir: dir });
-  assert.equal(await store.registerBriefStore({ registry }), true, 'registered at boot, before the registry loads its rows');
-  await registry.loadStoreModules();
-  const row = registry.getStore('delivery-briefs');
-  assert.equal(row.ownRow, undefined);
+  const bare = registryContract({ dataDir: freshDir(), ownRowsAtLoad: false });
+  assert.equal(await store.registerBriefStore({ registry: bare }), true);
+  await bare.loadStoreModules();
+  const full = bare.getStore('delivery-briefs');
+  assert.equal(full.ownRow, undefined, 'the registry adds its row later only for ids not registered yet');
   assert.deepEqual(
-    [row.label, row.retention, row.clientKey, row.legalBasis, row.processors],
+    [full.label, full.retention, full.clientKey, full.legalBasis, full.processors],
     ['Leveransebrief', { rule: 'brief' }, 'path', 'Contract', ['Anthropic']],
     'the same description and retention rule as the registry\'s own row',
   );
+
+  // The hub's registry lists its own row from the start: the description stays, the handlers are the brief's.
+  store.resetBriefStoreRegistrationForTests();
+  const dir = freshDir();
+  const registry = registryContract({ dataDir: dir });
+  assert.equal(await store.registerBriefStore({ registry }), true);
+  const row = registry.getStore('delivery-briefs');
+  assert.equal(row.ownRow, true);
+  assert.deepEqual([row.label, row.purpose, row.personalData, row.retention, row.order], ['Leveransebrief', registry.ownRow.purpose, registry.ownRow.personalData, { rule: 'brief' }, 30], 'the registry\'s description is kept');
+  assert.notEqual(row.erase, registry.ownRow.erase, 'the brief\'s erase (under the brief lease) is used');
 
   await brief.rebuildBrief(clientRecord(), { llm: stubLlm(), dataDir: dir, deps: depsFor() });
   const folder = store.clientBriefDir('syn-brief-1', { dataDir: dir });

@@ -391,11 +391,15 @@ test('the brief store is registered with the personal-data registry when the rou
   assert.deepEqual(snapshot(join(hub.dir, 'delivery-briefs')), [], 'registering writes nothing');
   assert.equal(hub.llm.state.calls, 0);
 
-  // A registry that already lists the store keeps its row.
+  // A registry that already lists the store keeps its row's description; the brief adds its handlers.
   store.resetBriefStoreRegistrationForTests();
   const kept = [];
-  await setup(t, { extraDeps: { personalDataRegistry: { registerStore: (entry) => kept.push(entry), getStore: (id) => (id === 'delivery-briefs' ? { id } : null) } } });
-  assert.deepEqual(kept, []);
+  const own = { id: 'delivery-briefs', label: 'Registry label', retention: { rule: 'brief' }, purpose: 'Registry purpose', export: () => ({}), erase: () => ({}) };
+  await setup(t, { extraDeps: { personalDataRegistry: { registerStore: (entry) => kept.push(entry), getStore: (id) => (id === 'delivery-briefs' ? own : null) } } });
+  assert.equal(kept.length, 1);
+  assert.deepEqual([kept[0].id, kept[0].label, kept[0].purpose, kept[0].retention], ['delivery-briefs', 'Registry label', 'Registry purpose', { rule: 'brief' }]);
+  assert.notEqual(kept[0].erase, own.erase);
+  assert.notEqual(kept[0].export, own.export);
   store.resetBriefStoreRegistrationForTests();
 });
 
