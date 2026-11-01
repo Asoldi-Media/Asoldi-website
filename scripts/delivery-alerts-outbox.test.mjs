@@ -81,7 +81,7 @@ function loopAt(start) {
   return { loop, clock };
 }
 
-/** Forget the alert state and the loop files (a fresh hub), keeping the outbox. */
+/** Clear the alert state and the loop files (a fresh hub), keeping the outbox. */
 function freshAlertState() {
   rmSync(join(dataDir, 'delivery-hot'), { recursive: true, force: true });
   alerts.resetDeliveryAlertsMemoryForTests();
