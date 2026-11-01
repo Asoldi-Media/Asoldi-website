@@ -117,7 +117,7 @@ function snapshot(dir) {
 }
 
 /** A hub-like app with the brief routes; `current.settings` can be changed between requests. */
-async function setup(t, { settings = defaultAutomationSettings(), routedJobs = null } = {}) {
+async function setup(t, { settings = defaultAutomationSettings(), routedJobs = null, extraDeps = {} } = {}) {
   const dir = tempDir();
   accessLog.resetMakerAccessLogMemoForTests();
   const { host, token } = hosts.createMakerHost({ label: 'Test host' }, { dataDir: dir });
@@ -147,6 +147,7 @@ async function setup(t, { settings = defaultAutomationSettings(), routedJobs = n
     briefDeps,
     ...(routedJobs ? { routedJobs } : {}),
     log: { warn() {}, error() {}, log() {} },
+    ...extraDeps,
   });
   const server = await serve(app);
   t.after(server.close);
@@ -304,6 +305,89 @@ test('reviews through the board: directive status and fact review re-assemble th
   assert.equal((await hub.call('PATCH', '/api/admin/development/syn-own/brief/facts', { headers: { 'x-test-user': 'dev-2' }, body: { path: 'contact.phone', status: 'accepted' } })).status, 404);
   const started = await hub.call('POST', '/api/admin/development/syn-own/brief/rebuild', { headers: hub.admin });
   assert.equal(started.status, 202);
+});
+
+test('the board\'s rebuild shares the lease with the loop: 409 brief-busy while another runner holds it, and no LLM call', async (t) => {
+  const hub = await setup(t, { settings: settingsWith({ enabled: true }) });
+  const { acquireLease } = await import('../data/email-store.js');
+  const held = await acquireLease('brief:syn-other', 60_000);
+  for (const body of [{ wait: true }, {}]) {
+    const busy = await hub.call('POST', '/api/admin/development/syn-other/brief/rebuild', { headers: hub.admin, body });
+    assert.equal(busy.status, 409);
+    assert.equal((await busy.json()).code, 'brief-busy');
+  }
+  assert.equal(hub.llm.state.calls, 0);
+  await held.release();
+  const built = await hub.call('POST', '/api/admin/development/syn-other/brief/rebuild', { headers: hub.admin, body: { wait: true } });
+  assert.equal(built.status, 200);
+  assert.ok(hub.llm.state.calls > 0);
+  // The lease is released after the rebuild, so the next one can start.
+  const again = await hub.call('POST', '/api/admin/development/syn-other/brief/rebuild', { headers: hub.admin, body: { wait: true } });
+  assert.equal(again.status, 200);
+  assert.equal((await again.json()).status, 'unchanged');
+});
+
+test('fact reviews through the board: list positions and broken values are refused with 400 and nothing is stored', async (t) => {
+  const hub = await setup(t, { settings: settingsWith({ enabled: true }) });
+  await hub.call('POST', '/api/admin/development/syn-other/brief/rebuild', { headers: hub.admin, body: { wait: true } });
+  const versions = async () => (await (await hub.call('GET', '/api/admin/development/syn-other/brief/versions', { headers: hub.admin })).json()).versions.length;
+  const before = await versions();
+  for (const [body, code] of [
+    [{ path: 'claims.stats[0]', status: 'accepted' }, 'bad-fact-path'],
+    [{ path: 'products.catalogs', status: 'accepted', value: 'x' }, 'bad-fact-path'],
+    [{ path: 'schema', status: 'accepted', value: 'other' }, 'bad-fact-path'],
+    [{ path: 'contact.onlineOnly', status: 'accepted', value: 'kanskje' }, 'invalid-review'],
+  ]) {
+    const response = await hub.call('PATCH', '/api/admin/development/syn-other/brief/facts', { headers: hub.admin, body });
+    assert.equal(response.status, 400, JSON.stringify(body));
+    const answer = await response.json();
+    assert.equal(answer.code, code, JSON.stringify(body));
+    if (code === 'invalid-review') assert.ok(answer.errors.length >= 1 && answer.errors.every((row) => typeof row.path === 'string'));
+  }
+  assert.equal(await versions(), before, 'no new version');
+  const { readReviews } = await import('../lib/delivery-brief/store.js');
+  assert.equal(readReviews('syn-other', { dataDir: hub.dir }).revision, 0, 'no review stored');
+});
+
+test('ETag: with a media signer the ETag follows the signed URLs, so a 304 never keeps an expired link', async (t) => {
+  let bucket = 1;
+  const media = [{ id: 'media-1', bucket: 'gallery', fileName: 'bad.jpg', mime: 'image/jpeg', bytes: 10, sha256: 'a'.repeat(64), url: 'https://example.com/m/1' }];
+  const hub = await setup(t, {
+    settings: settingsWith({ enabled: true, mode: 'auto' }, { pilotClientIds: ['syn-pilot'] }),
+    extraDeps: {
+      briefDeps: { ...briefDeps, mediaManifest: () => media },
+      signMediaUrl: (item) => `${item.url}?exp=${bucket}&sig=s${bucket}`,
+    },
+  });
+  await hub.call('POST', '/api/admin/development/syn-pilot/brief/rebuild', { headers: hub.admin, body: { wait: true } });
+  for (const [path, headers] of [['/api/maker/clients/syn-pilot/brief', hub.maker], ['/api/admin/development/syn-pilot/brief', hub.admin]]) {
+    bucket = 1;
+    const first = await hub.call('GET', path, { headers });
+    assert.equal(first.status, 200);
+    const etag = first.headers.get('etag');
+    const body = await first.json();
+    assert.notEqual(etag, `"${body.hash}"`, 'the ETag covers the signed URLs');
+    assert.equal(body.facts.media.manifest[0].url, 'https://example.com/m/1?exp=1&sig=s1');
+    assert.equal((await hub.call('GET', path, { headers: { ...headers, 'if-none-match': etag } })).status, 304, 'same signature window: 304');
+    bucket = 2;
+    const later = await hub.call('GET', path, { headers: { ...headers, 'if-none-match': etag } });
+    assert.equal(later.status, 200, 'new signatures: the full brief again');
+    assert.equal((await later.json()).facts.media.manifest[0].url, 'https://example.com/m/1?exp=2&sig=s2');
+  }
+});
+
+test('the brief store is registered with the personal-data registry when the routes register, before any rebuild', async (t) => {
+  const store = await import('../lib/delivery-brief/store.js');
+  store.resetBriefStoreRegistrationForTests();
+  const registered = [];
+  const hub = await setup(t, { extraDeps: { personalDataRegistry: { registerStore: (entry) => registered.push(entry) } } });
+  assert.equal(registered.length, 1);
+  assert.equal(registered[0].id, 'delivery-briefs');
+  assert.equal(registered[0].clientKey, 'directory');
+  assert.equal(typeof registered[0].export, 'function');
+  assert.equal(typeof registered[0].erase, 'function');
+  assert.deepEqual(snapshot(join(hub.dir, 'delivery-briefs')), [], 'registering writes nothing');
+  assert.equal(hub.llm.state.calls, 0);
 });
 
 test('optional routes: the brief module registers through the shared list', async () => {

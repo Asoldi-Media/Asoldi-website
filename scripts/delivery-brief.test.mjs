@@ -219,7 +219,9 @@ test('reviews survive a rebuild', async () => {
   const v1 = store.readLatestBrief(client.id, { dataDir: dir });
   const directive = v1.directives.find((row) => row.target.area === 'chrome.header');
   store.setDirectiveStatus(client.id, directive.id, { status: 'accepted', by: 'dev', jobId: 'job-1' }, { dataDir: dir });
-  store.reviewFact(client.id, 'claims.stats[0]', { status: 'rejected', by: 'dev' }, { dataDir: dir });
+  const statId = v1.facts.claims.stats[0].id;
+  assert.match(statId, /^f-[0-9a-f]{12}$/);
+  store.reviewFact(client.id, statId, { status: 'rejected', by: 'dev' }, { dataDir: dir });
   store.reviewFact(client.id, 'positioning.toneOfVoice', { status: 'accepted', value: 'Rolig og saklig', by: 'dev' }, { dataDir: dir });
   const after = await brief.reassembleBrief(client, { dataDir: dir, deps });
   assert.equal(after.status, 'built');
@@ -246,6 +248,74 @@ test('reviews survive a rebuild', async () => {
   assert.equal(store.readReviews(client.id, { dataDir: dir }).revision, 3);
   assert.throws(() => store.setDirectiveStatus(client.id, directive.id, { status: 'maybe' }, { dataDir: dir }), (error) => error.code === 'bad-status');
   assert.throws(() => store.reviewFact(client.id, '../etc', { status: 'accepted' }, { dataDir: dir }), (error) => error.code === 'bad-fact-path');
+});
+
+test('fact reviews: only single fact paths and transcript fact ids; a review that breaks the schema is refused and not stored', async () => {
+  const dir = freshDir();
+  const client = clientRecord();
+  const deps = depsFor();
+  await brief.rebuildBrief(client, { llm: stubLlm(), dataDir: dir, deps });
+  for (const path of ['claims.stats[0]', 'positioning.services[1]', 'products.catalogs', 'schema', 'facts.schema', 'positioning.services', 'contact.scope']) {
+    assert.throws(() => store.reviewFact(client.id, path, { status: 'accepted', value: 'x' }, { dataDir: dir }), (error) => error.code === 'bad-fact-path', path);
+  }
+  const statId = store.readLatestBrief(client.id, { dataDir: dir }).facts.claims.stats[0].id;
+  assert.throws(() => store.reviewFact(client.id, statId, { status: 'accepted', value: '40' }, { dataDir: dir }), (error) => error.code === 'bad-value', 'an id takes a status only');
+  const revision = store.readReviews(client.id, { dataDir: dir }).revision;
+  const versions = store.listBriefVersions(client.id, { dataDir: dir }).length;
+  for (const [path, value] of [['contact.onlineOnly', 'kanskje'], ['logo.wordmarkSpec.weight', 'tykk'], ['logo.wordmarkSpec.case', 'STOR'], ['timeline.targetLaunchAt', 'snart']]) {
+    await assert.rejects(brief.reviewBriefFact(client, path, { status: 'accepted', value }, { dataDir: dir, deps }), (error) => error.code === 'invalid-review' && error.errors.length > 0, path);
+  }
+  assert.equal(store.readReviews(client.id, { dataDir: dir }).revision, revision, 'a refused review is not stored');
+  assert.equal(store.listBriefVersions(client.id, { dataDir: dir }).length, versions);
+  const ok = await brief.reviewBriefFact(client, 'contact.onlineOnly', { status: 'accepted', value: true }, { dataDir: dir, deps });
+  assert.equal(ok.status, 'built');
+  const latest = store.readLatestBrief(client.id, { dataDir: dir });
+  assert.equal(latest.facts.contact.onlineOnly, true);
+  assert.equal(validateDeliveryBrief(latest).valid, true);
+
+  // A list entry's review follows its id when a rebuild changes the order of the list.
+  await brief.reviewBriefFact(client, statId, { status: 'rejected' }, { dataDir: dir, deps });
+  const more = { ...TRANSCRIPTS, 'syn-m-sales': TRANSCRIPTS['syn-m-sales'].replace('Kunde: Firmaet heter', 'Kunde: Vi har hatt 300 fornøyde kunder i år.\nKunde: Firmaet heter') };
+  const extraAnswer = stubLlm();
+  const json = extraAnswer.json;
+  extraAnswer.json = async (request) => {
+    const result = await json(request);
+    if (request.user.includes('300 fornøyde kunder')) result.data.facts.unshift({ path: 'claims.stats', value: '300', number: 300, unit: 'kunder', label: 'fornøyde kunder', quote: 'Vi har hatt 300 fornøyde kunder', speaker: 'Kunde', confidence: 0.95 });
+    return result;
+  };
+  await brief.rebuildBrief(client, { llm: extraAnswer, dataDir: dir, deps: depsFor({ transcripts: more }) });
+  const reordered = store.readLatestBrief(client.id, { dataDir: dir });
+  const byId = new Map(reordered.facts.claims.stats.map((stat) => [stat.id, stat]));
+  assert.equal(reordered.facts.claims.stats.length, 2);
+  assert.notEqual(reordered.facts.claims.stats[0].id, statId, 'the new stat now comes first');
+  assert.equal(byId.get(statId).status, 'rejected', 'the reviewed stat keeps its review');
+  assert.equal(reordered.facts.claims.stats.find((stat) => stat.id !== statId).status, 'proposed', 'the new stat is not affected');
+});
+
+test('client data: a Kundedata differentiator shifts every transcript differentiator source, also beyond ten', () => {
+  const items = Array.from({ length: 12 }, (_, i) => ({
+    id: `f-${String(i).padStart(12, '0')}`,
+    type: 'fact',
+    path: 'positioning.differentiators',
+    value: `Forskjell nummer ${i} ord${i}`,
+    quote: `forskjell ${i}`,
+    speaker: 'Kunde',
+    meetingId: 'm',
+    purpose: 'sales',
+    status: 'active',
+    confidence: 0.8,
+  }));
+  const sources = { meetings: [], parts: { meetings: [] }, bank: { websiteCreatorQuestions: { differentiator: 'Fra Kundedata' } }, media: [], seo: {}, cmsSetup: null, changeRequests: [], projectDocument: null };
+  const assembled = assembleBrief({ client: { id: 'syn-diff' }, sources, extraction: { items }, reviews: {} });
+  const list = assembled.facts.positioning.differentiators;
+  assert.equal(list.length, 13);
+  assert.equal(list[0], 'Fra Kundedata');
+  assert.deepEqual(assembled.factSources['positioning.differentiators[0]'], { kind: 'client', status: 'client-confirmed' });
+  for (let i = 1; i < list.length; i += 1) {
+    const source = assembled.factSources[`positioning.differentiators[${i}]`];
+    assert.ok(source, `source ${i}`);
+    assert.equal(source.factId, items[i - 1].id, `entry ${i} keeps its own source`);
+  }
 });
 
 test('the brief is at most 300 KB and holds no 20-word run from any transcript', async () => {
@@ -315,16 +385,101 @@ test('an interrupted rebuild saves nothing and the next one redoes only the miss
   const dir = freshDir();
   const client = clientRecord();
   const flaky = stubLlm({ failAfter: 1 });
-  const partial = await brief.rebuildBrief(client, { llm: flaky, dataDir: dir, deps: depsFor() });
+  const t0 = Date.parse('2026-11-01T12:00:00.000Z');
+  const partial = await brief.rebuildBrief(client, { llm: flaky, dataDir: dir, deps: depsFor(), backoffNow: t0 });
   assert.equal(partial.status, 'partial');
+  assert.equal(flaky.state.calls, 2, 'one answer, one failure, then no more calls in this run');
   assert.equal(store.readLatestBrief(client.id, { dataDir: dir }), null);
-  assert.equal(store.readBriefState(client.id, { dataDir: dir }).partial, true);
+  const state = store.readBriefState(client.id, { dataDir: dir });
+  assert.equal(state.partial, true);
+  assert.equal(Object.keys(state.chunkFailures).length, 1);
+  assert.equal(state.retryAt, new Date(t0 + 15 * 60_000).toISOString(), 'the failed chunk may be asked again in 15 minutes');
   const totalChunks = partial.meetings.reduce((sum, meeting) => sum + meeting.chunks.total, 0);
+
+  // Before the backoff ends the failed chunk waits (the others are asked); a person's rebuild asks it at once.
+  const early = stubLlm();
+  const waiting = await brief.rebuildBrief(client, { llm: early, dataDir: dir, deps: depsFor(), backoffNow: t0 + 60_000 });
+  assert.equal(waiting.status, 'partial');
+  assert.equal(early.state.calls, totalChunks - 2);
   const healthy = stubLlm();
-  const done = await brief.rebuildBrief(client, { llm: healthy, dataDir: dir, deps: depsFor() });
+  const done = await brief.rebuildBrief(client, { llm: healthy, dataDir: dir, deps: depsFor(), ignoreBackoff: true });
   assert.equal(done.status, 'built');
-  assert.equal(healthy.state.calls, totalChunks - 1);
-  assert.equal(store.readBriefState(client.id, { dataDir: dir }).partial, false);
+  assert.equal(healthy.state.calls, 1);
+  const after = store.readBriefState(client.id, { dataDir: dir });
+  assert.equal(after.partial, false);
+  assert.deepEqual(after.chunkFailures, {});
+});
+
+test('the lease: a rebuild while another runner holds it is refused, and a rebuild that lost it writes nothing', async () => {
+  const dir = freshDir();
+  const client = clientRecord({ id: 'syn-lease-1' });
+  const { acquireLease } = await import('../data/email-store.js');
+  const held = await acquireLease('brief:syn-lease-1', 60_000);
+  const llm = stubLlm();
+  await assert.rejects(brief.rebuildBrief(client, { llm, dataDir: dir, deps: depsFor() }), (error) => error.code === 'brief-busy');
+  assert.equal(llm.state.calls, 0);
+  await held.release();
+
+  // Another runner takes the lease over while this one is in its LLM calls: nothing is saved.
+  const own = await acquireLease('brief:syn-lease-1', 60_000);
+  let stolen = false;
+  const thief = {
+    json: async (request) => {
+      if (!stolen) {
+        stolen = true;
+        // Simulates expiry and a second runner taking the lease: its file now names another runner.
+        const locks = [];
+        const walk = (path) => {
+          for (const entry of readdirSync(path, { withFileTypes: true })) {
+            const full = join(path, entry.name);
+            if (entry.isDirectory()) walk(full);
+            else if (entry.name.endsWith('.lease') && entry.name.includes('syn-lease-1')) locks.push(full);
+          }
+        };
+        walk(dataDir);
+        assert.equal(locks.length, 1, 'one lease file');
+        writeFileSync(locks[0], JSON.stringify({ name: 'brief:syn-lease-1', nonce: 'other-runner', expiresAt: Date.now() + 60_000 }));
+      }
+      return llm.json(request);
+    },
+  };
+  const result = await brief.rebuildBrief(client, { llm: thief, dataDir: dir, deps: depsFor(), lease: own });
+  assert.equal(result.status, 'lease-lost');
+  const clientDir = store.clientBriefDir('syn-lease-1', { dataDir: dir });
+  assert.deepEqual(existsSync(clientDir) ? readdirSync(clientDir).filter((name) => name !== 'chunks') : [], [], 'no brief, extraction or state file');
+  await own.release();
+});
+
+test('the input hash covers what the brief shows: offer status, id and client wishes, the plan\'s offer and media rows', async () => {
+  const offer = { id: 'offer-syn-1', status: 'sent', products: [{ name: 'Nettside' }], clientIntent: { headline: 'Flere kunder', wants: ['bilder'] } };
+  const hashWith = async ({ offerValue = offer, client = clientRecord(), media = [] } = {}) => {
+    const deps = { ...depsFor(), offer: () => ({ offer: offerValue, offerHash: 'same-content-hash' }), mediaManifest: () => media };
+    return (await gatherBriefSources(client, { deps })).inputHash;
+  };
+  const base = await hashWith();
+  assert.equal(await hashWith(), base);
+  assert.notEqual(await hashWith({ offerValue: { ...offer, status: 'accepted' } }), base, 'offer status');
+  assert.notEqual(await hashWith({ offerValue: { ...offer, id: 'offer-syn-2' } }), base, 'offer id');
+  assert.notEqual(await hashWith({ offerValue: { ...offer, clientIntent: { headline: 'Flere kunder', wants: ['video'] } } }), base, 'client wishes');
+  const plan = clientRecord();
+  assert.notEqual(await hashWith({ client: { ...plan, sitePlan: { ...plan.sitePlan, offerId: 'offer-syn-2' } } }), base, 'the plan\'s offer');
+  const item = { id: 'media-1', bucket: 'gallery', fileName: 'bad.jpg', mime: 'image/jpeg', bytes: 10, sha256: 'a'.repeat(64), url: 'https://example.com/m/1', credit: '' };
+  const withMedia = await hashWith({ media: [item] });
+  assert.notEqual(await hashWith({ media: [{ ...item, bucket: 'logo' }] }), withMedia, 'media bucket (logo status)');
+  assert.notEqual(await hashWith({ media: [{ ...item, fileName: 'nytt.jpg' }] }), withMedia, 'file name');
+  assert.notEqual(await hashWith({ media: [{ ...item, credit: 'Foto: Eksempel' }] }), withMedia, 'credit');
+  assert.equal(await hashWith({ media: [{ ...item, url: 'https://example.com/m/1?sig=abc&exp=1' }] }), withMedia, 'a URL signature is not an input');
+});
+
+test('the loop builds briefs only for clients who bought something or are pilots', () => {
+  const lead = { id: 'syn-lead', meetings: [{ meetingId: 'syn-m-sales', purpose: 'sales', hasTranscript: true }], delivery: { stage: 'sales_meeting' } };
+  assert.equal(brief.clientNeedsBrief(lead, { settings: defaultAutomationSettings() }), false, 'a sales lead with a recorded meeting');
+  assert.equal(brief.clientNeedsBrief({ ...lead, delivery: { stage: 'offer_sent' } }, { settings: defaultAutomationSettings() }), false);
+  assert.equal(brief.clientNeedsBrief({ ...lead, delivery: { stage: 'signed' } }, { settings: defaultAutomationSettings() }), true);
+  assert.equal(brief.clientNeedsBrief({ ...lead, delivery: { stage: 'iterating' } }, { settings: defaultAutomationSettings() }), true);
+  assert.equal(brief.clientNeedsBrief(lead, { settings: { ...defaultAutomationSettings(), pilotClientIds: ['syn-lead'] } }), true, 'a pilot');
+  assert.equal(brief.clientNeedsBrief({ id: 'syn-lead', meetings: [] }, { settings: { ...defaultAutomationSettings(), pilotClientIds: ['syn-lead'] } }), false, 'a pilot without a meeting');
+  assert.equal(brief.clientNeedsBrief(clientRecord(), { settings: defaultAutomationSettings() }), true, 'a plan in force');
 });
 
 // ---------------------------------------------------------------- switch and loop step
@@ -435,13 +590,78 @@ test('loop step: at most two starts per tick, the lease keeps a second runner ou
   await held.release();
   assert.equal((await brief.runBriefRebuildStep({ ...tick, tickId: 'tick-5' }, leased)).status, 'built');
 
-  // A rebuild cut short resumes on the next tick without a new debounce wait.
+  // A rebuild that ran out of time resumes on the next tick without a new debounce wait.
+  const cutClient = clientRecord({ id: 'syn-tick-f' });
+  const cut = await brief.rebuildBrief(cutClient, { llm: stubLlm(), dataDir: dir, deps: depsFor(), deadline: 0 });
+  assert.equal(cut.status, 'partial');
+  assert.equal(cut.retryAt, '', 'out of time: resume at once');
+  const resumedCut = await brief.runBriefRebuildStep({ ...tick, now: tick.now + 1000, tickId: 'tick-9' }, cutClient);
+  assert.equal(resumedCut.status, 'built');
+
+  // A rebuild whose provider call failed waits out the chunk's backoff, then resumes without a new debounce.
   const flakyClient = clientRecord({ id: 'syn-tick-e' });
   await brief.runBriefRebuildStep({ ...tick, now: t0, tickId: 'tick-6' }, flakyClient);
   const partial = await brief.runBriefRebuildStep({ ...tick, llm: stubLlm({ failAfter: 1 }), tickId: 'tick-7' }, flakyClient);
   assert.equal(partial.status, 'partial');
-  const resumed = await brief.runBriefRebuildStep({ ...tick, now: tick.now + 1000, tickId: 'tick-8' }, flakyClient);
+  const snapshot = filesUnder(dir);
+  const early = stubLlm();
+  assert.equal((await brief.runBriefRebuildStep({ ...tick, llm: early, now: tick.now + 5 * 60_000, tickId: 'tick-8' }, flakyClient)).status, 'backoff');
+  assert.equal(early.state.calls, 0);
+  assert.deepEqual(filesUnder(dir), snapshot, 'a tick in backoff writes nothing');
+  const resumed = await brief.runBriefRebuildStep({ ...tick, now: tick.now + 15 * 60_000, tickId: 'tick-10' }, flakyClient);
   assert.equal(resumed.status, 'built');
+});
+
+/** One transcript chunk that the model can never answer, every other chunk answered; ticks every five minutes for two days. */
+async function stuckChunkTicks({ code, clientId }) {
+  const dir = freshDir();
+  const settings = settingsWith({ enabled: true });
+  const client = clientRecord({ id: clientId, meetings: [...clientRecord().meetings, { meetingId: 'syn-m-stuck', purpose: 'demo', startedAt: '2026-10-15T10:00:00.000Z', hasTranscript: true }] });
+  const transcripts = { ...TRANSCRIPTS, 'syn-m-stuck': meetingText('Demo', 12, ['Kunde: STUCK denne delen får aldri et svar.']) };
+  const healthy = stubLlm();
+  let stuckCalls = 0;
+  let otherCalls = 0;
+  const llm = {
+    json: async (request) => {
+      if (request.user.includes('STUCK')) {
+        stuckCalls += 1;
+        throw Object.assign(new Error(`stub ${code}`), { code, allRows: [{ usd: 0.002 }] });
+      }
+      otherCalls += 1;
+      return healthy.json(request);
+    },
+  };
+  brief.resetBriefTickForTests();
+  const t0 = Date.parse('2026-11-03T00:00:00.000Z');
+  const statuses = [];
+  const callsByTick = [];
+  for (let i = 0; i < 2 * 24 * 12; i += 1) {
+    const result = await brief.runBriefRebuildStep({ now: t0 + i * 5 * 60_000, mode: 'shadow', settings, dataDir: dir, llm, briefDeps: depsFor({ transcripts }), tickId: `${clientId}-${i}` }, client);
+    statuses.push(result.status);
+    callsByTick.push(stuckCalls);
+  }
+  return { dir, client, statuses, stuckCalls, otherCalls, callsByTick };
+}
+
+test('loop step: a chunk the model always fails on costs a bounded number of calls and the brief is built with a gap', async () => {
+  // A final answer (output limit after the core's retry): asked once, cached as a gap.
+  const final = await stuckChunkTicks({ code: 'max_tokens', clientId: 'syn-stuck-final' });
+  assert.equal(final.stuckCalls, 1, 'one paid call for the stuck chunk in two days');
+  assert.ok(final.statuses.includes('built'));
+  assert.equal(final.statuses.at(-1), 'unchanged');
+  const built = store.readLatestBrief('syn-stuck-final', { dataDir: final.dir });
+  assert.equal(built.stats.chunks.gaps, 1, 'the brief shows the gap');
+  assert.match(renderBriefMarkdown(built), /\*\*Hull:\*\* 1 del av møtene/, 'and so does the markdown');
+  assert.ok(built.directives.some((row) => row.target.area === 'chrome.header'), 'the rest of the meeting is in the brief');
+
+  // Provider errors: backoff, at most six calls, then a gap; the call count stops growing.
+  const transient = await stuckChunkTicks({ code: 'provider_error', clientId: 'syn-stuck-transient' });
+  assert.equal(transient.stuckCalls, 6, `${transient.stuckCalls} calls`);
+  assert.equal(transient.callsByTick.at(-1), transient.callsByTick[transient.callsByTick.length - 200], 'no new call in the last 16 hours');
+  assert.ok(transient.statuses.filter((status) => status === 'backoff').length > 50, 'most ticks wait');
+  assert.equal(transient.statuses.at(-1), 'unchanged');
+  assert.equal(store.readLatestBrief('syn-stuck-transient', { dataDir: transient.dir }).stats.chunks.gaps, 1);
+  assert.deepEqual(store.readBriefState('syn-stuck-transient', { dataDir: transient.dir }).chunkFailures, {});
 });
 
 test('tickSteps has the loop contract', () => {
