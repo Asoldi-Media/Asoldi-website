@@ -473,12 +473,18 @@ node scripts/security/secret-scan.mjs --workspace <dir>           # a folder wit
 ```
 
 - `pre-commit` scans the staged lines; `commit-msg` scans the message (commit messages are
-  public too; the e-mail of a `Co-authored-by:` style trailer is skipped).
-- `pre-push` scans every commit being pushed (a secret added and removed again is still
-  caught), the lines written while resolving a merge (`--cc`), and the message of every pushed
-  commit, merge commits included (the same check as `--commits` over the pushed range), then runs
-  `npm test`. Planning words in file lines are checked on the pushed result (the diff from the
-  remote to the pushed tip), so a line that a later commit in the same push rewords passes.
+  public too; the e-mail of a `Co-authored-by:` style trailer is skipped). While the committed
+  `scripts/security/scan-profile.json` says `public`, `pre-commit` uses the public rules
+  whatever the working tree says, and refuses a staged profile that names a weaker one.
+- `pre-push` scans every commit being pushed (a secret or a planning word added and removed
+  again is still caught, because every pushed commit is published), the lines written while
+  resolving a merge (`--cc`), the message of every pushed commit, merge commits included (the
+  same check as `--commits` over the pushed range), and the message of a pushed annotated tag,
+  then runs `npm test`. A tag or a new branch at a commit that is already on a remote adds no
+  commits, so only its tag message is new. `SECRET_SCAN_PLAN_NET_DIFF=1` (or
+  `--plan-net-diff`) checks planning words in file lines on the pushed result instead (the diff
+  from the remote to the pushed tip); set it only when the planning words of earlier commits in
+  the push may become public, because the scan then lets them through and lists each one.
   A push to main deploys asoldi.com, so a failing test blocks it. When the remote
   sha is not in this clone, it scans everything that is on no remote-tracking branch.
   `npm test` runs with a throwaway `APP_DATA_DIR` (removed afterwards) and
@@ -522,35 +528,50 @@ offender list after `--write`, and change nothing on a second run. Commit their 
 own, after the merges it applies to.
 
 - `scripts/security/neutralize-plan-ids.mjs` rewords planning words into area words in comments,
-  Markdown prose and test titles only. It parses JavaScript and TypeScript with the TypeScript
+  Markdown prose and test titles only. This public script holds only the area words; a more
+  precise word per task comes from a JSON file kept outside the public repos (`--words <file>`,
+  `PLAN_WORDS_FILE` or `~/.asoldi-secrets/plan-words.json`; a tracked words file is refused,
+  and the output depends on the words file used). An id whose words already follow it is dropped
+  rather than doubled. It parses JavaScript and TypeScript with the TypeScript
   compiler and refuses a file whose code (names, values, structure) would change. It prints what
   it leaves: values in code, JSON and Markdown code spans (task `owner` fields, assertion
-  messages), for a separate reviewed commit, because those values reach ledger rows, prompts and
-  copies in other repos. It skips the copies of client CMS files listed under `codemodSkip`
+  messages) and ids quoted in comments, which stand for such values, for a separate reviewed
+  commit, because those values reach ledger rows, prompts and copies in other repos. It skips the copies of client CMS files listed under `codemodSkip`
   (their sha256 is pinned in `data/cms-feature-tree.meta.json`): reword them in website-cms and
   copy them again with `scripts/sync-cms-feature-tree.mjs`. When it changes files under
   `packages/suite`, restamp the suite manifest with `scripts/sync-suite.mjs` and copy the suite
   to the Maker again.
 - `scripts/security/scrub-client-data.mjs` replaces flagged e-mail addresses and phone numbers in
-  tests, fixtures, scripts and Markdown with reserved ones: company domains become
-  `site-<hash>.test` everywhere they appear (a website and its contact address still match),
-  platform addresses become `<local>@example.com`, names in local parts become `person-<hash>`,
-  and numbers keep their first digit and layout with `0000` fixture digits. Production code is
-  never changed; Asoldi's own contacts and form placeholders are in `.secret-scan-allowlist.json`.
-  Files under `scrubExclude` (work another change set is rewriting) keep their findings on the
-  list until that work lands.
+  tests, fixtures, scripts and Markdown with reserved ones. A company domain becomes a neutral
+  word on the reserved `.test` domain (a plant name such as `maple.test`); in a file with a
+  flagged address on that domain, the domain also changes in URLs, host names and regular
+  expressions, and the company name taken from the domain changes to the same word inside
+  strings, comments and docs, so a website, its contact address and its business name still
+  match. Platform addresses become `<local>@example.com`; local parts keep a role word (`post`,
+  `hei`, `booking`) and anything else becomes `person-<hash>`; numbers keep their first digit and
+  layout with `0000` fixture digits. Production code, names in code, the scan tools and this doc
+  are never changed, and addresses the allowlist keeps (Asoldi's own contacts and placeholders)
+  keep their domain. Files under `scrubExclude` keep their findings on the list. The scrub knows
+  only addresses and numbers: it lists by path and line the company names, replaced domains used
+  elsewhere and name parts it leaves, and those fixtures still need a synthetic business written
+  by hand (org numbers, street addresses and people's names are not touched).
+  Run `npm test` on the result before committing it.
 
 ### Redacting copies outside the repos
 
 `--redact <dir>` replaces every secret the scan finds under a folder with `<redacted:KEY>`
 (the env key name, the retired label or the rule id; a private key goes whole). It is a dry run
 that lists what it would replace unless `--apply` is given. `--apply` keeps each changed file's
-original once as `<file>.bak-redact` (never overwritten); check the result, then delete the
-backups, which still hold the values. Client data and planning words are not touched.
+original once (never overwritten) outside the folder, as
+`<backup dir>/<folder>-<hash>/<path>.bak-redact` with the backup dir from `--backup-dir`,
+`ASOLDI_REDACT_BACKUPS` or `~/.asoldi-secrets/redact-backups`, so a `git add` in the folder
+cannot pick them up. Check the result, then delete the backups, which still hold the values. A
+folder that holds one of the env files the known values come from (a repo root or a parent
+folder), or the backup dir, is refused. Client data and planning words are not touched.
 
 ```bash
 node scripts/security/secret-scan.mjs --redact <dir>            # dry run
-node scripts/security/secret-scan.mjs --redact <dir> --apply    # write, keep .bak-redact copies
+node scripts/security/secret-scan.mjs --redact <dir> --apply    # write; originals go to the backup dir
 ```
 
 ## Read-only probe
