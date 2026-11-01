@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "name": "cms",
+  "ref": "HEAD",
+  "egress": false,
+  "hosts": [
+    {
+      "host": "api.deepseek.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "sporing.bring.no",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "sporing.posten.no",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "tracking.postnord.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "www.dao.as",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "www.dhl.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "www.helthjem.no",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "www.ups.com",
+      "via": [
+        "static"
+      ]
+    }
+  ]
+}
