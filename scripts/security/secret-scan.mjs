@@ -8,8 +8,8 @@
  *   node scripts/security/secret-scan.mjs --staged          pre-commit: lines and paths being committed
  *   node scripts/security/secret-scan.mjs --commit-msg F    commit-msg: the message being committed
  *   node scripts/security/secret-scan.mjs --pre-push        pre-push: every commit being pushed (refs on stdin),
- *                                                            its merge-resolution lines, and --commits over the
- *                                                            pushed range; planning words on the pushed result
+ *                                                            its merge-resolution lines, --commits over the
+ *                                                            pushed range and the message of a pushed annotated tag
  *   node scripts/security/secret-scan.mjs --commits A..B    the messages of every commit in a range, merges included
  *   node scripts/security/secret-scan.mjs --range A..B      every commit in a range: lines and messages
  *   node scripts/security/secret-scan.mjs --tracked         audit: every tracked file as it is now
@@ -17,7 +17,7 @@
  *                                                            the tracked files against the offender lists
  *   node scripts/security/secret-scan.mjs --history         audit: every commit on every branch
  *   node scripts/security/secret-scan.mjs --workspace DIR   every file under DIR, without git
- *   node scripts/security/secret-scan.mjs --redact DIR [--apply]
+ *   node scripts/security/secret-scan.mjs --redact DIR [--apply] [--backup-dir DIR]
  *                                                            secrets under DIR replaced by <redacted:KEY>
  *   node scripts/security/secret-scan.mjs --stdin           text piped in
  *   node scripts/security/secret-scan.mjs <files…>          those files
@@ -37,9 +37,12 @@
  *     or SECRET_SCAN_NAMES), planning words (task and area ids, planning branch and batch
  *     names, planning file names) and paths that hold client data;
  *   - every profile: paths that hold secrets (.env, keys, service accounts, secrets/, redaction backups).
- * Planning words in a pushed commit's lines are checked on the pushed result (the diff from the
- * remote to the pushed tip), so a line a later commit in the same push rewords passes; every
- * other rule is checked per commit, because each commit is published.
+ * Every rule is checked per pushed commit, because each commit is published. With
+ * SECRET_SCAN_PLAN_NET_DIFF=1 (or --plan-net-diff) planning words in file lines are checked on the
+ * pushed result instead (the diff from the remote to the pushed tip): set it only when the
+ * planning words of earlier commits in the push may be published; the scan lists every one it lets
+ * through. In a repo whose committed profile is public, --staged uses the public rules and refuses
+ * a staged scan-profile.json that names a weaker profile.
  * Fake test fixtures are allowed through .secret-scan-allowlist.json (path + rule + reason, or
  * the sha256 of one fixture value); an allowlisted secret hit must still look fake, so a real
  * key pasted there is caught. commitEntries (commit + path + line + rule + reason) let one
@@ -47,15 +50,18 @@
  * values or retired secrets, and the scan output lists every finding they let through.
  *
  * --redact is a dry run unless --apply is given: it lists what it would replace. --apply keeps
- * the original next to each changed file as <file>.bak-redact (written once, never
- * overwritten); delete those copies after checking the result. Only secrets are replaced.
+ * each changed file's original once (never overwritten) as <backup dir>/<folder>-<hash>/<path>.bak-redact,
+ * outside the folder: --backup-dir, ASOLDI_REDACT_BACKUPS or ~/.asoldi-secrets/redact-backups.
+ * Delete those copies after checking the result. Only secrets are replaced. A folder that holds
+ * one of the env files the known values come from, or the backup dir, is refused.
  *
  * Output never contains a matched value. Exit 0 clean, 1 findings, 2 error.
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   buildNamesMatcher,
@@ -176,7 +182,8 @@ export function defaultNamesFile(env = process.env) {
   return env.SECRET_SCAN_NAMES || join(homedir(), '.asoldi-secrets', 'scan-names.txt');
 }
 
-function isTrackedIn(root, file) {
+/** True when `file` is tracked in the git checkout at `root`. */
+export function isTrackedIn(root, file) {
   const rel = relative(root, resolve(file));
   if (!rel || rel.startsWith('..') || isAbsolute(rel)) return false;
   try {
@@ -220,6 +227,40 @@ export function loadProfileConfig(root) {
     codemodSkip: Array.isArray(raw.codemodSkip) ? raw.codemodSkip.map(String) : [],
     scrubExclude: Array.isArray(raw.scrubExclude) ? raw.scrubExclude.map(String) : [],
   };
+}
+
+/** The profile name in a scan-profile.json text ('public' when the file or the field is missing). */
+function profileNameOf(text) {
+  if (text === null) return 'public';
+  try {
+    return String(JSON.parse(text).profile || 'public').trim().toLowerCase();
+  } catch {
+    return 'invalid';
+  }
+}
+
+function gitShow(cwd, spec) {
+  try {
+    return gitText(['show', spec], { cwd });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The committed (HEAD) and staged profile names (committed: null before the first commit). A repo
+ * whose committed profile is public keeps the public rules for --staged, whatever the working tree
+ * or the index says.
+ */
+export function stagedProfiles(cwd) {
+  let committed = null;
+  try {
+    git(['rev-parse', '--verify', '-q', 'HEAD^{commit}'], { cwd });
+    committed = profileNameOf(gitShow(cwd, `HEAD:${PROFILE_FILE}`));
+  } catch {
+    committed = null;
+  }
+  return { committed, staged: profileNameOf(gitShow(cwd, `:${PROFILE_FILE}`)) };
 }
 
 /**
@@ -446,7 +487,13 @@ function withRules(ctx, rules) {
 
 export function scanStaged(cwd, ctx) {
   const patch = gitText(['diff', '--cached', ...DIFF_ARGS, '--diff-filter=ACMR'], { cwd });
-  return scanPatchFiles(parsePatch(patch), ctx);
+  const { committed, staged } = stagedProfiles(cwd);
+  if (committed !== 'public') return scanPatchFiles(parsePatch(patch), ctx);
+  const findings = scanPatchFiles(parsePatch(patch), { ...ctx, profile: PROFILES.public });
+  if (staged !== 'public') {
+    findings.push({ path: PROFILE_FILE, line: 0, rule: 'path:profile-weakened', kind: 'path', hint: 'the committed profile is public' });
+  }
+  return findings;
 }
 
 export function scanRevisions(cwd, revArgs, ctx, { messages = true } = {}) {
@@ -482,7 +529,7 @@ export function commitExists(cwd, sha) {
 
 /**
  * pre-push stdin: "<local ref> <local sha> <remote ref> <remote sha>" per line → one entry per
- * pushed ref: { localSha, remoteSha } (remoteSha '' when the remote sha is unknown here).
+ * pushed ref: { localRef, localSha, remoteSha } (remoteSha '' when the remote sha is unknown here).
  */
 export function prePushRefs(stdinText, { hasCommit = () => true } = {}) {
   const refs = [];
@@ -490,7 +537,7 @@ export function prePushRefs(stdinText, { hasCommit = () => true } = {}) {
     const [localRef, localSha, , remoteSha] = line.trim().split(/\s+/);
     if (!localRef || !localSha || ZERO_SHA.test(localSha)) continue;
     const known = remoteSha && !ZERO_SHA.test(remoteSha) && hasCommit(remoteSha);
-    refs.push({ localSha, remoteSha: known ? remoteSha : '' });
+    refs.push({ localRef, localSha, remoteSha: known ? remoteSha : '' });
   }
   return refs;
 }
@@ -506,12 +553,16 @@ export function prePushRevArgs(stdinText, { hasCommit = () => true } = {}) {
 }
 
 /**
- * The commit the pushed result is compared with: the remote sha, or for a new branch the one
- * commit where the pushed commits meet the remote-tracking refs (the empty tree when nothing is
- * on a remote yet). null when the pushed commits meet them in more than one place.
+ * The commit the pushed result is compared with: the remote sha; the pushed commit itself when
+ * every pushed commit is already on a remote-tracking ref (a tag or a new branch at a pushed
+ * commit: nothing new); for a new branch the one commit where the pushed commits meet the
+ * remote-tracking refs; the empty tree when this clone has no remote-tracking ref or the pushed
+ * history meets none. null when the pushed commits meet them in more than one place.
  */
 export function pushBase(cwd, { localSha, remoteSha }) {
   if (remoteSha) return remoteSha;
+  if (!gitText(['for-each-ref', '--format=%(objectname)', 'refs/remotes'], { cwd }).trim()) return EMPTY_TREE;
+  if (!gitText(['rev-list', localSha, '--not', '--remotes'], { cwd }).trim()) return localSha;
   const boundary = gitText(['rev-list', '--boundary', localSha, '--not', '--remotes'], { cwd })
     .split(/\r?\n/)
     .filter((line) => line.startsWith('-'))
@@ -520,27 +571,49 @@ export function pushBase(cwd, { localSha, remoteSha }) {
   return boundary.length === 1 ? boundary[0] : null;
 }
 
+/** The message lines of an annotated tag object ([] for a commit or a lightweight tag). */
+export function tagMessageLines(cwd, sha) {
+  try {
+    if (gitText(['cat-file', '-t', sha], { cwd }).trim() !== 'tag') return [];
+    const body = gitText(['cat-file', 'tag', sha], { cwd });
+    const at = body.indexOf('\n\n');
+    const message = at === -1 ? '' : body.slice(at + 2);
+    // A signed tag ends with its signature block, which is not part of the message.
+    return splitLines(message.split(/\n-----BEGIN (?:PGP|SSH) SIGNATURE-----/)[0].replace(/\n$/, ''));
+  } catch {
+    return [];
+  }
+}
+
 /**
- * pre-push: every pushed commit's lines (secrets, client data, paths), the messages of every
- * pushed commit (--commits), and the planning words in the lines the push adds overall. When the
- * pushed commits have no single base, planning words are checked per commit instead.
+ * pre-push: every pushed commit's lines (secrets, client data, planning words, paths), the
+ * messages of every pushed commit (--commits) and of every pushed annotated tag. With
+ * `planNetDiff`, planning words in file lines count on the pushed result only (the diff from the
+ * push base to the tip), and every per-commit planning finding that lets through is listed in
+ * ctx.letThrough. When the pushed commits have no single base, planning words stay per commit.
  */
-export function scanPrePush(cwd, stdinText, ctx) {
+export function scanPrePush(cwd, stdinText, ctx, { planNetDiff = false } = {}) {
   const findings = [];
   for (const ref of prePushRefs(stdinText, { hasCommit: (sha) => commitExists(cwd, sha) })) {
     const revArgs = ref.remoteSha ? [`${ref.remoteSha}..${ref.localSha}`] : [ref.localSha, '--not', '--remotes'];
-    findings.push(...scanRevisions(cwd, revArgs, withRules(ctx, { plan: false }), { messages: false }));
-    findings.push(...scanCommitMessages(cwd, revArgs, ctx));
-    if (!ctx.profile.plan) continue;
-    const planOnly = withRules(ctx, { secrets: false, pii: false, plan: true, paths: 'none' });
-    const base = pushBase(cwd, ref);
+    const base = planNetDiff && ctx.profile.plan ? pushBase(cwd, ref) : null;
     if (base === null) {
-      findings.push(...scanRevisions(cwd, revArgs, planOnly, { messages: false }));
-      continue;
+      findings.push(...scanRevisions(cwd, revArgs, ctx, { messages: false }));
+    } else {
+      findings.push(...scanRevisions(cwd, revArgs, withRules(ctx, { plan: false }), { messages: false }));
+      const planOnly = withRules(ctx, { secrets: false, pii: false, plan: true, paths: 'none' });
+      const patch = gitText(['diff', ...DIFF_ARGS, base, ref.localSha], { cwd });
+      const tip = ref.localSha.slice(0, 10);
+      findings.push(...scanPatchFiles(parsePatch(patch), planOnly, { label: (file) => `${tip}:${file.path}` }));
+      if (Array.isArray(ctx.letThrough)) {
+        for (const finding of scanRevisions(cwd, revArgs, planOnly, { messages: false })) ctx.letThrough.push(`${finding.path}:${finding.line} ${finding.rule}`);
+      }
     }
-    const patch = gitText(['diff', ...DIFF_ARGS, base, ref.localSha], { cwd });
-    const tip = ref.localSha.slice(0, 10);
-    findings.push(...scanPatchFiles(parsePatch(patch), planOnly, { label: (file) => `${tip}:${file.path}` }));
+    findings.push(...scanCommitMessages(cwd, revArgs, ctx));
+    if (ref.localRef.startsWith('refs/tags/')) {
+      const label = `${ref.localSha.slice(0, 10)}:tag-message`;
+      for (const finding of scanLines('', messageLinesForScan(tagMessageLines(cwd, ref.localSha)), ctx)) findings.push({ ...finding, path: label });
+    }
   }
   return findings;
 }
@@ -633,13 +706,52 @@ export function scanFiles(paths, ctx) {
   return findings;
 }
 
+export function defaultBackupRoot(env = process.env) {
+  return env.ASOLDI_REDACT_BACKUPS || join(homedir(), '.asoldi-secrets', 'redact-backups');
+}
+
+function realOrResolved(path) {
+  try {
+    return realpathSync.native(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+/** True when `path` is `dir` or inside it (both resolved through links; case-insensitive on Windows). */
+export function isInside(dir, path) {
+  const norm = (value) => {
+    const out = realOrResolved(value).replace(/\\/g, '/').replace(/\/+$/, '');
+    return process.platform === 'win32' ? out.toLowerCase() : out;
+  };
+  const base = norm(dir);
+  const target = norm(path);
+  return target === base || target.startsWith(`${base}/`);
+}
+
+/**
+ * The folder the originals of one --redact target go to: <backup root>/<folder name>-<hash of its
+ * path>, so two targets never share one and a later run finds the first originals again.
+ */
+export function backupDirFor(root, backupRoot) {
+  const id = createHash('sha256').update(realOrResolved(root).replace(/\\/g, '/').toLowerCase()).digest('hex').slice(0, 10);
+  return join(backupRoot, `${basename(resolve(root)) || 'folder'}-${id}`);
+}
+
 /**
  * --redact: the secrets in every text file under `dir`, replaced by <redacted:KEY>. A dry run
- * unless `apply`; with `apply` each changed file's original is kept once as <file>.bak-redact.
- * Returns { files: [{ path, redactions, backup }], skippedBackups } with no values.
+ * unless `apply`; with `apply` each changed file's original is kept once (never overwritten) as
+ * <backupDirFor(dir)>/<path>.bak-redact, outside `dir`, so a later `git add` in `dir` cannot pick
+ * it up. A folder that holds one of `envSources` (the env files the known values come from) or
+ * the backup root is refused: those files must keep their values. Returns { files: [{ path,
+ * redactions, backup }], backupDir } with no values.
  */
-export function redactWorkspace(dir, ctx, { apply = false } = {}) {
+export function redactWorkspace(dir, ctx, { apply = false, backupRoot = defaultBackupRoot(), envSources = ctx.envSources || [] } = {}) {
   const root = resolve(dir);
+  const held = envSources.filter((file) => existsSync(file) && isInside(root, file));
+  if (held.length) throw new Error(`the folder holds ${held.length} env file(s) the known values come from; redact a folder without them`);
+  if (isInside(root, backupRoot)) throw new Error('the backup folder is inside the folder being redacted; pick another --backup-dir');
+  const backupDir = backupDirFor(root, backupRoot);
   const files = [];
   for (const path of walkFiles(root)) {
     if (/\.bak-redact$/i.test(path)) continue;
@@ -650,14 +762,17 @@ export function redactWorkspace(dir, ctx, { apply = false } = {}) {
     if (!result.redactions.length) continue;
     const row = { path, redactions: result.redactions, backup: '' };
     if (apply) {
-      const backup = `${abs}.bak-redact`;
-      if (!existsSync(backup)) writeFileSync(backup, readFileSync(abs));
+      const backup = join(backupDir, `${path}.bak-redact`);
+      if (!existsSync(backup)) {
+        mkdirSync(dirname(backup), { recursive: true });
+        writeFileSync(backup, readFileSync(abs));
+      }
       writeFileSync(abs, result.text);
-      row.backup = `${path}.bak-redact`;
+      row.backup = backup;
     }
     files.push(row);
   }
-  return { files };
+  return { files, backupDir };
 }
 
 // ---------------------------------------------------------------- ratchets
@@ -712,13 +827,16 @@ export function buildContext(cwd, { env = process.env, useEnv = true, useRetired
   const names = namesFile
     ? loadNames(namesFile, root, { required: true })
     : loadNames(defaultNamesFile(env), root);
+  const envSources = useEnv ? defaultEnvFiles(cwd, env).filter((file) => existsSync(file)) : [];
   return {
     root,
     config,
     profile: profile ? resolveProfile(profile) : config.profile,
     allowlist: loadAllowlist(root),
     allowedByCommit: [],
-    knownValues: useEnv ? loadKnownValues(defaultEnvFiles(cwd, env)) : [],
+    letThrough: [],
+    envSources,
+    knownValues: useEnv ? loadKnownValues(envSources) : [],
     retired: useRetired ? loadRetired(defaultRetiredFile(env)) : null,
     names,
   };
@@ -730,7 +848,7 @@ function summarize(findings) {
   return byRule;
 }
 
-const VALUE_FLAGS = new Set(['--range', '--commit-msg', '--commits', '--workspace', '--redact', '--names', '--profile']);
+const VALUE_FLAGS = new Set(['--range', '--commit-msg', '--commits', '--workspace', '--redact', '--names', '--profile', '--backup-dir']);
 
 function flagValue(argv, flag) {
   const index = argv.indexOf(flag);
@@ -765,10 +883,11 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), 
   if (flagValue(argv, '--redact') !== undefined) {
     const dir = resolve(cwd, flagValue(argv, '--redact'));
     const apply = flags.has('--apply');
-    const result = redactWorkspace(dir, ctx, { apply });
+    const backupRoot = flagValue(argv, '--backup-dir') ? resolve(cwd, flagValue(argv, '--backup-dir')) : defaultBackupRoot(env);
+    const result = redactWorkspace(dir, ctx, { apply, backupRoot });
     const count = result.files.reduce((sum, row) => sum + row.redactions.length, 0);
     if (flags.has('--json')) {
-      process.stdout.write(`${JSON.stringify({ mode: 'redact', apply, count, files: result.files }, null, 2)}\n`);
+      process.stdout.write(`${JSON.stringify({ mode: 'redact', apply, count, backupDir: result.backupDir, files: result.files }, null, 2)}\n`);
     } else {
       for (const row of result.files) {
         for (const item of row.redactions) console.log(formatFinding({ path: row.path, ...item }));
@@ -779,7 +898,7 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), 
       return 0;
     }
     if (apply) {
-      console.log(`secret-scan (redact): replaced ${count} value(s) in ${result.files.length} file(s). Each original is kept once as <file>.bak-redact; delete those copies after checking.`);
+      console.log(`secret-scan (redact): replaced ${count} value(s) in ${result.files.length} file(s). Each original is kept once under ${result.backupDir} as <path>.bak-redact; delete those copies after checking.`);
       return 0;
     }
     console.log(`secret-scan (redact): would replace ${count} value(s) in ${result.files.length} file(s) (dry run; add --apply to write) (${sources}).`);
@@ -807,7 +926,8 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), 
     findings = scanCommitMessageFile(isAbsolute(file) ? file : resolve(cwd, file), ctx);
   } else if (flags.has('--pre-push')) {
     mode = 'pre-push';
-    findings = scanPrePush(cwd, stdinText ?? readStdin(), ctx);
+    const planNetDiff = flags.has('--plan-net-diff') || env.SECRET_SCAN_PLAN_NET_DIFF === '1';
+    findings = scanPrePush(cwd, stdinText ?? readStdin(), ctx, { planNetDiff });
   } else if (flagValue(argv, '--commits') !== undefined) {
     mode = 'commits';
     findings = scanCommitMessages(cwd, [flagValue(argv, '--commits')], ctx);
@@ -829,7 +949,7 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), 
   } else if (files.length) {
     findings = scanFiles(files, ctx);
   } else {
-    console.error('usage: secret-scan.mjs --staged | --commit-msg <file> | --pre-push | --commits A..B | --range A..B | --tracked [--ratchet [--shrink]] | --history | --workspace <dir> | --redact <dir> [--apply] | --stdin | <files…>');
+    console.error('usage: secret-scan.mjs --staged | --commit-msg <file> | --pre-push [--plan-net-diff] | --commits A..B | --range A..B | --tracked [--ratchet [--shrink]] | --history | --workspace <dir> | --redact <dir> [--apply] [--backup-dir <dir>] | --stdin | <files…>');
     return 2;
   }
   if (flags.has('--secrets-only')) findings = findings.filter((f) => f.kind === 'secret');
@@ -841,12 +961,15 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), 
     path: findings.filter((f) => f.kind === 'path').length,
   };
   if (flags.has('--json')) {
-    process.stdout.write(`${JSON.stringify({ mode, counts, byRule: summarize(findings), findings, allowedByCommit: ctx.allowedByCommit }, null, 2)}\n`);
+    process.stdout.write(`${JSON.stringify({ mode, counts, byRule: summarize(findings), findings, allowedByCommit: ctx.allowedByCommit, letThrough: ctx.letThrough }, null, 2)}\n`);
     return findings.length ? 1 : 0;
   }
   if (!flags.has('--summary')) for (const finding of findings) console.log(formatFinding(finding));
   if (ctx.allowedByCommit.length) {
     console.log(`secret-scan: let through by commit-pinned allowlist entries: ${ctx.allowedByCommit.join(', ')}`);
+  }
+  if (ctx.letThrough.length) {
+    console.log(`secret-scan: planning words in pushed commits that the pushed result no longer has, let through by SECRET_SCAN_PLAN_NET_DIFF (they will be public in history): ${ctx.letThrough.join(', ')}`);
   }
   if (!findings.length) {
     console.log(`secret-scan (${mode}): clean (${sources}).`);

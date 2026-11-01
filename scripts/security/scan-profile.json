@@ -12,10 +12,12 @@
     "data/cms-feature-tree.json",
     "scripts/fixtures/cms-feature-matrix.json"
   ],
-  "scrubExcludeReason": "Files another change set is rewriting. Their findings stay on the client-data offender list until that change set lands; then the scrub runs on them too.",
+  "scrubExcludeReason": "Files the client-data scrub leaves alone; their findings stay on the client-data offender list. The inbox bot, workshop prep and suite bot tests and lib/inbox-bot are being rewritten by another change set: run the scrub on them after it lands. The context-links test checks how links about one business are scored, so its fixture has to read like a whole business: replace it with a synthetic business by hand.",
   "scrubExclude": [
     "scripts/inbox-bot.test.mjs",
     "scripts/workshop-prep.test.mjs",
-    "lib/inbox-bot/**"
+    "scripts/suite-bot-core.test.mjs",
+    "lib/inbox-bot/**",
+    "scripts/client-context-links.test.mjs"
   ]
 }

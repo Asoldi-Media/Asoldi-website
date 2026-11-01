@@ -186,6 +186,7 @@ export const DEFAULT_ALLOWED_EMAIL_DOMAINS = [
   'example.org',
   'example.net',
   'example.no',
+  'example',
   'test',
   'invalid',
   'localhost',
@@ -284,6 +285,8 @@ export const BLOCKED_PATH_RULES = [
   { id: 'client-export', re: /\.(?:eml|mbox|msg|pst)$/i },
   { id: 'daily-log', re: /^docs\/daily-logs\//i },
   { id: 'plan-file', re: /(?:^|\/)plans\/publish-ready[^/]*\//i },
+  // The words the planning-word cleanup puts in place of task ids: kept outside the public repos.
+  { id: 'plan-words', re: /(?:^|\/)plan-words\.json$/i },
   { id: 'scratch-file', re: /(?:^|\/)tmp-[^/]+\.(?:mjs|js|json|html|py|txt)$|^tmp\//i },
   // The original a --redact --apply run keeps next to each file it changed: it holds the values.
   { id: 'redact-backup', re: /\.bak-redact$/i },
@@ -566,7 +569,16 @@ export function secretHitsInLine(path, text, { allowlist = normalizeAllowlist(),
   const hits = [];
   if (!text) return hits;
   for (const rule of SECRET_RULES) {
-    rule.re.lastIndex = 0;
+    if (rule.anchor) {
+      if (!text.includes(rule.anchor)) continue;
+    } else {
+      // One test() first: matchAll() copies the regex, which costs more than the scan of a line
+      // that has no match (almost every line).
+      rule.re.lastIndex = 0;
+      const hit = rule.re.test(text);
+      rule.re.lastIndex = 0;
+      if (!hit) continue;
+    }
     const matches = rule.anchor
       ? anchoredMatches(text, rule.re, rule.anchor, { precheck: rule.precheck })
       : text.matchAll(rule.re);

@@ -1,7 +1,8 @@
 #!/bin/sh
 # A push to main deploys asoldi.com. Refuse it when any commit being pushed (its lines, its
-# message, merge commits included, or the lines written while resolving a merge) adds a secret
-# or client data, when the pushed result adds an internal planning word, or when npm test fails. git passes the refs on stdin.
+# message, merge commits included, or the lines written while resolving a merge) or a pushed
+# annotated tag message adds a secret, client data or an internal planning word, or when npm test
+# fails. git passes the refs on stdin.
 # Installed with: npm run hooks:install
 node scripts/security/secret-scan.mjs --pre-push
 status=$?
