@@ -495,6 +495,11 @@ export const SETTINGS_KEYS = Object.freeze({
   // v2
   makerEvents: 'development.makerEvents',
   deliveryBackfill: 'migrations.deliveryBackfill',
+  // --- signing
+  signingEnabled: 'signing.enabled',
+  signingMode: 'signing.mode',
+  signingPaused: 'signing.paused',
+  // --- end signing
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);
@@ -511,6 +516,9 @@ export const RELEASE_GATED_SWITCHES = Object.freeze([
   'development.autoQueue',
   'publish.staging',
   'publish.production',
+  // --- signing
+  'signing',
+  // --- end signing
 ]);
 
 // ---------------------------------------------------------------- tier matrix and site plan (v2)

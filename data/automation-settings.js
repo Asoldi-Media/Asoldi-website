@@ -124,6 +124,12 @@ export function defaultAutomationSettings() {
     alerts: { to: 'ansatte@asoldi.com', hostOfflineHours: 2, jobBlockedHours: 24, digestAt: '08:00' },
     // Written only by recordReleasePass (the pre-release suite), never by PUT.
     releases: {},
+    // --- signing
+    // One signer for every signing path (lib/contract-signing.js). Off: today's paths, unchanged.
+    // shadow: today's paths plus a record of what the signer would write. auto: the signer runs for
+    // pilot clients only (lib/spine-mode.js); every other client stays in shadow.
+    signing: { enabled: false, mode: 'shadow', paused: null },
+    // --- end signing
   };
 }
 
@@ -235,6 +241,9 @@ const ENUMS = {
   'changeRequests.countAt': ['accepted'],
   'development.makerEvents': [...MAKER_EVENT_MODES],
   'migrations.deliveryBackfill': [...BACKFILL_MODES],
+  // --- signing
+  'signing.mode': ['shadow', 'auto'],
+  // --- end signing
 };
 
 const RANGES = {
@@ -276,6 +285,9 @@ const BOOLEANS = new Set([
   'development.previewJobs',
   'development.seoJobs',
   'promotion.auto',
+  // --- signing
+  'signing.enabled',
+  // --- end signing
 ]);
 
 function knownPaths() {
@@ -385,6 +397,21 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
     if (paused === undefined) fail(`publish.${target}.paused`, 'Must be null or {reason}.');
     else node.paused = paused;
   }
+  // --- signing
+  if (isPlainObject(value.signing)) {
+    const mode = normalizeAutomationMode(value.signing.mode);
+    if (mode) value.signing.mode = mode;
+    const paused = normalizePaused(value.signing.paused, { by, now });
+    if (paused === undefined) fail('signing.paused', 'Must be null or {reason}.');
+    else value.signing.paused = paused;
+    const pilotList = Array.isArray(value.pilotClientIds) ? value.pilotClientIds : [];
+    if (value.signing.enabled === true && value.signing.mode === 'auto' && !pilotList.length) {
+      fail('signing.mode', 'signing runs in auto only for listed pilot clients. Add pilotClientIds first, or keep it in shadow.');
+    }
+  } else {
+    fail('signing', 'Missing signing settings.');
+  }
+  // --- end signing
   const tiers = value.publish?.staging?.tiers;
   if (!Array.isArray(tiers) || tiers.some((tier) => !TIER_IDS.includes(tier))) {
     fail('publish.staging.tiers', `Must list tier ids (${TIER_IDS.join(', ')}).`);
