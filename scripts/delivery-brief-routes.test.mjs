@@ -3,6 +3,7 @@
 // the 403 for a host without a routed job or linked run, and that nothing is written while off.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -388,6 +389,76 @@ test('the brief store is registered with the personal-data registry when the rou
   assert.equal(typeof registered[0].erase, 'function');
   assert.deepEqual(snapshot(join(hub.dir, 'delivery-briefs')), [], 'registering writes nothing');
   assert.equal(hub.llm.state.calls, 0);
+});
+
+test('media links: the build\'s signer signs hub media items only while the media switch is on, with the same links (and ETag) within the hour', async (t) => {
+  const assetId = `ma_${'a'.repeat(32)}`;
+  let mediaOn = true;
+  const signed = [];
+  const modules = {
+    '../media-manifest.js': {
+      MEDIA_ROUTE_PREFIX: '/api/maker/media/',
+      MEDIA_URL_TTL_MS: 24 * 60 * 60 * 1000,
+      buildMediaManifest: (clientId) => ({ clientId, items: [{ id: assetId, source: 'bank', bucket: 'gallery', name: 'bad.jpg', mime: 'image/jpeg', bytes: 10, sha256: 'b'.repeat(64), rightsConfirmed: true, url: `/api/maker/media/${assetId}?c=${clientId}&exp=1&sig=${'0'.repeat(64)}` }], external: [] }),
+      signMediaUrl: ({ assetId: id, clientId, expiresAt }) => {
+        signed.push({ id, clientId, expiresAt });
+        return `/api/maker/media/${id}?c=${clientId}&exp=${expiresAt}&sig=${'1'.repeat(64)}`;
+      },
+    },
+    '../privacy-settings.js': { signedMediaEnabled: () => mediaOn },
+  };
+  const { mediaManifest: _media, ...base } = briefDeps;
+  const hub = await setup(t, {
+    settings: settingsWith({ enabled: true, mode: 'auto' }, { pilotClientIds: ['syn-pilot'] }),
+    extraDeps: { briefDeps: { ...base, modules } },
+  });
+  await hub.call('POST', '/api/admin/development/syn-pilot/brief/rebuild', { headers: hub.admin, body: { wait: true } });
+  const first = await hub.call('GET', '/api/maker/clients/syn-pilot/brief', { headers: hub.maker });
+  assert.equal(first.status, 200);
+  const body = await first.json();
+  const url = body.facts.media.manifest[0].url;
+  assert.match(url, new RegExp(`^/api/maker/media/${assetId}\\?c=syn-pilot&exp=\\d+&sig=1{64}$`));
+  const exp = Number(/exp=(\d+)/.exec(url)[1]);
+  assert.equal(exp % (60 * 60 * 1000), 0, 'the expiry is on a full hour');
+  assert.ok(exp - Date.now() >= 24 * 60 * 60 * 1000 - 5000, 'and about 24 hours away or more');
+  assert.deepEqual(signed.at(-1), { id: assetId, clientId: 'syn-pilot', expiresAt: exp }, 'signed with the asset id and the client id');
+  const etag = first.headers.get('etag');
+  assert.notEqual(etag, `"${body.hash}"`);
+  assert.equal((await hub.call('GET', '/api/maker/clients/syn-pilot/brief', { headers: { ...hub.maker, 'if-none-match': etag } })).status, 304, 'the same links within the hour');
+
+  // The media switch goes off: the stored (unsigned) links go out as they are and nothing is signed.
+  mediaOn = false;
+  const before = signed.length;
+  const off = await hub.call('GET', '/api/maker/clients/syn-pilot/brief', { headers: hub.maker });
+  const offBody = await off.json();
+  assert.equal(off.headers.get('etag'), `"${offBody.hash}"`);
+  assert.equal(offBody.facts.media.manifest[0].url, `/api/maker/media/${assetId}`);
+  assert.equal(signed.length, before);
+});
+
+test('the Maker never gets live captions as a transcript', async (t) => {
+  const captions = 'Kunde: Direkteteksting mens møtet pågår.';
+  const stored = { 'syn-r-sales': { meetingId: 'syn-r-sales', transcript: captions, isLive: true } };
+  const hub = await setup(t, {
+    settings: settingsWith({ enabled: true, mode: 'auto' }, { pilotClientIds: ['syn-pilot'] }),
+    extraDeps: { briefDeps: { ...briefDeps, readStoredMeeting: (meetingId) => (stored[meetingId] ? { ...stored[meetingId] } : null) } },
+  });
+  const rebuilt = await (await hub.call('POST', '/api/admin/development/syn-pilot/brief/rebuild', { headers: hub.admin, body: { wait: true } })).json();
+  assert.equal(hub.llm.state.calls, 0, 'captions are never sent to the model');
+  assert.equal(rebuilt.status, 'built');
+  const body = await (await hub.call('GET', '/api/maker/clients/syn-pilot/brief', { headers: hub.maker })).json();
+  assert.deepEqual(body.transcripts, []);
+  const sha = createHash('sha256').update(captions).digest('hex');
+  const res = await hub.call('GET', `/api/maker/clients/syn-pilot/transcripts/${sha}`, { headers: hub.maker });
+  assert.equal(res.status, 404);
+  assert.equal((await res.json()).code, 'no-transcript');
+
+  // The final copy arrives: the transcript is extracted and served.
+  stored['syn-r-sales'] = { meetingId: 'syn-r-sales', transcript: SALES_TEXT, isLive: false, summaryStatus: 'processed' };
+  await hub.call('POST', '/api/admin/development/syn-pilot/brief/rebuild', { headers: hub.admin, body: { wait: true } });
+  assert.ok(hub.llm.state.calls > 0);
+  const finalSha = createHash('sha256').update(SALES_TEXT).digest('hex');
+  assert.equal((await hub.call('GET', `/api/maker/clients/syn-pilot/transcripts/${finalSha}`, { headers: hub.maker })).status, 200);
 });
 
 test('optional routes: the brief module registers through the shared list', async () => {

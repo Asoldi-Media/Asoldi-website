@@ -13,7 +13,10 @@ delete process.env.DATA_DIR;
 const brief = await import('../lib/delivery-brief/index.js');
 const store = await import('../lib/delivery-brief/store.js');
 const { assembleBrief, clipTranscriptRuns, transcriptRunSet, MAX_TRANSCRIPT_RUN_WORDS } = await import('../lib/delivery-brief/assemble.js');
-const { gatherBriefSources } = await import('../lib/delivery-brief/sources.js');
+const { findClientTranscript, gatherBriefSources } = await import('../lib/delivery-brief/sources.js');
+const { sha256 } = await import('../lib/delivery-brief/text.js');
+const { promptFor } = await import('../lib/delivery-brief/extract.js');
+const { chunkTranscript } = await import('../lib/delivery-brief/chunk.js');
 const { renderBriefMarkdown } = await import('../lib/delivery-brief/render-md.js');
 const { validateDeliveryBrief } = await import('../lib/delivery-brief/facts-contract.js');
 const { normalizeSitePlan } = await import('../lib/site-plan-model.js');
@@ -703,4 +706,163 @@ test('erase and export cover every file of a client', async () => {
   store.eraseClientBriefs('syn-brief-1', { dataDir: dir, dryRun: false });
   assert.equal(existsSync(store.clientBriefDir('syn-brief-1', { dataDir: dir })), false);
   writeFileSync(join(dir, 'marker'), 'x');
+});
+
+// ---------------------------------------------------------------- live captions and optional modules
+
+test('sources: live captions are never a transcript, also from the archive; the meeting joins once the final copy arrives', async () => {
+  const captions = 'Kunde: Dette er direkteteksting mens møtet fortsatt pågår.';
+  const stored = {
+    'syn-m-sales': { meetingId: 'syn-m-sales', transcript: captions, isLive: true },
+    'syn-m-workshop': { meetingId: 'syn-m-workshop', transcript: 'Kunde: Delvis tekst uten ferdig sammendrag.', partial: true, summaryStatus: '' },
+  };
+  // The hub's own storedMeetingIsPartial decides (no stand-in for it).
+  const deps = { ...depsFor(), readStoredMeeting: (meetingId) => (stored[meetingId] ? { ...stored[meetingId] } : null) };
+  const live = await gatherBriefSources(clientRecord(), { deps });
+  assert.deepEqual(live.meetings, [], 'live and partial copies are left out');
+  const archive = () => [
+    { meetingId: 'syn-m-sales', purpose: 'sales', transcript: 'Kunde: Arkivert kopi av direkteteksting.' },
+    { meetingId: 'syn-m-flagged', purpose: 'sales', transcript: 'Kunde: En kopi som selv sier at den er delvis.', partial: true },
+  ];
+  const withArchive = await gatherBriefSources(clientRecord(), { deps: { ...deps, readArchivedTranscripts: archive } });
+  assert.deepEqual(withArchive.meetings, [], 'an archived copy of a meeting that is still live, or a copy flagged partial, is left out');
+  assert.equal(await findClientTranscript(clientRecord(), sha256(captions), { deps }), null, 'captions are never served');
+  assert.equal(await findClientTranscript(clientRecord(), sha256(captions), { deps: { ...deps, readTranscriptBySha: () => ({ meetingId: 'syn-m-sales', transcript: captions }) } }), null, 'not from the archive reader either');
+
+  // A pilot whose only meeting row is captions is not built by the loop.
+  const pilots = { ...defaultAutomationSettings(), pilotClientIds: ['syn-pilot-captions'] };
+  assert.equal(brief.clientNeedsBrief({ id: 'syn-pilot-captions', meetings: [{ meetingId: 'm-1', hasTranscript: true, partial: true }] }, { settings: pilots }), false);
+  assert.equal(brief.clientNeedsBrief({ id: 'syn-pilot-captions', meetings: [{ meetingId: 'm-1', hasTranscript: true, isLive: true }] }, { settings: pilots }), false);
+  assert.equal(brief.clientNeedsBrief({ id: 'syn-pilot-captions', meetings: [{ meetingId: 'm-1', hasTranscript: true }] }, { settings: pilots }), true);
+
+  // The final copies arrive: both meetings join and the input hash changes.
+  stored['syn-m-sales'] = { meetingId: 'syn-m-sales', transcript: TRANSCRIPTS['syn-m-sales'], isLive: false, summaryStatus: 'processed' };
+  stored['syn-m-workshop'] = { meetingId: 'syn-m-workshop', transcript: TRANSCRIPTS['syn-m-workshop'], partial: true, summaryStatus: 'processed' };
+  const settled = await gatherBriefSources(clientRecord(), { deps });
+  assert.deepEqual(settled.meetings.map((row) => row.meetingId), ['syn-m-sales', 'syn-m-workshop']);
+  assert.notEqual(settled.inputHash, live.inputHash);
+  const served = await findClientTranscript(clientRecord(), sha256(TRANSCRIPTS['syn-m-sales']), { deps });
+  assert.equal(served?.transcript, TRANSCRIPTS['syn-m-sales']);
+});
+
+/**
+ * Stand-ins with the exact signatures and shapes of optional modules other parts of the hub provide:
+ * buildMediaManifest(clientId, { client, dataDir }) → { items: [{ id, source, bucket, name, mime, bytes,
+ * sha256, rightsConfirmed, url }] }, signMediaUrl({ assetId, clientId, expiresAt }), and the SEO record's
+ * readSeoRecord(clientId) / agreedKeywordsFor(clientIdOrRecord) (approved phrases as strings).
+ */
+function mediaManifestModule({ items, calls }) {
+  return {
+    MEDIA_ROUTE_PREFIX: '/api/maker/media/',
+    MEDIA_URL_TTL_MS: 24 * 60 * 60 * 1000,
+    buildMediaManifest(clientId, { client, dataDir } = {}) {
+      calls.push({ clientId, hasClient: Boolean(client), dataDir });
+      if (typeof clientId !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(clientId)) throw Object.assign(new Error('Invalid client id.'), { status: 400 });
+      return {
+        kind: 'asoldi.media-manifest/1',
+        clientId,
+        generatedAt: '2026-11-01T00:00:00.000Z',
+        expiresAt: '2026-11-02T00:00:00.000Z',
+        items: items.map((item) => ({ ...item, url: `/api/maker/media/${item.id}?c=${clientId}&exp=1&sig=${'0'.repeat(64)}` })),
+        external: [],
+      };
+    },
+    signMediaUrl({ assetId, clientId, expiresAt }) {
+      return `/api/maker/media/${encodeURIComponent(assetId)}?c=${encodeURIComponent(clientId)}&exp=${Math.floor(Number(expiresAt))}&sig=${'1'.repeat(64)}`;
+    },
+  };
+}
+
+function seoRecordModule(records) {
+  const readSeoRecord = (salesClientId) => {
+    if (typeof salesClientId !== 'string') throw new TypeError('a sales client id');
+    return records[salesClientId] ? structuredClone(records[salesClientId]) : null;
+  };
+  return {
+    readSeoRecord,
+    agreedKeywordsFor(salesClientIdOrRecord, { status = 'approved' } = {}) {
+      const record = salesClientIdOrRecord && typeof salesClientIdOrRecord === 'object' ? salesClientIdOrRecord : readSeoRecord(salesClientIdOrRecord);
+      return (record?.agreedKeywords || []).filter((row) => row.status === status).map((row) => row.phrase);
+    },
+  };
+}
+
+const MEDIA_ITEMS = [
+  { id: `ma_${'a'.repeat(32)}`, source: 'bank', bucket: 'gallery', name: 'bad.jpg', mime: 'image/jpeg', bytes: 10, sha256: 'b'.repeat(64), rightsConfirmed: true },
+  { id: `ma_${'c'.repeat(32)}`, source: 'logo', bucket: 'logo:primary', name: 'logo.png', mime: 'image/png', bytes: 20, sha256: 'd'.repeat(64), rightsConfirmed: null },
+];
+
+const SEO_RECORDS = {
+  'syn-brief-1': {
+    agreedKeywords: [
+      { phrase: 'flislegger eksempelby', status: 'approved', source: 'meeting', quoteRef: 'syn-m-sales#1', at: '2026-10-02T10:00:00.000Z', by: 'dev' },
+      { phrase: 'nytt bad', status: 'proposed', source: 'maker', at: '2026-10-02T10:00:00.000Z', by: 'maker' },
+    ],
+  },
+};
+
+test('sources: the media manifest and the SEO record are read through their own signatures; media only while the media switch is on', async () => {
+  const calls = [];
+  let mediaOn = false;
+  const modules = {
+    '../media-manifest.js': mediaManifestModule({ items: MEDIA_ITEMS, calls }),
+    '../privacy-settings.js': { signedMediaEnabled: () => mediaOn },
+    '../seo-ops/record.js': seoRecordModule(SEO_RECORDS),
+  };
+  const { mediaManifest: _media, agreedKeywords: _keywords, ...base } = depsFor();
+  const deps = { ...base, modules };
+
+  const off = await gatherBriefSources(clientRecord(), { deps });
+  assert.deepEqual(off.media, []);
+  assert.equal(calls.length, 0, 'with the media switch off the manifest (which writes its id index) is not built');
+  assert.deepEqual(off.seo.agreedKeywords, [
+    { keyword: 'flislegger eksempelby', status: 'approved', source: 'meeting' },
+    { keyword: 'nytt bad', status: 'proposed', source: 'maker' },
+  ], 'every row of the record, phrase as keyword');
+
+  mediaOn = true;
+  const on = await gatherBriefSources(clientRecord(), { deps });
+  assert.deepEqual(calls.map((call) => [call.clientId, call.hasClient]), [['syn-brief-1', true]], 'called with the client id and the client');
+  assert.deepEqual(on.media.map((row) => [row.id, row.fileName, row.bucket, row.url, row.rightsConfirmed]), [
+    [MEDIA_ITEMS[0].id, 'bad.jpg', 'gallery', `/api/maker/media/${MEDIA_ITEMS[0].id}`, true],
+    [MEDIA_ITEMS[1].id, 'logo.png', 'logo:primary', `/api/maker/media/${MEDIA_ITEMS[1].id}`, false],
+  ], 'the manifest name is the file name and URL signatures are left out');
+  assert.notEqual(on.inputHash, off.inputHash);
+
+  // A build whose SEO module has only agreedKeywordsFor: the approved phrases.
+  const phrasesOnly = { ...modules, '../seo-ops/record.js': { agreedKeywordsFor: seoRecordModule(SEO_RECORDS).agreedKeywordsFor } };
+  const approved = await gatherBriefSources(clientRecord(), { deps: { ...deps, modules: phrasesOnly } });
+  assert.deepEqual(approved.seo.agreedKeywords, [{ keyword: 'flislegger eksempelby', status: 'approved', source: 'seo-record' }]);
+  // A client without a record keeps the sales card's keywords.
+  const card = await gatherBriefSources(clientRecord({ id: 'syn-no-record', seoRecord: { agreedKeywords: [{ phrase: 'baderom', status: 'approved', source: 'card' }] } }), { deps });
+  assert.deepEqual(card.seo.agreedKeywords, [{ keyword: 'baderom', status: 'approved', source: 'card' }]);
+
+  // The loop keeps one manifest build per client for a while instead of hashing every file each tick.
+  calls.length = 0;
+  await gatherBriefSources(clientRecord(), { deps: { ...deps, mediaCacheMs: 60_000 } });
+  await gatherBriefSources(clientRecord(), { deps: { ...deps, mediaCacheMs: 60_000 } });
+  assert.equal(calls.length, 1);
+
+  // The brief shows them.
+  const dir = freshDir();
+  await brief.rebuildBrief(clientRecord(), { llm: stubLlm(), dataDir: dir, deps });
+  const stored = store.readLatestBrief('syn-brief-1', { dataDir: dir });
+  assert.deepEqual(stored.facts.media.manifest.map((row) => row.fileName), ['bad.jpg', 'logo.png']);
+  assert.equal(stored.facts.logo.status, 'present');
+  assert.deepEqual(stored.seo.agreedKeywords.map((row) => row.keyword), ['flislegger eksempelby', 'nytt bad']);
+  assert.equal(validateDeliveryBrief(stored).valid, true);
+});
+
+test('sources: credentials are left out of the CMS setup at every depth, inside lists too', async () => {
+  const setup = {
+    siteId: 'site-1',
+    users: [{ email: 'post@example.com', password: 'pw-value', role: 'owner' }],
+    integrations: [{ name: 'shop', apiToken: 'token-value', options: [{ secretKey: 'key-value', label: 'synlig' }] }],
+    siteKey: 'site-key-value',
+  };
+  const sources = await gatherBriefSources(clientRecord(), { deps: { ...depsFor(), cmsSetup: () => setup } });
+  const text = JSON.stringify(sources.cmsSetup);
+  for (const value of ['pw-value', 'token-value', 'key-value', 'site-key-value']) assert.equal(text.includes(value), false, value);
+  assert.equal(sources.cmsSetup.users[0].email, 'post@example.com');
+  assert.equal(sources.cmsSetup.integrations[0].options[0].label, 'synlig');
 });
