@@ -536,6 +536,43 @@ test('a failing provider: one failed call stops the run, each chunk backs off (1
   assert.equal(healthyCalls, total);
 });
 
+test('a failure before any provider answers (safe mode, spend guard, switched-off facade) never becomes a gap: it backs off to once a day and recovers', async () => {
+  for (const code of ['safe_mode', 'budget_exceeded', 'facade_off']) {
+    const retry = { failures: {}, nowMs: Date.parse('2026-11-01T00:00:00.000Z'), ignoreBackoff: false };
+    let calls = 0;
+    let down = true;
+    const llm = {
+      json: async (request) => {
+        calls += 1;
+        if (down) throw codedFailure(code);
+        return { data: answerFor(chunkOf(request.user)) };
+      },
+    };
+    const cache = createMemoryChunkCache();
+    const meeting = { meetingId: `m-unpaid-${code}`, purpose: 'sales', transcript: SALES };
+    const total = chunkTranscript(SALES).length;
+    let last = null;
+    // Three days of five-minute ticks while the cause lasts.
+    for (let i = 0; i < 3 * 24 * 12; i += 1) {
+      last = await extractMeeting({ meeting, llm, cache, clientId: 'syn-brief', retry });
+      retry.nowMs += 5 * 60_000;
+    }
+    assert.equal(last.chunks.gaps, 0, `${code}: no gap`);
+    assert.equal(last.complete, false);
+    assert.ok(calls <= total * 10, `${code}: ${calls} attempts in three days, none of them paid`);
+    assert.ok(Object.values(retry.failures).every((record) => record.count > MAX_CHUNK_ATTEMPTS), `${code}: still waiting, past the paid-failure limit`);
+    // The cause is gone: each chunk is asked again when its wait ends (at most a day), and the meeting completes.
+    down = false;
+    for (let i = 0; i < 24 * 12 && !last.complete; i += 1) {
+      last = await extractMeeting({ meeting, llm, cache, clientId: 'syn-brief', retry });
+      retry.nowMs += 5 * 60_000;
+    }
+    assert.equal(last.complete, true, `${code}: recovered within a day`);
+    assert.equal(last.chunks.gaps, 0);
+    assert.ok(last.items.some((item) => item.path === 'identity.brandName'));
+  }
+});
+
 test('a lost lease stops the run before the next call', async () => {
   let calls = 0;
   const llm = { json: async (request) => { calls += 1; return { data: answerFor(chunkOf(request.user)) }; } };
