@@ -22,12 +22,14 @@ function snapshot(name) {
   return JSON.parse(readFileSync(new URL(`./legal/hosts-${name}.json`, import.meta.url), 'utf8'));
 }
 
-/** The sibling checkout for a snapshot: LEGAL_HOSTS_<NAME>_REPO, else ../website-<name> next to this repo. */
+/**
+ * The sibling repository for a snapshot check: only LEGAL_HOSTS_<NAME>_REPO (set it explicitly), so
+ * a plain npm test never depends on another checkout's current commit. The check reads the files at
+ * LEGAL_HOSTS_<NAME>_REF (default HEAD) through git only.
+ */
 function siblingRepo(name) {
-  const fromEnv = process.env[`LEGAL_HOSTS_${name.toUpperCase()}_REPO`];
-  const guess = resolve(repoRoot, '..', `website-${name}`);
-  const dir = fromEnv || guess;
-  return existsSync(join(dir, '.git')) ? dir : '';
+  const dir = String(process.env[`LEGAL_HOSTS_${name.toUpperCase()}_REPO`] || '').trim();
+  return dir && existsSync(join(dir, '.git')) ? dir : '';
 }
 
 test('every host in the three snapshots has a register row', () => {
@@ -57,25 +59,27 @@ test('the register is well formed and names every required provider', () => {
   assert.equal(subprocessors.validateRegister(broken).length, 3, 'contradictions and missing fields are reported');
 });
 
-test('the hub snapshot matches a fresh scan of this checkout', async (t) => {
+test('the hub snapshot matches a fresh scan of the committed code (HEAD)', async (t) => {
   if (!existsSync(join(repoRoot, '.git'))) {
     t.skip('no git checkout');
     return;
   }
   const committed = snapshot('hub');
-  const fresh = await scan.scanRepoHosts(repoRoot, { name: 'hub', ref: committed.ref || '', egress: true });
-  assert.deepEqual(scan.diffSnapshots(committed, fresh), { added: [], removed: [] }, 'run node scripts/legal/scan-hosts.mjs . --name hub --egress --out scripts/legal/hosts-hub.json');
+  assert.equal(committed.ref, 'HEAD', 'the hub snapshot is taken from the committed code, never from local changes');
+  const fresh = await scan.scanRepoHosts(repoRoot, { name: 'hub', ref: 'HEAD', egress: true });
+  assert.deepEqual(scan.diffSnapshots(committed, fresh), { added: [], removed: [] }, 'run node scripts/legal/scan-hosts.mjs . --name hub --ref HEAD --egress --out scripts/legal/hosts-hub.json');
 });
 
 for (const name of ['maker', 'cms']) {
-  test(`the ${name} snapshot matches the ${name} repository when it is next to this one`, async (t) => {
+  test(`the ${name} snapshot matches the ${name} repository named by LEGAL_HOSTS_${name.toUpperCase()}_REPO`, async (t) => {
     const dir = siblingRepo(name);
     if (!dir) {
-      t.skip(`no ${name} checkout (set LEGAL_HOSTS_${name.toUpperCase()}_REPO)`);
+      t.skip(`set LEGAL_HOSTS_${name.toUpperCase()}_REPO (and optionally LEGAL_HOSTS_${name.toUpperCase()}_REF) to check it`);
       return;
     }
     const committed = snapshot(name);
-    const fresh = await scan.scanRepoHosts(dir, { name, ref: committed.ref || 'HEAD' });
+    const ref = String(process.env[`LEGAL_HOSTS_${name.toUpperCase()}_REF`] || '').trim() || 'HEAD';
+    const fresh = await scan.scanRepoHosts(dir, { name, ref });
     assert.deepEqual(scan.diffSnapshots(committed, fresh), { added: [], removed: [] }, `regenerate scripts/legal/hosts-${name}.json with scripts/legal/scan-hosts.mjs`);
   });
 }
@@ -129,9 +133,28 @@ test('every processor with personal data is listed where it belongs', () => {
   for (const entry of subprocessors.subprocessorList({ scope: 'client' })) {
     assert.ok(appendix.includes(`${entry.name} (`), `${entry.name} in the DPA appendix`);
   }
-  for (const name of ['Myphoner', 'Deepgram', 'Luca Regnskap', 'Fireflies.ai', 'Brevo', 'Resend', 'Stripe', 'Hostinger']) {
+  for (const name of ['Myphoner', 'Deepgram', 'Luca Regnskap', 'Fireflies.ai', 'Brevo', 'Resend', 'Stripe', 'Hostinger', 'GitHub', 'PayPal']) {
     assert.ok(privacy.includes(`${name} (`), name);
   }
+});
+
+test('every processor in the register that gets personal data is named in the privacy policy, whatever its scope', () => {
+  const privacy = render.documentPlainText(render.renderDocument('personvern', { retentionText: null }));
+  const seen = new Set();
+  for (const scope of ['asoldi', 'client']) {
+    for (const entry of subprocessors.subprocessorList({ scope })) {
+      if (!entry.personalData || entry.id === 'thirdPartyContent' || seen.has(entry.id)) continue;
+      seen.add(entry.id);
+      assert.ok(privacy.includes(`${entry.name} (`), `${entry.name} (${scope}) in the privacy policy`);
+    }
+  }
+  assert.ok(seen.size >= 10);
+  // Negative control: a client-only processor with personal data added to the register shows up too.
+  const register = JSON.parse(JSON.stringify(subprocessors.HOSTS_REGISTER));
+  register.processors.extra = { name: 'Ekstra Lagring', entity: 'Ekstra Lagring AS', region: 'EØS', role: 'lagrer filer for kunder', scopes: ['client'] };
+  register.hosts['files.extra-lagring.example'] = { processor: 'extra', purpose: 'filer', dataCategories: ['filer'], region: 'EØS' };
+  const withExtra = render.documentPlainText(render.renderDocument('personvern', { retentionText: null, register }));
+  assert.ok(withExtra.includes('Ekstra Lagring ('));
 });
 
 test('retention text comes from the personal-data registry when it answers, else from the settings', () => {
