@@ -49,6 +49,7 @@ import {
   withoutKeys,
 } from './normalize-ext.js';
 import { normalizeRunAiSpend } from '../lib/ai-spend.js';
+import { makerRunStep2SubstepOrder, step2SubstepKeys, withStoredStep2SubstepOrder } from '../lib/step2-substeps.js';
 import { normalizeSitePlan, withPlanHistory } from '../lib/site-plan-model.js';
 import {
   deliveryEmailStampPatch,
@@ -309,14 +310,12 @@ function normalizeMakerRunSteps(value = {}) {
   }, input, FUTURE_MAKERRUN_STEP_KEYS);
 }
 
-function normalizeMakerStep2Substeps(value = {}) {
+// The four legacy substep keys always; with an order (sent by the Maker or stored in ext), its other ids too.
+export function normalizeMakerStep2Substeps(value = {}, order = null) {
   const input = value && typeof value === 'object' ? value : {};
-  return {
-    'generate-text': sanitizeText(input['generate-text']) || 'idle',
-    'inject-media': sanitizeText(input['inject-media']) || 'idle',
-    'layout-colors-style': sanitizeText(input['layout-colors-style']) || 'idle',
-    'maps-embed-sync': sanitizeText(input['maps-embed-sync']) || 'idle',
-  };
+  const out = {};
+  for (const key of step2SubstepKeys(order)) out[key] = sanitizeText(input[key]) || 'idle';
+  return out;
 }
 
 function normalizeMakerRun(value = {}) {
@@ -344,10 +343,10 @@ function normalizeMakerRun(value = {}) {
   const aiSpend = input.aiSpend ? normalizeRunAiSpend(input.aiSpend, { runId }) : null;
   if (aiSpend && runId && aiSpend.runId === runId) base.aiSpend = aiSpend;
   if (!runId) return withOwnedMakerRunKeys(carryFutureKeys(base, input, FUTURE_MAKERRUN_KEYS), input);
-  return withOwnedMakerRunKeys(carryFutureKeys({
+  return withOwnedMakerRunKeys(withStoredStep2SubstepOrder(carryFutureKeys({
     ...base,
     steps: normalizeMakerRunSteps(input.steps),
-    step2Substeps: normalizeMakerStep2Substeps(input.step2Substeps),
+    step2Substeps: normalizeMakerStep2Substeps(input.step2Substeps, makerRunStep2SubstepOrder(input)),
     language: {
       confirmed: Boolean(input.language?.confirmed),
       code: sanitizeText(input.language?.code),
@@ -359,7 +358,7 @@ function normalizeMakerRun(value = {}) {
     },
     productionDomain: sanitizeText(input.productionDomain),
     websiteDomain: sanitizeText(input.websiteDomain),
-  }, input, FUTURE_MAKERRUN_KEYS), input);
+  }, input, FUTURE_MAKERRUN_KEYS), input), input);
 }
 
 // Maker events owns materials and autopilot; previewPush has its shape here for preview and go-live.
