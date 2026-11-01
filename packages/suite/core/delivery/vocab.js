@@ -495,6 +495,13 @@ export const SETTINGS_KEYS = Object.freeze({
   // v2
   makerEvents: 'development.makerEvents',
   deliveryBackfill: 'migrations.deliveryBackfill',
+  // privacy
+  privacyArchive: 'privacy.archive.enabled',
+  privacyPurge: 'privacy.purge.enabled',
+  privacyPurgeMode: 'privacy.purge.mode',
+  mediaSignedUrls: 'media.signedUrls.enabled',
+  mediaRightsConfirm: 'media.rightsConfirm.enabled',
+  // end privacy
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);

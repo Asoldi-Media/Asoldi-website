@@ -204,7 +204,7 @@ Settings keys (`SETTINGS_KEYS`, dotted paths in the file):
 | Emails | `emails.<kind>.enabled`, `emails.<kind>.mode`, `emails.<kind>.paused`, `emails.preWorkshop.lines` (`legacy` or `gate`), `emails.postWorkshop.delayMinutes`, `emails.dataReminder.afterDays`, `emails.dataReminder.max`, `emails.nurture.cadenceDays` |
 | Senders | `sender.scheduling`, `sender.service.accountKey`, `sender.service.replyTo` (must be one of the read mailboxes) |
 | Inbox | `inbox.mailboxes` (only alexander@asoldi.com and damian@asoldi.com are allowed; default: alexander@ only, as today), `inbox.autoActions`, `inbox.autoReply`, `inbox.prefilter`, `inbox.internalDomains`, `inbox.internalSenders` |
-| Fireflies | `fireflies.candidateRanker.enabled`, `fireflies.candidateRanker.candidateMinScore`, `fireflies.autoLink.enabled`, `fireflies.autoLink.requireExactAttendeeEmail`, `fireflies.autoLink.slotWindowMinutes` |
+| Fireflies | `fireflies.candidateRanker.enabled` (default off; it ranks candidates and never links), `fireflies.candidateRanker.candidateMinScore`, `fireflies.autoLink.enabled`, `fireflies.autoLink.requireExactAttendeeEmail`, `fireflies.autoLink.slotWindowMinutes` |
 | Development | `development.autoQueue`, `development.directivesForAutoDev`, `development.defaultHostId`, `development.requireConfirmForCustom`, `development.previewJobs`, `development.seoJobs`, `development.makerEvents` (`off` or `record`; default `off`, see [Maker events](#maker-events)) |
 | Migrations | `migrations.deliveryBackfill` (`off`, `dry-run` or `apply`; default `off`, see [Backfill](#backfill)) |
 | Publish | `publish.staging.mode`, `publish.staging.tiers`, `publish.production.mode` |
@@ -214,6 +214,8 @@ Settings keys (`SETTINGS_KEYS`, dotted paths in the file):
 | Promotion | `promotion.auto` |
 | Guards | `guards.errorRatePct`, `guards.bounceRatePct`, `guards.complaintsMax`, `guards.volumeSpikeFactor`, `guards.windowHours`, `guards.minSample` |
 | Retention | `retention.leadMonths`, `retention.afterContractMonths`, `retention.briefOldVersionsDays`, `retention.changeRequestsMonths`, `retention.nurtureProofYears`, `retention.inboxSkipLogDays` |
+| Privacy | `privacy.archive.enabled` (transcript archive on link; default off), `privacy.purge.enabled` (daily retention step and the erase route; default off), `privacy.purge.mode` (`shadow` writes only a would-purge report, `auto` deletes; default `shadow`). See [privacy-processing-record.md](privacy-processing-record.md). |
+| Media | `media.signedUrls.enabled` (media manifest and signed downloads; default off), `media.rightsConfirm.enabled` (per-upload rights checkbox in the portal; default off) |
 | Storage | `storage.budgetFiles`, `storage.budgetMb` |
 | Alerts | `alerts.to`, `alerts.hostOfflineHours`, `alerts.jobBlockedHours`, `alerts.digestAt` |
 

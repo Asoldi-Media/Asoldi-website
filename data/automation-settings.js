@@ -88,7 +88,8 @@ export function defaultAutomationSettings() {
       internalSenders: ['ansatte@asoldi.com'],
     },
     fireflies: {
-      candidateRanker: { enabled: true, candidateMinScore: 40 },
+      // Ranked client candidates for recordings no booked Meet room owns. It never links.
+      candidateRanker: { enabled: false, candidateMinScore: 40 },
       autoLink: { enabled: false, requireExactAttendeeEmail: true, slotWindowMinutes: 30 },
     },
     development: {
@@ -120,6 +121,20 @@ export function defaultAutomationSettings() {
       nurtureProofYears: 3,
       inboxSkipLogDays: 30,
     },
+    // privacy
+    // privacy.archive: a copy of each linked transcript under transcript-archive/ (off: nothing written).
+    // privacy.purge: the daily retention step and the erase route; shadow only reports what would go.
+    // media.signedUrls: the media manifest and its signed download route.
+    // media.rightsConfirm: the per-upload rights checkbox in the client portal.
+    privacy: {
+      archive: { enabled: false },
+      purge: { enabled: false, mode: 'shadow' },
+    },
+    media: {
+      signedUrls: { enabled: false },
+      rightsConfirm: { enabled: false },
+    },
+    // end privacy
     storage: { budgetFiles: 20000, budgetMb: 2048 },
     alerts: { to: 'ansatte@asoldi.com', hostOfflineHours: 2, jobBlockedHours: 24, digestAt: '08:00' },
     // Written only by recordReleasePass (the pre-release suite), never by PUT.
@@ -235,6 +250,9 @@ const ENUMS = {
   'changeRequests.countAt': ['accepted'],
   'development.makerEvents': [...MAKER_EVENT_MODES],
   'migrations.deliveryBackfill': [...BACKFILL_MODES],
+  // privacy
+  'privacy.purge.mode': ['shadow', 'auto'],
+  // end privacy
 };
 
 const RANGES = {
@@ -276,6 +294,12 @@ const BOOLEANS = new Set([
   'development.previewJobs',
   'development.seoJobs',
   'promotion.auto',
+  // privacy
+  'privacy.archive.enabled',
+  'privacy.purge.enabled',
+  'media.signedUrls.enabled',
+  'media.rightsConfirm.enabled',
+  // end privacy
 ]);
 
 function knownPaths() {
