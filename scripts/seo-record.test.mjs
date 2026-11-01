@@ -192,6 +192,45 @@ test('a short listed substance matches only at the start of a word; long ones al
   }
 });
 
+test('a phrase whose substance is listed after it was stored never locks the list: it can be kept, removed or blocked', async () => {
+  const id = 'sc-record-listed-later';
+  const regulated = (error) => error.code === 'regulated' && error.status === 400;
+  const at = '2026-10-01T10:00:00.000Z';
+  // Written straight to the file, as rows stored before their substance was listed would be.
+  const { createSeoOpsStore } = await import('../lib/seo-ops/store.js');
+  await createSeoOpsStore().updateClient(id, (draft) => {
+    draft.agreedKeywords = [
+      { phrase: 'melatonin for barn', status: 'approved', source: 'developer', at, by: 'dev-a' },
+      { phrase: 'helsekost eksempelby', status: 'approved', source: 'developer', at, by: 'dev-a' },
+      { phrase: 'cialis eksempelby', status: 'proposed', source: 'plan', at, by: 'dev-a' },
+    ];
+  });
+  const rows = () => record.readSeoRecord(id).agreedKeywords;
+  const pairs = () => rows().map((row) => [row.phrase, row.status]);
+  assert.equal(agreedKeywordsContractText(record.readSeoRecord(id)), 'Avtalte søkeord: helsekost eksempelby', 'the contract line already leaves it out');
+
+  // A PUT that keeps every stored row and adds an ordinary one passes; the stored rows are unchanged.
+  await record.updateClientSeo(id, { agreedKeywords: [...rows(), { phrase: 'urtete eksempelby', status: 'proposed' }] }, { by: 'dev-b' });
+  assert.deepEqual(pairs(), [['melatonin for barn', 'approved'], ['helsekost eksempelby', 'approved'], ['cialis eksempelby', 'proposed'], ['urtete eksempelby', 'proposed']]);
+  assert.equal(rows()[0].by, 'dev-a', 'a kept row keeps its author');
+
+  // Still refused: a new proposal, a new approval, and a stored proposal turned into an approval.
+  await assert.rejects(record.updateClientSeo(id, { agreedKeywords: [...rows(), { phrase: 'kjøp melatonin', status: 'proposed' }] }, { by: 'dev-b' }), regulated);
+  await assert.rejects(record.approveAgreedKeyword(id, 'cialis eksempelby', { by: 'dev-b' }), regulated);
+  await assert.rejects(record.updateClientSeo(id, { agreedKeywords: rows().map((row) => (row.phrase === 'cialis eksempelby' ? { ...row, status: 'approved' } : row)) }, { by: 'dev-b' }), regulated);
+  assert.equal(pairs().length, 4, 'a refused change writes nothing');
+
+  // The plan candidate can be blocked (the panel's block button), and so can a phrase never stored.
+  await record.blockAgreedKeyword(id, 'cialis eksempelby', { by: 'dev-b' });
+  await record.blockAgreedKeyword(id, 'viagra eksempelby', { by: 'dev-b' });
+  // An approved one can go back to proposed, be blocked, or be removed (the panel's remove is a PUT without it).
+  await record.updateClientSeo(id, { agreedKeywords: rows().map((row) => (row.phrase === 'melatonin for barn' ? { ...row, status: 'proposed' } : row)) }, { by: 'dev-b' });
+  assert.equal(rows().find((row) => row.phrase === 'melatonin for barn').status, 'proposed');
+  await record.blockAgreedKeyword(id, 'melatonin for barn', { by: 'dev-b' });
+  await record.updateClientSeo(id, { agreedKeywords: rows().filter((row) => row.phrase !== 'melatonin for barn') }, { by: 'dev-b' });
+  assert.deepEqual(pairs(), [['helsekost eksempelby', 'approved'], ['cialis eksempelby', 'blocked'], ['urtete eksempelby', 'proposed'], ['viagra eksempelby', 'blocked']]);
+});
+
 test('contract text, agreedKeywordsFor and freezeAgreedKeywords', async () => {
   const id = 'sc-record-2';
   const stored = record.readSeoRecord(id);
