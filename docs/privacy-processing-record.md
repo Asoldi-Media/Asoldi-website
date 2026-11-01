@@ -34,33 +34,43 @@ Every part below that writes new data or deletes data is behind a switch in `aut
 | Media manifest (`media-manifest/<client>.json`) | File names, checksums, rights answers | Handing client media to the build | Contract | Follows the client card; links last 24 hours | Hostinger |
 | Media rights (`media-rights.json`, client `ext.mediaRights`) | Which uploads the client confirmed, and when | Using client images | Contract | Follows the client card | Hostinger |
 | Portal uploads (`client-uploads/<user>/`) | Images, logos, documents | Client material | Contract | Follows the client card | Hostinger, Google |
+| Call recordings (`myphoner-recordings/`, `myphoner-audio/`, the recording cache in `myphoner-integration.json`) | Recorded sales calls, the called number, call times | Sales follow-up and the meeting preview | Legitimate interest | Follows the client card | Hostinger, Myphoner |
+| Imported site copy (`sales-site-imports/<client>/`) | A copy of the client's existing website | Building the preview | Legitimate interest (leads); contract (clients) | Follows the client card | Hostinger |
+| Developer handoff (`dev-handoffs/<client>.zip`) | The client's material packed for a developer | Building the website | Contract | Follows the client card | Hostinger |
+| Booked meeting (Google Calendar event on the client card) | The client as guest of the sales meeting | Booking the meeting | Legitimate interest | Follows the client card | Google |
+| Library files tagged `client:<id>` (`media/`, `media-library.json`) | Client images placed in the asoldi.com media library | Showing the client's work on asoldi.com | Legitimate interest; contract | Until removed in the media library | Hostinger |
 | Client portal account | Account e-mail, business details, Kundedata, payment status | The portal and payments | Contract; bookkeeping law | While the account exists; the client deletes or deactivates it | Hostinger, Stripe |
 | Hub site (`sites.json`) | Site contact e-mail, domain | Running the client site | Contract | While the contract runs | Hostinger |
 | Workshop needs, developer requests, SEO client data | What the client asked for, messages, agreed keywords | Building the website | Contract | Follows the client card | Hostinger, DataForSEO |
 | Delivery audit, Maker access log, recording link audit, migration reports | Ids only | Tracing changes and access | Legitimate interest | 24, 12 and 24 months (monthly files); the ten newest reports | Hostinger |
 | E-mail log (`email-log/`) | Hashed and masked recipient, kind, status | Proof of sending; bounce handling | Legitimate interest; consent proof | 400 days after the month ends | Brevo, Resend |
-| Snapshots and automatic backups | Copies of the stores above | Restoring after a failed update or write | Legitimate interest (data safety) | The newest copies; an erase removes the client from them | Hostinger |
+| Snapshots and automatic backups | Copies of the stores above | Restoring after a failed update or write | Legitimate interest (data safety) | The newest copies; an erase removes the client from the copies of what it erases (see below) | Hostinger |
 
 AI processing: client data reaches Anthropic and Google only through the hub's LLM layer, and DeepSeek only for the data classes its policy allows (no transcripts).
 
 ## Data-subject requests
 
-- **Export.** `GET /api/admin/sales/:id/personal-data-export` (Superadmin) returns one JSON file with every registered store's records and files for the client.
-- **Erase.** `POST /api/admin/sales/:id/erase` (Superadmin) answers 403 while `privacy.purge.enabled` is off. It is a dry run unless the body says `dryRun: false`; the dry run lists, per store, what would be deleted, redacted, held or retained. A client with a running contract is erased only with `allowActiveContract: true`. The erase:
-  - deletes the client card, unsigned offers, recordings, the transcript archive, briefs, the media manifest, uploads, attachments, workshop needs, developer requests and SEO client data;
-  - removes the client from snapshots and automatic backups;
+- **Export.** `GET /api/admin/sales/:id/personal-data-export` (Superadmin) returns one JSON file with every registered store's records and files for the client. Each file is listed with its size and a sha256; files over 32 MB (meeting video, call audio) are listed with an empty sha256 and are not read, so an export never loads large media into memory.
+- **Erase.** `POST /api/admin/sales/:id/erase` (Superadmin) answers 403 while `privacy.purge.enabled` is off. It is a dry run unless the body says `dryRun: false`; the dry run lists, per store, what would be deleted, redacted, held or retained. A client with a running contract is erased only with `allowActiveContract: true` (409 otherwise). An id with no client card is erased only with `allowMissingClient: true` (404 `{code:'client-not-found'}` otherwise): without the card the stores cannot see what the client had, and every sent offer is then held as a possible signed contract. The erase:
+  - deletes the client card, unsigned offers, recordings, the transcript archive, briefs, the media manifest, uploads, attachments, the imported site copy, the developer handoff, call recordings and their cache entries (a recording another card also points at is held), workshop needs, developer requests and SEO client data, and removes the booked meeting from Google Calendar (in safe mode, or when that fails, the event is reported as retained);
+  - takes the client out of the snapshot copies and automatic backups of the stores it deletes from or redacts: client cards, offers, portal offers, Fireflies meetings, inbox items, workshop needs, developer requests, media rights and the call recording cache; the SEO client file's own backups are deleted. A copy that does not parse is not rewritten: it is listed under `kept` and rotates out with the other copies;
   - blanks the client's e-mail items (sender, subject, text) and keeps their ids;
-  - keeps signed contracts, the sent offer of a signed client, accepted portal offers and the client portal account (bookkeeping law and the client's own account);
+  - keeps signed contracts, the sent offer of a signed client, accepted portal offers, the client portal account and the hub site (bookkeeping law, the client's own account, the running site), in the stores and in their copies;
+  - holds library files tagged `client:<id>` and lists them, so they are removed in the media library once it is checked where asoldi.com uses them;
   - keeps ids-only logs, which are dropped by month;
   - records the erase in the delivery audit with ids only.
 
 ## Retention purge
 
-`lib/delivery-retention.js` exports the delivery loop step `retention-purge` (daily). It asks every store with a purge rule for its expired items, using `retention.*`: in `shadow` mode it writes only a report under `privacy/purge-reports/` (ids and paths), in `auto` mode it deletes the items and reports what went. The transcript archive's date is recomputed from the client as it is when the purge runs (signing, a decline or the contract end move it). Nothing is purged while the sales store reads as empty. `GET /api/admin/system/retention-purge` shows the last run; `POST /api/admin/system/retention-purge/run` runs it once (403 while the switch is off).
+`lib/delivery-retention.js` exports the delivery loop step `retention-purge` (daily). It asks every store with a purge rule for its expired items, using `retention.*`: in `shadow` mode it writes only a report under `privacy/purge-reports/` (ids and paths), in `auto` mode it deletes the items and reports what went. Every run, shadow or auto, also writes `privacy/retention-state.json` (the time of the last run, the mode and the report name; no client data), which keeps the step to once a day. The transcript archive's date is recomputed from the client as it is when the purge runs (signing, a decline or the contract end move it). A lead's last activity comes from stamps only real activity sets (creation, meetings, recordings, calls, a sent contract, a decline, nurture mail), never from the card's last change, so automatic passes do not push the date forward. Nothing is purged while the sales store reads as empty. `GET /api/admin/system/retention-purge` shows the last run; `POST /api/admin/system/retention-purge/run` runs it once (403 while the switch is off).
 
 ## Transcript archive
 
-With `privacy.archive.enabled` on, every link of a recording with talk (webhook, pull, paste, admin link, backfill) writes `transcript-archive/<client>/<sha256>.json`, once per transcript text; a newer copy of the same meeting replaces the older one, and an unlink or a move deletes it from the client it left. `node scripts/backfill-transcript-archive.mjs` lists the recordings on cards that have no archived copy (a dry run); `--apply` writes them.
+With `privacy.archive.enabled` on, every link of a recording with talk (webhook, pull, paste, admin link, backfill) writes `transcript-archive/<client>/<sha256>.json`, once per transcript text; a newer copy of the same meeting replaces the older one, and an unlink or a move deletes it from the client it left. Nothing is archived for a client whose retention date has passed, so the sync never writes back what the purge removed. `node scripts/backfill-transcript-archive.mjs` lists the recordings on cards that have no archived copy (a dry run); `--apply` writes them.
+
+## Client media
+
+With `media.signedUrls.enabled` on, the media manifest lists the client's files: Kundedata media, logos and product images, e-mail attachments and library files tagged `client:<id>`. A Kundedata link to a portal upload is listed only when the uploader is one of the client's own portal users (the linked user, the profile's owner or an active member of the client's business). With `media.rightsConfirm.enabled` on, the portal stores the rights answer for the uploader's own files that exist, in one write per request (at most 50 files, at most 1000 answers per client); answers for files that are gone are dropped on the next write.
 
 ## Recording candidates
 
