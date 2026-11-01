@@ -39,6 +39,126 @@
       "htmlSha256": "1433eb6d242a4d9803e5f54f89dc06bd6b8e5a1276357d367ca0cabcb9474209",
       "articleSha256": "13bae6e33f362994312cb726edb83707c1534e40173ba6b642ebb7388548a1a5",
       "pdfSha256": "c48f1784a38b26d17f9c1af473b4787a0c6197b2a3e35f61e00db49c0aa809d9"
+    },
+    "tier1Draft": {
+      "htmlSha256": "d0f8488294702199fa18cb760a61f94999c299905cb4cb5adf3c1ed78d1ca95d",
+      "articleSha256": "4323ba8c71f40a9ad0f488eadb47ef2c571ba73d2ae41bc98bcd429fdca3a59e",
+      "pdfSha256": "946fb48d2e060a1aa52303f1eed0e76ea57ea23937d549a268800ad9a8400e1a"
+    },
+    "tier1ReviewRequested": {
+      "htmlSha256": "d0f8488294702199fa18cb760a61f94999c299905cb4cb5adf3c1ed78d1ca95d",
+      "articleSha256": "4323ba8c71f40a9ad0f488eadb47ef2c571ba73d2ae41bc98bcd429fdca3a59e",
+      "pdfSha256": "946fb48d2e060a1aa52303f1eed0e76ea57ea23937d549a268800ad9a8400e1a"
+    },
+    "tier1Verified": {
+      "htmlSha256": "d0f8488294702199fa18cb760a61f94999c299905cb4cb5adf3c1ed78d1ca95d",
+      "articleSha256": "4323ba8c71f40a9ad0f488eadb47ef2c571ba73d2ae41bc98bcd429fdca3a59e",
+      "pdfSha256": "946fb48d2e060a1aa52303f1eed0e76ea57ea23937d549a268800ad9a8400e1a"
+    },
+    "tier2Draft": {
+      "htmlSha256": "429b3fa2850c71cce651caf70b9eb1ce1a6f60bd5e65561bbb80a7c84e85139e",
+      "articleSha256": "091520ccbe46166bc6946a630c40be871f24199f938973f11c5f819112b51c3e",
+      "pdfSha256": "5d9ec49f224ab4f55f97122597861a39ed9268ed67a62c14aa4a9942a4340003"
+    },
+    "tier2ReviewRequested": {
+      "htmlSha256": "429b3fa2850c71cce651caf70b9eb1ce1a6f60bd5e65561bbb80a7c84e85139e",
+      "articleSha256": "091520ccbe46166bc6946a630c40be871f24199f938973f11c5f819112b51c3e",
+      "pdfSha256": "5d9ec49f224ab4f55f97122597861a39ed9268ed67a62c14aa4a9942a4340003"
+    },
+    "tier2Verified": {
+      "htmlSha256": "429b3fa2850c71cce651caf70b9eb1ce1a6f60bd5e65561bbb80a7c84e85139e",
+      "articleSha256": "091520ccbe46166bc6946a630c40be871f24199f938973f11c5f819112b51c3e",
+      "pdfSha256": "5d9ec49f224ab4f55f97122597861a39ed9268ed67a62c14aa4a9942a4340003"
+    },
+    "tier3Draft": {
+      "htmlSha256": "4c282be59e0710d7c48ab561d09a81bf1d34bbf6de8b7aa0b6b1b17bda3142e4",
+      "articleSha256": "466f76f696c5228cf7af7f5e675b478119260f9add807dfb0141a7de185bc718",
+      "pdfSha256": "fdcddadba6d0175b21d0ffacdfc677c633dd4c667c9e501ff626f29204405ad1"
+    },
+    "tier3ReviewRequested": {
+      "htmlSha256": "4c282be59e0710d7c48ab561d09a81bf1d34bbf6de8b7aa0b6b1b17bda3142e4",
+      "articleSha256": "466f76f696c5228cf7af7f5e675b478119260f9add807dfb0141a7de185bc718",
+      "pdfSha256": "fdcddadba6d0175b21d0ffacdfc677c633dd4c667c9e501ff626f29204405ad1"
+    },
+    "tier3Verified": {
+      "htmlSha256": "4c282be59e0710d7c48ab561d09a81bf1d34bbf6de8b7aa0b6b1b17bda3142e4",
+      "articleSha256": "466f76f696c5228cf7af7f5e675b478119260f9add807dfb0141a7de185bc718",
+      "pdfSha256": "fdcddadba6d0175b21d0ffacdfc677c633dd4c667c9e501ff626f29204405ad1"
+    },
+    "tier2EnDraft": {
+      "htmlSha256": "855259e1f8ee72adc1035edf29c78e5f19c06d62a60af4bcef71186053d25a1f",
+      "articleSha256": "26bb78e49e053c996ada69ff20132496404e2b8bee29110892c6e19dd6a798d4",
+      "pdfSha256": "77d9104d681d9eba2da40f4964efe0fdd899f35dd8e10dc7b26b5506817990b2"
+    },
+    "tier2EnReviewRequested": {
+      "htmlSha256": "855259e1f8ee72adc1035edf29c78e5f19c06d62a60af4bcef71186053d25a1f",
+      "articleSha256": "26bb78e49e053c996ada69ff20132496404e2b8bee29110892c6e19dd6a798d4",
+      "pdfSha256": "77d9104d681d9eba2da40f4964efe0fdd899f35dd8e10dc7b26b5506817990b2"
+    },
+    "tier2EnVerified": {
+      "htmlSha256": "855259e1f8ee72adc1035edf29c78e5f19c06d62a60af4bcef71186053d25a1f",
+      "articleSha256": "26bb78e49e053c996ada69ff20132496404e2b8bee29110892c6e19dd6a798d4",
+      "pdfSha256": "77d9104d681d9eba2da40f4964efe0fdd899f35dd8e10dc7b26b5506817990b2"
+    },
+    "tier1FeesDraft": {
+      "htmlSha256": "abc24cd9cb5657b97b94df64bd11e5414cb1ee8014b039d90bc7381402119ce2",
+      "articleSha256": "12d591afca5670821146aca46b994b8e7f2f6afafa2be82310a5831fde7516d9",
+      "pdfSha256": "703ecd616f78c163c0f675e2a57b01126b616b797b4f552f0dc47d6596c93f65"
+    },
+    "tier1FeesReviewRequested": {
+      "htmlSha256": "abc24cd9cb5657b97b94df64bd11e5414cb1ee8014b039d90bc7381402119ce2",
+      "articleSha256": "12d591afca5670821146aca46b994b8e7f2f6afafa2be82310a5831fde7516d9",
+      "pdfSha256": "703ecd616f78c163c0f675e2a57b01126b616b797b4f552f0dc47d6596c93f65"
+    },
+    "tier1FeesVerified": {
+      "htmlSha256": "abc24cd9cb5657b97b94df64bd11e5414cb1ee8014b039d90bc7381402119ce2",
+      "articleSha256": "12d591afca5670821146aca46b994b8e7f2f6afafa2be82310a5831fde7516d9",
+      "pdfSha256": "703ecd616f78c163c0f675e2a57b01126b616b797b4f552f0dc47d6596c93f65"
+    },
+    "tier2MvaDraft": {
+      "htmlSha256": "62987a9a96295c3d012390dc813feb54063ee92506321cce71d9e0e28dec8343",
+      "articleSha256": "2249d56fbb473c10afffb301faaaa74e2dcaef0002dbc36f12bb99bb2ff5591f",
+      "pdfSha256": "c0b56438ee4899c2dd8a9e4409eb6aa076ee2dd42b2486cb0c782d75ca52f2b6"
+    },
+    "tier2MvaReviewRequested": {
+      "htmlSha256": "62987a9a96295c3d012390dc813feb54063ee92506321cce71d9e0e28dec8343",
+      "articleSha256": "2249d56fbb473c10afffb301faaaa74e2dcaef0002dbc36f12bb99bb2ff5591f",
+      "pdfSha256": "c0b56438ee4899c2dd8a9e4409eb6aa076ee2dd42b2486cb0c782d75ca52f2b6"
+    },
+    "tier2MvaVerified": {
+      "htmlSha256": "62987a9a96295c3d012390dc813feb54063ee92506321cce71d9e0e28dec8343",
+      "articleSha256": "2249d56fbb473c10afffb301faaaa74e2dcaef0002dbc36f12bb99bb2ff5591f",
+      "pdfSha256": "c0b56438ee4899c2dd8a9e4409eb6aa076ee2dd42b2486cb0c782d75ca52f2b6"
+    },
+    "customDraft": {
+      "htmlSha256": "0bc43575946b7a94029e215c81c1db8a05fa1c9c75e2624551b044f7907d52da",
+      "articleSha256": "96b31361ab94c2a0f1d39a800cc50e3cd29c03298929f8766c33dfd38fd4ee95",
+      "pdfSha256": "87aa12b770e94c8a81d5b20c08acb041ad341da85474e23570b805a136a33ce2"
+    },
+    "customReviewRequested": {
+      "htmlSha256": "0bc43575946b7a94029e215c81c1db8a05fa1c9c75e2624551b044f7907d52da",
+      "articleSha256": "96b31361ab94c2a0f1d39a800cc50e3cd29c03298929f8766c33dfd38fd4ee95",
+      "pdfSha256": "87aa12b770e94c8a81d5b20c08acb041ad341da85474e23570b805a136a33ce2"
+    },
+    "customVerified": {
+      "htmlSha256": "0bc43575946b7a94029e215c81c1db8a05fa1c9c75e2624551b044f7907d52da",
+      "articleSha256": "96b31361ab94c2a0f1d39a800cc50e3cd29c03298929f8766c33dfd38fd4ee95",
+      "pdfSha256": "87aa12b770e94c8a81d5b20c08acb041ad341da85474e23570b805a136a33ce2"
+    },
+    "dualDraft": {
+      "htmlSha256": "1433eb6d242a4d9803e5f54f89dc06bd6b8e5a1276357d367ca0cabcb9474209",
+      "articleSha256": "13bae6e33f362994312cb726edb83707c1534e40173ba6b642ebb7388548a1a5",
+      "pdfSha256": "c48f1784a38b26d17f9c1af473b4787a0c6197b2a3e35f61e00db49c0aa809d9"
+    },
+    "dualReviewRequested": {
+      "htmlSha256": "1433eb6d242a4d9803e5f54f89dc06bd6b8e5a1276357d367ca0cabcb9474209",
+      "articleSha256": "13bae6e33f362994312cb726edb83707c1534e40173ba6b642ebb7388548a1a5",
+      "pdfSha256": "c48f1784a38b26d17f9c1af473b4787a0c6197b2a3e35f61e00db49c0aa809d9"
+    },
+    "dualVerified": {
+      "htmlSha256": "1433eb6d242a4d9803e5f54f89dc06bd6b8e5a1276357d367ca0cabcb9474209",
+      "articleSha256": "13bae6e33f362994312cb726edb83707c1534e40173ba6b642ebb7388548a1a5",
+      "pdfSha256": "c48f1784a38b26d17f9c1af473b4787a0c6197b2a3e35f61e00db49c0aa809d9"
     }
   },
   "copy": {
@@ -1304,6 +1424,66 @@
       "alternativeIndex": 0,
       "priceExMva": 2500,
       "offerHash": "f58fda44191db5cc00f37f81fa5c9f88f7d75e4f",
+      "dpaVersion": ""
+    },
+    "tier1RepLinesDraft": {
+      "ok": true,
+      "plan": {
+        "tierId": "tier-1-standard",
+        "services": [
+          "site",
+          "changes",
+          "blog"
+        ],
+        "pages": 5,
+        "oneTimeAddOns": [],
+        "billing": "month",
+        "catalogType": null,
+        "derived": true,
+        "needsConfirmation": true,
+        "unknownLines": [
+          "Grunnleggende SEO og sitemap",
+          "Kontaktskjema og juridiske sider",
+          "Opptil 4 endringer/mnd"
+        ]
+      },
+      "stale": false,
+      "offerId": "offer-plan-tier1-draft",
+      "alternativeIndex": 0,
+      "priceExMva": 499,
+      "offerHash": "e69a2cfde8153d7637a59c966f5c6f517d3bd876",
+      "dpaVersion": ""
+    },
+    "tier2RepLinesVerified": {
+      "ok": true,
+      "plan": {
+        "tierId": "tier-2-seo",
+        "services": [
+          "site",
+          "changes",
+          "seo",
+          "social",
+          "email",
+          "blog",
+          "backlinks"
+        ],
+        "pages": 7,
+        "oneTimeAddOns": [],
+        "billing": "month",
+        "catalogType": null,
+        "derived": true,
+        "needsConfirmation": true,
+        "unknownLines": [
+          "Blogg der du publiserer egne innlegg",
+          "Asoldi-nettverk for relevante lenker",
+          "Anmeldelser og lenker til sosiale medier"
+        ]
+      },
+      "stale": false,
+      "offerId": "offer-plan-tier2-verified",
+      "alternativeIndex": 0,
+      "priceExMva": 1499,
+      "offerHash": "9457a6fc09b8dbde819c2ac3787b33bd650cd01c",
       "dpaVersion": ""
     }
   }

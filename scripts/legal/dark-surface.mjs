@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
  * The client-facing texts the legal catalog switch may change, computed from synthetic offers:
- * contract articles, HTML and PDF bytes (Norwegian and English, tier, custom, dual and one-time
- * fees; as SHA-256 hashes, the PDF with time frozen by the caller), the contract copy, the public
+ * contract articles, HTML and PDF bytes (Norwegian and English, tier, custom, dual, one-time fees
+ * and prices with VAT, each as a sent offer and as an unsent one in every status before sending;
+ * as SHA-256 hashes, the PDF with time frozen by the caller), the contract copy, the public
  * pricing cards, the offer-letter product blocks, the offers built from a meeting quote and the
  * plans derived from offers whose rep-typed lines equal lines the catalog gives a tier.
  *
@@ -19,7 +20,10 @@ export const BASELINE_PATH = new URL('../fixtures/legal/dark-surface-baseline.js
 
 const SENT_AT = '2026-05-04T09:00:00.000Z';
 
-const CLIENT = Object.freeze({
+// The date printed on every fixture contract (a sent offer's sentAt; unsent offers have none).
+const CONTRACT_DATE = SENT_AT;
+
+export const FIXTURE_CLIENT = Object.freeze({
   id: 'legal-fixture-client',
   businessName: 'Eksempel Bakeri AS',
   orgNumber: '999999999',
@@ -27,6 +31,8 @@ const CLIENT = Object.freeze({
   contactEmail: 'kari@example.com',
   address: 'Eksempelveien 1, 0001 Oslo',
 });
+
+const CLIENT = FIXTURE_CLIENT;
 
 function tierOffer(tierId, extra = {}) {
   return {
@@ -41,7 +47,7 @@ function tierOffer(tierId, extra = {}) {
   };
 }
 
-export const FIXTURE_OFFERS = Object.freeze({
+const SENT_OFFERS = {
   tier1: tierOffer('tier-1-standard'),
   tier2: tierOffer('tier-2-seo'),
   tier3: tierOffer('tier-3-ecommerce'),
@@ -58,11 +64,27 @@ export const FIXTURE_OFFERS = Object.freeze({
       { tierId: 'tier-2-seo', products: [{ kind: 'tier', tierId: 'tier-2-seo', name: 'Nettside – SEO', priceExMva: 1499, deliveryWeeks: 2 }] },
     ],
   }),
-});
+};
+
+// The statuses before sending. The contract of an unsent offer is the one the client sees in the
+// preview, gets as the PDF attached at send, and signs, so the switch must not change it while off.
+const UNSENT_STATUSES = Object.freeze({ Draft: 'draft', ReviewRequested: 'review-requested', Verified: 'verified' });
+
+function unsentOffers() {
+  const out = {};
+  for (const [key, offer] of Object.entries(SENT_OFFERS)) {
+    for (const [suffix, status] of Object.entries(UNSENT_STATUSES)) {
+      out[`${key}${suffix}`] = { ...offer, id: `${offer.id}-${status}`, status, sentAt: '' };
+    }
+  }
+  return out;
+}
+
+export const FIXTURE_OFFERS = Object.freeze({ ...SENT_OFFERS, ...unsentOffers() });
 
 // Offers whose rep-typed lines equal offer-letter lines the legal catalog gives a tier. With the
 // switch off and no legal stamp, the plan derived from them must not change.
-export const FIXTURE_PLAN_OFFERS = Object.freeze({
+const PLAN_OFFERS = {
   tier1RepLines: {
     id: 'offer-plan-tier1',
     salesClientId: CLIENT.id,
@@ -84,6 +106,12 @@ export const FIXTURE_PLAN_OFFERS = Object.freeze({
     tierId: 'custom',
     products: [{ id: 'prod-plan-custom', kind: 'custom', name: 'Skreddersydd nettside', pages: 6, priceExMva: 2500, deliveryWeeks: 4, includes: ['Grunnleggende SEO og sitemap', 'Blogg der du publiserer egne innlegg'] }],
   },
+};
+
+export const FIXTURE_PLAN_OFFERS = Object.freeze({
+  ...PLAN_OFFERS,
+  tier1RepLinesDraft: { ...PLAN_OFFERS.tier1RepLines, id: 'offer-plan-tier1-draft', status: 'draft' },
+  tier2RepLinesVerified: { ...PLAN_OFFERS.tier2RepLines, id: 'offer-plan-tier2-verified', status: 'verified' },
 });
 
 export const FIXTURE_QUOTES = Object.freeze({
@@ -118,13 +146,13 @@ export async function darkSurface({ pdf = false } = {}) {
   const out = { contracts: {}, copy: {}, tiers: {}, quotes: {}, plans: {} };
   for (const [key, offer] of Object.entries(FIXTURE_OFFERS)) {
     const inputs = contractInputsForOffer(offer, CLIENT);
-    const article = contractArticleModel({ client: CLIENT, ...inputs, date: new Date(offer.sentAt) });
+    const article = contractArticleModel({ client: CLIENT, ...inputs, date: new Date(CONTRACT_DATE) });
     const entry = {
       htmlSha256: sha256(contractHtmlForOffer(offer, CLIENT)),
       articleSha256: sha256(JSON.stringify(plain({ ...article, copy: undefined }))),
     };
     if (pdf) {
-      const buffer = await buildContractPdf({ client: CLIENT, ...inputs, date: new Date(offer.sentAt) });
+      const buffer = await buildContractPdf({ client: CLIENT, ...inputs, date: new Date(CONTRACT_DATE) });
       entry.pdfSha256 = sha256(buffer);
     }
     out.contracts[key] = entry;
