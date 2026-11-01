@@ -251,6 +251,32 @@ test('who may read or change a record: own sales clients, visible and workable d
   assert.equal(seoRecordAccess({}, client), 'forbidden');
 });
 
+test('each seo switch takes paused (null or {reason}), and a paused switch is off', async () => {
+  const settings = await import('../data/automation-settings.js');
+  const { seoRecordPullEnabled } = await import('../lib/routes/seo-record-routes.js');
+  const { dfsLedgerEnabled } = await import('../lib/seo-ops/dfs-ledger.js');
+  const { seoJobGatingMode } = await import('../lib/seo-ops/job-gating.js');
+  assert.deepEqual(settings.defaultAutomationSettings().seo, {
+    jobGating: { enabled: false, mode: 'shadow', paused: null },
+    dfsLedger: { enabled: false, paused: null },
+    recordPull: { enabled: false, paused: null },
+  });
+  const on = settings.validateAutomationSettings({ seo: { jobGating: { enabled: true, mode: 'auto' }, dfsLedger: { enabled: true }, recordPull: { enabled: true } } }, { by: 'test' });
+  assert.equal(on.ok, true, JSON.stringify(on.errors));
+  assert.deepEqual([seoJobGatingMode({ settings: on.value }), dfsLedgerEnabled({ settings: on.value }), seoRecordPullEnabled(on.value)], ['auto', true, true]);
+  const reason = { reason: 'checking the gating diff' };
+  const paused = settings.validateAutomationSettings({ seo: { jobGating: { paused: reason }, dfsLedger: { paused: reason }, recordPull: { paused: reason } } }, { current: on.value, by: 'test' });
+  assert.equal(paused.ok, true, JSON.stringify(paused.errors));
+  assert.equal(paused.value.seo.jobGating.paused.reason, 'checking the gating diff');
+  assert.equal(paused.value.seo.jobGating.paused.by, 'test');
+  assert.deepEqual([seoJobGatingMode({ settings: paused.value }), dfsLedgerEnabled({ settings: paused.value }), seoRecordPullEnabled(paused.value)], ['off', false, false]);
+  const resumed = settings.validateAutomationSettings({ seo: { jobGating: { paused: null } } }, { current: paused.value, by: 'test' });
+  assert.equal(seoJobGatingMode({ settings: resumed.value }), 'auto');
+  const bad = settings.validateAutomationSettings({ seo: { recordPull: { paused: 'yes' } } }, { by: 'test' });
+  assert.equal(bad.ok, false);
+  assert.deepEqual(bad.errors.map((error) => error.path), ['seo.recordPull.paused']);
+});
+
 test('a push answers busy within seconds while another writer holds the client file', async () => {
   const id = 'sc-record-2';
   const lockPath = join(dataDir, 'seo-ops', 'clients', `${id}.json.lock`);

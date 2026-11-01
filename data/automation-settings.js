@@ -127,11 +127,11 @@ export function defaultAutomationSettings() {
     // still decide and every site where the feature-key gate would decide differently is logged; auto =
     // the feature-key gate decides. dfsLedger: DataForSEO spend is also booked into the monthly seo-ops
     // ledger, which alerts at a cap and never stops a call. recordPull: the Maker may read a client's
-    // SEO record.
+    // SEO record. A paused switch ({reason}) counts as off.
     seo: {
-      jobGating: { enabled: false, mode: 'shadow' },
-      dfsLedger: { enabled: false },
-      recordPull: { enabled: false },
+      jobGating: { enabled: false, mode: 'shadow', paused: null },
+      dfsLedger: { enabled: false, paused: null },
+      recordPull: { enabled: false, paused: null },
     },
     // Written only by recordReleasePass (the pre-release suite), never by PUT.
     releases: {},
@@ -400,6 +400,14 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
     else node.mode = mode;
     const paused = normalizePaused(node.paused, { by, now });
     if (paused === undefined) fail(`publish.${target}.paused`, 'Must be null or {reason}.');
+    else node.paused = paused;
+  }
+  // seo
+  for (const name of ['jobGating', 'dfsLedger', 'recordPull']) {
+    const node = value.seo?.[name];
+    if (!isPlainObject(node)) continue;
+    const paused = normalizePaused(node.paused, { by, now });
+    if (paused === undefined) fail(`seo.${name}.paused`, 'Must be null or {reason}.');
     else node.paused = paused;
   }
   const tiers = value.publish?.staging?.tiers;
