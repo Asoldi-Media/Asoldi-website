@@ -19617,14 +19617,15 @@ const DEVELOPMENT_RECONCILE_MS = 20_000;
 
 app.get('/api/admin/development', developmentAuth, async (req, res) => {
   const now = Date.now();
-  // Clients the delivery loop runs in auto get these writes from the loop; with the loop off
-  // both options are undefined and this runs exactly as before.
+  // Clients the delivery loop runs in auto get the phase reconcile and the open-client owner from
+  // the loop; with the loop off both options are undefined and this runs exactly as before. The
+  // one-time owner seed stays here for every client.
   const loopScope = developmentGetLoopScope(() => sales.getSalesClients());
   if (now - lastDeliveryReconcileAt >= DEVELOPMENT_RECONCILE_MS) {
     lastDeliveryReconcileAt = now;
     hub.reconcileDeliveryPhases(sales.getSalesClients(), loopScope.reconcile);
   }
-  sales.seedExistingDeveloperOwnersToAdmin(loopScope.owners);
+  sales.seedExistingDeveloperOwnersToAdmin();
   const caller = req.developmentUser || {};
   const developerOptions = await listDeveloperOwnerOptions(caller);
   const onlyAdmin = !developerOptions.some((row) => sanitizeText(row.accountKey).startsWith('developer:'));

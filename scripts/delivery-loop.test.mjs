@@ -224,19 +224,17 @@ test('loop health is written at most every 5 minutes and feeds hubLoopLastTickAt
 
 // ── leases and restarts ──────────────────────────────────────────────────────
 
-test('two loop processes on one data dir never tick at the same time', async () => {
+async function raceTwoProcesses({ ticks = 8, leaseMs = 0, stepMs = 120 } = {}) {
   const shared = mkdtempSync(join(tmpdir(), 'asoldi-delivery-race-'));
   temps.push(shared);
   writeFileSync(join(shared, 'automation-settings.json'), JSON.stringify({ version: 2, delivery: { loop: { enabled: true, mode: 'shadow', paused: null } } }));
   const run = promisify(execFile);
   const child = join(root, 'scripts', 'fixtures', 'delivery-loop-race-child.mjs');
   const env = { ...process.env, APP_DATA_DIR: shared, DATA_DIR: '', PERSIST_PRODUCTION_ENV: '0' };
-  const outputs = await Promise.all([run(process.execPath, [child, '8'], { env, cwd: root }), run(process.execPath, [child, '8'], { env, cwd: root })]);
+  const args = [child, String(ticks), String(leaseMs), String(stepMs)];
+  const outputs = await Promise.all([run(process.execPath, args, { env, cwd: root }), run(process.execPath, args, { env, cwd: root })]);
   const reports = outputs.map(({ stdout }) => JSON.parse(stdout.trim().split('\n').at(-1)));
-  const ran = reports.flatMap((report) => report.results).filter((value) => value === 'ran').length;
-  const skipped = reports.flatMap((report) => report.results).filter((value) => value === 'lease-held').length;
-  assert.ok(ran >= 2, `ticks ran: ${ran}`);
-  assert.ok(skipped >= 1, 'the processes did contend for the lease');
+  const results = reports.flatMap((report) => report.results);
   const edges = readFileSync(join(shared, 'race-log.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line)).sort((a, b) => a.at - b.at);
   let open = null;
   for (const edge of edges) {
@@ -248,7 +246,45 @@ test('two loop processes on one data dir never tick at the same time', async () 
       open = null;
     }
   }
-  assert.equal(edges.filter((edge) => edge.edge === 'start').length, ran);
+  return { results, starts: edges.filter((edge) => edge.edge === 'start').length };
+}
+
+test('two loop processes on one data dir never tick at the same time', async () => {
+  const { results, starts } = await raceTwoProcesses();
+  const ran = results.filter((value) => value === 'ran').length;
+  assert.ok(ran >= 2, `ticks ran: ${ran}`);
+  assert.ok(results.filter((value) => value === 'lease-held').length >= 1, 'the processes did contend for the lease');
+  assert.equal(starts, ran);
+});
+
+test('a step that runs longer than the lease keeps it: the other process still never ticks alongside', async () => {
+  // A 300 ms lease and a 1 s step: without renewal the lease would lapse three times per tick.
+  const { results, starts } = await raceTwoProcesses({ ticks: 3, leaseMs: 300, stepMs: 1000 });
+  const ran = results.filter((value) => value === 'ran').length;
+  assert.ok(ran >= 2, `ticks ran: ${JSON.stringify(results)}`);
+  assert.ok(results.filter((value) => value === 'lease-held').length >= 1, 'the processes did contend for the lease');
+  assert.equal(results.some((value) => value.startsWith('aborted')), false, 'no tick lost its lease');
+  assert.equal(starts, ran);
+});
+
+test('a tick whose lease cannot be renewed stops at the next client and stores nothing more', async () => {
+  resetData();
+  seed({ clients: clientsFixture(4) });
+  setSettings({ delivery: { loop: { enabled: true, mode: 'shadow' } } });
+  assert.equal(loopLib.markDirty('c001', { now: T0 }), true);
+  const seen = [];
+  const lostLease = { expiresAt: Date.now() + 60_000, renew: async () => false, release: async () => true };
+  const steps = [
+    { name: 'slow-client', order: 10, scope: 'client', run: async (_ctx, client) => { seen.push(client.id); await new Promise((r) => setTimeout(r, 120)); return { wrote: false }; } },
+    { name: 'after', order: 20, scope: 'global', run: async () => { seen.push('after'); return { wrote: false }; } },
+  ];
+  const loop = makeLoop({ steps, leaseMs: 150, acquireLease: async () => lostLease });
+  const result = await loop.tick({ now: T0 });
+  assert.equal(result.aborted, 'lease-lost');
+  assert.deepEqual(seen, ['c000'], 'it stopped after the client it was on');
+  assert.deepEqual(Object.keys(loopLib.readDirtyMarks({ fresh: true })), ['c001'], 'the dirty mark stays for the next tick');
+  assert.equal(existsSync(join(dataDir, 'delivery-hot', 'loop-state.json')), false, 'no step schedule or shadow memo was stored');
+  assert.ok(loop.health().lastErrors.some((row) => row.step === 'tick' && /lease/.test(row.error)));
 });
 
 test('a restart loses no work: dirty marks and step schedules survive, failed clients stay dirty', async () => {
@@ -374,9 +410,35 @@ test('server.js wires the loop into the background plan and the development GET'
   assert.match(source, /^ {4}delivery: \(\) => startDeliveryLoop\(\{ sales, hub, listDeveloperOwnerOptions: /m);
   assert.match(source, /const loopScope = developmentGetLoopScope\(\(\) => sales\.getSalesClients\(\)\);/);
   assert.match(source, /hub\.reconcileDeliveryPhases\(sales\.getSalesClients\(\), loopScope\.reconcile\);/);
-  assert.match(source, /sales\.seedExistingDeveloperOwnersToAdmin\(loopScope\.owners\);/);
+  assert.match(source, /^ {2}sales\.seedExistingDeveloperOwnersToAdmin\(\);$/m, 'the one-time owner seed in the GET is unscoped, as before');
   assert.match(source, /if \(onlyAdmin\) sales\.assignOpenDeveloperClientsToAdmin\(loopScope\.owners\);/);
   assert.match(source, /createMakerAuth\(\{ legacyHolder: MAKER_CALLBACK_TOKEN_HOLDER, dataDir: getPersistentDataDir\(\), onAlert: noteMakerAuthAlert \}\)/);
+});
+
+test('the one-time owner seed: the loop seeds its pilots first, the development GET still seeds everyone else', async () => {
+  for (const loopFirst of [true, false]) {
+    resetData();
+    seed({ clients: [
+      { id: 'p1', product: 'asoldi', businessName: 'Pilot AS', status: 'active', progression: signed, developerOwnerId: '' },
+      { id: 'o1', product: 'asoldi', businessName: 'Annen AS', status: 'active', progression: signed, developerOwnerId: '' },
+    ] });
+    setSettings({ pilotClientIds: ['p1'], delivery: { loop: { enabled: true, mode: 'auto' } } });
+    // Another developer exists, so only the one-time seed (not the only-admin rule) assigns owners.
+    const loop = makeLoop({ listDeveloperOwnerOptions: async () => [{ accountKey: 'admin' }, { accountKey: 'developer:dev1' }] });
+    const getSeed = () => sales.seedExistingDeveloperOwnersToAdmin(); // what the development GET calls
+    if (loopFirst) {
+      await loop.tick({ now: T0 });
+      assert.equal(sales.getSalesClientById('p1').developerOwnerId, 'admin', 'the loop seeded its pilot');
+      assert.equal(sales.getSalesClientById('o1').developerOwnerId, '', 'and wrote nothing for the other client');
+      assert.equal(existsSync(join(dataDir, 'developer-owner-seed.json')), false, 'a scoped seed does not mark the seed done');
+      assert.deepEqual(getSeed(), { seeded: true, assignedCount: 1 });
+    } else {
+      assert.deepEqual(getSeed(), { seeded: true, assignedCount: 2 });
+      await loop.tick({ now: T0 });
+    }
+    assert.deepEqual(sales.getSalesClients().map((client) => `${client.id}=${client.developerOwnerId}`).sort(), ['o1=admin', 'p1=admin'], loopFirst ? 'loop first' : 'GET first');
+    assert.deepEqual(getSeed(), { seeded: false, assignedCount: 0 }, 'once only');
+  }
 });
 
 test('reconcile and owner writers keep their old behaviour without options', () => {

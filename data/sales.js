@@ -786,8 +786,10 @@ function readDeveloperOwnerSeedMeta() {
   }
 }
 
-// `include(client)` limits the seed to some clients (the delivery loop and the development GET
-// split them by loop ownership); without it every client is seeded, as before.
+// Without options every client is seeded and the one-time seed is marked done, as before.
+// `include(client)` limits the seed to some clients (the delivery loop seeds its auto clients this
+// way); such a scoped seed never marks the one-time seed done, so the next unscoped call still
+// seeds every other client once.
 export function seedExistingDeveloperOwnersToAdmin({ include } = {}) {
   const meta = readDeveloperOwnerSeedMeta();
   if (!shouldSeedExistingDeveloperOwners(meta)) {
@@ -796,6 +798,7 @@ export function seedExistingDeveloperOwnersToAdmin({ include } = {}) {
   const list = readState();
   const applied = applyScopedOwnerSeed(list, include);
   if (applied.assignedCount) writeState(applied.clients);
+  if (typeof include === 'function') return { seeded: false, scoped: true, assignedCount: applied.assignedCount };
   writeDataJson(DEVELOPER_OWNER_SEED_PATH, {
     existingAssignedToAdminAt: applied.seededAt,
     assignedCount: applied.assignedCount,
