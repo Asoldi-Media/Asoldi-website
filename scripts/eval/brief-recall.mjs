@@ -13,6 +13,8 @@
 // from cassettes in <data-dir>/ai/cassettes/hub and no provider is called; `record` and the live
 // profiles call providers with the keys in this process's environment). The report (counts, ids and
 // match scores; no transcript text) is written to --report, which must be outside this repository.
+// --data-dir holds the chunk cache and the cassettes (transcript text and model answers), so it must be
+// outside this repository too; without it a fresh temporary folder is used.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, isAbsolute } from 'node:path';
@@ -44,11 +46,11 @@ export function parseArgs(argv) {
   return args;
 }
 
-/** Throws when `path` is inside this repository (reports may hold client data). */
-export function assertOutsideRepo(path, root = repoRoot) {
+/** Throws when `path` is inside this repository (reports, chunk caches and cassettes may hold client data). */
+export function assertOutsideRepo(path, root = repoRoot, what = 'The report') {
   const target = resolve(path);
   const rel = relative(root, target);
-  if (!rel || (!rel.startsWith('..') && !isAbsolute(rel))) throw new Error(`The report must be written outside the repository: ${target}`);
+  if (!rel || (!rel.startsWith('..') && !isAbsolute(rel))) throw new Error(`${what} must be outside the repository: ${target}`);
   return target;
 }
 
@@ -122,7 +124,7 @@ async function facadeFor(profile, dataDir, providers) {
 export async function runRecall(args, { llm = null, providers = null, log = console } = {}) {
   const reportPath = assertOutsideRepo(args.report);
   const inputDir = resolve(args.input);
-  const dataDir = args.dataDir ? resolve(args.dataDir) : mkdtempSync(join(tmpdir(), 'brief-recall-'));
+  const dataDir = assertOutsideRepo(args.dataDir || mkdtempSync(join(tmpdir(), 'brief-recall-')), repoRoot, 'The data dir (chunk cache and cassettes)');
   const model = llm || (await facadeFor(args.profile, dataDir, providers));
   const clients = readdirSync(inputDir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && existsSync(join(inputDir, entry.name, 'transcripts.json')))

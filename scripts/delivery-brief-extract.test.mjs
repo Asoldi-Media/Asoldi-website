@@ -3,7 +3,7 @@
 // extraction from cached chunks. Transcripts are synthetic.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -594,7 +594,7 @@ test('a failing provider: one failed call stops the run, each chunk backs off (1
 });
 
 test('a failure before any provider answers (safe mode, spend guard, switched-off facade) never becomes a gap: it backs off to once a day and recovers', async () => {
-  for (const code of ['safe_mode', 'budget_exceeded', 'facade_off']) {
+  for (const code of ['safe_mode', 'budget_exceeded', 'facade_off', 'route_config']) {
     const retry = { failures: {}, nowMs: Date.parse('2026-11-01T00:00:00.000Z'), ignoreBackoff: false };
     let calls = 0;
     let down = true;
@@ -759,6 +759,15 @@ test('recall script: records cassettes, replays them without a provider, scores 
     assert.deepEqual(replayed.clients[0].rows, row.rows);
 
     assert.throws(() => assertOutsideRepo(join(process.cwd(), 'scripts', 'report.json')), /outside the repository/);
+    // The chunk cache and cassettes hold transcript text: a data dir inside the repository is refused before anything runs.
+    const insideDataDir = join(process.cwd(), 'scripts', 'brief-recall-data');
+    const refused = stubProviders();
+    await assert.rejects(
+      runRecall(parseArgs(['--input', input, '--report', join(work, 'inside.json'), '--profile', 'record', '--data-dir', insideDataDir]), { providers: refused.providers, log: {} }),
+      /data dir .* must be outside the repository/,
+    );
+    assert.equal(refused.calls.claude, 0, 'nothing was asked');
+    assert.equal(existsSync(insideDataDir), false, 'nothing was written inside the repository');
     assert.throws(() => parseArgs(['--input', input]), /--report/);
     assert.equal(scoreClient([{ id: 'x', kind: 'client_need', statement: 'nothing', quote: '' }], []).needs.recall, 0);
   } finally {
