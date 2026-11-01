@@ -1,6 +1,9 @@
-// Every data file written through writeDataJson or writeHotJson is either a registered personal-data
-// store (lib/personal-data.js registerStore ... writers) or listed in NON_PERSONAL_WRITERS with a
-// reason. A new writer fails this test until it is registered or listed.
+// Every data file written through the hub's JSON write helpers (writeDataJson, writeHotJson,
+// updateJsonLocked, writeJsonAtomic, writeTextAtomic, createJsonOnce) is either a registered
+// personal-data store (lib/personal-data.js registerStore ... writers) or listed in NON_PERSONAL_WRITERS
+// with a reason. A new writer fails this test until it is registered or listed.
+// Not covered: plain fs writes (writeFileSync, appendFileSync, streams), such as append-only logs and
+// uploaded files; those stores are registered by hand (see docs/privacy-processing-record.md).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -12,7 +15,7 @@ process.env.APP_DATA_DIR = mkdtempSync(join(tmpdir(), 'asoldi-pd-writers-'));
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const { NON_PERSONAL_WRITERS, loadStoreModules } = await import('../lib/personal-data.js');
 
-const WRITER_CALL = /\b(writeDataJson|writeHotJson)\s*\(/g;
+const WRITER_CALL = /\b(writeDataJson|writeHotJson|updateJsonLocked|writeJsonAtomic|writeTextAtomic|createJsonOnce)\s*\(/g;
 // Server code only: the browser bundle (app, src) cannot write the data disk; scripts are tools.
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'scripts', 'public', 'app', 'src', 'tmp', 'local', 'assets', 'docs']);
 const BACKSLASH = String.fromCharCode(92);
@@ -98,7 +101,7 @@ function scanWriters(base = root) {
   return keys;
 }
 
-test('every writeDataJson / writeHotJson target is a registered store or listed as holding no client personal data', async () => {
+test('every JSON write helper target is a registered store or listed as holding no client personal data', async () => {
   const stores = await loadStoreModules();
   const registered = new Set(stores.flatMap((store) => store.writers));
   const found = scanWriters();
@@ -127,7 +130,9 @@ test('the scan catches a new writer', () => {
     '}',
     'export function writeHotJson(path, v) { return [path, v]; }',
     "writeHotJson(join(dir(), 'hot.json'), {});",
+    'updateJsonLocked(LOCKED_PATH, (current) => current);',
+    '// writeJsonAtomic(COMMENTED, {}) is a comment, not a call',
     '',
   ].join('\n'));
-  assert.deepEqual([...scanWriters(dir)].sort(), ['lib/new-store.js:NEW_PATH', "lib/new-store.js:join(dir(), 'hot.json')"]);
+  assert.deepEqual([...scanWriters(dir)].sort(), ['lib/new-store.js:LOCKED_PATH', 'lib/new-store.js:NEW_PATH', "lib/new-store.js:join(dir(), 'hot.json')"]);
 });

@@ -451,7 +451,8 @@ test('the retention purge deletes nothing while privacy.purge is off, only repor
   const off = await retention.runRetentionPurge({ settings: settingsStore.getAutomationSettings({ fresh: true }) });
   assert.deepEqual(off, { ran: false, reason: 'disabled' });
   assert.ok(existsSync(expired), 'negative control: nothing deleted while off');
-  assert.equal(existsSync(join(DATA_DIR, 'privacy')), false, 'no report while off');
+  assert.equal(existsSync(join(DATA_DIR, 'privacy', 'purge-reports')), false, 'no report while off');
+  assert.equal(existsSync(join(DATA_DIR, 'privacy', 'retention-state.json')), false, 'no run state while off');
 
   assert.equal(settingsStore.saveAutomationSettings({ privacy: { purge: { enabled: true } } }).ok, true);
   const shadow = await retention.runRetentionPurge({ settings: settingsStore.getAutomationSettings({ fresh: true }) });
