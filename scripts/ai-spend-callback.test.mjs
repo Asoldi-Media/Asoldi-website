@@ -3,7 +3,7 @@
 // data dir, safe mode on and the egress recorder enforcing (nothing leaves 127.0.0.1).
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bootHub } from './safe-mode/hub-boot.mjs';
@@ -271,7 +271,12 @@ test('PUT /api/admin/ai/routes: outside safe mode the override may choose legacy
     assert.equal(prod.status, 200);
     assert.equal(prod.body.profile, 'prod');
     // A hand-written override with a local-only profile is not applied either.
-    writeFileSync(join(app.dir, 'ai-routes.override.json'), JSON.stringify({ version: 1, profile: 'record' }));
+    const overrideFile = join(app.dir, 'ai-routes.override.json');
+    const putAt = statSync(overrideFile).mtime;
+    writeFileSync(overrideFile, JSON.stringify({ version: 1, profile: 'record' }));
+    // The hub reloads an override when its modified time changes. A write right after the PUT can
+    // land in the same clock tick, so give the hand-written file a later time, as a later edit has.
+    utimesSync(overrideFile, new Date(), new Date(putAt.getTime() + 2000));
     const after = await app.status();
     assert.equal(after.profile, 'legacy');
     assert.ok(after.warnings.some((line) => /record.*safe mode/.test(line)), JSON.stringify(after.warnings));
