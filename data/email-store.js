@@ -521,6 +521,9 @@ export async function acquireLease(name, ttlMs = 60_000, { now = () => Date.now(
 export function defaultEmailSettings() {
   return {
     version: 1,
+    // The hub email platform (site routes, public unsubscribe pages, provisioning). Off: every
+    // email route answers 404 and nothing is sent or written.
+    enabled: false,
     // Dark by default: nothing sends until Superadmin adds sites to the allowlist.
     rollout: { mode: 'off', siteIds: [] },
     killSwitch: false,
@@ -552,6 +555,7 @@ export function defaultEmailSettings() {
       borrowAfterHour: 16,
       perRecipientMarketingPerDay: 2,
       perRecipientCampaignEveryDays: 3,
+      perSiteTestMax: 20,
     },
     sender: { defaultAddress: 'kunder@asoldi.com', nameSuffix: '' },
     links: {
@@ -572,6 +576,12 @@ export function defaultEmailSettings() {
     testRecipients: ['damian@asoldi.com', 'alexander@asoldi.com'],
     alerts: { recipients: ['damian@asoldi.com'], dailyAt: '08:30', quotaWarnRatio: 0.7, webhookSilenceHours: 24, staleTickMinutes: 30 },
     health: { maxBounceRate: 0.05, maxComplaintRate: 0.003, window: 100 },
+    // Owner routing default for form and order notices (lib/owner-recipients.js): when enabled,
+    // listed sites with a verified owner address move to the owner, with Asoldi in BCC for 30 days.
+    ownerRoutingDefault: { enabled: false, siteIds: [] },
+    // Local tests only: { siteId: 'http://127.0.0.1:<port>' }. Honoured in safe mode alone
+    // (lib/email-site-auth.js cmsTarget); a hub outside safe mode ignores it.
+    devCmsTargets: {},
   };
 }
 
@@ -755,6 +765,29 @@ export async function updateEmailSuppressions(mutate) {
   });
 }
 
+/**
+ * Writes a rebuilt opt-out record (lib/email-unsubscribe.js rebuildSuppressionsFromCms) under the
+ * cross-process lock. Only while the record is unavailable (both files gone after it existed, or
+ * both unreadable), unless `force`: a readable record is never replaced by a rebuild.
+ * Returns { written, reason }.
+ */
+export async function restoreEmailSuppressions(rows, { force = false } = {}) {
+  if (!isPlainObject(rows)) throw new Error('restoreEmailSuppressions: rows must be an object');
+  return withFileLock(EMAIL_FILES.suppressions, () => {
+    let readable = true;
+    try {
+      readSuppressionsMeta();
+    } catch (error) {
+      if (error?.code !== 'EMAIL_STORE_UNREADABLE') throw error;
+      readable = false;
+    }
+    if (readable && !force) return { written: false, reason: 'readable' };
+    writeBackedUpJson(EMAIL_FILES.suppressions, rows);
+    ensureSuppressionsMarker();
+    return { written: true, reason: readable ? 'forced' : 'restored' };
+  });
+}
+
 /* ------------------------------------------------------------------ secrets */
 
 function secretsJsonPath() {
@@ -793,6 +826,15 @@ function readSecretsJson({ strict = false } = {}) {
     brevoApiKey: typeof raw.brevoApiKey === 'string' ? raw.brevoApiKey : '',
     siteKeys: isPlainObject(raw.siteKeys) ? raw.siteKeys : {},
   };
+}
+
+/**
+ * Per-site emailKeys (lib/email-site-auth.js), keyed by hub site id. Missing file → {}.
+ * With strict, a damaged file throws EMAIL_SECRETS_UNREADABLE; without it (key checks) it reads
+ * as {}, so every key check fails closed.
+ */
+export function readEmailSiteKeys({ strict = false } = {}) {
+  return clone(readSecretsJson({ strict }).siteKeys);
 }
 
 /** Only the unsubscribe HMAC key (created on first use). Rendering a link needs nothing else. */
