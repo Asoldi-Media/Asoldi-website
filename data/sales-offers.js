@@ -96,7 +96,7 @@ export function normalizeOfferTierId(value = '') {
   return tierById(id) ? id : '';
 }
 
-// ---------------------------------------------------------------- plan and pricing (WS8.2)
+// ---------------------------------------------------------------- plan and pricing (offer plan)
 
 const PLAN_CATALOG_TYPES = ['menu', 'tiers', 'normal'];
 const MAX_PLAN_PAGES = 500;
@@ -155,7 +155,7 @@ function withPlanKeys(target, source, futureKeys) {
   return target;
 }
 
-// `strict` drops the forward-compatible keys (WS8.44). offerContentHash uses it, so the
+// `strict` drops the forward-compatible keys (forward compatibility). offerContentHash uses it, so the
 // fingerprint of an offer never depends on keys this code does not understand.
 export function normalizeOfferProduct(raw = {}, { strict = false } = {}) {
   const source = raw && typeof raw === 'object' ? raw : {};
@@ -254,7 +254,7 @@ export function flattenOfferToChosen(offer = {}, index = 0) {
     oneTimeFees: chosen.oneTimeFees,
     alternatives: alts,
   };
-  // WS8.2: the chosen alternative's plan, pricing and DPA version travel with it. A stored offer
+  // Offer plan: the chosen alternative's plan, pricing and DPA version travel with it. A stored offer
   // keeps them per alternative; updateSalesOffer never takes them from a patch.
   for (const key of ['plan', 'pricing', 'dpaVersion']) {
     if (chosen[key] !== undefined) flattened[key] = chosen[key];
@@ -400,7 +400,7 @@ export function normalizeSalesOffer(raw = {}) {
     createdAt,
     updatedAt: sanitizeText(raw.updatedAt) || createdAt,
   };
-  // WS8.2 owns plan and pricing; WS8.44: keys a later batch writes (dpaVersion, ext) survive this code.
+  // Offer plan owns plan and pricing; forward compatibility: keys a later batch writes (dpaVersion, ext) survive this code.
   return withPlanKeys(offer, raw, FUTURE_OFFER_KEYS);
 }
 
@@ -447,7 +447,7 @@ export function getOfferForClient(salesClientId) {
   return readAll().filter((offer) => offer.salesClientId === target).sort(byUpdatedDesc)[0] || null;
 }
 
-/** Offer counts per status. `excludeSalesClientIds` leaves out test clients (WS8.56). */
+/** Offer counts per status. `excludeSalesClientIds` leaves out test clients (test-client flag). */
 export function countOffersByStatus({ excludeSalesClientIds = null } = {}) {
   const skip = excludeSalesClientIds instanceof Set ? excludeSalesClientIds : new Set(excludeSalesClientIds || []);
   const counts = Object.fromEntries(OFFER_STATUSES.map((status) => [status, 0]));
@@ -509,7 +509,7 @@ function guardPatchProducts(list, stored) {
 }
 
 /**
- * WS8.44: keys a later batch owns on an offer (plan, pricing, dpaVersion, products[].services,
+ * Forward compatibility: keys a later batch owns on an offer (plan, pricing, dpaVersion, products[].services,
  * products[].oneTimeAddOns, ext) come only from the stored offer, never from a patch. A rep's
  * composer body therefore cannot grant services, and a product edit by this code keeps the keys
  * the stored product with the same id carries (alternatives: the stored one at the same index).
@@ -540,7 +540,7 @@ export function withoutFutureOfferPatchKeys(patch = {}, current = {}) {
 }
 
 /**
- * WS8.2: plans and pricing snapshots come from the server's own quote build, never from a body.
+ * Offer plan: plans and pricing snapshots come from the server's own quote build, never from a body.
  * Copies plan and pricing of each `built` alternative (buildOfferFromMeetingQuote output) onto
  * the patch's alternative at the same index, and the top-level ones onto the patch.
  */
@@ -750,7 +750,7 @@ export function offerContentHash(offer = {}, { includeParty = true } = {}) {
   if (includeParty) payload.party = partyOverrides(offer?.party);
   const contractLanguage = normalizeContractLanguage(offer?.contractLanguage);
   if (contractLanguage !== 'nb') payload.contractLanguage = contractLanguage;
-  // WS8.2: plan, pricing and DPA version count only when stored, so offers without them (every
+  // Offer plan: plan, pricing and DPA version count only when stored, so offers without them (every
   // offer sent before this batch) keep their hash.
   const planData = offerPlanFingerprint(offer);
   if (planData) payload.planData = planData;

@@ -51,7 +51,7 @@ test('every task resolves in every profile, and the data policy holds for all of
   }
 });
 
-test('WS4 change requests are in: dev.copy and dev.locate exist, dev.plan is JSON and personal', () => {
+test('Developer automation change requests are in: dev.copy and dev.locate exist, dev.plan is JSON and personal', () => {
   const t = ASOLDI_LLM_TASKS.tasks;
   assert.equal(t['dev.plan'].kind, 'json');
   assert.equal(t['dev.plan'].dataClass, 'personal');
@@ -147,7 +147,7 @@ test('public tasks that may read a client\'s live site: callers pass ctx.dataCla
   assert.equal(r.resolveRoute('sales-link.discover', { profile: 'prod' }).route, 'claude:claude-haiku-5-5:low');
 });
 
-test('reference policy records the CMS local-blog-job DeepSeek call as a known exception (WS9)', () => {
+test('reference policy records the CMS local-blog-job DeepSeek call as a known exception (SEO)', () => {
   assert.equal(core.validatePolicy(ASOLDI_LLM_POLICY).ok, true);
   const [exception] = ASOLDI_LLM_POLICY.exceptions;
   assert.equal(exception.id, 'cms-local-blog-job');

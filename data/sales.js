@@ -62,7 +62,7 @@ import { appendDeliveryAudit } from '../lib/delivery-audit.js';
 // updateSalesClient and patchSalesClientsById never take them from an update, so no request body
 // that reaches those functions can write a plan or a delivery state.
 export const OWNED_CLIENT_KEYS = Object.freeze(['sitePlan', 'delivery']);
-// makerRun keys only setSalesMakerRunOwned writes (Maker delivery events, WS8.28).
+// makerRun keys only setSalesMakerRunOwned writes (Maker delivery events, Maker events).
 export const OWNED_MAKERRUN_KEYS = Object.freeze(['materials', 'autopilot', 'previewPush']);
 
 function withoutOwnedKeys(updates = {}, keys = OWNED_CLIENT_KEYS) {
@@ -338,7 +338,7 @@ function normalizeMakerRun(value = {}) {
     quickFillCompletedAt: sanitizeText(input.quickFillCompletedAt),
     mediaGatherCompletedAt: sanitizeText(input.mediaGatherCompletedAt),
   };
-  // WS0.19 owns aiSpend (the Maker's run.ai.spend callback); only setSalesMakerRunAiSpend writes it.
+  // LLM facade owns aiSpend (the Maker's run.ai.spend callback); only setSalesMakerRunAiSpend writes it.
   // It belongs to one run: after a relink to another run it is dropped (ai/maker-spend.json keeps it).
   const aiSpend = input.aiSpend ? normalizeRunAiSpend(input.aiSpend, { runId }) : null;
   if (aiSpend && runId && aiSpend.runId === runId) base.aiSpend = aiSpend;
@@ -361,7 +361,7 @@ function normalizeMakerRun(value = {}) {
   }, input, FUTURE_MAKERRUN_KEYS), input);
 }
 
-// WS8.28 owns materials and autopilot; previewPush has its shape here for WS8.17.
+// Maker events owns materials and autopilot; previewPush has its shape here for preview and go-live.
 function withOwnedMakerRunKeys(out, input) {
   applyOwned(out, input, 'materials', normalizeMakerMaterials);
   applyOwned(out, input, 'autopilot', normalizeMakerAutopilot);
@@ -449,7 +449,7 @@ function normalizeMeetingQuotePackage(value = {}, fallback = {}) {
     selected,
     oneTimeAddOns,
   };
-  // WS8.3: the rep picked the tier (not the starter default). Stored only when true, so existing
+  // Site plan: the rep picked the tier (not the starter default). Stored only when true, so existing
   // quotes keep their shape; the plan resolver trusts a quote's tier only with this flag.
   if (input.tierExplicit === true) pkg.tierExplicit = true;
   return pkg;
@@ -729,9 +729,9 @@ function normalizeSalesClient(raw = {}) {
     createdAt,
     updatedAt,
   };
-  // WS8.56: stored only when true, so existing records keep their shape.
+  // Test-client flag: stored only when true, so existing records keep their shape.
   if (raw.isTest === true) client.isTest = true;
-  // WS8.44: keys a later batch writes survive this code; WS8.3 / WS8.9 own sitePlan and delivery.
+  // Forward compatibility: keys a later batch writes survive this code; site plan / delivery state own sitePlan and delivery.
   carryFutureKeys(client, raw, FUTURE_CLIENT_KEYS);
   applyOwned(client, raw, 'sitePlan', normalizeSitePlan);
   applyOwned(client, raw, 'delivery', normalizeDelivery);
@@ -1649,7 +1649,7 @@ export function setSalesWebsiteImport(id, importPatch = {}) {
   return updateSalesClient(id, { websiteImport: importPatch });
 }
 
-/** WS8.56: mark or unmark a sales client as a test client (Superadmin). */
+/** Test-client flag: mark or unmark a sales client as a test client (Superadmin). */
 export function setSalesTestFlag(id, isTest) {
   return updateSalesClient(id, { isTest: isTest === true });
 }
@@ -1660,7 +1660,7 @@ export function setSalesMakerRun(id, makerPatch = {}) {
 }
 
 /**
- * WS8.28: writes the makerRun keys the Maker's delivery events own (materials, autopilot,
+ * Maker events: writes the makerRun keys the Maker's delivery events own (materials, autopilot,
  * previewPush), normalized. Only the authenticated callback handler calls this.
  */
 export function setSalesMakerRunOwned(id, ownedPatch = {}) {
@@ -1673,7 +1673,7 @@ export function setSalesMakerRunOwned(id, ownedPatch = {}) {
 }
 
 /**
- * WS8.3: stores client.sitePlan (normalized) with a history entry when the tier, services, billing
+ * Site plan: stores client.sitePlan (normalized) with a history entry when the tier, services, billing
  * or status change. Returns the client, or null when the client or the plan is not valid.
  */
 export function setSalesSitePlan(id, plan, { by = '', reason = '', now = nowIso() } = {}) {
@@ -1688,7 +1688,7 @@ export function setSalesSitePlan(id, plan, { by = '', reason = '', now = nowIso(
 }
 
 /**
- * WS8.9: merges a delivery patch (events and emails shallow, every other key replaces) and
+ * Delivery state: merges a delivery patch (events and emails shallow, every other key replaces) and
  * writes only when something changed. Returns the client.
  */
 export function setSalesDelivery(id, patch = {}, { by = '', reason = '' } = {}) {
@@ -1702,7 +1702,7 @@ export function setSalesDelivery(id, patch = {}, { by = '', reason = '' } = {}) 
 }
 
 /**
- * WS8.9: one email stamp in delivery.emails and its legacy mirror in workshop.deskEmails, in one
+ * Delivery state: one email stamp in delivery.emails and its legacy mirror in workshop.deskEmails, in one
  * write, so the two never diverge. `key` is a delivery email key or `dataReminders`.
  */
 export function stampDeliveryEmail(id, key, at = nowIso(), { by = '' } = {}) {
@@ -1739,7 +1739,7 @@ export function stampDeliveryEmails(id, stamps = {}, { by = '', backfilled = fal
 }
 
 /**
- * WS8.9: derives the client's stage and stores it (with one history entry) only when it changed.
+ * Delivery state: derives the client's stage and stores it (with one history entry) only when it changed.
  * Idempotent. Returns { client, changed, derived, change }.
  */
 export function syncSalesDeliveryStage(id, { by = '', reason = '', now = Date.now(), jobs } = {}) {
@@ -1753,7 +1753,7 @@ export function syncSalesDeliveryStage(id, { by = '', reason = '', now = Date.no
 }
 
 /**
- * WS0.19: the only writer of makerRun.aiSpend (the Maker's run.ai.spend callback, after its token and
+ * LLM facade: the only writer of makerRun.aiSpend (the Maker's run.ai.spend callback, after its token and
  * linked-run checks). Stores the run's spend snapshot when it belongs to the linked run and is not older
  * than the stored one. The snapshot's own `at` is required, so a delayed retry is never taken for the
  * newest; at the same `at`, a snapshot with fewer calls is the older one. Returns { client, stored, reason }.

@@ -146,4 +146,4 @@ It fails on any connection to a host outside `scripts/safe-mode/soak-allowlist.j
 
 The recorder also refuses unlisted hosts, as a safety net. The report goes to `.local-data/soak/soak-report.json` (or `soak-plain`).
 
-Not covered yet: the synthetic data has no calendar tokens, Fireflies meetings or inbox mail, so those guards are exercised by the unit tests (`scripts/safe-mode-guards.test.mjs`, `scripts/safe-mode-egress.test.mjs`), not by the soak. Seed a booked client with calendar and Fireflies fixtures once WS0.21 lands.
+Not covered yet: the synthetic data has no calendar tokens, Fireflies meetings or inbox mail, so those guards are exercised by the unit tests (`scripts/safe-mode-guards.test.mjs`, `scripts/safe-mode-egress.test.mjs`), not by the soak. Seed a booked client with calendar and Fireflies fixtures once golden harness lands.

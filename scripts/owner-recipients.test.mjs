@@ -24,7 +24,7 @@ function site(overrides = {}) {
   return { id: 'site_1', site_key: 'key_1', domain: 'frisor.example.no', name: 'Frisør Eksempel', clientAdmin: { email: '' }, ...overrides };
 }
 
-/** Exactly what server.js sent before WS7.39. */
+/** Exactly what server.js sent before owner routing. */
 function legacyPayload(target) {
   const email = clientForms.buildFormEmail({ site: target, fields, pageUrl });
   const replyTo = clientForms.replyToFromFields(fields);
@@ -42,7 +42,7 @@ function mailFor(target, options = {}) {
   return clientForms.buildClientFormMail({ site: target, fields, pageUrl, routing });
 }
 
-test('WS7.39: owner order is confirmed owner recipients, then clientAdmin, then the linked sales client', () => {
+test('Owner routing: owner order is confirmed owner recipients, then clientAdmin, then the linked sales client', () => {
   const salesClients = [{ id: 'c1', contactEmail: 'Salg.Kontakt@Example.no', hubSite: { siteKey: 'key_1' } }];
   const getSalesClients = () => salesClients;
   const confirmed = { ownerRecipients: [
@@ -72,7 +72,7 @@ test('WS7.39: owner order is confirmed owner recipients, then clientAdmin, then 
   );
 });
 
-test('WS7.39 (d): name-only and domain-only sales client matches are not used', () => {
+test('Owner routing (d): name-only and domain-only sales client matches are not used', () => {
   const salesClients = [
     { contactEmail: 'navn@example.no', businessName: 'Frisør Eksempel', hubSite: {} },
     { contactEmail: 'domene@example.no', websiteDomain: 'frisor.example.no', hubSite: { domain: 'frisor.example.no' } },
@@ -84,7 +84,7 @@ test('WS7.39 (d): name-only and domain-only sales client matches are not used', 
   assert.equal(owners.salesClientLinkedToSite(site(), salesClients[1]), false);
 });
 
-test('WS7.39 (c): with ownerRouting unset the mail is byte-identical to today', () => {
+test('Owner routing (c): with ownerRouting unset the mail is byte-identical to today', () => {
   const target = site({ clientAdmin: { email: 'admin@example.no' } });
   // No email-sites.json at all.
   assert.deepEqual(mailFor(target), legacyPayload(target));
@@ -95,7 +95,7 @@ test('WS7.39 (c): with ownerRouting unset the mail is byte-identical to today', 
   assert.deepEqual(clientForms.buildClientFormMail({ site: target, fields, pageUrl }), legacyPayload(target));
 });
 
-test('WS7.39 (c): an unreadable email-sites.json keeps today\'s routing', () => {
+test('Owner routing (c): an unreadable email-sites.json keeps today\'s routing', () => {
   const live = join(dataDir, 'email-sites.json');
   writeFileSync(live, '{"site_1": {', 'utf8');
   const target = site({ clientAdmin: { email: 'admin@example.no' } });
@@ -103,7 +103,7 @@ test('WS7.39 (c): an unreadable email-sites.json keeps today\'s routing', () => 
   unlinkSync(live);
 });
 
-test('WS7.39 (a): owner+asoldi-bcc mails the owner with BCC to SALES_CONTACT_EMAIL', async () => {
+test('Owner routing (a): owner+asoldi-bcc mails the owner with BCC to SALES_CONTACT_EMAIL', async () => {
   await store.patchEmailSite('site_1', { ownerRouting: 'owner+asoldi-bcc', ownerRoutingSetAt: new Date(NOW - 2 * DAY).toISOString() });
   const target = site({ clientAdmin: { email: 'admin@example.no' } });
   const mail = mailFor(target);
@@ -115,7 +115,7 @@ test('WS7.39 (a): owner+asoldi-bcc mails the owner with BCC to SALES_CONTACT_EMA
   assert.equal(resolveBccHeader(mail.bcc, mail.to), 'salg@asoldi.test', 'the transport sends the BCC');
 });
 
-test('WS7.39: on the SMTP transport an explicit BCC is in the envelope, so it is delivered', () => {
+test('Owner routing: on the SMTP transport an explicit BCC is in the envelope, so it is delivered', () => {
   const saved = { user: process.env.SMTP_USER, bcc: process.env.SMTP_BCC };
   process.env.SMTP_USER = 'smtp-user@asoldi.test';
   delete process.env.SMTP_BCC;
@@ -134,7 +134,7 @@ test('WS7.39: on the SMTP transport an explicit BCC is in the envelope, so it is
   }
 });
 
-test('WS7.39: the Asoldi BCC stops 30 days after the switch; owner mode never copies Asoldi', async () => {
+test('Owner routing: the Asoldi BCC stops 30 days after the switch; owner mode never copies Asoldi', async () => {
   const target = site({ clientAdmin: { email: 'admin@example.no' } });
   await store.patchEmailSite('site_1', { ownerRouting: 'owner+asoldi-bcc', ownerRoutingSetAt: new Date(NOW - 31 * DAY).toISOString() });
   const late = mailFor(target);
@@ -147,7 +147,7 @@ test('WS7.39: the Asoldi BCC stops 30 days after the switch; owner mode never co
   assert.equal(routing.bcc, 'salg@asoldi.test', 'no timestamp keeps the copy');
 });
 
-test('WS7.39 (b): a site with no owner falls back to the inbox with the [Ingen eier-e-post satt] prefix', async () => {
+test('Owner routing (b): a site with no owner falls back to the inbox with the [Ingen eier-e-post satt] prefix', async () => {
   await store.patchEmailSite('site_1', { ownerRouting: 'owner+asoldi-bcc', ownerRoutingSetAt: new Date(NOW).toISOString() });
   const target = site();
   const mail = mailFor(target, { getSalesClients: () => [] });
@@ -156,7 +156,7 @@ test('WS7.39 (b): a site with no owner falls back to the inbox with the [Ingen e
   assert.equal('bcc' in mail, false, 'the fallback already is the Asoldi inbox');
 });
 
-test('WS7.39: multiple confirmed owners all receive the notice', async () => {
+test('Owner routing: multiple confirmed owners all receive the notice', async () => {
   await store.patchEmailSite('site_1', {
     ownerRouting: 'owner',
     ownerRecipients: [
@@ -197,7 +197,7 @@ async function withServer(fn) {
   }
 }
 
-test('WS7.39: Superadmin reads and sets the routing per site', async () => {
+test('Owner routing: Superadmin reads and sets the routing per site', async () => {
   await withServer(async ({ call, tick }) => {
     assert.equal((await call('GET', '/api/hub/sites/site_9/owner-routing', null, '')).status, 401);
     assert.equal((await call('PUT', '/api/hub/sites/site_9/owner-routing', { ownerRouting: 'owner' }, '')).status, 401);
@@ -238,7 +238,7 @@ test('WS7.39: Superadmin reads and sets the routing per site', async () => {
   });
 });
 
-test('WS7.39: a mode change never confirms a pending owner or rewrites confirmed rows (3.3.9 change control)', async () => {
+test('Owner routing: a mode change never confirms a pending owner or rewrites confirmed rows (3.3.9 change control)', async () => {
   const confirmedAt = '2026-10-01T09:00:00.000Z';
   await store.patchEmailSite('site_9', {
     ownerRouting: '',
@@ -276,7 +276,7 @@ test('WS7.39: a mode change never confirms a pending owner or rewrites confirmed
   await store.patchEmailSite('site_9', { ownerRecipients: [], ownerRouting: '' });
 });
 
-test('WS7.39: the Superadmin field shows and sends only confirmed addresses, and only when edited', () => {
+test('Owner routing: the Superadmin field shows and sends only confirmed addresses, and only when edited', () => {
   const source = readFileSync(new URL('../app/pages/Admin/sections/OwnerRoutingField.tsx', import.meta.url), 'utf8');
   assert.match(source, /filter\(\(row\) => row\.status === 'confirmed'\)/, 'pending rows are not put in the input');
   assert.match(source, /if \(!sameEmailList\(emails, confirmedEmails\(view\)\)\) body\.ownerEmails = emails;/, 'ownerEmails only when the field changed');

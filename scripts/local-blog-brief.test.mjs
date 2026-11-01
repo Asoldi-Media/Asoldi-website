@@ -109,14 +109,14 @@ test('automatic posts need the seo service, not only the legacy blog flag', () =
   assert.equal(brief({ websitePlan: 'custom', features: { blog: true } }), false);
   assert.equal(brief({ websitePlan: 'custom', features: { blog: true, analytics: true } }), true);
 
-  // planSource.services (WS8.4) wins over the plan id when it lists services.
+  // planSource.services (plan source) wins over the plan id when it lists services.
   assert.equal(localBlogAutoPostsEnabled({ websitePlan: 'tier-2-seo', features: { blog: true }, planSource: { kind: 'offer', services: ['site'] } }), false);
   assert.equal(localBlogAutoPostsEnabled({ websitePlan: 'tier-1-standard', features: { blog: true }, planSource: { kind: 'offer', services: ['site', 'seo'] } }), true);
   assert.equal(localBlogAutoPostsEnabled({ websitePlan: 'tier-2-seo', features: { blog: true }, planSource: { kind: 'backfill', derivedFeatures: {} } }), true, 'backfill has no services: the plan decides');
   assert.deepEqual(siteServices({ websitePlan: 'tier-1-standard' }), ['site', 'changes', 'blog']);
 });
 
-test('flags derived from the vocabulary (WS8.1) never turn on automatic posts for tier 1 or a site-only custom plan', () => {
+test('flags derived from the vocabulary (service vocabulary) never turn on automatic posts for tier 1 or a site-only custom plan', () => {
   // legacyFlagsForServices turns the blog flag on for every tier (site brings blog). The gate must
   // still say no until the seo service is there.
   for (const tierId of ['tier-1-standard', 'tier-2-seo', 'tier-3-ecommerce']) {

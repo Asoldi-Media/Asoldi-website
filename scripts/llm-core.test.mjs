@@ -1,4 +1,4 @@
-// Tests for packages/suite/core/llm (WS0.15 shared LLM core, WS0.33 contract freeze). No network calls:
+// Tests for packages/suite/core/llm (LLM core shared LLM core, LLM contract freeze). No network calls:
 // every provider is a mock adapter.
 import test from 'node:test';
 import assert from 'node:assert/strict';

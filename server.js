@@ -550,13 +550,13 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 applyPersistentProductionEnv();
-// WS8.44: snapshot the delivery stores once per schema bump, before any code below writes to them.
+// Forward compatibility: snapshot the delivery stores once per schema bump, before any code below writes to them.
 try {
   runDeliverySchemaStartupSnapshot();
 } catch (error) {
   console.error('[delivery] startup snapshot failed (will retry next boot):', error?.message || error);
 }
-// WS8.41: the delivery backfill runs at boot only when migrations.deliveryBackfill is dry-run or apply.
+// The delivery backfill runs at boot only when migrations.deliveryBackfill is dry-run or apply.
 try {
   runDeliveryBackfillAtBoot();
 } catch (error) {
@@ -12961,7 +12961,7 @@ registerCmsSsoRoutes(app, { adminAuth, getSiteById: hub.getSiteById, getAllSites
 registerSiteCredentialRoutes(app, { adminAuth, getSiteByKey: hub.getSiteByKey, getSiteById: hub.getSiteById, getAllSites: hub.getAllSites, setTrustedCmsVersion: (id, packageVersion) => hub.updateSite(id, { cms: { packageVersion } }).ok });
 registerSafeModeRoutes(app, { adminAuth });
 registerDeliveryRoutes(app, { adminAuth, sales, hub, salesOffers });
-// WS6.7/WS6.8: feature tree and cms-spec. Dark until Superadmin switches it on (cms-feature-settings.json).
+// Feature tree and cms-spec. Dark until Superadmin switches it on (cms-feature-settings.json).
 const cmsFeatures = registerCmsFeatureRoutes(app, {
   adminAuth,
   hub,
@@ -13583,13 +13583,13 @@ app.post('/api/admin/sales/maker-status-callback', requireMakerHost('callback'),
     });
   }
 
-  // WS0.19: the Maker's AI spend for this run (makerRun.aiSpend; GET /api/admin/ai/spend adds it up).
+  // LLM facade: the Maker's AI spend for this run (makerRun.aiSpend; GET /api/admin/ai/spend adds it up).
   if (event === 'run.ai.spend') {
     const spend = applyRunAiSpendCallback({ sales, client, runId: nextRunId, body: req.body });
     return res.status(spend.status).json(spend.body);
   }
 
-  // WS8.28: Maker delivery events are stored on makerRun while development.makerEvents is 'record'.
+  // Maker delivery events are stored on makerRun while development.makerEvents is 'record'.
   // With the switch off they take the step-status path below, as before.
   if (isMakerDeliveryEvent(event) && makerEventsRecording()) {
     return res.json(recordMakerDeliveryEvent({ event, body: req.body || {}, client, sales, runId: nextRunId }));
@@ -14413,7 +14413,7 @@ app.get('/api/admin/sales/:id', salesAuth, (req, res) => {
 });
 
 async function workshopNeedsMakerFetch(client) {
-  // WS8.28: the live Maker run first; a fresh materials snapshot of the linked run stands in only
+  // Maker events: the live Maker run first; a fresh materials snapshot of the linked run stands in only
   // when that fetch fails (and only while development.makerEvents is 'record').
   return makerRunFetchWithMaterials(client, async (runId) => {
     const websiteMakerBaseUrl = resolveWebsiteMakerBaseUrl('', client);
@@ -19031,7 +19031,7 @@ app.post('/api/admin/sales/:id/create-maker-run', salesOrDevelopmentAuth, async 
       productionDomain: sanitizeSalesWebsiteDomain(client.websiteDomain),
       quickFillLinks,
     };
-    // WS8.3: a plan in force travels with the run (contract site-plan/1, read by the Maker).
+    // Site plan: a plan in force travels with the run (contract site-plan/1, read by the Maker).
     const sitePlanPayload = makerSitePlanPayload(client.sitePlan);
     if (sitePlanPayload) requestBody.sitePlan = sitePlanPayload;
 

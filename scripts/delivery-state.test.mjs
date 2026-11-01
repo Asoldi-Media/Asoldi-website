@@ -1,4 +1,4 @@
-// WS8.9: the delivery state machine. deriveStage is pure (table of client snapshots, every stage,
+// The delivery state machine. deriveStage is pure (table of client snapshots, every stage,
 // overlay and sub-state), the stored state is normalized and idempotent, email stamps and their
 // legacy mirror never diverge, and history is capped.
 import test from 'node:test';

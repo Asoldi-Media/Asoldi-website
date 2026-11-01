@@ -1,4 +1,4 @@
-// WS9.46 — SEO feature keys and tier mapping.
+// SEO features — SEO feature keys and tier mapping.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -13,7 +13,7 @@ import {
 } from '../lib/seo-ops/features.js';
 import { normalizeSite, featuresFromPlan } from '../data/hub-model.js';
 
-// Hand-authored from WS9.46 + owner decisions Q19/Q52 (not generated from code).
+// Hand-authored from SEO features + owner decisions Q19/Q52 (not generated from code).
 const EXPECTED = {
   'tier-1-standard': ['blog', 'blog.posts', 'seo', 'seo.contentHead', 'seo.keywords', 'seo.onPage', 'seo.sitemap'],
   'tier-2-seo': [
@@ -64,7 +64,7 @@ test('owner decisions: blog on every tier, auto posts and the backlink network T
 test('the tier fallback gives the same result as a resolved tree for the 3 tiers', () => {
   for (const [tier, keys] of Object.entries(EXPECTED)) {
     const fromTier = seoFeaturesForSite(site(tier));
-    // A WS6 resolveFeatures-shaped tree ({nodes, effective}) carrying unrelated keys too.
+    // A CMS resolveFeatures-shaped tree ({nodes, effective}) carrying unrelated keys too.
     const tree = { nodes: [...SEO_FEATURE_KEYS, 'shop', 'shop.checkout', 'users'].map((key) => ({ key })), effective: new Set([...keys, 'shop', 'shop.checkout', 'users']) };
     const fromTree = seoFeaturesForSite(site(tier), { featureTree: tree });
     assert.equal(fromTree.source, 'tree');
@@ -110,7 +110,7 @@ test('cancellation stops hub services but keeps the client blog, head and sitema
   assert.equal(seoJobAllowed({ ...site('tier-2-seo'), hubServicesActive: false }, 'link-network').allowed, false);
 });
 
-test('custom plans map legacy flags like WS6 (analytics → seo, blog → blog, ecommerce → ecom); self-hosted package', () => {
+test('custom plans map legacy flags like CMS (analytics → seo, blog → blog, ecommerce → ecom); self-hosted package', () => {
   const custom = site('custom', { features: { analytics: true, blog: false, ecommerce: true } });
   const f = seoFeaturesForSite(custom);
   assert.equal(f.source, 'legacy-fallback');
@@ -134,13 +134,13 @@ test('feature keys never reuse CMS feeler names (feelers carry no seo. prefix)',
 
 test('a tree that does not carry the SEO keys yet keeps the tier value per key (never switches them off)', () => {
   const tier2 = site('tier-2-seo');
-  // WS6 tree that knows only non-SEO keys: treated as absent for SEO.
+  // CMS tree that knows only non-SEO keys: treated as absent for SEO.
   const nonSeo = { nodes: [{ key: 'shop' }, { key: 'users' }], effective: new Set(['users']) };
   const a = seoFeaturesForSite(tier2, { featureTree: nonSeo });
   assert.equal(a.source, 'tier-fallback');
   for (const key of ['blog.autoPosts', 'seo.linkNetwork', 'seo.tracking.organic', 'seo.liveAudit']) assert.equal(a.has(key), true, key);
 
-  // WS6 tree that knows the older SEO keys but not blog.autoPosts, seo.tracking.aiAssistants,
+  // CMS tree that knows the older SEO keys but not blog.autoPosts, seo.tracking.aiAssistants,
   // seo.liveAudit or seo.multilingual: those fall back to the tier, the rest follow the tree.
   const missing = new Set(['blog.autoPosts', 'blog.posts', 'seo.tracking.aiAssistants', 'seo.liveAudit', 'seo.multilingual']);
   const knownKeys = SEO_FEATURE_KEYS.filter((k) => !missing.has(k));

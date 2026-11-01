@@ -1,4 +1,4 @@
-// WS8.56: a test client never shows up in Myphoner payloads, sales reports or reported numbers,
+// Test-client flag: a test client never shows up in Myphoner payloads, sales reports or reported numbers,
 // and takes part in delivery automation only as a listed pilot. One fixture per consumer.
 import test from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,4 +1,4 @@
-// WS8.2: each offer alternative carries a machine-readable plan and a pricing snapshot. Offers
+// Each offer alternative carries a machine-readable plan and a pricing snapshot. Offers
 // built before this keep rendering and hashing exactly as before (golden values from b5fe3a7).
 import test from 'node:test';
 import assert from 'node:assert/strict';

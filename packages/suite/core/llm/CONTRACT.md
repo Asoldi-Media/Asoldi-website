@@ -158,7 +158,7 @@ warning: the call then uses no tier routes and the default budget base. Malforme
 - `exceptions` lists known LLM calls that do not go through the core yet, so they bypass this policy, the
   ledger and budgets. Each has `id`, `provider`, `where`, `owner`, `reason` and an optional `dataClass`.
   The list is validated but not used for routing. The reference policy lists the CMS's
-  `server/local-blog-job.js` DeepSeek call (owner WS9, moving to a hub relay).
+  `server/local-blog-job.js` DeepSeek call (owner SEO, moving to a hub relay).
 - **Legacy profile.** The policy also applies under `AI_PROFILE=legacy`. Today's DeepSeek, Gemini and OpenAI
   call sites therefore move to Claude Haiku 5.5 whenever they carry client data. Legacy reproduces today's
   provider only for public data. A working Anthropic key is a precondition for a facade to adopt the core.

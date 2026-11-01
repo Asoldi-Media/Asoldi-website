@@ -1,4 +1,4 @@
-// WS7.31 (hub side): the email feature keys in the one registry, the send kinds they allow, and the
+// (hub side): the email feature keys in the one registry, the send kinds they allow, and the
 // legacy-flag fallback before the feature tree reaches a site.
 import test from 'node:test';
 import assert from 'node:assert/strict';

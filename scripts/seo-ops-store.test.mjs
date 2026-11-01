@@ -1,4 +1,4 @@
-// WS9.48: the seo-ops store (lib/seo-ops/store.js) and the path-qualified backups in
+// The seo-ops store (lib/seo-ops/store.js) and the path-qualified backups in
 // data/storage-path.js. Runs on a temp data dir with an injected clock.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';

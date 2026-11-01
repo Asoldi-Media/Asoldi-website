@@ -1,6 +1,6 @@
 /**
- * Maker hosts: one row per Website Maker install that may call the hub (WS0.4), plus the
- * routing fields a host reports in its heartbeat (WS8.25).
+ * Maker hosts: one row per Website Maker install that may call the hub, plus the
+ * routing fields a host reports in its heartbeat (Maker heartbeat).
  *
  * <dataDir>/maker-hosts.json
  *   { version: 1, hosts: [ {
@@ -8,13 +8,13 @@
  *       tokenHash: 'sha256:<64 hex>', tokenPrefix: 'mkr_<8 hex>',
  *       scopes: ['callback', 'preview-push', 'client-bundle', 'jobs'],
  *       createdAt, createdBy, lastSeenAt, revokedAt, revokedBy,
- *       runIds: [...], capabilities: { handlers: [...], vision, cdp }, version, makerPort   // WS8.25
+ *       runIds: [...], capabilities: { handlers: [...], vision, cdp }, version, makerPort   // Maker heartbeat
  *   } ] }
  *
  * - A host token is `mkr_<hex of hostId>_<43 base64url chars>` (32 random bytes). It is shown once
  *   when the host is created; the file keeps only its sha256. A lookup goes by the hostId part, and
  *   the hash compare runs in constant time.
- * - lastSeenAt is written at most every LAST_SEEN_WRITE_MS (5 min) per host; the WS8.25 fields
+ * - lastSeenAt is written at most every LAST_SEEN_WRITE_MS (5 min) per host; the Maker heartbeat fields
  *   only when their value changes. A heartbeat with nothing new writes nothing.
  * - Every change is a locked read-modify-write on a fresh read (data/atomic-json.js), so hub
  *   processes that share the data dir never lose each other's writes. Reads on the request path
@@ -389,7 +389,7 @@ export function touchMakerHostLastSeen(hostId, { dataDir, now = Date.now(), host
   }
 }
 
-/** The WS8.25 fields a heartbeat may set, cleaned. Unknown keys are dropped. */
+/** The Maker heartbeat fields a heartbeat may set, cleaned. Unknown keys are dropped. */
 export function normalizeHostMetaPatch(patch = {}) {
   const source = patch && typeof patch === 'object' ? patch : {};
   const out = {};
@@ -405,7 +405,7 @@ function sameValue(a, b) {
 }
 
 /**
- * Applies WS8.25 fields to a host and writes only when a value changed (WS0 updateHostMeta).
+ * Applies Maker heartbeat fields to a host and writes only when a value changed (platform updateHostMeta).
  * Returns { changed, host (public) } or null for an unknown host.
  */
 export function updateHostMeta(hostId, patch, { dataDir } = {}) {

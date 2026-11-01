@@ -148,7 +148,7 @@ function newestStampedBackup(fileName, backupDir) {
  * Writes a data file and keeps backups of it in <dataDir>/backups. Options (all additive):
  * - backupName: the name the backups are kept under instead of the file's basename, so two files
  *   with the same basename in different folders (seo-ops sites/<key>.json, clients/<key>.json)
- *   never share or prune each other's backups (WS9.48: seo-ops__sites__<key>.json);
+ *   never share or prune each other's backups (seo-ops store: seo-ops__sites__<key>.json);
  * - latest: false skips the <name>.latest.json copy (one file less per data file); an unchanged
  *   write is then recognised against the newest stamped backup;
  * - atomic: true writes a temp file and renames it, so readers never see half a file;

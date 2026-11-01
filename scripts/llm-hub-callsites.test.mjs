@@ -1,4 +1,4 @@
-// Static scan of the hub's LLM call sites (WS0.19): provider endpoints and SDKs only inside lib/llm/ and
+// Static scan of the hub's LLM call sites (LLM facade): provider endpoints and SDKs only inside lib/llm/ and
 // the two wrappers, a registered task key on every call, the safe-mode guard on every provider call,
 // and none of it in the browser bundle.
 import test from 'node:test';

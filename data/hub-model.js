@@ -55,7 +55,7 @@ export function normalizeFeatures(features) {
 
 /**
  * The 7 legacy CMS flags for a website plan id. Delegates to the shared tier service matrix
- * (WS8.1): the flags of the tier's services, with the legacy meaning of `blog` (automatic posts,
+ * (service vocabulary): the flags of the tier's services, with the legacy meaning of `blog` (automatic posts,
  * part of the seo service). The output is unchanged for every plan; a custom plan has no services
  * by tier, so it keeps the defaults. Plan-based flags with blog on every tier come from
  * featuresFromServices (lib/website-tiers.js) once a site's plan carries services.
@@ -161,7 +161,7 @@ export function normalizeUnverifiedCms(raw) {
 export function normalizeCmsMeta(cms) {
   const base = emptyCmsMeta();
   if (!cms || typeof cms !== 'object') return base;
-  // WS6.7: what the CMS reports in its heartbeat, each field only when it was reported.
+  // Feature tree: what the CMS reports in its heartbeat, each field only when it was reported.
   const reported = normalizeCmsReportedFields(cms);
   const out = carryFutureKeys({
     githubRepo: String(cms.githubRepo || ''),
@@ -213,9 +213,9 @@ export function normalizeSite(site) {
     createdAt: site.createdAt || new Date().toISOString(),
     analyticsLevel: analyticsLevelFromFlags({ planId: websitePlan, features }),
   };
-  // WS8.56: stored only when true, so existing sites keep their shape.
+  // Test-client flag: stored only when true, so existing sites keep their shape.
   if (site.isTest === true) out.isTest = true;
-  // WS6.7 / WS6.8: the feature spec, the settings spec and its history, and the enforcement mode,
+  // Feature tree / cms-spec: the feature spec, the settings spec and its history, and the enforcement mode,
   // each stored only when the site has one (lib/cms-entitlements.js fills in the rest on read).
   const featureSpec = normalizeFeatureSpec(site.featureSpec);
   if (featureSpec) out.featureSpec = featureSpec;
@@ -224,7 +224,7 @@ export function normalizeSite(site) {
   if (Array.isArray(site.cmsSpecHistory)) out.cmsSpecHistory = normalizeCmsSpecHistory(site.cmsSpecHistory);
   const featureEnforcement = normalizeFeatureEnforcement(site.featureEnforcement);
   if (featureEnforcement) out.featureEnforcement = featureEnforcement;
-  // WS8.44: keys a later batch writes survive this code (see data/normalize-ext.js).
+  // Forward compatibility: keys a later batch writes survive this code (see data/normalize-ext.js).
   carryFutureKeys(out, site, FUTURE_SITE_KEYS);
   if (out.isTest !== true) delete out.isTest;
   // Owned now: a value that did not normalize is dropped, never carried through as it was.

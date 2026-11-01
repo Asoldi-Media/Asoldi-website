@@ -1,4 +1,4 @@
-// WS0.2 (rest): token age from the data dir, revokedBefore per class, per-user tokenVersion,
+// Auth hardening (rest): token age from the data dir, revokedBefore per class, per-user tokenVersion,
 // and env secrets that are known defaults or too short are ignored.
 import test from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,4 +1,4 @@
-// Shape normalizers for the CMS feature tree fields on a hub site (WS6.7, WS6.8).
+// Shape normalizers for the CMS feature tree fields on a hub site (feature tree, cms-spec).
 //
 // site.featureSpec        agency spec: grant/revoke services and keys, defaults, values, locks, rev
 // site.cmsSpec            settings sections for the CMS, rev, force list

@@ -1,5 +1,5 @@
 /**
- * Hub email data store (WS7.1).
+ * Hub email data store (email store).
  *
  * Files live in the persistent data dir (never in Git):
  * - email-settings.json, email-sites.json, email-suppressions.json: low churn,
@@ -530,7 +530,7 @@ export function defaultEmailSettings() {
       folderId: null,
       webhookId: null,
       lastAccountSyncAt: '',
-      // Filled by the Brevo account sync (WS7.37); the owner reports a paid Starter plan.
+      // Filled by the Brevo account sync (email terms gate); the owner reports a paid Starter plan.
       planTier: 'unknown',
       campaignsOnFree: false,
       termsConfirmedAt: '',
@@ -814,7 +814,7 @@ export function readEmailSecrets() {
 }
 
 /**
- * Superadmin Brevo key paste (fallback when env has none) and per-site emailKeys (WS7.34).
+ * Superadmin Brevo key paste (fallback when env has none) and per-site emailKeys (email credential).
  * Rejects with EMAIL_SECRETS_UNREADABLE, writing nothing, when the current file cannot be
  * read: a paste must never wipe the per-site keys.
  */

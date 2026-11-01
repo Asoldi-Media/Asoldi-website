@@ -1,5 +1,5 @@
 // Boots the real hub (server.js) on a random local port with a throwaway data dir and no real
-// credentials, then checks Maker host tokens over HTTP (WS0.4, WS8.25). Same isolation as
+// credentials, then checks Maker host tokens over HTTP (Maker hosts, Maker heartbeat). Same isolation as
 // scripts/security-boot.test.mjs: empty child cwd (no .env), every credential-like env key
 // blanked, safe mode on, and scripts/security/loopback-only-egress.mjs preloaded so nothing but
 // 127.0.0.1 can be reached.
@@ -169,7 +169,7 @@ test('real hub: per-host tokens on Maker callbacks, revoke, legacy disk token, h
     assert.notEqual(bundle.status, 401, 'the client-bundle scope is granted by default');
     assert.notEqual(bundle.status, 403);
 
-    // 4. WS8.25 heartbeat: stores the routing fields once; an unchanged heartbeat writes nothing.
+    // 4. Maker heartbeat: stores the routing fields once; an unchanged heartbeat writes nothing.
     const beat = (body) => fetch(`${base}/api/maker/hosts/heartbeat`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-maker-host-token': token },

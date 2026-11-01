@@ -1,4 +1,4 @@
-// Automation settings store (WS8.10): <dataDir>/automation-settings.json, version 2.
+// Automation settings store: <dataDir>/automation-settings.json, version 2.
 //
 // Owner decision 2026-10-23: no approval queues. Every switch is either `shadow` (internal
 // pre-release stage: the system computes and records what it would do and sends nothing) or
@@ -78,7 +78,7 @@ export function defaultAutomationSettings() {
     pilotClientIds: [],
     emails,
     sender: { scheduling: 'owner-rep', service: { accountKey: 'damian', replyTo: 'alexander@asoldi.com' } },
-    // Today the inbox bot reads alexander@ only. WS8.32 adds damian@ behind the known-contact prefilter.
+    // Today the inbox bot reads alexander@ only. Inbox bot adds damian@ behind the known-contact prefilter.
     inbox: {
       mailboxes: ['alexander@asoldi.com'],
       autoActions: { 'alexander@asoldi.com': true },
@@ -98,10 +98,10 @@ export function defaultAutomationSettings() {
       requireConfirmForCustom: true,
       previewJobs: false,
       seoJobs: false,
-      // WS8.28: Maker delivery events are recorded on makerRun only when set to 'record'.
+      // Maker delivery events are recorded on makerRun only when set to 'record'.
       makerEvents: 'off',
     },
-    // WS8.41: 'dry-run' writes the backfill report at boot, 'apply' also applies it (idempotent).
+    // 'dry-run' writes the backfill report at boot, 'apply' also applies it (idempotent).
     migrations: { deliveryBackfill: 'off' },
     publish: {
       staging: { mode: 'shadow', tiers: ['tier-3-ecommerce'], paused: null },

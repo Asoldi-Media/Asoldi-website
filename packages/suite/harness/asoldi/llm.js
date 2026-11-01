@@ -2,7 +2,7 @@
 // reference routes, data policy and budgets. Facades load these (or a JSON copy with the same schema) and
 // may override values from their own config or data-dir files; the schemas are the core's.
 //
-// Task keys are append-only: other workstreams add entries here, never rename one.
+// Task keys are append-only: other areas add entries here, never rename one.
 
 import { parseTaskRegistry, tasksForRepo } from '../../core/llm/index.js';
 
@@ -13,7 +13,7 @@ function t(kind, vision, dataClass, maxTokens, extra = {}) {
   return { kind, vision, dataClass, maxTokens, ...extra };
 }
 
-// Public tasks that may also read a client's own site (live-site imports, WS1 / WS2.24). `public` holds only
+// Public tasks that may also read a client's own site (live-site imports, import / site intelligence). `public` holds only
 // for template sources; callers pass ctx.dataClass: 'business' when the source is a client's live site, so the
 // data policy keeps it off DeepSeek and unpaid Gemini.
 const LIVE_SITE = { note: "public for template sources; pass ctx.dataClass 'business' when the source is a client's live site" };
@@ -58,7 +58,7 @@ export const ASOLDI_LLM_TASKS = {
     'template-import.qa-vision': t('json', true, 'public', 4000, { family: 'visual-qa', repo: M, owner: 'WS1', ...LIVE_SITE }),
     'upload.ingest': t('json', true, 'business', 2000, { family: 'extraction', repo: M }),
     'data-extract.repair': t('json', false, 'business', 4000, { family: 'extraction', repo: M }),
-    // Maker: automatic development agent and model evaluation (WS4)
+    // Maker: automatic development agent and model evaluation (developer automation)
     'dev.plan': t('json', true, 'personal', 16000, { family: 'plan', repo: M, owner: 'WS4' }),
     'dev.copy': t('json', false, 'personal', 8000, { family: 'copy', repo: M, owner: 'WS4' }),
     'dev.judge': t('json', true, 'business', 4000, { family: 'visual-qa', repo: M, owner: 'WS4' }),
@@ -84,7 +84,7 @@ export const ASOLDI_LLM_TASKS = {
     'infokort.agent': t('tools', false, 'public', 4096, { family: 'agent', repo: H }),
     // A real business's name, city, phone and address: business data (Q5), not public.
     'sales-link.discover': t('json', false, 'business', 4000, { family: 'extraction', repo: H }),
-    // Hub: delivery brief and change requests (WS8)
+    // Hub: delivery brief and change requests
     'brief.map': t('json', false, 'transcript', 8000, { family: 'brief', repo: H, owner: 'WS8' }),
     'brief.reduce': t('json', false, 'transcript', 16000, { family: 'brief', repo: H, owner: 'WS8' }),
     'brief.iteration': t('json', false, 'transcript', 8000, { family: 'brief', repo: H, owner: 'WS8' }),
@@ -95,11 +95,11 @@ export const ASOLDI_LLM_TASKS = {
 
 /**
  * Starting routes before the model evaluation (owner order: DeepSeek for tests, then Haiku 5.5, then other
- * Claude, then Gemini). Production routes by task family; WS4's evaluation adopts values into `tasks`.
+ * Claude, then Gemini). Production routes by task family; developer automation's evaluation adopts values into `tasks`.
  * Q5: real client data runs on Claude (or replay). DeepSeek stays only as a fallback for families whose tasks
  * are mostly public (template HTML, template classification); the data policy removes it for any client data.
  * When such a task reads a client's live site, the caller passes ctx.dataClass 'business' (see LIVE_SITE).
- * Gemini entries take effect once WS0.34 confirms the paid tier; until then the policy removes them.
+ * Gemini entries take effect once data protection confirms the paid tier; until then the policy removes them.
  */
 export const ASOLDI_LLM_ROUTES = {
   version: 1,
@@ -173,7 +173,7 @@ export const ASOLDI_LLM_POLICY = {
     },
   },
   redirect: 'claude:claude-haiku-5-5',
-  // Known LLM calls outside the core, so outside this policy, ledger and budgets (critic WS0 #36).
+  // Known LLM calls outside the core, so outside this policy, ledger and budgets (critic platform #36).
   exceptions: [
     {
       id: 'cms-local-blog-job',

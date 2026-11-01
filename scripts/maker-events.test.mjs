@@ -1,4 +1,4 @@
-// WS8.28: Maker delivery events on the hub. Payload normalization (no URLs, counts and routes
+// Maker delivery events on the hub. Payload normalization (no URLs, counts and routes
 // only), the recorder on the data layer, the materials snapshot in place of a live run fetch, and
 // the switch wiring in the status callback (off by default: the old step-status path). The live run
 // fetch comes first; the snapshot of the linked run stands in only when it fails.

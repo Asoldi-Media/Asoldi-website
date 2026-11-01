@@ -55,7 +55,7 @@ function writeSites(sites) {
 
 function publicSite(site) {
   if (!site) return null;
-  // blogQueue (WS9.49) holds a token hash; it is kept on disk but never returned.
+  // blogQueue (blog queue) holds a token hash; it is kept on disk but never returned.
   const { blogQueue, ...rest } = site;
   return {
     ...rest,
@@ -84,7 +84,7 @@ export function getSiteByDomain(domain) {
  * contact, a pending admin password hash and, with the feature tree, pendingSettings; HTTP callers
  * turn it on only for a request that carries the site's valid credential (lib/site-credentials.js),
  * never for a site key or domain alone. `withFeatures(config, site, { byDomain, includeAdmin })`
- * (WS6.7) may return a config with the feature tree; without it, or when it returns nothing, the
+ * (feature tree) may return a config with the feature tree; without it, or when it returns nothing, the
  * answer is unchanged.
  */
 export function getSiteConfig(siteKeyOrDomain, byDomain = false, { withFeatures = null, includeAdmin = false } = {}) {
@@ -255,7 +255,7 @@ export function updateSite(id, patch = {}) {
   if (patch.githubRepo !== undefined || patch.cms !== undefined) {
     current.cms = normalizeCmsMeta({
       ...current.cms,
-      // WS8.44: heartbeat-derived keys a later batch owns (effective, featuresRev, ...) come only
+      // Forward compatibility: heartbeat-derived keys a later batch owns (effective, featuresRev, ...) come only
       // from the stored site, never from a request body.
       ...(withoutKeys(patch.cms, [...FUTURE_SITE_CMS_KEYS, ...CMS_REPORTED_KEYS]) || {}),
       ...(patch.githubRepo !== undefined ? { githubRepo: patch.githubRepo } : {}),
@@ -286,7 +286,7 @@ export function updateSite(id, patch = {}) {
 }
 
 /**
- * Stores a site's planSource object (WS8.4 shape). Only server-side writers call this (the
+ * Stores a site's planSource object (plan source shape). Only server-side writers call this (the
  * delivery backfill, later the plan apply); no route passes a request body here.
  */
 export function setSitePlanSource(id, planSource) {
@@ -324,7 +324,7 @@ const UNVERIFIED_HEARTBEAT_WRITE_GAP_MS = 60_000;
  * A client CMS heartbeat. A verified heartbeat (the HTTP route sets verified only when the call
  * carried the site's valid credential) updates the version and admin address the hub acts on, the
  * name of an unnamed site and the pending admin flag, and applies `report`, the heartbeat body
- * (WS6.7): the feature and settings revs, the effective keys, the daily block counts, the migration
+ * (feature tree): the feature and settings revs, the effective keys, the daily block counts, the migration
  * summary and the sign-in report fields (data/feature-spec-model.js cmsPatchFromHeartbeat picks and
  * bounds them). An unverified one (the default) never applies the report, since it says which
  * settings revision the CMS applied and that stops pendingSettings; it keeps what it reported in
@@ -410,7 +410,7 @@ export async function updateClientAdmin(id, patch = {}) {
 }
 
 /**
- * Changes a site's feature spec fields (WS6.8) in one locked read-modify-write (withSitesLocked).
+ * Changes a site's feature spec fields (cms-spec) in one locked read-modify-write (withSitesLocked).
  * `mutate(site)` returns { ok:false, ... } to stop, or { ok:true, featureSpec?, cmsSpec?,
  * cmsSpecHistory?, featureEnforcement?, ... }; only those four fields are taken from it. Returns
  * mutate's result with the saved public site.

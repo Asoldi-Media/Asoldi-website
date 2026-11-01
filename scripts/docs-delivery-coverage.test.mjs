@@ -1,4 +1,4 @@
-// WS8.43: every id in the delivery vocabulary is documented, and every runbook has symptom, check and fix.
+// Delivery docs: every id in the delivery vocabulary is documented, and every runbook has symptom, check and fix.
 // Part of every delivery batch's definition of done.
 import test from 'node:test';
 import assert from 'node:assert/strict';

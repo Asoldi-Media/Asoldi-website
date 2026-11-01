@@ -1,4 +1,4 @@
-// CMS feature tree switch (WS6.7, WS6.8): <dataDir>/cms-feature-settings.json, edited from Superadmin.
+// CMS feature tree switch (feature tree, cms-spec): <dataDir>/cms-feature-settings.json, edited from Superadmin.
 //
 // The feature tree ships dark. With no file (or mode 'off') /api/hub/site-config answers exactly as
 // before. 'shadow' computes the tree for every site-config call and records the result for the

@@ -1,4 +1,4 @@
-// WS8.1 tier service matrix and WS8.3 client.sitePlan: resolver, offer-scoped plan, readers and the
+// Service vocabulary tier service matrix and site plan client.sitePlan: resolver, offer-scoped plan, readers and the
 // Maker handoff payload. Pure functions plus the data layer on a temp data dir.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -22,7 +22,7 @@ const model = await import('../lib/site-plan-model.js');
 const { planIdForProfile, analyticsAccessFor } = await import('../lib/client-analytics-service.js');
 const { buildDevelopmentItems } = await import('../lib/development-phase.js');
 
-// ---------------------------------------------------------------- WS8.1 tier matrix
+// ---------------------------------------------------------------- Service vocabulary tier matrix
 
 test('tier matrix: featuresFromPlan returns exactly what it returned before the matrix', () => {
   for (const [id, expected] of Object.entries(golden.featuresFromPlan)) {
@@ -69,7 +69,7 @@ test('tier matrix: aliases and calculator ids map to plan services', () => {
   assert.equal(vocab.changesPerMonthForTier('custom'), 4);
 });
 
-// ---------------------------------------------------------------- WS8.3 offer-scoped plan and resolver
+// ---------------------------------------------------------------- Site plan offer-scoped plan and resolver
 
 const quoteTier2 = buildOfferFromMeetingQuote({ tierId: 'seo', selected: [], pages: 7 });
 const quoteDual = buildOfferFromMeetingQuote({ tierId: 'starter', selected: [], pages: 5, altQuote: { tierId: 'nettbutikk', selected: [], pages: 10 } });

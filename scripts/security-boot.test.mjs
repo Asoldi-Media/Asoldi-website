@@ -5,7 +5,7 @@
 //   finds no .env even when this test runs from the main checkout that has the live .env.
 // - Every credential-like key is set to an empty string in the child env: dotenv never
 //   overrides a key that is already set, so even a stray .env could not fill them.
-// - Myphoner reconcile / SSU sync are off, and HUB_SAFE_MODE=1 (honoured once WS0.11 lands).
+// - Myphoner reconcile / SSU sync are off, and HUB_SAFE_MODE=1 (honoured once safe mode lands).
 // - scripts/security/loopback-only-egress.mjs is preloaded: any TCP connection to a
 //   non-loopback host fails inside the child.
 //
@@ -301,7 +301,7 @@ test('local hub boot: tokens signed with an old default secret, stale tokens, pa
     assert.equal(counters['maker-callback-rejected'].total, 1);
     assert.equal(counters['maker-callback-missing-token'].total, 1);
 
-    // 10. The read-only probe (WS0.32) passes against the real hub for a real site; only the
+    // 10. The read-only probe (deploy gate) passes against the real hub for a real site; only the
     //     Fireflies API key is missing because the boot env has none on purpose.
     const site = await fetch(`${base}/api/hub/sites`, {
       method: 'POST',

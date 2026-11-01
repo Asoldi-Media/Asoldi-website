@@ -23,7 +23,7 @@ test('public client admin never returns the password hash', () => {
   assert.equal('passwordHash' in pub, false);
 });
 
-test('SEO features derive from the site tier until the feature tree lands (WS9.46)', () => {
+test('SEO features derive from the site tier until the feature tree lands', () => {
   const byPlan = (websitePlan) => seoFeaturesForSite(normalizeSite({ id: websitePlan, site_key: 'k', name: 'S', websitePlan }));
   const t1 = byPlan('tier-1-standard');
   const t2 = byPlan('tier-2-seo');

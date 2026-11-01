@@ -1,4 +1,4 @@
-// Forward-compatible normalizers (WS8.44, batch 0).
+// Forward-compatible normalizers (forward compatibility, batch 0).
 //
 // The hub's normalizers rebuild records from explicit whitelists, so a key the running code does
 // not know is deleted on the next write. Reverting a later batch would therefore drop the data that
@@ -18,63 +18,63 @@ export const EXT_KEY = 'ext';
 
 // Sales client (data/sales.js normalizeSalesClient).
 export const FUTURE_CLIENT_KEYS = Object.freeze([
-  'sitePlan', // WS8.3
-  'delivery', // WS8.9
-  'nurture', // WS8.38
-  'isTest', // WS8.56
-  'seoRecord', // WS9 seo-ops pointer
-  'seoAudit', // WS8.40 / WS9.43
-  'seo', // WS9.14 agreed keywords (read by the WS8 gate)
-  'brandName', // WS3 / WS4 identity
-  'legalName', // WS3 / WS4 identity
-  'language', // WS3 / WS4
+  'sitePlan', // Site plan
+  'delivery', // Delivery state
+  'nurture', // Lead nurture
+  'isTest', // Test-client flag
+  'seoRecord', // SEO seo-ops pointer
+  'seoAudit', // Pre-sales SEO audit / prospect SEO check
+  'seo', // SEO client record agreed keywords (read by the delivery gate)
+  'brandName', // Branding / developer automation identity
+  'legalName', // Branding / developer automation identity
+  'language', // Branding / developer automation
   EXT_KEY,
 ]);
 
 // client.makerRun (data/sales.js normalizeMakerRun, lib/developer-card.js mergeMakerRunPatch).
 export const FUTURE_MAKERRUN_KEYS = Object.freeze([
-  'previewPush', // WS8.17
-  'materials', // WS8.28
-  'autopilot', // WS3.22
-  'dev', // WS4.18
-  'goLive', // WS5.21
-  'step1Qa', // WS1.43
-  'homepageRoute', // WS1.13
+  'previewPush', // Preview and go-live
+  'materials', // Maker events
+  'autopilot', // Intake autopilot
+  'dev', // Dev reports
+  'goLive', // Go-live callback
+  'step1Qa', // Import handoff
+  'homepageRoute', // Homepage variant
   EXT_KEY,
 ]);
 
 // client.makerRun keys a batch owns and normalizes, but that only their own authenticated writer may set:
 // incoming makerRun patches (mergeMakerRunPatch, updateSalesClient) never carry them.
-//   aiSpend: WS0.19, written only by the Maker's run.ai.spend callback (data/sales.js setSalesMakerRunAiSpend)
+//   aiSpend: LLM facade, written only by the Maker's run.ai.spend callback (data/sales.js setSalesMakerRunAiSpend)
 export const WRITER_ONLY_MAKERRUN_KEYS = Object.freeze(['aiSpend']);
 
-// client.makerRun.steps and step tokens beyond today's 1, 1.5, 2, 3 (WS4 chain).
+// client.makerRun.steps and step tokens beyond today's 1, 1.5, 2, 3 (developer automation chain).
 export const FUTURE_MAKERRUN_STEP_KEYS = Object.freeze(['2.5', 'cms', 'dev', 'dev-verify']);
 
 // client.hubSite (data/sales.js normalizeHubSite).
 export const FUTURE_HUBSITE_KEYS = Object.freeze([
-  'githubRepo', // WS8.4
+  'githubRepo', // Plan source
   EXT_KEY,
 ]);
 
 // Hub site in sites.json (data/hub-model.js normalizeSite).
 export const FUTURE_SITE_KEYS = Object.freeze([
-  'planSource', // WS8.4
-  'isTest', // WS8.56
-  'stagingDomain', // WS5.21
-  'keyAliases', // WS5 rekeySite
-  'featureSpec', // WS6.7
-  'cmsSpec', // WS6.8
-  'cmsSpecHistory', // WS6.8
-  'featureEnforcement', // WS6.6 / WS6.54
-  'featureOverrides', // WS8 legacy-flag overrides, converted by WS6.7
-  'contactEmail', // WS7
-  'blogQueue', // WS9.49
-  'shopConnectionRev', // WS8.50
+  'planSource', // Plan source
+  'isTest', // Test-client flag
+  'stagingDomain', // Go-live callback
+  'keyAliases', // Publish rekeySite
+  'featureSpec', // Feature tree
+  'cmsSpec', // cms-spec
+  'cmsSpecHistory', // cms-spec
+  'featureEnforcement', // Feature enforcement / enforcement switch
+  'featureOverrides', // Delivery legacy-flag overrides, converted by feature tree
+  'contactEmail', // Email
+  'blogQueue', // Blog queue
+  'shopConnectionRev', // Staging publish
   EXT_KEY,
 ]);
 
-// site.cms (data/hub-model.js normalizeCmsMeta), heartbeat-derived state added by WS6.7.
+// site.cms (data/hub-model.js normalizeCmsMeta), heartbeat-derived state added by feature tree.
 export const FUTURE_SITE_CMS_KEYS = Object.freeze([
   'featuresRev',
   'clientFeaturesRev',
@@ -89,12 +89,12 @@ export const FUTURE_SITE_CMS_KEYS = Object.freeze([
 ]);
 
 // Offers (data/sales-offers.js). Kept on stored records only; offerContentHash ignores them, so
-// batch 0 never changes a hash. WS8.2 / WS8.57 decide how they enter the hash.
+// batch 0 never changes a hash. Offer plan / DPA versions decide how they enter the hash.
 export const FUTURE_OFFER_KEYS = Object.freeze(['plan', 'pricing', 'dpaVersion', EXT_KEY]);
 export const FUTURE_OFFER_ALTERNATIVE_KEYS = Object.freeze(['plan', 'pricing', 'dpaVersion', EXT_KEY]);
 export const FUTURE_OFFER_PRODUCT_KEYS = Object.freeze(['services', 'oneTimeAddOns', EXT_KEY]);
 
-// site.deliveryPhase values a later batch writes (WS8.4 / WS8.47); kept instead of reset.
+// site.deliveryPhase values a later batch writes (plan source / cancellation); kept instead of reset.
 export const FUTURE_DELIVERY_PHASES = Object.freeze(['cancelled', 'archived']);
 
 function isPlainObject(value) {

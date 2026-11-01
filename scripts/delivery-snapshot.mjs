@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Snapshot the delivery stores (WS8.44). Run before a batch deploy or a risky data change.
+// Snapshot the delivery stores (forward compatibility). Run before a batch deploy or a risky data change.
 //   node scripts/delivery-snapshot.mjs [--label <name>] [--reason <text>] [--data-dir <dir>]
 //   node scripts/delivery-snapshot.mjs --list [--data-dir <dir>]
 // The data dir defaults to APP_DATA_DIR / DATA_DIR / ~/.asoldi-website-data, like the server.

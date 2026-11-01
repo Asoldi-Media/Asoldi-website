@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Restore a delivery snapshot locally (WS8.44). On prod use
+// Restore a delivery snapshot locally (forward compatibility). On prod use
 // POST /api/admin/system/delivery-snapshots/:id/restore {dryRun} as superadmin instead.
 //   node scripts/restore-delivery-snapshot.mjs --snapshot <id> [--dry-run] [--data-dir <dir>]
 // A real restore first snapshots the current state as pre-restore-<timestamp>.

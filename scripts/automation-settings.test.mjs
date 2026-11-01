@@ -1,4 +1,4 @@
-// WS8.10: automation settings store and routes (shadow -> auto, no approval queue).
+// Automation settings store and routes (shadow -> auto, no approval queue).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

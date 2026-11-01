@@ -1,4 +1,4 @@
-// WS8.45: the shared delivery vocabulary (packages/suite/core/delivery/vocab.js).
+// The shared delivery vocabulary (packages/suite/core/delivery/vocab.js).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -107,7 +107,7 @@ test('owner decisions: blog on all tiers, auto posts and backlinks in tier 2+, n
   }
   // A custom plan with a site still gets the blog.
   assert.ok(vocab.expandServices(['site', 'changes', 'ecom']).includes('blog'));
-  // WS6 registry names: the client-written blog is `blog` and `blog.posts` (every tier); automatic
+  // CMS registry names: the client-written blog is `blog` and `blog.posts` (every tier); automatic
   // posts are `blog.autoPosts` and belong to `seo` only, so blog on every tier never gives tier 1
   // auto posts. The older name `blog.localPosts` is read as an alias.
   assert.deepEqual(vocab.SERVICE_FEATURE_ANCHORS.blog, ['blog']);
@@ -211,7 +211,7 @@ test('the Maker imports the same vocabulary module (synced suite copy)', { skip:
   assert.throws(() => maker.assertJobKind('change-request'), (error) => error.code === 'unknown-job-kind');
 });
 
-// WS8.45 deferred criterion: enqueueJob (WS8.26) and registerJobHandler (WS8.29) do not exist yet.
+// Delivery vocabulary deferred criterion: enqueueJob (job queue) and registerJobHandler (Maker worker) do not exist yet.
 // Whichever file defines them must reject kinds outside JOB_KINDS with assertJobKind. This test
 // stays green while nothing defines them and turns red when a definition skips the check.
 const JOB_API_DEFINITION = /function\s*\*?\s*(?:enqueueJob|registerJobHandler)\s*\(|(?:const|let|var)\s+(?:enqueueJob|registerJobHandler)\s*=|^\s*(?:async\s+)?(?:enqueueJob|registerJobHandler)\s*\([^)]*\)\s*\{/m;

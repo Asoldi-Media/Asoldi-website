@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Copies the client CMS feature registry into the hub (WS6.7).
+// Copies the client CMS feature registry into the hub (feature tree).
 //
 //   node scripts/sync-cms-feature-tree.mjs [--source ../website-cms] [--ref <git ref>] [--check]
 //
@@ -16,7 +16,7 @@
 // same input changes nothing. With --ref the files are read with `git show <ref>:<path>`, so a tag
 // or branch can be synced without checking it out. --check only compares and exits 1 on a drift.
 //
-// Release order: the hub copy ships before any CMS version that adds keys (WS6.51 checklist).
+// Release order: the hub copy ships before any CMS version that adds keys (release trains checklist).
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

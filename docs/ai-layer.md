@@ -43,7 +43,7 @@ change is refused with 409.
 | `inbox.inspect-contract` | `lib/inbox-bot/inspect-contract.js` | Gemini |
 | `sales-link.discover` | `lib/sales-link-discovery.js` (Google Search grounding) | Gemini |
 | `infokort.agent` | `lib/infokort-agent.js` (tool loop) | Claude Haiku 5.5 |
-| `brief.map`, `brief.reduce`, `brief.iteration`, `change.classify`, `followups.extract` | WS8 (no call site yet) | Claude Haiku 5.5 |
+| `brief.map`, `brief.reduce`, `brief.iteration`, `change.classify`, `followups.extract` | Delivery (no call site yet) | Claude Haiku 5.5 |
 
 - `lib/deepseek.js` (`deepseekChatJson`) and `lib/claude-messages.js` (`claudeMessages`,
   `claudeToolLoop`) are wrappers over the facade. Call sites pass `task` (and `ctx.salesClientId`

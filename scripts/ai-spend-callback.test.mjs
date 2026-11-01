@@ -1,4 +1,4 @@
-// The Maker's run.ai.spend callback -> makerRun.aiSpend, and the AI admin endpoints (WS0.19).
+// The Maker's run.ai.spend callback -> makerRun.aiSpend, and the AI admin endpoints (LLM facade).
 // Data-layer cases run in this process; the HTTP cases boot server.js from an empty folder with a temp
 // data dir, safe mode on and the egress recorder enforcing (nothing leaves 127.0.0.1).
 import test from 'node:test';

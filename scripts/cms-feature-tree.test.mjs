@@ -1,4 +1,4 @@
-// WS6.7: the hub's synced copy of the CMS feature registry (lib/cms-features.js,
+// Feature tree: the hub's synced copy of the CMS feature registry (lib/cms-features.js,
 // data/cms-feature-tree.json), the sync script, and parity with the delivery vocabulary and the
 // SEO feature map.
 import test from 'node:test';

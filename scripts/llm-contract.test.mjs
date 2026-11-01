@@ -1,4 +1,4 @@
-// LLM contract freeze (WS0.33). The same checks run in website-maker against its vendored lib/suite copy
+// LLM contract freeze. The same checks run in website-maker against its vendored lib/suite copy
 // and its facade; both repos pin the same version and fingerprint. A change to the contract must bump
 // LLM_CONTRACT.version and update this pin, CONTRACT.md and the Maker test in one change.
 import test from 'node:test';

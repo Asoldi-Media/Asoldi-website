@@ -54,7 +54,7 @@ async function withServer(fn, { limiter } = {}) {
   }
 }
 
-test('WS7.14: sales mail links are signed with the unsubKey and verify only for the same client', () => {
+test('Marketing unsubscribe: sales mail links are signed with the unsubKey and verify only for the same client', () => {
   const url = unsub.asoldiUnsubscribeUrl('c_1');
   const match = url.match(/^https:\/\/asoldi\.com\/email\/avmeld\?c=c_1&s=([A-Za-z0-9_-]{32})$/);
   assert.ok(match, url);
@@ -66,7 +66,7 @@ test('WS7.14: sales mail links are signed with the unsubKey and verify only for 
   assert.equal(unsub.asoldiUnsubscribeUrl('c 1', 'http://127.0.0.1:3001/'), `http://127.0.0.1:3001/email/avmeld?c=c%201&s=${unsub.signAsoldiUnsubscribe('c 1')}`);
 });
 
-test('WS7.14: unsubscribeUrl() in sales-email emits the signed link, and merge stripping still removes it', () => {
+test('Marketing unsubscribe: unsubscribeUrl() in sales-email emits the signed link, and merge stripping still removes it', () => {
   const url = unsubscribeUrl({ id: 'c_1' });
   assert.equal(url, `https://asoldi.com/email/avmeld?${signedQuery('c_1')}`);
   assert.equal(unsubscribeUrl({ id: 'c_1' }, 'http://127.0.0.1:3001'), `http://127.0.0.1:3001/email/avmeld?${signedQuery('c_1')}`);
@@ -77,13 +77,13 @@ test('WS7.14: unsubscribeUrl() in sales-email emits the signed link, and merge s
   assert.equal(stripMarketingUnsubscribe(html).includes('/email/avmeld'), false);
 });
 
-test('WS7.14 (b): the page no longer says "kobles snart"', () => {
+test('Marketing unsubscribe (b): the page no longer says "kobles snart"', () => {
   assert.equal(renderSalesUnsubscribePage({ clientId: 'c_1' }).includes('kobles snart'), false);
   assert.equal(unsub.renderAsoldiUnsubscribePage({ state: 'confirm' }).includes('kobles snart'), false);
   assert.match(renderSalesUnsubscribePage(), /name="email"/, 'the legacy export renders the address form');
 });
 
-test('WS7.14 (d): GET alone changes nothing, even on a valid signed link', async () => {
+test('Marketing unsubscribe (d): GET alone changes nothing, even on a valid signed link', async () => {
   await withServer(async ({ get }) => {
     const page = await get(`/email/avmeld?${signedQuery('c_1')}`);
     assert.equal(page.status, 200);
@@ -98,7 +98,7 @@ test('WS7.14 (d): GET alone changes nothing, even on a valid signed link', async
   });
 });
 
-test('WS7.14 (a)+(c): confirming a signed link records the suppression and isAsoldiMarketingSuppressed is true', async () => {
+test('Marketing unsubscribe (a)+(c): confirming a signed link records the suppression and isAsoldiMarketingSuppressed is true', async () => {
   await withServer(async ({ post }) => {
     const done = await post(`/email/avmeld?${signedQuery('c_1')}`, {});
     assert.equal(done.status, 200);
@@ -118,7 +118,7 @@ test('WS7.14 (a)+(c): confirming a signed link records the suppression and isAso
   });
 });
 
-test('WS7.14: a legacy unsigned ?c= link asks for the address and never reveals the card email', async () => {
+test('Marketing unsubscribe: a legacy unsigned ?c= link asks for the address and never reveals the card email', async () => {
   await withServer(async ({ get, post }) => {
     const page = await get('/email/avmeld?c=c_2');
     assert.equal(page.status, 200);
@@ -143,7 +143,7 @@ test('WS7.14: a legacy unsigned ?c= link asks for the address and never reveals 
   });
 });
 
-test('WS7.14: a signed card without an address falls back to the form; one-click POST works', async () => {
+test('Marketing unsubscribe: a signed card without an address falls back to the form; one-click POST works', async () => {
   await withServer(async ({ get, post }) => {
     const page = await get(`/email/avmeld?${signedQuery('c_3')}`);
     assert.match(page.html, /name="email"/);
@@ -158,7 +158,7 @@ test('WS7.14: a signed card without an address falls back to the form; one-click
   });
 });
 
-test('WS7.14: POSTs are rate limited per IP', async () => {
+test('Marketing unsubscribe: POSTs are rate limited per IP', async () => {
   let calls = 0;
   await withServer(async ({ post }) => {
     assert.equal((await post('/email/avmeld', { email: 'a1@example.no' })).status, 200);
@@ -169,7 +169,7 @@ test('WS7.14: POSTs are rate limited per IP', async () => {
   }, { limiter: () => { calls += 1; return calls <= 2; } });
 });
 
-test('WS7.14: every Asoldi marketing send is refused for a suppressed address; service mail still goes', () => {
+test('Marketing unsubscribe: every Asoldi marketing send is refused for a suppressed address; service mail still goes', () => {
   const blocked = unsub.asoldiMarketingSendBlock({ to: 'ola@example.no', service: false });
   assert.equal(blocked.code, 'asoldi_unsubscribed');
   assert.match(blocked.message, /o\*\*\*@example\.no/);
@@ -209,7 +209,7 @@ async function withRawServer(fn) {
   }
 }
 
-test('WS7.14: a client-written X-Forwarded-For cannot dodge the per-client limit on typed addresses', async () => {
+test('Marketing unsubscribe: a client-written X-Forwarded-For cannot dodge the per-client limit on typed addresses', async () => {
   await withRawServer(async (port) => {
     const statuses = [];
     for (let i = 0; i < 30; i += 1) {
@@ -236,7 +236,7 @@ test('WS7.14: a client-written X-Forwarded-For cannot dodge the per-client limit
   assert.equal(key('203.0.113.9', ''), '203.0.113.9');
 });
 
-test('WS7.14: typed opt-outs are capped hub-wide whatever the IP; signed links still work', async () => {
+test('Marketing unsubscribe: typed opt-outs are capped hub-wide whatever the IP; signed links still work', async () => {
   const now = Date.now();
   const seeded = [];
   await store.updateEmailSuppressions((rows) => {
@@ -297,7 +297,7 @@ test('WS7.14: typed opt-outs are capped hub-wide whatever the IP; signed links s
   });
 });
 
-test('WS7.14: repeating an opt-out writes nothing (no file rewrite, no backup snapshot, no lock)', async () => {
+test('Marketing unsubscribe: repeating an opt-out writes nothing (no file rewrite, no backup snapshot, no lock)', async () => {
   await withServer(async ({ post }) => {
     assert.equal(unsub.isAsoldiMarketingSuppressed('ola@example.no'), true);
     const before = statSync(suppressionsPath).mtimeMs;
@@ -317,7 +317,7 @@ test('WS7.14: repeating an opt-out writes nothing (no file rewrite, no backup sn
   assert.equal(JSON.parse(readFileSync(suppressionsPath, 'utf8')).asoldi['per@example.no'].source, 'unsubscribe-form', 'the original row is kept');
 });
 
-test('WS7.14: RFC 8058 one-click also works as multipart/form-data', async () => {
+test('Marketing unsubscribe: RFC 8058 one-click also works as multipart/form-data', async () => {
   clients.c_8 = { id: 'c_8', contactEmail: 'multipart@example.no' };
   await withRawServer(async (port) => {
     const form = new FormData();
@@ -329,7 +329,7 @@ test('WS7.14: RFC 8058 one-click also works as multipart/form-data', async () =>
   assert.equal(JSON.parse(readFileSync(suppressionsPath, 'utf8')).asoldi['multipart@example.no'].source, 'one-click');
 });
 
-test('WS7.14: Asoldi marketing mail carries the signed footer link and https-only List-Unsubscribe headers', () => {
+test('Marketing unsubscribe: Asoldi marketing mail carries the signed footer link and https-only List-Unsubscribe headers', () => {
   const message = { subject: 'Kampanje', html: '<html><body><p>Hei</p></body></html>', text: 'Hei', from: 'a@asoldi.com' };
   assert.equal(unsub.withAsoldiMarketingUnsubscribe(message, { clientId: 'c_2', service: true }), message, 'service mail is untouched');
   const marketing = unsub.withAsoldiMarketingUnsubscribe(message, { clientId: 'c_2' });
@@ -348,7 +348,7 @@ test('WS7.14: Asoldi marketing mail carries the signed footer link and https-onl
   assert.deepEqual(local.headers, {}, 'List-Unsubscribe is https only');
 });
 
-test('WS7.14: a composed custom template gets exactly one signed link after the merge strip; presets keep their flags', async () => {
+test('Marketing unsubscribe: a composed custom template gets exactly one signed link after the merge strip; presets keep their flags', async () => {
   const templates = await import('../lib/email-templates-store.js');
   const forged = templates.saveEmailTemplate({ name: 'Kampanje', key: 'offer', preset: true, html: '<p>Hei {{firstName}}</p><a href="https://asoldi.com/email/avmeld?c=x">Avmeld</a>' });
   assert.equal(forged.ok, true);
@@ -373,7 +373,7 @@ test('WS7.14: a composed custom template gets exactly one signed link after the 
   assert.ok(sent.headers['List-Unsubscribe']);
 });
 
-test('WS7.14: the composer route checks the service flag once and sends the footer and headers', () => {
+test('Marketing unsubscribe: the composer route checks the service flag once and sends the footer and headers', () => {
   const source = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
   const start = source.indexOf("app.post('/api/admin/sales/:id/send-composed-email'");
   const route = source.slice(start, source.indexOf('\n});', start));
@@ -383,7 +383,7 @@ test('WS7.14: the composer route checks the service flag once and sends the foot
   assert.match(route, /headers: composed\.headers,/);
 });
 
-test('WS7.14: rendering sales mail (no unsubscribe footer) does not touch the email secret store', async () => {
+test('Marketing unsubscribe: rendering sales mail (no unsubscribe footer) does not touch the email secret store', async () => {
   const fresh = mkdtempSync(join(tmpdir(), 'asoldi-unsub-lazy-'));
   try {
     const salesUrl = new URL('../lib/sales-email.js', import.meta.url).href;
@@ -407,7 +407,7 @@ test('WS7.14: rendering sales mail (no unsubscribe footer) does not touch the em
   }
 });
 
-test('WS7.14: an unreadable suppression record fails closed and the POST reports it', async () => {
+test('Marketing unsubscribe: an unreadable suppression record fails closed and the POST reports it', async () => {
   writeFileSync(suppressionsPath, '{"asoldi": {', 'utf8');
   writeFileSync(join(dataDir, 'backups', 'email-suppressions.json.latest.json'), 'broken', 'utf8');
   assert.equal(unsub.isAsoldiMarketingSuppressed('whoever@example.no'), true, 'unknown state counts as suppressed');

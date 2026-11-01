@@ -1,4 +1,4 @@
-// WS8.44 revert test: data written by a later batch survives ordinary writes by this code.
+// Forward compatibility revert test: data written by a later batch survives ordinary writes by this code.
 //
 // The fixture data dir holds every key in data/normalize-ext.js (what later batches write). A child
 // process runs the hub data layer against it and performs one client update, makerRun and hubSite
@@ -36,8 +36,8 @@ const writer = join(root, 'scripts', 'fixtures', 'forward-compat-writer.mjs');
 
 // When a batch starts owning a key (normalizing it itself), give the key a realistic sample here,
 // so the default working-tree run keeps passing; the sample must survive that batch's normalizer.
-// Batch 2 (WS8.2, WS8.3, WS8.9, WS8.28) owns these keys; their samples are normalized records.
-// WS6.7 / WS6.8 own the feature spec fields on a site and the CMS-reported fields in site.cms.
+// Batch 2 (offer plan, site plan, delivery state, Maker events) owns these keys; their samples are normalized records.
+// Feature tree / cms-spec own the feature spec fields on a site and the CMS-reported fields in site.cms.
 const AT = '2026-11-01T10:00:00.000Z';
 const OWNED_SAMPLES = {
   sitePlan: normalizeSitePlan({

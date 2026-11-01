@@ -1,4 +1,4 @@
-// WS8.44: the forward-compatible passthrough keeps keys a later batch stored, but an incoming patch
+// Forward compatibility: the forward-compatible passthrough keeps keys a later batch stored, but an incoming patch
 // cannot write them. Otherwise a rep could forge makerRun.goLive / previewPush through
 // POST /api/admin/sales/:id/set-maker-run (salesAuth), and later batches derive the `live` stage
 // from makerRun.goLive.
@@ -24,8 +24,8 @@ writeFileSync(join(DATA_DIR, 'sales-clients.json'), JSON.stringify([
   },
 ], null, 2));
 
-// Offers: one without later-batch keys, one with the keys WS8.2 / WS8.3 / WS8.57 store. Plan and
-// pricing are owned by WS8.2 (normalized records); products[].services stays a passthrough key.
+// Offers: one without later-batch keys, one with the keys offer plan / site plan / DPA versions store. Plan and
+// pricing are owned by offer plan (normalized records); products[].services stays a passthrough key.
 const storedServices = ['site', 'changes', 'blog'];
 const planOf = (tierId, services) => ({ tierId, services, pages: 5, oneTimeAddOns: [], billing: 'month', catalogType: null, derived: false, needsConfirmation: false });
 const tier1Plan = planOf('tier-1-standard', storedServices);
@@ -49,7 +49,7 @@ writeFileSync(join(DATA_DIR, 'sales-offers.json'), JSON.stringify([
   storedOffer,
 ], null, 2));
 
-// Hub sites: heartbeat-derived cms keys belong to WS6.7.
+// Hub sites: heartbeat-derived cms keys belong to feature tree.
 const storedEffective = 'users,site,blog';
 writeFileSync(join(DATA_DIR, 'sites.json'), JSON.stringify([
   { id: 'site-fresh', site_key: 'key-fresh', name: 'Fresh', domain: 'fresh.test', cms: { githubRepo: 'org/fresh' } },

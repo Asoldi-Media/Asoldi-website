@@ -1,4 +1,4 @@
-// WS9.58 — shared safe fetch. Local test server only; no outside network.
+// Shared safe fetch. Local test server only; no outside network.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';

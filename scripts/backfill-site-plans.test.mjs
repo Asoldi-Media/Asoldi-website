@@ -1,4 +1,4 @@
-// WS8.41: the delivery backfill on synthetic data shaped like the live stores. Dry run first (report
+// The delivery backfill on synthetic data shaped like the live stores. Dry run first (report
 // only, stores untouched), apply (snapshot, plans, planSource, stages, email stamps), a second apply
 // changes nothing, the hub site config is unchanged for every site, SSU clients never get a plan,
 // and the boot hook does nothing while the switch is off.

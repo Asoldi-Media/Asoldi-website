@@ -23,7 +23,7 @@ function freshDir() {
   return join(dataDir, `log-${dirCount}`);
 }
 
-test('WS7.1: message lines are whitelisted and carry no plain recipient', () => {
+test('Email store: message lines are whitelisted and carry no plain recipient', () => {
   const dir = freshDir();
   const log = createEmailLog({ dir, now: () => NOW, flushMs: 0 });
   const row = log.appendMessage({
@@ -54,7 +54,7 @@ test('WS7.1: message lines are whitelisted and carry no plain recipient', () => 
   assert.equal(sanitizeMessageRow({ siteId: 's', kind: 'k', status: 'weird' }).status, 'accepted');
 });
 
-test('WS7.1: dedupe keys are visible right after the append, failed sends do not dedupe', () => {
+test('Email store: dedupe keys are visible right after the append, failed sends do not dedupe', () => {
   const log = createEmailLog({ dir: freshDir(), now: () => NOW, flushMs: 0 });
   log.appendMessage({ siteId: 's', kind: 'welcome', dedupeKey: 's:welcome:c1:0', status: 'accepted' });
   log.appendMessage({ siteId: 's', kind: 'welcome', dedupeKey: 's:welcome:c2:0', status: 'failed' });
@@ -63,7 +63,7 @@ test('WS7.1: dedupe keys are visible right after the append, failed sends do not
   assert.equal(log.hasDedupeKey(''), false);
 });
 
-test('WS7.1: a second instance on the same dir (another worker) sees appended lines', () => {
+test('Email store: a second instance on the same dir (another worker) sees appended lines', () => {
   const dir = freshDir();
   const a = createEmailLog({ dir, now: () => NOW, flushMs: 0 });
   const b = createEmailLog({ dir, now: () => NOW, flushMs: 0 });
@@ -73,7 +73,7 @@ test('WS7.1: a second instance on the same dir (another worker) sees appended li
   assert.equal(b.siteTotals('s').sent, 1);
 });
 
-test('WS7.1: a torn last line is skipped until it is complete', () => {
+test('Email store: a torn last line is skipped until it is complete', () => {
   const dir = freshDir();
   const log = createEmailLog({ dir, now: () => NOW, flushMs: 0 });
   log.appendMessage({ siteId: 's', kind: 'test', dedupeKey: 'k1' });
@@ -87,7 +87,7 @@ test('WS7.1: a torn last line is skipped until it is complete', () => {
   assert.equal(log.hasDedupeKey('k1'), true, 'junk lines are ignored');
 });
 
-test('WS7.1: events queue in memory and flush in one append; opens count once per message', () => {
+test('Email store: events queue in memory and flush in one append; opens count once per message', () => {
   const dir = freshDir();
   const log = createEmailLog({ dir, now: () => NOW, flushMs: 0 });
   const message = log.appendMessage({ siteId: 's', kind: 'campaign', ref: 'cmp_1', campaignId: 'hc_1' });
@@ -104,7 +104,7 @@ test('WS7.1: events queue in memory and flush in one append; opens count once pe
   assert.equal(log.flushEvents(), 0);
 });
 
-test('WS7.1: the flush timer writes queued events on its own', async () => {
+test('Email store: the flush timer writes queued events on its own', async () => {
   const dir = freshDir();
   const log = createEmailLog({ dir, now: () => NOW, flushMs: 30 });
   const message = log.appendMessage({ siteId: 's', kind: 'test' });
@@ -115,7 +115,7 @@ test('WS7.1: the flush timer writes queued events on its own', async () => {
   log.stop();
 });
 
-test('WS7.1 (e): rebuilding from 4 monthly files with 20 000 messages takes < 2 s and restores the dedupe set exactly', () => {
+test('Email store (e): rebuilding from 4 monthly files with 20 000 messages takes < 2 s and restores the dedupe set exactly', () => {
   const dir = freshDir();
   createEmailLog({ dir, now: () => NOW, flushMs: 0 }).readIndex();
   const months = ['2026-07', '2026-08', '2026-09', '2026-10'];
@@ -153,7 +153,7 @@ test('WS7.1 (e): rebuilding from 4 monthly files with 20 000 messages takes < 2 
   assert.equal(delivered, 5000);
 });
 
-test('WS7.1: pruning rolls up months outside the index and keeps every line at least 400 days', () => {
+test('Email store: pruning rolls up months outside the index and keeps every line at least 400 days', () => {
   const dir = freshDir();
   createEmailLog({ dir, now: () => NOW, flushMs: 0 }).readIndex();
   const write = (month, rows) => writeFileSync(join(dir, `messages-${month}.jsonl`), `${rows.map((r) => JSON.stringify(r)).join('\n')}\n`);
@@ -186,7 +186,7 @@ test('WS7.1: pruning rolls up months outside the index and keeps every line at l
   assert.equal(readdirSync(dir).includes('messages-202509.jsonl'), false);
 });
 
-test('WS7.1: a worker that was idle for a whole month still sees that month (no index gap)', () => {
+test('Email store: a worker that was idle for a whole month still sees that month (no index gap)', () => {
   const dir = freshDir();
   let clockA = Date.parse('2026-08-15T10:00:00.000Z');
   const a = createEmailLog({ dir, now: () => clockA, flushMs: 0 });
@@ -202,7 +202,7 @@ test('WS7.1: a worker that was idle for a whole month still sees that month (no 
   assert.deepEqual(a.readIndex().months, ['202607', '202608', '202609', '202610', '202611']);
 });
 
-test('WS7.1: an append with a skewed createdAt is visible at once, to this and other workers', () => {
+test('Email store: an append with a skewed createdAt is visible at once, to this and other workers', () => {
   const dir = freshDir();
   const a = createEmailLog({ dir, now: () => NOW, flushMs: 0 });
   const b = createEmailLog({ dir, now: () => NOW, flushMs: 0 });
@@ -223,7 +223,7 @@ test('WS7.1: an append with a skewed createdAt is visible at once, to this and o
   assert.equal(lagging.hasDedupeKey('future-key'), true);
 });
 
-test('WS7.1: months that leave the window are evicted, so memory and counters match a fresh boot', () => {
+test('Email store: months that leave the window are evicted, so memory and counters match a fresh boot', () => {
   const dir = freshDir();
   let clock = NOW;
   const log = createEmailLog({ dir, now: () => clock, flushMs: 0 });

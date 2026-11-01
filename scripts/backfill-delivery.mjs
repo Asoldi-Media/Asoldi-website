@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Delivery backfill (WS8.41): site plans, hub planSource and delivery stages for existing clients.
+// Delivery backfill: site plans, hub planSource and delivery stages for existing clients.
 // Dry run by default: prints the counts and writes the report to <dataDir>/migrations/.
 //   node scripts/backfill-delivery.mjs [--apply] [--only site-plans|plan-source|delivery-stage] [--data-dir <dir>] [--json]
 // --apply takes a delivery snapshot first, applies, and checks that a second run finds nothing left.

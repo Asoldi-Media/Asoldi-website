@@ -9,7 +9,7 @@
 //
 // Owner decisions applied here (2026-10-23):
 // - Blog on every tier: `blog` is part of every tier, and `site` implies `blog` for custom plans.
-//   Auto-written posts (WS6 feature `blog.autoPosts`; older name `blog.localPosts`) belong to the
+//   Auto-written posts (CMS feature `blog.autoPosts`; older name `blog.localPosts`) belong to the
 //   `seo` service (tier 2+).
 // - The backlink network is a service of its own (`backlinks`), on by default for tier 2+.
 // - Cancellation stops hub services. There is no standalone mode: no id in this file
@@ -18,8 +18,8 @@
 //   computed and recorded, never sent) and `auto` (runs, with runtime guards that pause a kind).
 // - Soft budgets never block. Only a runaway (more than 5x expected) or a detected loop stops work.
 
-// 1: batch 0 (WS8.45). 2: tier service matrix, site plan contract, Maker events (WS8.1/8.3/8.28).
-// 3: automatic posts named blog.autoPosts, blog.localPosts read as an alias (WS6.7).
+// 1: batch 0 (delivery vocabulary). 2: tier service matrix, site plan contract, Maker events (service vocabulary, site plan, Maker events).
+// 3: automatic posts named blog.autoPosts, blog.localPosts read as an alias (feature tree).
 export const VOCAB_VERSION = 3;
 
 function freezeList(list) {
@@ -87,10 +87,10 @@ export const TIER_SERVICES = Object.freeze({
 
 export const CHANGES_PER_MONTH = 4;
 
-// Feature keys (WS6 feature registry names) that each service must entitle. The WS6 bundles may
+// Feature keys (CMS feature registry names) that each service must entitle. The CMS bundles may
 // entitle more, never less, with one exception: `blog.autoPosts` (automatic posts) belongs to the
 // `seo` service only. The client-written blog is `blog` and `blog.posts` on every tier.
-// Version 2: the WS6 registry (website-cms server/feature-tree.json) names automatic posts
+// Version 2: the CMS registry (website-cms server/feature-tree.json) names automatic posts
 // `blog.autoPosts`. Version 1 used the older name `blog.localPosts`, which stays a read alias, and
 // mapped `blog.posts` onto `blog`; `blog.posts` is a registry key of its own now.
 export const SERVICE_FEATURE_ANCHORS = Object.freeze({
@@ -105,7 +105,7 @@ export const SERVICE_EXCLUSIVE_FEATURES = Object.freeze({
   'blog.autoPosts': Object.freeze(['seo']),
 });
 
-// Older or alternative names that resolve to a WS6 registry key. They are read, never written; the
+// Older or alternative names that resolve to a CMS registry key. They are read, never written; the
 // registry's own `aliases` table has the same rows (the hub's cms-feature-tree test checks this).
 export const FEATURE_KEY_ALIASES = Object.freeze({
   'blog.localPosts': 'blog.autoPosts',
@@ -113,7 +113,7 @@ export const FEATURE_KEY_ALIASES = Object.freeze({
   'seo.meta': 'seo.contentHead',
 });
 
-/** A feature key with its alias names resolved to the WS6 registry key. */
+/** A feature key with its alias names resolved to the CMS registry key. */
 export function canonicalFeatureKey(value) {
   const raw = String(value ?? '').trim();
   return FEATURE_KEY_ALIASES[raw] || raw;
@@ -273,7 +273,7 @@ export function isWarningCode(code) {
 
 // ---------------------------------------------------------------- stages
 
-// Delivery stages in lifecycle order. The stage is always derived (WS8.9 deriveStage).
+// Delivery stages in lifecycle order. The stage is always derived (delivery state deriveStage).
 export const STAGES = Object.freeze([
   'lead',
   'sales_meeting',
@@ -555,7 +555,7 @@ export const BILLING_KINDS = Object.freeze(['month', 'once']);
 
 export const CATALOG_TYPES = Object.freeze(['menu', 'tiers', 'normal']);
 
-// client.sitePlan (WS8.3). `active` is the plan in force; `void` follows an un-signing and
+// client.sitePlan (site plan). `active` is the plan in force; `void` follows an un-signing and
 // `ended` a cancellation.
 export const SITE_PLAN_VERSION = 1;
 export const SITE_PLAN_STATUSES = Object.freeze(['active', 'void', 'ended']);
@@ -607,7 +607,7 @@ export const SITE_PLAN_HANDOFF_FIELDS = Object.freeze([
 
 // ---------------------------------------------------------------- Maker events (v2)
 
-// Events the Maker posts to the hub's status callback for delivery (WS8.28). Older hubs ignore them.
+// Events the Maker posts to the hub's status callback for delivery (Maker events). Older hubs ignore them.
 export const MAKER_DELIVERY_EVENTS = Object.freeze(['run.materials.updated', 'run.autopilot.updated']);
 
 export function isMakerDeliveryEvent(value) {

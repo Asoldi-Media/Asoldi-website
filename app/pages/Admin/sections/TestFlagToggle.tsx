@@ -9,7 +9,7 @@ type Props = {
 };
 
 /**
- * WS8.56 Superadmin switch: a test client or site stays workable on the boards but is left out of
+ * Test-client flag Superadmin switch: a test client or site stays workable on the boards but is left out of
  * reports, social proof, nurture and Myphoner sync, and joins delivery automation only as a pilot.
  */
 export function TestFlagToggle({ kind, id, initial, onChange }: Props) {

@@ -1,4 +1,4 @@
-// WS0.9: with the push webhook refused until the new secret is pasted into Fireflies, meetings that
+// Webhook rotation: with the push webhook refused until the new secret is pasted into Fireflies, meetings that
 // arrive only through the pull ingest still get the notify e-mail (once) and their media copied.
 import test from 'node:test';
 import assert from 'node:assert/strict';

@@ -1,4 +1,4 @@
-// WS6.7 / WS6.8 on the real hub: boots server.js in safe mode on 127.0.0.1 with a throwaway data dir
+// Feature tree / cms-spec on the real hub: boots server.js in safe mode on 127.0.0.1 with a throwaway data dir
 // and no credentials (same isolation as scripts/security-boot.test.mjs: empty cwd, blanked keys,
 // loopback-only egress), then checks over HTTP that site-config is unchanged while the feature switch
 // is off, that cms-spec works in safe mode, and what the switch changes. The shop site holds a site

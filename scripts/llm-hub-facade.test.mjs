@@ -1,4 +1,4 @@
-// Hub LLM facade (lib/llm, WS0.19) on the shared core. Every provider is a local mock: global fetch
+// Hub LLM facade (lib/llm, LLM facade) on the shared core. Every provider is a local mock: global fetch
 // answers DeepSeek, Anthropic and Gemini requests from memory, and a socket spy refuses any
 // non-loopback connection, so no test here can reach a provider.
 import test from 'node:test';
@@ -438,7 +438,7 @@ test('the ledger records 100% of calls in a scripted run of every hub task (lega
     readWebsite: async () => [],
     fetchImpl: async () => ({ ok: false, status: 404, json: async () => ({}) }),
   });
-  // WS8 tasks have no call site yet; they run through the facade directly (legacy profile -> core).
+  // Delivery tasks have no call site yet; they run through the facade directly (legacy profile -> core).
   for (const task of ['brief.map', 'brief.reduce', 'brief.iteration', 'change.classify', 'followups.extract']) {
     await facade.json({ task, system: 'Extract the facts.', user: 'Synthetic note without client data.', ctx: { salesClientId: CLIENT.id } });
   }
@@ -543,7 +543,7 @@ test('configuredFor follows the profile: legacy needs today\'s key, prod needs a
   assert.equal(hubLlm(), null);
 });
 
-// ---------------------------------------------------------------- safe mode (WS0.29) covers every call
+// ---------------------------------------------------------------- safe mode covers every call
 test('safe mode: legacy and prod-profile calls never reach a provider; each is guarded and recorded', async () => {
   const safeMode = await import('../lib/safe-mode.js');
   await import('../lib/safe-mode-ai.js');

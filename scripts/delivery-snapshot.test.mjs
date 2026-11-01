@@ -1,4 +1,4 @@
-// WS8.44: delivery snapshots, the schema-bump startup hook, and restore (dry run first).
+// Forward compatibility: delivery snapshots, the schema-bump startup hook, and restore (dry run first).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';

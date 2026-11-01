@@ -8,14 +8,14 @@ The client CMS has one feature registry (website-cms `server/feature-tree.json`,
 |---|---|
 | `data/cms-feature-tree.json` | Synced copy of website-cms `server/feature-tree.json` (85 keys, registry version 2.3.0). |
 | `lib/cms-features.js` | Synced copy of website-cms `server/features.js`, the same bytes. It finds the tree in `data/`. If the tree is missing or invalid the import still works, `featureRegistryStatus()` reports the error, and site-config keeps its old answer. |
-| `lib/cms-spec-schema.js` | The cms-spec section schemas and `validateCmsSpec`. Written in the hub first (WS6.8). website-cms takes it over as `server/cms-spec-schema.js` (WS6.9); from then on the sync copies it back. It has no imports, and the registry is passed in. |
+| `lib/cms-spec-schema.js` | The cms-spec section schemas and `validateCmsSpec`. Written in the hub first (cms-spec). website-cms takes it over as `server/cms-spec-schema.js` (cms-spec apply); from then on the sync copies it back. It has no imports, and the registry is passed in. |
 | `scripts/fixtures/cms-feature-matrix.json` | The hand-written golden matrix from website-cms (12 profiles × 85 keys). |
 | `data/cms-feature-tree.meta.json` | sha256 of each synced file, the source ref and commit, the registry version. |
 | `lib/cms-entitlements.js` | Services, tier, lazy migration, resolved tree, site-config fields. |
 | `lib/cms-spec.js` | Merge rules for cms-spec writes, history, the AI prompt. |
 | `lib/routes/cms-feature-routes.js` | The routes below and the site-config hook. |
 | `data/cms-feature-settings.js` | The switch, stored in `<dataDir>/cms-feature-settings.json`. |
-| `lib/email-feature-keys.js` | Email send kinds mapped to feature keys (WS7.31). |
+| `lib/email-feature-keys.js` | Email send kinds mapped to feature keys (email keys). |
 
 ## Sync
 
@@ -59,11 +59,11 @@ For a site that is switched on, `GET /api/hub/site-config` adds:
 - A domain lookup is public: with the tree on it returns only the fields in `PUBLIC_SITE_CONFIG_FIELDS` (`lib/cms-entitlements.js`), so it never has `pendingSettings` or an admin field, and a field added to site-config later stays out until it is listed. A new public site-config field must be added to that list, or switched-on sites lose it on domain lookups; `scripts/cms-entitlements.test.mjs` and `scripts/cms-features-boot.test.mjs` fail when a field of the dark domain answer is missing from it.
 - The 7 legacy `features` come from the tree (`legacyFromTree`). Every flag that is on today stays on, except `socialSync`, which is always off (it only showed a placeholder tab). Tier 1 gains `blog` and `general`. `ecommerceCatalogType` and `analyticsLevel` follow the derived flags.
 
-**Services** come from `site.planSource.services` (WS8.4), else the linked sales client's `sitePlan.services` and `oneTimeAddOns` (WS8.3), else the tier's services. Ids the registry does not know are logged once and dropped.
+**Services** come from `site.planSource.services` (plan source), else the linked sales client's `sitePlan.services` and `oneTimeAddOns` (site plan), else the tier's services. Ids the registry does not know are logged once and dropped.
 
 **Lazy migration.** A site without a `featureSpec` reads as `{ rev: 1 }` plus:
 - `grantServices` for each legacy flag that is on and that the plan neither covers nor explains (`analytics → seo`, `ecommerce → ecom`, `blog → blog`, `emailMarketing → email`, `socialSync → social`, `users`/`general → site`). A plan explains a flag when `planSource.derivedFeatures` has it, or when the plan's services stand for it.
-- `revoke` for a flag switched off on purpose: off while the plan's flags have it on, or a WS8 `featureOverrides` row (`analytics → analytics`, `ecommerce → shop`, `blog → blog`, `emailMarketing → email.campaigns, email.newsletter`).
+- `revoke` for a flag switched off on purpose: off while the plan's flags have it on, or a delivery `featureOverrides` row (`analytics → analytics`, `ecommerce → shop`, `blog → blog`, `emailMarketing → email.campaigns, email.newsletter`).
 - `defaults: {"blog.autoPosts": false}` when `seo` is granted only because of the analytics flag.
 - `values: {"shop.catalog": ecommerceCatalogType}` for a site without a plan.
 
@@ -96,6 +96,6 @@ The first cms-spec write that sends `featureSpec` stores this spec with the chan
 
 When the sales client has a `sitePlan`, the new hub site takes `websitePlan` from `sitePlan.tierId` and the request body's `websitePlan` is ignored.
 
-## Email keys (WS7.31)
+## Email keys
 
 The email keys are rows of the same registry. `lib/email-feature-keys.js` maps the relay's send kinds to them (`cart-recovery → email.automations.abandonedCart`, `welcome`, `double-opt-in`, `back-in-stock`, `review-request`, `winback`, `campaign → email.campaigns`, `test → email`). `emailKindsFor` allows a kind when its key is entitled; before the tree reaches a site, the legacy flags decide (`emailMarketing` gives welcome, double-opt-in and test; `ecommerce` adds the four shop kinds). `campaign` needs the caller's `campaignsAllowed`. The cms-spec `email` section carries sender, identity, recovery steps (1 to 3, 30 to 43,200 minutes, increasing), discounts, welcome, winback, review requests, campaigns, owner notifications, evidence quotes and `email.*` feature values.

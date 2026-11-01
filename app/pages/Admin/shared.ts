@@ -177,7 +177,7 @@ export type Site = {
   deliveryPhase?: DeliveryPhase;
   development?: SalesDevelopment;
   websiteDueOverride?: string;
-  /** WS8.56: test site, left out of reports and social proof. */
+  /** Test-client flag: test site, left out of reports and social proof. */
   isTest?: boolean;
 };
 
@@ -826,7 +826,7 @@ export type SalesOffer = {
 
 export type SalesClient = {
   id: string;
-  /** WS8.56: test client, left out of reports, Myphoner sync and social proof. */
+  /** Test-client flag: test client, left out of reports, Myphoner sync and social proof. */
   isTest?: boolean;
   product: SalesProduct;
   businessName: string;

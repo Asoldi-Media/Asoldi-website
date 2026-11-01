@@ -53,7 +53,7 @@ function walk(dir, skip = new Set()) {
   return out;
 }
 
-test('WS7.1 (a): the first call creates both secret files, the second returns the same secrets', () => {
+test('Email store (a): the first call creates both secret files, the second returns the same secrets', () => {
   const unsubPath = join(dataDir, 'secrets', 'email-unsub-key');
   const webhookPath = join(dataDir, 'secrets', 'email-webhook-token');
   assert.equal(existsSync(unsubPath), false);
@@ -71,7 +71,7 @@ test('WS7.1 (a): the first call creates both secret files, the second returns th
   }
 });
 
-test('WS7.1 (a): another process reads the same secrets from disk', async () => {
+test('Email store (a): another process reads the same secrets from disk', async () => {
   const mine = store.readEmailSecrets();
   const { line, exited } = runChild(`
     const store = await import(${JSON.stringify(storeUrl)});
@@ -83,7 +83,7 @@ test('WS7.1 (a): another process reads the same secrets from disk', async () => 
   assert.equal((await exited).code, 0);
 });
 
-test('WS7.1 (b): resolveBrevoKey ignores a masked env value and falls back to the Superadmin paste', async () => {
+test('Email store (b): resolveBrevoKey ignores a masked env value and falls back to the Superadmin paste', async () => {
   assert.equal(store.resolveBrevoKey({ env: { BREVO_API_KEY: '********' } }), null);
   assert.equal(store.resolveBrevoKey({ env: { BREVO_API_KEY: '   ' } }), null);
   assert.equal(store.resolveBrevoKey({ env: { BREVO_API_KEY: 'fake-brevo-test-env' } }), 'fake-brevo-test-env');
@@ -98,13 +98,13 @@ test('WS7.1 (b): resolveBrevoKey ignores a masked env value and falls back to th
   await store.patchEmailSecrets({ brevoApiKey: '' });
 });
 
-test('WS7.1: BREVO_API_KEY survives the durable production env backup', async () => {
+test('Email store: BREVO_API_KEY survives the durable production env backup', async () => {
   const { PRODUCTION_ENV_KEYS, mergeProductionEnv } = await import('../lib/persistent-env.js');
   assert.ok(PRODUCTION_ENV_KEYS.includes('BREVO_API_KEY'));
   assert.equal(mergeProductionEnv({}, { BREVO_API_KEY: 'fake-brevo-test' }).BREVO_API_KEY, 'fake-brevo-test');
 });
 
-test('WS7.1 (c): 100 parallel increments from each of two child processes lose 0 updates', async () => {
+test('Email store (c): 100 parallel increments from each of two child processes lose 0 updates', async () => {
   const code = `
     const store = await import(${JSON.stringify(storeUrl)});
     await Promise.all(Array.from({ length: 100 }, () => store.withFileLock('email-ledger.json', () => {
@@ -124,7 +124,7 @@ test('WS7.1 (c): 100 parallel increments from each of two child processes lose 0
   assert.deepEqual(readdirSync(join(dataDir, 'email-locks')).filter((name) => name.endsWith('.lock')), [], 'locks are released');
 });
 
-test('WS7.1 (c): in one process, parallel withFileLock calls serialize', async () => {
+test('Email store (c): in one process, parallel withFileLock calls serialize', async () => {
   let inside = 0;
   let maxInside = 0;
   await Promise.all(Array.from({ length: 30 }, async () => store.withFileLock('serial-check', async () => {
@@ -138,7 +138,7 @@ test('WS7.1 (c): in one process, parallel withFileLock calls serialize', async (
   assert.equal(await store.withFileLock('serial-check', () => 'next'), 'next', 'a failed holder releases the lock');
 });
 
-test('WS7.1 (d): a lockfile left by a killed process is reaped after the stale timeout', async () => {
+test('Email store (d): a lockfile left by a killed process is reaped after the stale timeout', async () => {
   const { child, line, exited } = runChild(`
     const store = await import(${JSON.stringify(storeUrl)});
     store.withFileLock('stuck', () => { console.log('LOCKED'); return new Promise(() => {}); });
@@ -155,7 +155,7 @@ test('WS7.1 (d): a lockfile left by a killed process is reaped after the stale t
   assert.ok(waited >= 400, `waited ${waited} ms before taking over`);
 });
 
-test('WS7.1 (d): a lease held by a killed process is taken over after it expires, with a higher fencing token', async () => {
+test('Email store (d): a lease held by a killed process is taken over after it expires, with a higher fencing token', async () => {
   const { child, line, exited } = runChild(`
     const store = await import(${JSON.stringify(storeUrl)});
     const lease = await store.acquireLease('email-dispatch', 1500);
@@ -184,7 +184,7 @@ test('WS7.1 (d): a lease held by a killed process is taken over after it expires
   await next.release();
 });
 
-test('WS7.1: settings default to dark and patches keep a backup snapshot', async () => {
+test('Email store: settings default to dark and patches keep a backup snapshot', async () => {
   const defaults = store.readEmailSettings();
   assert.equal(defaults.rollout.mode, 'off');
   assert.equal(defaults.killSwitch, false);
@@ -200,7 +200,7 @@ test('WS7.1: settings default to dark and patches keep a backup snapshot', async
   assert.equal(store.readEmailSettings().quota.limit, 500);
 });
 
-test('WS7.1: per-site rows merge nested patches and normalize owner routing', async () => {
+test('Email store: per-site rows merge nested patches and normalize owner routing', async () => {
   assert.equal(store.readEmailSite('site_none').ownerRouting, '');
   await store.patchEmailSite('site_a', { ownerRouting: 'owner+asoldi-bcc', ownerRoutingSetAt: '2026-10-23T10:00:00.000Z', dpa: { version: 'v1' } });
   await store.patchEmailSite('site_a', { dpa: { acceptedAt: '2026-10-23T11:00:00.000Z' }, ownerRecipients: [{ email: ' Eier@Example.no ', status: 'confirmed' }] });
@@ -212,7 +212,7 @@ test('WS7.1: per-site rows merge nested patches and normalize owner routing', as
   assert.equal(store.readEmailSite('site_a').ownerRouting, '', 'unknown modes fall back to unset');
 });
 
-test('WS7.1: suppressions restore from the backup and fail closed when nothing is readable', async () => {
+test('Email store: suppressions restore from the backup and fail closed when nothing is readable', async () => {
   await store.updateEmailSuppressions((rows) => {
     rows.asoldi = { 'ola@example.no': { scope: 'marketing', source: 'unsubscribe-link', at: '2026-10-23T10:00:00.000Z' } };
   });
@@ -238,13 +238,13 @@ test('WS7.1: suppressions restore from the backup and fail closed when nothing i
   writeFileSync(live, JSON.stringify({ asoldi: {} }), 'utf8');
 });
 
-test('WS7.1: file names cannot escape the data dir', () => {
+test('Email store: file names cannot escape the data dir', () => {
   assert.throws(() => store.readJson('../outside.json'), /bad file name/);
   assert.throws(() => store.writeJsonAtomic('a/../../b.json', {}), /bad file name/);
   assert.throws(() => store.readJson('C:\\x.json'), /bad file name/);
 });
 
-test('WS7.1 (f): no API view, data file or log line contains a secret', async () => {
+test('Email store (f): no API view, data file or log line contains a secret', async () => {
   const captured = [];
   const original = { log: console.log, error: console.error, warn: console.warn };
   for (const key of Object.keys(original)) console[key] = (...args) => captured.push(args.map(String).join(' '));

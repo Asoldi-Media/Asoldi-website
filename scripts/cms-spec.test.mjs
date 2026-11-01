@@ -1,4 +1,4 @@
-// WS6.8 cms-spec endpoint, validator and prompt; WS7.31 email section. Runs the real routes and data
+// Cms-spec endpoint, validator and prompt; email keys email section. Runs the real routes and data
 // modules on a temp data dir behind a fake adminAuth and a fake Maker token check.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -181,7 +181,7 @@ test('a write based on an old rev gets 409; a contradictory, empty or unknown wr
   assert.equal((await put({ unknownPart: {} })).status, 400);
 });
 
-test('the email section (WS7.31): a cart recovery spec with two steps passes, and each constraint names its path', async () => {
+test('the email section (email keys): a cart recovery spec with two steps passes, and each constraint names its path', async () => {
   seedSites();
   const spec = {
     email: {

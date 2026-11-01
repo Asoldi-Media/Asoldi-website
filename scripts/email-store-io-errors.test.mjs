@@ -1,4 +1,4 @@
-// WS7.1 / WS7.14 / WS7.39: file errors fail fast and fail closed, and never block the event loop.
+// Email store / marketing unsubscribe / owner routing: file errors fail fast and fail closed, and never block the event loop.
 // This file patches fs.readFileSync for the whole process, so it runs on its own.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -50,7 +50,7 @@ test.before(async () => {
 });
 
 for (const code of ['EACCES', 'EPERM', 'EBUSY']) {
-  test(`WS7.1: ${code} on a data file and its backup returns in < 200 ms; routing keeps today's inbox and marketing fails closed`, () => {
+  test(`Email store: ${code} on a data file and its backup returns in < 200 ms; routing keeps today's inbox and marketing fails closed`, () => {
     // Data files and their backups only (not the lockfiles next to them).
     const restore = failReads(/email-(sites|suppressions)\.json(\.latest\.json)?$/, code);
     try {
@@ -69,7 +69,7 @@ for (const code of ['EACCES', 'EPERM', 'EBUSY']) {
   });
 }
 
-test('WS7.1: a hard error on the live file falls back to the backup at once', () => {
+test('Email store: a hard error on the live file falls back to the backup at once', () => {
   const restore = failReads(/[\\/]email-sites\.json$/, 'EACCES');
   try {
     const routing = timed(() => owners.resolveFormRouting(site));
@@ -81,7 +81,7 @@ test('WS7.1: a hard error on the live file falls back to the backup at once', ()
   }
 });
 
-test('WS7.1: a locked write on an unreadable record fails fast instead of outliving the 10 s lock', async () => {
+test('Email store: a locked write on an unreadable record fails fast instead of outliving the 10 s lock', async () => {
   const restore = failReads(/email-suppressions\.json(\.latest\.json)?$/, 'EACCES');
   const started = Date.now();
   try {
@@ -93,7 +93,7 @@ test('WS7.1: a locked write on an unreadable record fails fast instead of outliv
   assert.equal(JSON.parse(readFileSync(join(dataDir, 'email-suppressions.json'), 'utf8')).asoldi['ny@example.no'], undefined);
 });
 
-test('WS7.1: patchEmailSecrets refuses to write over a damaged or unreadable secrets file', async () => {
+test('Email store: patchEmailSecrets refuses to write over a damaged or unreadable secrets file', async () => {
   await store.patchEmailSecrets({ brevoApiKey: 'fake-brevo-io-test', siteKeys: { site_io: 'fake-site-key' } });
   const path = join(dataDir, 'secrets', 'email-secrets.json');
   const good = readFileSync(path, 'utf8');
@@ -116,7 +116,7 @@ test('WS7.1: patchEmailSecrets refuses to write over a damaged or unreadable sec
   assert.equal(store.resolveBrevoKey({ env: {} }), 'fake-brevo-io-test');
 });
 
-test('WS7.1: the fencing token never goes backwards and a lease is never taken on a read error', async () => {
+test('Email store: the fencing token never goes backwards and a lease is never taken on a read error', async () => {
   const first = await store.acquireLease('io-lease', 60_000);
   assert.ok(first);
   const token = first.token;
@@ -145,7 +145,7 @@ test('WS7.1: the fencing token never goes backwards and a lease is never taken o
   await live.release();
 });
 
-test('WS7.1: releasing a lock never deletes a lockfile that is not ours (empty nonce after a stale reap)', async () => {
+test('Email store: releasing a lock never deletes a lockfile that is not ours (empty nonce after a stale reap)', async () => {
   const lockPath = join(dataDir, 'email-locks', 'io-release.lock');
   await store.withFileLock('io-release', () => {
     // Our lock was reaped and another process has just created its own with O_EXCL (not written yet).
@@ -162,7 +162,7 @@ test('WS7.1: releasing a lock never deletes a lockfile that is not ours (empty n
   assert.equal(existsSync(lockPath), false, 'our own lock is released');
 });
 
-test('WS7.14: a lost opt-out record (both files gone after it existed) fails closed and raises an alert', async () => {
+test('Marketing unsubscribe: a lost opt-out record (both files gone after it existed) fails closed and raises an alert', async () => {
   const errors = [];
   const original = console.error;
   console.error = (...args) => errors.push(args.join(' '));
@@ -186,7 +186,7 @@ test('WS7.14: a lost opt-out record (both files gone after it existed) fails clo
   assert.equal(unsub.isAsoldiMarketingSuppressed('anyone@example.no'), false);
 });
 
-test('WS7.14: a fresh install (no record, no marker) is not suppressed and writes no marker on read', () => {
+test('Marketing unsubscribe: a fresh install (no record, no marker) is not suppressed and writes no marker on read', () => {
   const marker = join(dataDir, 'secrets', store.SUPPRESSIONS_MARKER);
   assert.equal(existsSync(marker), false);
   assert.equal(unsub.isAsoldiMarketingSuppressed('anyone@example.no'), false);

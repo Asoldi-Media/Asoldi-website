@@ -1,5 +1,5 @@
-// Delivery admin routes, batch 0: automation settings (WS8.10), delivery snapshots (WS8.44) and the
-// test-client flag (WS8.56). Runs the real data modules on a temp data dir behind a fake adminAuth.
+// Delivery admin routes, batch 0: automation settings, delivery snapshots (forward compatibility) and the
+// test-client flag. Runs the real data modules on a temp data dir behind a fake adminAuth.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';

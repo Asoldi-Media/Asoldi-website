@@ -1,4 +1,4 @@
-// Maker host tokens (WS0.4) and host heartbeat, routing fields and scoped access (WS8.25).
+// Maker host tokens (Maker hosts) and host heartbeat, routing fields and scoped access (Maker heartbeat).
 // Temp data dirs only; every token here is generated at run time. Nothing leaves 127.0.0.1.
 //
 // Run: node --test scripts/maker-auth.test.mjs
@@ -694,7 +694,7 @@ test('persisted counters: batched, merged across writers, and the settings recor
   assert.equal(settings.readSecuritySettings({ dataDir: dir }).counters.makerRejected.total, 4);
 });
 
-// ── WS8.25: heartbeat, routing fields, scoped access ───────────────────────────
+// ── Maker heartbeat: heartbeat, routing fields, scoped access ───────────────────────────
 
 test('updateHostMeta / heartbeat: unchanged fields write nothing to maker-hosts.json', () => {
   const dir = tempDir();

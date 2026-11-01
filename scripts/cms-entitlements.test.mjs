@@ -1,4 +1,4 @@
-// WS6.7: hub feature entitlements (lib/cms-entitlements.js), the site-config feature block behind
+// Feature tree: hub feature entitlements (lib/cms-entitlements.js), the site-config feature block behind
 // its switch, the heartbeat report and the site shape. Runs the real data modules on a temp data dir.
 import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -157,7 +157,7 @@ test('a plan explains its own flags; flags switched on or off by hand become gra
   assert.equal(dev.legacy.blog, false);
   assert.ok(dev.notes.some((line) => line.includes('differs from the plan')));
 
-  // A WS8 featureOverrides row with a reason.
+  // A delivery featureOverrides row with a reason.
   const overridden = model.normalizeSite({
     id: 'ovr', site_key: 'kovr', name: 'Ovr', websitePlan: 'tier-3-ecommerce', features: model.featuresFromPlan('tier-3-ecommerce'),
     featureOverrides: { ecommerce: { value: false, reason: 'shop paused by the client' } },

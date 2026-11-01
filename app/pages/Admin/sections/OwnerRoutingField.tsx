@@ -43,7 +43,7 @@ function formatDay(value: string) {
   return Number.isNaN(date.getTime()) ? '' : date.toLocaleDateString('nb-NO');
 }
 
-/** WS7.39: where form submissions and order notices for this site go. */
+/** Owner routing: where form submissions and order notices for this site go. */
 export function OwnerRoutingField({ siteId, authHeaders }: { siteId: string; authHeaders?: Record<string, string> }) {
   const headers = authHeaders || defaultAuthHeaders();
   const endpoint = `${API}/hub/sites/${encodeURIComponent(siteId)}/owner-routing`;

@@ -1,4 +1,4 @@
-// WS0.9: Fireflies webhook credentials live on the data disk; the retired env values are refused.
+// Webhook rotation: Fireflies webhook credentials live on the data disk; the retired env values are refused.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, createHmac } from 'node:crypto';
