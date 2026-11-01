@@ -24,9 +24,9 @@ const clients = [
   { id: 'cnone', product: 'asoldi', businessName: 'No Plan AS', status: 'active', progression: { contractSigned: true } },
   { id: 'cvoid', product: 'asoldi', businessName: 'Void Example AS', status: 'active', progression: { contractSigned: true }, sitePlan: plan('tier-2-seo', { status: 'void' }) },
   { id: 'cgo', product: 'asoldi', businessName: 'Golive Example AS', status: 'active', makerRun: { runId: 'run-go' }, progression: { contractSigned: true }, sitePlan: plan('tier-2-seo') },
-  // A second lead with another client's domain, and one whose link names another client's site id.
+  // A second lead with another client's domain. (A lead whose link names another client's site id is
+  // added in its own test, after that site's owner had its plan applied.)
   { id: 'cdup', product: 'asoldi', businessName: 'Duplicate Lead AS', status: 'active', websiteDomain: 'plain.example.com', progression: { contractSigned: true }, sitePlan: plan('tier-3-ecommerce') },
-  { id: 'cid', product: 'asoldi', businessName: 'Copied Link AS', status: 'active', hubSite: { id: 'site-spec' }, progression: { contractSigned: true }, sitePlan: plan('tier-3-ecommerce') },
 ];
 const sites = [
   { id: 'site-plain', site_key: 'key-plain', name: 'Plain Example AS', domain: 'plain.example.com', websitePlan: 'tier-1-standard', features: { users: true, analytics: true }, planSource: 'admin' },
@@ -198,17 +198,33 @@ test('go-live handler: off without the switch; with it a needs_import task opens
   }
 });
 
+/** A sales client as data/sales.js stores it (sitePlan goes through setSalesSitePlan). */
+function addClient(row, sitePlan = null) {
+  sales.createSalesClient({ product: 'asoldi', status: 'active', progression: { contractSigned: true }, ...row });
+  if (sitePlan) sales.setSalesSitePlan(row.id, sitePlan, { by: 'test', reason: 'test' });
+  return sales.getSalesClientById(row.id);
+}
+
+/** A live client's hub site, stored as the seed above stores its sites. */
+function addSite(row) {
+  const site = { websitePlan: 'tier-1-standard', features: { users: true, blog: true }, deliveryPhase: 'client', createdAt: AT, ...row };
+  writeFileSync(join(DATA_DIR, 'sites.json'), JSON.stringify([...allSites(), site], null, 2));
+  return hub.getSiteById(site.id);
+}
+
 test('a site found by domain or linked id that belongs to another client is left alone, with a task for a person', () => {
   const plainBefore = hub.getSiteById('site-plain');
   const specBefore = hub.getSiteById('site-spec');
   assert.equal(plainBefore.planSource.salesClientId, 'c1', 'site-plain is c1\'s');
+  assert.equal(specBefore.planSource.salesClientId, 'cspec', 'site-spec is cspec\'s');
+  addClient({ id: 'cid', businessName: 'Copied Link AS', hubSite: { id: 'site-spec' } }, plan('tier-3-ecommerce'));
   const byDomain = apply.applySitePlanToHub('cdup', { by: 'test', now: AT });
   assert.equal(byDomain.ok, false);
   assert.equal(byDomain.reason, 'site-owned-elsewhere');
   assert.equal(byDomain.owner, 'c1');
   const byId = apply.applySitePlanToHub('cid', { by: 'test', now: AT });
   assert.equal(byId.reason, 'site-owned-elsewhere');
-  assert.equal(byId.owner, 'cspec', 'linked to cspec by its key');
+  assert.equal(byId.owner, 'cspec', 'the planSource names cspec');
   assert.deepEqual(hub.getSiteById('site-plain'), plainBefore, 'the other client\'s site is unchanged');
   assert.deepEqual(hub.getSiteById('site-spec'), specBefore);
   assert.equal(allSites().filter((site) => ['cdup', 'cid'].includes(site.planSource?.salesClientId)).length, 0, 'no site made');
@@ -223,4 +239,72 @@ test('a site found by domain or linked id that belongs to another client is left
   assert.equal(sales.getSalesClientById('cdup').delivery.tasks.filter((task) => task.kind === 'site_owner_conflict').length, 1);
   // Control: the owner itself still finds and applies to its site.
   assert.equal(apply.applySitePlanToHub('c1', { by: 'test', now: AT }).site.id, 'site-plain');
+});
+
+// A lead whose hub link was copied from a live client's site (the old got-client writes the other
+// client's key, id and domain for a lead with the same domain), or holds only its key.
+test('a site reached through a copied link (key and id, or key only) is left alone; its owner\'s site is unchanged', () => {
+  const ownerSite = addSite({ id: 'site-live', site_key: 'key-live', name: 'Live Example AS', domain: 'live.example.com' });
+  const keySite = addSite({ id: 'site-keyonly', site_key: 'key-keyonly', name: 'Keyonly Example AS', domain: 'keyonly.example.com' });
+  addClient({ id: 'clive', businessName: 'Live Example AS', websiteDomain: 'live.example.com', hubSite: { id: 'site-live', siteKey: 'key-live', domain: 'live.example.com', createdAt: AT } });
+  addClient({ id: 'ckeyowner', businessName: 'Keyonly Example AS', hubSite: { id: 'site-keyonly', siteKey: 'key-keyonly' } });
+  addClient({ id: 'ccopy', businessName: 'Copy Lead AS', websiteDomain: 'live.example.com', hubSite: { id: 'site-live', siteKey: 'key-live', domain: 'live.example.com', createdAt: AT } }, plan('tier-3-ecommerce'));
+  addClient({ id: 'ckeycopy', businessName: 'Keycopy Lead AS', hubSite: { siteKey: 'key-keyonly' } }, plan('tier-3-ecommerce'));
+  const sitesBefore = JSON.stringify(allSites());
+
+  const located = apply.locateSiteForClient(sales.getSalesClientById('ccopy'));
+  assert.equal(located.via, 'key');
+  assert.equal(located.owner, 'clive', 'the client\'s own link is checked too');
+  for (const [id, owner] of [['ccopy', 'clive'], ['ckeycopy', 'ckeyowner']]) {
+    const result = apply.applySitePlanToHub(id, { by: 'contract-signing', now: AT });
+    assert.equal(result.ok, false, id);
+    assert.equal(result.reason, 'site-owned-elsewhere', id);
+    assert.equal(result.owner, owner, id);
+    assert.equal(apply.findSiteForClient(sales.getSalesClientById(id)), null, `${id}: readers do not see the site`);
+    assert.ok(sales.getSalesClientById(id).delivery.tasks.some((task) => task.kind === 'site_owner_conflict' && task.status === 'open'), id);
+  }
+  assert.equal(JSON.stringify(allSites()), sitesBefore, 'no site changed');
+  assert.deepEqual(hub.getSiteById('site-live'), ownerSite);
+  assert.deepEqual(hub.getSiteById('site-keyonly'), keySite);
+  assert.equal(hub.getSiteConfig('key-live').websitePlan, 'tier-1-standard');
+  assert.equal(hub.getSiteConfig('key-live').features.ecommerce, false);
+
+  // Two clients link the site and its planSource names neither: nobody's to change, the owner's
+  // apply is refused too, until a person decides.
+  sales.setSalesSitePlan('clive', plan('tier-2-seo'), { by: 'test', reason: 'test' });
+  const ownerTry = apply.applySitePlanToHub('clive', { by: 'contract-signing', now: AT });
+  assert.equal(ownerTry.reason, 'site-owned-elsewhere');
+  assert.equal(ownerTry.owner, 'ccopy');
+  assert.equal(JSON.stringify(allSites()), sitesBefore, 'still no site changed');
+  assert.equal(apply.siteOwnerId(hub.getSiteById('site-live')), '', 'two links: no owner');
+  assert.equal(apply.siteOwnerId(hub.getSiteById('site-keyonly')), '', 'two links: no owner');
+  assert.equal(apply.siteOwnerId(hub.getSiteById('site-plain')), 'c1', 'the planSource names the owner');
+});
+
+test('control: the owner whose planSource names it still applies its plan, with a copied link on another lead', () => {
+  const site = addSite({ id: 'site-named', site_key: 'key-named', name: 'Named Example AS', domain: 'named.example.com', planSource: { kind: 'offer', salesClientId: 'cnamed', tierId: 'tier-1-standard', services: vocab.servicesForTier('tier-1-standard') } });
+  addClient({ id: 'cnamed', businessName: 'Named Example AS', hubSite: { id: 'site-named', siteKey: 'key-named', domain: 'named.example.com' } }, plan('tier-2-seo'));
+  addClient({ id: 'cnamedcopy', businessName: 'Named Copy AS', hubSite: { id: 'site-named', siteKey: 'key-named', domain: 'named.example.com' } }, plan('tier-3-ecommerce'));
+  assert.equal(apply.otherSiteOwner(site, { id: 'cnamed' }), '', 'the planSource decides');
+  assert.equal(apply.otherSiteOwner(site, { id: 'cnamedcopy' }), 'cnamed');
+  const copy = apply.applySitePlanToHub('cnamedcopy', { by: 'contract-signing', now: AT });
+  assert.equal(copy.reason, 'site-owned-elsewhere');
+  assert.deepEqual(hub.getSiteById('site-named'), site, 'the copy changes nothing');
+  const own = apply.applySitePlanToHub('cnamed', { by: 'contract-signing', now: AT });
+  assert.equal(own.ok, true);
+  assert.equal(own.site.id, 'site-named');
+  assert.equal(hub.getSiteById('site-named').websitePlan, 'tier-2-seo');
+  assert.equal(hub.getSiteById('site-named').planSource.salesClientId, 'cnamed');
+});
+
+test('the go-live callback\'s key finds a site only when no other client claims it', () => {
+  addClient({ id: 'cgolead', businessName: 'Golead Example AS' }, plan('tier-2-seo'));
+  const lead = sales.getSalesClientById('cgolead');
+  const claimed = apply.locateSiteForClient(lead, { siteKey: 'key-plain' });
+  assert.equal(claimed.site.id, 'site-plain');
+  assert.equal(claimed.owner, 'c1', 'another client\'s site by the Maker key is not taken');
+  addSite({ id: 'site-free', site_key: 'key-free', name: 'Free Example AS', domain: '' });
+  const free = apply.locateSiteForClient(lead, { siteKey: 'key-free' });
+  assert.equal(free.site.id, 'site-free');
+  assert.equal(free.owner, '', 'control: a site nobody claims is taken');
 });
