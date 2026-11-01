@@ -390,6 +390,17 @@ test('--staged in a public repo: the staged allowlist counts, not the working tr
   assert.doesNotMatch(switched.out, /allowlist-widened/);
   assert.match(switched.out, /a broader allowlist let through by SECRET_SCAN_ALLOWLIST_WIDEN: \.secret-scan-allowlist\.json: new entry: rule \* on \*\*/);
   assert.match(switched.out, /^c\.js:1 {2}plan-id$/m);
+
+  // The commit that adds the allowlist file adopts the scan: there is nothing to compare it with.
+  const fresh = makeRepo();
+  write(fresh, 'scripts/security/scan-profile.json', JSON.stringify({ profile: 'public' }));
+  write(fresh, 'a.js', 'export const a = 1;\n');
+  git(fresh, ['add', '-A']);
+  git(fresh, ['commit', '-q', '--no-verify', '-m', 'base']);
+  write(fresh, ALLOW_FILE, allowJson());
+  git(fresh, ['add', ALLOW_FILE]);
+  const adopted = await runScan(['--staged'], { cwd: fresh, env: NO_ENV(fresh) });
+  assert.equal(adopted.code, 0, adopted.out);
 });
 
 test('--pre-push takes the profile and the allowlist from the pushed commit, not the working tree, and refuses a weaker profile or a broader allowlist', async () => {

@@ -55,7 +55,8 @@
  * commit the push starts from has the public profile, the public rules apply and a weaker profile
  * is refused. Both refuse an allowlist change that lets more than one value in one file through (a
  * new '*' rule, a new glob path or a new allowed e-mail domain) unless
- * SECRET_SCAN_ALLOWLIST_WIDEN=1, which lists what it lets through.
+ * SECRET_SCAN_ALLOWLIST_WIDEN=1, which lists what it lets through. The commit that adds the
+ * allowlist file (or a push from before it existed) has nothing to compare with.
  * Fake test fixtures are allowed through .secret-scan-allowlist.json (path + rule + reason, or
  * the sha256 of one fixture value); an allowlisted secret hit must still look fake, so a real
  * key pasted there is caught. A '*' entry covers the secret and path rules only; client data and
@@ -298,9 +299,11 @@ function allowlistRawOf(text, { strict = true, where = ALLOWLIST_FILE } = {}) {
 /**
  * The allowlist changes between two raw allowlists that let more than one value in one file
  * through (allowlistWidening) as path findings on `label`. With ctx.allowWiden
- * (SECRET_SCAN_ALLOWLIST_WIDEN=1) they are listed in ctx.widenedLetThrough instead.
+ * (SECRET_SCAN_ALLOWLIST_WIDEN=1) they are listed in ctx.widenedLetThrough instead. A base
+ * without an allowlist file (null: the commit that adopts the scan) is nothing to compare with.
  */
 function wideningFindings(baseRaw, nextRaw, ctx, label = ALLOWLIST_FILE) {
+  if (baseRaw === null) return [];
   const hints = allowlistWidening(baseRaw, nextRaw);
   if (ctx.allowWiden) {
     if (Array.isArray(ctx.widenedLetThrough)) for (const hint of hints) ctx.widenedLetThrough.push(`${label}: ${hint}`);
@@ -541,7 +544,8 @@ export function scanStaged(cwd, ctx) {
   const { committed, staged } = stagedProfiles(cwd);
   if (committed !== 'public') return scanPatchFiles(parsePatch(patch), ctx);
   const stagedRaw = allowlistRawOf(gitShow(cwd, `:${ALLOWLIST_FILE}`), { where: `the staged ${ALLOWLIST_FILE}` });
-  const headRaw = allowlistRawOf(gitShow(cwd, `HEAD:${ALLOWLIST_FILE}`), { strict: false });
+  const headText = gitShow(cwd, `HEAD:${ALLOWLIST_FILE}`);
+  const headRaw = headText === null ? null : allowlistRawOf(headText, { strict: false });
   const findings = scanPatchFiles(parsePatch(patch), { ...ctx, profile: PROFILES.public, allowlist: normalizeAllowlist(stagedRaw) });
   if (staged !== 'public') {
     findings.push({ path: PROFILE_FILE, line: 0, rule: 'path:profile-weakened', kind: 'path', hint: 'the committed profile is public' });
@@ -649,10 +653,11 @@ function pushedRules(cwd, ref, ctx) {
   const tipAllowRaw = allowlistRawOf(gitShow(cwd, `${ref.localSha}:${ALLOWLIST_FILE}`), { where: `${ALLOWLIST_FILE} in ${tip}` });
   const bases = pushBoundaries(cwd, ref).map((rev) => {
     const profileText = gitShow(cwd, `${rev}:${PROFILE_FILE}`);
+    const allowText = gitShow(cwd, `${rev}:${ALLOWLIST_FILE}`);
     return {
-      // Only a profile file the base commit holds pins the rules; a base from before the file pins nothing.
+      // Only files the base commit holds count; a base from before the scan pins nothing.
       profile: profileText === null ? null : profileNameOf(profileText),
-      allowRaw: allowlistRawOf(gitShow(cwd, `${rev}:${ALLOWLIST_FILE}`), { strict: false }),
+      allowRaw: allowText === null ? null : allowlistRawOf(allowText, { strict: false }),
     };
   });
   const findings = [];
