@@ -1673,6 +1673,15 @@ export function setSalesMakerRunOwned(id, ownedPatch = {}) {
 }
 
 /**
+ * makerRun.goLive, the record of the Maker's schema-2 go-live callback (lib/golive-callback.js). Only
+ * that handler calls this; generic makerRun patches never carry goLive.
+ */
+export function setSalesMakerRunGoLive(id, goLive) {
+  if (!goLive || typeof goLive !== 'object' || Array.isArray(goLive)) return getSalesClientById(id);
+  return updateSalesClientInternal(id, { makerRun: { goLive } });
+}
+
+/**
  * WS8.3: stores client.sitePlan (normalized) with a history entry when the tier, services, billing
  * or status change. Returns the client, or null when the client or the plan is not valid.
  */

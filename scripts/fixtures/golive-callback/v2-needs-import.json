@@ -1,0 +1,13 @@
+{
+  "event": "run.golive.updated",
+  "schema": 2,
+  "target": "production",
+  "status": "needs_import",
+  "liveVerifiedAt": "",
+  "domain": "bakery.example.com",
+  "siteKey": "site-key-from-the-maker-0001",
+  "githubRepo": "Example-Org/website---bakery-example-com",
+  "needsImport": {
+    "hint": "Import the repository in the hosting panel, then publish again."
+  }
+}
