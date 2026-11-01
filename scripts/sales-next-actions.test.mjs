@@ -438,7 +438,7 @@ test('changing meeting time or IRL/online sends confirmation; name and notes do 
     meetingMode: 'online',
     meetingAt: '2026-09-30T10:00:00.000Z',
     contactPerson: 'Ada',
-    contactEmail: 'ada@test.no',
+    contactEmail: 'person-8defa9@clover.test',
   });
   const modeOnly = { ...existing, meetingMode: 'in-person' };
   const timeChanged = { ...existing, meetingAt: '2026-10-01T10:00:00.000Z' };

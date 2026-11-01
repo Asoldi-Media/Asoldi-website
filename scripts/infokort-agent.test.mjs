@@ -207,7 +207,7 @@ test('fillProvenPublicLinks writes TASS socials and Maps from trading-name hits'
         proffUrl: 'https://www.proff.no/selskap/x/x/x/925992720',
       },
     },
-    { businessName: 'Deles Are Terjesen', contactPhone: '47 13 13 80' },
+    { businessName: 'Deles Are Terjesen', contactPhone: '40 00 08 41' },
     {
       readWebsite: async () => ([
         { url: 'https://www.instagram.com/tass.norge/', title: 'tass.no', snippet: 'tass.no' },
@@ -219,7 +219,7 @@ test('fillProvenPublicLinks writes TASS socials and Maps from trading-name hits'
         results: [{
           title: 'TASS',
           address: 'Vasøyveien 103, 7167 Vallersund',
-          phone: '47 13 13 80',
+          phone: '40 00 08 41',
           website: 'https://tass.no',
           cid: '5208062932965149043',
           mapsUrl: 'https://maps.google.com/?cid=5208062932965149043',

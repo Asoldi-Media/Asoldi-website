@@ -15,7 +15,7 @@ test('public client admin never returns the password hash', () => {
     id: '1',
     site_key: 'abc',
     name: 'Mong',
-    clientAdmin: { name: 'Mong', email: 'a@b.no', passwordHash: 'secret-hash', pendingSync: true },
+    clientAdmin: { name: 'Mong', email: 'a@gorse.test', passwordHash: 'secret-hash', pendingSync: true },
   });
   const pub = publicClientAdmin(site.clientAdmin);
   assert.equal(pub.passwordSet, true);

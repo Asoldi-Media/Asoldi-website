@@ -31,7 +31,7 @@ const neo = {
 const byneset = {
   id: '3',
   site_key: 'byneset-key',
-  name: 'Byneset Bydelskafe',
+  name: 'Aspen Bydelskafe',
   domain: 'bynesetbydelskafe.no',
 };
 
@@ -39,14 +39,14 @@ const bynesetSales = {
   id: 'sales-byneset',
   product: 'asoldi',
   status: 'active',
-  businessName: 'Byneset Bydelskafe',
+  businessName: 'Aspen Bydelskafe',
   websiteDomain: 'bynesetbydelskafe.no',
   progression: { contractSigned: true },
   development: { nettsideFerdig: false },
   hubSite: { siteKey: 'byneset-key', id: '3', domain: 'bynesetbydelskafe.no' },
 };
 
-test('Byneset leaves Clients and appears in Development when contract is signed', () => {
+test('Aspen leaves Clients and appears in Development when contract is signed', () => {
   const sales = [bynesetSales];
   const sites = [mong, neo, byneset];
   assert.equal(resolveSiteDeliveryPhase(byneset, sales), 'development');
@@ -56,11 +56,11 @@ test('Byneset leaves Clients and appears in Development when contract is signed'
 
   const items = buildDevelopmentItems(sales, sites);
   assert.equal(items.length, 1);
-  assert.equal(items[0].businessName, 'Byneset Bydelskafe');
+  assert.equal(items[0].businessName, 'Aspen Bydelskafe');
   assert.equal(items[0].id, 'sales:sales-byneset');
 });
 
-test('Byneset hub site still appears in Development without a sales row', () => {
+test('Aspen hub site still appears in Development without a sales row', () => {
   const items = buildDevelopmentItems([], [mong, byneset]);
   assert.equal(items.length, 1);
   assert.equal(items[0].id, 'site:3');
@@ -165,9 +165,9 @@ test('developer board merges unsigned preview clients and signed contracts', () 
   const board = buildDeveloperBoardItems([unsigned, bynesetSales], [byneset]);
   assert.equal(board.length, 2);
   assert.equal(board.some((item) => item.businessName === 'New Cafe'), true);
-  assert.equal(board.some((item) => item.businessName === 'Byneset Bydelskafe'), true);
+  assert.equal(board.some((item) => item.businessName === 'Aspen Bydelskafe'), true);
   assert.equal(board.every((item) => item.developerGoals && item.developerGoals.readyForPreview === false), true);
-  assert.equal(buildPreviewItems([unsigned, bynesetSales], [byneset]).some((item) => item.businessName === 'Byneset Bydelskafe'), false);
+  assert.equal(buildPreviewItems([unsigned, bynesetSales], [byneset]).some((item) => item.businessName === 'Aspen Bydelskafe'), false);
   assert.equal(buildDevelopmentItems([unsigned, bynesetSales], [byneset]).some((item) => item.businessName === 'New Cafe'), false);
 });
 
@@ -258,10 +258,10 @@ test('development items carry sales Kundekort page 1 fields', () => {
   const sales = [{
     ...bynesetSales,
     industry: 'kafé',
-    contactEmail: 'hei@byneset.no',
+    contactEmail: 'hei@aspen.test',
     notes: 'Salgsnotat',
     details: {
-      instagramUrl: 'https://instagram.com/byneset',
+      instagramUrl: 'https://instagram.com/aspen',
       facebookUrl: '',
       proffUrl: '',
       googleBusinessProfile: '',
@@ -270,7 +270,7 @@ test('development items carry sales Kundekort page 1 fields', () => {
   }];
   const items = buildDevelopmentItems(sales, []);
   assert.equal(items[0].kundekort.industry, 'kafé');
-  assert.equal(items[0].kundekort.instagramUrl, 'https://instagram.com/byneset');
+  assert.equal(items[0].kundekort.instagramUrl, 'https://instagram.com/aspen');
   assert.equal(items[0].kundekort.notes, 'Salgsnotat');
   assert.equal(items[0].clientBrief.ready, false);
 });

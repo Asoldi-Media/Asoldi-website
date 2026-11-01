@@ -13,8 +13,8 @@ const offers = await import('../data/offers.js');
 const sales = await import('../data/sales.js');
 const sync = await import('../lib/maker-bundle-sync.js');
 
-const owner = { id: 'user-owner', username: 'owner@cafe.no', name: 'Kari' };
-const agency = { id: 'user-agency', username: 'dev@byra.no', name: 'Dev' };
+const owner = { id: 'user-owner', username: 'owner@elm.test', name: 'Kari' };
+const agency = { id: 'user-agency', username: 'dev@iris.test', name: 'Dev' };
 
 test('first signup creates a business id; later links stay on that id after email change', () => {
   const session = portal.presentClientSession(owner);
@@ -22,13 +22,13 @@ test('first signup creates a business id; later links stay on that id after emai
   assert.equal(session.businesses.length, 1);
   const businessId = session.activeBusinessId;
 
-  portal.updateOwnedLoginEmails(owner.id, 'ny@cafe.no');
+  portal.updateOwnedLoginEmails(owner.id, 'ny@elm.test');
   const afterEmail = portal.getClientProfileByBusinessId(businessId);
-  assert.equal(afterEmail.email, 'ny@cafe.no');
+  assert.equal(afterEmail.email, 'ny@elm.test');
 
   const hit = sync.findBusinessForMakerPush({
     businessId,
-    email: 'owner@cafe.no',
+    email: 'owner@elm.test',
   });
   assert.equal(hit.businessId, businessId);
   assert.equal(hit.matchedByEmail, undefined);
@@ -44,11 +44,11 @@ test('email is only first-time match; next maker push uses businessId even if em
   assert.ok(first.businessId);
   assert.equal(first.matchedByEmail, true);
 
-  portal.updateOwnedLoginEmails(owner.id, 'third@cafe.no');
+  portal.updateOwnedLoginEmails(owner.id, 'third@elm.test');
   const second = sync.applyMakerBundleToPortal({
     businessId: first.businessId,
-    email: 'someone-else@old.no',
-    bundle: { id: 'bundle-1', name: 'Cafe', data: { email: 'someone-else@old.no', businessName: 'Kafeen' } },
+    email: 'someone-else@larch.test',
+    bundle: { id: 'bundle-1', name: 'Cafe', data: { email: 'someone-else@larch.test', businessName: 'Kafeen' } },
   });
   assert.equal(second.ok, true);
   assert.equal(second.businessId, first.businessId);
@@ -80,27 +80,27 @@ test('invite existing user, they can switch between own business and client busi
 test('offer delivery email is not the durable key once businessId is stamped', () => {
   const businessId = portal.getClientProfileByUserId(owner.id).businessId;
   const offer = offers.createOffer({
-    targetEmail: 'old-inbox@cafe.no',
+    targetEmail: 'person-de2d9c@elm.test',
     targetUserId: owner.id,
     businessId,
     planId: 'tier-1-standard',
   });
   const found = offers.getActiveOfferForUser({
     userId: owner.id,
-    email: 'third@cafe.no',
+    email: 'third@elm.test',
     businessId,
     membershipBusinessIds: [businessId],
   });
   assert.equal(found.id, offer.id);
 
   const other = offers.createOffer({
-    targetEmail: 'third@cafe.no',
+    targetEmail: 'third@elm.test',
     businessId: 'biz_other',
     planId: 'tier-2-standard',
   });
   const stillCafe = offers.getActiveOfferForUser({
     userId: owner.id,
-    email: 'third@cafe.no',
+    email: 'third@elm.test',
     businessId,
     membershipBusinessIds: [businessId],
   });
@@ -111,19 +111,19 @@ test('offer delivery email is not the durable key once businessId is stamped', (
 test('sales client can store portalBusinessId separately from contact email', () => {
   const created = sales.createSalesClient({
     businessName: 'Kafeen',
-    contactEmail: 'kontakt@cafe.no',
+    contactEmail: 'kontakt@elm.test',
     ownerId: 'sales-1',
   });
   const businessId = portal.getClientProfileByUserId(owner.id).businessId;
   const updated = sales.updateSalesClient(created.id, {
     portalUserId: owner.id,
     portalBusinessId: businessId,
-    clientEmail: 'third@cafe.no',
+    clientEmail: 'third@elm.test',
   });
   assert.equal(updated.portalBusinessId, businessId);
   const hit = sync.findBusinessForMakerPush({
     salesClientId: created.id,
-    email: 'kontakt@cafe.no',
+    email: 'kontakt@elm.test',
   });
   assert.equal(hit.businessId, businessId);
 });

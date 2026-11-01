@@ -211,7 +211,7 @@ test('DataForSEO Maps items become cid places', () => {
         items: [{
           title: 'TASS',
           address: 'Vasøyveien 103, 7167 Vallersund',
-          phone: '47 13 13 80',
+          phone: '40 00 08 41',
           cid: '5208062932965149043',
           url: 'https://tass.no',
         }],

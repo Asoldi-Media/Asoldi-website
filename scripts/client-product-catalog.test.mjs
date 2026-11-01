@@ -312,7 +312,7 @@ test('maker bundle maps CLIENT_FIELDS into kundedata', () => {
     data: {
       businessName: 'Byneset Bydelskafe',
       industry: 'restaurant',
-      email: 'freidis.g.dahl@hotmail.com',
+      email: 'person-f78293@example.com',
       businessWhat: 'Nabolagskafe',
       reviews: 'Koselig',
       town: 'Trondheim',
@@ -326,7 +326,7 @@ test('maker bundle maps CLIENT_FIELDS into kundedata', () => {
     }],
   }, {});
   assert.equal(bank.businessCard.companyName, 'Byneset Bydelskafe');
-  assert.equal(bank.generalInfo.companyEmail, 'freidis.g.dahl@hotmail.com');
+  assert.equal(bank.generalInfo.companyEmail, 'person-f78293@example.com');
   assert.equal(bank.websiteCreatorQuestions.businessWhat, 'Nabolagskafe');
   assert.equal(bank.websiteCreatorQuestions.reviews, 'Koselig');
   assert.equal(bank.websiteCreatorQuestions.town, 'Trondheim');

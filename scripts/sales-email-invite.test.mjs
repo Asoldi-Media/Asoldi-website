@@ -348,7 +348,7 @@ test('sales sender identity is Name fra Asoldi with an asoldi.com address', () =
 test('personal Gmail is not used as From; the Asoldi mailbox is derived from the name', () => {
   const sender = buildSalesSender({
     name: 'Alexander',
-    fromEmail: 'alexander.sales@gmail.com',
+    fromEmail: 'person-5f0562@example.com',
   });
   assert.equal(sender.fromEmail, 'alexander@asoldi.com');
   assert.equal(sender.from, 'Alexander fra Asoldi <alexander@asoldi.com>');

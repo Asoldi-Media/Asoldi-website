@@ -129,8 +129,8 @@ test('store funnel dropoff and Shopify commerce exclude cancelled orders', () =>
     { type: 'pageview', sessionId: 'b', path: '/product/maki', at: '2026-09-01T11:00:00.000Z' },
   ];
   const funnel = summarizeEcommerceFunnel(events, [
-    { status: 'new', amount: 400, quantity: 2, productName: 'Roll', customerEmail: 'a@x.no', purchasedAt: '2026-09-01T10:01:00.000Z' },
-    { status: 'cancelled', amount: 50, quantity: 1, productName: 'Maki', customerEmail: 'b@x.no', purchasedAt: '2026-09-01T11:01:00.000Z' },
+    { status: 'new', amount: 400, quantity: 2, productName: 'Roll', customerEmail: 'a@nettle.test', purchasedAt: '2026-09-01T10:01:00.000Z' },
+    { status: 'cancelled', amount: 50, quantity: 1, productName: 'Maki', customerEmail: 'b@nettle.test', purchasedAt: '2026-09-01T11:01:00.000Z' },
   ], { from, to });
   assert.equal(funnel.counts.sessions, 2);
   assert.equal(funnel.counts.product, 2);
@@ -139,8 +139,8 @@ test('store funnel dropoff and Shopify commerce exclude cancelled orders', () =>
   assert.equal(funnel.counts.purchase, 1);
   assert.equal(funnel.abandonment.checkout, 0);
   const shop = summarizeShopifyCommerce([
-    { status: 'new', amount: 400, quantity: 2, productName: 'Roll', customerEmail: 'a@x.no', purchasedAt: '2026-09-01T10:01:00.000Z' },
-    { status: 'cancelled', amount: 50, quantity: 1, productName: 'Maki', customerEmail: 'b@x.no', purchasedAt: '2026-09-01T11:01:00.000Z' },
+    { status: 'new', amount: 400, quantity: 2, productName: 'Roll', customerEmail: 'a@nettle.test', purchasedAt: '2026-09-01T10:01:00.000Z' },
+    { status: 'cancelled', amount: 50, quantity: 1, productName: 'Maki', customerEmail: 'b@nettle.test', purchasedAt: '2026-09-01T11:01:00.000Z' },
   ], 10);
   assert.equal(shop.orders, 1);
   assert.equal(shop.cancelled, 1);

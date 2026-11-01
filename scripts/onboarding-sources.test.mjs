@@ -46,7 +46,7 @@ test('SerpAPI local results map to pickable Google profiles', () => {
 
 test('onboarding sources land in kundedata for later website intake', () => {
   const bank = portal.applyIntakeSourcesToBank({}, {
-    websiteUrl: 'https://cafeen.no',
+    websiteUrl: 'https://pine.test',
     instagramUrl: 'https://instagram.com/cafeen',
     facebookUrl: 'https://facebook.com/cafeen',
     googleMapsUrl: 'https://www.google.com/maps/search/?api=1&query_place_id=ChIJ1',
@@ -54,13 +54,13 @@ test('onboarding sources land in kundedata for later website intake', () => {
     googlePlaceName: 'Cafeen',
   }, {
     phone: '40000000',
-    email: 'hei@cafeen.no',
+    email: 'hei@pine.test',
   });
-  assert.equal(bank.generalInfo.websiteUrl, 'https://cafeen.no');
+  assert.equal(bank.generalInfo.websiteUrl, 'https://pine.test');
   assert.equal(bank.generalInfo.instagramUrl, 'https://instagram.com/cafeen');
   assert.equal(bank.generalInfo.googlePlaceId, 'ChIJ1');
   assert.equal(bank.openingHours.googleBusinessSyncUrl.includes('ChIJ1'), true);
-  assert.equal(bank.websiteCreatorQuestions.websiteDomain, 'cafeen.no');
+  assert.equal(bank.websiteCreatorQuestions.websiteDomain, 'pine.test');
   assert.match(bank.websiteCreatorQuestions.relevantLinks, /instagram.com\/cafeen/);
   assert.equal(bank.generalInfo.companyPhone, '40000000');
   assert.equal(bank.staff.length, 0);
@@ -71,14 +71,14 @@ test('onboarding contact person is added as the first Ansatte employee', () => {
     name: 'Kari Nordmann',
     title: 'Daglig leder',
     phone: '400 00 000',
-    email: 'kari@cafeen.no',
+    email: 'person-003bec@pine.test',
   });
   assert.equal(bank.staff.length, 1);
   assert.equal(bank.staff[0].id, portal.SIGNER_STAFF_ID);
   assert.equal(bank.staff[0].title, 'Daglig leder');
   assert.equal(bank.staff[0].name, 'Kari Nordmann');
   assert.equal(bank.staff[0].phone, '400 00 000');
-  assert.equal(bank.staff[0].email, 'kari@cafeen.no');
+  assert.equal(bank.staff[0].email, 'person-003bec@pine.test');
 });
 
 test('onboarding signer is not duplicated when already in Ansatte', () => {
@@ -86,16 +86,16 @@ test('onboarding signer is not duplicated when already in Ansatte', () => {
     name: 'Kari Nordmann',
     title: 'Daglig leder',
     phone: '40000000',
-    email: 'kari@cafeen.no',
+    email: 'person-003bec@pine.test',
   });
   const again = portal.applyIntakeSourcesToBank(first, {}, {
     name: 'Kari Nordmann',
     title: 'Daglig leder',
     phone: '40000000',
-    email: 'kari@cafeen.no',
+    email: 'person-003bec@pine.test',
   });
   assert.equal(again.staff.length, 1);
-  assert.equal(again.staff[0].email, 'kari@cafeen.no');
+  assert.equal(again.staff[0].email, 'person-003bec@pine.test');
 });
 
 test('name-only signup does not create an empty employee', () => {

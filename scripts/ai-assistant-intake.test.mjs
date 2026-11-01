@@ -145,11 +145,11 @@ test('opening hours cover weekdays, 24/7, not relevant, and an unnamed range', (
 });
 
 test('staff and partner answers land in the right shape', () => {
-  const staff = parseStaffAnswer('Kari Nord, baker, 90011223, kari@firma.no\nPer Berg, 41223344');
+  const staff = parseStaffAnswer('Kari Nord, baker, 90000152, kari@firma.no\nPer Berg, 41223344');
   assert.equal(staff.action, 'save');
   assert.equal(staff.people[0].name, 'Kari Nord');
   assert.equal(staff.people[0].title, 'baker');
-  assert.equal(staff.people[0].phone, '90011223');
+  assert.equal(staff.people[0].phone, '90000152');
   assert.equal(staff.people[0].email, 'kari@firma.no');
   assert.equal(staff.people[1].name, 'Per Berg');
   assert.equal(parseStaffAnswer('ja').action, 'details');
@@ -415,7 +415,7 @@ test('the assistant walks the missing buckets and writes each answer into kunded
   assert.match(details.assistantMessage, /navn/i);
 
   const people = await handleAssistantChat('intake-chat-user', {
-    text: 'Kari Nord, baker, 90011223, kari@firma.no',
+    text: 'Kari Nord, baker, 90000152, kari@firma.no',
   });
   assert.equal(people.currentStep, 'staff');
   assert.match(people.assistantMessage, /legge til mer|ansatt/i);

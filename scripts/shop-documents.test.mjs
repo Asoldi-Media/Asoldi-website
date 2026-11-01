@@ -25,7 +25,7 @@ docs.setShopDocumentDeps({
   },
 });
 
-const site = hub.createSite({ name: 'Kazal Test', domain: 'kazal.no', websitePlan: 'tier-3-ecommerce' });
+const site = hub.createSite({ name: 'Olive Test', domain: 'olive.test', websitePlan: 'tier-3-ecommerce' });
 // A shop on client CMS 2.1.3 (no site credential): it sends documents with its site key alone, which
 // the hub allows only for a shop site that never enrolled and runs 2.0.0 up to 2.2.1.
 hub.recordHeartbeat(site.site_key, { packageVersion: '2.1.3' }, { verified: true });
@@ -45,15 +45,15 @@ test.after(() => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-const seller = { name: 'Kazal Frisør AS', orgNumber: '934327497', vatRegistered: true, foretaksregisteret: true, address: 'Storgata 1, 7010 Trondheim', email: 'post@kazal.no', phone: '+4790000000' };
+const seller = { name: 'Olive Frisør AS', orgNumber: '934327497', vatRegistered: true, foretaksregisteret: true, address: 'Storgata 1, 7010 Trondheim', email: 'post@olive.test', phone: '+4790000000' };
 const order = {
   kind: 'order',
   number: '1001',
   orderNumber: '1001',
   date: '2026-10-18T10:00:00.000Z',
   currency: 'nok',
-  siteName: 'Kazal',
-  siteUrl: 'https://kazal.no',
+  siteName: 'Olive',
+  siteUrl: 'https://olive.test',
   seller,
   buyer: { name: 'Kari <b>Nordmann</b>', email: 'Kari@Example.com', phone: '+4799999999', address: 'Gata 2, 0155 Oslo, NO' },
   lines: [
@@ -68,9 +68,9 @@ const order = {
   giftcardPayments: [{ last4: 'AB12', amountMinor: 20000 }],
   amountPaidMinor: 84720,
   paymentMethod: 'Kort (Stripe)',
-  withdrawal: { text: 'Du har 14 dagers angrerett.', formUrl: 'https://kazal.no/api/cms/angreskjema?order=1001' },
-  accountUrl: 'https://kazal.no/api/cms/account',
-  downloads: [{ name: 'E-bok', url: 'https://kazal.no/api/cms/downloads/tok' }, { name: 'Bad', url: 'javascript:alert(1)' }],
+  withdrawal: { text: 'Du har 14 dagers angrerett.', formUrl: 'https://olive.test/api/cms/angreskjema?order=1001' },
+  accountUrl: 'https://olive.test/api/cms/account',
+  downloads: [{ name: 'E-bok', url: 'https://olive.test/api/cms/downloads/tok' }, { name: 'Bad', url: 'javascript:alert(1)' }],
 };
 
 test('HD-1 money and PDFs: Norwegian format, valid PDF for every PDF kind, odd characters do not break rendering', async () => {
@@ -107,7 +107,7 @@ test('HD-3 booking calendar: UTC times, stable UID, cancel variant', () => {
   const ics = docs.bookingIcs(doc);
   assert.match(ics, /DTSTART:20261020T080000Z/);
   assert.match(ics, /DTEND:20261020T083000Z/);
-  assert.match(ics, /UID:bk_1@kazal\.no/);
+  assert.match(ics, /UID:bk_1@olive\.test/);
   assert.equal((ics.match(/BEGIN:VEVENT/g) || []).length, 1, 'bookings without times are skipped');
   assert.match(ics, /METHOD:PUBLISH/);
   const cancel = docs.bookingIcs(doc, { cancel: true });
@@ -123,8 +123,8 @@ test('HD-4 send: buyer gets PDF from the shop name, once; resend works; explicit
   assert.deepEqual(first.data, { ok: true, skipped: false });
   const mail = mails.at(-1);
   assert.equal(mail.to, 'kari@example.com', 'order documents always go to the buyer');
-  assert.equal(mail.from, 'Kazal Frisør AS <contact@asoldi.com>');
-  assert.equal(mail.replyTo, 'post@kazal.no');
+  assert.equal(mail.from, 'Olive Frisør AS <contact@asoldi.com>');
+  assert.equal(mail.replyTo, 'post@olive.test');
   assert.equal(mail.bcc, false, 'no BCC copy of customer receipts');
   assert.equal(mail.attachments[0].filename, 'kvittering-1001.pdf');
   assert.equal(mail.attachments[0].content.subarray(0, 5).toString(), '%PDF-');
@@ -161,9 +161,9 @@ test('HD-5 bookings attach a calendar file; cancellations a CANCEL file', async 
 });
 
 test('HD-6 magic link must point at the site; validation and mail errors are reported', async () => {
-  const foreign = await send({ to: 'kari@example.com', document: { kind: 'magic-link', siteName: 'Kazal', siteUrl: 'https://kazal.no', link: 'https://evil.example/login' } });
+  const foreign = await send({ to: 'kari@example.com', document: { kind: 'magic-link', siteName: 'Olive', siteUrl: 'https://olive.test', link: 'https://evil.example/login' } });
   assert.equal(foreign.status, 400);
-  const ok = await send({ to: 'kari@example.com', document: { kind: 'magic-link', siteName: 'Kazal', siteUrl: 'https://kazal.no', link: 'https://kazal.no/api/cms/account/verify?token=abc' } });
+  const ok = await send({ to: 'kari@example.com', document: { kind: 'magic-link', siteName: 'Olive', siteUrl: 'https://olive.test', link: 'https://olive.test/api/cms/account/verify?token=abc' } });
   assert.equal(ok.status, 200, JSON.stringify(ok.data));
   assert.match(mails.at(-1).html, /account\/verify\?token=abc/);
   assert.equal((await send({ document: { kind: 'nope' } })).status, 400);
@@ -179,7 +179,7 @@ test('HD-6 magic link must point at the site; validation and mail errors are rep
 
 test('HD-7 per-recipient rate limit', async () => {
   docs.setShopDocumentDeps({ sendEmail: async (m) => mails.push(m) });
-  const link = { kind: 'magic-link', siteName: 'Kazal', siteUrl: 'https://kazal.no', link: 'https://kazal.no/api/cms/account/verify?token=x' };
+  const link = { kind: 'magic-link', siteName: 'Olive', siteUrl: 'https://olive.test', link: 'https://olive.test/api/cms/account/verify?token=x' };
   for (let i = 0; i < 20; i += 1) assert.equal((await send({ to: 'spam@example.com', document: link })).status, 200);
   const blocked = await send({ to: 'spam@example.com', document: link });
   assert.equal(blocked.status, 429);

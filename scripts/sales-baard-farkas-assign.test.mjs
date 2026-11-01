@@ -45,7 +45,7 @@ test('Bård lead before 11.08 stays in, same-day and later are out', () => {
   assert.equal(isBaardLeadBeforeCutoff(client({ myphoner: { bookedAt: '2026-08-10T21:59:00.000Z' } }), cutoff), true);
   assert.equal(isBaardLeadBeforeCutoff(client({ myphoner: { bookedAt: '2026-08-10T22:00:00.000Z' } }), cutoff), false);
   assert.equal(isBaardLeadBeforeCutoff(client({
-    myphoner: { bookedByEmail: 'other@x.no', bookedAt: '2026-07-01T12:00:00.000Z' },
+    myphoner: { bookedByEmail: 'other@nettle.test', bookedAt: '2026-07-01T12:00:00.000Z' },
   }), cutoff), false);
 });
 
@@ -70,7 +70,7 @@ test('plan moves Bård-before-cutoff to Alexander and other Alexander leads to D
     client({
       id: 'not-baard',
       ownerId: 'sales:alex-1',
-      myphoner: { bookedByEmail: 'someone@x.no', bookedByName: 'Kari', bookedAt: '2026-07-01T10:00:00.000Z' },
+      myphoner: { bookedByEmail: 'someone@nettle.test', bookedByName: 'Kari', bookedAt: '2026-07-01T10:00:00.000Z' },
     }),
   ], users, cutoff);
   assert.equal(plan.error, undefined);

@@ -38,14 +38,14 @@ test('MyPhoner empty payload keeps saved social, Proff and Maps URLs', () => {
       facebookUrl: 'https://www.facebook.com/kafeen/',
       proffUrl: 'https://www.proff.no/selskap/x/x/x/123456789',
       googleBusinessProfile: 'https://maps.google.com/?cid=1',
-      otherLinks: 'https://kafeen.no',
+      otherLinks: 'https://daisy.test',
     }
   );
   assert.equal(merged.instagramUrl, 'https://www.instagram.com/kafeen/');
   assert.equal(merged.facebookUrl, 'https://www.facebook.com/kafeen/');
   assert.equal(merged.proffUrl, 'https://www.proff.no/selskap/x/x/x/123456789');
   assert.equal(merged.googleBusinessProfile, 'https://maps.google.com/?cid=1');
-  assert.equal(merged.otherLinks, 'https://kafeen.no');
+  assert.equal(merged.otherLinks, 'https://daisy.test');
 });
 
 test('a saved URL stays when MyPhoner sends a different one; an empty field is filled', () => {
@@ -61,24 +61,24 @@ test('Maps URL in other links moves into the Google field', () => {
   const promoted = promoteGoogleBusinessFromOtherLinks(
     {
       googleBusinessProfile: '',
-      otherLinks: 'https://kafeen.no\nhttps://maps.google.com/?cid=42',
+      otherLinks: 'https://daisy.test\nhttps://maps.google.com/?cid=42',
     },
     classify
   );
   assert.equal(promoted.googleBusinessProfile, 'https://maps.google.com/?cid=42');
-  assert.equal(promoted.otherLinks, 'https://kafeen.no');
+  assert.equal(promoted.otherLinks, 'https://daisy.test');
 });
 
 test('existing Google Maps URL is not replaced, and extra maps/email leave other links', () => {
   const promoted = promoteGoogleBusinessFromOtherLinks(
     {
       googleBusinessProfile: 'https://maps.google.com/?cid=1',
-      otherLinks: 'https://maps.google.com/?cid=2\nmailto:post@kafeen.no\npost@kafeen.no\nhttps://kafeen.no',
+      otherLinks: 'https://maps.google.com/?cid=2\nmailto:post@daisy.test\npost@daisy.test\nhttps://daisy.test',
     },
     classify
   );
   assert.equal(promoted.googleBusinessProfile, 'https://maps.google.com/?cid=1');
-  assert.equal(promoted.otherLinks, 'https://kafeen.no');
+  assert.equal(promoted.otherLinks, 'https://daisy.test');
 });
 
 test('empty Proff URL is built from a 9-digit org number', () => {
@@ -151,28 +151,28 @@ test('an existing Proff URL that already has the org number is kept', () => {
 });
 
 test('other links drop maps, emails, and copies of dedicated fields', () => {
-  assert.equal(looksLikeEmailLink('mailto:post@kafeen.no'), true);
-  assert.equal(looksLikeEmailLink('post@kafeen.no'), true);
-  assert.equal(looksLikeEmailLink('https://post@kafeen.no'), true);
-  assert.equal(looksLikeEmailLink('https://kafeen.no'), false);
+  assert.equal(looksLikeEmailLink('mailto:post@daisy.test'), true);
+  assert.equal(looksLikeEmailLink('post@daisy.test'), true);
+  assert.equal(looksLikeEmailLink('https://post@daisy.test'), true);
+  assert.equal(looksLikeEmailLink('https://daisy.test'), false);
   assert.equal(looksLikeMapsOrGoogleBusinessLink('https://www.google.com/maps/search/?api=1&query=Oslo'), true);
   const cleaned = filterCustomOtherLinks(
     [
       'https://maps.google.com/?cid=9',
-      'mailto:hei@kafeen.no',
+      'mailto:hei@daisy.test',
       'https://www.instagram.com/kafeen/',
-      'https://kafeen.no/meny',
-      'https://kafeen.no/meny',
+      'https://daisy.test/meny',
+      'https://daisy.test/meny',
     ].join('\n'),
     { instagramUrl: 'https://www.instagram.com/kafeen/' }
   );
-  assert.equal(cleaned, 'https://kafeen.no/meny');
+  assert.equal(cleaned, 'https://daisy.test/meny');
 });
 
 test('website URL mirrors the sales domain and ignores an email', () => {
   assert.equal(websiteUrlFromDomain('nordlys.no'), 'https://nordlys.no');
   assert.equal(websiteUrlFromDomain('https://www.Nordlys.no/kontakt'), 'https://nordlys.no');
-  assert.equal(websiteUrlFromDomain('karpiakaneta@gmail.com'), '');
-  assert.equal(websiteUrlFromDomain('https://Karpiakaneta@gmail.com/'), '');
-  assert.equal(looksLikeEmailLink('https://Karpiakaneta@gmail.com/'), true);
+  assert.equal(websiteUrlFromDomain('person-0ed940@example.com'), '');
+  assert.equal(websiteUrlFromDomain('https://person-0ed940@example.com/'), '');
+  assert.equal(looksLikeEmailLink('https://person-0ed940@example.com/'), true);
 });

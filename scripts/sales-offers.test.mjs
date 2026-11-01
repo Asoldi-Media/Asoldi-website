@@ -23,11 +23,11 @@ const CLIENT = {
   ownerId: 'sales-anna',
   businessName: 'Byneset Bydelskafé AS',
   contactPerson: 'Kari Nordmann',
-  contactEmail: 'kari@byneset-kafe.no',
+  contactEmail: 'person-a17e62@dahlia.test',
   orgNumber: '923 456 789',
   businessAddress: 'Bynesveien 1, 7070 Bosberg',
   meetingPlace: '',
-  websiteDomain: 'byneset-kafe.no',
+  websiteDomain: 'dahlia.test',
   meetingAt: '2026-09-18T10:00:00.000Z',
 };
 
@@ -205,10 +205,10 @@ test('offer party: empty override uses the card, Til is the website email, map a
   assert.equal(cleared.businessName, CLIENT.businessName);
   assert.equal(cleared.contactEmail, CLIENT.contactEmail);
   const website = readiness.resolveOfferParty(
-    { ...CLIENT, websiteEmail: 'post@kafe.no' },
+    { ...CLIENT, websiteEmail: 'post@ivy.test' },
     { party: { contactEmail: 'annet@example.com' } },
   );
-  assert.equal(website.contactEmail, 'post@kafe.no');
+  assert.equal(website.contactEmail, 'post@ivy.test');
 });
 
 test('offer readiness: contract fields must be on the client card', () => {
@@ -938,10 +938,10 @@ test('offer send can target email, asoldi.com, or both', () => {
     salesClientId: 'client-both',
     email: { subject: 'Hei', html: '<p>Hei</p>' },
   });
-  const sent = store.markSalesOfferSent(offer.id, { to: 'kari@byneset-kafe.no', delivery: 'both' });
+  const sent = store.markSalesOfferSent(offer.id, { to: 'person-a17e62@dahlia.test', delivery: 'both' });
   assert.equal(sent.delivery, 'both');
   assert.equal(sent.status, 'sent');
-  assert.equal(sent.sentTo, 'kari@byneset-kafe.no');
+  assert.equal(sent.sentTo, 'person-a17e62@dahlia.test');
   assert.equal(sent.sentContent, '');
 
   const duringMeeting = store.createSalesOffer({
@@ -949,7 +949,7 @@ test('offer send can target email, asoldi.com, or both', () => {
     email: { subject: 'Hei', html: '<p><span data-offer-placeholder="1">[behov]</span></p>' },
   });
   const contractSent = store.markSalesOfferSent(duringMeeting.id, {
-    to: 'kari@byneset-kafe.no',
+    to: 'person-a17e62@dahlia.test',
     delivery: 'email',
     sentContent: 'contract',
   });

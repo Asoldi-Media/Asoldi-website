@@ -19,7 +19,7 @@ const CASES = [
     input: {
       businessName: 'Deles Are Terjesen',
       orgNumber: '925992720',
-      contactPhone: '47 13 13 80',
+      contactPhone: '40 00 08 41',
       industry: 'reklamebyrå',
       meetingPlace: 'Meieriveien 5',
       websiteDomain: '',

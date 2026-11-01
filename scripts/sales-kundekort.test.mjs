@@ -10,13 +10,13 @@ import {
 
 const client = {
   product: 'asoldi',
-  businessName: 'TASS',
+  businessName: 'JUNIPER',
   contactPerson: 'Are',
-  contactEmail: 'are@tass.no',
-  websiteEmail: 'hei@tass.no',
-  contactPhone: '47 13 13 80',
+  contactEmail: 'person-8688c1@juniper.test',
+  websiteEmail: 'hei@juniper.test',
+  contactPhone: '40 00 08 41',
   industry: 'reklamebyrå',
-  websiteDomain: 'tass.no',
+  websiteDomain: 'juniper.test',
   orgNumber: '925992720',
   meetingPlace: 'Vasøyveien 103, 7167 Vallersund',
   businessAddress: 'Vasøyveien 103, 7167 Vallersund',
@@ -26,18 +26,18 @@ const client = {
     facebookUrl: 'https://www.facebook.com/tassnorge/',
     proffUrl: 'https://www.proff.no/selskap/x/x/x/925992720',
     googleBusinessProfile: 'https://maps.google.com/?cid=1',
-    otherLinks: 'https://tiktok.com/@tass\nmailto:skip@x.com',
+    otherLinks: 'https://tiktok.com/@juniper\nmailto:skip@example.com',
   },
 };
 
 test('salesKundekortView copies Kundekort page 1 fields and splits other links', () => {
   const view = salesKundekortView(client);
   assert.equal(view.productLabel, 'Nettside');
-  assert.equal(view.businessName, 'TASS');
-  assert.equal(view.websiteEmail, 'hei@tass.no');
+  assert.equal(view.businessName, 'JUNIPER');
+  assert.equal(view.websiteEmail, 'hei@juniper.test');
   assert.equal(view.orgNumber, '925992720');
   assert.equal(view.instagramUrl, 'https://www.instagram.com/tass.norge/');
-  assert.deepEqual(view.otherLinks, ['https://tiktok.com/@tass', 'mailto:skip@x.com']);
+  assert.deepEqual(view.otherLinks, ['https://tiktok.com/@juniper', 'mailto:skip@example.com']);
   assert.equal(view.notes, 'Salgsnotat her');
 });
 
@@ -58,7 +58,7 @@ test('stored clientBrief is the card line and the full document text', () => {
     ...client,
     clientBrief: persistClientBrief({
       short: 'Markedsplass i Norge.',
-      full: 'TASS er en markedsplass. Are driver den fra Vallersund.',
+      full: 'JUNIPER er en markedsplass. Are driver den fra Vallersund.',
       source: 'sales-card',
     }),
   };
@@ -69,10 +69,10 @@ test('stored clientBrief is the card line and the full document text', () => {
 });
 
 test('kundekortHref opens links, mail, phone, and a bare domain', () => {
-  assert.equal(kundekortHref('tass.no', 'domain'), 'https://tass.no');
-  assert.equal(kundekortHref('are@tass.no', 'email'), 'mailto:are@tass.no');
-  assert.equal(kundekortHref('47 13 13 80', 'phone'), 'tel:47131380');
+  assert.equal(kundekortHref('juniper.test', 'domain'), 'https://juniper.test');
+  assert.equal(kundekortHref('person-8688c1@juniper.test', 'email'), 'mailto:person-8688c1@juniper.test');
+  assert.equal(kundekortHref('40 00 08 41', 'phone'), 'tel:40000841');
   assert.equal(kundekortHref('https://www.instagram.com/tass.norge/'), 'https://www.instagram.com/tass.norge/');
-  assert.equal(kundekortHref('mailto:hei@tass.no'), 'mailto:hei@tass.no');
+  assert.equal(kundekortHref('mailto:hei@juniper.test'), 'mailto:hei@juniper.test');
   assert.equal(kundekortHref(''), '');
 });
