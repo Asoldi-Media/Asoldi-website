@@ -300,7 +300,7 @@ test('quotes: an item is checked only against its own meeting', () => {
 
 test('quotes: a long quote that drops a negation, swaps a word or adds a word is rejected; the kept quote is the transcript\'s own words', async () => {
   const meetingText = [
-    'Selger: Hva tenker dere om bilder på nettsiden?',
+    'Selger: Hva tenker dere om bilder av de ansatte på nettsiden og på forsiden?',
     'Kunde: Vi vil ikke ha bilder av de ansatte på forsiden, det er viktig for oss at det blir sånn.',
     'Kunde: Vi vil ha en kontaktside, kontaktside med kart og åpningstider for 2027.',
   ].join('\n');
@@ -314,6 +314,9 @@ test('quotes: a long quote that drops a negation, swaps a word or adds a word is
     ['Vi vil aldri ikke ha bilder av de ansatte på forsiden, det er viktig for oss', 'a negation added'],
     ['Vi vil ha en kontaktside med kart og åpningstider for 2028', 'another number'],
   ];
+  // A "ja" added in front of a question does not make it an answer; a hesitation may be added.
+  assert.equal(verifier.verify('Ja, hva tenker dere om bilder av de ansatte på nettsiden og på forsiden', { speaker: 'Selger' }).ok, false, 'an added yes');
+  assert.equal(verifier.verify('Eh, hva tenker dere om bilder av de ansatte på nettsiden og på forsiden', { speaker: 'Selger' }).ok, true, 'an added hesitation');
   for (const [quote, why] of changed) {
     const result = verifier.verify(quote, { speaker: 'Kunde' });
     assert.equal(result.ok, false, why);
