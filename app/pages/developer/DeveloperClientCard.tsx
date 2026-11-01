@@ -19,6 +19,7 @@ import { createSalesMakerRun } from './MakerRunTools';
 import { summarizeMaterialDots } from '../../../lib/client-material-dots.js';
 import {
   DEVELOPER_PROGRESS_CHIPS,
+  developerProgressChips,
   developerCardTimeline,
   developerMediaLibraryView,
   makerLibraryFilesFromRun,
@@ -215,6 +216,11 @@ export function DeveloperClientCard({
 
   const persistedStatus = useMemo(
     () => pipelineStatusFromMakerRun(item.makerRun || {}),
+    [item.makerRun]
+  );
+  // DEVELOPER_PROGRESS_CHIPS, plus a chip per extra Step 2 substep this run's Maker reports.
+  const progressChips = useMemo(
+    () => developerProgressChips(item.makerRun || {}),
     [item.makerRun]
   );
   const status = mergeDeveloperPipelineStatus(persistedStatus, liveStatus);
@@ -596,7 +602,7 @@ export function DeveloperClientCard({
   }
 
   async function onProgressClick(chipId: string) {
-    const chip = DEVELOPER_PROGRESS_CHIPS.find((row) => row.id === chipId);
+    const chip = progressChips.find((row) => row.id === chipId);
     if (!chip) return;
     const resolved = resolveDeveloperProgressClick(chip, chipStatus);
     if (resolved.type === 'draft') {
@@ -876,7 +882,7 @@ export function DeveloperClientCard({
     const liveRun = liveStatus?.run && typeof liveStatus.run === 'object' ? liveStatus.run : null;
     return (
       <div className="flex flex-wrap gap-1.5">
-        {DEVELOPER_PROGRESS_CHIPS.map((chip) => {
+        {progressChips.map((chip) => {
           const resolved = resolveDeveloperProgressClick(chip, chipStatus);
           const visual = chipVisual(chip, resolved);
           const queueState = chip.target ? chipQueueState(chip.target) : '';
