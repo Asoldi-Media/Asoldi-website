@@ -1,0 +1,198 @@
+{
+  "schema": "asoldi.gate-input/1",
+  "client": {
+    "id": "syn-salon",
+    "businessName": "Example business",
+    "product": "asoldi",
+    "progression": {
+      "contractSigned": true
+    },
+    "sitePlan": {
+      "status": "active",
+      "tierId": "tier-3-ecommerce",
+      "services": [
+        "site",
+        "changes",
+        "seo",
+        "social",
+        "email",
+        "blog",
+        "ecom",
+        "dashboard",
+        "multilingual"
+      ],
+      "languages": [
+        "nb"
+      ],
+      "billing": "month",
+      "source": "backfill"
+    },
+    "workshop": {
+      "heldAt": "2026-10-12T11:00:00.000Z"
+    },
+    "makerRun": {
+      "runId": "run-syn-salon"
+    }
+  },
+  "inputs": {
+    "bank": {
+      "generalInfo": {
+        "companyPhone": "+47 00 00 00 00",
+        "companyEmail": "post@example.com",
+        "companyAddress": "Example street 1",
+        "googleMapsUrl": ""
+      },
+      "brandIdentity": {
+        "orgNumber": "000000000",
+        "logos": {
+          "normal": "logo.svg"
+        }
+      },
+      "websiteCreatorQuestions": {
+        "businessWhat": "Example description",
+        "town": "Example town",
+        "websiteDomain": "example.com",
+        "importantKeywords": []
+      },
+      "openingHours": {
+        "days": [
+          {
+            "day": "Mandag",
+            "opensAt": "09:00",
+            "closesAt": "17:00",
+            "closed": false
+          }
+        ]
+      },
+      "media": {
+        "mainHeroImages": [
+          {
+            "id": "media-1",
+            "fileName": "picture-1.jpg"
+          }
+        ],
+        "teamImages": [
+          {
+            "id": "media-2",
+            "fileName": "picture-2.jpg"
+          },
+          {
+            "id": "media-3",
+            "fileName": "picture-3.jpg"
+          },
+          {
+            "id": "media-4",
+            "fileName": "picture-4.jpg"
+          }
+        ],
+        "galleryImages": [
+          {
+            "id": "media-5",
+            "fileName": "picture-5.jpg"
+          },
+          {
+            "id": "media-6",
+            "fileName": "picture-6.jpg"
+          }
+        ],
+        "logos": [
+          {
+            "id": "logo",
+            "fileName": "logo.svg"
+          }
+        ]
+      },
+      "productCatalogs": [
+        {
+          "id": "catalog-1",
+          "layout": "normal",
+          "categories": [
+            {
+              "name": "Category 1",
+              "products": [
+                {
+                  "title": "Item 1",
+                  "price": "650"
+                },
+                {
+                  "title": "Item 2",
+                  "price": "450"
+                },
+                {
+                  "title": "Item 3",
+                  "price": "300"
+                },
+                {
+                  "title": "Item 4",
+                  "price": "1200"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "shopSetup": {
+        "bookingServices": [
+          {
+            "name": "Service 1"
+          },
+          {
+            "name": "Service 2"
+          },
+          {
+            "name": "Service 3"
+          },
+          {
+            "name": "Service 4"
+          }
+        ]
+      }
+    },
+    "materials": {
+      "runId": "run-syn-salon",
+      "logo": {
+        "present": true,
+        "source": ""
+      },
+      "uploads": {},
+      "uploadsTotal": 0,
+      "pageKinds": [
+        {
+          "route": "/page-3",
+          "kind": "services"
+        },
+        {
+          "route": "/page-4",
+          "kind": "booking"
+        }
+      ]
+    },
+    "brief": {
+      "hash": "brief-syn-salon",
+      "facts": {
+        "contact": {
+          "onlineOnly": false,
+          "town": "Example town"
+        },
+        "identity": {
+          "legalName": "Example AS"
+        },
+        "positioning": {
+          "businessWhat": "Example description",
+          "audience": "Example audience",
+          "services": [
+            "Service 1",
+            "Service 2",
+            "Service 3",
+            "Service 4",
+            "Service 5"
+          ]
+        },
+        "logo": {
+          "status": "present"
+        }
+      }
+    },
+    "tierId": "tier-3-ecommerce"
+  }
+}

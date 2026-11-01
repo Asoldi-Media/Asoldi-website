@@ -1,0 +1,133 @@
+{
+  "schema": "asoldi.gate-input/1",
+  "client": {
+    "id": "syn-craftsman",
+    "businessName": "Example business",
+    "product": "asoldi",
+    "progression": {
+      "contractSigned": true
+    },
+    "sitePlan": {
+      "status": "active",
+      "tierId": "tier-2-seo",
+      "services": [
+        "site",
+        "changes",
+        "seo",
+        "social",
+        "email",
+        "blog"
+      ],
+      "languages": [
+        "nb"
+      ],
+      "billing": "month",
+      "source": "backfill"
+    },
+    "workshop": {
+      "heldAt": "2026-10-12T11:00:00.000Z"
+    },
+    "makerRun": {
+      "runId": "run-syn-craftsman"
+    }
+  },
+  "inputs": {
+    "bank": {
+      "generalInfo": {
+        "companyPhone": "+47 00 00 00 00",
+        "companyEmail": "post@example.com",
+        "companyAddress": "Example street 1",
+        "googleMapsUrl": ""
+      },
+      "brandIdentity": {
+        "orgNumber": "000000000",
+        "logos": {
+          "normal": ""
+        }
+      },
+      "websiteCreatorQuestions": {
+        "businessWhat": "Example description",
+        "town": "Example town",
+        "websiteDomain": "example.com",
+        "importantKeywords": []
+      },
+      "openingHours": {
+        "days": [
+          {
+            "day": "Mandag",
+            "opensAt": "09:00",
+            "closesAt": "17:00",
+            "closed": false
+          }
+        ]
+      },
+      "media": {
+        "projectImages": [
+          {
+            "id": "media-1",
+            "fileName": "picture-1.jpg"
+          },
+          {
+            "id": "media-2",
+            "fileName": "picture-2.jpg"
+          },
+          {
+            "id": "media-3",
+            "fileName": "picture-3.jpg"
+          },
+          {
+            "id": "media-4",
+            "fileName": "picture-4.jpg"
+          },
+          {
+            "id": "media-5",
+            "fileName": "picture-5.jpg"
+          },
+          {
+            "id": "media-6",
+            "fileName": "picture-6.jpg"
+          }
+        ]
+      },
+      "productCatalogs": [],
+      "shopSetup": {}
+    },
+    "materials": {
+      "runId": "run-syn-craftsman",
+      "logo": {
+        "present": false,
+        "source": ""
+      },
+      "uploads": {},
+      "uploadsTotal": 0,
+      "pageKinds": []
+    },
+    "brief": {
+      "hash": "brief-syn-craftsman",
+      "facts": {
+        "contact": {
+          "onlineOnly": false,
+          "town": "Example town"
+        },
+        "identity": {
+          "legalName": "Example AS"
+        },
+        "positioning": {
+          "businessWhat": "Example description",
+          "audience": "Example audience",
+          "services": [
+            "Service 1",
+            "Service 2",
+            "Service 3",
+            "Service 4",
+            "Service 5"
+          ]
+        },
+        "logo": {
+          "status": "wordmark"
+        }
+      }
+    },
+    "tierId": "tier-2-seo"
+  }
+}

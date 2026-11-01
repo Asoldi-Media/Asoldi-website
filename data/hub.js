@@ -430,6 +430,21 @@ export function updateSiteSpecs(id, mutate) {
   });
 }
 
+/**
+ * Bumps a site's shopConnectionRev by one under the sites.json lock, so readers that cache on it
+ * (the delivery gate) see that the stored payment connections changed. Only the delivery gate's
+ * connection listener calls this, and only while the gate is on.
+ */
+export function bumpSiteShopConnectionRev(id) {
+  return withSitesLocked((sites) => {
+    const i = sites.findIndex((s) => s.id === id);
+    if (i === -1) return { result: { ok: false, error: 'Site not found' }, write: false };
+    const rev = Math.max(0, Math.round(Number(sites[i].shopConnectionRev) || 0)) + 1;
+    sites[i] = normalizeSite({ ...sites[i], shopConnectionRev: rev });
+    return { result: { ok: true, shopConnectionRev: rev }, write: true };
+  });
+}
+
 export function deleteSite(id) {
   const sites = readSites();
   const filtered = sites.filter((s) => s.id !== id);

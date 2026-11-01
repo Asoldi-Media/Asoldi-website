@@ -1,0 +1,137 @@
+{
+  "schema": "asoldi.gate-expected/1",
+  "client": "syn-saas",
+  "derivation": "requirement-table/1",
+  "sources": [
+    "client.json",
+    "facts.json",
+    "catalog.json",
+    "media/manifest.json",
+    "transcripts.json"
+  ],
+  "tierId": "tier-3-ecommerce",
+  "pageKinds": [
+    "pricing",
+    "blog-index"
+  ],
+  "lines": [
+    {
+      "id": "workshop",
+      "gate": "dev",
+      "status": "have",
+      "origin": "service:site"
+    },
+    {
+      "id": "logo",
+      "gate": "dev",
+      "status": "have",
+      "origin": "service:site"
+    },
+    {
+      "id": "business-what",
+      "gate": "dev",
+      "status": "have",
+      "origin": "service:site"
+    },
+    {
+      "id": "contact",
+      "gate": "dev",
+      "status": "have",
+      "origin": "service:site"
+    },
+    {
+      "id": "hero-media",
+      "gate": "ready",
+      "status": "have",
+      "origin": "service:site"
+    },
+    {
+      "id": "domain",
+      "gate": "ready",
+      "status": "have",
+      "origin": "service:site"
+    },
+    {
+      "id": "client-approval",
+      "gate": "ready",
+      "status": "missing",
+      "origin": "service:site"
+    },
+    {
+      "id": "keywords",
+      "gate": "dev",
+      "status": "missing",
+      "origin": "service:seo"
+    },
+    {
+      "id": "service-area",
+      "gate": "dev",
+      "status": "have",
+      "origin": "service:seo"
+    },
+    {
+      "id": "google-business",
+      "gate": "ready",
+      "status": "missing",
+      "origin": "service:seo"
+    },
+    {
+      "id": "products",
+      "gate": "dev",
+      "status": "have",
+      "origin": "service:ecom"
+    },
+    {
+      "id": "seller",
+      "gate": "dev",
+      "status": "have",
+      "origin": "service:ecom"
+    },
+    {
+      "id": "shipping",
+      "gate": "ready",
+      "status": "missing",
+      "origin": "service:ecom"
+    },
+    {
+      "id": "returns",
+      "gate": "ready",
+      "status": "missing",
+      "origin": "service:ecom"
+    },
+    {
+      "id": "payment",
+      "gate": "ready",
+      "status": "missing",
+      "origin": "service:ecom"
+    },
+    {
+      "id": "languages",
+      "gate": "dev",
+      "status": "missing",
+      "origin": "service:multilingual"
+    },
+    {
+      "id": "price-list",
+      "gate": "ready",
+      "status": "have",
+      "origin": "page-kind:pricing"
+    },
+    {
+      "id": "blog-topics",
+      "gate": "ready",
+      "status": "missing",
+      "origin": "page-kind:blog-index"
+    }
+  ],
+  "missingDev": [
+    "keywords",
+    "languages"
+  ],
+  "missingReady": [
+    "client-approval",
+    "shipping",
+    "returns",
+    "payment"
+  ]
+}

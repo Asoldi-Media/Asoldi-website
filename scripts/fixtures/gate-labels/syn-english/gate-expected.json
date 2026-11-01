@@ -1,0 +1,97 @@
+{
+  "schema": "asoldi.gate-expected/1",
+  "client": "syn-english",
+  "derivation": "requirement-table/1",
+  "sources": [
+    "client.json",
+    "facts.json",
+    "catalog.json",
+    "media/manifest.json",
+    "transcripts.json"
+  ],
+  "tierId": "tier-2-seo",
+  "pageKinds": [
+    "pricing"
+  ],
+  "lines": [
+    {
+      "id": "workshop",
+      "gate": "dev",
+      "status": "have",
+      "origin": "service:site"
+    },
+    {
+      "id": "logo",
+      "gate": "dev",
+      "status": "have",
+      "origin": "service:site"
+    },
+    {
+      "id": "business-what",
+      "gate": "dev",
+      "status": "have",
+      "origin": "service:site"
+    },
+    {
+      "id": "contact",
+      "gate": "dev",
+      "status": "have",
+      "origin": "service:site"
+    },
+    {
+      "id": "hero-media",
+      "gate": "ready",
+      "status": "have",
+      "origin": "service:site"
+    },
+    {
+      "id": "opening-hours",
+      "gate": "ready",
+      "status": "missing",
+      "origin": "service:site"
+    },
+    {
+      "id": "domain",
+      "gate": "ready",
+      "status": "have",
+      "origin": "service:site"
+    },
+    {
+      "id": "client-approval",
+      "gate": "ready",
+      "status": "missing",
+      "origin": "service:site"
+    },
+    {
+      "id": "keywords",
+      "gate": "dev",
+      "status": "missing",
+      "origin": "service:seo"
+    },
+    {
+      "id": "service-area",
+      "gate": "dev",
+      "status": "have",
+      "origin": "service:seo"
+    },
+    {
+      "id": "google-business",
+      "gate": "ready",
+      "status": "missing",
+      "origin": "service:seo"
+    },
+    {
+      "id": "price-list",
+      "gate": "ready",
+      "status": "missing",
+      "origin": "page-kind:pricing"
+    }
+  ],
+  "missingDev": [
+    "keywords"
+  ],
+  "missingReady": [
+    "client-approval",
+    "price-list"
+  ]
+}
