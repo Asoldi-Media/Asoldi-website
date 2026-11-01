@@ -1,0 +1,2576 @@
+{
+  "format": 1,
+  "catalogVersion": 1,
+  "dpaVersion": "dpa-1",
+  "date": "2026-11-01",
+  "clauses": [
+    {
+      "id": "general.about",
+      "version": 1,
+      "kind": "general",
+      "section": "about",
+      "docs": [
+        "terms"
+      ],
+      "nb": {
+        "title": "Om vilkårene",
+        "terms": [
+          "Disse vilkårene gjelder tjenestene Asoldi Markedsføring (drevet under foretaket CHAPANA, org.nr. 934 327 497) («Asoldi», «vi») leverer til næringsdrivende kunder, og bruk av asoldi.com og kundeportalen.",
+          "Avtalen er en avtale mellom næringsdrivende. Forbrukerkjøpsloven og angrerettloven gjelder ikke mellom Asoldi og kunden.",
+          "En signert tjenesteavtale viser partene, valgt omfang og pris. Den viser til disse vilkårene, personvernerklæringen og databehandleravtalen. Ved motstrid går den signerte avtalens konkrete vilkår (parter, pris, omfang, frister, ansvarstak, eierskap og avslutning) foran.",
+          "Vilkårene har et versjonsnummer. Kunden er bundet av versjonen som gjaldt da tjenesteavtalen ble signert, til kunden har fått skriftlig varsel om en ny versjon. Kundeportalen viser hvilken versjon som gjelder for kunden."
+        ]
+      }
+    },
+    {
+      "id": "general.account",
+      "version": 1,
+      "kind": "general",
+      "section": "account",
+      "docs": [
+        "terms"
+      ],
+      "nb": {
+        "title": "Bruk av nettstedet og kontoen",
+        "terms": [
+          "Kunden er ansvarlig for at opplysningene kunden gir, er riktige og oppdaterte.",
+          "Kunden holder innloggingene til kundeportalen og CMS hemmelige og er ansvarlig for aktivitet på egne kontoer.",
+          "Nettstedet og tjenestene skal ikke misbrukes, og kunden skal ikke forsøke å skaffe seg tilgang kunden ikke har fått.",
+          "Den som inngår avtalen for en virksomhet, bekrefter å ha fullmakt til det. Uten slik fullmakt er avtalen ugyldig."
+        ]
+      }
+    },
+    {
+      "id": "service.site",
+      "version": 1,
+      "kind": "service",
+      "section": "services",
+      "docs": [
+        "terms",
+        "contract",
+        "sales"
+      ],
+      "covers": {
+        "services": [
+          "site"
+        ],
+        "features": [
+          "users",
+          "users.*",
+          "site",
+          "site.*",
+          "forms",
+          "forms.wizard",
+          "content",
+          "content.*",
+          "social",
+          "social.profiles",
+          "shop",
+          "shop.catalog",
+          "seo",
+          "seo.keywords",
+          "seo.onPage",
+          "seo.contentHead",
+          "seo.sitemap",
+          "integrations",
+          "integrations.scripts"
+        ]
+      },
+      "nb": {
+        "title": "Nettside og CMS",
+        "terms": [
+          "Asoldi designer og utvikler nettsiden med det antallet hovedsider som er avtalt, med oppsett som fungerer på mobil, nettbrett og PC. Nettsiden har nettstedskart og kobles til kundens domene.",
+          "Kunden får Asoldi CMS med egne brukere og roller, redigering av sider, mediebibliotek, egne felt og innholdstyper som Asoldi setter opp.",
+          "Nettsiden har kontaktskjema som leverer meldinger til innboksen i CMS. En valgfri veiviser kan lede besøkende fram til skjemaet.",
+          "Nettsiden har juridiske sider (salgsbetingelser, personvern og informasjonskapsler) og en samtykkeløsning, slik at sporing først starter når den besøkende samtykker. Kunden kan legge inn egne skript for statistikk og annonser, for eksempel Google Analytics og Meta Pixel. De kjøres bare etter samtykke.",
+          "Grunnleggende søkemotortilpasning inngår: en enkel søkeordsplan, tittel og beskrivelse per side, god struktur og nettstedskart. Løpende SEO-arbeid er en egen tjeneste.",
+          "Kunden kan vise produkter eller tjenester i en enkel katalog uten kasse og lenke til egne profiler i sosiale medier."
+        ],
+        "contract": [
+          "Design og utvikling av nettsiden, inntil {pages} hovedsider, med oppsett for mobil, nettbrett og PC, nettstedskart og kobling til kundens domene",
+          "Asoldi CMS med egne brukere og roller, mediebibliotek og redigering av sider og innhold",
+          "Kontaktskjema, juridiske sider og samtykkeløsning for informasjonskapsler",
+          "Grunnleggende søkemotortilpasning: søkeordsplan, titler, beskrivelser, struktur og nettstedskart"
+        ],
+        "sales": [
+          "Full nettsideutvikling",
+          "Asoldi CMS med egne brukere",
+          "Kontaktskjema og juridiske sider",
+          "Grunnleggende SEO og sitemap"
+        ]
+      },
+      "en": {
+        "title": "Website and CMS",
+        "contract": [
+          "Design and development of the website, up to {pages} main pages, with a layout for mobile, tablet and desktop, a sitemap and connection to the Client's domain",
+          "Asoldi CMS with the Client's own users and roles, a media library and editing of pages and content",
+          "Contact form, legal pages and a cookie consent solution",
+          "Basic search engine setup: keyword plan, titles, descriptions, structure and sitemap"
+        ],
+        "sales": [
+          "Full website development",
+          "Asoldi CMS with your own users",
+          "Contact form and legal pages",
+          "Basic SEO and sitemap"
+        ]
+      }
+    },
+    {
+      "id": "service.hosting",
+      "version": 1,
+      "kind": "service",
+      "section": "services",
+      "docs": [
+        "terms",
+        "contract",
+        "sales"
+      ],
+      "covers": {
+        "services": [
+          "site"
+        ]
+      },
+      "nb": {
+        "title": "Hosting, domene og vedlikehold",
+        "terms": [
+          "Asoldi drifter nettsiden og CMS på Asoldis hostingnettverk hos Hostinger så lenge abonnementet løper. Hosting inngår i månedsprisen.",
+          "Kunden eier og betaler sitt eget domene. Asoldi kobler domenet til hostingen. Har kunden ikke et domene, kjøper kunden det selv hos en domeneregistrar.",
+          "Vedlikehold omfatter sikkerhetsoppdateringer, sikkerhetskopier, feilretting og nye versjoner av Asoldi CMS. Planlagt vedlikehold og feil hos underleverandører kan gi korte avbrudd.",
+          "Ett veiledningsmøte om bruk av CMS inngår og holdes én gang. Når nettbutikk inngår, dekker møtet også produkter, kunder og betalingsløsning."
+        ],
+        "contract": [
+          "Hosting og drift hos Hostinger så lenge abonnementet er aktivt",
+          "Domenekobling: kunden eier og betaler domenet, og Asoldi kobler det til hostingen",
+          "Vedlikehold: sikkerhet, sikkerhetskopier, feilretting og nye versjoner av Asoldi CMS",
+          "Ett veiledningsmøte om bruk av CMS, holdt én gang"
+        ],
+        "sales": [
+          "Hosting og vedlikehold",
+          "Koble til eget domene",
+          "Innledende veiledningsmøte"
+        ]
+      },
+      "en": {
+        "title": "Hosting, domain and maintenance",
+        "contract": [
+          "Hosting and operation at Hostinger while the subscription is active",
+          "Domain connection: the Client owns and pays for the domain, and Asoldi connects it to the hosting",
+          "Maintenance: security, backups, bug fixes and new versions of the Asoldi CMS",
+          "One guidance meeting on using the CMS, held once"
+        ],
+        "sales": [
+          "Hosting and maintenance",
+          "Connect your own domain",
+          "Onboarding meeting"
+        ]
+      }
+    },
+    {
+      "id": "service.changes",
+      "version": 1,
+      "kind": "service",
+      "section": "services",
+      "docs": [
+        "terms",
+        "contract",
+        "sales"
+      ],
+      "covers": {
+        "services": [
+          "changes"
+        ],
+        "features": [
+          "changeRequests"
+        ]
+      },
+      "nb": {
+        "title": "Endringer",
+        "terms": [
+          "Kunden sender endringsønsker fra CMS. Inntil {changesPerMonth} endringer per måned inngår.",
+          "Én godtatt forespørsel er én endring. Endringer i tekst, bilder og priser, og å legge til, flytte eller fjerne en seksjon, er tillatt. En ny side, en større ombygging eller ny funksjonalitet avtales særskilt.",
+          "Asoldi utfører en godtatt endring innen {slaWorkDays} arbeidsdager. Asoldi teller endringene og varsler når kvoten for måneden er brukt opp. Ubrukte endringer overføres ikke til neste måned.",
+          "Retting av skrivefeil og faktiske feil Asoldi har gjort, regnes ikke som en endring."
+        ],
+        "contract": [
+          "Inntil {changesPerMonth} endringer per måned. Én godtatt forespørsel er én endring, og endringer i seksjoner er tillatt",
+          "Godtatte endringer utføres innen {slaWorkDays} arbeidsdager"
+        ],
+        "sales": [
+          "Opptil {changesPerMonth} endringer/mnd"
+        ]
+      },
+      "en": {
+        "title": "Changes",
+        "contract": [
+          "Up to {changesPerMonth} changes per month. One accepted request is one change, and changes to sections are allowed",
+          "Accepted changes are made within {slaWorkDays} working days"
+        ],
+        "sales": [
+          "Up to {changesPerMonth} changes/month"
+        ]
+      }
+    },
+    {
+      "id": "service.unlimited",
+      "version": 1,
+      "kind": "service",
+      "section": "services",
+      "docs": [
+        "terms",
+        "contract",
+        "sales"
+      ],
+      "covers": {
+        "services": [
+          "unlimited"
+        ]
+      },
+      "nb": {
+        "title": "Ubegrensede endringer",
+        "terms": [
+          "Med ubegrensede endringer gjelder ingen månedlig grense for endringsforespørsler. Hver forespørsel må være rimelig i omfang. En ny side eller en større ombygging avtales fortsatt særskilt."
+        ],
+        "contract": [
+          "Ubegrensede endringer: ingen månedlig grense for rimelige endringsforespørsler"
+        ],
+        "sales": [
+          "Ubegrensede endringer"
+        ]
+      },
+      "en": {
+        "title": "Unlimited changes",
+        "contract": [
+          "Unlimited changes: no monthly limit on reasonable change requests"
+        ],
+        "sales": [
+          "Unlimited changes"
+        ]
+      }
+    },
+    {
+      "id": "service.blog",
+      "version": 1,
+      "kind": "service",
+      "section": "services",
+      "docs": [
+        "terms",
+        "contract",
+        "sales"
+      ],
+      "covers": {
+        "services": [
+          "blog"
+        ],
+        "features": [
+          "blog",
+          "blog.posts"
+        ]
+      },
+      "nb": {
+        "title": "Blogg",
+        "terms": [
+          "Alle nivåer har blogg på nettsiden. Kunden skriver og publiserer egne innlegg i CMS. Innleggene vises i bloggoversikten og på egne innleggssider.",
+          "Til kunden har publisert sitt første innlegg, kan bloggseksjonen være skjult."
+        ],
+        "contract": [
+          "Blogg på nettsiden: kunden skriver og publiserer egne innlegg i CMS"
+        ],
+        "sales": [
+          "Blogg der du publiserer egne innlegg"
+        ]
+      },
+      "en": {
+        "title": "Blog",
+        "contract": [
+          "Blog on the website: the Client writes and publishes their own posts in the CMS"
+        ],
+        "sales": [
+          "Blog where you publish your own posts"
+        ]
+      }
+    },
+    {
+      "id": "service.autoPosts",
+      "version": 1,
+      "kind": "service",
+      "section": "services",
+      "docs": [
+        "terms",
+        "contract",
+        "sales"
+      ],
+      "covers": {
+        "services": [
+          "seo"
+        ],
+        "features": [
+          "blog.autoPosts"
+        ]
+      },
+      "nb": {
+        "title": "Automatiske blogginnlegg",
+        "terms": [
+          "Med SEO-tjenesten skriver Asoldi blogginnlegg om kundens tjenester og område og publiserer dem automatisk. Standard er ett innlegg i uken. Kunden kan velge fra null til tre innlegg i uken.",
+          "Innleggene skrives med hjelp av AI og kontrolleres automatisk før de publiseres. I regulerte bransjer, for eksempel helse og kosttilskudd, publiseres et innlegg først når både Asoldi og kunden har godkjent det.",
+          "Kunden kan redigere eller avpublisere et innlegg når som helst. Automatiske innlegg stopper når abonnementet avsluttes."
+        ],
+        "contract": [
+          "Automatiske blogginnlegg om kundens tjenester og område: normalt ett i uken, og kunden kan velge fra null til tre i uken"
+        ],
+        "sales": [
+          "Automatiske SEO-blogginnlegg (1 i uken, 0–3 ved ønske)"
+        ]
+      },
+      "en": {
+        "title": "Automatic blog posts",
+        "contract": [
+          "Automatic blog posts about the Client's services and area: normally one a week, and the Client can choose from zero to three a week"
+        ],
+        "sales": [
+          "Automatic SEO blog posts (1 a week, 0–3 on request)"
+        ]
+      }
+    },
+    {
+      "id": "service.seo",
+      "version": 1,
+      "kind": "service",
+      "section": "services",
+      "docs": [
+        "terms",
+        "contract",
+        "sales"
+      ],
+      "covers": {
+        "services": [
+          "seo"
+        ],
+        "features": [
+          "analytics",
+          "analytics.level",
+          "seo.agreedKeywords",
+          "seo.reports",
+          "seo.reports.basic",
+          "seo.tracking",
+          "seo.tracking.**",
+          "seo.localPack",
+          "seo.backlinkTargets",
+          "seo.searchConsole",
+          "seo.liveAudit"
+        ]
+      },
+      "nb": {
+        "title": "SEO-arbeid og avtalte søkeord",
+        "terms": [
+          "SEO-tjenesten er løpende arbeid for at nettsiden skal bli funnet i Google Søk, Google Maps og AI-assistenter. Den omfatter søkeordsoptimalisert tekst, teknisk SEO, arbeid med lokalt søk og bedriftsprofil, en månedlig SEO-sjekk av nettsiden og forslag til nettsteder som bør lenke til kunden.",
+          "Asoldi og kunden avtaler søkeordene arbeidet rettes mot, normalt ett til tre. De avtalte søkeordene står i tjenesteavtalen eller i kundens SEO-oversikt i CMS. Nye eller endrede søkeord avtales skriftlig, også i CMS.",
+          "Kunden får en statistikkside i CMS med rangeringer i Google Søk, Google Maps, Googles AI-oversikt og AI-assistenter, data fra Google Search Console når kunden kobler den til, og en rapport hver fjortende dag.",
+          "Asoldi garanterer ikke en bestemt plassering, trafikk eller omsetning. SEO er løpende arbeid uten lovet kommersielt resultat."
+        ],
+        "contract": [
+          "Løpende SEO-arbeid mot Google Søk, Google Maps og AI-søk: søkeordsoptimalisert tekst, teknisk SEO, lokalt søk og en månedlig SEO-sjekk",
+          "Arbeid mot de avtalte søkeordene, normalt ett til tre",
+          "Statistikkside i CMS med rangeringer og en rapport hver fjortende dag",
+          "Asoldi garanterer ikke bestemt plassering, trafikk eller omsetning"
+        ],
+        "sales": [
+          "SEO for 1–3 avtalte søkeord",
+          "Rangering på Google, Google Maps og AI-søk",
+          "Analyse-dashbord og rapport hver 14. dag"
+        ]
+      },
+      "en": {
+        "title": "SEO work and agreed keywords",
+        "contract": [
+          "Ongoing SEO work for Google Search, Google Maps and AI search: keyword-optimised copy, technical SEO, local search and a monthly SEO check",
+          "Work towards the agreed keywords, normally one to three",
+          "Analytics page in the CMS with rankings and a report every fourteen days",
+          "Asoldi does not guarantee specific rankings, traffic or revenue"
+        ],
+        "sales": [
+          "SEO for 1–3 agreed keywords",
+          "Ranking on Google, Google Maps and AI search",
+          "Analytics dashboard and a report every 14 days"
+        ]
+      }
+    },
+    {
+      "id": "service.social",
+      "version": 1,
+      "kind": "service",
+      "section": "services",
+      "docs": [
+        "terms",
+        "contract",
+        "sales"
+      ],
+      "covers": {
+        "services": [
+          "social"
+        ],
+        "features": [
+          "reviews",
+          "reviews.onsite",
+          "reviews.google",
+          "social",
+          "social.profiles"
+        ]
+      },
+      "nb": {
+        "title": "Omtaler og sosiale medier",
+        "terms": [
+          "Nettsiden kan vise omtaler fra Google og omtaler som kundens egne kunder skriver på nettsiden, og lenke til kundens profiler i sosiale medier. Asoldi publiserer ikke innlegg i kundens sosiale medier.",
+          "For å hente omtaler fra Google kobler kunden sin bedriftsprofil. Asoldi lagrer ikke kundens passord til slike kontoer."
+        ],
+        "contract": [
+          "Visning av Google-omtaler og omtaler på nettsiden, og lenker til kundens sosiale profiler. Asoldi publiserer ikke i sosiale medier"
+        ],
+        "sales": [
+          "Anmeldelser og lenker til sosiale medier"
+        ]
+      },
+      "en": {
+        "title": "Reviews and social media",
+        "contract": [
+          "Display of Google reviews and on-site reviews, and links to the Client's social profiles. Asoldi does not post on social media"
+        ],
+        "sales": [
+          "Reviews and links to social media"
+        ]
+      }
+    },
+    {
+      "id": "service.email",
+      "version": 1,
+      "kind": "service",
+      "section": "services",
+      "docs": [
+        "terms",
+        "contract",
+        "sales"
+      ],
+      "covers": {
+        "services": [
+          "email"
+        ],
+        "features": [
+          "email",
+          "email.newsletter",
+          "email.doubleOptIn",
+          "email.campaigns",
+          "email.automations",
+          "email.automations.welcome",
+          "forms",
+          "forms.lists"
+        ]
+      },
+      "nb": {
+        "title": "E-postmarkedsføring",
+        "terms": [
+          "Nettsiden kan samle e-postadresser i skjemaer og i påmelding til nyhetsbrev. Nye abonnenter bekrefter adressen sin før de får e-post (dobbel bekreftelse).",
+          "Kunden kan sende kampanjer til listene sine og bruke automatiske e-poster, for eksempel velkomst-e-post til nye abonnenter. Hver e-post har en lenke for å melde seg av.",
+          "E-posten sendes gjennom Asoldis e-postleverandører. Kunden er avsender og behandlingsansvarlig for listene. E-postfunksjonene er av for nettsiden til kunden har godtatt databehandleravtalen."
+        ],
+        "contract": [
+          "Påmelding til nyhetsbrev med dobbel bekreftelse, e-postlister, kampanjer og velkomst-e-post",
+          "E-post sendes gjennom Asoldis e-postleverandører og er av til databehandleravtalen er godtatt"
+        ],
+        "sales": [
+          "E-postlister, nyhetsbrev og velkomst-e-post"
+        ]
+      },
+      "en": {
+        "title": "Email marketing",
+        "contract": [
+          "Newsletter sign-up with double opt-in, email lists, campaigns and a welcome email",
+          "Email is sent through Asoldi's email providers and stays off until the data processing agreement is accepted"
+        ],
+        "sales": [
+          "Email lists, newsletter and welcome email"
+        ]
+      }
+    },
+    {
+      "id": "service.shopEmail",
+      "version": 1,
+      "kind": "service",
+      "section": "services",
+      "docs": [
+        "terms",
+        "contract",
+        "sales"
+      ],
+      "covers": {
+        "services": [
+          "ecom"
+        ],
+        "features": [
+          "email.automations.abandonedCart",
+          "email.automations.winback",
+          "email.automations.reviewRequest",
+          "email.automations.backInStock",
+          "email.notifications",
+          "email.notifications.*",
+          "email.customDomain"
+        ]
+      },
+      "nb": {
+        "title": "E-postautomatiseringer i nettbutikken",
+        "terms": [
+          "I nettbutikken kan CMS sende automatiske e-poster: påminnelse om forlatt handlekurv, beskjed når en vare er tilbake på lager, forespørsel om omtale etter kjøp og e-post til kunder som ikke har handlet på en stund. Kunden kan få varsler om hendelser i butikken og sende e-post fra eget domene.",
+          "Påminnelse om forlatt handlekurv sendes bare til kjøpere som har krysset av for det i kassen. Påminnelsen sendes i to steg, etter én time og etter 24 timer, uten rabatt. Uten slikt samtykke ser kunden bare en maskert e-postadresse og verdien av handlekurven."
+        ],
+        "contract": [
+          "Automatiske e-poster i nettbutikken: forlatt handlekurv (bare med kjøperens samtykke i kassen), tilbake på lager, forespørsel om omtale og e-post til tidligere kunder",
+          "Varsler om hendelser i butikken og sending fra eget e-postdomene"
+        ],
+        "sales": [
+          "Påminnelse om forlatt handlekurv (med samtykke)"
+        ]
+      },
+      "en": {
+        "title": "Email automations in the online store",
+        "contract": [
+          "Automatic emails in the online store: abandoned cart (only with the buyer's consent at checkout), back in stock, review requests and win-back emails",
+          "Alerts about store events and sending from the Client's own email domain"
+        ],
+        "sales": [
+          "Abandoned cart reminders (with consent)"
+        ]
+      }
+    },
+    {
+      "id": "service.ecom",
+      "version": 1,
+      "kind": "service",
+      "section": "services",
+      "docs": [
+        "terms",
+        "contract",
+        "sales"
+      ],
+      "consumerFacing": true,
+      "covers": {
+        "services": [
+          "ecom"
+        ],
+        "features": [
+          "shop",
+          "shop.**",
+          "reviews.onsite",
+          "integrations.webhooks",
+          "integrations.apiKeys",
+          "integrations.metaCapi",
+          "experiments",
+          "seo.productFeed"
+        ]
+      },
+      "nb": {
+        "title": "Nettbutikk",
+        "terms": [
+          "Nettbutikken omfatter butikkoppsett, produktsider, handlekurv og kasse, kortbetaling, PayPal og Vipps når det er tilgjengelig, rabatter, gavekort, abonnement, forhåndsbestilling, digitale produkter, frakt og fraktetiketter, bestilling fra meny, timebestilling, kundekonto («Min side») og mersalg. Funksjonene slås på etter avtale og behov.",
+          "Kunden er selger overfor sine kunder og har ansvaret for varer, priser, levering, angrerett og reklamasjon. Salgsbetingelsene på kundens nettside bygger på Forbrukertilsynets standard salgsbetingelser for forbrukerkjøp av varer over Internett.",
+          "Kunden kobler sin egen betalingskonto. Kortopplysninger behandles av betalingsleverandøren og lagres ikke hos Asoldi.",
+          "Nettbutikken kan sende produktene til Google Shopping, koble til andre systemer med webhooks og API-nøkler, rapportere kjøp til Meta etter samtykke og kjøre splittester."
+        ],
+        "contract": [
+          "Nettbutikk: produktsider, handlekurv, kasse og betaling til kundens egen betalingskonto",
+          "Rabatter, gavekort, abonnement, frakt, timebestilling og kundekonto etter behov",
+          "Salgsbetingelser basert på Forbrukertilsynets standard salgsbetingelser. Kunden er selger overfor sine kunder",
+          "Produktfeed til Google Shopping, webhooks og API-nøkler"
+        ],
+        "sales": [
+          "Nettbutikk-funksjonalitet"
+        ]
+      },
+      "en": {
+        "title": "Online store",
+        "contract": [
+          "Online store: product pages, cart, checkout and payment to the Client's own payment account",
+          "Discounts, gift cards, subscriptions, shipping, bookings and customer accounts as needed",
+          "Terms of sale based on the Norwegian Consumer Authority's standard terms. The Client is the seller to its customers",
+          "Product feed for Google Shopping, webhooks and API keys"
+        ],
+        "sales": [
+          "Online store"
+        ]
+      }
+    },
+    {
+      "id": "service.dashboard",
+      "version": 1,
+      "kind": "service",
+      "section": "services",
+      "docs": [
+        "terms",
+        "contract",
+        "sales"
+      ],
+      "covers": {
+        "services": [
+          "dashboard"
+        ],
+        "features": [
+          "analytics",
+          "analytics.level",
+          "seo.reports.advanced"
+        ]
+      },
+      "nb": {
+        "title": "Utvidet statistikk og rapport",
+        "terms": [
+          "Kunden får utvidet statistikk i CMS, også nettbutikk-tall som kjøp, konverteringsrate og gjennomsnittlig ordreverdi, og en utvidet rapport hver sjuende dag i stedet for rapporten hver fjortende dag. Rapportene leveres i CMS."
+        ],
+        "contract": [
+          "Utvidet statistikk med nettbutikk-tall og en utvidet rapport hver sjuende dag"
+        ],
+        "sales": [
+          "Ukentlig avansert rapport",
+          "Nettbutikk-analyse (konvertering, AOV)"
+        ]
+      },
+      "en": {
+        "title": "Extended analytics and report",
+        "contract": [
+          "Extended analytics with online store figures and an extended report every seven days"
+        ],
+        "sales": [
+          "Weekly advanced report",
+          "Store analytics (conversion, AOV)"
+        ]
+      }
+    },
+    {
+      "id": "service.multilingual",
+      "version": 1,
+      "kind": "service",
+      "section": "services",
+      "docs": [
+        "terms",
+        "contract",
+        "sales"
+      ],
+      "covers": {
+        "services": [
+          "multilingual"
+        ],
+        "features": [
+          "i18n",
+          "i18n.**",
+          "seo.multilingual"
+        ]
+      },
+      "nb": {
+        "title": "Flere språk",
+        "terms": [
+          "Nettsiden og nettbutikken kan vises på flere språk, med oversatt innhold, produkter og innlegg og egne søkeord per språk."
+        ],
+        "contract": [
+          "Nettside og nettbutikk på flere språk, med søkeord per språk"
+        ],
+        "sales": [
+          "Flerspråklig funksjonalitet"
+        ]
+      },
+      "en": {
+        "title": "Multiple languages",
+        "contract": [
+          "Website and online store in several languages, with keywords per language"
+        ],
+        "sales": [
+          "Multilingual website"
+        ]
+      }
+    },
+    {
+      "id": "service.catalog",
+      "version": 1,
+      "kind": "service",
+      "section": "services",
+      "docs": [
+        "terms",
+        "contract",
+        "sales"
+      ],
+      "covers": {
+        "services": [
+          "catalog"
+        ],
+        "features": [
+          "shop",
+          "shop.catalog"
+        ]
+      },
+      "nb": {
+        "title": "Katalog",
+        "terms": [
+          "Katalogen viser produkter, en meny eller planer på nettsiden uten kasse. Kjøp skjer utenfor nettsiden."
+        ],
+        "contract": [
+          "Katalog over produkter, meny eller planer, uten kasse"
+        ],
+        "sales": [
+          "Produktkatalog uten kasse"
+        ]
+      },
+      "en": {
+        "title": "Catalogue",
+        "contract": [
+          "Catalogue of products, a menu or plans, without checkout"
+        ],
+        "sales": [
+          "Product catalogue without checkout"
+        ]
+      }
+    },
+    {
+      "id": "service.booking",
+      "version": 1,
+      "kind": "service",
+      "section": "services",
+      "docs": [
+        "terms",
+        "contract",
+        "sales"
+      ],
+      "consumerFacing": true,
+      "covers": {
+        "services": [
+          "booking"
+        ],
+        "features": [
+          "shop",
+          "shop.catalog",
+          "shop.checkout",
+          "shop.payments",
+          "shop.payments.stripe",
+          "shop.payments.vipps",
+          "shop.bookings",
+          "shop.giftcards",
+          "shop.accounts",
+          "reviews.onsite",
+          "email.automations.reviewRequest",
+          "email.notifications"
+        ]
+      },
+      "nb": {
+        "title": "Timebestilling",
+        "terms": [
+          "Kundens kunder kan bestille og betale time på nettsiden, kjøpe gavekort og se bestillingene sine. Kunden kan be om omtale etter besøket og få varsel om nye bestillinger.",
+          "Kunden er tjenesteyter overfor sine kunder. Vilkårene for bestilling bygger på Forbrukertilsynets standard salgsbetingelser og forbrukerreglene for tjenester."
+        ],
+        "contract": [
+          "Timebestilling med betaling, gavekort og kundekonto. Kunden er tjenesteyter overfor sine kunder"
+        ],
+        "sales": [
+          "Timebestilling på nettsiden"
+        ]
+      },
+      "en": {
+        "title": "Bookings",
+        "contract": [
+          "Bookings with payment, gift cards and customer accounts. The Client is the service provider to its customers"
+        ],
+        "sales": [
+          "Bookings on the website"
+        ]
+      }
+    },
+    {
+      "id": "service.backlinks",
+      "version": 1,
+      "kind": "service",
+      "section": "services",
+      "docs": [
+        "terms",
+        "contract",
+        "sales"
+      ],
+      "covers": {
+        "services": [
+          "backlinks"
+        ],
+        "features": [
+          "seo.linkNetwork"
+        ],
+        "cancellation": [
+          "backlink-network"
+        ]
+      },
+      "nb": {
+        "title": "Lenkenettverk",
+        "terms": [
+          "Nettsider som Asoldi leverer, lenker til hverandre i et lenkenettverk. Lenkene er vanlige, fulgte lenker i en partnerseksjon eller på en partnerside og i relevante blogginnlegg. Nettsidene kobles etter bransje og sted, og hver nettside har et tak på antall lenker. Lenkene legges aldri i bunnteksten på alle sider.",
+          "Kundens nettside lenker til og får lenker fra andre Asoldi-kunder. Antall lenker avhenger av hvor mange kunder som passer sammen. Asoldi følger med på rangeringene og kan stoppe nettverket for alle nettsider når det trengs.",
+          "Når abonnementet avsluttes, fjernes lenkene til og fra kundens nettside neste gang nettverket bygges om, og nye kunder lenker ikke til nettsiden."
+        ],
+        "contract": [
+          "Lenkenettverk: fulgte, relevante lenker mellom Asoldi-kunder i en partnerseksjon og i blogginnlegg, med tak per nettside og aldri i bunnteksten på alle sider",
+          "Lenkene til og fra nettsiden fjernes når abonnementet avsluttes"
+        ],
+        "sales": [
+          "Asoldi-nettverk for relevante lenker"
+        ]
+      },
+      "en": {
+        "title": "Link network",
+        "contract": [
+          "Link network: followed, relevant links between Asoldi clients in a partner section and in blog posts, capped per site and never in a site-wide footer",
+          "Links to and from the website are removed when the subscription ends"
+        ],
+        "sales": [
+          "Asoldi network for relevant links"
+        ]
+      }
+    },
+    {
+      "id": "addon.pos",
+      "version": 1,
+      "kind": "addon",
+      "section": "addons",
+      "docs": [
+        "terms",
+        "contract",
+        "sales"
+      ],
+      "covers": {
+        "addOns": [
+          "pos"
+        ],
+        "features": [
+          "integrations.webhooks",
+          "integrations.apiKeys"
+        ]
+      },
+      "nb": {
+        "title": "Kassesystem-kobling",
+        "terms": [
+          "Engangsarbeid som kobler nettsiden, vanligvis katalog, lager eller ordrer, til kundens eksisterende kassesystem gjennom leverandørens dokumenterte API eller offisielle integrasjon, med webhooks og API-nøkler i CMS.",
+          "Asoldi selger, lisensierer, drifter eller gir ikke support på kassesystemet. Kunden må ha et kassesystem med en brukbar integrasjon og gi Asoldi nødvendig tilgang. Kunden betaler løpende avgift til kassaleverandøren. Egenutvikling og maskinvare inngår ikke."
+        ],
+        "contract": [
+          "Kassesystem-kobling (engangsarbeid) gjennom leverandørens API eller offisielle integrasjon"
+        ],
+        "sales": [
+          "Kassesystem-kobling (engangs)"
+        ]
+      },
+      "en": {
+        "title": "POS connection",
+        "contract": [
+          "POS connection (one-time work) through the vendor's API or official integration"
+        ],
+        "sales": [
+          "POS connection (one-time)"
+        ]
+      }
+    },
+    {
+      "id": "addon.thirdpartyhost",
+      "version": 1,
+      "kind": "addon",
+      "section": "addons",
+      "docs": [
+        "terms",
+        "contract",
+        "sales"
+      ],
+      "covers": {
+        "addOns": [
+          "thirdpartyhost"
+        ]
+      },
+      "nb": {
+        "title": "Nettside hos en annen leverandør",
+        "terms": [
+          "SEO- og endringsarbeid for en nettside som driftes hos en annen leverandør. Kunden betaler vert og domeneregistrar selv og gir Asoldi nødvendig tilgang. Tillegget gir ikke Asoldi CMS hos den andre leverandøren."
+        ],
+        "contract": [
+          "Oppsett av SEO- og endringsarbeid for kundens nettside hos en annen vert (engangsarbeid). Kunden betaler vert og domeneregistrar"
+        ],
+        "sales": [
+          "Nettside hos annen vert (engangs)"
+        ]
+      },
+      "en": {
+        "title": "Website hosted elsewhere",
+        "contract": [
+          "Set-up of SEO and change work for the Client's website at another host (one-time work). The Client pays the host and registrar"
+        ],
+        "sales": [
+          "Website at another host (one-time)"
+        ]
+      }
+    },
+    {
+      "id": "general.oneTimePurchase",
+      "version": 1,
+      "kind": "general",
+      "section": "billing",
+      "docs": [
+        "terms",
+        "contract"
+      ],
+      "covers": {
+        "billing": [
+          "once"
+        ]
+      },
+      "nb": {
+        "title": "Engangskjøp",
+        "terms": [
+          "Ved engangskjøp betaler kunden én gang i stedet for månedlig. Prisen er {oneTimeMultiplier} ganger månedsprisen for valgt omfang, med en eventuell minstepris som står i tilbudet. Engangskjøp har ingen bindingstid.",
+          "Ubegrensede endringer inngår i {oneTimeMonths} måneder etter levering. Deretter gjelder samme endringskvote som for månedskunder.",
+          "Etter overleveringen har kunden selv ansvaret for hosting. Funksjoner som krever Asoldis hub, stopper: oppdateringer av CMS, automatiske blogginnlegg, lenkenettverket og e-post sendt gjennom Asoldi."
+        ],
+        "contract": [
+          "Engangskjøp: {oneTimeMultiplier} ganger månedsprisen, uten bindingstid",
+          "Ubegrensede endringer i {oneTimeMonths} måneder etter levering, deretter {changesPerMonth} endringer per måned",
+          "Etter overleveringen har kunden selv ansvaret for hosting, og funksjoner som krever Asoldis hub, stopper"
+        ]
+      },
+      "en": {
+        "title": "One-time purchase",
+        "contract": [
+          "One-time purchase: {oneTimeMultiplier} times the monthly price, with no binding period",
+          "Unlimited changes for {oneTimeMonths} months after delivery, then {changesPerMonth} changes per month",
+          "After handover the Client is responsible for hosting, and functions that need Asoldi's hub stop"
+        ]
+      }
+    },
+    {
+      "id": "general.term",
+      "version": 1,
+      "kind": "general",
+      "section": "term",
+      "docs": [
+        "terms",
+        "contract"
+      ],
+      "covers": {
+        "billing": [
+          "month"
+        ]
+      },
+      "nb": {
+        "title": "Avtaleperiode",
+        "terms": [
+          "Månedsabonnementet har en minste bindingstid på seks (6) måneder.",
+          "Oppsigelse krever 15 dagers varsel, og kunden betaler for hele oppsigelsesmåneden.",
+          "Kunden kan ikke nedgradere til et lavere nivå etter at funksjonalitet fra et høyere nivå er lagt til."
+        ],
+        "contract": [
+          "Minste bindingstid er seks (6) måneder",
+          "Oppsigelse krever 15 dagers varsel, og kunden betaler for hele oppsigelsesmåneden",
+          "Kunden kan ikke nedgradere til et lavere nivå etter at funksjonalitet fra et høyere nivå er lagt til"
+        ]
+      },
+      "en": {
+        "title": "Contract period",
+        "contract": [
+          "The minimum binding period is six (6) months",
+          "Cancellation requires 15 days' notice, and the Client pays for the whole month of cancellation",
+          "The Client cannot downgrade to a lower tier once functionality from a higher tier has been added"
+        ]
+      }
+    },
+    {
+      "id": "general.cancellation",
+      "version": 1,
+      "kind": "general",
+      "section": "cancellation",
+      "docs": [
+        "terms",
+        "contract"
+      ],
+      "covers": {
+        "cancellation": [
+          "cms-updates",
+          "auto-posts",
+          "backlink-network",
+          "hub-email",
+          "change-requests",
+          "grace"
+        ]
+      },
+      "nb": {
+        "title": "Når avtalen avsluttes",
+        "terms": [
+          "Når abonnementet avsluttes, stopper Asoldis løpende tjenester ved utløpet av den betalte perioden: oppdateringer av CMS, automatiske blogginnlegg, medlemskap i lenkenettverket, e-post sendt gjennom Asoldi og endringsforespørsler.",
+          "Nettsiden er oppe i {graceDays} dager etter at den betalte perioden er over. Deretter stopper hostingen. Asoldi sender e-post når avtalen avsluttes, sju dager før hostingen stopper og når den stopper.",
+          "Kunden kan be om eksport i kundeportalen fram til hostingen stopper. Eksporten inneholder nettsiden som statiske filer, CMS-data som JSON og CSV (produkter, ordrer, kunder, innlegg, skjemaer og samtykker) og mediefiler. Asoldi leverer eksporten innen syv (7) virkedager.",
+          "Kunden eier innholdet, designet og kode som er laget spesielt for kunden. Asoldi CMS og felles plattformkomponenter følger sin lisens og overføres ikke. Å flytte nettsiden til en annen leverandør er kundens ansvar. Asoldi kan hjelpe mot betaling etter prisen som til enhver tid står på asoldi.com."
+        ],
+        "contract": [
+          "Ved oppsigelse stopper oppdateringer av CMS, automatiske blogginnlegg, lenkenettverket, e-post gjennom Asoldi og endringsforespørsler ved utløpet av den betalte perioden",
+          "Nettsiden er oppe i {graceDays} dager etter den betalte perioden. Deretter stopper hostingen",
+          "Kunden kan be om eksport av nettsiden, CMS-data og mediefiler i kundeportalen fram til hostingen stopper. Eksporten leveres innen syv (7) virkedager",
+          "Kunden eier innholdet, designet og kode laget spesielt for kunden. Asoldi CMS følger sin lisens og overføres ikke"
+        ]
+      },
+      "en": {
+        "title": "When the agreement ends",
+        "contract": [
+          "On cancellation, CMS updates, automatic blog posts, the link network, email through Asoldi and change requests stop at the end of the paid period",
+          "The website stays online for {graceDays} days after the paid period. Then hosting stops",
+          "The Client can request an export of the website, CMS data and media in the client portal until hosting stops. The export is delivered within seven (7) business days",
+          "The Client owns the content, the design and code made specifically for the Client. The Asoldi CMS follows its licence and is not transferred"
+        ]
+      }
+    },
+    {
+      "id": "general.payment",
+      "version": 1,
+      "kind": "general",
+      "section": "payment",
+      "docs": [
+        "terms"
+      ],
+      "nb": {
+        "title": "Betaling",
+        "terms": [
+          "Månedlige betalinger skjer den 1. i hver måned. Første måned faktureres forholdsmessig fra levering.",
+          "Faktura for første måned forfaller innen 7 dager etter levering. Senere fakturaer forfaller innen 7 dager etter at de er sendt.",
+          "Betaling skjer med bankoverføring eller Stripe. Det er ingen etableringsavgift. Engangstillegg faktureres én gang på første faktura etter levering.",
+          "Priser er oppgitt uten merverdiavgift med mindre tilbudet sier noe annet."
+        ]
+      }
+    },
+    {
+      "id": "general.paymentDefault",
+      "version": 1,
+      "kind": "general",
+      "section": "payment",
+      "docs": [
+        "terms"
+      ],
+      "nb": {
+        "title": "Betalingsmislighold",
+        "terms": [
+          "Er betaling ikke mottatt innen 7 dager etter forfall, sender Asoldi en påminnelse. Er betaling ikke mottatt innen 14 dager etter forfall, kan nettsiden tas midlertidig ned til betaling er mottatt, og forsinkelsesrente og gebyrer etter norsk lov påløper.",
+          "Er betaling ikke mottatt innen 30 dager, kan kravet sendes til inkasso. Asoldi kan stanse tjenestene straks hvis det oppdages svindel knyttet til betaling."
+        ]
+      }
+    },
+    {
+      "id": "general.customer",
+      "version": 1,
+      "kind": "general",
+      "section": "customer",
+      "docs": [
+        "terms"
+      ],
+      "nb": {
+        "title": "Kundens ansvar",
+        "terms": [
+          "Kunden leverer innen rimelig tid det som trengs for nettsiden: logo, bilder og video, tilgang til domenet, og tilgang til kassesystem eller eksisterende vert når det inngår.",
+          "Leverer kunden ikke nødvendige opplysninger og tilganger innen rimelig tid, gjelder ikke leveringsgarantien og kompensasjonen for hostingfeil for forsinkelse som skyldes dette."
+        ]
+      }
+    },
+    {
+      "id": "general.usageRights",
+      "version": 1,
+      "kind": "general",
+      "section": "customer",
+      "docs": [
+        "terms",
+        "contract"
+      ],
+      "nb": {
+        "title": "Materiale fra kunden",
+        "terms": [
+          "Kunden bekrefter å ha rett til å bruke tekst, bilder, video, logoer og annet materiale kunden gir Asoldi, og gir Asoldi rett til å bruke materialet for å lage og drifte nettsiden etter avtalen.",
+          "Asoldi bruker ikke bilder som andre har lastet opp på Instagram, Facebook eller Google Maps. Bilder fra kundens egen nettside brukes bare når kunden har bekreftet retten til dem."
+        ],
+        "contract": [
+          "Kunden har rett til å bruke materialet kunden leverer, og gir Asoldi rett til å bruke det for å lage og drifte nettsiden"
+        ]
+      },
+      "en": {
+        "title": "Material from the Client",
+        "contract": [
+          "The Client has the right to use the material it supplies and gives Asoldi the right to use it to build and run the website"
+        ]
+      }
+    },
+    {
+      "id": "general.delivery",
+      "version": 1,
+      "kind": "general",
+      "section": "delivery",
+      "docs": [
+        "terms"
+      ],
+      "nb": {
+        "title": "Leveringsgaranti, hostingfeil og eierskap",
+        "terms": [
+          "Leverer Asoldi ikke nettsiden innen tidsrammen i tjenesteavtalen, får kunden én (1) måned med tjeneste gratis.",
+          "Er Asoldi over lengre tid ute av stand til å hoste nettsiden, får kunden én (1) måned med tjeneste gratis. Annet ansvar er begrenset som beskrevet under ansvar.",
+          "I abonnementsperioden har kunden full rett til å bruke nettsiden. Asoldi eier hostingmiljøet, Asoldi CMS, felles plattformkomponenter og tredjepartslisenser."
+        ]
+      }
+    },
+    {
+      "id": "general.support",
+      "version": 1,
+      "kind": "general",
+      "section": "delivery",
+      "docs": [
+        "terms"
+      ],
+      "nb": {
+        "title": "Support",
+        "terms": [
+          "Supporttiden er 09:00–16:00 (norsk tid) på virkedager. Vanlige henvendelser besvares innen 1–3 dager, hastesaker innen 1 dag."
+        ]
+      }
+    },
+    {
+      "id": "general.ai",
+      "version": 1,
+      "kind": "general",
+      "section": "ai",
+      "docs": [
+        "terms",
+        "contract",
+        "privacy",
+        "dpa"
+      ],
+      "nb": {
+        "title": "Bruk av AI",
+        "terms": [
+          "Asoldi bruker språkmodeller og andre AI-tjenester for å lage og forbedre tekst og innhold, lese materiale kunden sender, foreslå søkeord og transkribere og oppsummere møter.",
+          "Personopplysninger og møteopptak sendes bare til AI-leverandører som er godkjent for slike data og har databehandleravtale med Asoldi. Andre leverandører får bare offentlige opplysninger, opplysninger om bedriften eller anonymiserte data.",
+          "Endringer på nettsiden som er laget med AI, kontrolleres med automatiske sjekker og godkjennes av en utvikler før de publiseres. Automatiske blogginnlegg følger reglene for automatiske innlegg.",
+          "Hvilke leverandører Asoldi bruker, og hvilke data hver av dem får, står i personvernerklæringen og i vedlegget til databehandleravtalen."
+        ],
+        "contract": [
+          "Asoldi bruker AI-tjenester i leveransen. Personopplysninger sendes bare til leverandører som er godkjent for det, og listen står i vedlegget til databehandleravtalen"
+        ]
+      },
+      "en": {
+        "title": "Use of AI",
+        "contract": [
+          "Asoldi uses AI services in the delivery. Personal data is only sent to providers approved for it, and the list is in the appendix to the data processing agreement"
+        ]
+      }
+    },
+    {
+      "id": "general.dpa",
+      "version": 1,
+      "kind": "general",
+      "section": "privacy",
+      "docs": [
+        "terms",
+        "contract"
+      ],
+      "nb": {
+        "title": "Personvern og databehandleravtale",
+        "terms": [
+          "Kunden er behandlingsansvarlig for personopplysninger som samles inn via kundens nettside. Asoldi er databehandler og behandler slike opplysninger etter databehandleravtalen.",
+          "Databehandleravtalen (versjon {dpaVersion}) med vedlegg om underleverandører gjelder for alle kunder. E-postfunksjonene på nettsiden er av til kunden har godtatt databehandleravtalen, enten ved signering av tjenesteavtalen eller i kundeportalen.",
+          "Asoldis behandling av opplysninger om kunden står i personvernerklæringen."
+        ],
+        "contract": [
+          "Databehandleravtalen versjon {dpaVersion} med vedlegg om underleverandører gjelder og godtas ved signering av denne avtalen",
+          "E-postfunksjonene på nettsiden er av til databehandleravtalen er godtatt"
+        ]
+      },
+      "en": {
+        "title": "Privacy and data processing agreement",
+        "contract": [
+          "The data processing agreement version {dpaVersion} with its appendix on sub-processors applies and is accepted by signing this agreement",
+          "Email functions on the website stay off until the data processing agreement is accepted"
+        ]
+      }
+    },
+    {
+      "id": "general.consumer",
+      "version": 1,
+      "kind": "general",
+      "section": "consumer",
+      "docs": [
+        "terms"
+      ],
+      "consumerFacing": true,
+      "covers": {
+        "features": [
+          "site.legalPages"
+        ]
+      },
+      "nb": {
+        "title": "Kundens vilkår overfor forbrukere",
+        "terms": [
+          "Juridiske sider på kundens nettside (salgsbetingelser, personvern og informasjonskapsler) lages med Forbrukertilsynets standard salgsbetingelser for forbrukerkjøp av varer over Internett og gjeldende lov som utgangspunkt.",
+          "Kunden er ansvarlig for at opplysningene om virksomheten, prisene og vilkårene på nettsiden er riktige. Asoldis vilkår gjelder mellom Asoldi og kunden."
+        ]
+      }
+    },
+    {
+      "id": "general.liability",
+      "version": 1,
+      "kind": "general",
+      "section": "liability",
+      "docs": [
+        "terms"
+      ],
+      "nb": {
+        "title": "Ansvar",
+        "terms": [
+          "Asoldi er ikke ansvarlig for indirekte tap eller følgetap, eller for tap av omsetning, virksomhet eller data.",
+          "Asoldis samlede ansvar er begrenset til abonnementsbeløpet kunden har betalt de seks (6) siste månedene før kravet oppsto, uten merverdiavgift, med mindre ufravikelig norsk lov gir noe annet."
+        ]
+      }
+    },
+    {
+      "id": "general.portfolio",
+      "version": 1,
+      "kind": "general",
+      "section": "liability",
+      "docs": [
+        "terms"
+      ],
+      "nb": {
+        "title": "Referanser",
+        "terms": [
+          "Asoldi kan vise kundens nettside i referanser og markedsføring. Kunden kan reservere seg skriftlig."
+        ]
+      }
+    },
+    {
+      "id": "general.law",
+      "version": 1,
+      "kind": "general",
+      "section": "law",
+      "docs": [
+        "terms"
+      ],
+      "nb": {
+        "title": "Lovvalg og endringer",
+        "terms": [
+          "Vilkårene er underlagt norsk lov. Tvister søkes løst i minnelighet, ellers ved norske domstoler.",
+          "Asoldi kan endre vilkårene. En ny versjon får nytt versjonsnummer og gjelder for nye avtaler. Eksisterende kunder får skriftlig varsel minst 30 dager før en ny versjon gjelder for dem. Til da gjelder versjonen kunden signerte."
+        ]
+      }
+    },
+    {
+      "id": "privacy.intro",
+      "version": 1,
+      "kind": "privacy",
+      "section": "intro",
+      "docs": [
+        "privacy"
+      ],
+      "nb": {
+        "title": "Innledning",
+        "terms": [
+          "Denne personvernerklæringen forklarer hvordan Asoldi Markedsføring (drevet under foretaket CHAPANA, org.nr. 934 327 497) behandler personopplysninger når du besøker asoldi.com, bruker kundeportalen, snakker med oss eller inngår en avtale med oss. Asoldi er behandlingsansvarlig for denne behandlingen.",
+          "Når vi behandler personopplysninger på vegne av en kunde, for eksempel opplysninger om besøkende og kjøpere på kundens nettside, gjelder databehandleravtalen."
+        ]
+      }
+    },
+    {
+      "id": "privacy.collected",
+      "version": 1,
+      "kind": "privacy",
+      "section": "collected",
+      "docs": [
+        "privacy"
+      ],
+      "nb": {
+        "title": "Opplysninger vi behandler",
+        "terms": [
+          "Kontaktopplysninger: navn, e-postadresse, telefonnummer, rolle og bedrift, fra skjemaer, bestilling av møter, registrering, e-post og salgssamtaler.",
+          "Opplysninger om bedrifter vi kontakter: bedriftsnavn, kontaktperson, telefonnummer og notater fra samtaler, fra offentlige registre og leadlister.",
+          "Kunde- og prosjektopplysninger: tilbud, avtaler, fakturagrunnlag, ønsker for nettsiden og materiale kunden laster opp.",
+          "Møteopptak og transkripsjoner: salgsmøter og workshoper tas opp og transkriberes når deltakerne er informert om det. Lydopptak fra salgssamtaler kan transkriberes.",
+          "Kontoopplysninger: e-postadresse og passord (lagres som hash) og innlogging med Google.",
+          "Tekniske opplysninger: IP-adresse, nettleser og enhet, og bruk av nettstedet etter samtykke. Se erklæringen om informasjonskapsler."
+        ]
+      }
+    },
+    {
+      "id": "privacy.google",
+      "version": 1,
+      "kind": "privacy",
+      "section": "collected",
+      "docs": [
+        "privacy"
+      ],
+      "nb": {
+        "title": "Innlogging med Google og bruk av Google-data",
+        "terms": [
+          "Når du logger inn med Google, bruker vi Googles OAuth 2.0. Vi ber bare om navn, e-postadresse, profilbilde og konto-ID, og bruker dem til å opprette og logge inn kontoen din og til å kommunisere med deg om kontoen.",
+          "Asoldi kan koble en egen Google-konto til Google Kalender for å opprette, endre og slette møter du avtaler med oss, med Google Meet-lenker. Vi leser ikke din private kalender.",
+          "Asoldis bruk og overføring av informasjon fra Google API-er følger Google API Services User Data Policy, inkludert kravene til begrenset bruk (Limited Use). Vi bruker Google-data bare til funksjonene du har bedt om, selger dem ikke, bruker dem ikke til annonsering og lar ikke mennesker lese dem uten samtykke, med mindre det trengs for sikkerhet eller loven krever det."
+        ]
+      }
+    },
+    {
+      "id": "privacy.purposes",
+      "version": 1,
+      "kind": "privacy",
+      "section": "purposes",
+      "docs": [
+        "privacy"
+      ],
+      "nb": {
+        "title": "Formål og rettslig grunnlag",
+        "terms": [
+          "Levere tjenestene, kundeportalen og kontoen: nødvendig for å oppfylle avtalen (GDPR art. 6 nr. 1 b).",
+          "Kontakte bedrifter om våre tjenester, følge opp salgsmøter og forberede tilbud: berettiget interesse (art. 6 nr. 1 f).",
+          "Ta opp og transkribere møter for å lage riktig tilbud og prosjektdokument: berettiget interesse, og deltakerne informeres før opptak (art. 6 nr. 1 f).",
+          "Fakturere og føre regnskap: avtale og rettslig plikt (art. 6 nr. 1 b og c).",
+          "Sikre og forbedre nettstedet: berettiget interesse (art. 6 nr. 1 f). Statistikk og markedsføring: samtykke (art. 6 nr. 1 a), som du kan trekke tilbake når som helst."
+        ]
+      }
+    },
+    {
+      "id": "privacy.rights",
+      "version": 1,
+      "kind": "privacy",
+      "section": "rights",
+      "docs": [
+        "privacy"
+      ],
+      "nb": {
+        "title": "Dine rettigheter",
+        "terms": [
+          "Du har rett til innsyn, retting, sletting, begrensning, dataportabilitet og til å protestere mot behandling som bygger på berettiget interesse. Du kan trekke tilbake samtykke når som helst.",
+          "Kontakt oss på kontakt@asoldi.com. Du kan klage til Datatilsynet (datatilsynet.no). Du kan koble fra Google-tilgangen i Google-kontoens app-tillatelser."
+        ]
+      }
+    },
+    {
+      "id": "privacy.security",
+      "version": 1,
+      "kind": "privacy",
+      "section": "rights",
+      "docs": [
+        "privacy"
+      ],
+      "nb": {
+        "title": "Sikkerhet",
+        "terms": [
+          "Vi bruker tilgangsstyring, kryptert overføring, passord lagret som hash, sikkerhetskopier og rutiner for sikkerhetshendelser. Bare personer som trenger opplysningene for å levere tjenesten, har tilgang."
+        ]
+      }
+    },
+    {
+      "id": "privacy.changes",
+      "version": 1,
+      "kind": "privacy",
+      "section": "rights",
+      "docs": [
+        "privacy"
+      ],
+      "nb": {
+        "title": "Endringer",
+        "terms": [
+          "Vi oppdaterer erklæringen når tjenestene eller leverandørene endres. Hver versjon har et nummer og en dato."
+        ]
+      }
+    },
+    {
+      "id": "dpa.purpose",
+      "version": 1,
+      "kind": "dpa",
+      "section": "purpose",
+      "docs": [
+        "dpa"
+      ],
+      "nb": {
+        "title": "Avtalens formål",
+        "terms": [
+          "Denne databehandleravtalen regulerer Asoldi Markedsførings (CHAPANA, org.nr. 934 327 497) («databehandler») behandling av personopplysninger på vegne av kunden («behandlingsansvarlig») når Asoldi utvikler, hoster, vedlikeholder og drifter kundens nettside, CMS og tilknyttede tjenester, etter personvernforordningen artikkel 28.",
+          "Avtalen gjelder sammen med tjenesteavtalen og vilkårene. Den godtas ved signering av tjenesteavtalen eller i kundeportalen."
+        ]
+      }
+    },
+    {
+      "id": "dpa.roles",
+      "version": 1,
+      "kind": "dpa",
+      "section": "purpose",
+      "docs": [
+        "dpa"
+      ],
+      "nb": {
+        "title": "Roller og instruks",
+        "terms": [
+          "Kunden er behandlingsansvarlig for personopplysninger som samles inn via nettsiden: skjemaer, nettbutikk, timebestilling, e-postlister, omtaler og kundekontoer. Kunden har ansvar for behandlingsgrunnlag og informasjon til de registrerte.",
+          "Asoldi behandler opplysningene bare etter kundens dokumenterte instruks, denne avtalen og gjeldende rett. Kunden instruerer Asoldi om å behandle opplysningene for å levere tjenestene i tjenesteavtalen. Asoldi sier fra hvis en instruks etter Asoldis vurdering bryter personvernregelverket."
+        ]
+      }
+    },
+    {
+      "id": "dpa.processing",
+      "version": 1,
+      "kind": "dpa",
+      "section": "processing",
+      "docs": [
+        "dpa"
+      ],
+      "nb": {
+        "title": "Behandlingens art, formål og varighet",
+        "terms": [
+          "Asoldi behandler personopplysninger for å hoste og vise nettsiden, drifte skjemaer, CMS, blogg, nettbutikk, timebestilling og e-post, utføre vedlikehold, sikkerhet og sikkerhetskopiering, og levere avtalt SEO, innhold og support.",
+          "Behandlingen varer så lenge tjenesteavtalen løper, og deretter så lenge det trengs for eksport, sletting eller lovpålagt oppbevaring."
+        ]
+      }
+    },
+    {
+      "id": "dpa.categories",
+      "version": 1,
+      "kind": "dpa",
+      "section": "processing",
+      "docs": [
+        "dpa"
+      ],
+      "nb": {
+        "title": "Registrerte og opplysninger",
+        "terms": [
+          "Registrerte: besøkende på nettsiden, personer som sender skjema, melder seg på e-postlister, bestiller time eller handler i nettbutikken, og kundens ansatte med tilgang til CMS.",
+          "Opplysninger: navn, kontaktopplysninger, meldinger, bestillinger og betalingsstatus (selve kortbetalingen håndteres av betalingsleverandøren), samtykker og avmeldinger, omtaler, og tekniske logger som trengs for drift og sikkerhet.",
+          "Asoldi behandler ikke særlige kategorier av personopplysninger på kundens vegne uten skriftlig avtale om tilleggsvilkår."
+        ]
+      }
+    },
+    {
+      "id": "dpa.subprocessors",
+      "version": 1,
+      "kind": "dpa",
+      "section": "subprocessors",
+      "docs": [
+        "dpa"
+      ],
+      "nb": {
+        "title": "Underleverandører",
+        "terms": [
+          "Kunden gir Asoldi generell tillatelse til å bruke underleverandørene i vedlegget. Asoldi har databehandleravtale med hver av dem, med de samme pliktene som i denne avtalen.",
+          "Nye eller endrede underleverandører gir en ny versjon av vedlegget. Asoldi varsler kunden før endringen gjelder, og kunden kan protestere av saklig personverngrunn.",
+          "Overføring til land utenfor EØS skjer bare med gyldig grunnlag, normalt EUs standardkontraktsvilkår."
+        ]
+      }
+    },
+    {
+      "id": "dpa.security",
+      "version": 1,
+      "kind": "dpa",
+      "section": "security",
+      "docs": [
+        "dpa"
+      ],
+      "nb": {
+        "title": "Sikkerhet, taushetsplikt og bistand",
+        "terms": [
+          "Asoldi har tiltak tilpasset risikoen: tilgangsstyring og minst mulig tilgang, kryptert overføring, passord lagret som hash, sikkerhetskopier og rutiner for feilretting og sikkerhetshendelser.",
+          "Alle som får tilgang til opplysningene, har taushetsplikt, også etter at oppdraget er avsluttet.",
+          "Asoldi hjelper kunden med krav fra registrerte og med konsekvensvurderinger, så langt det er rimelig. Asoldi varsler kunden uten ugrunnet opphold om brudd på personopplysningssikkerheten som gjelder kundens opplysninger."
+        ]
+      }
+    },
+    {
+      "id": "dpa.end",
+      "version": 1,
+      "kind": "dpa",
+      "section": "end",
+      "docs": [
+        "dpa"
+      ],
+      "nb": {
+        "title": "Sletting, revisjon og varighet",
+        "terms": [
+          "Når avtalen avsluttes, kan kunden få eksport som beskrevet i vilkårene. Asoldi sletter eller anonymiserer opplysningene innen 30 dager etter at hostingen har stoppet, med mindre loven krever lengre oppbevaring. Sikkerhetskopier fases ut i den vanlige rotasjonen.",
+          "Asoldi gir kunden informasjonen som trengs for å vise at avtalen følges. Revisjon avtales på forhånd og gjennomføres uten å svekke sikkerheten for andre kunder.",
+          "Hver part er ansvarlig for brudd på egne plikter. Asoldis ansvar følger ansvarsbegrensningen i vilkårene. Avtalen gjelder så lenge Asoldi behandler opplysninger for kunden."
+        ]
+      }
+    }
+  ],
+  "docs": {
+    "vilkar": {
+      "doc": "vilkar",
+      "title": "Vilkår for bruk",
+      "description": "Vilkårene for tjenestene Asoldi Markedsføring leverer til næringsdrivende kunder, og for bruk av asoldi.com og kundeportalen.",
+      "path": "/vilkar",
+      "catalogVersion": 1,
+      "dpaVersion": "dpa-1",
+      "date": "2026-11-01",
+      "sections": [
+        {
+          "id": "about",
+          "title": "1. Om vilkårene",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Disse vilkårene gjelder tjenestene Asoldi Markedsføring (drevet under foretaket CHAPANA, org.nr. 934 327 497) («Asoldi», «vi») leverer til næringsdrivende kunder, og bruk av asoldi.com og kundeportalen."
+            },
+            {
+              "type": "p",
+              "text": "Avtalen er en avtale mellom næringsdrivende. Forbrukerkjøpsloven og angrerettloven gjelder ikke mellom Asoldi og kunden."
+            },
+            {
+              "type": "p",
+              "text": "En signert tjenesteavtale viser partene, valgt omfang og pris. Den viser til disse vilkårene, personvernerklæringen og databehandleravtalen. Ved motstrid går den signerte avtalens konkrete vilkår (parter, pris, omfang, frister, ansvarstak, eierskap og avslutning) foran."
+            },
+            {
+              "type": "p",
+              "text": "Vilkårene har et versjonsnummer. Kunden er bundet av versjonen som gjaldt da tjenesteavtalen ble signert, til kunden har fått skriftlig varsel om en ny versjon. Kundeportalen viser hvilken versjon som gjelder for kunden."
+            }
+          ]
+        },
+        {
+          "id": "account",
+          "title": "2. Bruk av nettstedet og kontoen",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Kunden er ansvarlig for at opplysningene kunden gir, er riktige og oppdaterte."
+            },
+            {
+              "type": "p",
+              "text": "Kunden holder innloggingene til kundeportalen og CMS hemmelige og er ansvarlig for aktivitet på egne kontoer."
+            },
+            {
+              "type": "p",
+              "text": "Nettstedet og tjenestene skal ikke misbrukes, og kunden skal ikke forsøke å skaffe seg tilgang kunden ikke har fått."
+            },
+            {
+              "type": "p",
+              "text": "Den som inngår avtalen for en virksomhet, bekrefter å ha fullmakt til det. Uten slik fullmakt er avtalen ugyldig."
+            }
+          ]
+        },
+        {
+          "id": "services",
+          "title": "3. Tjenestene",
+          "blocks": [
+            {
+              "type": "h3",
+              "text": "Nettside og CMS"
+            },
+            {
+              "type": "p",
+              "text": "Asoldi designer og utvikler nettsiden med det antallet hovedsider som er avtalt, med oppsett som fungerer på mobil, nettbrett og PC. Nettsiden har nettstedskart og kobles til kundens domene."
+            },
+            {
+              "type": "p",
+              "text": "Kunden får Asoldi CMS med egne brukere og roller, redigering av sider, mediebibliotek, egne felt og innholdstyper som Asoldi setter opp."
+            },
+            {
+              "type": "p",
+              "text": "Nettsiden har kontaktskjema som leverer meldinger til innboksen i CMS. En valgfri veiviser kan lede besøkende fram til skjemaet."
+            },
+            {
+              "type": "p",
+              "text": "Nettsiden har juridiske sider (salgsbetingelser, personvern og informasjonskapsler) og en samtykkeløsning, slik at sporing først starter når den besøkende samtykker. Kunden kan legge inn egne skript for statistikk og annonser, for eksempel Google Analytics og Meta Pixel. De kjøres bare etter samtykke."
+            },
+            {
+              "type": "p",
+              "text": "Grunnleggende søkemotortilpasning inngår: en enkel søkeordsplan, tittel og beskrivelse per side, god struktur og nettstedskart. Løpende SEO-arbeid er en egen tjeneste."
+            },
+            {
+              "type": "p",
+              "text": "Kunden kan vise produkter eller tjenester i en enkel katalog uten kasse og lenke til egne profiler i sosiale medier."
+            },
+            {
+              "type": "h3",
+              "text": "Hosting, domene og vedlikehold"
+            },
+            {
+              "type": "p",
+              "text": "Asoldi drifter nettsiden og CMS på Asoldis hostingnettverk hos Hostinger så lenge abonnementet løper. Hosting inngår i månedsprisen."
+            },
+            {
+              "type": "p",
+              "text": "Kunden eier og betaler sitt eget domene. Asoldi kobler domenet til hostingen. Har kunden ikke et domene, kjøper kunden det selv hos en domeneregistrar."
+            },
+            {
+              "type": "p",
+              "text": "Vedlikehold omfatter sikkerhetsoppdateringer, sikkerhetskopier, feilretting og nye versjoner av Asoldi CMS. Planlagt vedlikehold og feil hos underleverandører kan gi korte avbrudd."
+            },
+            {
+              "type": "p",
+              "text": "Ett veiledningsmøte om bruk av CMS inngår og holdes én gang. Når nettbutikk inngår, dekker møtet også produkter, kunder og betalingsløsning."
+            },
+            {
+              "type": "h3",
+              "text": "Endringer"
+            },
+            {
+              "type": "p",
+              "text": "Kunden sender endringsønsker fra CMS. Inntil 4 endringer per måned inngår."
+            },
+            {
+              "type": "p",
+              "text": "Én godtatt forespørsel er én endring. Endringer i tekst, bilder og priser, og å legge til, flytte eller fjerne en seksjon, er tillatt. En ny side, en større ombygging eller ny funksjonalitet avtales særskilt."
+            },
+            {
+              "type": "p",
+              "text": "Asoldi utfører en godtatt endring innen 10 arbeidsdager. Asoldi teller endringene og varsler når kvoten for måneden er brukt opp. Ubrukte endringer overføres ikke til neste måned."
+            },
+            {
+              "type": "p",
+              "text": "Retting av skrivefeil og faktiske feil Asoldi har gjort, regnes ikke som en endring."
+            },
+            {
+              "type": "h3",
+              "text": "Ubegrensede endringer"
+            },
+            {
+              "type": "p",
+              "text": "Med ubegrensede endringer gjelder ingen månedlig grense for endringsforespørsler. Hver forespørsel må være rimelig i omfang. En ny side eller en større ombygging avtales fortsatt særskilt."
+            },
+            {
+              "type": "h3",
+              "text": "Blogg"
+            },
+            {
+              "type": "p",
+              "text": "Alle nivåer har blogg på nettsiden. Kunden skriver og publiserer egne innlegg i CMS. Innleggene vises i bloggoversikten og på egne innleggssider."
+            },
+            {
+              "type": "p",
+              "text": "Til kunden har publisert sitt første innlegg, kan bloggseksjonen være skjult."
+            },
+            {
+              "type": "h3",
+              "text": "Automatiske blogginnlegg"
+            },
+            {
+              "type": "p",
+              "text": "Med SEO-tjenesten skriver Asoldi blogginnlegg om kundens tjenester og område og publiserer dem automatisk. Standard er ett innlegg i uken. Kunden kan velge fra null til tre innlegg i uken."
+            },
+            {
+              "type": "p",
+              "text": "Innleggene skrives med hjelp av AI og kontrolleres automatisk før de publiseres. I regulerte bransjer, for eksempel helse og kosttilskudd, publiseres et innlegg først når både Asoldi og kunden har godkjent det."
+            },
+            {
+              "type": "p",
+              "text": "Kunden kan redigere eller avpublisere et innlegg når som helst. Automatiske innlegg stopper når abonnementet avsluttes."
+            },
+            {
+              "type": "h3",
+              "text": "SEO-arbeid og avtalte søkeord"
+            },
+            {
+              "type": "p",
+              "text": "SEO-tjenesten er løpende arbeid for at nettsiden skal bli funnet i Google Søk, Google Maps og AI-assistenter. Den omfatter søkeordsoptimalisert tekst, teknisk SEO, arbeid med lokalt søk og bedriftsprofil, en månedlig SEO-sjekk av nettsiden og forslag til nettsteder som bør lenke til kunden."
+            },
+            {
+              "type": "p",
+              "text": "Asoldi og kunden avtaler søkeordene arbeidet rettes mot, normalt ett til tre. De avtalte søkeordene står i tjenesteavtalen eller i kundens SEO-oversikt i CMS. Nye eller endrede søkeord avtales skriftlig, også i CMS."
+            },
+            {
+              "type": "p",
+              "text": "Kunden får en statistikkside i CMS med rangeringer i Google Søk, Google Maps, Googles AI-oversikt og AI-assistenter, data fra Google Search Console når kunden kobler den til, og en rapport hver fjortende dag."
+            },
+            {
+              "type": "p",
+              "text": "Asoldi garanterer ikke en bestemt plassering, trafikk eller omsetning. SEO er løpende arbeid uten lovet kommersielt resultat."
+            },
+            {
+              "type": "h3",
+              "text": "Omtaler og sosiale medier"
+            },
+            {
+              "type": "p",
+              "text": "Nettsiden kan vise omtaler fra Google og omtaler som kundens egne kunder skriver på nettsiden, og lenke til kundens profiler i sosiale medier. Asoldi publiserer ikke innlegg i kundens sosiale medier."
+            },
+            {
+              "type": "p",
+              "text": "For å hente omtaler fra Google kobler kunden sin bedriftsprofil. Asoldi lagrer ikke kundens passord til slike kontoer."
+            },
+            {
+              "type": "h3",
+              "text": "E-postmarkedsføring"
+            },
+            {
+              "type": "p",
+              "text": "Nettsiden kan samle e-postadresser i skjemaer og i påmelding til nyhetsbrev. Nye abonnenter bekrefter adressen sin før de får e-post (dobbel bekreftelse)."
+            },
+            {
+              "type": "p",
+              "text": "Kunden kan sende kampanjer til listene sine og bruke automatiske e-poster, for eksempel velkomst-e-post til nye abonnenter. Hver e-post har en lenke for å melde seg av."
+            },
+            {
+              "type": "p",
+              "text": "E-posten sendes gjennom Asoldis e-postleverandører. Kunden er avsender og behandlingsansvarlig for listene. E-postfunksjonene er av for nettsiden til kunden har godtatt databehandleravtalen."
+            },
+            {
+              "type": "h3",
+              "text": "E-postautomatiseringer i nettbutikken"
+            },
+            {
+              "type": "p",
+              "text": "I nettbutikken kan CMS sende automatiske e-poster: påminnelse om forlatt handlekurv, beskjed når en vare er tilbake på lager, forespørsel om omtale etter kjøp og e-post til kunder som ikke har handlet på en stund. Kunden kan få varsler om hendelser i butikken og sende e-post fra eget domene."
+            },
+            {
+              "type": "p",
+              "text": "Påminnelse om forlatt handlekurv sendes bare til kjøpere som har krysset av for det i kassen. Påminnelsen sendes i to steg, etter én time og etter 24 timer, uten rabatt. Uten slikt samtykke ser kunden bare en maskert e-postadresse og verdien av handlekurven."
+            },
+            {
+              "type": "h3",
+              "text": "Nettbutikk"
+            },
+            {
+              "type": "p",
+              "text": "Nettbutikken omfatter butikkoppsett, produktsider, handlekurv og kasse, kortbetaling, PayPal og Vipps når det er tilgjengelig, rabatter, gavekort, abonnement, forhåndsbestilling, digitale produkter, frakt og fraktetiketter, bestilling fra meny, timebestilling, kundekonto («Min side») og mersalg. Funksjonene slås på etter avtale og behov."
+            },
+            {
+              "type": "p",
+              "text": "Kunden er selger overfor sine kunder og har ansvaret for varer, priser, levering, angrerett og reklamasjon. Salgsbetingelsene på kundens nettside bygger på Forbrukertilsynets standard salgsbetingelser for forbrukerkjøp av varer over Internett."
+            },
+            {
+              "type": "p",
+              "text": "Kunden kobler sin egen betalingskonto. Kortopplysninger behandles av betalingsleverandøren og lagres ikke hos Asoldi."
+            },
+            {
+              "type": "p",
+              "text": "Nettbutikken kan sende produktene til Google Shopping, koble til andre systemer med webhooks og API-nøkler, rapportere kjøp til Meta etter samtykke og kjøre splittester."
+            },
+            {
+              "type": "h3",
+              "text": "Utvidet statistikk og rapport"
+            },
+            {
+              "type": "p",
+              "text": "Kunden får utvidet statistikk i CMS, også nettbutikk-tall som kjøp, konverteringsrate og gjennomsnittlig ordreverdi, og en utvidet rapport hver sjuende dag i stedet for rapporten hver fjortende dag. Rapportene leveres i CMS."
+            },
+            {
+              "type": "h3",
+              "text": "Flere språk"
+            },
+            {
+              "type": "p",
+              "text": "Nettsiden og nettbutikken kan vises på flere språk, med oversatt innhold, produkter og innlegg og egne søkeord per språk."
+            },
+            {
+              "type": "h3",
+              "text": "Katalog"
+            },
+            {
+              "type": "p",
+              "text": "Katalogen viser produkter, en meny eller planer på nettsiden uten kasse. Kjøp skjer utenfor nettsiden."
+            },
+            {
+              "type": "h3",
+              "text": "Timebestilling"
+            },
+            {
+              "type": "p",
+              "text": "Kundens kunder kan bestille og betale time på nettsiden, kjøpe gavekort og se bestillingene sine. Kunden kan be om omtale etter besøket og få varsel om nye bestillinger."
+            },
+            {
+              "type": "p",
+              "text": "Kunden er tjenesteyter overfor sine kunder. Vilkårene for bestilling bygger på Forbrukertilsynets standard salgsbetingelser og forbrukerreglene for tjenester."
+            },
+            {
+              "type": "h3",
+              "text": "Lenkenettverk"
+            },
+            {
+              "type": "p",
+              "text": "Nettsider som Asoldi leverer, lenker til hverandre i et lenkenettverk. Lenkene er vanlige, fulgte lenker i en partnerseksjon eller på en partnerside og i relevante blogginnlegg. Nettsidene kobles etter bransje og sted, og hver nettside har et tak på antall lenker. Lenkene legges aldri i bunnteksten på alle sider."
+            },
+            {
+              "type": "p",
+              "text": "Kundens nettside lenker til og får lenker fra andre Asoldi-kunder. Antall lenker avhenger av hvor mange kunder som passer sammen. Asoldi følger med på rangeringene og kan stoppe nettverket for alle nettsider når det trengs."
+            },
+            {
+              "type": "p",
+              "text": "Når abonnementet avsluttes, fjernes lenkene til og fra kundens nettside neste gang nettverket bygges om, og nye kunder lenker ikke til nettsiden."
+            }
+          ]
+        },
+        {
+          "id": "tiers",
+          "title": "4. Nivåer",
+          "blocks": [
+            {
+              "type": "h3",
+              "text": "Nivå 1 – Standard (499 kr eks. mva per måned)"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Inntil 5 hovedsider.",
+                "Inneholder: Nettside og CMS, Hosting, domene og vedlikehold, Endringer, Blogg.",
+                "Leveringstid: 14 arbeidsdager. Hvis ingen egen oppstartstid er avtalt, starter fristen ved signert avtale."
+              ]
+            },
+            {
+              "type": "h3",
+              "text": "Nivå 2 – SEO (1 499 kr eks. mva per måned)"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Inntil 7 hovedsider.",
+                "Inneholder: Nettside og CMS, Hosting, domene og vedlikehold, Endringer, Blogg, Automatiske blogginnlegg, SEO-arbeid og avtalte søkeord, Omtaler og sosiale medier, E-postmarkedsføring, Lenkenettverk.",
+                "Leveringstid: 14 arbeidsdager. Hvis ingen egen oppstartstid er avtalt, starter fristen ved signert avtale."
+              ]
+            },
+            {
+              "type": "h3",
+              "text": "Nivå 3 – Nettbutikk (1 999 kr eks. mva per måned)"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Inntil 10 hovedsider.",
+                "Inneholder: Nettside og CMS, Hosting, domene og vedlikehold, Endringer, Blogg, Automatiske blogginnlegg, SEO-arbeid og avtalte søkeord, Omtaler og sosiale medier, E-postmarkedsføring, E-postautomatiseringer i nettbutikken, Nettbutikk, Utvidet statistikk og rapport, Flere språk, Lenkenettverk.",
+                "Leveringstid: 21 arbeidsdager. Hvis ingen egen oppstartstid er avtalt, starter fristen ved signert avtale."
+              ]
+            },
+            {
+              "type": "h3",
+              "text": "Skreddersydd"
+            },
+            {
+              "type": "p",
+              "text": "Omfang, pris og leveringstid avtales i tjenesteavtalen. Tjenestene ovenfor kan inngå helt eller delvis, med betydningen som står her."
+            }
+          ]
+        },
+        {
+          "id": "addons",
+          "title": "5. Engangstillegg",
+          "blocks": [
+            {
+              "type": "h3",
+              "text": "Kassesystem-kobling"
+            },
+            {
+              "type": "p",
+              "text": "Engangsarbeid som kobler nettsiden, vanligvis katalog, lager eller ordrer, til kundens eksisterende kassesystem gjennom leverandørens dokumenterte API eller offisielle integrasjon, med webhooks og API-nøkler i CMS."
+            },
+            {
+              "type": "p",
+              "text": "Asoldi selger, lisensierer, drifter eller gir ikke support på kassesystemet. Kunden må ha et kassesystem med en brukbar integrasjon og gi Asoldi nødvendig tilgang. Kunden betaler løpende avgift til kassaleverandøren. Egenutvikling og maskinvare inngår ikke."
+            },
+            {
+              "type": "h3",
+              "text": "Nettside hos en annen leverandør"
+            },
+            {
+              "type": "p",
+              "text": "SEO- og endringsarbeid for en nettside som driftes hos en annen leverandør. Kunden betaler vert og domeneregistrar selv og gir Asoldi nødvendig tilgang. Tillegget gir ikke Asoldi CMS hos den andre leverandøren."
+            }
+          ]
+        },
+        {
+          "id": "billing",
+          "title": "6. Engangskjøp",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Ved engangskjøp betaler kunden én gang i stedet for månedlig. Prisen er 9 ganger månedsprisen for valgt omfang, med en eventuell minstepris som står i tilbudet. Engangskjøp har ingen bindingstid."
+            },
+            {
+              "type": "p",
+              "text": "Ubegrensede endringer inngår i 6 måneder etter levering. Deretter gjelder samme endringskvote som for månedskunder."
+            },
+            {
+              "type": "p",
+              "text": "Etter overleveringen har kunden selv ansvaret for hosting. Funksjoner som krever Asoldis hub, stopper: oppdateringer av CMS, automatiske blogginnlegg, lenkenettverket og e-post sendt gjennom Asoldi."
+            }
+          ]
+        },
+        {
+          "id": "term",
+          "title": "7. Avtaleperiode",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Månedsabonnementet har en minste bindingstid på seks (6) måneder."
+            },
+            {
+              "type": "p",
+              "text": "Oppsigelse krever 15 dagers varsel, og kunden betaler for hele oppsigelsesmåneden."
+            },
+            {
+              "type": "p",
+              "text": "Kunden kan ikke nedgradere til et lavere nivå etter at funksjonalitet fra et høyere nivå er lagt til."
+            }
+          ]
+        },
+        {
+          "id": "cancellation",
+          "title": "8. Når avtalen avsluttes",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Når abonnementet avsluttes, stopper Asoldis løpende tjenester ved utløpet av den betalte perioden: oppdateringer av CMS, automatiske blogginnlegg, medlemskap i lenkenettverket, e-post sendt gjennom Asoldi og endringsforespørsler."
+            },
+            {
+              "type": "p",
+              "text": "Nettsiden er oppe i 30 dager etter at den betalte perioden er over. Deretter stopper hostingen. Asoldi sender e-post når avtalen avsluttes, sju dager før hostingen stopper og når den stopper."
+            },
+            {
+              "type": "p",
+              "text": "Kunden kan be om eksport i kundeportalen fram til hostingen stopper. Eksporten inneholder nettsiden som statiske filer, CMS-data som JSON og CSV (produkter, ordrer, kunder, innlegg, skjemaer og samtykker) og mediefiler. Asoldi leverer eksporten innen syv (7) virkedager."
+            },
+            {
+              "type": "p",
+              "text": "Kunden eier innholdet, designet og kode som er laget spesielt for kunden. Asoldi CMS og felles plattformkomponenter følger sin lisens og overføres ikke. Å flytte nettsiden til en annen leverandør er kundens ansvar. Asoldi kan hjelpe mot betaling etter prisen som til enhver tid står på asoldi.com."
+            }
+          ]
+        },
+        {
+          "id": "payment",
+          "title": "9. Betaling",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Månedlige betalinger skjer den 1. i hver måned. Første måned faktureres forholdsmessig fra levering."
+            },
+            {
+              "type": "p",
+              "text": "Faktura for første måned forfaller innen 7 dager etter levering. Senere fakturaer forfaller innen 7 dager etter at de er sendt."
+            },
+            {
+              "type": "p",
+              "text": "Betaling skjer med bankoverføring eller Stripe. Det er ingen etableringsavgift. Engangstillegg faktureres én gang på første faktura etter levering."
+            },
+            {
+              "type": "p",
+              "text": "Priser er oppgitt uten merverdiavgift med mindre tilbudet sier noe annet."
+            },
+            {
+              "type": "h3",
+              "text": "Betalingsmislighold"
+            },
+            {
+              "type": "p",
+              "text": "Er betaling ikke mottatt innen 7 dager etter forfall, sender Asoldi en påminnelse. Er betaling ikke mottatt innen 14 dager etter forfall, kan nettsiden tas midlertidig ned til betaling er mottatt, og forsinkelsesrente og gebyrer etter norsk lov påløper."
+            },
+            {
+              "type": "p",
+              "text": "Er betaling ikke mottatt innen 30 dager, kan kravet sendes til inkasso. Asoldi kan stanse tjenestene straks hvis det oppdages svindel knyttet til betaling."
+            }
+          ]
+        },
+        {
+          "id": "customer",
+          "title": "10. Kundens ansvar og materiale",
+          "blocks": [
+            {
+              "type": "h3",
+              "text": "Kundens ansvar"
+            },
+            {
+              "type": "p",
+              "text": "Kunden leverer innen rimelig tid det som trengs for nettsiden: logo, bilder og video, tilgang til domenet, og tilgang til kassesystem eller eksisterende vert når det inngår."
+            },
+            {
+              "type": "p",
+              "text": "Leverer kunden ikke nødvendige opplysninger og tilganger innen rimelig tid, gjelder ikke leveringsgarantien og kompensasjonen for hostingfeil for forsinkelse som skyldes dette."
+            },
+            {
+              "type": "h3",
+              "text": "Materiale fra kunden"
+            },
+            {
+              "type": "p",
+              "text": "Kunden bekrefter å ha rett til å bruke tekst, bilder, video, logoer og annet materiale kunden gir Asoldi, og gir Asoldi rett til å bruke materialet for å lage og drifte nettsiden etter avtalen."
+            },
+            {
+              "type": "p",
+              "text": "Asoldi bruker ikke bilder som andre har lastet opp på Instagram, Facebook eller Google Maps. Bilder fra kundens egen nettside brukes bare når kunden har bekreftet retten til dem."
+            }
+          ]
+        },
+        {
+          "id": "delivery",
+          "title": "11. Levering, drift og support",
+          "blocks": [
+            {
+              "type": "h3",
+              "text": "Leveringsgaranti, hostingfeil og eierskap"
+            },
+            {
+              "type": "p",
+              "text": "Leverer Asoldi ikke nettsiden innen tidsrammen i tjenesteavtalen, får kunden én (1) måned med tjeneste gratis."
+            },
+            {
+              "type": "p",
+              "text": "Er Asoldi over lengre tid ute av stand til å hoste nettsiden, får kunden én (1) måned med tjeneste gratis. Annet ansvar er begrenset som beskrevet under ansvar."
+            },
+            {
+              "type": "p",
+              "text": "I abonnementsperioden har kunden full rett til å bruke nettsiden. Asoldi eier hostingmiljøet, Asoldi CMS, felles plattformkomponenter og tredjepartslisenser."
+            },
+            {
+              "type": "h3",
+              "text": "Support"
+            },
+            {
+              "type": "p",
+              "text": "Supporttiden er 09:00–16:00 (norsk tid) på virkedager. Vanlige henvendelser besvares innen 1–3 dager, hastesaker innen 1 dag."
+            }
+          ]
+        },
+        {
+          "id": "ai",
+          "title": "12. Bruk av AI",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Asoldi bruker språkmodeller og andre AI-tjenester for å lage og forbedre tekst og innhold, lese materiale kunden sender, foreslå søkeord og transkribere og oppsummere møter."
+            },
+            {
+              "type": "p",
+              "text": "Personopplysninger og møteopptak sendes bare til AI-leverandører som er godkjent for slike data og har databehandleravtale med Asoldi. Andre leverandører får bare offentlige opplysninger, opplysninger om bedriften eller anonymiserte data."
+            },
+            {
+              "type": "p",
+              "text": "Endringer på nettsiden som er laget med AI, kontrolleres med automatiske sjekker og godkjennes av en utvikler før de publiseres. Automatiske blogginnlegg følger reglene for automatiske innlegg."
+            },
+            {
+              "type": "p",
+              "text": "Hvilke leverandører Asoldi bruker, og hvilke data hver av dem får, står i personvernerklæringen og i vedlegget til databehandleravtalen."
+            }
+          ]
+        },
+        {
+          "id": "privacy",
+          "title": "13. Personvern og databehandleravtale",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Kunden er behandlingsansvarlig for personopplysninger som samles inn via kundens nettside. Asoldi er databehandler og behandler slike opplysninger etter databehandleravtalen."
+            },
+            {
+              "type": "p",
+              "text": "Databehandleravtalen (versjon dpa-1) med vedlegg om underleverandører gjelder for alle kunder. E-postfunksjonene på nettsiden er av til kunden har godtatt databehandleravtalen, enten ved signering av tjenesteavtalen eller i kundeportalen."
+            },
+            {
+              "type": "p",
+              "text": "Asoldis behandling av opplysninger om kunden står i personvernerklæringen."
+            }
+          ]
+        },
+        {
+          "id": "consumer",
+          "title": "14. Kundens vilkår overfor forbrukere",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Juridiske sider på kundens nettside (salgsbetingelser, personvern og informasjonskapsler) lages med Forbrukertilsynets standard salgsbetingelser for forbrukerkjøp av varer over Internett og gjeldende lov som utgangspunkt."
+            },
+            {
+              "type": "p",
+              "text": "Kunden er ansvarlig for at opplysningene om virksomheten, prisene og vilkårene på nettsiden er riktige. Asoldis vilkår gjelder mellom Asoldi og kunden."
+            }
+          ]
+        },
+        {
+          "id": "liability",
+          "title": "15. Ansvar og referanser",
+          "blocks": [
+            {
+              "type": "h3",
+              "text": "Ansvar"
+            },
+            {
+              "type": "p",
+              "text": "Asoldi er ikke ansvarlig for indirekte tap eller følgetap, eller for tap av omsetning, virksomhet eller data."
+            },
+            {
+              "type": "p",
+              "text": "Asoldis samlede ansvar er begrenset til abonnementsbeløpet kunden har betalt de seks (6) siste månedene før kravet oppsto, uten merverdiavgift, med mindre ufravikelig norsk lov gir noe annet."
+            },
+            {
+              "type": "h3",
+              "text": "Referanser"
+            },
+            {
+              "type": "p",
+              "text": "Asoldi kan vise kundens nettside i referanser og markedsføring. Kunden kan reservere seg skriftlig."
+            }
+          ]
+        },
+        {
+          "id": "law",
+          "title": "16. Lovvalg og endringer",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Vilkårene er underlagt norsk lov. Tvister søkes løst i minnelighet, ellers ved norske domstoler."
+            },
+            {
+              "type": "p",
+              "text": "Asoldi kan endre vilkårene. En ny versjon får nytt versjonsnummer og gjelder for nye avtaler. Eksisterende kunder får skriftlig varsel minst 30 dager før en ny versjon gjelder for dem. Til da gjelder versjonen kunden signerte."
+            }
+          ]
+        }
+      ]
+    },
+    "personvern": {
+      "doc": "personvern",
+      "title": "Personvernerklæring",
+      "description": "Hvordan Asoldi Markedsføring behandler personopplysninger, hvilke leverandører som får dem, og hvor lenge de lagres.",
+      "path": "/personvern",
+      "catalogVersion": 1,
+      "dpaVersion": "dpa-1",
+      "date": "2026-11-01",
+      "sections": [
+        {
+          "id": "intro",
+          "title": "1. Innledning",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Denne personvernerklæringen forklarer hvordan Asoldi Markedsføring (drevet under foretaket CHAPANA, org.nr. 934 327 497) behandler personopplysninger når du besøker asoldi.com, bruker kundeportalen, snakker med oss eller inngår en avtale med oss. Asoldi er behandlingsansvarlig for denne behandlingen."
+            },
+            {
+              "type": "p",
+              "text": "Når vi behandler personopplysninger på vegne av en kunde, for eksempel opplysninger om besøkende og kjøpere på kundens nettside, gjelder databehandleravtalen."
+            }
+          ]
+        },
+        {
+          "id": "collected",
+          "title": "2. Opplysninger vi behandler",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Kontaktopplysninger: navn, e-postadresse, telefonnummer, rolle og bedrift, fra skjemaer, bestilling av møter, registrering, e-post og salgssamtaler."
+            },
+            {
+              "type": "p",
+              "text": "Opplysninger om bedrifter vi kontakter: bedriftsnavn, kontaktperson, telefonnummer og notater fra samtaler, fra offentlige registre og leadlister."
+            },
+            {
+              "type": "p",
+              "text": "Kunde- og prosjektopplysninger: tilbud, avtaler, fakturagrunnlag, ønsker for nettsiden og materiale kunden laster opp."
+            },
+            {
+              "type": "p",
+              "text": "Møteopptak og transkripsjoner: salgsmøter og workshoper tas opp og transkriberes når deltakerne er informert om det. Lydopptak fra salgssamtaler kan transkriberes."
+            },
+            {
+              "type": "p",
+              "text": "Kontoopplysninger: e-postadresse og passord (lagres som hash) og innlogging med Google."
+            },
+            {
+              "type": "p",
+              "text": "Tekniske opplysninger: IP-adresse, nettleser og enhet, og bruk av nettstedet etter samtykke. Se erklæringen om informasjonskapsler."
+            },
+            {
+              "type": "h3",
+              "text": "Innlogging med Google og bruk av Google-data"
+            },
+            {
+              "type": "p",
+              "text": "Når du logger inn med Google, bruker vi Googles OAuth 2.0. Vi ber bare om navn, e-postadresse, profilbilde og konto-ID, og bruker dem til å opprette og logge inn kontoen din og til å kommunisere med deg om kontoen."
+            },
+            {
+              "type": "p",
+              "text": "Asoldi kan koble en egen Google-konto til Google Kalender for å opprette, endre og slette møter du avtaler med oss, med Google Meet-lenker. Vi leser ikke din private kalender."
+            },
+            {
+              "type": "p",
+              "text": "Asoldis bruk og overføring av informasjon fra Google API-er følger Google API Services User Data Policy, inkludert kravene til begrenset bruk (Limited Use). Vi bruker Google-data bare til funksjonene du har bedt om, selger dem ikke, bruker dem ikke til annonsering og lar ikke mennesker lese dem uten samtykke, med mindre det trengs for sikkerhet eller loven krever det."
+            }
+          ]
+        },
+        {
+          "id": "purposes",
+          "title": "3. Formål og rettslig grunnlag",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Levere tjenestene, kundeportalen og kontoen: nødvendig for å oppfylle avtalen (GDPR art. 6 nr. 1 b)."
+            },
+            {
+              "type": "p",
+              "text": "Kontakte bedrifter om våre tjenester, følge opp salgsmøter og forberede tilbud: berettiget interesse (art. 6 nr. 1 f)."
+            },
+            {
+              "type": "p",
+              "text": "Ta opp og transkribere møter for å lage riktig tilbud og prosjektdokument: berettiget interesse, og deltakerne informeres før opptak (art. 6 nr. 1 f)."
+            },
+            {
+              "type": "p",
+              "text": "Fakturere og føre regnskap: avtale og rettslig plikt (art. 6 nr. 1 b og c)."
+            },
+            {
+              "type": "p",
+              "text": "Sikre og forbedre nettstedet: berettiget interesse (art. 6 nr. 1 f). Statistikk og markedsføring: samtykke (art. 6 nr. 1 a), som du kan trekke tilbake når som helst."
+            }
+          ]
+        },
+        {
+          "id": "ai",
+          "title": "4. Bruk av AI",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Asoldi bruker språkmodeller og andre AI-tjenester for å lage og forbedre tekst og innhold, lese materiale kunden sender, foreslå søkeord og transkribere og oppsummere møter."
+            },
+            {
+              "type": "p",
+              "text": "Personopplysninger og møteopptak sendes bare til AI-leverandører som er godkjent for slike data og har databehandleravtale med Asoldi. Andre leverandører får bare offentlige opplysninger, opplysninger om bedriften eller anonymiserte data."
+            },
+            {
+              "type": "p",
+              "text": "Endringer på nettsiden som er laget med AI, kontrolleres med automatiske sjekker og godkjennes av en utvikler før de publiseres. Automatiske blogginnlegg følger reglene for automatiske innlegg."
+            },
+            {
+              "type": "p",
+              "text": "Hvilke leverandører Asoldi bruker, og hvilke data hver av dem får, står i personvernerklæringen og i vedlegget til databehandleravtalen."
+            },
+            {
+              "type": "p",
+              "text": "AI-leverandørene og hvilke data hver av dem kan få:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Anthropic: kan få personopplysninger og møtetranskripsjoner når oppgaven krever det.",
+                "Google: kan få personopplysninger og møtetranskripsjoner når oppgaven krever det. Brukes for slike data først når betalt tjenestenivå med databehandleravtale er bekreftet.",
+                "DeepSeek: får bare offentlige opplysninger, opplysninger om bedriften eller anonymiserte data, aldri personopplysninger.",
+                "OpenAI: brukes bare til automatisk kvalitetskontroll og får aldri personopplysninger."
+              ]
+            }
+          ]
+        },
+        {
+          "id": "recipients",
+          "title": "5. Leverandører og mottakere",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Vi selger aldri personopplysninger. Disse leverandørene behandler opplysninger på våre vegne, og vi har databehandleravtale med hver av dem:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Anthropic (Anthropic, PBC, USA, overføringsgrunnlag: EUs standardkontraktsvilkår): Språkmodeller (Claude) for tekst, analyse av materiale og oppsummering av møter. Opplysninger: navn, kontaktopplysninger, møtetranskripsjoner, e-postinnhold, bedriftsopplysninger.",
+                "Brevo (Sendinblue SAS, EØS (Frankrike)): Sending av e-post: nyhetsbrev, kampanjer og automatiske e-poster fra kundenes nettsider, og e-post fra Asoldi. Opplysninger: navn, e-postadresse, meldingsinnhold, samtykke og avmelding.",
+                "Deepgram (Deepgram, Inc., USA, overføringsgrunnlag: EUs standardkontraktsvilkår): Transkribering av lydopptak fra salgssamtaler. Opplysninger: lydopptak, transkripsjoner.",
+                "Fireflies.ai (Fireflies.ai Corp., USA, overføringsgrunnlag: EUs standardkontraktsvilkår): Opptak og transkribering av salgsmøter og workshoper med kunder. Opplysninger: navn, e-postadresse, lydopptak, møtetranskripsjoner.",
+                "Google (Google Ireland Limited og Google LLC, EØS og USA, overføringsgrunnlag: EUs standardkontraktsvilkår): Innlogging, kalender og Meet, Gmail-lesing for Asoldis egen innboks, bedriftsprofil, kart og steder, skrifttyper, Search Console og språkmodeller (Gemini). Opplysninger: bedriftsopplysninger, bilder kunden laster opp, kontrakter som PDF, navn, e-postadresse, møtetidspunkt, e-post til Asoldi, omtaler, bedriftsnavn, adresse, IP-adresse i nettleseren, innloggingsopplysninger.",
+                "Hostinger (Hostinger International Ltd., EØS (Litauen)): Hosting av asoldi.com, kundenes nettsider og CMS-data, og e-postkontoene til Asoldi. Opplysninger: e-post til Asoldi, navn, e-postadresse, meldingsinnhold, domene, bedriftsnavn.",
+                "Kartverket (Kartverket, Norge): Adressesøk i det offentlige adresseregisteret. Opplysninger: søketekst (adresse).",
+                "Luca Regnskap (Luca Regnskap, Norge): Regnskap og fakturagrunnlag. Opplysninger: bedriftsnavn, kontaktperson, e-postadresse, fakturaopplysninger.",
+                "Myphoner (Myphoner, EØS): Salgssystem for oppringing av bedrifter (leadlister med bedrift, kontaktperson og telefonnummer). Opplysninger: bedriftsnavn, kontaktperson, telefonnummer, notater fra samtaler.",
+                "OpenStreetMap (OpenStreetMap Foundation, Storbritannia, overføringsgrunnlag: EUs beslutning om tilstrekkelig beskyttelsesnivå): Adressesøk og kartfliser. Opplysninger: søketekst (adresse), IP-adresse i nettleseren.",
+                "Photon (komoot) (komoot GmbH, EØS (Tyskland)): Adressesøk. Opplysninger: søketekst (adresse).",
+                "Resend (Resend, Inc., USA, overføringsgrunnlag: EUs standardkontraktsvilkår): Sending av transaksjons- og support-e-post. Opplysninger: navn, e-postadresse, meldingsinnhold.",
+                "Stripe (Stripe Payments Europe, Ltd., EØS (Irland) og USA, overføringsgrunnlag: EUs standardkontraktsvilkår): Betaling av Asoldis abonnement og kortbetaling i kundenes nettbutikker. Opplysninger: navn, e-postadresse, betalingsopplysninger, IP-adresse i nettleseren.",
+                "tawk.to (tawk.to inc., USA, overføringsgrunnlag: EUs standardkontraktsvilkår): Chat på siden for ansatte og jobbsøkere. Opplysninger: navn, e-postadresse, chatmeldinger, IP-adresse i nettleseren.",
+                "Vercel (Vercel Inc., USA, overføringsgrunnlag: EUs standardkontraktsvilkår): Drift av skjemaene for jobbsøknad og vervekampanje som er bygget inn på asoldi.com. Opplysninger: navn, kontaktopplysninger, søknadsinnhold."
+              ]
+            },
+            {
+              "type": "h3",
+              "text": "Innhold fra andre nettsteder"
+            },
+            {
+              "type": "p",
+              "text": "Bilder, video og stilark som lastes direkte i nettleseren. Nettleseren sender da IP-adresse og teknisk informasjon til nettstedet innholdet kommer fra. Det gjelder Unsplash, Coverr, YouTube, Vimeo, Pravatar og Tailwind CSS."
+            },
+            {
+              "type": "h3",
+              "text": "Leverandører som ikke får personopplysninger"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Brave Search (Brave Software, Inc., USA): Nettsøk for å finne bedrifters offentlige nettsider og profiler. Får bare bedriftsnavn og steder.",
+                "DataForSEO (DataForSEO, Utenfor Norge): Søkeordsdata og rangeringer i Google Søk og Google Maps. Får bare søkeord, bedriftsnavn og steder.",
+                "DeepSeek (Hangzhou DeepSeek Artificial Intelligence Co., Ltd., Kina): Språkmodell for tekst på offentlige, syntetiske eller anonymiserte data. Får aldri personopplysninger eller møteopptak.",
+                "OpenAI (OpenAI, L.L.C., USA): Språkmodell som brukes bare til automatisk kvalitetskontroll av maler og tekst. Får aldri personopplysninger.",
+                "SerpApi (SerpApi, LLC, USA): Søkeresultater for rangeringsmåling. Får bare søkeord og steder.",
+                "Supabase (Supabase, Inc., USA): Lagring av nettsidemaler. Inneholder ingen opplysninger om kunder."
+              ]
+            }
+          ]
+        },
+        {
+          "id": "retention",
+          "title": "6. Lagringstid",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Vi lagrer opplysningene så lenge det trengs for formålet, og lenger bare når loven krever det:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Bedrifter og kontaktpersoner som ikke har signert: 12 måneder etter siste aktivitet.",
+                "Kundeopplysninger og avtaler: 12 måneder etter at avtalen er avsluttet, og lenger der bokføringsloven krever det.",
+                "Møteopptak og transkripsjoner: som kundeopplysninger, eller 12 måneder etter siste aktivitet for bedrifter som ikke har signert.",
+                "Utkast og eldre versjoner av prosjektdokumenter: 90 dager.",
+                "Endringsforespørsler: 24 måneder.",
+                "Dokumentasjon av samtykke: 3 år.",
+                "Logg over e-post innboksen hoppet over: 30 dager.",
+                "Logg over e-post sendt fra Asoldi: 400 dager.",
+                "Skjermbilder fra utviklingsarbeid: 30 dager."
+              ]
+            },
+            {
+              "type": "p",
+              "text": "Opplysninger vi behandler på vegne av en kunde, slettes etter databehandleravtalen."
+            }
+          ]
+        },
+        {
+          "id": "rights",
+          "title": "7. Dine rettigheter, sikkerhet og endringer",
+          "blocks": [
+            {
+              "type": "h3",
+              "text": "Dine rettigheter"
+            },
+            {
+              "type": "p",
+              "text": "Du har rett til innsyn, retting, sletting, begrensning, dataportabilitet og til å protestere mot behandling som bygger på berettiget interesse. Du kan trekke tilbake samtykke når som helst."
+            },
+            {
+              "type": "p",
+              "text": "Kontakt oss på kontakt@asoldi.com. Du kan klage til Datatilsynet (datatilsynet.no). Du kan koble fra Google-tilgangen i Google-kontoens app-tillatelser."
+            },
+            {
+              "type": "h3",
+              "text": "Sikkerhet"
+            },
+            {
+              "type": "p",
+              "text": "Vi bruker tilgangsstyring, kryptert overføring, passord lagret som hash, sikkerhetskopier og rutiner for sikkerhetshendelser. Bare personer som trenger opplysningene for å levere tjenesten, har tilgang."
+            },
+            {
+              "type": "h3",
+              "text": "Endringer"
+            },
+            {
+              "type": "p",
+              "text": "Vi oppdaterer erklæringen når tjenestene eller leverandørene endres. Hver versjon har et nummer og en dato."
+            }
+          ]
+        }
+      ]
+    },
+    "databehandleravtale": {
+      "doc": "databehandleravtale",
+      "title": "Databehandleravtale",
+      "description": "Avtale etter personvernforordningen artikkel 28 mellom kunden som behandlingsansvarlig og Asoldi som databehandler, med vedlegg om underleverandører.",
+      "path": "/databehandleravtale",
+      "catalogVersion": 1,
+      "dpaVersion": "dpa-1",
+      "date": "2026-11-01",
+      "sections": [
+        {
+          "id": "purpose",
+          "title": "1. Formål, roller og instruks",
+          "blocks": [
+            {
+              "type": "h3",
+              "text": "Avtalens formål"
+            },
+            {
+              "type": "p",
+              "text": "Denne databehandleravtalen regulerer Asoldi Markedsførings (CHAPANA, org.nr. 934 327 497) («databehandler») behandling av personopplysninger på vegne av kunden («behandlingsansvarlig») når Asoldi utvikler, hoster, vedlikeholder og drifter kundens nettside, CMS og tilknyttede tjenester, etter personvernforordningen artikkel 28."
+            },
+            {
+              "type": "p",
+              "text": "Avtalen gjelder sammen med tjenesteavtalen og vilkårene. Den godtas ved signering av tjenesteavtalen eller i kundeportalen."
+            },
+            {
+              "type": "h3",
+              "text": "Roller og instruks"
+            },
+            {
+              "type": "p",
+              "text": "Kunden er behandlingsansvarlig for personopplysninger som samles inn via nettsiden: skjemaer, nettbutikk, timebestilling, e-postlister, omtaler og kundekontoer. Kunden har ansvar for behandlingsgrunnlag og informasjon til de registrerte."
+            },
+            {
+              "type": "p",
+              "text": "Asoldi behandler opplysningene bare etter kundens dokumenterte instruks, denne avtalen og gjeldende rett. Kunden instruerer Asoldi om å behandle opplysningene for å levere tjenestene i tjenesteavtalen. Asoldi sier fra hvis en instruks etter Asoldis vurdering bryter personvernregelverket."
+            }
+          ]
+        },
+        {
+          "id": "processing",
+          "title": "2. Behandlingen",
+          "blocks": [
+            {
+              "type": "h3",
+              "text": "Behandlingens art, formål og varighet"
+            },
+            {
+              "type": "p",
+              "text": "Asoldi behandler personopplysninger for å hoste og vise nettsiden, drifte skjemaer, CMS, blogg, nettbutikk, timebestilling og e-post, utføre vedlikehold, sikkerhet og sikkerhetskopiering, og levere avtalt SEO, innhold og support."
+            },
+            {
+              "type": "p",
+              "text": "Behandlingen varer så lenge tjenesteavtalen løper, og deretter så lenge det trengs for eksport, sletting eller lovpålagt oppbevaring."
+            },
+            {
+              "type": "h3",
+              "text": "Registrerte og opplysninger"
+            },
+            {
+              "type": "p",
+              "text": "Registrerte: besøkende på nettsiden, personer som sender skjema, melder seg på e-postlister, bestiller time eller handler i nettbutikken, og kundens ansatte med tilgang til CMS."
+            },
+            {
+              "type": "p",
+              "text": "Opplysninger: navn, kontaktopplysninger, meldinger, bestillinger og betalingsstatus (selve kortbetalingen håndteres av betalingsleverandøren), samtykker og avmeldinger, omtaler, og tekniske logger som trengs for drift og sikkerhet."
+            },
+            {
+              "type": "p",
+              "text": "Asoldi behandler ikke særlige kategorier av personopplysninger på kundens vegne uten skriftlig avtale om tilleggsvilkår."
+            }
+          ]
+        },
+        {
+          "id": "subprocessors",
+          "title": "3. Underleverandører",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Kunden gir Asoldi generell tillatelse til å bruke underleverandørene i vedlegget. Asoldi har databehandleravtale med hver av dem, med de samme pliktene som i denne avtalen."
+            },
+            {
+              "type": "p",
+              "text": "Nye eller endrede underleverandører gir en ny versjon av vedlegget. Asoldi varsler kunden før endringen gjelder, og kunden kan protestere av saklig personverngrunn."
+            },
+            {
+              "type": "p",
+              "text": "Overføring til land utenfor EØS skjer bare med gyldig grunnlag, normalt EUs standardkontraktsvilkår."
+            }
+          ]
+        },
+        {
+          "id": "ai",
+          "title": "4. Bruk av AI",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Asoldi bruker språkmodeller og andre AI-tjenester for å lage og forbedre tekst og innhold, lese materiale kunden sender, foreslå søkeord og transkribere og oppsummere møter."
+            },
+            {
+              "type": "p",
+              "text": "Personopplysninger og møteopptak sendes bare til AI-leverandører som er godkjent for slike data og har databehandleravtale med Asoldi. Andre leverandører får bare offentlige opplysninger, opplysninger om bedriften eller anonymiserte data."
+            },
+            {
+              "type": "p",
+              "text": "Endringer på nettsiden som er laget med AI, kontrolleres med automatiske sjekker og godkjennes av en utvikler før de publiseres. Automatiske blogginnlegg følger reglene for automatiske innlegg."
+            },
+            {
+              "type": "p",
+              "text": "Hvilke leverandører Asoldi bruker, og hvilke data hver av dem får, står i personvernerklæringen og i vedlegget til databehandleravtalen."
+            },
+            {
+              "type": "p",
+              "text": "AI-leverandørene og hvilke data hver av dem kan få:"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Anthropic: kan få personopplysninger og møtetranskripsjoner når oppgaven krever det.",
+                "Google: kan få personopplysninger og møtetranskripsjoner når oppgaven krever det. Brukes for slike data først når betalt tjenestenivå med databehandleravtale er bekreftet.",
+                "DeepSeek: får bare offentlige opplysninger, opplysninger om bedriften eller anonymiserte data, aldri personopplysninger.",
+                "OpenAI: brukes bare til automatisk kvalitetskontroll og får aldri personopplysninger."
+              ]
+            }
+          ]
+        },
+        {
+          "id": "security",
+          "title": "5. Sikkerhet, taushetsplikt og bistand",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Asoldi har tiltak tilpasset risikoen: tilgangsstyring og minst mulig tilgang, kryptert overføring, passord lagret som hash, sikkerhetskopier og rutiner for feilretting og sikkerhetshendelser."
+            },
+            {
+              "type": "p",
+              "text": "Alle som får tilgang til opplysningene, har taushetsplikt, også etter at oppdraget er avsluttet."
+            },
+            {
+              "type": "p",
+              "text": "Asoldi hjelper kunden med krav fra registrerte og med konsekvensvurderinger, så langt det er rimelig. Asoldi varsler kunden uten ugrunnet opphold om brudd på personopplysningssikkerheten som gjelder kundens opplysninger."
+            }
+          ]
+        },
+        {
+          "id": "end",
+          "title": "6. Sletting, revisjon og varighet",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Når avtalen avsluttes, kan kunden få eksport som beskrevet i vilkårene. Asoldi sletter eller anonymiserer opplysningene innen 30 dager etter at hostingen har stoppet, med mindre loven krever lengre oppbevaring. Sikkerhetskopier fases ut i den vanlige rotasjonen."
+            },
+            {
+              "type": "p",
+              "text": "Asoldi gir kunden informasjonen som trengs for å vise at avtalen følges. Revisjon avtales på forhånd og gjennomføres uten å svekke sikkerheten for andre kunder."
+            },
+            {
+              "type": "p",
+              "text": "Hver part er ansvarlig for brudd på egne plikter. Asoldis ansvar følger ansvarsbegrensningen i vilkårene. Avtalen gjelder så lenge Asoldi behandler opplysninger for kunden."
+            }
+          ]
+        },
+        {
+          "id": "appendix",
+          "title": "7. Vedlegg: underleverandører og AI-behandling",
+          "blocks": [
+            {
+              "type": "p",
+              "text": "Vedlegget hører til databehandleravtalen versjon dpa-1. Det lister underleverandørene Asoldi bruker når Asoldi behandler personopplysninger på kundens vegne."
+            },
+            {
+              "type": "h3",
+              "text": "Underleverandører"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Anthropic (Anthropic, PBC, USA, overføringsgrunnlag: EUs standardkontraktsvilkår): Språkmodeller (Claude) for tekst, analyse av materiale og oppsummering av møter. Opplysninger: navn, kontaktopplysninger, møtetranskripsjoner, e-postinnhold, bedriftsopplysninger.",
+                "Brevo (Sendinblue SAS, EØS (Frankrike)): Sending av e-post: nyhetsbrev, kampanjer og automatiske e-poster fra kundenes nettsider, og e-post fra Asoldi. Opplysninger: navn, e-postadresse, meldingsinnhold, samtykke og avmelding.",
+                "GitHub (GitHub, Inc., USA, overføringsgrunnlag: EUs standardkontraktsvilkår): Privat kodelager for kundenes nettsidefiler. Opplysninger: nettsidefiler med bedriftens kontaktopplysninger.",
+                "Google (Google Ireland Limited og Google LLC, EØS og USA, overføringsgrunnlag: EUs standardkontraktsvilkår): Innlogging, kalender og Meet, Gmail-lesing for Asoldis egen innboks, bedriftsprofil, kart og steder, skrifttyper, Search Console og språkmodeller (Gemini). Opplysninger: bedriftsopplysninger, bilder kunden laster opp, kontrakter som PDF, navn, e-postadresse, møtetidspunkt, e-post til Asoldi, omtaler, bedriftsnavn, adresse, IP-adresse i nettleseren, innloggingsopplysninger.",
+                "Hostinger (Hostinger International Ltd., EØS (Litauen)): Hosting av asoldi.com, kundenes nettsider og CMS-data, og e-postkontoene til Asoldi. Opplysninger: e-post til Asoldi, navn, e-postadresse, meldingsinnhold, domene, bedriftsnavn.",
+                "PayPal (PayPal (Europe) S.à r.l. et Cie, S.C.A., EØS (Luxembourg)): PayPal-betaling i kundenes nettbutikker. Opplysninger: navn, e-postadresse, betalingsopplysninger.",
+                "Resend (Resend, Inc., USA, overføringsgrunnlag: EUs standardkontraktsvilkår): Sending av transaksjons- og support-e-post. Opplysninger: navn, e-postadresse, meldingsinnhold.",
+                "Stripe (Stripe Payments Europe, Ltd., EØS (Irland) og USA, overføringsgrunnlag: EUs standardkontraktsvilkår): Betaling av Asoldis abonnement og kortbetaling i kundenes nettbutikker. Opplysninger: navn, e-postadresse, betalingsopplysninger, IP-adresse i nettleseren."
+              ]
+            },
+            {
+              "type": "h3",
+              "text": "AI-behandling"
+            },
+            {
+              "type": "list",
+              "items": [
+                "Anthropic: kan få personopplysninger og møtetranskripsjoner når oppgaven krever det.",
+                "Google: kan få personopplysninger og møtetranskripsjoner når oppgaven krever det. Brukes for slike data først når betalt tjenestenivå med databehandleravtale er bekreftet.",
+                "DeepSeek: får bare offentlige opplysninger, opplysninger om bedriften eller anonymiserte data, aldri personopplysninger.",
+                "OpenAI: brukes bare til automatisk kvalitetskontroll og får aldri personopplysninger."
+              ]
+            },
+            {
+              "type": "h3",
+              "text": "Leverandører som ikke får personopplysninger"
+            },
+            {
+              "type": "list",
+              "items": [
+                "DataForSEO (DataForSEO, Utenfor Norge): Søkeordsdata og rangeringer i Google Søk og Google Maps. Får bare søkeord, bedriftsnavn og steder.",
+                "DeepSeek (Hangzhou DeepSeek Artificial Intelligence Co., Ltd., Kina): Språkmodell for tekst på offentlige, syntetiske eller anonymiserte data. Får aldri personopplysninger eller møteopptak.",
+                "SerpApi (SerpApi, LLC, USA): Søkeresultater for rangeringsmåling. Får bare søkeord og steder."
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
