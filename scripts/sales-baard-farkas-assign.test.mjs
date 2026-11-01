@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  BAARD_BOOKER_EMAIL,
   baardFarkasCutoffMs,
   baardFarkasPatchEntries,
   findAlexanderSalesUser,
@@ -17,13 +18,13 @@ function client(overrides = {}) {
     ownerId: 'sales:other',
     createdAt: '2026-07-01T10:00:00.000Z',
     myphoner: {
-      bookedByEmail: 'baard.fransson@gmail.com',
+      bookedByEmail: BAARD_BOOKER_EMAIL,
       bookedByName: 'Bård Fransson',
       bookedAt: '2026-08-10T12:00:00.000Z',
     },
     ...overrides,
     myphoner: {
-      bookedByEmail: 'baard.fransson@gmail.com',
+      bookedByEmail: BAARD_BOOKER_EMAIL,
       bookedByName: 'Bård Fransson',
       bookedAt: '2026-08-10T12:00:00.000Z',
       ...(overrides.myphoner || {}),

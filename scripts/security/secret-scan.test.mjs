@@ -1,4 +1,4 @@
-// WS0.10 / WS0.27b / WS0.32: secret and client-data scan, retired hashes, allowlist, git hooks.
+// The secret and client-data scan: retired hashes, the allowlist and the git hooks.
 // Every "secret" below is fake or generated at run time. Temp repos only; nothing is pushed anywhere
 // except a bare repo inside the temp dir.
 import test from 'node:test';
