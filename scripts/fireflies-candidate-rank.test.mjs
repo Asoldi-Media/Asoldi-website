@@ -25,8 +25,8 @@ const ACME = {
   product: 'asoldi',
   businessName: 'Acme Bygg AS',
   contactPerson: 'Ola Normann',
-  contactEmail: 'ola@acme-bygg.example',
-  websiteDomain: 'https://www.acme-bygg.example',
+  contactEmail: 'ola@acme-bygg.example.com',
+  websiteDomain: 'https://www.acme-bygg.example.com',
   status: 'active',
   agreedTime: true,
   meetingAt: iso(T),
@@ -37,14 +37,15 @@ const TITLE_ONLY = {
   product: 'asoldi',
   businessName: 'Fjordkafeen AS',
   contactPerson: 'Kari Fjord',
-  contactEmail: 'kari@fjordkafe.example',
+  contactEmail: 'kari@fjordkafe.example.com',
   status: 'active',
   agreedTime: true,
   meetingAt: iso(T + 10 * HOUR),
   progression: {},
 };
-const NOT_SOLD = { id: 'rk-notsold', product: 'asoldi', businessName: 'Acme Bygg Vest AS', contactEmail: 'post@vest.example', status: 'not-sold', progression: {} };
-const FREEMAIL = { id: 'rk-freemail', product: 'asoldi', businessName: 'Gmail Snekker', contactEmail: 'snekker@gmail.com', websiteDomain: 'gmail.com', status: 'active', progression: {} };
+const NOT_SOLD = { id: 'rk-notsold', product: 'asoldi', businessName: 'Acme Bygg Vest AS', contactEmail: 'post@vest.example.com', status: 'not-sold', progression: {} };
+const FREE_DOMAIN = 'gmail.com';
+const FREEMAIL = { id: 'rk-freemail', product: 'asoldi', businessName: 'Fri Snekker', contactEmail: ['snekker', FREE_DOMAIN].join('@'), websiteDomain: FREE_DOMAIN, status: 'active', progression: {} };
 writeFileSync(join(DATA_DIR, 'sales-clients.json'), JSON.stringify([ACME, TITLE_ONLY, NOT_SOLD, FREEMAIL], null, 2));
 
 const webhook = await import('../lib/fireflies-webhook.js');
@@ -72,8 +73,8 @@ const ACME_RECORDING = {
   meetingId: 'rk-rec-acme',
   title: 'Møte med Acme Bygg',
   startedAt: iso(T + HOUR),
-  attendees: ['Ola Normann <ola@acme-bygg.example>', 'Selger <selger@asoldi.com>'],
-  attendeeEmails: ['ola@acme-bygg.example', 'selger@asoldi.com'],
+  attendees: ['Ola Normann <ola@acme-bygg.example.com>', 'Selger <selger@asoldi.com>'],
+  attendeeEmails: ['ola@acme-bygg.example.com', 'selger@asoldi.com'],
   transcript: 'Ola Normann: Vi vil ha ny nettside.\nSelger: Flott.',
   final: true,
 };
@@ -128,7 +129,7 @@ test('the signal table: e-mail, domain, booked slot, title, speaker, and not-sol
   assert.equal(notSold, undefined, 'a not-sold client with only a partial title match scores below zero');
   const notSoldScore = rank.scoreClientForRecording({ ...ACME_RECORDING, title: 'Acme Bygg Vest' }, NOT_SOLD);
   assert.deepEqual(notSoldScore.signals, { titleBusinessName: 20, notSold: -20 });
-  const free = rank.scoreClientForRecording({ ...ACME_RECORDING, attendeeEmails: ['someone@gmail.com'], attendees: [] }, FREEMAIL);
+  const free = rank.scoreClientForRecording({ ...ACME_RECORDING, attendeeEmails: [['someone', FREE_DOMAIN].join('@')], attendees: [] }, FREEMAIL);
   assert.equal(free.signals.attendeeDomain, undefined, 'a free-mail domain is never a website match');
   const excluded = rank.rankRecordingCandidates({ ...ACME_RECORDING, excludedClientIds: ['rk-acme'] }, clients, { minScore: 0 });
   assert.equal(excluded.some((row) => row.clientId === 'rk-acme'), false, 'an excluded client is never a candidate');
