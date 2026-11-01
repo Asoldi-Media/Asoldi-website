@@ -20,6 +20,7 @@ process.env.APP_DATA_DIR = dataDirForModules;
 const store = await import('../data/secret-store.js');
 const hardening = await import('../lib/auth-hardening.js');
 const webhookSecrets = await import('../data/webhook-secrets.js');
+const atomicJson = await import('../data/atomic-json.js');
 const cmsSso = await import('../lib/cms-sso.js');
 const privateDir = await import('../data/private-dir.js');
 
@@ -255,37 +256,60 @@ test('POSIX: a new secret file is 0600 in a 0700 folder', { skip: process.platfo
   }
 });
 
-function runChildren(count, script, dir) {
-  const run = () => new Promise((resolvePromise, reject) => {
-    const child = spawn(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, APP_DATA_DIR: dir, RACE_DIR: dir } });
-    let out = '';
-    let err = '';
-    child.stdout.on('data', (chunk) => { out += chunk; });
-    child.stderr.on('data', (chunk) => { err += chunk; });
-    child.on('error', reject);
-    child.on('exit', (code) => (code === 0 ? resolvePromise(out.trim()) : reject(new Error(`exit ${code}: ${err}`))));
-  });
-  return Promise.all(Array.from({ length: count }, run));
-}
-
 test('concurrent creates in separate processes end with one value and one file', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'secret-store-race-'));
+  const control = mkdtempSync(join(tmpdir(), 'secret-store-race-control-'));
   try {
     const moduleUrl = pathToFileURL(join(REPO, 'data', 'secret-store.js')).href;
+    // Each child signals it is ready, waits for the go file, and is then held for a second between
+    // "no file found" and "create" (beforeCreate), so every child races for the same name and all
+    // but one meet a file that already exists (the exclusive-create path).
     const script = `const m = await import(${JSON.stringify(moduleUrl)});
       const { createHash, randomBytes } = await import('node:crypto');
-      const s = m.createSecretStore({ dataDir: process.env.RACE_DIR, log: () => {} });
+      const { existsSync, writeFileSync } = await import('node:fs');
+      const { join } = await import('node:path');
+      const logs = [];
+      const hold = () => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000);
+      const s = m.createSecretStore({ dataDir: process.env.RACE_DIR, log: (line) => logs.push(String(line)), beforeCreate: hold });
+      writeFileSync(join(process.env.RACE_CONTROL, 'ready-' + process.pid), '');
+      while (!existsSync(join(process.env.RACE_CONTROL, 'go'))) await new Promise((r) => setTimeout(r, 5));
       const text = s.readOrCreate('race-secret', { bytes: 32 });
       const json = s.readOrCreateJson('race.json', { create: () => ({ version: 1, value: randomBytes(16).toString('hex') }) });
-      process.stdout.write(createHash('sha256').update(text).digest('hex') + ':' + json.value);`;
-    const results = await runChildren(6, script, dir);
-    assert.equal(new Set(results).size, 1, 'every process got the same values');
-    const [textHash, jsonValue] = results[0].split(':');
+      const created = (name) => logs.filter((line) => line === '[secret-store] created ' + name).length;
+      const joined = (name) => logs.filter((line) => line.startsWith('[secret-store] ' + name + ': another process')).length;
+      process.stdout.write(JSON.stringify({
+        values: createHash('sha256').update(text).digest('hex') + ':' + json.value,
+        created: { text: created('secrets/race-secret'), json: created('secrets/race.json') },
+        joined: { text: joined('secrets/race-secret'), json: joined('secrets/race.json') },
+      }));`;
+    const children = Array.from({ length: 6 }, () => new Promise((resolvePromise, reject) => {
+      const child = spawn(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, RACE_DIR: dir, RACE_CONTROL: control } });
+      let out = '';
+      let err = '';
+      child.stdout.on('data', (chunk) => { out += chunk; });
+      child.stderr.on('data', (chunk) => { err += chunk; });
+      child.on('error', reject);
+      child.on('exit', (code) => (code === 0 ? resolvePromise(JSON.parse(out.trim())) : reject(new Error(`exit ${code}: ${err}`))));
+    }));
+    for (let i = 0; i < 1200 && readdirSync(control).filter((n) => n.startsWith('ready-')).length < 6; i += 1) {
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    assert.equal(readdirSync(control).filter((n) => n.startsWith('ready-')).length, 6, 'every child reached the start line');
+    writeFileSync(join(control, 'go'), '');
+    const results = await Promise.all(children);
+    assert.equal(new Set(results.map((r) => r.values)).size, 1, 'every process got the same values');
+    const total = (pick) => results.reduce((sum, r) => sum + pick(r), 0);
+    assert.equal(total((r) => r.created.text), 1, 'one process made the text secret');
+    assert.equal(total((r) => r.created.json), 1, 'one process made the JSON secret');
+    assert.ok(total((r) => r.joined.text) >= 1, 'another process met the file at create time and took its value');
+    assert.ok(total((r) => r.joined.json) >= 1, 'another process met the JSON file at create time and took its value');
+    const [textHash, jsonValue] = results[0].values.split(':');
     assert.equal(createHash('sha256').update(readFileSync(join(dir, 'secrets', 'race-secret'), 'utf8').trim()).digest('hex'), textHash);
     assert.equal(JSON.parse(readFileSync(join(dir, 'secrets', 'race.json'), 'utf8')).value, jsonValue);
     assert.deepEqual(readdirSync(join(dir, 'secrets')).sort(), ['race-secret', 'race.json'], 'no temp files are left');
   } finally {
     rmSync(dir, { recursive: true, force: true });
+    rmSync(control, { recursive: true, force: true });
   }
 });
 
@@ -332,22 +356,44 @@ test('webhooks.json: a damaged Fireflies entry is left in place (null); an older
     const file = join(dir, 'secrets', 'webhooks.json');
     writeFileSync(file, '{"fireflies":{"secret":"short"}}');
     const damaged = readFileSync(file);
-    assert.equal(webhookSecrets.ensureFirefliesWebhookSecrets({ dataDir: dir }), null);
+    const notices = (pattern) => warnings.filter((line) => pattern.test(line)).length;
+    for (let i = 0; i < 3; i += 1) assert.equal(webhookSecrets.ensureFirefliesWebhookSecrets({ dataDir: dir }), null);
     assert.deepEqual(readFileSync(file), damaged);
+    assert.equal(notices(/damaged Fireflies entry/), 1, 'a damaged entry is reported once, not on every call');
     writeFileSync(file, '{"fireflies":');
-    assert.equal(webhookSecrets.ensureFirefliesWebhookSecrets({ dataDir: dir }), null);
+    for (let i = 0; i < 3; i += 1) assert.equal(webhookSecrets.ensureFirefliesWebhookSecrets({ dataDir: dir }), null);
+    assert.equal(webhookSecrets.firefliesWebhookSecretStatus({ dataDir: dir }).stored, false);
     assert.equal(readFileSync(file, 'utf8'), '{"fireflies":');
-    assert.ok(warnings.length >= 1);
+    assert.equal(notices(/cannot be read as JSON/), 1, 'an unparsable file is reported once, not on every webhook or status read');
+    assert.equal(notices(/could not read or create/), 0, 'damage is not reported as a write failure');
 
     writeFileSync(file, `${JSON.stringify({ version: 1, other: { kept: true } })}\n`);
     const added = webhookSecrets.ensureFirefliesWebhookSecrets({ dataDir: dir });
     assert.match(added.secret, /^[0-9a-f]{64}$/);
     assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).other, { kept: true });
 
+    // Damage that comes back after a usable read is reported again (once). The hot-path cache
+    // keeps the last good value for a second; a fresh read stands in for that second here.
+    writeFileSync(file, '{"fireflies":');
+    atomicJson.readJsonFresh(file);
+    for (let i = 0; i < 2; i += 1) assert.equal(webhookSecrets.ensureFirefliesWebhookSecrets({ dataDir: dir }), null);
+    assert.equal(notices(/cannot be read as JSON/), 2);
+
     writeFileSync(file, '{"fireflies":{"secret":"short"}}');
     const rotated = webhookSecrets.rotateFirefliesWebhookSecrets({ dataDir: dir, by: 'test' });
     assert.match(rotated.secret, /^[0-9a-f]{64}$/);
     assert.equal(webhookSecrets.ensureFirefliesWebhookSecrets({ dataDir: dir }).secret, rotated.secret);
+
+    // A real write failure (the secrets folder cannot be made) is still reported on every call.
+    const blocked = mkdtempSync(join(tmpdir(), 'secret-store-webhooks-blocked-'));
+    try {
+      writeFileSync(join(blocked, 'secrets'), 'a file where the folder should be');
+      const before = notices(/could not read or create/);
+      for (let i = 0; i < 2; i += 1) assert.equal(webhookSecrets.ensureFirefliesWebhookSecrets({ dataDir: blocked }), null);
+      assert.equal(notices(/could not read or create/) - before, 2);
+    } finally {
+      rmSync(blocked, { recursive: true, force: true });
+    }
   } finally {
     console.warn = originalWarn;
     rmSync(dir, { recursive: true, force: true });

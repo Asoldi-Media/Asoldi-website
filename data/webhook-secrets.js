@@ -22,7 +22,7 @@
  */
 import { randomBytes } from 'crypto';
 import { readJsonCached, readJsonFresh, updateJsonLocked } from './atomic-json.js';
-import { secretStoreFor } from './secret-store.js';
+import { isSecretUnusable, secretStoreFor } from './secret-store.js';
 import { getPersistentDataDir } from './storage-path.js';
 
 const FILE_NAME = 'webhooks.json';
@@ -64,7 +64,20 @@ function privatePath(dataDir) {
   return store.pathOf(FILE_NAME);
 }
 
-let unusableNoticed = '';
+// One notice per file and kind of damage: the hot path (every webhook, every status read) never
+// repeats it. A usable read clears it, so damage that comes back is reported again.
+const unusableNoticed = new Set();
+
+function noticeOnce(key, message) {
+  if (unusableNoticed.has(key)) return;
+  unusableNoticed.add(key);
+  console.warn(message);
+}
+
+function clearNotices(path) {
+  unusableNoticed.delete(`${path}|entry`);
+  unusableNoticed.delete(`${path}|file`);
+}
 
 /**
  * Returns the trusted Fireflies credentials, generating them on first use (the file does not
@@ -75,7 +88,10 @@ let unusableNoticed = '';
 export function ensureFirefliesWebhookSecrets({ dataDir, now } = {}) {
   const path = webhookSecretsPath(dataDir);
   const cached = readJsonCached(path);
-  if (cached && validFireflies(cached.fireflies)) return cached.fireflies;
+  if (cached && validFireflies(cached.fireflies)) {
+    if (unusableNoticed.size) clearNotices(path);
+    return cached.fireflies;
+  }
   try {
     const stored = secretStoreFor(dataDirOf(dataDir)).readOrCreateJson(FILE_NAME, {
       create: () => ({ version: 1, fireflies: newFirefliesCredentials(now) }),
@@ -83,6 +99,7 @@ export function ensureFirefliesWebhookSecrets({ dataDir, now } = {}) {
     if (validFireflies(stored.fireflies)) {
       // The file may have just been made: keep the hot-path read cache in step with it.
       readJsonFresh(path);
+      clearNotices(path);
       return stored.fireflies;
     }
     if (stored.fireflies === undefined) {
@@ -93,14 +110,19 @@ export function ensureFirefliesWebhookSecrets({ dataDir, now } = {}) {
           ? { ...fresh, version: 1, fireflies: newFirefliesCredentials(now) }
           : undefined
       ));
-      if (state && validFireflies(state.fireflies)) return state.fireflies;
+      if (state && validFireflies(state.fireflies)) {
+        clearNotices(path);
+        return state.fireflies;
+      }
     }
-    if (unusableNoticed !== path) {
-      unusableNoticed = path;
-      console.warn(`[security] secrets/${FILE_NAME} has a damaged Fireflies entry; it is left as it is until an admin rotates it`);
-    }
+    noticeOnce(`${path}|entry`, `[security] secrets/${FILE_NAME} has a damaged Fireflies entry; it is left as it is until an admin rotates it`);
     return null;
   } catch (error) {
+    if (isSecretUnusable(error)) {
+      // The file exists but cannot be read or parsed: it is left as it is (a rotation replaces it).
+      noticeOnce(`${path}|file`, `[security] secrets/${FILE_NAME} cannot be read as JSON; it is left as it is until an admin rotates it`);
+      return null;
+    }
     console.warn(`[security] could not read or create ${FILE_NAME}: ${error?.code || error?.message || error}`);
     return null;
   }

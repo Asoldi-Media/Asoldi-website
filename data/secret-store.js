@@ -119,7 +119,9 @@ function parseJsonObject(text) {
 }
 
 /**
- * The store for one data dir. Options (tests): platform, exec and chmod (permission stubs), log.
+ * The store for one data dir. Options (tests): platform, exec and chmod (permission stubs), log,
+ * and beforeCreate(name), called after the store found no file and before it creates one (a test
+ * holds processes there so they all race for the same name).
  */
 export function createSecretStore({
   dataDir,
@@ -128,6 +130,7 @@ export function createSecretStore({
   chmod,
   log = console.warn,
   minLength = MIN_SECRET_LENGTH,
+  beforeCreate = null,
 } = {}) {
   if (!dataDir) throw new SecretStoreError('secret store: dataDir is required', SECRET_BAD_NAME);
   const root = resolve(dataDir);
@@ -171,7 +174,9 @@ export function createSecretStore({
     );
   }
 
+  /** Another process created `file` first: its value is the one every process uses. */
   function settle(file, reader) {
+    log(`[secret-store] ${relLabel(root, file)}: another process made it at the same moment; its value is used`);
     let result = { state: 'missing' };
     for (let attempt = 0; attempt < SETTLE_ATTEMPTS; attempt += 1) {
       result = readCandidate(file, reader);
@@ -183,6 +188,7 @@ export function createSecretStore({
 
   /** Exclusive create of `text` at `file`; returns the value that ends up stored. */
   function createExclusive(file, text, reader, created) {
+    if (typeof beforeCreate === 'function') beforeCreate(relLabel(root, file));
     const tmp = `${file}.${process.pid}.${randomBytes(4).toString('hex')}.tmp`;
     writeFileSync(tmp, text, { flag: 'wx', mode: 0o600 });
     try {
