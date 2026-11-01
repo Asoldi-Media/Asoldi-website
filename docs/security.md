@@ -474,8 +474,16 @@ node scripts/security/secret-scan.mjs --workspace <dir>           # a folder wit
 
 - `pre-commit` scans the staged lines; `commit-msg` scans the message (commit messages are
   public too; the e-mail of a `Co-authored-by:` style trailer is skipped). While the committed
-  `scripts/security/scan-profile.json` says `public`, `pre-commit` uses the public rules
-  whatever the working tree says, and refuses a staged profile that names a weaker one.
+  `scripts/security/scan-profile.json` says `public`, `pre-commit` uses the public rules and the
+  staged `.secret-scan-allowlist.json` whatever the working tree says, and refuses a staged
+  profile that names a weaker one.
+- `pre-push` takes the profile and the allowlist from each pushed commit, never from the working
+  tree. When the commit the push starts from has the public profile, the public rules apply and
+  a pushed profile that names a weaker one is refused.
+- Both refuse an allowlist change that lets more than one value in one file through: a new `'*'`
+  rule, a new glob path or a new allowed e-mail domain. `SECRET_SCAN_ALLOWLIST_WIDEN=1` lets such
+  a change through on purpose and lists it. An exact value (`emails`, `phones`, `fixtureValues`)
+  or an entry for one file is not broader.
 - `pre-push` scans every commit being pushed (a secret or a planning word added and removed
   again is still caught, because every pushed commit is published), the lines written while
   resolving a merge (`--cc`), the message of every pushed commit, merge commits included (the
@@ -496,7 +504,12 @@ node scripts/security/secret-scan.mjs --workspace <dir>           # a folder wit
 
 Test fixtures use `example.com` addresses and values that look fake (`fake`, `test`,
 `0000` …). A fixture that must match a secret pattern goes in `.secret-scan-allowlist.json`
-with a reason; the scan still reports an allowlisted hit whose value looks real.
+with a reason; the scan still reports an allowlisted hit whose value looks real. An entry with
+rule `'*'` covers the secret and path rules only: client data and planning words need an entry
+that names the rule, on one file (`--ratchet` fails on such an entry with a glob path), or an
+exact value. A contact that only some files may hold goes in `fixtureValues` by the sha256 of
+the lowercase address or of the 8 national digits, with the path of the one file that needs it;
+tests import the value from that file.
 
 After rotating a secret, record the old value so the scan keeps catching it:
 
@@ -551,7 +564,9 @@ own, after the merges it applies to.
   `hei`, `booking`) and anything else becomes `person-<hash>`; numbers keep their first digit and
   layout with `0000` fixture digits. Production code, names in code, the scan tools and this doc
   are never changed, and addresses the allowlist keeps (Asoldi's own contacts and placeholders)
-  keep their domain. Files under `scrubExclude` keep their findings on the list. The scrub knows
+  keep their domain. A word that is already used on a `.test` domain in the tree (from an
+  earlier cleanup) is never given to another company, so a second run after more merges keeps
+  two businesses apart. Files under `scrubExclude` keep their findings on the list. The scrub knows
   only addresses and numbers: it lists by path and line the company names, replaced domains used
   elsewhere and name parts it leaves, and those fixtures still need a synthetic business written
   by hand (org numbers, street addresses and people's names are not touched).
@@ -574,6 +589,16 @@ and never changed. Client data and planning words are not touched.
 node scripts/security/secret-scan.mjs --redact <dir>            # dry run
 node scripts/security/secret-scan.mjs --redact <dir> --apply    # write; originals go to the backup dir
 ```
+
+`--workspace` and `--redact` read UTF-8 and UTF-16 text (PowerShell's `>` writes UTF-16 with a
+byte-order mark; a redacted UTF-16 file is written back as UTF-16). They print every file or
+folder they did not read as `<path>  not scanned: <reason>`: binary files or other encodings,
+files over the size limit (64 MiB, `--max-file-bytes N`), symbolic links and junctions (never
+followed; scan the target on its own), `.git` (run `--history` in that checkout and look at its
+`.git/config`), `node_modules`, folders that cannot be read, and for `--redact` env files and old
+`.bak-redact` copies left in the folder. When something was not read and nothing was found, the
+exit status is 3, not 0: the folder is not proven clean. Check the listed paths by hand, then
+pass `--allow-skipped` to accept them. A folder that does not exist is an error.
 
 ## Read-only probe
 
