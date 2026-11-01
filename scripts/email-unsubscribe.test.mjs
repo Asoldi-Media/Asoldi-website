@@ -270,3 +270,13 @@ test('public routes answer 404 while email is disabled', async () => {
   assert.equal(fileState(), before);
   await store.saveEmailSettings({ enabled: true });
 });
+
+test('one-click as multipart form data is recorded too', async () => {
+  const t = unsub.mintUnsubToken({ siteId: 'site_b', email: 'multipart@example.com', kind: 'welcome' });
+  const form = new FormData();
+  form.append('List-Unsubscribe', 'One-Click');
+  const res = await fetch(`${base}/api/hub/email/unsubscribe?t=${t}`, { method: 'POST', body: form });
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), 'unsubscribed');
+  assert.equal(store.readEmailSuppressions().site_b['multipart@example.com'].source, 'one-click');
+});
