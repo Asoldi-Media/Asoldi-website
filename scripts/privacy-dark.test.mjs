@@ -1,0 +1,184 @@
+// Negative controls for the privacy switches against the base commit (PRIVACY_DARK_REF, default
+// 859429c), extracted with `git archive` into build/ (ignored):
+//   1. With every switch off, the Fireflies link and unlink paths (admin link, automatic link, purpose
+//      pick, admin unlink, move, exclude, backfill) write byte-identical data to the base commit.
+//      A positive control shows the comparison notices the archive once privacy.archive is on.
+//   2. The client portal upload sections render byte-identical markup to the base commit while the
+//      rights checkbox is off, and the onboarding and settings pages are unchanged files.
+// Skipped (with a note) when git or the base commit is not available, e.g. in a plain file export.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const REF = String(process.env.PRIVACY_DARK_REF || '859429c').trim();
+const flow = join(root, 'scripts', 'fixtures', 'privacy-link-flow.mjs');
+
+function baseSha() {
+  try {
+    return execFileSync('git', ['rev-parse', '--short=12', `${REF}^{commit}`], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+  } catch {
+    return '';
+  }
+}
+
+function untar(buffer, destination) {
+  let offset = 0;
+  let paxPath = '';
+  const text = (start, length) => buffer.toString('utf8', start, start + length).replace(/\0.*$/s, '');
+  while (offset + 512 <= buffer.length) {
+    const header = buffer.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+    const name = text(offset, 100);
+    const size = parseInt(text(offset + 124, 12).trim() || '0', 8);
+    const type = String.fromCharCode(header[156] || 48);
+    const prefix = text(offset + 345, 155);
+    const body = buffer.subarray(offset + 512, offset + 512 + size);
+    offset += 512 + Math.ceil(size / 512) * 512;
+    if (type === 'x') {
+      const match = body.toString('utf8').match(/\d+ path=([^\n]+)\n/);
+      paxPath = match ? match[1] : '';
+      continue;
+    }
+    if (type === 'g') continue;
+    const path = paxPath || (prefix ? `${prefix}/${name}` : name);
+    paxPath = '';
+    if (path.includes('..')) throw new Error(`unsafe path in archive: ${path}`);
+    const target = join(destination, path);
+    if (type === '5') mkdirSync(target, { recursive: true });
+    else if (type === '0' || type === '\0') {
+      mkdirSync(dirname(target), { recursive: true });
+      writeFileSync(target, body);
+    }
+  }
+}
+
+const SHA = baseSha();
+const skip = SHA ? false : `base commit ${REF} is not available here`;
+let baseRoot = '';
+
+test.before(() => {
+  if (!SHA) return;
+  baseRoot = join(root, 'build', `privacy-dark-${SHA}`);
+  rmSync(baseRoot, { recursive: true, force: true });
+  mkdirSync(baseRoot, { recursive: true });
+  const tar = execFileSync('git', ['archive', '--format=tar', SHA, 'data', 'lib', 'packages', 'app'], { cwd: root, maxBuffer: 512 * 1024 * 1024 });
+  untar(tar, baseRoot);
+});
+
+test.after(() => {
+  if (baseRoot) rmSync(baseRoot, { recursive: true, force: true });
+});
+
+function seed(dataDir, settings = null) {
+  const at = '2026-10-01T10:00:00.000Z';
+  writeFileSync(join(dataDir, 'sales-clients.json'), JSON.stringify([
+    { id: 'flow-a', product: 'asoldi', businessName: 'Flyt A AS', contactEmail: 'a@example.com', status: 'active', createdAt: at, updatedAt: at, progression: { meetingHeld: true } },
+    { id: 'flow-b', product: 'asoldi', businessName: 'Flyt B AS', contactEmail: 'b@example.com', status: 'active', createdAt: at, updatedAt: at, progression: {} },
+  ], null, 2));
+  writeFileSync(join(dataDir, 'fireflies-meetings.json'), JSON.stringify({
+    'flow-rec-1': { meetingId: 'flow-rec-1', title: 'Salgsmøte', startedAt: '2026-10-20T10:00:00.000Z', transcript: 'A: Hei.\nB: Hei.', summary: 'Kort.', at, firstSeenAt: at, final: true },
+    'flow-rec-2': { meetingId: 'flow-rec-2', title: 'Workshop', startedAt: '2026-10-25T10:00:00.000Z', transcript: 'A: Workshop.\nB: Ja.', at, firstSeenAt: at, final: true },
+  }, null, 2));
+  if (settings) writeFileSync(join(dataDir, 'automation-settings.json'), JSON.stringify(settings, null, 2));
+}
+
+function tree(dir) {
+  const out = {};
+  const walk = (current) => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const full = join(current, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else out[relative(dir, full).split(sep).join('/')] = readFileSync(full, 'utf8');
+    }
+  };
+  walk(dir);
+  return out;
+}
+
+function runFlow(codeRoot, settings = null) {
+  const dataDir = mkdtempSync(join(tmpdir(), 'asoldi-privacy-dark-'));
+  try {
+    seed(dataDir, settings);
+    const env = { ...process.env, APP_DATA_DIR: dataDir, DATA_DIR: '', DATA_BACKUP_KEEP: '5' };
+    const out = execFileSync(process.execPath, [flow, '--code-root', codeRoot], { cwd: root, env, encoding: 'utf8' });
+    assert.match(out, /"backfill"/);
+    return tree(dataDir);
+  } finally {
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+}
+
+test('with every switch off the link and unlink paths write byte-identical data to the base commit', { skip }, () => {
+  const base = runFlow(baseRoot);
+  const ours = runFlow(root);
+  assert.deepEqual(Object.keys(ours).sort(), Object.keys(base).sort(), 'the same files');
+  for (const [name, body] of Object.entries(base)) assert.equal(ours[name], body, `${name} is byte-identical`);
+  assert.ok(Object.keys(base).includes('sales-clients.json'));
+});
+
+test('positive control: with privacy.archive on the same flow writes the archive (the comparison sees it)', { skip }, () => {
+  const base = runFlow(baseRoot);
+  const ours = runFlow(root, { privacy: { archive: { enabled: true } } });
+  const extra = Object.keys(ours).filter((name) => !(name in base));
+  assert.ok(extra.some((name) => name.startsWith('transcript-archive/flow-b/')), extra.join(', '));
+});
+
+async function renderSections(codeRoot, data) {
+  const esbuild = await import('esbuild');
+  const dir = join(codeRoot, 'app', 'components', 'client', 'settings');
+  const entry = [
+    "import React from 'react';",
+    "import { renderToStaticMarkup } from 'react-dom/server';",
+    "import { MediaSection } from './MediaSection';",
+    "import { StaffSection } from './StaffSection';",
+    "import { ProductsSection } from './ProductsSection';",
+    "import { MemoryRouter } from 'react-router-dom';",
+    `const data = ${JSON.stringify(data)};`,
+    "const props = { token: 'client-token', clientData: data, setClientData: () => {}, onError: () => {} };",
+    'export const html = {',
+    '  media: renderToStaticMarkup(React.createElement(MediaSection, props)),',
+    '  staff: renderToStaticMarkup(React.createElement(StaffSection, props)),',
+    '  products: renderToStaticMarkup(React.createElement(MemoryRouter, null, React.createElement(ProductsSection, props))),',
+    '};',
+  ].join('\n');
+  const result = await esbuild.build({
+    stdin: { contents: entry, resolveDir: dir, loader: 'tsx', sourcefile: 'render-entry.tsx' },
+    bundle: true,
+    write: false,
+    format: 'esm',
+    platform: 'node',
+    jsx: 'automatic',
+    packages: 'external',
+    logLevel: 'silent',
+    define: { 'import.meta.env': '{}' },
+  });
+  // Written under build/ (ignored) so the external packages resolve from this repo's node_modules.
+  const outDir = mkdtempSync(join(root, 'build', 'privacy-render-'));
+  const file = join(outDir, 'render.mjs');
+  writeFileSync(file, result.outputFiles[0].text);
+  try {
+    const mod = await import(`${new URL(`file:///${file.replace(/\\/g, '/')}`).href}?t=${Date.now()}`);
+    return mod.html;
+  } finally {
+    rmSync(outDir, { recursive: true, force: true });
+  }
+}
+
+test('the portal upload sections render byte-identical markup while the rights checkbox is off', { skip }, async () => {
+  const data = JSON.parse(readFileSync(join(root, 'scripts', 'fixtures', 'privacy-client-bank.json'), 'utf8'));
+  const base = await renderSections(baseRoot, data);
+  const ours = await renderSections(root, data);
+  for (const key of ['media', 'staff', 'products']) {
+    assert.ok(base[key].length > 100, `${key} rendered`);
+    assert.equal(ours[key], base[key], `${key} section markup is byte-identical`);
+  }
+  for (const page of ['app/pages/client/ClientOnboarding.tsx', 'app/pages/client/ClientSettings.tsx']) {
+    assert.equal(readFileSync(join(root, page), 'utf8').replace(/\r\n/g, '\n'), readFileSync(join(baseRoot, page), 'utf8').replace(/\r\n/g, '\n'), `${page} unchanged`);
+  }
+  assert.ok(existsSync(join(root, 'app', 'components', 'client', 'settings', 'MediaRightsCheckbox.tsx')));
+});
