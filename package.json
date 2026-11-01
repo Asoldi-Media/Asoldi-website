@@ -37,7 +37,7 @@
     "sync:prod-runtime": "node scripts/sync-prod-runtime.mjs",
     "media:pull": "node scripts/pull-media.mjs",
     "golden:seed": "node scripts/golden/seed-hub.mjs",
-    "test:signing": "node --test scripts/site-plan-apply.test.mjs scripts/signing-routes.test.mjs scripts/golive-callback-v2.test.mjs scripts/contract-signing.test.mjs scripts/signing-dark.test.mjs",
+    "test:signing": "node --test scripts/site-plan-apply.test.mjs scripts/signing-routes.test.mjs scripts/golive-callback-v2.test.mjs scripts/contract-signing-hooks.test.mjs scripts/contract-signing.test.mjs scripts/signing-dark.test.mjs",
     "test:golden": "node --test scripts/golden/hub-golden.test.mjs"
   },
   "dependencies": {

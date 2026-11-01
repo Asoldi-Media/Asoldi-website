@@ -86,6 +86,10 @@ export async function runSigningFlows(hub, seed, { token }) {
     headers: callback,
     body: { event: 'run.golive.updated', schema: 2, target: 'production', status: 'ready', liveVerifiedAt: '', runId: 'run-progress', salesClientId: C.progress, domain: 'progress.example.com', liveUrl: 'https://progress.example.com', siteKey: 'maker-key-progress', githubRepo: 'Example-Org/website---progress', hubSite: { site_key: 'maker-key-progress', domain: 'progress.example.com', name: 'Progress Example AS', githubRepo: 'Example-Org/website---progress' } },
   });
+
+  // A Superadmin changes the plan on the got-client site.
+  const gotSite = steps['got-client']?.body?.site?.id;
+  if (gotSite) await call('site-plan-edit', 'PUT', `/api/hub/sites/${encodeURIComponent(gotSite)}`, { body: { websitePlan: 'tier-2-seo' } });
   return steps;
 }
 

@@ -147,7 +147,8 @@ test('auto: every website path ends in the same signed state with one plan, one 
     assert.equal(v.client.sitePlan.tierId, 'tier-3-ecommerce', `${source}: tier from the offer`);
     assert.equal(v.client.sitePlan.source, source, `${source}: plan source`);
     assert.equal(v.sites.length, 1, `${source}: exactly one hub site`);
-    assert.equal(v.sites[0].planSource?.kind, 'offer', `${source}: planSource kind`);
+    // The got-client site gets a Superadmin plan edit at the end of the flows (checked below).
+    assert.equal(v.sites[0].planSource?.kind, id === C.gotClient ? 'admin' : 'offer', `${source}: planSource kind`);
     assert.equal(v.client.hubSite?.id, v.sites[0].id, `${source}: the site is linked`);
     assert.ok(['signed', 'gathering'].includes(v.client.delivery?.stage), `${source}: stage ${v.client.delivery?.stage}`);
     assert.equal(v.preWorkshopMails.length, 1, `${source}: one pre-workshop mail (${v.mails.length} mails)`);
@@ -242,8 +243,18 @@ test('auto: site-config of every signed site carries the plan flags', () => {
     const config = auto.configs[site.id];
     assert.equal(config.status, 200, id);
     assert.equal(config.body.features.ecommerce, true, id);
-    assert.equal(config.body.websitePlan, 'tier-3-ecommerce', id);
+    assert.equal(config.body.websitePlan, id === C.gotClient ? 'tier-2-seo' : 'tier-3-ecommerce', id);
   }
+});
+
+test('auto: a Superadmin websitePlan edit makes the site plan an admin choice; off it is a plain edit', () => {
+  const edited = auto.steps['site-plan-edit'];
+  assert.equal(edited.status, 200);
+  assert.equal(edited.body.websitePlan, 'tier-2-seo');
+  assert.equal(edited.body.planSource.kind, 'admin');
+  assert.equal(edited.body.planSource.tierId, 'tier-2-seo');
+  assert.equal(edited.body.planSource.salesClientId, C.gotClient);
+  assert.ok(auto.audit.some((row) => row.kind === 'plan-source' && row.clientId === C.gotClient));
 });
 
 test('off: every path runs as before: no plan, no planSource, no shadow record, no lease, the plan route is disabled', { timeout: 240_000 }, async () => {
@@ -265,6 +276,8 @@ test('off: every path runs as before: no plan, no planSource, no shadow record, 
   assert.equal(off.planRoute.body.code, 'disabled');
   assert.equal(off.steps['progression-dual'].status, 200, 'control: today the Kontrakt tick signs a dual offer');
   assert.equal(off.steps.golive.body.goLive, undefined, 'the callback answers as before');
+  assert.equal(off.steps['site-plan-edit'].status, 200);
+  assert.equal(off.steps['site-plan-edit'].body.planSource, undefined, 'a plain edit writes no planSource');
   assert.equal(Object.hasOwn(off.steps.golive.body, 'goLive'), false);
 });
 
