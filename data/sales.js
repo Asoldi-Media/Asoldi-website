@@ -37,7 +37,8 @@ import { mergeMakerRunPatch, normalizeDeveloperQa } from '../lib/developer-card.
 import { canonicalDeveloperOwnerId, normalizeDeveloperHandoff, applyAdminDeveloperOwnerSeed, shouldSeedExistingDeveloperOwners } from '../lib/developer-assignment.js';
 import { normalizeDeveloperGoals } from '../lib/developer-goals.js';
 import { normalizeDueDate } from '../lib/website-due.js';
-import { normalizeOfferSentContent } from './sales-offers.js';
+import { listSalesOffers, normalizeOfferSentContent } from './sales-offers.js';
+import { legalSnapshotPatch } from '../lib/legal/binding.js';
 import {
   carryFutureKeys,
   FUTURE_CLIENT_KEYS,
@@ -1374,7 +1375,23 @@ export function setSalesProgress(id, key, value, { fastTrack = false } = {}) {
     contractSignedAt: next.contractSignedAt,
     workshop: next.workshop,
     workshopAction: next.workshopAction,
+    ...(turningOn ? legalSnapshotOnSigning(current) : {}),
   });
+}
+
+/**
+ * Legal clause catalog (legal.catalogTexts): the client.ext.legal snapshot of the catalog and DPA
+ * versions of the client's latest sent offer, recorded when the contract is signed. {} while the
+ * switch is off or when that offer carries no stamp (the client then keeps the legacy texts).
+ */
+function legalSnapshotOnSigning(client) {
+  try {
+    const offer = listSalesOffers({ salesClientId: client.id, status: 'sent' })[0] || null;
+    return legalSnapshotPatch(client, offer) || {};
+  } catch (error) {
+    console.error('[legal] signing snapshot failed', client?.id, error?.message || error);
+    return {};
+  }
 }
 
 export function setClientWebsiteDue(id, dueOverride = '') {
