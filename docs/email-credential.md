@@ -118,6 +118,15 @@ times (`auth.keyId`, `auth.confirmedAt`, `auth.pendingKeyId`, `auth.provisionReq
 | `POST /api/admin/email/suppressions/rebuild` | superadmin | Rebuild a lost opt-out record from the CMS mirrors (`{"force":true}` writes even if a mirror did not answer). |
 | `GET /api/admin/email/owner-routing/preview`, `PUT /api/admin/email/owner-routing/default` | superadmin | Owner-routing default for form and order notices (see `docs/runtime-data.md`). |
 
+## Link checks in relayed mail
+
+The relay reads the HTML the way a browser's tokenizer does (comments, `<!…>` and `<?…>`
+declarations, end tags with attributes, and `style`, `title` and `textarea` as text). It also
+checks the tags inside comments (Outlook renders conditional comments), CSS `url()`, `@import` and
+`image-set()`, `ping` and `srcset` lists, and every absolute URL anywhere in the HTML. It refuses
+`script`, `noscript`, `iframe`, `svg`, `math`, `object`, `embed` and similar elements and
+`meta` refresh outright (`422 link_not_allowed`, reason `markup`).
+
 The send pipeline (`relaySend` in `lib/email-relay.js`), the Brevo client (`lib/brevo.js`) and the
 quota ledger (`lib/email-quota.js`) are library code; the CMS-facing send, contacts and quota
 routes are added separately and use `requireEmailKey()`.

@@ -152,6 +152,43 @@ const CASES = [
   ['entity-encoded foreign link', { body: withHtml('<a href="https&#58;//unlisted.example/">x</a>'), expect: [422, 'link_not_allowed'] }],
   ['www variant is matched exactly, not stripped', { body: withHtml('<a href="https://www.fjordbutikk.example.com/ok">x</a><a href="https://www.g.page/r/abc">y</a>'), expect: [422, 'link_not_allowed'] }],
   ['a foreign URL in the text part', { body: (b) => ({ ...b, text: 'Se https://unlisted.example/tilbud {{unsubscribeUrl}}' }), expect: [422, 'link_not_allowed'] }],
+  // Markup a browser reads differently from a naive scanner: the link after it is real.
+  ['a quote inside a comment does not hide the link after it', { body: withHtml('<p>Hei</p><!-- <x a=" --> <a href="https://unlisted.example/login">Logg inn</a> <y b=" -->'), expect: [422, 'link_not_allowed'] }],
+  ['a quote inside a title does not hide the link after it', { body: withHtml('<title><a t="</title><a href=https://unlisted.example/>x</a>">'), expect: [422, 'link_not_allowed'] }],
+  ['a quote inside a style block does not hide the link after it', { body: withHtml('<style><a b="</style><a href=https://unlisted.example/>x</a>">'), expect: [422, 'link_not_allowed'] }],
+  ['a quote inside a textarea does not hide the link after it', { body: withHtml('<textarea><a b="</textarea><a href=https://unlisted.example/>x</a>">'), expect: [422, 'link_not_allowed'] }],
+  ['a quote inside an end tag does not hide the link after it', { body: withHtml('</p title="<x a=\'">\'<a href=https://unlisted.example/>x</a>'), expect: [422, 'link_not_allowed'] }],
+  ['a bogus comment ends at the first >', { body: withHtml('<![CDATA[ x > <a href="https://unlisted.example/">x</a> ]]>'), expect: [422, 'link_not_allowed'] }],
+  ['a link inside a comment (Outlook renders conditional comments)', { body: withHtml('<!--[if mso]><a href="https://unlisted.example/">x</a><![endif]-->'), expect: [422, 'link_not_allowed'] }],
+  ['a protocol-relative link', { body: withHtml('<a href="//unlisted.example/">x</a>'), expect: [422, 'link_not_allowed'] }],
+  ['a link with a tab in the scheme', { body: withHtml('<a href="ht&Tab;tps://unlisted.example/">x</a>'), expect: [422, 'link_not_allowed'] }],
+  ['a code point past U+10FFFF in a link does not crash the check', { body: withHtml('<a href="https://fjordbutikk.example.com/&#x110000;">x</a>'), expect: [200] }],
+  ['script', { body: withHtml('<script><!--<script></script><x a="--></script><a href=https://fjordbutikk.example.com/>x</a>">'), expect: [422, 'link_not_allowed'] }],
+  ['noscript', { body: withHtml('<noscript><a b="</noscript><a href=https://fjordbutikk.example.com/>x</a>">'), expect: [422, 'link_not_allowed'] }],
+  ['inline SVG', { body: withHtml('<svg><a href="https://fjordbutikk.example.com/"><text>x</text></a></svg>'), expect: [422, 'link_not_allowed'] }],
+  ['SVG animate that sets a link', { body: withHtml('<svg><a><animate attributeName="href" values="https://unlisted.example/"/><text>x</text></a></svg>'), expect: [422, 'link_not_allowed'] }],
+  ['MathML', { body: withHtml('<math><mi>x</mi></math>'), expect: [422, 'link_not_allowed'] }],
+  ['iframe', { body: withHtml('<iframe src="https://fjordbutikk.example.com/"></iframe>'), expect: [422, 'link_not_allowed'] }],
+  ['meta refresh', { body: withHtml('<meta http-equiv="refresh" content="0;url=https://fjordbutikk.example.com/">'), expect: [422, 'link_not_allowed'] }],
+  ['a ping to a foreign host', { body: withHtml('<a href="https://fjordbutikk.example.com/" ping="https://tracker.example.net/p">x</a>'), expect: [422, 'link_not_allowed'] }],
+  ['image-set with a quoted foreign URL', { body: withHtml('<div style="background-image:image-set(\'https://tracker.example.net/p.png\' 1x)">x</div>'), expect: [422, 'image_not_allowed'] }],
+  ['a CSS-escaped url()', { body: withHtml('<div style="background:\\75 rl(https://tracker.example.net/p.png)">x</div>'), expect: [422, 'image_not_allowed'] }],
+  ['a srcset entry hidden behind an encoded comma', { body: withHtml('<img src="https://fjordbutikk.example.com/a.png" srcset="https://fjordbutikk.example.com/a.png 1x&#44;https://tracker.example.net/b.png 2x">'), expect: [422, 'image_not_allowed'] }],
+  ['a VML link inside an Outlook comment to a foreign host', { body: withHtml('<!--[if mso]><v:roundrect href="https://unlisted.example/" style="width:200px"><v:fill src="https://fjordbutikk.example.com/b.png"/></v:roundrect><![endif]-->'), expect: [422, 'link_not_allowed'] }],
+  ['allowed: an XHTML template with conditional comments, VML and a style block', {
+    body: (b) => ({
+      ...b,
+      html: '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">'
+        + '<html xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office"><head>'
+        + '<title>Tilbud fra Fjordbutikken</title><!--[if mso]><noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript><![endif]-->'
+        + '<style type="text/css">/* hero */ .hero{background:url("https://cdn.example.net/hero.jpg")} @media (max-width:480px){.c{width:100%!important}}</style></head><body>'
+        + '<!--[if mso]><v:roundrect href="https://fjordbutikk.example.com/kasse" arcsize="10%"><v:fill src="https://cdn.example.net/b.png"/></v:roundrect><![endif]-->'
+        + '<!--[if !mso]><!--><a href="https://fjordbutikk.example.com/kasse">Til kassen</a><!--<![endif]-->'
+        + '<img src="https://fjordbutikk.example.com/logo.png" srcset="https://fjordbutikk.example.com/logo.png 1x, https://cdn.example.net/logo@2x.png?w=2&amp;q=80 2x" alt="">'
+        + '<p>Besøk https://fjordbutikk.example.com/tilbud</p><a href="{{unsubscribeUrl}}">Meld deg av</a></body></html>',
+    }),
+    expect: [200],
+  }],
   ['test send to an address not on the list', { body: (b) => ({ ...b, kind: 'test', to: { email: 'random@asoldi.com' } }), expect: [403, 'test_recipient'] }],
   ['test send to a listed test recipient', { body: (b) => ({ ...b, kind: 'test', to: { email: 'alexander@asoldi.com' } }), expect: [200] }],
   ['test send to the confirmed owner', { body: (b) => ({ ...b, kind: 'test', ref: '', to: { email: 'eier@example.com' } }), expect: [200] }],
@@ -307,4 +344,42 @@ test('the tag scanner reads attributes like an HTML tokenizer and stays linear o
   relay.scanTags(broken);
   relay.checkLinks(broken, SITES.shop, { settings: store.readEmailSettings() });
   assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`);
+});
+
+test('the markup scan stays linear on pathological input', () => {
+  const settings = store.readEmailSettings();
+  const inputs = [
+    '<!--'.repeat(50_000),
+    '<style>'.repeat(25_000),
+    '<title><a b="'.repeat(15_000),
+    'image-set('.repeat(20_000),
+    'url('.repeat(40_000),
+    '/*'.repeat(80_000),
+    '&#'.repeat(80_000),
+    `<a href="${' '.repeat(190_000)}">`,
+    '='.repeat(50_000) + '//'.repeat(50_000),
+    'https:'.repeat(30_000),
+  ];
+  for (const html of inputs) {
+    const started = Date.now();
+    relay.checkLinks(html, SITES.shop, { settings, text: html });
+    assert.ok(Date.now() - started < 2000, `${html.slice(0, 12)}…: ${Date.now() - started} ms`);
+  }
+});
+
+test('the tokenizer: comments, bogus comments, end tags and text-only elements', () => {
+  const hrefs = (html) => relay.scanMarkup(html).tags.filter((t) => !t.hidden).flatMap((t) => t.attrs.filter(([n]) => n === 'href').map(([, v]) => v));
+  assert.deepEqual(hrefs('<!--><a href="https://a.example.com/">'), ['https://a.example.com/'], '<!--> ends the comment at once');
+  assert.deepEqual(hrefs('<!---><a href="https://a.example.com/">'), ['https://a.example.com/'], '<!---> too');
+  assert.deepEqual(hrefs('<!-- x --!><a href="https://a.example.com/">'), ['https://a.example.com/'], '--!> ends a comment');
+  assert.deepEqual(hrefs('<!-- x -- ><a href="https://a.example.com/">'), [], '-- > does not');
+  assert.deepEqual(hrefs('<style>x</STYLE ><a href="https://a.example.com/">'), ['https://a.example.com/'], 'end tags match without regard to ASCII case');
+  assert.deepEqual(hrefs('<style>x</styles><a href="https://a.example.com/">'), [], '</styles> does not end a style block');
+  assert.deepEqual(hrefs('</><a href="https://a.example.com/">'), ['https://a.example.com/'], '</> is dropped');
+  assert.deepEqual(hrefs('</ x="><a href="https://a.example.com/">'), ['https://a.example.com/'], '</ + space is a bogus comment up to the first >, quotes do not count');
+  assert.deepEqual(hrefs('</p x="><a href=https://c.example.com/>"><a href="https://a.example.com/">'), ['https://a.example.com/'], 'an end tag reads its quoted attributes');
+  const hidden = relay.scanMarkup('<!--[if mso]><a href="https://b.example.com/">x</a><![endif]-->').tags;
+  assert.deepEqual(hidden.map((t) => [t.name, t.hidden === true]), [['a', true]], 'tags inside comments are scanned and marked hidden');
+  assert.deepEqual(relay.scanMarkup('<!--[if mso]><noscript><xml></xml></noscript><![endif]-->').problems, [], 'refused elements inside comments are inert');
+  assert.deepEqual(relay.scanMarkup('<noscript></noscript>').problems, [{ tag: 'noscript', reason: 'markup' }]);
 });
