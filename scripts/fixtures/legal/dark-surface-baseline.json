@@ -1218,5 +1218,93 @@
         }
       ]
     }
+  },
+  "plans": {
+    "tier1RepLines": {
+      "ok": true,
+      "plan": {
+        "tierId": "tier-1-standard",
+        "services": [
+          "site",
+          "changes",
+          "blog"
+        ],
+        "pages": 5,
+        "oneTimeAddOns": [],
+        "billing": "month",
+        "catalogType": null,
+        "derived": true,
+        "needsConfirmation": true,
+        "unknownLines": [
+          "Grunnleggende SEO og sitemap",
+          "Kontaktskjema og juridiske sider",
+          "Opptil 4 endringer/mnd"
+        ]
+      },
+      "stale": false,
+      "offerId": "offer-plan-tier1",
+      "alternativeIndex": 0,
+      "priceExMva": 499,
+      "offerHash": "e69a2cfde8153d7637a59c966f5c6f517d3bd876",
+      "dpaVersion": ""
+    },
+    "tier2RepLines": {
+      "ok": true,
+      "plan": {
+        "tierId": "tier-2-seo",
+        "services": [
+          "site",
+          "changes",
+          "seo",
+          "social",
+          "email",
+          "blog",
+          "backlinks"
+        ],
+        "pages": 7,
+        "oneTimeAddOns": [],
+        "billing": "month",
+        "catalogType": null,
+        "derived": true,
+        "needsConfirmation": true,
+        "unknownLines": [
+          "Blogg der du publiserer egne innlegg",
+          "Asoldi-nettverk for relevante lenker",
+          "Anmeldelser og lenker til sosiale medier"
+        ]
+      },
+      "stale": false,
+      "offerId": "offer-plan-tier2",
+      "alternativeIndex": 0,
+      "priceExMva": 1499,
+      "offerHash": "9457a6fc09b8dbde819c2ac3787b33bd650cd01c",
+      "dpaVersion": ""
+    },
+    "customRepLines": {
+      "ok": true,
+      "plan": {
+        "tierId": "custom",
+        "services": [
+          "site",
+          "blog"
+        ],
+        "pages": 6,
+        "oneTimeAddOns": [],
+        "billing": "month",
+        "catalogType": null,
+        "derived": true,
+        "needsConfirmation": true,
+        "unknownLines": [
+          "Grunnleggende SEO og sitemap",
+          "Blogg der du publiserer egne innlegg"
+        ]
+      },
+      "stale": false,
+      "offerId": "offer-plan-custom",
+      "alternativeIndex": 0,
+      "priceExMva": 2500,
+      "offerHash": "f58fda44191db5cc00f37f81fa5c9f88f7d75e4f",
+      "dpaVersion": ""
+    }
   }
 }

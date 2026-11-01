@@ -3,7 +3,8 @@
  * The client-facing texts the legal catalog switch may change, computed from synthetic offers:
  * contract articles, HTML and PDF bytes (Norwegian and English, tier, custom, dual and one-time
  * fees; as SHA-256 hashes, the PDF with time frozen by the caller), the contract copy, the public
- * pricing cards, the offer-letter product blocks and the offers built from a meeting quote.
+ * pricing cards, the offer-letter product blocks, the offers built from a meeting quote and the
+ * plans derived from offers whose rep-typed lines equal lines the catalog gives a tier.
  *
  * The committed baseline (scripts/fixtures/legal/dark-surface-baseline.json) was written from the
  * code before the catalog existed. With the switch off, darkSurface() must equal it byte for byte.
@@ -59,6 +60,32 @@ export const FIXTURE_OFFERS = Object.freeze({
   }),
 });
 
+// Offers whose rep-typed lines equal offer-letter lines the legal catalog gives a tier. With the
+// switch off and no legal stamp, the plan derived from them must not change.
+export const FIXTURE_PLAN_OFFERS = Object.freeze({
+  tier1RepLines: {
+    id: 'offer-plan-tier1',
+    salesClientId: CLIENT.id,
+    status: 'sent',
+    tierId: 'tier-1-standard',
+    products: [{ id: 'prod-plan-tier1', kind: 'tier', tierId: 'tier-1-standard', name: 'Nettside – Standard', pages: 5, priceExMva: 499, deliveryWeeks: 2, includes: ['Grunnleggende SEO og sitemap', 'Kontaktskjema og juridiske sider', 'Opptil 4 endringer/mnd'] }],
+  },
+  tier2RepLines: {
+    id: 'offer-plan-tier2',
+    salesClientId: CLIENT.id,
+    status: 'sent',
+    tierId: 'tier-2-seo',
+    products: [{ id: 'prod-plan-tier2', kind: 'tier', tierId: 'tier-2-seo', name: 'Nettside – SEO', pages: 7, priceExMva: 1499, deliveryWeeks: 2, includes: ['Blogg der du publiserer egne innlegg', 'Asoldi-nettverk for relevante lenker', 'Anmeldelser og lenker til sosiale medier'] }],
+  },
+  customRepLines: {
+    id: 'offer-plan-custom',
+    salesClientId: CLIENT.id,
+    status: 'sent',
+    tierId: 'custom',
+    products: [{ id: 'prod-plan-custom', kind: 'custom', name: 'Skreddersydd nettside', pages: 6, priceExMva: 2500, deliveryWeeks: 4, includes: ['Grunnleggende SEO og sitemap', 'Blogg der du publiserer egne innlegg'] }],
+  },
+});
+
 export const FIXTURE_QUOTES = Object.freeze({
   starter: { tierId: 'starter', selected: [], pages: 5 },
   seo: { tierId: 'seo', selected: [], pages: 7 },
@@ -86,8 +113,9 @@ export async function darkSurface({ pdf = false } = {}) {
   const { WEBSITE_TIERS, tierOfferProduct, toWebsiteProduct, toClientWebsitePlan } = await import('../../lib/website-tiers.js');
   const { productsWithTier } = await import('../../lib/offer-email.js');
   const { buildOfferFromMeetingQuote } = await import('../../lib/offer-from-quote.js');
+  const { planFromOfferAlternative } = await import('../../lib/site-plan.js');
 
-  const out = { contracts: {}, copy: {}, tiers: {}, quotes: {} };
+  const out = { contracts: {}, copy: {}, tiers: {}, quotes: {}, plans: {} };
   for (const [key, offer] of Object.entries(FIXTURE_OFFERS)) {
     const inputs = contractInputsForOffer(offer, CLIENT);
     const article = contractArticleModel({ client: CLIENT, ...inputs, date: new Date(offer.sentAt) });
@@ -127,6 +155,9 @@ export async function darkSurface({ pdf = false } = {}) {
   }
   for (const [key, quote] of Object.entries(FIXTURE_QUOTES)) {
     out.quotes[key] = plain(buildOfferFromMeetingQuote(quote));
+  }
+  for (const [key, offer] of Object.entries(FIXTURE_PLAN_OFFERS)) {
+    out.plans[key] = plain(planFromOfferAlternative(offer));
   }
   return out;
 }
