@@ -232,6 +232,8 @@ test('the erase keeps the other business\'s files, cards, recordings, cache entr
     assert.equal(personalData.correctionMatchesClient(entry, LEAD) && !remaining.some((client) => personalData.correctionMatchesClient(entry, client)), false, `${entry.businessName} would not recreate the lead`);
   }
   assert.equal(JSON.stringify(atBoot).includes('kari@example.com'), false);
+  // ...and the list this running hub loaded at boot (the admin "apply contact corrections" action).
+  assert.deepEqual(corrections.SALES_CONTACT_CORRECTIONS.map((row) => row.businessName), ['Annen Kunde', 'Test', 'Helt Ny Kunde AS']);
 
   const sessions = readJson('fireflies-live-sessions.json').sessions;
   assert.deepEqual(Object.keys(sessions).sort(), ['room-b', 'room-c']);
