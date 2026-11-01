@@ -216,6 +216,7 @@ Settings keys (`SETTINGS_KEYS`, dotted paths in the file):
 | Retention | `retention.leadMonths`, `retention.afterContractMonths`, `retention.briefOldVersionsDays`, `retention.changeRequestsMonths`, `retention.nurtureProofYears`, `retention.inboxSkipLogDays` |
 | Storage | `storage.budgetFiles`, `storage.budgetMb` |
 | Alerts | `alerts.to`, `alerts.hostOfflineHours`, `alerts.jobBlockedHours`, `alerts.digestAt` |
+| Delivery loop | `delivery.loop.enabled` (default `false`), `delivery.loop.mode` (`shadow` or `auto`; `auto` needs at least one client in `pilotClientIds`), `delivery.loop.paused` (null or `{reason}`); see [Delivery loop and Maker jobs](#delivery-loop-and-maker-jobs) |
 
 ---
 
@@ -241,6 +242,27 @@ Blocking codes (`BLOCKING_CODES`) stop a job; the fix is in [delivery-runbooks.m
 `needs-language`, `needs-pages`, `needs-template`, `needs-confirm`, `needs-brief-identity`, `needs-approval`, `needs-payment-setup`, `dns-not-switched`, `run-not-on-host`, `no-handler`, `maker-offline`, `step-failed` (stored as `step-failed:<target>`), `dev-agent-failed`, `budget-runaway`, `loop-detected`.
 
 Warning codes (`WARNING_CODES`) never block: `dev-skipped`, `seo-deferred-no-domain`, `cms-review-pending`, `plan-changed-rerun`, `budget-soft-limit`.
+
+## Delivery loop and Maker jobs
+
+**The loop** (`lib/delivery-loop.js`) ticks every 60 s from the background plan (job `delivery`, on in safe mode too; its mail goes to the outbox there). It does nothing at all while `delivery.loop.enabled` is `false`: no lease, no file read beyond the settings, no write.
+
+- **Scope.** Signed website clients, clients a fact change marked dirty (`markDirty(clientId)`, kept in `<dataDir>/delivery-hot/loop-dirty.json`), and clients in an active nurture.
+- **Modes.** Per client the mode is `spineModeForClient('delivery.loop', client)` (`lib/spine-mode.js`): `auto` only for clients in `pilotClientIds`, `shadow` for everyone else, also while the pilot list is empty. In `shadow` a step writes delivery-audit records only (`kind: loop-shadow`), and only when its outcome for the client changed. With `delivery.loop.paused` set only the alert step runs.
+- **Steps.** A module plugs in by exporting `tickSteps = [{name, order, scope: 'client' | 'global', everyMs?, whenPaused?, run(ctx, client?)}]`. `lib/delivery-steps.js` imports a fixed list of modules when they exist (the gate, the brief, retention, the job queue, delivery emails, alerts, the SEO record), so a build without one simply has no such step. The loop's own steps: `stage` (order 80) stores the derived stage for auto clients in one write, and `phases` (order 90) runs the hub-site phase reconcile and the developer-owner seeding for auto clients. For every other client the development board GET keeps doing both, exactly as before.
+- **Safety.** Each tick holds the lease `delivery-loop` (90 s), so two hub processes on one data dir never tick together. Dirty marks and step schedules (`everyMs`) live in `delivery-hot/` and survive a restart; a dirty mark is cleared only after every step ran for the client without an error. A tick that changes nothing writes nothing (only the lease lock files change).
+- **Health.** `delivery-hot/loop-health.json` (written at most every 5 minutes) holds the last tick, per-step timings, write flags and the last errors; Maker heartbeats return its `lastTickAt` as `hubLoopLastTickAt`. `GET /api/admin/system/delivery-loop` shows the live health, the registered steps, the dirty count, job counts and file counts and bytes per top-level store of the data dir. In safe mode `POST /api/admin/system/delivery-loop/tick {now}` runs one tick on a given clock (404 everywhere else).
+
+**The job queue** (`lib/delivery-jobs.js`, `<dataDir>/delivery-jobs.json`, written in place with no stamped backups, plus one dated copy a day in `snapshots/delivery-jobs/`, 7 kept):
+
+- `enqueueJob` checks the kind (`assertJobKind`) and keeps one active job per client and kind. Behind the switches (`requestJob`): `delivery.loop` on, the kind switch on (`development.previewJobs` for `preview`, `development.seoJobs` for `seo.*`) and the client in `auto`; a `shadow` client gets an audit record and no job.
+- **Routing.** The host that reports the client's run; with two, the handoff owner's host, then the most recently seen; else the host owned by the client's developer; else `development.defaultHostId`; else the first capable host that claims it. A job is offered only to a host whose heartbeat lists its kind in `capabilities.handlers`. An accepted developer handoff moves queued jobs to the new developer's host.
+- **Pull API** (host token with the `jobs` scope; 404 `{code: 'disabled'}` while the loop is off): `GET /api/maker/jobs`, `POST /api/maker/jobs/:id/claim` (10-minute lease; 409 when taken), `POST …/heartbeat {progress, log}` (extends the lease; the last 50 log lines are kept), `POST …/complete {result, warnings}` (local and private-network URLs are removed from the result), `POST …/fail {error, blocking, retryable}` (a blocking code blocks; otherwise retries wait 5, 15, then 45 minutes until `maxAttempts`, default 4). The tick step `jobs-requeue-stale` returns jobs whose lease ran out. `client.delivery.job` mirrors a job only when its status changes.
+- **Link-run.** `POST /api/maker/clients/:id/link-run {runId}` links a run to a client that has none, only for a run the calling host reports in its heartbeat and only when a job for the client is routed to that host. A linked run is never replaced (409 `already-linked`).
+- **Developers.** `GET /api/admin/delivery/jobs?clientId=` (switch state, the client's mode, its jobs), `POST /api/admin/delivery/jobs {salesClientId, kind: 'preview'}` (the "Send preview-jobb til Maker" button on the developer card, shown only with `development.previewJobs` on and the client in `auto`), `POST /api/admin/delivery/jobs/:jobId/cancel` and `/retry`. The existing "Create run" button is unchanged.
+- **Hub capabilities.** While the loop is on, the heartbeat answer lists `delivery-jobs/1`.
+
+**Alerts** (`lib/delivery-alerts.js`, step `alerts`, also while paused): a Maker host with work routed to it unseen for more than `alerts.hostOfflineHours`; a job blocked or failed for more than `alerts.jobBlockedHours`; more than 15 minutes since the previous successful tick (so the first tick after an outage reports it); a step error in the last 15 minutes; more than 30 refused Maker requests in 10 minutes; a paused switch. A new alert mails `alerts.to` once (not again for the same alert within 6 hours) and a daily digest of the active alerts goes out after `alerts.digestAt` (Oslo time), only while the loop is configured for `auto`; in `shadow` alerts are recorded in `delivery-hot/alerts.json` and shown, never mailed. `GET /api/admin/system/delivery-alerts` lists the active, recent and live alerts.
 
 ---
 
