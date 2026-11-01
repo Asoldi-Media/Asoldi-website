@@ -231,7 +231,7 @@
           "Med ubegrensede endringer gjelder ingen månedlig grense for endringsforespørsler. Hver forespørsel må være rimelig i omfang. En ny side eller en større ombygging avtales fortsatt særskilt."
         ],
         "contract": [
-          "Ubegrensede endringer: ingen månedlig grense for rimelige endringsforespørsler"
+          "Ingen månedlig grense for rimelige endringsforespørsler"
         ],
         "sales": [
           "Ubegrensede endringer"
@@ -240,7 +240,7 @@
       "en": {
         "title": "Unlimited changes",
         "contract": [
-          "Unlimited changes: no monthly limit on reasonable change requests"
+          "No monthly limit on reasonable change requests"
         ],
         "sales": [
           "Unlimited changes"
@@ -805,7 +805,7 @@
           "Når abonnementet avsluttes, fjernes lenkene til og fra kundens nettside neste gang nettverket bygges om, og nye kunder lenker ikke til nettsiden."
         ],
         "contract": [
-          "Lenkenettverk: fulgte, relevante lenker mellom Asoldi-kunder i en partnerseksjon og i blogginnlegg, med tak per nettside og aldri i bunnteksten på alle sider",
+          "Fulgte, relevante lenker mellom Asoldi-kunder i en partnerseksjon og i blogginnlegg, med tak per nettside og aldri i bunnteksten på alle sider",
           "Lenkene til og fra nettsiden fjernes når abonnementet avsluttes"
         ],
         "sales": [
@@ -815,7 +815,7 @@
       "en": {
         "title": "Link network",
         "contract": [
-          "Link network: followed, relevant links between Asoldi clients in a partner section and in blog posts, capped per site and never in a site-wide footer",
+          "Followed, relevant links between Asoldi clients in a partner section and in blog posts, capped per site and never in a site-wide footer",
           "Links to and from the website are removed when the subscription ends"
         ],
         "sales": [
