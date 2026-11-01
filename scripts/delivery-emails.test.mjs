@@ -4,7 +4,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -89,7 +89,7 @@ function tickInChild(id, now, mode = 'auto') {
 test('negative control: with the gate off nothing is scheduled, drafted or sent', async () => {
   save({ gate: { enabled: false } });
   const client = seed('off-1');
-  assert.deepEqual(emails.schedulePostWorkshop('off-1', { sales, startedAt: START, endedAt: END }), { scheduled: false, dueAt: '', reason: 'gate-off' });
+  assert.deepEqual(emails.schedulePostWorkshop('off-1', { sales, startedAt: START, endedAt: END, now: END }), { scheduled: false, dueAt: '', reason: 'gate-off' });
   // Even a stored due time sends nothing while the gate is off.
   sales.stampDeliveryEmail('off-1', 'postWorkshopDueAt', DUE);
   const result = await emails.runPostWorkshopStep({ mode: 'auto', now: '2026-11-03T13:30:00.000Z' }, sales.getSalesClientById('off-1'));
@@ -113,7 +113,7 @@ test('negative control: with the gate off nothing is scheduled, drafted or sent'
 test('a 10:00-11:00 workshop makes the mail due at 13:00; 12:59 sends nothing, 13:01 exactly one, also after a restart', async () => {
   save({ gate: { enabled: true, mode: 'shadow' } });
   seed('pw-1');
-  const scheduled = emails.schedulePostWorkshop('pw-1', { sales, startedAt: START, endedAt: END });
+  const scheduled = emails.schedulePostWorkshop('pw-1', { sales, startedAt: START, endedAt: END, now: END });
   assert.equal(scheduled.dueAt, DUE);
   assert.equal(deliveryEmailStamps(sales.getSalesClientById('pw-1')).postWorkshopDueAt, DUE);
   // Scheduling again keeps the first due time.
@@ -140,7 +140,7 @@ test('a 10:00-11:00 workshop makes the mail due at 13:00; 12:59 sends nothing, 1
 test('auto delivery sends once through the transport and stamps postWorkshopSentAt', async () => {
   save({ gate: { enabled: true, mode: 'shadow' } });
   seed('pw-auto', { ownerId: 'admin:alexander@asoldi.com' });
-  emails.schedulePostWorkshop('pw-auto', { sales, startedAt: START, endedAt: END });
+  emails.schedulePostWorkshop('pw-auto', { sales, startedAt: START, endedAt: END, now: END });
   // Auto is not offered by the settings yet; a settings object shows what it would do.
   const base = settingsStore.getAutomationSettings({ fresh: true });
   const settings = {
@@ -167,7 +167,7 @@ test('auto delivery sends once through the transport and stamps postWorkshopSent
 test('with emails.postWorkshop disabled nothing is drafted', async () => {
   save({ gate: { enabled: true, mode: 'shadow' }, emails: { postWorkshop: { enabled: false } } });
   seed('pw-off');
-  emails.schedulePostWorkshop('pw-off', { sales, startedAt: START, endedAt: END });
+  emails.schedulePostWorkshop('pw-off', { sales, startedAt: START, endedAt: END, now: END });
   const result = await emails.runPostWorkshopStep({ mode: 'auto', now: '2026-11-03T14:00:00.000Z' }, sales.getSalesClientById('pw-off'));
   assert.equal(result.wrote, false);
   assert.equal(result.skipped, 'mode-off');
@@ -196,17 +196,50 @@ async function applyDocument(id, workshopMeeting) {
   return deliveryEmailStamps(sales.getSalesClientById(id)).postWorkshopDueAt;
 }
 
+// A UTC day relative to the real clock (the Prosjektdokument schedules against the real clock).
+function utcDay(offsetDays = 0) {
+  return new Date(Date.now() + offsetDays * 86_400_000).toISOString().slice(0, 10);
+}
+
 test('the Prosjektdokument schedules the mail from the stored recording of the workshop', async () => {
   save({ gate: { enabled: true, mode: 'shadow' } });
+  // Today 10:00-11:00 UTC: the due time 13:00 is at most 11 hours ago, so never stale.
+  const today = utcDay();
+  const [start, due] = [`${today}T10:00:00.000Z`, `${today}T13:00:00.000Z`];
   // No booked workshop: the recording alone gives the time.
   seed('pw-doc');
-  assert.equal(await applyDocument('pw-doc', storedMeeting('m-doc', START, 60)), DUE);
+  assert.equal(await applyDocument('pw-doc', storedMeeting('m-doc', start, 60)), due);
   // A booking at 09:00 does not move it: the recording wins over the booked time.
-  seed('pw-doc-booked', { workshopAction: { dueAt: '2026-11-03T09:00:00.000Z' } });
-  assert.equal(await applyDocument('pw-doc-booked', storedMeeting('m-doc-2', START, 60)), DUE);
+  seed('pw-doc-booked', { workshopAction: { dueAt: `${today}T09:00:00.000Z` } });
+  assert.equal(await applyDocument('pw-doc-booked', storedMeeting('m-doc-2', start, 60)), due);
   // A raw Fireflies answer still works.
   seed('pw-doc-raw');
-  assert.equal(await applyDocument('pw-doc-raw', { meetingId: 'm-doc-3', transcript: 'Workshop.', dateString: START, duration: 60 }), DUE);
+  assert.equal(await applyDocument('pw-doc-raw', { meetingId: 'm-doc-3', transcript: 'Workshop.', dateString: start, duration: 60 }), due);
+});
+
+test('a workshop recording linked days later schedules no post-workshop mail', async () => {
+  save({ gate: { enabled: true, mode: 'shadow' } });
+  // A recording from 3 days ago, applied now: no due time, so no thank-you goes out days late.
+  seed('pw-stale-doc');
+  assert.equal(await applyDocument('pw-stale-doc', storedMeeting('m-stale', `${utcDay(-3)}T10:00:00.000Z`, 60)), '');
+  assert.ok(sales.getSalesClientById('pw-stale-doc').workshop.heldAt, 'the workshop is still marked held');
+  // The rule at its edge: a due time just within 24 hours is stored, one just past it is not.
+  seed('pw-stale-1');
+  const late = emails.schedulePostWorkshop('pw-stale-1', { sales, startedAt: START, endedAt: END, now: '2026-11-06T13:00:00.000Z' });
+  assert.deepEqual(late, { scheduled: false, dueAt: '', reason: 'stale' });
+  assert.equal(deliveryEmailStamps(sales.getSalesClientById('pw-stale-1')).postWorkshopDueAt, '');
+  seed('pw-stale-2');
+  assert.equal(emails.schedulePostWorkshop('pw-stale-2', { sales, startedAt: START, endedAt: END, now: '2026-11-04T13:01:00.000Z' }).reason, 'stale');
+  seed('pw-stale-3');
+  const within = emails.schedulePostWorkshop('pw-stale-3', { sales, startedAt: START, endedAt: END, now: '2026-11-04T12:59:00.000Z' });
+  assert.equal(within.scheduled, true);
+  assert.equal(within.dueAt, DUE);
+  // Nothing was recorded for the stale clients by a later tick either.
+  for (const id of ['pw-stale-doc', 'pw-stale-1', 'pw-stale-2']) {
+    const tick = await emails.runPostWorkshopStep({ mode: 'auto', now: '2026-11-07T10:00:00.000Z' }, sales.getSalesClientById(id));
+    assert.equal(tick.wrote, false, id);
+    assert.equal(shadowRecords(id).length, 0, id);
+  }
 });
 
 test('no post-workshop mail or reminder for a backfilled, cancelled, paused or later-stage client', async () => {
@@ -230,7 +263,7 @@ test('no post-workshop mail or reminder for a backfilled, cancelled, paused or l
   const expected = { 'pw-cancelled': 'overlay-cancelled', 'pw-paused': 'overlay-paused', 'pw-preview': 'stage-client_preview' };
   for (const [id, delivery] of Object.entries(cases)) {
     seed(id);
-    emails.schedulePostWorkshop(id, { sales, startedAt: START, endedAt: END });
+    emails.schedulePostWorkshop(id, { sales, startedAt: START, endedAt: END, now: END });
     sales.setSalesDelivery(id, delivery);
     const post = await emails.runPostWorkshopStep({ mode: 'auto', now: '2026-11-03T13:30:00.000Z' }, sales.getSalesClientById(id));
     assert.equal(post.wrote, false, id);
@@ -242,7 +275,7 @@ test('no post-workshop mail or reminder for a backfilled, cancelled, paused or l
   for (const id of ['bf-live', 'bf-gate', ...Object.keys(cases)]) assert.equal(shadowRecords(id).length, 0, id);
   // The same flow for a client still in delivery records the reminder (the rule above is the cause).
   seed('pw-active');
-  emails.schedulePostWorkshop('pw-active', { sales, startedAt: START, endedAt: END });
+  emails.schedulePostWorkshop('pw-active', { sales, startedAt: START, endedAt: END, now: END });
   assert.equal((await emails.runDataReminderStep({ mode: 'auto', now: later }, sales.getSalesClientById('pw-active'))).wrote, true);
   save({ emails: { dataReminder: { enabled: false, mode: 'shadow' } } });
 });
@@ -285,7 +318,7 @@ test('a complete gate gets the ready variant', async () => {
 test('data reminders: after afterDays while lines remain, at most max times', async () => {
   save({ gate: { enabled: true, mode: 'shadow' }, emails: { dataReminder: { enabled: true, mode: 'shadow', afterDays: 4, max: 2 } } });
   seed('dr-1');
-  emails.schedulePostWorkshop('dr-1', { sales, startedAt: START, endedAt: END });
+  emails.schedulePostWorkshop('dr-1', { sales, startedAt: START, endedAt: END, now: END });
   const tick = (now) => emails.runDataReminderStep({ mode: 'auto', now }, sales.getSalesClientById('dr-1'));
   const day = (n, minutes = 0) => new Date(Date.parse(DUE) + n * 86_400_000 + minutes * 60_000).toISOString();
   assert.equal((await tick(day(4, -1))).wrote, false);
@@ -299,7 +332,7 @@ test('data reminders: after afterDays while lines remain, at most max times', as
   assert.equal(transport.length, 0);
   // Nothing to ask for: no reminder.
   seed('dr-2', { contactPhone: '+47 00 00 00 00', workshop: { heldAt: END } });
-  emails.schedulePostWorkshop('dr-2', { sales, startedAt: START, endedAt: END });
+  emails.schedulePostWorkshop('dr-2', { sales, startedAt: START, endedAt: END, now: END });
   const complete = {
     getProfile: () => ({ clientDataBank: {
       brandIdentity: { logos: { normal: 'logo.svg' } },
@@ -379,9 +412,11 @@ test('routes with the gate on: the gate view, waivers, workshop held and the man
     assert.equal((await call(base, 'PUT', '/api/admin/delivery/gate/rt-2/waivers/logo', { option: 'Something else' })).status, 400);
     const evaluated = await call(base, 'POST', '/api/admin/delivery/gate/rt-2/evaluate', {});
     assert.equal(evaluated.body.gate.waivers.logo.option, 'Bruk tekstlogo');
-    // A workshop held two days ago, 10:00-11:00 UTC (the route refuses times in the future).
-    const day = new Date(Date.now() - 2 * 86_400_000).toISOString().slice(0, 10);
-    const [heldStart, heldEnd, heldDue] = [`${day}T10:00:00.000Z`, `${day}T11:00:00.000Z`, `${day}T13:00:00.000Z`];
+    // A one-hour workshop that ended an hour ago (the route refuses times in the future, and a due
+    // time more than a day old is not stored).
+    const endMs = Math.floor((Date.now() - 60 * 60_000) / 60_000) * 60_000;
+    const iso = (ms) => new Date(ms).toISOString();
+    const [heldStart, heldEnd, heldDue] = [iso(endMs - 60 * 60_000), iso(endMs), iso(endMs + 120 * 60_000)];
     // Workshop times must be ISO times that are not in the future; nothing is written otherwise.
     for (const body of [{ endedAt: 'yesterday' }, { endedAt: '2999-01-01T10:00:00.000Z' }, { startedAt: heldEnd, endedAt: heldStart }, { durationMinutes: -5 }]) {
       const refused = await call(base, 'POST', '/api/admin/sales/rt-2/workshop/held', body);
@@ -395,21 +430,90 @@ test('routes with the gate on: the gate view, waivers, workshop held and the man
     assert.equal(sales.getSalesClientById('rt-2').workshop.heldAt, heldEnd);
     assert.equal(held.body.heldAt, heldEnd, 'the stored heldAt');
     // Held again with another end: the first heldAt stays and is what the route answers.
-    const again = await call(base, 'POST', '/api/admin/sales/rt-2/workshop/held', { endedAt: `${day}T12:00:00.000Z` });
+    const again = await call(base, 'POST', '/api/admin/sales/rt-2/workshop/held', { endedAt: iso(endMs + 30 * 60_000) });
     assert.equal(again.body.heldAt, heldEnd);
     assert.equal(again.body.reason, 'already-scheduled');
+    // A workshop that ended three days ago is marked held, but no mail is scheduled any more.
+    seed('rt-stale');
+    const staleEnd = iso(endMs - 3 * 86_400_000);
+    const stale = await call(base, 'POST', '/api/admin/sales/rt-stale/workshop/held', { endedAt: staleEnd });
+    assert.equal(stale.status, 200);
+    assert.deepEqual([stale.body.heldAt, stale.body.scheduled, stale.body.reason, stale.body.postWorkshopDueAt], [staleEnd, false, 'stale', '']);
+    assert.equal(deliveryEmailStamps(sales.getSalesClientById('rt-stale')).postWorkshopDueAt, '');
+    // The manual desk kind in shadow (the gate is shadow-only): a shadow record, nothing sent.
     const before = transport.length;
-    const sent = await call(base, 'POST', '/api/admin/sales/rt-2/workshop/desk-email', { kind: 'post-workshop' });
-    assert.equal(sent.status, 200);
-    assert.equal(sent.body.sent, true);
-    assert.equal(sent.body.client, undefined, 'the raw client record is not returned');
-    assert.equal(sent.body.emails.postWorkshopSentAt, deliveryEmailStamps(sales.getSalesClientById('rt-2')).postWorkshopSentAt);
-    assert.equal(transport.length, before + 1, 'the manual desk kind sends now');
-    assert.ok(deliveryEmailStamps(sales.getSalesClientById('rt-2')).postWorkshopSentAt);
+    const desk = (body) => call(base, 'POST', '/api/admin/sales/rt-2/workshop/desk-email', { kind: 'post-workshop', ...body });
+    const recorded = await desk({});
+    assert.equal(recorded.status, 200);
+    assert.deepEqual([recorded.body.sent, recorded.body.shadow, recorded.body.status], [false, true, 'shadow']);
+    assert.equal(recorded.body.client, undefined, 'the raw client record is not returned');
+    assert.equal(recorded.body.emails.postWorkshopSentAt, '');
+    assert.equal(shadowRecords('rt-2').length, 1);
+    assert.equal((await emails.shadowMailsFor('rt-2', { dataDir: DATA_DIR }))[0].key, 'postWorkshop:rt-2:manual');
+    // A second press records nothing new; force records a fresh draft.
+    assert.equal((await desk({})).body.status, 'already-recorded');
+    assert.equal(shadowRecords('rt-2').length, 1);
+    assert.equal((await desk({ force: true })).body.status, 'shadow');
+    assert.equal(shadowRecords('rt-2').length, 2);
+    // Off or paused: 409 and nothing is drafted.
+    save({ emails: { postWorkshop: { enabled: false } } });
+    const off = await desk({});
+    assert.deepEqual([off.status, off.body.code], [409, 'off']);
+    save({ emails: { postWorkshop: { enabled: true, paused: { reason: 'test pause' } } } });
+    const paused = await desk({ force: true });
+    assert.deepEqual([paused.status, paused.body.code], [409, 'paused']);
+    save({ emails: { postWorkshop: { paused: null } } });
+    assert.equal(shadowRecords('rt-2').length, 2);
+    assert.equal(transport.length, before, 'in shadow, off or paused the desk kind sends nothing');
+    assert.equal(deliveryEmailStamps(sales.getSalesClientById('rt-2')).postWorkshopSentAt, '');
     // Other kinds still go to the existing desk route.
     assert.deepEqual((await call(base, 'POST', '/api/admin/sales/rt-2/workshop/desk-email', { kind: 'data-innsamling-2' })).body, { legacy: true, kind: 'data-innsamling-2' });
   });
   save({ gate: { enabled: false } });
+});
+
+test('the manual post-workshop desk mail in auto: two presses send once, a sent mail needs force', async () => {
+  const file = join(DATA_DIR, 'automation-settings.json');
+  const previous = existsSync(file) ? readFileSync(file, 'utf8') : null;
+  const defaults = settingsStore.defaultAutomationSettings();
+  // Written to the settings file directly: the settings route refuses a gate in auto for now.
+  writeFileSync(file, JSON.stringify({
+    ...defaults,
+    pilotClientIds: ['rt-auto'],
+    gate: { enabled: true, mode: 'auto', paused: null },
+    emails: { ...defaults.emails, postWorkshop: { ...defaults.emails.postWorkshop, enabled: true, mode: 'auto' } },
+  }));
+  settingsStore.invalidateAutomationSettingsCache();
+  try {
+    seed('rt-auto');
+    seed('rt-not-pilot');
+    await withServer(async (base) => {
+      const desk = (id, body = {}) => call(base, 'POST', `/api/admin/sales/${id}/workshop/desk-email`, { kind: 'post-workshop', ...body });
+      const before = transport.length;
+      const both = await Promise.all([desk('rt-auto'), desk('rt-auto')]);
+      assert.deepEqual(both.map((result) => result.status).sort(), [200, 409]);
+      const ok = both.find((result) => result.status === 200);
+      assert.deepEqual([ok.body.sent, ok.body.shadow, ok.body.status], [true, false, 'sent']);
+      assert.ok(['busy', 'already-sent'].includes(both.find((result) => result.status === 409).body.code));
+      assert.equal(transport.length, before + 1, 'two presses at once send once');
+      assert.ok(ok.body.emails.postWorkshopSentAt);
+      const third = await desk('rt-auto');
+      assert.deepEqual([third.status, third.body.code], [409, 'already-sent']);
+      assert.equal(transport.length, before + 1);
+      const forced = await desk('rt-auto', { force: true });
+      assert.deepEqual([forced.status, forced.body.sent], [200, true]);
+      assert.equal(transport.length, before + 2, 'force sends again');
+      // A client that is not a pilot is in shadow: a record, no send.
+      const other = await desk('rt-not-pilot');
+      assert.deepEqual([other.status, other.body.sent, other.body.shadow], [200, false, true]);
+      assert.equal(transport.length, before + 2);
+      assert.equal(shadowRecords('rt-not-pilot').length, 1);
+    });
+  } finally {
+    if (previous === null) rmSync(file, { force: true });
+    else writeFileSync(file, previous);
+    settingsStore.invalidateAutomationSettingsCache();
+  }
 });
 
 test('routes while the gate is paused: views answer, every write answers 409 and writes nothing', async () => {
