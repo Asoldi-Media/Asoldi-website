@@ -119,6 +119,35 @@ test('shadow records alerts and never mails; the digest goes out once a day afte
   assert.equal((await alerts.processAlerts({ now: T0 + 27 * HOUR, settings, conditions: [condition], sendMail, log: quiet })).digest, true, 'next day');
 });
 
+test("the first alert after digestAt is one mail and counts as the day's digest; an older alert brings the digest", async () => {
+  reset();
+  const mails = [];
+  const sendMail = async (message) => mails.push(message);
+  const settings = autoSettings();
+  const hostAlert = { key: 'host-offline:mh_aaaaaa01', kind: 'host-offline', message: 'Maker-verten er borte.', data: {} };
+  const jobAlert = { key: 'job-blocked:job_aaaaaaaa01', kind: 'job-blocked', message: 'Jobben står fast.', data: {} };
+  // 10:00 in Oslo, after the default digest time (08:00).
+  const first = await alerts.processAlerts({ now: T0 + 4 * HOUR, settings, conditions: [hostAlert], sendMail, log: quiet });
+  assert.deepEqual(first.mailed, [hostAlert.key]);
+  assert.equal(first.digest, false);
+  assert.equal(first.digestCovered, true);
+  assert.deepEqual(mails.map((mail) => mail.subject), ['[Asoldi] Leveransevarsel: host-offline'], 'one mail, not a mail and a digest of it');
+  assert.equal(alerts.readAlertState().lastDigestDay, '2026-11-02');
+  const second = await alerts.processAlerts({ now: T0 + 5 * HOUR, settings, conditions: [hostAlert, jobAlert], sendMail, log: quiet });
+  assert.deepEqual(second.mailed, [jobAlert.key]);
+  assert.equal(second.digest, false, "the day's digest is done");
+  assert.equal(mails.length, 2);
+  // Negative control: the same first alert before the digest time leaves the digest due, and the
+  // first tick after 08:00 sends it.
+  reset();
+  mails.length = 0;
+  await alerts.processAlerts({ now: T0, settings, conditions: [hostAlert], sendMail, log: quiet }); // 06:00 Oslo
+  const due = await alerts.processAlerts({ now: T0 + 2 * HOUR + 60_000, settings, conditions: [hostAlert, jobAlert], sendMail, log: quiet }); // 08:01
+  assert.deepEqual(due.mailed, [jobAlert.key]);
+  assert.equal(due.digest, true, 'an alert mailed before 08:00 is in the digest');
+  assert.deepEqual(mails.map((mail) => mail.subject), ['[Asoldi] Leveransevarsel: host-offline', '[Asoldi] Leveransevarsel: job-blocked', '[Asoldi] Leveransevarsler: 2 aktive']);
+});
+
 test('boot gap check: the first tick after a 20-minute outage raises loop-stalled once', async () => {
   reset();
   writeFileSync(join(dataDir, 'sales-clients.json'), '[]');
