@@ -1,0 +1,8 @@
+{
+  "name": "signing-backfill",
+  "description": "The signed-contract backfill, the HTTP end of the e-mail signing path (signed contracts filed from the mailbox): a dry run, then applied.",
+  "steps": [
+    { "name": "backfill dry run", "method": "POST", "path": "/api/admin/sales/signed-contract-backfill", "auth": "admin", "expect": 200, "body": {} },
+    { "name": "backfill applied", "method": "POST", "path": "/api/admin/sales/signed-contract-backfill", "auth": "admin", "expect": 200, "body": { "apply": true, "confirm": "backfill-once" } }
+  ]
+}

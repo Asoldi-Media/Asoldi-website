@@ -1,0 +1,16 @@
+{
+  "name": "signing-preview",
+  "description": "The contract goes out by e-mail (outbox) and the client signs it on the public preview page, which also makes their portal account.",
+  "steps": [
+    { "name": "create a sales client with the contract party facts", "method": "POST", "path": "/api/admin/sales", "auth": "admin", "expect": 201,
+      "body": { "businessName": "Dark Diff Preview Signing AS", "contactPerson": "Kari Example", "contactEmail": "signing-preview@example.com", "orgNumber": "123456785", "businessAddress": "Testveien 1, 0001 Oslo", "industry": "bakery" },
+      "save": { "clientId": "body.client.id" } },
+    { "name": "send the contract by e-mail", "method": "POST", "path": "/api/admin/sales/{{clientId}}/offer/send", "auth": "admin", "expect": 200, "body": { "content": "contract" } },
+    { "name": "open the contract on the preview", "method": "GET", "path": "/api/public/sales-preview/{{clientId}}/contract", "expect": 200 },
+    { "name": "sign on the preview", "method": "POST", "path": "/api/public/sales-preview/{{clientId}}/contract/accept", "expect": 200,
+      "body": { "accepted": true, "termsAccepted": true, "bindingAccepted": true, "password": "dark-diff-preview-pass-1", "name": "Kari Example" } },
+    { "settle": 10000 },
+    { "name": "the contract reads signed", "method": "GET", "path": "/api/public/sales-preview/{{clientId}}/contract", "expect": 200 },
+    { "name": "the sales card after signing", "method": "GET", "path": "/api/admin/sales/{{clientId}}/offer", "auth": "admin", "expect": 200 }
+  ]
+}

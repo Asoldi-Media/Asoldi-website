@@ -10,6 +10,7 @@ disagree.
 | What lives where: hub, GitHub, Hostinger disk | [deployment-split.md](deployment-split.md), [runtime-data.md](runtime-data.md), [../DEPLOYMENT.md](../DEPLOYMENT.md) |
 | Security: disk secrets and rotation, Maker hosts, login tokens and limits, Open CMS as Asoldi, site credentials, public-repo scans | [security.md](security.md) |
 | Safe mode: local and LAN hubs that never touch real systems, golden data | [safe-mode.md](safe-mode.md) |
+| Ship gates: what a hub push must pass (dark-diff, secrets, rollback) | [ship-gates.md](ship-gates.md) |
 | Hub AI layer: the facade, profiles, ledger, budgets, Maker run spend | [ai-layer.md](ai-layer.md) |
 | Client CMS feature tree and cms-spec in site-config | [cms-feature-tree.md](cms-feature-tree.md) |
 | seo-ops store (per-site SEO operations data) | [seo-ops-store.md](seo-ops-store.md) |

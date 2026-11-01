@@ -13,13 +13,23 @@ change here needs a new Hostinger env variable.
 | `secrets/maker-callback-token` | Maker callback token when no env token is set; rotatable from the Security card | `server.js` `getMakerCallbackToken` |
 | `secrets/initial-admin-password` | first admin password on an empty install | `ensureAdminExists` |
 | `secrets/webhooks.json` | Fireflies webhook signing secret and URL token | `data/webhook-secrets.js` |
+| `secrets/email-unsub-key`, `secrets/email-webhook-token` | unsubscribe link key and e-mail webhook token | `data/email-store.js` |
+| `secrets/email-secrets.json` | a pasted e-mail provider key and per-site keys (written only by a paste, never made by the store) | `data/email-store.js` |
 | `security-settings.json` | max token age, `revokedBefore` per class, one-time `migrations`, `loginTrustedHops`, persisted `counters` (Maker refusals) | `data/security-settings.js` |
 | `maker-hosts.json` | one row per Maker host: label, scopes, the sha256 of its token (never the token), `lastSeenAt`, `revokedAt`, heartbeat fields | `data/maker-hosts.js` |
 | `site-credentials/` | `credentials.json` (per site id the sha256 of its site credential, never the value), `nonces.json` (used enrollment nonces), `audit.json`, `settings.json` (the enrollment switch, off by default) | `lib/site-credentials.js` |
 | `token-revocations.json` | per-user token versions ("log out everywhere") | `data/security-settings.js` |
 
-Files are created in one step (temp file + hard link or rename), mode 0600, so two processes
-booting together end with the same secret. The `secrets/` folder is 0700 on Linux; on Windows
+Every file under `secrets/` is read and made through one store, `data/secret-store.js`. It reads a
+secret from where it is (a caller can name older locations too) and makes a new one only when no
+file exists: written to a temp file and hard-linked into place (or created with `wx`), mode 0600,
+so two processes booting together end with the same secret. A file that exists but cannot be read,
+or holds no usable value, is never replaced or moved: the store refuses (`ESECRET_UNUSABLE`), a
+signing secret holder then signs with a value kept in memory until the file is usable again or an
+admin rotates it, and a damaged `webhooks.json` waits for a rotation. Making a secret is logged
+(path only). Permissions are best effort and never stop the hub: `icacls` on Windows, `chmod`
+elsewhere. The other files in this table are created in one step too (temp file + hard link or
+rename). The `secrets/` folder is 0700 on Linux; on Windows
 (PC2 LAN hub, local dev) its ACL is reset to the account running the hub, with no inherited
 entries, and every file inside inherits that one entry (`data/private-dir.js`). Changes to
 `webhooks.json`, `security-settings.json` and `token-revocations.json` are a read-modify-write

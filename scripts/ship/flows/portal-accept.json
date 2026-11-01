@@ -1,0 +1,17 @@
+{
+  "name": "portal-accept",
+  "description": "The contract goes out by e-mail, the client makes a portal account with that address and accepts the offer in the portal.",
+  "steps": [
+    { "name": "create a sales client with the contract party facts", "method": "POST", "path": "/api/admin/sales", "auth": "admin", "expect": 201,
+      "body": { "businessName": "Dark Diff Portal Accept AS", "contactPerson": "Ola Example", "contactEmail": "portal-accept@example.com", "orgNumber": "123456785", "businessAddress": "Testveien 2, 0001 Oslo", "industry": "bakery" },
+      "save": { "clientId": "body.client.id" } },
+    { "name": "send the contract by e-mail", "method": "POST", "path": "/api/admin/sales/{{clientId}}/offer/send", "auth": "admin", "expect": 200, "body": { "content": "contract" } },
+    { "name": "the client makes a portal account", "method": "POST", "path": "/api/client/auth/signup", "expect": 201,
+      "body": { "email": "portal-accept@example.com", "password": "dark-diff-portal-pass-1" }, "save": { "clientToken": "body.token" } },
+    { "name": "the portal shows the offer", "method": "GET", "path": "/api/client/offer", "auth": "bearer:clientToken", "expect": 200 },
+    { "name": "the client accepts in the portal", "method": "POST", "path": "/api/client/offer/accept", "auth": "bearer:clientToken", "expect": 200, "body": {} },
+    { "settle": 10000 },
+    { "name": "the portal offer after accepting", "method": "GET", "path": "/api/client/offer", "auth": "bearer:clientToken", "expect": 200 },
+    { "name": "the sales card after accepting", "method": "GET", "path": "/api/admin/sales/{{clientId}}/offer", "auth": "admin", "expect": 200 }
+  ]
+}
