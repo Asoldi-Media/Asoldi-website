@@ -4,9 +4,15 @@ import { clientAuthHeaders } from '../../pages/client/auth';
 type LegalState = {
   client: boolean;
   current: { catalogVersion: number; dpaVersion: string; date: string };
-  binding: { mode: 'catalog' | 'legacy' | 'unsigned'; catalogVersion?: number; boundAt?: string };
-  dpa: { status: string; missing: boolean; version: string; signedAt: string; current: string };
-  links: { vilkar: string; personvern: string; databehandleravtale: string };
+  binding: {
+    mode: 'catalog' | 'legacy' | 'unsigned';
+    catalogVersion?: number;
+    boundAt?: string;
+    source?: 'signing' | 'notice';
+    pendingNotice?: { catalogVersion: number; effectiveFrom: string } | null;
+  };
+  dpa: { status: string; required: boolean; missing: boolean; upToDate: boolean; version: string; offerVersion: string; signedAt: string; current: string };
+  links: { vilkar: string; personvern: string; databehandleravtale: string; databehandleravtaleCurrent?: string };
 };
 
 function dateLabel(value = '') {
@@ -16,7 +22,9 @@ function dateLabel(value = '') {
 
 /**
  * The client's terms version and data processing agreement, with a button to sign the current
- * DPA. Renders nothing while the legal routes answer 404 (the legal switch is off) or on errors.
+ * DPA when the client's DPA is not the current version. A client who signed the service agreement
+ * before the catalog has the DPA in force as published on the signing date, and is told so.
+ * Renders nothing while the legal routes answer 404 (the legal switch is off) or on errors.
  */
 export const ClientLegalCard: React.FC = () => {
   const [state, setState] = useState<LegalState | null>(null);
@@ -54,20 +62,27 @@ export const ClientLegalCard: React.FC = () => {
   }
 
   const { binding, dpa, links, current } = state;
-  const terms = binding.mode === 'catalog'
-    ? `Versjon ${binding.catalogVersion}${binding.boundAt ? `, signert ${dateLabel(binding.boundAt)}` : ''}`
+  const boundLabel = binding.source === 'notice' ? 'gjelder fra' : 'signert';
+  const pending = binding.pendingNotice
+    ? ` Versjon ${binding.pendingNotice.catalogVersion} gjelder fra ${dateLabel(binding.pendingNotice.effectiveFrom)}.`
+    : '';
+  const terms = (binding.mode === 'catalog'
+    ? `Versjon ${binding.catalogVersion}${binding.boundAt ? `, ${boundLabel} ${dateLabel(binding.boundAt)}` : ''}`
     : binding.mode === 'legacy'
       ? 'Vilkårene som gjaldt da du signerte'
-      : `Versjon ${current.catalogVersion} gjelder når du signerer`;
+      : `Versjon ${current.catalogVersion} gjelder når du signerer`) + pending;
   const dpaLine = dpa.status === 'signed'
     ? `Signert ${dateLabel(dpa.signedAt)} (versjon ${dpa.version})`
     : dpa.status === 'accepted-with-contract'
-      ? `Godtatt med tjenesteavtalen (versjon ${dpa.current})`
+      ? `Godtatt med tjenesteavtalen (versjon ${dpa.offerVersion || dpa.current})`
       : dpa.status === 'outdated'
-        ? `Du har signert en eldre versjon. Versjon ${dpa.current} må signeres.`
-        : dpa.missing
-          ? 'Ikke signert. E-postfunksjonene på nettsiden er av til databehandleravtalen er signert.'
-          : 'Gjelder fra du signerer tjenesteavtalen.';
+        ? `Versjon ${dpa.version || dpa.offerVersion} gjelder for deg. Du kan signere gjeldende versjon (${dpa.current}).`
+        : dpa.status === 'accepted-legacy'
+          ? `Godtatt med tjenesteavtalen, i versjonen som gjaldt da du signerte. Du kan signere gjeldende versjon (${dpa.current}).`
+          : dpa.missing
+            ? 'Ikke signert. E-postfunksjonene på nettsiden er av til databehandleravtalen er signert.'
+            : 'Gjelder fra du signerer tjenesteavtalen.';
+  const canSign = dpa.missing || (dpa.required && !dpa.upToDate);
 
   return (
     <section className="rounded-2xl border border-[#E5E7EB] bg-white p-5">
@@ -82,10 +97,15 @@ export const ClientLegalCard: React.FC = () => {
           <a href={links.databehandleravtale} className="text-[#FF5B00] hover:underline">Les avtalen</a>
         </p>
       </div>
-      {dpa.missing ? (
-        <button type="button" onClick={() => void signDpa()} disabled={busy} className="mt-3 rounded-lg bg-[#FF5B00] px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
-          {busy ? 'Signerer...' : 'Signer databehandleravtale'}
-        </button>
+      {canSign ? (
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <button type="button" onClick={() => void signDpa()} disabled={busy} className="rounded-lg bg-[#FF5B00] px-4 py-2 text-sm font-medium text-white disabled:opacity-50">
+            {busy ? 'Signerer...' : dpa.missing ? 'Signer databehandleravtale' : `Signer versjon ${dpa.current}`}
+          </button>
+          {links.databehandleravtaleCurrent && links.databehandleravtaleCurrent !== links.databehandleravtale ? (
+            <a href={links.databehandleravtaleCurrent} className="text-sm text-[#FF5B00] hover:underline">Les gjeldende versjon</a>
+          ) : null}
+        </div>
       ) : null}
       {error ? <p className="mt-2 text-sm text-red-600">{error}</p> : null}
     </section>

@@ -693,9 +693,11 @@ export function markSalesOfferSent(id, { actor = '', to = '', pdfPath = '', deli
 /**
  * Legal clause catalog (legal.catalogTexts): stamps a sent offer with the DPA version (dpaVersion,
  * also on each alternative) and the catalog version (ext.legal.catalogVersion) its contract was
- * rendered with. Signing the offer then accepts those versions. Returns the stamped offer, or
- * null while the switch is off (nothing is written). An already stamped offer is returned as is.
- * The content hash includes dpaVersion, so a preview approval that was current is carried over.
+ * rendered with, plus what each tier contained (ext.legal.tiers) and the client's agreed keywords
+ * (ext.legal.agreedKeywordsText), so the contract keeps that scope. Signing the offer then accepts
+ * those versions. Returns the stamped offer, or null while the switch is off (nothing is written).
+ * An already stamped offer is returned as is. The content hash includes dpaVersion, so a preview
+ * approval that was current is carried over.
  */
 export function stampOfferLegalVersions(id, { settings = null } = {}) {
   if (!legalCatalogEnabled({ settings })) return null;
@@ -704,15 +706,16 @@ export function stampOfferLegalVersions(id, { settings = null } = {}) {
   if (index === -1) return null;
   const current = list[index];
   if (current.status !== 'sent') return null;
-  const stamp = offerSendStamp();
   const legal = isPlainRecord(current.ext?.legal) ? current.ext.legal : {};
+  const stamp = offerSendStamp(current);
   if (current.dpaVersion === stamp.dpaVersion && Number(legal.catalogVersion) === stamp.catalogVersion) return current;
+  const frozen = { tiers: stamp.tiers, ...(typeof stamp.agreedKeywordsText === 'string' ? { agreedKeywordsText: stamp.agreedKeywordsText } : {}) };
   const previewWasCurrent = offerPreviewIsCurrent(current);
   const next = {
     ...current,
     dpaVersion: stamp.dpaVersion,
     alternatives: (current.alternatives || []).map((alternative) => ({ ...alternative, dpaVersion: stamp.dpaVersion })),
-    ext: { ...(isPlainRecord(current.ext) ? current.ext : {}), legal: { ...legal, catalogVersion: stamp.catalogVersion, stampedAt: nowIso() } },
+    ext: { ...(isPlainRecord(current.ext) ? current.ext : {}), legal: { ...legal, catalogVersion: stamp.catalogVersion, stampedAt: nowIso(), ...frozen } },
   };
   if (previewWasCurrent) next.previewHash = offerContentHash(next);
   const merged = normalizeSalesOffer(next);
