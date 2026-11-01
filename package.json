@@ -32,7 +32,7 @@
     "test:laptop-preview": "node scripts/test-laptop-preview.mjs",
     "test:llm-core": "node --test scripts/llm-core.test.mjs scripts/llm-contract.test.mjs scripts/llm-harness.test.mjs scripts/suite-boundary.test.mjs scripts/suite-drift.test.mjs",
     "test:llm-hub": "node --test scripts/llm-hub-facade.test.mjs scripts/llm-hub-callsites.test.mjs scripts/ai-spend-callback.test.mjs scripts/llm-ledger-retention.test.mjs",
-    "test:brief": "node --test scripts/brief-facts-contract.test.mjs scripts/delivery-brief-extract.test.mjs",
+    "test:brief": "node --test scripts/brief-facts-contract.test.mjs scripts/delivery-brief-extract.test.mjs scripts/delivery-brief.test.mjs",
     "publish:previews": "node scripts/publish-previews-from-office.mjs",
     "sync:prod-users": "node scripts/sync-prod-users.mjs",
     "sync:prod-runtime": "node scripts/sync-prod-runtime.mjs",

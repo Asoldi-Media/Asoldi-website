@@ -121,6 +121,16 @@ recording, erase request, payment not connected) are added by the batch that shi
 
 ---
 
+## Delivery brief missing or stale
+
+**Symptom.** The developer board shows no brief for a signed client, or the brief misses a recent meeting.
+
+**Check.** `GET /api/admin/automation-settings`: `brief.enabled` must be true (a 404 `{code:'brief-disabled'}` from the brief routes means it is off). `GET /api/admin/development/<id>/brief/versions` lists the stored versions. In `<dataDir>/delivery-briefs/<id>/state.json`, `pendingSince` shows a rebuild waiting out its 10-minute debounce, `partial: true` a rebuild that ran out of time or met provider errors (`lastErrors`), and `builtInputHash` the inputs of the newest version.
+
+**Fix.** Wait for the debounce, or `POST /api/admin/development/<id>/brief/rebuild` with `{"wait":true}`. A partial rebuild resumes from its cached chunks; provider errors need the LLM provider back (`GET /api/admin/ai/status`). A brief never falls back to another provider for transcripts.
+
+---
+
 ## Blocking codes
 
 What each code means and how to clear it. Jobs and the board arrive in later batches; the codes are fixed now (`BLOCKING_CODES` in the vocabulary).

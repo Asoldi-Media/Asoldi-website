@@ -495,6 +495,9 @@ export const SETTINGS_KEYS = Object.freeze({
   // v2
   makerEvents: 'development.makerEvents',
   deliveryBackfill: 'migrations.deliveryBackfill',
+  // brief
+  briefEnabled: 'brief.enabled',
+  briefMode: 'brief.mode',
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);
@@ -511,6 +514,8 @@ export const RELEASE_GATED_SWITCHES = Object.freeze([
   'development.autoQueue',
   'publish.staging',
   'publish.production',
+  // brief
+  'brief',
 ]);
 
 // ---------------------------------------------------------------- tier matrix and site plan (v2)

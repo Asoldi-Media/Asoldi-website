@@ -264,6 +264,48 @@ Every run plans first. `dry-run` (the default of `node scripts/backfill-delivery
 
 ---
 
+## Delivery brief
+
+One versioned brief per client (`asoldi.delivery-brief/1`, schema in `scripts/schemas/delivery-brief.schema.json`, pinned by hash in `lib/delivery-brief/facts-contract.js`) that tells the Maker and the developer what was sold and what the client asked for. Code: `lib/delivery-brief/`, routes in `lib/routes/brief-routes.js`.
+
+**Switch.** `brief.enabled` (default `false`) and `brief.mode` (`shadow` or `auto`; default `shadow`), resolved per client with `spineModeForClient('brief', client)`:
+
+- off: nothing is built and every brief route answers 404 `{code:'brief-disabled'}` before any other check, so no log line or file is written.
+- `shadow`: briefs are built and stored, and the developer board can read and review them. The Maker routes answer 404 `{code:'brief-disabled'}`.
+- `auto`: the Maker can also fetch the brief and transcripts, but only for clients in `pilotClientIds`; every other client stays in shadow. A PUT refuses `auto` while `pilotClientIds` is empty, and `brief` is release-gated (`RELEASE_GATED_SWITCHES`), so `auto` also needs a recorded pre-release pass.
+
+**How a brief is built.**
+
+1. Inputs (`sources.js`): the plan in force, the newest offer, client data from the portal (Kundedata, including product catalogs), the Prosjektdokument todos, the linked meetings' transcripts (from the transcript archive when the build has one, else the stored Fireflies meetings), and, when the build has them, the gate snapshot, the media manifest, the agreed keywords and the CMS setup. Site keys and other credentials never go into a brief.
+2. Map (`chunk.js`, `extract.js`): each transcript is cut into chunks of at most 9,000 characters on speaker lines, with up to 600 characters of overlap. One call per chunk through the hub LLM facade (task `brief.map`, or `brief.iteration` for iteration meetings), data class `transcript`, with a closed JSON schema and one prompt per meeting purpose (sales, demo, workshop, iteration). There is no other provider path: the data policy keeps transcripts on Claude, and a failed chunk waits for the next rebuild. Results are cached per chunk sha and prompt hash under the client's folder.
+3. Quotes (`verify-quotes.js`): every item needs a quote and a speaker. A quote passes when, with whitespace and case normalized (diacritics kept), it is a substring of its own meeting's transcript, or when at least 90 % of its words (four or more) appear in one line and every number in it appears there too. A stat also needs its number in the quote. Everything else is dropped and counted.
+4. Reduce (`reduce.js`): duplicates (same key, or word Jaccard of at least 0.7) merge with precedence iteration > workshop > demo > sales; the loser keeps `supersededBy`. Above 40 items an optional merge call (task `brief.reduce`) groups remaining duplicates; its answer is cached and precedence still decides.
+5. Assemble (`assemble.js`): client-confirmed data beats transcript data, a developer review beats both, and the sales card only fills gaps. `delivery.targetLaunchAt` comes from the launch date fact, else the due-date override.
+
+**No transcript text in a brief.** Transcripts are referenced by sha256 and length; quotes are short; a final pass clips any string that repeats 20 words in a row from a transcript. A brief is at most 300 KB.
+
+**Store** (`store.js`), under the data dir: `delivery-briefs/<clientId>/v<N>.json`, `latest.json`, `reviews.json`, `extraction.json`, `state.json` and `chunks/`. The hash covers the brief without version, `generatedAt`, stats and URL signatures, so an unchanged input writes no new version. At most 10 versions and 2 MB per client. Reviews (`setDirectiveStatus`, `reviewFact`) are keyed by directive id and fact path and survive rebuilds.
+
+**Loop step** `brief-rebuild` (`tickSteps` in `lib/delivery-brief/index.js`, scope client): rebuilds when the client's input hash changed and stayed the same for 10 minutes, under the lease `brief:<clientId>`, at most 2 starts per tick within 5 minutes of wall time. A rebuild that runs out of time resumes from its cached chunks on the next tick. Nothing runs while the loop's mode is off.
+
+**Routes.**
+
+| Method and path | Auth | Purpose |
+|---|---|---|
+| `GET /api/admin/development/:id/brief` (`?format=md`, `?version=N`) | developmentAuth | The brief as JSON or Norwegian markdown, with ETag and 304 |
+| `GET /api/admin/development/:id/brief/versions` | developmentAuth | Stored versions |
+| `POST /api/admin/development/:id/brief/rebuild` `{wait?}` | developmentAuth (assigned developer or admin) | Rebuild now |
+| `PATCH /api/admin/development/:id/brief/directives/:directiveId` `{status, note?, jobId?}` | developmentAuth (assigned developer or admin) | open, accepted, rejected or done |
+| `PATCH /api/admin/development/:id/brief/facts` `{path, status, value?, note?}` | developmentAuth (assigned developer or admin) | Review a fact |
+| `GET /api/maker/clients/:id/brief` | Maker host token (scope `jobs`) with a routed job or the client's linked run | The newest brief, with ETag and 304 |
+| `GET /api/maker/clients/:id/transcripts/:sha256` | same | One transcript, on demand |
+
+Every Maker request for a client's brief or transcript is written to the Maker access log (ids only), allowed or refused. A host without a routed job or the client's run gets 403.
+
+**Recall check** (not part of `npm test`): `node scripts/eval/brief-recall.mjs --input <dir> --report <file outside the repo>` runs the extractor on transcripts and expectations from a folder and reports recall per client.
+
+---
+
 ## Data safety
 
 - **Forward-compatible keys.** `data/normalize-ext.js` lists what later batches store on sales clients (`sitePlan`, `delivery`, `nurture`, `isTest`, ...), `makerRun`, `hubSite`, hub sites (`planSource`, `stagingDomain`, `featureSpec`, ...), `site.cms` and offers (`plan`, `pricing`, `dpaVersion`), plus a reserved `ext` object. Normalizers pass them through unchanged from the stored record; the code that owns a key normalizes it itself. An incoming patch cannot write them: `mergeMakerRunPatch` drops future `makerRun` keys and step tokens from a patch (for example a set-maker-run body), so a value such as `makerRun.goLive` only ever comes from the batch that owns it. `updateSalesOffer` does the same for offers (`withoutFutureOfferPatchKeys`): `plan`, `pricing`, `dpaVersion`, `ext` and `products[].services` / `oneTimeAddOns` / `ext` in a patch (a rep's composer body, an admin edit, a meeting-quote rebuild, a contract summary) are dropped, and a product edit keeps the keys the stored product with the same id carries (alternatives: the stored one at the same index). `offerPatchFromBody` also normalizes body products in strict mode. `updateSite` drops the heartbeat-derived `site.cms` keys (`effective`, `featuresRev`, ...) from a `cms` patch. `offerContentHash` counts `plan`, `pricing` and `dpaVersion` only when an offer stores them (batch 2), so no existing offer hash changes. `site.deliveryPhase` keeps `cancelled` and `archived`.
