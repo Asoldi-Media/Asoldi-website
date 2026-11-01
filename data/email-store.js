@@ -24,6 +24,7 @@ import {
   existsSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   statSync,
@@ -521,6 +522,9 @@ export async function acquireLease(name, ttlMs = 60_000, { now = () => Date.now(
 export function defaultEmailSettings() {
   return {
     version: 1,
+    // The hub email platform (site routes, public unsubscribe pages, provisioning). Off: every
+    // email route answers 404 and nothing is sent or written.
+    enabled: false,
     // Dark by default: nothing sends until Superadmin adds sites to the allowlist.
     rollout: { mode: 'off', siteIds: [] },
     killSwitch: false,
@@ -552,6 +556,7 @@ export function defaultEmailSettings() {
       borrowAfterHour: 16,
       perRecipientMarketingPerDay: 2,
       perRecipientCampaignEveryDays: 3,
+      perSiteTestMax: 20,
     },
     sender: { defaultAddress: 'kunder@asoldi.com', nameSuffix: '' },
     links: {
@@ -572,6 +577,12 @@ export function defaultEmailSettings() {
     testRecipients: ['damian@asoldi.com', 'alexander@asoldi.com'],
     alerts: { recipients: ['damian@asoldi.com'], dailyAt: '08:30', quotaWarnRatio: 0.7, webhookSilenceHours: 24, staleTickMinutes: 30 },
     health: { maxBounceRate: 0.05, maxComplaintRate: 0.003, window: 100 },
+    // Owner routing default for form and order notices (lib/owner-recipients.js): when enabled,
+    // listed sites with a verified owner address move to the owner, with Asoldi in BCC for 30 days.
+    ownerRoutingDefault: { enabled: false, siteIds: [] },
+    // Local tests only: { siteId: 'http://127.0.0.1:<port>' }. Honoured in safe mode alone
+    // (lib/email-site-auth.js cmsTarget); a hub outside safe mode ignores it.
+    devCmsTargets: {},
   };
 }
 
@@ -741,8 +752,10 @@ export function readEmailSuppressions() {
  * Read-modify-write under the cross-process lock. mutate(rows) edits rows in place.
  * Nothing is written when mutate changed nothing (an idempotent repost costs one read),
  * unless the live file had to come from the backup: then the locked write repairs it.
+ * afterCommit(result), when given, runs after that write (or after no write was needed), still
+ * under the lock, so a step that must follow the write cannot interleave with another writer.
  */
-export async function updateEmailSuppressions(mutate) {
+export async function updateEmailSuppressions(mutate, { afterCommit = null } = {}) {
   return withFileLock(EMAIL_FILES.suppressions, async () => {
     const { rows, source } = readSuppressionsMeta();
     const before = JSON.stringify(rows);
@@ -751,8 +764,57 @@ export async function updateEmailSuppressions(mutate) {
       writeBackedUpJson(EMAIL_FILES.suppressions, rows);
       ensureSuppressionsMarker();
     }
+    if (typeof afterCommit === 'function') await afterCommit(result);
     return result;
   });
+}
+
+/**
+ * Writes a rebuilt opt-out record (lib/email-unsubscribe.js rebuildSuppressionsFromCms) under the
+ * cross-process lock, only while the record is unavailable (both files gone after it existed, or
+ * both unreadable). A readable record is never replaced: the caller merges into it instead.
+ * Returns { written, reason }.
+ */
+export async function restoreEmailSuppressions(rows) {
+  if (!isPlainObject(rows)) throw new Error('restoreEmailSuppressions: rows must be an object');
+  return withFileLock(EMAIL_FILES.suppressions, () => {
+    try {
+      readSuppressionsMeta();
+      return { written: false, reason: 'readable' };
+    } catch (error) {
+      if (error?.code !== 'EMAIL_STORE_UNREADABLE') throw error;
+    }
+    writeBackedUpJson(EMAIL_FILES.suppressions, rows);
+    ensureSuppressionsMarker();
+    return { written: true, reason: 'restored' };
+  });
+}
+
+/**
+ * The newest dated snapshot of the opt-out record in backups/ that still reads as a JSON object
+ * (every changed write leaves one), as { rows, name }, or null. Used as the base when a lost
+ * record is rebuilt, so rows no client CMS mirrors (Asoldi's own opt-outs, global rows) survive.
+ */
+export function readSuppressionsSnapshot() {
+  const prefix = `${EMAIL_FILES.suppressions}.`;
+  let names = [];
+  try {
+    names = readdirSync(getDataBackupDir())
+      .filter((name) => name.startsWith(prefix) && /^\d{4}-\d{2}-\d{2}T.+\.json$/.test(name.slice(prefix.length)))
+      .sort()
+      .reverse();
+  } catch {
+    return null;
+  }
+  for (const name of names) {
+    try {
+      const rows = readJsonAbs(join(getDataBackupDir(), name), undefined, `${EMAIL_FILES.suppressions} snapshot`);
+      if (isPlainObject(rows)) return { rows, name };
+    } catch {
+      // try the next older snapshot
+    }
+  }
+  return null;
 }
 
 /* ------------------------------------------------------------------ secrets */
@@ -793,6 +855,15 @@ function readSecretsJson({ strict = false } = {}) {
     brevoApiKey: typeof raw.brevoApiKey === 'string' ? raw.brevoApiKey : '',
     siteKeys: isPlainObject(raw.siteKeys) ? raw.siteKeys : {},
   };
+}
+
+/**
+ * Per-site emailKeys (lib/email-site-auth.js), keyed by hub site id. Missing file → {}.
+ * With strict, a damaged file throws EMAIL_SECRETS_UNREADABLE; without it (key checks) it reads
+ * as {}, so every key check fails closed.
+ */
+export function readEmailSiteKeys({ strict = false } = {}) {
+  return clone(readSecretsJson({ strict }).siteKeys);
 }
 
 /** Only the unsubscribe HMAC key (created on first use). Rendering a link needs nothing else. */
