@@ -154,6 +154,12 @@
       ]
     },
     {
+      "host": "assets.calendly.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
       "host": "businessprofileperformance.googleapis.com",
       "via": [
         "egress",
@@ -167,7 +173,19 @@
       ]
     },
     {
+      "host": "calendly.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
       "host": "cdn.coverr.co",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "cdn.prod.website-files.com",
       "via": [
         "static"
       ]
@@ -200,6 +218,18 @@
       "host": "firestore.googleapis.com",
       "via": [
         "sdk"
+      ]
+    },
+    {
+      "host": "fonts.googleapis.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "fonts.gstatic.com",
+      "via": [
+        "static"
       ]
     },
     {

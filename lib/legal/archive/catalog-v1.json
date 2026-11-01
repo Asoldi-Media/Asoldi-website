@@ -2298,6 +2298,7 @@
               "items": [
                 "Anthropic (Anthropic, PBC, USA, overføringsgrunnlag: EUs standardkontraktsvilkår): Språkmodeller (Claude) for tekst, analyse av materiale og oppsummering av møter. Opplysninger: navn, kontaktopplysninger, møtetranskripsjoner, e-postinnhold, bedriftsopplysninger.",
                 "Brevo (Sendinblue SAS, EØS (Frankrike)): Sending av e-post: nyhetsbrev, kampanjer og automatiske e-poster fra kundenes nettsider, og e-post fra Asoldi. Opplysninger: navn, e-postadresse, meldingsinnhold, samtykke og avmelding.",
+                "Calendly (Calendly LLC, USA, overføringsgrunnlag: EUs standardkontraktsvilkår): Bestilling av møter på asoldi.com. Skriptet lastes på sidene til asoldi.com. Opplysninger: navn, e-postadresse, møtetidspunkt, IP-adresse i nettleseren.",
                 "Deepgram (Deepgram, Inc., USA, overføringsgrunnlag: EUs standardkontraktsvilkår): Transkribering av lydopptak fra salgssamtaler. Opplysninger: lydopptak, transkripsjoner.",
                 "Fireflies.ai (Fireflies.ai Corp., USA, overføringsgrunnlag: EUs standardkontraktsvilkår): Opptak og transkribering av salgsmøter og workshoper med kunder. Opplysninger: navn, e-postadresse, lydopptak, møtetranskripsjoner.",
                 "Google (Google Ireland Limited og Google LLC, EØS og USA, overføringsgrunnlag: EUs standardkontraktsvilkår): Innlogging, kalender og Meet, Gmail-lesing for Asoldis egen innboks, bedriftsprofil, kart og steder, skrifttyper, Search Console og språkmodeller (Gemini). Opplysninger: bedriftsopplysninger, bilder kunden laster opp, kontrakter som PDF, navn, e-postadresse, møtetidspunkt, e-post til Asoldi, omtaler, bedriftsnavn, adresse, IP-adresse i nettleseren, innloggingsopplysninger.",
@@ -2334,7 +2335,7 @@
             },
             {
               "type": "p",
-              "text": "Bilder, video og stilark som lastes direkte i nettleseren. Nettleseren sender da IP-adresse og teknisk informasjon til nettstedet innholdet kommer fra. Det gjelder Unsplash, Coverr, YouTube, Vimeo, Pravatar og Tailwind CSS."
+              "text": "Bilder, video og stilark som lastes direkte i nettleseren. Nettleseren sender da IP-adresse og teknisk informasjon til nettstedet innholdet kommer fra. Det gjelder Unsplash, Coverr, YouTube, Vimeo, Pravatar, Webflow og Tailwind CSS."
             },
             {
               "type": "h3",

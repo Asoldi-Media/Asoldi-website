@@ -1,7 +1,8 @@
 {
   "version": 1,
   "name": "maker",
-  "ref": "HEAD",
+  "ref": "main",
+  "commit": "b982c7b8200ec05a91f70b41be1b650574230a6f",
   "egress": false,
   "hosts": [
     {
@@ -56,6 +57,18 @@
     },
     {
       "host": "asoldi.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "assets-global.website-files.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "cdn.prod.website-files.com",
       "via": [
         "static"
       ]

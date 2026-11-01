@@ -1,7 +1,8 @@
 {
   "version": 1,
   "name": "cms",
-  "ref": "HEAD",
+  "ref": "main",
+  "commit": "86332405fc25138326c477cffe8df18315212d94",
   "egress": false,
   "hosts": [
     {

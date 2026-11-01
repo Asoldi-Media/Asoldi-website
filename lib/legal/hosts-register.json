@@ -164,6 +164,14 @@
       "scopes": ["asoldi"],
       "role": "Drift av skjemaene for jobbsøknad og vervekampanje som er bygget inn på asoldi.com"
     },
+    "calendly": {
+      "name": "Calendly",
+      "entity": "Calendly LLC",
+      "region": "USA",
+      "transfer": "EUs standardkontraktsvilkår",
+      "scopes": ["asoldi"],
+      "role": "Bestilling av møter på asoldi.com. Skriptet lastes på sidene til asoldi.com"
+    },
     "tawk": {
       "name": "tawk.to",
       "entity": "tawk.to inc.",
@@ -198,7 +206,7 @@
     },
     "thirdPartyContent": {
       "name": "Innhold fra andre nettsteder",
-      "entity": "Unsplash, Coverr, YouTube, Vimeo, Pravatar og Tailwind CSS",
+      "entity": "Unsplash, Coverr, YouTube, Vimeo, Pravatar, Webflow og Tailwind CSS",
       "region": "Varierer",
       "transfer": "",
       "scopes": ["asoldi"],
@@ -291,6 +299,8 @@
 
     "asoldi-referal-section.vercel.app": { "processor": "vercel", "purpose": "Skjema for vervekampanje på asoldi.com", "dataCategories": ["navn", "kontaktopplysninger"], "region": "USA" },
     "employment-paginated-asoldi-form.vercel.app": { "processor": "vercel", "purpose": "Skjema for jobbsøknad på asoldi.com", "dataCategories": ["navn", "kontaktopplysninger", "søknadsinnhold"], "region": "USA" },
+    "calendly.com": { "processor": "calendly", "purpose": "Bestilling av møter på asoldi.com", "dataCategories": ["navn", "e-postadresse", "møtetidspunkt", "IP-adresse i nettleseren"], "region": "USA" },
+    "assets.calendly.com": { "processor": "calendly", "purpose": "Skript for møtebestilling som lastes på sidene til asoldi.com", "dataCategories": ["IP-adresse i nettleseren"], "region": "USA" },
     "embed.tawk.to": { "processor": "tawk", "purpose": "Chat på siden for ansatte og jobbsøkere", "dataCategories": ["navn", "e-postadresse", "chatmeldinger", "IP-adresse i nettleseren"], "region": "USA" },
 
     "nominatim.openstreetmap.org": { "processor": "openstreetmap", "purpose": "Adressesøk", "dataCategories": ["søketekst (adresse)", "IP-adresse i nettleseren"], "region": "Storbritannia" },
@@ -304,6 +314,8 @@
     "img.youtube.com": { "processor": "thirdPartyContent", "purpose": "Forhåndsbilder av video", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },
     "www.youtube.com": { "processor": "thirdPartyContent", "purpose": "Innebygd video", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },
     "vimeo.com": { "processor": "thirdPartyContent", "purpose": "Innebygd video", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },
+    "cdn.prod.website-files.com": { "processor": "thirdPartyContent", "purpose": "Bilder og ikoner på asoldi.com og ssu.asoldi.com", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },
+    "assets-global.website-files.com": { "processor": "thirdPartyContent", "purpose": "Stilark og bilder på ssu.asoldi.com", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },
     "cdn.tailwindcss.com": { "processor": "thirdPartyContent", "purpose": "Stilark i forhåndsvisninger i Asoldis interne verktøy", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },
 
     "data.brreg.no": { "noPersonalData": true, "reason": "Oppslag i Enhetsregisteret. Sender bare organisasjonsnummer eller bedriftsnavn" },
