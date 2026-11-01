@@ -122,6 +122,9 @@ export function defaultAutomationSettings() {
     },
     storage: { budgetFiles: 20000, budgetMb: 2048 },
     alerts: { to: 'ansatte@asoldi.com', hostOfflineHours: 2, jobBlockedHours: 24, digestAt: '08:00' },
+    // gate: the delivery gate (lib/delivery-gate.js). Off by default; 'shadow' computes the requirement
+    // lines and shows them to developers, and the mails that would use them are recorded, never sent.
+    gate: { enabled: false, mode: 'shadow', paused: null },
     // Written only by recordReleasePass (the pre-release suite), never by PUT.
     releases: {},
   };
@@ -235,6 +238,8 @@ const ENUMS = {
   'changeRequests.countAt': ['accepted'],
   'development.makerEvents': [...MAKER_EVENT_MODES],
   'migrations.deliveryBackfill': [...BACKFILL_MODES],
+  // gate: 'auto' is not offered yet; the gate runs in shadow only.
+  'gate.mode': ['shadow'],
 };
 
 const RANGES = {
@@ -276,6 +281,8 @@ const BOOLEANS = new Set([
   'development.previewJobs',
   'development.seoJobs',
   'promotion.auto',
+  // gate
+  'gate.enabled',
 ]);
 
 function knownPaths() {
@@ -384,6 +391,14 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
     const paused = normalizePaused(node.paused, { by, now });
     if (paused === undefined) fail(`publish.${target}.paused`, 'Must be null or {reason}.');
     else node.paused = paused;
+  }
+  // gate: shadow (old names approve and manual) or a refused auto; a pause needs a reason.
+  if (isPlainObject(value.gate)) {
+    const gateMode = normalizeAutomationMode(value.gate.mode);
+    if (gateMode) value.gate.mode = gateMode;
+    const gatePaused = normalizePaused(value.gate.paused, { by, now });
+    if (gatePaused === undefined) fail('gate.paused', 'Must be null or {reason}.');
+    else value.gate.paused = gatePaused;
   }
   const tiers = value.publish?.staging?.tiers;
   if (!Array.isArray(tiers) || tiers.some((tier) => !TIER_IDS.includes(tier))) {

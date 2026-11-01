@@ -495,6 +495,9 @@ export const SETTINGS_KEYS = Object.freeze({
   // v2
   makerEvents: 'development.makerEvents',
   deliveryBackfill: 'migrations.deliveryBackfill',
+  // gate: the delivery gate switch (off by default; shadow only for now)
+  gateEnabled: 'gate.enabled',
+  gateMode: 'gate.mode',
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);
