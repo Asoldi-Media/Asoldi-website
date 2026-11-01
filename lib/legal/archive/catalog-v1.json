@@ -3,6 +3,52 @@
   "catalogVersion": 1,
   "dpaVersion": "dpa-1",
   "date": "2026-11-01",
+  "published": {
+    "params": {
+      "slaWorkDays": 10,
+      "oneTimeMultiplier": 9,
+      "oneTimeMonths": 6,
+      "graceDays": 30
+    },
+    "retention": [
+      {
+        "id": "leads",
+        "text": "12 måneder etter siste aktivitet"
+      },
+      {
+        "id": "clients",
+        "text": "12 måneder etter at avtalen er avsluttet, og lenger der bokføringsloven krever det"
+      },
+      {
+        "id": "meetings",
+        "text": "som kundeopplysninger, eller 12 måneder etter siste aktivitet for bedrifter som ikke har signert"
+      },
+      {
+        "id": "drafts",
+        "text": "90 dager"
+      },
+      {
+        "id": "changeRequests",
+        "text": "24 måneder"
+      },
+      {
+        "id": "consent",
+        "text": "3 år"
+      },
+      {
+        "id": "inbox",
+        "text": "30 dager"
+      },
+      {
+        "id": "emailLog",
+        "text": "400 dager"
+      },
+      {
+        "id": "screenshots",
+        "text": "30 dager"
+      }
+    ]
+  },
   "clauses": [
     {
       "id": "general.about",
@@ -18,7 +64,7 @@
           "Disse vilkårene gjelder tjenestene Asoldi Markedsføring (drevet under foretaket CHAPANA, org.nr. 934 327 497) («Asoldi», «vi») leverer til næringsdrivende kunder, og bruk av asoldi.com og kundeportalen.",
           "Avtalen er en avtale mellom næringsdrivende. Forbrukerkjøpsloven og angrerettloven gjelder ikke mellom Asoldi og kunden.",
           "En signert tjenesteavtale viser partene, valgt omfang og pris. Den viser til disse vilkårene, personvernerklæringen og databehandleravtalen. Ved motstrid går den signerte avtalens konkrete vilkår (parter, pris, omfang, frister, ansvarstak, eierskap og avslutning) foran.",
-          "Vilkårene har et versjonsnummer. Kunden er bundet av versjonen som gjaldt da tjenesteavtalen ble signert, til kunden har fått skriftlig varsel om en ny versjon. Kundeportalen viser hvilken versjon som gjelder for kunden."
+          "Vilkårene har et versjonsnummer. Kunden er bundet av versjonen som gjaldt da tjenesteavtalen ble signert, til en ny versjon gjelder for kunden etter skriftlig varsel (se «Lovvalg og endringer»). Kundeportalen viser hvilken versjon som gjelder for kunden."
         ]
       }
     },
@@ -998,13 +1044,13 @@
         "terms": [
           "Når abonnementet avsluttes, stopper Asoldis løpende tjenester ved utløpet av den betalte perioden: oppdateringer av CMS, automatiske blogginnlegg, medlemskap i lenkenettverket, e-post sendt gjennom Asoldi og endringsforespørsler.",
           "Nettsiden er oppe i {graceDays} dager etter at den betalte perioden er over. Deretter stopper hostingen. Asoldi sender e-post når avtalen avsluttes, sju dager før hostingen stopper og når den stopper.",
-          "Kunden kan be om eksport i kundeportalen fram til hostingen stopper. Eksporten inneholder nettsiden som statiske filer, CMS-data som JSON og CSV (produkter, ordrer, kunder, innlegg, skjemaer og samtykker) og mediefiler. Asoldi leverer eksporten innen syv (7) virkedager.",
+          "Kunden kan be om eksport fram til hostingen stopper, i kundeportalen eller ved å kontakte Asoldi. Eksporten inneholder nettsiden som statiske filer, CMS-data som JSON og CSV (produkter, ordrer, kunder, innlegg, skjemaer og samtykker) og mediefiler.",
           "Kunden eier innholdet, designet og kode som er laget spesielt for kunden. Asoldi CMS og felles plattformkomponenter følger sin lisens og overføres ikke. Å flytte nettsiden til en annen leverandør er kundens ansvar. Asoldi kan hjelpe mot betaling etter prisen som til enhver tid står på asoldi.com."
         ],
         "contract": [
           "Ved oppsigelse stopper oppdateringer av CMS, automatiske blogginnlegg, lenkenettverket, e-post gjennom Asoldi og endringsforespørsler ved utløpet av den betalte perioden",
           "Nettsiden er oppe i {graceDays} dager etter den betalte perioden. Deretter stopper hostingen",
-          "Kunden kan be om eksport av nettsiden, CMS-data og mediefiler i kundeportalen fram til hostingen stopper. Eksporten leveres innen syv (7) virkedager",
+          "Kunden kan be om eksport av nettsiden, CMS-data og mediefiler fram til hostingen stopper",
           "Kunden eier innholdet, designet og kode laget spesielt for kunden. Asoldi CMS følger sin lisens og overføres ikke"
         ]
       },
@@ -1013,7 +1059,7 @@
         "contract": [
           "On cancellation, CMS updates, automatic blog posts, the link network, email through Asoldi and change requests stop at the end of the paid period",
           "The website stays online for {graceDays} days after the paid period. Then hosting stops",
-          "The Client can request an export of the website, CMS data and media in the client portal until hosting stops. The export is delivered within seven (7) business days",
+          "The Client can request an export of the website, CMS data and media until hosting stops",
           "The Client owns the content, the design and code made specifically for the Client. The Asoldi CMS follows its licence and is not transferred"
         ]
       }
@@ -1142,7 +1188,7 @@
         "terms": [
           "Asoldi bruker språkmodeller og andre AI-tjenester for å lage og forbedre tekst og innhold, lese materiale kunden sender, foreslå søkeord og transkribere og oppsummere møter.",
           "Personopplysninger og møteopptak sendes bare til AI-leverandører som er godkjent for slike data og har databehandleravtale med Asoldi. Andre leverandører får bare offentlige opplysninger, opplysninger om bedriften eller anonymiserte data.",
-          "Endringer på nettsiden som er laget med AI, kontrolleres med automatiske sjekker og godkjennes av en utvikler før de publiseres. Automatiske blogginnlegg følger reglene for automatiske innlegg.",
+          "Endringer på nettsiden som er laget med AI, kontrolleres med automatiske sjekker før de publiseres. Automatiske blogginnlegg følger reglene for automatiske innlegg.",
           "Hvilke leverandører Asoldi bruker, og hvilke data hver av dem får, står i personvernerklæringen og i vedlegget til databehandleravtalen."
         ],
         "contract": [
@@ -1517,7 +1563,7 @@
             },
             {
               "type": "p",
-              "text": "Vilkårene har et versjonsnummer. Kunden er bundet av versjonen som gjaldt da tjenesteavtalen ble signert, til kunden har fått skriftlig varsel om en ny versjon. Kundeportalen viser hvilken versjon som gjelder for kunden."
+              "text": "Vilkårene har et versjonsnummer. Kunden er bundet av versjonen som gjaldt da tjenesteavtalen ble signert, til en ny versjon gjelder for kunden etter skriftlig varsel (se «Lovvalg og endringer»). Kundeportalen viser hvilken versjon som gjelder for kunden."
             }
           ]
         },
@@ -1911,7 +1957,7 @@
             },
             {
               "type": "p",
-              "text": "Kunden kan be om eksport i kundeportalen fram til hostingen stopper. Eksporten inneholder nettsiden som statiske filer, CMS-data som JSON og CSV (produkter, ordrer, kunder, innlegg, skjemaer og samtykker) og mediefiler. Asoldi leverer eksporten innen syv (7) virkedager."
+              "text": "Kunden kan be om eksport fram til hostingen stopper, i kundeportalen eller ved å kontakte Asoldi. Eksporten inneholder nettsiden som statiske filer, CMS-data som JSON og CSV (produkter, ordrer, kunder, innlegg, skjemaer og samtykker) og mediefiler."
             },
             {
               "type": "p",
@@ -2027,7 +2073,7 @@
             },
             {
               "type": "p",
-              "text": "Endringer på nettsiden som er laget med AI, kontrolleres med automatiske sjekker og godkjennes av en utvikler før de publiseres. Automatiske blogginnlegg følger reglene for automatiske innlegg."
+              "text": "Endringer på nettsiden som er laget med AI, kontrolleres med automatiske sjekker før de publiseres. Automatiske blogginnlegg følger reglene for automatiske innlegg."
             },
             {
               "type": "p",
@@ -2218,7 +2264,7 @@
             },
             {
               "type": "p",
-              "text": "Endringer på nettsiden som er laget med AI, kontrolleres med automatiske sjekker og godkjennes av en utvikler før de publiseres. Automatiske blogginnlegg følger reglene for automatiske innlegg."
+              "text": "Endringer på nettsiden som er laget med AI, kontrolleres med automatiske sjekker før de publiseres. Automatiske blogginnlegg følger reglene for automatiske innlegg."
             },
             {
               "type": "p",
@@ -2265,6 +2311,21 @@
                 "Stripe (Stripe Payments Europe, Ltd., EØS (Irland) og USA, overføringsgrunnlag: EUs standardkontraktsvilkår): Betaling av Asoldis abonnement og kortbetaling i kundenes nettbutikker. Opplysninger: navn, e-postadresse, betalingsopplysninger, IP-adresse i nettleseren.",
                 "tawk.to (tawk.to inc., USA, overføringsgrunnlag: EUs standardkontraktsvilkår): Chat på siden for ansatte og jobbsøkere. Opplysninger: navn, e-postadresse, chatmeldinger, IP-adresse i nettleseren.",
                 "Vercel (Vercel Inc., USA, overføringsgrunnlag: EUs standardkontraktsvilkår): Drift av skjemaene for jobbsøknad og vervekampanje som er bygget inn på asoldi.com. Opplysninger: navn, kontaktopplysninger, søknadsinnhold."
+              ]
+            },
+            {
+              "type": "h3",
+              "text": "Når vi behandler opplysninger for kunder"
+            },
+            {
+              "type": "p",
+              "text": "Når Asoldi lager, drifter og vedlikeholder nettsider for kunder, behandler vi opplysninger på kundens vegne etter databehandleravtalen. Da bruker vi i tillegg disse leverandørene. Alle underleverandørene står i vedlegget til databehandleravtalen."
+            },
+            {
+              "type": "list",
+              "items": [
+                "GitHub (GitHub, Inc., USA, overføringsgrunnlag: EUs standardkontraktsvilkår): Privat kodelager for kundenes nettsidefiler. Opplysninger: nettsidefiler med bedriftens kontaktopplysninger.",
+                "PayPal (PayPal (Europe) S.à r.l. et Cie, S.C.A., EØS (Luxembourg)): PayPal-betaling i kundenes nettbutikker. Opplysninger: navn, e-postadresse, betalingsopplysninger."
               ]
             },
             {
@@ -2461,7 +2522,7 @@
             },
             {
               "type": "p",
-              "text": "Endringer på nettsiden som er laget med AI, kontrolleres med automatiske sjekker og godkjennes av en utvikler før de publiseres. Automatiske blogginnlegg følger reglene for automatiske innlegg."
+              "text": "Endringer på nettsiden som er laget med AI, kontrolleres med automatiske sjekker før de publiseres. Automatiske blogginnlegg følger reglene for automatiske innlegg."
             },
             {
               "type": "p",
