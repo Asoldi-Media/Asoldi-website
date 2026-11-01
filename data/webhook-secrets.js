@@ -21,6 +21,7 @@
  * a rotation by an admin writes a fresh entry.
  */
 import { randomBytes } from 'crypto';
+import { existsSync } from 'fs';
 import { readJsonCached, readJsonFresh, updateJsonLocked } from './atomic-json.js';
 import { isSecretUnusable, secretStoreFor } from './secret-store.js';
 import { getPersistentDataDir } from './storage-path.js';
@@ -178,7 +179,16 @@ export function recordFirefliesWebhookVerified(via, { dataDir, now, credential }
   }
 }
 
-/** Status without any secret value. */
+/**
+ * True when the file is there. After ensureFirefliesWebhookSecrets returned null, that means the
+ * file or its Fireflies entry is damaged and only a rotation replaces it (the folder is not the
+ * problem).
+ */
+export function firefliesWebhookFileExists({ dataDir } = {}) {
+  return existsSync(webhookSecretsPath(dataDir));
+}
+
+/** Status without any secret value. damaged: true only while the file exists but cannot be used. */
 export function firefliesWebhookSecretStatus({ dataDir } = {}) {
   const row = ensureFirefliesWebhookSecrets({ dataDir });
   return {
@@ -187,5 +197,6 @@ export function firefliesWebhookSecretStatus({ dataDir } = {}) {
     rotatedAt: row?.rotatedAt || null,
     acceptQueryToken: row ? row.acceptQueryToken !== false : false,
     lastVerified: row?.lastVerified || null,
+    ...(!row && firefliesWebhookFileExists({ dataDir }) ? { damaged: true } : {}),
   };
 }

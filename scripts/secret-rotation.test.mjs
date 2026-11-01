@@ -773,3 +773,36 @@ test('routes: an admin token of a users.json user cannot rotate; it gets 403 and
     assert.equal((await post(base, '/api/admin/security/maker-callback-token/rotate', adminToken(), good)).status, 200, 'the hub admin still rotates');
   });
 });
+
+test('routes: the security status names a secret signed from memory while its file is damaged, and says nothing otherwise', async () => {
+  const dir = tempDir();
+  const errors = [];
+  const originalError = console.error;
+  console.error = (...args) => errors.push(args.join(' '));
+  try {
+    const adminSecretHolder = hardening.createHubSecretHolder({ dataDir: dir, name: 'admin-secret', refreshMs: 0 });
+    const makerCallbackTokenHolder = hardening.createHubSecretHolder({ envRule: 'any', lazy: true, dataDir: dir, name: 'maker-callback-token', bytes: 32 });
+    await withApp({ adminSecretHolder, makerCallbackTokenHolder }, async (base, { adminToken }) => {
+      const read = async () => (await fetch(`${base}/api/admin/system/security`, { headers: { authorization: `Bearer ${adminToken()}` } })).json();
+      const healthy = await read();
+      assert.equal(Object.hasOwn(healthy, 'secretsMemoryOnly'), false, 'the usual answer is unchanged');
+      // A damaged Maker token file: the holder made on it keeps the file and signs from memory.
+      writeFileSync(join(dir, 'secrets', 'maker-callback-token'), 'too-short\n');
+      const damagedHolder = hardening.createHubSecretHolder({ envRule: 'any', dataDir: dir, name: 'maker-callback-token', bytes: 32 });
+      assert.equal(damagedHolder.memoryOnly, true);
+      await withApp({ adminSecretHolder, makerCallbackTokenHolder: damagedHolder }, async (base2, { adminToken: token2 }) => {
+        const status = await (await fetch(`${base2}/api/admin/system/security`, { headers: { authorization: `Bearer ${token2()}` } })).json();
+        assert.deepEqual(status.secretsMemoryOnly, ['maker-callback-token']);
+        assert.equal(JSON.stringify(status).includes(damagedHolder.get()), false, 'never the value');
+        // The admin fix: a rotation writes a fresh file and the note goes away.
+        const rotated = await post(base2, '/api/admin/security/maker-callback-token/rotate', token2(), { currentPassword: PASSWORD, confirm: 'ROTER' });
+        assert.equal(rotated.status, 200);
+        const after = await (await fetch(`${base2}/api/admin/system/security`, { headers: { authorization: `Bearer ${token2()}` } })).json();
+        assert.equal(Object.hasOwn(after, 'secretsMemoryOnly'), false);
+      });
+    });
+    assert.ok(errors.some((line) => /maker-callback-token/.test(line) && /memory/.test(line)));
+  } finally {
+    console.error = originalError;
+  }
+});

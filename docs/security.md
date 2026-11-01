@@ -20,13 +20,17 @@ change here needs a new Hostinger env variable.
 | `site-credentials/` | `credentials.json` (per site id the sha256 of its site credential, never the value), `nonces.json` (used enrollment nonces), `audit.json`, `settings.json` (the enrollment switch, off by default) | `lib/site-credentials.js` |
 | `token-revocations.json` | per-user token versions ("log out everywhere") | `data/security-settings.js` |
 
-Every file under `secrets/` is read and made through one store, `data/secret-store.js`. It reads a
-secret from where it is (a caller can name older locations too) and makes a new one only when no
-file exists: written to a temp file and hard-linked into place (or created with `wx`), mode 0600,
+The generated secrets under `secrets/` (`admin-secret`, `maker-callback-token`,
+`initial-admin-password`, the e-mail keys, `webhooks.json`) are read and made through one store, `data/secret-store.js`. `data/email-store.js`
+writes `email-secrets.json` and its suppressions marker itself, and a rotation replaces its file
+under the file's lock. The store reads a secret from where it is (a caller can name older
+locations too) and makes a new one only when no file exists: written to a temp file and hard-linked into place (or created with `wx`), mode 0600,
 so two processes booting together end with the same secret. A file that exists but cannot be read,
 or holds no usable value, is never replaced or moved: the store refuses (`ESECRET_UNUSABLE`), a
 signing secret holder then signs with a value kept in memory until the file is usable again or an
-admin rotates it, and a damaged `webhooks.json` waits for a rotation. Making a secret is logged
+admin rotates it (the Security status lists it under `secretsMemoryOnly` meanwhile), and a damaged
+`webhooks.json` waits for a rotation (the webhook status says `damaged: true`, and reveal answers
+503 with "rotate to replace it" instead of "not writable"). Making a secret is logged
 (path only). Permissions are best effort and never stop the hub: `icacls` on Windows, `chmod`
 elsewhere. The other files in this table are created in one step too (temp file + hard link or
 rename). The `secrets/` folder is 0700 on Linux; on Windows

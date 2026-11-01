@@ -315,3 +315,38 @@ test('lastVerified is recorded only while the verifying credential is still stor
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('admin routes: a damaged webhooks.json is told apart from a folder that cannot be written, and a rotation repairs it', async () => {
+  await withAdminApp(async (base) => {
+    const auth = { authorization: 'Bearer admin-ok', 'content-type': 'application/json' };
+    assert.ok(secrets.ensureFirefliesWebhookSecrets(), 'a usable file first');
+    const healthy = await (await fetch(`${base}/api/admin/security/fireflies-webhook`, { headers: auth })).json();
+    assert.equal(healthy.stored, true);
+    assert.equal(Object.hasOwn(healthy, 'damaged'), false, 'a healthy status has no damaged key');
+    const file = join(dataDir, 'secrets', 'webhooks.json');
+    writeFileSync(file, '{ "version": 1, "fireflies": ');
+    // Past the hot-path read cache.
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    const reveal = await fetch(`${base}/api/admin/security/fireflies-webhook/reveal`, { method: 'POST', headers: auth });
+    assert.equal(reveal.status, 503);
+    const body = await reveal.json();
+    assert.equal(body.damaged, true);
+    assert.match(body.message, /exists but cannot be used \(it is damaged\)\. Rotate the webhook secret/);
+    assert.doesNotMatch(body.message, /not writable/);
+    const toggle = await fetch(`${base}/api/admin/security/fireflies-webhook/query-token`, { method: 'POST', headers: auth, body: JSON.stringify({ enabled: true }) });
+    assert.equal(toggle.status, 503);
+    assert.equal((await toggle.json()).damaged, true);
+    const status = await (await fetch(`${base}/api/admin/security/fireflies-webhook`, { headers: auth })).json();
+    assert.equal(status.stored, false);
+    assert.equal(status.damaged, true);
+    assert.equal(readFileSync(file, 'utf8'), '{ "version": 1, "fireflies": ', 'the damaged file is left as it is');
+    const rotated = await (await fetch(`${base}/api/admin/security/fireflies-webhook/rotate`, { method: 'POST', headers: auth })).json();
+    assert.match(rotated.secret, /^[0-9a-f]{64}$/);
+    const after = await fetch(`${base}/api/admin/security/fireflies-webhook/reveal`, { method: 'POST', headers: auth });
+    assert.equal(after.status, 200);
+    assert.equal((await after.json()).secret, rotated.secret);
+    const repaired = await (await fetch(`${base}/api/admin/security/fireflies-webhook`, { headers: auth })).json();
+    assert.equal(repaired.stored, true);
+    assert.equal(Object.hasOwn(repaired, 'damaged'), false);
+  });
+});
