@@ -274,14 +274,17 @@ export function OfferReviewSection({ hideHeader = false }: { hideHeader?: boolea
   }, []);
 
   async function loadUnmatched() {
+    let meetings: StoredMeetingRow[] = [];
     try {
       const data = await listFirefliesMeetings({ unmatched: true }) as { meetings: StoredMeetingRow[] };
-      setUnmatched(data.meetings || []);
+      meetings = data.meetings || [];
+      setUnmatched(meetings);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Kunne ikke hente møter');
     }
-    // Ranked candidates exist only while the candidate ranker is on; otherwise nothing extra is shown.
-    const ranked = await listFirefliesCandidates();
+    // Ranked candidates exist only while the candidate ranker is on, and only for listed recordings:
+    // with an empty list nothing is asked for.
+    const ranked = meetings.length ? await listFirefliesCandidates() : null;
     setCandidates(ranked ? new Map(ranked.map((row) => [row.meetingId, row.candidates])) : null);
   }
 

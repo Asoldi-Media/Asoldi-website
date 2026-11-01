@@ -4,6 +4,8 @@ import { GoogleBusinessConnectCard } from '../GoogleBusinessConnectCard';
 import type { AffiliationItem, ClientDataBank } from './clientDataTypes';
 import { LANGUAGE_OPTIONS, clientMediaSrc, normalizeHex, randomId } from './clientDataTypes';
 import { uploadClientMediaFile } from './uploadClientMedia';
+import { useMediaRights } from './mediaRights';
+import { MediaRightsCheckbox } from './MediaRightsCheckbox';
 
 type AccordionId = 'Aapningstider' | 'Affiliasjoner' | 'Identitet' | 'Kobling';
 
@@ -18,6 +20,9 @@ export function GeneralInfoSection({ token, clientData, setClientData, onError }
   const [open, setOpen] = useState<AccordionId | null>('Identitet');
   const [addressSuggestions, setAddressSuggestions] = useState<string[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  // Shown only when the hub has the rights checkbox switched on; each logo, favicon and affiliation upload records the answer.
+  const rights = useMediaRights(token);
+  const [rightsConfirmed, setRightsConfirmed] = useState(false);
   const language = clientData.generalInfo.websiteLanguage;
   const filteredLanguages = LANGUAGE_OPTIONS.filter((option) =>
     option.toLowerCase().includes(language.toLowerCase()) || language === 'Norsk (Norge)'
@@ -53,7 +58,10 @@ export function GeneralInfoSection({ token, clientData, setClientData, onError }
   async function uploadTo(setter: (url: string) => void, file?: File | null) {
     if (!file) return;
     try {
-      setter(await uploadClientMediaFile(token, file));
+      const url = await uploadClientMediaFile(token, file);
+      setter(url);
+      // After the upload is in Kundedata: a failed rights answer is reported and never drops it.
+      rights.recordAfterUpload([url], rightsConfirmed, onError);
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Kunne ikke laste opp filen.');
     }
@@ -168,6 +176,7 @@ export function GeneralInfoSection({ token, clientData, setClientData, onError }
         >
           <Plus className="w-3.5 h-3.5" /> Legg til kategori
         </button>
+        {rights.enabled ? <MediaRightsCheckbox checked={rightsConfirmed} onChange={setRightsConfirmed} /> : null}
         {clientData.affiliations.map((category, categoryIndex) => (
           <div key={category.id} className="bg-white border border-gray-200 rounded-xl overflow-hidden">
             <div className="flex items-center justify-between bg-gray-50/80 p-3 border-b border-gray-200">
@@ -344,6 +353,7 @@ export function GeneralInfoSection({ token, clientData, setClientData, onError }
             })), file)}
           />
         </div>
+        {rights.enabled ? <MediaRightsCheckbox checked={rightsConfirmed} onChange={setRightsConfirmed} /> : null}
         <div className="flex flex-col md:flex-row gap-6 relative">
           <div className="flex-1 relative">
             <label className="text-[13px] font-medium text-gray-700 mb-2 block">Bedriftsadresse</label>

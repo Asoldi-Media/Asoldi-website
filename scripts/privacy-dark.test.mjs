@@ -1,10 +1,13 @@
 // Negative controls for the privacy switches against the base commit (PRIVACY_DARK_REF, default
 // 859429c), extracted with `git archive` into build/ (ignored):
 //   1. With every switch off, the Fireflies link and unlink paths (admin link, automatic link, purpose
-//      pick, admin unlink, move, exclude, backfill) write byte-identical data to the base commit.
-//      A positive control shows the comparison notices the archive once privacy.archive is on.
-//   2. The client portal upload sections render byte-identical markup to the base commit while the
-//      rights checkbox is off, and the onboarding and settings pages are unchanged files.
+//      pick, admin unlink, move, exclude, backfill) and the ingest store paths (list page, full fetch,
+//      media write, failed fetch) write byte-identical data to the base commit and return the same.
+//      Positive controls show the comparison notices the archive once privacy.archive is on, and an
+//      erased recording once an erase has put it on the erased list.
+//   2. The client portal upload sections (media, staff, products, logos and affiliations) render
+//      byte-identical markup to the base commit while the rights checkbox is off, and the onboarding
+//      and settings pages are unchanged files.
 // Skipped (with a note) when git or the base commit is not available, e.g. in a plain file export.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -74,7 +77,7 @@ test.after(() => {
   if (baseRoot) rmSync(baseRoot, { recursive: true, force: true });
 });
 
-function seed(dataDir, settings = null) {
+function seed(dataDir, settings = null, erasedIds = []) {
   const at = '2026-10-01T10:00:00.000Z';
   writeFileSync(join(dataDir, 'sales-clients.json'), JSON.stringify([
     { id: 'flow-a', product: 'asoldi', businessName: 'Flyt A AS', contactEmail: 'a@example.com', status: 'active', createdAt: at, updatedAt: at, progression: { meetingHeld: true } },
@@ -85,6 +88,11 @@ function seed(dataDir, settings = null) {
     'flow-rec-2': { meetingId: 'flow-rec-2', title: 'Workshop', startedAt: '2026-10-25T10:00:00.000Z', transcript: 'A: Workshop.\nB: Ja.', at, firstSeenAt: at, final: true },
   }, null, 2));
   if (settings) writeFileSync(join(dataDir, 'automation-settings.json'), JSON.stringify(settings, null, 2));
+  if (erasedIds.length) {
+    mkdirSync(join(dataDir, 'privacy'), { recursive: true });
+    const meetings = Object.fromEntries(erasedIds.map((id) => [id, { erasedAt: '2026-10-31T10:00:00.000Z' }]));
+    writeFileSync(join(dataDir, 'privacy', 'erased-meetings.json'), JSON.stringify({ kind: 'asoldi.erased-meetings/1', meetings }, null, 2));
+  }
 }
 
 function tree(dir) {
@@ -100,25 +108,39 @@ function tree(dir) {
   return out;
 }
 
-function runFlow(codeRoot, settings = null) {
+function runFlow(codeRoot, settings = null, { erasedIds = [], withOutput = false } = {}) {
   const dataDir = mkdtempSync(join(tmpdir(), 'asoldi-privacy-dark-'));
   try {
-    seed(dataDir, settings);
+    seed(dataDir, settings, erasedIds);
     const env = { ...process.env, APP_DATA_DIR: dataDir, DATA_DIR: '', DATA_BACKUP_KEEP: '5' };
     const out = execFileSync(process.execPath, [flow, '--code-root', codeRoot], { cwd: root, env, encoding: 'utf8' });
     assert.match(out, /"backfill"/);
-    return tree(dataDir);
+    assert.match(out, /"ingest"/);
+    return withOutput ? { files: tree(dataDir), out: out.trim().split('\n').pop() } : tree(dataDir);
   } finally {
     rmSync(dataDir, { recursive: true, force: true });
   }
 }
 
-test('with every switch off the link and unlink paths write byte-identical data to the base commit', { skip }, () => {
-  const base = runFlow(baseRoot);
-  const ours = runFlow(root);
-  assert.deepEqual(Object.keys(ours).sort(), Object.keys(base).sort(), 'the same files');
-  for (const [name, body] of Object.entries(base)) assert.equal(ours[name], body, `${name} is byte-identical`);
-  assert.ok(Object.keys(base).includes('sales-clients.json'));
+test('with every switch off the link, unlink and ingest paths write byte-identical data to the base commit', { skip }, () => {
+  const base = runFlow(baseRoot, null, { withOutput: true });
+  const ours = runFlow(root, null, { withOutput: true });
+  assert.deepEqual(Object.keys(ours.files).sort(), Object.keys(base.files).sort(), 'the same files');
+  for (const [name, body] of Object.entries(base.files)) assert.equal(ours.files[name], body, `${name} is byte-identical`);
+  assert.ok(Object.keys(base.files).includes('sales-clients.json'));
+  assert.equal(ours.out, base.out, 'the ingest paths return the same');
+  assert.match(base.out, /"flow-rec-3",true,true/, 'the run stored a new recording');
+});
+
+test('positive control: an erased recording is not stored again where the base commit stores it (the comparison sees it)', { skip }, () => {
+  const base = runFlow(baseRoot, null, { erasedIds: ['flow-rec-3', 'flow-rec-4'] });
+  const ours = runFlow(root, null, { erasedIds: ['flow-rec-3', 'flow-rec-4'] });
+  const baseMeetings = JSON.parse(base['fireflies-meetings.json']);
+  const ourMeetings = JSON.parse(ours['fireflies-meetings.json']);
+  assert.ok(baseMeetings['flow-rec-3'] && baseMeetings['flow-rec-4'], 'the base commit stores them');
+  assert.equal(ourMeetings['flow-rec-3'], undefined);
+  assert.equal(ourMeetings['flow-rec-4'], undefined);
+  assert.ok(ourMeetings['flow-rec-1'] && ourMeetings['flow-rec-2'], 'the other recordings are untouched');
 });
 
 test('positive control: with privacy.archive on the same flow writes the archive (the comparison sees it)', { skip }, () => {
@@ -137,6 +159,7 @@ async function renderSections(codeRoot, data) {
     "import { MediaSection } from './MediaSection';",
     "import { StaffSection } from './StaffSection';",
     "import { ProductsSection } from './ProductsSection';",
+    "import { GeneralInfoSection } from './GeneralInfoSection';",
     "import { MemoryRouter } from 'react-router-dom';",
     `const data = ${JSON.stringify(data)};`,
     "const props = { token: 'client-token', clientData: data, setClientData: () => {}, onError: () => {} };",
@@ -144,6 +167,7 @@ async function renderSections(codeRoot, data) {
     '  media: renderToStaticMarkup(React.createElement(MediaSection, props)),',
     '  staff: renderToStaticMarkup(React.createElement(StaffSection, props)),',
     '  products: renderToStaticMarkup(React.createElement(MemoryRouter, null, React.createElement(ProductsSection, props))),',
+    '  general: renderToStaticMarkup(React.createElement(MemoryRouter, null, React.createElement(GeneralInfoSection, props))),',
     '};',
   ].join('\n');
   const result = await esbuild.build({
@@ -173,7 +197,7 @@ test('the portal upload sections render byte-identical markup while the rights c
   const data = JSON.parse(readFileSync(join(root, 'scripts', 'fixtures', 'privacy-client-bank.json'), 'utf8'));
   const base = await renderSections(baseRoot, data);
   const ours = await renderSections(root, data);
-  for (const key of ['media', 'staff', 'products']) {
+  for (const key of ['media', 'staff', 'products', 'general']) {
     assert.ok(base[key].length > 100, `${key} rendered`);
     assert.equal(ours[key], base[key], `${key} section markup is byte-identical`);
   }

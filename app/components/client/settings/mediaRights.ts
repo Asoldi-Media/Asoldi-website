@@ -1,5 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
 
+// One request per page load and token, shared by every upload section on the page.
+const enabledByToken = new Map<string, Promise<boolean>>();
+
+function loadEnabled(token: string): Promise<boolean> {
+  let pending = enabledByToken.get(token);
+  if (!pending) {
+    pending = fetch('/api/client/media-rights', { headers: { Authorization: `Bearer ${token}` } })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((data: { enabled?: boolean } | null) => Boolean(data?.enabled))
+      .catch(() => false);
+    enabledByToken.set(token, pending);
+  }
+  return pending;
+}
+
 /**
  * The per-upload rights answer ("Vi har rett til å bruke disse bildene"). The hub answers 404 while the
  * rights checkbox is switched off; then `enabled` stays false and nothing is shown or sent.
@@ -10,12 +25,9 @@ export function useMediaRights(token: string) {
   useEffect(() => {
     if (!token) return undefined;
     let cancelled = false;
-    fetch('/api/client/media-rights', { headers: { Authorization: `Bearer ${token}` } })
-      .then((response) => (response.ok ? response.json() : null))
-      .then((data: { enabled?: boolean } | null) => {
-        if (!cancelled) setEnabled(Boolean(data?.enabled));
-      })
-      .catch(() => undefined);
+    void loadEnabled(token).then((value) => {
+      if (!cancelled) setEnabled(value);
+    });
     return () => {
       cancelled = true;
     };
