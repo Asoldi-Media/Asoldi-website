@@ -345,6 +345,79 @@ test('a claimed job is told to stop while the loop is paused; heartbeat, complet
   assert.equal(jobs.getJob(second.id).status, 'done');
 });
 
+test('a client that left auto: heartbeat, fail and complete keep working but write only the delivery audit', async (t) => {
+  resetJobs();
+  seedClients(baseClients());
+  loopOn();
+  const app = routeApp();
+  const { base, close } = await serve(app);
+  t.after(close);
+  const worker = makeHost('Left PC', ['preview', 'continue']);
+  const headers = { 'content-type': 'application/json', 'x-maker-host-token': worker.token };
+  const post = (path, body = {}) => fetch(`${base}${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+  const fresh = (kind) => jobs.enqueueJob({ salesClientId: 'cl-auto', kind }, { sales }).job;
+  let first = null;
+  let second = null;
+  const cases = [
+    ['pilot removed', { pilotClientIds: ['cl-linked'], delivery: { loop: { enabled: true, mode: 'auto' } }, development: { previewJobs: true } }, 'not-auto'],
+    ['shadow', { pilotClientIds: ['cl-auto'], delivery: { loop: { enabled: true, mode: 'shadow' } }, development: { previewJobs: true } }, 'not-auto'],
+    ['paused', { pilotClientIds: ['cl-auto'], delivery: { loop: { enabled: true, mode: 'auto', paused: { reason: 'check' } } }, development: { previewJobs: true } }, 'paused'],
+  ];
+  for (const [label, patch, stop] of cases) {
+    // In auto two fresh jobs are claimed, then the client leaves auto.
+    loopOn();
+    if (first) jobs.cancelJob(first.id, { by: 'test', sales });
+    first = fresh('preview');
+    second = fresh('continue');
+    assert.equal((await post(`/api/maker/jobs/${first.id}/claim`)).status, 200, `${label}: claim preview`);
+    assert.equal((await post(`/api/maker/jobs/${second.id}/claim`)).status, 200, `${label}: claim continue`);
+    setSettings(patch);
+    const before = JSON.stringify(sales.getSalesClientById('cl-auto'));
+    const auditBefore = readDeliveryAudit().length;
+    const beat = await post(`/api/maker/jobs/${first.id}/heartbeat`, { progress: { phase: 'pipeline', pct: 30 } });
+    assert.equal((await beat.json()).stop, stop, `${label}: told to stop`);
+    assert.equal((await post(`/api/maker/jobs/${first.id}/fail`, { error: 'stopped', retryable: true })).status, 200, `${label}: fail`);
+    assert.equal(jobs.getJob(first.id).status, 'retrying');
+    assert.equal((await post(`/api/maker/jobs/${second.id}/complete`, { result: { runId: 'run-left-0001' } })).status, 200, `${label}: complete`);
+    assert.equal(jobs.getJob(second.id).status, 'done');
+    assert.equal(JSON.stringify(sales.getSalesClientById('cl-auto')), before, `${label}: the client record is not written`);
+    const audit = readDeliveryAudit().slice(auditBefore).filter((row) => row.kind === 'job' && row.clientId === 'cl-auto');
+    assert.deepEqual(audit.map((row) => row.jobId).sort(), [first.id, first.id, second.id].sort(), `${label}: running, retrying and done go to the audit`);
+    assert.ok(audit.every((row) => /client not in auto/.test(row.reason)), label);
+  }
+  // Negative control: in auto the same reports do write the client.
+  loopOn();
+  jobs.cancelJob(first.id, { by: 'test', sales });
+  first = fresh('preview');
+  assert.equal((await post(`/api/maker/jobs/${first.id}/claim`)).status, 200);
+  assert.equal((await post(`/api/maker/jobs/${first.id}/fail`, { error: 'stopped', retryable: true })).status, 200);
+  assert.equal(sales.getSalesClientById('cl-auto').delivery.job.status, 'retrying', 'in auto the mirror follows');
+});
+
+test('a failed job can be cancelled, which ends its job-blocked alert', async () => {
+  resetJobs();
+  seedClients(baseClients());
+  loopOn();
+  const alertsLib = await import('../lib/delivery-alerts.js');
+  const worker = makeHost('Failed PC', ['preview']);
+  const { job } = jobs.enqueueJob({ salesClientId: 'cl-auto', kind: 'preview', maxAttempts: 1 }, { now: T0 });
+  assert.equal(jobs.claimJob(job.id, worker.host, { now: T0 }).status, 200);
+  assert.equal(jobs.failJob(job.id, worker.host, { now: T0, error: 'step crashed' }).job.status, 'failed');
+  const later = T0 + 25 * 60 * MIN;
+  const settings = settingsStore.getAutomationSettings({ fresh: true });
+  const blocked = (now) => alertsLib.currentAlerts({ dataDir, settings, now }).filter((alert) => alert.kind === 'job-blocked').map((alert) => alert.key);
+  assert.deepEqual(blocked(later), [`job-blocked:${job.id}`]);
+  const cancelled = jobs.cancelJob(job.id, { by: 'admin', now: later });
+  assert.equal(cancelled.status, 200);
+  assert.equal(jobs.getJob(job.id).status, 'cancelled');
+  assert.deepEqual(blocked(later + MIN), [], 'the alert ends');
+  assert.equal(jobs.cancelJob(job.id, { by: 'admin', now: later }).status, 409, 'a cancelled job stays cancelled');
+  const done = jobs.enqueueJob({ salesClientId: 'cl-auto', kind: 'preview' }, { now: later }).job;
+  jobs.claimJob(done.id, worker.host, { now: later });
+  jobs.completeJob(done.id, worker.host, { now: later });
+  assert.equal(jobs.cancelJob(done.id, { by: 'admin', now: later }).code, 'finished', 'a done job is not cancelled');
+});
+
 test('a stale lease of a client that left auto is requeued without writing the client', async () => {
   resetJobs();
   seedClients(baseClients());
