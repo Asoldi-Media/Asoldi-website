@@ -39,8 +39,8 @@ export function StaffSection({ token, clientData, setClientData, onError }: Prop
     setUploadingId(memberId);
     try {
       const url = await uploadClientMediaFile(token, file);
-      if (rights.enabled) await rights.record([url], rightsConfirmed);
       commit(staff.map((row) => (row.id === memberId ? { ...row, imageUrl: url } : row)));
+      rights.recordAfterUpload([url], rightsConfirmed, onError);
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Kunne ikke laste opp bildet.');
     } finally {

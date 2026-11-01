@@ -35,5 +35,16 @@ export function useMediaRights(token: string) {
     }
   }, [enabled, token]);
 
-  return { enabled, record };
+  /**
+   * Records the answer once the uploads are already in Kundedata. Never throws: a refused answer is
+   * reported through onError and the uploads stay.
+   */
+  const recordAfterUpload = useCallback((urls: string[], confirmed: boolean, onError: (message: string) => void) => {
+    if (!enabled) return;
+    record(urls, confirmed).catch((err: unknown) => {
+      onError(err instanceof Error ? err.message : 'Kunne ikke lagre bekreftelsen.');
+    });
+  }, [enabled, record]);
+
+  return { enabled, record, recordAfterUpload };
 }

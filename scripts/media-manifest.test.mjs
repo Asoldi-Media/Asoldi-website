@@ -1,18 +1,22 @@
 // Media manifest and signed URLs: a valid signature downloads without a session and the bytes match
 // the manifest's sha256; a changed signature, expiry or client id gives 403; an expired link gives
 // 410; with media.signedUrls off every new route answers 404 {code:'disabled'} and nothing is
-// written (no signing key, no index). The rights checkbox routes follow media.rightsConfirm.
+// written (no signing key, no index). Uploads of a portal user who is not the client's are never
+// listed. The rights checkbox routes follow media.rightsConfirm, need a portal user with role
+// 'client', accept only the user's own files that exist, and store a request in one write.
 // Synthetic client and files on a temp data dir.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const DATA_DIR = mkdtempSync(join(tmpdir(), 'asoldi-media-manifest-'));
 process.env.APP_DATA_DIR = DATA_DIR;
 delete process.env.DATA_DIR;
+// Every write keeps a stamped backup, so the test can count writes.
+process.env.DATA_BACKUP_KEEP = '50';
 
 function put(rel, value) {
   const path = join(DATA_DIR, rel);
@@ -28,7 +32,7 @@ put('sales-clients.json', JSON.stringify([
 ], null, 2));
 const bank = {
   media: {
-    galleryImages: ['/client-media/u-mm/photo.jpg', 'https://cdn.example.com/stock.jpg'],
+    galleryImages: ['/client-media/u-mm/photo.jpg', 'https://cdn.example.com/stock.jpg', '/client-media/u-member/team.jpg', '/client-media/u-gone/old.jpg'],
     logos: ['/client-media/u-mm/logo.png'],
     mainHeroImages: ['/client-media/u-other/not-mine.jpg', '/client-media/u-mm/..%2F..%2Fsales-clients.json'],
   },
@@ -36,10 +40,30 @@ const bank = {
   productCatalogs: [{ layout: 'normal', categories: [{ name: 'Planter', products: [{ title: 'Rose', imageUrl: '/client-media/u-mm/product.webp' }] }] }],
 };
 put('client-portal-profiles.json', JSON.stringify([{ userId: 'u-mm', ownerUserId: 'u-mm', businessId: 'b-mm', businessName: 'Testgartneriet AS', clientDataBank: bank }], null, 2));
+// An active member of the client's business uploads for it; a revoked one no longer does.
+put('client-businesses.json', JSON.stringify({
+  memberships: [
+    { id: 'mem_1', businessId: 'b-mm', userId: 'u-member', email: 'medlem@example.com', role: 'collaborator', status: 'active' },
+    { id: 'mem_2', businessId: 'b-mm', userId: 'u-gone', email: 'borte@example.com', role: 'collaborator', status: 'revoked' },
+  ],
+  userState: {},
+}));
+put('users.json', JSON.stringify([
+  { id: 'u-mm', username: 'gartner@example.com', role: 'client' },
+  { id: 'u-solo', username: 'solo@example.com', role: 'client' },
+  { id: 'u-staff', username: 'ansatt@example.com', role: 'employee' },
+]));
 const PHOTO = Buffer.from('jpeg-photo-bytes-0123456789');
 put('client-uploads/u-mm/photo.jpg', PHOTO);
 put('client-uploads/u-mm/logo.png', Buffer.from('png-logo'));
 put('client-uploads/u-mm/product.webp', Buffer.from('webp-product'));
+put('client-uploads/u-mm/extra.jpg', Buffer.from('jpeg-extra'));
+put('client-uploads/u-mm/temp.jpg', Buffer.from('jpeg-temp'));
+put('client-uploads/u-member/team.jpg', Buffer.from('jpeg-team'));
+// Files of portal users who are not this client's: they exist, so only the owner check keeps them out.
+put('client-uploads/u-other/not-mine.jpg', Buffer.from('another users private upload'));
+put('client-uploads/u-gone/old.jpg', Buffer.from('a former members upload'));
+put('client-uploads/u-solo/a.jpg', Buffer.from('jpeg-solo'));
 put('inbox-bot-staging/mm-1/1700000000000-vedlegg.jpg', Buffer.from('mail-attachment'));
 put('media/client-mm-1/banner.png', Buffer.from('library-banner'));
 put('media-library.json', JSON.stringify({ items: { 'client-mm-1/banner.png': { tags: ['client:mm-1'] }, 'site/hero.png': { tags: ['site'] } } }));
@@ -104,13 +128,16 @@ test('the manifest lists bank, logo, product, inbox and library files with their
   manifest = await res.json();
   assert.equal(manifest.kind, 'asoldi.media-manifest/1');
   const bySource = (source) => manifest.items.filter((item) => item.source === source);
-  assert.deepEqual(bySource('bank').map((item) => item.name).sort(), ['logo.png', 'photo.jpg']);
+  assert.deepEqual(bySource('bank').map((item) => item.name).sort(), ['logo.png', 'photo.jpg', 'team.jpg'], 'the owner\'s and an active member\'s uploads');
   assert.equal(bySource('product')[0].name, 'product.webp');
   assert.equal(bySource('inbox')[0].name, '1700000000000-vedlegg.jpg');
   assert.equal(bySource('library')[0].name, 'banner.png');
-  assert.equal(manifest.items.length, 5, 'the logo is listed once');
+  assert.equal(manifest.items.length, 6, 'the logo is listed once');
   assert.deepEqual(manifest.external.map((row) => row.url), ['https://cdn.example.com/stock.jpg']);
-  assert.doesNotMatch(JSON.stringify(manifest), /not-mine|sales-clients|hero\.png/);
+  assert.ok(existsSync(join(DATA_DIR, 'client-uploads/u-other/not-mine.jpg')), 'the other user\'s file exists');
+  assert.doesNotMatch(JSON.stringify(manifest), /not-mine|old\.jpg|u-other|u-gone|sales-clients|hero\.png/, 'another portal user\'s upload is never listed');
+  const index = readFileSync(join(DATA_DIR, 'media-manifest', 'mm-1.json'), 'utf8');
+  assert.doesNotMatch(index, /not-mine|u-other|u-gone/, 'nor stored in the index');
   const photo = manifest.items.find((item) => item.name === 'photo.jpg');
   assert.equal(photo.sha256, sha(PHOTO));
   assert.equal(photo.bytes, PHOTO.length);
@@ -160,22 +187,67 @@ test('a changed signature, expiry, asset or client gives 403; an expired link gi
   assert.equal((await res.json()).code, 'expired');
 });
 
-test('the rights checkbox stores the answer on the client record and the manifest shows it', async () => {
+function salesClientWrites() {
+  const dir = join(DATA_DIR, 'backups');
+  return existsSync(dir) ? readdirSync(dir).filter((name) => /^sales-clients\.json\.\d{4}-\d{2}-\d{2}T/.test(name)).length : 0;
+}
+
+function postRights(auth, body) {
+  return fetch(`${base}/api/client/media-rights`, { method: 'POST', headers: { authorization: auth, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+}
+
+test('the rights routes need a portal user with role client', async () => {
   setSettings({ media: { rightsConfirm: { enabled: true } } });
-  const auth = { authorization: 'Bearer client:u-mm', 'content-type': 'application/json' };
+  for (const auth of ['Bearer client:u-staff', 'Bearer client:u-nobody']) {
+    assert.equal((await get('/api/client/media-rights', auth)).status, 401, auth);
+    assert.equal((await postRights(auth, { url: '/client-media/u-staff/x.jpg', confirmed: true })).status, 401, auth);
+  }
+  assert.equal(existsSync(join(DATA_DIR, 'media-rights.json')), false, 'nothing stored');
+});
+
+test('the rights checkbox stores a request\'s answers on the client record in one write and the manifest shows them', async () => {
+  setSettings({ media: { rightsConfirm: { enabled: true } } });
   const first = await get('/api/client/media-rights', 'Bearer client:u-mm');
   assert.deepEqual(await first.json(), { enabled: true, rights: {} });
-  const saved = await fetch(`${base}/api/client/media-rights`, { method: 'POST', headers: auth, body: JSON.stringify({ items: [{ url: '/client-media/u-mm/photo.jpg', confirmed: true }, { url: '/client-media/u-mm/logo.png', confirmed: false }] }) });
+  sales.getSalesClients();
+  const writesBefore = salesClientWrites();
+  const answers = [
+    { url: '/client-media/u-mm/photo.jpg', confirmed: true },
+    { url: '/client-media/u-mm/logo.png', confirmed: false },
+    { url: '/client-media/u-mm/extra.jpg', confirmed: true },
+  ];
+  const saved = await postRights('Bearer client:u-mm', { items: answers });
   assert.equal(saved.status, 200);
+  assert.equal((await saved.json()).saved.length, 3);
+  assert.equal(salesClientWrites() - writesBefore, 1, 'three answers, one write');
   const client = sales.getSalesClientById('mm-1');
   assert.equal(client.ext.mediaRights['u-mm/photo.jpg'].confirmed, true);
   assert.equal(client.ext.mediaRights['u-mm/logo.png'].confirmed, false);
-  const foreign = await fetch(`${base}/api/client/media-rights`, { method: 'POST', headers: auth, body: JSON.stringify({ url: '/client-media/u-other/not-mine.jpg', confirmed: true }) });
+  const again = await postRights('Bearer client:u-mm', { items: answers });
+  assert.equal(again.status, 200);
+  assert.equal(salesClientWrites() - writesBefore, 1, 'the same answers again write nothing');
+
+  const auth = 'Bearer client:u-mm';
+  const foreign = await postRights(auth, { url: '/client-media/u-other/not-mine.jpg', confirmed: true });
   assert.equal(foreign.status, 403, 'only the uploader\'s own files');
-  const again = manifestLib.buildMediaManifest('mm-1', { dataDir: DATA_DIR });
-  assert.equal(again.items.find((item) => item.name === 'photo.jpg').rightsConfirmed, true);
-  assert.equal(again.items.find((item) => item.name === 'logo.png').rightsConfirmed, false);
-  assert.equal(again.items.find((item) => item.source === 'inbox').rightsConfirmed, null);
+  const missing = await postRights(auth, { url: `/client-media/u-mm/never-uploaded-${'x'.repeat(150)}.jpg`, confirmed: true });
+  assert.equal(missing.status, 404, 'a file that does not exist is refused');
+  const mixed = await postRights(auth, { items: [{ url: '/client-media/u-mm/temp.jpg', confirmed: true }, { url: '/client-media/u-mm/nope.jpg', confirmed: true }] });
+  assert.equal(mixed.status, 404, 'one missing file refuses the whole request');
+  const tooMany = await postRights(auth, { items: Array.from({ length: 51 }, () => ({ url: '/client-media/u-mm/photo.jpg', confirmed: true })) });
+  assert.equal(tooMany.status, 400);
+  assert.equal(salesClientWrites() - writesBefore, 1, 'refused requests write nothing');
+  assert.deepEqual(Object.keys(sales.getSalesClientById('mm-1').ext.mediaRights).sort(), ['u-mm/extra.jpg', 'u-mm/logo.png', 'u-mm/photo.jpg']);
+
+  // An answer for a file that is later deleted is dropped on the next write.
+  assert.equal((await postRights(auth, { url: '/client-media/u-mm/temp.jpg', confirmed: true })).status, 200);
+  rmSync(join(DATA_DIR, 'client-uploads/u-mm/temp.jpg'));
+  assert.equal((await postRights(auth, { url: '/client-media/u-mm/extra.jpg', confirmed: false })).status, 200);
+  assert.deepEqual(Object.keys(sales.getSalesClientById('mm-1').ext.mediaRights).sort(), ['u-mm/extra.jpg', 'u-mm/logo.png', 'u-mm/photo.jpg']);
+  const rebuilt = manifestLib.buildMediaManifest('mm-1', { dataDir: DATA_DIR });
+  assert.equal(rebuilt.items.find((item) => item.name === 'photo.jpg').rightsConfirmed, true);
+  assert.equal(rebuilt.items.find((item) => item.name === 'logo.png').rightsConfirmed, false);
+  assert.equal(rebuilt.items.find((item) => item.source === 'inbox').rightsConfirmed, null);
   const read = await get('/api/client/media-rights', 'Bearer client:u-mm');
   assert.equal((await read.json()).rights['u-mm/photo.jpg'].confirmed, true);
 });

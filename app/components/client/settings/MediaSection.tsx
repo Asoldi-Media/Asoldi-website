@@ -73,7 +73,6 @@ export function MediaSection({ token, clientData, setClientData, onError }: Prop
     try {
       const uploads = [];
       for (const file of files) uploads.push(await uploadClientMediaCategorized(token, file));
-      if (rights.enabled) await rights.record(uploads.map((upload) => upload.url), rightsConfirmed);
       const isBucket = (key?: string): key is MediaBucketKey => MEDIA_BUCKETS.some((entry) => entry.key === key);
       const next = [
         ...items,
@@ -96,6 +95,8 @@ export function MediaSection({ token, clientData, setClientData, onError }: Prop
           ...briefs,
         ]),
       }));
+      // After the uploads are in Kundedata: a failed rights answer is reported and never drops them.
+      rights.recordAfterUpload(uploads.map((upload) => upload.url), rightsConfirmed, onError);
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Kunne ikke laste opp media.');
     } finally {

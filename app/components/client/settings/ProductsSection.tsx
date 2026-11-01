@@ -160,8 +160,8 @@ export function ProductsSection({ token, clientData, setClientData, onError, onP
   async function uploadImage(categoryIndex: number, productIndex: number, file: File) {
     try {
       const url = await uploadClientMediaFile(token, file);
-      if (rights.enabled) await rights.record([url], rightsConfirmed);
       updateProduct(categoryIndex, productIndex, { imageUrl: url, image: url });
+      rights.recordAfterUpload([url], rightsConfirmed, onError);
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Kunne ikke laste opp produktbilde.');
     }
