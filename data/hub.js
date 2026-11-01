@@ -153,10 +153,13 @@ export function issueLocalBlogToken(id) {
   return { ok: true, token, site: publicSite(sites[i]) };
 }
 
-export function reconcileDeliveryPhases(salesClients = []) {
+// `siteFilter(site)` limits the reconcile to some sites (the delivery loop takes the sites of
+// its own clients, the development GET the rest); without it every site is reconciled, as before.
+export function reconcileDeliveryPhases(salesClients = [], { siteFilter } = {}) {
   const sites = readSites();
   let changed = 0;
   const next = sites.map((site) => {
+    if (typeof siteFilter === 'function' && !siteFilter(site)) return site;
     const deliveryPhase = resolveSiteDeliveryPhase(site, salesClients);
     if (site.deliveryPhase === deliveryPhase) return site;
     changed += 1;

@@ -767,6 +767,15 @@ function writeState(items) {
   writeSalesFile(items.map(normalizeSalesClient));
 }
 
+function applyScopedOwnerSeed(list, include) {
+  if (typeof include !== 'function') return applyAdminDeveloperOwnerSeed(list);
+  const picked = list.filter((client) => include(client));
+  const applied = applyAdminDeveloperOwnerSeed(picked);
+  if (!applied.assignedCount) return { ...applied, clients: list };
+  const byId = new Map(applied.clients.map((client) => [client.id, client]));
+  return { ...applied, clients: list.map((client) => byId.get(client.id) || client) };
+}
+
 function readDeveloperOwnerSeedMeta() {
   if (!existsSync(DEVELOPER_OWNER_SEED_PATH)) return {};
   try {
@@ -777,13 +786,15 @@ function readDeveloperOwnerSeedMeta() {
   }
 }
 
-export function seedExistingDeveloperOwnersToAdmin() {
+// `include(client)` limits the seed to some clients (the delivery loop and the development GET
+// split them by loop ownership); without it every client is seeded, as before.
+export function seedExistingDeveloperOwnersToAdmin({ include } = {}) {
   const meta = readDeveloperOwnerSeedMeta();
   if (!shouldSeedExistingDeveloperOwners(meta)) {
     return { seeded: false, assignedCount: 0 };
   }
   const list = readState();
-  const applied = applyAdminDeveloperOwnerSeed(list);
+  const applied = applyScopedOwnerSeed(list, include);
   if (applied.assignedCount) writeState(applied.clients);
   writeDataJson(DEVELOPER_OWNER_SEED_PATH, {
     existingAssignedToAdminAt: applied.seededAt,
@@ -793,9 +804,9 @@ export function seedExistingDeveloperOwnersToAdmin() {
 }
 
 /** While Admin is the only developer, new website clients do not sit unassigned. */
-export function assignOpenDeveloperClientsToAdmin() {
+export function assignOpenDeveloperClientsToAdmin({ include } = {}) {
   const list = readState();
-  const applied = applyAdminDeveloperOwnerSeed(list);
+  const applied = applyScopedOwnerSeed(list, include);
   if (!applied.assignedCount) return { assignedCount: 0 };
   writeState(applied.clients);
   return { assignedCount: applied.assignedCount };
@@ -1750,6 +1761,35 @@ export function syncSalesDeliveryStage(id, { by = '', reason = '', now = Date.no
   const client = updateSalesClientInternal(id, { delivery: plan.delivery });
   appendDeliveryAudit({ kind: 'stage', clientId: id, by, reason, from: plan.change.from, to: plan.change.to, overlay: plan.change.overlay });
   return { client, changed: true, derived: plan.derived, change: plan.change };
+}
+
+/**
+ * The delivery loop's batch form of syncSalesDeliveryStage: one read and at most one write for
+ * every listed client ({ id, jobs? }). Returns { changed: [{ id, change }] }.
+ */
+export function syncSalesDeliveryStages(entries = [], { by = '', reason = '', now = Date.now() } = {}) {
+  const wanted = new Map();
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const id = sanitizeText(entry?.id);
+    if (id) wanted.set(id, entry);
+  }
+  if (!wanted.size) return { changed: [] };
+  const state = readState();
+  const changed = [];
+  const next = state.map((client) => {
+    const entry = wanted.get(client.id);
+    if (!entry) return client;
+    const plan = planStageWrite(client, { now, by, reason, jobs: entry.jobs });
+    if (!plan.changed) return client;
+    changed.push({ id: client.id, change: plan.change });
+    return normalizeSalesClient({ ...client, delivery: plan.delivery, updatedAt: nowIso() });
+  });
+  if (!changed.length) return { changed };
+  writeState(next);
+  for (const row of changed) {
+    appendDeliveryAudit({ kind: 'stage', clientId: row.id, by, reason, from: row.change.from, to: row.change.to, overlay: row.change.overlay });
+  }
+  return { changed };
 }
 
 /**
