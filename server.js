@@ -85,7 +85,7 @@ import {
   serpApiKeyLabel,
 } from './lib/serpapi-keys.js';
 import { applyMakerBundleToPortal } from './lib/maker-bundle-sync.js';
-import { recordPlanSummaryFromPush, seoPushResponseFields, seoRecordForBank } from './lib/seo-ops/record.js';
+import { recordPlanSummaryFromPush, seoPushResponseFields, seoRecordForProfile } from './lib/seo-ops/record.js';
 import * as offers from './data/offers.js';
 import * as resetTokens from './data/reset-tokens.js';
 import { getPersistentDataDir, pruneAllDataBackups } from './data/storage-path.js';
@@ -12983,7 +12983,7 @@ app.get('/api/hub/site-config', (req, res) => {
   const domain = req.query.domain;
   function withGoals(config, key) {
     const { profile } = findProfileForSiteKey(key);
-    return { ...config, analyticsGoals: analyticsGoalsFromBank(profile?.clientDataBank, { seoRecord: seoRecordForBank(profile?.clientDataBank) }) };
+    return { ...config, analyticsGoals: analyticsGoalsFromBank(profile?.clientDataBank, { seoRecord: seoRecordForProfile(profile) }) };
   }
   if (siteKey) {
     const site = hub.getSiteByKey(siteKey);

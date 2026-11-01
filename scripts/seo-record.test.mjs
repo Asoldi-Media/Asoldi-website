@@ -221,9 +221,12 @@ test('views: the Maker sees decided keywords only', () => {
 
 test('a client with no record file reads as no record', () => {
   assert.equal(record.readSeoRecord('sc-none'), null);
-  assert.equal(record.seoRecordForBank({ makerLink: { salesClientId: 'sc-none' } }), null);
-  assert.equal(record.seoRecordForBank({}), null);
-  assert.ok(record.seoRecordForBank({ makerLink: { salesClientId: 'sc-record-1' } }));
+  const linked = { id: 'sc-record-1', portalBusinessId: 'biz-1' };
+  const profile = (salesClientId) => ({ businessId: 'biz-1', userId: 'user-1', clientDataBank: { makerLink: { salesClientId } } });
+  assert.equal(record.seoRecordForProfile(profile('sc-none'), { getSalesClient: () => linked }), null);
+  assert.equal(record.seoRecordForProfile({ businessId: 'biz-1', clientDataBank: {} }), null);
+  assert.ok(record.seoRecordForProfile(profile('sc-record-1'), { getSalesClient: () => linked }));
+  assert.equal(record.seoRecordForProfile(profile('sc-record-1')), null, 'sc-record-1 is linked to no portal business');
   assert.equal(record.recordGuidesConsumers(null), false);
   assert.equal(record.recordGuidesConsumers({ agreedKeywords: [{ phrase: 'x', status: 'proposed' }] }), false);
 });

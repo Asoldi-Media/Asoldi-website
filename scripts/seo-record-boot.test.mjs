@@ -2,7 +2,9 @@
 // credentials, safe mode on and loopback-only egress, then checks the SEO record over HTTP:
 // both bundle ingest routes record the plan summary without a portal user, a push without a summary
 // answers exactly as before, the admin routes round-trip agreed keywords, and the Maker read stays
-// 404 {code:'disabled'} until seo.recordPull is switched on.
+// 404 {code:'disabled'} until seo.recordPull is switched on. Negative controls: staff access, and a
+// portal data bank that names another business's sales client never gets that client's keywords in
+// the public site config.
 //
 // Run: node --test scripts/seo-record-boot.test.mjs
 import test from 'node:test';
@@ -71,7 +73,7 @@ async function waitFor(check, { timeoutMs = 90_000, stepMs = 150, what = 'condit
   throw new Error(`timed out waiting for ${what}`);
 }
 
-async function bootHub(t) {
+async function bootHub(t, { seed = null } = {}) {
   const dataDir = mkdtempSync(join(tmpdir(), 'asoldi-seo-record-boot-'));
   const home = mkdtempSync(join(tmpdir(), 'asoldi-seo-record-home-'));
   const runDir = mkdtempSync(join(tmpdir(), 'asoldi-seo-record-cwd-'));
@@ -80,6 +82,7 @@ async function bootHub(t) {
     { id: OWNED_ID, businessName: 'Eksempel Baderom AS', industry: 'Baderom', product: 'asoldi', ownerId: 'sales:rep-a@example.com' },
     { id: HANDOFF_ID, businessName: 'Eksempel Maler AS', industry: 'Maler', product: 'asoldi', ownerId: 'sales:rep-a@example.com', makerRun: { runId: 'run-seo-boot-3' } },
   ]));
+  if (seed) seed(dataDir);
   const port = await freePort();
   let logs = '';
   const child = spawn(process.execPath, ['--import', egressGuard, serverPath], {
@@ -329,6 +332,74 @@ test('real hub negative controls: sales reps read only their own clients, develo
       ['Eksempel Baderom', 'approved', ['brand']],
     ]);
     assert.equal(confirmed.body.record.contractText, 'Avtalte søkeord: baderom eksempelby, Eksempel Baderom');
+  } catch (error) {
+    console.error(hub.logs().slice(-4000));
+    throw error;
+  }
+});
+
+test("real hub negative control: a portal bank naming another business's sales client gets none of its keywords in the site config", { timeout: 240_000 }, async (t) => {
+  const LINKED_ID = 'sc-seo-boot-4';
+  const site = (id, name, domain) => ({
+    id,
+    site_key: `key-${id}`,
+    name,
+    domain,
+    websitePlan: 'tier-2-seo',
+    features: { users: true, analytics: true, ecommerce: false, blog: true, socialSync: false, emailMarketing: false, general: true },
+  });
+  // Both portal banks name the same sales client; the hub links it to the first business only (as a
+  // Maker bundle push does). A portal client can write that id into its own bank.
+  const profile = (n, name, domain, phrase) => ({
+    businessId: `biz-${n}`,
+    userId: `user-${n}`,
+    ownerUserId: `user-${n}`,
+    email: `post-${n}@example.com`,
+    businessName: name,
+    createdAt: '2026-10-01T10:00:00.000Z',
+    updatedAt: '2026-10-01T10:00:00.000Z',
+    clientDataBank: {
+      generalInfo: { companyName: name, websiteUrl: `https://${domain}/` },
+      websiteCreatorQuestions: { town: 'Eksempelby' },
+      seo: { keywordPlan: { primary: [{ keyword: phrase }] } },
+      makerLink: { salesClientId: LINKED_ID },
+    },
+  });
+  const hub = await bootHub(t, {
+    seed(dataDir) {
+      const file = join(dataDir, 'sales-clients.json');
+      const clients = JSON.parse(readFileSync(file, 'utf8'));
+      clients.push({ id: LINKED_ID, businessName: 'Eksempel Flytting AS', product: 'asoldi', portalUserId: 'user-own', portalBusinessId: 'biz-own' });
+      writeFileSync(file, JSON.stringify(clients));
+      writeFileSync(join(dataDir, 'sites.json'), JSON.stringify([
+        site('own', 'Eksempel Flytting AS', 'flytting.example.com'),
+        site('other', 'Annen Bedrift AS', 'annen.example.com'),
+      ]));
+      writeFileSync(join(dataDir, 'client-portal-profiles.json'), JSON.stringify([
+        profile('own', 'Eksempel Flytting AS', 'flytting.example.com', 'flytting eksempelby'),
+        profile('other', 'Annen Bedrift AS', 'annen.example.com', 'regnskap eksempelby'),
+      ]));
+    },
+  });
+  const { base, admin } = hub;
+  const goals = async (key) => {
+    const answer = await json(await fetch(`${base}/api/hub/site-config?site_key=${key}`));
+    assert.equal(answer.status, 200, answer.text);
+    return answer.body.analyticsGoals;
+  };
+  try {
+    const before = { own: await goals('key-own'), other: await goals('key-other') };
+    assert.deepEqual(before.own.mapsKeywords, ['flytting eksempelby']);
+    assert.deepEqual(before.other.mapsKeywords, ['regnskap eksempelby']);
+    const approved = await fetch(`${base}/api/admin/sales-clients/${LINKED_ID}/seo/approve`, {
+      method: 'POST',
+      headers: admin({ 'content-type': 'application/json' }),
+      body: JSON.stringify({ phrase: 'pianoflytting eksempelby' }),
+    });
+    assert.equal(approved.status, 200);
+    const after = { own: await goals('key-own'), other: await goals('key-other') };
+    assert.deepEqual(after.own.mapsKeywords, ['pianoflytting eksempelby', 'flytting eksempelby'], 'the linked business tracks the approved keyword first');
+    assert.deepEqual(after.other, before.other, 'the other business gets exactly its own goals, as without a record');
   } catch (error) {
     console.error(hub.logs().slice(-4000));
     throw error;

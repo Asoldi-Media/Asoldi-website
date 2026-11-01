@@ -15,7 +15,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const dataDir = mkdtempSync(join(tmpdir(), 'asoldi-seo-consumers-'));
 process.env.APP_DATA_DIR = dataDir;
-writeFileSync(join(dataDir, 'sales-clients.json'), JSON.stringify([{ id: 'sc-cons-1', businessName: 'Nordlys Sushi AS', product: 'asoldi' }]));
+// sc-cons-1 is linked to portal business biz-1 (as a Maker bundle push links it); sc-cons-2 only to a
+// portal user; sc-cons-3 to nobody.
+writeFileSync(join(dataDir, 'sales-clients.json'), JSON.stringify([
+  { id: 'sc-cons-1', businessName: 'Nordlys Sushi AS', product: 'asoldi', portalUserId: 'user-1', portalBusinessId: 'biz-1' },
+  { id: 'sc-cons-2', businessName: 'Eksempel Kafé AS', product: 'asoldi', portalUserId: 'user-3' },
+  { id: 'sc-cons-3', businessName: 'Eksempel Bakeri AS', product: 'asoldi' },
+]));
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const { phrasesFromKeywordPlan, analyticsGoalsFromBank } = await import('../lib/analytics-insights.js');
@@ -219,14 +225,65 @@ test('the analytics service and the site config pass the record read from the da
   await record.approveAgreedKeyword('sc-cons-1', 'sushi catering eksempelby', { by: 'dev' });
   await record.blockAgreedKeyword('sc-cons-1', 'sushi eksempelby', { by: 'dev' });
   const bank = { makerLink: { salesClientId: 'sc-cons-1' }, seo: { keywordPlan: PLAN }, generalInfo: { companyName: 'Nordlys Sushi AS', companyAddress: 'Eksempelgata 1' }, websiteCreatorQuestions: { town: 'Eksempelby' } };
-  const seoRecord = record.seoRecordForBank(bank);
+  const seoRecord = record.seoRecordForProfile({ businessId: 'biz-1', userId: 'user-1', clientDataBank: bank });
   assert.ok(seoRecord);
   const subject = buildMapsSubject({ businessId: 'biz-1', clientDataBank: bank }, {}, { seoRecord });
   assert.deepEqual(buildMapsKeywords(subject), ['sushi catering eksempelby', 'sushi takeaway eksempelby', 'restaurant sentrum eksempelby']);
   assert.equal('seoRecord' in buildMapsSubject({ clientDataBank: bank }, {}), false, 'no record: the subject has exactly the old fields');
   const { buildAnalyticsDashboard } = await import('../lib/client-analytics-service.js');
-  const dashboard = await buildAnalyticsDashboard({ profile: { businessId: 'biz-1', clientDataBank: bank, payment: { planId: 'tier-2-seo' } }, hubSite: null });
+  const dashboard = await buildAnalyticsDashboard({ profile: { businessId: 'biz-1', userId: 'user-1', clientDataBank: bank, payment: { planId: 'tier-2-seo' } }, hubSite: null });
   assert.equal(dashboard.access.allowed, true);
   assert.deepEqual(dashboard.subject.keywords, ['sushi catering eksempelby', 'sushi takeaway eksempelby', 'restaurant sentrum eksempelby']);
   assert.ok(!dashboard.goals.mapsKeywords.includes('sushi eksempelby'));
+});
+
+test("a data bank naming another business's sales client reads as no record: the consumers give their output without one", async () => {
+  // Runs after the test above, so sc-cons-1 has a record that guides consumers. A portal client can
+  // write any sales client id into its own bank (the portal keeps makerLink.salesClientId).
+  const clientPortal = await import('../data/client-portal.js');
+  const { buildAnalyticsDashboard } = await import('../lib/client-analytics-service.js');
+  assert.equal(record.recordGuidesConsumers(record.readSeoRecord('sc-cons-1')), true);
+  const bank = { seo: { keywordPlan: PLAN }, generalInfo: { companyName: 'Annen Bedrift AS', companyAddress: 'Prøvegata 2' }, websiteCreatorQuestions: { town: 'Eksempelby', importantKeywords: ['kafé eksempelby'] } };
+  clientPortal.upsertClientProfile('user-2', { businessName: 'Annen Bedrift AS', email: 'post2@example.com' }, { businessId: 'biz-2', ownerUserId: 'user-2' });
+  clientPortal.setClientDataBank('user-2', { ...bank, makerLink: { salesClientId: 'sc-cons-1' } }, { businessId: 'biz-2' });
+  const other = clientPortal.getClientProfileByBusinessId('biz-2');
+  assert.equal(other.clientDataBank.makerLink.salesClientId, 'sc-cons-1', 'the portal keeps the id the client wrote');
+  assert.equal(record.seoRecordForProfile(other), null);
+
+  const unlinked = { ...other, clientDataBank: { ...other.clientDataBank, makerLink: { ...other.clientDataBank.makerLink, salesClientId: '' } } };
+  const goals = analyticsGoalsFromBank(other.clientDataBank, { seoRecord: record.seoRecordForProfile(other) });
+  assert.deepEqual(goals, analyticsGoalsFromBank(other.clientDataBank), 'goals: exactly the no-record output');
+  if (baseInsights) assert.deepEqual(goals, baseInsights.analyticsGoalsFromBank(other.clientDataBank), 'goals: the base release output');
+  assert.ok(!goals.mapsKeywords.includes('sushi catering eksempelby'));
+  const dashboard = async (profile) => buildAnalyticsDashboard({ profile: { ...profile, payment: { planId: 'tier-2-seo' } }, hubSite: null });
+  const [named, none] = [await dashboard(other), await dashboard(unlinked)];
+  assert.equal(named.access.allowed, true);
+  assert.deepEqual(named.subject.keywords, none.subject.keywords, 'Maps keywords: exactly the no-record output');
+  assert.deepEqual(named.goals, none.goals);
+  assert.ok(!named.subject.keywords.includes('sushi catering eksempelby'));
+  if (baseMaps) assert.deepEqual(named.subject.keywords, baseMaps.buildMapsKeywords(baseMaps.buildMapsSubject(other, {})), 'Maps keywords: the base release output');
+
+  // The linked business reads it; a sales client without a business id is matched by its portal
+  // user; one linked to nobody is read by nobody.
+  const named1 = (profile) => ({ ...profile, clientDataBank: { makerLink: { salesClientId: profile.salesClientId } } });
+  assert.ok(record.seoRecordForProfile(named1({ businessId: 'biz-1', userId: 'user-1', salesClientId: 'sc-cons-1' })));
+  assert.equal(record.seoRecordForProfile(named1({ businessId: 'biz-9', userId: 'user-1', salesClientId: 'sc-cons-1' })), null, 'the business id decides when the sales client has one');
+  await record.approveAgreedKeyword('sc-cons-2', 'kafé eksempelby', { by: 'dev' });
+  await record.approveAgreedKeyword('sc-cons-3', 'brød eksempelby', { by: 'dev' });
+  assert.ok(record.seoRecordForProfile(named1({ businessId: 'biz-3', userId: 'user-3', salesClientId: 'sc-cons-2' })));
+  assert.equal(record.seoRecordForProfile(named1({ businessId: 'biz-4', userId: 'user-4', salesClientId: 'sc-cons-2' })), null);
+  assert.equal(record.seoRecordForProfile(named1({ businessId: 'biz-5', userId: 'user-5', salesClientId: 'sc-cons-3' })), null);
+  assert.equal(record.seoRecordForProfile(named1({ businessId: '', userId: '', salesClientId: 'sc-cons-3' })), null);
+  assert.equal(record.seoRecordForProfile(named1({ businessId: 'biz-1', userId: 'user-1', salesClientId: 'sc-unknown' })), null);
+  assert.equal(record.seoRecordForProfile(null), null);
+  assert.equal(record.seoRecordForProfile({ businessId: 'biz-1' }), null);
+
+  // The sales list is read only for an id that has a record file.
+  let reads = 0;
+  const counting = (id) => { reads += 1; return { id, portalBusinessId: 'biz-1' }; };
+  assert.equal(record.seoRecordForProfile(named1({ businessId: 'biz-1', salesClientId: 'sc-no-file' }), { getSalesClient: counting }), null);
+  assert.equal(reads, 0);
+  assert.ok(record.seoRecordForProfile(named1({ businessId: 'biz-1', salesClientId: 'sc-cons-1' }), { getSalesClient: counting }));
+  assert.equal(reads, 1);
+  assert.equal(record.seoRecordForProfile(named1({ businessId: 'biz-1', salesClientId: 'sc-cons-1' }), { getSalesClient: () => { throw new Error('unreadable'); } }), null);
 });
