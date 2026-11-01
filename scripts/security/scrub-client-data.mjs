@@ -137,10 +137,12 @@ export function domainLabel(domain) {
 
 /**
  * Neutral words for company domains, one per domain: a hashed start in NEUTRAL_WORDS, the next free
- * word on a clash, in sorted order. Returns Map<domain, word>.
+ * word on a clash, in sorted order. `taken`: words (and word-n variants) already in use on .test
+ * domains in the tree, from an earlier cleanup; a new company never gets one of them. Returns
+ * Map<domain, word>.
  */
-export function assignWords(domains) {
-  const used = new Set();
+export function assignWords(domains, { taken = [] } = {}) {
+  const used = new Set([...taken].map((word) => String(word).toLowerCase()));
   const out = new Map();
   for (const domain of [...new Set(domains)].sort()) {
     const start = parseInt(hash(domain, 8), 16) % NEUTRAL_WORDS.length;
@@ -232,18 +234,32 @@ export function fileHits(path, text, allowlist) {
   return hits;
 }
 
+// <word>.test or <word>-<n>.test as a domain or the end of a host name (www.<word>.test), not inside a longer label.
+const WORD_DOMAIN = new RegExp(`(?<![\\w-])((?:${NEUTRAL_WORDS.join('|')})(?:-\\d+)?)\\.test\\b`, 'gi');
+
+/** The neutral words (and word-n variants) the texts already use as <word>.test domains. */
+export function wordsInUse(texts) {
+  const out = new Set();
+  for (const text of texts) {
+    if (!/\.test\b/i.test(text)) continue;
+    for (const match of text.matchAll(WORD_DOMAIN)) out.add(match[1].toLowerCase());
+  }
+  return [...out].sort();
+}
+
 /**
- * Builds the value maps from the flagged hits. Returns { addresses: Map<lower address,
- * replacement>, domains: Map<lower domain, replacement domain>, words: Map<lower domain, word>,
- * phones: Map<national, fixture> }.
+ * Builds the value maps from the flagged hits. `taken`: words already used on .test domains
+ * (wordsInUse), which no new company gets. Returns { addresses: Map<lower address, replacement>,
+ * domains: Map<lower domain, replacement domain>, words: Map<lower domain, word>, phones:
+ * Map<national, fixture> }.
  */
-export function buildMaps(hits) {
+export function buildMaps(hits, { taken = [] } = {}) {
   const addresses = new Map();
   const phones = new Map();
   const used = new Set();
   const emails = [...new Set(hits.filter((h) => h.rule === 'email').map((h) => h.value.toLowerCase()))].sort();
   const companyDomains = emails.map((address) => address.slice(address.lastIndexOf('@') + 1)).filter((domain) => !PLATFORM_DOMAINS.has(domain));
-  const words = assignWords(companyDomains);
+  const words = assignWords(companyDomains, { taken });
   const domains = new Map([...words].map(([domain, word]) => [domain, `${word}.test`]));
   for (const address of emails) {
     const at = address.lastIndexOf('@');
@@ -368,6 +384,7 @@ export function run({ root, write = false } = {}) {
   const excluded = [];
   const runtime = [];
   const others = [];
+  const texts = [];
   for (const path of listRepoFiles(root)) {
     let buffer;
     try {
@@ -377,6 +394,7 @@ export function run({ root, write = false } = {}) {
     }
     if (isProbablyBinary(buffer)) continue;
     const text = buffer.toString('utf8');
+    texts.push(text);
     if (exclude.some((re) => re.test(path))) {
       const findings = scanLines(path, splitLines(text), ctx);
       if (findings.length) excluded.push({ path, count: findings.length });
@@ -391,7 +409,8 @@ export function run({ root, write = false } = {}) {
     files.push({ path, text, hits: own });
     hits.push(...own);
   }
-  const maps = buildMaps(hits);
+  // Words an earlier cleanup already gave a company stay that company's.
+  const maps = buildMaps(hits, { taken: wordsInUse(texts) });
   const changed = [];
   const left = [];
   const after = [];
