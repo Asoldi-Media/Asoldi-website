@@ -138,6 +138,28 @@ test('the signal table: e-mail, domain, booked slot, title, speaker, and not-sol
   assert.equal(titleOnly[0].signals.attendeeEmail, undefined);
 });
 
+test('a recording in a shared Meet room belongs to the client whose booked slot it started in, so it gets no candidates', () => {
+  const ROOM = 'https://meet.google.com/shr-room-aaa';
+  const owner = {
+    id: 'rk-room-owner',
+    businessName: 'Romeier AS',
+    agreedTime: true,
+    meetingAt: iso(T),
+    meetingMode: 'online',
+    calendar: { meetLink: ROOM, confirmedMeetLink: ROOM },
+    meetings: [],
+  };
+  const sharing = { id: 'rk-room-other', businessName: 'Annen Rom AS', recordedMeetLinks: [ROOM], meetings: [] };
+  const record = { meetingId: 'rk-rec-room', meetingLink: ROOM, startedAt: iso(T + 3 * 60_000), attendeeEmails: [], transcript: 'A: b' };
+  assert.equal(rank.recordingIsUnowned(record, [owner, sharing]), false, 'the booked slot settles the shared room');
+  assert.equal(rank.recordingIsUnowned(record, [owner, sharing], { slotOwner: null }), true, 'control: without the slot rule the room looks unowned');
+  const settings = { fireflies: { candidateRanker: { enabled: true, candidateMinScore: 0 } } };
+  assert.deepEqual(rank.candidatesForUnownedRecordings({ clients: [owner, sharing], meetings: [record], settings }), [], 'no candidate list for an owned recording');
+  const late = { ...record, meetingId: 'rk-rec-room-late', startedAt: iso(T + 9 * 24 * HOUR) };
+  assert.equal(rank.recordingIsUnowned(late, [owner, sharing]), true, 'no slot fits: nobody owns it');
+  assert.deepEqual(rank.candidatesForUnownedRecordings({ clients: [owner, sharing], meetings: [late], settings }).map((row) => row.meetingId), ['rk-rec-room-late']);
+});
+
 test('auto-link needs an exact attendee e-mail and a booked slot within 30 minutes; title and name never link', () => {
   setSettings({ fireflies: { autoLink: { enabled: true } } });
   const settings = settingsStore.getAutomationSettings({ fresh: true });

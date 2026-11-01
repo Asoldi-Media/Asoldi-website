@@ -499,7 +499,7 @@ export function OfferReviewSection({ hideHeader = false }: { hideHeader?: boolea
                     if (selectedId) void loadDetail(selectedId);
                   }}
                 />
-                {candidates ? (
+                {candidates?.has(meeting.meetingId) ? (
                   <FirefliesCandidateList
                     meetingId={meeting.meetingId}
                     candidates={candidates.get(meeting.meetingId) || []}
