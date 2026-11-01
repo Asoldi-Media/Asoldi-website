@@ -20,7 +20,9 @@ const { contractArticleModel, contractInputsForOffer } = await import('../lib/of
 const { productsWithTier, setOfferTierIncludesResolver } = await import('../lib/offer-email.js');
 const { buildOfferFromMeetingQuote, isStructuralIncludeLine } = await import('../lib/offer-from-quote.js');
 const { catalogOfferIncludes } = await import('../lib/legal/sales.js');
-const { mergeCatalogSalesProducts } = await import('../app/data/catalogLegalTexts.js');
+const { catalogCheckoutBenefits, mergeCatalogPortalPlans, mergeCatalogSalesProducts } = await import('../app/data/catalogLegalTexts.js');
+const { planFromOfferAlternative } = await import('../lib/site-plan.js');
+const { tierSnapshot } = await import('../lib/legal/plan.js');
 
 function setSwitch(enabled) {
   assert.equal(settingsStore.saveAutomationSettings({ legal: { catalogTexts: { enabled } } }, { by: 'test' }).ok, true);
@@ -118,6 +120,45 @@ test('switch on: a stamped sent offer keeps the version it was sent with', () =>
   assert.equal(contractInputsForOffer(unknown, CLIENT).legal.mode, 'legacy', 'an unknown stamped version falls back to the legacy text');
 });
 
+test('switch on: the contract links the versions it incorporates, not the latest pages', () => {
+  setSwitch(true);
+  const offer = { ...darkSurface.FIXTURE_OFFERS.tier2, dpaVersion: DPA_VERSION, ext: { legal: { catalogVersion: CATALOG_VERSION } } };
+  const html = contractHtmlForOffer(offer, CLIENT);
+  assert.match(html, new RegExp(`/vilkar\\?versjon=${CATALOG_VERSION}`));
+  assert.match(html, new RegExp(`/databehandleravtale\\?versjon=${CATALOG_VERSION}`));
+  assert.match(html, /etter skriftlig varsel minst 30 dager i forveien/, 'the contract says how a newer version starts to apply');
+});
+
+test('switch on: a stamped offer renders the tier contents and agreed keywords it was sent with', () => {
+  setSwitch(true);
+  const stamped = { ...darkSurface.FIXTURE_OFFERS.tier2, dpaVersion: DPA_VERSION, ext: { legal: { catalogVersion: CATALOG_VERSION, tiers: tierSnapshot(), agreedKeywordsText: 'Avtalte søkeord: frisør Bergen.' } } };
+  const inputs = contractInputsForOffer(stamped, CLIENT);
+  assert.equal(inputs.agreedKeywordsText, 'Avtalte søkeord: frisør Bergen.', 'the keywords sent, not the record today');
+  const html = contractHtmlForOffer(stamped, CLIENT);
+  assert.match(html, /Avtalte søkeord: frisør Bergen\./);
+  assert.match(html, /Lenkenettverk:/);
+  // The tier vocabulary changes after send: the stamped contract keeps the scope it was sent with.
+  const shrunk = { ...stamped, ext: { legal: { ...stamped.ext.legal, tiers: { ...tierSnapshot(), 'tier-2-seo': { services: ['site', 'changes'], pages: 7 } } } } };
+  assert.doesNotMatch(contractHtmlForOffer(shrunk, CLIENT), /Lenkenettverk:/, 'rendered from the snapshot');
+  const unsnapshotted = { ...stamped, ext: { legal: { catalogVersion: CATALOG_VERSION } } };
+  assert.equal(sha256(contractHtmlForOffer({ ...unsnapshotted, ext: { legal: { catalogVersion: CATALOG_VERSION, tiers: tierSnapshot(), agreedKeywordsText: '' } } }, CLIENT)), sha256(contractHtmlForOffer(unsnapshotted, CLIENT)), 'a snapshot of today\'s tiers renders the same text');
+});
+
+test('catalog lines count as tier lines only with the switch on or a legal stamp (negative control: derived plans as before)', () => {
+  setSwitch(false);
+  for (const [key, offer] of Object.entries(darkSurface.FIXTURE_PLAN_OFFERS)) {
+    assert.deepEqual(JSON.parse(JSON.stringify(planFromOfferAlternative(offer))), baseline.plans[key], key);
+  }
+  assert.equal(isStructuralIncludeLine('Grunnleggende SEO og sitemap', { tierId: 'tier-1-standard' }), false, 'switch off: a rep line equal to a catalog line is not neutral');
+  const tier1 = darkSurface.FIXTURE_PLAN_OFFERS.tier1RepLines;
+  const stamped = { ...tier1, dpaVersion: DPA_VERSION, ext: { legal: { catalogVersion: CATALOG_VERSION } } };
+  assert.equal(planFromOfferAlternative(stamped).plan.needsConfirmation, false, 'a stamped offer keeps its catalog lines neutral after a switch-off');
+  setSwitch(true);
+  assert.equal(planFromOfferAlternative(tier1).plan.needsConfirmation, false);
+  assert.deepEqual(planFromOfferAlternative(tier1).plan.unknownLines, []);
+  setSwitch(false);
+});
+
 test('switch on: offer letters and quote offers use the catalog lines, and those lines count as tier lines', () => {
   setSwitch(true);
   setOfferTierIncludesResolver((tierId) => catalogOfferIncludes(tierId));
@@ -130,6 +171,25 @@ test('switch on: offer letters and quote offers use the catalog lines, and those
   assert.equal(isStructuralIncludeLine('Asoldi-nettverk for relevante lenker', { tierId: 'tier-1-standard' }), false, 'a tier 2 line is not neutral in a tier 1 offer');
   setSwitch(false);
   assert.deepEqual(productsWithTier([], 'tier-1-standard'), baseline.tiers['tier-1-standard'].productsWithTier);
+});
+
+test('the portal plans and checkout keep their static data until the catalog answers, then drop promises the terms do not back', () => {
+  const plans = [{ id: 'tier-1-standard', features: ['f'], includedFeatures: ['a'], notIncludedFeatures: ['x'] }, { id: 'other', features: [], includedFeatures: ['b'], notIncludedFeatures: [] }];
+  assert.equal(mergeCatalogPortalPlans(plans, null), plans, 'same array while the API answers 404');
+  const benefits = [{ key: 'money-back' }, { key: 'no-setup-fee' }, { key: 'support' }];
+  assert.equal(catalogCheckoutBenefits(benefits, null), benefits, 'same array while the API answers 404');
+  const payload = { tiers: { 'tier-1-standard': render.salesCopyForTier('tier-1-standard') }, checkoutPromises: [] };
+  const merged = mergeCatalogPortalPlans(plans, payload);
+  assert.ok(merged[0].includedFeatures.includes('Blogg der du publiserer egne innlegg'));
+  assert.deepEqual(merged[0].features, merged[0].includedFeatures);
+  assert.equal(merged[1], plans[1]);
+  assert.deepEqual(catalogCheckoutBenefits(benefits, payload), [], 'no clause backs the static checkout promises');
+  assert.deepEqual(catalogCheckoutBenefits(benefits, { checkoutPromises: ['support'] }), [{ key: 'support' }]);
+  for (const page of ['../app/pages/client/ClientWebsitePlans.tsx', '../app/pages/client/ClientWebsiteCheckout.tsx']) {
+    const source = readFileSync(new URL(page, import.meta.url), 'utf8');
+    assert.match(source, /useCatalogSalesCopy\(\)/, page);
+    assert.doesNotMatch(source, /\{CHECKOUT_BENEFITS\.map/, `${page} renders the filtered promises`);
+  }
 });
 
 test('the sales page keeps its static cards until the catalog answers', () => {

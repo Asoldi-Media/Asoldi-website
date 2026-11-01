@@ -108,7 +108,9 @@ test('the owner decisions are in the texts', () => {
   assert.match(terms, /Ubegrensede endringer inngår i 6 måneder/);
   // Cancellation, export and hosting end after the paid period plus 30 days.
   assert.match(terms, /Nettsiden er oppe i 30 dager etter at den betalte perioden er over\. Deretter stopper hostingen/);
-  assert.match(terms, /Kunden kan be om eksport i kundeportalen/);
+  assert.match(terms, /Kunden kan be om eksport fram til hostingen stopper, i kundeportalen eller ved å kontakte Asoldi/);
+  // No commitments beyond the owner decisions: no export deadline, no manual approval of AI changes.
+  assert.doesNotMatch(terms, /virkedager\. Eksporten|leverer eksporten innen|godkjennes av en utvikler/);
   // AI processing.
   assert.match(terms, /Personopplysninger og møteopptak sendes bare til AI-leverandører/);
   // Business-to-business terms; consumer-facing clauses follow the consumer authority's standard terms.
@@ -157,6 +159,54 @@ test('the archive, the DPA appendix and the contract-line snapshot are current, 
   assert.notDeepEqual(changedTerms, archived.docs.vilkar);
 });
 
+test('the published texts come from the archive and never follow stored settings', async () => {
+  const texts = await import('../lib/legal/texts.js');
+  const archive = await import('../lib/legal/archive.js');
+  const archived = archive.loadArchivedCatalog(CATALOG_VERSION);
+  assert.deepEqual(archived.published, texts.publishedValues(), 'the archive records the values it was published with');
+  const served = texts.legalTextResponse('vilkar');
+  assert.equal(served.status, 200);
+  const { current, ...doc } = served.body;
+  assert.equal(current, true);
+  assert.deepEqual(doc, archived.docs.vilkar, 'the current terms are the archived ones');
+  assert.deepEqual(texts.legalSettingsDrift(defaultAutomationSettings()), []);
+  const changed = defaultAutomationSettings();
+  changed.lifecycle.cancellationGraceDays = 60;
+  changed.pricing.oneTimeMultiplier = 11;
+  changed.retention.leadMonths = 18;
+  const drift = texts.legalSettingsDrift(changed);
+  // retention.meetings follows the lead months for companies that have not signed.
+  assert.deepEqual(drift.map((row) => row.key).sort(), ['graceDays', 'oneTimeMultiplier', 'retention.leads', 'retention.meetings'].sort());
+  assert.deepEqual(drift.find((row) => row.key === 'graceDays'), { key: 'graceDays', published: 30, current: 60 });
+});
+
+test('the archive cache only holds versions that exist, and refuses numbers above the current version', async () => {
+  const archive = await import('../lib/legal/archive.js');
+  archive.clearArchiveCache();
+  assert.equal(archive.loadArchivedCatalog(1e21), null);
+  assert.equal(archive.loadArchivedCatalog(CATALOG_VERSION + 1), null);
+  for (let n = 0; n < 500; n += 1) archive.loadArchivedCatalog(CATALOG_VERSION + 2 + n);
+  assert.equal(archive.archiveCacheSize(), 0, 'misses are never cached');
+  assert.ok(archive.loadArchivedCatalog(CATALOG_VERSION));
+  assert.equal(archive.archiveCacheSize(), 1);
+  const texts = await import('../lib/legal/texts.js');
+  assert.equal(texts.legalTextResponse('vilkar', { version: '1000000000000000000000' }).status, 404);
+  assert.equal(archive.archiveCacheSize(), 1);
+});
+
+test('a tier snapshot keeps a sent contract scope when the tier vocabulary changes later', async () => {
+  const { planForContract, tierSnapshot } = await import('../lib/legal/plan.js');
+  const snapshot = tierSnapshot();
+  assert.deepEqual(planForContract({ tierId: 'tier-2-seo' }, { tiers: snapshot }), planForContract({ tierId: 'tier-2-seo' }));
+  const older = { ...snapshot, 'tier-2-seo': { services: ['site'], pages: 3 } };
+  const frozen = planForContract({ tierId: 'tier-2-seo' }, { tiers: older });
+  assert.equal(frozen.pages, 3);
+  assert.equal(frozen.services.includes('seo'), false, 'the snapshot, not today\'s tier contents');
+  const lines = render.contractLinesForPlan({ tierId: 'tier-2-seo' }, { tiers: older }).map((block) => block.clauseId);
+  assert.equal(lines.includes('service.seo'), false);
+  assert.ok(render.contractLinesForPlan({ tierId: 'tier-2-seo' }).some((block) => block.clauseId === 'service.seo'));
+});
+
 test('the generated appendix file is the committed one', () => {
   const committed = readFileSync(legalRender.APPENDIX_URL, 'utf8').replace(/\r\n/g, '\n');
   assert.equal(committed, legalRender.currentAppendix());
@@ -177,7 +227,7 @@ test('the legal files use neutral public wording', () => {
     '../lib/legal/catalog.js', '../lib/legal/render.js', '../lib/legal/subprocessors.js', '../lib/legal/dpa.js',
     '../lib/legal/binding.js', '../lib/legal/terms-update.js', '../lib/legal/hosts-register.json', '../docs/legal-texts.md',
     '../docs/databehandleravtale-appendix.md', '../lib/routes/legal-routes.js', '../lib/legal/archive.js', '../lib/legal/contract.js',
-    '../lib/legal/sales.js', '../lib/legal/switch.js', '../lib/legal/texts.js', './legal/scan-hosts.mjs', './legal-render.mjs',
+    '../lib/legal/sales.js', '../lib/legal/switch.js', '../lib/legal/texts.js', '../lib/legal/plan.js', './legal/scan-hosts.mjs', './legal-render.mjs',
     '../app/data/catalogLegalTexts.js', '../app/pages/legal/CatalogLegalPage.tsx', '../app/components/client/ClientLegalCard.tsx',
   ];
   for (const file of files) {

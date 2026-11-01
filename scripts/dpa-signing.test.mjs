@@ -14,9 +14,10 @@ const express = (await import('express')).default;
 const sales = await import('../data/sales.js');
 const offers = await import('../data/sales-offers.js');
 const settingsStore = await import('../data/automation-settings.js');
-const { DPA_VERSION, dpaSignPatch, dpaStatus } = await import('../lib/legal/dpa.js');
+const { DPA_VERSION, dpaMissingAtSigning, dpaSignPatch, dpaStatus } = await import('../lib/legal/dpa.js');
 const { CATALOG_VERSION } = await import('../lib/legal/catalog.js');
-const { legalBindingForClient, legalSourceForOffer } = await import('../lib/legal/binding.js');
+const { legalBindingForClient, legalSourceForOffer, setAgreedKeywordsResolver } = await import('../lib/legal/binding.js');
+const { draftTermsUpdateNotice, termsNoticePatch } = await import('../lib/legal/terms-update.js');
 const { register } = await import('../lib/routes/legal-routes.js');
 const { productsWithTier } = await import('../lib/offer-email.js');
 
@@ -104,13 +105,15 @@ test('switch off: no stamps, no snapshot, no DPA data, every legal route answers
   assert.equal(legalSourceForOffer(offer).mode, 'legacy');
   assert.equal(dpaStatus(client).status, 'disabled');
   portalUsers.set('u-off', client.id);
-  const before = { sales: readData('sales.json'), offers: readData('sales-offers.json') };
+  const before = { sales: readData('sales-clients.json'), offers: readData('sales-offers.json') };
+  assert.match(before.sales, /Dark Bakeri/, 'the client file is the one checked');
+  assert.match(before.offers, /"status": *"sent"/, 'the offer file is the one checked');
   for (const [path, options] of ROUTES) {
     const res = await call(path, options);
     assert.equal(res.status, 404, path);
     assert.deepEqual(res.body, { code: 'disabled' }, path);
   }
-  assert.equal(readData('sales.json'), before.sales, 'no client data written');
+  assert.equal(readData('sales-clients.json'), before.sales, 'no client data written');
   assert.equal(readData('sales-offers.json'), before.offers, 'no offer data written');
   assert.doesNotMatch(before.offers, /dpaVersion|"legal"/);
   assert.doesNotMatch(before.sales, /"legal"|"dpa"/);
@@ -132,7 +135,7 @@ test('switch on: an offer is stamped at send, alternatives too, and the preview 
   const again = offers.stampOfferLegalVersions(sent.id);
   assert.deepEqual(again, offers.getSalesOfferById(sent.id), 'stamping twice changes nothing');
   assert.equal(offers.markSalesOfferResent(sent.id, { actor: 'rep' }).dpaVersion, DPA_VERSION);
-  assert.deepEqual(legalSourceForOffer(sent), { mode: 'catalog', catalogVersion: CATALOG_VERSION, dpaVersion: DPA_VERSION });
+  assert.deepEqual(legalSourceForOffer(sent), { mode: 'catalog', catalogVersion: CATALOG_VERSION, dpaVersion: DPA_VERSION, tiers: sent.ext.legal.tiers });
 
   const dual = sentOffer(client.id, {
     alternatives: [
@@ -156,8 +159,90 @@ test('an offer sent before the switch keeps the legacy texts and never yields a 
   const signed = sales.setSalesProgress(client.id, 'contractSigned', true, { fastTrack: true });
   assert.equal(signed.ext, undefined, 'no snapshot without a stamped offer');
   assert.equal(legalBindingForClient(signed).mode, 'legacy');
-  assert.equal(dpaStatus(signed).status, 'missing');
-  assert.equal(dpaStatus(signed).missing, true);
+  // The legacy contract incorporates the DPA as published on the signing date: in force, not missing.
+  assert.equal(dpaStatus(signed).status, 'accepted-legacy');
+  assert.equal(dpaStatus(signed).missing, false);
+  assert.equal(dpaStatus(signed).upToDate, false, 'the portal offers the current version');
+  // The delivery gate's rule at signing: the offer did not carry the DPA, so it gets its developer-only line.
+  assert.equal(dpaMissingAtSigning(offers.getSalesOfferById(offer.id)), true);
+});
+
+test('a client signed before the switch is not told the DPA is missing once the switch is on', () => {
+  setSwitch(false);
+  const { client } = signedClient('Fleet AS');
+  setSwitch(true);
+  const status = dpaStatus(sales.getSalesClientById(client.id));
+  assert.deepEqual([status.status, status.missing, status.required, status.upToDate], ['accepted-legacy', false, true, false]);
+  const older = dpaStatus({ ...client, ext: { dpa: { version: 'dpa-0', signedAt: '2026-01-01T00:00:00.000Z' } } });
+  assert.deepEqual([older.status, older.missing, older.upToDate], ['outdated', false, false], 'an older signed version stays in force');
+  const bound = dpaStatus({ ...client, ext: { legal: { catalogVersion: CATALOG_VERSION } } });
+  assert.deepEqual([bound.status, bound.missing], ['missing', true], 'only a catalog-bound client with no DPA version recorded is missing one');
+});
+
+test('the got-client route path (a plain progression patch) records the snapshot too', () => {
+  setSwitch(true);
+  const client = sales.createSalesClient({ businessName: 'Route AS', contactEmail: 'route@example.com', product: 'asoldi' });
+  const offer = sentOffer(client.id);
+  assert.equal(offer.ext.legal.catalogVersion, CATALOG_VERSION);
+  // POST /api/admin/sales/:id/got-client writes progression.contractSigned directly.
+  const signed = sales.updateSalesClient(client.id, { progression: { contractSigned: true }, hubSite: { siteKey: 'route-site' } });
+  assert.equal(signed.ext.legal.catalogVersion, CATALOG_VERSION);
+  assert.equal(signed.ext.legal.offerId, offer.id);
+  assert.equal(legalBindingForClient(signed).mode, 'catalog');
+  assert.equal(dpaStatus(signed).status, 'accepted-with-contract');
+  assert.equal(dpaStatus(signed).missing, false);
+  const again = sales.updateSalesClient(client.id, { progression: { contractSigned: true } });
+  assert.equal(again.ext.legal.boundAt, signed.ext.legal.boundAt, 'a signed client is not snapshotted again');
+  const batch = sales.createSalesClient({ businessName: 'Batch AS', contactEmail: 'batch@example.com', product: 'asoldi' });
+  sentOffer(batch.id);
+  sales.patchSalesClientsById([{ id: batch.id, patch: { progression: { ...batch.progression, contractSigned: true } } }]);
+  assert.equal(sales.getSalesClientById(batch.id).ext.legal.catalogVersion, CATALOG_VERSION, 'the batch writer records it as well');
+});
+
+test('a stamped offer signed while the switch is off still binds its version (kill switch)', () => {
+  setSwitch(true);
+  const client = sales.createSalesClient({ businessName: 'Kill AS', contactEmail: 'kill@example.com', product: 'asoldi' });
+  const offer = sentOffer(client.id);
+  setSwitch(false);
+  const signed = sales.setSalesProgress(client.id, 'contractSigned', true, { fastTrack: true });
+  assert.equal(signed.ext.legal.catalogVersion, CATALOG_VERSION, 'the stamp decides, not the switch');
+  assert.equal(legalSourceForOffer(offers.getSalesOfferById(offer.id)).mode, 'legacy', 'while off the contract shows the legacy text');
+  setSwitch(true);
+  assert.equal(legalSourceForOffer(offers.getSalesOfferById(offer.id)).mode, 'catalog');
+  assert.equal(legalBindingForClient(signed).mode, 'catalog', 'binding and contract agree after the switch is back on');
+  assert.equal(dpaStatus(signed).status, 'accepted-with-contract');
+});
+
+test('a stamped offer freezes the tier contents and agreed keywords it was sent with', () => {
+  setSwitch(true);
+  setAgreedKeywordsResolver(() => 'Avtalte søkeord: frisør Bergen.');
+  try {
+    const client = sales.createSalesClient({ businessName: 'Frozen AS', contactEmail: 'frozen@example.com', product: 'asoldi' });
+    const offer = sentOffer(client.id);
+    assert.equal(offer.ext.legal.agreedKeywordsText, 'Avtalte søkeord: frisør Bergen.');
+    assert.ok(Array.isArray(offer.ext.legal.tiers['tier-2-seo'].services) && offer.ext.legal.tiers['tier-2-seo'].services.length > 0);
+    assert.ok(legalSourceForOffer(offer).tiers, 'the contract renders from the snapshot');
+  } finally {
+    setAgreedKeywordsResolver(null);
+  }
+});
+
+test('a recorded terms notice moves the binding on its effectiveFrom date, as the notice says', () => {
+  const client = { id: 'n1', businessName: 'Notice AS', progression: { contractSigned: true }, product: 'asoldi', ext: { other: { keep: 1 } } };
+  const sentAt = new Date('2027-01-01T10:00:00.000Z');
+  const notice = draftTermsUpdateNotice(client, { now: sentAt });
+  assert.match(notice.text, new RegExp(`Versjon ${CATALOG_VERSION} gjelder for deg fra ${notice.effectiveFrom}`));
+  assert.equal(legalBindingForClient(client, { now: new Date('2027-03-01T00:00:00.000Z') }).mode, 'legacy', 'a draft alone moves nothing');
+  const patch = termsNoticePatch(client, notice, { now: sentAt });
+  const noticed = { ...client, ext: patch.ext };
+  assert.deepEqual(noticed.ext.other, { keep: 1 });
+  assert.equal(termsNoticePatch(noticed, notice), null, 'recording the same notice twice changes nothing');
+  const before = legalBindingForClient(noticed, { now: new Date(Date.parse(notice.effectiveFrom) - 1) });
+  assert.equal(before.mode, 'legacy');
+  assert.deepEqual(before.pendingNotice, { catalogVersion: CATALOG_VERSION, effectiveFrom: notice.effectiveFrom });
+  const after = legalBindingForClient(noticed, { now: new Date(Date.parse(notice.effectiveFrom)) });
+  assert.deepEqual([after.mode, after.catalogVersion, after.source, after.boundAt], ['catalog', CATALOG_VERSION, 'notice', notice.effectiveFrom]);
+  assert.equal(dpaStatus(noticed, { enabled: true }).status, 'accepted-legacy', 'a notice records no DPA signature');
 });
 
 test('signing a stamped offer records the catalog and DPA versions; the DPA counts as accepted', () => {
@@ -186,6 +271,7 @@ test('portal DPA signing is idempotent and keeps the other ext keys', () => {
   assert.equal(dpaSignPatch(after, { now: new Date('2026-11-03T10:00:00.000Z') }), null, 'a second signature changes nothing');
   assert.equal(dpaStatus(after, { enabled: true }).status, 'signed');
   assert.equal(dpaStatus({ ...client, ext: { dpa: { version: 'dpa-0', signedAt: 'x' } } }, { enabled: true }).status, 'outdated');
+  assert.equal(patch.ext.dpa.catalogVersion, CATALOG_VERSION, 'the signature names the catalog version of the text signed');
   assert.equal(dpaStatus({ product: 'ssu', progression: { contractSigned: true } }, { enabled: true }).status, 'not-required');
   assert.equal(dpaStatus({ progression: { contractSigned: false } }, { enabled: true }).status, 'not-required');
 });
@@ -218,15 +304,20 @@ test('switch on: the legal routes serve texts, the binding and DPA signing; term
   const legacyView = await call('/api/client/legal', { user: 'u-legacy' });
   assert.equal(legacyView.status, 200);
   assert.equal(legacyView.body.binding.mode, 'legacy');
-  assert.equal(legacyView.body.dpa.status, 'missing');
+  assert.equal(legacyView.body.dpa.status, 'accepted-legacy');
+  assert.equal(legacyView.body.dpa.missing, false);
+  assert.match(legacyView.body.links.vilkar, /versjon=legacy$/);
+  assert.match(legacyView.body.links.databehandleravtale, /versjon=legacy$/, 'the DPA in force for a legacy client is the static text');
   const boundView = await call('/api/client/legal', { user: 'u-bound' });
   assert.deepEqual([boundView.body.binding.mode, boundView.body.binding.catalogVersion], ['catalog', CATALOG_VERSION]);
   assert.match(boundView.body.links.vilkar, new RegExp(`versjon=${CATALOG_VERSION}$`));
+  assert.match(boundView.body.links.databehandleravtale, new RegExp(`/databehandleravtale\\?versjon=${CATALOG_VERSION}$`), 'the bound DPA version, not always the latest');
 
   const first = await call('/api/client/dpa/sign', { user: 'u-legacy', method: 'POST' });
   assert.equal(first.status, 200);
   assert.equal(first.body.changed, true);
   assert.equal(first.body.dpa.status, 'signed');
+  assert.match(first.body.links.databehandleravtale, new RegExp(`versjon=${CATALOG_VERSION}$`), 'the signed text');
   const signedAt = sales.getSalesClientById(legacy.id).ext.dpa.signedAt;
   const second = await call('/api/client/dpa/sign', { user: 'u-legacy', method: 'POST' });
   assert.equal(second.body.changed, false);
@@ -244,6 +335,14 @@ test('switch on: the legal routes serve texts, the binding and DPA signing; term
   assert.equal(row.bound, 'legacy');
   assert.match(row.notice.subject, /Oppdaterte vilkår fra Asoldi/);
   assert.match(row.notice.text, /gjelder for deg fra \d{4}-\d{2}-\d{2}/);
+  assert.deepEqual(update.body.settingsDrift, [], 'the stored settings match the published texts');
+  assert.equal(settingsStore.saveAutomationSettings({ lifecycle: { cancellationGraceDays: 45 } }, { by: 'test', reason: 'test' }).ok, true);
+  const drifted = await call('/api/admin/legal/terms-update', { admin: true });
+  assert.deepEqual(drifted.body.settingsDrift.find((entry) => entry.key === 'graceDays'), { key: 'graceDays', published: 30, current: 45 });
+  const served = await call('/api/legal/texts/vilkar');
+  assert.match(JSON.stringify(served.body), /oppe i 30 dager/, 'the published text keeps its version value until a new version');
+  assert.doesNotMatch(JSON.stringify(served.body), /oppe i 45 dager/);
+  assert.equal(settingsStore.saveAutomationSettings({ lifecycle: { cancellationGraceDays: 30 } }, { by: 'test', reason: 'test' }).ok, true);
   assert.equal((await call('/api/admin/legal/terms-update')).status, 401);
   assert.deepEqual(readdirSync(dataDir).filter((name) => /outbox|email-log/i.test(name)), [], 'nothing was queued or sent');
 });
