@@ -56,7 +56,7 @@ import {
   planStageWrite,
 } from '../lib/delivery-state.js';
 import { normalizeMakerAutopilot, normalizeMakerMaterials, normalizePreviewPush } from '../lib/maker-events.js';
-import { appendDeliveryAudit } from '../lib/delivery-audit.js';
+import { appendDeliveryAudit, appendDeliveryAuditBatch } from '../lib/delivery-audit.js';
 
 // Client keys only their own writers set (setSalesSitePlan, setSalesDelivery and friends):
 // updateSalesClient and patchSalesClientsById never take them from an update, so no request body
@@ -1786,9 +1786,7 @@ export function syncSalesDeliveryStages(entries = [], { by = '', reason = '', no
   });
   if (!changed.length) return { changed };
   writeState(next);
-  for (const row of changed) {
-    appendDeliveryAudit({ kind: 'stage', clientId: row.id, by, reason, from: row.change.from, to: row.change.to, overlay: row.change.overlay });
-  }
+  appendDeliveryAuditBatch(changed.map((row) => ({ kind: 'stage', clientId: row.id, by, reason, from: row.change.from, to: row.change.to, overlay: row.change.overlay })));
   return { changed };
 }
 
