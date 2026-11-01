@@ -24,6 +24,7 @@ import {
   existsSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   renameSync,
   statSync,
@@ -751,8 +752,10 @@ export function readEmailSuppressions() {
  * Read-modify-write under the cross-process lock. mutate(rows) edits rows in place.
  * Nothing is written when mutate changed nothing (an idempotent repost costs one read),
  * unless the live file had to come from the backup: then the locked write repairs it.
+ * afterCommit(result), when given, runs after that write (or after no write was needed), still
+ * under the lock, so a step that must follow the write cannot interleave with another writer.
  */
-export async function updateEmailSuppressions(mutate) {
+export async function updateEmailSuppressions(mutate, { afterCommit = null } = {}) {
   return withFileLock(EMAIL_FILES.suppressions, async () => {
     const { rows, source } = readSuppressionsMeta();
     const before = JSON.stringify(rows);
@@ -761,31 +764,57 @@ export async function updateEmailSuppressions(mutate) {
       writeBackedUpJson(EMAIL_FILES.suppressions, rows);
       ensureSuppressionsMarker();
     }
+    if (typeof afterCommit === 'function') await afterCommit(result);
     return result;
   });
 }
 
 /**
  * Writes a rebuilt opt-out record (lib/email-unsubscribe.js rebuildSuppressionsFromCms) under the
- * cross-process lock. Only while the record is unavailable (both files gone after it existed, or
- * both unreadable), unless `force`: a readable record is never replaced by a rebuild.
+ * cross-process lock, only while the record is unavailable (both files gone after it existed, or
+ * both unreadable). A readable record is never replaced: the caller merges into it instead.
  * Returns { written, reason }.
  */
-export async function restoreEmailSuppressions(rows, { force = false } = {}) {
+export async function restoreEmailSuppressions(rows) {
   if (!isPlainObject(rows)) throw new Error('restoreEmailSuppressions: rows must be an object');
   return withFileLock(EMAIL_FILES.suppressions, () => {
-    let readable = true;
     try {
       readSuppressionsMeta();
+      return { written: false, reason: 'readable' };
     } catch (error) {
       if (error?.code !== 'EMAIL_STORE_UNREADABLE') throw error;
-      readable = false;
     }
-    if (readable && !force) return { written: false, reason: 'readable' };
     writeBackedUpJson(EMAIL_FILES.suppressions, rows);
     ensureSuppressionsMarker();
-    return { written: true, reason: readable ? 'forced' : 'restored' };
+    return { written: true, reason: 'restored' };
   });
+}
+
+/**
+ * The newest dated snapshot of the opt-out record in backups/ that still reads as a JSON object
+ * (every changed write leaves one), as { rows, name }, or null. Used as the base when a lost
+ * record is rebuilt, so rows no client CMS mirrors (Asoldi's own opt-outs, global rows) survive.
+ */
+export function readSuppressionsSnapshot() {
+  const prefix = `${EMAIL_FILES.suppressions}.`;
+  let names = [];
+  try {
+    names = readdirSync(getDataBackupDir())
+      .filter((name) => name.startsWith(prefix) && /^\d{4}-\d{2}-\d{2}T.+\.json$/.test(name.slice(prefix.length)))
+      .sort()
+      .reverse();
+  } catch {
+    return null;
+  }
+  for (const name of names) {
+    try {
+      const rows = readJsonAbs(join(getDataBackupDir(), name), undefined, `${EMAIL_FILES.suppressions} snapshot`);
+      if (isPlainObject(rows)) return { rows, name };
+    } catch {
+      // try the next older snapshot
+    }
+  }
+  return null;
 }
 
 /* ------------------------------------------------------------------ secrets */

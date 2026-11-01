@@ -11,9 +11,10 @@ Each site therefore gets an **emailKey**: 32 random bytes, base64url (43 charact
 
 Everything here is off until a superadmin turns the email platform on (email setting `enabled`,
 default `false`). While it is off, every `/api/hub/email/*` route answers `404 {"code":"disabled"}`
-and writes nothing. One exception: once the relay has sent mail (a message log file exists), the
-unsubscribe pages stay open even if the platform is switched off again, so the links in mail
-already sent keep working. To pause sending, use `killSwitch` instead.
+and writes nothing. One exception: once Brevo has accepted a relay send (the relay then writes
+`email-relay-sent.json` once), the unsubscribe pages stay open even if the platform is switched off
+again, so the links in delivered mail keep working. Sandbox and safe-mode outbox sends do not count,
+and neither does a line in the message log. To pause sending, use `killSwitch` instead.
 
 ## Provisioning is a pull
 
@@ -87,7 +88,7 @@ Calls:
 |---|---|---|
 | `POST /api/cms/email/hub-event` | `{"type":"suppression","siteId":"…","at":"…"}` | The opt-out list changed: pull `GET /api/hub/email/suppressions?since=` |
 | `POST /api/cms/email/hub-event` | `{"type":"key-rotation","keyId":"ek_2","siteId":"…","at":"…"}` | A new key is pending: provision-request, then confirm |
-| `GET /api/cms/email/suppressions[?since=<ISO>]` | (empty) | The CMS's mirror of its opt-out rows, used to rebuild a lost hub record. Answer `{"items":[{"email","scope","source","at"}],"next":<ISO or null>}` |
+| `GET /api/cms/email/suppressions[?since=<ISO>]` | (empty) | The CMS's mirror of its opt-out rows, merged into the hub record by a rebuild. Answer `{"items":[{"email","scope","source","at","updatedAt"}],"next":<ISO or null>}` (`updatedAt` optional), at most 5 MB per page |
 
 Hints carry no address. `verifyEmailSignature()` and `createReferenceCmsVerifier()` in
 `lib/email-site-auth.js` are the reference implementation of the CMS side; the hub tests use them.
@@ -111,12 +112,32 @@ times (`auth.keyId`, `auth.confirmedAt`, `auth.pendingKeyId`, `auth.provisionReq
 | Route | Who | Notes |
 |---|---|---|
 | `GET /api/hub/email/unsubscribe?t=` | public | Confirm page (nb/en, masked address, no external assets, `noindex`). Never changes state. |
-| `POST /api/hub/email/unsubscribe?t=` | public | Form submit and RFC 8058 one-click (`List-Unsubscribe=One-Click`). Records the opt-out for the site. |
-| `POST /api/hub/email/resubscribe?t=` | public | Undo from the page: once per address and site, within 30 days. |
+| `POST /api/hub/email/unsubscribe?t=` | public | Form submit and RFC 8058 one-click (`List-Unsubscribe=One-Click`). Records the opt-out for the site. A repeat changes nothing (no write, no Brevo call, no hint). |
+| `POST /api/hub/email/resubscribe?t=` | public | Undo from the page: once per address and site, within 30 days, and only for an opt-out made through a link. |
+
+Both public POST routes allow 10 requests per token and 300 per client address in 10 minutes, then
+answer 429 with `Retry-After`.
 | `GET /api/admin/email/status`, `PUT /api/admin/email/settings` | superadmin | `enabled`, `rollout`, `killSwitch`, `brevo.sandbox`, `brevo.syncContacts`, `testRecipients` (and `devCmsTargets` in safe mode). |
 | `POST /api/admin/email/sites/:id/provision` | superadmin | Issue the first key or rotate. Answers key ids only. |
-| `POST /api/admin/email/suppressions/rebuild` | superadmin | Rebuild a lost opt-out record from the CMS mirrors (`{"force":true}` writes even if a mirror did not answer). |
+| `POST /api/admin/email/suppressions/rebuild` | superadmin | Pull the CMS mirrors and merge them into the opt-out record (see below). `{"force":true}` writes even if a mirror did not answer; `{"base":{…}}` supplies a record for a lost one that has no snapshot. |
 | `GET /api/admin/email/owner-routing/preview`, `PUT /api/admin/email/owner-routing/default` | superadmin | Owner-routing default for form and order notices (see `docs/runtime-data.md`). |
+
+## Opt-out record: rows only get stronger
+
+`email-suppressions.json` holds the client-site rows per site id, the global rows under `*` and
+Asoldi's own marketing opt-outs under `asoldi`. Scopes rank `none` (resubscribed) < `marketing` <
+`all`. An opt-out, a CMS mirror row or a pending row only adds a row or makes one stronger; it never
+removes or weakens one, and the `asoldi` rows are never touched by client-site code.
+
+- While the record cannot be read, opt-outs go to `email-suppressions-pending.jsonl`. Those rows
+  count for every send check at once and are merged into the record as soon as it is readable
+  again, however it came back (boot, the next opt-out or send, a rebuild). The file is then renamed
+  `.applied-<time>`.
+- A rebuild of a readable record merges the mirrors in. A lost record is rebuilt on top of its
+  newest dated snapshot in `backups/` (or a superadmin-supplied record with an `asoldi` object),
+  plus the mirrors and the pending rows. With no snapshot and no supplied record, or with no site to
+  pull, nothing is written (`reason` `no_base` or `no_sites`) and every marketing send, Asoldi's
+  included, stays blocked until the file is restored by hand.
 
 ## Link checks in relayed mail
 

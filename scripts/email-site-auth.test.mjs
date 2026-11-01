@@ -266,10 +266,10 @@ test('key status and secrets: no key in any admin view or email-sites.json', asy
   for (const value of values) assert.equal(text.includes(value), false);
 });
 
-test('the opt-out rebuild route leaves a readable record alone', async () => {
+test('the opt-out rebuild route merges into a readable record and writes nothing when nothing is new', async () => {
   const res = await call('post', '/api/admin/email/suppressions/rebuild', admin, {});
   assert.equal(res.status, 200);
-  assert.deepEqual([res.body.ok, res.body.written, res.body.reason], [true, false, 'readable']);
+  assert.deepEqual([res.body.ok, res.body.written, res.body.mode, res.body.changed], [true, false, 'merge', 0]);
   assert.equal((await call('post', '/api/admin/email/suppressions/rebuild', {}, {})).status, 401, 'superadmin only');
 });
 

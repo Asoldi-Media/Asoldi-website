@@ -346,6 +346,32 @@ test('the tag scanner reads attributes like an HTML tokenizer and stays linear o
   assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`);
 });
 
+test('only a send Brevo accepted marks unsubscribe links as out in mail (the safe-mode outbox does not)', async () => {
+  const { rmSync, existsSync } = await import('node:fs');
+  const marker = join(dataDir, unsub.RELAY_SENT_FILE);
+  rmSync(marker, { force: true });
+  brevoLib.setBrevoDeps({ env: { BREVO_API_KEY: 'fake-brevo-key-for-relay-tests' }, fetch: async () => new Response('{}', { status: 201 }) });
+  installSafeMode({ env: { HUB_SAFE_MODE: '1' }, dataDir, egress: false, log: null });
+  try {
+    const settings = settingsFor();
+    const outbox = await relay.relaySend(SITES.shop, body(), { now: NOW, emailKey: KEYS.site_shop, deps: { settings, log, quota: quotaFor(null, settings), env: { BREVO_API_KEY: 'fake-brevo-key-for-relay-tests' } } });
+    assert.equal(outbox.body.mode, 'outbox');
+    assert.equal(existsSync(marker), false, 'an outbox send is not delivered mail');
+    assert.equal(unsub.relayHasSent(), false);
+  } finally {
+    resetSafeModeForTests();
+    brevoLib.setBrevoDeps(null);
+  }
+  const settings = settingsFor();
+  const sandbox = await relay.relaySend(SITES.shop, body(), { now: NOW, emailKey: KEYS.site_shop, deps: { settings, brevo: brevoStub({ mode: 'sandbox' }), log, quota: quotaFor(null, settings) } });
+  assert.equal(sandbox.body.mode, 'sandbox');
+  assert.equal(existsSync(marker), false, 'a sandbox send is dropped by Brevo');
+  const accepted = await relay.relaySend(SITES.shop, body(), { now: NOW, emailKey: KEYS.site_shop, deps: { settings, brevo: brevoStub(), log, quota: quotaFor(null, settings) } });
+  assert.equal(accepted.status, 200);
+  assert.equal(unsub.relayHasSent(), true);
+  assert.match(readFileSync(marker, 'utf8'), /"firstAcceptedAt":"2026-11-03T10:00:00.000Z"/);
+});
+
 test('the From name is the hub name for the site, cleaned; the brand name from the CMS stays in the body only', async () => {
   const settings = settingsFor();
   const brevo = brevoStub();
