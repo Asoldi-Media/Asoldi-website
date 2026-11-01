@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Archives the transcripts of recordings already on client cards (lib/transcript-archive.js).
 // A dry run by default: it lists what would be archived (client and meeting ids only) and writes
-// nothing. With --apply it writes the missing archive files. Runs against the data dir the hub uses
+// nothing. With --apply it writes the missing archive files, and only while privacy.archive.enabled is
+// on (it refuses otherwise, so no copy is made that the switched-off hub would not make). Runs against the data dir the hub uses
 // (APP_DATA_DIR / DATA_DIR / ~/.asoldi-website-data); it never calls Fireflies or any other service.
 //   node scripts/backfill-transcript-archive.mjs [--apply] [--json]
 const args = new Set(process.argv.slice(2));
@@ -9,6 +10,11 @@ const apply = args.has('--apply');
 const asJson = args.has('--json');
 
 const { syncTranscriptArchive } = await import('../lib/transcript-archive.js');
+const { transcriptArchiveEnabled } = await import('../lib/privacy-settings.js');
+if (apply && !transcriptArchiveEnabled()) {
+  console.error('[transcript-archive] --apply refused: privacy.archive.enabled is off in automation-settings.json. Nothing was written; a dry run (without --apply) lists what would be archived.');
+  process.exit(2);
+}
 const result = syncTranscriptArchive({ apply });
 
 if (asJson) {

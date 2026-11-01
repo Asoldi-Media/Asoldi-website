@@ -187,12 +187,33 @@ test('the backfill is a dry run by default and archives what is missing with --a
   assert.match(out, /dry run/i);
   assert.match(out, /ta-lead ff-backfill/);
   assert.equal(archiveFiles('ta-lead').includes(`${sha}.json`), false);
+  // --apply is refused while privacy.archive is off: the backfill never makes a copy the hub would not.
+  const { spawnSync } = await import('node:child_process');
+  const refused = spawnSync(process.execPath, [script, '--apply'], { env, encoding: 'utf8' });
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /refused: privacy.archive.enabled is off/);
+  assert.equal(archiveFiles('ta-lead').includes(`${sha}.json`), false, 'nothing written while the switch is off');
+  setSettings({ privacy: { archive: { enabled: true } } });
   const applied = execFileSync(process.execPath, [script, '--apply'], { env, encoding: 'utf8' });
   assert.match(applied, /apply: \d+ recording\(s\) without an archived copy, \d+ written/);
   assert.match(applied, /ta-lead ff-backfill/);
   assert.ok(archiveFiles('ta-lead').includes(`${sha}.json`));
+  setSettings({ privacy: { archive: { enabled: false } } });
   const step = archive.tickSteps[0];
   assert.deepEqual(await step.run({ settings: settingsStore.getAutomationSettings({ fresh: true }) }), { wrote: false }, 'the sync step does nothing while the switch is off');
+});
+
+test('an unlink deletes a copy archived while the switch was on, after the switch is turned off', () => {
+  setSettings({ privacy: { archive: { enabled: true } } });
+  const stored = webhook.storeFirefliesMeeting(record('ff-wrong', 'Feil kunde: tekst.'));
+  linker.link('ta-lead', personRef(stored, 'ta-lead'));
+  const sha = archive.transcriptSha('Feil kunde: tekst.');
+  assert.ok(archiveFiles('ta-lead').includes(`${sha}.json`), 'archived while on');
+  setSettings({ privacy: { archive: { enabled: false } } });
+  // Staff correct a wrong link: the other person's transcript must not stay with this client.
+  linker.unlinkFromHolder('ff-wrong');
+  assert.equal(archiveFiles('ta-lead').includes(`${sha}.json`), false, 'the copy left with the recording');
+  assert.equal(archive.readArchivedTranscripts('ta-lead').some((row) => row.meetingId === 'ff-wrong'), false);
 });
 
 test('nothing is archived for a client past its retention date, so the sync never writes back what the purge removed', async () => {
