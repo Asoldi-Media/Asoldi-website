@@ -1,5 +1,7 @@
 // Child process for scripts/privacy-dark.test.mjs: one scripted run of the Fireflies link and unlink
-// paths against APP_DATA_DIR, with the hub code from --code-root (this tree or an older commit).
+// paths, then the store paths the pull ingest and the webhook use (a list page, a full fetch, a media
+// write, a failed fetch), against APP_DATA_DIR, with the hub code from --code-root (this tree or an
+// older commit).
 // The linker is wired the way that commit's server.js wires it: with the privacy hooks when the code
 // has lib/privacy-link-hooks.js, without them otherwise. The clock and Math.random are fixed, so two
 // runs that write the same data write the same bytes.
@@ -67,4 +69,20 @@ linker.link('flow-b', person(rec1, 'flow-b'));
 steps.push('relink');
 linker.backfill();
 steps.push('backfill');
-console.log(JSON.stringify({ steps }));
+const listed = webhook.upsertListedFirefliesMeetings([
+  { meetingId: 'flow-rec-1', title: 'Salgsmøte', startedAt: '2026-10-20T10:00:00.000Z', listedSummaryStatus: 'processed' },
+  { meetingId: 'flow-rec-3', title: 'Nytt møte', startedAt: '2026-10-30T10:00:00.000Z', listedSummaryStatus: 'processing' },
+]);
+const fetched = webhook.storeFetchedFirefliesMeeting({ meetingId: 'flow-rec-3', title: 'Nytt møte', transcript: 'C: Ny.\nD: Ja.', summary: 'Nytt.', summaryStatus: 'processed' });
+const media = webhook.updateStoredFirefliesMeeting('flow-rec-3', { media: { audio: { state: 'saved', bytes: 3 } } });
+const failed = webhook.noteFirefliesFetchFailure('flow-rec-4', 'timeout');
+steps.push('ingest');
+console.log(JSON.stringify({
+  steps,
+  ingest: {
+    listed: listed.map((row) => [row.id, row.isNew, row.changed, row.queued]),
+    fetched: Boolean(fetched),
+    media: Boolean(media),
+    failed: Boolean(failed),
+  },
+}));
