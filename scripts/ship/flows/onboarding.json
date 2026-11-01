@@ -1,0 +1,19 @@
+{
+  "name": "onboarding",
+  "description": "New client accounts go through onboarding in both portal versions: register, read the state, fill the profile and finish onboarding.",
+  "steps": [
+    { "name": "register (portal v2)", "method": "POST", "path": "/api/client-auth/register", "expect": 201,
+      "body": { "email": "onboarding-v2-{{run}}@example.com", "password": "dark-diff-onboarding-pass-1" }, "save": { "v2Token": "body.token" } },
+    { "name": "who am I (portal v2)", "replay": true, "method": "GET", "path": "/api/client-auth/me", "auth": "bearer:v2Token", "expect": 200 },
+    { "name": "save the profile (portal v2)", "replay": true, "method": "PUT", "path": "/api/client-auth/profile", "auth": "bearer:v2Token", "expect": 200,
+      "body": { "name": "Per Example", "businessName": "Example Onboarding {{run}} AS" } },
+    { "name": "read the portal state", "replay": true, "method": "GET", "path": "/api/client-portal/state", "auth": "bearer:v2Token", "expect": 200 },
+    { "name": "finish onboarding", "replay": true, "method": "PATCH", "path": "/api/client-portal/state", "auth": "bearer:v2Token", "expect": 200, "body": { "onboardingComplete": true } },
+    { "name": "sign up (portal v1)", "method": "POST", "path": "/api/client/auth/signup", "expect": 201,
+      "body": { "email": "onboarding-v1-{{run}}@example.com", "password": "dark-diff-onboarding-pass-2" }, "save": { "v1Token": "body.token" } },
+    { "name": "fill the onboarding profile", "replay": true, "method": "PUT", "path": "/api/client/profile", "auth": "bearer:v1Token", "expect": 200,
+      "body": { "name": "Per Example", "businessName": "Example Onboarding Two {{run}} AS", "position": "Daglig leder", "discoveryChannel": "google", "onboardingCompleted": true } },
+    { "name": "the dashboard after onboarding", "replay": true, "method": "GET", "path": "/api/client/dashboard", "auth": "bearer:v1Token", "expect": 200 },
+    { "name": "the settings after onboarding", "replay": true, "method": "GET", "path": "/api/client/settings", "auth": "bearer:v1Token", "expect": 200 }
+  ]
+}

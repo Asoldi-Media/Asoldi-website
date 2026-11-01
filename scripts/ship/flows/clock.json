@@ -1,0 +1,8 @@
+{
+  "description": "Tick routes the clock moves through. A release without one answers 404 and is skipped.",
+  "hours": 24,
+  "stepMinutes": 60,
+  "ticks": [
+    { "method": "POST", "path": "/api/admin/system/delivery-loop/tick", "auth": "admin", "body": { "now": "{{clock}}" } }
+  ]
+}

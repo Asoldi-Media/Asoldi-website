@@ -8,6 +8,7 @@ type FirefliesStatus = {
   webhookUrl: string;
   trustedSource: 'data' | 'none';
   stored: boolean;
+  damaged?: boolean;
   rotatedAt: string | null;
   acceptQueryToken: boolean;
   lastVerified: { via: string; at: string } | null;
@@ -23,6 +24,7 @@ type RotationName = 'admin-secret' | 'maker-callback-token';
 type SecurityStatus = {
   adminSecretSource: string;
   adminSecretEnvRejected: string | null;
+  secretsMemoryOnly?: RotationName[];
   makerCallbackTokenSource: string;
   secretRotations?: Partial<Record<RotationName, Rotation>>;
   secretRotationHistory?: Array<Rotation & { name: RotationName }>;
@@ -272,6 +274,12 @@ export function SecurityCard() {
                   <Dot ok />
                   Maker callback token: {data.makerCallbackTokenSource === 'env' ? 'env value' : 'generated on the hub disk'}.
                 </p>
+                {data.secretsMemoryOnly && data.secretsMemoryOnly.length > 0 && (
+                  <p className="text-sm text-amber-300">
+                    <Dot ok={false} />
+                    Damaged on the hub disk, so this hub process signs with a value kept in memory only: {data.secretsMemoryOnly.join(', ')}. Other hub processes cannot check what it signs. Rotate it below to repair.
+                  </p>
+                )}
               </section>
 
               <section className="space-y-2">
@@ -459,7 +467,7 @@ export function SecurityCard() {
                   <h3 className="text-white font-medium">Fireflies webhook</h3>
                   <p className="text-sm text-gray-300">
                     <Dot ok={ff.stored} />
-                    Trusted secret: {ff.stored ? `on the hub disk (made ${when(ff.rotatedAt)})` : 'missing: the data folder is not writable'}.
+                    Trusted secret: {ff.stored ? `on the hub disk (made ${when(ff.rotatedAt)})` : ff.damaged ? 'the file on the hub disk is damaged: rotate the webhook secret to replace it' : 'missing: the data folder is not writable'}.
                     {' '}Last accepted webhook: {ff.lastVerified ? `${ff.lastVerified.via}, ${when(ff.lastVerified.at)}` : 'none yet'}.
                   </p>
                   <p className="text-sm text-gray-300">

@@ -1,0 +1,14 @@
+{
+  "name": "signing-admin",
+  "description": "Staff mark the contract signed on the sales card (fast track), which sends the pre-workshop mail, then turn the client into a hub site.",
+  "steps": [
+    { "name": "create a sales client", "method": "POST", "path": "/api/admin/sales", "auth": "admin", "expect": 201,
+      "body": { "businessName": "Dark Diff Signing Staff {{run}} AS", "contactPerson": "Ola Example", "contactEmail": "signing-staff-{{run}}@example.com", "industry": "bakery", "websiteDomain": "signing-staff-{{run}}.example" },
+      "save": { "clientId": "body.client.id" } },
+    { "name": "mark the contract signed", "replay": true, "method": "PATCH", "path": "/api/admin/sales/{{clientId}}/progression", "auth": "admin", "expect": 200,
+      "body": { "key": "contractSigned", "value": true, "fastTrack": true } },
+    { "settle": 10000 },
+    { "name": "make the hub site", "method": "POST", "path": "/api/admin/sales/{{clientId}}/got-client", "auth": "admin", "expect": 200, "body": {} },
+    { "name": "read the offer state back", "replay": true, "method": "GET", "path": "/api/admin/sales/{{clientId}}/offer", "auth": "admin", "expect": 200 }
+  ]
+}
