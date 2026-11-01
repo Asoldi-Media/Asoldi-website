@@ -20,7 +20,8 @@
 
 // 1: batch 0 (delivery vocabulary). 2: tier service matrix, site plan contract, Maker events (service vocabulary, site plan, Maker events).
 // 3: automatic posts named blog.autoPosts, blog.localPosts read as an alias (feature tree).
-export const VOCAB_VERSION = 3;
+// 4: no id added, renamed or removed; the comments were reworded.
+export const VOCAB_VERSION = 4;
 
 function freezeList(list) {
   return Object.freeze(list.map((item) => (item && typeof item === 'object' ? Object.freeze({ ...item }) : item)));
