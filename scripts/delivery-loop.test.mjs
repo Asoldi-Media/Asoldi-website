@@ -224,14 +224,14 @@ test('loop health is written at most every 5 minutes and feeds hubLoopLastTickAt
 
 // ── leases and restarts ──────────────────────────────────────────────────────
 
-async function raceTwoProcesses({ ticks = 8, leaseMs = 0, stepMs = 120 } = {}) {
+async function raceTwoProcesses({ ticks = 8, leaseMs = 0, stepMs = 120, untilRan = false } = {}) {
   const shared = mkdtempSync(join(tmpdir(), 'asoldi-delivery-race-'));
   temps.push(shared);
   writeFileSync(join(shared, 'automation-settings.json'), JSON.stringify({ version: 2, delivery: { loop: { enabled: true, mode: 'shadow', paused: null } } }));
   const run = promisify(execFile);
   const child = join(root, 'scripts', 'fixtures', 'delivery-loop-race-child.mjs');
   const env = { ...process.env, APP_DATA_DIR: shared, DATA_DIR: '', PERSIST_PRODUCTION_ENV: '0' };
-  const args = [child, String(ticks), String(leaseMs), String(stepMs)];
+  const args = [child, String(ticks), String(leaseMs), String(stepMs), untilRan ? 'until-ran' : ''];
   const outputs = await Promise.all([run(process.execPath, args, { env, cwd: root }), run(process.execPath, args, { env, cwd: root })]);
   const reports = outputs.map(({ stdout }) => JSON.parse(stdout.trim().split('\n').at(-1)));
   const results = reports.flatMap((report) => report.results);
@@ -258,10 +258,11 @@ test('two loop processes on one data dir never tick at the same time', async () 
 });
 
 test('a step that runs longer than the lease keeps it: the other process still never ticks alongside', async () => {
-  // A 300 ms lease and a 1 s step: without renewal the lease would lapse three times per tick.
-  const { results, starts } = await raceTwoProcesses({ ticks: 3, leaseMs: 300, stepMs: 1000 });
+  // A 300 ms lease and a 1 s step: without renewal the lease would lapse three times per tick, and
+  // each process keeps trying until it ran two ticks, so the other one is always knocking.
+  const { results, starts } = await raceTwoProcesses({ ticks: 2, leaseMs: 300, stepMs: 1000, untilRan: true });
   const ran = results.filter((value) => value === 'ran').length;
-  assert.ok(ran >= 2, `ticks ran: ${JSON.stringify(results)}`);
+  assert.equal(ran, 4, `ticks ran: ${JSON.stringify(results.filter((value) => value !== 'lease-held'))}`);
   assert.ok(results.filter((value) => value === 'lease-held').length >= 1, 'the processes did contend for the lease');
   assert.equal(results.some((value) => value.startsWith('aborted')), false, 'no tick lost its lease');
   assert.equal(starts, ran);
