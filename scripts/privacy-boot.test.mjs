@@ -35,6 +35,9 @@ test('privacy switches off on the real hub: new routes are disabled, demo is ref
   const hub = await bootHub({ HUB_SAFE_MODE: '1', PERSIST_PRODUCTION_ENV: '0', ADMIN_USERNAME: ADMIN, ADMIN_PASSWORD: PASSWORD }, { seed });
   try {
     assert.ok(hub.health, `hub did not boot:\n${hub.log().slice(-2000)}`);
+    // On a busy machine the admin account can appear well after /api/health answers; wait for it
+    // before logging in, so the login attempts stay under the failure limit.
+    for (let i = 0; i < 120 && !existsSync(join(hub.dataDir, 'admin.json')); i += 1) await new Promise((r) => setTimeout(r, 500));
     const token = await hub.adminToken(ADMIN, PASSWORD);
     assert.ok(token, 'admin token');
     const call = (method, path, body, auth = token) => fetch(`${hub.base}${path}`, {
