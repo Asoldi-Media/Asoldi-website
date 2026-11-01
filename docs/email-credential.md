@@ -125,7 +125,8 @@ declarations, end tags with attributes, and `style`, `title` and `textarea` as t
 checks the tags inside comments (Outlook renders conditional comments), CSS `url()`, `@import` and
 `image-set()`, `ping` and `srcset` lists, and every absolute URL anywhere in the HTML. It refuses
 `script`, `noscript`, `iframe`, `svg`, `math`, `object`, `embed` and similar elements and
-`meta` refresh outright (`422 link_not_allowed`, reason `markup`).
+`meta` refresh outright (`422 link_not_allowed`, reason `markup`). The From name is the hub's name
+for the site; the brand name the CMS sends appears only in the body.
 
 The send pipeline (`relaySend` in `lib/email-relay.js`), the Brevo client (`lib/brevo.js`) and the
 quota ledger (`lib/email-quota.js`) are library code; the CMS-facing send, contacts and quota

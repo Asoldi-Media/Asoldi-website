@@ -346,6 +346,41 @@ test('the tag scanner reads attributes like an HTML tokenizer and stays linear o
   assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`);
 });
 
+test('the From name is the hub name for the site, cleaned; the brand name from the CMS stays in the body only', async () => {
+  const settings = settingsFor();
+  const brevo = brevoStub();
+  const site = { ...SITES.shop, name: 'Fjord "Butikk" <post@example.com>\u0007' + 'x'.repeat(80) };
+  const input = body({ brand: { name: 'Din Bank', accent: '#0F2A44' }, html: '<html><body><p>Hei</p></body></html>', text: 'Hei' });
+  const result = await relay.relaySend(site, input, { now: NOW, emailKey: KEYS.site_shop, deps: { settings, brevo, log, quota: quotaFor(null, settings) } });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  const name = brevo.calls[0].sender.name;
+  assert.equal(name.includes('Din Bank'), false);
+  assert.equal(/["<>\\\u0000-\u001f]/.test(name), false, name);
+  assert.ok(name.startsWith('Fjord Butikk post@example.com x'), name);
+  assert.ok(name.length <= 60, `${name.length}`);
+  assert.match(brevo.calls[0].htmlContent, /Du får denne e-posten fra Din Bank/, 'the in-body brand is the CMS brand');
+});
+
+test('account, key, IP and rate refusals never add a global provider-blocked row; a 400 about the contact does', async () => {
+  const settings = settingsFor();
+  const refusals = [
+    ['acct-401@example.com', 401, 'unauthorized', 'Your account is blocked'],
+    ['acct-403@example.com', 403, 'permission_denied', 'Unrecognised IP address, blocked'],
+    ['acct-400@example.com', 400, 'account_under_validation', 'Your account has been blocked'],
+    ['acct-429@example.com', 429, 'too_many_requests', 'Blocked for too many requests'],
+    ['sender-400@example.com', 400, 'invalid_parameter', 'Sender email is blocked'],
+  ];
+  for (const [email, status, brevoCode, brevoMessage] of refusals) {
+    const error = new brevoLib.BrevoError('provider_rejected', { status, brevoCode, brevoMessage });
+    const result = await relay.relaySend(SITES.shop, body({ to: { email } }), { now: NOW, emailKey: KEYS.site_shop, deps: { settings, brevo: brevoStub({ error }), log, quota: quotaFor(null, settings) } });
+    assert.equal(result.status, 502, email);
+    assert.equal(store.readEmailSuppressions()['*']?.[email], undefined, `${status} ${brevoMessage}: no global row`);
+  }
+  const contact = new brevoLib.BrevoError('provider_rejected', { status: 400, brevoCode: 'invalid_parameter', brevoMessage: 'The email address is blacklisted' });
+  await relay.relaySend(SITES.shop, body({ to: { email: 'svartelistet@example.com' } }), { now: NOW, emailKey: KEYS.site_shop, deps: { settings, brevo: brevoStub({ error: contact }), log, quota: quotaFor(null, settings) } });
+  assert.equal(store.readEmailSuppressions()['*']['svartelistet@example.com'].source, 'provider-blocked');
+});
+
 test('the markup scan stays linear on pathological input', () => {
   const settings = store.readEmailSettings();
   const inputs = [
