@@ -19493,7 +19493,7 @@ app.post('/api/admin/sales/:id/got-client', salesAuth, async (req, res) => {
     }
     if (!signed.ok) return res.status(signed.status || 400).json({ message: signed.reason === 'busy' ? 'Signeringen pågår allerede. Prøv igjen om litt.' : 'Kunne ikke signere kontrakten.' });
     const body = req.salesUser?.isAdmin ? req.body || {} : {};
-    const placed = siteForGotClient(client.id, signed, {
+    const placed = await siteForGotClient(client.id, signed, {
       create: (latest) => hub.createSite({
         name: latest.businessName || 'New client',
         domain: latest.websiteDomain || '',
@@ -19504,7 +19504,8 @@ app.post('/api/admin/sales/:id/got-client', salesAuth, async (req, res) => {
         features: body.features,
         deliveryPhase: 'development',
       }),
-    });
+    }).catch(() => ({ site: null, owner: '', reason: 'error' }));
+    if (placed.reason === 'busy') return res.status(409).json({ message: 'Signeringen pågår allerede. Prøv igjen om litt.' });
     if (placed.owner) {
       // The site found by key, link or domain is another client's: signed, but no site is linked here.
       return res.status(409).json({

@@ -156,7 +156,7 @@ async function chooseAlternative(hub, token) {
     const res = await fetch(`${hub.base}/api/admin/sales/${id}/site-plan`, { headers });
     return { status: res.status, body: await res.json().catch(() => ({})) };
   };
-  const out = { dualView: await view(C.dual), inboxDualView: await view(C.inboxDual) };
+  const out = { dualView: await view(C.dual), inboxDualView: await view(C.inboxDual), gotDupView: await view(C.gotDup), progressView: await view(C.progress) };
   const mailsBefore = (await flows.settledOutbox(hub.dataDir)).length;
   const res = await fetch(`${hub.base}/api/admin/sales/${C.inboxDual}/progression`, {
     method: 'PATCH',
@@ -472,6 +472,8 @@ test('auto: got-client retried twice and a later Kontrakt tick for the same-doma
   assert.equal(v.client.delivery.tasks.filter((task) => task.kind === 'site_owner_conflict' && task.status === 'open').length, 1, 'one task for a person');
   assert.equal(v.preWorkshopMails.length, 1, 'one pre-workshop mail over every call');
   assertOwnedSiteUnchanged(auto, 'auto');
+  assert.deepEqual(auto.extra.gotDupView.body.siteConflicts.map((row) => row.siteId), ['site-owned'], 'the sales card shows the conflict');
+  assert.deepEqual(auto.extra.progressView.body.siteConflicts, [], 'and nothing for a client without one');
   // Control: the switch-off build links the site on every call and moves it to development.
   for (const name of ['got-client-same-domain', 'got-client-same-domain-retry', 'got-client-same-domain-third']) assert.equal(off.steps[name].status, 200, `control: ${name}`);
   assert.equal(off.clients.find((entry) => entry.id === C.gotDup).hubSite.siteKey, 'key-owned', 'control: the lead holds the other client\'s key');

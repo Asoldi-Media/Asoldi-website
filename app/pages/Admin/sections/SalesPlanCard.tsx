@@ -36,6 +36,7 @@ type SitePlanView = {
     contractReceived: boolean;
     alternatives: Array<{ index: number; tierId: string; tierName: string; billing: string; priceExMva: number }>;
   } | null;
+  siteConflicts?: Array<{ siteId: string; at: string }>;
 };
 
 const SOURCE_LABELS: Record<string, string> = {
@@ -172,6 +173,12 @@ export function SalesPlanCard<C = unknown>({ clientId, onClientSaved }: { client
               Avvik: {conflict.source} sier {conflict.tierId}{conflict.at ? ` (${shortDate(conflict.at)})` : ''}. Kontrakten gjelder til planen endres.
             </div>
           ))}
+        </div>
+      ) : null}
+      {view.siteConflicts && view.siteConflicts.length ? (
+        <div className="rounded border border-amber-400/40 bg-amber-400/10 px-2 py-1 text-amber-200">
+          Nettstedet som domenet eller koblingen peker på tilhører en annen kunde, så planen er ikke lagt på noe nettsted.
+          Sjekk koblingen før kunden flyttes til utvikling.
         </div>
       ) : null}
       {choice ? (
