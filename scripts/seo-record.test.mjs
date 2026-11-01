@@ -227,3 +227,26 @@ test('a client with no record file reads as no record', () => {
   assert.equal(record.recordGuidesConsumers(null), false);
   assert.equal(record.recordGuidesConsumers({ agreedKeywords: [{ phrase: 'x', status: 'proposed' }] }), false);
 });
+
+test('who may read or change a record: own sales clients, visible and workable developer clients, admins', async () => {
+  const { seoRecordAccess } = await import('../lib/routes/seo-record-routes.js');
+  const client = { id: 'sc-x', ownerId: 'sales:101', developerOwnerId: 'developer:201' };
+  const rep = (userId, username = '') => ({ salesUser: { role: 'sales', isAdmin: false, userId, username, accountKey: `sales:${userId}` } });
+  const dev = (userId) => ({ developmentUser: { role: 'developer', isAdmin: false, userId, accountKey: `developer:${userId}` } });
+  const admin = { salesUser: { role: 'admin', isAdmin: true }, developmentUser: { role: 'admin', isAdmin: true } };
+  assert.equal(seoRecordAccess(rep('101'), client), 'ok');
+  assert.equal(seoRecordAccess(rep('999', 'rep-b@example.com'), client), 'forbidden', 'another rep');
+  assert.equal(seoRecordAccess(rep('999', 'rep-a@example.com'), { ...client, ownerId: 'sales:rep-a@example.com' }), 'ok', 'owner by username');
+  assert.equal(seoRecordAccess(rep('101'), { ...client, ownerId: '' }), 'forbidden', 'a client without an owner');
+  assert.equal(seoRecordAccess(rep('101'), client, { work: true }), 'forbidden', 'sales never change keywords');
+  assert.equal(seoRecordAccess(dev('201'), client), 'ok');
+  assert.equal(seoRecordAccess(dev('201'), client, { work: true }), 'ok');
+  assert.equal(seoRecordAccess(dev('202'), client), 'not-found', 'an unassigned developer');
+  const handoff = { ...client, developerOwnerId: 'developer:202', developerHandoff: { status: 'waiting-upload', fromOwnerId: 'developer:201', toOwnerId: 'developer:202' } };
+  assert.equal(seoRecordAccess(dev('201'), handoff), 'ok', 'the developer handing off still sees the client');
+  assert.equal(seoRecordAccess(dev('201'), handoff, { work: true }), 'forbidden');
+  assert.equal(seoRecordAccess(dev('202'), handoff, { work: true }), 'forbidden', 'nobody works on it until the handoff is accepted');
+  assert.equal(seoRecordAccess(admin, handoff, { work: true }), 'ok');
+  assert.equal(seoRecordAccess(admin, null), 'not-found');
+  assert.equal(seoRecordAccess({}, client), 'forbidden');
+});

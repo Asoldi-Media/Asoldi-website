@@ -22,6 +22,10 @@ const CREDENTIAL_KEY = /(KEY|SECRET|TOKEN|PASS|PASSWORD|AUTH|_API$|_JSON$|_LOGIN
 const EXTRA_KEYS = ['PROD_ADMIN_URL', 'PROD_ADMIN_PASSWORD', 'WEBSITE_MAKER_API_KEY', 'WEBSITEMAKER_API_KEY', 'GITHUB_TOKEN', 'ANTHROPIC_API_KEY'];
 const CLIENT_ID = 'sc-seo-boot-1';
 const RUN_ID = 'run-seo-boot-1';
+// Owned by sales rep A (by username) and assigned to developers during the test. The second one has a
+// Maker run, so each new assignment starts a handoff (the boot assigns both to Admin first).
+const OWNED_ID = 'sc-seo-boot-2';
+const HANDOFF_ID = 'sc-seo-boot-3';
 
 function bootEnv({ dataDir, home, port }) {
   const env = {};
@@ -73,6 +77,8 @@ async function bootHub(t) {
   const runDir = mkdtempSync(join(tmpdir(), 'asoldi-seo-record-cwd-'));
   writeFileSync(join(dataDir, 'sales-clients.json'), JSON.stringify([
     { id: CLIENT_ID, businessName: 'Eksempel Rørlegger AS', industry: 'Rørlegger', product: 'asoldi', makerRun: { runId: RUN_ID } },
+    { id: OWNED_ID, businessName: 'Eksempel Baderom AS', industry: 'Baderom', product: 'asoldi', ownerId: 'sales:rep-a@example.com' },
+    { id: HANDOFF_ID, businessName: 'Eksempel Maler AS', industry: 'Maler', product: 'asoldi', ownerId: 'sales:rep-a@example.com', makerRun: { runId: 'run-seo-boot-3' } },
   ]));
   const port = await freePort();
   let logs = '';
@@ -102,7 +108,7 @@ async function bootHub(t) {
   const admin = (more = {}) => ({ authorization: `Bearer ${adminToken}`, ...more });
   const legacy = (await (await fetch(`${base}/api/admin/system/maker-callback-token`, { headers: admin() })).json()).token;
   assert.ok(legacy);
-  return { base, dataDir, admin, legacy, logs: () => logs };
+  return { base, dataDir, admin, adminToken, legacy, logs: () => logs };
 }
 
 const summary = (builtAt) => ({
@@ -222,6 +228,107 @@ test('real hub: SEO record ingest, admin routes and the Maker read switch', { ti
     assert.equal(pulled.status, 200);
     assert.equal(pulled.body.seoRecorded, true);
     assert.deepEqual(pulled.body.record.agreedKeywords, [{ phrase: 'rørlegger eksempelby', status: 'approved', source: 'plan' }]);
+  } catch (error) {
+    console.error(hub.logs().slice(-4000));
+    throw error;
+  }
+});
+
+test('real hub negative controls: sales reps read only their own clients, developers change only the clients they work on', { timeout: 240_000 }, async (t) => {
+  const hub = await bootHub(t);
+  const { base, dataDir, admin } = hub;
+  const recordFile = join(dataDir, 'seo-ops', 'clients', `${OWNED_ID}.json`);
+  const sendTo = (id) => (method, path, token, body) => fetch(`${base}/api/admin/sales-clients/${id}/seo${path}`, {
+    method,
+    headers: { authorization: `Bearer ${token}`, ...(body ? { 'content-type': 'application/json' } : {}) },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const send = sendTo(OWNED_ID);
+  const sendHandoff = sendTo(HANDOFF_ID);
+  const writes = (token, to = send) => [
+    to('PUT', '', token, { agreedKeywords: [{ phrase: 'flis eksempelby', status: 'approved' }] }),
+    to('POST', '/approve', token, { phrase: 'flis eksempelby' }),
+    to('POST', '/block', token, { phrase: 'flis eksempelby' }),
+  ];
+  const statuses = async (calls) => (await Promise.all(calls)).map((response) => response.status);
+  try {
+    // Staff users: two sales reps and three developers.
+    const users = {};
+    const password = `staff-${Date.now()}-pw`;
+    for (const [key, username, role, phone] of [
+      ['repA', 'rep-a@example.com', 'sales', '+47 900 00 001'],
+      ['repB', 'rep-b@example.com', 'sales', '+47 900 00 002'],
+      ['devA', 'dev-a@example.com', 'developer'],
+      ['devB', 'dev-b@example.com', 'developer'],
+      ['devC', 'dev-c@example.com', 'developer'],
+    ]) {
+      const created = await fetch(`${base}/api/admin/users`, { method: 'POST', headers: admin({ 'content-type': 'application/json' }), body: JSON.stringify({ username, password, role, ...(phone ? { phone } : {}) }) });
+      assert.equal(created.status, 201, await created.clone().text());
+      const login = await fetch(`${base}/api/auth/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ username, password }) });
+      assert.equal(login.status, 200);
+      users[key] = { id: (await created.json()).id, token: (await login.json()).token };
+    }
+    const assign = async (id, key) => {
+      const response = await fetch(`${base}/api/admin/development/sales:${id}/assign`, { method: 'POST', headers: admin({ 'content-type': 'application/json' }), body: JSON.stringify({ developerOwnerId: `developer:${users[key].id}` }) });
+      const answer = await json(response);
+      assert.equal(answer.status, 200, answer.text);
+      return answer.body.client;
+    };
+    // No Maker run: the assignment takes effect at once.
+    assert.equal((await assign(OWNED_ID, 'devA')).developerHandoff?.status || '', '');
+
+    // Sales: the owning rep reads; another rep gets 403 as on the other sales-client routes; no rep writes.
+    assert.equal((await send('GET', '', users.repA.token)).status, 200);
+    const other = await json(await send('GET', '', users.repB.token));
+    assert.deepEqual([other.status, other.body], [403, { message: 'Not your sales client.' }]);
+    assert.deepEqual(await statuses(writes(users.repA.token)), [401, 401, 401]);
+
+    // Developers: the assigned one reads and approves; an unassigned one gets 404 for every call.
+    assert.equal((await send('GET', '', users.devA.token)).status, 200);
+    const approved = await json(await send('POST', '/approve', users.devA.token, { phrase: 'baderom eksempelby' }));
+    assert.equal(approved.status, 200);
+    const stored = readFileSync(recordFile, 'utf8');
+    assert.equal((await send('GET', '', users.devC.token)).status, 404);
+    assert.deepEqual(await statuses(writes(users.devC.token)), [404, 404, 404]);
+
+    // The own name needs a confirmation on the route too.
+    const brand = await json(await send('POST', '/approve', users.devA.token, { phrase: 'Eksempel Baderom' }));
+    assert.deepEqual([brand.status, brand.body.code], [400, 'brand']);
+    assert.equal(readFileSync(recordFile, 'utf8'), stored, 'refused calls write nothing');
+
+    // With a Maker run every reassignment is a handoff: the developer it goes to (and the one it comes
+    // from) still see the client, and nobody but an admin changes keywords until it is accepted.
+    assert.equal((await assign(HANDOFF_ID, 'devA')).developerHandoff.status, 'waiting-upload');
+    assert.equal((await sendHandoff('GET', '', users.devA.token)).status, 200);
+    assert.deepEqual(await statuses(writes(users.devA.token, sendHandoff)), [403, 403, 403]);
+    const handoff = await assign(HANDOFF_ID, 'devB');
+    assert.deepEqual([handoff.developerHandoff.status, handoff.developerHandoff.fromOwnerId], ['waiting-upload', `developer:${users.devA.id}`]);
+    for (const key of ['devA', 'devB']) {
+      assert.equal((await sendHandoff('GET', '', users[key].token)).status, 200, key);
+      const refused = await json(await sendHandoff('POST', '/approve', users[key].token, { phrase: 'maler eksempelby' }));
+      assert.deepEqual([refused.status, refused.body.message], [403, 'Prosjektet er tildelt en annen utvikler.'], key);
+      assert.deepEqual(await statuses(writes(users[key].token, sendHandoff)), [403, 403, 403], key);
+    }
+    assert.equal((await sendHandoff('GET', '', users.devC.token)).status, 404);
+    assert.equal(existsSync(join(dataDir, 'seo-ops', 'clients', `${HANDOFF_ID}.json`)), false, 'refused calls write nothing');
+    assert.equal((await sendHandoff('POST', '/approve', hub.adminToken, { phrase: 'maler eksempelby' })).status, 200);
+
+    // Reassigned without a run: developer A no longer sees the client, B works on it.
+    await assign(OWNED_ID, 'devB');
+    assert.equal((await send('GET', '', users.devA.token)).status, 404);
+    assert.deepEqual(await statuses(writes(users.devA.token)), [404, 404, 404]);
+    assert.equal(readFileSync(recordFile, 'utf8'), stored, 'refused calls write nothing');
+    assert.equal((await send('POST', '/block', users.devB.token, { phrase: 'akutt baderom' })).status, 200);
+
+    // Admin changes it, and confirms the own name.
+    const confirmed = await json(await send('POST', '/approve', hub.adminToken, { phrase: 'Eksempel Baderom', allowBrand: true }));
+    assert.equal(confirmed.status, 200);
+    assert.deepEqual(confirmed.body.record.agreedKeywords.map((row) => [row.phrase, row.status, row.flags || []]), [
+      ['baderom eksempelby', 'approved', []],
+      ['akutt baderom', 'blocked', []],
+      ['Eksempel Baderom', 'approved', ['brand']],
+    ]);
+    assert.equal(confirmed.body.record.contractText, 'Avtalte søkeord: baderom eksempelby, Eksempel Baderom');
   } catch (error) {
     console.error(hub.logs().slice(-4000));
     throw error;
