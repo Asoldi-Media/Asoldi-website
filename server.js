@@ -37,9 +37,21 @@ import { registerCmsSsoRoutes } from './lib/cms-sso.js';
 import { createHeartbeatLimits, heartbeatMarksSeen, registerSiteCredentialRoutes, siteCredentialState } from './lib/site-credentials.js';
 import { registerDeliveryRoutes } from './lib/routes/delivery-routes.js';
 import { registerCmsFeatureRoutes } from './lib/routes/cms-feature-routes.js';
+import { registerOptionalRoutes } from './lib/routes/optional-routes.js';
 import { websitePlanForNewSite } from './lib/cms-entitlements.js';
 import { runDeliverySchemaStartupSnapshot } from './lib/delivery-snapshots.js';
 import { chosenWebsiteTier, makerSitePlanPayload, websiteTierIdForClient } from './lib/site-plan.js';
+import {
+  contractSigningSettled,
+  endedSitePlanForMaker,
+  markAdminPlanEdit,
+  markContractSigned,
+  recordSigningShadow,
+  signFromStripeCheckout,
+  signingModeForClient,
+  signingTierForOffer,
+} from './lib/contract-signing.js';
+import { goLiveCallbackV2 } from './lib/golive-callback.js';
 import { isMakerDeliveryEvent, makerEventsRecording, makerRunFetchWithMaterials, recordMakerDeliveryEvent } from './lib/maker-events-hub.js';
 import { runDeliveryBackfillAtBoot } from './lib/delivery-backfill.js';
 import { myphonerMatchCandidates, myphonerSyncSkipReason, testClientIdSet } from './lib/test-clients.js';
@@ -12441,6 +12453,10 @@ async function handleStripeWebhook(req, res) {
             paidAt: new Date().toISOString(),
           });
         }
+        // Signing switch: a checkout for an accepted offer signs; any other leaves a next action.
+        await signFromStripeCheckout(session).catch((error) => {
+          console.error('[signing] stripe checkout', sanitizeText(error?.message) || error);
+        });
         break;
       }
       case 'invoice.payment_failed': {
@@ -12554,7 +12570,7 @@ app.get('/api/client/offer', clientAuth, async (req, res) => {
   return res.json({ offer: presentClientOffer(offer) });
 });
 
-async function acceptPortalOfferForUser(offer, user, req) {
+async function acceptPortalOfferForUser(offer, user, req, { signingSource = 'portal-accept' } = {}) {
   const salesOffer = offer.salesOfferId ? salesOffers.getSalesOfferById(offer.salesOfferId) : null;
   const dual = salesOffers.offerHasDualAlternatives(salesOffer);
   const choice = salesOffers.parseChosenOfferIndex(req.body?.chosenOfferIndex, dual ? 2 : 1);
@@ -12565,7 +12581,7 @@ async function acceptPortalOfferForUser(offer, user, req) {
     if (!flattened) return { error: { status: 400, message: choice.error } };
     salesOffers.updateSalesOffer(salesOffer.id, flattened, { actor: 'client', action: 'chosen-offer' });
     const salesClient = offer.salesClientId ? sales.getSalesClientById(offer.salesClientId) : null;
-    const tier = chosenWebsiteTier(salesClient || {}, { ...salesOffer, ...flattened });
+    const tier = signingTierForOffer(salesClient || {}, { ...salesOffer, ...flattened }, choice.index);
     const plan = tier ? toClientWebsitePlan(tier) : null;
     if (plan) {
       working = offers.updateOffer(offer.id, {
@@ -12591,7 +12607,13 @@ async function acceptPortalOfferForUser(offer, user, req) {
   if (working.salesClientId) {
     const salesClient = sales.getSalesClientById(working.salesClientId);
     if (salesClient) {
-      markClientSoldFromSignedContract(salesClient.id);
+      markClientSoldFromSignedContract(salesClient.id, {
+        source: signingSource,
+        offerId: salesOffer?.id || '',
+        alternativeIndex: choice.index,
+        actor: 'client',
+      });
+      await contractSigningSettled(salesClient.id);
       try {
         await storePreviewAcceptedContract(sales.getSalesClientById(salesClient.id) || salesClient, {
           email: user?.username || saved?.acceptance?.email || '',
@@ -12969,6 +12991,7 @@ const cmsFeatures = registerCmsFeatureRoutes(app, {
   makerAuth: requireMakerHost('jobs', { message: 'Unauthorized' }),
 });
 registerAiAdminRoutes(app, { adminAuth, sales });
+await registerOptionalRoutes(app, { adminAuth, makerAuth, salesAuth, developmentAuth, salesOrDevelopmentAuth, clientAuth, sales, hub, salesOffers, getDataDir: getPersistentDataDir });
 
 // --- Hub API (public: site config for client CMS)
 // The site key is public, so a key lookup gets the public fields only. The client admin contact and
@@ -13109,9 +13132,11 @@ app.post('/api/hub/sites', adminAuth, (req, res) => {
 });
 
 app.put('/api/hub/sites/:id', adminAuth, (req, res) => {
+  const before = hub.getSiteById(req.params.id);
   const result = hub.updateSite(req.params.id, req.body || {});
   if (!result.ok) return res.status(404).json({ message: result.error });
-  res.json(result.site);
+  // Signing switch, auto: a websitePlan change here makes the site's plan an admin choice.
+  res.json(markAdminPlanEdit(before, result.site, { by: req.admin?.username || 'superadmin' }) || result.site);
 });
 
 app.get('/api/hub/sites/:id/website-due', adminAuth, (req, res) => {
@@ -13668,8 +13693,10 @@ app.post('/api/admin/sales/maker-status-callback', requireMakerHost('callback'),
     const githubRepo = sanitizeText(req.body?.githubRepo || req.body?.hubSite?.githubRepo);
     const goLiveStatus = sanitizeText(req.body?.status).toLowerCase();
     const hubName = sanitizeText(req.body?.hubSite?.name || client.businessName);
-    let site = null;
-    if (goLiveStatus === 'ready' && (siteKey || domain)) {
+    // Signing switch: a schema-2 callback (status only) for a client the switch covers.
+    const goLiveV2 = goLiveCallbackV2(req.body || {}, client);
+    let site = goLiveV2 ? await goLiveV2.linkSite({ siteKey, domain, githubRepo, name: hubName }) : null;
+    if (!goLiveV2 && goLiveStatus === 'ready' && (siteKey || domain)) {
       site = hub.createSite({
         name: hubName || domain || 'New client',
         domain,
@@ -13687,7 +13714,7 @@ app.post('/api/admin/sales/maker-status-callback', requireMakerHost('callback'),
     }
     const clientPatch = {};
     if (domain) clientPatch.websiteDomain = domain;
-    if (goLiveStatus === 'ready' && site) {
+    if ((goLiveV2 || goLiveStatus === 'ready') && site) {
       clientPatch.hubSite = {
         siteKey: site.site_key,
         domain: site.domain,
@@ -13716,6 +13743,10 @@ app.post('/api/admin/sales/maker-status-callback', requireMakerHost('callback'),
     else if (callbackStatus) patch.latestStepStatus = callbackStatus;
     if (sanitizeText(linked.intakeStatus)) patch.intakeStatus = linked.intakeStatus;
     const updated = sales.setSalesMakerRun((updatedClient || client).id, patch);
+    if (goLiveV2) {
+      const recorded = goLiveV2.record(updated);
+      return res.json({ ok: true, event, client: recorded, site, live: goLiveStatus === 'ready', goLive: recorded?.makerRun?.goLive || null });
+    }
     return res.json({ ok: true, event, client: updated, site, live: goLiveStatus === 'ready' });
   }
 
@@ -14929,8 +14960,33 @@ app.patch('/api/admin/sales/:id/progression', salesAuth, async (req, res) => {
   const existing = sales.getSalesClientById(req.params.id);
   if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, existing)) return res.status(403).json({ message: 'Not your sales client.' });
+  // Signing switch: in auto, ticking Kontrakt signs through the signer (the same state as every path).
+  const signingMode = key === 'contractSigned' && value === true ? signingModeForClient(existing) : 'off';
+  if (signingMode === 'auto') {
+    try {
+      const signed = await markContractSigned(existing.id, {
+        source: 'progression',
+        actor: offerActor(req),
+        sender: await resolveSalesSenderForAccount(req.salesUser),
+        fastTrack,
+        alternativeIndex: req.body?.chosenOfferIndex,
+      });
+      if (signed.needsChoice) {
+        return res.status(409).json({ message: 'Tilbudet har to alternativer. Velg hvilket kunden signerte.', needsChoice: true, client: existing });
+      }
+      if (!signed.ok) {
+        return res.status(signed.status || 400).json({ message: signed.reason === 'busy' ? 'Signeringen pågår allerede. Prøv igjen om litt.' : 'Kunne ikke signere kontrakten.' });
+      }
+      return res.json({ client: signed.client, warnings: signed.warnings || [] });
+    } catch (error) {
+      return res.status(400).json({ message: sanitizeText(error?.message) || 'Failed updating progression.' });
+    }
+  }
   try {
     const previousSigned = Boolean(existing.progression?.contractSigned);
+    if (signingMode === 'shadow') {
+      await recordSigningShadow(existing.id, { source: 'progression', actor: offerActor(req), alternativeIndex: req.body?.chosenOfferIndex });
+    }
     const updated = sales.setSalesProgress(req.params.id, key, value, { fastTrack });
     if (!updated) return res.status(404).json({ message: 'Sales client not found.' });
     let client = updated;
@@ -15034,7 +15090,7 @@ app.post('/api/admin/sales/:id/connect-portal', salesAuth, async (req, res) => {
     return res.status(404).json({ message: 'Fant ingen kundekonto med denne e-posten. Kunden må opprette kontoen først.' });
   }
   const salesOffer = salesOffers.getOfferForClient(existing.id);
-  const tier = chosenWebsiteTier(existing, salesOffer);
+  const tier = signingTierForOffer(existing, salesOffer);
   if (!tier) {
     return res.status(400).json({ message: 'Velg en tier i møtenotatene eller i tilbudet før du kobler.' });
   }
@@ -17659,7 +17715,7 @@ async function findClientUserByEmail(email) {
 }
 
 function publishSalesOfferToPortal({ salesClient, offer, letterHtml, contractHtml, user, email }) {
-  const tier = chosenWebsiteTier(salesClient, offer);
+  const tier = signingTierForOffer(salesClient, offer);
   const plan = tier ? toClientWebsitePlan(tier) : null;
   const previewUrl = getPublicSalesPreviewUrl(salesClient) || '';
   const portalOffer = offers.upsertPortalOffer({
@@ -19034,6 +19090,9 @@ app.post('/api/admin/sales/:id/create-maker-run', salesOrDevelopmentAuth, async 
     // WS8.3: a plan in force travels with the run (contract site-plan/1, read by the Maker).
     const sitePlanPayload = makerSitePlanPayload(client.sitePlan);
     if (sitePlanPayload) requestBody.sitePlan = sitePlanPayload;
+    // Signing switch, auto: a void or ended plan goes out with its status.
+    const endedPlanPayload = sitePlanPayload ? null : endedSitePlanForMaker(client);
+    if (endedPlanPayload) requestBody.sitePlan = endedPlanPayload;
 
     const browserCreated = req.body?.browserCreated && typeof req.body.browserCreated === 'object' ? req.body.browserCreated : null;
     const browserCreatedRunId = sanitizeText(browserCreated?.runId);
@@ -19415,6 +19474,41 @@ app.post('/api/admin/sales/:id/got-client', salesAuth, async (req, res) => {
     });
   }
 
+  // Signing switch. auto: the signer signs and creates the one hub site from the plan; a plan in the
+  // body counts only for a superadmin. Without any plan the site below is created as before.
+  const signingMode = signingModeForClient(client);
+  let siteBody = req.body || {};
+  if (signingMode === 'auto') {
+    const signed = await markContractSigned(client.id, {
+      source: 'got-client',
+      actor: offerActor(req),
+      sender: await resolveSalesSenderForAccount(req.salesUser),
+      superadminTierId: req.salesUser?.isAdmin ? sanitizeText(req.body?.websitePlan) : '',
+      fastTrack: true,
+    }).catch((error) => ({ ok: false, status: 400, reason: sanitizeText(error?.message) }));
+    if (signed.needsChoice) {
+      return res.status(409).json({ message: 'Tilbudet har to alternativer. Velg hvilket kunden signerte.', needsChoice: true });
+    }
+    if (!signed.ok) return res.status(signed.status || 400).json({ message: signed.reason === 'busy' ? 'Signeringen pågår allerede. Prøv igjen om litt.' : 'Kunne ikke signere kontrakten.' });
+    if (signed.site) {
+      return res.json({
+        ok: true,
+        phase: 'development',
+        site: hub.getAllSites().find((entry) => entry.id === signed.site.id) || signed.site,
+        client: sales.getSalesClientById(client.id),
+        movedClient: client,
+        warnings: signed.warnings || [],
+      });
+    }
+    if (!req.salesUser?.isAdmin) siteBody = {};
+  } else if (signingMode === 'shadow') {
+    await recordSigningShadow(client.id, {
+      source: 'got-client',
+      actor: offerActor(req),
+      superadminTierId: req.salesUser?.isAdmin ? sanitizeText(req.body?.websitePlan) : '',
+    });
+  }
+
   const existing =
     (client.hubSite?.siteKey && hub.getSiteByKey(client.hubSite.siteKey)) ||
     (client.websiteDomain && hub.getSiteByDomain(client.websiteDomain)) ||
@@ -19425,10 +19519,10 @@ app.post('/api/admin/sales/:id/got-client', salesAuth, async (req, res) => {
       name: client.businessName || 'New client',
       domain: client.websiteDomain || '',
       site_key: client.hubSite?.siteKey || '',
-      websitePlan: websitePlanForNewSite(client, req.body?.websitePlan),
-      ecommerceCatalogType: req.body?.ecommerceCatalogType,
-      githubRepo: req.body?.githubRepo,
-      features: req.body?.features,
+      websitePlan: websitePlanForNewSite(client, siteBody.websitePlan),
+      ecommerceCatalogType: siteBody.ecommerceCatalogType,
+      githubRepo: siteBody.githubRepo,
+      features: siteBody.features,
       deliveryPhase: 'development',
     });
   if (site?.id) {
@@ -21030,7 +21124,7 @@ app.post('/api/public/sales-preview/:id/contract/accept', async (req, res) => {
   });
   if (!signed.ok) return res.status(signed.status).json({ message: signed.message });
   const stamped = stampOfferBusiness(offer, signed.user);
-  const result = await acceptPortalOfferForUser(stamped, signed.user, req);
+  const result = await acceptPortalOfferForUser(stamped, signed.user, req, { signingSource: 'preview-accept' });
   if (result.error) return res.status(result.error.status).json({ message: result.error.message });
   return res.json(salesPreviewContractPayload(client));
 });
