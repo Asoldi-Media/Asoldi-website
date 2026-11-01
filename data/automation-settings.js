@@ -122,6 +122,12 @@ export function defaultAutomationSettings() {
     },
     storage: { budgetFiles: 20000, budgetMb: 2048 },
     alerts: { to: 'ansatte@asoldi.com', hostOfflineHours: 2, jobBlockedHours: 24, digestAt: '08:00' },
+    // ---- legal texts
+    // The clause catalog (lib/legal) renders the legal pages, contract lines, offer letters and
+    // sales copy, stamps DPA versions and offers DPA signing only while catalogTexts is enabled.
+    // Off: today's static texts, no stamps, and the legal routes answer 404.
+    legal: { catalogTexts: { enabled: false } },
+    // ---- end legal texts
     // Written only by recordReleasePass (the pre-release suite), never by PUT.
     releases: {},
   };
@@ -276,6 +282,9 @@ const BOOLEANS = new Set([
   'development.previewJobs',
   'development.seoJobs',
   'promotion.auto',
+  // ---- legal texts
+  'legal.catalogTexts.enabled',
+  // ---- end legal texts
 ]);
 
 function knownPaths() {
