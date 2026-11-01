@@ -17,6 +17,7 @@ import { DEVELOPER_RECENT_OVERDUE_MS } from '../../../../lib/developer-goals.js'
 import { DeveloperClientCard } from '../../developer/DeveloperClientCard';
 import { currentPipelineStage } from '../../../../lib/developer-card.js';
 import { DeveloperRunQueueBar } from '../../developer/DeveloperRunQueueBar';
+import { DeliveryGatePanel } from '../../developer/DeliveryGatePanel';
 import { LOCAL_EDITOR_ORIGIN } from '../../../../lib/maker-editor-origin.js';
 import { fetchMakerQueue } from '../../developer/makerQueue';
 import { clientIdentityBrief, salesKundekortView } from '../../../../lib/sales-kundekort.js';
@@ -1271,6 +1272,7 @@ export function DevelopmentClientsSection({ onLogout }: Props) {
       </FocusHeaderPopup>
 
       <div className="flex min-h-0 w-full flex-1 flex-col gap-3 px-3 sm:px-4 py-3">
+      <DeliveryGatePanel />
       {headerPanel !== 'filter' && (selectedIds.length > 0 || runningJobs > 0) && (
         <button
           type="button"
