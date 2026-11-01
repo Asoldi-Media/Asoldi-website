@@ -13,8 +13,20 @@ delete process.env.DATA_DIR;
 for (const key of Object.keys(process.env)) if (/^(AI_PROFILE|AI_TEST_MODE|AI_ROUTE_|HUB_SAFE_MODE|HUB_LLM_FACADE)/.test(key)) delete process.env[key];
 
 const { CHUNK_MAX_CHARS, chunkTranscript, splitSpeakerTurns } = await import('../lib/delivery-brief/chunk.js');
-const { createQuoteVerifier, normalizeQuote, verifyItemQuotes } = await import('../lib/delivery-brief/verify-quotes.js');
-const { createChunkCache, createMemoryChunkCache, extractMeeting, mapSchema, normalizeMapOutput, promptFor, taskForPurpose } = await import('../lib/delivery-brief/extract.js');
+const { createQuoteVerifier, normalizeQuote, runDistance, speakerMatches, verifyItemQuotes } = await import('../lib/delivery-brief/verify-quotes.js');
+const {
+  MAX_CHUNK_ATTEMPTS,
+  backoffDelayMs,
+  createChunkCache,
+  createMemoryChunkCache,
+  extractMeeting,
+  mapSchema,
+  normalizeMapOutput,
+  promptFor,
+  statHasQuotedNumber,
+  taskForPurpose,
+} = await import('../lib/delivery-brief/extract.js');
+const { wordTokens } = await import('../lib/delivery-brief/text.js');
 const { llmMergeItems, reduceItems } = await import('../lib/delivery-brief/reduce.js');
 const { createHubLlm } = await import('../lib/llm/index.js');
 const { validateJson } = await import('../packages/suite/core/llm/json.js');
@@ -29,6 +41,9 @@ const SIGNALS = {
   header: 'Kunde: Telefonnummeret på siden skal stå helt øverst i menyen.',
   blog: 'Selger: Bloggen er inkludert i pakken, og vi skriver innlegg hver måned.',
   gallery: 'Kunde: Vi vil gjerne at forsiden viser bilder av ferdige bad fra kunder i hele fylket.',
+  // Two adjacent turns by two speakers, a year, and a negation: material for planted fabrications.
+  started: 'Kunde: Vi startet i 2020 og har nå åtte ansatte.\nSelger: Flott, da lager vi en side for flisfirmaet.',
+  noShop: 'Kunde: Vi skal ikke ha nettbutikk på siden.',
 };
 
 function filler(prefix, count) {
@@ -47,7 +62,7 @@ function transcript(prefix, lines, signals) {
   return body.join('\n');
 }
 
-const SALES = transcript('Salg', 160, [SIGNALS.brand, SIGNALS.years, SIGNALS.blog]);
+const SALES = transcript('Salg', 160, [SIGNALS.brand, SIGNALS.years, SIGNALS.blog, SIGNALS.started, SIGNALS.noShop]);
 const WORKSHOP = transcript('Workshop', 120, [SIGNALS.header, SIGNALS.gallery]);
 
 // Quotes no transcript contains in a form the rules accept. Every one must be rejected.
@@ -59,6 +74,25 @@ const PLANTED = [
   'Firmaet heter Eksempel Kjøkken',
   'bloggen koster ekstra hver måned',
   'Telefonnummeret skal stå helt nederst i bunnteksten',
+];
+
+// Fabrications that a character-substring check over the whole transcript would let through. Each
+// planted item carries the word "plantet" in its value, ask or text; none may survive.
+const PLANTED_SHORT = [
+  // 1-2 words that do occur in the transcript.
+  { list: 'facts', item: { path: 'positioning.audience', value: 'plantet: kort', quote: 'og har', speaker: 'Kunde' } },
+  { list: 'facts', item: { path: 'claims.awards', value: 'plantet: ett ord', quote: 'nettbutikk', speaker: 'Kunde' } },
+  // A number inside a longer number: "20" in "2020", alone and in a stat.
+  { list: 'facts', item: { path: 'claims.stats', value: 'plantet: 20 år', number: 20, unit: 'år', label: 'erfaring', quote: '20', speaker: 'Kunde' } },
+  { list: 'facts', item: { path: 'claims.stats', value: 'plantet: 20 år', number: 20, unit: 'år', label: 'erfaring', quote: 'Vi startet i 2020 og har', speaker: 'Kunde' } },
+  // A word fragment.
+  { list: 'facts', item: { path: 'identity.brandName', value: 'plantet: fragment', quote: 'lisfirma', speaker: 'Selger' } },
+  // Across two turns (two speakers).
+  { list: 'directives', item: { kind: 'add', area: 'hero', ask: 'plantet: to linjer', quote: 'nå åtte ansatte. Selger: Flott, da lager vi', speaker: 'Kunde' } },
+  // A real quote under the wrong speaker.
+  { list: 'facts', item: { path: 'identity.brandName', value: 'plantet: feil taler', quote: 'Firmaet heter Eksempel Bad', speaker: 'Selger' } },
+  // A word left out that turns the meaning around ("ikke").
+  { list: 'directives', item: { kind: 'add', area: 'products', ask: 'plantet: nettbutikk', quote: 'Vi skal ha nettbutikk på siden', speaker: 'Kunde' } },
 ];
 
 function emptyAnswer() {
@@ -88,6 +122,7 @@ function answerFor(chunkText) {
   answer.facts.push({ path: 'identity.brandName', value: 'Eksempel Kjøkken', quote: PLANTED[4], speaker: 'Kunde' });
   answer.promises.push({ featureKey: 'blog.posts', text: 'Blogg mot betaling', quote: PLANTED[5], speaker: 'Selger' });
   answer.directives.push({ kind: 'change', area: 'footer', ask: 'Nummer nederst', quote: PLANTED[6], speaker: 'Kunde' });
+  for (const { list, item } of PLANTED_SHORT) answer[list].push({ ...item });
   // A stat whose quote is real but does not hold its number: dropped.
   answer.facts.push({ path: 'claims.stats', value: '15', number: 15, unit: 'jobs', label: 'jobber', quote: 'Telefonnummeret på siden skal stå helt øverst', speaker: 'Kunde' });
   // Items without a quote or speaker are invalid.
@@ -182,32 +217,82 @@ test('quotes: substring after whitespace and case folding; diacritics are kept',
   assert.equal(normalizeQuote('  «Hei   der…»  '), 'hei der');
 });
 
-test('quotes: 90 % word overlap with one line passes; a changed number, a paraphrase or words from two lines do not', () => {
+test('quotes: other punctuation is the same run of words; 90 % in order with one turn passes; a changed number, a paraphrase or words from two turns do not', () => {
   const verifier = createQuoteVerifier(WORKSHOP);
   const close = verifier.verify('Vi vil gjerne at forsiden viser bilder av ferdige bad fra kunder i hele fylket!');
   assert.equal(close.ok, true);
-  assert.equal(close.how, 'tokens', 'another end mark: matched on words');
-  const reordered = verifier.verify('vi vil gjerne at forsiden viser bilder av ferdige bad, fra kunder i hele fylket');
-  assert.equal(reordered.ok, true);
-  assert.equal(reordered.how, 'tokens');
+  assert.equal(close.how, 'substring', 'another end mark: the same words in the same order');
+  const comma = verifier.verify('vi vil gjerne at forsiden viser bilder av ferdige bad, fra kunder i hele fylket');
+  assert.equal(comma.ok, true);
+  const oneWord = verifier.verify('Vi vil gjerne at forsiden viser fine bilder av ferdige bad fra kunder i hele fylket');
+  assert.equal(oneWord.ok, true, 'one added word in sixteen');
+  assert.equal(oneWord.how, 'tokens');
+  assert.equal(verifier.verify('Vi vil gjerne at forsiden viser bilder av bad fra kunder i fylket').ok, false, 'two words in fourteen left out: under 90 %');
+  assert.equal(verifier.verify('fra kunder i hele fylket vil vi gjerne at forsiden viser bilder av ferdige bad').ok, false, 'the same words in another order');
   const sales = createQuoteVerifier(SALES);
   assert.equal(sales.verify('Vi har drevet med flislegging i 40 år').ok, false, 'changed number');
   assert.equal(sales.verify('Vi har drevet med flislegging i 26 år her i byen, og 40 til').ok, false, 'a number not in the line');
+  assert.equal(sales.verify('Vi skal ha nettbutikk på siden').ok, false, 'a left-out "ikke" turns the meaning around');
   assert.equal(verifier.verify('Vi ønsker at nummeret står øverst').ok, false, 'paraphrase');
   assert.equal(verifier.verify('Telefonnummeret på siden viser bilder av ferdige bad fra kunder').ok, false, 'two lines spliced');
   assert.equal(verifier.verify('x'.repeat(401)).ok, false, 'over 400 characters');
   assert.equal(verifier.verify('').ok, false);
+  assert.equal(runDistance(['a', 'b', 'c'], ['x', 'a', 'b', 'c', 'y']), 0);
+  assert.equal(runDistance(['a', 'c'], ['a', 'b', 'c']), 1);
+});
+
+test('quotes: whole words inside one speaker turn only; short runs, fragments, numbers inside numbers, two turns and the wrong speaker fail', () => {
+  const transcriptText = 'Kari: Vi startet i 2020 og har nå åtte ansatte.\nOla: Flott, da lager vi en side for frisørsalongen.\nKari: Ja.\nfortsatt Kari på en ny linje uten navn';
+  const verifier = createQuoteVerifier(transcriptText);
+  for (const [quote, reason] of [
+    ['20', 'not-found'],
+    ['0 og', 'not-found'],
+    ['er', 'not-found'],
+    ['salongen', 'not-found'],
+    ['nå åtte ansatte. ola: flott', 'not-found'],
+    ['og har', 'too-short'],
+    ['flott', 'too-short'],
+  ]) {
+    const result = verifier.verify(quote, { speaker: 'Kari' });
+    assert.equal(result.ok, false, quote);
+    assert.equal(result.how, reason, quote);
+  }
+  assert.equal(verifier.verify('Ja', { speaker: 'Kari' }).ok, false, 'a whole turn of one word, but the turn continues on the next line');
+  assert.equal(createQuoteVerifier('Kari: Ja.\nOla: Bra.').verify('Ja', { speaker: 'Kari' }).ok, true, 'a short quote passes when it is the whole turn');
+  assert.equal(verifier.verify('Vi startet i 2020', { speaker: 'Kari' }).ok, true);
+  assert.equal(verifier.verify('Kari: Vi startet i 2020', { speaker: 'Kari' }).ok, true, 'the line label copied with the quote is ignored');
+  assert.equal(verifier.verify('ja fortsatt kari på en ny linje', { speaker: 'Kari' }).ok, true, 'a turn runs over continuation lines');
+  const wrong = verifier.verify('Vi startet i 2020', { speaker: 'Ola' });
+  assert.equal(wrong.ok, false);
+  assert.equal(wrong.how, 'speaker-mismatch');
+  assert.equal(verifier.verify('da lager vi en side', { speaker: 'Ola Nordmann' }).ok, true, 'a fuller name for the same speaker');
+  assert.equal(speakerMatches('Kari', 'Kari Nordmann'), true);
+  assert.equal(speakerMatches('Ola', 'Kari'), false);
+  assert.equal(speakerMatches('', 'Kari'), false);
+  assert.equal(speakerMatches('Hvem som helst', ''), true, 'a turn without a label cannot be checked');
+
+  // The stat probe: a made-up 20 with the quote "20" or a quote holding 2020.
+  const { kept } = verifyItemQuotes([
+    { type: 'fact', path: 'claims.stats', number: 20, unit: 'år', quote: '20', speaker: 'Kari', meetingId: 'm1' },
+    { type: 'fact', path: 'claims.stats', number: 20, unit: 'år', quote: 'Vi startet i 2020', speaker: 'Kari', meetingId: 'm1' },
+    { type: 'fact', path: 'claims.stats', number: 2020, unit: 'år', quote: 'Vi startet i 2020', speaker: 'Kari', meetingId: 'm1' },
+  ], new Map([['m1', transcriptText]]));
+  assert.deepEqual(kept.map((item) => [item.number, statHasQuotedNumber(item)]), [[20, false], [2020, true]]);
+  assert.equal(statHasQuotedNumber({ type: 'fact', path: 'claims.stats', number: 20000, quote: 'vi solgte 20 000 fliser' }), true, 'digit groups');
+  assert.equal(statHasQuotedNumber({ type: 'fact', path: 'claims.stats', number: 2.5, quote: 'på 2,5 dager' }), true, 'a decimal comma');
 });
 
 test('quotes: an item is checked only against its own meeting', () => {
   const items = [
-    { quote: 'Firmaet heter Eksempel Bad', meetingId: 'sales' },
-    { quote: 'Firmaet heter Eksempel Bad', meetingId: 'workshop' },
-    { quote: 'Firmaet heter Eksempel Bad', meetingId: 'unknown' },
+    { quote: 'Firmaet heter Eksempel Bad', speaker: 'Kunde', meetingId: 'sales' },
+    { quote: 'Firmaet heter Eksempel Bad', speaker: 'Kunde', meetingId: 'workshop' },
+    { quote: 'Firmaet heter Eksempel Bad', speaker: 'Kunde', meetingId: 'unknown' },
+    { quote: 'Firmaet heter Eksempel Bad', speaker: 'Selger', meetingId: 'sales' },
   ];
   const { kept, dropped } = verifyItemQuotes(items, { sales: SALES, workshop: WORKSHOP });
   assert.equal(kept.length, 1);
-  assert.deepEqual(dropped.map((row) => row.reason), ['not-found', 'no-transcript']);
+  assert.equal(kept[0].speaker, 'Kunde');
+  assert.deepEqual(dropped.map((row) => row.reason), ['not-found', 'no-transcript', 'speaker-mismatch']);
 });
 
 // ---------------------------------------------------------------- the map step
@@ -268,6 +353,7 @@ test('extraction through the facade: every planted fabricated quote is rejected 
   assert.ok(results.every((result) => result.complete));
   const planted = new Set(PLANTED.map(normalizeQuote));
   assert.deepEqual(kept.filter((item) => planted.has(normalizeQuote(item.quote))), [], 'no planted quote survives');
+  assert.deepEqual(kept.filter((item) => /plantet/.test(item.value || item.ask || item.text || '')), [], 'no short, partial, spliced or misattributed quote survives');
   // Each chunk planted 7 fabrications and one stat without its number in the quote.
   const droppedUnverified = results.reduce((sum, result) => sum + result.droppedUnverified, 0);
   assert.ok(droppedUnverified >= chunkCount * 8, `dropped ${droppedUnverified}`);
@@ -276,7 +362,7 @@ test('extraction through the facade: every planted fabricated quote is rejected 
   assert.ok(stats.length >= 1);
   for (const stat of stats) {
     assert.equal(stat.quoteVerified, true);
-    assert.match(stat.quote, new RegExp(String(stat.number)));
+    assert.ok(wordTokens(stat.quote).includes(String(stat.number)), `the number ${stat.number} is a whole word of «${stat.quote}»`);
   }
   assert.ok(kept.every((item) => item.quoteVerified === true && item.quote && item.speaker));
   assert.ok(kept.some((item) => item.type === 'fact' && item.path === 'identity.brandName' && item.value === 'Eksempel Bad'));
@@ -310,12 +396,15 @@ test('ledger: transcript calls never reach a provider the data policy disallows,
   }
 });
 
-test('no other provider when Claude fails: the chunk is left for the next rebuild', async () => {
+test('no other provider when Claude fails: the chunk is left for the next rebuild and the run makes no more calls', async () => {
   const stub = stubProviders({ failAfter: 0 });
   const { llm } = facadeFor('test', stub);
   const result = await extractMeeting({ meeting: { meetingId: 'm-down', purpose: 'sales', transcript: SALES }, llm, cache: createMemoryChunkCache(), clientId: 'syn-brief' });
+  assert.ok(result.chunks.total >= 2);
   assert.equal(result.complete, false);
-  assert.equal(result.chunks.failed, result.chunks.total);
+  assert.equal(result.chunks.failed, 1, 'the first failure stops new calls');
+  assert.equal(result.chunks.waiting, result.chunks.total - 1);
+  assert.equal(stub.calls.claude, 1);
   assert.equal(result.items.length, 0);
   assert.equal(stub.calls.deepseek, 0);
   assert.equal(stub.calls.gemini, 0);
@@ -356,6 +445,110 @@ test('an interrupted extraction redoes only the chunks it had not finished (disk
   assert.equal(deadlineRun.complete, false);
   assert.equal(timed.calls.claude, 0);
   assert.ok(deadlineRun.chunks.skipped >= 1);
+});
+
+// ---------------------------------------------------------------- failures: gaps and backoff
+
+function codedFailure(code, usd = 0) {
+  return Object.assign(new Error(`stub ${code}`), { code, allRows: usd ? [{ usd }] : [] });
+}
+
+test('a final answer (refusal, output limit, broken schema) is cached as a gap: the meeting completes and the chunk is not paid for again', async () => {
+  const long = transcript('Gap', 400, [SIGNALS.brand, 'Kunde: MARKØR denne delen svarer modellen aldri ordentlig på.']);
+  const total = chunkTranscript(long).length;
+  assert.ok(total >= 3, `${total} chunks`);
+  for (const code of ['max_tokens', 'refusal', 'schema_invalid']) {
+    let calls = 0;
+    const llm = {
+      json: async (request) => {
+        calls += 1;
+        const chunk = chunkOf(request.user);
+        if (chunk.includes('MARKØR')) throw codedFailure(code, 0.01);
+        return { data: answerFor(chunk), usd: 0.001 };
+      },
+    };
+    const cache = createMemoryChunkCache();
+    const meeting = { meetingId: `m-gap-${code}`, purpose: 'sales', transcript: long };
+    const first = await extractMeeting({ meeting, llm, cache, clientId: 'syn-brief' });
+    assert.equal(first.complete, true, `${code}: a gap does not hold the meeting back`);
+    assert.ok(first.chunks.gaps >= 1, code);
+    assert.equal(calls, total, `${code}: every chunk asked once, the rest of the run went on`);
+    assert.ok(first.items.some((item) => item.path === 'identity.brandName'));
+    assert.ok(first.costUsd >= 0.01, 'the failed call is counted in the cost');
+    const again = await extractMeeting({ meeting, llm, cache, clientId: 'syn-brief' });
+    assert.equal(calls, total, `${code}: the gap is cached, nothing is paid again`);
+    assert.equal(again.chunks.gaps, first.chunks.gaps);
+    await extractMeeting({ meeting, llm, cache, clientId: 'syn-brief', retryGaps: true });
+    assert.equal(calls, total + first.chunks.gaps, `${code}: retryGaps asks the gaps again`);
+  }
+});
+
+test('a failing provider: one failed call stops the run, each chunk backs off (15 min doubling to 24 h) and becomes a gap after six failures', async () => {
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => backoffDelayMs(n) / 60_000), [15, 30, 60, 120, 240, 480, 960, 1440, 1440, 1440]);
+  assert.equal(MAX_CHUNK_ATTEMPTS, 6);
+  const retry = { failures: {}, nowMs: Date.parse('2026-11-01T00:00:00.000Z'), ignoreBackoff: false };
+  const callTimes = new Map();
+  let calls = 0;
+  const llm = {
+    json: async (request) => {
+      calls += 1;
+      const chunk = chunkOf(request.user);
+      if (!callTimes.has(chunk)) callTimes.set(chunk, []);
+      callTimes.get(chunk).push(retry.nowMs);
+      throw codedFailure('provider_error');
+    },
+  };
+  const cache = createMemoryChunkCache();
+  const meeting = { meetingId: 'm-outage', purpose: 'sales', transcript: SALES };
+  const total = chunkTranscript(SALES).length;
+  assert.ok(total >= 2, `${total} chunks`);
+  const callsAt = [];
+  let last = null;
+  // Two days of five-minute ticks.
+  for (let tickIndex = 0; tickIndex < 2 * 24 * 12; tickIndex += 1) {
+    const before = calls;
+    last = await extractMeeting({ meeting, llm, cache, clientId: 'syn-brief', retry });
+    assert.ok(calls - before <= 1, 'at most one failed call per run');
+    callsAt.push(calls);
+    retry.nowMs += 5 * 60_000;
+  }
+  assert.equal(calls, total * MAX_CHUNK_ATTEMPTS, `${calls} calls for ${total} chunks: at most six per chunk`);
+  assert.equal(callsAt.at(-1), callsAt[callsAt.length - 100], 'the call count stopped growing');
+  assert.equal(last.complete, true, 'every chunk ended as a gap');
+  assert.equal(last.chunks.gaps, total);
+  assert.deepEqual(retry.failures, {}, 'no failure records left');
+  for (const times of callTimes.values()) {
+    assert.deepEqual(times.slice(1).map((at, i) => (at - times[i]) / 60_000), [15, 30, 60, 120, 240], 'each chunk backs off 15, 30, 60, 120, 240 minutes');
+  }
+
+  // A person's rebuild (ignoreBackoff) retries a waiting chunk at once.
+  let healthyCalls = 0;
+  const healthy = { json: async (request) => { healthyCalls += 1; return { data: answerFor(chunkOf(request.user)) }; } };
+  const waiting = { failures: { }, nowMs: Date.parse('2026-11-01T00:00:00.000Z'), ignoreBackoff: false };
+  const freshCache = createMemoryChunkCache();
+  await extractMeeting({ meeting, llm: { json: async () => { throw codedFailure('provider_error'); } }, cache: freshCache, clientId: 'syn-brief', retry: waiting });
+  assert.equal(Object.keys(waiting.failures).length, 1);
+  const blocked = await extractMeeting({ meeting, llm: healthy, cache: freshCache, clientId: 'syn-brief', retry: waiting });
+  assert.equal(healthyCalls, total - 1, 'the failed chunk waits; the others are asked');
+  assert.equal(blocked.complete, false);
+  const forced = await extractMeeting({ meeting, llm: healthy, cache: freshCache, clientId: 'syn-brief', retry: { ...waiting, ignoreBackoff: true } });
+  assert.equal(forced.complete, true);
+  assert.equal(healthyCalls, total);
+});
+
+test('a lost lease stops the run before the next call', async () => {
+  let calls = 0;
+  const llm = { json: async (request) => { calls += 1; return { data: answerFor(chunkOf(request.user)) }; } };
+  let allowed = 1;
+  const result = await extractMeeting({
+    meeting: { meetingId: 'm-lease', purpose: 'sales', transcript: SALES },
+    llm,
+    cache: createMemoryChunkCache(),
+    clientId: 'syn-brief',
+    beforeCall: async () => (allowed-- > 0),
+  });
+  assert.equal(calls, 1);
+  assert.equal(result.complete, false);
 });
 
 // ---------------------------------------------------------------- reduce
