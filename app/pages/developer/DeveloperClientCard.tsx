@@ -12,6 +12,7 @@ import { DeveloperRequestThread } from './DeveloperRequestThread';
 import { ClientNotesFeed, clientFeedMessages } from '../Admin/sections/ClientNotesFeed';
 import { DeveloperLanguageLockPopup } from './DeveloperLanguageLockPopup';
 import { DeveloperPagesPopup } from './DeveloperPagesPopup';
+import { DeveloperSeoPanel } from './DeveloperSeoPanel';
 import { DeveloperAuthImage, DeveloperClientBrief, DeveloperMediaLibrary, type BriefMediaFile, type MaterialDot } from './DeveloperClientBrief';
 import { DeveloperClientIdentityLine, type KundekortDraft } from './DeveloperKundedata';
 import { enqueueMakerQueue, ensureLocalMaker, fetchMakerRunStatus, findMakerRunBySalesClientId, saveMakerRunDomain } from './makerQueue';
@@ -1506,7 +1507,8 @@ export function DeveloperClientCard({
   return (
     <div className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
       {card}
-      <div className="min-w-0">
+      <div className="min-w-0 space-y-3">
+        {salesClientId ? <DeveloperSeoPanel salesClientId={salesClientId} authHeaders={developmentAuthHeaders()} canEdit={canWork || isAdmin} /> : null}
         {salesClientId ? (
           <ClientNotesFeed
             salesClientId={salesClientId}
