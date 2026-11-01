@@ -485,7 +485,7 @@ test('linkedSalesClientIndex finds the same client as findLinkedSalesClient for 
   assert.equal(linked(sites[4]).id, 'k1', 'the first matching client wins, as in a scan');
 });
 
-test('the storage report walks the data dir without holding the event loop, one scan at a time', async () => {
+test('the storage report walks the data dir without holding the event loop, one scan at a time', async (t) => {
   resetData();
   for (let folder = 0; folder < 6; folder += 1) {
     const dir = join(dataDir, `store-${folder}`, 'nested');
@@ -497,6 +497,7 @@ test('the storage report walks the data dir without holding the event loop, one 
   const ticker = setInterval(() => {
     turns += 1;
   }, 0);
+  t.after(() => clearInterval(ticker));
   const first = loopLib.deliveryStorageReport({ dataDir, now: T0 });
   const second = loopLib.deliveryStorageReport({ dataDir, now: T0 + 1 });
   assert.ok(first instanceof Promise, 'the report is async');
