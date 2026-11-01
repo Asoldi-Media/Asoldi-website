@@ -31,6 +31,7 @@ type GateDetail = {
     info: Array<{ id: string; status: string; detail: string }>;
   };
   askable: { rows: Array<{ id: string; group: string; title: string }>; total: number };
+  shadowMails?: Array<{ key: string; kind: string; at: string; subject: string; replyTo: string; text: string; purged: boolean }>;
 };
 
 type GateClient = {
@@ -243,6 +244,26 @@ export function DeliveryGatePanel() {
                         <p className="mt-2 text-xs text-slate-500">
                           Kunden spørres om {detail.askable.rows.length} av {detail.askable.total} linjer på e-post.
                         </p>
+                        {detail.shadowMails && detail.shadowMails.length > 0 && (
+                          <div className="mt-2">
+                            <p className="text-xs font-medium text-slate-700">Skyggeutkast (ikke sendt)</p>
+                            <ul className="mt-1 space-y-1">
+                              {detail.shadowMails.map((mail) => (
+                                <li key={mail.key} className="text-xs text-slate-600">
+                                  <details>
+                                    <summary className="cursor-pointer">
+                                      {mail.at.slice(0, 16).replace('T', ' ')} · {mail.subject || mail.kind}
+                                      {mail.replyTo ? ` · svar til ${mail.replyTo}` : ''}
+                                    </summary>
+                                    <pre className="mt-1 whitespace-pre-wrap rounded bg-white p-2 text-[11px] text-slate-700">
+                                      {mail.purged ? 'Innholdet er slettet fra utboksen (eldre enn 30 dager).' : mail.text}
+                                    </pre>
+                                  </details>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
                       </>
                     )}
                   </div>
