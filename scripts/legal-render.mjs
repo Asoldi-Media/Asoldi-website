@@ -11,6 +11,9 @@
  *   node scripts/legal-render.mjs --check   exit 1 when any of them is stale, or when the DPA text changed
  *                                           without a new DPA_VERSION.
  *
+ * The archive also holds the wording a catalog contract adds around the clauses (contractWording()),
+ * so a change to lib/legal/contract.js's introduction or Section 4 needs a new version too.
+ *
  * Rendering uses lib/legal/texts.js archiveRenderOptions(): the code defaults of the automation
  * settings and the personal-data registry's retention text when that registry exists, so the output
  * depends only on the code. The API serves the current documents from this archive, and the archive
@@ -25,6 +28,8 @@ import { ARCHIVE_DIR, ARCHIVE_FORMAT, archiveUrl, archivedVersions, clearArchive
 import { LEGAL_DOC_IDS, contractLinesForPlan, renderDocument, renderDpaAppendixMarkdown } from '../lib/legal/render.js';
 import { personalDataReady } from '../lib/legal/subprocessors.js';
 import { archiveRenderOptions, publishedValues } from '../lib/legal/texts.js';
+import { catalogContractCopy } from '../lib/legal/contract.js';
+import { contractCopy } from '../lib/offer-contract-copy.js';
 
 // The personal-data registry is optional and loads without blocking; wait for it before rendering.
 await personalDataReady;
@@ -39,6 +44,19 @@ const SNAPSHOT_PLANS = Object.freeze({
   'tier-1-standard:once': { tierId: 'tier-1-standard', billing: 'once' },
 });
 
+/**
+ * The wording a catalog contract adds around the clauses (lib/legal/contract.js: the introduction's
+ * legal sentence and Section 4), in Norwegian and English. It is part of the archive, so changing it
+ * needs a new catalog version like any clause.
+ */
+export function contractWording() {
+  const legal = { mode: 'catalog', catalogVersion: CATALOG_VERSION, dpaVersion: DPA_VERSION };
+  return Object.fromEntries(['nb', 'en'].map((language) => {
+    const t = catalogContractCopy(contractCopy(language), { legal, plan: { tierId: 'tier-2-seo', services: [], oneTimeAddOns: [], billing: 'month', pages: 7 }, language });
+    return [language, { introLegal: t.introLegal, section4: t.s4.bullets }];
+  }));
+}
+
 export function currentArchive() {
   const options = archiveRenderOptions();
   return {
@@ -49,6 +67,7 @@ export function currentArchive() {
     published: publishedValues(options),
     clauses: declaredClauses(),
     docs: Object.fromEntries(LEGAL_DOC_IDS.map((doc) => [doc, renderDocument(doc, options)])),
+    contract: contractWording(),
   };
 }
 

@@ -1,7 +1,8 @@
 // DPA and catalog versions: stamped on offers at send, snapshot at signing, signed in the portal
 // (idempotent), the legal routes, and nothing at all while the legal switch is off.
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,10 +17,20 @@ const offers = await import('../data/sales-offers.js');
 const settingsStore = await import('../data/automation-settings.js');
 const { DPA_VERSION, dpaMissingAtSigning, dpaSignPatch, dpaStatus } = await import('../lib/legal/dpa.js');
 const { CATALOG_VERSION } = await import('../lib/legal/catalog.js');
-const { legalBindingForClient, legalSourceForOffer, setAgreedKeywordsResolver } = await import('../lib/legal/binding.js');
+const { legalBindingForClient, legalSnapshotPatch, legalSourceForOffer, setAgreedKeywordsResolver } = await import('../lib/legal/binding.js');
 const { draftTermsUpdateNotice, termsNoticePatch } = await import('../lib/legal/terms-update.js');
 const { register } = await import('../lib/routes/legal-routes.js');
 const { productsWithTier } = await import('../lib/offer-email.js');
+const { contractHtmlForOffer } = await import('../lib/offer-contract-html.js');
+const { buildContractPdf, contractInputsForOffer } = await import('../lib/offer-contract-pdf.js');
+const { clientWithOfferParty } = await import('../lib/offer-readiness.js');
+const { storePreviewAcceptedContract } = await import('../lib/sales-signed-contract.js');
+const darkSurface = await import('./legal/dark-surface.mjs');
+const baseline = JSON.parse(readFileSync(darkSurface.BASELINE_PATH, 'utf8'));
+
+function sha256(value) {
+  return createHash('sha256').update(value).digest('hex');
+}
 
 function setSwitch(enabled) {
   const result = settingsStore.saveAutomationSettings({ legal: { catalogTexts: { enabled } } }, { by: 'test', reason: 'test' });
@@ -118,6 +129,23 @@ test('switch off: no stamps, no snapshot, no DPA data, every legal route answers
   assert.doesNotMatch(before.offers, /dpaVersion|"legal"/);
   assert.doesNotMatch(before.sales, /"legal"|"dpa"/);
   assert.deepEqual(productsWithTier([], 'tier-1-standard')[0].includes.includes('Blogg der du publiserer egne innlegg'), false, 'static offer lines while off');
+  // Unsent offers: the preview, the PDF attached at send and the contract signed are the static text.
+  const draft = offers.createSalesOffer({ salesClientId: client.id, ownerId: 'rep', tierId: 'tier-2-seo', products: productsWithTier([], 'tier-2-seo') });
+  assert.equal(draft.status, 'draft');
+  assert.equal(legalSourceForOffer(draft).mode, 'legacy');
+  assert.equal(legalSourceForOffer(offers.markOfferPreviewed(draft.id, { actor: 'rep' })).mode, 'legacy');
+  // The baseline was recorded with the clock at the fixtures' date (the contract prints today's date).
+  mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-05-04T09:00:00.000Z') });
+  try {
+    for (const key of ['tier2Draft', 'tier2ReviewRequested', 'tier2Verified', 'tier2EnDraft', 'customVerified', 'dualDraft']) {
+      const fixture = darkSurface.FIXTURE_OFFERS[key];
+      assert.notEqual(fixture.status, 'sent', key);
+      assert.equal(legalSourceForOffer(fixture).mode, 'legacy', key);
+      assert.equal(sha256(contractHtmlForOffer(fixture, darkSurface.FIXTURE_CLIENT)), baseline.contracts[key].htmlSha256, key);
+    }
+  } finally {
+    mock.timers.reset();
+  }
 });
 
 test('switch on: an offer is stamped at send, alternatives too, and the preview approval carries over', () => {
@@ -199,18 +227,59 @@ test('the got-client route path (a plain progression patch) records the snapshot
   assert.equal(sales.getSalesClientById(batch.id).ext.legal.catalogVersion, CATALOG_VERSION, 'the batch writer records it as well');
 });
 
-test('a stamped offer signed while the switch is off still binds its version (kill switch)', () => {
+test('a stamped offer signed while the switch is off binds and shows the version it was sent with (kill switch)', async () => {
   setSwitch(true);
   const client = sales.createSalesClient({ businessName: 'Kill AS', contactEmail: 'kill@example.com', product: 'asoldi' });
   const offer = sentOffer(client.id);
+  const sentHtml = contractHtmlForOffer(offer, client);
   setSwitch(false);
   const signed = sales.setSalesProgress(client.id, 'contractSigned', true, { fastTrack: true });
-  assert.equal(signed.ext.legal.catalogVersion, CATALOG_VERSION, 'the stamp decides, not the switch');
-  assert.equal(legalSourceForOffer(offers.getSalesOfferById(offer.id)).mode, 'legacy', 'while off the contract shows the legacy text');
+  assert.equal(signed.ext.legal.catalogVersion, CATALOG_VERSION, 'the stamp decides the binding, not the switch');
+  const stored = offers.getSalesOfferById(offer.id);
+  assert.deepEqual(legalSourceForOffer(stored), { mode: 'catalog', catalogVersion: CATALOG_VERSION, dpaVersion: DPA_VERSION, tiers: stored.ext.legal.tiers }, 'and the contract');
+  assert.equal(legalBindingForClient(signed).mode, 'catalog', 'binding and contract agree while off');
+  assert.equal(contractHtmlForOffer(stored, signed), sentHtml, 'the portal shows the contract that was sent');
+  // Kill switch for new contracts: an unsent offer shows the static text while off.
+  const draft = offers.createSalesOffer({ salesClientId: 'other-client', ownerId: 'rep', tierId: 'tier-2-seo', products: productsWithTier([], 'tier-2-seo') });
+  assert.equal(legalSourceForOffer(draft).mode, 'legacy');
+
+  // The PDF stored when the client accepts on the preview is the stamped contract.
+  const signedAt = signed.contractSignedAt || signed.contractSentAt || stored.sentAt;
+  mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-02T10:00:00.000Z') });
+  try {
+    const item = await storePreviewAcceptedContract(signed, { email: 'kill@example.com', acceptedAt: '2026-11-02T10:00:00.000Z' });
+    assert.ok(item?.filePath && existsSync(item.filePath), 'the signed contract PDF is stored');
+    const inputs = contractInputsForOffer(stored, signed);
+    assert.equal(inputs.legal.mode, 'catalog');
+    const view = clientWithOfferParty(signed, stored, {});
+    const date = new Date(signedAt);
+    const expected = await buildContractPdf({ client: view, ...inputs, date });
+    const legacy = await buildContractPdf({ client: view, ...inputs, legal: { mode: 'legacy' }, date });
+    const saved = readFileSync(item.filePath);
+    assert.equal(sha256(saved), sha256(expected), 'the stored PDF is the stamped version');
+    assert.notEqual(sha256(saved), sha256(legacy), 'not the static text');
+  } finally {
+    mock.timers.reset();
+  }
+
   setSwitch(true);
-  assert.equal(legalSourceForOffer(offers.getSalesOfferById(offer.id)).mode, 'catalog');
-  assert.equal(legalBindingForClient(signed).mode, 'catalog', 'binding and contract agree after the switch is back on');
   assert.equal(dpaStatus(signed).status, 'accepted-with-contract');
+});
+
+test('a signed client stays on its snapshot until a terms notice or the signing step records a newer offer', () => {
+  setSwitch(true);
+  const { client, offer: first } = signedClient('Upgrade AS');
+  assert.equal(client.ext.legal.offerId, first.id);
+  const upgrade = sentOffer(client.id);
+  assert.notEqual(upgrade.id, first.id);
+  const again = sales.updateSalesClient(client.id, { progression: { ...client.progression, contractSigned: true } });
+  assert.equal(again.ext.legal.offerId, first.id, 'a progression write on a signed client records nothing');
+  const patch = legalSnapshotPatch(again, upgrade);
+  assert.ok(patch, 'the signing step can record the accepted offer');
+  const moved = sales.updateSalesClient(client.id, patch);
+  assert.equal(moved.ext.legal.offerId, upgrade.id);
+  assert.equal(legalBindingForClient(moved).offerId, upgrade.id);
+  assert.equal(legalSnapshotPatch(moved, upgrade), null, 'recording it twice changes nothing');
 });
 
 test('a stamped offer freezes the tier contents and agreed keywords it was sent with', () => {

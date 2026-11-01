@@ -5,6 +5,7 @@
   "date": "2026-11-01",
   "published": {
     "params": {
+      "changesPerMonth": 4,
       "slaWorkDays": 10,
       "oneTimeMultiplier": 9,
       "oneTimeMonths": 6,
@@ -2632,6 +2633,26 @@
             }
           ]
         }
+      ]
+    }
+  },
+  "contract": {
+    "nb": {
+      "introLegal": "De publiserte vilkårene (https://asoldi.com/vilkar?versjon=1, versjon 1), personvernerklæringen (https://asoldi.com/personvern) og databehandleravtalen (https://asoldi.com/databehandleravtale?versjon=1, versjon dpa-1) utgjør en del av Avtalen i versjonene som er nevnt her.",
+      "section4": [
+        "Vilkårene, versjon 1, er publisert på https://asoldi.com/vilkar?versjon=1. Denne versjonen gjelder for kunden til en ny versjon gjelder etter skriftlig varsel minst 30 dager i forveien.",
+        "Personverninformasjon er publisert på https://asoldi.com/personvern.",
+        "Databehandleravtalen, versjon dpa-1, med vedlegg om underleverandører er publisert på https://asoldi.com/databehandleravtale?versjon=1.",
+        "Disse sidene, slik de lyder på signeringsdatoen, utgjør en del av Avtalen. Parter, pris, valgt omfang, tjenesteforklaringene i punkt 5, forsinkelsesregel, ansvarstak, eierskap og avslutningsvilkår i dette dokumentet går foran ved motstrid med nettstedet."
+      ]
+    },
+    "en": {
+      "introLegal": "The published Terms (https://asoldi.com/vilkar?versjon=1, version 1), Privacy Policy (https://asoldi.com/personvern) and Data Processing Agreement (https://asoldi.com/databehandleravtale?versjon=1, version dpa-1) form part of this Agreement in the versions named here.",
+      "section4": [
+        "The Terms, version 1, are published at https://asoldi.com/vilkar?versjon=1. This version applies to the Client until a new version applies after written notice at least 30 days in advance.",
+        "Privacy information is published at https://asoldi.com/personvern.",
+        "The Data Processing Agreement, version dpa-1, with its appendix on sub-processors is published at https://asoldi.com/databehandleravtale?versjon=1.",
+        "Those pages, as they stand on the signing date of this Agreement, form part of this Agreement. The parties, price, chosen scope, service meanings in Section 5, late-payment rule, liability cap, ownership and offboarding terms in this document prevail if they conflict with the website."
       ]
     }
   }

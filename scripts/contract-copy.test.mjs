@@ -23,6 +23,8 @@ const { catalogOfferIncludes } = await import('../lib/legal/sales.js');
 const { catalogCheckoutBenefits, mergeCatalogPortalPlans, mergeCatalogSalesProducts } = await import('../app/data/catalogLegalTexts.js');
 const { planFromOfferAlternative } = await import('../lib/site-plan.js');
 const { tierSnapshot } = await import('../lib/legal/plan.js');
+const archive = await import('../lib/legal/archive.js');
+const { legalTextResponse } = await import('../lib/legal/texts.js');
 
 function setSwitch(enabled) {
   assert.equal(settingsStore.saveAutomationSettings({ legal: { catalogTexts: { enabled } } }, { by: 'test' }).ok, true);
@@ -80,6 +82,67 @@ test('negative control: with the switch off the contracts, copy, pricing cards, 
     mock.timers.reset();
   }
   assert.deepEqual(surface, baseline);
+});
+
+test('switch on: every unsent fixture renders the catalog contract, so the negative control covers the path the switch changes', () => {
+  setSwitch(true);
+  const unsent = Object.entries(darkSurface.FIXTURE_OFFERS).filter(([, offer]) => offer.status !== 'sent');
+  assert.ok(unsent.length >= 24, 'draft, review-requested and verified copies of every sent fixture');
+  for (const [key, offer] of unsent) {
+    assert.equal(contractInputsForOffer(offer, CLIENT).legal.mode, 'catalog', key);
+    assert.notEqual(sha256(contractHtmlForOffer(offer, CLIENT)), baseline.contracts[key].htmlSha256, `${key}: the switch changes it, and the baseline holds it unchanged while off`);
+  }
+  setSwitch(false);
+  for (const [key, offer] of unsent) assert.equal(contractInputsForOffer(offer, CLIENT).legal.mode, 'legacy', key);
+});
+
+test('a contract bound to a version renders the values that version was published with, not today\'s', () => {
+  setSwitch(true);
+  const stored = archive.loadArchivedCatalog(CATALOG_VERSION);
+  assert.ok(stored?.published?.params, 'the archive records the values it was published with');
+  assert.equal(stored.published.params.changesPerMonth, 4, 'the change allowance is one of them');
+  // An archived version published with other values than the code has today.
+  const older = { ...stored, published: { ...stored.published, params: { changesPerMonth: 7, slaWorkDays: 12, oneTimeMultiplier: 11, oneTimeMonths: 8, graceDays: 45 } } };
+  const offer = { ...darkSurface.FIXTURE_OFFERS.tier2, dpaVersion: DPA_VERSION, ext: { legal: { catalogVersion: CATALOG_VERSION, tiers: tierSnapshot() } } };
+  const today = contractHtmlForOffer(offer, CLIENT);
+  assert.match(today, /Inntil 4 endringer per måned/);
+  assert.match(today, /oppe i 30 dager/);
+  archive.useArchivedCatalogForTests(CATALOG_VERSION, older);
+  try {
+    const html = contractHtmlForOffer(offer, CLIENT);
+    assert.match(html, /Inntil 7 endringer per måned/, 'Section 1');
+    assert.match(html, /innen 12 arbeidsdager/);
+    assert.match(html, /oppe i 45 dager/, 'Section 3');
+    assert.doesNotMatch(html, /Inntil 4 endringer per måned|oppe i 30 dager/);
+    const once = contractHtmlForOffer({ ...offer, plan: { tierId: 'tier-2-seo', billing: 'once' } }, CLIENT);
+    assert.match(once, /11 ganger månedsprisen/);
+    assert.match(once, /i 8 måneder etter levering/);
+    const english = contractHtmlForOffer({ ...offer, contractLanguage: 'en' }, CLIENT);
+    assert.match(english, /Up to 7 changes per month/);
+    assert.match(english, /online for 45 days/);
+    const lines = legalTextResponse('kontrakt', { version: String(CATALOG_VERSION), tier: 'tier-2-seo' }).body.blocks.flatMap((block) => block.lines).join('\n');
+    assert.match(lines, /Inntil 7 endringer per måned/, 'the contract lines API too');
+  } finally {
+    archive.clearArchiveCache();
+  }
+  assert.equal(sha256(contractHtmlForOffer(offer, CLIENT)), sha256(today), 'back to the archive on disk');
+});
+
+test('switch on: an English catalog contract explains its services with the catalog, not the static English text', () => {
+  setSwitch(true);
+  const offer = { ...darkSurface.FIXTURE_OFFERS.tier2, status: 'draft', contractLanguage: 'en' };
+  const inputs = contractInputsForOffer(offer, CLIENT);
+  const article = contractArticleModel({ client: CLIENT, ...inputs, date: new Date('2026-05-04T09:00:00.000Z') });
+  const topics = article.sections.find((section) => Array.isArray(section.topics)).topics;
+  const text = topics.map((topic) => `${topic.title}: ${topic.text}`).join('\n');
+  assert.match(text, /changes to sections are allowed/, 'the section-change rule of the catalog');
+  assert.match(text, /Asoldi does not post on social media/);
+  const html = contractHtmlForOffer(offer, CLIENT);
+  assert.doesNotMatch(html, /outside this allowance/, 'no static rule that contradicts the catalog');
+  assert.doesNotMatch(html, /social-media sync/);
+  assert.doesNotMatch(text, /[æøå]/i, 'English only');
+  setSwitch(false);
+  assert.match(contractHtmlForOffer(offer, CLIENT), /outside this allowance/, 'negative control: the static English contract while off');
 });
 
 test('switch on: an unsent offer renders the catalog contract with its versions', () => {

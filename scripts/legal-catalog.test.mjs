@@ -159,6 +159,22 @@ test('the archive, the DPA appendix and the contract-line snapshot are current, 
   assert.notDeepEqual(changedTerms, archived.docs.vilkar);
 });
 
+test('the wording a catalog contract adds around the clauses is archived, so changing it needs a new version', async () => {
+  const archive = await import('../lib/legal/archive.js');
+  const stored = archive.loadArchivedCatalog(CATALOG_VERSION);
+  assert.deepEqual(stored.contract, legalRender.contractWording());
+  assert.match(stored.contract.nb.section4.join(' '), /etter skriftlig varsel minst 30 dager i forveien/);
+  assert.match(stored.contract.en.introLegal, /Data Processing Agreement/);
+  // Negative control: an archive with other wording than the code renders is reported as stale.
+  archive.useArchivedCatalogForTests(CATALOG_VERSION, { ...stored, contract: { ...stored.contract, nb: { ...stored.contract.nb, section4: ['Annen tekst.'] } } });
+  try {
+    assert.ok(legalRender.checkGenerated().some((problem) => /Bump CATALOG_VERSION/.test(problem)));
+  } finally {
+    archive.clearArchiveCache();
+  }
+  assert.deepEqual(legalRender.checkGenerated(), []);
+});
+
 test('the published texts come from the archive and never follow stored settings', async () => {
   const texts = await import('../lib/legal/texts.js');
   const archive = await import('../lib/legal/archive.js');
