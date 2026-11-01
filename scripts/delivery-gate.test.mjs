@@ -400,3 +400,44 @@ test('the labels hold line ids and statuses only (no names, addresses or numbers
     assert.doesNotMatch(input, /\+47 [1-9]/, 'only reserved numbers');
   }
 });
+
+test('on the real hub: gate routes answer 404 disabled while off, the desk route keeps its answer, and nothing is written', { timeout: 240_000 }, async (t) => {
+  const { bootHub } = await import('./safe-mode/hub-boot.mjs');
+  const { writeFileSync, readFileSync } = await import('node:fs');
+  const admin = 'gate-boot-admin';
+  const password = `gate-boot-${Date.now()}-pw`;
+  const clients = [{ id: 'gate-boot-1', product: 'asoldi', businessName: 'Example Boot AS', status: 'active', contactEmail: 'boot@example.com', progression: { meetingHeld: true, offerSent: true, contractSigned: true } }];
+  const hubBoot = await bootHub({ HUB_SAFE_MODE: '1', PERSIST_PRODUCTION_ENV: '0', ADMIN_USERNAME: admin, ADMIN_PASSWORD: password, DATA_DIR: '' }, {
+    seed: (dir) => writeFileSync(join(dir, 'sales-clients.json'), JSON.stringify(clients, null, 2)),
+  });
+  t.after(() => hubBoot.stop());
+  assert.ok(hubBoot.health, `hub did not start:\n${hubBoot.log().slice(-3000)}`);
+  const token = await hubBoot.adminToken(admin, password);
+  assert.ok(token, 'admin token');
+  const call = (method, path, body) => fetch(`${hubBoot.base}${path}`, {
+    method,
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const storesBefore = readFileSync(join(hubBoot.dataDir, 'sales-clients.json'), 'utf8');
+  for (const [method, path] of [['GET', '/api/admin/delivery/gate'], ['GET', '/api/admin/delivery/gate/gate-boot-1'], ['POST', '/api/admin/sales/gate-boot-1/workshop/held']]) {
+    const res = await call(method, path, method === 'POST' ? {} : undefined);
+    assert.equal(res.status, 404, path);
+    assert.equal((await res.json()).code, 'disabled', path);
+  }
+  const desk = await call('POST', '/api/admin/sales/gate-boot-1/workshop/desk-email', { kind: 'post-workshop' });
+  assert.equal(desk.status, 400, 'the existing desk route answers an unknown kind as before');
+  assert.equal((await desk.json()).message, 'Ukjent e-postmal.');
+  assert.equal(readFileSync(join(hubBoot.dataDir, 'sales-clients.json'), 'utf8'), storesBefore, 'no client write');
+  assert.equal(existsSync(join(hubBoot.dataDir, 'delivery-audit')), false, 'no delivery write');
+  assert.equal(existsSync(join(hubBoot.dataDir, 'delivery-email-shadow.json')), false);
+  // Switched on: the developer view answers.
+  const put = await call('PUT', '/api/admin/automation-settings', { gate: { enabled: true } });
+  assert.equal(put.status, 200);
+  const list = await call('GET', '/api/admin/delivery/gate');
+  assert.equal(list.status, 200);
+  assert.ok((await list.json()).clients.some((client) => client.clientId === 'gate-boot-1'));
+  const view = await call('GET', '/api/admin/delivery/gate/gate-boot-1');
+  assert.equal(view.status, 200);
+  assert.ok((await view.json()).gate.lines.some((line) => line.id === 'logo'));
+});
