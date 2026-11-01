@@ -132,8 +132,8 @@ recording, erase request, payment not connected) are added by the batch that shi
 
 **Fix.**
 - Evidence the gate cannot see (sent by phone, for example): put it in Kundedata, or waive the line with `PUT /api/admin/delivery/gate/<clientId>/waivers/<lineId> {"option": "..."}`; then `POST /api/admin/delivery/gate/<clientId>/evaluate`.
-- No due time: `POST /api/admin/sales/<clientId>/workshop/held {"startedAt": "...", "endedAt": "..."}`.
-- To send the post-workshop mail at once, use the desk kind `post-workshop`.
+- No due time: `POST /api/admin/sales/<clientId>/workshop/held {"startedAt": "...", "endedAt": "..."}`. A workshop that ended more than about a day ago gets no due time (`reason: 'stale'`); that is intended.
+- The desk kind `post-workshop` sends at once only when the post-workshop mail is auto for the client; while the gate is in shadow it records a shadow mail, and off or paused it answers 409. A sent mail is sent again only with `{"force": true}`.
 
 ## Blocking codes
 
