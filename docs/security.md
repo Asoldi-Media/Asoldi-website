@@ -567,7 +567,8 @@ original once (never overwritten) outside the folder, as
 `ASOLDI_REDACT_BACKUPS` or `~/.asoldi-secrets/redact-backups`, so a `git add` in the folder
 cannot pick them up. Check the result, then delete the backups, which still hold the values. A
 folder that holds one of the env files the known values come from (a repo root or a parent
-folder), or the backup dir, is refused. Client data and planning words are not touched.
+folder), or the backup dir, is refused; any other env file (`.env`, `.env.*`, `production.env`) is listed
+and never changed. Client data and planning words are not touched.
 
 ```bash
 node scripts/security/secret-scan.mjs --redact <dir>            # dry run

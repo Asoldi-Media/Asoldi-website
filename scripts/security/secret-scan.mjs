@@ -64,6 +64,7 @@ import { homedir } from 'node:os';
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  blockedPathRule,
   buildNamesMatcher,
   buildRetiredMatcher,
   commitEntryFor,
@@ -743,8 +744,10 @@ export function backupDirFor(root, backupRoot) {
  * unless `apply`; with `apply` each changed file's original is kept once (never overwritten) as
  * <backupDirFor(dir)>/<path>.bak-redact, outside `dir`, so a later `git add` in `dir` cannot pick
  * it up. A folder that holds one of `envSources` (the env files the known values come from) or
- * the backup root is refused: those files must keep their values. Returns { files: [{ path,
- * redactions, backup }], backupDir } with no values.
+ * the backup root is refused: those files must keep their values. Any other env file (.env,
+ * .env.*, production.env) is never changed either, only listed in `skipped`: it may be a live
+ * configuration. Returns { files: [{ path, redactions, backup }], skipped: [paths], backupDir }
+ * with no values.
  */
 export function redactWorkspace(dir, ctx, { apply = false, backupRoot = defaultBackupRoot(), envSources = ctx.envSources || [] } = {}) {
   const root = resolve(dir);
@@ -753,8 +756,13 @@ export function redactWorkspace(dir, ctx, { apply = false, backupRoot = defaultB
   if (isInside(root, backupRoot)) throw new Error('the backup folder is inside the folder being redacted; pick another --backup-dir');
   const backupDir = backupDirFor(root, backupRoot);
   const files = [];
+  const skipped = [];
   for (const path of walkFiles(root)) {
     if (/\.bak-redact$/i.test(path)) continue;
+    if (['env-file', 'env-backup'].includes(blockedPathRule(path, PROFILES.private))) {
+      skipped.push(path);
+      continue;
+    }
     const abs = join(root, path);
     const text = readText(abs, MAX_WORKSPACE_FILE_BYTES);
     if (text === null) continue;
@@ -772,7 +780,7 @@ export function redactWorkspace(dir, ctx, { apply = false, backupRoot = defaultB
     }
     files.push(row);
   }
-  return { files, backupDir };
+  return { files, skipped, backupDir };
 }
 
 // ---------------------------------------------------------------- ratchets
@@ -887,11 +895,12 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), 
     const result = redactWorkspace(dir, ctx, { apply, backupRoot });
     const count = result.files.reduce((sum, row) => sum + row.redactions.length, 0);
     if (flags.has('--json')) {
-      process.stdout.write(`${JSON.stringify({ mode: 'redact', apply, count, backupDir: result.backupDir, files: result.files }, null, 2)}\n`);
+      process.stdout.write(`${JSON.stringify({ mode: 'redact', apply, count, backupDir: result.backupDir, files: result.files, skipped: result.skipped }, null, 2)}\n`);
     } else {
       for (const row of result.files) {
         for (const item of row.redactions) console.log(formatFinding({ path: row.path, ...item }));
       }
+      for (const path of result.skipped) console.log(`${path}  skipped: an env file is never changed (move or delete a stale copy by hand)`);
     }
     if (!count) {
       console.log(`secret-scan (redact): nothing to redact (${sources}).`);

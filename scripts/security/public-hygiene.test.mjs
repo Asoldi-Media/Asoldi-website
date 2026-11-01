@@ -391,6 +391,15 @@ test('--redact refuses a folder that holds an env file the known values come fro
   write(plain, 'a.txt', `key ${FAKE_ANTHROPIC}\n`);
   await assert.rejects(runScan(['--redact', plain, '--apply', '--backup-dir', join(plain, 'backups')], { cwd, env: NO_ENV(cwd) }), /backup folder is inside/);
   assert.equal(readFileSync(join(plain, 'a.txt'), 'utf8'), `key ${FAKE_ANTHROPIC}\n`);
+
+  // Any other env file (a copy in an archive, a live one in a checkout) is listed, never changed.
+  write(plain, 'old/.env.production', `ANTHROPIC_API_KEY=${FAKE_ANTHROPIC}\n`);
+  const backupEnv = { ...NO_ENV(cwd), ASOLDI_REDACT_BACKUPS: tempDir('asoldi-redact-b2-') };
+  const applied = await runScan(['--redact', plain, '--apply'], { cwd, env: backupEnv });
+  assert.equal(applied.code, 0, applied.out);
+  assert.match(applied.out, /^old\/\.env\.production {2}skipped: an env file is never changed/m);
+  assert.equal(readFileSync(join(plain, 'old/.env.production'), 'utf8'), `ANTHROPIC_API_KEY=${FAKE_ANTHROPIC}\n`);
+  assert.equal(readFileSync(join(plain, 'a.txt'), 'utf8'), 'key <redacted:anthropic-key>\n');
 });
 
 // ------------------------------------------------------------------------- ratchet
