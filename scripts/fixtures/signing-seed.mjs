@@ -34,6 +34,8 @@ const SIGNING_CLIENTS = Object.freeze({
   inboxFresh: 'sg-inbox-fresh',
   portalFresh: 'sg-portal-fresh',
   inboxDual: 'sg-inbox-dual',
+  owner: 'sg-owner',
+  gotDup: 'sg-gotclient-dup',
 });
 
 function client(id, name, extra = {}) {
@@ -95,6 +97,14 @@ const clients = [
   client(C.inboxFresh, 'Freshmail Example AS', { progression: {} }),
   client(C.portalFresh, 'Freshportal Example AS', { progression: {} }),
   client(C.inboxDual, 'Dualmail Example AS'),
+  // A live client with its site, and a second lead that names the same domain.
+  client(C.owner, 'Owner Example AS', {
+    progression: { meetingHeld: true, offerSent: true, contractSigned: true },
+    contractSignedAt: T0,
+    websiteDomain: 'owned.example.com',
+    hubSite: { id: 'site-owned', siteKey: 'key-owned', domain: 'owned.example.com', createdAt: T0 },
+  }),
+  client(C.gotDup, 'Samedomain Example AS', { websiteDomain: 'owned.example.com' }),
   client(C.upgrade, 'Upgrade Example AS', {
     progression: { meetingHeld: true, offerSent: true, contractSigned: true },
     contractSignedAt: T0,
@@ -132,6 +142,7 @@ const offers = [
   sentOffer('so-inbox-fresh', C.inboxFresh, tier3, { status: 'draft', sentAt: '' }),
   sentOffer('so-portal-fresh', C.portalFresh, tier3, { status: 'draft', sentAt: '' }),
   sentOffer('so-inbox-dual', C.inboxDual, { tierId: 'starter', selected: [], pages: 5, altQuote: tier2 }),
+  sentOffer('so-gotclient-dup', C.gotDup, tier3),
 ];
 
 function portalOffer(id, salesClientId, salesOfferId, extra = {}) {
@@ -173,6 +184,10 @@ const sites = [
     id: 'site-upgrade', site_key: 'key-upgrade', name: 'Upgrade Example AS', domain: '', websitePlan: 'tier-1-standard',
     features: { users: true, blog: false }, deliveryPhase: 'development', createdAt: T0,
     planSource: { kind: 'offer', salesClientId: C.upgrade, offerId: 'so-upgrade-old', alternativeIndex: 0, tierId: 'tier-1-standard', services: ['site', 'changes', 'blog'], billing: 'month', derivedFeatures: { users: true, analytics: false, ecommerce: false, blog: true, socialSync: false, emailMarketing: false, general: false }, appliedAt: T0, appliedBy: 'contract-signing' },
+  },
+  {
+    id: 'site-owned', site_key: 'key-owned', name: 'Owner Example AS', domain: 'owned.example.com', websitePlan: 'tier-1-standard',
+    features: { users: true, blog: true }, deliveryPhase: 'client', createdAt: T0,
   },
 ];
 

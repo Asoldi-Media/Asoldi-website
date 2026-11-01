@@ -63,6 +63,7 @@ export async function runSigningFlows(hub, seed, { token }) {
   await call('progression-dual', 'PATCH', `/api/admin/sales/${C.dual}/progression`, { body: { key: 'contractSigned', value: true } });
   await call('progression-nonpilot', 'PATCH', `/api/admin/sales/${C.nonPilot}/progression`, { body: { key: 'contractSigned', value: true } });
   await call('got-client', 'POST', `/api/admin/sales/${C.gotClient}/got-client`, { body: {} });
+  await call('got-client-same-domain', 'POST', `/api/admin/sales/${C.gotDup}/got-client`, { body: {} });
   await call('preview-accept', 'POST', `/api/public/sales-preview/${C.preview}/contract/accept`, {
     headers: { 'content-type': 'application/json' },
     body: { accepted: true, termsAccepted: true, bindingAccepted: true, name: 'Kari Example', password: 'Preview-local-1234' },

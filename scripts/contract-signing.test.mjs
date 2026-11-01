@@ -315,6 +315,25 @@ test('auto: a contract by e-mail or portal for a client with nothing ticked and 
   assert.equal(auto.log.includes('Marker møtet hatt først'), false, 'no blocked signing in the log');
 });
 
+test('auto: got-client for a lead whose domain is another client\'s site signs but links and changes no site; off links it as today', () => {
+  const step = auto.steps['got-client-same-domain'];
+  assert.equal(step.status, 409);
+  assert.equal(step.body.code, 'site-owned-elsewhere');
+  const v = view(auto, C.gotDup);
+  assert.equal(v.client.progression.contractSigned, true, 'signed');
+  assert.equal(v.client.sitePlan?.status, 'active', 'with its plan');
+  assert.equal(v.client.hubSite?.id || '', '', 'no site linked');
+  assert.equal(v.sites.length, 0, 'no site made or taken');
+  assert.ok(v.client.delivery.tasks.some((task) => task.kind === 'site_owner_conflict' && task.siteId === 'site-owned' && task.status === 'open'));
+  const owned = auto.sites.find((site) => site.id === 'site-owned');
+  assert.equal(owned.deliveryPhase, 'client', 'the other client\'s site keeps its phase');
+  assert.equal(owned.websitePlan, 'tier-1-standard');
+  assert.equal(owned.planSource, undefined);
+  assert.equal(auto.clients.find((entry) => entry.id === C.owner).hubSite.id, 'site-owned');
+  assert.equal(off.steps['got-client-same-domain'].status, 200, 'control: the switch-off path answers 200');
+  assert.equal(off.clients.find((entry) => entry.id === C.gotDup).hubSite.id, 'site-owned', 'control: and links the other client\'s site');
+});
+
 test('auto: a dual offer signed by e-mail changes nothing and leaves an audit line; off signs it as today', () => {
   const a = view(auto, C.inboxDual);
   assert.notEqual(a.client.progression.contractSigned, true);

@@ -19490,6 +19490,14 @@ app.post('/api/admin/sales/:id/got-client', salesAuth, async (req, res) => {
       return res.status(409).json({ message: 'Tilbudet har to alternativer. Velg hvilket kunden signerte.', needsChoice: true });
     }
     if (!signed.ok) return res.status(signed.status || 400).json({ message: signed.reason === 'busy' ? 'Signeringen pågår allerede. Prøv igjen om litt.' : 'Kunne ikke signere kontrakten.' });
+    if ((signed.warnings || []).includes('plan-apply:site-owned-elsewhere')) {
+      // The site found by domain or link is another client's: signed, but no site is linked here.
+      return res.status(409).json({
+        message: 'Kontrakten er signert, men nettstedet med dette domenet eller denne koblingen tilhører en annen kunde. Sjekk koblingen før kunden flyttes til utvikling.',
+        code: 'site-owned-elsewhere',
+        client: sales.getSalesClientById(client.id),
+      });
+    }
     if (signed.site) {
       hub.updateSite(signed.site.id, { deliveryPhase: 'development' });
       return res.json({
