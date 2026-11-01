@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,7 +25,8 @@ const BATCH = ['Wa', 've 2'].join('');
 const BRANCH = ['wf', '/w3-something'].join('');
 const STREAM = ['work', 'stream'].join('');
 const PLAN_FILE = ['MASTER', '-PLAN.md'].join('');
-const FAKE_ANTHROPIC = 'sk-ant-api03-FAKEfakeFAKE1234567890abcdefTEST';
+// Built at run time too, so a copy of this file elsewhere holds no key-shaped text.
+const FAKE_ANTHROPIC = ['sk-ant-', 'api03-FAKEfakeFAKE1234567890abcdefTEST'].join('');
 
 const temps = [];
 function tempDir(prefix) {
@@ -102,9 +103,12 @@ test('planning words: task and area ids, batch and branch names, the streams wor
   assert.deepEqual(planRules(text), ['1:plan-id', '1:plan-id', '1:plan-id', '2:plan-batch', '3:plan-branch', '4:plan-word', '5:plan-file', '5:plan-file']);
 });
 
-test('the scanner, the cleanup scripts and their tests hold no planning word as text', () => {
-  for (const file of ['secret-scan-lib.mjs', 'secret-scan.mjs', 'neutralize-plan-ids.mjs', 'scrub-client-data.mjs', 'install-git-hooks.mjs', 'public-hygiene.test.mjs']) {
-    const text = readFileSync(join(repoRoot, 'scripts', 'security', file), 'utf8');
+test('every file of the scan tools, their lists and their tests holds no planning word as text', () => {
+  const dir = join(repoRoot, 'scripts', 'security');
+  const files = readdirSync(dir).filter((name) => /\.(?:[cm]?js|json|md|txt)$/.test(name));
+  assert.ok(files.includes('secret-scan.test.mjs') && files.includes('probe-hub.test.mjs') && files.includes('plan-id-offenders.json'));
+  for (const file of files) {
+    const text = readFileSync(join(dir, file), 'utf8');
     assert.deepEqual(planRules(text, file), [], file);
   }
 });
@@ -157,6 +161,54 @@ test('fixture values: one exact value passes by its hash, any other value in the
   const lines = lib.splitLines(`const LEGACY_PASSWORD = '${fixture}';\nconst ADMIN_PASSWORD = '${other}';`);
   assert.deepEqual(lib.scanLines('test/a.test.js', lines, { allowlist }).map((f) => `${f.line}:${f.rule}`), ['2:secret-assignment']);
   assert.deepEqual(lib.scanLines('src/a.js', lines, { allowlist }).map((f) => `${f.line}:${f.rule}`), ['1:secret-assignment', '2:secret-assignment']);
+});
+
+test("a '*' entry covers secrets only; client data and planning words need an entry naming the rule, and one contact can be allowed by value in one file", () => {
+  const text = `const k = '${FAKE_ANTHROPIC}';\n// ${id(8, 3)} ola.nordmann@kunde-firma.no +47 958 61 302`;
+  const star = lib.normalizeAllowlist({ entries: [{ path: 'tests/*.test.mjs', rule: '*', reason: 'scanner fixtures' }] });
+  assert.deepEqual(lib.scanLines('tests/a.test.mjs', lib.splitLines(text), { allowlist: star }).map((f) => f.rule).sort(), ['email', 'phone', 'plan-id']);
+  const named = lib.normalizeAllowlist({
+    entries: [
+      { path: 'tests/*.test.mjs', rule: '*', reason: 'scanner fixtures' },
+      { path: 'tests/a.test.mjs', rule: 'email', reason: 'made-up addresses' },
+      { path: 'tests/a.test.mjs', rule: 'phone', reason: 'made-up numbers' },
+      { path: 'tests/a.test.mjs', rule: 'plan-id', reason: 'rule samples' },
+    ],
+  });
+  assert.deepEqual(lib.scanLines('tests/a.test.mjs', lib.splitLines(text), { allowlist: named }), []);
+
+  const contact = lib.normalizeAllowlist({
+    fixtureValues: [
+      { path: 'lib/booker.js', rule: 'email', sha256: lib.sha256Hex('kari.booker@kundepost.no'), reason: 'the address the booker code matches' },
+      { path: 'lib/booker.js', rule: 'phone', sha256: lib.sha256Hex('95861302'), reason: 'the number the booker code prints' },
+    ],
+  });
+  const source = "const BOOKER = 'Kari.Booker@Kundepost.no'; // tlf +47 958 61 302\nconst OTHER = 'per.booker@kundepost.no';";
+  assert.deepEqual(lib.scanLines('lib/booker.js', lib.splitLines(source), { allowlist: contact }).map((f) => `${f.line}:${f.rule}`), ['2:email']);
+  assert.deepEqual(lib.scanLines('scripts/booker.test.mjs', lib.splitLines(source), { allowlist: contact }).map((f) => `${f.line}:${f.rule}`), ['1:email', '1:phone', '2:email'], 'only in its own file');
+
+  assert.deepEqual(lib.broadDataEntries(lib.normalizeAllowlist({
+    entries: [
+      { path: 'docs/*.md', rule: 'email', reason: 'x' },
+      { path: 'docs/a.md', rule: 'email', reason: 'x' },
+      { path: '**', rule: '*', reason: 'x' },
+      { path: 'notes/**', rule: 'plan-id', reason: 'x' },
+    ],
+  })), [{ path: 'docs/*.md', rule: 'email' }, { path: 'notes/**', rule: 'plan-id' }]);
+
+  const base = { entries: [{ path: 'tests/*.test.mjs', rule: '*', reason: 'x' }], emails: ['a@kunde.no'] };
+  assert.deepEqual(lib.allowlistWidening(base, base), []);
+  assert.deepEqual(lib.allowlistWidening(base, {
+    ...base,
+    emails: ['a@kunde.no', 'b@kunde.no'],
+    entries: [...base.entries, { path: 'src/a.js', rule: 'email', reason: 'one file' }],
+    fixtureValues: [{ path: 'lib/*.js', rule: 'email', sha256: lib.sha256Hex('c@kunde.no'), reason: 'one value' }],
+  }), [], 'exact values and one-file entries are not broader');
+  assert.deepEqual(lib.allowlistWidening(base, {
+    ...base,
+    entries: [...base.entries, { path: '**', rule: '*', reason: 'x' }, { path: 'docs/*.md', rule: 'email', reason: 'x' }],
+    emailDomains: ['kunde.no'],
+  }), ['new entry: rule * on **', 'new entry: rule email on docs/*.md', '1 new allowed e-mail domain(s)']);
 });
 
 // ------------------------------------------------------------------------- git modes
@@ -289,6 +341,115 @@ test('--staged: a repo whose committed profile is public keeps the public rules,
   assert.equal((await runScan(['--staged'], { cwd: priv, env: NO_ENV(priv) })).code, 0);
 });
 
+const ALLOW_FILE = '.secret-scan-allowlist.json';
+const allowJson = (extra = {}) => JSON.stringify({ entries: [{ path: 'tests/*.test.mjs', rule: '*', reason: 'scanner fixtures' }], ...extra });
+
+test('--staged in a public repo: the staged allowlist counts, not the working tree, and a broader allowlist is refused unless the switch lists it', async () => {
+  const dir = makeRepo();
+  write(dir, 'scripts/security/scan-profile.json', JSON.stringify({ profile: 'public' }));
+  write(dir, ALLOW_FILE, allowJson());
+  write(dir, 'a.js', 'export const a = 1;\n');
+  git(dir, ['add', '-A']);
+  git(dir, ['commit', '-q', '--no-verify', '-m', 'base']);
+  const env = NO_ENV(dir);
+
+  // An allowlist changed in the working tree only lets nothing through.
+  write(dir, ALLOW_FILE, allowJson({ emails: ['ola.nordmann@kunde-firma.no'] }));
+  write(dir, 'b.js', "export const b = 'ola.nordmann@kunde-firma.no';\n");
+  git(dir, ['add', 'b.js']);
+  const unstaged = await runScan(['--staged'], { cwd: dir, env });
+  assert.equal(unstaged.code, 1, unstaged.out);
+  assert.match(unstaged.out, /^b\.js:1 {2}email$/m);
+  // Staged with the value: one exact value is not broader, so it passes.
+  git(dir, ['add', ALLOW_FILE]);
+  const exact = await runScan(['--staged'], { cwd: dir, env });
+  assert.equal(exact.code, 0, exact.out);
+
+  // A new '*' entry, a glob for a client-data rule and a new domain are refused; the '*' entry does not hide client data or planning words either.
+  write(dir, ALLOW_FILE, JSON.stringify({
+    entries: [
+      { path: 'tests/*.test.mjs', rule: '*', reason: 'scanner fixtures' },
+      { path: '**', rule: '*', reason: 'everything' },
+      { path: 'docs/*.md', rule: 'email', reason: 'docs' },
+    ],
+    emails: ['ola.nordmann@kunde-firma.no'],
+    emailDomains: ['kunde-firma.no'],
+  }));
+  write(dir, 'c.js', `// ${id(8, 3)}\nexport const c = 'kari@annen-kunde.no';\n`);
+  git(dir, ['add', '-A']);
+  const widened = await runScan(['--staged'], { cwd: dir, env });
+  assert.equal(widened.code, 1, widened.out);
+  assert.match(widened.out, /^\.secret-scan-allowlist\.json {2}path:allowlist-widened {2}\(new entry: rule \* on \*\*\)$/m);
+  assert.match(widened.out, /^\.secret-scan-allowlist\.json {2}path:allowlist-widened {2}\(new entry: rule email on docs\/\*\.md\)$/m);
+  assert.match(widened.out, /^\.secret-scan-allowlist\.json {2}path:allowlist-widened {2}\(1 new allowed e-mail domain\(s\)\)$/m);
+  assert.match(widened.out, /^c\.js:1 {2}plan-id$/m);
+  assert.match(widened.out, /^c\.js:2 {2}email$/m);
+  // The switch lets the broader allowlist through and says so; the rules still apply to the lines.
+  const switched = await runScan(['--staged'], { cwd: dir, env: { ...env, SECRET_SCAN_ALLOWLIST_WIDEN: '1' } });
+  assert.equal(switched.code, 1);
+  assert.doesNotMatch(switched.out, /allowlist-widened/);
+  assert.match(switched.out, /a broader allowlist let through by SECRET_SCAN_ALLOWLIST_WIDEN: \.secret-scan-allowlist\.json: new entry: rule \* on \*\*/);
+  assert.match(switched.out, /^c\.js:1 {2}plan-id$/m);
+});
+
+test('--pre-push takes the profile and the allowlist from the pushed commit, not the working tree, and refuses a weaker profile or a broader allowlist', async () => {
+  const dir = makeRepo();
+  write(dir, 'scripts/security/scan-profile.json', JSON.stringify({ profile: 'public' }));
+  write(dir, ALLOW_FILE, allowJson());
+  write(dir, 'a.js', 'export const a = 1;\n');
+  git(dir, ['add', '-A']);
+  git(dir, ['commit', '-q', '--no-verify', '-m', 'base']);
+  const base = git(dir, ['rev-parse', 'HEAD']).trim();
+  git(dir, ['update-ref', 'refs/remotes/origin/main', base]);
+  const env = NO_ENV(dir);
+  const stdin = (sha) => `refs/heads/main ${sha} refs/heads/main ${base}\n`;
+
+  // A pushed commit that widens the allowlist and adds client data and a planning word.
+  write(dir, ALLOW_FILE, JSON.stringify({ entries: [{ path: 'tests/*.test.mjs', rule: '*', reason: 'x' }, { path: 'src/*.js', rule: 'email', reason: 'x' }] }));
+  write(dir, 'src/d.js', `// ${id(8, 3)}\nexport const d = 'kari@annen-kunde.no';\n`);
+  git(dir, ['add', '-A']);
+  git(dir, ['commit', '-q', '--no-verify', '-m', 'add d']);
+  const wide = git(dir, ['rev-parse', 'HEAD']).trim();
+  // The working tree says private and allows everything; neither is committed, so neither counts.
+  write(dir, 'scripts/security/scan-profile.json', JSON.stringify({ profile: 'private' }));
+  write(dir, ALLOW_FILE, JSON.stringify({ entries: [{ path: '**', rule: 'plan-id', reason: 'x' }], emailDomains: ['annen-kunde.no'] }));
+  const pushed = await runScan(['--pre-push'], { cwd: dir, env, stdinText: stdin(wide) });
+  assert.equal(pushed.code, 1, pushed.out);
+  assert.match(pushed.out, new RegExp(`^${wide.slice(0, 10)}:\\.secret-scan-allowlist\\.json {2}path:allowlist-widened {2}\\(new entry: rule email on src/\\*\\.js\\)$`, 'm'));
+  assert.match(pushed.out, new RegExp(`^${wide.slice(0, 10)}:src/d\\.js:1 {2}plan-id$`, 'm'));
+  assert.doesNotMatch(pushed.out, /src\/d\.js:2 {2}email/, 'the pushed allowlist itself still applies to its own commit');
+  const switched = await runScan(['--pre-push'], { cwd: dir, env: { ...env, SECRET_SCAN_ALLOWLIST_WIDEN: '1' }, stdinText: stdin(wide) });
+  assert.doesNotMatch(switched.out, /allowlist-widened/);
+  assert.match(switched.out, /let through by SECRET_SCAN_ALLOWLIST_WIDEN/);
+  git(dir, ['checkout', '-q', '--', '.']);
+
+  // A pushed commit that weakens the profile is refused, and the public rules still apply to it.
+  git(dir, ['reset', '-q', '--hard', base]);
+  write(dir, 'scripts/security/scan-profile.json', JSON.stringify({ profile: 'private' }));
+  write(dir, 'e.js', `// ${id(8, 3)}\nexport const e = 1;\n`);
+  git(dir, ['add', '-A']);
+  git(dir, ['commit', '-q', '--no-verify', '-m', 'add e']);
+  const weak = git(dir, ['rev-parse', 'HEAD']).trim();
+  const weakened = await runScan(['--pre-push'], { cwd: dir, env, stdinText: stdin(weak) });
+  assert.equal(weakened.code, 1, weakened.out);
+  assert.match(weakened.out, new RegExp(`^${weak.slice(0, 10)}:scripts/security/scan-profile\\.json {2}path:profile-weakened`, 'm'));
+  assert.match(weakened.out, new RegExp(`^${weak.slice(0, 10)}:e\\.js:1 {2}plan-id$`, 'm'));
+
+  // Remote history without a profile file pins nothing: a private repo that adopts the file keeps its own rules.
+  const priv = makeRepo();
+  write(priv, 'a.js', 'export const a = 1;\n');
+  git(priv, ['add', '-A']);
+  git(priv, ['commit', '-q', '--no-verify', '-m', 'base']);
+  const privBase = git(priv, ['rev-parse', 'HEAD']).trim();
+  git(priv, ['update-ref', 'refs/remotes/origin/main', privBase]);
+  write(priv, 'scripts/security/scan-profile.json', JSON.stringify({ profile: 'private' }));
+  write(priv, 'fixture.json', JSON.stringify({ client: 'kari@kunde-firma.no', note: id(8, 3) }));
+  git(priv, ['add', '-A']);
+  git(priv, ['commit', '-q', '--no-verify', '-m', 'adopt the scan']);
+  const adopted = await runScan(['--pre-push'], { cwd: priv, env: NO_ENV(priv), stdinText: `refs/heads/main ${git(priv, ['rev-parse', 'HEAD']).trim()} refs/heads/main ${privBase}\n` });
+  assert.equal(adopted.code, 0, adopted.out);
+});
+
 test('this public repo pins the public profile', () => {
   assert.equal(loadProfileConfig(repoRoot).profile.name, 'public');
 });
@@ -308,7 +469,8 @@ test('--workspace scans a folder without git, and prints paths relative to it an
   assert.match(result.out, /^notes\/a\.md:2 {2}plan-id$/m);
   assert.match(result.out, /^deep\/b\.json:1 {2}anthropic-key$/m);
   assert.match(result.out, /^\.env {2}path:env-file$/m);
-  assert.equal(result.out.includes('node_modules'), false);
+  assert.doesNotMatch(result.out, /node_modules\/x/, 'node_modules is listed as not scanned, never read');
+  assert.match(result.out, /^node_modules\/ {2}not scanned: installed dependencies$/m);
   assert.equal(result.out.includes(FAKE_ANTHROPIC), false);
   const priv = await runScan(['--workspace', dir, '--profile', 'private'], { cwd, env: NO_ENV(cwd) });
   assert.doesNotMatch(priv.out, /email|plan-id/);
@@ -396,10 +558,124 @@ test('--redact refuses a folder that holds an env file the known values come fro
   write(plain, 'old/.env.production', `ANTHROPIC_API_KEY=${FAKE_ANTHROPIC}\n`);
   const backupEnv = { ...NO_ENV(cwd), ASOLDI_REDACT_BACKUPS: tempDir('asoldi-redact-b2-') };
   const applied = await runScan(['--redact', plain, '--apply'], { cwd, env: backupEnv });
-  assert.equal(applied.code, 0, applied.out);
-  assert.match(applied.out, /^old\/\.env\.production {2}skipped: an env file is never changed/m);
+  assert.equal(applied.code, 3, `an env file left as it was keeps the folder from counting as clean\n${applied.out}`);
+  assert.match(applied.out, /^old\/\.env\.production {2}not scanned: an env file is never changed by a redaction/m);
   assert.equal(readFileSync(join(plain, 'old/.env.production'), 'utf8'), `ANTHROPIC_API_KEY=${FAKE_ANTHROPIC}\n`);
   assert.equal(readFileSync(join(plain, 'a.txt'), 'utf8'), 'key <redacted:anthropic-key>\n');
+});
+
+const utf16le = (text, bom = true) => Buffer.concat([Buffer.from(bom ? [0xff, 0xfe] : []), Buffer.from(text, 'utf16le')]);
+const utf16be = (text) => {
+  const body = Buffer.from(text, 'utf16le');
+  body.swap16();
+  return Buffer.concat([Buffer.from([0xfe, 0xff]), body]);
+};
+
+/** A junction (Windows) or a directory symlink to `target` at `path`; false when the system refuses one. */
+function linkDir(target, path) {
+  try {
+    symlinkSync(target, path, process.platform === 'win32' ? 'junction' : 'dir');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+test('--workspace reads UTF-16 text (as PowerShell writes it) with or without a byte-order mark', async () => {
+  const cwd = makeRepo();
+  const dir = tempDir('asoldi-workspace-utf16-');
+  writeFileSync(join(dir, 'ps-out.txt'), utf16le(`first\r\ntoken ${FAKE_ANTHROPIC}\r\n`));
+  writeFileSync(join(dir, 'be.txt'), utf16be(`key ${FAKE_ANTHROPIC}\n`));
+  writeFileSync(join(dir, 'no-bom.txt'), utf16le(`key ${FAKE_ANTHROPIC}\n`, false));
+  write(dir, 'bom-utf8.txt', `﻿key ${FAKE_ANTHROPIC}\n`);
+  const result = await runScan(['--workspace', dir, '--profile', 'private'], { cwd, env: NO_ENV(cwd) });
+  assert.equal(result.code, 1, result.out);
+  assert.match(result.out, /^ps-out\.txt:2 {2}anthropic-key$/m);
+  assert.match(result.out, /^be\.txt:1 {2}anthropic-key$/m);
+  assert.match(result.out, /^no-bom\.txt:1 {2}anthropic-key$/m);
+  assert.match(result.out, /^bom-utf8\.txt:1 {2}anthropic-key$/m);
+  assert.doesNotMatch(result.out, /not scanned/);
+  assert.equal(result.out.includes(FAKE_ANTHROPIC), false);
+  for (const sample of [Buffer.from([0, 1, 2, 3]), Buffer.from([0xff, 0xfe, 0, 0, 0x41, 0, 0, 0]), utf16le('odd').subarray(0, 5)]) {
+    assert.equal(lib.decodeText(sample), null, 'binary, UTF-32 and a cut UTF-16 file are not read as text');
+  }
+  const round = lib.decodeText(utf16be('abæ'));
+  assert.deepEqual(round, { text: 'abæ', encoding: 'utf16be', bom: true });
+  assert.deepEqual(lib.encodeText(round.text, round), utf16be('abæ'));
+});
+
+test('--workspace lists every file or folder it did not read, and exits 3 instead of 0 when it found nothing but did not read everything', async () => {
+  const cwd = makeRepo();
+  const dir = tempDir('asoldi-workspace-unread-');
+  writeFileSync(join(dir, 'blob.bin'), Buffer.concat([Buffer.from([0, 1, 2, 0]), Buffer.from(FAKE_ANTHROPIC)]));
+  write(dir, 'big.log', `${'y'.repeat(300)}\nkey ${FAKE_ANTHROPIC}\n`);
+  write(dir, 'node_modules/p/index.js', `k = '${FAKE_ANTHROPIC}';\n`);
+  write(dir, '.git/config', `[remote "origin"]\n\turl = https://u:${FAKE_ANTHROPIC}@git.example.invalid/r.git\n`);
+  write(dir, 'notes.md', 'nothing here\n');
+  const target = tempDir('asoldi-workspace-link-target-');
+  write(target, 'k.txt', `key ${FAKE_ANTHROPIC}\n`);
+  const linked = linkDir(target, join(dir, 'linked'));
+  const env = NO_ENV(cwd);
+
+  const result = await runScan(['--workspace', dir, '--max-file-bytes', '200'], { cwd, env });
+  assert.equal(result.code, 3, result.out);
+  assert.match(result.out, /^blob\.bin {2}not scanned: binary/m);
+  assert.match(result.out, /^big\.log {2}not scanned: larger than the size limit/m);
+  assert.match(result.out, /^node_modules\/ {2}not scanned: installed dependencies$/m);
+  assert.match(result.out, /^\.git\/ {2}not scanned: git metadata/m);
+  if (linked) assert.match(result.out, /^linked {2}not scanned: a symbolic link or junction/m);
+  assert.match(result.out, /secret-scan \(workspace\): no finding in the files it read/);
+  assert.match(result.out, /not proven clean/);
+  assert.doesNotMatch(result.out, /clean \(/);
+  assert.equal(result.out.includes(FAKE_ANTHROPIC), false);
+
+  const json = await runScan(['--workspace', dir, '--max-file-bytes', '200', '--json'], { cwd, env });
+  assert.equal(json.code, 3);
+  const report = JSON.parse(json.out);
+  assert.equal(report.counts.notScanned, linked ? 5 : 4);
+  assert.deepEqual(report.notScanned.map((row) => row.reason).sort(), [...(linked ? ['link'] : []), 'binary', 'dependencies', 'git-metadata', 'too-large'].sort());
+
+  const accepted = await runScan(['--workspace', dir, '--max-file-bytes', '200', '--allow-skipped'], { cwd, env });
+  assert.equal(accepted.code, 0, accepted.out);
+  assert.match(accepted.out, /Accepted with --allow-skipped/);
+  // Read in full, the large file's key is found; findings decide the exit status.
+  const full = await runScan(['--workspace', dir], { cwd, env });
+  assert.equal(full.code, 1);
+  assert.match(full.out, /^big\.log:2 {2}anthropic-key$/m);
+  // A folder that is not there is an error, never a clean result.
+  await assert.rejects(runScan(['--workspace', join(dir, 'missing')], { cwd, env }), /no folder at/);
+  await assert.rejects(runScan(['--redact', join(dir, 'notes.md')], { cwd, env }), /is not a folder/);
+});
+
+test('--redact writes a UTF-16 file back as UTF-16 and lists the binary files and old backups it left (exit 3 unless accepted)', async () => {
+  const cwd = makeRepo();
+  const dir = tempDir('asoldi-redact-utf16-');
+  const backups = tempDir('asoldi-redact-utf16-b-');
+  const original = utf16le(`line one\r\nkey: ${FAKE_ANTHROPIC}\r\nlast`);
+  writeFileSync(join(dir, 'ps-out.txt'), original);
+  const blob = Buffer.concat([Buffer.from([0, 0, 0, 1]), Buffer.from(FAKE_ANTHROPIC)]);
+  writeFileSync(join(dir, 'blob.bin'), blob);
+  write(dir, 'old/copy.txt.bak-redact', `key ${FAKE_ANTHROPIC}\n`);
+  const env = { ...NO_ENV(cwd), ASOLDI_REDACT_BACKUPS: backups };
+
+  const dry = await runScan(['--redact', dir], { cwd, env });
+  assert.equal(dry.code, 1, dry.out);
+  assert.match(dry.out, /would replace 1 value\(s\) in 1 file\(s\)/);
+  assert.match(dry.out, /^blob\.bin {2}not scanned: binary/m);
+  assert.match(dry.out, /^old\/copy\.txt\.bak-redact {2}not scanned: an original kept by an older redaction run/m);
+
+  const applied = await runScan(['--redact', dir, '--apply'], { cwd, env });
+  assert.equal(applied.code, 3, applied.out);
+  assert.match(applied.out, /replaced 1 value\(s\) in 1 file\(s\)/);
+  const after = readFileSync(join(dir, 'ps-out.txt'));
+  assert.deepEqual([...after.subarray(0, 2)], [0xff, 0xfe], 'the byte-order mark stays');
+  assert.equal(after.subarray(2).toString('utf16le'), 'line one\r\nkey: <redacted:anthropic-key>\r\nlast');
+  const [folder] = readdirSync(backups);
+  assert.deepEqual(readFileSync(join(backups, folder, 'ps-out.txt.bak-redact')), original);
+  assert.deepEqual(readFileSync(join(dir, 'blob.bin')), blob, 'a file it cannot read is never changed');
+  const json = JSON.parse((await runScan(['--redact', dir, '--json'], { cwd, env })).out);
+  assert.deepEqual(json.notScanned, [{ path: 'blob.bin', reason: 'binary' }, { path: 'old/copy.txt.bak-redact', reason: 'redaction-backup' }]);
+  assert.equal((await runScan(['--redact', dir, '--apply', '--allow-skipped'], { cwd, env })).code, 0);
 });
 
 // ------------------------------------------------------------------------- ratchet
@@ -434,6 +710,18 @@ test('offender lists: a new file or a higher count fails, a lower count passes, 
   const blocked = await runScan(['--tracked', '--ratchet'], { cwd: dir, env: NO_ENV(dir) });
   assert.equal(blocked.code, 1);
   assert.match(blocked.out, /docs\/daily-logs\/x\.md {2}path:daily-log/);
+  git(dir, ['rm', '-q', '--cached', 'docs/daily-logs/x.md']);
+
+  // An allowlist entry for client data on a glob would hide findings from the lists: it fails; on one file it passes.
+  write(dir, 'docs/a.md', 'kari@annen-kunde.no\n');
+  write(dir, ALLOW_FILE, JSON.stringify({ entries: [{ path: 'docs/*.md', rule: 'email', reason: 'docs' }] }));
+  git(dir, ['add', 'docs/a.md', ALLOW_FILE]);
+  const broad = await runScan(['--tracked', '--ratchet'], { cwd: dir, env: NO_ENV(dir) });
+  assert.equal(broad.code, 1, broad.out);
+  assert.match(broad.out, /^\.secret-scan-allowlist\.json {2}path:allowlist-broad {2}\(rule email on docs\/\*\.md; name one file\)$/m);
+  write(dir, ALLOW_FILE, JSON.stringify({ entries: [{ path: 'docs/a.md', rule: 'email', reason: 'docs' }] }));
+  const one = await runScan(['--tracked', '--ratchet'], { cwd: dir, env: NO_ENV(dir) });
+  assert.equal(one.code, 0, one.out);
 });
 
 // ------------------------------------------------------------------------- hooks (negative controls)
@@ -697,6 +985,31 @@ test('the client-data cleanup: neutral company words, role mailboxes kept, the s
   const maps = scrub.buildMaps([{ rule: 'email', value: 'post@kafe.no' }, { rule: 'email', value: 'Post@Kafe.com' }]);
   assert.notEqual(maps.domains.get('kafe.no'), maps.domains.get('kafe.com'));
   for (const domain of maps.domains.values()) assert.match(domain, /^[a-z]+\.test$/);
+});
+
+test('the client-data cleanup never gives a new company a word an earlier cleanup left in the tree', () => {
+  const first = 'kunde-0.no';
+  const word = scrub.assignWords([first]).get(first);
+  // Another company whose hashed start is the same word.
+  const second = Array.from({ length: 400 }, (_, i) => `kunde-${i + 1}.no`).find((domain) => scrub.assignWords([domain]).get(domain) === word);
+  assert.ok(second, 'a domain with the same start word');
+  assert.deepEqual(scrub.wordsInUse([`post@${word}.test and https://www.${word}-2.test/x`, `not${word}.test`, 'x.TANSY.test']), [word, `${word}-2`, 'tansy'].sort());
+  assert.equal(scrub.assignWords(['x.no'], { taken: scrub.NEUTRAL_WORDS }).get('x.no').replace(/-\d+$/, '-n'), `${scrub.assignWords(['x.no']).get('x.no')}-n`);
+
+  const dir = treeWithProfile();
+  write(dir, '.secret-scan-allowlist.json', JSON.stringify({}));
+  write(dir, 'scripts/security/pii.json', JSON.stringify({ kind: 'pii', files: {} }));
+  write(dir, 'scripts/security/plan.json', JSON.stringify({ kind: 'plan', files: {} }));
+  // An earlier cleanup already moved one company to the word; a later merge brings the other company.
+  write(dir, 'scripts/old.test.mjs', `const a = 'post@${word}.test';\n`);
+  write(dir, 'scripts/new.test.mjs', `const b = 'post@${second}';\n`);
+  quiet(() => scrub.run({ root: dir, write: true }));
+  const out = readFileSync(join(dir, 'scripts/new.test.mjs'), 'utf8');
+  const moved = out.match(/post@([a-z-]+)\.test/);
+  assert.ok(moved, out);
+  assert.notEqual(moved[1], word, 'two companies never share one .test domain');
+  assert.ok(scrub.NEUTRAL_WORDS.includes(moved[1]));
+  assert.equal(readFileSync(join(dir, 'scripts/old.test.mjs'), 'utf8'), `const a = 'post@${word}.test';\n`);
 });
 // ------------------------------------------------------------------------- this repo, end to end
 

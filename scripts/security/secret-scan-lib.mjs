@@ -367,9 +367,11 @@ export function commitEntryFor(allowlist, commit, finding) {
 /**
  * fixtureValues let one exact fixture value through wherever it appears in the matching paths:
  * { path: <glob>, rule, sha256: <hex sha256 of the matched value>, reason }. Use it for a test
- * value that has to look real (a credential in a URL, a password a test signs in with). Only the
- * hash is stored, a different value in the same file is still reported, and an entry never covers
- * a value from a local .env file or a retired secret.
+ * value that has to look real (a credential in a URL, a password a test signs in with), or for one
+ * contact that only some files may hold (rule 'email': the hash of the lowercase address; rule
+ * 'phone': the hash of its 8 national digits). Only the hash is stored, a different value in the
+ * same file is still reported, and an entry never covers a value from a local .env file or a
+ * retired secret.
  */
 export function normalizeFixtureValues(raw = []) {
   return (Array.isArray(raw) ? raw : [])
@@ -410,9 +412,53 @@ export function normalizeAllowlist(raw = {}) {
   };
 }
 
+/** The client-data rule ids. */
+export const PII_RULE_IDS = new Set(['listed-name', 'email', 'phone', 'national-id', 'card-number']);
+
+/**
+ * The entry that lets `rule` through in `path`. A '*' entry covers the secret and path rules only
+ * (a secret hit must still look fake): client data and planning words need an entry that names
+ * the rule.
+ */
 function allowEntry(allowlist, path, rule) {
   const normalized = String(path || '').replace(/\\/g, '/');
-  return allowlist.entries.find((row) => (row.rule === rule || row.rule === '*') && row.re.test(normalized)) || null;
+  const star = !PII_RULE_IDS.has(rule) && !PLAN_RULE_IDS.has(rule);
+  return allowlist.entries.find((row) => (row.rule === rule || (star && row.rule === '*')) && row.re.test(normalized)) || null;
+}
+
+const GLOB_CHARS = /[*?]/;
+
+/**
+ * Entries that let client data or planning words through in more than one file: a client-data or
+ * planning rule on a glob path. A public repo allows these rules by exact path or by exact value
+ * only. Returns [{ path, rule }].
+ */
+export function broadDataEntries(allowlist) {
+  return (allowlist?.entries || [])
+    .filter((row) => (PII_RULE_IDS.has(row.rule) || PLAN_RULE_IDS.has(row.rule)) && GLOB_CHARS.test(row.path))
+    .map((row) => ({ path: row.path, rule: row.rule }));
+}
+
+/**
+ * What the allowlist `next` (raw JSON) lets through beyond `base` (raw JSON; {} when there was
+ * none) that is broader than one value in one file: a new entry whose rule is '*' or whose path is
+ * a glob, and a new allowed e-mail domain. Exact values (emails, phones, fixtureValues),
+ * commit-pinned entries and one-file entries are not counted. Returns hints without values.
+ */
+export function allowlistWidening(base = {}, next = {}) {
+  const before = normalizeAllowlist(base || {});
+  const after = normalizeAllowlist(next || {});
+  const key = (row) => `${row.path}\u0000${row.rule}`;
+  const known = new Set(before.entries.map(key));
+  const out = [];
+  for (const row of after.entries) {
+    if (known.has(key(row))) continue;
+    if (row.rule === '*' || GLOB_CHARS.test(row.path)) out.push(`new entry: rule ${row.rule} on ${row.path}`);
+  }
+  const domains = new Set(before.emailDomains);
+  const added = after.emailDomains.filter((domain) => !domains.has(domain)).length;
+  if (added) out.push(`${added} new allowed e-mail domain(s)`);
+  return out;
 }
 
 // ---------------------------------------------------------------- known values and retired hashes
@@ -674,7 +720,7 @@ export function piiHitsInLine(path, text, { allowlist = normalizeAllowlist(), na
     const address = match[0].toLowerCase();
     if (domainAllowed(match[1], allowlist.emailDomains) || allowlist.emails.has(address)) continue;
     if (/\.(?:png|jpe?g|gif|svg|webp|avif|js|css)$/i.test(address)) continue; // image@2x.png and similar
-    if (allowEntry(allowlist, path, 'email')) continue;
+    if (allowEntry(allowlist, path, 'email') || fixtureValueAllowed(allowlist, path, 'email', address)) continue;
     hits.push({ rule: 'email', hint: '', start: match.index, end: match.index + match[0].length, value: match[0] });
   }
 
@@ -686,7 +732,7 @@ export function piiHitsInLine(path, text, { allowlist = normalizeAllowlist(), na
   for (const match of phones) {
     const national = nationalPhone(match[0]);
     if (allowlist.phones.has(national) || phoneLooksFake(national)) continue;
-    if (allowEntry(allowlist, path, 'phone')) continue;
+    if (allowEntry(allowlist, path, 'phone') || fixtureValueAllowed(allowlist, path, 'phone', national)) continue;
     hits.push({ rule: 'phone', hint: '', start: match.index, end: match.index + match[0].length, value: match[0] });
   }
 
@@ -734,6 +780,61 @@ export function formatFinding(finding) {
 export function isProbablyBinary(buffer) {
   const sample = buffer.subarray(0, Math.min(buffer.length, 8000));
   return sample.includes(0);
+}
+
+// UTF-16 without a byte-order mark: at least this share of the sampled characters has a zero high
+// byte (Latin text), and no character is NUL.
+const UTF16_ZERO_SHARE = 0.9;
+
+function utf16OrderWithoutBom(buffer) {
+  if (buffer.length < 4 || buffer.length % 2) return '';
+  const sample = buffer.subarray(0, Math.min(buffer.length, 8000) & ~1);
+  let evenZero = 0;
+  let oddZero = 0;
+  for (let i = 0; i < sample.length; i += 2) {
+    if (sample[i] === 0 && sample[i + 1] === 0) return '';
+    if (sample[i] === 0) evenZero += 1;
+    if (sample[i + 1] === 0) oddZero += 1;
+  }
+  const chars = sample.length / 2;
+  if (oddZero >= chars * UTF16_ZERO_SHARE && evenZero === 0) return 'utf16le';
+  if (evenZero >= chars * UTF16_ZERO_SHARE && oddZero === 0) return 'utf16be';
+  return '';
+}
+
+function utf16ToString(bytes, encoding) {
+  if (encoding === 'utf16le') return bytes.toString('utf16le');
+  const swapped = Buffer.from(bytes);
+  swapped.swap16();
+  return swapped.toString('utf16le');
+}
+
+/**
+ * A file's bytes as text: { text, encoding: 'utf8'|'utf16le'|'utf16be', bom }. UTF-8 keeps a
+ * byte-order mark in the text. UTF-16 is read with a byte-order mark (as PowerShell's '>' and
+ * Notepad write it) or, without one, when it is plainly UTF-16 Latin text. null for anything else
+ * that holds a NUL byte (binary, UTF-32).
+ */
+export function decodeText(buffer) {
+  const bomLe = buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe;
+  const bomBe = buffer.length >= 2 && buffer[0] === 0xfe && buffer[1] === 0xff;
+  if (bomLe || bomBe) {
+    if (buffer.length % 2 || (bomLe && buffer.length >= 4 && buffer[2] === 0 && buffer[3] === 0)) return null;
+    const encoding = bomLe ? 'utf16le' : 'utf16be';
+    return { text: utf16ToString(buffer.subarray(2), encoding), encoding, bom: true };
+  }
+  if (!isProbablyBinary(buffer)) return { text: buffer.toString('utf8'), encoding: 'utf8', bom: false };
+  const encoding = utf16OrderWithoutBom(buffer);
+  return encoding ? { text: utf16ToString(buffer, encoding), encoding, bom: false } : null;
+}
+
+/** The bytes of `text` in the encoding decodeText() read it in ({ encoding, bom }). */
+export function encodeText(text, { encoding = 'utf8', bom = false } = {}) {
+  if (encoding === 'utf8') return Buffer.from(text, 'utf8');
+  const body = Buffer.from(text, 'utf16le');
+  if (encoding === 'utf16be') body.swap16();
+  if (!bom) return body;
+  return Buffer.concat([Buffer.from(encoding === 'utf16le' ? [0xff, 0xfe] : [0xfe, 0xff]), body]);
 }
 
 // ---------------------------------------------------------------- redaction

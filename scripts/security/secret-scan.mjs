@@ -23,7 +23,15 @@
  *   node scripts/security/secret-scan.mjs <files…>          those files
  *
  * Options: --json, --summary, --secrets-only, --no-env, --no-retired, --profile public|private,
- * --names FILE (names to refuse, one per line, from a file outside the repo).
+ * --names FILE (names to refuse, one per line, from a file outside the repo); for --workspace,
+ * --redact and files: --allow-skipped, --max-file-bytes N (default 64 MiB).
+ *
+ * --workspace, --redact and files read UTF-8 and UTF-16 text (with a byte-order mark, or plainly
+ * UTF-16 without one). They list every file or folder they did not read, with the reason: binary
+ * or another encoding, over the size limit, a symbolic link or junction (never followed), .git,
+ * node_modules, an unreadable folder, and for --redact env files and old .bak-redact copies. When
+ * anything was not read and nothing was found, the exit status is 3, not 0: the folder is not
+ * proven clean. --allow-skipped accepts the list (exit 0).
  *
  * What counts as a finding (lib: secret-scan-lib.mjs):
  *   - credential patterns (private keys, sk-/AIza/ghp_/xkeysib-/sk_live_/whsec_/JWT service_role …);
@@ -41,21 +49,30 @@
  * SECRET_SCAN_PLAN_NET_DIFF=1 (or --plan-net-diff) planning words in file lines are checked on the
  * pushed result instead (the diff from the remote to the pushed tip): set it only when the
  * planning words of earlier commits in the push may be published; the scan lists every one it lets
- * through. In a repo whose committed profile is public, --staged uses the public rules and refuses
- * a staged scan-profile.json that names a weaker profile.
+ * through. In a repo whose committed profile is public, --staged uses the public rules and the
+ * staged allowlist (never the working tree's), and refuses a staged scan-profile.json that names a
+ * weaker profile. --pre-push takes the profile and the allowlist from each pushed tip; when the
+ * commit the push starts from has the public profile, the public rules apply and a weaker profile
+ * is refused. Both refuse an allowlist change that lets more than one value in one file through (a
+ * new '*' rule, a new glob path or a new allowed e-mail domain) unless
+ * SECRET_SCAN_ALLOWLIST_WIDEN=1, which lists what it lets through.
  * Fake test fixtures are allowed through .secret-scan-allowlist.json (path + rule + reason, or
  * the sha256 of one fixture value); an allowlisted secret hit must still look fake, so a real
- * key pasted there is caught. commitEntries (commit + path + line + rule + reason) let one
+ * key pasted there is caught. A '*' entry covers the secret and path rules only; client data and
+ * planning words need an entry that names the rule, on one file (--ratchet refuses a glob).
+ * commitEntries (commit + path + line + rule + reason) let one
  * finding through in one past commit, for history that is not rewritten; they never cover .env
  * values or retired secrets, and the scan output lists every finding they let through.
  *
  * --redact is a dry run unless --apply is given: it lists what it would replace. --apply keeps
  * each changed file's original once (never overwritten) as <backup dir>/<folder>-<hash>/<path>.bak-redact,
  * outside the folder: --backup-dir, ASOLDI_REDACT_BACKUPS or ~/.asoldi-secrets/redact-backups.
- * Delete those copies after checking the result. Only secrets are replaced. A folder that holds
- * one of the env files the known values come from, or the backup dir, is refused.
+ * Delete those copies after checking the result. Only secrets are replaced, and a UTF-16 file is
+ * written back as UTF-16. A folder that holds one of the env files the known values come from, or
+ * the backup dir, is refused; any other env file is listed and never changed.
  *
- * Output never contains a matched value. Exit 0 clean, 1 findings, 2 error.
+ * Output never contains a matched value. Exit 0 clean, 1 findings (or a --redact dry run with
+ * something to replace), 2 error, 3 nothing found but some files or folders were not read.
  */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -64,13 +81,16 @@ import { homedir } from 'node:os';
 import { basename, delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  allowlistWidening,
   blockedPathRule,
+  broadDataEntries,
   buildNamesMatcher,
   buildRetiredMatcher,
   commitEntryFor,
   countFindingsByPath,
+  decodeText,
+  encodeText,
   formatFinding,
-  isProbablyBinary,
   knownValuesFromEnv,
   normalizeAllowlist,
   parseEnvText,
@@ -262,6 +282,31 @@ export function stagedProfiles(cwd) {
     committed = null;
   }
   return { committed, staged: profileNameOf(gitShow(cwd, `:${PROFILE_FILE}`)) };
+}
+
+/** An allowlist JSON text → its raw object ({} for a missing file). `strict`: invalid JSON is an error, else {}. */
+function allowlistRawOf(text, { strict = true, where = ALLOWLIST_FILE } = {}) {
+  if (text === null) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    if (strict) throw new Error(`${where} is not valid JSON`);
+    return {};
+  }
+}
+
+/**
+ * The allowlist changes between two raw allowlists that let more than one value in one file
+ * through (allowlistWidening) as path findings on `label`. With ctx.allowWiden
+ * (SECRET_SCAN_ALLOWLIST_WIDEN=1) they are listed in ctx.widenedLetThrough instead.
+ */
+function wideningFindings(baseRaw, nextRaw, ctx, label = ALLOWLIST_FILE) {
+  const hints = allowlistWidening(baseRaw, nextRaw);
+  if (ctx.allowWiden) {
+    if (Array.isArray(ctx.widenedLetThrough)) for (const hint of hints) ctx.widenedLetThrough.push(`${label}: ${hint}`);
+    return [];
+  }
+  return hints.map((hint) => ({ path: label, line: 0, rule: 'path:allowlist-widened', kind: 'path', hint }));
 }
 
 /**
@@ -486,14 +531,22 @@ function withRules(ctx, rules) {
   return { ...ctx, profile: { ...ctx.profile, ...rules } };
 }
 
+/**
+ * --staged. In a repo whose committed profile is public: the public rules and the staged
+ * allowlist (not the working tree's), a staged weaker profile is refused, and so is a staged
+ * allowlist change broader than one value in one file (wideningFindings).
+ */
 export function scanStaged(cwd, ctx) {
   const patch = gitText(['diff', '--cached', ...DIFF_ARGS, '--diff-filter=ACMR'], { cwd });
   const { committed, staged } = stagedProfiles(cwd);
   if (committed !== 'public') return scanPatchFiles(parsePatch(patch), ctx);
-  const findings = scanPatchFiles(parsePatch(patch), { ...ctx, profile: PROFILES.public });
+  const stagedRaw = allowlistRawOf(gitShow(cwd, `:${ALLOWLIST_FILE}`), { where: `the staged ${ALLOWLIST_FILE}` });
+  const headRaw = allowlistRawOf(gitShow(cwd, `HEAD:${ALLOWLIST_FILE}`), { strict: false });
+  const findings = scanPatchFiles(parsePatch(patch), { ...ctx, profile: PROFILES.public, allowlist: normalizeAllowlist(stagedRaw) });
   if (staged !== 'public') {
     findings.push({ path: PROFILE_FILE, line: 0, rule: 'path:profile-weakened', kind: 'path', hint: 'the committed profile is public' });
   }
+  findings.push(...wideningFindings(headRaw, stagedRaw, ctx));
   return findings;
 }
 
@@ -560,16 +613,65 @@ export function prePushRevArgs(stdinText, { hasCommit = () => true } = {}) {
  * remote-tracking refs; the empty tree when this clone has no remote-tracking ref or the pushed
  * history meets none. null when the pushed commits meet them in more than one place.
  */
-export function pushBase(cwd, { localSha, remoteSha }) {
-  if (remoteSha) return remoteSha;
-  if (!gitText(['for-each-ref', '--format=%(objectname)', 'refs/remotes'], { cwd }).trim()) return EMPTY_TREE;
-  if (!gitText(['rev-list', localSha, '--not', '--remotes'], { cwd }).trim()) return localSha;
-  const boundary = gitText(['rev-list', '--boundary', localSha, '--not', '--remotes'], { cwd })
+export function pushBase(cwd, ref) {
+  const bases = pushBoundaries(cwd, ref);
+  if (!bases.length) return EMPTY_TREE;
+  return bases.length === 1 ? bases[0] : null;
+}
+
+/**
+ * The commits the pushed history starts from: [remote sha]; [the pushed commit] when every pushed
+ * commit is already on a remote-tracking ref; for a new branch every commit where the pushed
+ * commits meet the remote-tracking refs; [] when this clone has no remote-tracking ref or the
+ * pushed history meets none.
+ */
+export function pushBoundaries(cwd, { localSha, remoteSha }) {
+  if (remoteSha) return [remoteSha];
+  if (!gitText(['for-each-ref', '--format=%(objectname)', 'refs/remotes'], { cwd }).trim()) return [];
+  if (!gitText(['rev-list', localSha, '--not', '--remotes'], { cwd }).trim()) return [localSha];
+  return gitText(['rev-list', '--boundary', localSha, '--not', '--remotes'], { cwd })
     .split(/\r?\n/)
     .filter((line) => line.startsWith('-'))
     .map((line) => line.slice(1).trim());
-  if (!boundary.length) return EMPTY_TREE;
-  return boundary.length === 1 ? boundary[0] : null;
+}
+
+/**
+ * The rules and allowlist for one pushed ref: the profile and allowlist committed in the pushed
+ * tip, never the working tree's. When a commit the push starts from has a committed public
+ * profile, the public rules apply and a weaker profile in the tip is refused; an allowlist in the
+ * tip that is broader than in those commits is refused too (wideningFindings).
+ * Returns { ctx, findings }.
+ */
+function pushedRules(cwd, ref, ctx) {
+  const tip = ref.localSha.slice(0, 10);
+  const tipProfileText = gitShow(cwd, `${ref.localSha}:${PROFILE_FILE}`);
+  const tipProfile = profileNameOf(tipProfileText);
+  const tipAllowRaw = allowlistRawOf(gitShow(cwd, `${ref.localSha}:${ALLOWLIST_FILE}`), { where: `${ALLOWLIST_FILE} in ${tip}` });
+  const bases = pushBoundaries(cwd, ref).map((rev) => {
+    const profileText = gitShow(cwd, `${rev}:${PROFILE_FILE}`);
+    return {
+      // Only a profile file the base commit holds pins the rules; a base from before the file pins nothing.
+      profile: profileText === null ? null : profileNameOf(profileText),
+      allowRaw: allowlistRawOf(gitShow(cwd, `${rev}:${ALLOWLIST_FILE}`), { strict: false }),
+    };
+  });
+  const findings = [];
+  const pinned = bases.some((base) => base.profile === 'public');
+  if (pinned && tipProfile !== 'public') {
+    findings.push({ path: `${tip}:${PROFILE_FILE}`, line: 0, rule: 'path:profile-weakened', kind: 'path', hint: 'the pushed-to commit has the public profile' });
+  }
+  const profile = pinned ? PROFILES.public : resolveProfile(tipProfile);
+  if (profile.pii || profile.plan) {
+    const seen = new Set();
+    for (const base of bases) {
+      for (const finding of wideningFindings(base.allowRaw, tipAllowRaw, ctx, `${tip}:${ALLOWLIST_FILE}`)) {
+        if (seen.has(finding.hint)) continue;
+        seen.add(finding.hint);
+        findings.push(finding);
+      }
+    }
+  }
+  return { ctx: { ...ctx, profile, allowlist: normalizeAllowlist(tipAllowRaw) }, findings };
 }
 
 /** The message lines of an annotated tag object ([] for a commit or a lightweight tag). */
@@ -592,10 +694,14 @@ export function tagMessageLines(cwd, sha) {
  * `planNetDiff`, planning words in file lines count on the pushed result only (the diff from the
  * push base to the tip), and every per-commit planning finding that lets through is listed in
  * ctx.letThrough. When the pushed commits have no single base, planning words stay per commit.
+ * The rules and the allowlist come from each pushed tip (pushedRules), never the working tree.
  */
-export function scanPrePush(cwd, stdinText, ctx, { planNetDiff = false } = {}) {
+export function scanPrePush(cwd, stdinText, baseCtx, { planNetDiff = false } = {}) {
   const findings = [];
   for (const ref of prePushRefs(stdinText, { hasCommit: (sha) => commitExists(cwd, sha) })) {
+    const rules = pushedRules(cwd, ref, baseCtx);
+    const { ctx } = rules;
+    findings.push(...rules.findings);
     const revArgs = ref.remoteSha ? [`${ref.remoteSha}..${ref.localSha}`] : [ref.localSha, '--not', '--remotes'];
     const base = planNetDiff && ctx.profile.plan ? pushBase(cwd, ref) : null;
     if (base === null) {
@@ -623,31 +729,58 @@ export function scanPrePush(cwd, stdinText, ctx, { planNetDiff = false } = {}) {
 
 const WALK_SKIP_DIRS = new Set(['.git', 'node_modules']);
 
+/** Why a file or folder under a --workspace or --redact folder was not read (printed after the path). */
+export const NOT_SCANNED_REASONS = Object.freeze({
+  binary: 'binary, or a text encoding the scan does not read (UTF-8 and UTF-16 are read)',
+  'too-large': 'larger than the size limit (raise it with --max-file-bytes)',
+  link: 'a symbolic link or junction, not followed (scan its target on its own)',
+  'git-metadata': 'git metadata (run --history in that checkout and check its .git/config by hand)',
+  dependencies: 'installed dependencies',
+  unreadable: 'could not be read',
+  special: 'not a regular file',
+  'env-file': 'an env file is never changed by a redaction (move or delete a stale copy by hand)',
+  'redaction-backup': 'an original kept by an older redaction run, which holds the values (move it out of the folder or delete it)',
+});
+
+const byPath = (a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
+
 /**
- * Every regular file under `dir` as a relative '/' path, sorted. Skips .git and node_modules,
- * and never follows a symbolic link or a junction.
+ * Every regular file under `dir` as a relative '/' path, sorted, and what was not walked:
+ * { files, skipped: [{ path, reason }] }. .git and node_modules are listed, not walked; a symbolic
+ * link or a junction is listed and never followed; a folder that cannot be read is listed.
  */
-export function walkFiles(dir, { skipDirs = WALK_SKIP_DIRS } = {}) {
-  const out = [];
+export function walkTree(dir, { skipDirs = WALK_SKIP_DIRS } = {}) {
+  const files = [];
+  const skipped = [];
   const visit = (abs, rel) => {
     let entries;
     try {
       entries = readdirSync(abs, { withFileTypes: true });
     } catch {
+      if (rel) skipped.push({ path: `${rel}/`, reason: 'unreadable' });
       return;
     }
     for (const entry of entries) {
-      if (entry.isSymbolicLink()) continue;
       const childRel = rel ? `${rel}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) {
-        if (!skipDirs.has(entry.name)) visit(join(abs, entry.name), childRel);
+      if (entry.isSymbolicLink()) {
+        skipped.push({ path: childRel, reason: 'link' });
+      } else if (entry.isDirectory()) {
+        if (skipDirs.has(entry.name)) skipped.push({ path: `${childRel}/`, reason: entry.name === '.git' ? 'git-metadata' : 'dependencies' });
+        else visit(join(abs, entry.name), childRel);
       } else if (entry.isFile()) {
-        out.push(childRel);
+        files.push(childRel);
+      } else {
+        skipped.push({ path: childRel, reason: 'special' });
       }
     }
   };
   visit(resolve(dir), '');
-  return out.sort();
+  return { files: files.sort(), skipped: skipped.sort(byPath) };
+}
+
+/** Every regular file under `dir` (walkTree without the list of what was not walked). */
+export function walkFiles(dir, options = {}) {
+  return walkTree(dir, options).files;
 }
 
 /** The repo's files: `git ls-files`, or every file under `root` when it is not a git checkout. */
@@ -659,24 +792,43 @@ export function listRepoFiles(root) {
   }
 }
 
-function readText(file, maxBytes) {
+/**
+ * A file as text: { text, encoding, bom } (decodeText), or { reason } when it was not read
+ * ('too-large', 'binary', 'unreadable').
+ */
+export function readTextFile(file, maxBytes = MAX_FILE_BYTES) {
+  let buffer;
   try {
-    if (statSync(file).size > maxBytes) return null;
-    const buffer = readFileSync(file);
-    return isProbablyBinary(buffer) ? null : buffer.toString('utf8');
+    if (statSync(file).size > maxBytes) return { reason: 'too-large' };
+    buffer = readFileSync(file);
   } catch {
-    return null;
+    return { reason: 'unreadable' };
   }
+  return decodeText(buffer) || { reason: 'binary' };
 }
 
-function scanFileList(root, paths, ctx, { maxBytes = MAX_FILE_BYTES } = {}) {
+/** A --workspace or --redact folder must exist and be a folder, or the scan would call it clean. */
+function requireFolder(dir) {
+  let stat;
+  try {
+    stat = statSync(dir);
+  } catch {
+    throw new Error(`no folder at ${dir}`);
+  }
+  if (!stat.isDirectory()) throw new Error(`${dir} is not a folder`);
+}
+
+function scanFileList(root, paths, ctx, { maxBytes = MAX_FILE_BYTES, notScanned = null } = {}) {
   const findings = [];
   for (const path of paths) {
     const pathFinding = scanPath(path, ctx);
     if (pathFinding) findings.push(pathFinding);
-    const text = readText(join(root, path), maxBytes);
-    if (text === null) continue;
-    findings.push(...scanLines(path, splitLines(text), ctx));
+    const read = readTextFile(join(root, path), maxBytes);
+    if (read.reason) {
+      if (notScanned) notScanned.push({ path, reason: read.reason });
+      continue;
+    }
+    findings.push(...scanLines(path, splitLines(read.text), ctx));
   }
   return findings;
 }
@@ -685,26 +837,37 @@ export function scanTracked(cwd, ctx, { root = rootOrDir(cwd) } = {}) {
   return scanFileList(root, listRepoFiles(root), ctx);
 }
 
-/** --workspace: every file under `dir` (no git needed); paths in the output are relative to it. */
-export function scanWorkspace(dir, ctx) {
-  return scanFileList(resolve(dir), walkFiles(dir), ctx, { maxBytes: MAX_WORKSPACE_FILE_BYTES });
+/**
+ * --workspace: every file under `dir` (no git needed); paths are relative to it. Returns
+ * { findings, notScanned: [{ path, reason }] }: every file or folder that was not read (binary,
+ * over `maxBytes`, a link, .git, node_modules, unreadable), so a caller never calls a folder
+ * clean while part of it went unread.
+ */
+export function scanWorkspace(dir, ctx, { maxBytes = MAX_WORKSPACE_FILE_BYTES } = {}) {
+  const root = resolve(dir);
+  requireFolder(root);
+  const tree = walkTree(root);
+  const notScanned = [...tree.skipped];
+  const findings = scanFileList(root, tree.files, ctx, { maxBytes, notScanned });
+  return { findings, notScanned: notScanned.sort(byPath) };
 }
 
-export function scanFiles(paths, ctx) {
+/** The files given on the command line (relative to `cwd`): { findings, notScanned } as for scanWorkspace. */
+export function scanFiles(paths, ctx, { maxBytes = MAX_WORKSPACE_FILE_BYTES, cwd = process.cwd() } = {}) {
   const findings = [];
+  const notScanned = [];
   for (const path of paths) {
-    const pathFinding = scanPath(path, ctx);
+    const label = path.replace(/\\/g, '/');
+    const pathFinding = scanPath(label, ctx);
     if (pathFinding) findings.push(pathFinding);
-    let buffer;
-    try {
-      buffer = readFileSync(path);
-    } catch {
+    const read = readTextFile(resolve(cwd, path), maxBytes);
+    if (read.reason) {
+      notScanned.push({ path: label, reason: read.reason });
       continue;
     }
-    if (isProbablyBinary(buffer)) continue;
-    findings.push(...scanLines(path.replace(/\\/g, '/'), splitLines(buffer.toString('utf8')), ctx));
+    findings.push(...scanLines(label, splitLines(read.text), ctx));
   }
-  return findings;
+  return { findings, notScanned };
 }
 
 export function defaultBackupRoot(env = process.env) {
@@ -743,30 +906,41 @@ export function backupDirFor(root, backupRoot) {
  * --redact: the secrets in every text file under `dir`, replaced by <redacted:KEY>. A dry run
  * unless `apply`; with `apply` each changed file's original is kept once (never overwritten) as
  * <backupDirFor(dir)>/<path>.bak-redact, outside `dir`, so a later `git add` in `dir` cannot pick
- * it up. A folder that holds one of `envSources` (the env files the known values come from) or
- * the backup root is refused: those files must keep their values. Any other env file (.env,
- * .env.*, production.env) is never changed either, only listed in `skipped`: it may be a live
- * configuration. Returns { files: [{ path, redactions, backup }], skipped: [paths], backupDir }
- * with no values.
+ * it up. A file is written back in the encoding it was read in (UTF-8, or UTF-16 with its
+ * byte-order mark). A folder that holds one of `envSources` (the env files the known values come
+ * from) or the backup root is refused: those files must keep their values. Any other env file
+ * (.env, .env.*, production.env) is never changed either: it may be a live configuration.
+ * Returns { files: [{ path, redactions, backup }], notScanned: [{ path, reason }], backupDir } with
+ * no values. notScanned lists every file and folder that was not read or not changed, with its
+ * reason (NOT_SCANNED_REASONS): env files, old .bak-redact copies, binary and oversized files,
+ * links, .git and node_modules.
  */
-export function redactWorkspace(dir, ctx, { apply = false, backupRoot = defaultBackupRoot(), envSources = ctx.envSources || [] } = {}) {
+export function redactWorkspace(dir, ctx, { apply = false, backupRoot = defaultBackupRoot(), envSources = ctx.envSources || [], maxBytes = MAX_WORKSPACE_FILE_BYTES } = {}) {
   const root = resolve(dir);
+  requireFolder(root);
   const held = envSources.filter((file) => existsSync(file) && isInside(root, file));
   if (held.length) throw new Error(`the folder holds ${held.length} env file(s) the known values come from; redact a folder without them`);
   if (isInside(root, backupRoot)) throw new Error('the backup folder is inside the folder being redacted; pick another --backup-dir');
   const backupDir = backupDirFor(root, backupRoot);
   const files = [];
-  const skipped = [];
-  for (const path of walkFiles(root)) {
-    if (/\.bak-redact$/i.test(path)) continue;
+  const tree = walkTree(root);
+  const notScanned = [...tree.skipped];
+  for (const path of tree.files) {
+    if (/\.bak-redact$/i.test(path)) {
+      notScanned.push({ path, reason: 'redaction-backup' });
+      continue;
+    }
     if (['env-file', 'env-backup'].includes(blockedPathRule(path, PROFILES.private))) {
-      skipped.push(path);
+      notScanned.push({ path, reason: 'env-file' });
       continue;
     }
     const abs = join(root, path);
-    const text = readText(abs, MAX_WORKSPACE_FILE_BYTES);
-    if (text === null) continue;
-    const result = redactText(path, text, ctx);
+    const read = readTextFile(abs, maxBytes);
+    if (read.reason) {
+      notScanned.push({ path, reason: read.reason });
+      continue;
+    }
+    const result = redactText(path, read.text, ctx);
     if (!result.redactions.length) continue;
     const row = { path, redactions: result.redactions, backup: '' };
     if (apply) {
@@ -775,12 +949,24 @@ export function redactWorkspace(dir, ctx, { apply = false, backupRoot = defaultB
         mkdirSync(dirname(backup), { recursive: true });
         writeFileSync(backup, readFileSync(abs));
       }
-      writeFileSync(abs, result.text);
+      writeFileSync(abs, encodeText(result.text, read));
       row.backup = backup;
     }
     files.push(row);
   }
-  return { files, skipped, backupDir };
+  return { files, notScanned: notScanned.sort(byPath), backupDir };
+}
+
+/** One line per file or folder that was not read. */
+function printNotScanned(notScanned) {
+  for (const row of notScanned) console.log(`${row.path}  not scanned: ${NOT_SCANNED_REASONS[row.reason] || row.reason}`);
+}
+
+/** "binary 2, link 1": the count per reason. */
+function notScannedSummary(notScanned) {
+  const counts = {};
+  for (const row of notScanned) counts[row.reason] = (counts[row.reason] || 0) + 1;
+  return Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)).map(([reason, n]) => `${reason} ${n}`).join(', ');
 }
 
 // ---------------------------------------------------------------- ratchets
@@ -789,7 +975,9 @@ const RATCHET_KINDS = { plan: ['plan'], pii: ['pii'] };
 
 /**
  * The tracked files against the repo's offender lists (scan-profile.json `ratchets`): any secret
- * or blocked path fails, and each list fails on a new file or a higher count.
+ * or blocked path fails, and each list fails on a new file or a higher count. In a repo that
+ * checks client data or planning words, an allowlist entry for those rules on a glob path fails
+ * too (broadDataEntries): it would hide findings from the lists.
  */
 export function ratchetReport(root, { allowlist = loadAllowlist(root), config = loadProfileConfig(root) } = {}) {
   const ctx = { root, allowlist, knownValues: [], retired: null, profile: config.profile, names: null };
@@ -804,6 +992,11 @@ export function ratchetReport(root, { allowlist = loadAllowlist(root), config = 
   }
   const ratcheted = new Set(Object.keys(lists).flatMap((kind) => RATCHET_KINDS[kind]));
   const hard = findings.filter((finding) => !ratcheted.has(finding.kind));
+  if (config.profile.pii || config.profile.plan) {
+    for (const row of broadDataEntries(allowlist)) {
+      hard.push({ path: ALLOWLIST_FILE, line: 0, rule: 'path:allowlist-broad', kind: 'path', hint: `rule ${row.rule} on ${row.path}; name one file` });
+    }
+  }
   return { findings, hard, lists, ok: !hard.length && Object.values(lists).every((row) => row.ok) };
 }
 
@@ -843,6 +1036,9 @@ export function buildContext(cwd, { env = process.env, useEnv = true, useRetired
     allowlist: loadAllowlist(root),
     allowedByCommit: [],
     letThrough: [],
+    // SECRET_SCAN_ALLOWLIST_WIDEN=1: a broader allowlist in a commit or push is listed, not refused.
+    allowWiden: env.SECRET_SCAN_ALLOWLIST_WIDEN === '1',
+    widenedLetThrough: [],
     envSources,
     knownValues: useEnv ? loadKnownValues(envSources) : [],
     retired: useRetired ? loadRetired(defaultRetiredFile(env)) : null,
@@ -856,7 +1052,28 @@ function summarize(findings) {
   return byRule;
 }
 
-const VALUE_FLAGS = new Set(['--range', '--commit-msg', '--commits', '--workspace', '--redact', '--names', '--profile', '--backup-dir']);
+const VALUE_FLAGS = new Set(['--range', '--commit-msg', '--commits', '--workspace', '--redact', '--names', '--profile', '--backup-dir', '--max-file-bytes']);
+
+// Exit status when nothing was found but some files or folders were not read (--workspace, --redact, files).
+export const EXIT_NOT_SCANNED = 3;
+
+function maxFileBytes(argv) {
+  const raw = flagValue(argv, '--max-file-bytes');
+  if (raw === undefined) return MAX_WORKSPACE_FILE_BYTES;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error('--max-file-bytes needs a whole number of bytes');
+  return value;
+}
+
+/** The closing line about files that were not read, and whether they change the exit status. */
+function reportNotScanned(mode, notScanned, flags) {
+  if (!notScanned.length) return false;
+  const allowed = flags.has('--allow-skipped');
+  console.log(`secret-scan (${mode}): ${notScanned.length} file(s) or folder(s) not scanned (${notScannedSummary(notScanned)}). ${allowed
+    ? 'Accepted with --allow-skipped.'
+    : `The folder is not proven clean: check them by hand, or pass --allow-skipped to accept (exit ${EXIT_NOT_SCANNED}).`}`);
+  return !allowed;
+}
 
 function flagValue(argv, flag) {
   const index = argv.indexOf(flag);
@@ -892,26 +1109,29 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), 
     const dir = resolve(cwd, flagValue(argv, '--redact'));
     const apply = flags.has('--apply');
     const backupRoot = flagValue(argv, '--backup-dir') ? resolve(cwd, flagValue(argv, '--backup-dir')) : defaultBackupRoot(env);
-    const result = redactWorkspace(dir, ctx, { apply, backupRoot });
+    const result = redactWorkspace(dir, ctx, { apply, backupRoot, maxBytes: maxFileBytes(argv) });
     const count = result.files.reduce((sum, row) => sum + row.redactions.length, 0);
+    const notScanned = result.notScanned;
+    const skippedExit = notScanned.length && !flags.has('--allow-skipped') ? EXIT_NOT_SCANNED : 0;
     if (flags.has('--json')) {
-      process.stdout.write(`${JSON.stringify({ mode: 'redact', apply, count, backupDir: result.backupDir, files: result.files, skipped: result.skipped }, null, 2)}\n`);
-    } else {
-      for (const row of result.files) {
-        for (const item of row.redactions) console.log(formatFinding({ path: row.path, ...item }));
-      }
-      for (const path of result.skipped) console.log(`${path}  skipped: an env file is never changed (move or delete a stale copy by hand)`);
+      process.stdout.write(`${JSON.stringify({ mode: 'redact', apply, count, backupDir: result.backupDir, files: result.files, notScanned, counts: { notScanned: notScanned.length } }, null, 2)}\n`);
+      if (count && !apply) return 1;
+      return skippedExit;
     }
+    for (const row of result.files) {
+      for (const item of row.redactions) console.log(formatFinding({ path: row.path, ...item }));
+    }
+    printNotScanned(notScanned);
     if (!count) {
-      console.log(`secret-scan (redact): nothing to redact (${sources}).`);
-      return 0;
-    }
-    if (apply) {
+      console.log(`secret-scan (redact): nothing to redact in the files it read (${sources}).`);
+    } else if (apply) {
       console.log(`secret-scan (redact): replaced ${count} value(s) in ${result.files.length} file(s). Each original is kept once under ${result.backupDir} as <path>.bak-redact; delete those copies after checking.`);
-      return 0;
+    } else {
+      console.log(`secret-scan (redact): would replace ${count} value(s) in ${result.files.length} file(s) (dry run; add --apply to write) (${sources}).`);
     }
-    console.log(`secret-scan (redact): would replace ${count} value(s) in ${result.files.length} file(s) (dry run; add --apply to write) (${sources}).`);
-    return 1;
+    reportNotScanned('redact', notScanned, flags);
+    if (count && !apply) return 1;
+    return skippedExit;
   }
 
   if (flags.has('--ratchet')) {
@@ -926,6 +1146,7 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), 
 
   let mode = 'files';
   let findings = [];
+  let notScanned = [];
   if (flags.has('--staged')) {
     mode = 'staged';
     findings = scanStaged(cwd, ctx);
@@ -951,39 +1172,49 @@ export async function main(argv = process.argv.slice(2), { cwd = process.cwd(), 
     findings = scanTracked(cwd, ctx, { root: ctx.root });
   } else if (flagValue(argv, '--workspace') !== undefined) {
     mode = 'workspace';
-    findings = scanWorkspace(resolve(cwd, flagValue(argv, '--workspace')), ctx);
+    ({ findings, notScanned } = scanWorkspace(resolve(cwd, flagValue(argv, '--workspace')), ctx, { maxBytes: maxFileBytes(argv) }));
   } else if (flags.has('--stdin')) {
     mode = 'stdin';
     findings = scanLines('<stdin>', splitLines(stdinText ?? readStdin()), ctx);
   } else if (files.length) {
-    findings = scanFiles(files, ctx);
+    ({ findings, notScanned } = scanFiles(files, ctx, { maxBytes: maxFileBytes(argv), cwd }));
   } else {
-    console.error('usage: secret-scan.mjs --staged | --commit-msg <file> | --pre-push [--plan-net-diff] | --commits A..B | --range A..B | --tracked [--ratchet [--shrink]] | --history | --workspace <dir> | --redact <dir> [--apply] [--backup-dir <dir>] | --stdin | <files…>');
+    console.error('usage: secret-scan.mjs --staged | --commit-msg <file> | --pre-push [--plan-net-diff] | --commits A..B | --range A..B | --tracked [--ratchet [--shrink]] | --history | --workspace <dir> [--allow-skipped] [--max-file-bytes N] | --redact <dir> [--apply] [--backup-dir <dir>] [--allow-skipped] | --stdin | <files…>');
     return 2;
   }
   if (flags.has('--secrets-only')) findings = findings.filter((f) => f.kind === 'secret');
+  const skippedExit = notScanned.length && !flags.has('--allow-skipped') ? EXIT_NOT_SCANNED : 0;
 
   const counts = {
     secret: findings.filter((f) => f.kind === 'secret').length,
     pii: findings.filter((f) => f.kind === 'pii').length,
     plan: findings.filter((f) => f.kind === 'plan').length,
     path: findings.filter((f) => f.kind === 'path').length,
+    notScanned: notScanned.length,
   };
   if (flags.has('--json')) {
-    process.stdout.write(`${JSON.stringify({ mode, counts, byRule: summarize(findings), findings, allowedByCommit: ctx.allowedByCommit, letThrough: ctx.letThrough }, null, 2)}\n`);
-    return findings.length ? 1 : 0;
+    process.stdout.write(`${JSON.stringify({ mode, counts, byRule: summarize(findings), findings, notScanned, allowedByCommit: ctx.allowedByCommit, letThrough: ctx.letThrough, widenedLetThrough: ctx.widenedLetThrough }, null, 2)}\n`);
+    return findings.length ? 1 : skippedExit;
   }
-  if (!flags.has('--summary')) for (const finding of findings) console.log(formatFinding(finding));
+  if (!flags.has('--summary')) {
+    for (const finding of findings) console.log(formatFinding(finding));
+    printNotScanned(notScanned);
+  }
   if (ctx.allowedByCommit.length) {
     console.log(`secret-scan: let through by commit-pinned allowlist entries: ${ctx.allowedByCommit.join(', ')}`);
   }
   if (ctx.letThrough.length) {
     console.log(`secret-scan: planning words in pushed commits that the pushed result no longer has, let through by SECRET_SCAN_PLAN_NET_DIFF (they will be public in history): ${ctx.letThrough.join(', ')}`);
   }
-  if (!findings.length) {
-    console.log(`secret-scan (${mode}): clean (${sources}).`);
-    return 0;
+  if (ctx.widenedLetThrough.length) {
+    console.log(`secret-scan: a broader allowlist let through by SECRET_SCAN_ALLOWLIST_WIDEN: ${ctx.widenedLetThrough.join('; ')}`);
   }
+  if (!findings.length) {
+    console.log(`secret-scan (${mode}): ${notScanned.length ? 'no finding in the files it read' : 'clean'} (${sources}).`);
+    reportNotScanned(mode, notScanned, flags);
+    return skippedExit;
+  }
+  reportNotScanned(mode, notScanned, flags);
   if (flags.has('--summary')) {
     for (const [rule, count] of Object.entries(summarize(findings)).sort((a, b) => b[1] - a[1])) console.log(`${String(count).padStart(6)}  ${rule}`);
   }
