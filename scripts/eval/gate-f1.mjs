@@ -9,7 +9,8 @@
 // <dir>/<id>/gate-input.json ({client, inputs}). A line counts as right when the gate has the line
 // with the expected status; a line the gate adds or a status it gets wrong counts against
 // precision, a line it misses against recall. Prints per-line and overall scores and exits 1 when
-// the overall F1 is below --min (default 0.9).
+// the overall F1 is below --min (default 0.9), when no client was scored (an empty or wrong
+// directory), or when a client has a label but no gate to score.
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -88,7 +89,8 @@ async function evaluateInput(file) {
 export async function gateF1(dir, { actualDir = '' } = {}) {
   const counts = new Map();
   const clients = [];
-  for (const id of readdirSync(dir).sort()) {
+  const ids = existsSync(dir) && statSync(dir).isDirectory() ? readdirSync(dir).sort() : [];
+  for (const id of ids) {
     const folder = join(dir, id);
     if (!statSync(folder).isDirectory()) continue;
     const expectedFile = join(folder, 'gate-expected.json');
@@ -117,6 +119,16 @@ export async function gateF1(dir, { actualDir = '' } = {}) {
   return { clients, ...summarize(counts) };
 }
 
+/** Reasons a run proves nothing: no client scored, or a label without a gate. Empty when fine. */
+export function gateF1Problems(result) {
+  const clients = Array.isArray(result?.clients) ? result.clients : [];
+  const problems = [];
+  if (!clients.length) problems.push('no client was scored (no <id>/gate-expected.json under the directory)');
+  const missing = clients.filter((client) => client.source === 'missing').map((client) => client.id);
+  if (missing.length) problems.push(`no gate to score for: ${missing.join(', ')}`);
+  return problems;
+}
+
 function pct(value) {
   return `${(value * 100).toFixed(1)}%`;
 }
@@ -136,6 +148,11 @@ async function main(argv) {
   console.log(`overall            P ${pct(result.overall.precision)}  R ${pct(result.overall.recall)}  F1 ${pct(result.overall.f1)}`);
   const json = arg(argv, '--json');
   if (json) writeFileSync(json, `${JSON.stringify(result, null, 2)}\n`);
+  const problems = gateF1Problems(result);
+  if (problems.length) {
+    for (const problem of problems) console.error(`[gate-f1] ${problem}`);
+    process.exit(1);
+  }
   if (!(result.overall.f1 >= min)) {
     console.error(`[gate-f1] overall F1 ${pct(result.overall.f1)} is below ${pct(min)}`);
     process.exit(1);

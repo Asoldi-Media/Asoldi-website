@@ -2,10 +2,12 @@
 // the gate-f1 label check and the negative controls (gate off: nothing evaluated or written).
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import http from 'node:http';
 import https from 'node:https';
+import { syncBuiltinESMExports } from 'node:module';
 import net from 'node:net';
-import { existsSync, mkdtempSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -68,9 +70,20 @@ function withPlan(id, plan) {
   return sales.getSalesClientById(id);
 }
 
+// Counts every outbound call: fetch, the http/https/net helpers (also through named ESM imports
+// such as `import { request } from 'node:https'`, via syncBuiltinESMExports) and any socket connect.
 function spyNetwork() {
   const calls = [];
-  const originals = { fetch: globalThis.fetch, httpRequest: http.request, httpGet: http.get, httpsRequest: https.request, httpsGet: https.get, connect: net.connect, createConnection: net.createConnection };
+  const originals = {
+    fetch: globalThis.fetch,
+    httpRequest: http.request,
+    httpGet: http.get,
+    httpsRequest: https.request,
+    httpsGet: https.get,
+    connect: net.connect,
+    createConnection: net.createConnection,
+    socketConnect: net.Socket.prototype.connect,
+  };
   globalThis.fetch = async (...args) => { calls.push(['fetch', String(args[0])]); throw new Error('no network in tests'); };
   http.request = (...args) => { calls.push(['http.request']); throw new Error('no network'); };
   http.get = (...args) => { calls.push(['http.get']); throw new Error('no network'); };
@@ -78,6 +91,8 @@ function spyNetwork() {
   https.get = (...args) => { calls.push(['https.get']); throw new Error('no network'); };
   net.connect = (...args) => { calls.push(['net.connect']); throw new Error('no network'); };
   net.createConnection = (...args) => { calls.push(['net.createConnection']); throw new Error('no network'); };
+  net.Socket.prototype.connect = function connect() { calls.push(['socket.connect']); throw new Error('no network'); };
+  syncBuiltinESMExports();
   return {
     calls,
     restore() {
@@ -88,8 +103,17 @@ function spyNetwork() {
       https.get = originals.httpsGet;
       net.connect = originals.connect;
       net.createConnection = originals.createConnection;
+      net.Socket.prototype.connect = originals.socketConnect;
+      syncBuiltinESMExports();
     },
   };
+}
+
+// Settings as they would be with the gate in auto for these pilot clients (the stored settings
+// refuse gate.mode 'auto' for now, so the tests pass them in).
+function autoSettings(pilots) {
+  const base = settingsStore.getAutomationSettings({ fresh: true });
+  return { ...base, pilotClientIds: pilots, gate: { enabled: true, mode: 'auto', paused: null } };
 }
 
 function salesFileMtime() {
@@ -195,10 +219,16 @@ test('page-kind lines follow the page plan, on any tier and without a sellable s
   assert.deepEqual(pageKindsForClient({ bank: { websiteCreatorQuestions: { wantedPages: 'Forside, prisliste, kontakt' } } }).list.map((row) => row.kind), ['pricing']);
 });
 
-test('evidence: default portal colours are not a brand; the bank, Maker and inbox count; skips are declined', () => {
+test('evidence: brand colours are never evidence; the bank, Maker and inbox count; skips are declined', () => {
   const defaults = { brandIdentity: { colors: { primary: '#FF5B00', secondary: '#111827', accent: '#F9F9F8' }, logos: { normal: '' } } };
+  const custom = { brandIdentity: { colors: { primary: '#123456', secondary: '#abcdef', accent: '#0f0f0f' }, logos: { normal: '' } } };
   assert.equal(bankColorsAreDefault(defaults), true);
-  assert.equal(line(evaluate({ id: 'c', sitePlan: TIER1 }, { bank: defaults }), 'logo').status, 'missing');
+  assert.equal(bankColorsAreDefault(custom), false);
+  // No line reads colours: the portal defaults, custom colours and no bank at all give the same lines.
+  const statuses = (bank) => evaluate({ id: 'c', sitePlan: TIER3 }, { bank }).lines.map((entry) => [entry.id, entry.status, entry.evidence]);
+  assert.deepEqual(statuses(defaults), statuses({}));
+  assert.deepEqual(statuses(custom), statuses({}));
+  assert.equal(line(evaluate({ id: 'c', sitePlan: TIER1 }, { bank: custom }), 'logo').status, 'missing');
   assert.equal(line(evaluate({ id: 'c', sitePlan: TIER1 }, { bank: { brandIdentity: { logos: { normal: 'logo.svg' } } } }), 'logo').status, 'have');
   assert.equal(line(evaluate({ id: 'c', sitePlan: TIER1, makerRun: { runId: 'r', materials: { runId: 'r', logo: { present: true } } } }), 'logo').status, 'have');
   const inbox = [{ status: 'staged', found: ['logo'] }];
@@ -237,8 +267,10 @@ test('the gate makes no outbound network call while gathering, evaluating and ti
   try {
     const inputs = await gateLib.gatherGateInputs(client);
     evaluate(client, inputs);
-    await gateLib.runGateStep({ mode: 'auto', now: NOW }, client);
+    assert.equal((await gateLib.runGateStep({ mode: 'auto', now: NOW, settings: autoSettings(['net-1']) }, client)).wrote, true);
+    await gateLib.runGateStep({ mode: 'auto', now: NOW }, sales.getSalesClientById('net-1'));
     await gateLib.runGateStep({ mode: 'shadow', now: NOW }, sales.getSalesClientById('net-1'));
+    await gateLib.evaluateAndStoreGate('net-1', { sales, now: NOW });
   } finally {
     spy.restore();
   }
@@ -266,12 +298,22 @@ test('negative control: with the gate off the tick never evaluates and writes no
   assert.equal(await gateLib.gateMailLinesFor(client), null);
 });
 
-test('tick in loop auto stores the gate with its input hash and re-evaluates only when inputs change', async () => {
+test('tick with the gate and the loop in auto stores the gate with its input hash and re-evaluates only when inputs change', async () => {
   setGate({ gate: { enabled: true, mode: 'shadow' } });
   seed('tick-1');
   withPlan('tick-1', TIER1);
   let bank = {};
-  const ctx = { mode: 'auto', now: NOW, gateDeps: { getProfile: () => ({ clientDataBank: bank }) } };
+  const ctx = { mode: 'auto', now: NOW, settings: autoSettings(['tick-1']), gateDeps: { getProfile: () => ({ clientDataBank: bank }) } };
+  // The gate in shadow (as stored now): the loop in auto still writes no client data.
+  const before = salesFileMtime();
+  gateLib.resetGateShadowCacheForTests();
+  const shadow = await gateLib.runGateStep({ ...ctx, settings: undefined }, sales.getSalesClientById('tick-1'));
+  assert.equal(shadow.shadow, true);
+  assert.equal(salesFileMtime(), before, 'a gate in shadow never stores client.delivery.gate from the tick');
+  assert.equal(sales.getSalesClientById('tick-1').delivery?.gate ?? null, null);
+  // A client that is not a pilot stays in shadow when the gate is auto.
+  assert.equal((await gateLib.runGateStep({ ...ctx, settings: autoSettings(['someone-else']) }, sales.getSalesClientById('tick-1'))).wrote, false);
+  assert.equal(sales.getSalesClientById('tick-1').delivery?.gate ?? null, null);
   const first = await gateLib.runGateStep(ctx, sales.getSalesClientById('tick-1'));
   assert.equal(first.wrote, true);
   const stored = sales.getSalesClientById('tick-1').delivery.gate;
@@ -341,22 +383,55 @@ test('waivers persist across evaluations and ticks; waive-to-remove carries a di
   setGate({ gate: { enabled: false } });
 });
 
-test('a connect event bumps shopConnectionRev and flips the payment line on the next tick', async () => {
+test('a waiver or an approval stored while an evaluation gathers its inputs is kept', async () => {
+  setGate({ gate: { enabled: true, mode: 'shadow' } });
+  seed('race-1');
+  withPlan('race-1', TIER1);
+  // Another request stores a waiver while evaluateAndStoreGate awaits its inputs.
+  const deps = {
+    getProfile: () => {
+      sales.setSalesDelivery('race-1', { gate: { waivers: { logo: { option: 'Bruk tekstlogo', by: 'dev:other', at: NOW } }, approvedAt: NOW, approvedBy: 'admin:other' } });
+      return { clientDataBank: {} };
+    },
+  };
+  const result = await gateLib.evaluateAndStoreGate('race-1', { sales, now: NOW, deps });
+  assert.equal(result.changed, true);
+  const stored = sales.getSalesClientById('race-1').delivery.gate;
+  assert.equal(stored.waivers.logo?.option, 'Bruk tekstlogo', 'the waiver survives');
+  assert.equal(stored.approvedAt, NOW, 'the approval survives');
+  assert.equal(line(stored, 'logo').status, 'waived');
+  // The same for a waiver stored while another waiver is being set.
+  seed('race-2');
+  withPlan('race-2', TIER1);
+  const other = {
+    getProfile: () => {
+      sales.setSalesDelivery('race-2', { gate: { waivers: { contact: { option: 'Kun e-post/nett', by: 'dev:other', at: NOW } } } });
+      return { clientDataBank: {} };
+    },
+  };
+  const waived = await gateLib.setGateWaiver('race-2', { lineId: 'logo', option: 'Bruk tekstlogo', by: 'dev:test', sales, now: NOW, deps: other });
+  assert.deepEqual(Object.keys(waived.gate.waivers).sort(), ['contact', 'logo']);
+  setGate({ gate: { enabled: false } });
+});
+
+test('payment: starting a connection bumps shopConnectionRev but only a shop that can take payment flips the line on the next tick', async () => {
   setGate({ gate: { enabled: true, mode: 'shadow' } });
   assert.equal(await gateLib.installShopConnectionListener({ sales, hub }), true);
   const site = hub.createSite({ name: 'Example shop', domain: 'shop.example.com', websitePlan: 'tier-3-ecommerce' });
   seed('shop-1', { hubSite: { id: site.id, siteKey: site.site_key } });
   withPlan('shop-1', TIER3);
-  const ctx = { mode: 'auto', now: NOW, hub };
+  const ctx = { mode: 'auto', now: NOW, hub, settings: autoSettings(['shop-1']) };
   await gateLib.runGateStep(ctx, sales.getSalesClientById('shop-1'));
   assert.equal(line(sales.getSalesClientById('shop-1').delivery.gate, 'payment').status, 'missing');
-  // Connect through the real onboarding code with a stand-in Stripe SDK (no network, test-mode key).
+  // Connect through the real onboarding code with a stand-in Stripe SDK (no network, a local
+  // test-mode key and webhook secret that exist only in this temp data dir).
   const { writeFileSync } = await import('node:fs');
-  writeFileSync(join(DATA_DIR, 'shop-payments-platform.json'), JSON.stringify({ stripe: { mode: 'test', testSecretKey: 'sk_test_standin' } }));
+  writeFileSync(join(DATA_DIR, 'shop-payments-platform.json'), JSON.stringify({ stripe: { mode: 'test', testSecretKey: 'sk_test_standin', webhooks: { test: { secret: 'whsec_standin' } } } }));
   shop.setShopPaymentDeps({
     stripeFactory: () => ({
       accounts: { create: async () => ({ id: 'acct_standin', charges_enabled: false }), retrieve: async () => ({ id: 'acct_standin' }) },
       accountLinks: { create: async () => ({ url: 'https://connect.example.com/onboarding' }) },
+      webhooks: { constructEvent: (raw) => JSON.parse(String(raw)) },
     }),
     fetch: async () => { throw new Error('no network'); },
   });
@@ -364,15 +439,54 @@ test('a connect event bumps shopConnectionRev and flips the payment line on the 
   await shop.startStripeOnboarding(hub.getSiteById(site.id), { returnUrl: 'http://127.0.0.1/admin', hubUrl: 'http://127.0.0.1:3001' });
   assert.equal(hub.getSiteById(site.id).shopConnectionRev, before + 1);
   assert.equal(shop.readStoredShopConnections(site.id).stripe.connected, true);
+  assert.equal(shop.readStoredShopConnections(site.id).stripe.ready, false, 'onboarding started, charges not enabled');
   assert.ok(sales.getSalesClientById('shop-1').delivery.dirtyAt, 'the client is marked for a gate check');
   await gateLib.runGateStep(ctx, sales.getSalesClientById('shop-1'));
+  const started = sales.getSalesClientById('shop-1').delivery.gate;
+  assert.equal(line(started, 'payment').status, 'missing', 'a shop that cannot take payment is still missing');
+  assert.match(line(started, 'payment').evidence, /kan ikke ta imot betaling/);
+  assert.equal(started.inputs.shopConnectionRev, before + 1);
+  // Stripe reports the account can take charges (account.updated): the next tick flips the line.
+  const event = { type: 'account.updated', account: 'acct_standin', data: { object: { id: 'acct_standin', charges_enabled: true, details_submitted: true } } };
+  assert.equal(shop.parseStripeConnectWebhook(JSON.stringify(event), 'stand-in-signature').siteId, site.id);
+  assert.equal(hub.getSiteById(site.id).shopConnectionRev, before + 2);
+  assert.equal(shop.readStoredShopConnections(site.id).stripe.ready, true);
+  await gateLib.runGateStep(ctx, sales.getSalesClientById('shop-1'));
   assert.equal(line(sales.getSalesClientById('shop-1').delivery.gate, 'payment').status, 'have');
-  assert.equal(sales.getSalesClientById('shop-1').delivery.gate.inputs.shopConnectionRev, before + 1);
+  assert.equal(sales.getSalesClientById('shop-1').delivery.gate.inputs.shopConnectionRev, before + 2);
+  // PayPal follows the same rule: a login payee counts only once payments are receivable.
+  const paypal = (row) => gateLib.evaluateDeliveryGate({ id: 'p', sitePlan: TIER3 }, { shopConnections: row }, { now: NOW });
+  assert.equal(line(paypal({ paypal: { connected: true, paymentsReceivable: false, ready: false } }), 'payment').status, 'missing');
+  assert.equal(line(paypal({ paypal: { connected: true, paymentsReceivable: true, ready: true } }), 'payment').status, 'have');
   // With the gate off, a connection write bumps nothing.
   setGate({ gate: { enabled: false } });
   shop.disconnectProvider(hub.getSiteById(site.id), 'stripe');
-  assert.equal(hub.getSiteById(site.id).shopConnectionRev, before + 1);
+  assert.equal(hub.getSiteById(site.id).shopConnectionRev, before + 2);
   shop.setShopPaymentDeps({});
+});
+
+test('gate-f1 exits non-zero when it has nothing to score', () => {
+  const script = join(root, 'scripts', 'eval', 'gate-f1.mjs');
+  const empty = mkdtempSync(join(tmpdir(), 'asoldi-gate-f1-empty-'));
+  const run = (dir) => {
+    try {
+      execFileSync(process.execPath, [script, dir], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      return { status: 0, stderr: '' };
+    } catch (error) {
+      return { status: error.status, stderr: String(error.stderr || '') };
+    }
+  };
+  const emptyRun = run(empty);
+  assert.equal(emptyRun.status, 1);
+  assert.match(emptyRun.stderr, /no client was scored/);
+  assert.equal(run(join(empty, 'not-there')).status, 1);
+  // A label without a gate to score.
+  mkdirSync(join(empty, 'syn-only-label'));
+  writeFileSync(join(empty, 'syn-only-label', 'gate-expected.json'), JSON.stringify({ lines: [] }));
+  const unscored = run(empty);
+  assert.equal(unscored.status, 1);
+  assert.match(unscored.stderr, /no gate to score for: syn-only-label/);
+  assert.equal(run(join(root, 'scripts', 'fixtures', 'gate-labels')).status, 0, 'the synthetic labels pass');
 });
 
 test('gate-f1 scores at least 0.9 on the synthetic labels, and a wrong gate scores lower', async () => {

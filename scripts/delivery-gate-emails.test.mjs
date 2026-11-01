@@ -221,7 +221,7 @@ test('Reply-To on the gate path: the rep mailbox only when the inbox bot reads i
   assert.equal(built.replyTo, 'alexander@asoldi.com');
 });
 
-test('desk Datainnsamling lines: today\'s lines unless the gate runs and lines are set to gate', async () => {
+test('desk Datainnsamling lines: today\'s lines unless the pre-workshop mail is auto for the client with lines set to gate', async () => {
   save({ gate: { enabled: false }, emails: { preWorkshop: { lines: 'legacy', mode: 'auto' } } });
   const client = seedSigned('desk-1', { makerRun: { runId: 'run-d1' } });
   sales.setSalesMakerRunOwned('desk-1', {
@@ -235,8 +235,17 @@ test('desk Datainnsamling lines: today\'s lines unless the gate runs and lines a
   assert.equal(await gateLib.gateMailLinesFor(sales.getSalesClientById('desk-1')), null, 'gate off');
   save({ gate: { enabled: true } });
   assert.equal(await gateLib.gateMailLinesFor(sales.getSalesClientById('desk-1')), null, 'lines legacy');
+  // The desk sends through the real transport: with the gate in shadow it keeps today's lines,
+  // also with lines set to gate and the pre-workshop kind released to auto.
   save({ emails: { preWorkshop: { lines: 'gate', mode: 'shadow' } } });
-  const rows = await gateLib.gateMailLinesFor(sales.getSalesClientById('desk-1'));
+  assert.equal(await gateLib.gateMailLinesFor(sales.getSalesClientById('desk-1')), null, 'gate in shadow');
+  const stored = settingsStore.getAutomationSettings({ fresh: true });
+  const kindAuto = { ...stored, emails: { ...stored.emails, preWorkshop: { ...stored.emails.preWorkshop, lines: 'gate', mode: 'auto' } } };
+  assert.equal(await gateLib.gateMailLinesFor(sales.getSalesClientById('desk-1'), { settings: kindAuto }), null, 'gate in shadow, kind auto');
+  // Only with the gate and the kind auto for this client (a pilot) do the gate's lines reach the desk.
+  const auto = { ...kindAuto, pilotClientIds: ['desk-1'], gate: { enabled: true, mode: 'auto', paused: null } };
+  assert.equal(await gateLib.gateMailLinesFor(sales.getSalesClientById('desk-1'), { settings: { ...auto, pilotClientIds: ['someone-else'] } }), null, 'not a pilot');
+  const rows = await gateLib.gateMailLinesFor(sales.getSalesClientById('desk-1'), { settings: auto });
   assert.ok(Array.isArray(rows) && rows.length > 0);
   assert.ok(rows.every((row) => row.source === 'gate' && row.group));
   const placeholder = rows.find((row) => row.placeholder);
