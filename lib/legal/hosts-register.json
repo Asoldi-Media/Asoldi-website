@@ -1,0 +1,339 @@
+{
+  "version": 1,
+  "about": "Every outbound host the hub, Maker and CMS code can reach (scripts/legal/hosts-*.json). A host row names a processor with purpose, data categories and region, or says noPersonalData with a reason. scripts/legal-hosts.test.mjs fails on a scanned host without a row. Changing this file changes the privacy policy and the DPA appendix: bump the catalog version (lib/legal/catalog.js) and run node scripts/legal-render.mjs --write.",
+  "processors": {
+    "hostinger": {
+      "name": "Hostinger",
+      "entity": "Hostinger International Ltd.",
+      "region": "EØS (Litauen)",
+      "transfer": "",
+      "scopes": ["asoldi", "client"],
+      "role": "Hosting av asoldi.com, kundenes nettsider og CMS-data, og e-postkontoene til Asoldi"
+    },
+    "github": {
+      "name": "GitHub",
+      "entity": "GitHub, Inc.",
+      "region": "USA",
+      "transfer": "EUs standardkontraktsvilkår",
+      "scopes": ["client"],
+      "role": "Privat kodelager for kundenes nettsidefiler"
+    },
+    "anthropic": {
+      "name": "Anthropic",
+      "entity": "Anthropic, PBC",
+      "region": "USA",
+      "transfer": "EUs standardkontraktsvilkår",
+      "scopes": ["asoldi", "client"],
+      "llmProvider": "claude",
+      "role": "Språkmodeller (Claude) for tekst, analyse av materiale og oppsummering av møter"
+    },
+    "google": {
+      "name": "Google",
+      "entity": "Google Ireland Limited og Google LLC",
+      "region": "EØS og USA",
+      "transfer": "EUs standardkontraktsvilkår",
+      "scopes": ["asoldi", "client"],
+      "llmProvider": "gemini",
+      "role": "Innlogging, kalender og Meet, Gmail-lesing for Asoldis egen innboks, bedriftsprofil, kart og steder, skrifttyper, Search Console og språkmodeller (Gemini)"
+    },
+    "deepseek": {
+      "name": "DeepSeek",
+      "entity": "Hangzhou DeepSeek Artificial Intelligence Co., Ltd.",
+      "region": "Kina",
+      "transfer": "",
+      "scopes": ["asoldi", "client"],
+      "llmProvider": "deepseek",
+      "personalData": false,
+      "role": "Språkmodell for tekst på offentlige, syntetiske eller anonymiserte data. Får aldri personopplysninger eller møteopptak"
+    },
+    "openai": {
+      "name": "OpenAI",
+      "entity": "OpenAI, L.L.C.",
+      "region": "USA",
+      "transfer": "EUs standardkontraktsvilkår",
+      "scopes": ["asoldi"],
+      "llmProvider": "openai",
+      "personalData": false,
+      "role": "Språkmodell som brukes bare til automatisk kvalitetskontroll av maler og tekst. Får aldri personopplysninger"
+    },
+    "brevo": {
+      "name": "Brevo",
+      "entity": "Sendinblue SAS",
+      "region": "EØS (Frankrike)",
+      "transfer": "",
+      "scopes": ["asoldi", "client"],
+      "role": "Sending av e-post: nyhetsbrev, kampanjer og automatiske e-poster fra kundenes nettsider, og e-post fra Asoldi"
+    },
+    "resend": {
+      "name": "Resend",
+      "entity": "Resend, Inc.",
+      "region": "USA",
+      "transfer": "EUs standardkontraktsvilkår",
+      "scopes": ["asoldi", "client"],
+      "role": "Sending av transaksjons- og support-e-post"
+    },
+    "stripe": {
+      "name": "Stripe",
+      "entity": "Stripe Payments Europe, Ltd.",
+      "region": "EØS (Irland) og USA",
+      "transfer": "EUs standardkontraktsvilkår",
+      "scopes": ["asoldi", "client"],
+      "role": "Betaling av Asoldis abonnement og kortbetaling i kundenes nettbutikker"
+    },
+    "paypal": {
+      "name": "PayPal",
+      "entity": "PayPal (Europe) S.à r.l. et Cie, S.C.A.",
+      "region": "EØS (Luxembourg)",
+      "transfer": "",
+      "scopes": ["client"],
+      "role": "PayPal-betaling i kundenes nettbutikker"
+    },
+    "fireflies": {
+      "name": "Fireflies.ai",
+      "entity": "Fireflies.ai Corp.",
+      "region": "USA",
+      "transfer": "EUs standardkontraktsvilkår",
+      "scopes": ["asoldi"],
+      "role": "Opptak og transkribering av salgsmøter og workshoper med kunder"
+    },
+    "deepgram": {
+      "name": "Deepgram",
+      "entity": "Deepgram, Inc.",
+      "region": "USA",
+      "transfer": "EUs standardkontraktsvilkår",
+      "scopes": ["asoldi"],
+      "role": "Transkribering av lydopptak fra salgssamtaler"
+    },
+    "myphoner": {
+      "name": "Myphoner",
+      "entity": "Myphoner",
+      "region": "EØS",
+      "transfer": "",
+      "scopes": ["asoldi"],
+      "role": "Salgssystem for oppringing av bedrifter (leadlister med bedrift, kontaktperson og telefonnummer)"
+    },
+    "luca": {
+      "name": "Luca Regnskap",
+      "entity": "Luca Regnskap",
+      "region": "Norge",
+      "transfer": "",
+      "scopes": ["asoldi"],
+      "role": "Regnskap og fakturagrunnlag"
+    },
+    "dataforseo": {
+      "name": "DataForSEO",
+      "entity": "DataForSEO",
+      "region": "Utenfor Norge",
+      "transfer": "",
+      "scopes": ["asoldi", "client"],
+      "personalData": false,
+      "role": "Søkeordsdata og rangeringer i Google Søk og Google Maps. Får bare søkeord, bedriftsnavn og steder"
+    },
+    "serpapi": {
+      "name": "SerpApi",
+      "entity": "SerpApi, LLC",
+      "region": "USA",
+      "transfer": "",
+      "scopes": ["asoldi", "client"],
+      "personalData": false,
+      "role": "Søkeresultater for rangeringsmåling. Får bare søkeord og steder"
+    },
+    "brave": {
+      "name": "Brave Search",
+      "entity": "Brave Software, Inc.",
+      "region": "USA",
+      "transfer": "",
+      "scopes": ["asoldi"],
+      "personalData": false,
+      "role": "Nettsøk for å finne bedrifters offentlige nettsider og profiler. Får bare bedriftsnavn og steder"
+    },
+    "supabase": {
+      "name": "Supabase",
+      "entity": "Supabase, Inc.",
+      "region": "USA",
+      "transfer": "",
+      "scopes": ["asoldi"],
+      "personalData": false,
+      "role": "Lagring av nettsidemaler. Inneholder ingen opplysninger om kunder"
+    },
+    "vercel": {
+      "name": "Vercel",
+      "entity": "Vercel Inc.",
+      "region": "USA",
+      "transfer": "EUs standardkontraktsvilkår",
+      "scopes": ["asoldi"],
+      "role": "Drift av skjemaene for jobbsøknad og vervekampanje som er bygget inn på asoldi.com"
+    },
+    "calendly": {
+      "name": "Calendly",
+      "entity": "Calendly LLC",
+      "region": "USA",
+      "transfer": "EUs standardkontraktsvilkår",
+      "scopes": ["asoldi"],
+      "role": "Bestilling av møter på asoldi.com. Skriptet lastes på sidene til asoldi.com"
+    },
+    "tawk": {
+      "name": "tawk.to",
+      "entity": "tawk.to inc.",
+      "region": "USA",
+      "transfer": "EUs standardkontraktsvilkår",
+      "scopes": ["asoldi"],
+      "role": "Chat på siden for ansatte og jobbsøkere"
+    },
+    "openstreetmap": {
+      "name": "OpenStreetMap",
+      "entity": "OpenStreetMap Foundation",
+      "region": "Storbritannia",
+      "transfer": "EUs beslutning om tilstrekkelig beskyttelsesnivå",
+      "scopes": ["asoldi"],
+      "role": "Adressesøk og kartfliser"
+    },
+    "komoot": {
+      "name": "Photon (komoot)",
+      "entity": "komoot GmbH",
+      "region": "EØS (Tyskland)",
+      "transfer": "",
+      "scopes": ["asoldi"],
+      "role": "Adressesøk"
+    },
+    "kartverket": {
+      "name": "Kartverket",
+      "entity": "Kartverket",
+      "region": "Norge",
+      "transfer": "",
+      "scopes": ["asoldi"],
+      "role": "Adressesøk i det offentlige adresseregisteret"
+    },
+    "thirdPartyContent": {
+      "name": "Innhold fra andre nettsteder",
+      "entity": "Unsplash, Coverr, YouTube, Vimeo, Pravatar, Webflow og Tailwind CSS",
+      "region": "Varierer",
+      "transfer": "",
+      "scopes": ["asoldi"],
+      "role": "Bilder, video og stilark som lastes direkte i nettleseren. Nettleseren sender da IP-adresse og teknisk informasjon til nettstedet innholdet kommer fra"
+    },
+    "asoldi": {
+      "name": "Asoldi",
+      "entity": "CHAPANA (Asoldi Markedsføring)",
+      "region": "EØS (Hostinger)",
+      "transfer": "",
+      "scopes": [],
+      "self": true,
+      "role": "Asoldis egne tjenester: asoldi.com, kundeportalen og hubben som CMS-et snakker med"
+    }
+  },
+  "hosts": {
+    "asoldi.com": { "processor": "asoldi", "purpose": "Asoldis hub og kundeportal", "dataCategories": ["kontaktopplysninger", "kundeforhold"], "region": "EØS (Hostinger)" },
+    "www.asoldi.com": { "processor": "asoldi", "purpose": "Asoldis hub og kundeportal", "dataCategories": ["kontaktopplysninger", "kundeforhold"], "region": "EØS (Hostinger)" },
+
+    "imap.hostinger.com": { "processor": "hostinger", "purpose": "Lesing av Asoldis egen innboks", "dataCategories": ["e-post til Asoldi"], "region": "EØS (Litauen)" },
+    "smtp.hostinger.com": { "processor": "hostinger", "purpose": "Sending av e-post fra Asoldi", "dataCategories": ["navn", "e-postadresse", "meldingsinnhold"], "region": "EØS (Litauen)" },
+    "developers.hostinger.com": { "processor": "hostinger", "purpose": "Oppsett av hosting og domener for kundenes nettsider", "dataCategories": ["domene", "bedriftsnavn"], "region": "EØS (Litauen)" },
+
+    "api.github.com": { "processor": "github", "purpose": "Privat kodelager for kundenes nettsidefiler", "dataCategories": ["nettsidefiler med bedriftens kontaktopplysninger"], "region": "USA" },
+    "github.com": { "processor": "github", "purpose": "Privat kodelager for kundenes nettsidefiler", "dataCategories": ["nettsidefiler med bedriftens kontaktopplysninger"], "region": "USA" },
+
+    "api.anthropic.com": { "processor": "anthropic", "purpose": "Språkmodeller for tekst, analyse av materiale og oppsummering av møter", "dataCategories": ["navn", "kontaktopplysninger", "møtetranskripsjoner", "e-postinnhold", "bedriftsopplysninger"], "region": "USA" },
+    "platform.claude.com": { "noPersonalData": true, "reason": "Lenke til prisdokumentasjon i koden. Koden sender ingen data dit" },
+
+    "generativelanguage.googleapis.com": { "processor": "google", "purpose": "Språkmodeller (Gemini) for tekst og bilder", "dataCategories": ["bedriftsopplysninger", "bilder kunden laster opp", "kontrakter som PDF"], "region": "EØS og USA" },
+    "aiplatform.googleapis.com": { "processor": "google", "purpose": "Språkmodeller (Gemini) for tekst og bilder", "dataCategories": ["bedriftsopplysninger", "bilder kunden laster opp"], "region": "EØS og USA" },
+    "*.aiplatform.googleapis.com": { "processor": "google", "purpose": "Språkmodeller (Gemini) for tekst og bilder", "dataCategories": ["bedriftsopplysninger", "bilder kunden laster opp"], "region": "EØS og USA" },
+    "www.googleapis.com": { "processor": "google", "purpose": "Kalender, innlogging og bedriftsprofil", "dataCategories": ["navn", "e-postadresse", "møtetidspunkt"], "region": "EØS og USA" },
+    "oauth2.googleapis.com": { "processor": "google", "purpose": "Innlogging med Google", "dataCategories": ["navn", "e-postadresse"], "region": "EØS og USA" },
+    "accounts.google.com": { "processor": "google", "purpose": "Innlogging med Google", "dataCategories": ["navn", "e-postadresse"], "region": "EØS og USA" },
+    "gmail.googleapis.com": { "processor": "google", "purpose": "Lesing av Asoldis egen innboks", "dataCategories": ["e-post til Asoldi"], "region": "EØS og USA" },
+    "meet.googleapis.com": { "processor": "google", "purpose": "Møterom i Google Meet", "dataCategories": ["navn", "e-postadresse", "møtetidspunkt"], "region": "EØS og USA" },
+    "meet.google.com": { "processor": "google", "purpose": "Møtelenker i Google Meet", "dataCategories": ["navn", "e-postadresse", "møtetidspunkt"], "region": "EØS og USA" },
+    "calendar.google.com": { "processor": "google", "purpose": "Kalenderlenker for avtalte møter", "dataCategories": ["møtetidspunkt"], "region": "EØS og USA" },
+    "mybusinessbusinessinformation.googleapis.com": { "processor": "google", "purpose": "Kundens bedriftsprofil på Google", "dataCategories": ["bedriftsopplysninger", "omtaler"], "region": "EØS og USA" },
+    "mybusinessaccountmanagement.googleapis.com": { "processor": "google", "purpose": "Kundens bedriftsprofil på Google", "dataCategories": ["bedriftsopplysninger"], "region": "EØS og USA" },
+    "businessprofileperformance.googleapis.com": { "processor": "google", "purpose": "Statistikk for kundens bedriftsprofil", "dataCategories": ["bedriftsopplysninger"], "region": "EØS og USA" },
+    "places.googleapis.com": { "processor": "google", "purpose": "Søk etter bedrifter og steder", "dataCategories": ["bedriftsnavn", "adresse"], "region": "EØS og USA" },
+    "maps.googleapis.com": { "processor": "google", "purpose": "Kart og steder", "dataCategories": ["bedriftsnavn", "adresse"], "region": "EØS og USA" },
+    "maps.google.com": { "processor": "google", "purpose": "Kartlenker og innebygde kart", "dataCategories": ["IP-adresse i nettleseren"], "region": "EØS og USA" },
+    "g.page": { "noPersonalData": true, "reason": "Lenke til en bedriftsprofil som vises for en person. Koden sender ingen data dit" },
+    "search.google.com": { "noPersonalData": true, "reason": "Lenke til Googles skjema for omtaler. Koden sender ingen data dit" },
+    "www.google.com": { "noPersonalData": true, "reason": "Lenker til Google Søk og Maps som vises for en person. Koden sender ingen data dit" },
+    "ai.google.dev": { "noPersonalData": true, "reason": "Lenke til prisdokumentasjon i koden. Koden sender ingen data dit" },
+    "fonts.googleapis.com": { "processor": "google", "purpose": "Skrifttyper (Google Fonts) som lastes i nettleseren på nettsider som bruker dem", "dataCategories": ["IP-adresse i nettleseren"], "region": "EØS og USA" },
+    "fonts.gstatic.com": { "processor": "google", "purpose": "Skrifttyper (Google Fonts) som lastes i nettleseren på nettsider som bruker dem", "dataCategories": ["IP-adresse i nettleseren"], "region": "EØS og USA" },
+    "firestore.googleapis.com": { "processor": "google", "purpose": "Firebase-tjenester i nettleserappen", "dataCategories": ["innloggingsopplysninger"], "region": "EØS og USA" },
+    "identitytoolkit.googleapis.com": { "processor": "google", "purpose": "Firebase-innlogging i nettleserappen", "dataCategories": ["e-postadresse"], "region": "EØS og USA" },
+    "securetoken.googleapis.com": { "processor": "google", "purpose": "Firebase-innlogging i nettleserappen", "dataCategories": ["innloggingsopplysninger"], "region": "EØS og USA" },
+    "dns.google": { "noPersonalData": true, "reason": "Oppslag av domenenavn (DNS). Sender bare domenenavnet" },
+
+    "api.deepseek.com": { "processor": "deepseek", "purpose": "Språkmodell for tekst på offentlige, syntetiske eller anonymiserte data, og for SEO-innlegg om kundens bedrift", "dataCategories": [], "region": "Kina" },
+
+    "api.openai.com": { "processor": "openai", "purpose": "Automatisk kvalitetskontroll av maler og tekst", "dataCategories": [], "region": "USA" },
+    "developers.openai.com": { "noPersonalData": true, "reason": "Lenke til prisdokumentasjon i koden. Koden sender ingen data dit" },
+
+    "api.brevo.com": { "processor": "brevo", "purpose": "Sending av e-post", "dataCategories": ["navn", "e-postadresse", "meldingsinnhold", "samtykke og avmelding"], "region": "EØS (Frankrike)" },
+    "api.sendinblue.com": { "processor": "brevo", "purpose": "Sending av e-post (eldre adresse for Brevo)", "dataCategories": ["navn", "e-postadresse", "meldingsinnhold", "samtykke og avmelding"], "region": "EØS (Frankrike)" },
+    "api.resend.com": { "processor": "resend", "purpose": "Sending av transaksjons- og support-e-post", "dataCategories": ["navn", "e-postadresse", "meldingsinnhold"], "region": "USA" },
+
+    "api.stripe.com": { "processor": "stripe", "purpose": "Betaling og abonnement", "dataCategories": ["navn", "e-postadresse", "betalingsopplysninger"], "region": "EØS (Irland) og USA" },
+    "js.stripe.com": { "processor": "stripe", "purpose": "Betalingsskjema i nettleseren", "dataCategories": ["betalingsopplysninger", "IP-adresse i nettleseren"], "region": "EØS (Irland) og USA" },
+    "api-m.paypal.com": { "processor": "paypal", "purpose": "PayPal-betaling i nettbutikker", "dataCategories": ["navn", "e-postadresse", "betalingsopplysninger"], "region": "EØS (Luxembourg)" },
+    "api-m.sandbox.paypal.com": { "noPersonalData": true, "reason": "PayPals testmiljø. Brukes bare med testdata" },
+
+    "api.fireflies.ai": { "processor": "fireflies", "purpose": "Opptak og transkribering av møter", "dataCategories": ["navn", "e-postadresse", "lydopptak", "møtetranskripsjoner"], "region": "USA" },
+    "*.fireflies.ai": { "processor": "fireflies", "purpose": "Nedlasting av møteopptak", "dataCategories": ["lydopptak", "møtetranskripsjoner"], "region": "USA" },
+    "app.fireflies.ai": { "processor": "fireflies", "purpose": "Lenker til møter i Fireflies", "dataCategories": ["møtetranskripsjoner"], "region": "USA" },
+
+    "api.deepgram.com": { "processor": "deepgram", "purpose": "Transkribering av lydopptak fra salgssamtaler", "dataCategories": ["lydopptak", "transkripsjoner"], "region": "USA" },
+
+    "myphoner.com": { "processor": "myphoner", "purpose": "Leadlister for salgssamtaler", "dataCategories": ["bedriftsnavn", "kontaktperson", "telefonnummer", "notater fra samtaler"], "region": "EØS" },
+    "*.myphoner.com": { "processor": "myphoner", "purpose": "Leadlister for salgssamtaler", "dataCategories": ["bedriftsnavn", "kontaktperson", "telefonnummer", "notater fra samtaler"], "region": "EØS" },
+    "asoldi.myphoner.com": { "processor": "myphoner", "purpose": "Lenker til leads i Asoldis salgssystem", "dataCategories": ["bedriftsnavn", "kontaktperson", "telefonnummer"], "region": "EØS" },
+
+    "go.lucaregnskap.no": { "processor": "luca", "purpose": "Regnskap og fakturagrunnlag", "dataCategories": ["bedriftsnavn", "kontaktperson", "e-postadresse", "fakturaopplysninger"], "region": "Norge" },
+
+    "api.dataforseo.com": { "processor": "dataforseo", "purpose": "Søkeordsdata og rangeringer", "dataCategories": [], "region": "Utenfor Norge" },
+    "serpapi.com": { "processor": "serpapi", "purpose": "Søkeresultater for rangeringsmåling", "dataCategories": [], "region": "USA" },
+    "search.brave.com": { "processor": "brave", "purpose": "Nettsøk etter bedrifters offentlige nettsider", "dataCategories": [], "region": "USA" },
+    "api.search.brave.com": { "processor": "brave", "purpose": "Nettsøk etter bedrifters offentlige nettsider", "dataCategories": [], "region": "USA" },
+
+    "api.supabase.com": { "processor": "supabase", "purpose": "Lagring av nettsidemaler", "dataCategories": [], "region": "USA" },
+    "*.supabase.co": { "processor": "supabase", "purpose": "Lagring av nettsidemaler", "dataCategories": [], "region": "USA" },
+
+    "asoldi-referal-section.vercel.app": { "processor": "vercel", "purpose": "Skjema for vervekampanje på asoldi.com", "dataCategories": ["navn", "kontaktopplysninger"], "region": "USA" },
+    "employment-paginated-asoldi-form.vercel.app": { "processor": "vercel", "purpose": "Skjema for jobbsøknad på asoldi.com", "dataCategories": ["navn", "kontaktopplysninger", "søknadsinnhold"], "region": "USA" },
+    "calendly.com": { "processor": "calendly", "purpose": "Bestilling av møter på asoldi.com", "dataCategories": ["navn", "e-postadresse", "møtetidspunkt", "IP-adresse i nettleseren"], "region": "USA" },
+    "assets.calendly.com": { "processor": "calendly", "purpose": "Skript for møtebestilling som lastes på sidene til asoldi.com", "dataCategories": ["IP-adresse i nettleseren"], "region": "USA" },
+    "embed.tawk.to": { "processor": "tawk", "purpose": "Chat på siden for ansatte og jobbsøkere", "dataCategories": ["navn", "e-postadresse", "chatmeldinger", "IP-adresse i nettleseren"], "region": "USA" },
+
+    "nominatim.openstreetmap.org": { "processor": "openstreetmap", "purpose": "Adressesøk", "dataCategories": ["søketekst (adresse)", "IP-adresse i nettleseren"], "region": "Storbritannia" },
+    "tile.openstreetmap.org": { "processor": "openstreetmap", "purpose": "Kartfliser i Asoldis interne verktøy", "dataCategories": ["IP-adresse i nettleseren"], "region": "Storbritannia" },
+    "photon.komoot.io": { "processor": "komoot", "purpose": "Adressesøk", "dataCategories": ["søketekst (adresse)"], "region": "EØS (Tyskland)" },
+    "ws.geonorge.no": { "processor": "kartverket", "purpose": "Adressesøk i det offentlige adresseregisteret", "dataCategories": ["søketekst (adresse)"], "region": "Norge" },
+
+    "images.unsplash.com": { "processor": "thirdPartyContent", "purpose": "Bilder på asoldi.com", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },
+    "cdn.coverr.co": { "processor": "thirdPartyContent", "purpose": "Video på asoldi.com", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },
+    "i.pravatar.cc": { "processor": "thirdPartyContent", "purpose": "Eksempelbilder på asoldi.com", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },
+    "img.youtube.com": { "processor": "thirdPartyContent", "purpose": "Forhåndsbilder av video", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },
+    "www.youtube.com": { "processor": "thirdPartyContent", "purpose": "Innebygd video", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },
+    "vimeo.com": { "processor": "thirdPartyContent", "purpose": "Innebygd video", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },
+    "cdn.prod.website-files.com": { "processor": "thirdPartyContent", "purpose": "Bilder og ikoner på asoldi.com og ssu.asoldi.com", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },
+    "assets-global.website-files.com": { "processor": "thirdPartyContent", "purpose": "Stilark og bilder på ssu.asoldi.com", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },
+    "cdn.tailwindcss.com": { "processor": "thirdPartyContent", "purpose": "Stilark i forhåndsvisninger i Asoldis interne verktøy", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },
+
+    "data.brreg.no": { "noPersonalData": true, "reason": "Oppslag i Enhetsregisteret. Sender bare organisasjonsnummer eller bedriftsnavn" },
+    "www.proff.no": { "noPersonalData": true, "reason": "Lenke til en bedrifts side hos Proff som vises for en person. Koden sender ingen data dit" },
+    "www.facebook.com": { "noPersonalData": true, "reason": "Lenker til profiler i sosiale medier som vises for en person. Koden sender ingen data dit" },
+    "www.instagram.com": { "noPersonalData": true, "reason": "Lenker til profiler i sosiale medier som vises for en person. Koden sender ingen data dit" },
+    "www.linkedin.com": { "noPersonalData": true, "reason": "Lenker til profiler i sosiale medier som vises for en person. Koden sender ingen data dit" },
+    "www.tiktok.com": { "noPersonalData": true, "reason": "Lenker til profiler i sosiale medier som vises for en person. Koden sender ingen data dit" },
+    "cloudflare-dns.com": { "noPersonalData": true, "reason": "Oppslag av domenenavn (DNS). Sender bare domenenavnet" },
+    "placehold.co": { "noPersonalData": true, "reason": "Plassholderbilder i demosider. Sender ingen data" },
+    "r.jina.ai": { "noPersonalData": true, "reason": "Leser offentlige nettsider. Sender bare adressen til en offentlig nettside" },
+    "web.archive.org": { "noPersonalData": true, "reason": "Leser arkiverte offentlige nettsider. Sender bare adressen til en offentlig nettside" },
+    "sporing.bring.no": { "noPersonalData": true, "reason": "Sporingslenke som vises for kjøperen. Koden sender ingen data dit" },
+    "sporing.posten.no": { "noPersonalData": true, "reason": "Sporingslenke som vises for kjøperen. Koden sender ingen data dit" },
+    "tracking.postnord.com": { "noPersonalData": true, "reason": "Sporingslenke som vises for kjøperen. Koden sender ingen data dit" },
+    "www.dao.as": { "noPersonalData": true, "reason": "Sporingslenke som vises for kjøperen. Koden sender ingen data dit" },
+    "www.dhl.com": { "noPersonalData": true, "reason": "Sporingslenke som vises for kjøperen. Koden sender ingen data dit" },
+    "www.helthjem.no": { "noPersonalData": true, "reason": "Sporingslenke som vises for kjøperen. Koden sender ingen data dit" },
+    "www.ups.com": { "noPersonalData": true, "reason": "Sporingslenke som vises for kjøperen. Koden sender ingen data dit" }
+  }
+}

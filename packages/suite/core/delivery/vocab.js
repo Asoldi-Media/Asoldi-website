@@ -496,6 +496,9 @@ export const SETTINGS_KEYS = Object.freeze({
   // v2
   makerEvents: 'development.makerEvents',
   deliveryBackfill: 'migrations.deliveryBackfill',
+  // ---- legal texts
+  legalCatalogTexts: 'legal.catalogTexts.enabled',
+  // ---- end legal texts
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);

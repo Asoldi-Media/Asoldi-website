@@ -37,7 +37,8 @@ import { mergeMakerRunPatch, normalizeDeveloperQa } from '../lib/developer-card.
 import { canonicalDeveloperOwnerId, normalizeDeveloperHandoff, applyAdminDeveloperOwnerSeed, shouldSeedExistingDeveloperOwners } from '../lib/developer-assignment.js';
 import { normalizeDeveloperGoals } from '../lib/developer-goals.js';
 import { normalizeDueDate } from '../lib/website-due.js';
-import { normalizeOfferSentContent } from './sales-offers.js';
+import { listSalesOffers, normalizeOfferSentContent } from './sales-offers.js';
+import { legalSnapshotPatch } from '../lib/legal/binding.js';
 import {
   carryFutureKeys,
   FUTURE_CLIENT_KEYS,
@@ -915,7 +916,7 @@ function updateSalesClientInternal(id, updates = {}) {
   const ownerStamp = Object.prototype.hasOwnProperty.call(updates, 'ownerId')
     ? assignmentStampForOwnerChange(current.ownerId, updates.ownerId)
     : {};
-  const next = normalizeSalesClient({
+  const merged = {
     ...current,
     ...updates,
     ...ownerStamp,
@@ -967,10 +968,32 @@ function updateSalesClientInternal(id, updates = {}) {
       ? { ...(current.myphoner || {}), ...updates.myphoner }
       : current.myphoner,
     updatedAt: nowIso(),
-  });
+  };
+  const legalExt = legalExtOnSigning(current, merged);
+  const next = normalizeSalesClient(legalExt ? { ...merged, ext: legalExt } : merged);
   state[index] = next;
   writeState(state);
   return next;
+}
+
+/**
+ * Legal clause catalog (legal.catalogTexts): when a write turns progression.contractSigned on, the
+ * client.ext.legal snapshot of the catalog and DPA versions of the client's latest sent offer. Only
+ * an offer sent with a legal stamp yields one, and such a stamp exists only when the switch was on
+ * at send; otherwise this returns undefined and the write is unchanged (the client keeps the
+ * legacy texts). Every writer goes through here: setSalesProgress, the got-client route and any
+ * plain progression patch.
+ */
+function legalExtOnSigning(current, merged) {
+  if (current?.progression?.contractSigned === true || !merged?.progression?.contractSigned) return undefined;
+  try {
+    const offer = listSalesOffers({ salesClientId: current.id, status: 'sent' })[0] || null;
+    const patch = legalSnapshotPatch({ ...current, ext: merged.ext }, offer);
+    return patch ? patch.ext : undefined;
+  } catch (error) {
+    console.error('[legal] signing snapshot failed', current?.id, error?.message || error);
+    return undefined;
+  }
 }
 
 /** Stamp or clear the card error when a send to contactEmail fails or succeeds. Not the inbox bot. */
@@ -1018,7 +1041,7 @@ export function patchSalesClientsById(entries = []) {
     const ownerStamp = Object.prototype.hasOwnProperty.call(patch, 'ownerId')
       ? assignmentStampForOwnerChange(client.ownerId, patch.ownerId)
       : {};
-    return normalizeSalesClient({
+    const merged = {
       ...client,
       ...patch,
       ...ownerStamp,
@@ -1027,7 +1050,9 @@ export function patchSalesClientsById(entries = []) {
         ? { ...(client.salesMigrations || {}), ...patch.salesMigrations }
         : client.salesMigrations,
       updatedAt: Object.prototype.hasOwnProperty.call(patch, 'updatedAt') ? patch.updatedAt : client.updatedAt,
-    });
+    };
+    const legalExt = legalExtOnSigning(client, merged);
+    return normalizeSalesClient(legalExt ? { ...merged, ext: legalExt } : merged);
   });
   if (updated) writeState(next);
   return { total: state.length, updated };

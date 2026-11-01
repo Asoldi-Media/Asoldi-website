@@ -6,6 +6,7 @@ import { SEO } from '../components/SEO';
 import { getServiceSchema } from '../structuredData';
 import { BUSINESS, SITE_URL } from '../config';
 import { WEBSITE_PRODUCTS } from '../data/websiteProducts';
+import { useCatalogSalesProducts } from '../data/catalogLegalTexts.js';
 
 const services = [
   "Nettsideutvikling",
@@ -179,6 +180,8 @@ const pricingData: Record<string, any[]> = {
 };
 
 export const Pricing = () => {
+  // The legal clause catalog's "what's included" once its API answers; the static cards until then.
+  const websiteProducts = useCatalogSalesProducts(WEBSITE_PRODUCTS);
   const location = useLocation();
   const [activeService, setActiveService] = useState(services[0]);
 
@@ -419,7 +422,7 @@ export const Pricing = () => {
                     );
                   })
                 ) : (
-                  (pricingData[activeService] || []).map((plan, index) => (
+                  ((activeService === 'Nettsideutvikling' ? websiteProducts : pricingData[activeService]) || []).map((plan, index) => (
                     <div
                       key={plan.name}
                       className="relative p-10 flex flex-col bg-white"

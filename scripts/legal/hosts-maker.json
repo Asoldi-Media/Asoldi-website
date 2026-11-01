@@ -1,0 +1,186 @@
+{
+  "version": 1,
+  "name": "maker",
+  "ref": "main",
+  "commit": "b982c7b8200ec05a91f70b41be1b650574230a6f",
+  "egress": false,
+  "hosts": [
+    {
+      "host": "*.supabase.co",
+      "via": [
+        "sdk"
+      ]
+    },
+    {
+      "host": "ai.google.dev",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "api.anthropic.com",
+      "via": [
+        "sdk",
+        "static"
+      ]
+    },
+    {
+      "host": "api.dataforseo.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "api.deepseek.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "api.github.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "api.openai.com",
+      "via": [
+        "sdk",
+        "static"
+      ]
+    },
+    {
+      "host": "api.supabase.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "asoldi.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "assets-global.website-files.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "cdn.prod.website-files.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "cdn.tailwindcss.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "cloudflare-dns.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "developers.hostinger.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "developers.openai.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "dns.google",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "fonts.googleapis.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "fonts.gstatic.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "generativelanguage.googleapis.com",
+      "via": [
+        "sdk",
+        "static"
+      ]
+    },
+    {
+      "host": "github.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "placehold.co",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "platform.claude.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "r.jina.ai",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "web.archive.org",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "www.asoldi.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "www.facebook.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "www.google.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "www.instagram.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "www.proff.no",
+      "via": [
+        "static"
+      ]
+    }
+  ]
+}

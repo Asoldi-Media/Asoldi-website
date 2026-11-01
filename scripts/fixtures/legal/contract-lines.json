@@ -1,0 +1,962 @@
+{
+  "catalogVersion": 1,
+  "dpaVersion": "dpa-1",
+  "plans": {
+    "tier-1-standard": {
+      "nb": [
+        {
+          "clauseId": "service.site",
+          "group": "scope",
+          "title": "Nettside og CMS",
+          "lines": [
+            "Design og utvikling av nettsiden, inntil 5 hovedsider, med oppsett for mobil, nettbrett og PC, nettstedskart og kobling til kundens domene",
+            "Asoldi CMS med egne brukere og roller, mediebibliotek og redigering av sider og innhold",
+            "Kontaktskjema, juridiske sider og samtykkeløsning for informasjonskapsler",
+            "Grunnleggende søkemotortilpasning: søkeordsplan, titler, beskrivelser, struktur og nettstedskart"
+          ]
+        },
+        {
+          "clauseId": "service.hosting",
+          "group": "scope",
+          "title": "Hosting, domene og vedlikehold",
+          "lines": [
+            "Hosting og drift hos Hostinger så lenge abonnementet er aktivt",
+            "Domenekobling: kunden eier og betaler domenet, og Asoldi kobler det til hostingen",
+            "Vedlikehold: sikkerhet, sikkerhetskopier, feilretting og nye versjoner av Asoldi CMS",
+            "Ett veiledningsmøte om bruk av CMS, holdt én gang"
+          ]
+        },
+        {
+          "clauseId": "service.changes",
+          "group": "scope",
+          "title": "Endringer",
+          "lines": [
+            "Inntil 4 endringer per måned. Én godtatt forespørsel er én endring, og endringer i seksjoner er tillatt",
+            "Godtatte endringer utføres innen 10 arbeidsdager"
+          ]
+        },
+        {
+          "clauseId": "service.blog",
+          "group": "scope",
+          "title": "Blogg",
+          "lines": [
+            "Blogg på nettsiden: kunden skriver og publiserer egne innlegg i CMS"
+          ]
+        },
+        {
+          "clauseId": "general.term",
+          "group": "term",
+          "title": "Avtaleperiode",
+          "lines": [
+            "Minste bindingstid er seks (6) måneder",
+            "Oppsigelse krever 15 dagers varsel, og kunden betaler for hele oppsigelsesmåneden",
+            "Kunden kan ikke nedgradere til et lavere nivå etter at funksjonalitet fra et høyere nivå er lagt til"
+          ]
+        },
+        {
+          "clauseId": "general.cancellation",
+          "group": "term",
+          "title": "Når avtalen avsluttes",
+          "lines": [
+            "Ved oppsigelse stopper oppdateringer av CMS, automatiske blogginnlegg, lenkenettverket, e-post gjennom Asoldi og endringsforespørsler ved utløpet av den betalte perioden",
+            "Nettsiden er oppe i 30 dager etter den betalte perioden. Deretter stopper hostingen",
+            "Kunden kan be om eksport av nettsiden, CMS-data og mediefiler fram til hostingen stopper",
+            "Kunden eier innholdet, designet og kode laget spesielt for kunden. Asoldi CMS følger sin lisens og overføres ikke"
+          ]
+        },
+        {
+          "clauseId": "general.usageRights",
+          "group": "legal",
+          "title": "Materiale fra kunden",
+          "lines": [
+            "Kunden har rett til å bruke materialet kunden leverer, og gir Asoldi rett til å bruke det for å lage og drifte nettsiden"
+          ]
+        },
+        {
+          "clauseId": "general.ai",
+          "group": "legal",
+          "title": "Bruk av AI",
+          "lines": [
+            "Asoldi bruker AI-tjenester i leveransen. Personopplysninger sendes bare til leverandører som er godkjent for det, og listen står i vedlegget til databehandleravtalen"
+          ]
+        },
+        {
+          "clauseId": "general.dpa",
+          "group": "legal",
+          "title": "Personvern og databehandleravtale",
+          "lines": [
+            "Databehandleravtalen versjon dpa-1 med vedlegg om underleverandører gjelder og godtas ved signering av denne avtalen",
+            "E-postfunksjonene på nettsiden er av til databehandleravtalen er godtatt"
+          ]
+        }
+      ],
+      "en": [
+        {
+          "clauseId": "service.site",
+          "group": "scope",
+          "title": "Website and CMS",
+          "lines": [
+            "Design and development of the website, up to 5 main pages, with a layout for mobile, tablet and desktop, a sitemap and connection to the Client's domain",
+            "Asoldi CMS with the Client's own users and roles, a media library and editing of pages and content",
+            "Contact form, legal pages and a cookie consent solution",
+            "Basic search engine setup: keyword plan, titles, descriptions, structure and sitemap"
+          ]
+        },
+        {
+          "clauseId": "service.hosting",
+          "group": "scope",
+          "title": "Hosting, domain and maintenance",
+          "lines": [
+            "Hosting and operation at Hostinger while the subscription is active",
+            "Domain connection: the Client owns and pays for the domain, and Asoldi connects it to the hosting",
+            "Maintenance: security, backups, bug fixes and new versions of the Asoldi CMS",
+            "One guidance meeting on using the CMS, held once"
+          ]
+        },
+        {
+          "clauseId": "service.changes",
+          "group": "scope",
+          "title": "Changes",
+          "lines": [
+            "Up to 4 changes per month. One accepted request is one change, and changes to sections are allowed",
+            "Accepted changes are made within 10 working days"
+          ]
+        },
+        {
+          "clauseId": "service.blog",
+          "group": "scope",
+          "title": "Blog",
+          "lines": [
+            "Blog on the website: the Client writes and publishes their own posts in the CMS"
+          ]
+        },
+        {
+          "clauseId": "general.term",
+          "group": "term",
+          "title": "Contract period",
+          "lines": [
+            "The minimum binding period is six (6) months",
+            "Cancellation requires 15 days' notice, and the Client pays for the whole month of cancellation",
+            "The Client cannot downgrade to a lower tier once functionality from a higher tier has been added"
+          ]
+        },
+        {
+          "clauseId": "general.cancellation",
+          "group": "term",
+          "title": "When the agreement ends",
+          "lines": [
+            "On cancellation, CMS updates, automatic blog posts, the link network, email through Asoldi and change requests stop at the end of the paid period",
+            "The website stays online for 30 days after the paid period. Then hosting stops",
+            "The Client can request an export of the website, CMS data and media until hosting stops",
+            "The Client owns the content, the design and code made specifically for the Client. The Asoldi CMS follows its licence and is not transferred"
+          ]
+        },
+        {
+          "clauseId": "general.usageRights",
+          "group": "legal",
+          "title": "Material from the Client",
+          "lines": [
+            "The Client has the right to use the material it supplies and gives Asoldi the right to use it to build and run the website"
+          ]
+        },
+        {
+          "clauseId": "general.ai",
+          "group": "legal",
+          "title": "Use of AI",
+          "lines": [
+            "Asoldi uses AI services in the delivery. Personal data is only sent to providers approved for it, and the list is in the appendix to the data processing agreement"
+          ]
+        },
+        {
+          "clauseId": "general.dpa",
+          "group": "legal",
+          "title": "Privacy and data processing agreement",
+          "lines": [
+            "The data processing agreement version dpa-1 with its appendix on sub-processors applies and is accepted by signing this agreement",
+            "Email functions on the website stay off until the data processing agreement is accepted"
+          ]
+        }
+      ]
+    },
+    "tier-2-seo": {
+      "nb": [
+        {
+          "clauseId": "service.site",
+          "group": "scope",
+          "title": "Nettside og CMS",
+          "lines": [
+            "Design og utvikling av nettsiden, inntil 7 hovedsider, med oppsett for mobil, nettbrett og PC, nettstedskart og kobling til kundens domene",
+            "Asoldi CMS med egne brukere og roller, mediebibliotek og redigering av sider og innhold",
+            "Kontaktskjema, juridiske sider og samtykkeløsning for informasjonskapsler",
+            "Grunnleggende søkemotortilpasning: søkeordsplan, titler, beskrivelser, struktur og nettstedskart"
+          ]
+        },
+        {
+          "clauseId": "service.hosting",
+          "group": "scope",
+          "title": "Hosting, domene og vedlikehold",
+          "lines": [
+            "Hosting og drift hos Hostinger så lenge abonnementet er aktivt",
+            "Domenekobling: kunden eier og betaler domenet, og Asoldi kobler det til hostingen",
+            "Vedlikehold: sikkerhet, sikkerhetskopier, feilretting og nye versjoner av Asoldi CMS",
+            "Ett veiledningsmøte om bruk av CMS, holdt én gang"
+          ]
+        },
+        {
+          "clauseId": "service.changes",
+          "group": "scope",
+          "title": "Endringer",
+          "lines": [
+            "Inntil 4 endringer per måned. Én godtatt forespørsel er én endring, og endringer i seksjoner er tillatt",
+            "Godtatte endringer utføres innen 10 arbeidsdager"
+          ]
+        },
+        {
+          "clauseId": "service.blog",
+          "group": "scope",
+          "title": "Blogg",
+          "lines": [
+            "Blogg på nettsiden: kunden skriver og publiserer egne innlegg i CMS"
+          ]
+        },
+        {
+          "clauseId": "service.autoPosts",
+          "group": "scope",
+          "title": "Automatiske blogginnlegg",
+          "lines": [
+            "Automatiske blogginnlegg om kundens tjenester og område: normalt ett i uken, og kunden kan velge fra null til tre i uken"
+          ]
+        },
+        {
+          "clauseId": "service.seo",
+          "group": "scope",
+          "title": "SEO-arbeid og avtalte søkeord",
+          "lines": [
+            "Løpende SEO-arbeid mot Google Søk, Google Maps og AI-søk: søkeordsoptimalisert tekst, teknisk SEO, lokalt søk og en månedlig SEO-sjekk",
+            "Arbeid mot de avtalte søkeordene, normalt ett til tre",
+            "Statistikkside i CMS med rangeringer og en rapport hver fjortende dag",
+            "Asoldi garanterer ikke bestemt plassering, trafikk eller omsetning"
+          ]
+        },
+        {
+          "clauseId": "service.social",
+          "group": "scope",
+          "title": "Omtaler og sosiale medier",
+          "lines": [
+            "Visning av Google-omtaler og omtaler på nettsiden, og lenker til kundens sosiale profiler. Asoldi publiserer ikke i sosiale medier"
+          ]
+        },
+        {
+          "clauseId": "service.email",
+          "group": "scope",
+          "title": "E-postmarkedsføring",
+          "lines": [
+            "Påmelding til nyhetsbrev med dobbel bekreftelse, e-postlister, kampanjer og velkomst-e-post",
+            "E-post sendes gjennom Asoldis e-postleverandører og er av til databehandleravtalen er godtatt"
+          ]
+        },
+        {
+          "clauseId": "service.backlinks",
+          "group": "scope",
+          "title": "Lenkenettverk",
+          "lines": [
+            "Fulgte, relevante lenker mellom Asoldi-kunder i en partnerseksjon og i blogginnlegg, med tak per nettside og aldri i bunnteksten på alle sider",
+            "Lenkene til og fra nettsiden fjernes når abonnementet avsluttes"
+          ]
+        },
+        {
+          "clauseId": "general.term",
+          "group": "term",
+          "title": "Avtaleperiode",
+          "lines": [
+            "Minste bindingstid er seks (6) måneder",
+            "Oppsigelse krever 15 dagers varsel, og kunden betaler for hele oppsigelsesmåneden",
+            "Kunden kan ikke nedgradere til et lavere nivå etter at funksjonalitet fra et høyere nivå er lagt til"
+          ]
+        },
+        {
+          "clauseId": "general.cancellation",
+          "group": "term",
+          "title": "Når avtalen avsluttes",
+          "lines": [
+            "Ved oppsigelse stopper oppdateringer av CMS, automatiske blogginnlegg, lenkenettverket, e-post gjennom Asoldi og endringsforespørsler ved utløpet av den betalte perioden",
+            "Nettsiden er oppe i 30 dager etter den betalte perioden. Deretter stopper hostingen",
+            "Kunden kan be om eksport av nettsiden, CMS-data og mediefiler fram til hostingen stopper",
+            "Kunden eier innholdet, designet og kode laget spesielt for kunden. Asoldi CMS følger sin lisens og overføres ikke"
+          ]
+        },
+        {
+          "clauseId": "general.usageRights",
+          "group": "legal",
+          "title": "Materiale fra kunden",
+          "lines": [
+            "Kunden har rett til å bruke materialet kunden leverer, og gir Asoldi rett til å bruke det for å lage og drifte nettsiden"
+          ]
+        },
+        {
+          "clauseId": "general.ai",
+          "group": "legal",
+          "title": "Bruk av AI",
+          "lines": [
+            "Asoldi bruker AI-tjenester i leveransen. Personopplysninger sendes bare til leverandører som er godkjent for det, og listen står i vedlegget til databehandleravtalen"
+          ]
+        },
+        {
+          "clauseId": "general.dpa",
+          "group": "legal",
+          "title": "Personvern og databehandleravtale",
+          "lines": [
+            "Databehandleravtalen versjon dpa-1 med vedlegg om underleverandører gjelder og godtas ved signering av denne avtalen",
+            "E-postfunksjonene på nettsiden er av til databehandleravtalen er godtatt"
+          ]
+        }
+      ],
+      "en": [
+        {
+          "clauseId": "service.site",
+          "group": "scope",
+          "title": "Website and CMS",
+          "lines": [
+            "Design and development of the website, up to 7 main pages, with a layout for mobile, tablet and desktop, a sitemap and connection to the Client's domain",
+            "Asoldi CMS with the Client's own users and roles, a media library and editing of pages and content",
+            "Contact form, legal pages and a cookie consent solution",
+            "Basic search engine setup: keyword plan, titles, descriptions, structure and sitemap"
+          ]
+        },
+        {
+          "clauseId": "service.hosting",
+          "group": "scope",
+          "title": "Hosting, domain and maintenance",
+          "lines": [
+            "Hosting and operation at Hostinger while the subscription is active",
+            "Domain connection: the Client owns and pays for the domain, and Asoldi connects it to the hosting",
+            "Maintenance: security, backups, bug fixes and new versions of the Asoldi CMS",
+            "One guidance meeting on using the CMS, held once"
+          ]
+        },
+        {
+          "clauseId": "service.changes",
+          "group": "scope",
+          "title": "Changes",
+          "lines": [
+            "Up to 4 changes per month. One accepted request is one change, and changes to sections are allowed",
+            "Accepted changes are made within 10 working days"
+          ]
+        },
+        {
+          "clauseId": "service.blog",
+          "group": "scope",
+          "title": "Blog",
+          "lines": [
+            "Blog on the website: the Client writes and publishes their own posts in the CMS"
+          ]
+        },
+        {
+          "clauseId": "service.autoPosts",
+          "group": "scope",
+          "title": "Automatic blog posts",
+          "lines": [
+            "Automatic blog posts about the Client's services and area: normally one a week, and the Client can choose from zero to three a week"
+          ]
+        },
+        {
+          "clauseId": "service.seo",
+          "group": "scope",
+          "title": "SEO work and agreed keywords",
+          "lines": [
+            "Ongoing SEO work for Google Search, Google Maps and AI search: keyword-optimised copy, technical SEO, local search and a monthly SEO check",
+            "Work towards the agreed keywords, normally one to three",
+            "Analytics page in the CMS with rankings and a report every fourteen days",
+            "Asoldi does not guarantee specific rankings, traffic or revenue"
+          ]
+        },
+        {
+          "clauseId": "service.social",
+          "group": "scope",
+          "title": "Reviews and social media",
+          "lines": [
+            "Display of Google reviews and on-site reviews, and links to the Client's social profiles. Asoldi does not post on social media"
+          ]
+        },
+        {
+          "clauseId": "service.email",
+          "group": "scope",
+          "title": "Email marketing",
+          "lines": [
+            "Newsletter sign-up with double opt-in, email lists, campaigns and a welcome email",
+            "Email is sent through Asoldi's email providers and stays off until the data processing agreement is accepted"
+          ]
+        },
+        {
+          "clauseId": "service.backlinks",
+          "group": "scope",
+          "title": "Link network",
+          "lines": [
+            "Followed, relevant links between Asoldi clients in a partner section and in blog posts, capped per site and never in a site-wide footer",
+            "Links to and from the website are removed when the subscription ends"
+          ]
+        },
+        {
+          "clauseId": "general.term",
+          "group": "term",
+          "title": "Contract period",
+          "lines": [
+            "The minimum binding period is six (6) months",
+            "Cancellation requires 15 days' notice, and the Client pays for the whole month of cancellation",
+            "The Client cannot downgrade to a lower tier once functionality from a higher tier has been added"
+          ]
+        },
+        {
+          "clauseId": "general.cancellation",
+          "group": "term",
+          "title": "When the agreement ends",
+          "lines": [
+            "On cancellation, CMS updates, automatic blog posts, the link network, email through Asoldi and change requests stop at the end of the paid period",
+            "The website stays online for 30 days after the paid period. Then hosting stops",
+            "The Client can request an export of the website, CMS data and media until hosting stops",
+            "The Client owns the content, the design and code made specifically for the Client. The Asoldi CMS follows its licence and is not transferred"
+          ]
+        },
+        {
+          "clauseId": "general.usageRights",
+          "group": "legal",
+          "title": "Material from the Client",
+          "lines": [
+            "The Client has the right to use the material it supplies and gives Asoldi the right to use it to build and run the website"
+          ]
+        },
+        {
+          "clauseId": "general.ai",
+          "group": "legal",
+          "title": "Use of AI",
+          "lines": [
+            "Asoldi uses AI services in the delivery. Personal data is only sent to providers approved for it, and the list is in the appendix to the data processing agreement"
+          ]
+        },
+        {
+          "clauseId": "general.dpa",
+          "group": "legal",
+          "title": "Privacy and data processing agreement",
+          "lines": [
+            "The data processing agreement version dpa-1 with its appendix on sub-processors applies and is accepted by signing this agreement",
+            "Email functions on the website stay off until the data processing agreement is accepted"
+          ]
+        }
+      ]
+    },
+    "tier-3-ecommerce": {
+      "nb": [
+        {
+          "clauseId": "service.site",
+          "group": "scope",
+          "title": "Nettside og CMS",
+          "lines": [
+            "Design og utvikling av nettsiden, inntil 10 hovedsider, med oppsett for mobil, nettbrett og PC, nettstedskart og kobling til kundens domene",
+            "Asoldi CMS med egne brukere og roller, mediebibliotek og redigering av sider og innhold",
+            "Kontaktskjema, juridiske sider og samtykkeløsning for informasjonskapsler",
+            "Grunnleggende søkemotortilpasning: søkeordsplan, titler, beskrivelser, struktur og nettstedskart"
+          ]
+        },
+        {
+          "clauseId": "service.hosting",
+          "group": "scope",
+          "title": "Hosting, domene og vedlikehold",
+          "lines": [
+            "Hosting og drift hos Hostinger så lenge abonnementet er aktivt",
+            "Domenekobling: kunden eier og betaler domenet, og Asoldi kobler det til hostingen",
+            "Vedlikehold: sikkerhet, sikkerhetskopier, feilretting og nye versjoner av Asoldi CMS",
+            "Ett veiledningsmøte om bruk av CMS, holdt én gang"
+          ]
+        },
+        {
+          "clauseId": "service.changes",
+          "group": "scope",
+          "title": "Endringer",
+          "lines": [
+            "Inntil 4 endringer per måned. Én godtatt forespørsel er én endring, og endringer i seksjoner er tillatt",
+            "Godtatte endringer utføres innen 10 arbeidsdager"
+          ]
+        },
+        {
+          "clauseId": "service.blog",
+          "group": "scope",
+          "title": "Blogg",
+          "lines": [
+            "Blogg på nettsiden: kunden skriver og publiserer egne innlegg i CMS"
+          ]
+        },
+        {
+          "clauseId": "service.autoPosts",
+          "group": "scope",
+          "title": "Automatiske blogginnlegg",
+          "lines": [
+            "Automatiske blogginnlegg om kundens tjenester og område: normalt ett i uken, og kunden kan velge fra null til tre i uken"
+          ]
+        },
+        {
+          "clauseId": "service.seo",
+          "group": "scope",
+          "title": "SEO-arbeid og avtalte søkeord",
+          "lines": [
+            "Løpende SEO-arbeid mot Google Søk, Google Maps og AI-søk: søkeordsoptimalisert tekst, teknisk SEO, lokalt søk og en månedlig SEO-sjekk",
+            "Arbeid mot de avtalte søkeordene, normalt ett til tre",
+            "Statistikkside i CMS med rangeringer og en rapport hver fjortende dag",
+            "Asoldi garanterer ikke bestemt plassering, trafikk eller omsetning"
+          ]
+        },
+        {
+          "clauseId": "service.social",
+          "group": "scope",
+          "title": "Omtaler og sosiale medier",
+          "lines": [
+            "Visning av Google-omtaler og omtaler på nettsiden, og lenker til kundens sosiale profiler. Asoldi publiserer ikke i sosiale medier"
+          ]
+        },
+        {
+          "clauseId": "service.email",
+          "group": "scope",
+          "title": "E-postmarkedsføring",
+          "lines": [
+            "Påmelding til nyhetsbrev med dobbel bekreftelse, e-postlister, kampanjer og velkomst-e-post",
+            "E-post sendes gjennom Asoldis e-postleverandører og er av til databehandleravtalen er godtatt"
+          ]
+        },
+        {
+          "clauseId": "service.shopEmail",
+          "group": "scope",
+          "title": "E-postautomatiseringer i nettbutikken",
+          "lines": [
+            "Automatiske e-poster i nettbutikken: forlatt handlekurv (bare med kjøperens samtykke i kassen), tilbake på lager, forespørsel om omtale og e-post til tidligere kunder",
+            "Varsler om hendelser i butikken og sending fra eget e-postdomene"
+          ]
+        },
+        {
+          "clauseId": "service.ecom",
+          "group": "scope",
+          "title": "Nettbutikk",
+          "lines": [
+            "Nettbutikk: produktsider, handlekurv, kasse og betaling til kundens egen betalingskonto",
+            "Rabatter, gavekort, abonnement, frakt, timebestilling og kundekonto etter behov",
+            "Salgsbetingelser basert på Forbrukertilsynets standard salgsbetingelser. Kunden er selger overfor sine kunder",
+            "Produktfeed til Google Shopping, webhooks og API-nøkler"
+          ]
+        },
+        {
+          "clauseId": "service.dashboard",
+          "group": "scope",
+          "title": "Utvidet statistikk og rapport",
+          "lines": [
+            "Utvidet statistikk med nettbutikk-tall og en utvidet rapport hver sjuende dag"
+          ]
+        },
+        {
+          "clauseId": "service.multilingual",
+          "group": "scope",
+          "title": "Flere språk",
+          "lines": [
+            "Nettside og nettbutikk på flere språk, med søkeord per språk"
+          ]
+        },
+        {
+          "clauseId": "service.backlinks",
+          "group": "scope",
+          "title": "Lenkenettverk",
+          "lines": [
+            "Fulgte, relevante lenker mellom Asoldi-kunder i en partnerseksjon og i blogginnlegg, med tak per nettside og aldri i bunnteksten på alle sider",
+            "Lenkene til og fra nettsiden fjernes når abonnementet avsluttes"
+          ]
+        },
+        {
+          "clauseId": "general.term",
+          "group": "term",
+          "title": "Avtaleperiode",
+          "lines": [
+            "Minste bindingstid er seks (6) måneder",
+            "Oppsigelse krever 15 dagers varsel, og kunden betaler for hele oppsigelsesmåneden",
+            "Kunden kan ikke nedgradere til et lavere nivå etter at funksjonalitet fra et høyere nivå er lagt til"
+          ]
+        },
+        {
+          "clauseId": "general.cancellation",
+          "group": "term",
+          "title": "Når avtalen avsluttes",
+          "lines": [
+            "Ved oppsigelse stopper oppdateringer av CMS, automatiske blogginnlegg, lenkenettverket, e-post gjennom Asoldi og endringsforespørsler ved utløpet av den betalte perioden",
+            "Nettsiden er oppe i 30 dager etter den betalte perioden. Deretter stopper hostingen",
+            "Kunden kan be om eksport av nettsiden, CMS-data og mediefiler fram til hostingen stopper",
+            "Kunden eier innholdet, designet og kode laget spesielt for kunden. Asoldi CMS følger sin lisens og overføres ikke"
+          ]
+        },
+        {
+          "clauseId": "general.usageRights",
+          "group": "legal",
+          "title": "Materiale fra kunden",
+          "lines": [
+            "Kunden har rett til å bruke materialet kunden leverer, og gir Asoldi rett til å bruke det for å lage og drifte nettsiden"
+          ]
+        },
+        {
+          "clauseId": "general.ai",
+          "group": "legal",
+          "title": "Bruk av AI",
+          "lines": [
+            "Asoldi bruker AI-tjenester i leveransen. Personopplysninger sendes bare til leverandører som er godkjent for det, og listen står i vedlegget til databehandleravtalen"
+          ]
+        },
+        {
+          "clauseId": "general.dpa",
+          "group": "legal",
+          "title": "Personvern og databehandleravtale",
+          "lines": [
+            "Databehandleravtalen versjon dpa-1 med vedlegg om underleverandører gjelder og godtas ved signering av denne avtalen",
+            "E-postfunksjonene på nettsiden er av til databehandleravtalen er godtatt"
+          ]
+        }
+      ],
+      "en": [
+        {
+          "clauseId": "service.site",
+          "group": "scope",
+          "title": "Website and CMS",
+          "lines": [
+            "Design and development of the website, up to 10 main pages, with a layout for mobile, tablet and desktop, a sitemap and connection to the Client's domain",
+            "Asoldi CMS with the Client's own users and roles, a media library and editing of pages and content",
+            "Contact form, legal pages and a cookie consent solution",
+            "Basic search engine setup: keyword plan, titles, descriptions, structure and sitemap"
+          ]
+        },
+        {
+          "clauseId": "service.hosting",
+          "group": "scope",
+          "title": "Hosting, domain and maintenance",
+          "lines": [
+            "Hosting and operation at Hostinger while the subscription is active",
+            "Domain connection: the Client owns and pays for the domain, and Asoldi connects it to the hosting",
+            "Maintenance: security, backups, bug fixes and new versions of the Asoldi CMS",
+            "One guidance meeting on using the CMS, held once"
+          ]
+        },
+        {
+          "clauseId": "service.changes",
+          "group": "scope",
+          "title": "Changes",
+          "lines": [
+            "Up to 4 changes per month. One accepted request is one change, and changes to sections are allowed",
+            "Accepted changes are made within 10 working days"
+          ]
+        },
+        {
+          "clauseId": "service.blog",
+          "group": "scope",
+          "title": "Blog",
+          "lines": [
+            "Blog on the website: the Client writes and publishes their own posts in the CMS"
+          ]
+        },
+        {
+          "clauseId": "service.autoPosts",
+          "group": "scope",
+          "title": "Automatic blog posts",
+          "lines": [
+            "Automatic blog posts about the Client's services and area: normally one a week, and the Client can choose from zero to three a week"
+          ]
+        },
+        {
+          "clauseId": "service.seo",
+          "group": "scope",
+          "title": "SEO work and agreed keywords",
+          "lines": [
+            "Ongoing SEO work for Google Search, Google Maps and AI search: keyword-optimised copy, technical SEO, local search and a monthly SEO check",
+            "Work towards the agreed keywords, normally one to three",
+            "Analytics page in the CMS with rankings and a report every fourteen days",
+            "Asoldi does not guarantee specific rankings, traffic or revenue"
+          ]
+        },
+        {
+          "clauseId": "service.social",
+          "group": "scope",
+          "title": "Reviews and social media",
+          "lines": [
+            "Display of Google reviews and on-site reviews, and links to the Client's social profiles. Asoldi does not post on social media"
+          ]
+        },
+        {
+          "clauseId": "service.email",
+          "group": "scope",
+          "title": "Email marketing",
+          "lines": [
+            "Newsletter sign-up with double opt-in, email lists, campaigns and a welcome email",
+            "Email is sent through Asoldi's email providers and stays off until the data processing agreement is accepted"
+          ]
+        },
+        {
+          "clauseId": "service.shopEmail",
+          "group": "scope",
+          "title": "Email automations in the online store",
+          "lines": [
+            "Automatic emails in the online store: abandoned cart (only with the buyer's consent at checkout), back in stock, review requests and win-back emails",
+            "Alerts about store events and sending from the Client's own email domain"
+          ]
+        },
+        {
+          "clauseId": "service.ecom",
+          "group": "scope",
+          "title": "Online store",
+          "lines": [
+            "Online store: product pages, cart, checkout and payment to the Client's own payment account",
+            "Discounts, gift cards, subscriptions, shipping, bookings and customer accounts as needed",
+            "Terms of sale based on the Norwegian Consumer Authority's standard terms. The Client is the seller to its customers",
+            "Product feed for Google Shopping, webhooks and API keys"
+          ]
+        },
+        {
+          "clauseId": "service.dashboard",
+          "group": "scope",
+          "title": "Extended analytics and report",
+          "lines": [
+            "Extended analytics with online store figures and an extended report every seven days"
+          ]
+        },
+        {
+          "clauseId": "service.multilingual",
+          "group": "scope",
+          "title": "Multiple languages",
+          "lines": [
+            "Website and online store in several languages, with keywords per language"
+          ]
+        },
+        {
+          "clauseId": "service.backlinks",
+          "group": "scope",
+          "title": "Link network",
+          "lines": [
+            "Followed, relevant links between Asoldi clients in a partner section and in blog posts, capped per site and never in a site-wide footer",
+            "Links to and from the website are removed when the subscription ends"
+          ]
+        },
+        {
+          "clauseId": "general.term",
+          "group": "term",
+          "title": "Contract period",
+          "lines": [
+            "The minimum binding period is six (6) months",
+            "Cancellation requires 15 days' notice, and the Client pays for the whole month of cancellation",
+            "The Client cannot downgrade to a lower tier once functionality from a higher tier has been added"
+          ]
+        },
+        {
+          "clauseId": "general.cancellation",
+          "group": "term",
+          "title": "When the agreement ends",
+          "lines": [
+            "On cancellation, CMS updates, automatic blog posts, the link network, email through Asoldi and change requests stop at the end of the paid period",
+            "The website stays online for 30 days after the paid period. Then hosting stops",
+            "The Client can request an export of the website, CMS data and media until hosting stops",
+            "The Client owns the content, the design and code made specifically for the Client. The Asoldi CMS follows its licence and is not transferred"
+          ]
+        },
+        {
+          "clauseId": "general.usageRights",
+          "group": "legal",
+          "title": "Material from the Client",
+          "lines": [
+            "The Client has the right to use the material it supplies and gives Asoldi the right to use it to build and run the website"
+          ]
+        },
+        {
+          "clauseId": "general.ai",
+          "group": "legal",
+          "title": "Use of AI",
+          "lines": [
+            "Asoldi uses AI services in the delivery. Personal data is only sent to providers approved for it, and the list is in the appendix to the data processing agreement"
+          ]
+        },
+        {
+          "clauseId": "general.dpa",
+          "group": "legal",
+          "title": "Privacy and data processing agreement",
+          "lines": [
+            "The data processing agreement version dpa-1 with its appendix on sub-processors applies and is accepted by signing this agreement",
+            "Email functions on the website stay off until the data processing agreement is accepted"
+          ]
+        }
+      ]
+    },
+    "tier-1-standard:once": {
+      "nb": [
+        {
+          "clauseId": "service.site",
+          "group": "scope",
+          "title": "Nettside og CMS",
+          "lines": [
+            "Design og utvikling av nettsiden, inntil 5 hovedsider, med oppsett for mobil, nettbrett og PC, nettstedskart og kobling til kundens domene",
+            "Asoldi CMS med egne brukere og roller, mediebibliotek og redigering av sider og innhold",
+            "Kontaktskjema, juridiske sider og samtykkeløsning for informasjonskapsler",
+            "Grunnleggende søkemotortilpasning: søkeordsplan, titler, beskrivelser, struktur og nettstedskart"
+          ]
+        },
+        {
+          "clauseId": "service.hosting",
+          "group": "scope",
+          "title": "Hosting, domene og vedlikehold",
+          "lines": [
+            "Hosting og drift hos Hostinger så lenge abonnementet er aktivt",
+            "Domenekobling: kunden eier og betaler domenet, og Asoldi kobler det til hostingen",
+            "Vedlikehold: sikkerhet, sikkerhetskopier, feilretting og nye versjoner av Asoldi CMS",
+            "Ett veiledningsmøte om bruk av CMS, holdt én gang"
+          ]
+        },
+        {
+          "clauseId": "service.changes",
+          "group": "scope",
+          "title": "Endringer",
+          "lines": [
+            "Inntil 4 endringer per måned. Én godtatt forespørsel er én endring, og endringer i seksjoner er tillatt",
+            "Godtatte endringer utføres innen 10 arbeidsdager"
+          ]
+        },
+        {
+          "clauseId": "service.blog",
+          "group": "scope",
+          "title": "Blogg",
+          "lines": [
+            "Blogg på nettsiden: kunden skriver og publiserer egne innlegg i CMS"
+          ]
+        },
+        {
+          "clauseId": "general.oneTimePurchase",
+          "group": "term",
+          "title": "Engangskjøp",
+          "lines": [
+            "Engangskjøp: 9 ganger månedsprisen, uten bindingstid",
+            "Ubegrensede endringer i 6 måneder etter levering, deretter 4 endringer per måned",
+            "Etter overleveringen har kunden selv ansvaret for hosting, og funksjoner som krever Asoldis hub, stopper"
+          ]
+        },
+        {
+          "clauseId": "general.cancellation",
+          "group": "term",
+          "title": "Når avtalen avsluttes",
+          "lines": [
+            "Ved oppsigelse stopper oppdateringer av CMS, automatiske blogginnlegg, lenkenettverket, e-post gjennom Asoldi og endringsforespørsler ved utløpet av den betalte perioden",
+            "Nettsiden er oppe i 30 dager etter den betalte perioden. Deretter stopper hostingen",
+            "Kunden kan be om eksport av nettsiden, CMS-data og mediefiler fram til hostingen stopper",
+            "Kunden eier innholdet, designet og kode laget spesielt for kunden. Asoldi CMS følger sin lisens og overføres ikke"
+          ]
+        },
+        {
+          "clauseId": "general.usageRights",
+          "group": "legal",
+          "title": "Materiale fra kunden",
+          "lines": [
+            "Kunden har rett til å bruke materialet kunden leverer, og gir Asoldi rett til å bruke det for å lage og drifte nettsiden"
+          ]
+        },
+        {
+          "clauseId": "general.ai",
+          "group": "legal",
+          "title": "Bruk av AI",
+          "lines": [
+            "Asoldi bruker AI-tjenester i leveransen. Personopplysninger sendes bare til leverandører som er godkjent for det, og listen står i vedlegget til databehandleravtalen"
+          ]
+        },
+        {
+          "clauseId": "general.dpa",
+          "group": "legal",
+          "title": "Personvern og databehandleravtale",
+          "lines": [
+            "Databehandleravtalen versjon dpa-1 med vedlegg om underleverandører gjelder og godtas ved signering av denne avtalen",
+            "E-postfunksjonene på nettsiden er av til databehandleravtalen er godtatt"
+          ]
+        }
+      ],
+      "en": [
+        {
+          "clauseId": "service.site",
+          "group": "scope",
+          "title": "Website and CMS",
+          "lines": [
+            "Design and development of the website, up to 5 main pages, with a layout for mobile, tablet and desktop, a sitemap and connection to the Client's domain",
+            "Asoldi CMS with the Client's own users and roles, a media library and editing of pages and content",
+            "Contact form, legal pages and a cookie consent solution",
+            "Basic search engine setup: keyword plan, titles, descriptions, structure and sitemap"
+          ]
+        },
+        {
+          "clauseId": "service.hosting",
+          "group": "scope",
+          "title": "Hosting, domain and maintenance",
+          "lines": [
+            "Hosting and operation at Hostinger while the subscription is active",
+            "Domain connection: the Client owns and pays for the domain, and Asoldi connects it to the hosting",
+            "Maintenance: security, backups, bug fixes and new versions of the Asoldi CMS",
+            "One guidance meeting on using the CMS, held once"
+          ]
+        },
+        {
+          "clauseId": "service.changes",
+          "group": "scope",
+          "title": "Changes",
+          "lines": [
+            "Up to 4 changes per month. One accepted request is one change, and changes to sections are allowed",
+            "Accepted changes are made within 10 working days"
+          ]
+        },
+        {
+          "clauseId": "service.blog",
+          "group": "scope",
+          "title": "Blog",
+          "lines": [
+            "Blog on the website: the Client writes and publishes their own posts in the CMS"
+          ]
+        },
+        {
+          "clauseId": "general.oneTimePurchase",
+          "group": "term",
+          "title": "One-time purchase",
+          "lines": [
+            "One-time purchase: 9 times the monthly price, with no binding period",
+            "Unlimited changes for 6 months after delivery, then 4 changes per month",
+            "After handover the Client is responsible for hosting, and functions that need Asoldi's hub stop"
+          ]
+        },
+        {
+          "clauseId": "general.cancellation",
+          "group": "term",
+          "title": "When the agreement ends",
+          "lines": [
+            "On cancellation, CMS updates, automatic blog posts, the link network, email through Asoldi and change requests stop at the end of the paid period",
+            "The website stays online for 30 days after the paid period. Then hosting stops",
+            "The Client can request an export of the website, CMS data and media until hosting stops",
+            "The Client owns the content, the design and code made specifically for the Client. The Asoldi CMS follows its licence and is not transferred"
+          ]
+        },
+        {
+          "clauseId": "general.usageRights",
+          "group": "legal",
+          "title": "Material from the Client",
+          "lines": [
+            "The Client has the right to use the material it supplies and gives Asoldi the right to use it to build and run the website"
+          ]
+        },
+        {
+          "clauseId": "general.ai",
+          "group": "legal",
+          "title": "Use of AI",
+          "lines": [
+            "Asoldi uses AI services in the delivery. Personal data is only sent to providers approved for it, and the list is in the appendix to the data processing agreement"
+          ]
+        },
+        {
+          "clauseId": "general.dpa",
+          "group": "legal",
+          "title": "Privacy and data processing agreement",
+          "lines": [
+            "The data processing agreement version dpa-1 with its appendix on sub-processors applies and is accepted by signing this agreement",
+            "Email functions on the website stay off until the data processing agreement is accepted"
+          ]
+        }
+      ]
+    }
+  }
+}

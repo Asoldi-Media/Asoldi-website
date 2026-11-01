@@ -17,6 +17,8 @@ import {
   FUTURE_OFFER_PRODUCT_KEYS,
   withoutKeys,
 } from './normalize-ext.js';
+import { legalCatalogEnabled } from '../lib/legal/switch.js';
+import { offerSendStamp } from '../lib/legal/binding.js';
 
 /**
  * Offer (tilbud) drafts: the offer email + product blocks + contract summary for one sales client.
@@ -676,7 +678,7 @@ export function markSalesOfferSent(id, { actor = '', to = '', pdfPath = '', deli
   if (!current) return null;
   const channel = normalizeOfferDelivery(delivery);
   const content = normalizeOfferSentContent(sentContent);
-  return updateSalesOffer(id, {
+  const sent = updateSalesOffer(id, {
     status: 'sent',
     sentAt: nowIso(),
     sentTo: sanitizeText(to),
@@ -685,6 +687,41 @@ export function markSalesOfferSent(id, { actor = '', to = '', pdfPath = '', deli
     sentContent: content,
     contract: { ...current.contract, pdfPath: sanitizeText(pdfPath) || current.contract.pdfPath },
   }, { actor, action: 'sent', note: `${channel}${content ? `:${content}` : ''}:${sanitizeText(to)}` });
+  return (sent && stampOfferLegalVersions(sent.id)) || sent;
+}
+
+/**
+ * Legal clause catalog (legal.catalogTexts): stamps a sent offer with the DPA version (dpaVersion,
+ * also on each alternative) and the catalog version (ext.legal.catalogVersion) its contract was
+ * rendered with, plus what each tier contained (ext.legal.tiers) and the client's agreed keywords
+ * (ext.legal.agreedKeywordsText), so the contract keeps that scope. Signing the offer then accepts
+ * those versions. Returns the stamped offer, or null while the switch is off (nothing is written).
+ * An already stamped offer is returned as is. The content hash includes dpaVersion, so a preview
+ * approval that was current is carried over.
+ */
+export function stampOfferLegalVersions(id, { settings = null } = {}) {
+  if (!legalCatalogEnabled({ settings })) return null;
+  const list = readAll();
+  const index = list.findIndex((offer) => offer.id === sanitizeText(id));
+  if (index === -1) return null;
+  const current = list[index];
+  if (current.status !== 'sent') return null;
+  const legal = isPlainRecord(current.ext?.legal) ? current.ext.legal : {};
+  const stamp = offerSendStamp(current);
+  if (current.dpaVersion === stamp.dpaVersion && Number(legal.catalogVersion) === stamp.catalogVersion) return current;
+  const frozen = { tiers: stamp.tiers, ...(typeof stamp.agreedKeywordsText === 'string' ? { agreedKeywordsText: stamp.agreedKeywordsText } : {}) };
+  const previewWasCurrent = offerPreviewIsCurrent(current);
+  const next = {
+    ...current,
+    dpaVersion: stamp.dpaVersion,
+    alternatives: (current.alternatives || []).map((alternative) => ({ ...alternative, dpaVersion: stamp.dpaVersion })),
+    ext: { ...(isPlainRecord(current.ext) ? current.ext : {}), legal: { ...legal, catalogVersion: stamp.catalogVersion, stampedAt: nowIso(), ...frozen } },
+  };
+  if (previewWasCurrent) next.previewHash = offerContentHash(next);
+  const merged = normalizeSalesOffer(next);
+  list[index] = merged;
+  writeOffersFile(list);
+  return merged;
 }
 
 /** Full Fireflies letter went out after a Signer nå send. Keeps first sentAt. */

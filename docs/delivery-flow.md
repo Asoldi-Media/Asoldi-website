@@ -20,6 +20,7 @@ batch by batch, and each batch updates this file. Runbooks: [delivery-runbooks.m
 | Delivery state | `lib/delivery-state.js`, writers in `data/sales.js`, audit in `lib/delivery-audit.js` | in place (stored by the backfill; the loop is a later batch) |
 | Maker events | `lib/maker-events.js`, `lib/maker-events-hub.js` | in place, off (`development.makerEvents`) |
 | Backfill | `lib/delivery-backfill.js`, `scripts/backfill-*.mjs`, routes in `lib/routes/delivery-routes.js` | in place, off (`migrations.deliveryBackfill`) |
+| Legal texts | `lib/legal/`, routes in `lib/routes/legal-routes.js`, [legal-texts.md](legal-texts.md) | in place, off (`legal.catalogTexts.enabled`) |
 | Gate, emails, job queue, Maker worker | later batches | planned |
 
 ---
@@ -216,6 +217,7 @@ Settings keys (`SETTINGS_KEYS`, dotted paths in the file):
 | Retention | `retention.leadMonths`, `retention.afterContractMonths`, `retention.briefOldVersionsDays`, `retention.changeRequestsMonths`, `retention.nurtureProofYears`, `retention.inboxSkipLogDays` |
 | Storage | `storage.budgetFiles`, `storage.budgetMb` |
 | Alerts | `alerts.to`, `alerts.hostOfflineHours`, `alerts.jobBlockedHours`, `alerts.digestAt` |
+| Legal texts | `legal.catalogTexts.enabled` (default `false`; see [legal-texts.md](legal-texts.md)) |
 
 ---
 
