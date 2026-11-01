@@ -125,9 +125,9 @@ recording, erase request, payment not connected) are added by the batch that shi
 
 **Symptom.** The developer board shows no brief for a signed client, or the brief misses a recent meeting.
 
-**Check.** `GET /api/admin/automation-settings`: `brief.enabled` must be true (a 404 `{code:'brief-disabled'}` from the brief routes means it is off). `GET /api/admin/development/<id>/brief/versions` lists the stored versions. In `<dataDir>/delivery-briefs/<id>/state.json`, `pendingSince` shows a rebuild waiting out its 10-minute debounce, `partial: true` a rebuild that ran out of time or met provider errors (`lastErrors`), and `builtInputHash` the inputs of the newest version.
+**Check.** `GET /api/admin/automation-settings`: `brief.enabled` must be true (a 404 `{code:'brief-disabled'}` from the brief routes means it is off). `GET /api/admin/development/<id>/brief/versions` lists the stored versions. In `<dataDir>/delivery-briefs/<id>/state.json`, `pendingSince` shows a rebuild waiting out its 10-minute debounce, `partial: true` a rebuild that ran out of time or met provider errors (`lastErrors`), `retryAt` when a failed chunk may be asked again (`chunkFailures` holds the count per chunk), `failureRetryAt` the backoff after a rebuild that failed outright, and `builtInputHash` the inputs of the newest version. `stats.chunks.gaps` in the brief counts chunks the model could not answer.
 
-**Fix.** Wait for the debounce, or `POST /api/admin/development/<id>/brief/rebuild` with `{"wait":true}`. A partial rebuild resumes from its cached chunks; provider errors need the LLM provider back (`GET /api/admin/ai/status`). A brief never falls back to another provider for transcripts.
+**Fix.** Wait for the debounce or the backoff, or `POST /api/admin/development/<id>/brief/rebuild` with `{"wait":true}` (it does not wait for chunk backoffs). A 409 `brief-busy` means another rebuild of the same client is running; try again when it is done. A partial rebuild resumes from its cached chunks; provider errors need the LLM provider back (`GET /api/admin/ai/status`). Gaps (refusals, output limits, broken answers, or 6 failures in a row) stay until the prompt changes; once the cause is fixed, ask again with `{"wait":true,"retryGaps":true}`. A brief never falls back to another provider for transcripts.
 
 ---
 
