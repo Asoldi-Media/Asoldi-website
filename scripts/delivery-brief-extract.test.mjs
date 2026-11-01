@@ -217,16 +217,19 @@ test('quotes: substring after whitespace and case folding; diacritics are kept',
   assert.equal(normalizeQuote('  «Hei   der…»  '), 'hei der');
 });
 
-test('quotes: other punctuation is the same run of words; 90 % in order with one turn passes; a changed number, a paraphrase or words from two turns do not', () => {
+test('quotes: other punctuation is the same run of words; a filler word added passes; a changed number, a paraphrase or words from two turns do not', () => {
   const verifier = createQuoteVerifier(WORKSHOP);
   const close = verifier.verify('Vi vil gjerne at forsiden viser bilder av ferdige bad fra kunder i hele fylket!');
   assert.equal(close.ok, true);
   assert.equal(close.how, 'substring', 'another end mark: the same words in the same order');
+  assert.equal(close.quote, 'Vi vil gjerne at forsiden viser bilder av ferdige bad fra kunder i hele fylket', 'the transcript\'s own words');
   const comma = verifier.verify('vi vil gjerne at forsiden viser bilder av ferdige bad, fra kunder i hele fylket');
   assert.equal(comma.ok, true);
-  const oneWord = verifier.verify('Vi vil gjerne at forsiden viser fine bilder av ferdige bad fra kunder i hele fylket');
-  assert.equal(oneWord.ok, true, 'one added word in sixteen');
-  assert.equal(oneWord.how, 'tokens');
+  const filler = verifier.verify('Vi vil jo gjerne at forsiden viser bilder av ferdige bad fra kunder i hele fylket');
+  assert.equal(filler.ok, true, 'one added filler word in sixteen');
+  assert.equal(filler.how, 'tokens');
+  assert.equal(filler.quote, 'Vi vil gjerne at forsiden viser bilder av ferdige bad fra kunder i hele fylket', 'the stored quote leaves the added word out');
+  assert.equal(verifier.verify('Vi vil gjerne at forsiden viser fine bilder av ferdige bad fra kunder i hele fylket').ok, false, 'an added content word');
   assert.equal(verifier.verify('Vi vil gjerne at forsiden viser bilder av bad fra kunder i fylket').ok, false, 'two words in fourteen left out: under 90 %');
   assert.equal(verifier.verify('fra kunder i hele fylket vil vi gjerne at forsiden viser bilder av ferdige bad').ok, false, 'the same words in another order');
   const sales = createQuoteVerifier(SALES);
@@ -293,6 +296,60 @@ test('quotes: an item is checked only against its own meeting', () => {
   assert.equal(kept.length, 1);
   assert.equal(kept[0].speaker, 'Kunde');
   assert.deepEqual(dropped.map((row) => row.reason), ['not-found', 'no-transcript', 'speaker-mismatch']);
+});
+
+test('quotes: a long quote that drops a negation, swaps a word or adds a word is rejected; the kept quote is the transcript\'s own words', async () => {
+  const meetingText = [
+    'Selger: Hva tenker dere om bilder på nettsiden?',
+    'Kunde: Vi vil ikke ha bilder av de ansatte på forsiden, det er viktig for oss at det blir sånn.',
+    'Kunde: Vi vil ha en kontaktside, kontaktside med kart og åpningstider for 2027.',
+  ].join('\n');
+  const verifier = createQuoteVerifier(meetingText);
+  // Fourteen words each: one edit would be within 10 %, but none of these edits is allowed.
+  const changed = [
+    ['Vi vil ha bilder av de ansatte på forsiden, det er viktig for oss', 'the negation left out'],
+    ['Vi vil gjerne ha bilder av de ansatte på forsiden, det er viktig for oss', 'the negation swapped for another word'],
+    ['Vi vil ikke ha bilder av de ansatte på kontaktsiden, det er viktig for oss', 'another page named'],
+    ['Vi vil ikke ha bilder av de tidligere ansatte på forsiden, det er viktig for oss', 'a content word added'],
+    ['Vi vil aldri ikke ha bilder av de ansatte på forsiden, det er viktig for oss', 'a negation added'],
+    ['Vi vil ha en kontaktside med kart og åpningstider for 2028', 'another number'],
+  ];
+  for (const [quote, why] of changed) {
+    const result = verifier.verify(quote, { speaker: 'Kunde' });
+    assert.equal(result.ok, false, why);
+  }
+  // Allowed: a small word left out or added, and a repeated word left out. The stored quote is the transcript's.
+  const article = verifier.verify('Vi vil ikke ha bilder av ansatte på forsiden, det er viktig for oss', { speaker: 'Kunde' });
+  assert.equal(article.ok, true);
+  assert.equal(article.how, 'tokens');
+  assert.equal(article.quote, 'Vi vil ikke ha bilder av de ansatte på forsiden, det er viktig for oss');
+  const stutter = verifier.verify('Vi vil ha en kontaktside med kart og åpningstider for 2027', { speaker: 'Kunde' });
+  assert.equal(stutter.ok, true);
+  assert.equal(stutter.how, 'tokens');
+  assert.equal(stutter.quote, 'Vi vil ha en kontaktside, kontaktside med kart og åpningstider for 2027');
+
+  // The same through the extractor with a stubbed model: the meaning-changing items are dropped and
+  // a kept item carries the transcript's words, not the model's copy.
+  const llm = {
+    json: async () => ({
+      data: {
+        ...emptyAnswer(),
+        directives: [
+          { kind: 'add', area: 'hero', ask: 'plantet: bilder av ansatte', quote: changed[0][0], speaker: 'Kunde' },
+          { kind: 'add', area: 'hero', ask: 'plantet: gjerne bilder', quote: changed[1][0], speaker: 'Kunde' },
+          { kind: 'remove', area: 'page:contact', ask: 'plantet: kontaktsiden', quote: changed[2][0], speaker: 'Kunde' },
+          { kind: 'remove', area: 'hero', ask: 'Ingen bilder av ansatte på forsiden', quote: 'vi vil ikke ha bilder av ansatte på forsiden, det er viktig for oss', speaker: 'Kunde' },
+        ],
+      },
+    }),
+  };
+  const result = await extractMeeting({ meeting: { meetingId: 'm-polarity', purpose: 'workshop', transcript: meetingText }, llm, cache: createMemoryChunkCache(), clientId: 'syn-brief' });
+  assert.deepEqual(result.items.filter((entry) => /plantet/.test(entry.ask)), [], 'no meaning-changing quote survives');
+  assert.equal(result.droppedUnverified, 3);
+  const kept = result.items.find((entry) => entry.ask === 'Ingen bilder av ansatte på forsiden');
+  assert.ok(kept);
+  assert.equal(kept.quote, 'Vi vil ikke ha bilder av de ansatte på forsiden, det er viktig for oss');
+  assert.ok(meetingText.includes(kept.quote), 'the stored quote is text from the transcript');
 });
 
 // ---------------------------------------------------------------- the map step
