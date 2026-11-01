@@ -128,6 +128,17 @@ export function defaultAutomationSettings() {
     // Off: today's static texts, no stamps, and the legal routes answer 404.
     legal: { catalogTexts: { enabled: false } },
     // ---- end legal texts
+    // seo
+    // jobGating: off = the old gates decide automatic posts and Maps ranking; shadow = the old gates
+    // still decide and every site where the feature-key gate would decide differently is logged; auto =
+    // the feature-key gate decides. dfsLedger: DataForSEO spend is also booked into the monthly seo-ops
+    // ledger, which alerts at a cap and never stops a call. recordPull: the Maker may read a client's
+    // SEO record. A paused switch ({reason}) counts as off.
+    seo: {
+      jobGating: { enabled: false, mode: 'shadow', paused: null },
+      dfsLedger: { enabled: false, paused: null },
+      recordPull: { enabled: false, paused: null },
+    },
     // Written only by recordReleasePass (the pre-release suite), never by PUT.
     releases: {},
   };
@@ -241,6 +252,8 @@ const ENUMS = {
   'changeRequests.countAt': ['accepted'],
   'development.makerEvents': [...MAKER_EVENT_MODES],
   'migrations.deliveryBackfill': [...BACKFILL_MODES],
+  // seo
+  'seo.jobGating.mode': ['shadow', 'auto'],
 };
 
 const RANGES = {
@@ -285,6 +298,10 @@ const BOOLEANS = new Set([
   // ---- legal texts
   'legal.catalogTexts.enabled',
   // ---- end legal texts
+  // seo
+  'seo.jobGating.enabled',
+  'seo.dfsLedger.enabled',
+  'seo.recordPull.enabled',
 ]);
 
 function knownPaths() {
@@ -392,6 +409,14 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
     else node.mode = mode;
     const paused = normalizePaused(node.paused, { by, now });
     if (paused === undefined) fail(`publish.${target}.paused`, 'Must be null or {reason}.');
+    else node.paused = paused;
+  }
+  // seo
+  for (const name of ['jobGating', 'dfsLedger', 'recordPull']) {
+    const node = value.seo?.[name];
+    if (!isPlainObject(node)) continue;
+    const paused = normalizePaused(node.paused, { by, now });
+    if (paused === undefined) fail(`seo.${name}.paused`, 'Must be null or {reason}.');
     else node.paused = paused;
   }
   const tiers = value.publish?.staging?.tiers;

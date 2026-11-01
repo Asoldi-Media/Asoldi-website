@@ -218,6 +218,7 @@ Settings keys (`SETTINGS_KEYS`, dotted paths in the file):
 | Storage | `storage.budgetFiles`, `storage.budgetMb` |
 | Alerts | `alerts.to`, `alerts.hostOfflineHours`, `alerts.jobBlockedHours`, `alerts.digestAt` |
 | Legal texts | `legal.catalogTexts.enabled` (default `false`; see [legal-texts.md](legal-texts.md)) |
+| SEO | `seo.jobGating.enabled`, `seo.jobGating.mode` (`shadow` or `auto`; default off, see [SEO record, job gating and the DataForSEO ledger](seo-record.md)), `seo.dfsLedger.enabled` (default off), `seo.recordPull.enabled` (default off); `seo.jobGating.paused`, `seo.dfsLedger.paused`, `seo.recordPull.paused` (`null` or `{reason}`; a paused switch counts as off) |
 
 ---
 

@@ -1,0 +1,65 @@
+{
+  "version": "0.1.20250000",
+  "status_code": 20000,
+  "status_message": "Ok.",
+  "cost": 0.002,
+  "tasks_count": 1,
+  "tasks": [
+    {
+      "id": "synthetic-maps-task",
+      "status_code": 20000,
+      "status_message": "Ok.",
+      "cost": 0.002,
+      "result": [
+        {
+          "keyword": "synthetic keyword",
+          "se_domain": "google.no",
+          "check_url": "https://www.google.no/maps/search/synthetic+keyword",
+          "datetime": "2026-10-01 10:00:00 +00:00",
+          "se_results_count": 3,
+          "items": [
+            {
+              "type": "maps_search",
+              "rank_group": 1,
+              "rank_absolute": 1,
+              "title": "Eksempel Verksted AS",
+              "domain": "verksted.example.com",
+              "url": "https://verksted.example.com/",
+              "address": "Eksempelveien 1, 0001 Eksempelby",
+              "category": "Bilverksted",
+              "rating": { "value": 4.7, "votes_count": 31 },
+              "place_id": "synthetic-place-1",
+              "is_claimed": true
+            },
+            {
+              "type": "maps_search",
+              "rank_group": 2,
+              "rank_absolute": 2,
+              "title": "Testbakeriet",
+              "domain": "bakeri.example.com",
+              "url": "https://bakeri.example.com/",
+              "address": "Prøvegata 2, 0002 Eksempelby",
+              "category": "Bakeri",
+              "rating": { "value": 4.4, "votes_count": 12 },
+              "place_id": "synthetic-place-2",
+              "is_claimed": false
+            },
+            {
+              "type": "maps_search",
+              "rank_group": 3,
+              "rank_absolute": 3,
+              "title": "Demo Frisør",
+              "domain": "frisor.example.com",
+              "url": "https://frisor.example.com/",
+              "address": "Demogata 3, 0003 Eksempelby",
+              "category": "Frisør",
+              "rating": { "value": 4.9, "votes_count": 80 },
+              "place_id": "synthetic-place-3",
+              "is_claimed": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

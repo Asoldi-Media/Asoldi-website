@@ -499,6 +499,11 @@ export const SETTINGS_KEYS = Object.freeze({
   // ---- legal texts
   legalCatalogTexts: 'legal.catalogTexts.enabled',
   // ---- end legal texts
+  // seo
+  seoJobGating: 'seo.jobGating.enabled',
+  seoJobGatingMode: 'seo.jobGating.mode',
+  seoDfsLedger: 'seo.dfsLedger.enabled',
+  seoRecordPull: 'seo.recordPull.enabled',
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);

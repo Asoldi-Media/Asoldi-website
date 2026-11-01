@@ -17,7 +17,8 @@ import {
   type MergeField,
   type OfferReadiness,
 } from './emailApi';
-import { getSalesToken, type SalesClient, type SalesOffer, type SalesSender } from '../Admin/shared';
+import { getSalesToken, salesAuthHeaders, type SalesClient, type SalesOffer, type SalesSender } from '../Admin/shared';
+import { AgreedKeywordsList } from './AgreedKeywordsList';
 import { ContractSummaryCard, HtmlPreview, OfferProductsCard, OfferStatusChip } from './offerUi';
 import { SalesFlowSteps } from './SalesFlowSteps';
 import { clientCardParty, offerMissingFields, offerReadinessMessage } from '../../../lib/offer-readiness.js';
@@ -1400,6 +1401,7 @@ export function SalesOfferComposer({
                 <aside className="flex flex-col gap-4">
                   <OfferProductsCard products={offer.products} alternatives={offer.alternatives} mvaIncluded={mvaIncluded} />
                   <ContractSummaryCard summary={offer.contract.summary} mvaIncluded={mvaIncluded} />
+                  {clientId ? <AgreedKeywordsList salesClientId={clientId} authHeaders={salesAuthHeaders()} /> : null}
                   <div className="rounded-xl border border-white/10 bg-[#161616] p-4 text-xs text-gray-300 space-y-2">
                     <div className="font-medium text-white text-sm">Kontraktdata for dette tilbudet</div>
                     <p className="text-[11px] text-gray-500">Krysset nullstiller feltet til kundekortet. Til og startdato settes på de forrige stegene.</p>
