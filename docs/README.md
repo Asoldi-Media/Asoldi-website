@@ -28,6 +28,7 @@ disagree.
 | Admin sign-in and password reset codes | [ADMIN-AND-OTP.md](ADMIN-AND-OTP.md) |
 | Checkout and sales rollout checklist | [checkout-sales-rollout-checklist.md](checkout-sales-rollout-checklist.md), [client-flow-checklist.txt](client-flow-checklist.txt) |
 | Publishing the client CMS package | [PUBLISH-NPM-PACKAGE-WALKTHROUGH.md](PUBLISH-NPM-PACKAGE-WALKTHROUGH.md) |
+| Client-site email: the per-site emailKey, provisioning, signed hub → CMS calls, unsubscribe routes | [email-credential.md](email-credential.md) |
 
 ## Switches that ship off
 
@@ -45,3 +46,5 @@ no new outgoing call.
 | Maker delivery events | `off` (events take the step-status path) | `PUT /api/admin/automation-settings` `{"development":{"makerEvents":"record"}}` | `automation-settings.json` | [delivery-flow.md](delivery-flow.md#maker-events) |
 | Delivery backfill | `off` | dry run: `POST /api/admin/system/delivery-backfill` `{}`; apply: `{"dryRun":false}` (or `migrations.deliveryBackfill` `apply` for one boot, then back to `off`) | `automation-settings.json`, `migrations/` | [delivery-flow.md](delivery-flow.md#backfill) |
 | Hub AI profile | `legacy`: every call site sends its request as before the facade, which only records it | AI status card, or `PUT /api/admin/ai/routes` (`profile` `prod` after a live check); `{"facade":false}` turns the facade off | `ai-routes.override.json` | [ai-layer.md](ai-layer.md) |
+| Client-site email platform | off: every `/api/hub/email/*` route answers 404 `{"code":"disabled"}` | `PUT /api/admin/email/settings` `{"enabled":true,"rollout":{"mode":"allowlist","siteIds":["<id>"]}}` | `email-settings.json` `enabled`, `rollout` | [email-credential.md](email-credential.md) |
+| Owner-routing default for form and order notices | off, no sites | check `GET /api/admin/email/owner-routing/preview`, then `PUT /api/admin/email/owner-routing/default` `{"enabled":true,"siteIds":["<id>"]}` one site at a time | `email-settings.json` `ownerRoutingDefault` | [runtime-data.md](runtime-data.md#6-email-data-opt-outs-owner-routing-email-log) |
