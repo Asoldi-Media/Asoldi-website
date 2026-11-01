@@ -128,7 +128,7 @@ recording, erase request, payment not connected) are added by the batch that shi
 **Check.**
 - `GET /api/admin/automation-settings`: `settings.gate.enabled` must be `true`; `emails.postWorkshop` must not be off or paused.
 - `GET /api/admin/delivery/gate/<clientId>`: each line's `status`, `evidence` and `source`, `stale` (the stored gate is older than its inputs) and `info`.
-- The client's `delivery.emails.postWorkshopDueAt`; shadow records are in the safe-mode outbox with channel `delivery-shadow` and in `<dataDir>/delivery-audit/<YYYY-MM>.jsonl` (`email-shadow`).
+- The client's `delivery.emails.postWorkshopDueAt`; shadow mails are never sent: an admin reads them under the client in the developer gate panel (or in `shadowMails` of `GET /api/admin/delivery/gate/<clientId>`); they are stored in `<dataDir>/outbox` with channel `delivery-shadow` (purged after 30 days), keyed in `<dataDir>/delivery-email-shadow.json`, and listed in `<dataDir>/delivery-audit/<YYYY-MM>.jsonl` (`email-shadow`).
 
 **Fix.**
 - Evidence the gate cannot see (sent by phone, for example): put it in Kundedata, or waive the line with `PUT /api/admin/delivery/gate/<clientId>/waivers/<lineId> {"option": "..."}`; then `POST /api/admin/delivery/gate/<clientId>/evaluate`.
