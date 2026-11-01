@@ -461,6 +461,7 @@ import {
 } from './lib/workshop-action.js';
 import { ensureMeetRoomOpen } from './lib/google-meet-access.js';
 import { sendPreWorkshopAfterContractSigned } from './lib/workshop-prep-send.js';
+import { gateMailLinesFor } from './lib/delivery-gate.js';
 import {
   adminBoardViewerIsDamianMailbox,
   isAdminBoardCalendarQuery,
@@ -14431,6 +14432,9 @@ async function workshopNeedsMakerFetch(client) {
 
 async function loadDeskNeedLines(client, templateKey = '') {
   if (!isDataInnsamlingEmailTemplate(templateKey)) return [];
+  // With the gate on and emails.preWorkshop.lines 'gate', the gate's grouped lines; else null.
+  const gateLines = await gateMailLinesFor(client).catch(() => null);
+  if (gateLines) return gateLines;
   try {
     const document = await loadWorkshopNeedsDocument(client, {
       fetchMakerRun: await workshopNeedsMakerFetch(client),
