@@ -218,6 +218,10 @@ test('automatic posts: off and shadow give the base release\'s set of sites; sha
   const rows = Object.values(gating.readDecisionDiff()).filter((row) => row.job === 'blog-scheduler');
   assert.deepEqual(rows.map((row) => row.siteKey).sort(), differing, 'shadow logged exactly the differing sites');
   for (const row of rows) assert.equal(row.legacy, off.has(row.siteKey));
+  // Auto never posts on a site whose blog module is off, as the old gate never did.
+  const blogOff = sites.filter((site) => site.features?.blog !== true).map((site) => site.site_key);
+  assert.ok(blogOff.length > 0);
+  assert.deepEqual(blogOff.filter((key) => auto.has(key)), [], 'auto: no automatic posts with the blog off');
   if (!baseBlog) console.log(`# ${BASE_REF} not available: compared with this tree's old gate only`);
 });
 

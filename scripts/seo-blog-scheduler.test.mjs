@@ -54,6 +54,21 @@ test('auto: the override blog.autoPosts=false stops the scheduler', () => {
   assert.equal(brief(tier2({ websitePlan: 'tier-1-standard' })), false, 'tier 1 has no automatic posts');
 });
 
+test('auto: a site whose blog module is off gets no automatic posts on any tier', () => {
+  setGating({ enabled: true, mode: 'auto' });
+  const blogOff = (websitePlan) => tier2({ websitePlan, features: { ...tier2().features, blog: false } });
+  for (const plan of ['tier-2-seo', 'tier-3-ecommerce']) {
+    const site = blogOff(plan);
+    assert.equal(site.features.blog, false);
+    assert.equal(brief(site), false, plan);
+    const decision = gating.featureKeyDecision(site, 'blog-scheduler');
+    assert.deepEqual([decision.allowed, decision.key], [false, 'blog.autoPosts']);
+    assert.match(decision.reason, /blog module is off/);
+  }
+  assert.equal(brief(tier2({ websitePlan: 'tier-3-ecommerce' })), true, 'with the blog on, tier 3 keeps automatic posts');
+  assert.equal(gating.featureKeyDecision(blogOff('tier-2-seo'), 'rank-tracker.maps').allowed, true, 'only the blog job needs the blog module');
+});
+
 test('a paused switch counts as off', () => {
   setGating({ enabled: true, mode: 'auto' });
   const settings = { seo: { jobGating: { enabled: true, mode: 'auto', paused: { at: '2026-11-01T00:00:00.000Z', reason: 'test', by: 'test' } } } };
