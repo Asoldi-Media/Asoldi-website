@@ -58,7 +58,7 @@ function buildApp() {
   return app;
 }
 
-test('heartbeat: no capabilities and no loop time while the loop is off; both once it runs', async (t) => {
+test('heartbeat: no capabilities and no loop time while the loop is off; jobs only while it runs in auto', async (t) => {
   setSettings({});
   writeFileSync(join(dataDir, 'sales-clients.json'), '[]');
   const app = buildApp();
@@ -79,9 +79,15 @@ test('heartbeat: no capabilities and no loop time while the loop is off; both on
   const tickAt = Date.parse('2026-11-02T09:00:00.000Z');
   await loop.tick({ now: tickAt });
   clearJsonCacheForTests();
+  const shadow = await beat();
+  assert.deepEqual(shadow.hubCapabilities, [], 'in shadow no client can get a job, so none is offered');
+  assert.equal(shadow.hubLoopLastTickAt, new Date(tickAt).toISOString());
+  setSettings({ pilotClientIds: ['meta-p1'], delivery: { loop: { enabled: true, mode: 'auto' } } });
   const on = await beat();
   assert.deepEqual(on.hubCapabilities, ['delivery-jobs/1']);
   assert.equal(on.hubLoopLastTickAt, new Date(tickAt).toISOString());
+  setSettings({ pilotClientIds: ['meta-p1'], delivery: { loop: { enabled: true, mode: 'auto', paused: { reason: 'check' } } } });
+  assert.deepEqual((await beat()).hubCapabilities, [], 'a paused loop offers no jobs');
 });
 
 test('an unchanged heartbeat leaves maker-hosts.json untouched', () => {

@@ -161,6 +161,7 @@ test('routeHost: the run owner, the handoff owner on a tie, the developer, the d
 test('a job is never offered to a host without its handler, and such a claim gets 409', () => {
   resetJobs();
   seedClients(baseClients());
+  loopOn();
   const previewHost = makeHost('Preview PC', ['preview']);
   const continueHost = makeHost('Continue PC', ['continue']);
   const { job } = jobs.enqueueJob({ salesClientId: 'cl-auto', kind: 'preview' }, { now: T0 });
@@ -203,6 +204,7 @@ test('100 concurrent claims of one job: exactly one 200 and 99 409', async (t) =
 test('heartbeats extend the lease and keep 50 log lines, without backup files', () => {
   resetJobs();
   seedClients(baseClients());
+  loopOn();
   const worker = makeHost('Beat PC', ['preview']);
   const { job } = jobs.enqueueJob({ salesClientId: 'cl-auto', kind: 'preview' }, { now: T0 });
   jobs.claimJob(job.id, worker.host, { now: T0 });
@@ -226,6 +228,7 @@ test('heartbeats extend the lease and keep 50 log lines, without backup files', 
 test('failures back off 5, 15, then 45 minutes and fail after maxAttempts; a blocking code blocks', () => {
   resetJobs();
   seedClients(baseClients());
+  loopOn();
   const worker = makeHost('Retry PC', ['preview', 'publish']);
   const { job } = jobs.enqueueJob({ salesClientId: 'cl-auto', kind: 'preview' }, { now: T0 });
   let now = T0;
@@ -276,11 +279,94 @@ test('a stale lease is requeued by one loop tick', async () => {
   assert.equal(sales.getSalesClientById('cl-auto').delivery.job.status, 'queued', 'the mirror follows the status change');
 });
 
+// ── paused, shadow and pilot removed: queued work stays put ─────────────────
+
+test('paused, shadow or no longer a pilot: no job is offered, a claim gets 409 and the client is not written', async (t) => {
+  resetJobs();
+  seedClients(baseClients());
+  loopOn();
+  const app = routeApp();
+  const { base, close } = await serve(app);
+  t.after(close);
+  const worker = makeHost('Hold PC', ['preview']);
+  const queued = jobs.requestJob({ kind: 'preview', createdBy: 'test' }, { client: sales.getSalesClientById('cl-auto'), sales });
+  assert.equal(queued.status, 201);
+  const headers = { 'content-type': 'application/json', 'x-maker-host-token': worker.token };
+  const clientBefore = JSON.stringify(sales.getSalesClientById('cl-auto'));
+  // [label, settings, claim code, capabilities]: another pilot in auto still asks Makers to poll.
+  const cases = [
+    ['paused', { pilotClientIds: ['cl-auto'], delivery: { loop: { enabled: true, mode: 'auto', paused: { reason: 'check' } } }, development: { previewJobs: true } }, 'paused', []],
+    ['shadow', { pilotClientIds: ['cl-auto'], delivery: { loop: { enabled: true, mode: 'shadow' } }, development: { previewJobs: true } }, 'not-auto', []],
+    ['pilot removed', { pilotClientIds: ['cl-linked'], delivery: { loop: { enabled: true, mode: 'auto' } }, development: { previewJobs: true } }, 'not-auto', ['delivery-jobs/1']],
+  ];
+  for (const [label, patch, code, capabilities] of cases) {
+    setSettings(patch);
+    const listed = await (await fetch(`${base}/api/maker/jobs`, { headers })).json();
+    assert.deepEqual(listed.jobs, [], `${label}: nothing is offered`);
+    assert.deepEqual(jobs.listOfferable(worker.host, {}), [], `${label}: listOfferable agrees`);
+    const claim = await fetch(`${base}/api/maker/jobs/${queued.job.id}/claim`, { method: 'POST', headers, body: '{}' });
+    assert.equal(claim.status, 409, label);
+    assert.equal((await claim.json()).code, code, label);
+    assert.equal(jobs.getJob(queued.job.id).status, 'queued', `${label}: the job stays queued`);
+    assert.equal(jobs.getJob(queued.job.id).attempts, 0, `${label}: no attempt is used`);
+    assert.equal(JSON.stringify(sales.getSalesClientById('cl-auto')), clientBefore, `${label}: the client record is not written`);
+    assert.deepEqual(meta.hubCapabilities({ dataDir }), capabilities, `${label}: capabilities`);
+  }
+  loopOn();
+  assert.deepEqual((await (await fetch(`${base}/api/maker/jobs`, { headers })).json()).jobs.map((row) => row.id), [queued.job.id], 'back in auto: offered again');
+  assert.deepEqual(meta.hubCapabilities({ dataDir }), ['delivery-jobs/1']);
+});
+
+test('a claimed job is told to stop while the loop is paused; heartbeat, complete and fail keep working', async (t) => {
+  resetJobs();
+  seedClients(baseClients());
+  loopOn();
+  const app = routeApp();
+  const { base, close } = await serve(app);
+  t.after(close);
+  const worker = makeHost('Stop PC', ['preview', 'continue']);
+  const headers = { 'content-type': 'application/json', 'x-maker-host-token': worker.token };
+  const post = (path, body = {}) => fetch(`${base}${path}`, { method: 'POST', headers, body: JSON.stringify(body) });
+  const first = jobs.enqueueJob({ salesClientId: 'cl-auto', kind: 'preview' }, {}).job;
+  const second = jobs.enqueueJob({ salesClientId: 'cl-auto', kind: 'continue' }, {}).job;
+  assert.equal((await post(`/api/maker/jobs/${first.id}/claim`)).status, 200);
+  assert.equal((await post(`/api/maker/jobs/${second.id}/claim`)).status, 200);
+  const running = await (await post(`/api/maker/jobs/${first.id}/heartbeat`, { progress: { phase: 'pipeline', pct: 10 } })).json();
+  assert.equal(running.stop, undefined, 'no stop while the client is in auto');
+  setSettings({ pilotClientIds: ['cl-auto'], delivery: { loop: { enabled: true, mode: 'auto', paused: { reason: 'check' } } }, development: { previewJobs: true } });
+  const beat = await post(`/api/maker/jobs/${first.id}/heartbeat`, { progress: { phase: 'pipeline', pct: 20 } });
+  assert.equal(beat.status, 200);
+  assert.equal((await beat.json()).stop, 'paused');
+  const failed = await post(`/api/maker/jobs/${first.id}/fail`, { error: 'Stopped: the hub holds this job (paused).', retryable: true });
+  assert.equal(failed.status, 200);
+  assert.equal(jobs.getJob(first.id).status, 'retrying', 'it waits in the queue');
+  const done = await post(`/api/maker/jobs/${second.id}/complete`, { result: { runId: 'run-done-0001' } });
+  assert.equal(done.status, 200, 'a job that finished anyway is recorded');
+  assert.equal(jobs.getJob(second.id).status, 'done');
+});
+
+test('a stale lease of a client that left auto is requeued without writing the client', async () => {
+  resetJobs();
+  seedClients(baseClients());
+  loopOn();
+  const worker = makeHost('Left PC', ['preview']);
+  const { job } = jobs.requestJob({ kind: 'preview', createdBy: 'test' }, { client: sales.getSalesClientById('cl-auto'), sales, now: T0 });
+  jobs.claimJob(job.id, worker.host, { now: T0, sales });
+  assert.equal(sales.getSalesClientById('cl-auto').delivery.job.status, 'claimed');
+  setSettings({ pilotClientIds: ['cl-linked'], delivery: { loop: { enabled: true, mode: 'auto' } }, development: { previewJobs: true } });
+  const before = JSON.stringify(sales.getSalesClientById('cl-auto'));
+  const touched = jobs.requeueStale({ now: T0 + 11 * MIN, sales });
+  assert.equal(touched.length, 1);
+  assert.equal(jobs.getJob(job.id).status, 'queued');
+  assert.equal(JSON.stringify(sales.getSalesClientById('cl-auto')), before, 'the loop does not write a client outside auto');
+});
+
 // ── results and stages ───────────────────────────────────────────────────────
 
 test('completed results lose local and private-network URLs; a done continue job derives dev_review', () => {
   resetJobs();
   seedClients(baseClients());
+  loopOn();
   const worker = makeHost('Done PC', ['continue']);
   const { job } = jobs.enqueueJob({ salesClientId: 'cl-auto', kind: 'continue' }, { now: T0 });
   jobs.claimJob(job.id, worker.host, { now: T0 });
@@ -401,6 +487,28 @@ test('admin routes: the preview button state, enqueue, duplicate, cancel and ret
   assert.equal((await call('POST', `/api/admin/delivery/jobs/${job.id}/retry`)).status, 409, 'only failed or blocked jobs retry');
   assert.equal((await call('POST', '/api/admin/delivery/jobs/job_unknown0000/cancel')).status, 404);
   assert.deepEqual(meta.hubCapabilities({ dataDir }), ['delivery-jobs/1']);
+});
+
+test('admin enqueue: a preview job takes the client language when the request names none', async (t) => {
+  resetJobs();
+  seedClients([
+    { ...baseClients()[0], language: 'en' },
+    { id: 'cl-plan', product: 'asoldi', businessName: 'Maler Eksempel AS', status: 'active', progression: signed, sitePlan: { status: 'active', tierId: 'tier-1', languages: ['nb'] } },
+  ]);
+  loopOn(['cl-auto', 'cl-plan']);
+  const app = routeApp();
+  const { base, close } = await serve(app);
+  t.after(close);
+  const call = (body) => fetch(`${base}/api/admin/delivery/jobs`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const own = await (await call({ salesClientId: 'cl-auto', kind: 'preview' })).json();
+  assert.equal(own.job.input.language, 'en');
+  const fromPlan = await (await call({ salesClientId: 'cl-plan', kind: 'preview' })).json();
+  assert.equal(fromPlan.job.input.language, sales.getSalesClientById('cl-plan').sitePlan?.languages?.[0] || '', 'the site plan language when the client has no own one');
+  const routesLib = await import('../lib/routes/delivery-jobs-routes.js');
+  assert.equal(routesLib.clientLanguage({ language: { code: 'SV' } }), 'sv');
+  assert.equal(routesLib.clientLanguage({ makerRun: { language: { code: 'da' } } }), 'da');
+  assert.equal(routesLib.clientLanguage({ language: 'not a language' }), '');
+  assert.equal(routesLib.clientLanguage({}), '');
 });
 
 test('handoff accepted: queued jobs move to the new developer host', () => {
