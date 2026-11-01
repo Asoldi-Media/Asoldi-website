@@ -39,6 +39,7 @@ import { normalizeDeveloperGoals } from '../lib/developer-goals.js';
 import { normalizeDueDate } from '../lib/website-due.js';
 import { listSalesOffers, normalizeOfferSentContent } from './sales-offers.js';
 import { legalSnapshotPatch } from '../lib/legal/binding.js';
+import { legalCatalogEnabled } from '../lib/legal/switch.js';
 import {
   carryFutureKeys,
   FUTURE_CLIENT_KEYS,
@@ -1386,6 +1387,7 @@ export function setSalesProgress(id, key, value, { fastTrack = false } = {}) {
  */
 function legalSnapshotOnSigning(client) {
   try {
+    if (!legalCatalogEnabled()) return {};
     const offer = listSalesOffers({ salesClientId: client.id, status: 'sent' })[0] || null;
     return legalSnapshotPatch(client, offer) || {};
   } catch (error) {
