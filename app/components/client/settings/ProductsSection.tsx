@@ -12,6 +12,8 @@ import {
 import type { CatalogCategory, CatalogProduct, ClientDataBank, ProductCatalog } from './clientDataTypes';
 import { clientMediaSrc, resolveClientCatalogs } from './clientDataTypes';
 import { uploadClientMediaFile } from './uploadClientMedia';
+import { useMediaRights } from './mediaRights';
+import { MediaRightsCheckbox } from './MediaRightsCheckbox';
 
 type LayoutId = ProductCatalog['layout'];
 type Flow = 'empty' | 'choose_layout' | 'choose_upload' | 'editor';
@@ -42,6 +44,8 @@ export function ProductsSection({ token, clientData, setClientData, onError, onP
   const [previewImage, setPreviewImage] = useState('');
   const [busy, setBusy] = useState('');
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const rights = useMediaRights(token);
+  const [rightsConfirmed, setRightsConfirmed] = useState(false);
   const layout: LayoutId = (catalog?.layout || 'normal') as LayoutId;
 
   const selectedCount = selectedIds.length;
@@ -156,6 +160,7 @@ export function ProductsSection({ token, clientData, setClientData, onError, onP
   async function uploadImage(categoryIndex: number, productIndex: number, file: File) {
     try {
       const url = await uploadClientMediaFile(token, file);
+      if (rights.enabled) await rights.record([url], rightsConfirmed);
       updateProduct(categoryIndex, productIndex, { imageUrl: url, image: url });
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Kunne ikke laste opp produktbilde.');
@@ -207,6 +212,7 @@ export function ProductsSection({ token, clientData, setClientData, onError, onP
               </button>
             </div>
           </div>
+          {rights.enabled ? <MediaRightsCheckbox checked={rightsConfirmed} onChange={setRightsConfirmed} className="mb-4" /> : null}
 
           {selectedCount > 0 ? (
             <div className="flex items-center gap-3 bg-gray-100 px-4 py-2 rounded-lg mb-6 border border-gray-200">

@@ -4,6 +4,7 @@ import { EmailVisualEditor } from '../../sales/EmailVisualEditor';
 import {
   getAdminOffer,
   listAdminOffers,
+  listFirefliesCandidates,
   listFirefliesMeetings,
   openAuthedPdf,
   reflectAdminOfferContract,
@@ -12,6 +13,7 @@ import {
   saveAdminOffer,
   saveAdminOfferContract,
   verifyAdminOffer,
+  type FirefliesCandidate,
   type MergeField,
   type OfferReadiness,
   type OfferTier,
@@ -30,6 +32,7 @@ import { ClientMeetingCard, MeetingCard, type StoredMeetingRow } from './Meeting
 import { WebsiteDueField } from './WebsiteDueField';
 import { isDuplicateRow, isPlaceholderRow, visibleMeetingRows } from './firefliesRecording';
 import { ExcludeMeetingButton, MeetingPurposePicker, PlaceholderRecordingActions } from './MeetingRecordingControls';
+import { FirefliesCandidateList } from './FirefliesCandidates';
 
 type OfferRow = SalesOffer & {
   client: { id: string; businessName: string; contactPerson: string; contactEmail: string } | null;
@@ -181,6 +184,7 @@ export function OfferReviewSection({ hideHeader = false }: { hideHeader?: boolea
   const [busy, setBusy] = useState('');
   const [clients, setClients] = useState<ClientOption[]>([]);
   const [unmatched, setUnmatched] = useState<StoredMeetingRow[]>([]);
+  const [candidates, setCandidates] = useState<Map<string, FirefliesCandidate[]> | null>(null);
   const [showUnmatched, setShowUnmatched] = useState(false);
   const [showDuplicateMeetings, setShowDuplicateMeetings] = useState(false);
 
@@ -276,6 +280,9 @@ export function OfferReviewSection({ hideHeader = false }: { hideHeader?: boolea
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Kunne ikke hente møter');
     }
+    // Ranked candidates exist only while the candidate ranker is on; otherwise nothing extra is shown.
+    const ranked = await listFirefliesCandidates();
+    setCandidates(ranked ? new Map(ranked.map((row) => [row.meetingId, row.candidates])) : null);
   }
 
   useEffect(() => {
@@ -481,17 +488,29 @@ export function OfferReviewSection({ hideHeader = false }: { hideHeader?: boolea
             <p className="text-xs text-gray-500">Alle møter er koblet til en kunde.</p>
           ) : (
             unmatched.map((meeting) => (
-              <MeetingCard
-                key={meeting.meetingId}
-                meeting={meeting}
-                clients={clients}
-                compact
-                onChanged={() => {
-                  void loadUnmatched();
-                  void loadList();
-                  if (selectedId) void loadDetail(selectedId);
-                }}
-              />
+              <React.Fragment key={meeting.meetingId}>
+                <MeetingCard
+                  meeting={meeting}
+                  clients={clients}
+                  compact
+                  onChanged={() => {
+                    void loadUnmatched();
+                    void loadList();
+                    if (selectedId) void loadDetail(selectedId);
+                  }}
+                />
+                {candidates ? (
+                  <FirefliesCandidateList
+                    meetingId={meeting.meetingId}
+                    candidates={candidates.get(meeting.meetingId) || []}
+                    onLinked={() => {
+                      void loadUnmatched();
+                      void loadList();
+                      if (selectedId) void loadDetail(selectedId);
+                    }}
+                  />
+                ) : null}
+              </React.Fragment>
             ))
           )}
         </div>
