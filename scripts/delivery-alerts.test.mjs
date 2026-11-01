@@ -123,7 +123,8 @@ test('boot gap check: the first tick after a 20-minute outage raises loop-stalle
   reset();
   writeFileSync(join(dataDir, 'sales-clients.json'), '[]');
   settingsStore.invalidateAutomationSettingsCache();
-  settingsStore.saveAutomationSettings({ pilotClientIds: ['p1'], delivery: { loop: { enabled: true, mode: 'auto' } } }, { by: 'test' });
+  // The loop was switched on an hour ago and last ticked 20 minutes ago: a real outage.
+  settingsStore.saveAutomationSettings({ pilotClientIds: ['p1'], delivery: { loop: { enabled: true, mode: 'auto' } } }, { by: 'test', now: new Date(Date.now() - 60 * 60 * 1000) });
   settingsStore.invalidateAutomationSettingsCache();
   mkdirSync(join(dataDir, 'delivery-hot'), { recursive: true });
   const lastSuccess = new Date(Date.now() - 20 * 60 * 1000).toISOString();
@@ -138,6 +139,67 @@ test('boot gap check: the first tick after a 20-minute outage raises loop-stalle
   await loop.tick();
   assert.equal(alerts.readAlertState().active['loop-stalled'], undefined, 'it clears once the loop ticks again');
   assert.equal(mails.filter((mail) => /loop-stalled/.test(mail.subject)).length, 1);
+});
+
+test('no stall after the loop was off: a success from before the switch-on is no outage', async () => {
+  reset();
+  writeFileSync(join(dataDir, 'sales-clients.json'), '[]');
+  settingsStore.invalidateAutomationSettingsCache();
+  mkdirSync(join(dataDir, 'delivery-hot'), { recursive: true });
+  const oldSuccess = new Date(Date.now() - 3 * HOUR).toISOString();
+  writeFileSync(join(dataDir, 'delivery-hot', 'loop-health.json'), JSON.stringify({ lastTickAt: oldSuccess, lastSuccessAt: oldSuccess }));
+  // Switched on (again) just now, after three hours off: the settings audit says so.
+  settingsStore.saveAutomationSettings({ pilotClientIds: ['p1'], delivery: { loop: { enabled: true, mode: 'auto' } } }, { by: 'test' });
+  settingsStore.invalidateAutomationSettingsCache();
+  const mails = [];
+  const sales = await import('../data/sales.js');
+  const loop = loopLib.createDeliveryLoop({ sales, hub: null, log: quiet, sendMail: async (message) => mails.push(message) });
+  assert.equal((await loop.tick()).ran, true);
+  assert.equal(alerts.readAlertState().active['loop-stalled'], undefined);
+  assert.equal(mails.length, 0);
+
+  // Off and on again inside one process, with no audit entry (a hand edit of the file).
+  reset();
+  writeFileSync(join(dataDir, 'sales-clients.json'), '[]');
+  const write = (enabled) => {
+    writeFileSync(join(dataDir, 'automation-settings.json'), JSON.stringify({ version: 2, pilotClientIds: ['p1'], delivery: { loop: { enabled, mode: 'auto', paused: null } } }));
+    settingsStore.invalidateAutomationSettingsCache();
+  };
+  let clock = Date.now() - 2 * HOUR;
+  const memoryLoop = loopLib.createDeliveryLoop({ sales, hub: null, log: quiet, now: () => clock, sendMail: async (message) => mails.push(message) });
+  write(true);
+  assert.equal((await memoryLoop.tick()).ran, true);
+  write(false);
+  clock += HOUR;
+  assert.equal((await memoryLoop.tick()).ran, false, 'off: the tick does nothing');
+  write(true);
+  clock += HOUR;
+  assert.equal((await memoryLoop.tick()).ran, true);
+  assert.equal(alerts.readAlertState().active['loop-stalled'], undefined, 'the gap was the off period');
+  assert.equal(mails.filter((mail) => /loop-stalled/.test(mail.subject)).length, 0);
+  // Negative control: the same two-hour gap with the loop on the whole time is an outage.
+  clock += 2 * HOUR;
+  await memoryLoop.tick();
+  assert.ok(alerts.readAlertState().active['loop-stalled'], 'a gap while on is reported');
+});
+
+test('alert state that cannot be written never sends the same mail again', async () => {
+  reset();
+  const mails = [];
+  const sendMail = async (message) => mails.push(message);
+  const settings = autoSettings();
+  // A folder where the state file belongs: every write of it fails.
+  mkdirSync(join(dataDir, 'delivery-hot', 'alerts.json'), { recursive: true });
+  const condition = { key: 'host-offline:mh_aaaaaa01', kind: 'host-offline', message: 'Maker-verten er borte.', data: {} };
+  await assert.rejects(alerts.processAlerts({ now: T0, settings, conditions: [condition], sendMail, log: quiet }));
+  assert.equal(mails.length, 1, 'the first mail went out');
+  await assert.rejects(alerts.processAlerts({ now: T0 + 60_000, settings, conditions: [condition], sendMail, log: quiet }));
+  await assert.rejects(alerts.processAlerts({ now: T0 + 120_000, settings, conditions: [condition], sendMail, log: quiet }));
+  assert.equal(mails.length, 1, 'no second mail while the state cannot be stored');
+  // Negative control: a fresh process (memory cleared) with the same broken state does mail again.
+  alerts.resetDeliveryAlertsMemoryForTests();
+  await assert.rejects(alerts.processAlerts({ now: T0 + 180_000, settings, conditions: [condition], sendMail, log: quiet }));
+  assert.equal(mails.length, 2);
 });
 
 test('a tick on a test clock never reports a stall', async () => {
