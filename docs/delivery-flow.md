@@ -20,6 +20,7 @@ batch by batch, and each batch updates this file. Runbooks: [delivery-runbooks.m
 | Delivery state | `lib/delivery-state.js`, writers in `data/sales.js`, audit in `lib/delivery-audit.js` | in place (stored by the backfill; the loop is a later batch) |
 | Maker events | `lib/maker-events.js`, `lib/maker-events-hub.js` | in place, off (`development.makerEvents`) |
 | Backfill | `lib/delivery-backfill.js`, `scripts/backfill-*.mjs`, routes in `lib/routes/delivery-routes.js` | in place, off (`migrations.deliveryBackfill`) |
+| Signing | `lib/contract-signing.js`, `lib/site-plan-apply.js`, `lib/golive-callback.js`, routes in `lib/routes/signing-routes.js`, card `app/pages/Admin/sections/SalesPlanCard.tsx` | in place, off (`signing`, see [Signing](#signing)) |
 | Gate, emails, job queue, Maker worker | later batches | planned |
 
 ---
@@ -73,7 +74,44 @@ Owner decisions built into the vocabulary:
 
 **Readers.** The developer board and website-due views read the tier with `websiteTierIdForClient` (the plan in force, then the offer, `portalTierId` and the meeting quote, as before). Analytics access (`planIdForProfile`) reads the applied hub site first, then a passed plan in force. The development GET shows `sitePlan` (summary) and `deliveryStage` / `deliveryOverlay` / `deliverySubState` only for clients with a stored plan or delivery record, so other items are unchanged; the stage there is derived from the client at read time (`deriveStage`), never the stored one, so it cannot fall behind before the delivery loop keeps the stored stage in sync.
 
-**Maker handoff (contract `site-plan/1`).** `create-maker-run` adds `sitePlan` to the Maker request body when the client has a plan in force: `makerSitePlanPayload` gives `SITE_PLAN_HANDOFF_FIELDS` (schema, status, tier, services, pages, add-ons, billing, catalog type, languages, `changesPerMonth`, source, offer reference, `signedAt`, `needsConfirmation`, the 7 flags from the services and a `planHash`). The Maker treats a plan as known only with `source` and `signedAt`. Clients without a plan send the same body as before.
+**Maker handoff (contract `site-plan/1`).** `create-maker-run` adds `sitePlan` to the Maker request body when the client has a plan in force: `makerSitePlanPayload` gives `SITE_PLAN_HANDOFF_FIELDS` (schema, status, tier, services, pages, add-ons, billing, catalog type, languages, `changesPerMonth`, source, offer reference, `signedAt`, `needsConfirmation`, the 7 flags from the services and a `planHash`). The Maker treats a plan as known only with `source` and `signedAt`. Clients without a plan send the same body as before. For a client the signing switch runs in auto, a `void` or `ended` plan is sent too, with that status, so the Maker stops treating it as in force.
+
+---
+
+## Signing
+
+One signer, `markContractSigned(clientId, {source, offerId, alternativeIndex, actor})` in `lib/contract-signing.js`, for every signing path: portal accept (`portal-accept`), the preview's contract accept (`preview-accept`), the Kontrakt tick on the sales card (`progression`), the signed contract from e-mail (`inbox-contract`, through `markClientSoldFromSignedContract`), got-client (`got-client`) and a Stripe checkout for an accepted offer (`stripe-checkout`).
+
+**Switch.** `signing` (`signing.enabled`, `signing.mode`, `signing.paused`; default `{enabled: false, mode: 'shadow', paused: null}`). It is release-gated, and validation refuses `auto` while `pilotClientIds` is empty. Per client the mode comes from `spineModeForClient('signing', client)` (`lib/spine-mode.js`): `auto` reaches pilot clients only; every other client runs in shadow; a paused switch runs in shadow; a test client that is not a pilot runs as off.
+
+- **off**: every path runs exactly as before. Responses, mails, `/api/hub/site-config` and the data folder are the same as without this code; the plan routes answer 404 `{code: 'disabled'}` and the sales card shows nothing new.
+- **shadow**: every path runs as before, plus a `signing-shadow` line in the delivery audit log and `client.delivery.sitePlanShadow` (tier, services, offer, whether a hub site would be created). No `sitePlan`, hub site or `planSource` is written, and entitlements never read the shadow plan.
+- **auto**: the signer runs under the lease `sign:<clientId>` (`acquireLease`, 30 s; a second process waits and then finds the client signed).
+
+**What the signer does (auto).**
+
+1. A non-website product (SSU) gets only the signing stamp (`setSalesProgress`): no plan, site or mail.
+2. A client already signed with a plan: an accepted offer that differs from the plan's offer or alternative becomes the plan (`offer-upgrade`, re-applied to the hub site, no mail); the same offer only makes sure the plan is applied.
+3. The plan comes from the offer the path names, else the newest sent offer, else the resolver's evidence; on got-client a tier in the body counts only for a superadmin. A dual offer without a chosen alternative returns `needsChoice` (409) and changes nothing.
+4. `setSalesProgress('contractSigned')` (fast track when a sent offer proves the meeting and the offer): `contractSignedAt` and the Informasjon action.
+5. `client.sitePlan` (status `active`, the path as `source`), then `applySitePlanToHub`, then the delivery stage (`signed`).
+6. The accepted alternative's `dpaVersion` is copied to `client.ext.dpa.offerVersion`.
+7. One pre-workshop mail (`sendPreWorkshopAfterContractSigned`; with `emails.preWorkshop.lines` set to `gate` and the gate module present, its `askableLines`), then the stage again (`gathering`). An optional SEO hook freezes the agreed keywords when `lib/seo-ops/record.js` exists.
+8. A `signing` line in the delivery audit log.
+
+**Apply to the hub (`applySitePlanToHub`, `lib/site-plan-apply.js`).** Finds the client's site by site key, then the linked site id, then the domain, or creates one (`deliveryPhase: 'development'`, a generated site key). It writes `websitePlan`, the catalog type and `planSource {kind: 'offer', salesClientId, offerId, alternativeIndex, tierId, services, billing, catalogType, derivedFeatures, appliedAt, appliedBy}` (`kind: 'admin'` for a superadmin's tier), links the site on the client (`hubSite`, `portalTierId`) and stamps `sitePlan.appliedAt` / `appliedSiteId`. Legacy flags: the first apply writes the plan's flags; a later apply writes them only when the plan changed and keeps every flag that differs from the previous plan's flags (a change made by hand); a site with a `featureSpec` gets no feature write. An unchanged plan writes nothing. A stored legacy string `planSource` is read as `{kind}`.
+
+**Portal tier (auto).** Publish to the portal, connect-portal and the accept of a dual offer take the tier from the offer itself (`planFromOfferAlternative`; a custom plan maps to the smallest standard tier that covers its services), never from an older offer, the meeting quote or `portalTierId`. A tier-1 client who accepts a tier-2 offer gets tier 2.
+
+**Entitlements (auto).** `lib/cms-entitlements.js` reads the linked client's `sitePlan` only while it is `active`; for every other client the stored plan counts as before.
+
+**Superadmin plan edit (auto).** A `websitePlan` change through `PUT /api/hub/sites/:id` on a site linked to an auto client sets `planSource.kind` to `admin` with the new tier's services.
+
+**Stripe.** `checkout.session.completed` signs only when the session metadata carries `offerId` and `contractHash` (`offerContentHash`) of an offer of that client. Otherwise the payment is recorded as before and the rep gets the next action "Mangler tilbudsaksept"; for a client already signed on another tier the plan gets an open conflict (`source: 'stripe'`).
+
+**Sales card.** `SalesPlanCard` (mounted once in the sales client form) shows the plan, its services, history and open conflicts, the shadow plan in shadow, and "Bekreft tjenester" for a derived plan or one that needs confirmation (Superadmin, auto). It changes no tier and undoes no signing. Routes: `GET /api/admin/sales/:id/site-plan`, `POST /api/admin/sales/:id/site-plan/confirm`.
+
+**Go-live callback, schema 2.** The Maker's `run.golive.updated` carries `schema: 2`, `target` (`staging` or `production`), `status` and `liveVerifiedAt` on top of the old fields (the old `ready` reads as `pushed`; statuses: `pushed`, `deploying`, `needs_import`, `deploy_failed`, `verify_failed`, `live`, `failed`). It reports status only; plan and feature fields in it are ignored. With the switch off, or without `schema: 2`, the callback is handled as before. Otherwise the hub stores `makerRun.goLive` (the newest record per target; a staging record never hides a production one, and a later production push keeps `liveVerifiedAt`), opens a `needs_import` task in `delivery.tasks` (closed by a later push or live status), and in auto sets `progression.live` and `domainConnected` only for a verified production `live`, and creates a missing hub site from the plan (`applySitePlanToHub`) instead of a bare one. Shared fixtures: `scripts/fixtures/golive-callback/` (the same files in the Maker).
 
 ---
 
@@ -188,7 +226,7 @@ Scheduling mails go out from the client's rep with the rep's reply-to, so replie
 - `auto`: sends, guarded.
 - Effective state (`EFFECTIVE_MODES`): `off` (not enabled), `shadow`, `paused`, `auto`.
 
-**Pre-release gate.** Release-gated switches (`RELEASE_GATED_SWITCHES`: every non-legacy email kind, `emails.preWorkshop.gate` for gate lines in the pre-workshop mail, `development.autoQueue`, `publish.staging`, `publish.production`) can only be set to `auto` after the pre-release suite (golden clients, safe-mode outbox snapshots, the canary site) recorded a pass with `recordReleasePass`. A PUT cannot write `releases`. With `promotion.auto` on, a recorded pass promotes the switch to `auto` in the same write.
+**Pre-release gate.** Release-gated switches (`RELEASE_GATED_SWITCHES`: every non-legacy email kind, `emails.preWorkshop.gate` for gate lines in the pre-workshop mail, `development.autoQueue`, `publish.staging`, `publish.production`, `signing`) can only be set to `auto` after the pre-release suite (golden clients, safe-mode outbox snapshots, the canary site) recorded a pass with `recordReleasePass`. A PUT cannot write `releases`. With `promotion.auto` on, a recorded pass promotes the switch to `auto` in the same write.
 
 **Runtime guards.** `pauseAutomationSwitch(path, {reason})` pauses an email kind or a publish target (errors, bounces, complaints, volume spike, empty fields, wrong recipient class) and audits it with source `guard`. Resume with `resumeAutomationSwitch` or a PUT of `paused: null`. Thresholds live under `guards.*`.
 
@@ -216,6 +254,7 @@ Settings keys (`SETTINGS_KEYS`, dotted paths in the file):
 | Retention | `retention.leadMonths`, `retention.afterContractMonths`, `retention.briefOldVersionsDays`, `retention.changeRequestsMonths`, `retention.nurtureProofYears`, `retention.inboxSkipLogDays` |
 | Storage | `storage.budgetFiles`, `storage.budgetMb` |
 | Alerts | `alerts.to`, `alerts.hostOfflineHours`, `alerts.jobBlockedHours`, `alerts.digestAt` |
+| Signing | `signing.enabled`, `signing.mode` (`shadow` or `auto`; `auto` needs pilots), `signing.paused` (see [Signing](#signing)) |
 
 ---
 
