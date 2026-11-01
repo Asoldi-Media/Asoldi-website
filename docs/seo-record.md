@@ -38,12 +38,14 @@ Access matches the other sales-client and developer routes: another rep's client
 
 | Job | Old gate | Feature-key gate |
 |---|---|---|
-| `blog-scheduler` (the `blogEnabled` flag of `GET /api/hub/local-blog-brief`) | blog flag on and a service that entitles automatic posts | `blog.autoPosts` (older name `blog.localPosts`) |
-| `rank-tracker.maps` (the Maps ranking loop) | analytics access for the plan and flags | `seo.tracking.maps` |
+| `blog-scheduler` (the `blogEnabled` flag of `GET /api/hub/local-blog-brief`) | blog flag on and a service that entitles automatic posts | `blog.autoPosts` (older name `blog.localPosts`), and the site's blog flag (`features.blog`) on |
+| `rank-tracker.maps` (the Maps ranking loop; in auto also every other paid Maps refresh) | analytics access for the plan and flags | `seo.tracking.maps` |
 
 - Off (`enabled: false`, the default): the old gate decides; the feature-key gate is not computed.
 - Shadow: the old gate decides; each site where the feature-key gate differs gets a row in `<dataDir>/seo-ops/decision-diff.json` (removed when they agree again).
 - Auto: the feature-key gate decides. Agency overrides go in `site.ext.seoFeatureOverrides`, for example `{"blog.autoPosts": false}`.
+  - Automatic posts also need the site's blog flag, whatever the tier: the client CMS publishes them through its blog module, so a site with the blog off gets none, as before.
+  - Maps ranking: the gate also applies inside `ensureMapsRanking`, so a dashboard refresh (`refresh=1` on the portal and site-credential routes) and the portal's refresh button make no DataForSEO call for a site whose `seo.tracking.maps` is off; the stored ranking is shown. In off and shadow those paths are unchanged.
 
 Before auto, compare both decisions on a copy of the production data dir: `node scripts/seo-gating-diff.mjs --data <copy>` (only reads the copy; `--json`, `--all`). The sites it lists change behaviour when the switch moves to auto.
 
