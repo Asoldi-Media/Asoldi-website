@@ -11,8 +11,11 @@
  *   node scripts/legal-render.mjs --check   exit 1 when any of them is stale, or when the DPA text changed
  *                                           without a new DPA_VERSION.
  *
- * Rendering uses the code defaults of the automation settings and no personal-data registry text,
- * so the output depends only on the code.
+ * Rendering uses lib/legal/texts.js archiveRenderOptions(): the code defaults of the automation
+ * settings and the personal-data registry's retention text when that registry exists, so the output
+ * depends only on the code. The API serves the current documents from this archive, and the archive
+ * records the settings-derived values it was published with (`published`), which
+ * GET /api/admin/legal/terms-update compares with the stored settings.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -20,6 +23,11 @@ import { defaultAutomationSettings } from '../data/automation-settings.js';
 import { CATALOG_DATE, CATALOG_VERSION, DPA_VERSION, declaredClauses } from '../lib/legal/catalog.js';
 import { ARCHIVE_DIR, ARCHIVE_FORMAT, archiveUrl, archivedVersions, clearArchiveCache, loadArchivedCatalog } from '../lib/legal/archive.js';
 import { LEGAL_DOC_IDS, contractLinesForPlan, renderDocument, renderDpaAppendixMarkdown } from '../lib/legal/render.js';
+import { personalDataReady } from '../lib/legal/subprocessors.js';
+import { archiveRenderOptions, publishedValues } from '../lib/legal/texts.js';
+
+// The personal-data registry is optional and loads without blocking; wait for it before rendering.
+await personalDataReady;
 
 export const APPENDIX_URL = new URL('../docs/databehandleravtale-appendix.md', import.meta.url);
 export const CONTRACT_LINES_URL = new URL('./fixtures/legal/contract-lines.json', import.meta.url);
@@ -31,24 +39,21 @@ const SNAPSHOT_PLANS = Object.freeze({
   'tier-1-standard:once': { tierId: 'tier-1-standard', billing: 'once' },
 });
 
-function renderOptions() {
-  return { settings: defaultAutomationSettings(), retentionText: null };
-}
-
 export function currentArchive() {
-  const options = renderOptions();
+  const options = archiveRenderOptions();
   return {
     format: ARCHIVE_FORMAT,
     catalogVersion: CATALOG_VERSION,
     dpaVersion: DPA_VERSION,
     date: CATALOG_DATE,
+    published: publishedValues(options),
     clauses: declaredClauses(),
     docs: Object.fromEntries(LEGAL_DOC_IDS.map((doc) => [doc, renderDocument(doc, options)])),
   };
 }
 
 export function currentAppendix() {
-  return renderDpaAppendixMarkdown(renderOptions());
+  return renderDpaAppendixMarkdown(archiveRenderOptions());
 }
 
 export function currentContractLines() {
