@@ -430,3 +430,52 @@ test('reduce: the optional LLM merge runs only above 40 items, is cached, and ke
   assert.equal(failing.error, 'provider_dead');
   assert.deepEqual(failing.reduced.active.map((row) => row.id), ids, 'a failed merge changes nothing');
 });
+
+// ---------------------------------------------------------------- recall check script
+
+test('recall script: records cassettes, replays them without a provider, scores expectations and refuses a report inside the repo', async () => {
+  const { assertOutsideRepo, parseArgs, runRecall, scoreClient } = await import('./eval/brief-recall.mjs');
+  const { writeFileSync, mkdirSync, readFileSync } = await import('node:fs');
+  const input = mkdtempSync(join(tmpdir(), 'brief-recall-input-'));
+  const work = mkdtempSync(join(tmpdir(), 'brief-recall-work-'));
+  try {
+    const client = join(input, 'syn-eval');
+    mkdirSync(client);
+    writeFileSync(join(client, 'sales.txt'), SALES);
+    writeFileSync(join(client, 'workshop.txt'), WORKSHOP);
+    writeFileSync(join(client, 'transcripts.json'), JSON.stringify({ meetings: { sales: { file: 'sales.txt', meetingId: 'eval-sales' }, workshop: { file: 'workshop.txt', meetingId: 'eval-workshop' } } }));
+    writeFileSync(join(client, 'expectations.json'), JSON.stringify({ items: [
+      { id: 'N1', kind: 'client_need', statement: 'Phone number at the top of the menu', quote: 'Telefonnummeret på siden skal stå helt øverst i menyen' },
+      { id: 'N2', kind: 'both', statement: 'Photos of finished bathrooms on the front page', quote: 'forsiden viser bilder av ferdige bad' },
+      { id: 'N3', kind: 'client_need', statement: 'A booking calendar', quote: 'Vi trenger en bookingkalender på nettsiden' },
+      { id: 'P1', kind: 'asoldi_promise', statement: 'Monthly blog posts', quote: 'vi skriver innlegg hver måned', featureKey: 'blog.autoPosts' },
+    ] }));
+    const report = join(work, 'report.json');
+    const dataDir = join(work, 'llm');
+    const recorder = stubProviders();
+    const recorded = await runRecall(parseArgs(['--input', input, '--report', report, '--profile', 'record', '--data-dir', dataDir]), { providers: recorder.providers, log: {} });
+    assert.ok(recorder.calls.claude > 0);
+    assert.equal(recorder.calls.deepseek, 0);
+    const row = recorded.clients[0];
+    assert.equal(row.complete, true);
+    assert.deepEqual([row.needs.recalled, row.needs.total], [2, 3]);
+    assert.deepEqual([row.promises.recalled, row.promises.total], [1, 1]);
+    assert.equal(row.pass, false, '2 of 3 is below 0.8');
+    assert.deepEqual(row.rows.filter((entry) => !entry.matched).map((entry) => entry.id), ['N3']);
+    const saved = JSON.parse(readFileSync(report, 'utf8'));
+    assert.equal(JSON.stringify(saved).includes('Eksempelby'), false, 'the report holds ids and scores, not transcript text');
+
+    // Replay: the same answers from the cassettes; a provider call would throw.
+    const silent = stubProviders({ failAfter: 0 });
+    const replayed = await runRecall(parseArgs(['--input', input, '--report', join(work, 'replay.json'), '--profile', 'replay', '--data-dir', join(work, 'llm')]), { providers: silent.providers, log: {} });
+    assert.equal(silent.calls.claude + silent.calls.deepseek + silent.calls.gemini, 0, 'no provider call on replay');
+    assert.deepEqual(replayed.clients[0].rows, row.rows);
+
+    assert.throws(() => assertOutsideRepo(join(process.cwd(), 'scripts', 'report.json')), /outside the repository/);
+    assert.throws(() => parseArgs(['--input', input]), /--report/);
+    assert.equal(scoreClient([{ id: 'x', kind: 'client_need', statement: 'nothing', quote: '' }], []).needs.recall, 0);
+  } finally {
+    rmSync(input, { recursive: true, force: true });
+    rmSync(work, { recursive: true, force: true });
+  }
+});
