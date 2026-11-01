@@ -31,6 +31,9 @@ const SIGNING_CLIENTS = Object.freeze({
   stripeNone: 'sg-stripe-none',
   nonPilot: 'sg-nonpilot',
   upgrade: 'sg-upgrade',
+  inboxFresh: 'sg-inbox-fresh',
+  portalFresh: 'sg-portal-fresh',
+  inboxDual: 'sg-inbox-dual',
 });
 
 function client(id, name, extra = {}) {
@@ -88,6 +91,10 @@ const clients = [
   client(C.dual, 'Dual Example AS'),
   client(C.stripeNone, 'Cardonly Example AS'),
   client(C.nonPilot, 'Nonpilot Example AS'),
+  // No meeting or offer ticked on the card and no sent offer: the contract alone signs them.
+  client(C.inboxFresh, 'Freshmail Example AS', { progression: {} }),
+  client(C.portalFresh, 'Freshportal Example AS', { progression: {} }),
+  client(C.inboxDual, 'Dualmail Example AS'),
   client(C.upgrade, 'Upgrade Example AS', {
     progression: { meetingHeld: true, offerSent: true, contractSigned: true },
     contractSignedAt: T0,
@@ -122,6 +129,9 @@ const offers = [
   sentOffer('so-nonpilot', C.nonPilot, tier3),
   sentOffer('so-upgrade-old', C.upgrade, { tierId: 'starter', selected: [], pages: 5 }, { updatedAt: T0, sentAt: T0 }),
   upgradeOffer,
+  sentOffer('so-inbox-fresh', C.inboxFresh, tier3, { status: 'draft', sentAt: '' }),
+  sentOffer('so-portal-fresh', C.portalFresh, tier3, { status: 'draft', sentAt: '' }),
+  sentOffer('so-inbox-dual', C.inboxDual, { tierId: 'starter', selected: [], pages: 5, altQuote: tier2 }),
 ];
 
 function portalOffer(id, salesClientId, salesOfferId, extra = {}) {
@@ -147,6 +157,13 @@ const portalOffers = [
   portalOffer('po-portal', C.portal, 'so-portal'),
   portalOffer('po-inbox', C.inbox, 'so-inbox', {
     acceptance: { acceptedAt: '2026-10-22T09:00:00.000Z', userId: 'u-inbox', email: `${C.inbox}@example.com`, chosenOfferIndex: null },
+  }),
+  portalOffer('po-inbox-fresh', C.inboxFresh, 'so-inbox-fresh', {
+    acceptance: { acceptedAt: '2026-10-22T09:00:00.000Z', userId: 'u-inbox-fresh', email: `${C.inboxFresh}@example.com`, chosenOfferIndex: null },
+  }),
+  portalOffer('po-portal-fresh', C.portalFresh, 'so-portal-fresh'),
+  portalOffer('po-inbox-dual', C.inboxDual, 'so-inbox-dual', {
+    acceptance: { acceptedAt: '2026-10-22T09:00:00.000Z', userId: 'u-inbox-dual', email: `${C.inboxDual}@example.com`, chosenOfferIndex: null },
   }),
   portalOffer('po-upgrade', C.upgrade, 'so-upgrade-new', { planId: 'tier-1-standard', planName: 'Tier 1: Standard', createdAt: '2026-10-25T09:00:00.000Z', updatedAt: '2026-10-25T09:00:00.000Z' }),
 ];

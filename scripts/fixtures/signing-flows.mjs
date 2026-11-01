@@ -53,6 +53,7 @@ export async function runSigningFlows(hub, seed, { token }) {
 
   // Client accounts for the portal paths (the portal offers target these addresses).
   const portalUser = await call('register-portal', 'POST', '/api/client-auth/register', { headers: { 'content-type': 'application/json' }, body: { email: `${C.portal}@example.com`, password: 'Portal-local-1234' } });
+  const portalFreshUser = await call('register-portal-fresh', 'POST', '/api/client-auth/register', { headers: { 'content-type': 'application/json' }, body: { email: `${C.portalFresh}@example.com`, password: 'Fresh-local-1234' } });
   const upgradeUser = await call('register-upgrade', 'POST', '/api/client-auth/register', { headers: { 'content-type': 'application/json' }, body: { email: `${C.upgrade}@example.com`, password: 'Upgrade-local-1234' } });
 
   await call('connect-upgrade', 'POST', `/api/admin/sales/${C.upgrade}/connect-portal`, { body: {} });
@@ -67,6 +68,7 @@ export async function runSigningFlows(hub, seed, { token }) {
     body: { accepted: true, termsAccepted: true, bindingAccepted: true, name: 'Kari Example', password: 'Preview-local-1234' },
   });
   await call('portal-accept', 'POST', '/api/client/offer/accept', { headers: { authorization: `Bearer ${portalUser.body.token}`, 'content-type': 'application/json' }, body: {} });
+  await call('portal-accept-fresh', 'POST', '/api/client/offer/accept', { headers: { authorization: `Bearer ${portalFreshUser.body.token}`, 'content-type': 'application/json' }, body: {} });
   await call('portal-accept-upgrade', 'POST', '/api/client/offer/accept', { headers: { authorization: `Bearer ${upgradeUser.body.token}`, 'content-type': 'application/json' }, body: {} });
 
   const stripe = new Stripe('sk_test_signing_local_only');

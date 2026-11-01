@@ -61,9 +61,13 @@ async function runMode(mode) {
     const steps = await flows.runSigningFlows(hub, seed, { token });
     // The e-mail path signs without waiting; give it time to finish.
     await waitFor(() => clientIn(hub.dataDir, C.inbox)?.progression?.contractSigned === true, 15_000);
+    await waitFor(() => clientIn(hub.dataDir, C.inboxFresh)?.progression?.contractSigned === true, 15_000);
+    await waitFor(() => clientIn(hub.dataDir, C.inboxDual)?.progression?.contractSigned === true
+      || readAudit(hub.dataDir).some((row) => row.kind === 'signing-needs-choice' && row.clientId === C.inboxDual), 15_000);
     const outbox = await flows.settledOutbox(hub.dataDir);
     const planRoute = await fetch(`${hub.base}/api/admin/sales/${C.progress}/site-plan`, { headers: { authorization: `Bearer ${token}` } });
     const configs = await flows.siteConfigs(hub);
+    const makerKey = await fetch(`${hub.base}/api/hub/site-config?site_key=maker-key-progress`);
     const egress = hub.egressRows().filter((row) => !row.event && !row.listed);
     return {
       mode,
@@ -72,6 +76,7 @@ async function runMode(mode) {
       configs,
       egress,
       planRoute: { status: planRoute.status, body: await planRoute.json().catch(() => ({})) },
+      makerKeyConfig: { status: makerKey.status, body: await makerKey.json().catch(() => ({})) },
       clients: flows.readJsonFile(hub.dataDir, 'sales-clients.json', []),
       sites: flows.readJsonFile(hub.dataDir, 'sites.json', []),
       files: listFiles(hub.dataDir),
@@ -226,14 +231,23 @@ test('auto: a tier-1 client who accepts a tier-2 offer gets tier 2 (plan, site a
   assert.equal(v.preWorkshopMails.length, 0, 'an upgrade sends no pre-workshop mail');
 });
 
-test('auto: the go-live callback v2 records the status and keeps the one site', () => {
+test('auto: the go-live callback v2 records the status, keeps the one site and gives it the Maker\'s key', () => {
   assert.equal(auto.steps.golive.status, 200);
   assert.equal(auto.steps.golive.body.goLive.status, 'pushed');
   assert.equal(auto.steps.golive.body.goLive.target, 'production');
   const v = view(auto, C.progress);
   assert.equal(v.sites.length, 1, 'no second site for the Maker key');
-  assert.equal(v.client.makerRun.goLive.siteKeyMismatch, true, 'the other key is flagged');
-  assert.ok(v.client.delivery.tasks.some((task) => task.kind === 'site_key_mismatch' && task.status === 'open'));
+  assert.equal(v.sites[0].site_key, 'maker-key-progress', 'the site made at signing, which no CMS reached, takes the Maker key');
+  assert.equal(v.client.hubSite.siteKey, 'maker-key-progress', 'the client link follows');
+  assert.equal(v.sites[0].domain, 'progress.example.com', 'the published domain fills in the site');
+  assert.notEqual(v.client.makerRun.goLive.siteKeyMismatch, true, 'nothing to flag');
+  assert.equal((v.client.delivery.tasks || []).some((task) => task.kind === 'site_key_mismatch'), false);
+  assert.ok(auto.audit.some((row) => row.kind === 'site-key-adopted' && row.clientId === C.progress));
+  // The published CMS asks with the Maker key and gets the plan.
+  assert.equal(auto.makerKeyConfig.status, 200);
+  assert.equal(auto.makerKeyConfig.body.id, v.sites[0].id);
+  assert.equal(auto.makerKeyConfig.body.websitePlan, 'tier-3-ecommerce');
+  assert.equal(auto.makerKeyConfig.body.features.ecommerce, true);
   assert.notEqual(v.client.progression.live, true, 'a push is not live');
 });
 
@@ -279,6 +293,37 @@ test('off: every path runs as before: no plan, no planSource, no shadow record, 
   assert.equal(off.steps['site-plan-edit'].status, 200);
   assert.equal(off.steps['site-plan-edit'].body.planSource, undefined, 'a plain edit writes no planSource');
   assert.equal(Object.hasOwn(off.steps.golive.body, 'goLive'), false);
+  assert.equal(off.makerKeyConfig.status, 200, 'control: the old handler makes a bare site with the Maker key');
+  assert.equal(off.makerKeyConfig.body.websitePlan, 'tier-1-standard', 'control: without the plan');
+});
+
+test('auto: a contract by e-mail or portal for a client with nothing ticked and no sent offer signs as with the switch off', () => {
+  for (const id of [C.inboxFresh, C.portalFresh]) {
+    const a = view(auto, id);
+    const o = view(off, id);
+    assert.equal(o.client.progression.contractSigned, true, `control ${id}: the switch-off path signs`);
+    assert.equal(a.client.progression.contractSigned, true, `${id}: signed in auto`);
+    assert.ok(a.client.contractSignedAt, `${id}: contractSignedAt`);
+    for (const key of ['meetingHeld', 'offerSent', 'contractSigned']) assert.equal(a.client.progression[key], o.client.progression[key], `${id}: ${key}`);
+    assert.equal(a.preWorkshopMails.length, 1, `${id}: one pre-workshop mail`);
+    assert.equal(a.preWorkshopMails.length, o.preWorkshopMails.length, `${id}: the same mails as off`);
+    assert.equal(a.informasjon, true, `${id}: the Informasjon action`);
+    assert.equal(a.client.sitePlan?.status, 'active', `${id}: a plan`);
+    assert.equal(a.sites.length, 1, `${id}: one site`);
+  }
+  assert.equal(view(auto, C.portalFresh).client.sitePlan.offerId, 'so-portal-fresh', 'the accepted offer\'s plan');
+  assert.equal(auto.log.includes('Marker møtet hatt først'), false, 'no blocked signing in the log');
+});
+
+test('auto: a dual offer signed by e-mail changes nothing and leaves an audit line; off signs it as today', () => {
+  const a = view(auto, C.inboxDual);
+  assert.notEqual(a.client.progression.contractSigned, true);
+  assert.equal(a.client.sitePlan, undefined);
+  assert.equal(a.client.delivery, undefined);
+  assert.equal(a.mails.length, 0);
+  assert.ok(auto.audit.some((row) => row.kind === 'signing-needs-choice' && row.clientId === C.inboxDual && row.source === 'inbox-contract'));
+  assert.equal(view(off, C.inboxDual).client.progression.contractSigned, true, 'control: the switch-off path signs');
+  assert.equal(off.audit.length, 0, 'control: no audit line with the switch off');
 });
 
 test('shadow: sitePlan, sites and planSource are what the switch-off run wrote; only the shadow record is added', { timeout: 240_000 }, async () => {

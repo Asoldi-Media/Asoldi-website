@@ -22,7 +22,16 @@ writeFileSync(join(DATA_DIR, 'sales-clients.json'), JSON.stringify([
   client('plain'),
   client('withsite', { sitePlan: signedPlan('tier-2-seo'), hubSite: { id: 'site-withsite', siteKey: 'hub-key-withsite' } }),
   client('nosite', { sitePlan: signedPlan('tier-3-ecommerce') }),
-  client('staging', { sitePlan: signedPlan('tier-3-ecommerce'), hubSite: { id: 'site-staging', siteKey: 'hub-key-staging' } }),
+  client('staging', {
+    sitePlan: signedPlan('tier-3-ecommerce'),
+    hubSite: { id: 'site-staging', siteKey: 'hub-key-staging' },
+    nextActions: [{ id: 'na-live', goalKey: 'live', presetKey: 'custom', name: 'Publiser nettsiden', format: 'ring', dueAt: AT, createdAt: AT }],
+  }),
+  // Sites the signer makes below (applySitePlanToHub), with a key of the hub's own.
+  client('signed', { sitePlan: signedPlan('tier-3-ecommerce') }),
+  client('reached', { sitePlan: signedPlan('tier-3-ecommerce') }),
+  client('enrolled', { sitePlan: signedPlan('tier-3-ecommerce') }),
+  client('other', { sitePlan: signedPlan('tier-3-ecommerce') }),
 ], null, 2));
 writeFileSync(join(DATA_DIR, 'sites.json'), JSON.stringify([
   { id: 'site-withsite', site_key: 'hub-key-withsite', name: 'withsite Example AS', websitePlan: 'tier-2-seo', features: { users: true, analytics: true, blog: true } },
@@ -40,7 +49,18 @@ function setSettings(value) {
   else rmSync(file, { force: true });
   settingsStore.invalidateAutomationSettingsCache();
 }
-const AUTO = { pilotClientIds: ['withsite', 'nosite', 'staging'], signing: { enabled: true, mode: 'auto', paused: null } };
+const AUTO = { pilotClientIds: ['withsite', 'nosite', 'staging', 'signed', 'reached', 'enrolled', 'other'], signing: { enabled: true, mode: 'auto', paused: null } };
+const apply = await import('../lib/site-plan-apply.js');
+const { siteCredentialStore } = await import('../lib/site-credentials.js');
+
+function auditRows() {
+  const folder = join(DATA_DIR, 'delivery-audit');
+  try {
+    return readdirSync(folder).flatMap((name) => readFileSync(join(folder, name), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line)));
+  } catch {
+    return [];
+  }
+}
 
 async function deliver(clientId, body) {
   const current = sales.getSalesClientById(clientId);
@@ -120,6 +140,8 @@ test('a verified production live sets live, domainConnected and liveVerifiedAt (
   assert.equal(result.client.makerRun.goLive.liveVerifiedAt, '2026-11-02T10:20:00.000Z');
   assert.equal(result.client.makerRun.goLive.staging.target, 'staging', 'the staging record is kept beside it');
   assert.equal(result.client.delivery.stage, 'live');
+  const action = result.client.nextActions.find((entry) => entry.id === 'na-live');
+  assert.ok(action?.doneAt, 'the next action tied to the live goal closes, as on the card');
 });
 
 test('needs_import keeps the hint and opens one developer task', async () => {
@@ -136,8 +158,9 @@ test('needs_import keeps the hint and opens one developer task', async () => {
 
 test('auto: a client without a hub site gets it from its plan, with the Maker\'s key; shadow creates the old bare site', async () => {
   setSettings(AUTO);
-  const result = await deliver('nosite', fixture('v2-ready.json'));
+  const result = await deliver('nosite', { ...fixture('v2-ready.json'), domain: 'nosite.example.com' });
   assert.equal(result.site.site_key, 'site-key-from-the-maker-0001');
+  assert.equal(result.site.domain, 'nosite.example.com');
   assert.equal(result.site.websitePlan, 'tier-3-ecommerce');
   assert.equal(result.site.planSource.kind, 'offer');
   assert.equal(result.site.features.ecommerce, true);
@@ -148,5 +171,79 @@ test('auto: a client without a hub site gets it from its plan, with the Maker\'s
   assert.equal(shadow.site.site_key, 'plain-key');
   assert.equal(shadow.site.planSource, undefined, 'shadow never writes a planSource');
   assert.equal(shadow.site.websitePlan, 'tier-1-standard', 'the old bare site');
+  setSettings(null);
+});
+
+// A site the signer made (planSource.siteCreatedBy) with a key of the hub's own, before the Maker
+// published the site with its key.
+function signerSite(clientId) {
+  const made = apply.applySitePlanToHub(clientId, { by: 'contract-signing', now: AT });
+  assert.equal(made.created, true, clientId);
+  assert.match(made.site.site_key, /^[0-9a-f]{32}$/);
+  return made.site;
+}
+
+test('auto: a site the signer made that no CMS has reached takes the Maker\'s key; site-config answers for it', async () => {
+  setSettings(AUTO);
+  const site = signerSite('signed');
+  const result = await deliver('signed', { ...fixture('v2-ready.json'), siteKey: 'maker-key-signed-0001', domain: 'signed.example.com' });
+  assert.equal(result.site.id, site.id, 'the same site');
+  assert.equal(result.site.site_key, 'maker-key-signed-0001');
+  assert.equal(result.site.domain, 'signed.example.com');
+  assert.equal(hub.getSiteByKey(site.site_key), null, 'the old key is gone');
+  assert.equal(hub.getAllSites().filter((entry) => entry.planSource?.salesClientId === 'signed').length, 1);
+  assert.equal(sales.getSalesClientById('signed').hubSite.siteKey, 'maker-key-signed-0001');
+  assert.notEqual(result.client.makerRun.goLive.siteKeyMismatch, true);
+  assert.equal((result.client.delivery?.tasks || []).some((task) => task.kind === 'site_key_mismatch'), false);
+  const config = hub.getSiteConfig('maker-key-signed-0001');
+  assert.equal(config.id, site.id);
+  assert.equal(config.websitePlan, 'tier-3-ecommerce');
+  assert.equal(config.features.ecommerce, true);
+  assert.ok(auditRows().some((row) => row.kind === 'site-key-adopted' && row.clientId === 'signed'));
+});
+
+test('auto: a site a CMS has reached keeps its key and the Maker\'s key is flagged', async () => {
+  setSettings(AUTO);
+  const site = signerSite('reached');
+  hub.recordHeartbeat(site.site_key, { packageVersion: '2.2.2' });
+  const result = await deliver('reached', { ...fixture('v2-ready.json'), siteKey: 'maker-key-reached-0001', domain: 'reached.example.com' });
+  assert.equal(result.site.id, site.id);
+  assert.equal(result.site.site_key, site.site_key, 'the key the CMS uses stays');
+  assert.equal(result.client.makerRun.goLive.siteKeyMismatch, true);
+  assert.ok(result.client.delivery.tasks.some((task) => task.kind === 'site_key_mismatch' && task.status === 'open'));
+  assert.equal(hub.getSiteByKey('maker-key-reached-0001'), null, 'no second site');
+});
+
+test('auto: a site with a site credential keeps its key', async () => {
+  setSettings(AUTO);
+  const site = signerSite('enrolled');
+  siteCredentialStore().enroll(site.id, 'A'.repeat(43), { proofDomain: 'enrolled.example.com' });
+  const result = await deliver('enrolled', { ...fixture('v2-ready.json'), siteKey: 'maker-key-enrolled-0001', domain: 'enrolled.example.com' });
+  assert.equal(result.site.site_key, site.site_key);
+  assert.equal(result.client.makerRun.goLive.siteKeyMismatch, true);
+});
+
+test('auto: a site found by domain that belongs to another client is left alone', async () => {
+  setSettings(AUTO);
+  const before = hub.getSiteById('site-withsite');
+  assert.equal(before.domain, 'bakery.example.com', 'filled in by the first callback');
+  const result = await deliver('other', { ...fixture('v2-ready.json'), siteKey: '', hubSite: undefined });
+  assert.equal(result.site, null, 'no site linked');
+  assert.deepEqual(hub.getSiteById('site-withsite'), before, 'the other client\'s site is unchanged');
+  const other = sales.getSalesClientById('other');
+  assert.equal(other.hubSite?.id || '', '', 'no site linked on the client');
+  assert.ok(other.delivery.tasks.some((task) => task.kind === 'site_owner_conflict' && task.siteId === 'site-withsite' && task.status === 'open'));
+  assert.ok(auditRows().some((row) => row.kind === 'site-owner-conflict' && row.clientId === 'other' && row.owner === 'withsite'));
+});
+
+test('shadow: only a pushed status links a site, as the old handler did', async () => {
+  setSettings({ ...AUTO, signing: { enabled: true, mode: 'shadow', paused: null } });
+  const sitesBefore = readFileSync(join(DATA_DIR, 'sites.json'), 'utf8');
+  for (const status of ['deploying', 'needs_import', 'live', 'failed']) {
+    const result = await deliver('plain', { ...fixture('v2-ready.json'), status, siteKey: `plain-${status}-key`, domain: `plain-${status}.example.com` });
+    assert.equal(result.mode, 'shadow');
+    assert.equal(result.site, null, status);
+  }
+  assert.equal(readFileSync(join(DATA_DIR, 'sites.json'), 'utf8'), sitesBefore, 'no site written');
   setSettings(null);
 });
