@@ -21,6 +21,7 @@ const { relaySend } = await import('../lib/email-relay.js');
 const { createEmailLog } = await import('../lib/email-log.js');
 const { createEmailQuota, memoryLedgerStore } = await import('../lib/email-quota.js');
 const { createPublicPostLimiter, registerEmailHubRoutes } = await import('../lib/routes/email-hub-routes.js');
+const { getFromCms, MAX_ANSWER_BYTES } = await import('../lib/email-hint.js');
 const { isAsoldiMarketingSuppressed } = await import('../lib/asoldi-unsubscribe.js');
 
 const NOW = Date.parse('2026-11-03T10:00:00Z');
@@ -440,4 +441,29 @@ test('the public POST routes are limited per token and per client address', asyn
   assert.ok(limiter.check(req, 'b') > 0, 'per address');
   at = 1001;
   assert.equal(limiter.check(req, 'a'), 0, 'the window slides');
+});
+
+test('a CMS mirror answer is read with a size cap and abandoned past it', async () => {
+  let pulled = 0;
+  let cancelled = false;
+  const endless = () => new Response(new ReadableStream({
+    pull(controller) {
+      pulled += 64 * 1024;
+      controller.enqueue(new Uint8Array(64 * 1024).fill(32));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  }), { status: 200 });
+  const site = hub.getSiteById('site_a');
+  const settings = store.deepMerge(store.readEmailSettings(), { devCmsTargets: { site_a: 'http://127.0.0.1:9' } });
+  await assert.rejects(() => getFromCms(site, '/api/cms/email/suppressions', { fetchImpl: async () => endless(), settings, env: { HUB_SAFE_MODE: '1' } }), (error) => error.code === 'cms_unreadable');
+  assert.equal(cancelled, true);
+  assert.ok(pulled <= MAX_ANSWER_BYTES + 3 * 64 * 1024, `${pulled} bytes pulled`);
+  let read = false;
+  const declared = async () => ({ status: 200, headers: new Headers({ 'content-length': String(MAX_ANSWER_BYTES + 1) }), body: { cancel: async () => {}, getReader: () => { read = true; return null; } }, text: async () => { read = true; return ''; } });
+  await assert.rejects(() => getFromCms(site, '/api/cms/email/suppressions', { fetchImpl: declared, settings, env: { HUB_SAFE_MODE: '1' } }), (error) => error.code === 'cms_unreadable');
+  assert.equal(read, false, 'a declared size over the cap is refused before reading');
+  const small = await getFromCms(site, '/api/cms/email/suppressions', { fetchImpl: async () => new Response('{"items":[],"next":null}', { status: 200 }), settings, env: { HUB_SAFE_MODE: '1' } });
+  assert.deepEqual(small, { items: [], next: null });
 });
