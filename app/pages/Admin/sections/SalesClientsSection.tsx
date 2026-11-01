@@ -88,6 +88,7 @@ import {
 import type { MeetingQuoteState } from '../../sales/websitePricing';
 import { WEBSITE_TIERS, formatMonthlyPrice } from '../../../../lib/website-tiers.js';
 import { TestFlagToggle } from './TestFlagToggle';
+import { SalesPlanCard } from './SalesPlanCard';
 import { FirefliesKnockStrip, useKnockTitle } from './FirefliesKnockStrip';
 import { FirefliesLiveChip, FirefliesLiveStatus } from './FirefliesLiveStatus';
 import { RecordingChip } from './MeetingRecordingControls';
@@ -4629,6 +4630,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                 ))}
               </div>
 
+              {editingId && <SalesPlanCard clientId={editingId} />}
               {editingId && (
                 <div className="md:col-span-2 flex flex-wrap items-center gap-2">
                   {isSalesAdmin && (
