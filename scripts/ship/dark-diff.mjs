@@ -741,8 +741,10 @@ export async function runDarkDiff(options) {
     // Prep: one copy gets local credentials through the base release's own modules, then two copies of it.
     const prep = join(root, 'data', 'prep');
     copyData(source, prep);
+    const fakeAdded = new Set();
     if (opts.fakeSecrets) {
       const added = addFakeSecrets(prep);
+      for (const name of added) fakeAdded.add(`secrets/${name}`);
       if (added.length) report.warnings.push(`fake secrets added to the copies (random values): ${added.join(', ')}`);
     }
     const password = randomBytes(18).toString('base64url');
@@ -752,7 +754,9 @@ export async function runDarkDiff(options) {
     const sourceSecrets = opts.secrets ? secretManifest(source) : null;
     const prepSecrets = opts.secrets ? secretManifest(prep) : null;
     if (opts.secrets) {
-      for (const v of secretViolations(sourceSecrets, prepSecrets, { stage: 'prep' })) report.warnings.push(`prep touched a secret file: ${v.key}`);
+      for (const v of secretViolations(sourceSecrets, prepSecrets, { stage: 'prep' })) {
+        if (!fakeAdded.has(v.rel)) report.warnings.push(`prep touched a secret file: ${v.key}`);
+      }
     }
     const dirs = { base: join(root, 'data', 'base'), head: join(root, 'data', 'head') };
     copyData(prep, dirs.base);
