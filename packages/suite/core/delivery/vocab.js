@@ -495,6 +495,10 @@ export const SETTINGS_KEYS = Object.freeze({
   // v2
   makerEvents: 'development.makerEvents',
   deliveryBackfill: 'migrations.deliveryBackfill',
+  // delivery loop
+  deliveryLoopEnabled: 'delivery.loop.enabled',
+  deliveryLoopMode: 'delivery.loop.mode',
+  deliveryLoopPaused: 'delivery.loop.paused',
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);
