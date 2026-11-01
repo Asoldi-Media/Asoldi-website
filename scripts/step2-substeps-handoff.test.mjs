@@ -8,7 +8,9 @@
 // substeps (negative control).
 //
 // node --test scripts/step2-substeps-handoff.test.mjs
-// STEP2_SUBSTEPS_BASE_REF=<ref> picks the older commit for the comparison (default 859429c).
+// STEP2_SUBSTEPS_BASE_REF=<ref> picks the older commit for the comparison (default 859429c). In a
+// checkout without that commit (a shallow clone or an exported tree) the comparisons with it are
+// skipped, unless STEP2_SUBSTEPS_BASE_REF is set: then a missing commit fails the run.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -42,7 +44,21 @@ import { LEGACY_STEP2_SUBSTEP_KEYS, normalizeStep2SubstepOrder } from '../lib/st
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const writer = join(root, 'scripts', 'fixtures', 'step2-substeps-writer.mjs');
+const BASE_REF_SET = Boolean(String(process.env.STEP2_SUBSTEPS_BASE_REF || '').trim());
 const BASE_REF = String(process.env.STEP2_SUBSTEPS_BASE_REF || '859429c').trim();
+
+function baseRefResolves() {
+  try {
+    execFileSync('git', ['rev-parse', '--verify', '--quiet', `${BASE_REF}^{commit}`], { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+// Options for the tests that load the older commit: skipped with a reason when it is not in history.
+const BASE = BASE_REF_SET || baseRefResolves()
+  ? {}
+  : { skip: `commit ${BASE_REF} is not in this checkout's history (shallow or exported tree); set STEP2_SUBSTEPS_BASE_REF to compare` };
 
 const LEGACY = ['generate-text', 'inject-media', 'layout-colors-style', 'maps-embed-sync'];
 const ORDER = [...LEGACY, 'bind-cta-data'];
@@ -269,7 +285,7 @@ function withoutClock(text) {
   return String(text).replace(/"(updatedAt|statusUpdatedAt|createdAt)":\s*"[^"]*"/g, '"$1": "<t>"');
 }
 
-test(`negative control: commit ${BASE_REF}, fed the new handoff, still stores four substeps`, () => {
+test(`negative control: commit ${BASE_REF}, fed the new handoff, still stores four substeps`, BASE, () => {
   const { makerRun } = runWriter(baseCodeRoot(), [newHandoff()]);
   assert.deepEqual(Object.keys(makerRun.step2Substeps), LEGACY);
   assert.equal(makerRun.ext, undefined);
@@ -283,7 +299,7 @@ test('this tree, fed the new handoff, stores five substeps and keeps them throug
   assert.equal(Object.prototype.hasOwnProperty.call(makerRun, 'step2SubstepOrder'), false, 'the order is stored in ext only');
 });
 
-test(`rollback: commit ${BASE_REF} keeps the stored order in ext, and this tree then restores the fifth key`, () => {
+test(`rollback: commit ${BASE_REF} keeps the stored order in ext, and this tree then restores the fifth key`, BASE, () => {
   const dataDir = newDataDir();
   try {
     runWriterIn(dataDir, root, [newHandoff()]);
@@ -298,10 +314,46 @@ test(`rollback: commit ${BASE_REF} keeps the stored order in ext, and this tree 
   }
 });
 
-test(`without step2SubstepOrder the stored client is byte-identical to commit ${BASE_REF}`, () => {
+test(`without step2SubstepOrder the stored client is byte-identical to commit ${BASE_REF}`, BASE, () => {
   const handoffs = [legacyHandoff(), legacyHandoff({ step2Substeps: { 'generate-text': 'ready', 'bind-cta-data': 'ready' } })];
   const before = runWriter(baseCodeRoot(), handoffs);
   const after = runWriter(root, handoffs);
   assert.equal(withoutClock(after.stored), withoutClock(before.stored));
   assert.deepEqual(Object.keys(after.makerRun.step2Substeps), LEGACY);
+});
+
+test('a sent order without the extra ids takes them back out: four keys, no stored order, no queue target', () => {
+  const dataDir = newDataDir();
+  try {
+    runWriterIn(dataDir, root, [newHandoff()]);
+    const back = runWriterIn(dataDir, root, [legacyHandoff({ step2SubstepOrder: [...LEGACY] })]);
+    assert.deepEqual(Object.keys(back.makerRun.step2Substeps), LEGACY);
+    assert.equal(back.makerRun.ext, undefined, 'the stored order is removed and the empty ext with it');
+    const later = runWriterIn(dataDir, root, [legacyHandoff()]);
+    assert.deepEqual(Object.keys(later.makerRun.step2Substeps), LEGACY, 'later handoffs without an order stay at four');
+    const lookup = (id) => (id === 's2-client' ? { makerRun: later.makerRun } : null);
+    const order = step2SubstepOrderForQueueRequest({ salesClientIds: ['s2-client'] }, lookup);
+    assert.equal(order, null);
+    assert.equal(isAcceptedQueueTarget('bind-cta-data', { step2SubstepOrder: order }), false);
+  } finally {
+    rmSync(dataDir, { recursive: true, force: true });
+  }
+  const other = runWriter(root, [legacyHandoff({ step2SubstepOrder: [...LEGACY] })]);
+  assert.equal(other.makerRun.ext, undefined, 'a legacy order on a client without a stored one stores nothing');
+});
+
+test('other ext keys stay when the stored order is removed', async () => {
+  const { withStoredStep2SubstepOrder } = await import('../lib/step2-substeps.js');
+  const target = { ext: { step2SubstepOrder: [...ORDER], note: 'kept' } };
+  withStoredStep2SubstepOrder(target, { step2SubstepOrder: [...LEGACY] });
+  assert.deepEqual(target.ext, { note: 'kept' });
+  const untouched = { ext: { step2SubstepOrder: [...ORDER] } };
+  withStoredStep2SubstepOrder(untouched, {});
+  assert.deepEqual(untouched.ext, { step2SubstepOrder: ORDER }, 'no order sent: the stored one stays');
+});
+
+test(`after the extra ids are taken out the stored client is byte-identical to commit ${BASE_REF} without them`, BASE, () => {
+  const before = runWriter(baseCodeRoot(), [legacyHandoff(), legacyHandoff()]);
+  const after = runWriter(root, [newHandoff(), legacyHandoff({ step2SubstepOrder: [...LEGACY] })]);
+  assert.equal(withoutClock(after.stored), withoutClock(before.stored));
 });
