@@ -110,11 +110,13 @@ test('calendar upsert keeps an in-progress room when preserveForeignMeet is set'
   assert.match(src, /Do not mint a second room on a time change/);
   assert.match(src, /forceNewMeet/);
   assert.match(src, /requestOwnedConference/);
+  assert.match(src, /forceOwnerMeet: Boolean\(options\?\.forceOwnerMeet\) \|\| forceNewMeet/);
+  assert.match(src, /The shared service account cannot host this room/);
   const stampBlock = src.slice(src.indexOf('let meetHostVerifiedEmail'));
   assert.match(stampBlock.slice(0, 500), /requestOwnedConference/);
   assert.equal(stampBlock.slice(0, 900).includes('salesMeetLooksOwnerHosted'), false);
   const replaceBlock = src.slice(src.indexOf('if (needsFreshConference)'));
-  assert.match(replaceBlock.slice(0, 500), /includeAttendees = true/);
+  assert.match(replaceBlock.slice(0, 900), /includeAttendees = true/);
 });
 
 test('recorded extra Møte plans Meet plus Fireflies and no client email', () => {

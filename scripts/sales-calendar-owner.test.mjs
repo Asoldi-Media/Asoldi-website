@@ -179,6 +179,12 @@ test('a shared mailbox cannot host a sales meeting', () => {
     expectedOwnerEmail: 'alexander@asoldi.com',
     hangoutLink: meet,
     forceOwnerMeet: true,
+  }), true);
+  assert.equal(salesMeetNeedsFreshConference({
+    expectedOwnerEmail: 'alexander@asoldi.com',
+    hangoutLink: meet,
+    forceOwnerMeet: true,
+    verifiedHostEmail: 'alexander@asoldi.com',
   }), false);
   const join = salesMeetJoinUrl(meet, 'alexander@asoldi.com');
   assert.match(join, /AccountChooser/);
