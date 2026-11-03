@@ -20,6 +20,7 @@ import {
   salesMeetJoinUrl,
   salesMeetLooksOwnerHosted,
   salesMeetNeedsFreshConference,
+  salesClientNeedsOwnerMeetBackfill,
   salesMeetingIsInProgress,
   sanitizeMyphonerDefaultOwnerKey,
   shouldSyncSalesMeetingCalendar,
@@ -193,6 +194,47 @@ test('a shared mailbox cannot host a sales meeting', () => {
   const during = new Date('2026-10-07T13:10:00.000Z').getTime();
   assert.equal(salesMeetingIsInProgress('2026-10-07T13:00:00.000Z', 60, during), true);
   assert.equal(salesMeetingIsInProgress('2026-10-08T12:00:00.000Z', 60, during), false);
+});
+
+test('owner-meet backfill only repairs leftover assigned online rooms', () => {
+  const now = Date.parse('2026-11-03T11:20:00.000Z');
+  const leftover = {
+    status: 'active',
+    agreedTime: true,
+    meetingAt: '2026-11-03T14:00:00.000Z',
+    meetingMode: 'online',
+    ownerId: alexanderSales,
+    calendar: { meetLink: 'https://meet.google.com/omf-uiwc-ddr', meetHostVerifiedEmail: '' },
+  };
+  assert.equal(salesClientNeedsOwnerMeetBackfill(leftover, now), true);
+  assert.equal(salesClientNeedsOwnerMeetBackfill({
+    ...leftover,
+    calendar: { ...leftover.calendar, meetHostVerifiedEmail: 'alexander@asoldi.com' },
+  }, now), false);
+  assert.equal(salesClientNeedsOwnerMeetBackfill({
+    ...leftover,
+    calendar: { ...leftover.calendar, meetHostVerifiedEmail: 'contact@asoldi.com' },
+  }, now), true);
+  assert.equal(salesClientNeedsOwnerMeetBackfill({
+    ...leftover,
+    meetingMode: 'in-person',
+  }, now), false);
+  assert.equal(salesClientNeedsOwnerMeetBackfill({
+    ...leftover,
+    ownerId: '',
+  }, now), false);
+  assert.equal(salesClientNeedsOwnerMeetBackfill({
+    ...leftover,
+    status: 'not-sold',
+  }, now), false);
+  assert.equal(salesClientNeedsOwnerMeetBackfill({
+    ...leftover,
+    meetingAt: '2026-11-03T09:00:00.000Z',
+  }, now), false);
+  assert.equal(salesClientNeedsOwnerMeetBackfill({
+    ...leftover,
+    meetingAt: '2026-11-03T11:00:00.000Z',
+  }, now), true);
 });
 
 test('confirmed Meet is the emailed URL, not a later calendar swap', () => {
