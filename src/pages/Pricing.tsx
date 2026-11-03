@@ -89,7 +89,7 @@ const pricingData: Record<string, any[]> = {
   "Nettsideutvikling": [
     {
       name: "Starter",
-      price: "499,-/mnd",
+      price: "800,-/mnd",
       description: "Simpel og funksjonell nettside.",
       includedFeatures: [
         "Full nettsideutvikling",
