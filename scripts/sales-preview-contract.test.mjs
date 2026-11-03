@@ -146,7 +146,7 @@ test('contract popup can download the PDF and requires terms plus 6-month bindin
   assert.equal(previewSignAgreementsOk({ accepted: true }), false);
 });
 
-test('kontrakt link opens the contract, docks into the sign button, and explains the Asoldi password', () => {
+test('kontrakt link opens the contract, docks into the sign button, and signs through signup/login', () => {
   const src = readFileSync(new URL('../public/sales-preview-contract.js', import.meta.url), 'utf8');
   assert.match(src, /wantsContractOpen/);
   assert.match(src, /params\.get\('kontrakt'\)/);
@@ -157,22 +157,59 @@ test('kontrakt link opens the contract, docks into the sign button, and explains
   assert.match(src, /asoldi-orbit/);
   assert.match(src, /@property --asoldi-orbit/);
   assert.doesNotMatch(src, /asoldi-orbit[^}]*rotate\(360deg\)/);
-  assert.match(src, /account-note/);
-  assert.doesNotMatch(src, /\.account-note \{[\s\S]*?background:\s*#111/);
-  assert.match(src, /class="reveal"/);
-  assert.match(src, /classList\.toggle\('at-bottom'/);
-  assert.match(src, /setAttribute\('inert'/);
-  assert.match(src, /grid-template-columns:\s*minmax\(0,\s*1fr\)\s+auto/);
-  assert.match(src, /class="sign-row"/);
-  assert.match(src, /placeholder="passord: minst 8 tegn"/);
-  assert.match(src, /placeholder="Navn"/);
-  assert.match(src, /placeholder="E-post"/);
+  assert.match(src, /Signer og lag Asoldi-bruker/);
+  assert.match(src, /class="cta"/);
+  assert.match(src, /data-ready="0"/);
+  assert.match(src, /showReadHint/);
+  assert.match(src, /class="auth"/);
+  assert.match(src, /Opprett konto/);
+  assert.match(src, /Logg inn/);
+  assert.match(src, /Gjenta passord/);
+  assert.match(src, /Asoldi-terminalen/);
+  assert.match(src, /autocomplete="off"/);
+  assert.match(src, /data-lpignore="true"/);
+  assert.doesNotMatch(src, /\breadonly\b/);
+  assert.doesNotMatch(src, /class="reveal"/);
+  assert.doesNotMatch(src, /class="sign-row"/);
+  assert.doesNotMatch(src, /placeholder="passord: minst 8 tegn"/);
   assert.doesNotMatch(src, /Nytt Asoldi-passord/);
-  assert.doesNotMatch(src, /label class="field"/);
   assert.doesNotMatch(src, /Signering oppretter Asoldi-kontoen/);
-  assert.doesNotMatch(src, /read-note/);
   assert.match(src, /Du m\\u00e5 lese hele kontrakten/);
   assert.match(src, />Signer</);
+  assert.match(src, /auth-go\.ready/);
+  assert.match(src, /mode: authMode/);
+});
+
+test('signup mode refuses an existing client; login mode refuses a missing one', async () => {
+  const created = await ensurePreviewSigner({
+    email: 'login-mode@cafe.no',
+    password: 'hemmelig1',
+    name: 'Kari Nord',
+    mode: 'signup',
+  });
+  assert.equal(created.ok, true);
+  const again = await ensurePreviewSigner({
+    email: 'login-mode@cafe.no',
+    password: 'hemmelig1',
+    name: 'Kari Nord',
+    mode: 'signup',
+  });
+  assert.equal(again.ok, false);
+  assert.equal(again.status, 409);
+  const missing = await ensurePreviewSigner({
+    email: 'ingen-konto@cafe.no',
+    password: 'hemmelig1',
+    mode: 'login',
+  });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.status, 404);
+  const loggedIn = await ensurePreviewSigner({
+    email: 'login-mode@cafe.no',
+    password: 'hemmelig1',
+    mode: 'login',
+  });
+  assert.equal(loggedIn.ok, true);
+  assert.equal(loggedIn.user.id, created.user.id);
 });
 
 test('preview accept is rate-limited per key', () => {

@@ -21091,12 +21091,23 @@ app.post('/api/public/sales-preview/:id/contract/accept', async (req, res) => {
   if (!previewSignAgreementsOk(req.body)) {
     return res.status(400).json({ message: 'Du må godkjenne vilkår og 6 måneders bindingstid.' });
   }
-  const email = sanitizeText(offer.targetEmail) || offerSendToEmail(client);
-  const name = sanitizeText(req.body?.name) || sanitizeText(client.contactPerson);
+  const requestedEmail = sanitizeText(req.body?.email);
+  const fallbackEmail = sanitizeText(offer.targetEmail) || offerSendToEmail(client);
+  if (requestedEmail && !isValidEmail(requestedEmail)) {
+    return res.status(400).json({ message: 'Skriv inn en gyldig e-post.' });
+  }
+  const email = requestedEmail ? normalizeEmail(requestedEmail) : fallbackEmail;
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ message: 'Mangler gyldig e-post.' });
+  }
+  const modeRaw = sanitizeText(req.body?.mode).toLowerCase();
+  const mode = modeRaw === 'login' || modeRaw === 'signup' ? modeRaw : '';
+  const name = sanitizeText(req.body?.name) || (mode === 'login' ? '' : sanitizeText(client.contactPerson));
   const signed = await ensurePreviewSigner({
     email,
     password: req.body?.password,
     name,
+    mode,
   });
   if (!signed.ok) return res.status(signed.status).json({ message: signed.message });
   const stamped = stampOfferBusiness(offer, signed.user);

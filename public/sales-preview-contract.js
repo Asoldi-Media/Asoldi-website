@@ -15,7 +15,7 @@
   shadow.innerHTML = `
     <style>
       :host { all: initial; }
-      * { box-sizing: border-box; font-family: Inter, system-ui, sans-serif; }
+      * { box-sizing: border-box; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
       .btn[hidden] { display: none !important; }
       .btn {
         position: fixed;
@@ -213,107 +213,212 @@
       .offer-contract-sign h2 { margin-top: 0; }
       .offer-contract-sign-line { min-height: 56px; border-bottom: 1px solid #222; display: flex; align-items: flex-end; }
       .offer-contract-stamp { height: 52px; width: auto; max-width: 100%; object-fit: contain; }
+      .offer-contract-sign-note { margin-top: 12px; color: #4B5563; font-size: 14px; line-height: 1.55; }
       .foot {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
-        align-items: end;
-        column-gap: 20px;
+        position: relative;
         flex: 0 0 auto;
-        min-height: 0;
-        overflow: hidden;
-        padding: 10px 16px 12px;
+        padding: 12px 16px max(16px, env(safe-area-inset-bottom));
         border-top: 1px solid #E5E1D8;
-        background: rgba(255,255,255,.95);
-        transition: padding .4s ease;
+        background: rgba(255,255,255,.96);
       }
-      .foot.at-bottom {
-        max-height: 42%;
-        overflow-x: hidden;
-        overflow-y: auto;
-        overscroll-behavior: contain;
-        touch-action: pan-y;
-        padding-top: 14px;
+      .cta {
+        width: 100%;
+        height: 48px;
+        border: 0;
+        border-radius: 12px;
+        font-size: 15px;
+        font-weight: 650;
+        cursor: pointer;
+        transition: background .2s ease, color .2s ease;
       }
-      .reveal {
-        grid-column: 1;
-        grid-row: 1;
-        display: grid;
-        grid-template-rows: 0fr;
-        opacity: 0;
-        visibility: hidden;
-        overflow: hidden;
-        margin: 0;
-        max-height: 0;
-        pointer-events: none;
-        transition: grid-template-rows .45s cubic-bezier(.22,.7,.2,1), opacity .28s ease, visibility 0s linear .45s, max-height .45s ease;
+      .cta[data-ready="0"] {
+        background: #D1D5DB;
+        color: #6B7280;
       }
-      .reveal-inner {
-        min-height: 0;
-        overflow: hidden;
-        transform: translateY(12px);
-        transition: transform .45s cubic-bezier(.22,.7,.2,1);
+      .cta[data-ready="1"] {
+        background: #111827;
+        color: #fff;
       }
-      .foot.at-bottom .reveal {
-        grid-template-rows: 1fr;
-        opacity: 1;
-        visibility: visible;
-        max-height: 480px;
-        pointer-events: auto;
-        transition: grid-template-rows .45s cubic-bezier(.22,.7,.2,1), opacity .28s ease, visibility 0s, max-height .45s ease;
-      }
-      .foot.at-bottom .reveal-inner { transform: translateY(0); }
-      .alts { display: grid; gap: 8px; margin-bottom: 12px; }
-      .alt { display: flex; gap: 10px; padding: 10px 12px; border: 1px solid #E5E7EB; border-radius: 12px; cursor: pointer; font-size: 14px; }
-      .alt input { margin-top: 3px; }
-      .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
-      input[type="text"], input[type="email"], input[type="password"] {
-        width: 100%; height: 40px; padding: 0 12px; border: 1px solid #E5E7EB; border-radius: 10px;
-        font-size: 14px; color: #111827; background: #fff;
-      }
-      input[readonly] { background: #F9FAFB; color: #4B5563; }
-      .accept { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; color: #111827; margin: 8px 0 0; }
-      .accept + .accept { margin-top: 8px; }
-      .accept input { margin-top: 3px; flex: 0 0 auto; }
-      .accept a { color: #FF5B00; font-weight: 650; }
-      .accepts { margin: 0 0 2px; display: grid; gap: 0; }
-      .sign-row {
-        grid-column: 2;
-        grid-row: 1;
-        display: flex;
-        justify-content: flex-end;
-        align-items: center;
-        gap: 8px;
-      }
-      .sign-row [name="password"] { width: min(280px, 100%); flex: 0 1 280px; }
-      .go {
-        width: auto; min-width: 120px; height: 40px; padding: 0 18px; border: 0; border-radius: 12px;
-        background: #FF5B00; color: #fff; font-size: 14px; font-weight: 650; cursor: pointer; flex: 0 0 auto;
-      }
-      .go.wait { background: #E5E7EB; color: #9CA3AF; }
-      .err {
-        grid-column: 1 / -1;
-        grid-row: 2;
-        margin: 8px 0 0;
-        text-align: right;
-        font-size: 12px;
-        color: #DC2626;
-      }
-      .account-note {
-        margin: 0 0 12px;
+      .hint {
+        display: none;
+        margin: 0 0 8px;
+        padding: 10px 14px;
+        border-radius: 10px;
+        background: #111827;
+        color: #fff;
         font-size: 13px;
         line-height: 1.45;
-        font-weight: 500;
-        color: #4B5563;
+        text-align: center;
+      }
+      .hint.show { display: block; }
+      .auth {
+        position: fixed;
+        inset: 0;
+        z-index: 1;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background: rgba(15, 23, 42, .52);
+        backdrop-filter: blur(10px);
+        overflow: auto;
+        overscroll-behavior: contain;
+        touch-action: auto;
+      }
+      .auth.open { display: flex; }
+      .auth-card {
+        position: relative;
+        width: 100%;
+        max-width: 420px;
+        max-height: min(92vh, 780px);
+        overflow: auto;
+        overscroll-behavior: contain;
+        margin: auto;
+        padding: 32px 32px 28px;
+        border-radius: 16px;
+        background: #fff;
+        box-shadow: 0 24px 80px rgba(15, 23, 42, .28);
+      }
+      .auth-close {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        width: 36px;
+        height: 36px;
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: #6B7280;
+        font-size: 22px;
+        line-height: 1;
+        cursor: pointer;
+      }
+      .auth-close:hover { background: #F3F4F6; color: #111827; }
+      .auth-brand {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin: 0 0 18px;
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: -.02em;
+        color: #111827;
+      }
+      .auth-mark {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: #FF5B00;
+      }
+      .auth-card h2 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 650;
+        letter-spacing: -.03em;
+        color: #111827;
+      }
+      .lede {
+        margin: 10px 0 22px;
+        font-size: 14px;
+        line-height: 1.55;
+        color: #6B7280;
+      }
+      .auth-form { margin: 0; }
+      .field { margin: 0 0 14px; }
+      .field-label {
+        display: block;
+        margin: 0 0 6px;
+        font-size: 14px;
+        font-weight: 550;
+        color: #111827;
+      }
+      .field input[type="text"],
+      .field input[type="email"],
+      .field input[type="password"] {
+        width: 100%;
+        height: 44px;
+        padding: 0 14px;
+        border: 1px solid #E5E7EB;
+        border-radius: 8px;
+        font-size: 14px;
+        color: #111827;
+        background: #fff;
+      }
+      .field input:focus {
+        outline: none;
+        border-color: #FF5B00;
+        box-shadow: 0 0 0 3px rgba(255,91,0,.14);
+      }
+      .field input::placeholder { color: #9CA3AF; }
+      .pass-wrap { position: relative; }
+      .pass-wrap input { padding-right: 44px; }
+      .eye {
+        position: absolute;
+        right: 4px;
+        top: 50%;
+        width: 36px;
+        height: 36px;
+        transform: translateY(-50%);
+        border: 0;
+        border-radius: 8px;
+        background: transparent;
+        color: #9CA3AF;
+        cursor: pointer;
+      }
+      .eye:hover { color: #111827; }
+      .alts { display: grid; gap: 8px; margin: 4px 0 14px; }
+      .alt { display: flex; gap: 10px; padding: 10px 12px; border: 1px solid #E5E7EB; border-radius: 12px; cursor: pointer; font-size: 14px; }
+      .alt input { margin-top: 3px; accent-color: #FF5B00; }
+      .accept { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; color: #374151; margin: 0; }
+      .accept + .accept { margin-top: 10px; }
+      .accept input { margin-top: 3px; flex: 0 0 auto; accent-color: #FF5B00; }
+      .accept a { color: #FF5B00; font-weight: 650; }
+      .accepts { margin: 4px 0 16px; }
+      .auth-go {
+        width: 100%;
+        height: 44px;
+        border: 0;
+        border-radius: 8px;
+        font-size: 15px;
+        font-weight: 650;
+        transition: background .15s ease, color .15s ease;
+      }
+      .auth-go.wait {
+        background: #E5E7EB;
+        color: #9CA3AF;
+        cursor: pointer;
+      }
+      .auth-go.ready {
+        background: #FF5B00;
+        color: #fff;
+        cursor: pointer;
+      }
+      .auth-go.ready:hover { background: #E55200; }
+      .auth-err {
+        margin: 10px 0 0;
+        font-size: 13px;
+        color: #DC2626;
+      }
+      .auth-switch {
+        margin: 20px 0 0;
+        text-align: center;
+        font-size: 14px;
+        color: #6B7280;
+      }
+      .auth-switch button {
+        border: 0;
+        padding: 0;
+        background: none;
+        color: #111827;
+        font-weight: 650;
+        text-decoration: underline;
+        cursor: pointer;
       }
       @media (max-width: 640px) {
         .paper { padding: 28px 20px; }
-        .offer-contract-parties, .offer-contract-sign, .pair { grid-template-columns: 1fr; }
-        .foot { grid-template-columns: 1fr; }
-        .reveal, .sign-row { grid-column: 1; }
-        .sign-row { grid-row: 2; flex-wrap: wrap; }
-        .sign-row [name="password"] { flex: 1 1 160px; }
-        .go { flex: 1 1 auto; }
-        .err { grid-row: 3; }
+        .offer-contract-parties, .offer-contract-sign { grid-template-columns: 1fr; }
+        .auth { padding: 12px; }
+        .auth-card { padding: 28px 20px 22px; }
       }
     </style>
     <button class="btn" type="button" data-status="idle" aria-label="Kontrakt">
@@ -335,7 +440,13 @@
         <div class="scroller">
           <div class="paper"></div>
         </div>
-        <div class="foot"></div>
+        <div class="foot">
+          <p class="hint" role="status" aria-live="polite">Du m\u00e5 lese hele kontrakten f\u00f8r du kan g\u00e5 videre. Scroll ned til bunnen.</p>
+          <button class="cta" type="button" data-ready="0">Signer og lag Asoldi-bruker</button>
+        </div>
+      </div>
+      <div class="auth" hidden>
+        <div class="auth-card" role="dialog" aria-modal="true" aria-labelledby="asoldi-auth-title"></div>
       </div>
     </dialog>
   `;
@@ -345,11 +456,19 @@
   const scroller = shadow.querySelector('.scroller');
   const paper = shadow.querySelector('.paper');
   const foot = shadow.querySelector('.foot');
+  const hint = shadow.querySelector('.hint');
+  const cta = shadow.querySelector('.cta');
+  const auth = shadow.querySelector('.auth');
+  const authCard = shadow.querySelector('.auth-card');
   let state = { status: 'idle', name: '', email: '', contractHtml: '', alternatives: [], acceptedAt: '' };
   let atBottom = false;
   let chosen = null;
   let busy = false;
   let docking = false;
+  let authMode = 'signup';
+  let draftName = '';
+  let draftEmail = '';
+  let hintTimer = 0;
   const frozenStyles = [];
 
   function wantsContractOpen() {
@@ -373,6 +492,10 @@
 
   function isModalOpen() {
     return overlay.classList.contains('open') || overlay.open === true;
+  }
+
+  function isAuthOpen() {
+    return auth.classList.contains('open');
   }
 
   function eventInside(root, event) {
@@ -440,6 +563,10 @@
     event.preventDefault();
     event.stopPropagation();
     if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+    if (isAuthOpen()) {
+      applyDelta(authCard, wheelDeltaY(event));
+      return;
+    }
     applyDelta(scroller, wheelDeltaY(event));
   }
 
@@ -452,6 +579,12 @@
     const y = event.touches?.[0]?.clientY || 0;
     const delta = touchY - y;
     touchY = y;
+    if (isAuthOpen()) {
+      if (eventInside(authCard, event)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (eventInside(scroller, event) || eventInside(foot, event)) return;
     event.preventDefault();
     event.stopPropagation();
@@ -466,17 +599,19 @@
     if (tag === 'input' || tag === 'textarea' || tag === 'select' || event.target?.isContentEditable) return;
     event.preventDefault();
     event.stopPropagation();
-    const page = scroller.clientHeight || 400;
+    const target = isAuthOpen() ? authCard : scroller;
+    const page = target.clientHeight || 400;
     const delta = event.key === 'ArrowDown' ? 40
       : event.key === 'ArrowUp' ? -40
         : event.key === 'PageDown' || event.key === ' ' ? page
           : event.key === 'PageUp' ? -page
-            : event.key === 'Home' ? -scroller.scrollHeight
-              : scroller.scrollHeight;
-    applyDelta(scroller, delta);
+            : event.key === 'Home' ? -target.scrollHeight
+              : target.scrollHeight;
+    applyDelta(target, delta);
   }
 
   function finishClose() {
+    closeAuth();
     overlay.classList.remove('docking');
     const panel = shadow.querySelector('.panel');
     if (panel) {
@@ -504,6 +639,7 @@
       return;
     }
     docking = true;
+    closeAuth();
     btn.hidden = false;
     btn.dataset.call = '1';
     const panelRect = panel.getBoundingClientRect();
@@ -527,6 +663,10 @@
 
   function closeModal() {
     if (!isModalOpen() || docking) return;
+    if (isAuthOpen()) {
+      closeAuth();
+      return;
+    }
     if (fromContractLink && state.status === 'ready') {
       dockIntoButton();
       return;
@@ -534,107 +674,191 @@
     finishClose();
   }
 
+  function hideHint() {
+    hint.classList.remove('show');
+    if (hintTimer) window.clearTimeout(hintTimer);
+    hintTimer = 0;
+  }
+
+  function showReadHint() {
+    hint.classList.add('show');
+    if (hintTimer) window.clearTimeout(hintTimer);
+    hintTimer = window.setTimeout(hideHint, 3400);
+  }
+
   function syncBottom() {
     const reached = scroller.scrollTop + scroller.clientHeight >= scroller.scrollHeight - 28;
     atBottom = reached || scroller.scrollHeight <= scroller.clientHeight + 8;
-    foot.classList.toggle('at-bottom', atBottom);
-    const reveal = foot.querySelector('.reveal');
-    if (reveal) {
-      reveal.setAttribute('aria-hidden', atBottom ? 'false' : 'true');
-      if (atBottom) reveal.removeAttribute('inert');
-      else reveal.setAttribute('inert', '');
-    }
-    foot.querySelectorAll('.reveal input').forEach((input) => {
-      if (atBottom) input.removeAttribute('tabindex');
-      else input.setAttribute('tabindex', '-1');
-    });
-    refreshSubmit();
+    cta.dataset.ready = atBottom ? '1' : '0';
+    if (atBottom) hideHint();
   }
 
-  function blockReason() {
-    const password = String(shadow.querySelector('[name="password"]')?.value || '');
+  function validEmail(value) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || '').trim());
+  }
+
+  function authBlockReason() {
+    const name = String(authCard.querySelector('[name="name"]')?.value || '').trim();
+    const email = String(authCard.querySelector('[name="email"]')?.value || '').trim();
+    const password = String(authCard.querySelector('[name="password"]')?.value || '');
+    const password2 = String(authCard.querySelector('[name="password2"]')?.value || '');
     const needsChoice = Array.isArray(state.alternatives) && state.alternatives.length >= 2;
-    if (!atBottom) return 'scroll';
-    if (needsChoice && chosen !== 0 && chosen !== 1) return 'choice';
-    if (!shadow.querySelector('[name="terms"]')?.checked) return 'terms';
-    if (!shadow.querySelector('[name="binding"]')?.checked) return 'binding';
+    if (authMode === 'signup' && !name) return 'name';
+    if (!validEmail(email)) return 'email';
     if (password.length < 8) return 'password';
+    if (authMode === 'signup' && password !== password2) return 'repeat';
+    if (needsChoice && chosen !== 0 && chosen !== 1) return 'choice';
+    if (!authCard.querySelector('[name="terms"]')?.checked) return 'terms';
+    if (!authCard.querySelector('[name="binding"]')?.checked) return 'binding';
     return '';
   }
 
-  function refreshSubmit() {
-    const submit = shadow.querySelector('.go');
-    if (!submit) return;
-    submit.classList.toggle('wait', Boolean(blockReason()) || busy);
+  function authMessage(reason) {
+    return reason === 'name' ? 'Skriv inn navnet ditt.'
+      : reason === 'email' ? 'Skriv inn en gyldig e-post.'
+        : reason === 'password' ? 'Passordet m\u00e5 v\u00e6re minst 8 tegn.'
+          : reason === 'repeat' ? 'Passordene m\u00e5 v\u00e6re like.'
+            : reason === 'choice' ? 'Velg Tilbud 1 eller Tilbud 2 f\u00f8r du signerer.'
+              : reason === 'terms' ? 'Du m\u00e5 godta vilk\u00e5r og betingelser f\u00f8r du signerer.'
+                : reason === 'binding' ? 'Du m\u00e5 godkjenne 6 m\u00e5neders bindingstid f\u00f8r du signerer.'
+                  : '';
   }
 
-  function renderFooter() {
+  function refreshAuthSubmit() {
+    const submit = authCard.querySelector('.auth-go');
+    if (!submit) return;
+    const blocked = Boolean(authBlockReason()) || busy;
+    submit.classList.toggle('wait', blocked);
+    submit.classList.toggle('ready', !blocked);
+  }
+
+  function bindEye(button, input) {
+    if (!button || !input) return;
+    button.addEventListener('click', () => {
+      input.type = input.type === 'password' ? 'text' : 'password';
+    });
+  }
+
+  function renderAuth() {
+    const signup = authMode === 'signup';
     const alts = Array.isArray(state.alternatives) && state.alternatives.length >= 2 ? state.alternatives : [];
-    const nameLocked = Boolean(state.name);
-    foot.innerHTML = `
-      <div class="reveal" aria-hidden="true" inert>
-        <div class="reveal-inner">
-          <p class="account-note">For \u00e5 signere m\u00e5 du lage en Asoldi-konto. Passordet du skriver inn blir innloggingen din p\u00e5 asoldi.com.</p>
-          ${alts.length ? `<div class="alts">${alts.map((alt) => `
-            <label class="alt">
-              <input type="radio" name="chosen" value="${alt.index === 1 ? 1 : 0}">
-              <span><strong>${escapeHtml(alt.label || '')}</strong>${alt.name ? ` — ${escapeHtml(alt.name)}` : ''}${alt.price ? `<br><small>${escapeHtml(alt.price)}</small>` : ''}</span>
-            </label>`).join('')}</div>` : ''}
-          <div class="pair">
-            <input name="name" type="text" value="${escapeAttr(state.name)}" ${nameLocked ? 'readonly' : ''} autocomplete="name" placeholder="Navn" aria-label="Navn">
-            <input name="email" type="email" value="${escapeAttr(state.email)}" readonly autocomplete="email" placeholder="E-post" aria-label="E-post">
-          </div>
-          <div class="accepts">
-            <label class="accept">
-              <input name="terms" type="checkbox">
-              <span>Jeg godtar <a href="https://asoldi.com/vilkar" target="_blank" rel="noopener">vilk\u00e5r og betingelser</a>.</span>
-            </label>
-            <label class="accept">
-              <input name="binding" type="checkbox">
-              <span>Jeg anerkjenner at avtalen har bindingstid p\u00e5 6 m\u00e5neder.</span>
-            </label>
-          </div>
+    const eye = `<button class="eye" type="button" tabindex="-1" aria-label="Vis passord">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+        <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/>
+        <circle cx="12" cy="12" r="3"/>
+      </svg>
+    </button>`;
+    authCard.innerHTML = `
+      <button class="auth-close" type="button" aria-label="Lukk">\u00d7</button>
+      <div class="auth-brand"><span class="auth-mark"></span>Asoldi</div>
+      <h2 id="asoldi-auth-title">${signup ? 'Opprett konto' : 'Logg inn'}</h2>
+      <p class="lede">Med denne brukeren f\u00e5r du tilgang til Asoldi-terminalen, fremdriftsdata, forh\u00e5ndsvisninger og hele systemet v\u00e5rt. Du signerer ogs\u00e5 kontrakten, s\u00e5 vi kan starte samarbeidet.</p>
+      <form class="auth-form" autocomplete="off" novalidate data-lpignore="true" data-1p-ignore="true" data-form-type="other">
+        ${signup ? `<label class="field">
+          <span class="field-label">Navn</span>
+          <input name="name" type="text" value="${escapeAttr(draftName)}" autocomplete="off" autocapitalize="words" spellcheck="false" data-lpignore="true" data-1p-ignore="true" placeholder="Fullt navn">
+        </label>` : ''}
+        <label class="field">
+          <span class="field-label">E-post</span>
+          <input name="email" type="email" value="${escapeAttr(draftEmail)}" autocomplete="off" autocapitalize="none" spellcheck="false" data-lpignore="true" data-1p-ignore="true" placeholder="navn@bedrift.no">
+        </label>
+        <label class="field">
+          <span class="field-label">Passord</span>
+          <span class="pass-wrap">
+            <input name="password" type="password" minlength="8" autocomplete="off" data-lpignore="true" data-1p-ignore="true" placeholder="Minst 8 tegn">
+            ${eye}
+          </span>
+        </label>
+        ${signup ? `<label class="field">
+          <span class="field-label">Gjenta passord</span>
+          <span class="pass-wrap">
+            <input name="password2" type="password" minlength="8" autocomplete="off" data-lpignore="true" data-1p-ignore="true" placeholder="Gjenta passordet">
+            ${eye}
+          </span>
+        </label>` : ''}
+        ${alts.length ? `<div class="alts">${alts.map((alt) => `
+          <label class="alt">
+            <input type="radio" name="chosen" value="${alt.index === 1 ? 1 : 0}" ${chosen === (alt.index === 1 ? 1 : 0) ? 'checked' : ''}>
+            <span><strong>${escapeHtml(alt.label || '')}</strong>${alt.name ? ` \u2014 ${escapeHtml(alt.name)}` : ''}${alt.price ? `<br><small>${escapeHtml(alt.price)}</small>` : ''}</span>
+          </label>`).join('')}</div>` : ''}
+        <div class="accepts">
+          <label class="accept">
+            <input name="terms" type="checkbox">
+            <span>Jeg godtar <a href="https://asoldi.com/vilkar" target="_blank" rel="noopener">vilk\u00e5r og betingelser</a>.</span>
+          </label>
+          <label class="accept">
+            <input name="binding" type="checkbox">
+            <span>Jeg anerkjenner at avtalen har bindingstid p\u00e5 6 m\u00e5neder.</span>
+          </label>
         </div>
-      </div>
-      <div class="sign-row">
-        <input name="password" type="password" minlength="8" autocomplete="new-password" placeholder="passord: minst 8 tegn" aria-label="passord: minst 8 tegn">
-        <button class="go wait" type="button">Signer</button>
-      </div>
-      <p class="err" hidden></p>
+        <button class="auth-go wait" type="submit">Signer</button>
+        <p class="auth-err" hidden></p>
+      </form>
+      <p class="auth-switch">${signup
+        ? 'Har du allerede en konto? <button type="button" data-switch="login">Logg inn</button>'
+        : 'Har du ikke konto? <button type="button" data-switch="signup">Opprett konto</button>'}</p>
     `;
-    foot.querySelectorAll('[name="chosen"]').forEach((input) => {
-      input.addEventListener('change', () => {
-        chosen = Number(input.value) === 1 ? 1 : 0;
-        refreshSubmit();
-      });
+    authCard.querySelector('.auth-close')?.addEventListener('click', closeAuth);
+    authCard.querySelector('[data-switch]')?.addEventListener('click', () => {
+      rememberDraft();
+      authMode = signup ? 'login' : 'signup';
+      renderAuth();
     });
-    foot.querySelector('[name="password"]')?.addEventListener('input', refreshSubmit);
-    foot.querySelectorAll('[name="terms"], [name="binding"]').forEach((input) => {
-      input.addEventListener('change', refreshSubmit);
-    });
-    foot.querySelector('.go')?.addEventListener('click', () => {
-      const reason = blockReason();
-      const err = shadow.querySelector('.err');
+    const form = authCard.querySelector('.auth-form');
+    form?.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const reason = authBlockReason();
+      const err = authCard.querySelector('.auth-err');
       if (reason) {
-        const message = reason === 'scroll'
-          ? 'Du m\u00e5 lese hele kontrakten f\u00f8r du kan signere. Scroll ned til bunnen f\u00f8rst.'
-          : reason === 'choice'
-            ? 'Velg Tilbud 1 eller Tilbud 2 f\u00f8r du signerer.'
-            : reason === 'terms'
-              ? 'Du m\u00e5 godta vilk\u00e5r og betingelser f\u00f8r du signerer.'
-              : reason === 'binding'
-                ? 'Du m\u00e5 godkjenne 6 m\u00e5neders bindingstid f\u00f8r du signerer.'
-                : 'Passordet m\u00e5 v\u00e6re minst 8 tegn. Det blir innloggingen din p\u00e5 asoldi.com.';
         if (err) {
           err.hidden = false;
-          err.textContent = message;
+          err.textContent = authMessage(reason);
         }
         return;
       }
       if (err) { err.hidden = true; err.textContent = ''; }
       void submitAccept();
     });
-    refreshSubmit();
+    form?.addEventListener('input', () => {
+      rememberDraft();
+      refreshAuthSubmit();
+    });
+    form?.addEventListener('change', refreshAuthSubmit);
+    authCard.querySelectorAll('[name="chosen"]').forEach((input) => {
+      input.addEventListener('change', () => {
+        chosen = Number(input.value) === 1 ? 1 : 0;
+        refreshAuthSubmit();
+      });
+    });
+    const wraps = authCard.querySelectorAll('.pass-wrap');
+    wraps.forEach((wrap) => bindEye(wrap.querySelector('.eye'), wrap.querySelector('input')));
+    refreshAuthSubmit();
+  }
+
+  function rememberDraft() {
+    const nameInput = authCard.querySelector('[name="name"]');
+    const emailInput = authCard.querySelector('[name="email"]');
+    if (nameInput) draftName = String(nameInput.value || '');
+    if (emailInput) draftEmail = String(emailInput.value || '');
+  }
+
+  function openAuth() {
+    if (!atBottom) {
+      showReadHint();
+      return;
+    }
+    renderAuth();
+    auth.hidden = false;
+    auth.classList.add('open');
+    const focusName = authCard.querySelector('[name="name"]');
+    const focusEmail = authCard.querySelector('[name="email"]');
+    (focusName || focusEmail)?.focus?.();
+  }
+
+  function closeAuth() {
+    rememberDraft();
+    auth.classList.remove('open');
+    auth.hidden = true;
   }
 
   function escapeHtml(value) {
@@ -654,8 +878,9 @@
     paper.innerHTML = state.contractHtml || '<p>Kontraktteksten kommer n\u00e5r tilbudet er sendt.</p>';
     chosen = null;
     atBottom = false;
-    foot.classList.remove('at-bottom');
-    renderFooter();
+    cta.dataset.ready = '0';
+    hideHint();
+    closeAuth();
     overlay.classList.add('open');
     if (typeof overlay.showModal === 'function') {
       try {
@@ -688,6 +913,8 @@
         alternatives: Array.isArray(data.alternatives) ? data.alternatives : [],
         acceptedAt: String(data.acceptedAt || ''),
       };
+      if (!draftName) draftName = state.name;
+      if (!draftEmail) draftEmail = state.email;
       setStatus(state.status);
     } catch {
       setStatus('idle');
@@ -695,19 +922,21 @@
   }
 
   async function submitAccept() {
-    const submit = shadow.querySelector('.go');
-    const err = shadow.querySelector('.err');
-    if (!submit || submit.disabled || busy) return;
+    const submit = authCard.querySelector('.auth-go');
+    const err = authCard.querySelector('.auth-err');
+    if (!submit || busy) return;
     busy = true;
-    refreshSubmit();
+    refreshAuthSubmit();
     if (err) { err.hidden = true; err.textContent = ''; }
     try {
       const body = {
-        password: String(shadow.querySelector('[name="password"]')?.value || ''),
-        name: String(shadow.querySelector('[name="name"]')?.value || ''),
+        mode: authMode,
+        password: String(authCard.querySelector('[name="password"]')?.value || ''),
+        name: authMode === 'signup' ? String(authCard.querySelector('[name="name"]')?.value || draftName || '') : '',
+        email: String(authCard.querySelector('[name="email"]')?.value || ''),
         accepted: true,
-        termsAccepted: Boolean(shadow.querySelector('[name="terms"]')?.checked),
-        bindingAccepted: Boolean(shadow.querySelector('[name="binding"]')?.checked),
+        termsAccepted: Boolean(authCard.querySelector('[name="terms"]')?.checked),
+        bindingAccepted: Boolean(authCard.querySelector('[name="binding"]')?.checked),
         language: navigator.language || '',
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || '',
         platform: navigator.platform || '',
@@ -723,6 +952,7 @@
       if (!response.ok) throw new Error(data.message || 'Kunne ikke signere.');
       state.status = 'signed';
       setStatus('signed');
+      closeAuth();
       closeModal();
     } catch (error) {
       if (err) {
@@ -731,27 +961,36 @@
       }
     } finally {
       busy = false;
-      refreshSubmit();
+      refreshAuthSubmit();
     }
   }
 
   btn.addEventListener('click', () => {
     if (state.status === 'ready') openModal();
   });
+  cta.addEventListener('click', () => {
+    if (state.status !== 'ready') return;
+    openAuth();
+  });
   shadow.querySelector('.close').addEventListener('click', closeModal);
   overlay.addEventListener('cancel', (event) => {
     event.preventDefault();
-    closeModal();
+    if (isAuthOpen()) closeAuth();
+    else closeModal();
   });
   overlay.addEventListener('close', () => {
     overlay.classList.remove('open');
     overlay.classList.remove('docking');
+    closeAuth();
     unlockPageScroll();
     btn.hidden = false;
     if (state.status === 'ready') btn.dataset.call = '1';
   });
   overlay.addEventListener('click', (event) => {
     if (event.target === overlay) closeModal();
+  });
+  auth.addEventListener('click', (event) => {
+    if (event.target === auth) closeAuth();
   });
   overlay.addEventListener('wheel', trapWheel, { passive: false });
   overlay.addEventListener('touchstart', trapTouchStart, { passive: true });
