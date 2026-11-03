@@ -35,7 +35,7 @@ function syntheticData(dataDir) {
   ];
   const offers = [
     { id: 'boot-offer', salesClientId: 'boot-signed', status: 'sent', sentAt: '2026-09-30T10:00:00.000Z', tierId: 'tier-2-seo', email: { subject: 'Tilbud', html: '<p>Tilbud</p>' }, products: [tier2Product], alternatives: [{ products: [tier2Product], billing: 'month', tierId: 'tier-2-seo' }] },
-    { id: 'boot-draft', salesClientId: 'boot-lead', status: 'draft', tierId: 'tier-1-standard', email: { subject: 'Utkast', html: '<p>Utkast</p>' }, products: [{ id: 'p-2', kind: 'tier', tierId: 'tier-1-standard', name: 'Nettside – Standard', priceExMva: 800 }] },
+    { id: 'boot-draft', salesClientId: 'boot-lead', status: 'draft', tierId: 'tier-1-standard', email: { subject: 'Utkast', html: '<p>Utkast</p>' }, products: [{ id: 'p-2', kind: 'tier', tierId: 'tier-1-standard', name: 'Nettside – Standard', priceExMva: 799 }] },
   ];
   const flags1 = { users: true, analytics: false, ecommerce: false, blog: false, socialSync: false, emailMarketing: false, general: false };
   const flags3 = { users: true, analytics: true, ecommerce: true, blog: true, socialSync: true, emailMarketing: true, general: true };
