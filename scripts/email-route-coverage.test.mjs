@@ -8,7 +8,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 process.env.APP_DATA_DIR = mkdtempSync(path.join(tmpdir(), 'asoldi-email-route-coverage-'));
-const { EMAIL_SITE_ROUTES, EMAIL_WEBHOOK_ROUTES, registerEmailSiteRoutes } = await import('../lib/routes/email-site-routes.js');
+const { EMAIL_SITE_ROUTES, EMAIL_WEBHOOK_ROUTES, registerEmailRoutes, registerEmailSiteRoutes } = await import('../lib/routes/email-site-routes.js');
 
 const TESTS = ['email-routes.test.mjs'];
 const hub = { getSiteById: () => null, getSiteByKey: () => null, getAllSites: () => [] };
@@ -34,6 +34,7 @@ test('every email site route, the webhook route and the wake route are called by
 });
 
 test('the listed site routes are exactly the /api/hub/email/ routes behind the emailKey', () => {
+  assert.equal(registerEmailRoutes, registerEmailSiteRoutes);
   const routes = collect().filter((r) => r.route.split(' ')[1].startsWith('/api/hub/email/'));
   const guarded = routes.filter((r) => r.handlers.some((h) => h?.requiresEmailKey === true)).map((r) => r.route).sort();
   assert.deepEqual(guarded, [...EMAIL_SITE_ROUTES].sort());
