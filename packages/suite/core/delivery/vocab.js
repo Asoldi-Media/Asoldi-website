@@ -505,6 +505,10 @@ export const SETTINGS_KEYS = Object.freeze({
   seoJobGatingMode: 'seo.jobGating.mode',
   seoDfsLedger: 'seo.dfsLedger.enabled',
   seoRecordPull: 'seo.recordPull.enabled',
+  // delivery loop
+  deliveryLoopEnabled: 'delivery.loop.enabled',
+  deliveryLoopMode: 'delivery.loop.mode',
+  deliveryLoopPaused: 'delivery.loop.paused',
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);

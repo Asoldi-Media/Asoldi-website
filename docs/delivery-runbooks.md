@@ -119,6 +119,22 @@ recording, erase request, payment not connected) are added by the batch that shi
 
 **Fix.** `PUT /api/admin/automation-settings` with `{"development": {"makerEvents": "record"}}`. If the run link is wrong, link the right run on the client first. A snapshot stands in only when the live run fetch fails, only for the run linked now and only while it is younger than 24 hours; the next event from the Maker refreshes it.
 
+## Delivery loop does not tick
+
+**Symptom.** Stages and jobs do not move, the Maker chip shows an old loop time, or the alert `loop-stalled` is active.
+
+**Check.** `GET /api/admin/system/delivery-loop`: `enabled`, `mode` (`off`, `paused`, `shadow`, `auto`), `health.lastTickAt`, `health.skipped.lease` (another hub process holds the lease) and `health.lastErrors` (the step that failed). `steps` lists the registered steps and `stepErrors` the step modules that did not load.
+
+**Fix.** Turn the loop on or resume it with `PUT /api/admin/automation-settings {"delivery": {"loop": {"enabled": true, "paused": null}}}`. A failing step keeps its clients dirty and retries every tick; fix the cause shown in `lastErrors`. A lease held by a process that died expires after 90 seconds. To stop everything at once set `delivery.loop.enabled` to `false`: the tick then does nothing at all.
+
+## Maker job does not start
+
+**Symptom.** A job stays `queued` or `retrying`, or the alert `host-offline` or `job-blocked` is active.
+
+**Check.** `GET /api/admin/delivery/jobs?clientId=<id>` shows the client's `mode` and the job with its `hostId`, `notBefore`, `attempts`, `error`, `blocking` and the last 50 `log` lines. A job is handed out only while the client runs in `auto`: with the loop paused or in `shadow`, or the client off `pilotClientIds`, it stays queued. `GET /api/admin/maker-hosts` shows each host's handlers and last heartbeat: a job goes only to a host that lists its kind.
+
+**Fix.** Start the Maker and its hub worker (the chip in the Maker header), or route the work by setting `development.defaultHostId`. A `retrying` job waits for its backoff (5, 15, 45 minutes). Clear a blocking code (table below), then `POST /api/admin/delivery/jobs/<jobId>/retry`; `POST …/cancel` drops the job (a failed one too, which ends its `job-blocked` alert).
+
 ---
 
 ## Blocking codes

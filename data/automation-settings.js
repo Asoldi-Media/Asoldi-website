@@ -139,6 +139,9 @@ export function defaultAutomationSettings() {
       dfsLedger: { enabled: false, paused: null },
       recordPull: { enabled: false, paused: null },
     },
+    // delivery loop: the 60 s delivery tick and the Maker job queue. Off by default; 'shadow'
+    // records what the tick would do, 'auto' acts for pilot clients only (lib/spine-mode.js).
+    delivery: { loop: { enabled: false, mode: 'shadow', paused: null } },
     // Written only by recordReleasePass (the pre-release suite), never by PUT.
     releases: {},
   };
@@ -254,6 +257,8 @@ const ENUMS = {
   'migrations.deliveryBackfill': [...BACKFILL_MODES],
   // seo
   'seo.jobGating.mode': ['shadow', 'auto'],
+  // delivery loop
+  'delivery.loop.mode': ['shadow', 'auto'],
 };
 
 const RANGES = {
@@ -302,6 +307,8 @@ const BOOLEANS = new Set([
   'seo.jobGating.enabled',
   'seo.dfsLedger.enabled',
   'seo.recordPull.enabled',
+  // delivery loop
+  'delivery.loop.enabled',
 ]);
 
 function knownPaths() {
@@ -499,6 +506,16 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
   const hostId = value.development?.defaultHostId;
   if (typeof hostId !== 'string' || !/^[A-Za-z0-9_-]{0,64}$/.test(hostId)) {
     fail('development.defaultHostId', 'Must be empty or a Maker host id.');
+  }
+  // delivery loop: 'auto' acts only for pilot clients, so it needs a pilot list.
+  const loop = value.delivery?.loop;
+  if (isPlainObject(loop)) {
+    const paused = normalizePaused(loop.paused, { by, now });
+    if (paused === undefined) fail('delivery.loop.paused', 'Must be null or {reason}.');
+    else loop.paused = paused;
+    if (loop.enabled === true && loop.mode === 'auto' && !(Array.isArray(value.pilotClientIds) && value.pilotClientIds.length)) {
+      fail('delivery.loop.mode', 'delivery.loop can run in auto only with at least one client in pilotClientIds. Keep it in shadow.');
+    }
   }
   if (!EMAIL_RE.test(String(value.alerts?.to || ''))) fail('alerts.to', 'Must be an email address.');
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(value.alerts?.digestAt || ''))) fail('alerts.digestAt', 'Must be HH:MM.');
