@@ -439,3 +439,17 @@ test('the wake: a signed tick goes to the local CMS target, sites without a conf
   }
   assert.equal(existsSync(join(dataDir, 'email-settings.json')), true);
 });
+
+test('an erased address stays erased: a mirrored row for it merges into its hashed key, and a hashed row from a mirror is kept', () => {
+  const tomb = unsub.tombstoneKey('slett-meg@example.com');
+  const target = { site_shop: { [tomb]: { scope: 'marketing', source: 'unsubscribe-link', at: '2026-11-01T10:00:00.000Z', updatedAt: '2026-11-01T10:00:00.000Z' } } };
+  const changed = unsub.mergeSuppressionRows(target, { site_shop: { 'Slett-Meg@example.com': { scope: 'all', source: 'cms-mirror', at: '2026-11-02T10:00:00.000Z' } } });
+  assert.equal(changed, 1);
+  assert.deepEqual(Object.keys(target.site_shop), [tomb], 'the address never comes back as a key');
+  assert.equal(target.site_shop[tomb].scope, 'all', 'the stronger row is kept under the hash');
+  const fromMirror = {};
+  unsub.mergeSuppressionRows(fromMirror, { site_plain: { [tomb]: { scope: 'marketing', source: 'cms-mirror', at: '2026-11-02T10:00:00.000Z' } } });
+  assert.deepEqual(Object.keys(fromMirror.site_plain), [tomb]);
+  assert.equal(unsub.suppressionFor('site_plain', 'slett-meg@example.com', 'campaign', { rows: fromMirror }).suppressed, true);
+  assert.equal(unsub.suppressionFor('site_plain', 'slett-meg@example.com', 'test', { rows: fromMirror }).suppressed, false);
+});
