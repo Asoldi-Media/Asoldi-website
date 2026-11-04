@@ -160,8 +160,12 @@ personal-data class is named in the privacy policy and the DPA appendix.
 
 Retention periods in the privacy policy come from the personal-data registry
 (`lib/personal-data.js` `retentionText(storeId)`) when it exists and answers, else from the
-`retention.*` defaults. The registry and the SEO record modules are loaded without blocking module
-evaluation (`personalDataReady`, `seoModulesReady`), so they may import the data layer.
+`retention.*` defaults. The registry text is used only for a store that one row lists: the leads and
+the clients rows both read the sales store, so each keeps its own text. The registry renders with the
+retention values the caller passes over the code defaults, never with the stored settings, so the
+archive and `legal-render --check` do not depend on the data dir. Recordings and transcripts read
+the transcript archive's rule. The registry and the SEO record modules are loaded without blocking
+module evaluation (`personalDataReady`, `seoModulesReady`), so they may import the data layer.
 
 ## Routes
 
