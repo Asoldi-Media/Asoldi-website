@@ -453,3 +453,17 @@ test('an erased address stays erased: a mirrored row for it merges into its hash
   assert.equal(unsub.suppressionFor('site_plain', 'slett-meg@example.com', 'campaign', { rows: fromMirror }).suppressed, true);
   assert.equal(unsub.suppressionFor('site_plain', 'slett-meg@example.com', 'test', { rows: fromMirror }).suppressed, false);
 });
+
+test('a rebuild from the CMS mirrors keeps an erased address as its hashed row', async () => {
+  const tomb = unsub.tombstoneKey('mirror-only@example.com');
+  const fetchImpl = async (url) => {
+    assert.match(String(url), /^https:\/\/shop\.example\.com\/api\/cms\/email\/suppressions/);
+    return new Response(JSON.stringify({ items: [{ email: tomb, scope: 'marketing', source: 'unsubscribe-link', at: '2026-11-03T10:00:00.000Z' }, { email: 'not an address', scope: 'all' }], next: null }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const result = await unsub.rebuildSuppressionsFromCms({ getAllSites: () => [hub.getSiteById('site_shop')], fetchImpl, env: { HUB_SAFE_MODE: '0' }, now: Date.now() });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  const record = store.readEmailSuppressions();
+  assert.equal(record.site_shop[tomb].scope, 'marketing');
+  assert.equal(JSON.stringify(record).includes('mirror-only'), false);
+  assert.equal(Object.hasOwn(record['*'] || {}, tomb), false, 'a hashed row never becomes a global row');
+});
