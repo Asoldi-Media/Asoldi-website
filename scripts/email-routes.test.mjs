@@ -419,7 +419,8 @@ test('the wake: a signed tick goes to the local CMS target, sites without a conf
       const body = JSON.parse(call.body);
       assert.equal(body.type, 'wake');
       const key = KEYS[body.siteId];
-      assert.ok(auth.verifyEmailSignature({ header: call.headers['x-asoldi-signature'], body: call.body, key, now: clock }), `${body.siteId}: signed with its emailKey`);
+      assert.ok(auth.verifyEmailSignature({ header: call.headers['x-asoldi-signature'], body: call.body, method: 'POST', path: '/api/cms/email/tick', key, now: clock }), `${body.siteId}: signed with its emailKey over the method and path`);
+      assert.equal(auth.verifyEmailSignature({ header: call.headers['x-asoldi-signature'], body: call.body, method: 'POST', path: '/api/cms/email/hub-event', key, now: clock }), false, 'the wake signature opens no other path');
       const [, t] = call.headers['x-asoldi-signature'].match(/t=(\d+)/);
       const siteKeySignature = createHmac('sha256', 'pk-shop-0001').update(`${t}.${call.body}`).digest('hex');
       assert.equal(call.headers['x-asoldi-signature'].includes(siteKeySignature), false, 'never signed with the site key');

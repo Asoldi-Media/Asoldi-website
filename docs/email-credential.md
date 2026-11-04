@@ -137,16 +137,21 @@ counted per site in memory; three in a row are logged. `POST /api/admin/email/si
 
 ## Hub → CMS: `x-asoldi-signature`
 
-Every hub → CMS email call is signed with the site's current emailKey:
+Every hub → CMS email call is signed with the site's current emailKey over its method, its path
+with the query, and its body:
 
 ```
-x-asoldi-signature: t=<unix seconds>,v1=<hex HMAC-SHA256(emailKey, t + "." + body)>
+x-asoldi-signature: t=<unix seconds>,v1=<hex HMAC-SHA256(emailKey, t + "." + METHOD + " " + path + "\n" + body)>
 x-asoldi-key-id:    ek_<n>
 ```
 
-- `body` is the exact request body (the empty string for a GET).
+- `METHOD` is the upper-case method; `path` is the request path with its query exactly as sent
+  (for example `/api/cms/email/suppressions?since=2026-11-04T08%3A00%3A00.000Z`); `body` is the
+  exact request body (the empty string for a GET).
 - The CMS accepts a signature only when `t` is within **±300 s** of its own clock and the HMAC
-  matches its committed key (compare in constant time). A call signed with the site key is refused.
+  matches its committed key (or its previous key inside the grace window) for the method, path and
+  body it received (compare in constant time). A call signed with the site key is refused, and a
+  signature seen on one call opens no other path, query or method.
 - The hub sends these calls only to `https://<site domain>` (the domain set in the hub). It never
   uses the CMS admin URL that heartbeats report, never follows a redirect, and gives up after 10 s.
   A site without a public domain, or without a committed key, is skipped.

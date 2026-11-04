@@ -187,7 +187,7 @@ test('rotation: a signed hint goes to https://<domain> only; the old key works 1
   assert.equal(hints.length, 1);
   assert.equal(hints[0].url, `https://shop.example.com${HUB_EVENT_PATH}`, 'never the heartbeat adminUrl');
   const cms = auth.createReferenceCmsVerifier({ key: firstKey });
-  assert.deepEqual(cms.check({ headers: hints[0].init.headers, body: hints[0].init.body, now: clock }), { ok: true, reason: 'ok' });
+  assert.deepEqual(cms.check({ headers: hints[0].init.headers, body: hints[0].init.body, url: hints[0].url, now: clock }), { ok: true, reason: 'ok' });
   assert.equal(JSON.parse(hints[0].init.body).type, 'key-rotation');
 
   const guarded = (key) => call('get', '/api/hub/email/quota', { 'x-email-key': key });
@@ -221,18 +221,28 @@ test('at most three credential-valid provision requests per site and day', async
   clock = T0;
 });
 
-test('hub → CMS signatures: the reference verifier accepts the emailKey only, within ±300 s', () => {
+test('hub → CMS signatures: the reference verifier accepts the emailKey only, for the signed method, path and body, within ±300 s', () => {
   const key = auth.generateEmailKey();
   const body = JSON.stringify({ type: 'suppression', siteId: 'site_1' });
-  const header = auth.signEmailPayload(key, body, { now: T0 });
+  const call = { method: 'POST', path: '/api/cms/email/hub-event' };
+  const header = auth.signEmailPayload(key, body, { now: T0, ...call });
   assert.match(header, /^t=\d+,v1=[a-f0-9]{64}$/);
-  assert.equal(auth.verifyEmailSignature({ header, body, key, now: T0 + 299_000 }), true);
-  assert.equal(auth.verifyEmailSignature({ header, body, key, now: T0 + 301_000 }), false, 'too old');
-  assert.equal(auth.verifyEmailSignature({ header, body, key, now: T0 - 301_000 }), false, 'too far ahead');
-  assert.equal(auth.verifyEmailSignature({ header, body: `${body} `, key, now: T0 }), false, 'a changed body');
-  const siteKeySigned = auth.signEmailPayload('public-key-one', body, { now: T0 });
-  assert.equal(auth.verifyEmailSignature({ header: siteKeySigned, body, key, now: T0 }), false, 'a hint signed with the site key is refused');
+  assert.equal(auth.verifyEmailSignature({ header, body, key, now: T0 + 299_000, ...call }), true);
+  assert.equal(auth.verifyEmailSignature({ header, body, key, now: T0 + 301_000, ...call }), false, 'too old');
+  assert.equal(auth.verifyEmailSignature({ header, body, key, now: T0 - 301_000, ...call }), false, 'too far ahead');
+  assert.equal(auth.verifyEmailSignature({ header, body: `${body} `, key, now: T0, ...call }), false, 'a changed body');
+  assert.equal(auth.verifyEmailSignature({ header, body, key, now: T0, method: 'POST', path: '/api/cms/email/tick' }), false, 'another path');
+  assert.equal(auth.verifyEmailSignature({ header, body, key, now: T0, method: 'PUT', path: call.path }), false, 'another method');
+  const siteKeySigned = auth.signEmailPayload('public-key-one', body, { now: T0, ...call });
+  assert.equal(auth.verifyEmailSignature({ header: siteKeySigned, body, key, now: T0, ...call }), false, 'a hint signed with the site key is refused');
   assert.equal(auth.createReferenceCmsVerifier({ key }).check({ headers: {}, body, now: T0 }).reason, 'missing-signature');
+  // A GET covers its query: the signature of one page of the mirror opens no other.
+  const get = { method: 'GET', path: '/api/cms/email/suppressions?since=2026-11-03T08%3A00%3A00.000Z' };
+  const getHeader = auth.signEmailPayload(key, '', { now: T0, ...get });
+  assert.equal(auth.verifyEmailSignature({ header: getHeader, key, now: T0, ...get }), true);
+  assert.equal(auth.verifyEmailSignature({ header: getHeader, key, now: T0, method: 'GET', path: '/api/cms/email/suppressions' }), false, 'without the query');
+  assert.equal(auth.verifyEmailSignature({ header: getHeader, key, now: T0, method: 'GET', path: '/api/cms/email/suppressions?since=2000-01-01T00%3A00%3A00.000Z' }), false, 'another query');
+  assert.equal(auth.signedPathOf('https://shop.example.com/api/cms/email/suppressions?since=2026-11-03T08%3A00%3A00.000Z'), get.path);
 });
 
 test('postCmsHint skips sites without a key or a public domain and never follows redirects', async () => {
