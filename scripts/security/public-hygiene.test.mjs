@@ -147,9 +147,31 @@ test('the private profile reports secrets and secret paths only; the public prof
   assert.throws(() => lib.resolveProfile('loose'), /unknown scan profile/);
 });
 
+/**
+ * A random value the secret-assignment rule reports: letters and digits only, high entropy and no
+ * fixture marker. A bare random string misses the rule now and then (a hex string has too little
+ * entropy about one time in ten, and any value can spell a marker such as '1234'), so draw until
+ * it holds.
+ */
+function realLookingPassword() {
+  for (let tries = 0; tries < 1000; tries += 1) {
+    const value = `Q${randomBytes(18).toString('base64url').replace(/[^A-Za-z0-9]/g, 'k')}9z`;
+    if (lib.looksRandom(value) && !lib.looksFake(value)) return value;
+  }
+  throw new Error('no real-looking value in 1000 draws');
+}
+
+test('the made-up password of the fixture-value test is one the secret-assignment rule reports, every time', () => {
+  for (let i = 0; i < 2000; i += 1) {
+    const value = realLookingPassword();
+    const lines = lib.splitLines(`const ADMIN_PASSWORD = '${value}';`);
+    assert.deepEqual(lib.scanLines('src/a.js', lines).map((f) => f.rule), ['secret-assignment']);
+  }
+});
+
 test('fixture values: one exact value passes by its hash, any other value in the same file is still reported', () => {
   const fixture = 'legacy-first-admin-pw-17Qz';
-  const other = `Q${randomBytes(12).toString('hex')}9z`;
+  const other = realLookingPassword();
   const allowlist = lib.normalizeAllowlist({
     fixtureValues: [
       { path: 'test/*.test.js', rule: 'secret-assignment', sha256: lib.sha256Hex(fixture), reason: 'the password a legacy sign-in test signs in with' },
