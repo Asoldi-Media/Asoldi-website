@@ -8,7 +8,9 @@ import {
   isBlockedCalendarAccountKey,
   isBlockedCalendarGoogleEmail,
   isUnacceptableMeetingHostEmail,
+  findStaffProfileForAccountKey,
   pickCalendarSyncAccountKey,
+  staffMailboxFromProfile,
   salesClientNeedsCalendarMove,
   overlaySalesInboxMeetOnEvents,
   overlaySalesMeetingsOnEvents,
@@ -73,6 +75,48 @@ test('existing Gmail events are migrated even before a rep is assigned', () => {
   assert.equal(calendarRecordIsOnBlockedMailbox({
     calendarId: 'daracha777@gmail.com',
   }), true);
+});
+
+test('staff mailbox comes from fromEmail, username, or alexander → alexander@asoldi.com', () => {
+  assert.equal(staffMailboxFromProfile({ fromEmail: 'alexander@asoldi.com', username: 'alexander' }), 'alexander@asoldi.com');
+  assert.equal(staffMailboxFromProfile({ username: 'alexander@asoldi.com' }), 'alexander@asoldi.com');
+  assert.equal(staffMailboxFromProfile({ username: 'alexander' }), 'alexander@asoldi.com');
+  assert.equal(staffMailboxFromProfile({ fromEmail: 'contact@asoldi.com', username: 'alexander' }), 'alexander@asoldi.com');
+  assert.equal(staffMailboxFromProfile({ username: 'admin' }), '');
+  const users = [
+    { id: '1789355644760', username: 'alexander@asoldi.com', fromEmail: '' },
+    { id: 'rep-2', username: 'baard', fromEmail: 'baard@asoldi.com' },
+  ];
+  assert.equal(findStaffProfileForAccountKey('sales:1789355644760', users)?.id, '1789355644760');
+  assert.equal(findStaffProfileForAccountKey('sales:alexander', users)?.id, '1789355644760');
+  assert.equal(findStaffProfileForAccountKey('sales:alexander@asoldi.com', users)?.id, '1789355644760');
+  assert.equal(findStaffProfileForAccountKey('sales:baard', users)?.fromEmail, 'baard@asoldi.com');
+  assert.equal(findStaffProfileForAccountKey('admin:damian@asoldi.com', users), null);
+});
+
+test('known owner mailbox never falls back to Damian’s token', () => {
+  const mailboxOf = (key) => ({
+    [alexanderSales]: 'alexander@asoldi.com',
+    [damianAdmin]: 'damian@asoldi.com',
+    [damianSales]: 'damian@asoldi.com',
+  }[key] || '');
+  const onlyDamianUsable = (key) => key === damianAdmin;
+  assert.equal(pickCalendarSyncAccountKey({
+    ownerId: alexanderSales,
+    actorAccountKey: damianAdmin,
+    fallbackAccountKeys: [damianAdmin],
+    ownerMailbox: 'alexander@asoldi.com',
+    mailboxOf,
+    isUsable: onlyDamianUsable,
+  }), alexanderSales);
+  assert.equal(pickCalendarSyncAccountKey({
+    ownerId: alexanderSales,
+    actorAccountKey: damianAdmin,
+    preferredAccountKeys: [alexanderSales],
+    ownerMailbox: 'alexander@asoldi.com',
+    mailboxOf,
+    isUsable: (key) => key === alexanderSales || key === damianAdmin,
+  }), alexanderSales);
 });
 
 test('Damian’s connected token wins; Daracha is never selected', () => {

@@ -1812,8 +1812,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
         method,
         body: JSON.stringify(payload),
       });
-      const warnings = (Array.isArray(data.warnings) ? data.warnings.filter(Boolean) : [])
-        .filter((line) => !/client owner calendar/i.test(String(line)));
+      const warnings = (Array.isArray(data.warnings) ? data.warnings.filter(Boolean) : []);
       const saved = (data.client || {}) as SalesClient;
       const meetingUpdated = Boolean(editingId && data.meetingChanged && data.calendarInviteSent);
       const savedId = editingId || saved.id || '';
@@ -1948,8 +1947,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
       const saved = data?.client as SalesClient | undefined;
       if (saved?.id) applySavedClient(saved);
       else await loadSales({ clearMessages: false, showLoading: false });
-      const warnings = (Array.isArray(data?.warnings) ? data.warnings.filter(Boolean) : [])
-        .filter((line) => !/client owner calendar/i.test(String(line)));
+      const warnings = (Array.isArray(data?.warnings) ? data.warnings.filter(Boolean) : []);
       if (warnings.length) setError(warnings.join(' | '));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed updating next action');

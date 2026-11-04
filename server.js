@@ -176,9 +176,11 @@ import { calendarDurationForMode } from './lib/sales-meeting-duration.js';
 import {
   calendarOwnerIdForSync,
   calendarRecordIsOnBlockedMailbox,
+  findStaffProfileForAccountKey,
   isBlockedCalendarAccountKey,
   isBlockedCalendarGoogleEmail,
   isUnacceptableMeetingHostEmail,
+  staffMailboxFromProfile,
   salesClientNeedsCalendarMove,
   overlaySalesInboxMeetOnEvents,
   overlaySalesMeetingsOnEvents,
@@ -8310,12 +8312,22 @@ async function salesOrDevelopmentAuth(req, res, next) {
 async function accountKeyToEmail(accountKey = '') {
   const key = sanitizeText(accountKey);
   if (!key) return '';
-  if (key.startsWith('admin:')) return normalizeEmail(key.slice('admin:'.length));
-  if (key.startsWith('sales:') || key.startsWith('developer:')) {
-    const userId = key.includes(':') ? key.slice(key.indexOf(':') + 1) : '';
+  if (key.startsWith('admin:')) {
+    const fromKey = normalizeEmail(key.slice('admin:'.length));
+    if (fromKey.endsWith('@asoldi.com') && !isUnacceptableMeetingHostEmail(fromKey)) return fromKey;
     try {
-      const user = (await store.getUserById(userId)) || (await store.getUserByUsername(userId));
-      return normalizeEmail(user?.username);
+      return staffMailboxFromProfile(await store.getAdmin()) || fromKey;
+    } catch {
+      return fromKey;
+    }
+  }
+  if (key.startsWith('sales:') || key.startsWith('developer:')) {
+    try {
+      const slice = key.includes(':') ? key.slice(key.indexOf(':') + 1) : '';
+      const user = (await store.getUserById(slice))
+        || (await store.getUserByUsername(slice))
+        || findStaffProfileForAccountKey(key, await store.getAllUsers());
+      return staffMailboxFromProfile(user);
     } catch {
       return '';
     }
@@ -8346,7 +8358,7 @@ async function resolveSiblingCalendarAccountKeys(accountKey = '') {
   try {
     const users = await store.getAllUsers();
     for (const user of Array.isArray(users) ? users : []) {
-      if (normalizeEmail(user?.username) !== email) continue;
+      if (staffMailboxFromProfile(user) !== email) continue;
       const userId = sanitizeText(user?.id);
       const username = sanitizeText(user?.username);
       if (userId) {
@@ -8562,6 +8574,7 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
     ? options.fallbackAccountKeys.filter((key) => !isBlockedCalendarAccountKey(key))
     : await resolveCalendarFallbackAccountKeys(nextClient?.ownerId || '', actorAccountKey);
   const preferredAccountKeys = await preferredCalendarAccountKeysForOwner(nextClient?.ownerId || '');
+  const ownerEmail = (await accountKeyToEmail(calendarOwnerIdForSync(nextClient?.ownerId || ''))).toLowerCase();
 
   // Copy tokens onto the current owner/actor even if that key is not connected yet
   // (OAuth may live under a sibling sales:/admin: key for the same Google inbox).
@@ -8577,6 +8590,7 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
     fallbackAccountKeys,
     previousAccountKey: isBlockedCalendarAccountKey(previousAccountKey) ? '' : previousAccountKey,
     preferredAccountKeys,
+    ownerMailbox: ownerEmail,
   });
   const syncCalendarStatus = getGoogleCalendarStatus(accountKey);
   if (isBlockedCalendarAccountKey(accountKey) || isBlockedCalendarGoogleEmail(syncCalendarStatus.googleEmail)) {
@@ -8616,7 +8630,6 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
 
   const calendarStatus = getGoogleCalendarStatus(accountKey);
   if (calendarStatus.configured && calendarStatus.connected) {
-    const ownerEmail = (await accountKeyToEmail(calendarOwnerIdForSync(nextClient?.ownerId || ''))).toLowerCase();
     const tokenEmail = sanitizeText(calendarStatus.googleEmail).toLowerCase();
     const expectedOwnerEmail = ownerEmail && !isUnacceptableMeetingHostEmail(ownerEmail)
       ? ownerEmail
@@ -8852,6 +8865,7 @@ async function maybeSyncNextActionCalendars(previousClient, nextClient, { actorA
     fallbackAccountKeys,
     previousAccountKey: isBlockedCalendarAccountKey(previousAccountKey) ? '' : previousAccountKey,
     preferredAccountKeys,
+    ownerMailbox: await accountKeyToEmail(calendarOwnerIdForSync(nextClient?.ownerId || '')),
   });
   if (isBlockedCalendarAccountKey(accountKey) || isBlockedCalendarGoogleEmail(getGoogleCalendarStatus(accountKey).googleEmail)) {
     return { client, warnings };
@@ -12285,7 +12299,7 @@ async function salesOwnerEmailMap() {
     for (const user of Array.isArray(users) ? users : []) {
       if (!user?.id) continue;
       // Staff usernames are e-mail addresses; fromEmail is the sender override if set.
-      const email = sanitizeText(user.fromEmail || user.email || (String(user.username || '').includes('@') ? user.username : '')).toLowerCase();
+      const email = staffMailboxFromProfile(user);
       if (!email) continue;
       // Owner keys follow salesUserOwnerKeys(): sales:<userId> / sales:<username>.
       map[`sales:${user.id}`] = email;
@@ -13196,9 +13210,9 @@ app.get('/api/admin/sales/session', salesAuth, (req, res) => {
   });
 });
 
-app.get('/api/admin/sales/google/status', salesAuth, (req, res) => {
+app.get('/api/admin/sales/google/status', salesAuth, async (req, res) => {
   res.json(presentCalendarStatus(
-    getGoogleCalendarStatus(req.salesUser.accountKey),
+    await ensureSharedCalendarTokens(req.salesUser.accountKey),
     req.salesUser
   ));
 });
@@ -14007,7 +14021,7 @@ app.get('/api/admin/sales', salesAuth, async (req, res) => {
       : owned;
   const clients = filtered;
   const calendar = presentCalendarStatus(
-    getGoogleCalendarStatus(req.salesUser.accountKey),
+    await ensureSharedCalendarTokens(req.salesUser.accountKey),
     req.salesUser
   );
   const sender = await resolveSalesSenderForAccount(req.salesUser);
