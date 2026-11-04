@@ -28,11 +28,12 @@
  *
  * --workspace, --redact and files read UTF-8 and UTF-16 text (with a byte-order mark, or plainly
  * UTF-16 without one), and any other text without a NUL byte (a Windows-1252 or Latin-1 export)
- * byte for byte as Latin-1, so a redaction changes only the values it replaces. They list every file or folder they did not read, with the reason: binary
- * or another encoding, over the size limit, a symbolic link or junction (never followed), .git,
- * node_modules, an unreadable folder, and for --redact env files and old .bak-redact copies. When
- * anything was not read and nothing was found, the exit status is 3, not 0: the folder is not
- * proven clean. --allow-skipped accepts the list (exit 0).
+ * byte for byte as Latin-1, so a redaction changes only the values it replaces. They list every
+ * file or folder they did not read, with the reason: binary or another encoding, over the size
+ * limit, a symbolic link or junction (never followed), .git, node_modules, an unreadable folder,
+ * and for --redact env files and old .bak-redact copies. When anything was not read and nothing
+ * was found, the exit status is 3, not 0: the folder is not proven clean. --allow-skipped accepts
+ * the list (exit 0).
  *
  * What counts as a finding (lib: secret-scan-lib.mjs):
  *   - credential patterns (private keys, sk-/AIza/ghp_/xkeysib-/sk_live_/whsec_/JWT service_role …);
@@ -914,9 +915,9 @@ export function backupDirFor(root, backupRoot) {
  * <backupDirFor(dir)>/<path>.bak-redact, outside `dir`, so a later `git add` in `dir` cannot pick
  * it up. A file is written back in the encoding it was read in (UTF-8, UTF-16 with its byte-order
  * mark, or byte for byte for other text such as a Latin-1 export, where only the replaced values
- * change). A folder that holds one of `envSources` (the env files the known values come
- * from) or the backup root is refused: those files must keep their values. Any other env file
- * (.env, .env.*, production.env) is never changed either: it may be a live configuration.
+ * change). A folder that holds one of `envSources` (the env files the known values come from) or
+ * the backup root is refused: those files must keep their values. Any other env file (.env,
+ * .env.*, production.env) is never changed either: it may be a live configuration.
  * Returns { files: [{ path, redactions, backup }], notScanned: [{ path, reason }], backupDir } with
  * no values. notScanned lists every file and folder that was not read or not changed, with its
  * reason (NOT_SCANNED_REASONS): env files, old .bak-redact copies, binary and oversized files,
