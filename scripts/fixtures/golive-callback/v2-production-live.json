@@ -1,0 +1,10 @@
+{
+  "event": "run.golive.updated",
+  "schema": 2,
+  "target": "production",
+  "status": "live",
+  "liveVerifiedAt": "2026-11-02T10:20:00.000Z",
+  "domain": "bakery.example.com",
+  "siteKey": "site-key-from-the-maker-0001",
+  "githubRepo": "Example-Org/website---bakery-example-com"
+}

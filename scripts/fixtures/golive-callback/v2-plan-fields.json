@@ -1,0 +1,30 @@
+{
+  "event": "run.golive.updated",
+  "domain": "bakery.example.com",
+  "liveUrl": "https://bakery.example.com",
+  "siteKey": "site-key-from-the-maker-0001",
+  "githubRepo": "Example-Org/website---bakery-example-com",
+  "status": "ready",
+  "progression": {
+    "domainConnected": true,
+    "live": true
+  },
+  "hubSite": {
+    "site_key": "site-key-from-the-maker-0001",
+    "domain": "bakery.example.com",
+    "name": "Example Bakery AS",
+    "githubRepo": "Example-Org/website---bakery-example-com"
+  },
+  "schema": 2,
+  "target": "production",
+  "liveVerifiedAt": "",
+  "websitePlan": "tier-3-ecommerce",
+  "features": {
+    "ecommerce": true,
+    "analytics": true
+  },
+  "planSource": {
+    "kind": "offer",
+    "tierId": "tier-3-ecommerce"
+  }
+}

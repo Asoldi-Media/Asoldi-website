@@ -522,6 +522,11 @@ export const SETTINGS_KEYS = Object.freeze({
   mediaSignedUrls: 'media.signedUrls.enabled',
   mediaRightsConfirm: 'media.rightsConfirm.enabled',
   // end privacy
+  // --- signing
+  signingEnabled: 'signing.enabled',
+  signingMode: 'signing.mode',
+  signingPaused: 'signing.paused',
+  // --- end signing
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);
@@ -540,6 +545,9 @@ export const RELEASE_GATED_SWITCHES = Object.freeze([
   'publish.production',
   // brief
   'brief',
+  // --- signing
+  'signing',
+  // --- end signing
 ]);
 
 // ---------------------------------------------------------------- tier matrix and site plan (v2)

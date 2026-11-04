@@ -304,6 +304,36 @@ export function setSitePlanSource(id, planSource) {
   return { ok: true, site: publicSite(sites[i]) };
 }
 
+const SITE_KEY_RE = /^[A-Za-z0-9_-]{8,128}$/;
+
+/** True once a client CMS has reported to the hub for this site (a heartbeat or a package version). */
+export function siteReachedByCms(site) {
+  const cms = site?.cms || {};
+  return Boolean(cms.lastSeenAt || cms.lastVerifiedAt || cms.packageVersion || cms.unverified);
+}
+
+/**
+ * Gives a site another site key, in one locked write: only while the site still has the key `from`,
+ * no other site has `to`, and no client CMS has reported in for it (siteReachedByCms). Server-side
+ * callers only (the go-live callback, for a site the hub made before the site was published with its
+ * own key). Returns { ok:true, site } or { ok:false, reason }.
+ */
+export function adoptSiteKey(id, { from, to } = {}) {
+  const previous = String(from || '').trim();
+  const next = String(to || '').trim();
+  if (!previous || !SITE_KEY_RE.test(next)) return { ok: false, reason: 'bad-key' };
+  if (previous === next) return { ok: false, reason: 'same-key' };
+  return withSitesLocked((sites) => {
+    const i = sites.findIndex((s) => s.id === id);
+    if (i === -1) return { result: { ok: false, reason: 'not-found' }, write: false };
+    if (sites[i].site_key !== previous) return { result: { ok: false, reason: 'key-changed' }, write: false };
+    if (sites.some((s, j) => j !== i && s.site_key === next)) return { result: { ok: false, reason: 'key-taken' }, write: false };
+    if (siteReachedByCms(sites[i])) return { result: { ok: false, reason: 'cms-reached' }, write: false };
+    sites[i] = normalizeSite({ ...sites[i], site_key: next });
+    return { result: { ok: true, site: publicSite(sites[i]) }, write: true };
+  });
+}
+
 /**
  * Read-modify-write of sites.json under the `<sites.json>.lock` file (data/atomic-json.js), so a
  * heartbeat and a cms-spec write in two hub processes never overwrite each other. `fn(sites)`

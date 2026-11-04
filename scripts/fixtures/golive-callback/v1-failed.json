@@ -1,0 +1,9 @@
+{
+  "event": "run.golive.updated",
+  "domain": "bakery.example.com",
+  "liveUrl": "https://bakery.example.com",
+  "siteKey": "site-key-from-the-maker-0001",
+  "githubRepo": "Example-Org/website---bakery-example-com",
+  "status": "failed",
+  "error": "GitHub publish failed."
+}
