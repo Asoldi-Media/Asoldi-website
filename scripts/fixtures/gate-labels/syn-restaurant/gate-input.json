@@ -1,0 +1,203 @@
+{
+  "schema": "asoldi.gate-input/1",
+  "client": {
+    "id": "syn-restaurant",
+    "businessName": "Example business",
+    "product": "asoldi",
+    "progression": {
+      "contractSigned": true
+    },
+    "sitePlan": {
+      "status": "active",
+      "tierId": "tier-3-ecommerce",
+      "services": [
+        "site",
+        "changes",
+        "seo",
+        "social",
+        "email",
+        "blog",
+        "ecom",
+        "dashboard",
+        "multilingual"
+      ],
+      "languages": [
+        "nb"
+      ],
+      "billing": "month",
+      "source": "backfill"
+    },
+    "workshop": {
+      "heldAt": "2026-10-12T11:00:00.000Z"
+    },
+    "makerRun": {
+      "runId": "run-syn-restaurant"
+    }
+  },
+  "inputs": {
+    "bank": {
+      "generalInfo": {
+        "companyPhone": "+47 00 00 00 00",
+        "companyEmail": "post@example.com",
+        "companyAddress": "Example street 1",
+        "googleMapsUrl": ""
+      },
+      "brandIdentity": {
+        "orgNumber": "000000000",
+        "logos": {
+          "normal": "logo.svg"
+        }
+      },
+      "websiteCreatorQuestions": {
+        "businessWhat": "Example description",
+        "town": "Example town",
+        "websiteDomain": "example.com",
+        "importantKeywords": []
+      },
+      "openingHours": {
+        "days": [
+          {
+            "day": "Mandag",
+            "opensAt": "09:00",
+            "closesAt": "17:00",
+            "closed": false
+          }
+        ]
+      },
+      "media": {
+        "mainHeroImages": [
+          {
+            "id": "media-1",
+            "fileName": "picture-1.jpg"
+          }
+        ],
+        "locationImages": [
+          {
+            "id": "media-2",
+            "fileName": "picture-2.jpg"
+          },
+          {
+            "id": "media-6",
+            "fileName": "picture-6.jpg"
+          }
+        ],
+        "offeringImages": [
+          {
+            "id": "media-3",
+            "fileName": "picture-3.jpg"
+          },
+          {
+            "id": "media-4",
+            "fileName": "picture-4.jpg"
+          },
+          {
+            "id": "media-5",
+            "fileName": "picture-5.jpg"
+          }
+        ],
+        "logos": [
+          {
+            "id": "logo",
+            "fileName": "logo.svg"
+          }
+        ]
+      },
+      "productCatalogs": [
+        {
+          "id": "catalog-1",
+          "layout": "meny",
+          "categories": [
+            {
+              "name": "Category 1",
+              "products": [
+                {
+                  "title": "Item 1",
+                  "price": "149"
+                },
+                {
+                  "title": "Item 2",
+                  "price": "139"
+                },
+                {
+                  "title": "Item 3",
+                  "price": "129"
+                },
+                {
+                  "title": "Item 4",
+                  "price": "289"
+                },
+                {
+                  "title": "Item 5",
+                  "price": "319"
+                },
+                {
+                  "title": "Item 6",
+                  "price": "229"
+                },
+                {
+                  "title": "Item 7",
+                  "price": "239"
+                },
+                {
+                  "title": "Item 8",
+                  "price": "119"
+                },
+                {
+                  "title": "Item 9",
+                  "price": "129"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "shopSetup": {
+        "shipping": [
+          {
+            "name": "Shipping"
+          }
+        ]
+      }
+    },
+    "materials": {
+      "runId": "run-syn-restaurant",
+      "logo": {
+        "present": true,
+        "source": ""
+      },
+      "uploads": {},
+      "uploadsTotal": 0,
+      "pageKinds": [
+        {
+          "route": "/page-2",
+          "kind": "menu"
+        }
+      ]
+    },
+    "brief": {
+      "hash": "brief-syn-restaurant",
+      "facts": {
+        "contact": {
+          "onlineOnly": false,
+          "town": "Example town"
+        },
+        "identity": {
+          "legalName": "Example AS"
+        },
+        "positioning": {
+          "businessWhat": "Example description",
+          "audience": "Example audience",
+          "services": [
+            "Service 1",
+            "Service 2",
+            "Service 3"
+          ]
+        },
+        "logo": {
+          "status": "present"
+        }
+      }
+    },
+    "tierId": "tier-3-ecommerce"
+  }
+}

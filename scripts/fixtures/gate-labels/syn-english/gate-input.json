@@ -1,0 +1,175 @@
+{
+  "schema": "asoldi.gate-input/1",
+  "client": {
+    "id": "syn-english",
+    "businessName": "Example business",
+    "product": "asoldi",
+    "progression": {
+      "contractSigned": true
+    },
+    "sitePlan": {
+      "status": "active",
+      "tierId": "tier-2-seo",
+      "services": [
+        "site",
+        "changes",
+        "seo",
+        "social",
+        "email",
+        "blog"
+      ],
+      "languages": [
+        "en"
+      ],
+      "billing": "month",
+      "source": "backfill"
+    },
+    "workshop": {
+      "heldAt": "2026-10-12T11:00:00.000Z"
+    },
+    "makerRun": {
+      "runId": "run-syn-english"
+    }
+  },
+  "inputs": {
+    "bank": {
+      "generalInfo": {
+        "companyPhone": "+47 00 00 00 00",
+        "companyEmail": "post@example.com",
+        "companyAddress": "Example street 1",
+        "googleMapsUrl": ""
+      },
+      "brandIdentity": {
+        "orgNumber": "000000000",
+        "logos": {
+          "normal": "logo.svg"
+        }
+      },
+      "websiteCreatorQuestions": {
+        "businessWhat": "Example description",
+        "town": "Example town",
+        "websiteDomain": "example.com",
+        "importantKeywords": []
+      },
+      "openingHours": {},
+      "media": {
+        "mainHeroImages": [
+          {
+            "id": "media-1",
+            "fileName": "picture-1.jpg"
+          }
+        ],
+        "offeringImages": [
+          {
+            "id": "media-2",
+            "fileName": "picture-2.jpg"
+          },
+          {
+            "id": "media-3",
+            "fileName": "picture-3.jpg"
+          }
+        ],
+        "galleryImages": [
+          {
+            "id": "media-4",
+            "fileName": "picture-4.jpg"
+          }
+        ],
+        "illustrationImages": [
+          {
+            "id": "media-5",
+            "fileName": "picture-5.jpg"
+          }
+        ],
+        "teamImages": [
+          {
+            "id": "media-6",
+            "fileName": "picture-6.jpg"
+          }
+        ],
+        "logos": [
+          {
+            "id": "logo",
+            "fileName": "logo.svg"
+          }
+        ]
+      },
+      "productCatalogs": [
+        {
+          "id": "catalog-1",
+          "layout": "normal",
+          "categories": [
+            {
+              "name": "Category 1",
+              "products": [
+                {
+                  "title": "Item 1",
+                  "price": "900"
+                },
+                {
+                  "title": "Item 2",
+                  "price": "450"
+                },
+                {
+                  "title": "Item 3",
+                  "price": "1290"
+                },
+                {
+                  "title": "Item 4",
+                  "price": "1490"
+                },
+                {
+                  "title": "Item 5",
+                  "price": "690"
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "shopSetup": {}
+    },
+    "materials": {
+      "runId": "run-syn-english",
+      "logo": {
+        "present": true,
+        "source": ""
+      },
+      "uploads": {},
+      "uploadsTotal": 0,
+      "pageKinds": [
+        {
+          "route": "/page-5",
+          "kind": "pricing"
+        }
+      ]
+    },
+    "brief": {
+      "hash": "brief-syn-english",
+      "facts": {
+        "contact": {
+          "onlineOnly": false,
+          "town": "Example town"
+        },
+        "identity": {
+          "legalName": "Example AS"
+        },
+        "positioning": {
+          "businessWhat": "Example description",
+          "audience": "Example audience",
+          "services": [
+            "Service 1",
+            "Service 2",
+            "Service 3",
+            "Service 4",
+            "Service 5"
+          ]
+        },
+        "logo": {
+          "status": "present"
+        }
+      }
+    },
+    "tierId": "tier-2-seo"
+  }
+}

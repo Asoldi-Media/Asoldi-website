@@ -509,6 +509,9 @@ export const SETTINGS_KEYS = Object.freeze({
   deliveryLoopEnabled: 'delivery.loop.enabled',
   deliveryLoopMode: 'delivery.loop.mode',
   deliveryLoopPaused: 'delivery.loop.paused',
+  // gate: the delivery gate switch (off by default; shadow only for now)
+  gateEnabled: 'gate.enabled',
+  gateMode: 'gate.mode',
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);

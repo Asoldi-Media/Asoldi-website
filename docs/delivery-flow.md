@@ -21,7 +21,9 @@ batch by batch, and each batch updates this file. Runbooks: [delivery-runbooks.m
 | Maker events | `lib/maker-events.js`, `lib/maker-events-hub.js` | in place, off (`development.makerEvents`) |
 | Backfill | `lib/delivery-backfill.js`, `scripts/backfill-*.mjs`, routes in `lib/routes/delivery-routes.js` | in place, off (`migrations.deliveryBackfill`) |
 | Legal texts | `lib/legal/`, routes in `lib/routes/legal-routes.js`, [legal-texts.md](legal-texts.md) | in place, off (`legal.catalogTexts.enabled`) |
-| Gate, emails, job queue, Maker worker | later batches | planned |
+| Delivery gate | `lib/delivery-gate.js`, `lib/site-plan-requirements.js`, `lib/page-kind-requirements.js`, routes in `lib/routes/gate-routes.js`, `scripts/eval/gate-f1.mjs` | in place, off (`gate.enabled`) |
+| Post-workshop mail and data reminders | `lib/delivery-emails.js` | in place, off (they need the gate) |
+| Delivery loop and Maker jobs | `lib/delivery-loop.js`, `lib/delivery-steps.js`, `lib/delivery-jobs.js`, `lib/delivery-alerts.js`, routes in `lib/routes/delivery-jobs-routes.js` | in place, off (`delivery.loop`, see [Delivery loop and Maker jobs](#delivery-loop-and-maker-jobs)) |
 
 ---
 
@@ -157,6 +159,33 @@ Page-kind lines (`GATE_PAGE_KIND_LINES`), on any tier when the page plan has the
 
 Developer-only info lines (`GATE_INFO_LINES`, never sent to the client, never blocking): `step1Qa`, `needs-hard`, `dpa-missing`, `plan-changed-rerun`.
 
+### Evaluation
+
+**Switch.** `gate` in the automation settings: `gate.enabled` (default `false`) and `gate.mode` (`shadow`; `auto` is refused for now), plus `gate.paused`. Every per-client decision goes through `spineModeForClient('gate', client)`. Off: nothing is evaluated, stored, shown or mailed, every gate route answers 404 `{code:'disabled'}`, the developer panel is hidden, and the pre-workshop and desk mails are exactly as before. Shadow: the lines are computed and shown to developers; the tick writes only delivery-audit rows; mails that would use the lines are recorded as shadow mails and never sent, while today's mails go out unchanged beside them, and the desk's manual mails keep today's lines. Paused: the views answer, every gate write answers 409 `{code:'paused'}` and nothing is written.
+
+**Inputs.** `evaluateDeliveryGate(client, inputs)` is pure (no network, no writes). `gatherGateInputs(client)` reads stored data only: the Kundedata bank, the Maker materials snapshot of the linked run (`makerRun.materials`, any age), the inbox bot's filed and staged items, assistant skips (`bank.assistantIntake`, recorded as `declined`), the stored payment connections (`readStoredShopConnections`, no Stripe or PayPal call) and the page kinds. When their modules are present it also reads the delivery brief facts, the agreed keywords and the DPA status; `dpa-missing` appears only then. The default portal colours, opening hours and language of a new bank are never evidence.
+
+**Statuses.** A line is `have` when there is evidence, else `waived` when a developer waived it, else `declined` when the client skipped it in the assistant, else `missing`. `missingDev` lists the required dev lines that are `missing` or `declined`; `missingReady` the same for the ready column. A line whose dev column is not required is a ready line (`gate: 'ready'`): tier-3 `shipping` never blocks development. `passed` is `devComplete` or an admin approval.
+
+**Stored result.** `client.delivery.gate`: `{version, evaluatedAt, inputHash, inputs, tierId, services, devComplete, readyComplete, passed, missingDev, missingReady, approvedBy, approvedAt, note, waivers, lines, info}`. It is written by the tick only when the gate and the loop are both auto for the client; while the gate is in shadow only a person's action in the gate panel writes it (evaluate, waive, approve). The stage board of the deployed hub reads it: a stored gate with `devComplete` or an approval moves a client from `workshop_held` to `gate`, and a missing `payment` line shows `needs-payment-setup` on a staging site. Waivers, the approval and the note are kept across evaluations, also when one is stored while an evaluation is running. A waiver can carry a build directive ("Fjern teamsiden" gives `{action:'remove', pageKind:'team'}`; see `gateDirectives(gate)`).
+
+**What changes while `gate.enabled` is true (also in shadow).** No mail reaches the transport that would not without the gate, but these data writes happen, and the deployed stage board reads some of them:
+- A person's action in the gate panel (evaluate, waive, approve) stores `client.delivery.gate` (see above).
+- Applying the first Prosjektdokument stores `delivery.emails.postWorkshopDueAt`. For a client without `client.delivery` that creates it, so the developer board starts showing a delivery stage for the client.
+- `POST /api/admin/sales/:id/workshop/held` stores `workshop.heldAt` when it is missing, which moves the derived stage to `workshop_held` (or `gate` with a passed gate), and stores the due time.
+- A change to a site's stored payment connection bumps `site.shopConnectionRev` and stores `delivery.dirtyAt` on the linked clients in delivery.
+- Shadow mails are written to `<dataDir>/outbox` (channel `delivery-shadow`), keyed in `<dataDir>/delivery-email-shadow.json`, and listed in the delivery audit.
+
+**Tick steps.** `lib/delivery-gate.js` exports `tickSteps` `[{name:'gate', scope:'client'}]`: with the gate and the loop both auto for the client it stores the gate when the input hash changed; otherwise it writes one delivery-audit record (`gate-shadow`) per input hash. The hash covers exactly the fields the evaluators read. A change to a site's stored payment connection bumps `site.shopConnectionRev` and marks the linked clients dirty while the gate is enabled, so the next tick re-evaluates the `payment` line. That line is `have` only when the shop can take payment, by the rule of the CMS payment status: Stripe once charges are enabled, PayPal once a payee is set and payments are receivable (or the payee is an email). Starting the Stripe onboarding is not enough.
+
+**Page kinds.** From `makerRun.materials.pageKinds` when the run reported them, otherwise from the offer's page names, otherwise from the wanted pages in Kundedata (`pageKindFromLabel`).
+
+**Askable lines.** `askableLines(gate, {max: 12})`: askable and `missing` lines only (never `declined`, `waived` or `have`), required dev lines first, then required ready lines, then optional ones, grouped as Merke, Innhold, Kontakt, Bilder, Nettbutikk and Synlighet. `gateMailRows` adds one row under Bilder for template pictures still on the site ("Vi bruker fortsatt 7 eksempelbilder, blant annet på /portfolio").
+
+**Routes** (developer or admin token; 404 `{code:'disabled'}` while the switch is off): `GET /api/admin/delivery/gate` (clients in delivery with their stored gate), `GET /api/admin/delivery/gate/:clientId` (evaluated now, nothing written; for admins also the client's shadow mails with their text), `POST /api/admin/delivery/gate/:clientId/evaluate` (work access to the client), `PUT` and `DELETE /api/admin/delivery/gate/:clientId/waivers/:lineId` (`{option, reason}`; work access to the client), `POST /api/admin/delivery/gate/:clientId/approve` (admin), `POST /api/admin/sales/:id/workshop/held` (`{startedAt, endedAt, durationMinutes}`, optional ISO times that are not in the future and 1-600 minutes, otherwise 400; admin; answers the stored `heldAt`). Every write answers 409 while the gate is paused.
+
+**Labels.** `scripts/eval/gate-f1.mjs <dir>` scores the gate against `gate-expected.json` label files (precision, recall and F1 per line; exit 1 below 0.9, and also when no client was scored or a label has no gate to score). The labels are derived from fixture facts, never written by hand; `scripts/fixtures/gate-labels/` holds the synthetic clients with neutral inputs.
+
 ---
 
 ## Emails
@@ -176,6 +205,13 @@ Developer-only info lines (`GATE_INFO_LINES`, never sent to the client, never bl
 | `dpaSigning` | service | no | shadow |
 
 Scheduling mails go out from the client's rep with the rep's reply-to, so replies reach a mailbox the inbox bot reads. Service mails use `sender.service`.
+
+**Gate mails** (only while the gate runs for the client):
+- With `emails.preWorkshop.lines` set to `gate`, the pre-workshop mail on signing lists the gate's askable lines, grouped. The desk's Datainnsamling mails go through the real transport, so they use the gate's lines only once the pre-workshop mail is auto for the client (the gate and `emails.preWorkshop` both auto, which needs the pilot list); with the gate in shadow they keep today's lines. On this path the Reply-To becomes the rep's mailbox only when it is in `INBOX_MAILBOX_ALLOWLIST` and in `inbox.mailboxes` (so the inbox bot files the reply); otherwise today's Reply-To stays. The gate's version replaces today's mail only when the pre-workshop mail is auto for the client. In every other case, including a client that is not a pilot while the gate is auto for pilots, today's pre-workshop mail and workshop confirmation go out exactly as before (today's lines, sender and Reply-To, and only when `emails.preWorkshop` itself is auto). With the gate in shadow the gate's version is also written to the outbox as a shadow record (channel `delivery-shadow`, once per signing) with a delivery-audit row; it never reaches the mail transport, touches no calendar event and stamps nothing.
+- **Post-workshop.** When the first Prosjektdokument sets `workshop.heldAt` (the end is the stored recording's `startedAt` plus `durationMinutes`, else the booked time plus the standard length), or on `POST .../workshop/held`, `delivery.emails.postWorkshopDueAt` is set to the workshop's end plus `emails.postWorkshop.delayMinutes` (120): a 10:00-11:00 workshop is due at 13:00. The `post-workshop` tick step sends (auto) or records (shadow) the mail once after that time; the ready variant goes to a client whose gate is complete. The time is stored, so a restart loses nothing. A due time more than 24 hours in the past when it is scheduled (a recording linked days after the workshop) is not stored (`reason: 'stale'`), so no thank-you goes out days late. With `emails.postWorkshop` off nothing is drafted. The desk kind `post-workshop` (`POST /api/admin/sales/:id/workshop/desk-email`, admin) follows the same mode: off or paused answers 409 `{code:'off'|'paused'}` and writes nothing; shadow records a shadow mail and sends nothing (once per client; `{force: true}` records a fresh one); only auto sends it at once and stamps it. Once it was sent the route answers 409 `{code:'already-sent'}` unless `force` is true, and two presses at once send once.
+- **Data reminders.** The `data-reminder` step sends a Datainnsamling reminder `emails.dataReminder.afterDays` after the post-workshop mail (or the last reminder) while askable lines remain, at most `emails.dataReminder.max` times. It counts only from a post-workshop mail this flow scheduled or sent, never from a stamp the backfill wrote (`delivery.emails.backfilled`).
+- Both steps skip a client that is cancelled or paused, or whose stage is past `developing`.
+- A mail is `auto` only when the gate, its email kind and (in the loop) the delivery loop are all auto for the client; anything less is a shadow record.
 
 ---
 
@@ -220,6 +256,7 @@ Settings keys (`SETTINGS_KEYS`, dotted paths in the file):
 | Legal texts | `legal.catalogTexts.enabled` (default `false`; see [legal-texts.md](legal-texts.md)) |
 | SEO | `seo.jobGating.enabled`, `seo.jobGating.mode` (`shadow` or `auto`; default off, see [SEO record, job gating and the DataForSEO ledger](seo-record.md)), `seo.dfsLedger.enabled` (default off), `seo.recordPull.enabled` (default off); `seo.jobGating.paused`, `seo.dfsLedger.paused`, `seo.recordPull.paused` (`null` or `{reason}`; a paused switch counts as off) |
 | Delivery loop | `delivery.loop.enabled` (default `false`), `delivery.loop.mode` (`shadow` or `auto`; `auto` needs at least one client in `pilotClientIds`), `delivery.loop.paused` (null or `{reason}`); see [Delivery loop and Maker jobs](#delivery-loop-and-maker-jobs) |
+| Gate | `gate.enabled` (default `false`), `gate.mode` (`shadow` only for now), `gate.paused` (see [Gate](#gate)) |
 
 ---
 
