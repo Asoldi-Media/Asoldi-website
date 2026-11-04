@@ -7,7 +7,8 @@ published form HTML), so **the site key never authenticates an email call**.
 
 Each site therefore gets an **emailKey**: 32 random bytes, base64url (43 characters), with a key id
 `ek_<n>`. Code: `lib/email-site-auth.js`, `lib/email-hint.js`, routes in
-`lib/routes/email-hub-routes.js`.
+`lib/routes/email-hub-routes.js` (provisioning, unsubscribe pages, superadmin) and
+`lib/routes/email-site-routes.js` (the site API the CMS calls with its key, and the wake).
 
 Everything here is off until a superadmin turns the email platform on (email setting `enabled`,
 default `false`). While it is off, every `/api/hub/email/*` route answers `404 {"code":"disabled"}`
@@ -66,6 +67,68 @@ against every site's current key and its previous key while that is inside its g
 - with the site key alone, with the site key and a valid site credential, or with any wrong key;
 - when `x-site-key` is also sent and names another site.
 
+## The site API (`lib/routes/email-site-routes.js`)
+
+Every route below needs the emailKey (the 401 rules above). Each site may make **120 requests a
+minute** across them; then `429 {"ok":false,"code":"rate_limited","retryAt"}` with `Retry-After`.
+While the platform is off they answer `404 {"code":"disabled"}` like every other email route.
+
+| Method and path | Body or query | Answer |
+|---|---|---|
+| `POST /api/hub/email/send` | the send body of `lib/email-relay.js` | `{ok, messageId, quota}` or the relay's error code |
+| `POST /api/hub/email/contacts` | `{upsert:[{email}], remove:[email]}`, at most 500 | `{ok, synced, removed, sync}`; a no-op (`sync:false`) unless `brevo.syncContacts` is on |
+| `DELETE /api/hub/email/contacts` | `{email}` | `{ok, erased, provider}`: the site's opt-out row moves to its tombstone key (`sha256:<hex>`, still blocking sends, no longer listed); Brevo's transactional log for the address is deleted, the address leaves the site list, and the Brevo contact is deleted only when no other list holds it |
+| `GET /api/hub/email/quota` | | the site's own quota view, `campaigns {allowed, reason}`, `paused`, `suspended`; nothing about other sites |
+| `GET /api/hub/email/suppressions` | `?since=<ISO>` | `{items:[{email, scope, source, at, updatedAt}], next}` |
+| `GET /api/hub/email/stats` | `?campaignId=` or `?kind=&from=&to=` or `?refs=a,b` | `{byRef, totals}` for the site's own messages |
+| `POST /api/hub/email/lint` | `{subject, html, text, kind}` | `{claims:[], claimsChecked:false, links:[{href, kind, ok, host, reason, tag}]}` (the relay's link check) |
+| `GET /api/hub/email/owner-recipients` | | `[{email, status}]` |
+| `POST /api/hub/email/campaigns`, `…/campaigns/:id/recipients`, `…/start`, `…/cancel`, `GET …/campaigns/:id`, `PUT /api/hub/email/owner-recipients`, `POST /api/hub/email/owner-notify` | | `501 {"code":"not_available"}` until those parts of the platform are built |
+
+`POST /api/hub/email/brevo-webhook/:token` is the one `/api/hub/email/` route that takes another
+credential: the hub's Brevo webhook token, in the path and in the `x-asoldi-webhook` header. Any
+other token gets 404. Event handling is not built yet, so a valid call answers
+`503 {"code":"not_ready"}` with `Retry-After`.
+
+## The site-config `email` block
+
+`GET /api/hub/site-config` (and `/api/cms/config`) carry an `email` block only for a site whose
+email is on: the platform is on and the rollout lists the site. Every other site's answer is exactly
+as before. For a listed site `email` is the **only** field that changes; it is on
+`PUBLIC_SITE_CONFIG_FIELDS`, so a domain lookup carries it too. It never holds a key.
+
+```json
+"email": { "api": 1, "enabled": true, "provisioned": true,
+           "kinds": ["cart-recovery","welcome","double-opt-in","back-in-stock","review-request","winback","campaign","test"],
+           "campaigns": { "allowed": true, "reason": "" },
+           "sender": { "mode": "asoldi", "fromName": "<the hub's name for the site>", "fromAddress": "kunder@asoldi.com" },
+           "suspended": false, "paused": false }
+```
+
+- `enabled`: Brevo is configured, the data processing agreement is accepted or attested, and the
+  site may send at least one kind. Otherwise `false` with `reason` `not_configured`, `dpa_missing`
+  or `not_entitled`. A CMS treats `enabled:false` as "use the old behaviour".
+- `provisioned`: the site's key is confirmed. A CMS that sees `false` pulls its key (provision
+  request, confirm). A pending key alone is not provisioned.
+- `kinds`: from the feature tree when the answer carries one, else from the legacy flags
+  (`emailMarketing` gives welcome, double-opt-in and test; with `ecommerce` also cart-recovery,
+  review-request, winback and back-in-stock). `campaign` only when campaigns are allowed.
+- `campaigns.allowed`: the site is entitled to `email.campaigns`, the Brevo plan is known and not
+  the free plan (or `brevo.campaignsOnFree` is on), and `brevo.termsConfirmedAt` is set. The relay
+  applies the same rule to `kind: "campaign"`. `reason`: `not_entitled`, `free_plan`,
+  `plan_unknown` or `terms_unconfirmed`.
+- `paused`: the kill switch is on (a CMS holds its mail). When the site's email state cannot be
+  read, the block says `paused:true` with `reason:"unavailable"`.
+
+## The wake
+
+Every 5 minutes the hub calls `POST /api/cms/email/tick` on each site whose email is on (platform
+on, kill switch off, in the rollout, key confirmed), signed like every hub → CMS call, four at a
+time with a 10 s limit (`lib/email-wake.js`, lease `email-wake` so two hub workers do not both
+wake). The CMS answers `{ran, dueSteps}` and runs its tick at most once a minute. Failed wakes are
+counted per site in memory; three in a row are logged. `POST /api/admin/email/sites/:id/wake`
+(superadmin) wakes one site now (`409 not_ready` when the site would not be woken).
+
 ## Hub → CMS: `x-asoldi-signature`
 
 Every hub → CMS email call is signed with the site's current emailKey:
@@ -88,6 +151,7 @@ Calls:
 |---|---|---|
 | `POST /api/cms/email/hub-event` | `{"type":"suppression","siteId":"…","at":"…"}` | The opt-out list changed: pull `GET /api/hub/email/suppressions?since=` |
 | `POST /api/cms/email/hub-event` | `{"type":"key-rotation","keyId":"ek_2","siteId":"…","at":"…"}` | A new key is pending: provision-request, then confirm |
+| `POST /api/cms/email/tick` | `{"type":"wake","siteId":"…","at":"…"}` | The wake: run the email tick now (at most once a minute); answer `{"ran":…,"dueSteps":…}` |
 | `GET /api/cms/email/suppressions[?since=<ISO>]` | (empty) | The CMS's mirror of its opt-out rows, merged into the hub record by a rebuild. Answer `{"items":[{"email","scope","source","at","updatedAt"}],"next":<ISO or null>}` (`updatedAt` optional), at most 5 MB per page |
 
 Hints carry no address. `verifyEmailSignature()` and `createReferenceCmsVerifier()` in
@@ -150,5 +214,5 @@ checks the tags inside comments (Outlook renders conditional comments), CSS `url
 for the site; the brand name the CMS sends appears only in the body.
 
 The send pipeline (`relaySend` in `lib/email-relay.js`), the Brevo client (`lib/brevo.js`) and the
-quota ledger (`lib/email-quota.js`) are library code; the CMS-facing send, contacts and quota
-routes are added separately and use `requireEmailKey()`.
+quota ledger (`lib/email-quota.js`) are library code; the site API above
+(`lib/routes/email-site-routes.js`) puts them behind `requireEmailKey()`.
