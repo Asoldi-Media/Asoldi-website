@@ -4,7 +4,8 @@
 // answers exactly as before, the admin routes round-trip agreed keywords, and the Maker read stays
 // 404 {code:'disabled'} until seo.recordPull is switched on. Negative controls: staff access, and a
 // portal data bank that names another business's sales client never gets that client's keywords in
-// the public site config.
+// the public site config, also after the sales client is relinked by a push or by a sales file
+// replaced from outside the process (the hub keeps the portal links per change of the sales file).
 //
 // Run: node --test scripts/seo-record-boot.test.mjs
 import test from 'node:test';
@@ -188,6 +189,8 @@ test('real hub: SEO record ingest, admin routes and the Maker read switch', { ti
     assert.equal(approved.body.seoRecorded, true);
     assert.deepEqual(approved.body.record.agreedKeywords.map((row) => [row.phrase, row.status, row.source]), [['rørlegger eksempelby', 'approved', 'plan']]);
     assert.equal(approved.body.record.contractText, 'Avtalte søkeord: rørlegger eksempelby');
+    assert.equal(approved.body.record.guidesConsumers, true);
+    assert.equal(approved.body.record.linked, false, 'no portal profile uses the record of a client without a portal link');
     const blocked = await json(await post('block', { phrase: 'akutt rørlegger', reason: 'not offered' }));
     assert.equal(blocked.status, 200);
     assert.deepEqual(blocked.body.record.agreedKeywords.map((row) => row.status), ['approved', 'blocked']);
@@ -381,7 +384,7 @@ test("real hub negative control: a portal bank naming another business's sales c
       ]));
     },
   });
-  const { base, admin } = hub;
+  const { base, admin, legacy, dataDir } = hub;
   const goals = async (key) => {
     const answer = await json(await fetch(`${base}/api/hub/site-config?site_key=${key}`));
     assert.equal(answer.status, 200, answer.text);
@@ -391,15 +394,47 @@ test("real hub negative control: a portal bank naming another business's sales c
     const before = { own: await goals('key-own'), other: await goals('key-other') };
     assert.deepEqual(before.own.mapsKeywords, ['flytting eksempelby']);
     assert.deepEqual(before.other.mapsKeywords, ['regnskap eksempelby']);
-    const approved = await fetch(`${base}/api/admin/sales-clients/${LINKED_ID}/seo/approve`, {
+    const approved = await json(await fetch(`${base}/api/admin/sales-clients/${LINKED_ID}/seo/approve`, {
       method: 'POST',
       headers: admin({ 'content-type': 'application/json' }),
       body: JSON.stringify({ phrase: 'pianoflytting eksempelby' }),
-    });
+    }));
     assert.equal(approved.status, 200);
+    assert.equal(approved.body.record.linked, true, 'the first business uses the record');
     const after = { own: await goals('key-own'), other: await goals('key-other') };
     assert.deepEqual(after.own.mapsKeywords, ['pianoflytting eksempelby', 'flytting eksempelby'], 'the linked business tracks the approved keyword first');
     assert.deepEqual(after.other, before.other, 'the other business gets exactly its own goals, as without a record');
+    for (let i = 0; i < 3; i += 1) assert.deepEqual(await goals('key-other'), before.other);
+
+    // A Maker push relinks the sales client to the other business (a hub write): the record follows at once.
+    const pushed = await fetch(`${base}/api/internal/maker/client-bundle`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-sales-callback-token': legacy },
+      body: JSON.stringify({ salesClientId: LINKED_ID, businessId: 'biz-other', bundle: { id: 'b-relink', data: {} } }),
+    });
+    assert.equal(pushed.status, 200, await pushed.text());
+    const relinked = { own: await goals('key-own'), other: await goals('key-other') };
+    assert.deepEqual(relinked.own, before.own, 'the first business is no longer linked: its goals as without a record');
+    assert.equal(relinked.other.mapsKeywords[0], 'pianoflytting eksempelby', 'the business the push linked gets the record');
+
+    // The sales file replaced from outside the process: the next call reads the new links.
+    const salesFile = join(dataDir, 'sales-clients.json');
+    const relink = (businessId, userId) => {
+      const rows = JSON.parse(readFileSync(salesFile, 'utf8')).map((row) => (row.id === LINKED_ID ? { ...row, portalBusinessId: businessId, portalUserId: userId } : row));
+      writeFileSync(salesFile, JSON.stringify(rows, null, businessId === 'biz-own' ? 2 : 1));
+    };
+    relink('biz-own', 'user-own');
+    const back = { own: await goals('key-own'), other: await goals('key-other') };
+    assert.deepEqual(back.own, after.own, 'linked again to the first business');
+    assert.ok(!back.other.mapsKeywords.includes('pianoflytting eksempelby'), JSON.stringify(back.other));
+
+    // Linked to a business without a portal profile: nobody uses the record, and the admin view says so.
+    relink('biz-none', 'user-none');
+    assert.deepEqual(await goals('key-own'), before.own);
+    assert.ok(!(await goals('key-other')).mapsKeywords.includes('pianoflytting eksempelby'));
+    const view = await json(await fetch(`${base}/api/admin/sales-clients/${LINKED_ID}/seo`, { headers: admin() }));
+    assert.equal(view.status, 200);
+    assert.deepEqual([view.body.record.guidesConsumers, view.body.record.linked], [true, false]);
   } catch (error) {
     console.error(hub.logs().slice(-4000));
     throw error;

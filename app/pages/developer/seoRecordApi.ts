@@ -29,6 +29,8 @@ export type SeoRecordView = {
   pageMap: Array<{ route: string; kind?: string; primary?: string; indexable?: boolean }>;
   updatedAt: string | null;
   guidesConsumers: boolean;
+  /** A portal profile uses the record; until then the site config, Maps and the dashboard ignore it. */
+  linked?: boolean;
   contractText: string | null;
   history: Array<{ at: string; by: string; action: string; phrase?: string }>;
 };

@@ -139,8 +139,13 @@ export function DeveloperSeoPanel({ salesClientId, authHeaders, canEdit = false 
           </ul>
         </div>
       ) : null}
-      {record?.guidesConsumers ? (
+      {record?.guidesConsumers && record.linked ? (
         <p className="text-[10px] text-gray-500">Maps-rangering og analysemål bruker de godkjente søkeordene først, og aldri de blokkerte.</p>
+      ) : null}
+      {record?.guidesConsumers && !record.linked ? (
+        <p className="text-[10px] text-amber-300">
+          Kunden er ikke koblet til kundeportalen ennå. Maps-rangering og analysemål tar i bruk søkeordene etter neste overføring fra Website Maker som kobler kunden.
+        </p>
       ) : null}
     </section>
   );
