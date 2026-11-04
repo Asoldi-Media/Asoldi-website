@@ -124,7 +124,10 @@ as before. For a listed site `email` is the **only** field that changes; it is o
   applies the same rule to `kind: "campaign"`. `reason`: `not_entitled`, `free_plan`,
   `plan_unknown` or `terms_unconfirmed`.
 - `paused`: the kill switch is on (a CMS holds its mail). When the site's email state cannot be
-  read, the block says `paused:true` with `reason:"unavailable"`.
+  read, the block says `paused:true` with `reason:"unavailable"`. The same holds while the email
+  settings file exists but cannot be read (live file and backup): a site that the hub's last good
+  read of the settings had switched on gets the paused block, so its CMS holds its mail instead of
+  falling back after two answers without a block; a site it had not switched on gets no block.
 
 ## The wake
 

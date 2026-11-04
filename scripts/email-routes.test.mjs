@@ -10,7 +10,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac, randomBytes } from 'node:crypto';
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import express from 'express';
@@ -381,6 +381,28 @@ test('a pending key is not provisioned: the block says provisioned false until t
   await store.saveEmailSettings({ rollout: { mode: 'allowlist', siteIds: ['site_shop', 'site_plain', 'site_basic', 'site_new'] } });
   assert.equal(emailConfigForSite(fresh).provisioned, false);
   await store.saveEmailSettings({ rollout: { mode: 'allowlist', siteIds: ['site_shop', 'site_plain', 'site_basic'] } });
+});
+
+test('email settings that exist but cannot be read: a site the last good read switched on holds its mail (paused, unavailable); others get no block', async () => {
+  const { emailConfigForSite } = await import('../lib/email-site-config.js');
+  const shop = hub.getSiteById('site_shop');
+  const outside = hub.getSiteById('site_out');
+  assert.equal(emailConfigForSite(shop).paused, false, 'a good read');
+  const files = [join(dataDir, 'email-settings.json'), join(dataDir, 'backups', 'email-settings.json.latest.json')].filter((f) => existsSync(f));
+  const saved = files.map((f) => [f, readFileSync(f, 'utf8')]);
+  try {
+    for (const f of files) writeFileSync(f, '{ "enabled": tr');
+    assert.throws(() => store.readEmailSettings({ strict: true }), 'the strict read sees the damage');
+    assert.equal(store.readEmailSettings().enabled, false, 'the lenient read still gives the defaults');
+    const block = emailConfigForSite(shop);
+    assert.deepEqual([block.enabled, block.paused, block.reason, block.provisioned, block.kinds], [false, true, 'unavailable', false, []]);
+    assert.equal(JSON.stringify(block).includes(KEYS.site_shop), false);
+    assert.equal(hubData.getSiteConfig(shop.site_key, false).email.reason, 'unavailable', 'site-config carries it, so the CMS holds its mail');
+    assert.equal(emailConfigForSite(outside), null, 'a site the last good read did not switch on gets no block');
+  } finally {
+    for (const [f, text] of saved) writeFileSync(f, text);
+  }
+  assert.equal(emailConfigForSite(shop).paused, false, 'back to normal once the file reads again');
 });
 
 test('POST /api/hub/email/brevo-webhook/:token: an unknown token gets 404, the hub token with its header 503 not_ready', async () => {
