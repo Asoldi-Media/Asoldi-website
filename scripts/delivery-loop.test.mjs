@@ -513,12 +513,17 @@ test('the storage report walks the data dir without holding the event loop, one 
   const stale = await loopLib.deliveryStorageReport({ dataDir, now: T0 + 61_000 });
   assert.equal(stale.total.files, 1500, 'an older report comes back at once');
   assert.equal(stale.refreshing, true);
-  // The refresh started by that call finishes in the background; the next call gets it.
-  let fresh = stale;
-  for (let i = 0; i < 200 && fresh.total.files === 1500; i += 1) {
-    await new Promise((resolveWait) => setTimeout(resolveWait, 10));
-    fresh = await loopLib.deliveryStorageReport({ dataDir, now: T0 + 62_000 });
-  }
+  // That call started a refresh in the background; a call while it runs shares it.
+  const refresh = loopLib.deliveryStorageScanForTests();
+  assert.ok(refresh instanceof Promise, 'the stale call started a refresh');
+  const during = await loopLib.deliveryStorageReport({ dataDir, now: T0 + 61_500 });
+  assert.equal(during.total.files, 1500);
+  assert.equal(during.refreshing, true);
+  assert.equal(loopLib.deliveryStorageScanForTests(), refresh, 'one scan at a time');
+  // However long the walk takes on a busy machine, the next call after it gets the new report.
+  await refresh;
+  assert.equal(loopLib.deliveryStorageScanForTests(), null);
+  const fresh = await loopLib.deliveryStorageReport({ dataDir, now: T0 + 62_000 });
   assert.equal(fresh.total.files, 1501);
   assert.equal(fresh.refreshing, undefined);
 });
