@@ -255,7 +255,22 @@ test('views: the Maker sees decided keywords only', () => {
   const admin = record.seoRecordView(record.readSeoRecord('sc-record-2'));
   assert.equal(admin.guidesConsumers, true);
   assert.equal(admin.contractText, 'Avtalte søkeord: bakeri eksempelby, brød eksempelby');
+  assert.equal(admin.linked, false, 'not linked unless the caller found a portal profile that uses it');
+  assert.equal(record.seoRecordView(record.readSeoRecord('sc-record-2'), { linked: true }).linked, true);
   assert.equal(record.seoRecordView(null), null);
+});
+
+test('linked: a portal profile uses the record only when its bank names the client and the client points back at it', () => {
+  const client = { id: 'sc-link-1', portalBusinessId: 'biz-1', portalUserId: 'user-1' };
+  const profile = (businessId, salesClientId, more = {}) => ({ businessId, userId: more.userId || businessId.replace('biz', 'user'), ...more, clientDataBank: { makerLink: { salesClientId } } });
+  assert.equal(record.seoRecordPortalLinked(client, [profile('biz-1', 'sc-link-1')]), true);
+  assert.equal(record.seoRecordPortalLinked(client, [profile('biz-2', 'sc-link-1')]), false, 'a bank naming the client is not enough');
+  assert.equal(record.seoRecordPortalLinked(client, [profile('biz-1', 'sc-other')]), false, 'the linked business names another client');
+  assert.equal(record.seoRecordPortalLinked(client, [profile('biz-2', 'sc-link-1'), profile('biz-1', 'sc-link-1')]), true);
+  assert.equal(record.seoRecordPortalLinked({ id: 'sc-link-2', portalUserId: 'user-3' }, [profile('biz-3', 'sc-link-2', { ownerUserId: 'user-3' })]), true, 'no business id: the portal user decides');
+  assert.equal(record.seoRecordPortalLinked({ id: 'sc-link-3' }, [profile('biz-1', 'sc-link-3')]), false, 'a client linked to nobody');
+  assert.equal(record.seoRecordPortalLinked(client, []), false);
+  assert.equal(record.seoRecordPortalLinked(null, [profile('biz-1', '')]), false);
 });
 
 test('a client with no record file reads as no record', () => {

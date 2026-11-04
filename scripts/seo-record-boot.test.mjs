@@ -189,6 +189,8 @@ test('real hub: SEO record ingest, admin routes and the Maker read switch', { ti
     assert.equal(approved.body.seoRecorded, true);
     assert.deepEqual(approved.body.record.agreedKeywords.map((row) => [row.phrase, row.status, row.source]), [['rørlegger eksempelby', 'approved', 'plan']]);
     assert.equal(approved.body.record.contractText, 'Avtalte søkeord: rørlegger eksempelby');
+    assert.equal(approved.body.record.guidesConsumers, true);
+    assert.equal(approved.body.record.linked, false, 'no portal profile uses the record of a client without a portal link');
     const blocked = await json(await post('block', { phrase: 'akutt rørlegger', reason: 'not offered' }));
     assert.equal(blocked.status, 200);
     assert.deepEqual(blocked.body.record.agreedKeywords.map((row) => row.status), ['approved', 'blocked']);
@@ -398,6 +400,7 @@ test("real hub negative control: a portal bank naming another business's sales c
       body: JSON.stringify({ phrase: 'pianoflytting eksempelby' }),
     }));
     assert.equal(approved.status, 200);
+    assert.equal(approved.body.record.linked, true, 'the first business uses the record');
     const after = { own: await goals('key-own'), other: await goals('key-other') };
     assert.deepEqual(after.own.mapsKeywords, ['pianoflytting eksempelby', 'flytting eksempelby'], 'the linked business tracks the approved keyword first');
     assert.deepEqual(after.other, before.other, 'the other business gets exactly its own goals, as without a record');
@@ -425,10 +428,13 @@ test("real hub negative control: a portal bank naming another business's sales c
     assert.deepEqual(back.own, after.own, 'linked again to the first business');
     assert.ok(!back.other.mapsKeywords.includes('pianoflytting eksempelby'), JSON.stringify(back.other));
 
-    // Linked to a business without a portal profile: nobody uses the record.
+    // Linked to a business without a portal profile: nobody uses the record, and the admin view says so.
     relink('biz-none', 'user-none');
     assert.deepEqual(await goals('key-own'), before.own);
     assert.ok(!(await goals('key-other')).mapsKeywords.includes('pianoflytting eksempelby'));
+    const view = await json(await fetch(`${base}/api/admin/sales-clients/${LINKED_ID}/seo`, { headers: admin() }));
+    assert.equal(view.status, 200);
+    assert.deepEqual([view.body.record.guidesConsumers, view.body.record.linked], [true, false]);
   } catch (error) {
     console.error(hub.logs().slice(-4000));
     throw error;

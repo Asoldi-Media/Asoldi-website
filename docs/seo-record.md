@@ -20,7 +20,7 @@ One record per sales client in `<dataDir>/seo-ops/clients/<salesClientId>.json`,
 
 | Route | Who | What |
 |---|---|---|
-| `GET /api/admin/sales-clients/:id/seo` | the sales rep who owns the client, a developer who sees it on the developer page, admin | the record, its contract line and the last 20 history rows |
+| `GET /api/admin/sales-clients/:id/seo` | the sales rep who owns the client, a developer who sees it on the developer page, admin | the record, its contract line, the last 20 history rows, `guidesConsumers` and `linked` (see Consumers) |
 | `PUT /api/admin/sales-clients/:id/seo` | the developer who works on the client, admin | `{ agreedKeywords: [...] }` replaces the list (duplicates collapse to the strongest status; a row may carry `allowBrand`) |
 | `POST /api/admin/sales-clients/:id/seo/approve` | the developer who works on the client, admin | `{ phrase, source?, quoteRef?, allowBrand? }` |
 | `POST /api/admin/sales-clients/:id/seo/block` | the developer who works on the client, admin | `{ phrase, reason? }` |
@@ -31,6 +31,8 @@ Access matches the other sales-client and developer routes: another rep's client
 **For other code.** `agreedKeywordsFor(id)` (approved phrases), `freezeAgreedKeywords(id, { ref })` (a frozen snapshot with the contract line, noted in the history), `agreedKeywordsContractText(record)` in `lib/seo-ops/contract-text.js` (`Avtalte søkeord: a, b, c`, or `null`), and `tickSteps` (empty for now).
 
 **Consumers.** Maps keywords (`buildMapsKeywords`) and analytics goals (`analyticsGoalsFromBank`, also in `GET /api/hub/site-config`) read the record of a portal profile's sales client (`seoRecordForProfile`) once a developer has approved or blocked a keyword. The bank's `makerLink.salesClientId` names the sales client, but a client can edit its own bank, so the record is used only when that sales client points back at the profile (`portalBusinessId`, or `portalUserId` for a sales client without a business id; the Maker bundle push sets both). Otherwise the consumers give their output without a record. Once a record is used: approved keywords first, then the page map's primaries, then the bank's plan. Blocked phrases and prescription-only substances are left out everywhere; phrases that look like the business's own name are left out of the page map and the plan, never from the approved keywords, so Maps and the goals track exactly the keywords the contract line lists. Until a keyword is decided their output is exactly as without a record.
+
+The record view's `linked` says whether a portal profile uses the record: its bank names the sales client and the sales client points back at it. Until then (for example a client that has no portal account yet, or whose pushes never found one) the site config, the Maps keywords and the dashboard ignore the record, even with `guidesConsumers: true`; the developer page's SEO panel says so. It takes effect once the sales client is linked, usually by the next Maker bundle push that finds the portal account.
 
 Cost: the site config is public and the client CMS calls it on every page load without caching, so `seoRecordForProfile` reads the record first and stops there unless a keyword is decided. Only then does it look up the link, in an index of every sales client's `portalBusinessId` and `portalUserId` that is rebuilt once per change of `sales-clients.json` (the sales store's in-process revision plus the file's mtime and size, so a file replaced from outside the hub is seen too).
 
