@@ -196,6 +196,19 @@ test('the erase plan holds a recording another card has, a shared dialler entry 
   assert.equal(existsSync(join(DATA_DIR, 'privacy', 'erased-meetings.json')), false, 'a plan writes no erased list');
 });
 
+test('the export hands over the client\'s own contact corrections in full and only the matched fields of a shared one', async () => {
+  const exported = await personalData.exportClient('pe-lead');
+  const fixes = exported.stores.find((row) => row.id === 'sales-contact-corrections');
+  assert.deepEqual(fixes.records, [
+    { index: 0, ...CORRECTIONS.corrections[0] },
+    { index: 2, shared: true, matched: { businessName: 'Test' } },
+  ]);
+  assert.equal(JSON.stringify(fixes.records).includes('matches both test businesses'), false, 'the shared entry\'s notes stay out');
+  assert.match(fixes.note, /another client card/);
+  const signed = (await personalData.exportClient('pe-signed')).stores.find((row) => row.id === 'sales-contact-corrections');
+  assert.deepEqual(signed.records, [{ index: 2, shared: true, matched: { businessName: 'Test' } }]);
+});
+
 test('the erase keeps the other business\'s files, cards, recordings, cache entries, corrections and sessions', async () => {
   const signedBefore = (await personalData.exportClient('pe-signed')).stores.find((row) => row.id === 'client-uploads');
   // Safe mode (or a calendar error): the event stays, and the result and the audit name it.
