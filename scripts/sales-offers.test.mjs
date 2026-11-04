@@ -1103,7 +1103,11 @@ test('portal contract html uses a document header, party columns, and numbered s
   assert.match(html, /offer-contract-sign/);
   assert.match(html, /asoldi-contract-signature\.png/);
   assert.match(html, /offer-contract-stamp/);
-  assert.match(html, /Jeg aksepterer avtalen/);
+  assert.match(html, /offer-contract-sign-note/);
+  assert.match(html, /ikke et underskriftsfelt/);
+  assert.doesNotMatch(html, /offer-contract-sign-line--empty/);
+  assert.doesNotMatch(html, /____________/);
+  assert.doesNotMatch(html, /Jeg aksepterer avtalen/);
   const stamp = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'asoldi-contract-signature.png');
   assert.equal(existsSync(stamp), true, 'portal signature PNG is served from public/');
 });

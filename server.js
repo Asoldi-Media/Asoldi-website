@@ -191,6 +191,7 @@ import {
   salesMeetHostIsVerified,
   salesMeetJoinUrl,
   salesMeetingIsInProgress,
+  salesClientNeedsOwnerMeetBackfill,
   sanitizeMyphonerDefaultOwnerKey,
   shouldSyncSalesMeetingCalendar,
 } from './lib/sales-calendar-owner.js';
@@ -9015,6 +9016,7 @@ async function backfillMissingSalesCalendarEvents({
   notifyAttendees = false,
   repairUpcoming = false,
   sendMissingConfirmations = false,
+  repairOwnerMeet = false,
   clientIds = [],
   maxActions = 0,
 } = {}) {
@@ -9044,6 +9046,8 @@ async function backfillMissingSalesCalendarEvents({
     skippedCap: 0,
     repaired: 0,
     wouldRepair: 0,
+    repairedOwnerMeet: 0,
+    wouldRepairOwnerMeet: 0,
     mailed: 0,
     wouldMail: 0,
     alreadyConfirmed: 0,
@@ -9077,7 +9081,8 @@ async function backfillMissingSalesCalendarEvents({
     const needsCreate = !hasEvent;
     const needsRepair = repairUpcoming && hasEvent && inWindow && staleHostKey;
     const needsMail = sendMissingConfirmations && !thankYouSent && !meetingTimeHasPassed(client);
-    if (!needsCreate && !needsRepair && !needsMail) {
+    const needsOwnerMeet = repairOwnerMeet && salesClientNeedsOwnerMeetBackfill(client);
+    if (!needsCreate && !needsRepair && !needsMail && !needsOwnerMeet) {
       if (hasEvent) summary.skippedHasEvent += 1;
       if (thankYouSent) summary.alreadyConfirmed += 1;
       continue;
@@ -9093,12 +9098,21 @@ async function backfillMissingSalesCalendarEvents({
       if (needsCreate) summary.wouldUpdate += 1;
       if (needsRepair) summary.wouldRepair += 1;
       if (needsMail) summary.wouldMail += 1;
+      if (needsOwnerMeet) summary.wouldRepairOwnerMeet += 1;
       details.push({
         clientId: sanitizeText(client?.id),
         businessName: sanitizeText(client?.businessName),
         meetingAt: sanitizeText(client?.meetingAt),
-        status: needsMail ? 'would-confirm' : needsRepair ? 'would-repair' : 'would-sync',
+        status: needsOwnerMeet
+          ? 'would-repair-owner-meet'
+          : needsMail
+            ? 'would-confirm'
+            : needsRepair
+              ? 'would-repair'
+              : 'would-sync',
         thankYouSent,
+        meetLink: sanitizeText(client?.calendar?.meetLink),
+        meetHostVerifiedEmail: sanitizeText(client?.calendar?.meetHostVerifiedEmail),
       });
       continue;
     }
@@ -9106,19 +9120,29 @@ async function backfillMissingSalesCalendarEvents({
     let live = client;
     const warnings = [];
     let mailed = null;
-    if (needsMail) {
+    if (needsOwnerMeet) {
+      mailed = await sendSalesThankYou(live, {
+        force: true,
+        actorAccountKey: live.ownerId || actorAccountKey,
+        salesUser: salesUserFromAccountKey(live.ownerId || actorAccountKey),
+      });
+    } else if (needsMail) {
       mailed = await autoSendThankYouFromOwner(live, { existing: live, ownerJustAssigned: true });
+    }
+    if (mailed) {
       live = mailed.client || live;
       if (mailed.sent) summary.mailed += 1;
       if (Array.isArray(mailed.warnings)) warnings.push(...mailed.warnings);
       if (mailed.reason && !mailed.sent) warnings.push(mailed.reason);
     }
     const alreadySyncedByMail = Boolean(mailed?.sent && sanitizeText(live?.calendar?.eventId));
-    if ((needsCreate || needsRepair) && !alreadySyncedByMail) {
+    if ((needsCreate || needsRepair || needsOwnerMeet) && !alreadySyncedByMail) {
       const syncResult = await maybeSyncCalendar(live, client, {
-        notifyAttendees: thankYouSent ? false : Boolean(notifyAttendees),
+        notifyAttendees: needsOwnerMeet || (thankYouSent ? false : Boolean(notifyAttendees)),
         actorAccountKey,
         fallbackAccountKeys: await resolveCalendarFallbackAccountKeys(client?.ownerId || '', actorAccountKey),
+        forceOwnerMeet: needsOwnerMeet,
+        requireMeetLink: needsOwnerMeet,
       });
       live = syncResult.client || live;
       if (Array.isArray(syncResult.warnings)) warnings.push(...syncResult.warnings);
@@ -9126,19 +9150,26 @@ async function backfillMissingSalesCalendarEvents({
     summary.warnings += warnings.length;
     for (const warning of warnings) registerWarningReason(warning);
     const hasSyncedEvent = Boolean(sanitizeText(live?.calendar?.eventId));
+    const hostVerified = Boolean(sanitizeText(live?.calendar?.meetHostVerifiedEmail));
     if (hasSyncedEvent && needsRepair) summary.repaired += 1;
     else if (hasSyncedEvent && needsCreate) summary.updated += 1;
     else if (needsCreate || needsRepair) summary.unresolved += 1;
+    if (needsOwnerMeet && hostVerified) summary.repairedOwnerMeet += 1;
+    else if (needsOwnerMeet) summary.unresolved += 1;
     details.push({
       clientId: sanitizeText(client?.id),
       businessName: sanitizeText(client?.businessName),
       meetingAt: sanitizeText(client?.meetingAt),
-      status: mailed?.sent
-        ? 'confirmed'
-        : hasSyncedEvent
-          ? (needsRepair ? 'repaired' : 'synced')
-          : (mailed?.reason || 'unresolved'),
+      status: needsOwnerMeet
+        ? (hostVerified ? 'repaired-owner-meet' : (mailed?.reason || 'unresolved'))
+        : mailed?.sent
+          ? 'confirmed'
+          : hasSyncedEvent
+            ? (needsRepair ? 'repaired' : 'synced')
+            : (mailed?.reason || 'unresolved'),
       thankYouSent: Boolean(sanitizeText(live?.reminders?.thankYouSentAt)),
+      meetLink: sanitizeText(live?.calendar?.meetLink),
+      meetHostVerifiedEmail: sanitizeText(live?.calendar?.meetHostVerifiedEmail),
       warnings,
     });
   }
@@ -14172,6 +14203,7 @@ app.post('/api/admin/sales/backfill-calendar', salesAuth, async (req, res) => {
     const notifyAttendees = parseBoolean(req.body?.notifyAttendees, false);
     const repairUpcoming = parseBoolean(req.body?.repairUpcoming, true);
     const sendMissingConfirmations = parseBoolean(req.body?.sendMissingConfirmations, true);
+    const repairOwnerMeet = parseBoolean(req.body?.repairOwnerMeet, true);
     const requestedMaxActions = Number(req.body?.maxActions ?? 0);
     const maxActions = Number.isFinite(requestedMaxActions) && requestedMaxActions > 0
       ? Math.max(1, Math.min(40, Math.trunc(requestedMaxActions)))
@@ -14187,6 +14219,7 @@ app.post('/api/admin/sales/backfill-calendar', salesAuth, async (req, res) => {
       notifyAttendees,
       repairUpcoming,
       sendMissingConfirmations,
+      repairOwnerMeet,
       clientIds,
       maxActions,
     });
@@ -14202,6 +14235,43 @@ app.post('/api/admin/sales/backfill-calendar', salesAuth, async (req, res) => {
     return res.status(httpStatusFromError(error, 500)).json({
       ok: false,
       message: sanitizeText(error?.message) || 'Failed backfilling sales calendar events.',
+    });
+  }
+});
+
+app.post('/api/admin/sales/backfill-meet-host', salesAuth, async (req, res) => {
+  if (!req.salesUser?.isAdmin) {
+    return res.status(403).json({ message: 'Only admin can run Meet host backfill.' });
+  }
+  try {
+    const dryRun = parseBoolean(req.body?.dryRun, true);
+    const actorAccountKey = sanitizeText(req.salesUser.accountKey);
+    const requestedMaxActions = Number(req.body?.maxActions ?? 0);
+    const maxActions = Number.isFinite(requestedMaxActions) && requestedMaxActions > 0
+      ? Math.max(1, Math.min(40, Math.trunc(requestedMaxActions)))
+      : 0;
+    const clientIds = Array.isArray(req.body?.clientIds)
+      ? req.body.clientIds.map((id) => sanitizeText(id)).filter(Boolean).slice(0, 80)
+      : [];
+    const result = await backfillMissingSalesCalendarEvents({
+      dryRun,
+      actorAccountKey,
+      repairUpcoming: false,
+      sendMissingConfirmations: false,
+      repairOwnerMeet: true,
+      clientIds,
+      maxActions,
+    });
+    return res.json({
+      ok: true,
+      dryRun,
+      actorAccountKey,
+      ...result,
+    });
+  } catch (error) {
+    return res.status(httpStatusFromError(error, 500)).json({
+      ok: false,
+      message: sanitizeText(error?.message) || 'Failed backfilling owner-hosted Meets.',
     });
   }
 });
@@ -21029,12 +21099,23 @@ app.post('/api/public/sales-preview/:id/contract/accept', async (req, res) => {
   if (!previewSignAgreementsOk(req.body)) {
     return res.status(400).json({ message: 'Du må godkjenne vilkår og 6 måneders bindingstid.' });
   }
-  const email = sanitizeText(offer.targetEmail) || offerSendToEmail(client);
-  const name = sanitizeText(req.body?.name) || sanitizeText(client.contactPerson);
+  const requestedEmail = sanitizeText(req.body?.email);
+  const fallbackEmail = sanitizeText(offer.targetEmail) || offerSendToEmail(client);
+  if (requestedEmail && !isValidEmail(requestedEmail)) {
+    return res.status(400).json({ message: 'Skriv inn en gyldig e-post.' });
+  }
+  const email = requestedEmail ? normalizeEmail(requestedEmail) : fallbackEmail;
+  if (!isValidEmail(email)) {
+    return res.status(400).json({ message: 'Mangler gyldig e-post.' });
+  }
+  const modeRaw = sanitizeText(req.body?.mode).toLowerCase();
+  const mode = modeRaw === 'login' || modeRaw === 'signup' ? modeRaw : '';
+  const name = sanitizeText(req.body?.name) || (mode === 'login' ? '' : sanitizeText(client.contactPerson));
   const signed = await ensurePreviewSigner({
     email,
     password: req.body?.password,
     name,
+    mode,
   });
   if (!signed.ok) return res.status(signed.status).json({ message: signed.message });
   const stamped = stampOfferBusiness(offer, signed.user);
@@ -21510,6 +21591,20 @@ async function ensureData() {
   await ensureMyphonerRecordingsDir().catch(() => {});
 }
 
+async function runStartupOwnerMeetHostBackfill() {
+  const result = await backfillMissingSalesCalendarEvents({
+    dryRun: false,
+    repairUpcoming: false,
+    sendMissingConfirmations: false,
+    repairOwnerMeet: true,
+    maxActions: 40,
+  });
+  const summary = result?.summary || {};
+  console.log(
+    `[sales] owner-meet backfill scanned=${Number(summary.scanned || 0)} repaired=${Number(summary.repairedOwnerMeet || 0)} mailed=${Number(summary.mailed || 0)} unresolved=${Number(summary.unresolved || 0)}`
+  );
+}
+
 // Every loop and startup backfill by name. lib/safe-mode.js BACKGROUND_JOBS decides which
 // run while hub safe mode is on (all run on asoldi.com). A new job needs an entry there.
 function startBackgroundJobs() {
@@ -21529,6 +21624,9 @@ function startBackgroundJobs() {
     inboxBot: () => startInboxBotLoop(),
     signedContractBackfill: () => runSignedContractBackfillOnce().catch((error) => {
       console.error('[signed-contract] startup backfill failed', sanitizeText(error?.message) || error);
+    }),
+    ownerMeetHostBackfill: () => runStartupOwnerMeetHostBackfill().catch((error) => {
+      console.error('[sales] owner-meet startup backfill failed', sanitizeText(error?.message) || error);
     }),
     myphonerWebhookReconcile: () => startMyphonerWebhookReconcileLoop(),
     myphonerRecordingRetry: () => startMyphonerRecordingRetryLoop(),

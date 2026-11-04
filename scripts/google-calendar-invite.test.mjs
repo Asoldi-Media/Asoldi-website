@@ -110,11 +110,13 @@ test('calendar upsert keeps an in-progress room when preserveForeignMeet is set'
   assert.match(src, /Do not mint a second room on a time change/);
   assert.match(src, /forceNewMeet/);
   assert.match(src, /requestOwnedConference/);
+  assert.match(src, /forceOwnerMeet: Boolean\(options\?\.forceOwnerMeet\) \|\| forceNewMeet/);
+  assert.match(src, /The shared service account cannot host this room/);
   const stampBlock = src.slice(src.indexOf('let meetHostVerifiedEmail'));
   assert.match(stampBlock.slice(0, 500), /requestOwnedConference/);
   assert.equal(stampBlock.slice(0, 900).includes('salesMeetLooksOwnerHosted'), false);
   const replaceBlock = src.slice(src.indexOf('if (needsFreshConference)'));
-  assert.match(replaceBlock.slice(0, 500), /includeAttendees = true/);
+  assert.match(replaceBlock.slice(0, 900), /includeAttendees = true/);
 });
 
 test('recorded extra Møte plans Meet plus Fireflies and no client email', () => {
@@ -448,12 +450,18 @@ test('after confirmation the sales Meet button does not force a second room at c
   assert.match(syncFn.slice(0, 9000), /calendarKeysShareMailbox/);
   assert.match(syncFn.slice(0, 9000), /!sameMailbox/);
   const backfill = server.slice(server.indexOf('async function backfillMissingSalesCalendarEvents'));
-  assert.match(backfill.slice(0, 5500), /repairUpcoming/);
-  assert.match(backfill.slice(0, 5500), /sendMissingConfirmations/);
-  assert.match(backfill.slice(0, 5500), /autoSendThankYouFromOwner/);
-  assert.match(backfill.slice(0, 5500), /staleHostKey/);
-  assert.match(backfill.slice(0, 5500), /maxActions/);
+  assert.match(backfill.slice(0, 7500), /repairUpcoming/);
+  assert.match(backfill.slice(0, 7500), /sendMissingConfirmations/);
+  assert.match(backfill.slice(0, 7500), /repairOwnerMeet/);
+  assert.match(backfill.slice(0, 7500), /salesClientNeedsOwnerMeetBackfill/);
+  assert.match(backfill.slice(0, 7500), /autoSendThankYouFromOwner/);
+  assert.match(backfill.slice(0, 7500), /sendSalesThankYou/);
+  assert.match(backfill.slice(0, 7500), /forceOwnerMeet: needsOwnerMeet/);
+  assert.match(backfill.slice(0, 7500), /staleHostKey/);
+  assert.match(backfill.slice(0, 7500), /maxActions/);
   assert.equal(/if \(hasEvent\) \{\s*summary\.skippedHasEvent \+= 1;\s*continue;/.test(backfill.slice(0, 2500)), false);
+  assert.match(server, /app.post\('\/api\/admin\/sales\/backfill-meet-host'/);
+  assert.match(server, /runStartupOwnerMeetHostBackfill/);
   const jsonClient = server.slice(server.indexOf('function jsonSalesClient'));
   assert.match(jsonClient.slice(0, 800), /salesInboxMeetLink\(client\)/);
 });

@@ -6,7 +6,7 @@ import { Link } from 'react-router-dom';
 const websiteTiers = [
   { 
     name: 'Starter', 
-    price: 499,
+    price: 799,
     features: [
       "Full nettsideutvikling",
       "Hosting og vedlikehold",
@@ -51,7 +51,7 @@ export const PackageDeals = () => {
 
   const smmPrice = 2999;
   const emailPrice = 5999;
-  const starterNettsideValue = 499;
+  const starterNettsideValue = 799;
   const starterMarketingValue = 1999;
   const starterGuideValue = 999;
   const starterOriginal = starterNettsideValue + starterMarketingValue + starterGuideValue;
