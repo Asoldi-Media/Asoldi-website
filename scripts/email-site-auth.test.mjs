@@ -144,10 +144,17 @@ test('a credential-valid request gets the pending key; the confirm commits it; a
   assert.deepEqual([ok.status, ok.body], [200, { ok: true, keyId: 'ek_1' }]);
   const repeat = await call('post', '/api/hub/email/provision/confirm', { 'x-email-key': firstKey });
   assert.deepEqual([repeat.status, repeat.body], [200, { ok: true, keyId: 'ek_1' }], 'a repeated confirm is idempotent');
-  const settled = await call('post', '/api/hub/email/provision-request', cms1);
-  assert.deepEqual(settled.body, { ok: true }, 'nothing pending: no key in the answer');
   assert.equal(store.readEmailSite('site_1').auth.keyId, 'ek_1');
   assert.ok(store.readEmailSite('site_1').auth.confirmedAt);
+  // A CMS that lost its key, or whose owner asks to reconnect, asks again with its credential: the
+  // hub hands out a new pending key (a rotation); the confirmed key keeps working until its confirm.
+  const again2 = await call('post', '/api/hub/email/provision-request', cms1);
+  assert.equal(again2.body.keyId, 'ek_2', 'a site with a key gets a new pending key');
+  assert.notEqual(again2.body.emailKey, firstKey);
+  assert.deepEqual(auth.findSiteByEmailKey(firstKey, { now: clock }), { siteId: 'site_1', keyId: 'ek_1', which: 'current' }, 'the confirmed key still works');
+  assert.equal(auth.findSiteByEmailKey(again2.body.emailKey, { now: clock }), null, 'the new key authenticates nothing until its confirm');
+  const limit = await call('post', '/api/hub/email/provision-request', cms1);
+  assert.deepEqual(limit.body, { ok: true }, 'the fourth credential-valid request of the day gets nothing');
 });
 
 test('the site key alone gets 401 on every email site route; only the emailKey opens them', async () => {
@@ -173,7 +180,7 @@ test('rotation: a signed hint goes to https://<domain> only; the old key works 1
   hints.length = 0;
   const rotated = await call('post', '/api/admin/email/sites/site_1/provision', admin);
   assert.equal(rotated.status, 200);
-  assert.equal(rotated.body.pendingKeyId, 'ek_2');
+  assert.equal(rotated.body.pendingKeyId, 'ek_3', 'a superadmin rotation replaces the unconfirmed ek_2');
   assert.equal(rotated.body.rotation, true);
   assert.equal(JSON.stringify(rotated.body).includes(firstKey), false, 'the admin answer carries no key');
   await new Promise((resolve) => setTimeout(resolve, 20));
@@ -186,7 +193,7 @@ test('rotation: a signed hint goes to https://<domain> only; the old key works 1
   const guarded = (key) => call('get', '/api/hub/email/quota', { 'x-email-key': key });
   assert.equal((await guarded(firstKey)).status, 200, 'the current key keeps working until the confirm');
   const pulled = await call('post', '/api/hub/email/provision-request', cms1);
-  assert.equal(pulled.body.keyId, 'ek_2');
+  assert.equal(pulled.body.keyId, 'ek_3');
   const secondKey = pulled.body.emailKey;
   assert.notEqual(secondKey, firstKey);
   const confirmAt = clock;

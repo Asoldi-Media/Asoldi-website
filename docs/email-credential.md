@@ -39,8 +39,8 @@ CMS                                                   hub
   header `x-site-credential`). Without a valid one the answer is always `{"ok":true}`, so a caller
   with only the public site key learns nothing and gets nothing.
 - Where a pending key comes from: a superadmin issues it (`POST /api/admin/email/sites/:id/provision`),
-  or, for a site in the email rollout that has no key at all, the hub issues the first one on a
-  credential-valid provision request.
+  or the hub issues one on a credential-valid provision request for a site in the email rollout that
+  has no pending key: its first key, or, when it already has a key, a new one (a rotation, below).
 - At most **3 credential-valid provision requests per site and day** (Oslo day) are counted;
   later ones get `{"ok":true}`. Requests without a valid credential are not counted, so they
   cannot use up the site's allowance.
@@ -56,7 +56,13 @@ CMS                                                   hub
   The CMS then pulls the new key with a provision request and confirms it. The current key keeps
   working until the confirm, and **for 10 minutes after it** (the previous key's grace window);
   then it gets `401`.
-- **Recover** (the CMS lost its key): the superadmin rotates; the CMS pulls and confirms as above.
+- **Recover or reconnect** (the CMS lost its key, the hub refused it, or the owner pressed "Koble
+  til e-post på nytt"): the CMS sends a provision request with its site credential. For a site with a
+  key and nothing pending, the hub issues a new pending key, as a rotation within the daily limit;
+  the current key keeps working until the confirm and for 10 minutes after it. So the site
+  credential alone is enough to recover, without a superadmin, and a CMS never has to give up its
+  key to get a new one. A CMS keeps its own automatic requests to two a day, so the third stays for
+  a hint or the owner.
 
 ## CMS → hub: `x-email-key`
 
