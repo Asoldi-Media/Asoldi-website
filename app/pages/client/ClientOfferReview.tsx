@@ -31,6 +31,7 @@ const CONTRACT_CLASS = [
   '[&_.offer-contract-sign-line]:relative [&_.offer-contract-sign-line]:mt-2 [&_.offer-contract-sign-line]:flex [&_.offer-contract-sign-line]:min-h-[56px] [&_.offer-contract-sign-line]:items-end [&_.offer-contract-sign-line]:border-b [&_.offer-contract-sign-line]:border-[#222222]',
   '[&_.offer-contract-stamp]:mb-[-2px] [&_.offer-contract-stamp]:block [&_.offer-contract-stamp]:h-[52px] [&_.offer-contract-stamp]:w-auto [&_.offer-contract-stamp]:max-w-full [&_.offer-contract-stamp]:object-contain [&_.offer-contract-stamp]:object-left',
   '[&_.offer-contract-sign-date]:mt-2 [&_.offer-contract-sign-date]:text-[13px] [&_.offer-contract-sign-date]:text-[#1F2937]',
+  '[&_.offer-contract-sign-note]:mt-3 [&_.offer-contract-sign-note]:text-[13px] [&_.offer-contract-sign-note]:leading-[1.55] [&_.offer-contract-sign-note]:text-[#4B5563]',
 ].join(' ');
 
 export const ClientOfferReview = () => {
