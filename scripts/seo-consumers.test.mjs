@@ -8,7 +8,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -278,12 +278,96 @@ test("a data bank naming another business's sales client reads as no record: the
   assert.equal(record.seoRecordForProfile(null), null);
   assert.equal(record.seoRecordForProfile({ businessId: 'biz-1' }), null);
 
-  // The sales list is read only for an id that has a record file.
+  // The sales clients come from the reader; one that cannot read them means no record.
   let reads = 0;
-  const counting = (id) => { reads += 1; return { id, portalBusinessId: 'biz-1' }; };
-  assert.equal(record.seoRecordForProfile(named1({ businessId: 'biz-1', salesClientId: 'sc-no-file' }), { getSalesClient: counting }), null);
-  assert.equal(reads, 0);
-  assert.ok(record.seoRecordForProfile(named1({ businessId: 'biz-1', salesClientId: 'sc-cons-1' }), { getSalesClient: counting }));
+  const counting = () => { reads += 1; return [{ id: 'sc-cons-1', portalBusinessId: 'biz-1' }]; };
+  assert.equal(record.seoRecordForProfile(named1({ businessId: 'biz-1', salesClientId: 'sc-no-file' }), { readSalesClients: counting }), null);
+  assert.equal(reads, 0, 'no record file: no sales read');
+  assert.ok(record.seoRecordForProfile(named1({ businessId: 'biz-1', salesClientId: 'sc-cons-1' }), { readSalesClients: counting }));
   assert.equal(reads, 1);
-  assert.equal(record.seoRecordForProfile(named1({ businessId: 'biz-1', salesClientId: 'sc-cons-1' }), { getSalesClient: () => { throw new Error('unreadable'); } }), null);
+  assert.equal(record.seoRecordForProfile(named1({ businessId: 'biz-1', salesClientId: 'sc-cons-1' }), { readSalesClients: () => { throw new Error('unreadable'); } }), null);
+});
+
+test('the site config, the dashboard and the Maps refresh read the sales file at most once per change of it, and never for a record that guides no consumer', async () => {
+  // Runs after the tests above: sc-cons-1 (linked to biz-1) has a record that guides consumers, and
+  // the portal profile biz-2 names sc-cons-1 in its bank without being linked to it.
+  const clientPortal = await import('../data/client-portal.js');
+  const sales = await import('../data/sales.js');
+  const { buildAnalyticsDashboard, ensureMapsRanking } = await import('../lib/client-analytics-service.js');
+  const salesFile = join(dataDir, 'sales-clients.json');
+  const original = readFileSync(salesFile, 'utf8');
+  // sc-cons-4 (linked to biz-4) gets a record with a plan summary only: it guides no consumer yet.
+  writeFileSync(salesFile, JSON.stringify([...JSON.parse(original), { id: 'sc-cons-4', businessName: 'Eksempel Smie AS', product: 'asoldi', portalUserId: 'user-4', portalBusinessId: 'biz-4' }]));
+  const pushed = await record.recordPlanSummaryFromPush('sc-cons-4', { builtAt: '2026-10-30T10:00:00.000Z', primaries: [{ phrase: 'smie eksempelby' }] }, { salesClientExists: async () => true });
+  assert.equal(pushed.seoRecorded, true);
+
+  let reads = 0;
+  record.setSeoRecordSalesReaderForTests(() => {
+    reads += 1;
+    return record.readStoredSalesClients();
+  });
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async () => { throw new Error('no network in this test'); };
+  const noFetch = async () => { throw new Error('no network in this test'); };
+  const tier2 = (profile) => ({ ...profile, payment: { planId: 'tier-2-seo' } });
+  // What each request path gives: the public site config (server.js withGoals), the dashboard with a
+  // Maps refresh (refresh=1) and a forced Maps refresh (the portal button and the hourly loop).
+  const everyPath = async (profile) => {
+    const goals = analyticsGoalsFromBank(profile.clientDataBank, { seoRecord: record.seoRecordForProfile(profile) });
+    const dashboard = await buildAnalyticsDashboard({
+      profile,
+      hubSite: null,
+      includeMapsRun: true,
+      runMapsRanking: (p, site) => ensureMapsRanking(p, site, { force: true, fetchImpl: noFetch }),
+    });
+    await ensureMapsRanking(profile, null, { force: true, fetchImpl: noFetch });
+    assert.equal(dashboard.access.allowed, true);
+    return { goals: goals.mapsKeywords, keywords: dashboard.subject.keywords };
+  };
+  const bank = { makerLink: { salesClientId: 'sc-cons-1' }, seo: { keywordPlan: PLAN }, generalInfo: { companyName: 'Nordlys Sushi AS', companyAddress: 'Eksempelgata 1' }, websiteCreatorQuestions: { town: 'Eksempelby' } };
+  const own = tier2({ businessId: 'biz-1', userId: 'user-1', clientDataBank: bank });
+  const other = tier2(clientPortal.getClientProfileByBusinessId('biz-2'));
+  const unnamed = (profile) => ({ ...profile, clientDataBank: { ...profile.clientDataBank, makerLink: {} } });
+  try {
+    // A record that guides no consumer costs no sales read, and its consumers give the no-record output.
+    const smie = tier2({ businessId: 'biz-4', userId: 'user-4', clientDataBank: { makerLink: { salesClientId: 'sc-cons-4' }, seo: { keywordPlan: { primary: [{ keyword: 'smed eksempelby' }] } } } });
+    assert.equal(record.seoRecordForProfile(smie), null);
+    assert.deepEqual(await everyPath(smie), await everyPath(unnamed(smie)));
+    assert.equal(reads, 0, 'a record without an approved or blocked keyword reads no sales client');
+
+    // Repeated calls on every path, for the linked and the unlinked business: one read in all.
+    for (let round = 0; round < 3; round += 1) {
+      const linked = await everyPath(own);
+      assert.equal(linked.goals[0], 'sushi catering eksempelby');
+      assert.equal(linked.keywords[0], 'sushi catering eksempelby');
+      assert.deepEqual(await everyPath(other), await everyPath(unnamed(other)), 'the unlinked business: the no-record output');
+    }
+    assert.equal(reads, 1, 'one sales read for every call of three rounds while the sales file is unchanged');
+
+    // A hub write to the sales file: one more read, then cached again.
+    assert.equal(sales.setSalesTestFlag('sc-cons-3', true)?.id, 'sc-cons-3');
+    await everyPath(own);
+    await everyPath(other);
+    assert.equal(reads, 2, 'one read after a hub write');
+
+    // The file replaced from outside the process (the revision does not move): the next call reads it,
+    // and the relink to biz-2 takes effect at once.
+    const revision = sales.salesDataRevision();
+    const relinked = JSON.parse(readFileSync(salesFile, 'utf8')).map((row) => (row.id === 'sc-cons-1' ? { ...row, portalUserId: 'user-2', portalBusinessId: 'biz-2' } : row));
+    writeFileSync(salesFile, JSON.stringify(relinked, null, 2));
+    assert.equal(sales.salesDataRevision(), revision);
+    assert.deepEqual(await everyPath(own), await everyPath(unnamed(own)), 'biz-1 is no longer linked: the no-record output');
+    assert.equal((await everyPath(other)).goals[0], 'sushi catering eksempelby', 'biz-2 is linked now');
+    assert.equal(reads, 3, 'one read after an outside replace');
+
+    // A snapshot restore noted through the sales store also counts as a change.
+    sales.noteSalesStoreReplaced();
+    await everyPath(other);
+    await everyPath(other);
+    assert.equal(reads, 4);
+  } finally {
+    globalThis.fetch = realFetch;
+    record.setSeoRecordSalesReaderForTests(null);
+    writeFileSync(salesFile, original);
+  }
 });

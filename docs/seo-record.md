@@ -32,6 +32,8 @@ Access matches the other sales-client and developer routes: another rep's client
 
 **Consumers.** Maps keywords (`buildMapsKeywords`) and analytics goals (`analyticsGoalsFromBank`, also in `GET /api/hub/site-config`) read the record of a portal profile's sales client (`seoRecordForProfile`) once a developer has approved or blocked a keyword. The bank's `makerLink.salesClientId` names the sales client, but a client can edit its own bank, so the record is used only when that sales client points back at the profile (`portalBusinessId`, or `portalUserId` for a sales client without a business id; the Maker bundle push sets both). Otherwise the consumers give their output without a record. Once a record is used: approved keywords first, then the page map's primaries, then the bank's plan. Blocked phrases and prescription-only substances are left out everywhere; phrases that look like the business's own name are left out of the page map and the plan, never from the approved keywords, so Maps and the goals track exactly the keywords the contract line lists. Until a keyword is decided their output is exactly as without a record.
 
+Cost: the site config is public and the client CMS calls it on every page load without caching, so `seoRecordForProfile` reads the record first and stops there unless a keyword is decided. Only then does it look up the link, in an index of every sales client's `portalBusinessId` and `portalUserId` that is rebuilt once per change of `sales-clients.json` (the sales store's in-process revision plus the file's mtime and size, so a file replaced from outside the hub is seen too).
+
 ## Job gating
 
 `seo.jobGating` (`{ enabled, mode, paused }`, mode `shadow` or `auto`) chooses who decides two jobs (`lib/seo-ops/job-gating.js`):
