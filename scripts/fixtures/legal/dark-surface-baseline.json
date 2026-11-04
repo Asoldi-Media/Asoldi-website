@@ -1,176 +1,176 @@
 {
   "contracts": {
     "tier1": {
-      "htmlSha256": "d0f8488294702199fa18cb760a61f94999c299905cb4cb5adf3c1ed78d1ca95d",
-      "articleSha256": "4323ba8c71f40a9ad0f488eadb47ef2c571ba73d2ae41bc98bcd429fdca3a59e",
-      "pdfSha256": "946fb48d2e060a1aa52303f1eed0e76ea57ea23937d549a268800ad9a8400e1a"
+      "htmlSha256": "85c1ebc53ce221b8ab4a8e22810c8ed64023090fb9d642064283e4255f22a10b",
+      "articleSha256": "246dcdc674c2d09e7f9d1dba914836e9e132833e47040708f17eabf1dea9e12b",
+      "pdfSha256": "2a76bf9879d4f260e1b863ea3b4bd07c53111c8511249c24ca0ebe7d4ea43ca0"
     },
     "tier2": {
-      "htmlSha256": "429b3fa2850c71cce651caf70b9eb1ce1a6f60bd5e65561bbb80a7c84e85139e",
+      "htmlSha256": "6954d44c84b5a09caea0a6eeb1be9d8c3739bd1b7ba12dd48d047caf90e37493",
       "articleSha256": "091520ccbe46166bc6946a630c40be871f24199f938973f11c5f819112b51c3e",
-      "pdfSha256": "5d9ec49f224ab4f55f97122597861a39ed9268ed67a62c14aa4a9942a4340003"
+      "pdfSha256": "70aa866454f58ceadfd9481c22393dfcc1e2dcefa18b9b020e3b37b26f514a78"
     },
     "tier3": {
-      "htmlSha256": "4c282be59e0710d7c48ab561d09a81bf1d34bbf6de8b7aa0b6b1b17bda3142e4",
+      "htmlSha256": "32824599e34a83eb930fb3b1db930145c88b231052f128d3ef07177a5ace8104",
       "articleSha256": "466f76f696c5228cf7af7f5e675b478119260f9add807dfb0141a7de185bc718",
-      "pdfSha256": "fdcddadba6d0175b21d0ffacdfc677c633dd4c667c9e501ff626f29204405ad1"
+      "pdfSha256": "b8db9c2b8eb3a184c52b37bc415651c8799529001e67b84fcd1d6322ac60725f"
     },
     "tier2En": {
-      "htmlSha256": "855259e1f8ee72adc1035edf29c78e5f19c06d62a60af4bcef71186053d25a1f",
+      "htmlSha256": "1b4a86ff5c534ac6fb391798b1e92491e0794ee1d6ddc7d7f08b85b68f21c2d8",
       "articleSha256": "26bb78e49e053c996ada69ff20132496404e2b8bee29110892c6e19dd6a798d4",
-      "pdfSha256": "77d9104d681d9eba2da40f4964efe0fdd899f35dd8e10dc7b26b5506817990b2"
+      "pdfSha256": "7efdfdf79d2e318dd3b805eb7147315652a82d3ce5767d294e1db7f21bd45920"
     },
     "tier1Fees": {
-      "htmlSha256": "abc24cd9cb5657b97b94df64bd11e5414cb1ee8014b039d90bc7381402119ce2",
-      "articleSha256": "12d591afca5670821146aca46b994b8e7f2f6afafa2be82310a5831fde7516d9",
-      "pdfSha256": "703ecd616f78c163c0f675e2a57b01126b616b797b4f552f0dc47d6596c93f65"
+      "htmlSha256": "411358bc2d877aff1c5bb3124ebcd38800fcc2d136f72a5eb4ebe8b76883f269",
+      "articleSha256": "f06fdeb2ed9763acda906271eb677944f6f6aaba23df8ad6dd045ee0e15cea4a",
+      "pdfSha256": "7b9e55868b64843fdc029b826d87d155078e138ac8d6f6b98a1dfa270c53a5b2"
     },
     "tier2Mva": {
-      "htmlSha256": "62987a9a96295c3d012390dc813feb54063ee92506321cce71d9e0e28dec8343",
+      "htmlSha256": "463962e382b240c5680a9aa0da1469c065cc1194c9eadcb14ff3a4aa5d16a408",
       "articleSha256": "2249d56fbb473c10afffb301faaaa74e2dcaef0002dbc36f12bb99bb2ff5591f",
-      "pdfSha256": "c0b56438ee4899c2dd8a9e4409eb6aa076ee2dd42b2486cb0c782d75ca52f2b6"
+      "pdfSha256": "15213f07938b2c23abf500d252c0ba11e7f618b025a9849d7be0ef1253c412a4"
     },
     "custom": {
-      "htmlSha256": "0bc43575946b7a94029e215c81c1db8a05fa1c9c75e2624551b044f7907d52da",
+      "htmlSha256": "227f4ed97bfc1c4386b9bbd775daa1fd57f9058e61ee12346c9bfa700717631a",
       "articleSha256": "96b31361ab94c2a0f1d39a800cc50e3cd29c03298929f8766c33dfd38fd4ee95",
-      "pdfSha256": "87aa12b770e94c8a81d5b20c08acb041ad341da85474e23570b805a136a33ce2"
+      "pdfSha256": "864fcfb6904c556bd0a2679c1d09ec805bf649d464a89a43d5d9099986f448f0"
     },
     "dual": {
-      "htmlSha256": "1433eb6d242a4d9803e5f54f89dc06bd6b8e5a1276357d367ca0cabcb9474209",
-      "articleSha256": "13bae6e33f362994312cb726edb83707c1534e40173ba6b642ebb7388548a1a5",
-      "pdfSha256": "c48f1784a38b26d17f9c1af473b4787a0c6197b2a3e35f61e00db49c0aa809d9"
+      "htmlSha256": "ef4c6ab81f67f0c8c4bdc2e5f04de0d6bcf0c82fd9d375674f3168fa75f6bbbe",
+      "articleSha256": "b218767aa5564c9c9f2a28f54cf4e99fbe9369cf7be2872f63c7aaf2d8eb214b",
+      "pdfSha256": "8cd8dcb633bea9453f237c37f5b259d150e9056a2f3c18412619d0f0bafeb885"
     },
     "tier1Draft": {
-      "htmlSha256": "d0f8488294702199fa18cb760a61f94999c299905cb4cb5adf3c1ed78d1ca95d",
-      "articleSha256": "4323ba8c71f40a9ad0f488eadb47ef2c571ba73d2ae41bc98bcd429fdca3a59e",
-      "pdfSha256": "946fb48d2e060a1aa52303f1eed0e76ea57ea23937d549a268800ad9a8400e1a"
+      "htmlSha256": "85c1ebc53ce221b8ab4a8e22810c8ed64023090fb9d642064283e4255f22a10b",
+      "articleSha256": "246dcdc674c2d09e7f9d1dba914836e9e132833e47040708f17eabf1dea9e12b",
+      "pdfSha256": "2a76bf9879d4f260e1b863ea3b4bd07c53111c8511249c24ca0ebe7d4ea43ca0"
     },
     "tier1ReviewRequested": {
-      "htmlSha256": "d0f8488294702199fa18cb760a61f94999c299905cb4cb5adf3c1ed78d1ca95d",
-      "articleSha256": "4323ba8c71f40a9ad0f488eadb47ef2c571ba73d2ae41bc98bcd429fdca3a59e",
-      "pdfSha256": "946fb48d2e060a1aa52303f1eed0e76ea57ea23937d549a268800ad9a8400e1a"
+      "htmlSha256": "85c1ebc53ce221b8ab4a8e22810c8ed64023090fb9d642064283e4255f22a10b",
+      "articleSha256": "246dcdc674c2d09e7f9d1dba914836e9e132833e47040708f17eabf1dea9e12b",
+      "pdfSha256": "2a76bf9879d4f260e1b863ea3b4bd07c53111c8511249c24ca0ebe7d4ea43ca0"
     },
     "tier1Verified": {
-      "htmlSha256": "d0f8488294702199fa18cb760a61f94999c299905cb4cb5adf3c1ed78d1ca95d",
-      "articleSha256": "4323ba8c71f40a9ad0f488eadb47ef2c571ba73d2ae41bc98bcd429fdca3a59e",
-      "pdfSha256": "946fb48d2e060a1aa52303f1eed0e76ea57ea23937d549a268800ad9a8400e1a"
+      "htmlSha256": "85c1ebc53ce221b8ab4a8e22810c8ed64023090fb9d642064283e4255f22a10b",
+      "articleSha256": "246dcdc674c2d09e7f9d1dba914836e9e132833e47040708f17eabf1dea9e12b",
+      "pdfSha256": "2a76bf9879d4f260e1b863ea3b4bd07c53111c8511249c24ca0ebe7d4ea43ca0"
     },
     "tier2Draft": {
-      "htmlSha256": "429b3fa2850c71cce651caf70b9eb1ce1a6f60bd5e65561bbb80a7c84e85139e",
+      "htmlSha256": "6954d44c84b5a09caea0a6eeb1be9d8c3739bd1b7ba12dd48d047caf90e37493",
       "articleSha256": "091520ccbe46166bc6946a630c40be871f24199f938973f11c5f819112b51c3e",
-      "pdfSha256": "5d9ec49f224ab4f55f97122597861a39ed9268ed67a62c14aa4a9942a4340003"
+      "pdfSha256": "70aa866454f58ceadfd9481c22393dfcc1e2dcefa18b9b020e3b37b26f514a78"
     },
     "tier2ReviewRequested": {
-      "htmlSha256": "429b3fa2850c71cce651caf70b9eb1ce1a6f60bd5e65561bbb80a7c84e85139e",
+      "htmlSha256": "6954d44c84b5a09caea0a6eeb1be9d8c3739bd1b7ba12dd48d047caf90e37493",
       "articleSha256": "091520ccbe46166bc6946a630c40be871f24199f938973f11c5f819112b51c3e",
-      "pdfSha256": "5d9ec49f224ab4f55f97122597861a39ed9268ed67a62c14aa4a9942a4340003"
+      "pdfSha256": "70aa866454f58ceadfd9481c22393dfcc1e2dcefa18b9b020e3b37b26f514a78"
     },
     "tier2Verified": {
-      "htmlSha256": "429b3fa2850c71cce651caf70b9eb1ce1a6f60bd5e65561bbb80a7c84e85139e",
+      "htmlSha256": "6954d44c84b5a09caea0a6eeb1be9d8c3739bd1b7ba12dd48d047caf90e37493",
       "articleSha256": "091520ccbe46166bc6946a630c40be871f24199f938973f11c5f819112b51c3e",
-      "pdfSha256": "5d9ec49f224ab4f55f97122597861a39ed9268ed67a62c14aa4a9942a4340003"
+      "pdfSha256": "70aa866454f58ceadfd9481c22393dfcc1e2dcefa18b9b020e3b37b26f514a78"
     },
     "tier3Draft": {
-      "htmlSha256": "4c282be59e0710d7c48ab561d09a81bf1d34bbf6de8b7aa0b6b1b17bda3142e4",
+      "htmlSha256": "32824599e34a83eb930fb3b1db930145c88b231052f128d3ef07177a5ace8104",
       "articleSha256": "466f76f696c5228cf7af7f5e675b478119260f9add807dfb0141a7de185bc718",
-      "pdfSha256": "fdcddadba6d0175b21d0ffacdfc677c633dd4c667c9e501ff626f29204405ad1"
+      "pdfSha256": "b8db9c2b8eb3a184c52b37bc415651c8799529001e67b84fcd1d6322ac60725f"
     },
     "tier3ReviewRequested": {
-      "htmlSha256": "4c282be59e0710d7c48ab561d09a81bf1d34bbf6de8b7aa0b6b1b17bda3142e4",
+      "htmlSha256": "32824599e34a83eb930fb3b1db930145c88b231052f128d3ef07177a5ace8104",
       "articleSha256": "466f76f696c5228cf7af7f5e675b478119260f9add807dfb0141a7de185bc718",
-      "pdfSha256": "fdcddadba6d0175b21d0ffacdfc677c633dd4c667c9e501ff626f29204405ad1"
+      "pdfSha256": "b8db9c2b8eb3a184c52b37bc415651c8799529001e67b84fcd1d6322ac60725f"
     },
     "tier3Verified": {
-      "htmlSha256": "4c282be59e0710d7c48ab561d09a81bf1d34bbf6de8b7aa0b6b1b17bda3142e4",
+      "htmlSha256": "32824599e34a83eb930fb3b1db930145c88b231052f128d3ef07177a5ace8104",
       "articleSha256": "466f76f696c5228cf7af7f5e675b478119260f9add807dfb0141a7de185bc718",
-      "pdfSha256": "fdcddadba6d0175b21d0ffacdfc677c633dd4c667c9e501ff626f29204405ad1"
+      "pdfSha256": "b8db9c2b8eb3a184c52b37bc415651c8799529001e67b84fcd1d6322ac60725f"
     },
     "tier2EnDraft": {
-      "htmlSha256": "855259e1f8ee72adc1035edf29c78e5f19c06d62a60af4bcef71186053d25a1f",
+      "htmlSha256": "1b4a86ff5c534ac6fb391798b1e92491e0794ee1d6ddc7d7f08b85b68f21c2d8",
       "articleSha256": "26bb78e49e053c996ada69ff20132496404e2b8bee29110892c6e19dd6a798d4",
-      "pdfSha256": "77d9104d681d9eba2da40f4964efe0fdd899f35dd8e10dc7b26b5506817990b2"
+      "pdfSha256": "7efdfdf79d2e318dd3b805eb7147315652a82d3ce5767d294e1db7f21bd45920"
     },
     "tier2EnReviewRequested": {
-      "htmlSha256": "855259e1f8ee72adc1035edf29c78e5f19c06d62a60af4bcef71186053d25a1f",
+      "htmlSha256": "1b4a86ff5c534ac6fb391798b1e92491e0794ee1d6ddc7d7f08b85b68f21c2d8",
       "articleSha256": "26bb78e49e053c996ada69ff20132496404e2b8bee29110892c6e19dd6a798d4",
-      "pdfSha256": "77d9104d681d9eba2da40f4964efe0fdd899f35dd8e10dc7b26b5506817990b2"
+      "pdfSha256": "7efdfdf79d2e318dd3b805eb7147315652a82d3ce5767d294e1db7f21bd45920"
     },
     "tier2EnVerified": {
-      "htmlSha256": "855259e1f8ee72adc1035edf29c78e5f19c06d62a60af4bcef71186053d25a1f",
+      "htmlSha256": "1b4a86ff5c534ac6fb391798b1e92491e0794ee1d6ddc7d7f08b85b68f21c2d8",
       "articleSha256": "26bb78e49e053c996ada69ff20132496404e2b8bee29110892c6e19dd6a798d4",
-      "pdfSha256": "77d9104d681d9eba2da40f4964efe0fdd899f35dd8e10dc7b26b5506817990b2"
+      "pdfSha256": "7efdfdf79d2e318dd3b805eb7147315652a82d3ce5767d294e1db7f21bd45920"
     },
     "tier1FeesDraft": {
-      "htmlSha256": "abc24cd9cb5657b97b94df64bd11e5414cb1ee8014b039d90bc7381402119ce2",
-      "articleSha256": "12d591afca5670821146aca46b994b8e7f2f6afafa2be82310a5831fde7516d9",
-      "pdfSha256": "703ecd616f78c163c0f675e2a57b01126b616b797b4f552f0dc47d6596c93f65"
+      "htmlSha256": "411358bc2d877aff1c5bb3124ebcd38800fcc2d136f72a5eb4ebe8b76883f269",
+      "articleSha256": "f06fdeb2ed9763acda906271eb677944f6f6aaba23df8ad6dd045ee0e15cea4a",
+      "pdfSha256": "7b9e55868b64843fdc029b826d87d155078e138ac8d6f6b98a1dfa270c53a5b2"
     },
     "tier1FeesReviewRequested": {
-      "htmlSha256": "abc24cd9cb5657b97b94df64bd11e5414cb1ee8014b039d90bc7381402119ce2",
-      "articleSha256": "12d591afca5670821146aca46b994b8e7f2f6afafa2be82310a5831fde7516d9",
-      "pdfSha256": "703ecd616f78c163c0f675e2a57b01126b616b797b4f552f0dc47d6596c93f65"
+      "htmlSha256": "411358bc2d877aff1c5bb3124ebcd38800fcc2d136f72a5eb4ebe8b76883f269",
+      "articleSha256": "f06fdeb2ed9763acda906271eb677944f6f6aaba23df8ad6dd045ee0e15cea4a",
+      "pdfSha256": "7b9e55868b64843fdc029b826d87d155078e138ac8d6f6b98a1dfa270c53a5b2"
     },
     "tier1FeesVerified": {
-      "htmlSha256": "abc24cd9cb5657b97b94df64bd11e5414cb1ee8014b039d90bc7381402119ce2",
-      "articleSha256": "12d591afca5670821146aca46b994b8e7f2f6afafa2be82310a5831fde7516d9",
-      "pdfSha256": "703ecd616f78c163c0f675e2a57b01126b616b797b4f552f0dc47d6596c93f65"
+      "htmlSha256": "411358bc2d877aff1c5bb3124ebcd38800fcc2d136f72a5eb4ebe8b76883f269",
+      "articleSha256": "f06fdeb2ed9763acda906271eb677944f6f6aaba23df8ad6dd045ee0e15cea4a",
+      "pdfSha256": "7b9e55868b64843fdc029b826d87d155078e138ac8d6f6b98a1dfa270c53a5b2"
     },
     "tier2MvaDraft": {
-      "htmlSha256": "62987a9a96295c3d012390dc813feb54063ee92506321cce71d9e0e28dec8343",
+      "htmlSha256": "463962e382b240c5680a9aa0da1469c065cc1194c9eadcb14ff3a4aa5d16a408",
       "articleSha256": "2249d56fbb473c10afffb301faaaa74e2dcaef0002dbc36f12bb99bb2ff5591f",
-      "pdfSha256": "c0b56438ee4899c2dd8a9e4409eb6aa076ee2dd42b2486cb0c782d75ca52f2b6"
+      "pdfSha256": "15213f07938b2c23abf500d252c0ba11e7f618b025a9849d7be0ef1253c412a4"
     },
     "tier2MvaReviewRequested": {
-      "htmlSha256": "62987a9a96295c3d012390dc813feb54063ee92506321cce71d9e0e28dec8343",
+      "htmlSha256": "463962e382b240c5680a9aa0da1469c065cc1194c9eadcb14ff3a4aa5d16a408",
       "articleSha256": "2249d56fbb473c10afffb301faaaa74e2dcaef0002dbc36f12bb99bb2ff5591f",
-      "pdfSha256": "c0b56438ee4899c2dd8a9e4409eb6aa076ee2dd42b2486cb0c782d75ca52f2b6"
+      "pdfSha256": "15213f07938b2c23abf500d252c0ba11e7f618b025a9849d7be0ef1253c412a4"
     },
     "tier2MvaVerified": {
-      "htmlSha256": "62987a9a96295c3d012390dc813feb54063ee92506321cce71d9e0e28dec8343",
+      "htmlSha256": "463962e382b240c5680a9aa0da1469c065cc1194c9eadcb14ff3a4aa5d16a408",
       "articleSha256": "2249d56fbb473c10afffb301faaaa74e2dcaef0002dbc36f12bb99bb2ff5591f",
-      "pdfSha256": "c0b56438ee4899c2dd8a9e4409eb6aa076ee2dd42b2486cb0c782d75ca52f2b6"
+      "pdfSha256": "15213f07938b2c23abf500d252c0ba11e7f618b025a9849d7be0ef1253c412a4"
     },
     "customDraft": {
-      "htmlSha256": "0bc43575946b7a94029e215c81c1db8a05fa1c9c75e2624551b044f7907d52da",
+      "htmlSha256": "227f4ed97bfc1c4386b9bbd775daa1fd57f9058e61ee12346c9bfa700717631a",
       "articleSha256": "96b31361ab94c2a0f1d39a800cc50e3cd29c03298929f8766c33dfd38fd4ee95",
-      "pdfSha256": "87aa12b770e94c8a81d5b20c08acb041ad341da85474e23570b805a136a33ce2"
+      "pdfSha256": "864fcfb6904c556bd0a2679c1d09ec805bf649d464a89a43d5d9099986f448f0"
     },
     "customReviewRequested": {
-      "htmlSha256": "0bc43575946b7a94029e215c81c1db8a05fa1c9c75e2624551b044f7907d52da",
+      "htmlSha256": "227f4ed97bfc1c4386b9bbd775daa1fd57f9058e61ee12346c9bfa700717631a",
       "articleSha256": "96b31361ab94c2a0f1d39a800cc50e3cd29c03298929f8766c33dfd38fd4ee95",
-      "pdfSha256": "87aa12b770e94c8a81d5b20c08acb041ad341da85474e23570b805a136a33ce2"
+      "pdfSha256": "864fcfb6904c556bd0a2679c1d09ec805bf649d464a89a43d5d9099986f448f0"
     },
     "customVerified": {
-      "htmlSha256": "0bc43575946b7a94029e215c81c1db8a05fa1c9c75e2624551b044f7907d52da",
+      "htmlSha256": "227f4ed97bfc1c4386b9bbd775daa1fd57f9058e61ee12346c9bfa700717631a",
       "articleSha256": "96b31361ab94c2a0f1d39a800cc50e3cd29c03298929f8766c33dfd38fd4ee95",
-      "pdfSha256": "87aa12b770e94c8a81d5b20c08acb041ad341da85474e23570b805a136a33ce2"
+      "pdfSha256": "864fcfb6904c556bd0a2679c1d09ec805bf649d464a89a43d5d9099986f448f0"
     },
     "dualDraft": {
-      "htmlSha256": "1433eb6d242a4d9803e5f54f89dc06bd6b8e5a1276357d367ca0cabcb9474209",
-      "articleSha256": "13bae6e33f362994312cb726edb83707c1534e40173ba6b642ebb7388548a1a5",
-      "pdfSha256": "c48f1784a38b26d17f9c1af473b4787a0c6197b2a3e35f61e00db49c0aa809d9"
+      "htmlSha256": "ef4c6ab81f67f0c8c4bdc2e5f04de0d6bcf0c82fd9d375674f3168fa75f6bbbe",
+      "articleSha256": "b218767aa5564c9c9f2a28f54cf4e99fbe9369cf7be2872f63c7aaf2d8eb214b",
+      "pdfSha256": "8cd8dcb633bea9453f237c37f5b259d150e9056a2f3c18412619d0f0bafeb885"
     },
     "dualReviewRequested": {
-      "htmlSha256": "1433eb6d242a4d9803e5f54f89dc06bd6b8e5a1276357d367ca0cabcb9474209",
-      "articleSha256": "13bae6e33f362994312cb726edb83707c1534e40173ba6b642ebb7388548a1a5",
-      "pdfSha256": "c48f1784a38b26d17f9c1af473b4787a0c6197b2a3e35f61e00db49c0aa809d9"
+      "htmlSha256": "ef4c6ab81f67f0c8c4bdc2e5f04de0d6bcf0c82fd9d375674f3168fa75f6bbbe",
+      "articleSha256": "b218767aa5564c9c9f2a28f54cf4e99fbe9369cf7be2872f63c7aaf2d8eb214b",
+      "pdfSha256": "8cd8dcb633bea9453f237c37f5b259d150e9056a2f3c18412619d0f0bafeb885"
     },
     "dualVerified": {
-      "htmlSha256": "1433eb6d242a4d9803e5f54f89dc06bd6b8e5a1276357d367ca0cabcb9474209",
-      "articleSha256": "13bae6e33f362994312cb726edb83707c1534e40173ba6b642ebb7388548a1a5",
-      "pdfSha256": "c48f1784a38b26d17f9c1af473b4787a0c6197b2a3e35f61e00db49c0aa809d9"
+      "htmlSha256": "ef4c6ab81f67f0c8c4bdc2e5f04de0d6bcf0c82fd9d375674f3168fa75f6bbbe",
+      "articleSha256": "b218767aa5564c9c9f2a28f54cf4e99fbe9369cf7be2872f63c7aaf2d8eb214b",
+      "pdfSha256": "8cd8dcb633bea9453f237c37f5b259d150e9056a2f3c18412619d0f0bafeb885"
     }
   },
   "copy": {
-    "nb": "982b97e1791c1fa8a169cf269c445ccef9caa9c0bd9efd6cec64ee05efd6d1e3",
-    "en": "39fd2016bf1e40e02503930ad82e7a46c51c02e020510e9ec3a6aa56c344ce9d"
+    "nb": "d7053cfc248405eec9dd82e13c8c801d6f29a76cbcad704b3fb32996b2f7a6ac",
+    "en": "11c0a08177235ac831a310629ee100abd3c35141a28a13a1d472f1826ea475a2"
   },
   "tiers": {
     "tier-1-standard": {
       "pricingCard": {
         "id": "starter",
         "name": "Starter",
-        "price": "499,-/mnd",
+        "price": "799,-/mnd",
         "description": "Simpel og funksjonell nettside.",
         "includedFeatures": [
           "Full nettsideutvikling",
@@ -202,7 +202,7 @@
       "clientPlan": {
         "id": "tier-1-standard",
         "name": "Tier 1: Standard",
-        "price": "499,-/mnd",
+        "price": "799,-/mnd",
         "setupFee": "999,- /engang",
         "domainPrice": "79,-/mnd",
         "emailPrice": "49,-/mnd",
@@ -258,7 +258,7 @@
           "Innledende veiledningsmøte"
         ],
         "note": "",
-        "priceExMva": 499,
+        "priceExMva": 799,
         "deliveryWeeks": 2,
         "deliveryWorkDays": 14
       },
@@ -278,7 +278,7 @@
             "Innledende veiledningsmøte"
           ],
           "note": "",
-          "priceExMva": 499,
+          "priceExMva": 799,
           "deliveryWeeks": 2,
           "deliveryWorkDays": 14,
           "id": "prod-tier-1-standard"
@@ -771,7 +771,7 @@
             "Innledende veiledningsmøte"
           ],
           "note": "",
-          "priceExMva": 499,
+          "priceExMva": 799,
           "deliveryWeeks": 2,
           "deliveryWorkDays": 14
         }
@@ -816,7 +816,7 @@
                 "Innledende veiledningsmøte"
               ],
               "note": "",
-              "priceExMva": 499,
+              "priceExMva": 799,
               "deliveryWeeks": 2,
               "deliveryWorkDays": 14
             }
@@ -1110,7 +1110,7 @@
             "Engangsbetaling (månedspris × 9)"
           ],
           "note": "Engangsbetaling",
-          "priceExMva": 4491,
+          "priceExMva": 7191,
           "deliveryWeeks": 2,
           "deliveryWorkDays": 14
         }
@@ -1156,7 +1156,7 @@
                 "Engangsbetaling (månedspris × 9)"
               ],
               "note": "Engangsbetaling",
-              "priceExMva": 4491,
+              "priceExMva": 7191,
               "deliveryWeeks": 2,
               "deliveryWorkDays": 14
             }
@@ -1203,7 +1203,7 @@
             "Innledende veiledningsmøte"
           ],
           "note": "",
-          "priceExMva": 499,
+          "priceExMva": 799,
           "deliveryWeeks": 2,
           "deliveryWorkDays": 14
         }
@@ -1248,7 +1248,7 @@
                 "Innledende veiledningsmøte"
               ],
               "note": "",
-              "priceExMva": 499,
+              "priceExMva": 799,
               "deliveryWeeks": 2,
               "deliveryWorkDays": 14
             }
