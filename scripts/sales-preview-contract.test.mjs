@@ -159,6 +159,12 @@ test('kontrakt link opens the contract, docks into the sign button, and signs th
   assert.doesNotMatch(src, /asoldi-orbit[^}]*rotate\(360deg\)/);
   assert.match(src, /Signer og lag Asoldi-bruker/);
   assert.match(src, /class="cta"/);
+  assert.match(src, /\.cta, \.hint \{[\s\S]*?max-width:\s*760px/);
+  assert.match(src, /class="scroll-cue"/);
+  assert.match(src, /Bla ned/);
+  assert.match(src, /asoldi-scroll-cue/);
+  assert.match(src, /coverPreviewChrome/);
+  assert.match(src, /asoldi-contract-cover/);
   assert.match(src, /data-ready="0"/);
   assert.match(src, /showReadHint/);
   assert.match(src, /class="auth"/);

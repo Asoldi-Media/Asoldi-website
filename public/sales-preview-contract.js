@@ -16,7 +16,7 @@
     <style>
       :host { all: initial; }
       * { box-sizing: border-box; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
-      .btn[hidden] { display: none !important; }
+      .btn[hidden], .scroll-cue[hidden] { display: none !important; }
       .btn {
         position: fixed;
         left: 50%;
@@ -136,6 +136,7 @@
       }
       .overlay.docking::backdrop { background: rgba(0,0,0,0); }
       .panel {
+        position: relative;
         display: flex;
         flex-direction: column;
         width: 100%;
@@ -217,12 +218,18 @@
       .foot {
         position: relative;
         flex: 0 0 auto;
-        padding: 12px 16px max(16px, env(safe-area-inset-bottom));
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 12px 20px max(16px, env(safe-area-inset-bottom));
         border-top: 1px solid #E5E1D8;
         background: rgba(255,255,255,.96);
       }
-      .cta {
+      .cta, .hint {
         width: 100%;
+        max-width: 760px;
+      }
+      .cta {
         height: 48px;
         border: 0;
         border-radius: 12px;
@@ -230,6 +237,31 @@
         font-weight: 650;
         cursor: pointer;
         transition: background .2s ease, color .2s ease;
+      }
+      .scroll-cue {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+        margin: 0 0 8px;
+        padding: 0;
+        border: 0;
+        background: none;
+        color: #6B7280;
+        font-size: 11px;
+        font-weight: 650;
+        letter-spacing: .12em;
+        text-transform: uppercase;
+        pointer-events: none;
+        animation: asoldi-scroll-cue 1.8s ease-in-out infinite;
+      }
+      .scroll-cue svg { display: block; }
+      @keyframes asoldi-scroll-cue {
+        0%, 100% { opacity: .35; transform: translateY(0); }
+        50% { opacity: .95; transform: translateY(6px); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .scroll-cue { animation: none; opacity: .7; }
       }
       .cta[data-ready="0"] {
         background: #D1D5DB;
@@ -441,6 +473,12 @@
           <div class="paper"></div>
         </div>
         <div class="foot">
+          <div class="scroll-cue" hidden aria-hidden="true">
+            <span>Bla ned</span>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M6 9l6 6 6-6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
           <p class="hint" role="status" aria-live="polite">Du m\u00e5 lese hele kontrakten f\u00f8r du kan g\u00e5 videre. Scroll ned til bunnen.</p>
           <button class="cta" type="button" data-ready="0">Signer og lag Asoldi-bruker</button>
         </div>
@@ -458,6 +496,7 @@
   const foot = shadow.querySelector('.foot');
   const hint = shadow.querySelector('.hint');
   const cta = shadow.querySelector('.cta');
+  const scrollCue = shadow.querySelector('.scroll-cue');
   const auth = shadow.querySelector('.auth');
   const authCard = shadow.querySelector('.auth-card');
   let state = { status: 'idle', name: '', email: '', contractHtml: '', alternatives: [], acceptedAt: '' };
@@ -529,7 +568,23 @@
     try { window.lenis?.start?.(); } catch {}
   }
 
+  function coverPreviewChrome(on) {
+    const cover = !!on;
+    try {
+      window.parent.postMessage({ type: 'asoldi-preview-contract', cover }, location.origin);
+    } catch {}
+    try {
+      if (window.parent && window.parent !== window) {
+        const doc = window.parent.document;
+        if (doc.getElementById('asoldi-preview-chrome')) {
+          doc.documentElement.classList.toggle('asoldi-contract-cover', cover);
+        }
+      }
+    } catch {}
+  }
+
   function lockPageScroll() {
+    coverPreviewChrome(true);
     if (frozenStyles.length) return;
     [document.documentElement, document.body].forEach((node) => {
       if (!node) return;
@@ -551,6 +606,7 @@
       item.node.style.overscrollBehavior = item.overscrollBehavior;
     });
     document.documentElement.removeAttribute('data-asoldi-contract-open');
+    coverPreviewChrome(false);
     window.removeEventListener('wheel', trapWheel, { capture: true });
     window.removeEventListener('touchstart', trapTouchStart, { capture: true });
     window.removeEventListener('touchmove', trapTouch, { capture: true });
@@ -691,6 +747,10 @@
     atBottom = reached || scroller.scrollHeight <= scroller.clientHeight + 8;
     cta.dataset.ready = atBottom ? '1' : '0';
     if (atBottom) hideHint();
+    if (scrollCue) {
+      const scrolled = scroller.scrollTop > 8;
+      scrollCue.hidden = !isModalOpen() || isAuthOpen() || atBottom || scrolled;
+    }
   }
 
   function validEmail(value) {

@@ -105,6 +105,8 @@ const chrome = renderSalesPreviewChrome({
   title: 'Garnstogo',
 });
 assert.match(chrome, /id="asoldi-preview-chrome"/);
+assert.match(chrome, /asoldi-contract-cover/);
+assert.match(chrome, /asoldi-preview-contract/);
 assert.match(chrome, /<label[^>]*>Sider<\/label>/);
 assert.match(chrome, /<select id="asoldi-preview-pages">/);
 assert.match(chrome, /Garnstogo/);
