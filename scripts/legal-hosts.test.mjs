@@ -312,3 +312,29 @@ test('retention text comes from the personal-data registry when it answers, else
   const privacy = render.documentPlainText(render.renderDocument('personvern', { retentionText: registry }));
   assert.match(privacy, /Logg over e-post sendt fra Asoldi: 13 måneder\./);
 });
+
+test('a store that several retention rows list keeps each row\'s own text, and a registry sentence gets one full stop', () => {
+  const registry = (storeId) => ({
+    'sales-clients': 'Leads and clients together, in one sentence.',
+    'email-log': 'Monthly files are dropped after 400 days.',
+  })[storeId] || '';
+  const rows = subprocessors.retentionRows({ retentionText: registry });
+  assert.equal(rows.find((row) => row.id === 'leads').text, '12 måneder etter siste aktivitet');
+  assert.equal(rows.find((row) => row.id === 'clients').text, '12 måneder etter at avtalen er avsluttet, og lenger der bokføringsloven krever det');
+  assert.equal(rows.find((row) => row.id === 'emailLog').text, 'Monthly files are dropped after 400 days.');
+  const privacy = render.documentPlainText(render.renderDocument('personvern', { retentionText: registry }));
+  assert.match(privacy, /Logg over e-post sendt fra Asoldi: Monthly files are dropped after 400 days\.(?!\.)/);
+  assert.doesNotMatch(privacy, /\.\./);
+  assert.doesNotMatch(privacy, /Leads and clients together/);
+});
+
+test('the registry renders retention text with the values passed in over the code defaults, never with stored settings', () => {
+  const seen = [];
+  const registry = (storeId, options) => {
+    seen.push(options?.settings?.retention?.leadMonths);
+    return storeId === 'transcript-archive' ? `${options.settings.retention.leadMonths} months` : '';
+  };
+  assert.equal(subprocessors.retentionRows({ retentionText: registry }).find((row) => row.id === 'meetings').text, '12 months');
+  assert.equal(subprocessors.retentionRows({ settings: { retention: { leadMonths: 18 } }, retentionText: registry }).find((row) => row.id === 'meetings').text, '18 months');
+  assert.ok(seen.length > 0 && seen.every((value) => value === 12 || value === 18), JSON.stringify(seen));
+});

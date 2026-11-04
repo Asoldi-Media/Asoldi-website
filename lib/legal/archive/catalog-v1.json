@@ -22,11 +22,11 @@
       },
       {
         "id": "meetings",
-        "text": "som kundeopplysninger, eller 12 måneder etter siste aktivitet for bedrifter som ikke har signert"
+        "text": "Leads som ikke signerer: 12 måneder etter siste aktivitet eller avslag. Utsatte leads: mens oppfølgingen pågår, deretter 12 måneder. Kunder: avtaleslutt pluss 12 måneder. Slettes av den daglige oppryddingen."
       },
       {
         "id": "drafts",
-        "text": "90 dager"
+        "text": "Siste versjon mens kunden er aktiv; eldre versjoner 90 dager; alt slettes 12 måneder etter avtaleslutt."
       },
       {
         "id": "changeRequests",
@@ -42,7 +42,7 @@
       },
       {
         "id": "emailLog",
-        "text": "400 dager"
+        "text": "Ingen e-postadresser i klartekst (bare hash og maskert adresse). Månedsfiler slettes 400 dager etter månedens slutt."
       },
       {
         "id": "screenshots",
@@ -2368,12 +2368,12 @@
               "items": [
                 "Bedrifter og kontaktpersoner som ikke har signert: 12 måneder etter siste aktivitet.",
                 "Kundeopplysninger og avtaler: 12 måneder etter at avtalen er avsluttet, og lenger der bokføringsloven krever det.",
-                "Møteopptak og transkripsjoner: som kundeopplysninger, eller 12 måneder etter siste aktivitet for bedrifter som ikke har signert.",
-                "Utkast og eldre versjoner av prosjektdokumenter: 90 dager.",
+                "Møteopptak og transkripsjoner: Leads som ikke signerer: 12 måneder etter siste aktivitet eller avslag. Utsatte leads: mens oppfølgingen pågår, deretter 12 måneder. Kunder: avtaleslutt pluss 12 måneder. Slettes av den daglige oppryddingen.",
+                "Utkast og eldre versjoner av prosjektdokumenter: Siste versjon mens kunden er aktiv; eldre versjoner 90 dager; alt slettes 12 måneder etter avtaleslutt.",
                 "Endringsforespørsler: 24 måneder.",
                 "Dokumentasjon av samtykke: 3 år.",
                 "Logg over e-post innboksen hoppet over: 30 dager.",
-                "Logg over e-post sendt fra Asoldi: 400 dager.",
+                "Logg over e-post sendt fra Asoldi: Ingen e-postadresser i klartekst (bare hash og maskert adresse). Månedsfiler slettes 400 dager etter månedens slutt.",
                 "Skjermbilder fra utviklingsarbeid: 30 dager."
               ]
             },
