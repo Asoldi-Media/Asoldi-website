@@ -812,9 +812,16 @@ function utf16ToString(bytes, encoding) {
   return swapped.toString('utf16le');
 }
 
+/** True when `buffer` is valid UTF-8: decoding it and encoding it again gives the same bytes. */
+export function isValidUtf8(buffer) {
+  return Buffer.from(buffer.toString('utf8'), 'utf8').equals(buffer);
+}
+
 /**
- * A file's bytes as text: { text, encoding: 'utf8'|'utf16le'|'utf16be', bom }. UTF-8 keeps a
- * byte-order mark in the text. UTF-16 is read with a byte-order mark (as PowerShell's '>' and
+ * A file's bytes as text: { text, encoding: 'utf8'|'latin1'|'utf16le'|'utf16be', bom }. UTF-8
+ * keeps a byte-order mark in the text. Text without a NUL byte that is not valid UTF-8 (a
+ * Windows-1252 or Latin-1 export) is read byte for byte as Latin-1, so encodeText() gives back
+ * every byte it did not change. UTF-16 is read with a byte-order mark (as PowerShell's '>' and
  * Notepad write it) or, without one, when it is plainly UTF-16 Latin text. null for anything else
  * that holds a NUL byte (binary, UTF-32).
  */
@@ -826,14 +833,25 @@ export function decodeText(buffer) {
     const encoding = bomLe ? 'utf16le' : 'utf16be';
     return { text: utf16ToString(buffer.subarray(2), encoding), encoding, bom: true };
   }
-  if (!isProbablyBinary(buffer)) return { text: buffer.toString('utf8'), encoding: 'utf8', bom: false };
+  if (!isProbablyBinary(buffer)) {
+    if (isValidUtf8(buffer)) return { text: buffer.toString('utf8'), encoding: 'utf8', bom: false };
+    return { text: buffer.toString('latin1'), encoding: 'latin1', bom: false };
+  }
   const encoding = utf16OrderWithoutBom(buffer);
   return encoding ? { text: utf16ToString(buffer, encoding), encoding, bom: false } : null;
 }
 
-/** The bytes of `text` in the encoding decodeText() read it in ({ encoding, bom }). */
+/**
+ * The bytes of `text` in the encoding decodeText() read it in ({ encoding, bom }). Latin-1 text
+ * must hold no character above U+00FF: such a character has no byte there, so it throws rather
+ * than write a different character.
+ */
 export function encodeText(text, { encoding = 'utf8', bom = false } = {}) {
   if (encoding === 'utf8') return Buffer.from(text, 'utf8');
+  if (encoding === 'latin1') {
+    if (/[^\u0000-ÿ]/.test(text)) throw new Error('text read as Latin-1 now holds a character Latin-1 cannot write');
+    return Buffer.from(text, 'latin1');
+  }
   const body = Buffer.from(text, 'utf16le');
   if (encoding === 'utf16be') body.swap16();
   if (!bom) return body;
