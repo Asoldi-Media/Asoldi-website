@@ -2,9 +2,11 @@
 // transcripts, client data and offers are synthetic and injected through the sources' deps.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { execFile } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const dataDir = mkdtempSync(join(tmpdir(), 'asoldi-brief-'));
 process.env.APP_DATA_DIR = dataDir;
@@ -907,6 +909,7 @@ function registryContract({ dataDir, ownRowsAtLoad = true }) {
     processors: ['Anthropic'],
     order: 30,
     ownRow: true,
+    writers: ['lib/delivery-brief/store.js:path', 'lib/registry-only.js:path'],
     export: () => ({ files: [] }),
     erase: () => ({ action: 'none', records: 0, files: [] }),
   };
@@ -964,6 +967,7 @@ test('privacy registry: the registry\'s own row keeps its description and gets t
     ['Leveransebrief', { rule: 'brief' }, 'path', 'Contract', ['Anthropic']],
     'the same description and retention rule as the registry\'s own row',
   );
+  assert.deepEqual(full.writers, [...store.BRIEF_STORE_WRITERS], 'the brief\'s writers are declared');
 
   // The hub's registry lists its own row from the start: the description stays, the handlers are the brief's.
   store.resetBriefStoreRegistrationForTests();
@@ -974,6 +978,11 @@ test('privacy registry: the registry\'s own row keeps its description and gets t
   assert.equal(row.ownRow, true);
   assert.deepEqual([row.label, row.purpose, row.personalData, row.retention, row.order], ['Leveransebrief', registry.ownRow.purpose, registry.ownRow.personalData, { rule: 'brief' }, 30], 'the registry\'s description is kept');
   assert.notEqual(row.erase, registry.ownRow.erase, 'the brief\'s erase (under the brief lease) is used');
+  assert.deepEqual(
+    [...row.writers].sort(),
+    [...new Set([...registry.ownRow.writers, ...store.BRIEF_STORE_WRITERS])].sort(),
+    'the registry row\'s writers are kept together with the brief\'s own',
+  );
 
   await brief.rebuildBrief(clientRecord(), { llm: stubLlm(), dataDir: dir, deps: depsFor() });
   const folder = store.clientBriefDir('syn-brief-1', { dataDir: dir });
@@ -993,7 +1002,98 @@ test('privacy registry: the registry\'s own row keeps its description and gets t
   store.resetBriefStoreRegistrationForTests();
 });
 
-test('privacy erase holds the brief lease: it deletes nothing under a running rebuild and deletes once the rebuild is done', async () => {
+// The personal-data writer scan's naming: '<file>:<first argument>' of each JSON write helper call,
+// comments blanked, whitespace in the argument collapsed. Every such target of the brief must be among
+// the store's declared writers, so a privacy registry that checks its writers knows them all.
+const WRITER_CALL = /\b(writeDataJson|writeHotJson|updateJsonLocked|writeJsonAtomic|writeTextAtomic|createJsonOnce)\s*\(/g;
+const BACKSLASH = String.fromCharCode(92);
+
+function firstArgument(source, open) {
+  let depth = 0;
+  let quote = '';
+  for (let i = open + 1; i < source.length; i += 1) {
+    const ch = source[i];
+    if (quote) {
+      if (ch === BACKSLASH) i += 1;
+      else if (ch === quote) quote = '';
+      continue;
+    }
+    if (ch === '"' || ch === "'" || ch === '`') quote = ch;
+    else if (ch === '(' || ch === '[' || ch === '{') depth += 1;
+    else if (ch === ')' || ch === ']' || ch === '}') {
+      if (depth === 0) return source.slice(open + 1, i).trim();
+      depth -= 1;
+    } else if (ch === ',' && depth === 0) return source.slice(open + 1, i).trim();
+  }
+  return '';
+}
+
+function withoutComments(source) {
+  const out = source.split('');
+  let state = '';
+  for (let i = 0; i < out.length; i += 1) {
+    const ch = source[i];
+    const next = source[i + 1];
+    if (state === 'line') {
+      if (ch === '\n') state = '';
+      else out[i] = ' ';
+    } else if (state === 'block') {
+      if (ch === '*' && next === '/') {
+        out[i] = ' ';
+        out[i + 1] = ' ';
+        i += 1;
+        state = '';
+      } else if (ch !== '\n') out[i] = ' ';
+    } else if (state) {
+      if (ch === BACKSLASH) i += 1;
+      else if (ch === state) state = '';
+    } else if (ch === '/' && next === '/') {
+      state = 'line';
+      out[i] = ' ';
+    } else if (ch === '/' && next === '*') {
+      state = 'block';
+      out[i] = ' ';
+    } else if (ch === '"' || ch === "'" || ch === '`') state = ch;
+  }
+  return out.join('');
+}
+
+function briefWriterTargets() {
+  const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+  const files = [
+    ...readdirSync(join(root, 'lib', 'delivery-brief')).filter((name) => name.endsWith('.js')).map((name) => join(root, 'lib', 'delivery-brief', name)),
+    join(root, 'lib', 'routes', 'brief-routes.js'),
+  ];
+  const keys = new Set();
+  for (const file of files) {
+    const rel = relative(root, file).split(sep).join('/');
+    const source = withoutComments(readFileSync(file, 'utf8'));
+    for (const match of source.matchAll(WRITER_CALL)) {
+      if (/function\s+$/.test(source.slice(Math.max(0, match.index - 20), match.index))) continue;
+      const arg = firstArgument(source, match.index + match[0].length - 1).replace(/\s+/g, ' ');
+      if (arg) keys.add(`${rel}:${arg}`);
+    }
+  }
+  return keys;
+}
+
+test('privacy registry: every file the brief writes through the JSON write helpers is a declared writer of its store', () => {
+  const found = [...briefWriterTargets()].sort();
+  assert.ok(found.length >= 5, `expected the brief's writers, found ${found.length}`);
+  assert.deepEqual([...store.BRIEF_STORE_WRITERS].sort(), found, 'declare new writers in BRIEF_STORE_WRITERS (and in the registry\'s delivery-briefs row)');
+  assert.deepEqual([...store.briefStoreDescriptor().writers].sort(), found);
+});
+
+/** A promise and the function that resolves it. */
+function signal() {
+  let resolve;
+  const promise = new Promise((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+test('privacy erase during a running rebuild: the brief is deleted, and the rebuild stops without writing it again', async () => {
   const dir = freshDir();
   const client = clientRecord({ id: 'syn-erase-1' });
   await brief.rebuildBrief(client, { llm: stubLlm(), dataDir: dir, deps: depsFor() });
@@ -1001,27 +1101,125 @@ test('privacy erase holds the brief lease: it deletes nothing under a running re
   const descriptor = store.briefStoreDescriptor({ waitMs: 300 });
   // A changed transcript makes the rebuild ask the model; the call waits until the erase has answered.
   const changed = depsFor({ transcripts: { ...TRANSCRIPTS, 'syn-m-workshop': `${TRANSCRIPTS['syn-m-workshop']}\nKunde: En ny linje helt til slutt.` } });
-  let entered;
-  const inCall = new Promise((resolve) => {
-    entered = resolve;
-  });
-  let release;
-  const gate = new Promise((resolve) => {
-    release = resolve;
-  });
+  const inCall = signal();
+  const gate = signal();
   const inner = stubLlm();
-  const slow = { json: async (request) => { entered(); await gate; return inner.json(request); } };
+  const slow = { json: async (request) => { inCall.resolve(); await gate.promise; return inner.json(request); } };
   const running = brief.rebuildBrief(client, { llm: slow, dataDir: dir, deps: changed });
-  await inCall;
-  const busy = await descriptor.erase('syn-erase-1', { dataDir: dir, dryRun: false });
-  assert.equal(busy.action, 'none');
-  assert.match(busy.error, /running/);
-  assert.ok(existsSync(join(folder, 'latest.json')), 'nothing deleted under the rebuild');
-  release();
-  assert.equal((await running).status, 'built');
+  await inCall.promise;
   const erased = await descriptor.erase('syn-erase-1', { dataDir: dir, dryRun: false });
-  assert.equal(erased.action, 'delete');
+  assert.equal(erased.action, 'delete', 'the erase does not wait for the rebuild to finish');
+  assert.equal(erased.error, undefined);
+  assert.ok(erased.files.some((path) => path.endsWith('/latest.json')));
   assert.equal(existsSync(folder), false);
+  assert.equal(store.briefErased('syn-erase-1', { dataDir: dir }), true);
+  gate.resolve();
+  await assert.rejects(running, (error) => error.code === 'brief-erased');
+  assert.equal(inner.state.calls, 1, 'the rebuild asks nothing more after the erase');
+  assert.equal(existsSync(folder), false, 'the rebuild wrote nothing after the erase');
+  const { acquireLease } = await import('../data/email-store.js');
+  const lease = await acquireLease('brief:syn-erase-1', 1000);
+  assert.ok(lease, 'the rebuild released its lease');
+  await lease.release();
+});
+
+test('after a privacy erase no review, re-assembly, rebuild or loop step writes the client\'s brief again', async () => {
+  const dir = freshDir();
+  const client = clientRecord({ id: 'syn-erase-2' });
+  await brief.rebuildBrief(client, { llm: stubLlm(), dataDir: dir, deps: depsFor() });
+  const directiveId = store.readLatestBrief('syn-erase-2', { dataDir: dir }).directives[0].id;
+  const folder = store.clientBriefDir('syn-erase-2', { dataDir: dir });
+
+  // A review that is still assembling when the erase runs: its write is refused afterwards.
+  const inSources = signal();
+  const gate = signal();
+  const slowDeps = { ...depsFor(), sites: async () => { inSources.resolve(); await gate.promise; return []; } };
+  const review = brief.reviewBriefFact(client, 'positioning.toneOfVoice', { status: 'accepted', value: 'Rolig', by: 'dev' }, { dataDir: dir, deps: slowDeps });
+  await inSources.promise;
+  assert.equal((await store.briefStoreDescriptor({ waitMs: 0 }).erase('syn-erase-2', { dataDir: dir, dryRun: false })).action, 'delete');
+  gate.resolve();
+  await assert.rejects(review, (error) => error.code === 'brief-erased');
+  assert.equal(existsSync(folder), false, 'the review did not create the folder again');
+
+  const llm = stubLlm();
+  const refused = (error) => error.code === 'brief-erased';
+  assert.throws(() => store.reviewFact('syn-erase-2', 'contact.phone', { status: 'accepted' }, { dataDir: dir }), refused);
+  assert.throws(() => store.setDirectiveStatus('syn-erase-2', directiveId, { status: 'accepted' }, { dataDir: dir }), refused);
+  assert.throws(() => store.updateBriefState('syn-erase-2', { pendingHash: 'x' }, { dataDir: dir }), refused);
+  assert.throws(() => store.writeExtraction('syn-erase-2', { items: [] }, { dataDir: dir }), refused);
+  assert.throws(() => store.saveBrief('syn-erase-2', { facts: {} }, { dataDir: dir }), refused);
+  await assert.rejects(brief.reviewBriefFact(client, 'contact.phone', { status: 'accepted' }, { dataDir: dir, deps: depsFor() }), refused);
+  await assert.rejects(brief.reassembleBrief(client, { dataDir: dir, deps: depsFor() }), refused);
+  await assert.rejects(brief.rebuildBrief(client, { llm, dataDir: dir, deps: depsFor() }), refused);
+  brief.resetBriefTickForTests();
+  const ctx = { now: Date.parse('2026-11-01T10:00:00.000Z'), mode: 'shadow', settings: settingsWith({ enabled: true }), dataDir: dir, llm, briefDeps: depsFor(), tickId: 't-erased' };
+  assert.deepEqual(await brief.runBriefRebuildStep(ctx, client), { wrote: false, status: 'erased' });
+  assert.equal(llm.state.calls, 0);
+  assert.equal(existsSync(folder), false, 'nothing wrote the folder again');
+});
+
+test('a real erase of a client without a brief still marks it, so a loop tick before the client record is gone builds nothing', async () => {
+  const dir = freshDir();
+  const client = clientRecord({ id: 'syn-erase-3' });
+  const descriptor = store.briefStoreDescriptor({ waitMs: 0 });
+  assert.deepEqual(await descriptor.erase('syn-erase-3', { dataDir: dir, dryRun: true }), { action: 'none', records: 0, files: [] });
+  assert.equal(store.briefErased('syn-erase-3', { dataDir: dir }), false, 'a plan marks nothing');
+  assert.deepEqual(await descriptor.erase('syn-erase-3', { dataDir: dir, dryRun: false }), { action: 'none', records: 0, files: [] });
+  assert.equal(store.briefErased('syn-erase-3', { dataDir: dir }), true);
+  brief.resetBriefTickForTests();
+  const llm = stubLlm();
+  const ctx = (now) => ({ now, mode: 'shadow', settings: settingsWith({ enabled: true }), dataDir: dir, llm, briefDeps: depsFor(), tickId: `t-${now}` });
+  const t0 = Date.parse('2026-11-01T10:00:00.000Z');
+  assert.equal((await brief.runBriefRebuildStep(ctx(t0), client)).status, 'erased');
+  assert.equal((await brief.runBriefRebuildStep(ctx(t0 + 20 * 60_000), client)).status, 'erased');
+  assert.equal(existsSync(store.clientBriefDir('syn-erase-3', { dataDir: dir })), false);
+  assert.equal(llm.state.calls, 0);
+  // The marker is not a client folder and holds the client id and the time only.
+  const markers = readdirSync(join(dir, 'delivery-briefs', store.ERASED_DIR));
+  assert.deepEqual(markers, ['syn-erase-3.json']);
+  assert.deepEqual(Object.keys(JSON.parse(readFileSync(join(dir, 'delivery-briefs', store.ERASED_DIR, markers[0]), 'utf8'))).sort(), ['clientId', 'erasedAt', 'kind']);
+});
+
+test('erase markers older than the keep period are removed when the next erase writes one', async () => {
+  const dir = freshDir();
+  const now = new Date('2026-11-01T10:00:00.000Z');
+  store.markBriefErased('syn-old-1', { dataDir: dir, now });
+  store.markBriefErased('syn-new-1', { dataDir: dir, now });
+  const markerDir = join(dir, 'delivery-briefs', store.ERASED_DIR);
+  const old = new Date(Date.now() - store.ERASED_MARKER_KEEP_MS - 60_000);
+  utimesSync(join(markerDir, 'syn-old-1.json'), old, old);
+  store.markBriefErased('syn-next-1', { dataDir: dir, now: new Date() });
+  assert.deepEqual(readdirSync(markerDir).sort(), ['syn-new-1.json', 'syn-next-1.json']);
+});
+
+test('a privacy erase that waits for a held brief lease finishes in a process with nothing else running', async () => {
+  // A child process holds the lease brief:<id> itself (as a rebuild elsewhere would) and erases with a
+  // short wait. The wait timer must keep the process alive, or it exits mid-erase.
+  const dir = mkdtempSync(join(tmpdir(), 'asoldi-brief-erase-child-'));
+  try {
+    const folder = join(dir, 'delivery-briefs', 'syn-held-1');
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, 'latest.json'), '{"version":1}\n');
+    const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+    const script = [
+      `const { acquireLease } = await import(${JSON.stringify(pathToFileURL(join(root, 'data', 'email-store.js')).href)});`,
+      `const store = await import(${JSON.stringify(pathToFileURL(join(root, 'lib', 'delivery-brief', 'store.js')).href)});`,
+      "const held = await acquireLease('brief:syn-held-1', 60000);",
+      "if (!held) throw new Error('no lease');",
+      `const result = await store.briefStoreDescriptor({ waitMs: 600 }).erase('syn-held-1', { dataDir: ${JSON.stringify(dir)}, dryRun: false });`,
+      "process.stdout.write(JSON.stringify({ action: result.action, files: result.files.length }));",
+    ].join('\n');
+    const env = { ...process.env, APP_DATA_DIR: dir };
+    delete env.DATA_DIR;
+    const outcome = await new Promise((done) => {
+      execFile(process.execPath, ['--input-type=module', '-e', script], { env, cwd: dir, timeout: 60_000 }, (error, stdout, stderr) => done({ code: error ? error.code : 0, stdout, stderr }));
+    });
+    assert.equal(outcome.code, 0, `the erase finished (stderr: ${String(outcome.stderr).slice(0, 300)})`);
+    assert.deepEqual(JSON.parse(outcome.stdout), { action: 'delete', files: 1 });
+    assert.equal(existsSync(folder), false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('a review saved while a rebuild runs is in the saved brief: the save assembles with the newest reviews', async () => {

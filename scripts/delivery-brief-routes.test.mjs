@@ -350,6 +350,30 @@ test('fact reviews through the board: list positions and broken values are refus
   assert.equal(readReviews('syn-other', { dataDir: hub.dir }).revision, 0, 'no review stored');
 });
 
+test('after a privacy erase the board\'s writes answer 410 brief-erased and nothing is written again', async (t) => {
+  const hub = await setup(t, { settings: settingsWith({ enabled: true }) });
+  await hub.call('POST', '/api/admin/development/syn-own/brief/rebuild', { headers: hub.admin, body: { wait: true } });
+  const directive = (await (await hub.call('GET', '/api/admin/development/syn-own/brief', { headers: hub.admin })).json()).directives[0];
+  const store = await import('../lib/delivery-brief/store.js');
+  const folder = store.clientBriefDir('syn-own', { dataDir: hub.dir });
+  assert.equal((await store.briefStoreDescriptor({ waitMs: 0 }).erase('syn-own', { dataDir: hub.dir, dryRun: false })).action, 'delete');
+  assert.equal(existsSync(folder), false);
+  const calls = hub.llm.state.calls;
+  for (const [method, path, body] of [
+    ['PATCH', `/api/admin/development/syn-own/brief/directives/${directive.id}`, { status: 'accepted' }],
+    ['PATCH', '/api/admin/development/syn-own/brief/facts', { path: 'contact.phone', status: 'accepted' }],
+    ['POST', '/api/admin/development/syn-own/brief/rebuild', { wait: true }],
+    ['POST', '/api/admin/development/syn-own/brief/rebuild', {}],
+  ]) {
+    const response = await hub.call(method, path, { headers: hub.admin, body });
+    assert.equal(response.status, 410, `${method} ${path}`);
+    assert.equal((await response.json()).code, 'brief-erased');
+  }
+  assert.equal(hub.llm.state.calls, calls, 'no LLM call');
+  assert.equal(existsSync(folder), false, 'nothing created the folder again');
+  assert.equal((await hub.call('GET', '/api/admin/development/syn-own/brief', { headers: hub.admin })).status, 404);
+});
+
 test('ETag: with a media signer the ETag follows the signed URLs, so a 304 never keeps an expired link', async (t) => {
   let bucket = 1;
   const media = [{ id: 'media-1', bucket: 'gallery', fileName: 'bad.jpg', mime: 'image/jpeg', bytes: 10, sha256: 'a'.repeat(64), url: 'https://example.com/m/1' }];
