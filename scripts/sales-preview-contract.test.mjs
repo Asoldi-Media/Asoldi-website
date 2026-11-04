@@ -188,14 +188,14 @@ test('kontrakt link opens the contract, docks into the sign button, and signs th
 
 test('signup mode refuses an existing client; login mode refuses a missing one', async () => {
   const created = await ensurePreviewSigner({
-    email: 'login-mode@cafe.no',
+    email: 'person-b4bb74@fern.test',
     password: 'hemmelig1',
     name: 'Kari Nord',
     mode: 'signup',
   });
   assert.equal(created.ok, true);
   const again = await ensurePreviewSigner({
-    email: 'login-mode@cafe.no',
+    email: 'person-b4bb74@fern.test',
     password: 'hemmelig1',
     name: 'Kari Nord',
     mode: 'signup',
@@ -203,14 +203,14 @@ test('signup mode refuses an existing client; login mode refuses a missing one',
   assert.equal(again.ok, false);
   assert.equal(again.status, 409);
   const missing = await ensurePreviewSigner({
-    email: 'ingen-konto@cafe.no',
+    email: 'person-26c060@fern.test',
     password: 'hemmelig1',
     mode: 'login',
   });
   assert.equal(missing.ok, false);
   assert.equal(missing.status, 404);
   const loggedIn = await ensurePreviewSigner({
-    email: 'login-mode@cafe.no',
+    email: 'person-b4bb74@fern.test',
     password: 'hemmelig1',
     mode: 'login',
   });
