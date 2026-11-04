@@ -2,10 +2,11 @@
 // business profile that names the other card as its website build, or a second card of the business's
 // portal user. The business's uploads and its image rights answers belong to both cards, so an erase of
 // one holds them, in the store and in its backup copies; a business with one card is erased as before.
-// Synthetic clients only, on a temp data dir.
+// Also: a meeting id on a card is never joined to a path as it is, and a Fireflies media copy that runs
+// while the erase happens leaves no folder behind. Synthetic clients only, on a temp data dir.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -43,7 +44,12 @@ const CLIENTS = [
   card('sb-lead-3', { businessName: 'Testsalongen AS', portalUserId: 'u-three', portalBusinessId: 'b-three' }),
   card('sb-dup-3', { businessName: 'Testsalongen AS', portalUserId: 'u-three' }),
   // Control: a business with one card.
-  card('sb-solo', { businessName: 'Testbutikken AS', portalUserId: 'u-solo', portalBusinessId: 'b-solo' }),
+  card('sb-solo', {
+    businessName: 'Testbutikken AS',
+    portalUserId: 'u-solo',
+    portalBusinessId: 'b-solo',
+    meetings: [{ meetingId: '..', title: 'Feil id', startedAt: iso(NOW - 2 * DAY), linkedBy: 'admin:test', purpose: 'sales' }],
+  }),
 ];
 put('sales-clients.json', CLIENTS);
 put('client-portal-profiles.json', [
@@ -93,6 +99,8 @@ put('backups/media-rights.json.latest.json', RIGHTS);
 
 const personalData = await import('../lib/personal-data.js');
 const sales = await import('../data/sales.js');
+const erased = await import('../lib/fireflies-erased.js');
+const ffMedia = await import('../lib/fireflies-media.js');
 
 function rowOf(result, id) {
   return result.stores.find((row) => row.id === id);
@@ -157,4 +165,58 @@ test('a business is shared through its website build card or a second card of it
   assert.equal(rowOf(solo, 'client-uploads').held, undefined);
   assert.equal(rowOf(solo, 'media-rights').action, 'delete');
   assert.deepEqual(rowOf(solo, 'media-rights').files, ['media-rights.json']);
+});
+
+test('an erase never joins a card\'s meeting id to a path as it is', async () => {
+  const result = await personalData.eraseClient('sb-solo', { dryRun: false, by: 'superadmin', deleteCalendarEvent: async () => ({ deleted: true }) });
+  assert.equal(result.erased, true);
+  for (const kept of ['sales-clients.json', 'client-portal-profiles.json', 'client-uploads/u-shop/signed-logo.png', 'client-uploads/u-two/two-logo.png']) {
+    assert.ok(existsSync(join(DATA_DIR, kept)), `${kept} is still there`);
+  }
+  assert.equal(existsSync(join(DATA_DIR, 'client-uploads/u-solo/solo-logo.png')), false, 'the single-card business\'s upload is gone');
+  const rights = readJson('media-rights.json');
+  assert.deepEqual(Object.keys(rights.businesses).sort(), ['b-shop', 'b-three', 'b-two']);
+  assert.ok(sales.getSalesClientById('sb-signed-2') && sales.getSalesClientById('sb-dup-3'));
+});
+
+test('a media copy that runs while the erase happens leaves no folder and writes no state', async () => {
+  const record = (id) => ({ meetingId: id, title: 'Testmøte', transcript: 'A: hei', startedAt: iso(NOW - DAY), videoDownloadUrl: `https://cdn.example.com/${id}.mp4`, fetchedAt: iso(NOW - 7 * 60 * 60 * 1000) });
+  const run = async (id, { refetch, onDownload } = {}) => {
+    const updates = [];
+    const result = await ffMedia.saveFirefliesMediaForMeeting(id, {
+      readRecord: () => record(id),
+      refetchRecord: async () => {
+        if (refetch) refetch();
+        return record(id);
+      },
+      updateMedia: (meetingId, next) => updates.push(meetingId, next),
+      isFinal: () => true,
+      nowMs: NOW,
+      maxBytes: 1024 * 1024,
+      minFreeBytes: 0,
+      fetchImpl: async () => {
+        if (onDownload) onDownload();
+        return new Response('video-bytes', { status: 200, headers: { 'content-length': '11' } });
+      },
+    });
+    return { result, updates, dir: join(DATA_DIR, 'fireflies-media', id) };
+  };
+
+  const control = await run('ff-sb-copy');
+  assert.equal(control.result.status, 'saved', 'control: a recording nobody erased is copied');
+  assert.ok(existsSync(join(control.dir, 'video.mp4')));
+  assert.equal(control.updates.length, 2);
+
+  // The erase runs while the transcript is fetched again for fresh links.
+  const duringFetch = await run('ff-sb-race-1', { refetch: () => erased.recordErasedFirefliesMeetings(['ff-sb-race-1']) });
+  assert.equal(duringFetch.result.status, 'erased');
+  assert.equal(existsSync(duringFetch.dir), false, 'no folder after an erase during the fetch');
+  assert.deepEqual(duringFetch.updates, []);
+
+  // The erase runs while the video downloads (its own folder delete came first or did not get through).
+  const duringDownload = await run('ff-sb-race-2', { onDownload: () => erased.recordErasedFirefliesMeetings(['ff-sb-race-2']) });
+  assert.equal(duringDownload.result.status, 'erased');
+  assert.equal(existsSync(duringDownload.dir), false, 'no folder after an erase during the download');
+  assert.deepEqual(duringDownload.updates, []);
+  assert.deepEqual(readdirSync(join(DATA_DIR, 'fireflies-media')).sort(), ['ff-sb-copy']);
 });
