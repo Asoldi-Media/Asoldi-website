@@ -22,7 +22,8 @@
 // 3: automatic posts named blog.autoPosts, blog.localPosts read as an alias (feature tree).
 // 4: no id added, renamed or removed; the comments were reworded.
 // 5: settings keys for the legal texts switch and the SEO job gating, DataForSEO ledger and record pull switches.
-export const VOCAB_VERSION = 5;
+// 6: settings keys for the delivery loop, gate, brief, privacy, media and signing switches; brief and signing are release-gated.
+export const VOCAB_VERSION = 6;
 
 function freezeList(list) {
   return Object.freeze(list.map((item) => (item && typeof item === 'object' ? Object.freeze({ ...item }) : item)));
