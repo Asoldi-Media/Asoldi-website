@@ -575,7 +575,7 @@ function normalizeMeetings(list) {
       linkedAt: sanitizeText(raw.linkedAt) || nowIso(),
       linkedBy: sanitizeText(raw.linkedBy) || 'auto',
       forSalesMeeting: Boolean(raw.forSalesMeeting),
-      purpose: ['sales', 'workshop', 'iteration'].includes(sanitizeText(raw.purpose))
+      purpose: ['sales', 'workshop', 'iteration', 'demo'].includes(sanitizeText(raw.purpose))
         ? sanitizeText(raw.purpose)
         : '',
       // A person picked the purpose (POST …/meetings/:meetingId/purpose): automatic passes keep it.

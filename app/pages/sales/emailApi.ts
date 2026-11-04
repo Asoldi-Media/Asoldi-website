@@ -290,6 +290,37 @@ export function linkFirefliesMeeting(meetingId: string, clientId: string) {
   return emailRequest(`/admin/fireflies/meetings/${encodeURIComponent(meetingId)}/link`, { method: 'POST', body: JSON.stringify({ clientId }) });
 }
 
+/** A ranked client candidate for a recording no booked Meet room owns (the ranker never links). */
+export type FirefliesCandidate = {
+  clientId: string;
+  businessName: string;
+  score: number;
+  confidence: string;
+  reasons: string[];
+};
+
+export type FirefliesCandidateRow = { meetingId: string; title: string; startedAt: string; candidates: FirefliesCandidate[] };
+
+/** Candidates for the unmatched recordings, or null while the candidate ranker is off (404 disabled). */
+export async function listFirefliesCandidates(): Promise<FirefliesCandidateRow[] | null> {
+  try {
+    const data = await emailRequest('/admin/fireflies/candidates', { optionalRoute: true }) as { recordings?: FirefliesCandidateRow[] };
+    return Array.isArray(data.recordings) ? data.recordings : [];
+  } catch {
+    return null;
+  }
+}
+
+/** A person's one-click link from the candidate list, with an optional purpose. */
+export function linkFirefliesCandidate(meetingId: string, clientId: string, purpose: MeetingPurposePick) {
+  return emailRequest(`/admin/fireflies/meetings/${encodeURIComponent(meetingId)}/candidate-link`, {
+    method: 'POST',
+    body: JSON.stringify({ clientId, purpose }),
+    timeoutMs: 20_000,
+    timeoutMessage: SLOW_HUB_MESSAGE,
+  }) as Promise<{ meetingId: string; clientId: string; purpose: string }>;
+}
+
 export function unlinkFirefliesMeeting(meetingId: string) {
   return emailRequest(`/admin/fireflies/meetings/${encodeURIComponent(meetingId)}/unlink`, { method: 'POST', body: '{}' });
 }
@@ -352,7 +383,7 @@ export function setFirefliesRecordingState(
   }) as Promise<{ meetingId?: string; recording?: SalesMeetingRecording | null; client?: SalesClient }>;
 }
 
-export type MeetingPurposePick = '' | 'sales' | 'workshop' | 'iteration';
+export type MeetingPurposePick = '' | 'sales' | 'workshop' | 'iteration' | 'demo';
 
 /** A rep's purpose pick for one recording; '' gives the choice back to the hub. */
 export function setClientMeetingPurpose(clientId: string, meetingId: string, purpose: MeetingPurposePick) {

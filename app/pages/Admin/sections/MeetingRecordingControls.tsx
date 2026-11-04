@@ -160,8 +160,11 @@ const PURPOSE_OPTIONS: Array<{ value: MeetingPurposePick; label: string }> = [
   { value: 'iteration', label: 'Iterasjon' },
 ];
 
+// Demo is picked from the recording candidates (with the candidate ranker on); a row that has it shows it.
+const DEMO_OPTION: { value: MeetingPurposePick; label: string } = { value: 'demo', label: 'Demo' };
+
 function purposePick(value = ''): MeetingPurposePick {
-  return value === 'sales' || value === 'workshop' || value === 'iteration' ? value : '';
+  return value === 'sales' || value === 'workshop' || value === 'iteration' || value === 'demo' ? value : '';
 }
 
 // The select always sits on this hidden entry, so picking the type already shown still saves it.
@@ -183,7 +186,8 @@ export function MeetingPurposePicker({ clientId, meetingId, purpose = '', onClie
   const hidden = useMissingRoute('purpose');
   if (!clientId || !meetingId || (hidden && !error)) return null;
   const shown = value ?? purposePick(purpose);
-  const shownLabel = PURPOSE_OPTIONS.find((option) => option.value === shown)?.label || 'Automatisk';
+  const options = shown === 'demo' ? [...PURPOSE_OPTIONS, DEMO_OPTION] : PURPOSE_OPTIONS;
+  const shownLabel = options.find((option) => option.value === shown)?.label || 'Automatisk';
 
   async function pick(next: MeetingPurposePick) {
     setValue(next);
@@ -217,7 +221,7 @@ export function MeetingPurposePicker({ clientId, meetingId, purpose = '', onClie
           className="rounded-md bg-black/30 border border-white/10 text-gray-200 text-[11px] px-1.5 py-1 disabled:opacity-50"
         >
           <option value={SHOWN_PURPOSE} hidden>{shownLabel}</option>
-          {PURPOSE_OPTIONS.map((option) => (
+          {options.map((option) => (
             <option key={option.value || 'auto'} value={option.value}>{option.label}</option>
           ))}
         </select>

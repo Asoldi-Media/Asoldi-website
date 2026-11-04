@@ -515,6 +515,13 @@ export const SETTINGS_KEYS = Object.freeze({
   // brief
   briefEnabled: 'brief.enabled',
   briefMode: 'brief.mode',
+  // privacy
+  privacyArchive: 'privacy.archive.enabled',
+  privacyPurge: 'privacy.purge.enabled',
+  privacyPurgeMode: 'privacy.purge.mode',
+  mediaSignedUrls: 'media.signedUrls.enabled',
+  mediaRightsConfirm: 'media.rightsConfirm.enabled',
+  // end privacy
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);

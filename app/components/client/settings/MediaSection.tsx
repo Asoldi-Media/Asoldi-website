@@ -4,6 +4,8 @@ import { Edit, Image as ImageIcon, Plus, Upload, X } from 'lucide-react';
 import type { ClientDataBank, MediaBucketKey } from './clientDataTypes';
 import { MEDIA_BUCKETS, clientMediaSrc, randomId } from './clientDataTypes';
 import { uploadClientMediaCategorized } from './uploadClientMedia';
+import { useMediaRights } from './mediaRights';
+import { MediaRightsCheckbox } from './MediaRightsCheckbox';
 
 type MediaItem = {
   id: string;
@@ -54,6 +56,9 @@ export function MediaSection({ token, clientData, setClientData, onError }: Prop
   const [mapsLink, setMapsLink] = useState(clientData.openingHours.googleBusinessSyncUrl);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  // Shown only when the hub has the rights checkbox switched on; each upload records the answer.
+  const rights = useMediaRights(token);
+  const [rightsConfirmed, setRightsConfirmed] = useState(false);
 
   function commit(nextItems: MediaItem[]) {
     setClientData((prev) => ({
@@ -90,6 +95,8 @@ export function MediaSection({ token, clientData, setClientData, onError }: Prop
           ...briefs,
         ]),
       }));
+      // After the uploads are in Kundedata: a failed rights answer is reported and never drops them.
+      rights.recordAfterUpload(uploads.map((upload) => upload.url), rightsConfirmed, onError);
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Kunne ikke laste opp media.');
     } finally {
@@ -235,6 +242,9 @@ export function MediaSection({ token, clientData, setClientData, onError }: Prop
                     Dra filene til riktig kategori. Alle eksisterende mapper fra kundeportalen er med.
                   </p>
                   {uploading ? <p className="text-[13px] text-[#FF5B00] mt-2">Laster opp…</p> : null}
+                  {rights.enabled ? (
+                    <MediaRightsCheckbox checked={rightsConfirmed} onChange={setRightsConfirmed} className="mt-3" />
+                  ) : null}
                 </div>
                 <div className="flex gap-3">
                   <button type="button" onClick={() => setFlow('idle')} className="px-5 py-2.5 rounded-full border border-gray-200 text-[13px] font-semibold hover:bg-gray-50">

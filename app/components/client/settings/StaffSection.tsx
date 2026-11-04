@@ -3,6 +3,8 @@ import { Plus, Trash2, Upload, Users } from 'lucide-react';
 import type { ClientDataBank, StaffMember } from './clientDataTypes';
 import { clientMediaSrc, randomId } from './clientDataTypes';
 import { uploadClientMediaFile } from './uploadClientMedia';
+import { useMediaRights } from './mediaRights';
+import { MediaRightsCheckbox } from './MediaRightsCheckbox';
 
 type Props = {
   token: string;
@@ -25,6 +27,8 @@ function emptyMember(): StaffMember {
 export function StaffSection({ token, clientData, setClientData, onError }: Props) {
   const staff = clientData.staff || [];
   const [uploadingId, setUploadingId] = useState('');
+  const rights = useMediaRights(token);
+  const [rightsConfirmed, setRightsConfirmed] = useState(false);
 
   function commit(next: StaffMember[]) {
     setClientData((prev) => ({ ...prev, staff: next }));
@@ -36,6 +40,7 @@ export function StaffSection({ token, clientData, setClientData, onError }: Prop
     try {
       const url = await uploadClientMediaFile(token, file);
       commit(staff.map((row) => (row.id === memberId ? { ...row, imageUrl: url } : row)));
+      rights.recordAfterUpload([url], rightsConfirmed, onError);
     } catch (err) {
       onError(err instanceof Error ? err.message : 'Kunne ikke laste opp bildet.');
     } finally {
@@ -49,6 +54,7 @@ export function StaffSection({ token, clientData, setClientData, onError }: Prop
         <div>
           <h3 className="text-[20px] font-semibold text-[#121212]">Ansatte</h3>
           <p className="text-sm text-gray-500 mt-1">Tittel, navn, telefon, e-post og bilde for hver person.</p>
+          {rights.enabled ? <MediaRightsCheckbox checked={rightsConfirmed} onChange={setRightsConfirmed} className="mt-2" /> : null}
         </div>
         <button
           type="button"

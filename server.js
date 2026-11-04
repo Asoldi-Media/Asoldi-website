@@ -259,7 +259,9 @@ import { extractOfferLetterBody } from './lib/offer-letter-html.js';
 import { isDeepseekConfigured } from './lib/deepseek.js';
 import { clientIntentSourceHash, fillOfferFromTranscript, meetingContextIsTooThin, reflectContractFromEmail, summarizeClientIntent } from './lib/offer-ai.js';
 import { clientOwnedMeetLinks, emptyFirefliesLiveJoinStamp, firefliesMeetLinksDiffer, matchMeetingToClients, normalizeFirefliesMeetLink } from './lib/fireflies-client-match.js';
-import { createFirefliesLinker } from './lib/fireflies-linking.js';
+import { createFirefliesLinker, setFirefliesLinkerProvider } from './lib/fireflies-linking.js';
+import { privacyOnLinked, privacyOnUnlinked } from './lib/privacy-link-hooks.js';
+import { firefliesRankSettings } from './lib/privacy-settings.js';
 import { slotOwnerAmongClients } from './lib/fireflies-slots.js';
 import { firefliesNotetakerAllowedForOrganizer, refreshFirefliesKeyOwnerEmail } from './lib/fireflies-key-owner.js';
 import {
@@ -12354,10 +12356,14 @@ function firefliesLinker() {
       sales,
       stripFromOffer: (clientId, meetingId) => stripMeetingFromClientOffer(clientId, meetingId),
       onWorkshopRecording: (clientId) => scheduleWorkshopProjectDocument(clientId),
+      // Transcript archive and link audit; each writes nothing while its switch is off.
+      onLinked: (clientId, meetingId, info) => privacyOnLinked(clientId, meetingId, info),
+      onUnlinked: (clientId, meetingId) => privacyOnUnlinked(clientId, meetingId),
     });
   }
   return firefliesLinkerInstance;
 }
+setFirefliesLinkerProvider(firefliesLinker);
 
 /**
  * Put a Fireflies recording on a client card. Every link path goes through here (webhook, pull,
@@ -18278,12 +18284,14 @@ app.post('/api/admin/fireflies/meetings/:meetingId/exclude', salesAuth, (req, re
 });
 
 // A person says what one recording on the card is: sales | workshop | iteration, or '' to go back to automatic.
+// demo (a manual pick only, with no booked slot) is offered with the candidate ranker.
 app.post('/api/admin/sales/:id/meetings/:meetingId/purpose', salesAuth, (req, res) => {
   const client = sales.getSalesClientById(req.params.id);
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
   const purpose = sanitizeText(req.body?.purpose).toLowerCase();
-  if (!['', 'sales', 'workshop', 'iteration'].includes(purpose)) {
+  const demoAllowed = purpose === 'demo' && firefliesRankSettings().rankerEnabled;
+  if (!demoAllowed && !['', 'sales', 'workshop', 'iteration'].includes(purpose)) {
     return res.status(400).json({ message: 'Velg salgsmøte, workshop, iterasjon eller automatisk.' });
   }
   const meetingId = sanitizeText(req.params.meetingId);

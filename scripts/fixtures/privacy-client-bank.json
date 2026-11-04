@@ -1,0 +1,25 @@
+{
+  "businessCard": { "companyName": "Testgartneriet AS", "industry": "Hage", "websiteGoal": "Flere kunder" },
+  "generalInfo": { "companyName": "Testgartneriet AS", "companyAddress": "Testveien 1, 0001 Oslo", "websiteLanguage": "nb", "companyPhone": "+47 00 00 00 00", "companyEmail": "post@example.com", "socialMediaLinks": [], "extraLinks": [] },
+  "brandIdentity": { "orgNumber": "", "colors": { "primary": "#336633", "secondary": "#ffffff", "accent": "#ff9900" }, "logos": { "normal": "/client-media/u-test/logo.png", "favicon": "" } },
+  "openingHours": { "googleBusinessSyncUrl": "", "days": [] },
+  "affiliations": [],
+  "staff": [{ "id": "ansatt-1", "title": "Daglig leder", "name": "Test Person", "phone": "+47 00 00 00 01", "email": "person@example.com", "imageUrl": "/client-media/u-test/person.jpg" }],
+  "domainSetup": {},
+  "productCatalogs": [{ "id": "cat-1", "layout": "normal", "label": "Produkter", "categories": [{ "id": "kat-1", "name": "Planter", "products": [{ "id": "p-1", "title": "Rose", "name": "Rose", "description": "Rød", "price": "199", "imageUrl": "/client-media/u-test/rose.webp", "image": "/client-media/u-test/rose.webp", "included": [] }] }] }],
+  "products": [],
+  "media": {
+    "mainHeroImages": ["/client-media/u-test/hero.jpg"],
+    "galleryImages": ["/client-media/u-test/photo.jpg"],
+    "logos": ["/client-media/u-test/logo.png"],
+    "icons": [],
+    "uncategorized": [],
+    "teamImages": [],
+    "aboutImages": [],
+    "locationImages": [],
+    "illustrationImages": [],
+    "offeringImages": [],
+    "briefs": []
+  },
+  "websiteCreatorQuestions": { "targetAudience": "", "keyMessage": "", "toneOfVoice": "", "primaryAction": "", "importantKeywords": [], "competitorLinks": [], "businessWhat": "", "businessStory": "", "differentiator": "", "reviews": "", "extraContext": "" }
+}

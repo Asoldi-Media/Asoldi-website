@@ -703,7 +703,7 @@ export type SalesClientMeeting = {
   linkedAt: string;
   linkedBy: string;
   forSalesMeeting?: boolean;
-  purpose?: 'sales' | 'workshop' | 'iteration' | '';
+  purpose?: 'sales' | 'workshop' | 'iteration' | 'demo' | '';
   hasVideo?: boolean;
   /** Booked slot the row belongs to: sales:<ms>, workshop:<ms>, iteration:<ms> or action:<id>. */
   slotKey?: string;
