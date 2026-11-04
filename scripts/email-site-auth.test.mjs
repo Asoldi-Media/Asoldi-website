@@ -295,9 +295,13 @@ test('the CMS-facing email routes: each needs the emailKey, and the site key alo
   const app = express();
   app.use(express.json());
   await mod.register(app, { adminAuth: (_q, r) => r.status(401).end(), hub, sales: { getSalesClients: () => [] } });
-  const routes = auth.emailRouteGuards(app).filter((r) => !PUBLIC_EMAIL_ROUTES.includes(`${r.method} ${r.path}`));
+  // The Brevo webhook takes Brevo's token instead of an emailKey; it is checked below on its own.
+  const webhookRoutes = mod.EMAIL_WEBHOOK_ROUTES || [];
+  const all = auth.emailRouteGuards(app);
+  const routes = all.filter((r) => !PUBLIC_EMAIL_ROUTES.includes(`${r.method} ${r.path}`) && !webhookRoutes.includes(`${r.method} ${r.path}`));
   assert.ok(routes.length > 0, 'the module registers CMS-facing routes');
   assert.deepEqual(routes.filter((r) => !r.guarded).map((r) => `${r.method} ${r.path}`), [], 'routes without requireEmailKey');
+  assert.deepEqual(webhookRoutes.filter((r) => !all.some((x) => `${x.method} ${x.path}` === r)), [], 'every exempted webhook route exists');
   const srv = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });
@@ -307,6 +311,12 @@ test('the CMS-facing email routes: each needs the emailKey, and the site key alo
       const res = await fetch(url, { method, headers: { ...cms1, ...(method === 'GET' ? {} : { 'content-type': 'application/json' }) }, ...(method === 'GET' ? {} : { body: '{}' }) });
       await res.text();
       assert.equal(res.status, 401, `${method} ${path} with the site key and credential only`);
+    }
+    for (const route of webhookRoutes) {
+      const [method, path] = route.split(' ');
+      const res = await fetch(`http://127.0.0.1:${srv.address().port}${path.replace(/:[A-Za-z_]+/g, 'x')}`, { method, headers: { ...cms1, 'content-type': 'application/json', 'x-asoldi-webhook': 'x' }, body: '{}' });
+      await res.text();
+      assert.equal(res.status, 404, `${route} with a token that is not the hub's`);
     }
   } finally {
     srv.closeAllConnections?.();
