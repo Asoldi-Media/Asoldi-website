@@ -692,8 +692,47 @@ test('sources: transcripts come from linked meetings, live placeholders are skip
   const withSite = await gatherBriefSources(clientRecord({ hubSite: { id: 'site-1' } }), { deps: { ...depsFor(), sites: () => [{ id: 'site-1', domain: 'Example.com', site_key: 'secret-site-key' }] } });
   assert.equal(withSite.cmsSetup.siteId, 'site-1');
   assert.equal(JSON.stringify(withSite.cmsSetup).includes('secret-site-key'), false, 'no site key in the brief');
-  const archived = await gatherBriefSources(client, { deps: { ...depsFor(), readArchivedTranscripts: () => [{ meetingId: 'syn-m-sales', purpose: 'sales', transcript: 'Kunde: Arkivert tekst.' }] } });
-  assert.equal(archived.meetings.find((row) => row.meetingId === 'syn-m-sales').transcript, 'Kunde: Arkivert tekst.', 'the archive wins over the stored meeting');
+  const archive = () => [{ meetingId: 'syn-m-sales', purpose: 'sales', transcript: 'Kunde: Arkivert tekst.' }];
+  const withoutStoredSales = { ...TRANSCRIPTS, 'syn-m-sales': undefined };
+  const archived = await gatherBriefSources(client, { deps: { ...depsFor({ transcripts: withoutStoredSales }), readArchivedTranscripts: archive } });
+  assert.equal(archived.meetings.find((row) => row.meetingId === 'syn-m-sales').transcript, 'Kunde: Arkivert tekst.', 'the archive keeps a meeting whose stored copy is gone');
+  const sameText = await gatherBriefSources(client, { deps: { ...depsFor({ transcripts: { ...TRANSCRIPTS, 'syn-m-sales': 'Kunde: Arkivert tekst.' } }), readArchivedTranscripts: archive } });
+  assert.equal(sameText.meetings.find((row) => row.meetingId === 'syn-m-sales').transcript, 'Kunde: Arkivert tekst.');
+});
+
+test('sources: an archived copy taken while the meeting was still live captions gives way to the final stored copy', async () => {
+  // The archive copied the captions at link time; its record keeps neither isLive nor partial.
+  const captions = 'Kunde: Dette er direkteteksting fra møtet mens det pågikk.';
+  const archivedCaptions = { meetingId: 'syn-m-sales', purpose: 'sales', startedAt: '2026-10-01T10:00:00.000Z', transcript: captions, sha256: sha256(captions) };
+  const finalCopy = { meetingId: 'syn-m-sales', transcript: TRANSCRIPTS['syn-m-sales'], isLive: false, partial: false, summaryStatus: 'processed' };
+  const deps = {
+    ...depsFor(),
+    readArchivedTranscripts: () => [archivedCaptions],
+    readStoredMeeting: (meetingId) => (meetingId === 'syn-m-sales' ? { ...finalCopy } : TRANSCRIPTS[meetingId] ? { meetingId, transcript: TRANSCRIPTS[meetingId] } : null),
+    readTranscriptBySha: (_clientId, sha) => (sha === sha256(captions) ? { ...archivedCaptions, source: 'archive' } : null),
+  };
+  const sources = await gatherBriefSources(clientRecord(), { deps });
+  const sales = sources.meetings.find((row) => row.meetingId === 'syn-m-sales');
+  assert.equal(sales.transcript, TRANSCRIPTS['syn-m-sales'], 'the final stored copy, not the archived captions');
+  assert.equal(sales.sha256, sha256(TRANSCRIPTS['syn-m-sales']));
+  assert.equal(sources.parts.meetings.some((row) => row.sha256 === sha256(captions)), false, 'the captions are not an input');
+  assert.equal(await findClientTranscript(clientRecord(), sha256(captions), { deps }), null, 'the archived captions are not served');
+  const served = await findClientTranscript(clientRecord(), sha256(TRANSCRIPTS['syn-m-sales']), { deps });
+  assert.equal(served?.transcript, TRANSCRIPTS['syn-m-sales']);
+
+  // A rebuild pays only for the final transcript's chunks, never for the captions.
+  const llm = stubLlm();
+  const prompts = [];
+  const watching = { json: async (request) => { prompts.push(String(request.user)); return llm.json(request); } };
+  await brief.rebuildBrief(clientRecord({ id: 'syn-captions-1' }), { llm: watching, dataDir: freshDir(), deps });
+  assert.ok(prompts.length > 0);
+  assert.equal(prompts.some((user) => user.includes('direkteteksting')), false);
+
+  // Once the stored copy is gone, the archived copy is the meeting's transcript again.
+  const noStored = { ...deps, readStoredMeeting: (meetingId) => (meetingId === 'syn-m-sales' ? null : deps.readStoredMeeting(meetingId)) };
+  const fromArchive = await gatherBriefSources(clientRecord(), { deps: noStored });
+  assert.equal(fromArchive.meetings.find((row) => row.meetingId === 'syn-m-sales').transcript, captions);
+  assert.equal((await findClientTranscript(clientRecord(), sha256(captions), { deps: noStored }))?.transcript, captions);
 });
 
 /** Every file under `dir`, as paths inside it ('/'-separated). */
@@ -809,6 +848,7 @@ function seoRecordModule(records) {
 const MEDIA_ITEMS = [
   { id: `ma_${'a'.repeat(32)}`, source: 'bank', bucket: 'gallery', name: 'bad.jpg', mime: 'image/jpeg', bytes: 10, sha256: 'b'.repeat(64), rightsConfirmed: true },
   { id: `ma_${'c'.repeat(32)}`, source: 'logo', bucket: 'logo:primary', name: 'logo.png', mime: 'image/png', bytes: 20, sha256: 'd'.repeat(64), rightsConfirmed: null },
+  { id: `ma_${'e'.repeat(32)}`, source: 'bank', bucket: 'gallery', name: 'lant.jpg', mime: 'image/jpeg', bytes: 30, sha256: 'f'.repeat(64), rightsConfirmed: false },
 ];
 
 const SEO_RECORDS = {
@@ -816,6 +856,7 @@ const SEO_RECORDS = {
     agreedKeywords: [
       { phrase: 'flislegger eksempelby', status: 'approved', source: 'meeting', quoteRef: 'syn-m-sales#1', at: '2026-10-02T10:00:00.000Z', by: 'dev' },
       { phrase: 'nytt bad', status: 'proposed', source: 'maker', at: '2026-10-02T10:00:00.000Z', by: 'maker' },
+      { phrase: 'billig bad', status: 'blocked', source: 'developer', at: '2026-10-02T10:00:00.000Z', by: 'dev' },
     ],
   },
 };
@@ -836,24 +877,26 @@ test('sources: the media manifest and the SEO record are read through their own 
   assert.equal(calls.length, 0, 'with the media switch off the manifest (which writes its id index) is not built');
   assert.deepEqual(off.seo.agreedKeywords, [
     { keyword: 'flislegger eksempelby', status: 'approved', source: 'meeting' },
-    { keyword: 'nytt bad', status: 'proposed', source: 'maker' },
-  ], 'every row of the record, phrase as keyword');
+    { keyword: 'billig bad', status: 'blocked', source: 'developer' },
+  ], 'the approved and blocked rows of the record (as the record\'s Maker view has them), phrase as keyword; no proposals');
 
   mediaOn = true;
   const on = await gatherBriefSources(clientRecord(), { deps });
   assert.deepEqual(calls.map((call) => [call.clientId, call.hasClient]), [['syn-brief-1', true]], 'called with the client id and the client');
   assert.deepEqual(on.media.map((row) => [row.id, row.fileName, row.bucket, row.url, row.rightsConfirmed]), [
     [MEDIA_ITEMS[0].id, 'bad.jpg', 'gallery', `/api/maker/media/${MEDIA_ITEMS[0].id}`, true],
-    [MEDIA_ITEMS[1].id, 'logo.png', 'logo:primary', `/api/maker/media/${MEDIA_ITEMS[1].id}`, false],
+    [MEDIA_ITEMS[1].id, 'logo.png', 'logo:primary', `/api/maker/media/${MEDIA_ITEMS[1].id}`, undefined],
+    [MEDIA_ITEMS[2].id, 'lant.jpg', 'gallery', `/api/maker/media/${MEDIA_ITEMS[2].id}`, false],
   ], 'the manifest name is the file name and URL signatures are left out');
+  assert.equal(Object.hasOwn(on.media[1], 'rightsConfirmed'), false, 'an unanswered rights question stays unanswered, not "declined"');
   assert.notEqual(on.inputHash, off.inputHash);
 
   // A build whose SEO module has only agreedKeywordsFor: the approved phrases.
   const phrasesOnly = { ...modules, '../seo-ops/record.js': { agreedKeywordsFor: seoRecordModule(SEO_RECORDS).agreedKeywordsFor } };
   const approved = await gatherBriefSources(clientRecord(), { deps: { ...deps, modules: phrasesOnly } });
   assert.deepEqual(approved.seo.agreedKeywords, [{ keyword: 'flislegger eksempelby', status: 'approved', source: 'seo-record' }]);
-  // A client without a record keeps the sales card's keywords.
-  const card = await gatherBriefSources(clientRecord({ id: 'syn-no-record', seoRecord: { agreedKeywords: [{ phrase: 'baderom', status: 'approved', source: 'card' }] } }), { deps });
+  // A client without a record keeps the sales card's keywords, approved and blocked ones only.
+  const card = await gatherBriefSources(clientRecord({ id: 'syn-no-record', seoRecord: { agreedKeywords: [{ phrase: 'baderom', status: 'approved', source: 'card' }, { phrase: 'dusj', status: 'proposed', source: 'card' }] } }), { deps });
   assert.deepEqual(card.seo.agreedKeywords, [{ keyword: 'baderom', status: 'approved', source: 'card' }]);
 
   // The loop keeps one manifest build per client for a while instead of hashing every file each tick.
@@ -866,9 +909,9 @@ test('sources: the media manifest and the SEO record are read through their own 
   const dir = freshDir();
   await brief.rebuildBrief(clientRecord(), { llm: stubLlm(), dataDir: dir, deps });
   const stored = store.readLatestBrief('syn-brief-1', { dataDir: dir });
-  assert.deepEqual(stored.facts.media.manifest.map((row) => row.fileName), ['bad.jpg', 'logo.png']);
+  assert.deepEqual(stored.facts.media.manifest.map((row) => [row.fileName, row.rightsConfirmed]), [['bad.jpg', true], ['logo.png', undefined], ['lant.jpg', false]]);
   assert.equal(stored.facts.logo.status, 'present');
-  assert.deepEqual(stored.seo.agreedKeywords.map((row) => row.keyword), ['flislegger eksempelby', 'nytt bad']);
+  assert.deepEqual(stored.seo.agreedKeywords.map((row) => row.keyword), ['flislegger eksempelby', 'billig bad']);
   assert.equal(validateDeliveryBrief(stored).valid, true);
 });
 
@@ -884,6 +927,30 @@ test('sources: credentials are left out of the CMS setup at every depth, inside 
   for (const value of ['pw-value', 'token-value', 'key-value', 'site-key-value']) assert.equal(text.includes(value), false, value);
   assert.equal(sources.cmsSetup.users[0].email, 'post@example.com');
   assert.equal(sources.cmsSetup.integrations[0].options[0].label, 'synlig');
+});
+
+test('sources: only credential names are left out of the CMS setup; keywords, a feature\'s key and other ids stay', async () => {
+  const setup = {
+    siteId: 'site-1',
+    keywords: ['flislegger', 'bad'],
+    primaryKey: 'row-1',
+    features: [{ key: 'shop', enabled: true }, { key: 'blog', enabled: false, settings: { key: 'blog.posts', apiKey: 'api-key-value' } }],
+    apiKey: 'api-key-value',
+    'x-api-key': 'header-key-value',
+    stripe_secret_key: 'stripe-value',
+    privateKey: 'private-value',
+    token: 'token-value',
+    smtp: { host: 'smtp.example.com', user: 'post@example.com', pass: 'smtp-pass-value' },
+    credentials: { anything: 'credential-value' },
+  };
+  const sources = await gatherBriefSources(clientRecord(), { deps: { ...depsFor(), cmsSetup: () => setup } });
+  const kept = sources.cmsSetup;
+  const text = JSON.stringify(kept);
+  for (const value of ['api-key-value', 'header-key-value', 'stripe-value', 'private-value', 'token-value', 'smtp-pass-value', 'credential-value']) assert.equal(text.includes(value), false, value);
+  assert.deepEqual(kept.keywords, ['flislegger', 'bad']);
+  assert.equal(kept.primaryKey, 'row-1');
+  assert.deepEqual(kept.features, [{ key: 'shop', enabled: true }, { key: 'blog', enabled: false, settings: { key: 'blog.posts' } }]);
+  assert.deepEqual(kept.smtp, { host: 'smtp.example.com', user: 'post@example.com' });
 });
 
 // ---------------------------------------------------------------- privacy registry, erase and concurrent writes
