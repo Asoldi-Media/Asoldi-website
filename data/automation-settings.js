@@ -145,6 +145,9 @@ export function defaultAutomationSettings() {
     // gate: the delivery gate (lib/delivery-gate.js). Off by default; 'shadow' computes the requirement
     // lines and shows them to developers, and the mails that would use them are recorded, never sent.
     gate: { enabled: false, mode: 'shadow', paused: null },
+    // brief: the delivery brief (lib/delivery-brief). Off: nothing is built. Shadow: briefs are built and
+    // stored for admins. Auto: pilot clients' briefs are also served to the Maker.
+    brief: { enabled: false, mode: 'shadow' },
     // Written only by recordReleasePass (the pre-release suite), never by PUT.
     releases: {},
   };
@@ -264,6 +267,8 @@ const ENUMS = {
   'delivery.loop.mode': ['shadow', 'auto'],
   // gate: 'auto' is not offered yet; the gate runs in shadow only.
   'gate.mode': ['shadow'],
+  // brief
+  'brief.mode': ['shadow', 'auto'],
 };
 
 const RANGES = {
@@ -316,6 +321,8 @@ const BOOLEANS = new Set([
   'delivery.loop.enabled',
   // gate
   'gate.enabled',
+  // brief
+  'brief.enabled',
 ]);
 
 function knownPaths() {
@@ -534,6 +541,11 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
   }
   if (!EMAIL_RE.test(String(value.alerts?.to || ''))) fail('alerts.to', 'Must be an email address.');
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(String(value.alerts?.digestAt || ''))) fail('alerts.digestAt', 'Must be HH:MM.');
+
+  // brief: auto serves briefs to the Maker, which only pilot clients may get; refuse it without pilots.
+  if (value.brief?.enabled === true && value.brief?.mode === 'auto' && Array.isArray(pilots) && !pilots.length) {
+    fail('brief.mode', 'brief can run in auto only for pilot clients: list them in pilotClientIds first, or keep it in shadow.');
+  }
 
   // No owner approval queue: a gated switch reaches auto only after the pre-release suite passed.
   for (const switchId of unreleasedAutoSwitches(value)) {

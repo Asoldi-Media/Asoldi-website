@@ -1,0 +1,569 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "delivery-brief.schema.json",
+  "title": "asoldi.delivery-brief/1",
+  "description": "The delivery brief the hub builds per client from the signed plan, the offer, client data and verified meeting quotes. Append-only: later versions add optional fields and never remove or retype one. Every field except `schema` is optional, so a reader must accept a brief that leaves any part out. The brief never holds transcript text: `transcripts` holds references, and quotes are short.",
+  "type": "object",
+  "required": ["schema"],
+  "properties": {
+    "schema": { "const": "asoldi.delivery-brief/1" },
+    "version": { "type": "integer", "minimum": 1 },
+    "hash": { "$ref": "#/$defs/hash" },
+    "generatedAt": { "$ref": "#/$defs/timeOrEmpty" },
+    "salesClientId": { "$ref": "#/$defs/id" },
+    "inputs": {
+      "type": "object",
+      "properties": {
+        "meetings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "meetingId": { "$ref": "#/$defs/id" },
+              "purpose": { "$ref": "#/$defs/purpose" },
+              "sha256": { "$ref": "#/$defs/sha256" }
+            }
+          }
+        },
+        "offerHash": { "type": "string" },
+        "planHash": { "type": "string" },
+        "bankRevision": { "type": ["string", "integer"] },
+        "gateHash": { "type": "string" },
+        "reviewsRevision": { "type": "integer", "minimum": 0 },
+        "seoRevision": { "type": ["string", "integer"] },
+        "promptHash": { "type": "string" },
+        "inputHash": { "type": "string" }
+      }
+    },
+    "sitePlan": {
+      "type": ["object", "null"],
+      "properties": {
+        "tierId": { "type": "string" },
+        "services": { "$ref": "#/$defs/stringList" },
+        "pages": { "type": "integer", "minimum": 0 },
+        "billing": { "enum": ["month", "once"] },
+        "catalogType": { "type": ["string", "null"] },
+        "languages": { "$ref": "#/$defs/stringList" },
+        "signedAt": { "$ref": "#/$defs/timeOrEmpty" }
+      }
+    },
+    "offer": {
+      "type": ["object", "null"],
+      "properties": {
+        "id": { "type": "string" },
+        "status": { "type": "string" },
+        "acceptedAt": { "$ref": "#/$defs/timeOrEmpty" },
+        "title": { "type": "string" },
+        "includes": { "$ref": "#/$defs/stringList" },
+        "contractSummary": { "type": "string" },
+        "alternatives": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "index": { "type": "integer", "minimum": 0 },
+              "tierId": { "type": "string" },
+              "title": { "type": "string" },
+              "chosen": { "type": "boolean" }
+            }
+          }
+        },
+        "clientIntent": {
+          "type": ["object", "null"],
+          "properties": {
+            "headline": { "type": "string" },
+            "wants": { "$ref": "#/$defs/stringList" }
+          }
+        }
+      }
+    },
+    "facts": { "$ref": "#/$defs/facts" },
+    "factSources": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/factSource" }
+    },
+    "directives": { "type": "array", "items": { "$ref": "#/$defs/directive" } },
+    "iterations": { "type": "array", "items": { "$ref": "#/$defs/iteration" } },
+    "clientApproved": { "type": "boolean" },
+    "changeRequests": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "type": { "type": "string" },
+          "title": { "type": "string" },
+          "status": { "type": "string" }
+        }
+      }
+    },
+    "todos": { "type": "array", "items": { "$ref": "#/$defs/projectItem" } },
+    "openDecisions": { "type": "array", "items": { "$ref": "#/$defs/projectItem" } },
+    "outOfScope": { "type": "array", "items": { "$ref": "#/$defs/projectItem" } },
+    "transcripts": { "type": "array", "items": { "$ref": "#/$defs/transcriptRef" } },
+    "promises": { "type": "array", "items": { "$ref": "#/$defs/promise" } },
+    "unbuiltPromises": { "$ref": "#/$defs/stringList" },
+    "followUps": { "type": "array", "items": { "$ref": "#/$defs/followUp" } },
+    "approvalSignals": { "type": "array", "items": { "$ref": "#/$defs/quotedNote" } },
+    "requests": { "type": "array", "items": { "$ref": "#/$defs/request" } },
+    "openQuestions": { "type": "array", "items": { "$ref": "#/$defs/quotedNote" } },
+    "seo": {
+      "type": ["object", "null"],
+      "properties": {
+        "agreedKeywords": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "keyword": { "type": "string" },
+              "status": { "type": "string" },
+              "source": { "type": "string" },
+              "quote": { "$ref": "#/$defs/quote" }
+            }
+          }
+        }
+      }
+    },
+    "cmsSetup": {
+      "type": ["object", "null"],
+      "properties": {
+        "siteId": { "type": "string" },
+        "productionDomain": { "type": "string" },
+        "seller": {
+          "type": "object",
+          "properties": {
+            "legalName": { "type": "string" },
+            "orgNumber": { "type": "string" },
+            "vatRegistered": { "type": ["boolean", "null"] },
+            "vatSource": { "type": "string" }
+          }
+        },
+        "approval": {
+          "type": "object",
+          "properties": {
+            "clientApprovedAt": { "$ref": "#/$defs/timeOrEmpty" },
+            "by": { "type": "string" }
+          }
+        }
+      }
+    },
+    "gate": {
+      "type": ["object", "null"],
+      "properties": {
+        "devComplete": { "type": "boolean" },
+        "missingDev": { "$ref": "#/$defs/stringList" },
+        "inputHash": { "type": "string" },
+        "lines": { "type": "array" }
+      }
+    },
+    "delivery": {
+      "type": "object",
+      "properties": {
+        "stage": { "type": "string" },
+        "targetLaunchAt": { "$ref": "#/$defs/dateOrEmpty" },
+        "targetLaunchSource": { "type": "string" }
+      }
+    },
+    "stats": {
+      "type": "object",
+      "properties": {
+        "extractedItems": { "type": "integer", "minimum": 0 },
+        "keptItems": { "type": "integer", "minimum": 0 },
+        "droppedUnverifiedQuotes": { "type": "integer", "minimum": 0 },
+        "droppedInvalid": { "type": "integer", "minimum": 0 },
+        "supersededItems": { "type": "integer", "minimum": 0 },
+        "costUsd": { "type": "number", "minimum": 0 },
+        "route": { "type": "string" },
+        "chunks": { "type": "object" },
+        "durationMs": { "type": "integer", "minimum": 0 },
+        "bytes": { "type": "integer", "minimum": 0 },
+        "clipped": { "type": "integer", "minimum": 0 }
+      }
+    }
+  },
+  "$defs": {
+    "id": { "type": "string", "maxLength": 200 },
+    "hash": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "timeOrEmpty": { "type": "string", "pattern": "^($|\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2})" },
+    "dateOrEmpty": { "type": "string", "pattern": "^($|\\d{4}-\\d{2}-\\d{2})" },
+    "purpose": { "enum": ["sales", "demo", "workshop", "iteration"] },
+    "stringList": { "type": "array", "items": { "type": "string" } },
+    "quote": { "type": "string", "maxLength": 400 },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "factStatus": { "enum": ["proposed", "accepted", "client-confirmed", "rejected", "superseded", "open"] },
+    "source": {
+      "type": "object",
+      "properties": {
+        "kind": { "enum": ["transcript", "client", "admin", "scrape", "offer", "plan"] },
+        "meeting": { "$ref": "#/$defs/purpose" },
+        "meetingId": { "type": "string" },
+        "quote": { "$ref": "#/$defs/quote" },
+        "speaker": { "type": "string" }
+      }
+    },
+    "factSource": {
+      "type": "object",
+      "properties": {
+        "kind": { "enum": ["transcript", "client", "admin", "scrape", "offer", "plan"] },
+        "quote": { "$ref": "#/$defs/quote" },
+        "meetingId": { "type": "string" },
+        "purpose": { "$ref": "#/$defs/purpose" },
+        "speaker": { "type": "string" },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "status": { "$ref": "#/$defs/factStatus" },
+        "quoteVerified": { "type": "boolean" },
+        "factId": { "type": "string" },
+        "reviewedBy": { "type": "string" },
+        "reviewedAt": { "$ref": "#/$defs/timeOrEmpty" }
+      }
+    },
+    "facts": {
+      "type": "object",
+      "properties": {
+        "schema": { "const": "asoldi.brief.facts/1" },
+        "language": { "type": "string" },
+        "identity": {
+          "type": "object",
+          "properties": {
+            "brandName": { "type": "string" },
+            "legalName": { "type": "string" },
+            "orgNumber": { "type": "string" },
+            "source": { "$ref": "#/$defs/source" }
+          }
+        },
+        "logo": {
+          "type": "object",
+          "properties": {
+            "status": { "type": "string" },
+            "mediaId": { "type": ["string", "null"] },
+            "wordmarkSpec": {
+              "type": ["object", "null"],
+              "properties": {
+                "text": { "type": "string" },
+                "case": { "enum": ["upper", "lower", "title", "as-is"] },
+                "weight": { "type": "integer", "minimum": 100, "maximum": 900 },
+                "letterSpacingEm": { "type": "number" },
+                "source": { "$ref": "#/$defs/source" }
+              }
+            }
+          }
+        },
+        "contact": {
+          "type": "object",
+          "properties": {
+            "email": { "type": "string" },
+            "scope": { "enum": ["public", "contact-person", ""] },
+            "phone": { "type": "string" },
+            "address": { "type": "string" },
+            "postalCode": { "type": "string" },
+            "town": { "type": "string" },
+            "addressVisibility": { "enum": ["full", "town-only", "hidden", ""] },
+            "onlineOnly": { "type": "boolean" },
+            "serviceArea": { "type": "string" },
+            "openingHours": { "type": ["string", "object", "null"] }
+          }
+        },
+        "socials": { "type": "object", "additionalProperties": { "type": "string" } },
+        "importantLinks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": { "type": "string" },
+              "url": { "type": "string" },
+              "placement": { "enum": ["header", "hero", "footer"] },
+              "quote": { "$ref": "#/$defs/quote" }
+            }
+          }
+        },
+        "positioning": {
+          "type": "object",
+          "properties": {
+            "businessWhat": { "type": "string" },
+            "services": { "$ref": "#/$defs/stringList" },
+            "audience": { "type": "string" },
+            "differentiators": { "$ref": "#/$defs/stringList" },
+            "priorities": { "$ref": "#/$defs/stringList" },
+            "brandCues": { "$ref": "#/$defs/stringList" },
+            "toneOfVoice": { "type": "string" },
+            "story": { "type": "string" }
+          }
+        },
+        "claims": {
+          "type": "object",
+          "properties": {
+            "stats": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": { "type": "string" },
+                  "value": { "type": "number" },
+                  "unit": { "type": "string" },
+                  "label": { "type": "string" },
+                  "status": { "$ref": "#/$defs/factStatus" },
+                  "quoteVerified": { "type": "boolean" },
+                  "source": { "$ref": "#/$defs/source" }
+                }
+              }
+            },
+            "awards": { "$ref": "#/$defs/stringList" },
+            "certifications": { "$ref": "#/$defs/stringList" },
+            "guarantees": { "$ref": "#/$defs/stringList" },
+            "regulated": {
+              "type": "object",
+              "properties": {
+                "domain": { "type": "string" },
+                "approvedClaims": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": { "type": "string" },
+                      "ingredient": { "type": "string" },
+                      "wording": { "type": "string" },
+                      "conditions": { "type": "string" },
+                      "registerRef": { "type": "string" },
+                      "status": { "$ref": "#/$defs/factStatus" },
+                      "source": { "$ref": "#/$defs/source" }
+                    }
+                  }
+                },
+                "mentions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "text": { "type": "string" },
+                      "quote": { "$ref": "#/$defs/quote" },
+                      "meetingId": { "type": "string" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "products": {
+          "type": "object",
+          "properties": {
+            "catalogs": { "type": "array", "items": { "type": "object" } },
+            "focusProductId": { "type": ["string", "null"] },
+            "focusProduct": { "type": "string" },
+            "productFacts": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "text": { "type": "string" },
+                  "product": { "type": "string" },
+                  "quote": { "$ref": "#/$defs/quote" },
+                  "meetingId": { "type": "string" }
+                }
+              }
+            },
+            "salesStatus": { "type": "string" }
+          }
+        },
+        "shop": {
+          "type": "object",
+          "properties": {
+            "shipping": { "type": "string" },
+            "returns": { "type": "string" }
+          }
+        },
+        "timeline": {
+          "type": "object",
+          "properties": {
+            "targetLaunchAt": { "$ref": "#/$defs/dateOrEmpty" }
+          }
+        },
+        "content": {
+          "type": "object",
+          "properties": {
+            "density": { "type": "string" },
+            "structure": { "type": "string" },
+            "pagesRequested": { "$ref": "#/$defs/stringList" },
+            "pagesExcluded": { "$ref": "#/$defs/stringList" },
+            "keepAsIs": { "$ref": "#/$defs/stringList" },
+            "mediaPlan": { "type": "string" },
+            "reuseOldSite": {
+              "type": "object",
+              "properties": {
+                "url": { "type": "string" },
+                "quote": { "$ref": "#/$defs/quote" }
+              }
+            }
+          }
+        },
+        "brand": {
+          "type": "object",
+          "properties": {
+            "fonts": { "$ref": "#/$defs/stringList" },
+            "colors": { "$ref": "#/$defs/stringList" },
+            "textLogo": {
+              "type": "object",
+              "properties": {
+                "case": { "enum": ["upper", "lower", "title", "as-is"] },
+                "weight": { "enum": ["light", "regular", "medium", "semibold", "bold", "black"] },
+                "letterSpacing": { "enum": ["none", "tight", "normal", "wide", "wider"] }
+              }
+            }
+          }
+        },
+        "previewFeedback": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "text": { "type": "string" },
+              "quote": { "$ref": "#/$defs/quote" },
+              "meetingId": { "type": "string" }
+            }
+          }
+        },
+        "media": {
+          "type": "object",
+          "properties": {
+            "manifest": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "id": { "type": "string" },
+                  "bucket": { "type": "string" },
+                  "fileName": { "type": "string" },
+                  "mime": { "type": "string" },
+                  "bytes": { "type": "integer", "minimum": 0 },
+                  "sha256": { "type": "string" },
+                  "url": { "type": "string" },
+                  "source": { "type": "string" },
+                  "rightsConfirmed": { "type": "boolean" },
+                  "credit": { "type": "string" },
+                  "productId": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "directive": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^dir-" },
+        "kind": { "enum": ["change", "add", "remove", "keep"] },
+        "target": {
+          "type": "object",
+          "properties": {
+            "scope": { "enum": ["site", "page", "section", "element"] },
+            "area": { "type": "string" },
+            "route": { "type": ["string", "null"] },
+            "pageKind": { "type": ["string", "null"] },
+            "sectionKind": { "type": ["string", "null"] }
+          }
+        },
+        "ask": { "type": "string" },
+        "quote": { "$ref": "#/$defs/quote" },
+        "meetingId": { "type": "string" },
+        "source": { "enum": ["sales", "demo", "workshop", "iteration", "admin"] },
+        "speaker": { "type": "string" },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "priority": { "enum": ["must", "should", "could"] },
+        "status": { "enum": ["open", "accepted", "rejected", "done", "superseded"] },
+        "supersededBy": { "type": "string" },
+        "reviewedBy": { "type": "string" },
+        "reviewedAt": { "$ref": "#/$defs/timeOrEmpty" },
+        "appliedInJobs": { "$ref": "#/$defs/stringList" }
+      }
+    },
+    "iteration": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "pattern": "^it-" },
+        "area": { "type": "string" },
+        "route": { "type": ["string", "null"] },
+        "ask": { "type": "string" },
+        "keepAsIs": { "type": "boolean" },
+        "quote": { "$ref": "#/$defs/quote" },
+        "meetingId": { "type": "string" },
+        "speaker": { "type": "string" },
+        "status": { "enum": ["open", "accepted", "rejected", "done", "superseded"] },
+        "supersededBy": { "type": "string" }
+      }
+    },
+    "promise": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "featureKey": { "type": "string" },
+        "text": { "type": "string" },
+        "quote": { "$ref": "#/$defs/quote" },
+        "meetingId": { "type": "string" },
+        "speaker": { "type": "string" },
+        "availability": { "enum": ["available", "partial", "missing", "unknown"] }
+      }
+    },
+    "followUp": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "dueAt": { "type": "string" },
+        "who": { "type": "string" },
+        "channel": { "type": "string" },
+        "presetKey": { "type": "string" },
+        "text": { "type": "string" },
+        "quote": { "$ref": "#/$defs/quote" },
+        "meetingId": { "type": "string" },
+        "confidence": { "$ref": "#/$defs/confidence" }
+      }
+    },
+    "quotedNote": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "text": { "type": "string" },
+        "quote": { "$ref": "#/$defs/quote" },
+        "meetingId": { "type": "string" },
+        "speaker": { "type": "string" }
+      }
+    },
+    "request": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "kind": { "enum": ["consent", "contact-info"] },
+        "text": { "type": "string" },
+        "quote": { "$ref": "#/$defs/quote" },
+        "meetingId": { "type": "string" },
+        "speaker": { "type": "string" }
+      }
+    },
+    "projectItem": {
+      "anyOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "properties": {
+            "id": { "type": "string" },
+            "category": { "type": "string" },
+            "title": { "type": "string" },
+            "detail": { "type": "string" },
+            "done": { "type": "boolean" }
+          }
+        }
+      ]
+    },
+    "transcriptRef": {
+      "type": "object",
+      "properties": {
+        "meetingId": { "type": "string" },
+        "purpose": { "$ref": "#/$defs/purpose" },
+        "startedAt": { "$ref": "#/$defs/timeOrEmpty" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "chars": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

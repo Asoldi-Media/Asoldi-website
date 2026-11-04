@@ -151,6 +151,18 @@ recording, erase request, payment not connected) are added by the batch that shi
 - No due time: `POST /api/admin/sales/<clientId>/workshop/held {"startedAt": "...", "endedAt": "..."}`. A workshop that ended more than about a day ago gets no due time (`reason: 'stale'`); that is intended.
 - The desk kind `post-workshop` sends at once only when the post-workshop mail is auto for the client; while the gate is in shadow it records a shadow mail, and off or paused it answers 409. A sent mail is sent again only with `{"force": true}`.
 
+---
+
+## Delivery brief missing or stale
+
+**Symptom.** The developer board shows no brief for a signed client, or the brief misses a recent meeting.
+
+**Check.** `GET /api/admin/automation-settings`: `brief.enabled` must be true (a 404 `{code:'brief-disabled'}` from the brief routes means it is off). `GET /api/admin/development/<id>/brief/versions` lists the stored versions. In `<dataDir>/delivery-briefs/<id>/state.json`, `pendingSince` shows a rebuild waiting out its 10-minute debounce, `partial: true` a rebuild that ran out of time or met provider errors (`lastErrors`), `retryAt` when a failed chunk may be asked again (`chunkFailures` holds the count per chunk), `failureRetryAt` the backoff after a rebuild that failed outright, and `builtInputHash` the inputs of the newest version. `stats.chunks.gaps` in the brief counts chunks the model could not answer. A meeting that is missing although it is linked may still be live captions: its stored Fireflies copy is live or partial without a final summary, and it joins on the first rebuild after the final copy arrives. No media in the brief means the media switch (`media.signedUrls`) is off or the build has no media manifest.
+
+**Fix.** Wait for the debounce or the backoff, or `POST /api/admin/development/<id>/brief/rebuild` with `{"wait":true}` (it does not wait for chunk backoffs). A 409 `brief-busy` means another rebuild of the same client is running; try again when it is done. A partial rebuild resumes from its cached chunks; provider errors need the LLM provider back (`GET /api/admin/ai/status`). Gaps (refusals, output limits, broken answers, or 6 provider failures in a row; safe mode, a switched-off facade or the spend guard never make gaps) stay until the prompt changes; once the cause is fixed, ask again with `{"wait":true,"retryGaps":true}`. A brief never falls back to another provider for transcripts. A 410 `brief-erased` (or the loop status `erased`) means a privacy erase removed the client's brief; `<dataDir>/delivery-briefs/.erased/<id>.json` says when, and no brief is built for that client again. A privacy erase whose brief row answers with an error could not write that marker; the folder was deleted anyway, but a rebuild that was running could write it again, so run the erase again.
+
+---
+
 ## Blocking codes
 
 What each code means and how to clear it. Jobs and the board arrive in later batches; the codes are fixed now (`BLOCKING_CODES` in the vocabulary).

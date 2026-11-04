@@ -1,0 +1,43 @@
+{
+  "schema": "asoldi.delivery-brief/1",
+  "version": 2,
+  "hash": "sha256:4fb4c42f04356cf73e534a81b14e3e2c259279dc902556b215f1c8a99b470e98",
+  "generatedAt": "2026-10-23T09:00:00.000Z",
+  "salesClientId": "fixture-dual",
+  "inputs": {
+    "meetings": [ { "meetingId": "fixture-dual-sales", "purpose": "sales", "sha256": "d3de46abe3767a3af70bfade8de670f21e07f4b101b043c105592735193a649c" } ],
+    "offerHash": "offer-dual",
+    "reviewsRevision": 0,
+    "promptHash": "prompt-1"
+  },
+  "sitePlan": null,
+  "offer": {
+    "id": "offer-fixture-dual",
+    "status": "sent",
+    "acceptedAt": "",
+    "title": "To alternativer",
+    "includes": ["Nettside", "Nettbutikk"],
+    "contractSummary": "Alternativ A: Standard. Alternativ B: Nettbutikk.",
+    "alternatives": [
+      { "index": 0, "tierId": "tier-1-standard", "title": "Standard", "chosen": false },
+      { "index": 1, "tierId": "tier-3-ecommerce", "title": "Nettbutikk", "chosen": false }
+    ],
+    "clientIntent": { "headline": "Usikker på om nettbutikk trengs nå.", "wants": ["Starte enkelt"] }
+  },
+  "facts": {
+    "schema": "asoldi.brief.facts/1",
+    "language": "no",
+    "identity": { "brandName": "Eksempel Keramikk", "legalName": "", "orgNumber": "" },
+    "contact": { "email": "hei@example.com", "scope": "contact-person", "phone": "", "town": "Eksempelby" },
+    "positioning": { "businessWhat": "Håndlaget keramikk.", "services": [], "differentiators": [] }
+  },
+  "factSources": {},
+  "directives": [],
+  "iterations": [],
+  "transcripts": [ { "meetingId": "fixture-dual-sales", "purpose": "sales", "startedAt": "2026-10-10T10:00:00.000Z", "sha256": "d3de46abe3767a3af70bfade8de670f21e07f4b101b043c105592735193a649c", "chars": 12000 } ],
+  "promises": [],
+  "unbuiltPromises": [],
+  "openQuestions": [ { "id": "oq-1", "text": "Skal nettbutikken med fra start?", "quote": "jeg vet ikke om vi trenger butikk ennå", "meetingId": "fixture-dual-sales", "speaker": "Kunde" } ],
+  "requests": [ { "id": "rq-1", "kind": "contact-info", "text": "Vil ha kontaktinfo på e-post", "quote": "send meg det på mail", "meetingId": "fixture-dual-sales", "speaker": "Kunde" } ],
+  "delivery": { "stage": "", "targetLaunchAt": "" }
+}

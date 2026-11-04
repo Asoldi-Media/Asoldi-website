@@ -512,6 +512,9 @@ export const SETTINGS_KEYS = Object.freeze({
   // gate: the delivery gate switch (off by default; shadow only for now)
   gateEnabled: 'gate.enabled',
   gateMode: 'gate.mode',
+  // brief
+  briefEnabled: 'brief.enabled',
+  briefMode: 'brief.mode',
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);
@@ -528,6 +531,8 @@ export const RELEASE_GATED_SWITCHES = Object.freeze([
   'development.autoQueue',
   'publish.staging',
   'publish.production',
+  // brief
+  'brief',
 ]);
 
 // ---------------------------------------------------------------- tier matrix and site plan (v2)

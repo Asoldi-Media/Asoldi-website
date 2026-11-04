@@ -1,0 +1,54 @@
+{
+  "schema": "asoldi.delivery-brief/1",
+  "version": 1,
+  "hash": "sha256:f6441161b5da9315df77b8a7908bb2ef396e39ae545ae8cf728e8fb74d17294c",
+  "generatedAt": "2026-10-21T09:00:00.000Z",
+  "salesClientId": "fixture-tier2",
+  "inputs": {
+    "meetings": [ { "meetingId": "fixture-tier2-sales", "purpose": "sales", "sha256": "545c960242baee4b6df8d465924b437a953a4a8bb6d102180dbfac5d5cd3afd7" } ],
+    "offerHash": "offer-tier2",
+    "bankRevision": "bank-2",
+    "reviewsRevision": 0,
+    "seoRevision": 2,
+    "promptHash": "prompt-1"
+  },
+  "sitePlan": { "tierId": "tier-2-seo", "services": ["site", "changes", "blog", "seo", "social", "email", "backlinks"], "pages": 7, "billing": "month", "signedAt": "2026-10-02T10:00:00.000Z" },
+  "offer": { "id": "offer-fixture-tier2", "status": "sent", "acceptedAt": "2026-10-02T10:00:00.000Z", "title": "Nettside – SEO", "includes": ["Nettside", "Søkeordarbeid", "Blogginnlegg"], "contractSummary": "SEO-pakke med søkeordarbeid.", "clientIntent": { "headline": "Bli funnet på Google.", "wants": ["Flere henvendelser fra nettsiden"] } },
+  "facts": {
+    "schema": "asoldi.brief.facts/1",
+    "language": "no",
+    "identity": { "brandName": "Eksempel Bad", "legalName": "Eksempel Bad AS", "orgNumber": "012345671" },
+    "contact": { "email": "kontakt@example.com", "scope": "public", "phone": "+47 0000 0202", "address": "", "town": "Eksempelby", "addressVisibility": "town-only", "onlineOnly": false, "serviceArea": "Hele fylket" },
+    "positioning": { "businessWhat": "Flislegging og våtrom.", "services": ["Baderom", "Flislegging"], "audience": "Huseiere", "differentiators": ["Fast pris"], "priorities": [], "brandCues": [], "toneOfVoice": "Rett fram", "story": "" },
+    "claims": { "stats": [], "regulated": { "domain": "", "approvedClaims": [] } },
+    "timeline": { "targetLaunchAt": "" },
+    "content": { "density": "standard", "structure": "multi-page", "pagesRequested": ["Referanser"], "pagesExcluded": [], "keepAsIs": ["Tjenestelisten"], "mediaPlan": "Egne bilder fra jobber" }
+  },
+  "factSources": {
+    "positioning.differentiators[0]": { "kind": "transcript", "quote": "vi gir alltid fast pris", "meetingId": "fixture-tier2-sales", "purpose": "sales", "speaker": "Kunde", "confidence": 0.8, "status": "accepted", "quoteVerified": true }
+  },
+  "directives": [
+    {
+      "id": "dir-1a2b3c4d5e6f",
+      "kind": "keep",
+      "target": { "scope": "section", "area": "services", "route": "/", "pageKind": "home", "sectionKind": "services" },
+      "ask": "Behold tjenestelisten",
+      "quote": "behold tjenestelisten, den er fin",
+      "meetingId": "fixture-tier2-sales",
+      "source": "sales",
+      "speaker": "Kunde",
+      "confidence": 0.9,
+      "priority": "must",
+      "status": "accepted",
+      "reviewedBy": "admin",
+      "appliedInJobs": []
+    }
+  ],
+  "iterations": [],
+  "transcripts": [ { "meetingId": "fixture-tier2-sales", "purpose": "sales", "startedAt": "2026-09-30T10:00:00.000Z", "sha256": "545c960242baee4b6df8d465924b437a953a4a8bb6d102180dbfac5d5cd3afd7", "chars": 30000 } ],
+  "promises": [ { "id": "pr-2", "featureKey": "seo.keywords", "text": "Vi jobber med søkeord hver måned", "quote": "søkeordarbeid hver måned", "meetingId": "fixture-tier2-sales", "availability": "unknown" } ],
+  "unbuiltPromises": [],
+  "followUps": [ { "id": "fu-1", "dueAt": "2026-10-26T09:00:00+02:00", "who": "Selger", "channel": "ring", "presetKey": "checkIn", "quote": "ring meg på mandag", "confidence": 0.8 } ],
+  "seo": { "agreedKeywords": [ { "keyword": "flislegger eksempelby", "status": "approved", "source": "transcript", "quote": "flislegger i byen" } ] },
+  "delivery": { "stage": "gathering", "targetLaunchAt": "" }
+}

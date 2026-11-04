@@ -1,0 +1,94 @@
+{
+  "schema": "asoldi.delivery-brief/1",
+  "version": 3,
+  "hash": "sha256:06ada57c26aa5cf429e9f2c0a99e3e4a42daecd45fc4c955d7c1399ab4227ae8",
+  "generatedAt": "2026-10-20T09:00:00.000Z",
+  "salesClientId": "fixture-tier1",
+  "inputs": {
+    "meetings": [
+      { "meetingId": "fixture-tier1-sales", "purpose": "sales", "sha256": "e0ef56d6eb603d9ffe87e74c28b8210b0ea93839e2ea4fb64f1fc2c66e95e391" },
+      { "meetingId": "fixture-tier1-workshop", "purpose": "workshop", "sha256": "39610bca9443fdb6ae772d781954447c0bb23c05bcb2f08e72d6cc5f70209726" }
+    ],
+    "offerHash": "offer-tier1",
+    "bankRevision": "bank-1",
+    "gateHash": "",
+    "reviewsRevision": 1,
+    "seoRevision": 0,
+    "promptHash": "prompt-1"
+  },
+  "sitePlan": { "tierId": "tier-1-standard", "services": ["site", "changes", "blog"], "pages": 5, "billing": "month", "signedAt": "2026-10-01T10:00:00.000Z" },
+  "offer": {
+    "id": "offer-fixture-tier1",
+    "status": "sent",
+    "acceptedAt": "2026-10-01T10:00:00.000Z",
+    "title": "Nettside – Standard",
+    "includes": ["Nettside", "Hosting", "Endringer"],
+    "contractSummary": "Nettside med fem sider og fire endringer i måneden.",
+    "clientIntent": { "headline": "En enkel side med timebestilling på telefon.", "wants": ["Vise behandlingene", "Vise åpningstider"] }
+  },
+  "facts": {
+    "schema": "asoldi.brief.facts/1",
+    "language": "no",
+    "identity": { "brandName": "Eksempel Frisør", "legalName": "Eksempel Frisør AS", "orgNumber": "012345670", "source": { "kind": "client" } },
+    "logo": { "status": "missing", "mediaId": null, "wordmarkSpec": { "text": "Eksempel", "case": "upper", "weight": 700, "letterSpacingEm": 0.12, "source": { "kind": "transcript", "meeting": "workshop", "quote": "bare navnet med store bokstaver" } } },
+    "contact": { "email": "post@example.com", "scope": "public", "phone": "+47 0000 0101", "address": "Eksempelgata 1", "town": "Eksempelby", "addressVisibility": "full", "onlineOnly": false },
+    "socials": { "instagram": "https://instagram.com/example" },
+    "importantLinks": [],
+    "positioning": {
+      "businessWhat": "Frisørsalong for dame og herre.",
+      "services": ["Klipp", "Farge", "Skjeggstell"],
+      "audience": "Folk i nærområdet",
+      "differentiators": ["Drop-in hver lørdag"],
+      "priorities": ["quality-over-price"],
+      "brandCues": ["warm"],
+      "toneOfVoice": "Vennlig og enkel",
+      "story": ""
+    },
+    "claims": { "stats": [ { "id": "s1", "value": 12, "unit": "years", "label": "i bransjen", "status": "proposed", "quoteVerified": true, "source": { "kind": "transcript", "meeting": "sales", "quote": "vi har holdt på i 12 år" } } ], "regulated": { "domain": "", "approvedClaims": [] } },
+    "products": { "catalogs": [], "focusProductId": null, "productFacts": [], "salesStatus": "" },
+    "shop": { "shipping": "", "returns": "" },
+    "timeline": { "targetLaunchAt": "2026-11-15" },
+    "content": { "density": "concise", "structure": "multi-page", "pagesRequested": ["Behandlinger", "Kontakt"], "pagesExcluded": [], "keepAsIs": [], "mediaPlan": "", "reuseOldSite": { "url": "", "quote": "" } },
+    "previewFeedback": [],
+    "media": { "manifest": [] }
+  },
+  "factSources": {
+    "claims.stats[0]": { "kind": "transcript", "quote": "vi har holdt på i 12 år", "meetingId": "fixture-tier1-sales", "purpose": "sales", "speaker": "Kunde", "confidence": 0.9, "status": "proposed", "quoteVerified": true },
+    "contact.phone": { "kind": "client", "status": "client-confirmed" }
+  },
+  "directives": [
+    {
+      "id": "dir-0a1b2c3d4e5f",
+      "kind": "change",
+      "target": { "scope": "section", "area": "chrome.header", "route": null, "pageKind": null, "sectionKind": "header" },
+      "ask": "Telefonnummeret skal stå øverst på siden",
+      "quote": "nummeret må stå helt øverst",
+      "meetingId": "fixture-tier1-workshop",
+      "source": "workshop",
+      "speaker": "Kunde",
+      "confidence": 0.85,
+      "priority": "must",
+      "status": "open",
+      "reviewedBy": "",
+      "appliedInJobs": []
+    }
+  ],
+  "iterations": [],
+  "clientApproved": false,
+  "changeRequests": [],
+  "todos": [ { "id": "todo-1", "category": "Sider og innhold", "title": "Skriv behandlingsliste", "detail": "", "done": false } ],
+  "openDecisions": [],
+  "outOfScope": [],
+  "transcripts": [
+    { "meetingId": "fixture-tier1-sales", "purpose": "sales", "startedAt": "2026-09-28T10:00:00.000Z", "sha256": "e0ef56d6eb603d9ffe87e74c28b8210b0ea93839e2ea4fb64f1fc2c66e95e391", "chars": 18000 },
+    { "meetingId": "fixture-tier1-workshop", "purpose": "workshop", "startedAt": "2026-10-05T10:00:00.000Z", "sha256": "39610bca9443fdb6ae772d781954447c0bb23c05bcb2f08e72d6cc5f70209726", "chars": 24000 }
+  ],
+  "promises": [ { "id": "pr-1", "featureKey": "blog.posts", "text": "Blogg er med i pakken", "quote": "bloggen er inkludert", "meetingId": "fixture-tier1-sales", "availability": "unknown" } ],
+  "unbuiltPromises": [],
+  "followUps": [],
+  "seo": { "agreedKeywords": [] },
+  "cmsSetup": null,
+  "gate": { "devComplete": false, "missingDev": ["logo"], "lines": [] },
+  "delivery": { "stage": "gathering", "targetLaunchAt": "2026-11-15" },
+  "stats": { "extractedItems": 14, "droppedUnverifiedQuotes": 1, "costUsd": 0.02, "route": "claude:claude-haiku-5-5:medium" }
+}
