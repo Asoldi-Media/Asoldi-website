@@ -33,6 +33,8 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import {
   countFindingsByPath,
+  decodeText,
+  encodeText,
   isProbablyBinary,
   shrinkRatchet,
   scanLines,
@@ -472,7 +474,10 @@ export function run({ root, write = false, words = null } = {}) {
       continue;
     }
     if (isProbablyBinary(buffer)) continue;
-    const text = buffer.toString('utf8');
+    // UTF-8, or other text (Latin-1) byte for byte, so a rewrite changes only the words it replaces.
+    const read = decodeText(buffer);
+    if (!read) continue;
+    const text = read.text;
     if (!QUICK.test(text)) continue;
     if (skip.some((re) => re.test(path))) {
       const findings = scanLines(path, splitLines(text), ctx);
@@ -483,8 +488,16 @@ export function run({ root, write = false, words = null } = {}) {
     const result = neutralizeFile(path, text, { words });
     if (result.error) errors.push({ path, error: result.error });
     if (result.count && result.text !== text) {
-      changed.push({ path, count: result.count });
-      if (write) writeFileSync(abs, result.text);
+      let bytes = null;
+      try {
+        bytes = encodeText(result.text, read);
+      } catch (error) {
+        errors.push({ path, error: `${error.message}; left as it was` });
+      }
+      if (bytes) {
+        changed.push({ path, count: result.count });
+        if (write) writeFileSync(abs, bytes);
+      }
     }
     const findings = scanLines(path, splitLines(result.text), ctx);
     left.push(...findings);

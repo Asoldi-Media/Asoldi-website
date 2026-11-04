@@ -718,6 +718,38 @@ test('--redact writes a UTF-16 file back as UTF-16 and lists the binary files an
   assert.equal((await runScan(['--redact', dir, '--apply', '--allow-skipped'], { cwd, env })).code, 0);
 });
 
+test('--redact keeps every other byte of a Latin-1 or Windows-1252 file and changes only the value it replaces', async () => {
+  const cwd = makeRepo();
+  const dir = tempDir('asoldi-redact-latin1-');
+  const backups = tempDir('asoldi-redact-latin1-b-');
+  // 'Bjørn Ærlig' and a euro sign in single-byte encodings: 0xF8, 0xC6 and 0x80 are not UTF-8.
+  const latin1 = (text) => Buffer.from(text, 'latin1');
+  const original = Buffer.concat([latin1('Bjørn Ærlig;'), Buffer.from([0x80]), latin1(`;key ${FAKE_ANTHROPIC}\r\nsiste linje å\r\n`)]);
+  writeFileSync(join(dir, 'export.csv'), original);
+  const env = { ...NO_ENV(cwd), ASOLDI_REDACT_BACKUPS: backups };
+
+  const ws = await runScan(['--workspace', dir, '--profile', 'private'], { cwd, env });
+  assert.equal(ws.code, 1, ws.out);
+  assert.match(ws.out, /^export\.csv:1 {2}anthropic-key$/m);
+  assert.doesNotMatch(ws.out, /not scanned/);
+
+  const applied = await runScan(['--redact', dir, '--apply'], { cwd, env });
+  assert.equal(applied.code, 0, applied.out);
+  assert.match(applied.out, /replaced 1 value\(s\) in 1 file\(s\)/);
+  const expected = Buffer.concat([latin1('Bjørn Ærlig;'), Buffer.from([0x80]), latin1(';key <redacted:anthropic-key>\r\nsiste linje å\r\n')]);
+  const after = readFileSync(join(dir, 'export.csv'));
+  assert.equal(after.includes(Buffer.from([0xef, 0xbf, 0xbd])), false, 'no replacement character is written');
+  assert.deepEqual(after, expected, 'only the key changed');
+  const [folder] = readdirSync(backups);
+  assert.deepEqual(readFileSync(join(backups, folder, 'export.csv.bak-redact')), original);
+
+  const read = lib.decodeText(original);
+  assert.equal(read.encoding, 'latin1');
+  assert.deepEqual(lib.encodeText(read.text, read), original, 'Latin-1 text reads and writes byte for byte');
+  assert.throws(() => lib.encodeText('€', read), /Latin-1 cannot write/);
+  assert.equal(lib.decodeText(Buffer.from('Bjørn', 'utf8')).encoding, 'utf8', 'valid UTF-8 stays UTF-8');
+});
+
 // ------------------------------------------------------------------------- ratchet
 
 test('offender lists: a new file or a higher count fails, a lower count passes, and --shrink only lowers', async () => {
@@ -1050,6 +1082,34 @@ test('the client-data cleanup never gives a new company a word an earlier cleanu
   assert.notEqual(moved[1], word, 'two companies never share one .test domain');
   assert.ok(scrub.NEUTRAL_WORDS.includes(moved[1]));
   assert.equal(readFileSync(join(dir, 'scripts/old.test.mjs'), 'utf8'), `const a = 'post@${word}.test';\n`);
+});
+
+test('both cleanups keep every byte of a Latin-1 file they do not replace', () => {
+  const latin1 = (text) => Buffer.from(text, 'latin1');
+  const replacement = Buffer.from([0xef, 0xbf, 0xbd]);
+  const dir = treeWithProfile();
+  write(dir, '.secret-scan-allowlist.json', JSON.stringify({}));
+  write(dir, 'scripts/security/pii.json', JSON.stringify({ kind: 'pii', files: { 'scripts/kunde.test.mjs': 1 } }));
+  write(dir, 'scripts/security/plan.json', JSON.stringify({ kind: 'plan', files: { 'docs/notat.md': 1 } }));
+  const doc = `Notat for Bjørn: ${id(8, 56)} lagret i æreskål.\n`;
+  mkdirSync(join(dir, 'docs'), { recursive: true });
+  writeFileSync(join(dir, 'docs', 'notat.md'), latin1(doc));
+  const head = "// Kunde Bjørn Ærlig\nconst a = '";
+  const tail = "';\n";
+  writeFileSync(join(dir, 'scripts', 'kunde.test.mjs'), latin1(`${head}ola.nordmann@kunde-firma.no${tail}`));
+
+  assert.equal(quiet(() => codemod.main(['--write', '--root', dir], { env: { PLAN_WORDS_FILE: join(dir, 'none.json') } })), 0);
+  const docAfter = readFileSync(join(dir, 'docs', 'notat.md'));
+  assert.equal(docAfter.includes(replacement), false, 'no replacement character is written');
+  assert.deepEqual(docAfter, latin1(codemod.neutralizeFile('docs/notat.md', doc).text), 'only the planning word changed');
+  assert.equal(docAfter.toString('latin1').includes(id(8, 56)), false);
+
+  quiet(() => scrub.run({ root: dir, write: true }));
+  const testAfter = readFileSync(join(dir, 'scripts', 'kunde.test.mjs'));
+  assert.equal(testAfter.includes(replacement), false, 'no replacement character is written');
+  const text = testAfter.toString('latin1');
+  assert.ok(text.startsWith(head) && text.endsWith(tail), 'the bytes around the address are as they were');
+  assert.equal(text.includes('kunde-firma.no'), false, 'the address is replaced');
 });
 // ------------------------------------------------------------------------- this repo, end to end
 
