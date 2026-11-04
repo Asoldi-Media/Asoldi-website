@@ -54,6 +54,10 @@ function freePort() {
   });
 }
 
+// A merged hub can take well over a minute to start when other test processes share the machine;
+// BRIEF_BOOT_WAIT_MS (optional) changes how long the server start may take.
+const BOOT_WAIT_MS = Number(process.env.BRIEF_BOOT_WAIT_MS) > 0 ? Number(process.env.BRIEF_BOOT_WAIT_MS) : 240_000;
+
 async function waitFor(check, { timeoutMs = 90_000, stepMs = 150, what = 'condition' } = {}) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -78,7 +82,7 @@ function seed(dataDir) {
   }]));
 }
 
-test('real hub: brief routes are dark by default, then shadow after the switch is turned on', { timeout: 240_000 }, async (t) => {
+test('real hub: brief routes are dark by default, then shadow after the switch is turned on', { timeout: BOOT_WAIT_MS + 180_000 }, async (t) => {
   const dataDir = mkdtempSync(join(tmpdir(), 'asoldi-brief-boot-'));
   const home = mkdtempSync(join(tmpdir(), 'asoldi-brief-boot-home-'));
   const runDir = mkdtempSync(join(tmpdir(), 'asoldi-brief-boot-cwd-'));
@@ -94,7 +98,7 @@ test('real hub: brief routes are dark by default, then shadow after the switch i
     for (const dir of [dataDir, home, runDir]) rmSync(dir, { recursive: true, force: true });
   });
   try {
-    await waitFor(() => logs.includes('Server running on port'), { what: 'server start' });
+    await waitFor(() => logs.includes('Server running on port'), { timeoutMs: BOOT_WAIT_MS, what: 'server start' });
     const passwordFile = join(dataDir, 'secrets', 'initial-admin-password');
     await waitFor(() => existsSync(passwordFile) && existsSync(join(dataDir, 'admin.json')), { what: 'initial admin' });
     const base = `http://127.0.0.1:${port}`;

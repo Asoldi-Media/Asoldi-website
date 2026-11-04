@@ -101,6 +101,9 @@ function freePort() {
   });
 }
 
+// BRIEF_BOOT_WAIT_MS (optional) changes how long each hub start may take.
+const BOOT_WAIT_MS = Number(process.env.BRIEF_BOOT_WAIT_MS) > 0 ? Number(process.env.BRIEF_BOOT_WAIT_MS) : 240_000;
+
 async function waitFor(check, { timeoutMs = 120_000, stepMs = 150, what = 'condition' } = {}) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -136,7 +139,7 @@ async function runTree(codeRoot, label) {
   child.stderr.on('data', (chunk) => { logs += chunk; });
   const responses = [];
   try {
-    await waitFor(() => logs.includes('Server running on port'), { what: `${label} start` });
+    await waitFor(() => logs.includes('Server running on port'), { timeoutMs: BOOT_WAIT_MS, what: `${label} start` });
     const passwordFile = join(dataDir, 'secrets', 'initial-admin-password');
     await waitFor(() => existsSync(passwordFile) && existsSync(join(dataDir, 'admin.json')), { what: `${label} admin` });
     const base = `http://127.0.0.1:${port}`;
@@ -253,7 +256,7 @@ function snapshot(dataDir) {
   return files;
 }
 
-test(`with the brief switch off, answers and data writes match ${ref || 'an earlier commit (set DARK_COMPARE_REF)'}`, { skip: ref ? false : 'set DARK_COMPARE_REF=<git ref> to compare with that commit', timeout: 600_000 }, async () => {
+test(`with the brief switch off, answers and data writes match ${ref || 'an earlier commit (set DARK_COMPARE_REF)'}`, { skip: ref ? false : 'set DARK_COMPARE_REF=<git ref> to compare with that commit', timeout: Math.max(600_000, 2 * BOOT_WAIT_MS + 240_000) }, async () => {
   const base = treeForRef(ref);
   let baseRun = null;
   let ownRun = null;
