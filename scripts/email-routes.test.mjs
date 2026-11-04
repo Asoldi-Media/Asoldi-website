@@ -160,6 +160,8 @@ test('off (the default): every route answers 404 disabled, site-config has no em
   const wake = await call('POST', '/api/admin/email/sites/site_shop/wake', admin, {});
   assert.equal(wake.status, 404);
   assert.equal(wake.data.code, 'disabled');
+  const anonymous = await call('POST', '/api/admin/email/sites/site_shop/wake', {}, {});
+  assert.deepEqual([anonymous.status, anonymous.data.code], [404, 'disabled'], 'off, the wake route looks absent even without a sign-in');
   for (const [name, text] of Object.entries(siteConfigs())) {
     assert.equal(text, darkConfigs[name], `${name} is unchanged`);
     assert.equal(Object.hasOwn(JSON.parse(text), 'email'), false, name);
