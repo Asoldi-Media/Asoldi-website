@@ -593,12 +593,15 @@ node scripts/security/secret-scan.mjs --redact <dir> --apply    # write; origina
 ```
 
 `--workspace` and `--redact` read UTF-8 and UTF-16 text (PowerShell's `>` writes UTF-16 with a
-byte-order mark; a redacted UTF-16 file is written back as UTF-16). They print every file or
-folder they did not read as `<path>  not scanned: <reason>`: binary files or other encodings,
-files over the size limit (64 MiB, `--max-file-bytes N`), symbolic links and junctions (never
-followed; scan the target on its own), `.git` (run `--history` in that checkout and look at its
-`.git/config`), `node_modules`, folders that cannot be read, and for `--redact` env files and old
-`.bak-redact` copies left in the folder. When something was not read and nothing was found, the
+byte-order mark; a redacted UTF-16 file is written back as UTF-16). Other text without NUL bytes,
+such as a Windows-1252 or Latin-1 export, is read byte for byte, so a redaction changes only the
+values it replaces and every `æ`, `ø` and `å` stays as it was (the cleanup scripts above read and
+write files the same way). They print every file or folder they did not read as
+`<path>  not scanned: <reason>`: binary files or other encodings, files over the size limit
+(64 MiB, `--max-file-bytes N`), symbolic links and junctions (never followed; scan the target
+on its own), `.git` (run `--history` in that checkout and look at its `.git/config`),
+`node_modules`, folders that cannot be read, and for `--redact` env files and old `.bak-redact`
+copies left in the folder. When something was not read and nothing was found, the
 exit status is 3, not 0: the folder is not proven clean. Check the listed paths by hand, then
 pass `--allow-skipped` to accept them. A folder that does not exist is an error.
 
