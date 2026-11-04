@@ -114,6 +114,13 @@ test('with media.signedUrls and media.rightsConfirm off every new route answers 
   }
   const post = await fetch(`${base}/api/client/media-rights`, { method: 'POST', headers: { authorization: 'Bearer client:u-mm', 'content-type': 'application/json' }, body: JSON.stringify({ url: '/client-media/u-mm/photo.jpg', confirmed: true }) });
   assert.equal(post.status, 404);
+  // Without a session too: the client routes answer as a route that does not exist, not 401.
+  const anonymous = await get('/api/client/media-rights');
+  assert.equal(anonymous.status, 404);
+  assert.equal((await anonymous.json()).code, 'disabled');
+  const anonymousPost = await fetch(`${base}/api/client/media-rights`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+  assert.equal(anonymousPost.status, 404);
+  assert.equal((await anonymousPost.json()).code, 'disabled');
   assert.equal(existsSync(join(DATA_DIR, 'secrets')), false, 'no signing key is created while off');
   assert.equal(existsSync(join(DATA_DIR, 'media-manifest')), false);
   assert.equal(existsSync(join(DATA_DIR, 'media-rights.json')), false);
