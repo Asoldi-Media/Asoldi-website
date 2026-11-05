@@ -447,3 +447,149 @@ test('the tokenizer: comments, bogus comments, end tags and text-only elements',
   assert.deepEqual(relay.scanMarkup('<!--[if mso]><noscript><xml></xml></noscript><![endif]-->').problems, [], 'refused elements inside comments are inert');
   assert.deepEqual(relay.scanMarkup('<noscript></noscript>').problems, [{ tag: 'noscript', reason: 'markup' }]);
 });
+
+const FOOTER_START = '<div style="margin-top:24px';
+
+/** What follows the footer in the sent html (the footer cut out), or null without a footer. */
+function afterFooter(html) {
+  const at = html.indexOf(FOOTER_START);
+  return at < 0 ? null : html.slice(at).replace(/^<div style="margin-top:24px[\s\S]*?<\/div>/, '');
+}
+
+test('the footer is added unless {{unsubscribeUrl}} is a visible link, and goes right before the real </body>', async () => {
+  const settings = settingsFor();
+  const cases = [
+    ['only in a comment', '<html><body><p>Kjøp nå</p><!-- {{unsubscribeUrl}} --></body></html>', true],
+    ['only in the title', '<html><head><title>{{unsubscribeUrl}}</title></head><body><p>Hei</p></body></html>', true],
+    ['a link in a display:none block', '<html><body><div style="display: none"><a href="{{unsubscribeUrl}}">Meld deg av</a></div><p>Hei</p></body></html>', true],
+    ['a link hidden from Outlook with mso-hide', '<html><body><p>Hei</p><a style="MSO-HIDE:ALL" href="{{unsubscribeUrl}}">x</a></body></html>', true],
+    ['a link in an element with the hidden attribute', '<html><body><span hidden><a href="{{unsubscribeUrl}}">x</a></span><p>Hei</p></body></html>', true],
+    ['a link inside an Outlook conditional comment only', '<html><body><!--[if mso]><a href="{{unsubscribeUrl}}">Meld deg av</a><![endif]--><p>Hei</p></body></html>', true],
+    ['link text but not a link', '<html><body><p>Meld deg av: {{unsubscribeUrl}}</p></body></html>', true],
+    ['a link inside a template element', '<html><body><template><a href="{{unsubscribeUrl}}">x</a></template><p>Hei</p></body></html>', true],
+    ['an early </body> inside an Outlook conditional comment', '<html><body><p>Hei</p><!--[if mso]></body><![endif]--><p>Mer tekst</p></body></html>', true],
+    ['a visible link', '<html><body><p>Hei</p><a href="{{unsubscribeUrl}}">Meld deg av</a></body></html>', false],
+    ['a visible link after a closed hidden preheader', '<html><body><div style="display:none;max-height:0">Forhåndstekst</div><a href="{{unsubscribeUrl}}">Meld deg av</a></body></html>', false],
+    ['a visible link in the non-Outlook branch', '<html><body><!--[if !mso]><!--><a href="{{unsubscribeUrl}}">Meld deg av</a><!--<![endif]--></body></html>', false],
+    ['a visible link after an unclosed head', '<html><head><title>Hei</title><body><a href="{{unsubscribeUrl}}">Meld deg av</a></body></html>', false],
+  ];
+  for (const [name, html, footer] of cases) {
+    const brevo = brevoStub();
+    const result = await relay.relaySend(SITES.shop, body({ html, text: 'Hei {{unsubscribeUrl}}' }), { now: NOW, emailKey: KEYS.site_shop, deps: { settings, brevo, log, quota: quotaFor(null, settings) } });
+    assert.equal(result.status, 200, `${name}: ${JSON.stringify(result.body)}`);
+    const out = brevo.calls[0].htmlContent;
+    assert.equal(out.includes('{{unsubscribeUrl}}'), false, `${name}: the placeholder is replaced`);
+    assert.equal(out.includes(FOOTER_START), footer, `${name}: footer ${footer ? 'added' : 'not added'}`);
+    if (footer) assert.equal(afterFooter(out), '</body></html>', `${name}: the footer sits right before the real </body>, outside every comment`);
+  }
+  assert.equal(relay.unsubscribeLinkVisible('<a href="{{unsubscribeUrl}}">x</a>'), true, 'a fragment without body or head');
+  assert.equal(relay.withFooterHtml('<p>Hei</p>', '<div>F</div>'), '<p>Hei</p><div>F</div>', 'without </body> the footer goes at the end');
+});
+
+test('nested URLs are found on the parsed URL: a backslash after the host, encoded slashes and protocol-relative values', async () => {
+  const ctx = { site: SITES.shop, settings: store.readEmailSettings() };
+  for (const href of [
+    'https://fjordbutikk.example.com\\https://evil.example.net',
+    'https://fjordbutikk.example.com/go?to=%2F%2Fevil.example.net',
+    'https://fjordbutikk.example.com/go?to=%252F%252Fevil.example.net',
+    'https://fjordbutikk.example.com/go?to=/\\evil.example.net',
+    'https://fjordbutikk.example.com/go?to=%5C%5Cevil.example.net',
+    'https://fjordbutikk.example.com/go?a=1&to=+%2F%2Fevil.example.net',
+    'https://fjordbutikk.example.com//evil.example.net/',
+    'https://fjordbutikk.example.com/#//evil.example.net',
+  ]) {
+    const verdict = relay.checkLinkUrl(href, ctx);
+    assert.deepEqual([verdict.ok, verdict.reason], [false, 'nested_url'], href);
+  }
+  for (const href of [
+    'https://fjordbutikk.example.com/kasse?c=1&ref=mail',
+    'https://fjordbutikk.example.com/sok?q=sko+str%2F42',
+    'https://fjordbutikk.example.com/a/b/#topp',
+    'https://fjordbutikk.example.com/?next=/kasse',
+  ]) assert.equal(relay.checkLinkUrl(href, ctx).ok, true, href);
+  const image = relay.checkImageUrl('https://cdn.example.net\\https://evil.example.net/p.png', ctx);
+  assert.deepEqual([image.ok, image.reason], [false, 'nested_url']);
+  const settings = settingsFor();
+  const brevo = brevoStub();
+  const result = await relay.relaySend(SITES.shop, body({ html: '<html><body><a href="https://fjordbutikk.example.com\\https://evil.example.net">x</a> <a href="{{unsubscribeUrl}}">x</a></body></html>' }), { now: NOW, emailKey: KEYS.site_shop, deps: { settings, brevo, log, quota: quotaFor(null, settings) } });
+  assert.deepEqual([result.status, result.body.code, result.body.reason], [422, 'link_not_allowed', 'nested_url']);
+  assert.equal(brevo.calls.length, 0);
+});
+
+test('a ref with control characters never carries a line break into the provider header or the log', async () => {
+  const settings = settingsFor();
+  const brevo = brevoStub();
+  const input = body({ ref: `int_crlf\r\nX-Other: 1${String.fromCharCode(0)}` });
+  const result = await relay.relaySend(SITES.shop, input, { now: NOW, emailKey: KEYS.site_shop, deps: { settings, brevo, log, quota: quotaFor(null, settings) } });
+  assert.equal(result.status, 200, JSON.stringify(result.body));
+  assert.equal(brevo.calls[0].headers.idempotencyKey, 'site_shop:cart-recovery:int_crlfX-Other: 1:1');
+  const lines = readdirSync(join(dataDir, 'email-log')).filter((f) => f.startsWith('messages-'))
+    .flatMap((f) => readFileSync(join(dataDir, 'email-log', f), 'utf8').split('\n').filter(Boolean)).map((l) => JSON.parse(l));
+  const row = lines.find((l) => l.id === result.body.messageId);
+  assert.equal(row.ref, 'int_crlfX-Other: 1');
+  assert.equal(/[\r\n\x00]/.test(row.dedupeKey), false);
+  const onlyControls = await relay.relaySend(SITES.shop, body({ ref: '\r\n' }), { now: NOW, emailKey: KEYS.site_shop, deps: { settings, brevo, log, quota: quotaFor(null, settings) } });
+  assert.deepEqual([onlyControls.status, onlyControls.body.code], [400, 'bad_ref']);
+});
+
+test('an error after the quota ticket was taken gives the ticket and the recipient count back', async () => {
+  const settings = settingsFor();
+  const mem = memoryLedgerStore();
+  const quota = createEmailQuota({ store: mem, settings: () => settings });
+  const brevo = brevoStub();
+  const broken = () => {
+    throw Object.assign(new Error('the unsubscribe key cannot be read'), { code: 'EACCES' });
+  };
+  const result = await relay.relaySend(SITES.shop, body({ to: { email: 'feil@example.com' } }), { now: NOW, emailKey: KEYS.site_shop, deps: { settings, brevo, log, quota, mintUnsubToken: broken } });
+  assert.deepEqual([result.status, result.body.code], [500, 'internal']);
+  assert.equal(brevo.calls.length, 0);
+  assert.equal(mem.peek().total, 0, 'the ticket was given back');
+  assert.deepEqual(mem.peek().byRecipient, {}, 'and the recipient count');
+  const retry = await relay.relaySend(SITES.shop, body({ to: { email: 'feil@example.com' } }), { now: NOW, emailKey: KEYS.site_shop, deps: { settings, brevo, log, quota } });
+  assert.equal(retry.status, 200, 'the next attempt sends');
+});
+
+test('the duplicate check holds across hub processes: a send another process has in progress is refused', async () => {
+  const { execFileSync } = await import('node:child_process');
+  const { writeFileSync } = await import('node:fs');
+  const settings = settingsFor();
+  const inflightFile = join(dataDir, relay.RELAY_INFLIGHT_FILE);
+  const input = body();
+  const key = `site_shop:cart-recovery:${input.ref}:1`;
+  // Another hub process takes the reservation and stops mid-send (it never releases it).
+  const relayUrl = new URL('../lib/email-relay.js', import.meta.url).href;
+  const child = `const m = await import(${JSON.stringify(relayUrl)}); const r = await m.reserveRelayDedupe(${JSON.stringify(key)}, { now: ${NOW} }); console.log(r ? 'held' : 'refused');`;
+  assert.equal(execFileSync(process.execPath, ['--input-type=module', '-e', child], { env: { ...process.env, APP_DATA_DIR: dataDir }, encoding: 'utf8' }).trim(), 'held');
+  const brevo = brevoStub();
+  const held = await relay.relaySend(SITES.shop, input, { now: NOW + 1000, emailKey: KEYS.site_shop, deps: { settings, brevo, log, quota: quotaFor(null, settings) } });
+  assert.deepEqual([held.status, held.body.code], [409, 'duplicate']);
+  assert.equal(brevo.calls.length, 0, 'no Brevo call while another process sends it');
+  // Ten minutes on, the reservation of the stopped process no longer counts: the message goes out once.
+  const later = NOW + relay.RELAY_RESERVATION_MS + 1;
+  const sent = await relay.relaySend(SITES.shop, input, { now: later, emailKey: KEYS.site_shop, deps: { settings, brevo, log, quota: quotaFor(null, settings) } });
+  assert.equal(sent.status, 200, JSON.stringify(sent.body));
+  assert.equal(Object.hasOwn(JSON.parse(readFileSync(inflightFile, 'utf8')), key), false, 'released after the log line');
+  const again = await relay.relaySend(SITES.shop, input, { now: later, emailKey: KEYS.site_shop, deps: { settings, brevo, log, quota: quotaFor(null, settings) } });
+  assert.deepEqual([again.status, again.body.code], [409, 'duplicate'], 'the log line now dedupes it');
+  assert.equal(brevo.calls.length, 1);
+  // One holder at a time; a damaged reservation file only drops the reservations it held.
+  const first = await relay.reserveRelayDedupe('site_shop:test:k1:', { now: NOW, log });
+  assert.ok(first);
+  assert.equal(await relay.reserveRelayDedupe('site_shop:test:k1:', { now: NOW, log }), null);
+  await first.release();
+  writeFileSync(inflightFile, '{not json');
+  const afterDamage = await relay.reserveRelayDedupe('site_shop:test:k1:', { now: NOW, log });
+  assert.ok(afterDamage, 'a damaged reservation file does not block sends');
+  await afterDamage.release();
+});
+
+test('a provider failure releases the reservation, so the retry sends', async () => {
+  const settings = settingsFor();
+  const input = body();
+  const down = await relay.relaySend(SITES.shop, input, { now: NOW, emailKey: KEYS.site_shop, deps: { settings, brevo: brevoStub({ error: new brevoLib.BrevoError('provider_unavailable', { status: 503 }) }), log, quota: quotaFor(null, settings) } });
+  assert.deepEqual([down.status, down.body.code], [502, 'provider_unavailable']);
+  const brevo = brevoStub();
+  const retry = await relay.relaySend(SITES.shop, input, { now: NOW, emailKey: KEYS.site_shop, deps: { settings, brevo, log, quota: quotaFor(null, settings) } });
+  assert.equal(retry.status, 200, JSON.stringify(retry.body));
+  assert.equal(brevo.calls.length, 1);
+});
