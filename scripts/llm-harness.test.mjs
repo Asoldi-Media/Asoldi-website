@@ -155,3 +155,89 @@ test('reference policy records the CMS local-blog-job DeepSeek call as a known e
   assert.equal(exception.owner, 'WS9');
   assert.match(exception.where, /local-blog-job/);
 });
+
+// The CMS hookup arbiters, the CMS spec written from the delivery brief, the claims check and the meeting
+// keyword pass. Owners are area words, never planning ids.
+const NEWER_TASKS = Object.freeze({
+  'step2.cta-classify': { repo: ['maker'], dataClass: 'business', family: 'arbiter', effort: 'low', owner: 'branding' },
+  'cms.shell-arbiter': { repo: ['maker'], dataClass: 'business', family: 'arbiter', effort: 'low', owner: 'publish' },
+  'cms.cta-arbiter': { repo: ['maker'], dataClass: 'business', family: 'arbiter', effort: 'low', owner: 'publish' },
+  'cms.spec-writer': { repo: ['maker'], dataClass: 'transcript', family: 'brief', effort: 'medium', owner: 'CMS' },
+  'cms-spec.email': { repo: ['maker'], dataClass: 'transcript', family: 'brief', effort: 'medium', owner: 'email' },
+  'seo.claims-extract': { repo: ['maker'], dataClass: 'business', family: 'compliance', effort: 'medium', owner: 'SEO' },
+  'seo.agreed-extract': { repo: ['hub'], dataClass: 'transcript', family: 'brief', effort: 'medium', owner: 'SEO' },
+});
+
+test('newer tasks are registered for their repo with a data class, a family, an effort and an area owner', () => {
+  const t = ASOLDI_LLM_TASKS.tasks;
+  for (const [key, want] of Object.entries(NEWER_TASKS)) {
+    assert.ok(t[key], `${key} is registered`);
+    const { repo, dataClass, family, effort, owner } = t[key];
+    assert.deepEqual({ repo, dataClass, family, effort, owner }, want, key);
+    assert.equal(t[key].kind, 'json', key);
+    assert.equal(t[key].vision, false, key);
+  }
+  const hub = asoldiLlmConfig('hub').tasks;
+  const maker = asoldiLlmConfig('maker').tasks;
+  for (const [key, { repo }] of Object.entries(NEWER_TASKS)) {
+    assert.equal(Boolean(maker[key]), repo.includes('maker'), `${key} in the Maker config`);
+    assert.equal(Boolean(hub[key]), repo.includes('hub'), `${key} in the hub config`);
+  }
+});
+
+test('newer tasks start on Haiku 5.5 in production with no DeepSeek, even for synthetic or redacted data', () => {
+  const r = core.createRouter({ ...asoldiLlmConfig(), legacyRoute, now: NOW });
+  for (const [task, { effort, family }] of Object.entries(NEWER_TASKS)) {
+    const haiku = `claude:claude-haiku-5-5:${effort}`;
+    for (const ctx of [{}, { synthetic: true }, { redacted: true }, { tier: 3 }]) {
+      const route = r.resolveRoute(task, { profile: 'prod', ...ctx });
+      assert.equal(route.route, haiku, `${task} prod ${JSON.stringify(ctx)}`);
+    }
+    const escalated = r.resolveRoute(task, { profile: 'prod', escalation: 1 }).route;
+    assert.equal(escalated, family === 'arbiter' ? 'claude:claude-haiku-5-5:medium' : 'claude:claude-sonnet-5-5:medium', `${task} escalation`);
+    assert.ok(!escalated.includes('deepseek'), `${task} escalation`);
+  }
+});
+
+test('newer tasks in the test profile: DeepSeek only for synthetic data or a clean redaction of business data, real data on Claude at the task effort', () => {
+  const r = core.createRouter({ ...asoldiLlmConfig(), legacyRoute, now: NOW });
+  for (const [task, { effort, dataClass }] of Object.entries(NEWER_TASKS)) {
+    assert.equal(r.resolveRoute(task, { profile: 'test' }).route, `claude:claude-haiku-5-5:${effort}`, `${task} real data`);
+    assert.equal(r.resolveRoute(task, { profile: 'test', synthetic: true }).primary.provider, 'deepseek', `${task} synthetic`);
+    const leaked = r.resolveRoute(task, { profile: 'test', synthetic: true }, { payload: { user: 'Kari Nordmann kari@firma.no 22 33 44 55' } });
+    assert.equal(leaked.primary.provider, 'claude', `${task}: a synthetic flag on real-looking data is ignored`);
+    // Redaction never lowers a transcript; a clean redaction of business data may use DeepSeek (core data policy).
+    const redacted = r.resolveRoute(task, { profile: 'test', redacted: true }, { payload: { user: 'Shop copy, contact [EMAIL]' } });
+    assert.equal(redacted.primary.provider, dataClass === 'transcript' ? 'claude' : 'deepseek', `${task} redacted`);
+    for (const profile of ['legacy', 'replay', 'record']) assert.ok(r.resolveRoute(task, { profile }).chain.length > 0, `${task} ${profile}`);
+  }
+});
+
+test('newer tasks route by family, so the shared routes name none of them and neither repo gets a new unknown-task warning', () => {
+  const named = new Set(
+    Object.values(ASOLDI_LLM_ROUTES.profiles).flatMap((profile) => [
+      ...Object.keys(profile.tasks || {}),
+      ...Object.keys(profile.escalate || {}),
+      ...Object.values(profile.tiers || {}).flatMap((tier) => [...Object.keys(tier.tasks || {}), ...Object.keys(tier.escalate || {})]),
+    ]),
+  );
+  for (const task of Object.keys(NEWER_TASKS)) assert.equal(named.has(task), false, task);
+  for (const repo of ['hub', 'maker']) {
+    const warnings = core.createLlmCore({ ...asoldiLlmConfig(repo), providers: {}, legacyRoute, now: NOW }).warnings.join('\n');
+    for (const task of Object.keys(NEWER_TASKS)) assert.doesNotMatch(warnings, new RegExp(task.replace(/[.-]/g, '\$&')), `${repo}: ${task}`);
+  }
+});
+
+test('opt-in budget scopes for the CMS hookup, an SEO pass and the meeting keyword pass scale like the run', () => {
+  const b = ASOLDI_LLM_BUDGETS;
+  assert.equal(core.validateBudgetsConfig(b).ok, true);
+  assert.equal(core.expectedCostUsd(b, 'cmsHookup', { tier: 1, projectSize: { pages: 6 } }), 0.3);
+  assert.equal(core.expectedCostUsd(b, 'cmsHookup', { tier: 3, projectSize: { pages: 6 } }), 0.5);
+  assert.equal(core.expectedCostUsd(b, 'cmsHookup', { tier: 3, projectSize: { pages: 12 } }), 1);
+  assert.equal(core.expectedCostUsd(b, 'seoPass', { tier: 2, projectSize: { pages: 6, locales: 1 } }), 0.4);
+  assert.equal(core.expectedCostUsd(b, 'meetingKeywords', {}), 0.2);
+  // Alert at 100 % and go on; stop only above 5x expected (a runaway).
+  assert.equal(core.evaluateBudget({ expectedUsd: 0.5, spentUsd: 0.6 }).action, 'alert');
+  assert.equal(core.evaluateBudget({ expectedUsd: 0.5, spentUsd: 2.4 }).action, 'alert');
+  assert.equal(core.evaluateBudget({ expectedUsd: 0.5, spentUsd: 2.6 }).action, 'stop');
+});

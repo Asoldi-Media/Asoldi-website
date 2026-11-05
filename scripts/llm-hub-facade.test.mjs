@@ -438,8 +438,9 @@ test('the ledger records 100% of calls in a scripted run of every hub task (lega
     readWebsite: async () => [],
     fetchImpl: async () => ({ ok: false, status: 404, json: async () => ({}) }),
   });
-  // Delivery tasks have no call site yet; they run through the facade directly (legacy profile -> core).
-  for (const task of ['brief.map', 'brief.reduce', 'brief.iteration', 'change.classify', 'followups.extract']) {
+  // Delivery tasks and the meeting keyword pass have no call site yet; they run through the facade directly
+  // (legacy profile -> core).
+  for (const task of ['brief.map', 'brief.reduce', 'brief.iteration', 'change.classify', 'followups.extract', 'seo.agreed-extract']) {
     await facade.json({ task, system: 'Extract the facts.', user: 'Synthetic note without client data.', ctx: { salesClientId: CLIENT.id } });
   }
   registerHubLlm(null);
@@ -455,6 +456,7 @@ test('the ledger records 100% of calls in a scripted run of every hub task (lega
   assert.equal(providersByTask['sales-link.discover'], 'gemini');
   assert.equal(providersByTask['infokort.agent'], 'claude');
   assert.equal(providersByTask['brief.map'], 'claude');
+  assert.equal(providersByTask['seo.agreed-extract'], 'claude', 'meeting transcripts stay on Claude');
   // Per-client spend: every row names the sales client, so the hub part of a client's spend is complete.
   const unnamed = rows.filter((row) => row.salesClientId !== salesClientId).map((row) => row.task);
   assert.deepEqual(unnamed, [], 'rows without the sales client');

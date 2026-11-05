@@ -44,6 +44,7 @@ change is refused with 409.
 | `sales-link.discover` | `lib/sales-link-discovery.js` (Google Search grounding) | Gemini |
 | `infokort.agent` | `lib/infokort-agent.js` (tool loop) | Claude Haiku 5.5 |
 | `brief.map`, `brief.reduce`, `brief.iteration`, `change.classify`, `followups.extract` | Delivery (no call site yet) | Claude Haiku 5.5 |
+| `seo.agreed-extract` | SEO keyword proposals from meetings, a second pass on transcript chunks (no call site yet) | Claude Haiku 5.5 |
 
 - `lib/deepseek.js` (`deepseekChatJson`) and `lib/claude-messages.js` (`claudeMessages`,
   `claudeToolLoop`) are wrappers over the facade. Call sites pass `task` (and `ctx.salesClientId`
@@ -54,6 +55,26 @@ change is refused with 409.
   profile they run only while the task's route still allows Gemini; otherwise they return no result.
 - `scripts/llm-hub-callsites.test.mjs` keeps provider endpoints and SDKs inside `lib/llm/` and the two
   wrappers, and requires a registered task key on every call.
+
+## Newer shared tasks: data class and starting route
+
+The shared registry holds the Maker's tasks too. These newer ones route by family (`arbiter`, `brief`,
+`compliance`), so the shared routes name none of them and neither repo gets an unknown-task warning.
+Production never falls back to DeepSeek for these families, not even for synthetic data; the `test`
+profile uses DeepSeek only where the data policy allows it.
+
+| Task | Repo | Data class | `prod` | `test` profile | Escalation |
+|---|---|---|---|---|---|
+| `step2.cta-classify` | Maker | business | Haiku 5.5 low | DeepSeek for synthetic data or a clean redaction, else Haiku 5.5 low | Haiku 5.5 medium |
+| `cms.shell-arbiter`, `cms.cta-arbiter` | Maker | business | Haiku 5.5 low | DeepSeek for synthetic data or a clean redaction, else Haiku 5.5 low | Haiku 5.5 medium |
+| `cms.spec-writer`, `cms-spec.email` | Maker | transcript (brief directives quote meetings) | Haiku 5.5 medium | DeepSeek only for a synthetic brief, else Haiku 5.5 medium | Sonnet 5.5 medium |
+| `seo.claims-extract` | Maker | business | Haiku 5.5 medium | DeepSeek for synthetic data or a clean redaction, else Haiku 5.5 medium | Sonnet 5.5 medium |
+| `seo.agreed-extract` | hub | transcript | Haiku 5.5 medium | DeepSeek only for synthetic transcripts, else Haiku 5.5 medium | Sonnet 5.5 medium |
+
+Budget scopes a caller may opt into with `ctx.budgetScope` (plus its run or job id): `cmsHookup` (one CMS
+hookup attempt, $0.30, $0.50 on tier 3, scaled by pages like the run), `seoPass` ($0.40, scaled by pages)
+and `meetingKeywords` ($0.20). Reaching the expected cost alerts and the call goes on; only more than 5x
+stops. A call without a scope counts toward its run as before.
 
 ## Ledger, spend and budgets
 

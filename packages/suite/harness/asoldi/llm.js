@@ -37,14 +37,47 @@ export const ASOLDI_LLM_TASKS = {
     'step2.copy-judge': t('json', false, 'business', 4000, { family: 'judge', repo: M }),
     'step2.repair': t('json', false, 'business', 4000, { family: 'copy', repo: M }),
     'step2.claims-rewrite': t('json', false, 'business', 4000, { family: 'copy', repo: M, owner: 'WS3' }),
-    'step2.cta-classify': t('json', false, 'business', 2000, { family: 'classification', effort: 'low', repo: M, owner: 'WS3' }),
+    // One batched call per site, only for CTAs that carry no intent marker: a closed choice of intent per label.
+    'step2.cta-classify': t('json', false, 'business', 2000, { family: 'arbiter', effort: 'low', repo: M, owner: 'branding' }),
     'qa.label': t('json', false, 'business', 2000, { family: 'judge', repo: M, owner: 'WS3' }),
     // Maker: SEO and CMS
     'seo.meta': t('json', false, 'business', 4000, { family: 'copy', repo: M }),
     'seo.keywords.relevance': t('json', false, 'business', 4000, { family: 'keyword-judge', effort: 'low', repo: M }),
     'cms.page-kinds': t('json', false, 'business', 2000, { family: 'classification', effort: 'low', repo: M }),
     'cms.propose': t('json', false, 'business', 4000, { family: 'extraction', repo: M }),
-    'cms-spec.email': t('json', false, 'transcript', 4000, { family: 'extraction', repo: M, owner: 'WS7' }),
+    // CMS hookup: closed choices where the structural rules find no answer, read from the client's branded site.
+    'cms.shell-arbiter': t('json', false, 'business', 2000, {
+      family: 'arbiter',
+      effort: 'low',
+      repo: M,
+      owner: 'publish',
+      note: 'which top-level body children are the header and which the footer chrome, from an outline (tag, short text, link count, position)',
+    }),
+    'cms.cta-arbiter': t('json', false, 'business', 2000, {
+      family: 'arbiter',
+      effort: 'low',
+      repo: M,
+      owner: 'publish',
+      note: 'which commerce binding a template element gets (add to cart, cart link, buy CTA or none)',
+    }),
+    // CMS spec from the delivery brief: its directives carry short quotes from client meetings, so these
+    // tasks are transcript data and reach DeepSeek only when the brief is synthetic.
+    'cms.spec-writer': t('json', false, 'transcript', 8000, {
+      family: 'brief',
+      effort: 'medium',
+      repo: M,
+      owner: 'CMS',
+      note: 'free-text brief directives the deterministic CMS spec rules do not cover; closed JSON checked by the CMS spec validator',
+    }),
+    'cms-spec.email': t('json', false, 'transcript', 4000, {
+      family: 'brief',
+      effort: 'medium',
+      repo: M,
+      owner: 'email',
+      note: 'the email section; a value counts only when its quote is found in a brief directive',
+    }),
+    // Health and benefit statements in a draft or keyword plan, each with its span; any error rejects (fail closed).
+    'seo.claims-extract': t('json', false, 'business', 8000, { family: 'compliance', effort: 'medium', repo: M, owner: 'SEO' }),
     // Maker: intake, media, import
     'quickfill.narrative': t('json', false, 'business', 4000, { family: 'copy', repo: M }),
     'quickfill.colors': t('json', true, 'business', 1000, { family: 'media', repo: M }),
@@ -90,6 +123,9 @@ export const ASOLDI_LLM_TASKS = {
     'brief.iteration': t('json', false, 'transcript', 8000, { family: 'brief', repo: H, owner: 'WS8' }),
     'change.classify': t('json', false, 'personal', 2000, { family: 'classification', effort: 'low', repo: H, owner: 'WS8' }),
     'followups.extract': t('json', false, 'transcript', 4000, { family: 'extraction', repo: H, owner: 'WS8' }),
+    // Hub: SEO keyword proposals from meetings, a focused second pass on transcript chunks with keyword talk
+    // but no clean phrase. Proposals are never approved automatically.
+    'seo.agreed-extract': t('json', false, 'transcript', 4000, { family: 'brief', effort: 'medium', repo: H, owner: 'SEO' }),
   },
 };
 
@@ -123,6 +159,10 @@ export const ASOLDI_LLM_ROUTES = {
         'keyword-judge': 'claude:claude-haiku-5-5:low',
         judge: 'claude:claude-haiku-5-5:medium',
         agent: 'claude:claude-haiku-5-5:medium',
+        // Closed-choice arbiters and claims extraction always read client data: Claude only in production,
+        // with no DeepSeek fallback even for synthetic data (the test profile is where DeepSeek runs).
+        arbiter: 'claude:claude-haiku-5-5:low',
+        compliance: 'claude:claude-haiku-5-5:medium',
       },
       tasks: {
         'eval.judge': 'claude:claude-opus-5-5:high',
@@ -140,6 +180,8 @@ export const ASOLDI_LLM_ROUTES = {
         brief: ['claude:claude-sonnet-5-5:medium'],
         'keyword-judge': ['claude:claude-haiku-5-5:medium'],
         judge: ['claude:claude-sonnet-5-5:medium'],
+        arbiter: ['claude:claude-haiku-5-5:medium'],
+        compliance: ['claude:claude-sonnet-5-5:medium'],
       },
     },
     test: {
@@ -196,6 +238,22 @@ export const ASOLDI_LLM_BUDGETS = {
     devSession: { baseUsd: { default: 2.5, 'tier-1-standard': 1.5, 'tier-2-seo': 2.5, 'tier-3-ecommerce': 4 }, referencePages: 6, extraLocaleFactor: 0.75, productsPerPage: 20 },
     iteration: { of: 'devSession', factor: 0.5 },
     step2: { baseUsd: { default: 0.6 }, referencePages: 6, extraLocaleFactor: 0.75, productsPerPage: 20 },
+    // Opt-in scopes (ctx.budgetScope plus the run or job id); a call without one counts toward its run as before.
+    cmsHookup: {
+      baseUsd: { default: 0.3, 'tier-3-ecommerce': 0.5 },
+      referencePages: 6,
+      extraLocaleFactor: 0.75,
+      productsPerPage: 20,
+      note: 'one CMS hookup attempt: shell and CTA arbiters, the CMS spec writer and its email section',
+    },
+    seoPass: {
+      baseUsd: { default: 0.4 },
+      referencePages: 6,
+      extraLocaleFactor: 0.75,
+      productsPerPage: 20,
+      note: 'one SEO pass of a run: meta, keyword relevance and the claims check',
+    },
+    meetingKeywords: { baseUsd: { default: 0.2 }, note: "one keyword pass over a client's meeting transcripts in the hub" },
   },
   periodic: { clientMonthUsd: 10, makerDayUsd: 15, hubDayUsd: 5, evalTotalUsd: 200 },
   loop: { maxRepeats: 3, maxIdentical: 6, windowMinutes: 15 },
