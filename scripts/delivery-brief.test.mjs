@@ -362,6 +362,35 @@ test('the store keeps at most 10 versions and 2 MB per client, newest always kep
   assert.equal(unchanged.changed, false);
 });
 
+test('the chunk cache counts toward the 2 MB per client: old versions go first, also when only the cache grew', () => {
+  const dir = freshDir();
+  const id = 'syn-cache-cap';
+  const pad = 'x'.repeat(200 * 1024);
+  for (let i = 0; i < 4; i += 1) store.saveBrief(id, { schema: 'asoldi.delivery-brief/1', pad, n: i }, { dataDir: dir });
+  assert.equal(store.listBriefVersions(id, { dataDir: dir }).length, 4, 'four versions are well under the cap');
+  const chunks = store.chunkCacheDir(id, { dataDir: dir });
+  mkdirSync(chunks, { recursive: true });
+  const addChunks = (from, count) => {
+    for (let i = from; i < from + count; i += 1) writeFileSync(join(chunks, `c${i}-p.json`), JSON.stringify({ items: [], pad: 'y'.repeat(200 * 1024) }));
+  };
+  const onDisk = () => store.listBriefVersions(id, { dataDir: dir }).reduce((sum, row) => sum + row.bytes, 0)
+    + readdirSync(chunks).reduce((sum, name) => sum + statSync(join(chunks, name)).size, 0);
+  addChunks(0, 7);
+  const saved = store.saveBrief(id, { schema: 'asoldi.delivery-brief/1', pad, n: 4 }, { dataDir: dir });
+  assert.deepEqual(saved.pruned, [1, 2], 'with the cache counted, the two oldest versions go');
+  assert.ok(onDisk() <= store.MAX_CLIENT_BYTES, `${onDisk()} bytes`);
+  assert.equal(readdirSync(chunks).length, 7, 'the cache itself is never cut here');
+
+  // Only the cache grew (a rebuild of longer meetings): the caps apply without a new version.
+  addChunks(7, 3);
+  assert.deepEqual(store.enforceClientCaps(id, { dataDir: dir }), [3, 4]);
+  assert.deepEqual(store.listBriefVersions(id, { dataDir: dir }).map((row) => row.version), [5], 'the newest version always stays');
+  assert.equal(store.readLatestBrief(id, { dataDir: dir }).version, 5);
+  assert.deepEqual(store.enforceClientCaps(id, { dataDir: dir }), [], 'nothing more to drop');
+  assert.deepEqual(store.enforceClientCaps('syn-no-folder', { dataDir: dir }), []);
+  assert.equal(existsSync(store.clientBriefDir('syn-no-folder', { dataDir: dir })), false, 'no folder is created');
+});
+
 test('the hash ignores version, generatedAt, stats and URL signatures', () => {
   const base = { schema: 'asoldi.delivery-brief/1', facts: { media: { manifest: [{ id: 'a', url: 'https://example.com/m/a?exp=1&sig=abc' }] } } };
   const other = { ...base, version: 4, generatedAt: '2026-01-01T00:00:00.000Z', stats: { costUsd: 1 }, facts: { media: { manifest: [{ id: 'a', url: 'https://example.com/m/a?exp=2&sig=def' }] } } };
