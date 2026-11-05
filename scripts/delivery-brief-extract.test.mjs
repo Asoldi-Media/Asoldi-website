@@ -355,6 +355,61 @@ test('quotes: a long quote that drops a negation, swaps a word or adds a word is
   assert.ok(meetingText.includes(kept.quote), 'the stored quote is text from the transcript');
 });
 
+test('quotes: words cut out right after or right before a negation, or out of a grouped number, are rejected; a clause break or a whole statement passes', async () => {
+  const meetingText = [
+    'Selger: Skal dere ha nettbutikk på siden fra start?',
+    'Kunde: Vi skal ikke ha nettbutikk på siden før neste år.',
+    'Kunde: Jeg tror ikke at vi trenger en egen side for kursene våre.',
+    'Kunde: En side med priser trenger vi jo ikke.',
+    'Kunde: Nei, vi vil ha en enkel side med kart og telefonnummer.',
+    'Kunde: Budsjettet er 20 000 kroner for hele prosjektet.',
+    'Kunde: Vi vil ha bilder av lokalet, ikke video fra kjøkkenet.',
+    'Kunde: Vi vil ha ei side om historien til bakeriet.',
+    'Kunde: Vi vil ha en side for kursene uten priser på.',
+    "Client: We don't want photos of the staff on the front page.",
+  ].join('\n');
+  const verifier = createQuoteVerifier(meetingText);
+  const rejected = [
+    ['ha nettbutikk på siden før neste år', 'negation-cut', 'starts right after "ikke"'],
+    ['vi trenger en egen side for kursene våre', 'negation-cut', 'starts after "ikke at": only a small word between'],
+    ['En side med priser trenger vi', 'negation-cut', 'ends right before "jo ikke"'],
+    ['priser på', 'negation-cut', 'starts right after "uten"'],
+    ['want photos of the staff on the front page', 'negation-cut', 'starts right after "don\'t"'],
+    ['000 kroner for hele prosjektet', 'number-cut', 'starts inside "20 000"'],
+    ['Budsjettet er 20', 'number-cut', 'ends inside "20 000"'],
+  ];
+  for (const [quote, how, why] of rejected) {
+    const result = verifier.verify(quote);
+    assert.equal(result.ok, false, why);
+    assert.equal(result.how, how, why);
+  }
+  const kept = [
+    ['vi vil ha en enkel side med kart og telefonnummer', 'a clause break (comma) after "Nei"'],
+    ['Vi vil ha bilder av lokalet', 'a clause break before "ikke video"'],
+    ['side om historien til bakeriet', '"ei" before it is the article'],
+    ['Vi vil ha en side for kursene', '"uten" after it starts a new phrase'],
+    ['Vi skal ikke ha nettbutikk på siden', 'the negation inside the quote'],
+    ['Budsjettet er 20 000 kroner', 'the whole number'],
+  ];
+  for (const [quote, why] of kept) assert.equal(verifier.verify(quote).ok, true, why);
+
+  // Through the extractor with a stubbed model: the cut quote is dropped, the whole statement is kept.
+  const llm = {
+    json: async () => ({
+      data: {
+        ...emptyAnswer(),
+        directives: [
+          { kind: 'add', area: 'products', ask: 'plantet: nettbutikk fra start', quote: 'ha nettbutikk på siden før neste år', speaker: 'Kunde' },
+          { kind: 'remove', area: 'products', ask: 'Ingen nettbutikk før neste år', quote: 'Vi skal ikke ha nettbutikk på siden før neste år', speaker: 'Kunde' },
+        ],
+      },
+    }),
+  };
+  const result = await extractMeeting({ meeting: { meetingId: 'm-cut', purpose: 'workshop', transcript: meetingText }, llm, cache: createMemoryChunkCache(), clientId: 'syn-brief' });
+  assert.deepEqual(result.items.map((entry) => entry.ask), ['Ingen nettbutikk før neste år']);
+  assert.equal(result.droppedUnverified, 1);
+});
+
 // ---------------------------------------------------------------- the map step
 
 test('prompts: one per purpose, a closed schema, and the iteration task for iteration meetings', () => {
