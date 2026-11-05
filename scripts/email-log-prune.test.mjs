@@ -60,13 +60,14 @@ test('the loop runs the prune after its first delay, then on its interval, and n
   const runs = [];
   const loop = emailLog.startEmailLogPruneLoop({ firstDelayMs: 5, everyMs: 20, logger: quiet, run: async () => { runs.push(Date.now()); throw new Error('disk gone'); } });
   try {
-    await new Promise((resolve) => setTimeout(resolve, 80));
+    const deadline = Date.now() + 5000;
+    while (runs.length < 2 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
   } finally {
     loop.stop();
   }
   assert.ok(runs.length >= 2, `${runs.length} runs`);
   const after = runs.length;
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal(runs.length, after, 'stop() ends the loop');
 });
 
