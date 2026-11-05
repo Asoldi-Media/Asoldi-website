@@ -1,9 +1,9 @@
 // Every data file written through the hub's JSON write helpers (writeDataJson, writeHotJson,
-// updateJsonLocked, writeJsonAtomic, writeTextAtomic, createJsonOnce) is either a registered
-// personal-data store (lib/personal-data.js registerStore ... writers) or listed in NON_PERSONAL_WRITERS
-// with a reason. A new writer fails this test until it is registered or listed.
-// Not covered: plain fs writes (writeFileSync, appendFileSync, streams), such as append-only logs and
-// uploaded files; those stores are registered by hand (see docs/privacy-processing-record.md).
+// updateJsonLocked, writeJsonAtomic, writeTextAtomic, createJsonOnce) or a plain writeFileSync is
+// either a registered personal-data store (lib/personal-data.js registerStore ... writers) or listed in
+// NON_PERSONAL_WRITERS with a reason. A new writer fails this test until it is registered or listed.
+// Not covered: appends (appendFileSync), streams and renames, such as append-only logs and moved
+// uploads; those stores are registered by hand (see docs/privacy-processing-record.md).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -15,7 +15,7 @@ process.env.APP_DATA_DIR = mkdtempSync(join(tmpdir(), 'asoldi-pd-writers-'));
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const { NON_PERSONAL_WRITERS, loadStoreModules } = await import('../lib/personal-data.js');
 
-const WRITER_CALL = /\b(writeDataJson|writeHotJson|updateJsonLocked|writeJsonAtomic|writeTextAtomic|createJsonOnce)\s*\(/g;
+const WRITER_CALL = /\b(writeDataJson|writeHotJson|updateJsonLocked|writeJsonAtomic|writeTextAtomic|createJsonOnce|writeFileSync)\s*\(/g;
 // Server code only: the browser bundle (app, src) cannot write the data disk; scripts are tools.
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'scripts', 'public', 'app', 'src', 'tmp', 'local', 'assets', 'docs']);
 const BACKSLASH = String.fromCharCode(92);
@@ -132,7 +132,36 @@ test('the scan catches a new writer', () => {
     "writeHotJson(join(dir(), 'hot.json'), {});",
     'updateJsonLocked(LOCKED_PATH, (current) => current);',
     '// writeJsonAtomic(COMMENTED, {}) is a comment, not a call',
+    "writeFileSync(join(getPersistentDataDir(), 'notes.json'), body);",
+    'fs.writeFileSync(UPLOAD_PATH, buffer);',
     '',
   ].join('\n'));
-  assert.deepEqual([...scanWriters(dir)].sort(), ['lib/new-store.js:LOCKED_PATH', 'lib/new-store.js:NEW_PATH', "lib/new-store.js:join(dir(), 'hot.json')"]);
+  assert.deepEqual([...scanWriters(dir)].sort(), [
+    'lib/new-store.js:LOCKED_PATH',
+    'lib/new-store.js:NEW_PATH',
+    'lib/new-store.js:UPLOAD_PATH',
+    "lib/new-store.js:join(dir(), 'hot.json')",
+    "lib/new-store.js:join(getPersistentDataDir(), 'notes.json')",
+  ]);
+});
+
+test('plain file writes are scanned too: the stores they write are registered, and the ones that hold no client data say why', async () => {
+  const stores = await loadStoreModules();
+  const owner = (key) => stores.find((store) => store.writers.includes(key))?.id || (Object.prototype.hasOwnProperty.call(NON_PERSONAL_WRITERS, key) ? 'allowlisted' : '');
+  const found = [...scanWriters()].filter((key) => {
+    const [file, ...rest] = key.split(':');
+    const source = withoutComments(readFileSync(join(root, file), 'utf8'));
+    return new RegExp(`writeFileSync\\(\\s*${rest.join(':').replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s*')}`).test(source);
+  });
+  assert.ok(found.length > 20, `expected the plain writes, found ${found.length}`);
+  for (const [key, store] of [
+    ['lib/workshop-notes.js:path', 'workshop-note-files'],
+    ['lib/safe-mode-outbox.js:join(dir, `${id}.eml`)', 'mail-outbox'],
+    ["lib/email.js:join(getPersistentDataDir(), 'last-email-send.json')", 'last-mail-send'],
+    ['server.js:SALES_GEOCODE_CACHE_PATH', 'sales-map-places'],
+    ['lib/fireflies-media.js:transcriptPath', 'fireflies-meetings'],
+    ['lib/inbox-bot/apply-contract.js:dest', 'signed-contracts'],
+    ['lib/transcript-archive.js:tmp', 'transcript-archive'],
+  ]) assert.equal(owner(key), store, key);
+  assert.deepEqual(found.filter((key) => !owner(key)), [], 'every plain write has a store or a reason');
 });
