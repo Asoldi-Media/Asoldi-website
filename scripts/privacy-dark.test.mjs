@@ -6,8 +6,8 @@
 //      Positive controls show the comparison notices the archive once privacy.archive is on, and an
 //      erased recording once an erase has put it on the erased list.
 //   2. The client portal upload sections (media, staff, products, logos and affiliations) render
-//      byte-identical markup to the base commit while the rights checkbox is off, and the onboarding
-//      and settings pages are unchanged files.
+//      byte-identical markup to the base commit while the rights checkbox is off, and no line added to
+//      the onboarding and settings pages since then carries rights checkbox code.
 // Skipped (with a note) when git or the base commit is not available, e.g. in a plain file export.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -201,8 +201,19 @@ test('the portal upload sections render byte-identical markup while the rights c
     assert.ok(base[key].length > 100, `${key} rendered`);
     assert.equal(ours[key], base[key], `${key} section markup is byte-identical`);
   }
+  // Other features may change these pages after the base commit (a legal card on the settings page,
+  // for example); none of the lines added since may carry the rights checkbox or its route.
+  const RIGHTS_CODE = /MediaRights|mediaRights|media-rights|rightsConfirm/;
   for (const page of ['app/pages/client/ClientOnboarding.tsx', 'app/pages/client/ClientSettings.tsx']) {
-    assert.equal(readFileSync(join(root, page), 'utf8').replace(/\r\n/g, '\n'), readFileSync(join(baseRoot, page), 'utf8').replace(/\r\n/g, '\n'), `${page} unchanged`);
+    const baseLines = new Map();
+    for (const line of readFileSync(join(baseRoot, page), 'utf8').split(/\r?\n/)) baseLines.set(line, (baseLines.get(line) || 0) + 1);
+    const added = [];
+    for (const line of readFileSync(join(root, page), 'utf8').split(/\r?\n/)) {
+      const left = baseLines.get(line) || 0;
+      if (left) baseLines.set(line, left - 1);
+      else added.push(line);
+    }
+    assert.deepEqual(added.filter((line) => RIGHTS_CODE.test(line)), [], `${page}: no rights checkbox code added`);
   }
   assert.ok(existsSync(join(root, 'app', 'components', 'client', 'settings', 'MediaRightsCheckbox.tsx')));
 });

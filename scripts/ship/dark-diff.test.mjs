@@ -736,12 +736,22 @@ describe('dark-diff on a seeded data folder', { skip: !canBoot && 'no hub depend
   test('two releases that refuse every signed-in step stop the run with exit 2; they never compare equal and pass', { timeout: 900_000 }, async () => {
     setup();
     const flows = flowsDir(root, ['signing-admin', 'onboarding']);
+    // A tick route of flows/clock.json that this build serves is a signed-in step too, refused alike.
+    const clock = JSON.parse(readFileSync(join(HERE, 'flows', 'clock.json'), 'utf8'));
+    const routeSources = [join(REPO, 'server.js'), ...readdirSync(join(REPO, 'lib', 'routes')).map((name) => join(REPO, 'lib', 'routes', name))]
+      .map((file) => readFileSync(file, 'utf8'))
+      .join('\n');
+    const servedTicks = (clock.ticks || []).filter((tick) => routeSources.includes(`'${tick.path}'`));
     await assert.rejects(
       runDarkDiff({ base: trees.refusing, head: trees.refusing, data, inventory: false, flows, nodeModules: NODE_MODULES }),
       (error) => {
         assert.ok(error instanceof HarnessError, String(error?.stack || error));
-        assert.match(error.message, /^the flows did not run: 11 step\(s\) were refused or skipped on both releases/);
+        assert.match(error.message, new RegExp(`^the flows did not run: ${11 + servedTicks.length} step\\(s\\) were refused or skipped on both releases`));
         const rows = error.notRun.map((row) => `${row.key} ${row.method} ${row.path}: ${row.reason}`);
+        for (const tick of servedTicks) {
+          const method = String(tick.method || 'POST').toUpperCase();
+          assert.ok(rows.includes(`${method} ${tick.path} #0 ${method} ${tick.path}: refused (401)`), rows.join('\n'));
+        }
         assert.ok(rows.includes('signing-admin#0 POST /api/admin/sales: refused (401)'), rows.join('\n'));
         assert.ok(rows.includes('signing-admin#1 PATCH /api/admin/sales/{{clientId}}/progression: skipped after signing-admin#0 answered 401'), rows.join('\n'));
         assert.ok(rows.includes('onboarding#1 GET /api/client-auth/me: refused (401)'), rows.join('\n'));
