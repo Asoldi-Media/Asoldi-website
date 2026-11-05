@@ -818,10 +818,13 @@ export function isValidUtf8(buffer) {
 }
 
 /**
- * A file's bytes as text: { text, encoding: 'utf8'|'latin1'|'utf16le'|'utf16be', bom }. UTF-8
- * keeps a byte-order mark in the text. Text without a NUL byte that is not valid UTF-8 (a
+ * A file's bytes as text: { text, encoding: 'utf8'|'utf8-stray'|'latin1'|'utf16le'|'utf16be', bom }.
+ * UTF-8 keeps a byte-order mark in the text. Text without a NUL byte that is not valid UTF-8 (a
  * Windows-1252 or Latin-1 export) is read byte for byte as Latin-1, so encodeText() gives back
- * every byte it did not change. UTF-16 is read with a byte-order mark (as PowerShell's '>' and
+ * every byte it did not change. A file that is mostly UTF-8 with a few stray bytes (more valid
+ * multi-byte characters than stray bytes) is read as UTF-8 and each stray byte becomes one lone
+ * surrogate (U+DC80 to U+DCFF) that matches nothing, so the rest of the text is scanned as the
+ * characters it holds; encoding 'utf8-stray' writes the stray bytes back unchanged. UTF-16 is read with a byte-order mark (as PowerShell's '>' and
  * Notepad write it) or, without one, when it is plainly UTF-16 Latin text. null for anything else
  * that holds a NUL byte (binary, UTF-32).
  */
@@ -835,10 +838,85 @@ export function decodeText(buffer) {
   }
   if (!isProbablyBinary(buffer)) {
     if (isValidUtf8(buffer)) return { text: buffer.toString('utf8'), encoding: 'utf8', bom: false };
+    const stray = decodeUtf8WithStrays(buffer);
+    if (stray) return { text: stray, encoding: 'utf8-stray', bom: false };
     return { text: buffer.toString('latin1'), encoding: 'latin1', bom: false };
   }
   const encoding = utf16OrderWithoutBom(buffer);
   return encoding ? { text: utf16ToString(buffer, encoding), encoding, bom: false } : null;
+}
+
+/** Length of the valid UTF-8 sequence that starts at `i`, or 0 when the bytes there are not one. */
+function utf8SequenceLength(buffer, i) {
+  const b = buffer[i];
+  let length = 0;
+  let min = 0;
+  if (b >= 0xc2 && b <= 0xdf) { length = 2; min = 0x80; }
+  else if (b >= 0xe0 && b <= 0xef) { length = 3; min = 0x800; }
+  else if (b >= 0xf0 && b <= 0xf4) { length = 4; min = 0x10000; }
+  else return 0;
+  if (i + length > buffer.length) return 0;
+  let code = b & (0xff >> (length + 1));
+  for (let k = 1; k < length; k += 1) {
+    const c = buffer[i + k];
+    if ((c & 0xc0) !== 0x80) return 0;
+    code = (code << 6) | (c & 0x3f);
+  }
+  if (code < min || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return 0;
+  return length;
+}
+
+/**
+ * UTF-8 text with each stray byte (one that starts or continues no valid sequence) as the lone
+ * surrogate U+DC00 + byte. Null unless the file is mostly UTF-8: at least one valid multi-byte
+ * character, and no more stray bytes than valid multi-byte characters (a Latin-1 or Windows-1252
+ * file has no valid multi-byte character, or has one by accident among many stray bytes).
+ */
+function decodeUtf8WithStrays(buffer) {
+  const parts = [];
+  let valid = 0;
+  let strays = 0;
+  let start = 0;
+  let i = 0;
+  while (i < buffer.length) {
+    if (buffer[i] < 0x80) {
+      i += 1;
+      continue;
+    }
+    const length = utf8SequenceLength(buffer, i);
+    if (length) {
+      valid += 1;
+      i += length;
+      continue;
+    }
+    if (i > start) parts.push(buffer.toString('utf8', start, i));
+    parts.push(String.fromCharCode(0xdc00 + buffer[i]));
+    strays += 1;
+    i += 1;
+    start = i;
+  }
+  if (!strays || !valid || strays > valid) return null;
+  if (start < buffer.length) parts.push(buffer.toString('utf8', start));
+  return parts.join('');
+}
+
+/** The bytes of text read as 'utf8-stray': a lone U+DC80 to U+DCFF is the stray byte it stands for. */
+function encodeUtf8WithStrays(text) {
+  const chunks = [];
+  let run = '';
+  const flush = () => {
+    if (run) chunks.push(Buffer.from(run, 'utf8'));
+    run = '';
+  };
+  for (const ch of text) {
+    const code = ch.codePointAt(0);
+    if (code >= 0xdc80 && code <= 0xdcff) {
+      flush();
+      chunks.push(Buffer.from([code - 0xdc00]));
+    } else run += ch;
+  }
+  flush();
+  return Buffer.concat(chunks);
 }
 
 /**
@@ -848,6 +926,7 @@ export function decodeText(buffer) {
  */
 export function encodeText(text, { encoding = 'utf8', bom = false } = {}) {
   if (encoding === 'utf8') return Buffer.from(text, 'utf8');
+  if (encoding === 'utf8-stray') return encodeUtf8WithStrays(text);
   if (encoding === 'latin1') {
     if (/[^\u0000-ÿ]/.test(text)) throw new Error('text read as Latin-1 now holds a character Latin-1 cannot write');
     return Buffer.from(text, 'latin1');
