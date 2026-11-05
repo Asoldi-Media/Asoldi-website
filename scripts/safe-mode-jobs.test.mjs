@@ -24,6 +24,7 @@ function startedWith(env) {
 
 test('safe mode default: only the outbox loops and local backfills start', () => {
   assert.deepEqual(startedWith({ HUB_SAFE_MODE: '1' }), [
+    'cmsEnforcement',
     'delivery',
     'firefliesMeetLinkBackfill',
     'nyAssignmentBackfill',
@@ -37,7 +38,7 @@ test('safe mode default: only the outbox loops and local backfills start', () =>
 test('Fireflies ingest, live-join, inbox, Myphoner, geocode, LAN autopublish, maps ranking are off by default', () => {
   safeMode.installSafeMode({ env: { HUB_SAFE_MODE: '1' }, dataDir, log: null, egress: false });
   const plan = backgroundJobPlan();
-  for (const name of ['firefliesIngest', 'firefliesLiveJoin', 'inboxBot', 'myphonerWebhookReconcile', 'myphonerRecordingRetry', 'salesGeocodeWarmup', 'lanPreviewAutoPublish', 'mapsRanking', 'salesRecordingBackfill', 'salesLinkBackfill', 'ssuWinsBackfill', 'ownerMeetHostBackfill']) {
+  for (const name of ['firefliesIngest', 'firefliesLiveJoin', 'inboxBot', 'myphonerWebhookReconcile', 'myphonerRecordingRetry', 'salesGeocodeWarmup', 'lanPreviewAutoPublish', 'mapsRanking', 'salesRecordingBackfill', 'salesLinkBackfill', 'ssuWinsBackfill', 'ownerMeetHostBackfill', 'cmsWakePing']) {
     assert.equal(plan[name], 'off', name);
   }
 });

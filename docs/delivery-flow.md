@@ -300,6 +300,7 @@ Settings keys (`SETTINGS_KEYS`, dotted paths in the file):
 | Delivery loop | `delivery.loop.enabled` (default `false`), `delivery.loop.mode` (`shadow` or `auto`; `auto` needs at least one client in `pilotClientIds`), `delivery.loop.paused` (null or `{reason}`); see [Delivery loop and Maker jobs](#delivery-loop-and-maker-jobs) |
 | Gate | `gate.enabled` (default `false`), `gate.mode` (`shadow` only for now), `gate.paused` (see [Gate](#gate)) |
 | Signing | `signing.enabled`, `signing.mode` (`shadow` or `auto`; `auto` needs pilots), `signing.paused` (see [Signing](#signing)) |
+| CMS fleet monitor | `cmsFleet.monitor.enabled` (default `false`), `cmsFleet.monitor.mode` (`shadow` stores the daily proposals and digest, `auto` also mails the digest to `alerts.to`), `cmsFleet.monitor.paused`, `cmsFleet.autoApplyFlip` (default `false`; applies a proposal nobody dismissed for 3 days, only in `auto` and never in safe mode), `cmsFleet.wakePing.enabled` (default `false`; the hourly health ping), `cmsFleet.wakePing.paused` (`null` or `{reason}`; a paused switch counts as off). See [Fleet monitor](cms-feature-tree.md#fleet-monitor). |
 
 ---
 

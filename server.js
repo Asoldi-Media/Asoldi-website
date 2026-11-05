@@ -121,6 +121,7 @@ import { registerSecurityAdminRoutes } from './lib/security-admin-routes.js';
 import { createMakerAuth } from './lib/maker-auth.js';
 import { registerMakerHostRoutes } from './lib/routes/maker-host-routes.js';
 import { developmentGetLoopScope, startDeliveryLoop } from './lib/delivery-loop.js';
+import { startCmsFleetMonitor, startCmsWakePing } from './lib/cms-fleet-monitor.js';
 import { noteMakerAuthAlert } from './lib/delivery-alerts.js';
 import { noteDeveloperHandoffAccepted } from './lib/delivery-jobs.js';
 import { readBuildInfo } from './lib/build-info.js';
@@ -21758,6 +21759,8 @@ function startBackgroundJobs() {
     },
     inboxBot: () => startInboxBotLoop(),
     delivery: () => startDeliveryLoop({ sales, hub, listDeveloperOwnerOptions: () => listDeveloperOwnerOptions({ isAdmin: true }) }),
+    cmsEnforcement: () => startCmsFleetMonitor({ hub }),
+    cmsWakePing: () => startCmsWakePing({ hub }),
     signedContractBackfill: () => runSignedContractBackfillOnce().catch((error) => {
       console.error('[signed-contract] startup backfill failed', sanitizeText(error?.message) || error);
     }),
