@@ -491,6 +491,15 @@ test('gate-f1 exits non-zero when it has nothing to score', () => {
   assert.equal(run(join(root, 'scripts', 'fixtures', 'gate-labels')).status, 0, 'the synthetic labels pass');
 });
 
+test('gate-f1 scores only the named label folders when it is given clients', async () => {
+  const dir = join(root, 'scripts', 'fixtures', 'gate-labels');
+  const all = await gateF1(dir);
+  const first = all.clients[0].id;
+  const one = await gateF1(dir, { clients: [first] });
+  assert.deepEqual(one.clients.map((client) => client.id), [first]);
+  assert.deepEqual((await gateF1(dir, { clients: ['not-a-label'] })).clients, []);
+});
+
 test('gate-f1 scores at least 0.9 on the synthetic labels, and a wrong gate scores lower', async () => {
   const dir = join(root, 'scripts', 'fixtures', 'gate-labels');
   const result = await gateF1(dir);
