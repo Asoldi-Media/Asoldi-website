@@ -131,11 +131,12 @@ test('(c) (d) (e) one-click POST without cookies records the opt-out, removes th
   assert.equal(hints.length, 1);
   assert.equal(hints[0].url, 'https://butikk-a.example.com/api/cms/email/hub-event');
   const cms = auth.createReferenceCmsVerifier({ key: keys.site_a });
-  assert.equal(cms.check({ headers: hints[0].init.headers, body: hints[0].init.body, now: clock }).ok, true, 'verifies with the emailKey');
+  assert.equal(cms.check({ headers: hints[0].init.headers, body: hints[0].init.body, url: hints[0].url, now: clock }).ok, true, 'verifies with the emailKey');
+  assert.equal(cms.check({ headers: hints[0].init.headers, body: hints[0].init.body, url: 'https://butikk-a.example.com/api/cms/email/tick', now: clock }).ok, false, 'not on another path');
   assert.equal(JSON.parse(hints[0].init.body).type, 'suppression');
   assert.equal(hints[0].init.body.includes('ola@example.com'), false, 'the hint carries no address; the CMS pulls');
-  const siteKeySigned = { ...hints[0].init.headers, 'x-asoldi-signature': auth.signEmailPayload('pk-a', hints[0].init.body, { now: clock }) };
-  assert.equal(cms.check({ headers: siteKeySigned, body: hints[0].init.body, now: clock }).ok, false, 'a hint signed with the site key is refused');
+  const siteKeySigned = { ...hints[0].init.headers, 'x-asoldi-signature': auth.signEmailPayload('pk-a', hints[0].init.body, { now: clock, path: '/api/cms/email/hub-event' }) };
+  assert.equal(cms.check({ headers: siteKeySigned, body: hints[0].init.body, url: hints[0].url, now: clock }).ok, false, 'a hint signed with the site key is refused');
   await store.saveEmailSettings({ brevo: { syncContacts: false } });
 });
 
@@ -181,7 +182,7 @@ function fakeCms(siteId, items) {
   const verifier = auth.createReferenceCmsVerifier({ key: keys[siteId] });
   const seen = [];
   const srv = createServer((req, res) => {
-    const check = verifier.check({ headers: req.headers, body: '', now: clock });
+    const check = verifier.check({ headers: req.headers, body: '', method: req.method, path: req.url, now: clock });
     seen.push({ path: req.url, ok: check.ok });
     if (!check.ok || !req.url.startsWith('/api/cms/email/suppressions')) {
       res.writeHead(401);
