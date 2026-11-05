@@ -156,7 +156,7 @@ test('fireflies matcher: only the booked sales meeting counts, not a later calen
 test('offer draft shows the client and the editing rep instead of identity merge tags', async () => {
   const templates = await import('../lib/email-templates-store.js');
   const email = templates.buildOfferEmailForClient(CLIENT, {}, {
-    sender: { name: 'Alexander', fromEmail: 'alexander@asoldi.com', phone: '+47 923 31 098' },
+    sender: { name: 'Alexander', fromEmail: 'alexander@asoldi.com', phone: '+47 400 00 000' },
   });
   const html = offerEmail.resolveOfferIdentityTags(email.html, {
     firstName: 'Kari',
@@ -164,7 +164,7 @@ test('offer draft shows the client and the editing rep instead of identity merge
     businessName: 'Byneset Bydelskafé AS',
     signerName: 'Alexander',
     signerEmail: 'alexander@asoldi.com',
-    signerPhone: '+47 923 31 098',
+    signerPhone: '+47 400 00 000',
   });
   const subject = offerEmail.resolveOfferIdentityTags(email.subject, {
     businessName: 'Byneset Bydelskafé AS',
@@ -172,7 +172,7 @@ test('offer draft shows the client and the editing rep instead of identity merge
   assert.match(html, /Hei Kari,/);
   assert.match(html, /Alexander fra Asoldi/);
   assert.match(html, /alexander@asoldi.com/);
-  assert.match(html, /\+47 923 31 098/);
+  assert.match(html, /\+47 400 00 000/);
   assert.match(html, /\{\{need\}\}/);
   assert.equal(subject, 'Tilbud til Byneset Bydelskafé AS fra Asoldi');
   const old = offerEmail.refreshOfferShell('<p><strong>Kundebetingelser:</strong> Dere sender logo.</p><p>Nettsiden bygges i vårt eget CMS. Der ligger automatiserte prosesser.</p><h2>Hva som skjer fremover</h2><p>Vedlagt ligger kontrakten for valgt pakke. Den signeres først når dere har bestemt dere – ingenting betales før nettsiden er levert.</p>');
@@ -832,29 +832,32 @@ test('users store + sender: phone is normalized, formatted and flows into {{sign
   const senderMod = await import('../lib/sales-sender.js');
   const salesEmail = await import('../lib/sales-email.js');
 
-  assert.equal(users.normalizePhone('+47 92331098'), '+4792331098');
-  assert.equal(users.normalizePhone('923 31 098'), '+4792331098');
-  assert.equal(users.normalizePhone('004792331098'), '+4792331098');
+  assert.equal(users.normalizePhone('+47 40000000'), '+4740000000');
+  assert.equal(users.normalizePhone('400 00 000'), '+4740000000');
+  assert.equal(users.normalizePhone('004740000000'), '+4740000000');
   assert.equal(users.normalizePhone('abc'), '');
   assert.equal(users.normalizePhone(''), '');
 
-  assert.equal(senderMod.formatPhoneNumber('+4792331098'), '+47 923 31 098');
+  assert.equal(senderMod.formatPhoneNumber('+4740000000'), '+47 400 00 000');
   assert.equal(senderMod.formatPhoneNumber('73 51 00 00'), '+47 73 51 00 00');
 
-  const sender = senderMod.buildSalesSender({ name: 'Alexander', username: 'alexander@asoldi.com', phone: '+4792331098' });
-  assert.equal(sender.phone, '+47 923 31 098');
+  const sender = senderMod.buildSalesSender({ name: 'Alexander', username: 'alexander@asoldi.com', phone: '+4740000000' });
+  assert.equal(sender.phone, '+47 400 00 000');
   assert.equal(sender.fromEmail, 'alexander@asoldi.com');
   const merge = salesEmail.salesEmailMergeMap(CLIENT, {}, sender);
-  assert.equal(merge.signerPhone, '+47 923 31 098');
+  assert.equal(merge.signerPhone, '+47 400 00 000');
   assert.equal(merge.signerEmail, 'alexander@asoldi.com');
   // No number on the profile → office fallback, never an empty signature.
   assert.match(salesEmail.salesEmailMergeMap(CLIENT, {}, senderMod.buildSalesSender({ name: 'Ola', username: 'ola@asoldi.com' })).signerPhone, /^\+47 /);
 
-  // Users created without a phone can get one later; alexander@asoldi.com is seeded on first read.
+  // Users created without a phone can get one later; with HUB_SEED_USER_PHONES set, a listed user is seeded on first read.
+  delete process.env.HUB_SEED_USER_PHONES;
   const created = await users.createUser('alexander@asoldi.com', 'secret-pass', 'sales', { name: 'Alexander' });
   assert.equal(created.ok, true);
+  assert.equal((await users.getUserByUsername('alexander@asoldi.com')).phone || '', '', 'nothing is seeded while the env is not set');
+  process.env.HUB_SEED_USER_PHONES = JSON.stringify({ 'Alexander@asoldi.com': '+47 400 00 000', 'broken': 5 });
   const seeded = await users.getUserByUsername('alexander@asoldi.com');
-  assert.equal(seeded.phone, '+4792331098', 'seeded number is written to users.json');
+  assert.equal(seeded.phone, '+4740000000', 'seeded number is written to users.json');
   const updated = await users.updateUserProfile(created.user.id, { phone: '+47 999 88 777' });
   assert.equal(updated.user.phone, '+4799988777', 'admin edit wins over the seed');
   assert.equal((await users.getUserByUsername('alexander@asoldi.com')).phone, '+4799988777', 'seed does not overwrite an existing number');

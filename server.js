@@ -9977,7 +9977,7 @@ app.post('/api/admin/users', adminAuth, async (req, res) => {
     return res.status(400).json({ message: 'Send-from must be an @asoldi.com address, for example alexander@asoldi.com.' });
   }
   if (phoneIsInvalid(phone)) {
-    return res.status(400).json({ message: 'Phone number must be a valid number, for example +47 923 31 098.' });
+    return res.status(400).json({ message: 'Phone number must be a valid number, for example +47 400 00 000.' });
   }
   if (role === 'sales' && !store.normalizePhone(phone)) {
     return res.status(400).json({ message: PHONE_REQUIRED_MESSAGE });
@@ -9999,7 +9999,7 @@ app.put('/api/admin/users/:id', adminAuth, async (req, res) => {
   const existing = await store.getUserById(id);
   if (!existing) return res.status(404).json({ message: 'User not found' });
   if (phoneIsInvalid(phone)) {
-    return res.status(400).json({ message: 'Phone number must be a valid number, for example +47 923 31 098.' });
+    return res.status(400).json({ message: 'Phone number must be a valid number, for example +47 400 00 000.' });
   }
   // Sales reps are required to have a number: block clearing it, and block the role change without one.
   const nextPhone = phone === undefined ? store.normalizePhone(existing.phone) : store.normalizePhone(phone);
@@ -10055,7 +10055,7 @@ app.put('/api/admin/me/sender', adminAuth, async (req, res) => {
     return res.status(400).json({ message: 'Send-from must be an @asoldi.com address.' });
   }
   if (phoneIsInvalid(phone)) {
-    return res.status(400).json({ message: 'Phone number must be a valid number, for example +47 923 31 098.' });
+    return res.status(400).json({ message: 'Phone number must be a valid number, for example +47 400 00 000.' });
   }
   if (phone !== undefined && !store.normalizePhone(phone)) {
     return res.status(400).json({ message: 'Admin must have a phone number — it is printed in offers and confirmations you send.' });

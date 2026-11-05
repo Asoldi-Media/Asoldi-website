@@ -1,13 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  BAARD_BOOKER_EMAIL,
+  BAARD_BOOKER_EMAIL_HASHES,
+  bookerEmailHash,
+  isBaardBookerEmail,
   baardFarkasCutoffMs,
   baardFarkasPatchEntries,
   findAlexanderSalesUser,
   isBaardLeadBeforeCutoff,
   planBaardFarkasReassign,
 } from '../lib/sales-baard-farkas-assign.js';
+
+// A made-up booker address: the source holds only the real one's hash.
+const BAARD_BOOKER_EMAIL = 'booker.one@example.test';
+BAARD_BOOKER_EMAIL_HASHES.add(bookerEmailHash(BAARD_BOOKER_EMAIL));
 
 const cutoff = baardFarkasCutoffMs('2026-08-11');
 
@@ -79,4 +85,14 @@ test('plan moves Bård-before-cutoff to Alexander and other Alexander leads to D
   assert.deepEqual(plan.toAlexander.map((row) => row.id), ['keep']);
   assert.deepEqual(plan.toDamian.map((row) => row.id).sort(), ['not-baard', 'too-late']);
   assert.equal(baardFarkasPatchEntries(plan).length, 3);
+});
+
+test('the booker address is matched by hash: a listed address matches in any case, others do not, and the source keeps no address', async () => {
+  assert.equal(isBaardBookerEmail(BAARD_BOOKER_EMAIL), true);
+  assert.equal(isBaardBookerEmail('  Booker.One@Example.TEST '), true);
+  assert.equal(isBaardBookerEmail('booker.two@example.test'), false);
+  assert.equal(isBaardBookerEmail(''), false);
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../lib/sales-baard-farkas-assign.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /[w.+-]+@(?!asoldi.com)[w-]+.[a-z]{2,}/i, 'no personal address in the source');
 });

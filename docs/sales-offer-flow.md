@@ -71,7 +71,7 @@ profile) in the persistent data dir, so it survives deploys. The same inbox is t
 saved on the Users row for `damian@asoldi.com` is also used when that person sends as admin, and the other way
 around. Required for the `sales` role and for the admin sender profile (Admin → Users → *Your sender profile*),
 optional for everyone else; server-side validation in `POST/PUT /api/admin/users` and `PUT /api/admin/me/sender`.
-`data/store.js#seedKnownPhones` backfills known numbers (alexander@asoldi.com → `+47 923 31 098`) on first read
+`data/store.js#seedKnownPhones` backfills known numbers (alexander@asoldi.com → `+47 400 00 000`) on first read
 if the stored record has none.
 
 ## Pricing source of truth
