@@ -30,6 +30,7 @@ disagree.
 | Checkout and sales rollout checklist | [checkout-sales-rollout-checklist.md](checkout-sales-rollout-checklist.md), [client-flow-checklist.txt](client-flow-checklist.txt) |
 | Publishing the client CMS package | [PUBLISH-NPM-PACKAGE-WALKTHROUGH.md](PUBLISH-NPM-PACKAGE-WALKTHROUGH.md) |
 | Client-site email: the per-site emailKey, provisioning, the site API, the site-config email block, the wake, signed hub → CMS calls, unsubscribe routes | [email-credential.md](email-credential.md) |
+| Client-site owner recipients (owner-rank changes, confirm and revert links) and owner notices, including the hub-internal SEO report notice | [email-owner-notify.md](email-owner-notify.md) |
 
 ## Switches that ship off
 
