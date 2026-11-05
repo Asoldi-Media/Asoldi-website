@@ -14,6 +14,9 @@
  *   (WEBSITE_MAKER_LOCAL_URL/BASE_URL point at it), so the real local Maker is never touched.
  * - EGRESS_AUDIT_ENFORCE=1: an unlisted host is also refused by the recorder (safety net), and
  *   still fails the soak.
+ * - Seeded fixtures (scripts/fixtures/safe-mode-soak): two booked meetings with calendar records,
+ *   two Fireflies meetings and three handled inbox messages. The soak drives the calendar write,
+ *   the Fireflies refresh and live join and the inbox read on them, and each guard must refuse.
  * Pass: /api/health safeMode:true, 0 unlisted hosts, >= 1 outbox email for the due reminder,
  * an intent for every blocked drive action, 423 for the safe-mode refusals, and every URL the
  * hub hands the Maker (or returns from create-maker-run) local. Prints names, counts and the
@@ -27,6 +30,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { safeModeState } from '../lib/runtime-mode.js';
 import { nonLocalUrlsIn } from '../lib/safe-mode-maker-urls.js';
 import { planDevSafe, portInUse, readEnvFile } from './dev-safe.mjs';
+import { buildCalendarClients, buildCalendarTokens, buildFirefliesStore, buildInboxStore, loadSoakFixtures, mailEgress } from './safe-mode-soak-fixtures.mjs';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ALLOWLIST = join(REPO_ROOT, 'scripts', 'safe-mode', 'soak-allowlist.json');
@@ -38,10 +42,11 @@ function argValue(argv, flag) {
   return i >= 0 && argv[i + 1] && !argv[i + 1].startsWith('--') ? argv[i + 1] : '';
 }
 
+const SAFE_MODE_MEET_PLACEHOLDER = 'https://meet.google.com/safe-mode';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Synthetic data: one client with a due 24h reminder, a website snapshot for the prod-publish probe. */
-export function seedSoakData(dataDir, now = new Date()) {
+export function seedSoakData(dataDir, now = new Date(), fixtures = loadSoakFixtures()) {
   mkdirSync(dataDir, { recursive: true });
   const iso = (offsetMs) => new Date(now.getTime() + offsetMs).toISOString();
   const client = {
@@ -70,11 +75,20 @@ export function seedSoakData(dataDir, now = new Date()) {
       reminder1hSentAt: '',
     },
   };
-  writeFileSync(join(dataDir, 'sales-clients.json'), JSON.stringify([client], null, 2));
+  const calendarClients = buildCalendarClients(fixtures.calendar, now);
+  writeFileSync(join(dataDir, 'sales-clients.json'), JSON.stringify([client, ...calendarClients], null, 2));
+  writeFileSync(join(dataDir, 'google-calendar-tokens.json'), JSON.stringify(buildCalendarTokens(fixtures.calendar), null, 2));
+  writeFileSync(join(dataDir, 'fireflies-meetings.json'), JSON.stringify(buildFirefliesStore(fixtures.fireflies, now), null, 2));
+  writeFileSync(join(dataDir, 'inbox-bot.json'), JSON.stringify(buildInboxStore(fixtures.inbox, now), null, 2));
   const snapshot = join(dataDir, 'sales-site-imports', client.id);
   mkdirSync(snapshot, { recursive: true });
   writeFileSync(join(snapshot, 'index.html'), '<!doctype html><title>soak</title><p>soak snapshot</p>');
-  return { clientId: client.id };
+  return {
+    clientId: client.id,
+    onlineClientId: calendarClients.find((row) => row.meetingMode === 'online')?.id || '',
+    meetingIds: fixtures.fireflies.meetings.map((row) => row.meetingId),
+    inboxMessages: fixtures.inbox.messages.length,
+  };
 }
 
 export function analyzeEgress(lines = []) {
@@ -226,6 +240,13 @@ export async function main(argv = process.argv.slice(2)) {
     WEBSITE_MAKER_BASE_URL: maker.base,
     EGRESS_AUDIT_ALLOW: ALLOWLIST,
     EGRESS_AUDIT_ENFORCE: '1',
+    // A made-up key: it makes the Fireflies guards the thing that stops a call, not a missing key.
+    FIREFLIES_API_KEY: 'soak-not-a-real-key',
+    // Made-up Google settings and (in the seeded data) a made-up connected account: the calendar
+    // sync then gets as far as the safe-mode guard, which is the thing under test.
+    GOOGLE_OAUTH_CLIENT_ID: 'soak-not-a-real-client',
+    GOOGLE_OAUTH_CLIENT_SECRET: 'soak-not-a-real-secret',
+    GOOGLE_OAUTH_REDIRECT_URI: `http://127.0.0.1:${port}/api/google/callback`,
   };
   const decided = safeModeState(env);
   if (!decided.on) {
@@ -233,7 +254,7 @@ export async function main(argv = process.argv.slice(2)) {
     throw new Error(`refusing to soak: safe mode would be OFF (${decided.reason}). The soak never runs the hub with live keys outside safe mode.`);
   }
   rmSync(plan.dataDir, { recursive: true, force: true });
-  const { clientId } = seedSoakData(plan.dataDir);
+  const { clientId, onlineClientId, meetingIds, inboxMessages } = seedSoakData(plan.dataDir);
   const auditFile = env.EGRESS_AUDIT_FILE;
   const logFile = join(plan.dataDir, 'hub.log');
   const log = createWriteStream(logFile);
@@ -246,9 +267,22 @@ export async function main(argv = process.argv.slice(2)) {
   try {
     const health = await waitForHealth(base);
     report.checks.healthSafeMode = health.safeMode === true;
-    await sleep(2000);
-    const password = localAdminPassword(plan.dataDir, env);
-    const login = await call(base, '/api/admin/login', { method: 'POST', body: { username: env.ADMIN_USERNAME || 'asoldi.com', password } });
+    // The hub makes its first admin password a moment after it starts listening; a loaded PC takes
+    // longer than a fixed pause, so wait for the file instead.
+    let password = localAdminPassword(plan.dataDir, env);
+    for (let waited = 0; !password && waited < 60_000; waited += 500) {
+      await sleep(500);
+      password = localAdminPassword(plan.dataDir, env);
+    }
+    await sleep(1000);
+    // The hub stores the hashed password a moment after it writes the file, so an early sign-in
+    // is refused: try again for a while before calling it a failure.
+    let login = { status: 0, json: {} };
+    for (let waited = 0; waited <= 60_000; waited += 1000) {
+      login = await call(base, '/api/admin/login', { method: 'POST', body: { username: env.ADMIN_USERNAME || 'asoldi.com', password } });
+      if (login.json?.token) break;
+      await sleep(1000);
+    }
     const token = login.json?.token || '';
     report.checks.localAdminLogin = Boolean(token);
     // Drive: each of these would reach a real system without safe mode.
@@ -261,13 +295,41 @@ export async function main(argv = process.argv.slice(2)) {
     };
     for (const [name, result] of Object.entries(drive)) report.drive[name] = result.status;
     report.checks.refusalsAre423 = [drive.prodPublish, drive.stripeWebhookAdmin, drive.publicTunnel].every((result) => result.status === 423);
+    // Calendar, Fireflies and inbox on the seeded records. Each would reach Google, Fireflies or a
+    // mailbox without safe mode; here each must be refused or answer from local data only.
+    const guards = {
+      calendarOpenMeet: await call(base, `/api/admin/sales/${onlineClientId}/open-meet`, { method: 'POST', token, body: {} }),
+      calendarBackfill: await call(base, '/api/admin/sales/backfill-calendar', { method: 'POST', token, body: { dryRun: false, notifyAttendees: false } }),
+      firefliesRefreshSeeded: await call(base, `/api/admin/fireflies/meetings/${meetingIds[0]}/refresh`, { method: 'POST', token }),
+      firefliesLiveJoin: await call(base, `/api/admin/sales/${onlineClientId}/fireflies/live-join`, { method: 'POST', token, body: { slotKey: 'soak-slot' } }),
+      firefliesList: await call(base, '/api/admin/fireflies/meetings', { token }),
+      inboxStatus: await call(base, '/api/admin/inbox-bot/status', { token }),
+      inboxPeek: await call(base, '/api/admin/inbox-bot/peek', { token }),
+      inboxBackfill: await call(base, '/api/admin/inbox-bot/backfill', { method: 'POST', token, body: { apply: false } }),
+    };
+    for (const [name, result] of Object.entries(guards)) report.drive[name] = result.status;
+    const rowsOf = (result) => (Array.isArray(result.json?.meetings) ? result.json.meetings : []);
+    const listedIds = new Set(rowsOf(guards.firefliesList).map((row) => row.meetingId));
+    report.seeded = {
+      firefliesListed: meetingIds.filter((id) => listedIds.has(id)).length,
+      inboxListed: Array.isArray(guards.inboxStatus.json?.items) ? guards.inboxStatus.json.items.length : 0,
+      inboxSeeded: inboxMessages,
+    };
+    report.checks.firefliesRefreshRefused = guards.firefliesRefreshSeeded.status === 502;
+    report.checks.firefliesLiveJoinRefused = guards.firefliesLiveJoin.status === 423;
+    report.checks.firefliesSeededListed = report.seeded.firefliesListed === meetingIds.length;
+    report.checks.inboxSeededListed = report.seeded.inboxListed === inboxMessages;
+    report.checks.inboxReadStaysLocal = guards.inboxPeek.json?.skipped === true && guards.inboxBackfill.json?.skipped === true;
     // Maker handoff: the URL typed in Sales, then a request that looks like it reached asoldi.com
     // with no Maker URL (before the fix this returned a browser handoff carrying asoldi.com URLs).
     const typed = await call(base, `/api/admin/sales/${clientId}/create-maker-run`, { method: 'POST', token, body: { websiteMakerBaseUrl: maker.base } });
     const asIfPublic = await postWithHost(base, `/api/admin/sales/${clientId}/create-maker-run`, { token, host: 'asoldi.com', body: { forceNewRun: true } });
     report.drive.makerTyped = typed.status;
     report.drive.makerAsIfPublic = asIfPublic.status;
-    const offMachine = [...nonLocalUrlsIn(maker.captured), ...nonLocalUrlsIn([typed.json, asIfPublic.json])];
+    // The calendar guard answers with a placeholder Meet link (lib/google-calendar.js, safeModeCalendarEvent):
+    // it points nowhere and is the proof the guard stood in, so it is not an off-machine URL.
+    const offMachine = [...nonLocalUrlsIn(maker.captured), ...nonLocalUrlsIn([typed.json, asIfPublic.json])]
+      .filter((url) => url !== SAFE_MODE_MEET_PLACEHOLDER);
     report.maker = {
       runsCreated: maker.captured.length,
       browserHandoff: [typed.json?.browserHandoff, asIfPublic.json?.browserHandoff].some((value) => value === true),
@@ -285,6 +347,7 @@ export async function main(argv = process.argv.slice(2)) {
     for (const intent of state.json?.intents || []) report.intents[intent.kind] = (report.intents[intent.kind] || 0) + 1;
     report.counters = state.json?.counters || {};
     report.jobs = state.json?.jobs || {};
+    report.checks.inboxLoopOff = report.jobs.inboxBot === 'off' && report.jobs.firefliesIngest === 'off' && report.jobs.firefliesLiveJoin === 'off';
   } finally {
     child.kill('SIGTERM');
     await sleep(1500);
@@ -297,6 +360,10 @@ export async function main(argv = process.argv.slice(2)) {
   report.checks.recorderActiveInHub = report.egress.startedPids.includes(child.pid);
   report.checks.zeroUnlistedEgress = report.egress.unlisted.length === 0;
   report.checks.outboxHasReminder = report.outbox >= 1;
+  report.mailEgress = mailEgress(report.egress.hosts).length;
+  report.checks.noMailLeftTheMachine = report.mailEgress === 0;
+  report.checks.calendarWriteIntent = Boolean(report.intents.calendarWrite);
+  report.checks.firefliesIngestIntent = Boolean(report.intents.firefliesIngest);
   report.checks.prodPublishIntent = Boolean(report.intents.prodPublish);
   report.checks.stripeWebhookAdminIntent = Boolean(report.intents.stripeWebhookAdmin);
   report.checks.publicTunnelIntent = Boolean(report.intents.publicTunnel);
@@ -304,13 +371,14 @@ export async function main(argv = process.argv.slice(2)) {
   writeFileSync(join(plan.dataDir, 'soak-report.json'), JSON.stringify(report, null, 2));
   console.log(`[soak] egress connections=${report.egress.total} hosts=${report.egress.hosts.map((h) => `${h.host}:${h.port}x${h.count}${h.listed ? '' : ' UNLISTED'}`).join(', ') || '(none)'}`);
   console.log(`[soak] intents ${JSON.stringify(report.intents)}`);
+  console.log(`[soak] seeded ${JSON.stringify(report.seeded || {})} jobs inboxBot=${report.jobs?.inboxBot} firefliesIngest=${report.jobs?.firefliesIngest}`);
   console.log(`[soak] outbox=${report.outbox} drive=${JSON.stringify(report.drive)}`);
   console.log(`[soak] maker runs=${report.maker.runsCreated ?? 0} push=${(report.maker.pushUrls || []).join(',') || '(none)'} callback=${(report.maker.callbackUrls || []).join(',') || '(none)'} offMachine=${report.maker.offMachineUrls ?? '?'} browserHandoff=${Boolean(report.maker.browserHandoff)}`);
   for (const [name, pass] of Object.entries(report.checks)) console.log(`[soak] ${pass ? 'PASS' : 'FAIL'} ${name}`);
   console.log(`[soak] ${report.ok ? 'PASSED' : 'FAILED'} (report: .local-data/${profile}/soak-report.json, hub log: .local-data/${profile}/hub.log)`);
   if (!argv.includes('--keep') && report.ok) {
     // keep the report and log, drop the seeded data and outbox
-    for (const name of ['sales-clients.json', 'sales-site-imports', 'outbox']) rmSync(join(plan.dataDir, name), { recursive: true, force: true });
+    for (const name of ['sales-clients.json', 'sales-site-imports', 'outbox', 'fireflies-meetings.json', 'inbox-bot.json', 'google-calendar-tokens.json']) rmSync(join(plan.dataDir, name), { recursive: true, force: true });
   }
   return report.ok ? 0 : 1;
 }
