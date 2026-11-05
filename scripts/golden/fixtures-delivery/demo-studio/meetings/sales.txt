@@ -1,0 +1,8 @@
+Selger: Hei Kari, hva lager du i studioet?
+Kunde: Jeg lager kopper og skåler i keramikk og holder kurs på kveldstid.
+Selger: Hva vil du at nettsiden skal vise?
+Kunde: Jeg vil vise arbeidene mine og fortelle når neste kurs starter.
+Selger: Skal folk kunne melde seg på kursene fra nettsiden?
+Kunde: Det holder med et kontaktskjema der de kan spørre om plass.
+Selger: Vi lager et galleri med bilder av arbeidene dine.
+Kunde: Galleriet må ha store bilder som viser glasurene godt.

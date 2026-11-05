@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "id": "demo-clinic",
+  "kind": "synthetic",
+  "label": "Eksempel Fysioterapi AS",
+  "salesClient": {
+    "id": "golden_demo-clinic",
+    "businessName": "Eksempel Fysioterapi AS",
+    "contactPerson": "Kari Eksempel",
+    "contactEmail": "kari@fysio.example.com",
+    "contactPhone": "",
+    "orgNumber": "",
+    "businessAddress": "",
+    "industry": "physiotherapy",
+    "websiteDomain": "",
+    "status": "active"
+  },
+  "offer": { "status": "sent", "title": "Nettside", "summary": "Nettside med vedlikehold." }
+}

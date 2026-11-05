@@ -1,0 +1,6 @@
+Selger: Velkommen til workshop, la oss se på innholdet.
+Kunde: Studioet ligger i første etasje i et gammelt verksted ved elva.
+Selger: Hvilke sider trenger du?
+Kunde: En forside, en side om kursene og en side med galleriet.
+Selger: Hvordan vil du at folk skal ta kontakt?
+Kunde: De kan sende en melding gjennom skjemaet eller ringe meg.

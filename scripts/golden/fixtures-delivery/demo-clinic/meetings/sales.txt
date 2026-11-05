@@ -1,0 +1,10 @@
+Selger: Hei Kari, fortell litt om klinikken deres.
+Kunde: Vi er tre fysioterapeuter som behandler idrettsskader og ryggplager.
+Selger: Hva er det viktigste nettsiden skal gjøre?
+Kunde: Folk må finne oss når de søker etter fysioterapi i nærområdet.
+Selger: Da jobber vi med søkeord og en side for hver behandling.
+Kunde: Vi vil ha en egen side for idrettsskader og en for rygg og nakke.
+Selger: Ønsker dere at pasientene kan bestille time selv?
+Kunde: Ja, timebestillingen må være lett å finne på hver side.
+Selger: Skal vi presentere hver behandler med bilde?
+Kunde: Ja, vi vil vise hvem som jobber her med et kort bilde av hver.

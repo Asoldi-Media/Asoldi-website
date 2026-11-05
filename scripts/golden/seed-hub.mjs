@@ -12,7 +12,8 @@
 // Writes, through the hub's own data modules:
 //   sales-clients.json      one client per fixture, id golden_<fixture id>, with its sitePlan
 //   sales-offers.json       the fixture's offer as a draft offer for that client
-//   fireflies-meetings.json the fixture's meetings (inline text; private ones only with --private-dir)
+//   fireflies-meetings.json the fixture's meetings (inline text; private ones only with --private-dir), listed in
+//                           <id>/transcripts.json or <id>/meetings.json
 //   users.json              a local admin with a random password, saved to <data-dir>/secrets/local-admin.json
 //   sites.json              a site per client that has a website domain
 // Fixture values that are private placeholders are read from --private-dir, or the client is skipped.
@@ -146,7 +147,9 @@ export function loadFixtureClients(fixturesDir, spec = 'all') {
   });
   return wanted.map((entry) => {
     const dir = join(fixturesDir, entry.id);
-    return { ...entry, dir, client: readJson(join(dir, 'client.json')), transcripts: existsSync(join(dir, 'transcripts.json')) ? readJson(join(dir, 'transcripts.json')) : null };
+    // The meeting index is transcripts.json (the Maker's fixtures) or meetings.json (the same shape).
+    const meetingsFile = ['transcripts.json', 'meetings.json'].map((name) => join(dir, name)).find((file) => existsSync(file));
+    return { ...entry, dir, client: readJson(join(dir, 'client.json')), transcripts: meetingsFile ? readJson(meetingsFile) : null };
   });
 }
 

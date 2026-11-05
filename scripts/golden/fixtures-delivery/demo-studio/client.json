@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "id": "demo-studio",
+  "kind": "synthetic",
+  "label": "Eksempel Keramikk",
+  "salesClient": {
+    "id": "golden_demo-studio",
+    "businessName": "Eksempel Keramikk",
+    "contactPerson": "Kari Eksempel",
+    "contactEmail": "kari@keramikk.example.com",
+    "contactPhone": "",
+    "orgNumber": "",
+    "businessAddress": "",
+    "industry": "ceramics",
+    "websiteDomain": "",
+    "status": "active"
+  },
+  "offer": { "status": "sent", "title": "Nettside", "summary": "Nettside med vedlikehold." }
+}

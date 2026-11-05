@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "id": "demo-cafe",
+  "kind": "synthetic",
+  "label": "Eksempel Kafé",
+  "salesClient": {
+    "id": "golden_demo-cafe",
+    "businessName": "Eksempel Kafé",
+    "contactPerson": "Kari Eksempel",
+    "contactEmail": "kari@kafe.example.com",
+    "contactPhone": "",
+    "orgNumber": "",
+    "businessAddress": "",
+    "industry": "cafe",
+    "websiteDomain": "",
+    "status": "active"
+  },
+  "offer": { "status": "sent", "title": "Nettside", "summary": "Nettside med vedlikehold." }
+}
