@@ -4,6 +4,8 @@
 // gate-expected.json, schema asoldi.gate-expected/1) the lines score an overall F1 of at least
 // ctx.minF1 (default 0.9; scripts/eval/gate-f1.mjs scoring). The gates are written to
 // <outDir>/gate-actual/<fixture>/gate-actual.json so gate-f1.mjs --actual can score them again.
+// A client is scored on the gate once it is signed (plan gateAt 'signed') or, by default, once its
+// workshop is held: the point its labels describe.
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { scoreClient, summarize } from '../../eval/gate-f1.mjs';
@@ -19,8 +21,10 @@ export async function check(ctx) {
   const counts = new Map();
   let labelled = 0;
   for (const spec of ctx.plan.clients) {
-    const gate = ctx.timeline?.gates?.[spec.id];
-    const row = { status: gate?.status || 0, mode: gate?.mode || '', lines: gate?.lines?.length || 0, askable: gate?.askable || 0, askableDev: gate?.askableDev || 0 };
+    // The gate at the point the client's data describes: once signed, or with the workshop held (the default).
+    const at = spec.gateAt === 'signed' ? 'signed' : 'workshop-held';
+    const gate = at === 'signed' ? ctx.timeline?.gatesAtSigning?.[spec.id] : ctx.timeline?.gates?.[spec.id];
+    const row = { at, status: gate?.status || 0, mode: gate?.mode || '', lines: gate?.lines?.length || 0, askable: gate?.askable || 0, askableDev: gate?.askableDev || 0 };
     value.clients[spec.id] = row;
     if (!gate || gate.status !== 200) {
       findings.push(`${spec.id}: the gate route answered ${gate?.status || 'nothing'}`);

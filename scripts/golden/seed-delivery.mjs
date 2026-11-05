@@ -17,12 +17,13 @@
 //                                                       tokenOut (owner-only), never to stdout
 //     "clients": [{ "id": "<sales client id>", "fixture": "<fixture id>", "tier": "<tier id>",
 //                   "language": "nb", "brief": "stub" | "replay" | "live",
-//                   "briefReplayDir": "<dir>" }] }
+//                   "briefReplayDir": "<dir>", "materials": { logo, uploads, pageKinds } }] }
 //
 // Per client (the overlay): the signing state is reset (no plan, not signed; meeting held and offer
 // sent), one sent offer for the client's tier and its portal offer (so every signing path can sign),
 // the meeting rows get their purpose from the seeded meeting id (…_sales, …_workshop), and the
-// language is set.
+// language is set. `materials` stands for what the Maker reported about the client's preview run
+// (client.makerRun.materials: logo, uploads, page kinds).
 // switches "on": every client is a pilot; signing auto, delivery.loop auto, gate shadow, brief auto,
 // development.previewJobs on; the local release passes those need are recorded (suite local-e2e).
 // switches "off": no settings are written at all (the control run: every spine switch off).
@@ -187,9 +188,16 @@ function resetClient(mods, spec) {
     progression: { meetingHeld: true, offerSent: true, contractSigned: false },
     meetings,
     language: spec.language || client.language || 'nb',
+    // The address the client uses on the portal (connect-portal links by it).
+    clientEmail: client.clientEmail || client.contactEmail || '',
     contractSentAt: T0,
   };
   for (const key of ['sitePlan', 'contractSignedAt', 'hubSite', 'makerRun', 'delivery', 'workshop', 'workshopAction']) delete record[key];
+  // What the Maker reported about the client's preview run (logo, page kinds), when the plan names it.
+  if (spec.materials && typeof spec.materials === 'object') {
+    const { runId: _runId, ...materials } = spec.materials;
+    record.makerRun = { materials };
+  }
   return record;
 }
 

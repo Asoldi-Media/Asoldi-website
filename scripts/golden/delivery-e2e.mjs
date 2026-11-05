@@ -283,6 +283,25 @@ export async function clientJobs(base, token, clientId) {
 
 const FINISHED = new Set(['done', 'failed', 'cancelled', 'blocked']);
 
+/** The gate of every client as the developer route shows it: { clientId: { status, mode, lines, askable, askableDev } }. */
+export async function gateSnapshots(admin, plan) {
+  const out = {};
+  for (const spec of plan.clients) {
+    const gate = await admin.get(`/api/admin/delivery/gate/${encodeURIComponent(spec.id)}`);
+    const lines = Array.isArray(gate.body?.gate?.lines) ? gate.body.gate.lines.map((line) => ({ id: line.id, gate: line.gate, status: line.status, askable: line.askable === true })) : [];
+    out[spec.id] = {
+      status: gate.status,
+      inputHash: gate.body?.gate?.inputHash || '',
+      mode: gate.body?.mode || '',
+      lines,
+      // Lines the client could be asked for: all of them, and those the development gate needs.
+      askable: Number(gate.body?.askable?.total) || 0,
+      askableDev: lines.filter((line) => line.askable && line.gate === 'dev' && line.status === 'missing').length,
+    };
+  }
+  return out;
+}
+
 /**
  * The whole scenario. opts: { hub, token, plan, banks: {clientId: bank}, makerRuns: {clientId:
  * {runId, templateSetId}}, jobInputs: {clientId: {templateSetId, language}}, worker (stub worker or
@@ -318,7 +337,8 @@ export async function runDeliveryScenario({ hub, token, plan, banks = {}, makerR
   const afterSigning = await settledOutbox(dataDir);
   timeline.outboxAfterSigning = afterSigning.length - before;
 
-  // 3. Ticks until every brief is built (switched on), then the gate as the developer sees it.
+  // 3. Ticks until every brief is built (switched on), then the gate as the developer sees it
+  //    (timeline.gatesAtSigning; timeline.gates is the gate once the workshop is held).
   await advanceTo(Date.now() + MINUTE, 'after-signing');
   if (timeline.switches === 'on') {
     // A brief is built once its inputs held still for the rebuild debounce (10 minutes), at most two
@@ -334,19 +354,7 @@ export async function runDeliveryScenario({ hub, token, plan, banks = {}, makerR
       await advanceTo(clock.now + 11 * MINUTE, `brief-${round + 1}`);
       await advanceTo(clock.now + MINUTE, `brief-${round + 1}-next`);
     }
-    for (const spec of plan.clients) {
-      const gate = await admin.get(`/api/admin/delivery/gate/${encodeURIComponent(spec.id)}`);
-      const lines = Array.isArray(gate.body?.gate?.lines) ? gate.body.gate.lines.map((line) => ({ id: line.id, gate: line.gate, status: line.status, askable: line.askable === true })) : [];
-      timeline.gates[spec.id] = {
-        status: gate.status,
-        inputHash: gate.body?.gate?.inputHash || '',
-        mode: gate.body?.mode || '',
-        lines,
-        // Lines the client could be asked for: all of them, and those the development gate needs.
-        askable: Number(gate.body?.askable?.total) || 0,
-        askableDev: lines.filter((line) => line.askable && line.gate === 'dev' && line.status === 'missing').length,
-      };
-    }
+    timeline.gatesAtSigning = await gateSnapshots(admin, plan);
   }
 
   if (stopAfter === 'brief') {
@@ -374,6 +382,7 @@ export async function runDeliveryScenario({ hub, token, plan, banks = {}, makerR
   } else {
     await advanceTo(clock.now + MINUTE, 'workshop');
   }
+  if (timeline.switches === 'on') timeline.gates = await gateSnapshots(admin, plan);
 
   // 5. Preview jobs.
   if (timeline.switches === 'on') {
