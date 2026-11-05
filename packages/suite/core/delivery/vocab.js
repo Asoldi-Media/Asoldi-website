@@ -528,6 +528,14 @@ export const SETTINGS_KEYS = Object.freeze({
   signingMode: 'signing.mode',
   signingPaused: 'signing.paused',
   // --- end signing
+  // --- intake
+  intakeTierStepsEnabled: 'intake.tierSteps.enabled',
+  intakeTierStepsMode: 'intake.tierSteps.mode',
+  intakeTierStepsPaused: 'intake.tierSteps.paused',
+  intakeTranscriptKeywordsEnabled: 'intake.transcriptKeywords.enabled',
+  intakeTranscriptKeywordsMode: 'intake.transcriptKeywords.mode',
+  intakeTranscriptKeywordsPaused: 'intake.transcriptKeywords.paused',
+  // --- end intake
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);
