@@ -468,7 +468,10 @@ test('the retention purge deletes nothing while privacy.purge is off, only repor
   const again = await retention.runRetentionPurge({ settings: settingsStore.getAutomationSettings({ fresh: true }) });
   assert.equal(again.reason, 'not-due', 'once a day');
 
-  assert.equal(settingsStore.saveAutomationSettings({ privacy: { purge: { mode: 'auto' } } }).ok, true);
+  // Auto deletes data: it needs a pilot list and a recorded release pass (lib/spine-mode.js).
+  assert.equal(settingsStore.recordReleasePass('privacy.purge', { suite: 'test' }).ok, true);
+  assert.equal(settingsStore.saveAutomationSettings({ privacy: { purge: { mode: 'auto' } } }).ok, false, 'no pilot list yet');
+  assert.equal(settingsStore.saveAutomationSettings({ pilotClientIds: ['pd-other'], privacy: { purge: { mode: 'auto' } } }).ok, true);
   const auto = await retention.runRetentionPurge({ settings: settingsStore.getAutomationSettings({ fresh: true }), force: true });
   assert.equal(auto.dryRun, false);
   assert.equal(existsSync(expired), false, 'auto deletes the expired file');

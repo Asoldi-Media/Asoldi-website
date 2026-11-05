@@ -127,7 +127,9 @@ test('the archive survives the pruning of a 400-day-old Fireflies record while r
   assert.equal(fromArchive.source, 'archive');
   assert.match(fromArchive.transcript, /nettbutikk/);
 
-  setSettings({ privacy: { purge: { enabled: true, mode: 'auto' } } });
+  // Auto deletes data: it needs a pilot list and a recorded release pass (lib/spine-mode.js).
+  assert.equal(settingsStore.recordReleasePass('privacy.purge', { suite: 'test' }).ok, true);
+  setSettings({ pilotClientIds: ['ta-signed'], privacy: { purge: { enabled: true, mode: 'auto' } } });
   const kept = await retention.runRetentionPurge({ settings: settingsStore.getAutomationSettings({ fresh: true }), now: new Date(NOW + 400 * DAY), force: true });
   assert.equal(kept.counts['transcript-archive'], 0);
   assert.deepEqual(archiveFiles('ta-signed'), [`${sha}.json`], 'kept while the contract runs');

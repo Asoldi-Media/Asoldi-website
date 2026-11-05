@@ -33,6 +33,8 @@ test.after(() => {
 });
 
 const settingsStore = await import('../data/automation-settings.js');
+// Auto needs a recorded release pass (lib/spine-mode.js); a settings object in auto holds them.
+const { testReleases } = await import('./fixtures/test-releases.mjs');
 const sales = await import('../data/sales.js');
 const prep = await import('../lib/workshop-prep-send.js');
 const gateLib = await import('../lib/delivery-gate.js');
@@ -158,7 +160,7 @@ test(`negative control: with the gate off, or running in shadow, the pre-worksho
       // leaves it): today's mails still go out unchanged, and the gate's versions are shadow records.
       'gate in shadow, lines gate, kind auto': [{ ...defaults, gate: { enabled: true, mode: 'shadow', paused: null }, emails: gateLines }, bothShadowed],
       // A pilot rollout: clients that are not on the pilot list keep today's mails.
-      'gate auto for another pilot, lines gate, kind auto': [{ ...defaults, pilotClientIds: ['someone-else'], gate: { enabled: true, mode: 'auto', paused: null }, emails: gateLines }, bothShadowed],
+      'gate auto for another pilot, lines gate, kind auto': [{ ...defaults, pilotClientIds: ['someone-else'], gate: { enabled: true, mode: 'auto', paused: null }, releases: testReleases(), emails: gateLines }, bothShadowed],
     };
     for (const [label, [settings, shadow]] of Object.entries(variants)) {
       const actual = capture(root, settings);
@@ -252,7 +254,7 @@ test('with the pre-workshop kind released to auto and the gate in shadow, today\
   assert.ok(action.confirmationSentAt, 'the workshop confirmation was stamped');
   assert.equal(shadowOutbox('pre-shadow-booked').length, 1);
   // The modes behind it.
-  const auto = { ...settings, gate: { enabled: true, mode: 'auto', paused: null }, pilotClientIds: ['pre-shadow-3'] };
+  const auto = { ...settings, gate: { enabled: true, mode: 'auto', paused: null }, releases: testReleases(), pilotClientIds: ['pre-shadow-3'] };
   assert.equal(emails.deliveryEmailMode('preWorkshop', { id: 'pre-shadow-3' }, { settings: auto }), 'auto');
   assert.equal(emails.deliveryEmailMode('preWorkshop', { id: 'not-a-pilot' }, { settings: auto }), 'shadow');
   assert.equal(emails.deliveryEmailMode('preWorkshop', { id: 'pre-shadow-3' }, { settings: { ...auto, gate: { enabled: false, mode: 'shadow', paused: null } } }), 'off');
@@ -266,7 +268,7 @@ test('a pilot rollout: a client that is not a pilot keeps today\'s mail; only th
   writeFileSync(file, JSON.stringify({
     ...defaults,
     pilotClientIds: ['pre-pilot'],
-    gate: { enabled: true, mode: 'auto', paused: null },
+    gate: { enabled: true, mode: 'auto', paused: null }, releases: testReleases(),
     emails: { ...defaults.emails, preWorkshop: { ...defaults.emails.preWorkshop, lines: 'gate', mode: 'auto' } },
   }));
   settingsStore.invalidateAutomationSettingsCache();
@@ -343,7 +345,7 @@ test('desk Datainnsamling lines: today\'s lines unless the pre-workshop mail is 
   const kindAuto = { ...stored, emails: { ...stored.emails, preWorkshop: { ...stored.emails.preWorkshop, lines: 'gate', mode: 'auto' } } };
   assert.equal(await gateLib.gateMailLinesFor(sales.getSalesClientById('desk-1'), { settings: kindAuto }), null, 'gate in shadow, kind auto');
   // Only with the gate and the kind auto for this client (a pilot) do the gate's lines reach the desk.
-  const auto = { ...kindAuto, pilotClientIds: ['desk-1'], gate: { enabled: true, mode: 'auto', paused: null } };
+  const auto = { ...kindAuto, pilotClientIds: ['desk-1'], gate: { enabled: true, mode: 'auto', paused: null }, releases: testReleases() };
   assert.equal(await gateLib.gateMailLinesFor(sales.getSalesClientById('desk-1'), { settings: { ...auto, pilotClientIds: ['someone-else'] } }), null, 'not a pilot');
   const rows = await gateLib.gateMailLinesFor(sales.getSalesClientById('desk-1'), { settings: auto });
   assert.ok(Array.isArray(rows) && rows.length > 0);

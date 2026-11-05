@@ -32,6 +32,8 @@ test.after(() => {
 });
 
 const settingsStore = await import('../data/automation-settings.js');
+// Auto needs a recorded release pass (lib/spine-mode.js); a settings object in auto holds them.
+const { testReleases } = await import('./fixtures/test-releases.mjs');
 const sales = await import('../data/sales.js');
 const hub = await import('../data/hub.js');
 const emails = await import('../lib/delivery-emails.js');
@@ -146,7 +148,7 @@ test('auto delivery sends once through the transport and stamps postWorkshopSent
   const settings = {
     ...base,
     pilotClientIds: ['pw-auto'],
-    gate: { enabled: true, mode: 'auto', paused: null },
+    gate: { enabled: true, mode: 'auto', paused: null }, releases: testReleases(),
     emails: { ...base.emails, postWorkshop: { ...base.emails.postWorkshop, enabled: true, mode: 'auto' } },
   };
   const sent = [];
@@ -480,7 +482,7 @@ test('the manual post-workshop desk mail in auto: two presses send once, a sent 
   writeFileSync(file, JSON.stringify({
     ...defaults,
     pilotClientIds: ['rt-auto'],
-    gate: { enabled: true, mode: 'auto', paused: null },
+    gate: { enabled: true, mode: 'auto', paused: null }, releases: testReleases(),
     emails: { ...defaults.emails, postWorkshop: { ...defaults.emails.postWorkshop, enabled: true, mode: 'auto' } },
   }));
   settingsStore.invalidateAutomationSettingsCache();

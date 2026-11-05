@@ -21,6 +21,8 @@ delete process.env.STRIPE_CONNECT_TEST_SECRET_KEY;
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const vocab = await import('../packages/suite/core/delivery/vocab.js');
 const settingsStore = await import('../data/automation-settings.js');
+// Auto needs a recorded release pass (lib/spine-mode.js); a settings object in auto holds them.
+const { testReleases } = await import('./fixtures/test-releases.mjs');
 const sales = await import('../data/sales.js');
 const hub = await import('../data/hub.js');
 const gateLib = await import('../lib/delivery-gate.js');
@@ -113,7 +115,7 @@ function spyNetwork() {
 // refuse gate.mode 'auto' for now, so the tests pass them in).
 function autoSettings(pilots) {
   const base = settingsStore.getAutomationSettings({ fresh: true });
-  return { ...base, pilotClientIds: pilots, gate: { enabled: true, mode: 'auto', paused: null } };
+  return { ...base, pilotClientIds: pilots, gate: { enabled: true, mode: 'auto', paused: null }, releases: testReleases() };
 }
 
 function salesFileMtime() {

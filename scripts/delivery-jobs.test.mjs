@@ -17,6 +17,7 @@ process.env.PERSIST_PRODUCTION_ENV = '0';
 const jobs = await import('../lib/delivery-jobs.js');
 const sales = await import('../data/sales.js');
 const settingsStore = await import('../data/automation-settings.js');
+const { writeReleasesFile } = await import('./fixtures/test-releases.mjs');
 const hosts = await import('../data/maker-hosts.js');
 const meta = await import('../lib/maker-host-meta.js');
 const makerAuthLib = await import('../lib/maker-auth.js');
@@ -44,7 +45,8 @@ function resetJobs() {
 }
 
 function setSettings(patch) {
-  rmSync(join(dataDir, 'automation-settings.json'), { force: true });
+  // Auto needs a recorded release pass (lib/spine-mode.js): start from settings that hold the passes.
+  writeReleasesFile(dataDir);
   settingsStore.invalidateAutomationSettingsCache();
   const result = settingsStore.saveAutomationSettings(patch, { by: 'test' });
   assert.equal(result.ok, true, JSON.stringify(result.errors));

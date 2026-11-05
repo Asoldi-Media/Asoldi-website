@@ -20,6 +20,7 @@ const meta = await import('../lib/maker-host-meta.js');
 const accessLog = await import('../lib/maker-access-log.js');
 const routes = await import('../lib/routes/brief-routes.js');
 const { defaultAutomationSettings } = await import('../data/automation-settings.js');
+const { testReleases } = await import('./fixtures/test-releases.mjs');
 const { normalizeSitePlan } = await import('../lib/site-plan-model.js');
 const { registerOptionalRoutes, OPTIONAL_ROUTE_MODULES } = await import('../lib/routes/optional-routes.js');
 
@@ -83,9 +84,10 @@ function stubLlm() {
   };
 }
 
+// Auto needs a recorded release pass (lib/spine-mode.js): these settings hold the passes.
 function settingsWith(brief, extra = {}) {
   const settings = defaultAutomationSettings();
-  return { ...settings, brief: { ...settings.brief, ...brief }, ...extra };
+  return { ...settings, releases: testReleases(), brief: { ...settings.brief, ...brief }, ...extra };
 }
 
 function developmentAuth(req, res, next) {
