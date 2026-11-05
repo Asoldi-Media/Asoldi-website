@@ -505,3 +505,15 @@ test('ping addresses: a stored scheme or path is dropped, Unicode names are sent
   assert.equal(monitor.isLoopbackHost('fjordlys.test'), false);
 });
 
+// ---------------------------------------------------------------- the Superadmin card
+
+test('the CMS-utrulling card sits on the System safety page and uses only the fleet routes', () => {
+  const section = readFileSync(new URL('../app/pages/Admin/sections/SystemSafetySection.tsx', import.meta.url), 'utf8');
+  assert.ok(section.includes("import { CmsRolloutCard } from './CmsRolloutCard';"));
+  assert.ok(section.includes('<CmsRolloutCard />'));
+  const cardSource = readFileSync(new URL('../app/pages/Admin/sections/CmsRolloutCard.tsx', import.meta.url), 'utf8');
+  const paths = new Set([...cardSource.matchAll(/\$\{API\}(\/[^`'"]*)/g)].map((match) => match[1]));
+  assert.deepEqual([...paths].sort(), ['/admin/cms-fleet', '/admin/cms-fleet/${path}']);
+  for (const action of ["post('flip'", "post('dismiss'", "post('revert'"]) assert.ok(cardSource.includes(action), action);
+  assert.doesNotMatch(cardSource, /dangerouslySetInnerHTML|innerHTML/);
+});
