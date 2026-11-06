@@ -21,7 +21,6 @@ import {
   ShieldCheck,
   Search,
   SkipForward,
-  StickyNote,
   Tag,
   Trash2,
   Undo2,
@@ -39,8 +38,9 @@ import { SalesFlowSteps } from '../../sales/SalesFlowSteps';
 import { SalesScriptsDock } from '../../sales/SalesScriptsDock';
 import { offerMissingFields, offerReadinessMessage } from '../../../../lib/offer-readiness.js';
 import { SalesGoalTimeline } from './SalesGoalTimeline';
-import { SignedContractPill } from './InboxBotPanel';
+import { InboxNeedsReplyPill, SignedContractPill } from './InboxBotPanel';
 import { SalesFocusBoard, type SalesFocusCategoryId } from './SalesFocusBoard';
+import { ClientSalesLog } from './ClientSalesLog';
 import { SalesCalendarWeek } from './SalesCalendarWeek';
 import { BookerRecordingPlayer } from '../../developer/DeveloperKundedata';
 import { WorkshopIterationLog } from './WorkshopIterationLog';
@@ -1445,10 +1445,17 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
     setShowForm(true);
   }
 
-  function clientNoteDraft(client: SalesClient) {
-    return Object.prototype.hasOwnProperty.call(noteDrafts, client.id)
-      ? noteDrafts[client.id]
-      : (client.notes || '');
+  function renderClientSalesLog(client: SalesClient) {
+    return (
+      <ClientSalesLog
+        client={client}
+        nowMs={meetingNowMs}
+        draft={noteDrafts[client.id] || ''}
+        saving={savingNoteId === client.id}
+        onDraft={(value) => setNoteDrafts((prev) => ({ ...prev, [client.id]: value }))}
+        onAdd={() => void addClientNote(client)}
+      />
+    );
   }
 
   function applySavedClient(saved: SalesClient) {
@@ -1458,12 +1465,6 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
       const index = prev.findIndex((entry) => entry.id === saved.id);
       const next = index === -1 ? [saved, ...prev] : prev.map((entry, i) => (i === index ? saved : entry));
       writeSalesListCache(next, productCounts);
-      return next;
-    });
-    setNoteDrafts((prev) => {
-      if (!Object.prototype.hasOwnProperty.call(prev, saved.id)) return prev;
-      const next = { ...prev };
-      delete next[saved.id];
       return next;
     });
   }
@@ -1511,19 +1512,21 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
     openAlertClient(row.clientId, row.businessName, row.kind === 'sales' ? 3 : 1);
   }
 
-  async function saveClientNotes(client: SalesClient) {
-    const notes = clientNoteDraft(client);
-    if (notes.trim() === String(client.notes || '').trim()) return;
-    if (savingNoteId === client.id) return;
+  async function addClientNote(client: SalesClient) {
+    const line = String(noteDrafts[client.id] || '').trim();
+    if (!line || savingNoteId === client.id) return;
     setSavingNoteId(client.id);
     setError('');
     try {
-      const data = await request(`/admin/sales/${client.id}/notes`, {
-        method: 'PATCH',
-        body: JSON.stringify({ notes }),
-      });
-      const saved = data?.client as SalesClient | undefined;
-      if (saved?.id) applySavedClient(saved);
+      const saved = await appendClientNote(client, line);
+      if (saved?.id) {
+        setNoteDrafts((prev) => {
+          if (!Object.prototype.hasOwnProperty.call(prev, client.id)) return prev;
+          const next = { ...prev };
+          delete next[client.id];
+          return next;
+        });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed saving note');
     } finally {
@@ -1635,7 +1638,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
       industry: client.industry || '',
       meetingMode: client.meetingMode === 'in-person' ? 'in-person' : 'online',
       websiteDomain: client.websiteDomain || '',
-      notes: clientNoteDraft(client),
+      notes: client.notes || '',
       instagramUrl: details.instagramUrl,
       facebookUrl: details.facebookUrl,
       proffUrl: details.proffUrl || proffUrlFromOrgNumber(client.orgNumber),
@@ -1675,7 +1678,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
     const next = new URLSearchParams(searchParams);
     next.set('kategori', id);
     setSearchParams(next, { replace: true });
-    setListCategoryOverride(null);
+    if (!showAllClients) setListCategoryOverride(null);
   }
 
   async function setReadUp(client: SalesClient, done: boolean) {
@@ -1684,11 +1687,9 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
   }
 
   async function appendClientNote(client: SalesClient, line: string) {
-    const prev = String(client.notes || '').trim();
-    const notes = prev ? `${prev}\n${line}` : line;
     const data = await request(`/admin/sales/${client.id}/notes`, {
       method: 'PATCH',
-      body: JSON.stringify({ notes }),
+      body: JSON.stringify({ append: line }),
     });
     const saved = data?.client as SalesClient | undefined;
     if (saved?.id) applySavedClient(saved);
@@ -3135,6 +3136,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                       ) : null}
                       {showCompact ? <FirefliesLiveChip client={client} /> : null}
                       <SignedContractPill client={client} className="shrink-0" />
+                      <InboxNeedsReplyPill client={client} className="shrink-0" />
                       {interestLabel ? (
                         <span className={`shrink-0 px-2 py-0.5 rounded text-[11px] bg-violet-500/15 border border-violet-400/40 text-violet-100 truncate ${showCompact ? 'max-w-[52%]' : 'max-w-[46%]'}`}>
                           {interestLabel}
@@ -3278,14 +3280,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                   onClient={applyUserClient}
                   isAdmin={isSalesAdmin}
                 />
-                <ClientNotesField
-                  label="Notater"
-                  value={clientNoteDraft(client)}
-                  saving={savingNoteId === client.id}
-                  dirty={clientNoteDraft(client).trim() !== String(client.notes || '').trim()}
-                  onChange={(value) => setNoteDrafts((prev) => ({ ...prev, [client.id]: value }))}
-                  onSave={() => void saveClientNotes(client)}
-                />
+                {renderClientSalesLog(client)}
                 <WorkshopIterationLog
                   client={client}
                   canMarkDone
@@ -3979,16 +3974,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
               recordingEndpoint={buildRecordingProxyUrl(client.id)}
             />
           )}
-          renderNotes={(client) => (
-            <ClientNotesField
-              label="Notater"
-              value={clientNoteDraft(client)}
-              saving={savingNoteId === client.id}
-              dirty={clientNoteDraft(client).trim() !== String(client.notes || '').trim()}
-              onChange={(value) => setNoteDrafts((prev) => ({ ...prev, [client.id]: value }))}
-              onSave={() => void saveClientNotes(client)}
-            />
-          )}
+          renderNotes={renderClientSalesLog}
         />
         <div className="mt-auto flex justify-center pt-1">
           <button
@@ -3999,14 +3985,14 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                 return;
               }
               setShowAllClients(true);
-              setListCategoryOverride(null);
+              setListCategoryOverride('');
             }}
             disabled={hasActiveFilters}
             aria-expanded={allClientsOpen}
             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-full bg-white/10 text-sm text-white hover:bg-white/15 disabled:opacity-60"
             title={hasActiveFilters ? 'Listen er åpen fordi søk eller filter er på' : undefined}
           >
-            {allClientsOpen ? 'Skjul alle kunder' : `Vis alle kunder (${listPreviewCount})`}
+            {allClientsOpen ? 'Skjul alle kunder' : `Vis alle kunder (${productClients.length})`}
             <ChevronDown size={15} className={`transition-transform ${allClientsOpen ? 'rotate-180' : ''}`} />
           </button>
         </div>
@@ -4386,14 +4372,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                 ) : (
                   <div className="text-xs text-gray-500">No reason added.</div>
                 )}
-                <ClientNotesField
-                  label="Notater"
-                  value={clientNoteDraft(client)}
-                  saving={savingNoteId === client.id}
-                  dirty={clientNoteDraft(client).trim() !== String(client.notes || '').trim()}
-                  onChange={(value) => setNoteDrafts((prev) => ({ ...prev, [client.id]: value }))}
-                  onSave={() => void saveClientNotes(client)}
-                />
+                {renderClientSalesLog(client)}
                 <div className="flex flex-wrap items-center gap-2">
                   <button
                     type="button"

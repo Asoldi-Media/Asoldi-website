@@ -106,87 +106,45 @@ test('inbox reply with a time before Kontrakt does not book a workshop', async (
   assert.equal(getWorkshopAction(sales.getSalesClientById(client.id))?.dueAt || '', '');
 });
 
-test('inbox reply with a time after Kontrakt books when Damian calendar is free', async () => {
-  const client = seedClient({ id: 'sale-prep-time-2', contactEmail: 'tid2@nordlys.no' });
-  sales.updateSalesClient(client.id, { progression: { contractSigned: true } });
-  let confirmed = 0;
-  const result = await ingestInboxMessage({
-    id: 'imap-ws-2',
-    mailbox: 'damian@asoldi.com',
-    from: 'tid2@nordlys.no',
-    subject: 'Workshop',
-    text: 'Tirsdag kl 10 passer',
-    mailAt: '2026-10-10T12:00:00.000Z',
-  }, {
-    queryBusy: async () => ({ busy: [] }),
-    now: new Date('2026-10-10T12:00:00.000Z'),
-    loadNeeds: async () => [{ title: 'Logo' }],
-    confirmWorkshop: async (live, previous, next) => {
-      confirmed += 1;
-      assert.ok(next.dueAt);
-      return { sent: true, client: live };
-    },
+// After Kontrakt the client is Solgt: the inbox bot never answers, books or moves a workshop; a person does.
+for (const [label, text] of [
+  ['a time', 'Tirsdag kl 10 passer'],
+  ['a cancel', 'Kan ikke på workshopen i morgen likevel'],
+  ['a call request', 'Dere kan ringe meg på onsdag morgen for å avtale nærmere da jeg ikke helt vet'],
+]) {
+  test(`inbox reply with ${label} after Kontrakt is logged for a person, never answered or booked`, async () => {
+    const id = `sale-prep-won-${label.replace(/\s+/g, '-')}`;
+    const email = `${id}@nordlys.no`;
+    const client = seedClient({ id, contactEmail: email });
+    sales.updateSalesClient(client.id, { progression: { meetingHeld: true, offerSent: true, contractSigned: true } });
+    const before = sales.getSalesClientById(client.id);
+    let confirmed = 0;
+    const sent = [];
+    const result = await ingestInboxMessage({
+      id: `imap-${id}`,
+      mailbox: 'damian@asoldi.com',
+      from: email,
+      subject: 'Workshop',
+      text,
+      mailAt: '2026-10-10T12:00:00.000Z',
+    }, {
+      queryBusy: async () => ({ busy: [] }),
+      sendEmail: async (payload) => { sent.push(payload); },
+      now: new Date('2026-10-10T12:00:00.000Z'),
+      confirmWorkshop: async () => {
+        confirmed += 1;
+        return { sent: true };
+      },
+    });
+    const after = sales.getSalesClientById(client.id);
+    assert.equal(confirmed, 0);
+    assert.equal(sent.length, 0);
+    assert.equal(result.write?.silent, true);
+    assert.equal(result.write?.reason, 'stage:won');
+    assert.equal(getWorkshopAction(after)?.dueAt || '', getWorkshopAction(before)?.dueAt || '');
+    assert.equal((after.workshop?.goalActions || []).length, (before.workshop?.goalActions || []).length);
   });
-  assert.equal(result.kind, 'workshop_book');
-  assert.equal(confirmed, 1);
-  assert.equal(result.write?.applied?.applied, true);
-});
-
-test('busy Damian slot proposes other times instead of booking', async () => {
-  const client = seedClient({ id: 'sale-prep-busy', contactEmail: 'busy@nordlys.no' });
-  sales.updateSalesClient(client.id, { progression: { contractSigned: true } });
-  const now = new Date('2026-10-10T12:00:00.000Z');
-  const parsed = parseWorkshopTimeHeuristic('Tirsdag kl 10 passer', { now });
-  let confirmed = 0;
-  const sent = [];
-  const result = await ingestInboxMessage({
-    id: 'imap-ws-busy',
-    mailbox: 'damian@asoldi.com',
-    from: 'busy@nordlys.no',
-    subject: 'Workshop',
-    text: 'Tirsdag kl 10 passer',
-    mailAt: '2026-10-10T12:00:00.000Z',
-  }, {
-    queryBusy: async () => ({
-      busy: [{ start: parsed.dueAt, end: new Date(Date.parse(parsed.dueAt) + 30 * 60 * 1000).toISOString() }],
-    }),
-    sendEmail: async (payload) => { sent.push(payload); },
-    now,
-    confirmWorkshop: async () => {
-      confirmed += 1;
-      return { sent: true };
-    },
-  });
-  assert.equal(confirmed, 0);
-  assert.equal(result.kind, 'workshop_propose');
-  assert.match(sent[0].text, /opptatt/i);
-});
-
-test('call-followup after Kontrakt acks and adds an Admin ring action, not a calendar booking', async () => {
-  const client = seedClient({ id: 'sale-prep-call', contactEmail: 'ring@nordlys.no' });
-  sales.updateSalesClient(client.id, { progression: { contractSigned: true } });
-  const sent = [];
-  const result = await ingestInboxMessage({
-    id: 'imap-ws-call',
-    mailbox: 'damian@asoldi.com',
-    from: 'ring@nordlys.no',
-    subject: 'Workshop',
-    text: 'Dere kan ringe meg på onsdag morgen for å avtale nærmere da jeg ikke helt vet',
-    mailAt: '2026-10-10T12:00:00.000Z',
-  }, {
-    queryBusy: async () => ({ busy: [] }),
-    sendEmail: async (payload) => { sent.push(payload); },
-    confirmWorkshop: async () => ({ sent: true }),
-  });
-  assert.equal(result.kind, 'workshop_call');
-  assert.match(sent[0].text, /helt i orden/i);
-  const actions = sales.getSalesClientById(client.id).workshop?.goalActions || [];
-  const row = actions.find((item) => /tid for workshop/i.test(item.name));
-  assert.ok(row);
-  assert.equal(row.format, 'ring');
-  assert.equal(Boolean(row.addToCalendar), false);
-  assert.equal(getWorkshopAction(sales.getSalesClientById(client.id))?.dueAt || '', '');
-});
+}
 
 test('write is skipped when From is not a known client email', async () => {
   seedClient({ id: 'sale-prep-unknown', contactEmail: 'kjent@nordlys.no' });
@@ -220,15 +178,13 @@ test('day hint and call phrasing parse without inventing a clock', () => {
   assert.equal(slotIsFree('2026-10-14T07:00:00.000Z', 30, [
     { start: '2026-10-14T07:00:00.000Z', end: '2026-10-14T08:00:00.000Z' },
   ]), false);
-  const intent = classifyInboxWrite('onsdag passer bra', { progression: { contractSigned: true } }, { now });
-  assert.equal(intent.intent, 'workshop_propose');
+  // The classifier only speaks sales; whether the bot may act at all is the stage gate's call.
+  const intent = classifyInboxWrite('onsdag passer bra', {}, { now });
+  assert.equal(intent.intent, 'sales_propose');
   const inThree = parseDayHint('ring meg om 3 dager og sjekk opp', { now });
   assert.equal(inThree.ymd, '2026-10-13');
-  const callSoon = classifyInboxWrite('Kan dere ringe meg om 3 dager for å sjekke opp', {
-    progression: { contractSigned: true },
-  }, { now });
-  assert.equal(callSoon.intent, 'workshop_call');
-  assert.equal(callSoon.day.ymd, '2026-10-13');
+  const callSoon = classifyInboxWrite('Kan dere ringe meg om 3 dager for å sjekke opp', {}, { now });
+  assert.equal(callSoon.intent, 'sales_call');
 });
 
 test('sales meeting clock that is busy on the rep calendar proposes other times', async () => {

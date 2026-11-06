@@ -3,6 +3,7 @@ import { getDataFilePath, ensurePersistentDataDir, writeDataJson } from './stora
 import { DEVELOPMENT_KEYS, normalizeDevelopment } from '../lib/development-phase.js';
 import { normalizeStoredWebsiteEmail } from '../lib/sales-website-email.js';
 import {
+  appendActionNote,
   applyNextActionMutation,
   applyOfferSentFromDelivery,
   applyProgressionChange,
@@ -57,6 +58,7 @@ import {
 } from '../lib/delivery-state.js';
 import { normalizeMakerAutopilot, normalizeMakerMaterials, normalizePreviewPush } from '../lib/maker-events.js';
 import { appendDeliveryAudit } from '../lib/delivery-audit.js';
+import { appendStampedSalesNote } from '../lib/sales-card-log.js';
 
 // Client keys only their own writers set (setSalesSitePlan, setSalesDelivery and friends):
 // updateSalesClient and patchSalesClientsById never take them from an update, so no request body
@@ -635,6 +637,9 @@ function normalizeSalesPlaybook(raw) {
     missedAt: iso(raw?.missedAt),
     missedMeetingAt: iso(raw?.missedMeetingAt),
     missedCalledAt: iso(raw?.missedCalledAt),
+    // Last voided meeting time (client cancelled, no new time). MyPhoner may not restore it.
+    cancelledMeetingAt: iso(raw?.cancelledMeetingAt),
+    cancelledAt: iso(raw?.cancelledAt),
   };
 }
 
@@ -860,6 +865,49 @@ export function salesReminderCatchUpIsDue(kind, client = {}, nowMs = Date.now())
   const thankYouMs = new Date(client?.reminders?.thankYouSentAt).getTime();
   if (!Number.isFinite(thankYouMs) || meetingMs - thankYouMs <= windowMs) return false;
   return nowMs >= meetingMs - windowMs;
+}
+
+/** 'status' when the card is off the active list, 'stage' from Tilbud on (meeting held, offer sent, signed), else ''. */
+export function salesMeetingStageBlockedReason(client = {}) {
+  if ((sanitizeText(client?.status) || 'active') !== 'active') return 'status';
+  const progression = client?.progression || {};
+  if (progression.meetingHeld || progression.offerSent || progression.contractSigned) return 'stage';
+  return '';
+}
+
+/** Why the automatic meeting reminders must stay silent for this card ('' = they may go out). Owner checks live in server.js. */
+export function salesReminderBlockedReason(client = {}, nowMs = Date.now()) {
+  if (!client) return 'no-client';
+  const stage = salesMeetingStageBlockedReason(client);
+  if (stage) return stage;
+  if (!sanitizeText(client.reminders?.thankYouSentAt)) return 'not-confirmed';
+  if (!client.agreedTime || !sanitizeText(client.meetingAt)) return 'no-meeting';
+  const meetingMs = new Date(client.meetingAt).getTime();
+  if (!Number.isFinite(meetingMs) || meetingMs <= nowMs) return 'meeting-passed';
+  const playbook = client.salesPlaybook || {};
+  const marked = playbook.missedKind === 'noShow' || playbook.missedKind === 'skipped';
+  if (marked && sameMeetingInstant(playbook.missedMeetingAt, client.meetingAt)) return 'missed';
+  return '';
+}
+
+const REMINDER_OFFSET_MS = {
+  reminder3dAt: 3 * 24 * 60 * 60 * 1000,
+  reminder24hAt: 24 * 60 * 60 * 1000,
+  reminder1hAt: 60 * 60 * 1000,
+};
+const REMINDER_STAMP_TOLERANCE_MS = 60 * 1000;
+
+/** True when a stored reminder*At belongs to another meeting time (meetingAt moved without rescheduleSalesReminders). */
+export function salesReminderStampsStale(client = {}) {
+  const reminders = client?.reminders || {};
+  const meetingMs = client?.agreedTime ? new Date(client?.meetingAt).getTime() : Number.NaN;
+  return Object.entries(REMINDER_OFFSET_MS).some(([key, offsetMs]) => {
+    const at = sanitizeText(reminders[key]);
+    if (!at) return false;
+    const atMs = new Date(at).getTime();
+    if (!Number.isFinite(meetingMs) || !Number.isFinite(atMs)) return true;
+    return Math.abs(meetingMs - offsetMs - atMs) > REMINDER_STAMP_TOLERANCE_MS;
+  });
 }
 
 export function getSalesClients() {
@@ -1215,6 +1263,14 @@ export function setSalesNotes(id, notes, meetingQuote) {
   }
   if (!Object.keys(updates).length) return current;
   return updateSalesClient(id, updates);
+}
+
+export function appendSalesNote(id, text, at = nowIso()) {
+  const current = getSalesClientById(id);
+  if (!current) return null;
+  const notes = appendStampedSalesNote(current.notes, text, at);
+  if (notes === sanitizeSalesNotes(current.notes)) return current;
+  return updateSalesClient(id, { notes });
 }
 
 /** readUp = Les deg opp. noShow / skip move the client to Venter møtebekreftelse; missedCall = Ring for ny møtetid. */
@@ -1873,17 +1929,22 @@ export function setSalesStatus(id, status, archivePatch = {}) {
   });
 }
 
-export function rescheduleSalesReminders(id, nowMs = Date.now()) {
+/**
+ * New 3d/24h/1h stamps from meetingAt, sent stamps cleared. `keepSent24h`: when the meeting is now inside
+ * 24 hours, a 24h mail that already went out stays counted, so the catch-up never sends a second "om 24 timer".
+ */
+export function rescheduleSalesReminders(id, nowMs = Date.now(), { keepSent24h = false } = {}) {
   const current = getSalesClientById(id);
   if (!current) return null;
   const schedule = deriveReminderSchedule(current, nowMs);
+  const kept24h = keepSent24h && !schedule.reminder24hAt ? sanitizeText(current.reminders?.reminder24hSentAt) : '';
   return updateSalesClient(id, {
     reminders: {
       reminder3dAt: schedule.reminder3dAt,
       reminder24hAt: schedule.reminder24hAt,
       reminder1hAt: schedule.reminder1hAt,
       reminder3dSentAt: '',
-      reminder24hSentAt: '',
+      reminder24hSentAt: kept24h,
       reminder1hSentAt: '',
       skipDueToShortNotice: schedule.skipDueToShortNotice,
     },
@@ -1912,6 +1973,31 @@ export function applySilentOwnerPatches(entries = []) {
   return patchSalesClientsById(patches);
 }
 
+/** Every calendar.* field blank: the card no longer points at a Google event. */
+function emptyMeetingCalendar() {
+  return {
+    eventId: '',
+    htmlLink: '',
+    meetLink: '',
+    confirmedMeetLink: '',
+    calendarId: '',
+    accountKey: '',
+    googleEmail: '',
+    organizerEmail: '',
+    creatorEmail: '',
+    meetHostVerifiedEmail: '',
+    iCalUID: '',
+    syncedAt: '',
+    guestInvitedAt: '',
+    firefliesInvitedAt: '',
+    firefliesLiveJoinedAt: '',
+    firefliesLiveJoinAttemptAt: '',
+    firefliesLiveJoinError: '',
+    firefliesLiveJoinedMeetLink: '',
+    inviteSequence: 0,
+  };
+}
+
 export function clearSalesMeetingScheduling(id) {
   return updateSalesClient(id, {
     reminders: {
@@ -1923,26 +2009,69 @@ export function clearSalesMeetingScheduling(id) {
       reminder1hSentAt: '',
       skipDueToShortNotice: false,
     },
-    calendar: {
-      eventId: '',
-      htmlLink: '',
-      meetLink: '',
-      confirmedMeetLink: '',
-      calendarId: '',
-      accountKey: '',
-      googleEmail: '',
-      organizerEmail: '',
-      creatorEmail: '',
-      meetHostVerifiedEmail: '',
-      iCalUID: '',
-      syncedAt: '',
-      guestInvitedAt: '',
-      firefliesInvitedAt: '',
-      firefliesLiveJoinedAt: '',
-      firefliesLiveJoinAttemptAt: '',
-      firefliesLiveJoinError: '',
-      firefliesLiveJoinedMeetLink: '',
-      inviteSequence: 0,
+    calendar: emptyMeetingCalendar(),
+  });
+}
+
+/** Rep tasks pinned to the meeting clock. They close when the meeting is voided. */
+const VOID_CLOSES_PRESETS = new Set(['sms24h', 'call2h', 'meetingBooked']);
+
+/** Rows whose time is read as the meeting time (clientMeetingAtIso). */
+const MEETING_TIME_PRESETS = new Set(['meeting', 'meetingBooked']);
+
+/** A ticked Møte / Møtet booket row at the cancelled time keeps no time, so nothing reads it as the meeting. */
+function voidedDoneAction(action, cancelledMeetingAt) {
+  if (!cancelledMeetingAt || !MEETING_TIME_PRESETS.has(action?.presetKey)) return action;
+  return sameMeetingInstant(action.dueAt, cancelledMeetingAt) ? { ...action, dueAt: '' } : action;
+}
+
+/** One action row after a void: the meeting row loses its time, follower tasks close, the SMS reminder goes. */
+function voidedMeetingAction(action, { note, stamp, cancelledMeetingAt }) {
+  if (action?.doneAt) return voidedDoneAction(action, cancelledMeetingAt);
+  if (action?.presetKey === 'meeting') {
+    return {
+      ...action,
+      dueAt: '',
+      relativeToMeetingHours: null,
+      sticky: false,
+      stickyAnchorId: '',
+      stickyOffsetMs: null,
+      note: appendActionNote(action.note, note),
+    };
+  }
+  if (action?.presetKey === 'sms1h') return null;
+  if (VOID_CLOSES_PRESETS.has(action?.presetKey)) {
+    return { ...action, dueAt: action.presetKey === 'meetingBooked' ? '' : action.dueAt, doneAt: stamp };
+  }
+  return action;
+}
+
+/**
+ * Client cancelled and gave no new time: no meetingAt, no reminder (thank-you included, so the next booking
+ * re-confirms), no calendar link, and the open meeting row keeps no time. Stores the cancelled time so
+ * MyPhoner cannot bring it back. The Google event is the caller's job. Null (nothing written) when the card
+ * is missing, past the meeting stage (Tilbud, Venter signering, Solgt) or not active.
+ */
+export function voidSalesMeetingTime(id, { note = '', nowMs = Date.now() } = {}) {
+  const current = getSalesClientById(id);
+  if (!current || salesMeetingStageBlockedReason(current)) return null;
+  const stamp = new Date(nowMs).toISOString();
+  const previousPlaybook = current.salesPlaybook || {};
+  const cancelledMeetingAt = clientMeetingAtIso(current) || sanitizeText(previousPlaybook.cancelledMeetingAt);
+  const nextActions = (current.nextActions || [])
+    .map((action) => voidedMeetingAction(action, { note, stamp, cancelledMeetingAt }))
+    .filter(Boolean);
+  return updateSalesClient(id, {
+    agreedTime: false,
+    meetingAt: '',
+    meetingAtSource: '',
+    nextActions,
+    reminders: emptyReminders(),
+    calendar: emptyMeetingCalendar(),
+    salesPlaybook: {
+      ...previousPlaybook,
+      cancelledMeetingAt,
+      cancelledAt: stamp,
     },
   });
 }

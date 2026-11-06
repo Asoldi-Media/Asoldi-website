@@ -13,7 +13,7 @@ const clientPortal = await import('../data/client-portal.js');
 const { categorizeEmailHeuristic, normalizeMediaBucket } = await import('../lib/inbox-bot/categorize.js');
 const { matchSalesClient, parseEmailAddress } = await import('../lib/inbox-bot/match-client.js');
 const { pdfLooksLikeAsoldiContract } = await import('../lib/inbox-bot/pdf-text.js');
-const { fingerprintPdfBuffer, scoreContractSigning, inspectInboundContract, clientDateSignals, inboundContractAcceptedByEmail } = await import('../lib/inbox-bot/inspect-contract.js');
+const { fingerprintPdfBuffer, scoreContractSigning, inspectInboundContract, clientDateSignals, decideInboundContract } = await import('../lib/inbox-bot/inspect-contract.js');
 const { backfillRecognizedSignedContracts } = await import('../lib/sales-signed-contract.js');
 const offers = await import('../data/offers.js');
 const { resolveMailboxSource } = await import('../lib/inbox-bot/mail.js');
@@ -35,6 +35,8 @@ const { normalizeNote } = await import('../lib/ai-assistant/gather.js');
 const { extractAttachmentNames, collectGmailAttachmentParts, presentGmailMessage } = await import('../lib/gmail-readonly.js');
 const { FETCH_TIMEOUT_MS, LOGIN_TIMEOUT_MS, imapCredsPresent, indexOfImapNeedle, parseRfc822 } = await import('../lib/inbox-bot/mail-imap.js');
 const inboxStore = await import('../lib/inbox-bot/store.js');
+const { faqReply, needsHumanSummary } = await import('../lib/inbox-bot/write.js');
+const { mergeWriteDecision } = await import('../lib/inbox-bot/decide.js');
 
 const PORTAL_USER = 'portal-inbox-1';
 
@@ -81,7 +83,7 @@ test('heuristic: newsletter without files is other', () => {
 
 test('pdf text with Asoldi org number looks like a contract', () => {
   assert.equal(pdfLooksLikeAsoldiContract('CHAPANA (Asoldi Marketing) org 934 327 497', 'scan.pdf'), true);
-  assert.equal(pdfLooksLikeAsoldiContract('Tjenesteavtale for nettside', 'scan.pdf'), true);
+  assert.equal(pdfLooksLikeAsoldiContract('Tjenesteavtale for nettside', 'scan.pdf'), false);
   assert.equal(pdfLooksLikeAsoldiContract('random menu', 'meny.pdf'), false);
   assert.equal(clientDateSignals('Date: ____________').blankClientDate, true);
   assert.equal(clientDateSignals('Dato: ____________').blankClientDate, true);
@@ -125,12 +127,13 @@ test('tiny bounced PDF is stored as unsigned copy and does not set contractSigne
   assert.equal(readFileSync(full).equals(pdf), true);
 });
 
-test('scan-sized inbound contract from the client email marks Solgt', async () => {
+test('scan-sized contract without a bottom-of-page signal waits for a human, even in Venter signering', async () => {
   const client = seedClient({
     id: 'sale-contract-scan',
     contactEmail: 'scan@nordlys.no',
   });
   sales.updateSalesClient(client.id, {
+    progression: { meetingHeld: true, offerSent: true },
     sentContractFingerprint: {
       byteLength: 78000,
       pageCount: 2,
@@ -151,15 +154,18 @@ test('scan-sized inbound contract from the client email marks Solgt', async () =
     attachmentNames: ['Asoldi-kontrakt-Tier-1-Cafe-Nordlys.pdf'],
     attachments: [{ filename: 'Asoldi-kontrakt-Tier-1-Cafe-Nordlys.pdf', mimeType: 'application/pdf', buffer: pdf }],
   });
+  // Size, pages and images alone reach "likely", but nothing shows the client signed the bottom.
   assert.equal(result.inspection.verdict, 'likely');
+  assert.equal(result.markedSold, false);
+  assert.equal(result.status, 'pending');
   const inbox = presentInboxForClient(client.id);
-  assert.equal(inbox.pendingContracts, 0);
-  assert.equal(inbox.contracts[0].status, 'accepted');
-  assert.ok(inbox.signed?.fileName);
-  assert.equal(Boolean(sales.getSalesClientById(client.id).progression?.contractSigned), true);
+  assert.equal(inbox.pendingContracts, 1);
+  assert.equal(inbox.contracts[0].status, 'pending');
+  assert.equal(inbox.signed, null);
+  assert.equal(Boolean(sales.getSalesClientById(client.id).progression?.contractSigned), false);
 });
 
-test('email-matched downloaded contract PDF marks Solgt even when identical to sent', async () => {
+test('an identical copy of the sent contract from the client email is an unsigned copy, never Solgt', async () => {
   const client = seedClient({
     id: 'sale-contract-download',
     contactEmail: 'last@nordlys.no',
@@ -176,6 +182,7 @@ test('email-matched downloaded contract PDF marks Solgt even when identical to s
     date: new Date('2026-10-01'),
   });
   sales.updateSalesClient(client.id, {
+    progression: { meetingHeld: true, offerSent: true },
     sentContractFingerprint: fingerprintPdfBuffer(buffer, 'Asoldi-kontrakt.pdf'),
   });
   const result = await ingestInboxMessage({
@@ -189,31 +196,33 @@ test('email-matched downloaded contract PDF marks Solgt even when identical to s
     attachments: [{ filename: 'Asoldi-kontrakt-Tier-1-Cafe-Nordlys.pdf', mimeType: 'application/pdf', buffer }],
   });
   assert.equal(result.inspection.verdict, 'unsigned');
-  assert.equal(result.item.status, 'accepted');
-  assert.equal(Boolean(sales.getSalesClientById(client.id).progression?.contractSigned), true);
-  assert.ok(presentInboxForClient(client.id).signed?.fileName);
+  assert.equal(result.inspection.shaMatch, true);
+  assert.equal(result.item.status, 'unsigned_copy');
+  assert.equal(result.markedSold, false);
+  assert.equal(Boolean(sales.getSalesClientById(client.id).progression?.contractSigned), false);
+  assert.equal(presentInboxForClient(client.id).signed, null);
+  assert.equal(presentInboxForClient(client.id).pendingContracts, 0);
 });
 
-test('org-only match does not auto-mark Solgt', () => {
-  assert.equal(inboundContractAcceptedByEmail({
-    inspection: { isAsoldiContract: true, inboundBytes: 80000 },
-    matched: { via: 'org', client: { id: 'x' } },
-  }), false);
-  assert.equal(inboundContractAcceptedByEmail({
-    inspection: { isAsoldiContract: true, inboundBytes: 80000 },
-    matched: { via: 'email', client: { id: 'x' } },
-  }), true);
-  assert.equal(inboundContractAcceptedByEmail({
-    inspection: { isAsoldiContract: true, inboundBytes: 200 },
-    matched: { via: 'email', client: { id: 'x' } },
-  }), false);
+test('only the client own From address can mark Solgt: org, name and AI-read hint addresses never do', () => {
+  const client = { id: 'sale-decide-via', progression: { meetingHeld: true, offerSent: true } };
+  const inspection = { isAsoldiContract: true, inboundBytes: 80000, verdict: 'likely', reasons: ['right-bottom-writing'] };
+  for (const via of ['org', 'name', 'hint']) {
+    const out = decideInboundContract({ client, matched: { via, client }, inspection });
+    assert.equal(out.markSold, false, via);
+    assert.equal(out.status, 'pending', via);
+    assert.equal(out.reason, 'not-client-address', via);
+  }
+  const fromClient = decideInboundContract({ client, matched: { via: 'email', client }, inspection });
+  assert.deepEqual(fromClient, { status: 'accepted', markSold: true, reason: 'signed' });
 });
 
-test('preview acceptance backfill marks Solgt', async () => {
+test('preview acceptance backfill marks Solgt (fastTrack: the client e-signed), also on a card without Møte/Tilbud', async () => {
   const client = seedClient({
     id: 'sale-preview-bf',
     contactEmail: 'preview@nordlys.no',
   });
+  sales.updateSalesClient(client.id, { progression: { meetingHeld: true, offerSent: true } });
   const offer = offers.upsertPortalOffer({
     salesClientId: client.id,
     salesOfferId: 'offer-preview-bf',
@@ -221,11 +230,63 @@ test('preview acceptance backfill marks Solgt', async () => {
     contractHtml: '<article>Avtale</article>',
   });
   offers.recordOfferAcceptance(offer.id, { email: 'preview@nordlys.no' });
+  const early = seedClient({ id: 'sale-preview-bf-early', contactEmail: 'early@nordlys.no' });
+  const earlyOffer = offers.upsertPortalOffer({
+    salesClientId: early.id,
+    salesOfferId: 'offer-preview-bf-early',
+    targetEmail: 'early@nordlys.no',
+    contractHtml: '<article>Avtale</article>',
+  });
+  offers.recordOfferAcceptance(earlyOffer.id, { email: 'early@nordlys.no' });
+
   const dry = await backfillRecognizedSignedContracts({ apply: false });
   assert.ok(dry.results.some((row) => row.id === client.id && row.needsSold));
+  const earlyRow = dry.results.find((row) => row.id === early.id);
+  assert.equal(earlyRow.needsSold, true);
+  assert.equal(earlyRow.blocked, undefined);
   assert.equal(Boolean(sales.getSalesClientById(client.id).progression?.contractSigned), false);
   await backfillRecognizedSignedContracts({ apply: true });
   assert.equal(Boolean(sales.getSalesClientById(client.id).progression?.contractSigned), true);
+  // An accepted offer is the client's own e-signature, so Møte and Tilbud are ticked with Solgt.
+  const earlyAfter = sales.getSalesClientById(early.id).progression || {};
+  assert.equal(Boolean(earlyAfter.contractSigned), true);
+  assert.equal(Boolean(earlyAfter.meetingHeld), true);
+  assert.equal(Boolean(earlyAfter.offerSent), true);
+});
+
+test('an Asoldi invoice with Fakturadato/Forfallsdato and a bottom-right total is not a signed contract', async () => {
+  const client = seedClient({ id: 'sale-contract-invoice', contactEmail: 'faktura@nordlys.no' });
+  sales.updateSalesClient(client.id, { progression: { meetingHeld: true, offerSent: true } });
+  assert.equal(clientDateSignals('Fakturadato: 30.10.2026 Forfallsdato: 13.11.2026').clientDateFilled, false);
+  const { default: PDFDocument } = await import('pdfkit');
+  const doc = new PDFDocument({ size: 'A4' });
+  const chunks = [];
+  doc.on('data', (chunk) => chunks.push(chunk));
+  const ended = new Promise((resolve) => doc.on('end', resolve));
+  doc.fontSize(16).text('Faktura', 56, 60);
+  doc.fontSize(10).text('CHAPANA', 56, 100).text('Org.nr: 934 327 497 MVA', 56, 114);
+  doc.text('Fakturadato: 30.10.2026', 330, 114).text('Forfallsdato: 13.11.2026', 330, 128);
+  doc.text('Totalt å betale: 5 000,00', 360, 640).text('Kontonummer: 1234.56.78901', 360, 656);
+  doc.end();
+  await ended;
+  const pdf = Buffer.concat(chunks);
+  const result = await ingestInboxMessage({
+    id: 'imap-invoice-1',
+    mailbox: 'alexander@asoldi.com',
+    from: 'faktura@nordlys.no',
+    subject: 'Betaling',
+    text: 'Hei, fakturaen er betalt.',
+    mailAt: '2026-10-10T12:00:00.000Z',
+    attachmentNames: ['Faktura-10023.pdf'],
+    attachments: [{ filename: 'Faktura-10023.pdf', mimeType: 'application/pdf', buffer: pdf }],
+  });
+  assert.equal(result.kind, 'signed_contract');
+  assert.equal(result.markedSold, false);
+  assert.equal(result.status, 'unsigned_copy');
+  assert.equal(result.reason, 'unsigned_copy');
+  assert.equal(result.inspection.reasons.includes('client-date-filled'), false);
+  assert.equal(result.inspection.reasons.includes('right-bottom-writing'), false);
+  assert.equal(Boolean(sales.getSalesClientById(client.id).progression?.contractSigned), false);
 });
 
 test('identical sent PDF is unsigned even if the email says signed', async () => {
@@ -430,15 +491,23 @@ test('RFC822 parser decodes encoded subjects, names, and UTF-8 quoted-printable 
 test('replies are read without the quoted thread: cancels never book, a moved time books the new time', async () => {
   const { classifyInboxWrite, freshReplyText } = await import('../lib/inbox-bot/write.js');
   const client = { progression: {} };
+  const bookedToday = { progression: {}, agreedTime: true, meetingAt: '2026-10-14T15:00:00.000Z' };
   const cancelToday = 'Blir mailene mine mottatt? Jeg kan ikke idag likevel Kari Founder Tel.+47 92 80 78 81 ons. 14. okt. 2026 kl. 15:47 skrev Kari <kari@example.no>: > Hei igjen';
   assert.equal(freshReplyText(cancelToday).includes('15:47'), false);
-  assert.equal(classifyInboxWrite(freshReplyText(cancelToday), client, { now: new Date('2026-10-14T14:00:00Z') }).cancel, true);
+  const today = classifyInboxWrite(freshReplyText(cancelToday), bookedToday, { now: new Date('2026-10-14T14:00:00Z') });
+  assert.equal(today.request, 'cancel');
+  assert.equal(today.cancel, true);
 
+  const bookedTomorrow = { progression: {}, agreedTime: true, meetingAt: '2026-10-16T09:00:00.000Z' };
   const cancelTomorrow = 'Hei! Jeg har svart deg flere ganger at jeg må avlyse møtet i morgen. Mvh Marie 15. okt. 2026 kl. 12:00 skrev Alexander fra Asoldi <alexander@asoldi.com>: Påminnelse: Online møte';
-  const cancelled = classifyInboxWrite(freshReplyText(cancelTomorrow), client, { now: new Date('2026-10-15T12:30:00Z') });
-  assert.equal(cancelled.intent, 'sales_propose');
+  const cancelled = classifyInboxWrite(freshReplyText(cancelTomorrow), bookedTomorrow, { now: new Date('2026-10-15T12:30:00Z') });
+  assert.equal(cancelled.intent, 'sales_cancel');
   assert.equal(cancelled.cancel, true);
   assert.equal(cancelled.day, null);
+  // No booked meeting: nothing to void, but the client still gets asked for a new time.
+  const unbooked = classifyInboxWrite(freshReplyText(cancelTomorrow), client, { now: new Date('2026-10-15T12:30:00Z') });
+  assert.equal(unbooked.intent, 'sales_cancel');
+  assert.equal(unbooked.cancel, false);
 
   const moved = 'Hei, Kan vi flytte møtet til onsdag neste uke istedet? Gjerne kl. 15. Med vennlig hilsen Ali ________________________________ Fra: Alexander (Google Kalender) <calendar-notification@google.com> Sendt: fredag 16. oktober 2026 13:59';
   const booked = classifyInboxWrite(freshReplyText(moved), client, { now: new Date('2026-10-16T12:00:00Z') });
@@ -524,7 +593,7 @@ test('peek classifies Alexander mail without marking processed or sending', asyn
   });
   assert.equal(peeked.skipped, false);
   assert.equal(peeked.messages[0].kind, 'client_elements');
-  assert.equal(peeked.messages[0].destination, 'kundedata:logos');
+  assert.equal(peeked.messages[0].destination, 'kundedata:logos; auto-reply:gather');
   assert.equal(peeked.messages[0].salesClientId, client.id);
   assert.equal(inboxStore.isProcessed('alexander@asoldi.com', 'imap-peek-1'), false);
   assert.equal(sendCalled, false);
@@ -562,6 +631,7 @@ test('peek proposes a sales auto-reply for a clock time without filing', async (
 
 test('cancel proposes new times, adds Ny møtetid, and only the newest mail from that sender gets a reply', async () => {
   const client = seedClient({ id: 'sale-cancel-1', contactEmail: 'marie@example.com' });
+  sales.updateSalesClient(client.id, { meetingAt: '2026-10-16T09:00:00.000Z', agreedTime: true });
   const now = new Date('2026-10-15T12:30:00.000Z');
   const sent = [];
   const older = {
@@ -592,16 +662,18 @@ test('cancel proposes new times, adds Ny møtetid, and only the newest mail from
     sendEmail: async (mail) => { sent.push(mail); },
     queryBusy: async () => ({ busy: [] }),
   });
-  assert.equal(first.kind, 'sales_propose');
+  assert.equal(first.kind, 'sales_cancel');
   assert.equal(sent.length, 1);
   assert.match(sent[0].text, /helt i orden/i);
+  assert.match(sent[0].text, /Hvilken dag og tid passer bedre/);
+  assert.equal(sales.getSalesClientById(client.id).agreedTime, false);
   assert.equal(/30 minutt/i.test(sent[0].text), false);
   assert.equal(skip.reason, 'older-same-thread');
   const live = sales.getSalesClientById(client.id);
   assert.ok((live.nextActions || []).some((row) => /ny møtetid|finn møtetid/i.test(row.name || '') && !row.doneAt));
 });
 
-test('a reminder that only repeats the card meeting is skipped; an older real time still books', async () => {
+test('a reminder that only repeats the card meeting is skipped; an older real time goes to a person in backfill', async () => {
   const { classifyInboxWrite } = await import('../lib/inbox-bot/write.js');
   const client = seedClient({ id: 'sale-echo-1', contactEmail: 'ali-echo@example.com' });
   sales.updateSalesClient(client.id, { meetingAt: '2026-10-19T13:00:00.000Z', agreedTime: true });
@@ -626,10 +698,12 @@ test('a reminder that only repeats the card meeting is skipped; an older real ti
   assert.equal(echoed.echo, true);
   const sameClockNextWeek = classifyInboxWrite(
     'tirsdag kl. 14:00',
-    { meetingAt: '2026-10-13T12:00:00.000Z' },
+    { meetingAt: '2026-10-13T12:00:00.000Z', agreedTime: true },
     { now: new Date('2026-10-13T11:39:07.000Z') },
   );
-  assert.equal(sameClockNextWeek.echo, true);
+  // The booked time repeated with no yes or no: never a new booking; a person reads it.
+  assert.notEqual(sameClockNextWeek.intent, 'sales_book');
+  assert.equal(sameClockNextWeek.request, 'unclear');
   const booked = classifyInboxWrite(flytt.text, liveClient(), { now: new Date(flytt.mailAt) });
   assert.equal(booked.intent, 'sales_book');
   assert.equal(booked.dueAt, '2026-10-21T13:00:00.000Z');
@@ -654,10 +728,13 @@ test('a reminder that only repeats the card meeting is skipped; an older real ti
     queryBusy: async () => ({ busy: [] }),
   });
   assert.equal(out.results.find((row) => row.id === 'imap-echo-new').reason, 'meeting-echo');
-  assert.equal(out.results.find((row) => row.id === 'imap-echo-old').wrote, true);
-  assert.equal(sent.length, 1);
-  assert.equal(liveClient().meetingAt, '2026-10-21T13:00:00.000Z');
-  assert.ok((liveClient().nextActions || []).some((row) => /Bot:/.test(row.note || '') || row.presetKey === 'meeting'));
+  // Backfill never moves a meeting from old mail: the card may have changed since.
+  assert.equal(out.results.find((row) => row.id === 'imap-echo-old').wrote, false);
+  assert.equal(out.results.find((row) => row.id === 'imap-echo-old').reason, 'stale-mail');
+  assert.equal(sent.length, 0);
+  assert.equal(liveClient().meetingAt, '2026-10-19T13:00:00.000Z');
+  const row = inboxStore.listInboxItems({ salesClientId: client.id }).find((item) => item.messageId === 'imap-echo-old:write');
+  assert.equal(row.status, 'needs_human');
 });
 
 test('machine mail is skipped from MIME/headers, not from the subject line', async () => {
@@ -702,6 +779,8 @@ test('machine mail is skipped from MIME/headers, not from the subject line', asy
   }), true);
 
   const client = seedClient({ id: 'sale-rsvp-1', contactEmail: 'eier@spireriet.no' });
+  // A booking is always for the card's own sales rep.
+  sales.updateSalesClient(client.id, { ownerId: 'sales:rep-1' });
   const sent = [];
   await ingestInboxMessage({
     id: 'imap-rsvp-ok',
@@ -744,12 +823,11 @@ test('walk-away asks why, offers a chat, and a second no closes politely', async
   const { mergeWriteDecision, polishInboxReply } = await import('../lib/inbox-bot/decide.js');
   assert.equal(polishInboxReply('Helt i orden. Møtet er 30 minutter. Vi tar den av.'), 'Helt i orden. Vi tar den av.');
   const merged = mergeWriteDecision(
-    { intent: 'sales_propose', cancel: true, _fresh: 'Avlys det hele' },
-    { intent: 'walk_away', reply: 'Skjønner, synd det ikke passer. Hva er grunnen? Vi tar en sjekk om en uke.', checkupFormat: 'sms' },
-    { client: {} },
+    { request: 'cancel', cancel: true },
+    { request: 'not_interested', reply: 'Skjønner. Kan jeg spørre hva som gjorde at det ikke ble aktuelt?' },
   );
-  assert.equal(merged.intent, 'walk_away');
-  assert.equal(merged.checkupFormat, 'sms');
+  assert.equal(merged.request, 'cancel');
+  assert.equal(merged.needsHuman, false);
 
   const client = seedClient({ id: 'sale-walkaway-1', contactEmail: 'drop@example.com' });
   const sent = [];
@@ -764,7 +842,7 @@ test('walk-away asks why, offers a chat, and a second no closes politely', async
     now: new Date('2026-10-15T12:00:00.000Z'),
     sendEmail: async (mail) => { sent.push(mail); },
     queryBusy: async () => ({ busy: [] }),
-    decideAi: async () => ({ intent: 'walk_away', checkupFormat: 'email' }),
+    decideAi: async () => ({ request: 'not_interested' }),
   });
   assert.equal(result.kind, 'walk_away');
   assert.equal(sent.length, 1);
@@ -775,7 +853,7 @@ test('walk-away asks why, offers a chat, and a second no closes politely', async
   const live = sales.getSalesClientById(client.id);
   const checkup = (live.nextActions || []).find((row) => /oppsjekk/i.test(row.name || ''));
   assert.ok(checkup);
-  assert.equal(checkup.format, 'email');
+  assert.equal(checkup.format, 'ring');
   assert.equal(checkup.dueAt, '2026-10-22T07:00:00.000Z');
 
   const again = await ingestInboxMessage({
@@ -789,7 +867,8 @@ test('walk-away asks why, offers a chat, and a second no closes politely', async
     now: new Date('2026-10-15T14:00:00.000Z'),
     sendEmail: async (mail) => { sent.push(mail); },
     queryBusy: async () => ({ busy: [] }),
-    decideAi: async () => ({}),
+    // With an AI configured, a card change waits for its answer; it agrees here.
+    decideAi: async () => ({ request: 'not_interested' }),
   });
   assert.equal(again.kind, 'walk_away_final');
   assert.equal(/passer noe av dette|\d{2}:\d{2}/i.test(sent[1].text), false);
@@ -810,7 +889,7 @@ test('client who cannot know yet gets a follow-up action, not a meeting time', a
     now: new Date('2026-10-15T12:00:00.000Z'),
     sendEmail: async (mail) => { sent.push(mail); },
     queryBusy: async () => ({ busy: [] }),
-    decideAi: async () => ({ intent: 'walk_away' }),
+    decideAi: async () => ({ request: 'not_now' }),
   });
   assert.equal(result.kind, 'sales_call');
   assert.equal(sent[0].text, 'Helt greit. Da sender jeg deg en melding på mandag, så tar vi det derfra.');
@@ -822,12 +901,16 @@ test('client who cannot know yet gets a follow-up action, not a meeting time', a
   assert.match(checkup.note, /^Bot: Kunden kan ikke avtale møtetid nå\. Bot lovet å ta kontakt på mandag\.\nKunden skrev: «Vet ikke helt ennå/);
   assert.equal(Boolean(live.agreedTime), false);
 
-  const { classifyInboxWrite } = await import('../lib/inbox-bot/write.js');
-  const later = classifyInboxWrite('Ikke aktuelt akkurat nå, ta kontakt om en måned', {}, { now: new Date('2026-10-15T12:00:00.000Z') });
+  const { classifyInboxWrite, pullInVagueDay } = await import('../lib/inbox-bot/write.js');
+  const asOf = { now: new Date('2026-10-15T12:00:00.000Z') };
+  const laterText = 'Ikke aktuelt akkurat nå, ta kontakt om en måned';
+  const later = classifyInboxWrite(laterText, {}, asOf);
   assert.equal(later.intent, 'sales_call');
-  assert.equal(later.day.ymd, '2026-11-09');
-  const withReason = classifyInboxWrite('Vi er på ferie, ta kontakt om en måned', {}, { now: new Date('2026-10-15T12:00:00.000Z') });
-  assert.equal(withReason.day.ymd, '2026-11-14');
+  assert.equal(later.request, 'not_now');
+  assert.equal(pullInVagueDay(later.day, laterText, asOf).ymd, '2026-11-09');
+  const reasonText = 'Vi er på ferie, ta kontakt om en måned';
+  const withReason = classifyInboxWrite(reasonText, {}, asOf);
+  assert.equal(pullInVagueDay(withReason.day, reasonText, asOf).ymd, '2026-11-14');
   assert.equal(classifyInboxWrite('Vi dropper hele greia, ikke interessert', {}).intent, 'walk_away');
 });
 
@@ -872,8 +955,9 @@ test('real-mail fixes: "kl 1400", busy window, only offered times, a question is
   const slots = ['2026-10-16T07:00:00.000Z', '2026-10-16T08:00:00.000Z'];
   assert.equal(replyTimesMatch('Fredag passer — kl. 09:00 eller 10:00?', slots), true);
   assert.equal(replyTimesMatch('Vi tar det tirsdag kl. 14 – passer det?', slots), false);
-  const merged = mergeWriteDecision({ intent: 'none', _fresh: 'Hei, hva gjelder dette?' }, { intent: 'sales_call', reply: 'Det gjelder et kort online møte om nettsiden.' });
-  assert.equal(merged.intent, 'gather');
+  const merged = mergeWriteDecision({ request: 'question' }, { request: 'call', reply: 'Det gjelder et kort online møte om nettsiden.' });
+  assert.equal(merged.request, 'question');
+  assert.equal(merged.reply, 'Det gjelder et kort online møte om nettsiden.');
 });
 
 test('every client mail goes past the Kundedata filer; only mail with facts is kept until the portal is connected', async () => {
@@ -1012,17 +1096,17 @@ test('a time that has passed is never booked and bot actions never land in the p
     sendEmail: async (mail) => { sent.push(mail); },
     queryBusy: async () => ({ busy: [] }),
     upsert: async () => { throw new Error('must not book'); },
-    decideAi: async () => ({}),
+    decideAi: async () => ({ request: 'reschedule_day' }),
   });
   assert.equal(result.write?.kind || result.kind, 'sales_propose');
   assert.equal(Boolean(sales.getSalesClientById(client.id).agreedTime), false);
   assert.match(sent[0].text, /passer noe av dette/i);
 });
 
-test('a book writes the assigned sales calendar with guest updates', async () => {
+test('a book goes through the rep move chain for the assigned sales rep', async () => {
   const client = seedClient({ id: 'sale-cal-upsert', contactEmail: 'cal-up@example.com' });
   sales.updateSalesClient(client.id, { ownerId: 'sales:alexander-id' });
-  const upserts = [];
+  const moves = [];
   const sent = [];
   const result = await ingestInboxMessage({
     id: 'imap-cal-upsert',
@@ -1035,27 +1119,25 @@ test('a book writes the assigned sales calendar with guest updates', async () =>
     now: new Date('2026-10-18T10:00:00.000Z'),
     sendEmail: async (mail) => { sent.push(mail); },
     queryBusy: async () => ({ busy: [] }),
-    decideAi: async () => ({}),
-    upsert: async (live, eventId, accountKey, options) => {
-      upserts.push({ id: live.id, eventId, accountKey, options });
-      return {
-        id: 'evt-bot-1',
-        hangoutLink: 'https://meet.google.com/abc-defg-hij',
-        htmlLink: 'https://calendar.google.com/event?eid=1',
-      };
+    decideAi: async () => ({ request: 'reschedule' }),
+    moveMeeting: async (live, dueAt, options) => {
+      moves.push({ id: live.id, ownerId: live.ownerId, dueAt, note: options.note });
+      return { ok: true, client: live, confirmationSent: true, error: '' };
     },
   });
   assert.equal(result.write?.kind || result.kind, 'sales_book');
-  assert.equal(upserts.length, 1);
-  assert.equal(upserts[0].accountKey, 'sales:alexander-id');
-  assert.equal(upserts[0].options.sendUpdates, 'all');
-  assert.equal(upserts[0].options.includeAttendees, true);
-  assert.equal(sales.getSalesClientById(client.id).calendar?.eventId, 'evt-bot-1');
-  assert.equal(sent.length, 1);
+  assert.equal(moves.length, 1);
+  assert.equal(moves[0].ownerId, 'sales:alexander-id');
+  assert.equal(moves[0].dueAt, '2026-10-21T13:00:00.000Z');
+  assert.match(moves[0].note, /^Bot:/);
+  // The rep chain sent the branded confirmation; the bot adds no second mail.
+  assert.equal(sent.length, 0);
 });
 
 test('a book still lands if Google calendar is disconnected', async () => {
   const client = seedClient({ id: 'sale-cal-off', contactEmail: 'cal-off@example.com' });
+  // Deliberate: with an assigned rep, a free/busy error still books (the rep chain sends the invite).
+  sales.updateSalesClient(client.id, { ownerId: 'sales:rep-1' });
   const sent = [];
   const result = await ingestInboxMessage({
     id: 'imap-cal-off',
@@ -1076,6 +1158,7 @@ test('a book still lands if Google calendar is disconnected', async () => {
 
 test('live ingest uses mailAt for neste uke even when caller omits now', async () => {
   const client = seedClient({ id: 'sale-mailat-now', contactEmail: 'mailat-now@example.com' });
+  sales.updateSalesClient(client.id, { ownerId: 'sales:rep-1' });
   const sent = [];
   const result = await ingestInboxMessage({
     id: 'imap-mailat-now',
@@ -1087,19 +1170,20 @@ test('live ingest uses mailAt for neste uke even when caller omits now', async (
   }, {
     sendEmail: async (mail) => { sent.push(mail); },
     queryBusy: async () => ({ busy: [] }),
-    decideAi: async () => ({}),
+    decideAi: async () => ({ request: 'reschedule' }),
+    realNow: new Date('2026-10-18T20:45:00.000Z'),
   });
   assert.equal(result.write?.kind || result.kind, 'sales_book');
   assert.equal(sales.getSalesClientById(client.id).meetingAt, '2026-10-21T13:00:00.000Z');
   assert.equal(sent.length, 1);
 });
 
-test('backfill parses neste uke from the mail date, not from today', async () => {
+test('backfill parses neste uke from the mail date, not from today, and never moves the meeting', async () => {
   const client = seedClient({ id: 'sale-bf-week', contactEmail: 'week-bf@example.com' });
-  sales.updateSalesClient(client.id, { meetingAt: '2026-10-19T13:00:00.000Z', agreedTime: true });
+  sales.updateSalesClient(client.id, { meetingAt: '2026-10-19T13:00:00.000Z', agreedTime: true, ownerId: 'sales:rep-1' });
   const sent = [];
-  const out = await backfillInboxReplies({
-    apply: true,
+  const run = (apply) => backfillInboxReplies({
+    apply,
     now: new Date('2026-10-19T08:00:00.000Z'),
     clients: [sales.getSalesClientById(client.id)],
     items: [],
@@ -1119,9 +1203,13 @@ test('backfill parses neste uke from the mail date, not from today', async () =>
     sendEmail: async (mail) => { sent.push(mail); },
     queryBusy: async () => ({ busy: [] }),
   });
-  assert.equal(out.results[0].wrote, true);
-  assert.equal(sales.getSalesClientById(client.id).meetingAt, '2026-10-21T13:00:00.000Z');
-  assert.equal(sent.length, 1);
+  const dry = await run(false);
+  assert.equal(dry.results[0].dueAt, '2026-10-21T13:00:00.000Z');
+  const out = await run(true);
+  assert.equal(out.results[0].wrote, false);
+  assert.equal(out.results[0].reason, 'stale-mail');
+  assert.equal(sales.getSalesClientById(client.id).meetingAt, '2026-10-19T13:00:00.000Z');
+  assert.equal(sent.length, 0);
 });
 
 test('backfill apply records a thrown ingest and continues', async () => {
@@ -1248,4 +1336,29 @@ test('backfill skips older same-sender, already-wrote, and outbound-after, then 
   assert.equal(sent.length, 1);
   assert.equal(out.results.find((row) => row.id === 'imap-backfill-new').wrote, true);
   assert.ok((sales.getSalesClientById(client.id).nextActions || []).some((row) => /Bot:/.test(row.note || '')));
+});
+
+test('FAQ: a link question gets the link from the card, never "it is in the invitation" when the card has none', () => {
+  const now = new Date('2031-03-03T08:15:00.000Z');
+  const base = { businessName: 'Cafe Nordlys', agreedTime: true, meetingAt: '2031-03-06T09:00:00.000Z' };
+  assert.equal(faqReply('Kan du sende meg lenken på nytt? Finner den ikke.', base, { now }), '');
+  assert.equal(faqReply('jeg kan ikke åpne lenken til møtet', base, { now }), '');
+  const linked = { ...base, calendar: { meetLink: 'https://meet.google.com/abc-defg-hij' } };
+  assert.match(faqReply('Kan du sende meg lenken på nytt?', linked, { now }), /https:\/\/meet\.google\.com\/abc-defg-hij/);
+  // "How do I join" is still answered; another platform is the rep's call.
+  assert.match(faqReply('Hvordan blir jeg med på torsdag?', base, { now }), /kalenderinvitasjonen/);
+  assert.equal(faqReply('Kan vi gjøre det på Teams?', linked, { now }), '');
+  assert.equal(faqReply('Kan vi ta møtet fysisk i stedet?', linked, { now }), '');
+});
+
+test('new needs_human reasons have their own summaries, and a person reason survives an AI that wants to act', () => {
+  assert.match(needsHumanSummary('time-unclear'), /uklart hvilket tidspunkt/);
+  assert.match(needsHumanSummary('move-warning:calendar sync failed'), /sjekk at kalenderen/);
+  assert.match(needsHumanSummary('no-meet-link'), /møtelenken/);
+  const kept = mergeWriteDecision({ request: 'unclear', reason: 'time-unclear' }, { request: 'reschedule' });
+  assert.equal(kept.needsHuman, true);
+  assert.equal(kept.reason, 'time-unclear');
+  const seen = mergeWriteDecision({ request: 'other', reason: 'unclear' }, { request: 'reschedule' });
+  assert.equal(seen.needsHuman, true);
+  assert.equal(seen.reason, 'ai-sees:reschedule');
 });

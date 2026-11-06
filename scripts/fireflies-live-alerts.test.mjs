@@ -497,7 +497,7 @@ test('a late or replayed bot_joined for a finished meeting in the room is not th
   assert.deepEqual(late, []);
   let session = readLiveSessionStore().sessions[KEY];
   assert.deepEqual([session.state, session.firstSeenActiveAt, session.ffMeetingId], ['dispatched', '', '']);
-  for (const minutes of [1, 2, 3]) await tickAt(state, minutes);
+  for (const minutes of [1, 2, 3, 7]) await tickAt(state, minutes);
   session = readLiveSessionStore().sessions[KEY];
   assert.equal(alerts.planLobbyAlert(session, at(3)).due, true, 'the rep is still told to let the bot in');
   assert.deepEqual(state.sent.map((input) => input.meetingLink), [ROOM, ROOM], 'the retry ladder goes on');
@@ -505,7 +505,7 @@ test('a late or replayed bot_joined for a finished meeting in the room is not th
   await live.noteFirefliesBotJoined({
     meetingId: 'FFOLD009',
     fetchPresence: async () => ({ meetingLink: ROOM, isLive: true, startTime: iso(-60) }),
-    nowMs: at(3.5),
+    nowMs: at(7.5),
   });
   session = readLiveSessionStore().sessions[KEY];
   assert.equal(session.message, LIVE_JOIN_MESSAGES.earlierBot);

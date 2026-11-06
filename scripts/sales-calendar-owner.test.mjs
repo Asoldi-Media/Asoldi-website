@@ -11,6 +11,8 @@ import {
   findStaffProfileForAccountKey,
   pickCalendarSyncAccountKey,
   staffMailboxFromProfile,
+  staffMeetMemberEmails,
+  listSalesStaffProfiles,
   salesClientNeedsCalendarMove,
   overlaySalesInboxMeetOnEvents,
   overlaySalesMeetingsOnEvents,
@@ -92,6 +94,40 @@ test('staff mailbox comes from fromEmail, username, or alexander → alexander@a
   assert.equal(findStaffProfileForAccountKey('sales:alexander@asoldi.com', users)?.id, '1789355644760');
   assert.equal(findStaffProfileForAccountKey('sales:baard', users)?.fromEmail, 'baard@asoldi.com');
   assert.equal(findStaffProfileForAccountKey('admin:damian@asoldi.com', users), null);
+});
+
+test('staff Meet co-hosts are connected asoldi mailboxes plus extras, never the client', () => {
+  assert.deepEqual(
+    staffMeetMemberEmails({
+      connectedSources: [
+        { googleEmail: 'alexander@asoldi.com' },
+        { googleEmail: 'contact@asoldi.com' },
+        { googleEmail: 'kari@example.com' },
+      ],
+      extraEmails: ['fred@fireflies.ai', 'alexander@asoldi.com'],
+      organizerEmail: 'alexander@asoldi.com',
+      clientEmail: 'kari@example.com',
+      staffProfiles: [{ username: 'future', fromEmail: 'future@asoldi.com' }],
+    }),
+    ['damian@asoldi.com', 'fred@fireflies.ai', 'future@asoldi.com'],
+  );
+});
+
+test('a new sales user is a Meet co-host; clients and employees are not', () => {
+  const users = [
+    { id: 'n1', username: 'nina', role: 'sales' },
+    { id: 'c1', username: 'kunde@asoldi.com', role: 'client' },
+    { id: 'e1', username: 'ansatt@asoldi.com', role: 'employee' },
+    { username: 'ghost', role: 'sales' },
+  ];
+  assert.deepEqual(listSalesStaffProfiles(users).map((user) => user.id), ['n1']);
+  assert.deepEqual(
+    staffMeetMemberEmails({
+      organizerEmail: 'alexander@asoldi.com',
+      staffProfiles: listSalesStaffProfiles(users),
+    }),
+    ['damian@asoldi.com', 'nina@asoldi.com'],
+  );
 });
 
 test('known owner mailbox never falls back to Damian’s token', () => {

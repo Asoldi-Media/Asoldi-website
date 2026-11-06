@@ -170,6 +170,8 @@ export async function listImapMessages(creds, {
         mailbox: creds.mailbox,
         source: 'imap',
         mailAt: parsed.date,
+        // The RFC Message-ID ("<x@y>"), so a reply can set In-Reply-To / References and stay in the thread.
+        rfcMessageId: parsed.messageId,
         from: parsed.from,
         to: parsed.to,
         subject: parsed.subject,

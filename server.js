@@ -364,6 +364,7 @@ import {
   applySalesPreviewSecurityHeaders,
   injectPreviewBaseHref,
   injectPreviewRobotsMeta,
+  freezeRevolutionSliderHtml,
   injectSalesPreviewContractWidget,
   isAllowedPreviewBridgeExportUrl,
   isPreviewCrawler,
@@ -393,6 +394,7 @@ import {
   getGoogleCalendarStatus,
   isRealGoogleMeetLink,
   listConnectedAsoldiCalendarSources,
+  meetCohostEmails,
   loadSalesCalendarWeek,
   prepareSalesCalendarEmbed,
   SALES_WEEK_CALENDAR_DISABLED,
@@ -426,6 +428,7 @@ import {
 } from './lib/inbox-bot/index.js';
 import {
   backfillRecognizedSignedContracts,
+  linkSalesClientPortalFromAcceptance,
   markClientSoldFromSignedContract,
   runSignedContractBackfillOnce,
   storePreviewAcceptedContract,
@@ -9704,9 +9707,9 @@ function liveSessionMeetHost(session) {
 }
 
 /**
- * From T-30 the engine asks for the room to be opened, so the notetaker walks in without a knock
- * (lib/google-meet-access.js; inert until the host has granted the Meet settings scope). Asked again each tick
- * until it is open: the opener caches its own refusals and errors, so a repeat costs a file read.
+ * From T-30 the engine prepares the room: staff and Fred as co-hosts, client still knocks
+ * (lib/google-meet-access.js; inert until the host has granted the Meet settings/members scopes).
+ * Asked again each tick until it is prepared: the opener caches its own refusals and errors.
  */
 async function openLiveSessionMeetRoom(session) {
   const host = liveSessionMeetHost(session);
@@ -9714,6 +9717,9 @@ async function openLiveSessionMeetRoom(session) {
     meetLink: session.meetLink,
     accountKey: host.accountKey,
     ownerEmail: host.ownerEmail,
+    memberEmails: meetCohostEmails({
+      organizerEmail: host.ownerEmail,
+    }),
     maxAgeMs: 15 * 60 * 1000,
   });
 }
@@ -12636,7 +12642,12 @@ async function acceptPortalOfferForUser(offer, user, req) {
   if (working.salesClientId) {
     const salesClient = sales.getSalesClientById(working.salesClientId);
     if (salesClient) {
-      markClientSoldFromSignedContract(salesClient.id);
+      markClientSoldFromSignedContract(salesClient.id, { fastTrack: true });
+      linkSalesClientPortalFromAcceptance(sales.getSalesClientById(salesClient.id) || salesClient, {
+        userId: user?.id || saved?.acceptance?.userId || '',
+        email: user?.username || saved?.acceptance?.email || '',
+        acceptedAt: saved?.acceptance?.acceptedAt || '',
+      });
       try {
         await storePreviewAcceptedContract(sales.getSalesClientById(salesClient.id) || salesClient, {
           email: user?.username || saved?.acceptance?.email || '',
@@ -15319,16 +15330,19 @@ app.patch('/api/admin/sales/:id/notes', salesAuth, (req, res) => {
   const existing = sales.getSalesClientById(req.params.id);
   if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, existing)) return res.status(403).json({ message: 'Not your sales client.' });
+  const append = sanitizeText(req.body?.append);
   const hasNotes = Object.prototype.hasOwnProperty.call(req.body || {}, 'notes');
   const hasQuote = req.body?.meetingQuote && typeof req.body.meetingQuote === 'object';
-  if (!hasNotes && !hasQuote) {
+  if (!append && !hasNotes && !hasQuote) {
     return res.status(400).json({ message: 'Notes are required.' });
   }
-  const updated = sales.setSalesNotes(
-    req.params.id,
-    hasNotes ? req.body?.notes : undefined,
-    hasQuote ? req.body.meetingQuote : undefined,
-  );
+  const updated = append
+    ? sales.appendSalesNote(req.params.id, append)
+    : sales.setSalesNotes(
+      req.params.id,
+      hasNotes ? req.body?.notes : undefined,
+      hasQuote ? req.body.meetingQuote : undefined,
+    );
   if (!updated) return res.status(404).json({ message: 'Sales client not found.' });
   res.json({ client: updated });
 });
@@ -20980,8 +20994,10 @@ async function sendSalesPreviewFile(req, res, relativePath = '') {
           res.setHeader('Content-Type', 'text/html; charset=utf-8');
           res.send(
             injectSalesPreviewContractWidget(
-              injectPreviewRobotsMeta(
-                ensureSharedPreviewStyles(rewritePreviewAssetPaths(injectPreviewBaseHref(text, client.id), client.id), roots)
+              freezeRevolutionSliderHtml(
+                injectPreviewRobotsMeta(
+                  ensureSharedPreviewStyles(rewritePreviewAssetPaths(injectPreviewBaseHref(text, client.id), client.id), roots)
+                )
               ),
               client.id
             )

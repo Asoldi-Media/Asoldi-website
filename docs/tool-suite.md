@@ -22,7 +22,7 @@ Edit only `asoldi-website/packages/suite`. Then:
 node scripts/sync-suite.mjs
 ```
 
-That copies the folder to `../website-maker/lib/suite` and writes `suite.manifest.json` (sha256 per file) into both copies. Drift tests in both repos (`scripts/suite-drift.test.mjs`) recompute the hashes. Never edit the vendored copy.
+That copies the folder to `../website-maker/lib/suite` and writes `suite.manifest.json` (sha256 per file) into both copies. It now refuses (and changes nothing) when website-maker's copy has files that `packages/suite` lacks (for example `core/llm`); it lists them. Do not pass `--force` until those files are in `packages/suite`, because `--force` deletes them from website-maker. Drift tests in both repos (`scripts/suite-drift.test.mjs`) recompute the hashes. Never edit the vendored copy.
 
 website-maker tests that load the suite run **inside the Docker app container** (`docker exec website-maker-app-1 …`), where `sharp` is installed.
 

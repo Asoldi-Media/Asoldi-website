@@ -73,8 +73,12 @@ export async function verifyAdmin(username, password) {
   return verifyPassword(password, admin.passwordHash);
 }
 
-export async function getAllUsers() {
+export function listUsers() {
   return migrateEmployeeProducts(seedKnownPhones(readUsers()));
+}
+
+export async function getAllUsers() {
+  return listUsers();
 }
 
 /**

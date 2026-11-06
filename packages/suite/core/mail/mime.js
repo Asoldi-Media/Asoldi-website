@@ -42,7 +42,8 @@ export function decodeMimeWords(value = '') {
 export function htmlToText(html = '') {
   return String(html || '')
     .replace(/<(style|script|head)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<blockquote\b/gi, ' > <blockquote')
+    .replace(/<blockquote\b/gi, '\n> <blockquote')
+    .replace(/<br\s*\/?>|<\/(?:p|div|li|tr|h[1-6])>/gi, '\n')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&nbsp;/gi, ' ')
     .replace(/&lt;/gi, '<')
@@ -107,6 +108,32 @@ function parseMimeTree(raw = '') {
   return { headers, contentType, body: decodePartBody(body, headers['content-transfer-encoding']), children: [] };
 }
 
+/**
+ * RFC 3676 format=flowed: a line that ends in a space continues on the next line (a soft break), so
+ * "møtes på torsdag \r\nkl 10" is one line again before the time parser reads it. Lines join only at
+ * the same quote depth ('>' count, one stuffed space dropped); a blank line and the "-- " signature
+ * line never join. DelSp=yes also drops the space before the break.
+ */
+function unflowText(text = '', { delSp = false } = {}) {
+  const out = [];
+  let open = -1;
+  for (const line of String(text || '').split(/\r?\n/)) {
+    const depth = /^>*/.exec(line)[0].length;
+    const body = line.slice(depth).replace(/^ /, '');
+    const flowed = body.endsWith(' ') && body !== '-- ';
+    const trim = (value) => (flowed && delSp ? value.slice(0, -1) : value);
+    if (open === depth && body && body !== '-- ') out[out.length - 1] += trim(body);
+    else out.push(trim(line));
+    open = flowed ? depth : -1;
+  }
+  return out.join('\n');
+}
+
+function plainPartText(text = '', contentType = '') {
+  if (!/;\s*format\s*=\s*"?flowed"?/i.test(contentType)) return text;
+  return unflowText(text, { delSp: /;\s*delsp\s*=\s*"?yes"?/i.test(contentType) });
+}
+
 function calendarMethodOfPart(contentType = '', body = '') {
   const fromType = String(contentType || '').match(/method=([a-z]+)/i);
   const fromBody = String(body || '').match(/^METHOD:(\w+)/im);
@@ -140,9 +167,20 @@ export function walkMime(node, acc = { text: [], attachments: [], calendar: [] }
     return acc;
   }
   const charset = charsetOf(node.contentType);
-  if (type.startsWith('text/plain') && node.body) acc.text.push(decodeCharset(node.body, charset));
+  if (type.startsWith('text/plain') && node.body) acc.text.push(plainPartText(decodeCharset(node.body, charset), node.contentType));
   else if (type.startsWith('text/html') && node.body && !acc.text.length) acc.text.push(htmlToText(decodeCharset(node.body, charset)));
   return acc;
+}
+
+/** Keep line breaks (quote headers and '>' lines live on their own lines); squash spaces and blank runs. */
+function normalizeBodyText(text = '') {
+  return String(text || '')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/[ \t ]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 export function parseRfc822(raw = '') {
@@ -163,7 +201,7 @@ export function parseRfc822(raw = '') {
     contentType,
     calendar,
     calendarMethod,
-    text: walked.text.join('\n').replace(/\s+/g, ' ').trim(),
+    text: normalizeBodyText(walked.text.join('\n')),
     attachments: walked.attachments,
     attachmentNames: walked.attachments.map((part) => part.filename),
   };
