@@ -599,3 +599,72 @@ test('Venter møtebekreftelse ranks the next action first, not old backlog', () 
   ]);
   assert.equal(queues.meetingsToday.some((row) => row.client.id === 'booker'), false);
 });
+
+test('confirm, Tilbud and Venter signering clock the next action, not old playbook overdue', () => {
+  const now = at('2026-10-21T13:20:00.000Z');
+  const nextAt = '2026-10-22T08:00:00.000Z';
+  const confirmNext = client({
+    id: 'confirm-next',
+    businessName: 'HB Bygg',
+    reminders: {},
+    myphoner: { bookedAt: '2026-05-01T08:00:00.000Z' },
+    nextActions: [
+      { id: 'na-sms1h-confirm-next', goalKey: 'meetingHeld', presetKey: 'sms1h', createdAt: '2026-05-01T08:00:00.000Z', relativeToMeetingHours: 24 },
+      { id: 'na-ring-confirm', goalKey: 'meetingHeld', presetKey: 'custom', name: 'Ring', format: 'ring', dueAt: nextAt, sortIndex: -1 },
+    ],
+  });
+  const confirmOld = client({
+    id: 'confirm-old',
+    businessName: 'Gammel bekreftelse',
+    reminders: {},
+    myphoner: { bookedAt: '2026-10-19T08:00:00.000Z' },
+  });
+  const offerNext = client({
+    id: 'offer-next',
+    businessName: 'Tilbud neste',
+    meetingAt: '2026-05-01T10:00:00.000Z',
+    progression: { meetingHeld: true },
+    nextActions: [
+      { id: 'na-ring-offer', goalKey: 'offerSent', presetKey: 'custom', name: 'Ring', format: 'ring', dueAt: nextAt, sortIndex: -1 },
+    ],
+  });
+  const offerOld = client({
+    id: 'offer-old',
+    businessName: 'Tilbud gammel',
+    meetingAt: '2026-10-01T10:00:00.000Z',
+    progression: { meetingHeld: true },
+    nextActions: [],
+  });
+  const signNext = client({
+    id: 'sign-next',
+    businessName: 'Signering neste',
+    contractSentAt: '2026-05-01T10:00:00.000Z',
+    progression: { meetingHeld: true, offerSent: true },
+    nextActions: [
+      { id: 'chk-old', goalKey: 'offerSent', presetKey: 'contractCheckup', dueAt: '2026-05-02T10:00:00.000Z' },
+      { id: 'na-ring-sign', goalKey: 'contractSigned', presetKey: 'custom', name: 'Ring', format: 'ring', dueAt: nextAt, sortIndex: -1 },
+    ],
+  });
+  const signOld = client({
+    id: 'sign-old',
+    businessName: 'Signering gammel',
+    contractSentAt: '2026-10-01T10:00:00.000Z',
+    progression: { meetingHeld: true, offerSent: true },
+    nextActions: [{
+      id: 'chk-sign-old',
+      goalKey: 'offerSent',
+      presetKey: 'contractCheckup',
+      dueAt: '2026-10-02T10:00:00.000Z',
+    }],
+  });
+  const queues = groupSalesFocusQueues(
+    [confirmOld, confirmNext, offerOld, offerNext, signOld, signNext],
+    now,
+  );
+  assert.equal(queues.confirm[0].client.id, 'confirm-next');
+  assert.equal(queues.offer[0].client.id, 'offer-next');
+  assert.equal(queues.signature[0].client.id, 'sign-next');
+  assert.deepEqual(salesCategoryClock(queues.confirm, 'confirm', now), { kind: 'until', atMs: at(nextAt) });
+  assert.deepEqual(salesCategoryClock(queues.offer, 'offer', now), { kind: 'until', atMs: at(nextAt) });
+  assert.deepEqual(salesCategoryClock(queues.signature, 'signature', now), { kind: 'until', atMs: at(nextAt) });
+});
