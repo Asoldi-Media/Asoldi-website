@@ -72,7 +72,10 @@ export function ClientSalesLog({
   const canAdd = Boolean(draft.trim()) && !saving;
 
   return (
-    <div className="rounded-xl border border-white/10 bg-black/20 p-2.5 space-y-2 h-full min-h-0 flex flex-col">
+    <div
+      className="rounded-xl border border-white/10 bg-black/20 p-2.5 space-y-2 h-full min-h-0 flex flex-col"
+      onClick={(event) => event.stopPropagation()}
+    >
       <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
         <StickyNote size={12} />
         Logg

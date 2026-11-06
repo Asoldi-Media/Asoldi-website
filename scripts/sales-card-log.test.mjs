@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   appendStampedSalesNote,
   buildSalesCardLog,
@@ -111,4 +112,11 @@ test('a held meeting lands in the log at the meeting time, not as an open row', 
   assert.equal(meeting.at, MEETING_AT);
   assert.ok(!rows.some((row) => row.id === 'meeting:ff-sales'), 'same recording is not a second row');
   assert.ok(rows.some((row) => row.id === 'playbook:readUp'));
+});
+
+test('the sales card right column is the log, not a free-edit notes blob', () => {
+  const board = readFileSync(new URL('../app/pages/Admin/sections/SalesClientsSection.tsx', import.meta.url), 'utf8');
+  assert.match(board, /renderNotes=\{renderClientSalesLog\}/);
+  assert.match(board, /append:\s*line/);
+  assert.doesNotMatch(board, /function ClientNotesField/);
 });

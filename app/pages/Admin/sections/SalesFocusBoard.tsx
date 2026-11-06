@@ -1150,7 +1150,7 @@ function FocusCard(props: FocusCardProps) {
         </div>
       </div>
 
-      <div className="space-y-3 min-w-0">
+      <div className="min-w-0 lg:min-h-[24rem] flex flex-col">
         {renderNotes(client)}
       </div>
     </div>
