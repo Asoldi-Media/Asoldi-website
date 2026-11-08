@@ -1,0 +1,60 @@
+{
+  "business": {
+    "name": "Testvik Sykkelverksted AS"
+  },
+  "purpose": "sales",
+  "meetingId": "m-bike-sales",
+  "text": "Rådgiver: Hva vil dere at folk skal finne dere på når de googler?\nKunde: Vi vil rangere høyt på sykkelservice Testvik, det er det meste av jobben vår.\nRådgiver: Og reparasjoner?\nKunde: Ja, folk søker etter reparasjon av elsykkel, det kommer det mer og mer av.\nKunde: Vi vil ikke bli funnet på sykkelutleie, det driver vi ikke med lenger.\nRådgiver: Har dere noen egne merker dere selger?\nKunde: Vi selger mest brukte sykler og noen nye fra et par leverandører.\nRådgiver: Hvor mange er dere i verkstedet?\nKunde: Vi er tre mekanikere og en lærling.\nKunde: Det viktigste er at de som bor i Testvik ser at vi har kort ventetid på service.\nRådgiver: Bra, da tar vi med åpningstider og en enkel bestillingsside.",
+  "items": [
+    {
+      "type": "fact",
+      "path": "positioning.services",
+      "value": "Sykkelservice",
+      "quote": "Vi vil rangere høyt på sykkelservice Testvik, det er det meste av jobben vår",
+      "speaker": "Kunde",
+      "meetingId": "m-bike-sales",
+      "purpose": "sales",
+      "confidence": 0.8
+    },
+    {
+      "type": "fact",
+      "path": "positioning.services",
+      "value": "Reparasjon av elsykler",
+      "quote": "folk søker etter reparasjon av elsykkel, det kommer det mer og mer av",
+      "speaker": "Kunde",
+      "meetingId": "m-bike-sales",
+      "purpose": "sales",
+      "confidence": 0.8
+    },
+    {
+      "type": "directive",
+      "kind": "remove",
+      "scope": "section",
+      "area": "services",
+      "ask": "Ingen sykkelutleie",
+      "priority": "should",
+      "quote": "Vi vil ikke bli funnet på sykkelutleie, det driver vi ikke med lenger",
+      "speaker": "Kunde",
+      "meetingId": "m-bike-sales",
+      "purpose": "sales",
+      "confidence": 0.8
+    },
+    {
+      "type": "fact",
+      "path": "positioning.audience",
+      "value": "Folk i Testvik",
+      "quote": "de som bor i Testvik ser at vi har kort ventetid på service",
+      "speaker": "Kunde",
+      "meetingId": "m-bike-sales",
+      "purpose": "sales",
+      "confidence": 0.8
+    }
+  ],
+  "expected": [
+    "sykkelservice Testvik",
+    "reparasjon av elsykkel"
+  ],
+  "mustNotPropose": [
+    "sykkelutleie"
+  ]
+}

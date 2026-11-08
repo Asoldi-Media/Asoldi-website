@@ -245,7 +245,8 @@ test('contract text, agreedKeywordsFor and freezeAgreedKeywords', async () => {
   assert.equal(frozen.contractText, 'Avtalte søkeord: bakeri eksempelby, brød eksempelby');
   assert.ok(Object.isFrozen(frozen));
   assert.equal(record.readSeoRecord(id).history.at(-1).action, 'freeze');
-  assert.deepEqual(record.tickSteps, []);
+  // One step: keyword proposals from meetings, which stops at its own switch (off by default).
+  assert.deepEqual(record.tickSteps.map((step) => [step.name, step.scope]), [['seo-transcript-keywords', 'client']]);
   assert.ok(Object.isFrozen(record.tickSteps));
 });
 
