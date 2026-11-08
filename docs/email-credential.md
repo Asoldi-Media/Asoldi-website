@@ -37,7 +37,13 @@ CMS                                                   hub
 
 - The site credential is the one from site-credential enrollment (`lib/site-credentials.js`,
   header `x-site-credential`). Without a valid one the answer is always `{"ok":true}`, so a caller
-  with only the public site key learns nothing and gets nothing.
+  with only the public site key learns nothing and gets nothing. The answer never carries the
+  `x-site-credential-status` header (other hub routes do), so it does not tell a known site key from
+  an unknown one or a valid credential from a wrong one either.
+- Provision request and confirm together allow **30 requests per client address in 10 minutes**;
+  then `429 {"ok":false,"code":"rate_limited"}` with `Retry-After`. A confirm whose value is not
+  shaped like a key, or matches no pending or current key, is refused before the hub takes its key
+  lock, so such requests never queue behind a superadmin issuing or rotating a key.
 - Where a pending key comes from: a superadmin issues it (`POST /api/admin/email/sites/:id/provision`),
   or the hub issues one on a credential-valid provision request for a site in the email rollout that
   has no pending key: its first key, or, when it already has a key, a new one (a rotation, below).
@@ -89,7 +95,9 @@ While the platform is off they answer `404 {"code":"disabled"}` like every other
 | `GET /api/hub/email/stats` | `?campaignId=` or `?kind=&from=&to=` or `?refs=a,b` | `{byRef, totals}` for the site's own messages |
 | `POST /api/hub/email/lint` | `{subject, html, text, kind}` | `{claims:[], claimsChecked:false, links:[{href, kind, ok, host, reason, tag}]}` (the relay's link check) |
 | `GET /api/hub/email/owner-recipients` | | `[{email, status}]` |
-| `POST /api/hub/email/campaigns`, `…/campaigns/:id/recipients`, `…/start`, `…/cancel`, `GET …/campaigns/:id`, `PUT /api/hub/email/owner-recipients`, `POST /api/hub/email/owner-notify` | | `501 {"code":"not_available"}` until those parts of the platform are built |
+| `PUT /api/hub/email/owner-recipients` | `{emails:[≤3], actor:{username, rank:"owner"}}` | the new list `[{email, status}]`; owner-rank only, new addresses pending until confirmed (`docs/email-owner-notify.md`) |
+| `POST /api/hub/email/owner-notify` | `{kind, subject, text, html?, dedupeKey}` | `{ok}`: a notice to the confirmed owners (`docs/email-owner-notify.md`) |
+| `POST /api/hub/email/campaigns`, `…/campaigns/:id/recipients`, `…/start`, `…/cancel`, `GET …/campaigns/:id` | | `501 {"code":"not_available"}` until that part of the platform is built |
 
 `POST /api/hub/email/brevo-webhook/:token` is the one `/api/hub/email/` route that takes another
 credential: the hub's Brevo webhook token, in the path and in the `x-asoldi-webhook` header. Any
@@ -192,13 +200,15 @@ times (`auth.keyId`, `auth.confirmedAt`, `auth.pendingKeyId`, `auth.provisionReq
 | `GET /api/hub/email/unsubscribe?t=` | public | Confirm page (nb/en, masked address, no external assets, `noindex`). Never changes state. |
 | `POST /api/hub/email/unsubscribe?t=` | public | Form submit and RFC 8058 one-click (`List-Unsubscribe=One-Click`). Records the opt-out for the site. A repeat changes nothing (no write, no Brevo call, no hint). |
 | `POST /api/hub/email/resubscribe?t=` | public | Undo from the page: once per address and site, within 30 days, and only for an opt-out made through a link. |
-
-Both public POST routes allow 10 requests per token and 300 per client address in 10 minutes, then
-answer 429 with `Retry-After`.
+| `GET` and `POST /api/hub/email/owner-recipients/confirm?t=`, `…/revert?t=` | public | The confirm and revert links of an owner-recipient change (`docs/email-owner-notify.md`). GET shows a button; only POST changes state. |
 | `GET /api/admin/email/status`, `PUT /api/admin/email/settings` | superadmin | `enabled`, `rollout`, `killSwitch`, `brevo.sandbox`, `brevo.syncContacts`, `testRecipients` (and `devCmsTargets` in safe mode). |
 | `POST /api/admin/email/sites/:id/provision` | superadmin | Issue the first key or rotate. Answers key ids only. |
 | `POST /api/admin/email/suppressions/rebuild` | superadmin | Pull the CMS mirrors and merge them into the opt-out record (see below). `{"force":true}` writes even if a mirror did not answer; `{"base":{…}}` supplies a record for a lost one that has no snapshot. |
 | `GET /api/admin/email/owner-routing/preview`, `PUT /api/admin/email/owner-routing/default` | superadmin | Owner-routing default for form and order notices (see `docs/runtime-data.md`). |
+
+The public POST routes allow 10 requests per link and 300 per client address in 10 minutes, then
+answer 429 with `Retry-After`. A superadmin change that cannot be saved (the settings file cannot be
+read or written) answers `503 {"ok":false,"code":"unavailable"}` and changes nothing.
 
 ## Opt-out record: rows only get stronger
 
@@ -226,6 +236,27 @@ checks the tags inside comments (Outlook renders conditional comments), CSS `url
 `script`, `noscript`, `iframe`, `svg`, `math`, `object`, `embed` and similar elements and
 `meta` refresh outright (`422 link_not_allowed`, reason `markup`). The From name is the hub's name
 for the site; the brand name the CMS sends appears only in the body.
+
+A link carrying another address is refused with reason `nested_url`. The check reads the link as
+written and as the URL parser reads it, so these count too: a backslash after the host
+(`https://shop.example.comhttps://…`, which the parser reads as a path), an `http(s)://` address in
+the path, query or fragment (raw or percent-decoded twice), a path that starts with `//`, and a query
+value or fragment that starts with two slashes or backslashes (raw or percent-encoded, such as
+`?to=%2F%2Fother.example`).
+
+**Footer.** The relay adds its unsubscribe footer (with the sender block) unless the template shows
+the link itself: `{{unsubscribeUrl}}` must be the `href` of an `<a>` in rendered markup, not in a
+comment or an Outlook conditional comment, not in the head, title or a template, and not under an
+element with a `hidden` attribute or a `display:none`, `visibility:hidden` or `mso-hide:all`
+style. In every other case the footer is added, right before the last `</body>` the tokenizer reads
+as markup (never one inside a comment), or at the end.
+
+**Duplicates and the ref.** `siteId:kind:ref:step` is checked against the message log and reserved
+in `email-relay-inflight.json` under a file lock until the message's log line is written, so two
+hub workers never both send it (a reservation older than 10 minutes belongs to a process that
+stopped mid-send and is ignored). `ref` loses every control character before it is used, so it never
+puts a line break into the provider's idempotency header. Any error between taking the quota ticket
+and Brevo accepting the message gives the ticket and the recipient count back.
 
 The send pipeline (`relaySend` in `lib/email-relay.js`), the Brevo client (`lib/brevo.js`) and the
 quota ledger (`lib/email-quota.js`) are library code; the site API above

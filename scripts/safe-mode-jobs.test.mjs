@@ -25,6 +25,7 @@ function startedWith(env) {
 test('safe mode default: only the outbox loops and local backfills start', () => {
   assert.deepEqual(startedWith({ HUB_SAFE_MODE: '1' }), [
     'delivery',
+    'emailLogPrune',
     'firefliesMeetLinkBackfill',
     'nyAssignmentBackfill',
     'salesBookingFactsBackfill',
