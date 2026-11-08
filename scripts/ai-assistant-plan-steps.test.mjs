@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -30,6 +30,7 @@ const {
   parseKeywordAnswer,
   parseShopAnswer,
   planMissingParts,
+  shopPartNamed,
   planStepsFor,
   planSubStep,
   websiteHost,
@@ -44,7 +45,7 @@ const { evaluateDeliveryGate } = await import('../lib/delivery-gate.js');
 const { readDeliveryAudit } = await import('../lib/delivery-audit.js');
 const { readSeoRecord } = await import('../lib/seo-ops/record.js');
 
-const PILOTS = ['shop-pilot', 'shop-open', 'tier1', 'book-1', 'seo-1', 'seo-known', 'kw-known', 'ship-known', 'prefill', 'skip-shop', 'q-pickup', 'q-ret', 'q-vat', 'q-side', 'q-dunno', 'q-nomore', 'q-revisit', 'q-exit', 'kw-again', 'o-1'];
+const PILOTS = ['shop-pilot', 'shop-open', 'tier1', 'book-1', 'seo-1', 'seo-known', 'kw-known', 'ship-known', 'prefill', 'skip-shop', 'q-pickup', 'q-ret', 'q-vat', 'q-side', 'q-dunno', 'q-nomore', 'q-revisit', 'q-exit', 'kw-again', 'o-1', 'q-stale', 'q-book', 'q-kwend'];
 const BASE_INTAKE_KEYS = ['products', 'media', 'logo', 'staff', 'hours', 'affiliations', 'focus'];
 const BANK_KEYS = [
   'businessCard', 'generalInfo', 'brandIdentity', 'openingHours', 'assistantIntake',
@@ -530,6 +531,7 @@ test('the panel markup without plan steps matches the previous panel', async () 
       packages: 'external',
       logLevel: 'silent',
     });
+    mkdirSync(join(root, 'build'), { recursive: true });
     const outDir = mkdtempSync(join(root, 'build', 'intake-render-'));
     const file = join(outDir, 'render.mjs');
     writeFileSync(file, built.outputFiles[0].text);
@@ -684,4 +686,64 @@ test('a finished keyword step keeps a phrase that contains og', async () => {
   const bank = portal.getClientProfileByUserId('kw-again').clientDataBank;
   assert.deepEqual(bank.websiteCreatorQuestions.importantKeywords, ['sykkelservice', 'hus og hage']);
   assert.equal(bank.assistantIntake.keywords, 'done');
+});
+
+test('declines and non-answers on the search word, area and booking questions are not saved', () => {
+  for (const text of ['Nei, ingen søkeord', 'Har ikke tenkt på det', 'hopp over dette', 'Nei, vi har ingen spesielle', 'Ingen flere']) {
+    assert.equal(parseKeywordAnswer(text).action, 'skip', text);
+  }
+  for (const text of ['vet ikke', 'usikker', 'aner ikke', 'det er alt']) {
+    assert.equal(parseKeywordAnswer(text).action, 'unclear', text);
+    assert.equal(parseAreaAnswer(text).action, 'unclear', text);
+    assert.equal(parseBookingAnswer(text).action, 'unclear', text);
+  }
+  for (const text of ['Ingen timebestilling', 'Nei, vi har ingen tjenester som bookes', 'Har ikke det']) {
+    assert.equal(parseBookingAnswer(text).action, 'skip', text);
+  }
+  assert.equal(parseAreaAnswer('hopp over dette').action, 'skip');
+  assert.deepEqual(parseKeywordAnswer('Nei, kajakkutleie Eksempelby').phrases, ['kajakkutleie Eksempelby']);
+  assert.equal(parseBookingAnswer('Klipp, 30 min, 500 kr').action, 'save');
+  const seller = parseShopAnswer('Nei, vi er ikke mva-registrert', 'seller');
+  assert.equal(seller.value.legalName, '');
+  assert.equal(seller.value.vatRegistered, false);
+  assert.equal(parseShopAnswer('Nei, ikke mva-registrert', 'seller').value.legalName, '');
+  assert.equal(shopPartNamed('Jeg vil endre returvilkårene'), 'returns');
+  assert.equal(shopPartNamed('endre returen'), 'returns');
+  assert.equal(shopPartNamed('fraktprisen'), 'shipping');
+});
+
+test('a declined booking step is skipped, and a finished keyword step ends on ingen flere', async () => {
+  writeSettings();
+  openClient({ id: 'q-book', tierId: 'tier-1-standard', extra: {} });
+  const offers = await import('../data/sales-offers.js');
+  offers.createSalesOffer({ salesClientId: 'q-book', products: [{ id: 'p1', name: 'Nettside', priceExMva: 1000, includes: ['Forside', 'Timebestilling', 'Kontakt'] }] });
+  await skipBase('q-book');
+  await handleAssistantChat('q-book', { text: 'Ingen timebestilling' });
+  const booked = portal.getClientProfileByUserId('q-book').clientDataBank;
+  assert.deepEqual(booked.bookingServices || booked.shopSetup?.bookingServices || [], []);
+  assert.equal(booked.assistantIntake.booking, 'skipped');
+
+  openClient({ id: 'q-kwend', tierId: 'tier-2-seo', extra: { seo: { scope: 'national' } } });
+  await skipBase('q-kwend');
+  await handleAssistantChat('q-kwend', { text: 'sykkelservice' });
+  await handleAssistantChat('q-kwend', { focusStep: 'keywords' });
+  await handleAssistantChat('q-kwend', { text: 'Ingen flere' });
+  const kw = portal.getClientProfileByUserId('q-kwend').clientDataBank;
+  assert.deepEqual(kw.websiteCreatorQuestions.importantKeywords, ['sykkelservice']);
+  assert.equal(kw.assistantIntake.focus, '');
+});
+
+test('a pending shop part is dropped when the client moves to another step', async () => {
+  writeSettings();
+  openClient({ id: 'q-stale', tierId: 'tier-3-ecommerce', extra: { orgNumber: '123456780', legalName: 'Eksempel Sykkel AS', seo: { scope: 'national' } } });
+  await skipBase('q-stale');
+  await handleAssistantChat('q-stale', { text: 'Posten, 99 kr' });
+  await handleAssistantChat('q-stale', { text: 'Standard 14 dagers angrerett' });
+  await handleAssistantChat('q-stale', { focusStep: 'shop' });
+  await handleAssistantChat('q-stale', { text: 'frakt' });
+  await handleAssistantChat('q-stale', { focusStep: 'keywords' });
+  await handleAssistantChat('q-stale', { focusStep: 'shop' });
+  const asked = await handleAssistantChat('q-stale', { text: 'retur' });
+  assert.match(asked.assistantMessage, /retur/i);
+  assert.equal(portal.getClientProfileByUserId('q-stale').clientDataBank.shopSetup.shipping, 'Posten, 99 kr');
 });
