@@ -468,3 +468,40 @@ test('a CMS mirror answer is read with a size cap and abandoned past it', async 
   const small = await getFromCms(site, '/api/cms/email/suppressions', { fetchImpl: async () => new Response('{"items":[],"next":null}', { status: 200 }), settings, env: { HUB_SAFE_MODE: '1' } });
   assert.deepEqual(small, { items: [], next: null });
 });
+
+test('a mirrored row with scope all stays a row of its own site and never becomes a global row', async () => {
+  const at = new Date(clock).toISOString();
+  const cms = await fakeCms('site_a', [
+    { email: 'mirror-hard@example.com', scope: 'all', source: 'hardBounce', at },
+    { email: 'mirror-blocked@example.com', scope: 'all', source: 'provider-blocked', at },
+  ]);
+  try {
+    const settings = store.deepMerge(store.readEmailSettings(), { devCmsTargets: { site_a: cms.origin } });
+    const result = await unsub.rebuildSuppressionsFromCms({ getAllSites: () => [hub.getSiteById('site_a')], now: clock, settings, env: { HUB_SAFE_MODE: '1' } });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const rows = store.readEmailSuppressions();
+    for (const email of ['mirror-hard@example.com', 'mirror-blocked@example.com']) {
+      assert.equal(rows.site_a[email].scope, 'all', email);
+      assert.equal(rows['*']?.[email], undefined, `${email}: no global row`);
+      assert.equal(unsub.isSuppressed('site_a', email, 'test'), true, `${email}: blocked for the site that mirrored it`);
+      assert.equal(unsub.isSuppressed('site_b', email, 'welcome'), false, `${email}: another site may still send`);
+    }
+  } finally {
+    cms.srv.close();
+  }
+});
+
+test('a pending opt-out file whose last line was cut short keeps every later opt-out', async () => {
+  const snapshot = join(dataDir, 'snapshot-before-cut.json');
+  writeFileSync(snapshot, readFileSync(suppressionsFile(), 'utf8'));
+  loseRecord({ snapshots: false });
+  // A write cut short: the last line has no newline.
+  writeFileSync(join(dataDir, unsub.PENDING_FILE), '{"siteId":"site_a","email":"cut-short@exa');
+  const t = unsub.mintUnsubToken({ siteId: 'site_a', email: 'after-cut@example.com', kind: 'welcome' });
+  assert.equal((await page('POST', `/api/hub/email/unsubscribe?t=${t}`, { body: 'List-Unsubscribe=One-Click' })).status, 200);
+  assert.deepEqual(unsub.readPendingSuppressions().map((row) => row.email), ['after-cut@example.com'], 'the new opt-out is a line of its own');
+  copyFileSync(snapshot, suppressionsFile());
+  assert.equal(unsub.isSuppressed('site_a', 'after-cut@example.com', 'campaign'), true, 'it counts before the merge');
+  await unsub.applyPendingSuppressions({ now: clock });
+  assert.equal(store.readEmailSuppressions().site_a['after-cut@example.com'].source, 'one-click', 'and is merged into the record');
+});

@@ -359,3 +359,87 @@ test('every email core route is called by a test', async () => {
   });
   assert.deepEqual(missing, [], `routes without a test: ${missing.join(', ')}`);
 });
+
+test('provision-request never carries the site-credential status header, whatever credential comes with it', async () => {
+  await store.saveEmailSettings({ enabled: true });
+  for (const [label, headers, plain] of [
+    ['the site key alone', { 'x-site-key': 'public-key-one' }, true],
+    ['a credential of another site', { 'x-site-key': 'public-key-one', 'x-site-credential': OTHER_CREDENTIAL }, true],
+    ['a malformed credential', { 'x-site-key': 'public-key-one', 'x-site-credential': 'short' }, true],
+    ['the valid credential', cms1, false],
+  ]) {
+    const res = await fetch(`${base}/api/hub/email/provision-request`, { method: 'POST', headers });
+    const answer = await res.json();
+    assert.equal(res.status, 200, label);
+    assert.equal(res.headers.get('x-site-credential-status'), null, `${label}: no status header`);
+    if (plain) assert.deepEqual(answer, { ok: true }, label);
+  }
+});
+
+test('a provision confirm with an unknown or malformed key is refused without waiting for the key lock', async () => {
+  await store.saveEmailSettings({ enabled: true });
+  let release;
+  const held = store.withFileLock('email-site-keys', () => new Promise((resolve) => { release = resolve; }));
+  try {
+    for (const key of ['x'.repeat(10), randomBytes(32).toString('base64url')]) {
+      const started = Date.now();
+      const res = await fetch(`${base}/api/hub/email/provision/confirm`, { method: 'POST', headers: { 'x-email-key': key }, signal: AbortSignal.timeout(5000) });
+      assert.equal(res.status, 401);
+      assert.deepEqual(await res.json(), { ok: false, code: 'unauthorized' });
+      assert.ok(Date.now() - started < 1500, `answered in ${Date.now() - started} ms while another holder kept the key lock`);
+    }
+  } finally {
+    release();
+    await held;
+  }
+});
+
+test('provision request and confirm are limited per client address; the unsubscribe limits are separate', async () => {
+  await store.saveEmailSettings({ enabled: true });
+  const app = express();
+  app.use(express.json());
+  registerEmailHubRoutes(app, { adminAuth: (_q, r) => r.status(401).end(), hub }, { now: () => clock, env: { HUB_SAFE_MODE: '0' }, startJobs: false, provisionLimits: { perAddress: 3 } });
+  const srv = await new Promise((resolve) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
+  });
+  try {
+    const url = (path) => `http://127.0.0.1:${srv.address().port}${path}`;
+    const statuses = [];
+    for (let i = 0; i < 2; i += 1) statuses.push((await fetch(url('/api/hub/email/provision/confirm'), { method: 'POST', headers: { 'x-email-key': 'y'.repeat(43) } })).status);
+    statuses.push((await fetch(url('/api/hub/email/provision-request'), { method: 'POST', headers: { 'x-site-key': 'public-key-two' } })).status);
+    const over = await fetch(url('/api/hub/email/provision/confirm'), { method: 'POST', headers: { 'x-email-key': 'y'.repeat(43) } });
+    assert.deepEqual(statuses, [401, 401, 200]);
+    assert.equal(over.status, 429);
+    assert.deepEqual(await over.json(), { ok: false, code: 'rate_limited' });
+    assert.ok(Number(over.headers.get('retry-after')) >= 1);
+    assert.equal((await fetch(url('/api/hub/email/provision-request'), { method: 'POST', headers: { 'x-site-key': 'public-key-two' } })).status, 429, 'the request route shares the allowance');
+    clock += 10 * 60_000 + 1000;
+    assert.equal((await fetch(url('/api/hub/email/provision/confirm'), { method: 'POST', headers: { 'x-email-key': 'y'.repeat(43) } })).status, 401, 'the window moves on');
+    const { PROVISION_PER_ADDRESS } = await import('../lib/routes/email-hub-routes.js');
+    assert.equal(PROVISION_PER_ADDRESS, 30, 'the default allowance');
+  } finally {
+    srv.closeAllConnections?.();
+    srv.close();
+  }
+});
+
+test('a settings change that cannot be saved answers 503 instead of hanging', async () => {
+  const { existsSync, mkdirSync, renameSync, rmSync } = await import('node:fs');
+  const live = join(dataDir, 'email-settings.json');
+  const aside = join(dataDir, 'email-settings.json.aside');
+  if (existsSync(live)) renameSync(live, aside);
+  mkdirSync(live);
+  try {
+    for (const [path, payload] of [['/api/admin/email/settings', { killSwitch: true }], ['/api/admin/email/owner-routing/default', { enabled: false, siteIds: [] }]]) {
+      const res = await fetch(`${base}${path}`, { method: 'PUT', headers: { ...admin, 'content-type': 'application/json' }, body: JSON.stringify(payload), signal: AbortSignal.timeout(8000) });
+      assert.equal(res.status, 503, path);
+      const answer = await res.json();
+      assert.equal(answer.code, 'unavailable', path);
+      assert.equal(answer.ok, false, path);
+    }
+  } finally {
+    rmSync(live, { recursive: true, force: true });
+    if (existsSync(aside)) renameSync(aside, live);
+  }
+  assert.equal((await call('put', '/api/admin/email/settings', admin, { killSwitch: false })).status, 200, 'saving works again');
+});

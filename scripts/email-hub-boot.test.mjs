@@ -1,8 +1,8 @@
 // Boots the real hub (server.js) on 127.0.0.1 in safe mode with a throwaway data dir, an empty
 // working directory (no .env), blank credentials and the loopback-only egress guard, and checks
 // the email core routes end to end:
-//  - with the default settings every new public route answers 404 { code: 'disabled' } and the
-//    boot writes no email data;
+//  - with the default settings every new public route (the owner-recipient and owner-notify routes
+//    too) answers 404 { code: 'disabled' } and the boot writes no email data;
 //  - the Superadmin preview of the owner-routing default works while everything is off;
 //  - once switched on, a one-click unsubscribe is recorded and the Brevo list removal becomes a
 //    safe-mode intent: no connection to api.brevo.com is ever attempted.
@@ -152,6 +152,12 @@ test('real hub: email core routes are dark by default, and safe mode keeps Brevo
     ['POST', '/api/hub/email/resubscribe?t=abc', 'from=page', 'application/x-www-form-urlencoded'],
     ['POST', '/api/hub/email/provision-request', '{}', 'application/json'],
     ['POST', '/api/hub/email/provision/confirm', '{}', 'application/json'],
+    ['PUT', '/api/hub/email/owner-recipients', '{"emails":[],"actor":{"rank":"owner"}}', 'application/json'],
+    ['POST', '/api/hub/email/owner-notify', '{"kind":"order"}', 'application/json'],
+    ['GET', '/api/hub/email/owner-recipients/confirm?t=abc'],
+    ['POST', '/api/hub/email/owner-recipients/confirm?t=abc', 'go=1', 'application/x-www-form-urlencoded'],
+    ['GET', '/api/hub/email/owner-recipients/revert?t=abc'],
+    ['POST', '/api/hub/email/owner-recipients/revert?t=abc', 'go=1', 'application/x-www-form-urlencoded'],
   ]) {
     const res = await hub.call(path, { method, ...(body ? { body, headers: { 'content-type': type, 'x-site-key': KEY_ONE } } : {}) });
     assert.equal(res.status, 404, `${method} ${path}`);
