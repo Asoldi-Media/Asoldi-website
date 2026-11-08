@@ -38,6 +38,7 @@ import { createHeartbeatLimits, heartbeatMarksSeen, registerSiteCredentialRoutes
 import { registerDeliveryRoutes } from './lib/routes/delivery-routes.js';
 import { registerCmsFeatureRoutes } from './lib/routes/cms-feature-routes.js';
 import { registerOptionalRoutes } from './lib/routes/optional-routes.js';
+import { startEmailLogPruneLoop } from './lib/email-log.js';
 import { websitePlanForNewSite } from './lib/cms-entitlements.js';
 import { runDeliverySchemaStartupSnapshot } from './lib/delivery-snapshots.js';
 import { chosenWebsiteTier, makerSitePlanPayload, websiteTierIdForClient } from './lib/site-plan.js';
@@ -21758,6 +21759,7 @@ function startBackgroundJobs() {
     },
     inboxBot: () => startInboxBotLoop(),
     delivery: () => startDeliveryLoop({ sales, hub, listDeveloperOwnerOptions: () => listDeveloperOwnerOptions({ isAdmin: true }) }),
+    emailLogPrune: () => startEmailLogPruneLoop(),
     signedContractBackfill: () => runSignedContractBackfillOnce().catch((error) => {
       console.error('[signed-contract] startup backfill failed', sanitizeText(error?.message) || error);
     }),
