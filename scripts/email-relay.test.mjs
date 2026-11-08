@@ -468,6 +468,12 @@ test('the footer is added unless {{unsubscribeUrl}} is a visible link, and goes 
     ['link text but not a link', '<html><body><p>Meld deg av: {{unsubscribeUrl}}</p></body></html>', true],
     ['a link inside a template element', '<html><body><template><a href="{{unsubscribeUrl}}">x</a></template><p>Hei</p></body></html>', true],
     ['an early </body> inside an Outlook conditional comment', '<html><body><p>Hei</p><!--[if mso]></body><![endif]--><p>Mer tekst</p></body></html>', true],
+    ['an entity-encoded placeholder href (a dead link in a mail client)', '<html><body><p>Hei</p><a href="&#123;&#123;unsubscribeUrl&#125;&#125;">Meld av</a></body></html>', true],
+    ['an entity-encoded placeholder href, hex form', '<html><body><p>Hei</p><a href="&#x7b;&#x7b;unsubscribeUrl&#x7d;&#x7d;">Meld av</a></body></html>', true],
+    ['a link with font-size:0', '<html><body><p>Hei</p><a style="font-size:0" href="{{unsubscribeUrl}}">x</a></body></html>', true],
+    ['a link in an opacity:0 block', '<html><body><div style="opacity:0"><a href="{{unsubscribeUrl}}">x</a></div></body></html>', true],
+    ['a link in a max-height:0 block', '<html><body><div style="max-height:0;overflow:hidden"><a href="{{unsubscribeUrl}}">x</a></div></body></html>', true],
+    ['a link in a 0 by 0 hidden block', '<html><body><div style="width:0;height:0;overflow:hidden"><a href="{{unsubscribeUrl}}">x</a></div></body></html>', true],
     ['a visible link', '<html><body><p>Hei</p><a href="{{unsubscribeUrl}}">Meld deg av</a></body></html>', false],
     ['a visible link after a closed hidden preheader', '<html><body><div style="display:none;max-height:0">Forhåndstekst</div><a href="{{unsubscribeUrl}}">Meld deg av</a></body></html>', false],
     ['a visible link in the non-Outlook branch', '<html><body><!--[if !mso]><!--><a href="{{unsubscribeUrl}}">Meld deg av</a><!--<![endif]--></body></html>', false],
@@ -497,6 +503,13 @@ test('nested URLs are found on the parsed URL: a backslash after the host, encod
     'https://fjordbutikk.example.com/go?a=1&to=+%2F%2Fevil.example.net',
     'https://fjordbutikk.example.com//evil.example.net/',
     'https://fjordbutikk.example.com/#//evil.example.net',
+    'https://fjordbutikk.example.com/%2F%2Fevil.example.net',
+    'https://fjordbutikk.example.com/%5C%5Cevil.example.net',
+    'https://fjordbutikk.example.com/go?//evil.example.net',
+    'https://fjordbutikk.example.com/go?%2F%2Fevil.example.net',
+    'https://fjordbutikk.example.com/go?to=/%09/evil.example.net',
+    'https://fjordbutikk.example.com/go?to=/%0a/evil.example.net',
+    'https://fjordbutikk.example.com/go?to=http:evil.example.net',
   ]) {
     const verdict = relay.checkLinkUrl(href, ctx);
     assert.deepEqual([verdict.ok, verdict.reason], [false, 'nested_url'], href);

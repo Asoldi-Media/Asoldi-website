@@ -244,7 +244,7 @@ test('links: a changed token, a token for another site and an expired one are re
   await put('site_busy', { emails: ['travel-eier@example.com', 'travel-ny@example.com'], actor: { username: 'eier', rank: 'owner' } });
   const confirm = linkIn(mails.find((m) => m.to === 'travel-ny@example.com'), 'confirm');
   const revert = linkIn(mails.find((m) => m.to === 'travel-eier@example.com'), 'revert');
-  const [v, body, mac] = confirm.token.split('.');
+  assert.ok(mails.length >= 2 && mails.every((m) => m.bcc === false), 'confirm and change mails never get the hub default bcc copy');  const [v, body, mac] = confirm.token.split('.');
   const tampered = `${v}.${body}.${mac.slice(0, -2)}${mac.endsWith('AA') ? 'BB' : 'AA'}`;
   assert.equal((await call('POST', `/api/hub/email/owner-recipients/confirm?t=${tampered}`, {}, 'go=1')).status, 400);
   const otherSite = owner.mintOwnerToken({ action: 'confirm', siteId: 'site_shop', changeId: JSON.parse(Buffer.from(body, 'base64url').toString()).c, email: 'travel-ny@example.com', expiresAt: clock + DAY });
@@ -291,6 +291,7 @@ test('(e) seo-report only through the internal function: confirmed owners, at mo
   const sent = await owner.sendOwnerNotice(site, report, { now: clock, sendEmail });
   assert.equal(sent.status, 200, JSON.stringify(sent.body));
   assert.deepEqual(recipientsOf(mails[0]), ['eier@example.com', 'ny@example.com']);
+  assert.equal(mails[0].bcc, false, 'an owner notice never gets the hub default bcc copy');
   const soon = await owner.sendOwnerNotice(site, { ...report, dedupeKey: 'seo-report:2026-11b' }, { now: clock + 6 * DAY, sendEmail });
   assert.deepEqual([soon.status, soon.body.code], [429, 'too_soon']);
   assert.equal((await owner.sendOwnerNotice(site, { ...report, dedupeKey: 'seo-report:2026-12' }, { now: clock + 7 * DAY, sendEmail })).status, 200);
