@@ -45,7 +45,7 @@ const { evaluateDeliveryGate } = await import('../lib/delivery-gate.js');
 const { readDeliveryAudit } = await import('../lib/delivery-audit.js');
 const { readSeoRecord } = await import('../lib/seo-ops/record.js');
 
-const PILOTS = ['shop-pilot', 'shop-open', 'tier1', 'book-1', 'seo-1', 'seo-known', 'kw-known', 'ship-known', 'prefill', 'skip-shop', 'q-pickup', 'q-ret', 'q-vat', 'q-side', 'q-dunno', 'q-nomore', 'q-revisit', 'q-exit', 'kw-again', 'o-1', 'q-stale', 'q-book', 'q-kwend'];
+const PILOTS = ['shop-pilot', 'shop-open', 'tier1', 'book-1', 'seo-1', 'seo-known', 'kw-known', 'ship-known', 'prefill', 'skip-shop', 'q-pickup', 'q-ret', 'q-vat', 'q-side', 'q-dunno', 'q-nomore', 'q-revisit', 'q-exit', 'kw-again', 'o-1', 'q-stale', 'q-book', 'q-kwend', 'd-shop', 'd-book', 'd-kw', 'd-area', 'd-rv-shop', 'd-rv-kw'];
 const BASE_INTAKE_KEYS = ['products', 'media', 'logo', 'staff', 'hours', 'affiliations', 'focus'];
 const BANK_KEYS = [
   'businessCard', 'generalInfo', 'brandIdentity', 'openingHours', 'assistantIntake',
@@ -746,4 +746,124 @@ test('a pending shop part is dropped when the client moves to another step', asy
   const asked = await handleAssistantChat('q-stale', { text: 'retur' });
   assert.match(asked.assistantMessage, /retur/i);
   assert.equal(portal.getClientProfileByUserId('q-stale').clientDataBank.shopSetup.shipping, 'Posten, 99 kr');
+});
+
+test('a decline after nei or nei takk is not saved on any plan question, and shop content after ingen still is', () => {
+  const keywordSkips = [
+    'Nei takk, ikke nå', 'Nei, ikke ennå', 'Nei, ikke enda', 'Nei takk, det trenger vi ikke', 'Nei, det vet jeg ikke',
+    'nei det er greit', 'Nei, vi stoler på dere', 'Nei, det har jeg ikke tenkt på', 'Dere kan bestemme', 'ikke viktig',
+    'Vet ikke, dere kan velge',
+  ];
+  for (const text of keywordSkips) {
+    const parsed = parseKeywordAnswer(text);
+    assert.equal(parsed.action, 'skip', text);
+    assert.deepEqual(parsed.phrases, [], text);
+  }
+  for (const text of ['Nei, vet ikke', 'Ingen anelse', 'Ingen idé', 'vet ikke helt']) {
+    assert.equal(parseKeywordAnswer(text).action, 'unclear', text);
+    assert.equal(parseAreaAnswer(text).action, 'unclear', text);
+    assert.equal(parseBookingAnswer(text).action, 'unclear', text);
+  }
+  assert.deepEqual(parseKeywordAnswer('Nei takk, kajakkutleie, ikke padling').phrases, ['kajakkutleie']);
+  assert.deepEqual(parseKeywordAnswer('Nei, kajakkutleie Eksempelby').phrases, ['kajakkutleie Eksempelby']);
+
+  const bookingSkips = [
+    'Nei, kundene ringer oss', 'Nei takk, kundene ringer oss', 'Nei, vi tar bare drop-in', 'Nei, ikke ennå',
+    'Nei takk, ikke nå', 'Nei, det ordner vi selv', 'Vi tar ikke imot bestillinger på nett',
+  ];
+  for (const text of bookingSkips) {
+    const parsed = parseBookingAnswer(text);
+    assert.equal(parsed.action, 'skip', text);
+    assert.deepEqual(parsed.services, [], text);
+  }
+  assert.deepEqual(parseBookingAnswer('Nei, Herreklipp, 30 min, 450 kr').services, [{ name: 'Herreklipp', duration: '30 min', price: '450 kr' }]);
+  assert.deepEqual(parseBookingAnswer('Herreklipp\nFarge').services.map((row) => row.name), ['Herreklipp', 'Farge']);
+
+  for (const text of ['Nei takk, ikke nå', 'Nei, ikke ennå']) assert.equal(parseAreaAnswer(text).action, 'skip', text);
+  assert.deepEqual(parseAreaAnswer('Nei, hele landet'), { action: 'save', value: 'hele landet' });
+  assert.deepEqual(parseAreaAnswer('Nei, bare Eksempelby'), { action: 'save', value: 'Eksempelby' });
+
+  for (const sub of ['shipping', 'returns']) {
+    for (const text of ['Nei takk, ikke nå', 'Ikke nå', 'Skip', 'hopp over dette']) {
+      assert.equal(parseShopAnswer(text, sub).action, 'skip', `${sub}: ${text}`);
+    }
+    for (const text of ['Ingen anelse', 'vet ikke helt', 'Nei, vet ikke']) {
+      assert.equal(parseShopAnswer(text, sub).action, 'unclear', `${sub}: ${text}`);
+    }
+  }
+  assert.deepEqual(parseShopAnswer('Ingen frakt, kun henting', 'shipping'), { action: 'save', value: 'Ingen frakt, kun henting' });
+  assert.deepEqual(parseShopAnswer('Ingen retur på matvarer', 'returns'), { action: 'save', value: 'Ingen retur på matvarer' });
+  assert.deepEqual(parseShopAnswer('Nei, kun henting i butikken', 'shipping'), { action: 'save', value: 'kun henting i butikken' });
+  assert.equal(parseShopAnswer('NOK 99 med Posten', 'shipping').action, 'save');
+  assert.equal(parseShopAnswer('Nei takk, ikke nå', 'seller').action, 'skip');
+  assert.equal(parseShopAnswer('Nei, ikke mva-registrert', 'seller').value.vatRegistered, false);
+});
+
+test('declines through the chat leave the gate lines missing and propose no search phrase', async () => {
+  writeSettings();
+  openClient({ id: 'd-shop', tierId: 'tier-3-ecommerce', extra: { orgNumber: '123456780', legalName: 'Eksempel Sykkel AS' } });
+  await skipBase('d-shop');
+  const shop = await handleAssistantChat('d-shop', { text: 'Nei takk, ikke nå' });
+  assert.notEqual(shop.currentStep, 'shop');
+  const shopBank = portal.getClientProfileByUserId('d-shop').clientDataBank;
+  assert.equal(shopBank.assistantIntake.shop, 'skipped');
+  assert.equal(shopBank.shopSetup?.shipping || '', '');
+  const shopClient = sales.getSalesClientById('d-shop');
+  const shopGate = evaluateDeliveryGate(shopClient, { bank: shopBank, plan: shopClient.sitePlan });
+  assert.equal(lineStatus(shopGate, 'shipping'), 'missing');
+  assert.equal(lineStatus(shopGate, 'returns'), 'missing');
+
+  openClient({ id: 'd-book', tierId: 'tier-1-standard', materials: { pageKinds: [{ route: '/bestill', kind: 'booking' }] } });
+  await skipBase('d-book');
+  await handleAssistantChat('d-book', { text: 'Nei, kundene ringer oss' });
+  const bookBank = portal.getClientProfileByUserId('d-book').clientDataBank;
+  assert.equal(bookBank.assistantIntake.booking, 'skipped');
+  assert.deepEqual(bookBank.shopSetup?.bookingServices || [], []);
+  const bookClient = sales.getSalesClientById('d-book');
+  const bookGate = evaluateDeliveryGate(bookClient, { bank: bookBank, plan: bookClient.sitePlan });
+  assert.equal(lineStatus(bookGate, 'booking-services'), 'missing');
+
+  openClient({ id: 'd-kw', tierId: 'tier-2-seo', extra: { seo: { scope: 'national' } } });
+  await skipBase('d-kw');
+  const unsure = await handleAssistantChat('d-kw', { text: 'Nei, vet ikke' });
+  assert.equal(unsure.currentStep, 'keywords');
+  assert.match(unsure.assistantMessage, /fikk ikke med meg/i);
+  await handleAssistantChat('d-kw', { text: 'Nei, vi stoler på dere' });
+  const kwBank = portal.getClientProfileByUserId('d-kw').clientDataBank;
+  assert.equal(kwBank.assistantIntake.keywords, 'skipped');
+  assert.deepEqual(kwBank.websiteCreatorQuestions?.importantKeywords || [], []);
+  assert.deepEqual(readSeoRecord('d-kw')?.agreedKeywords || [], []);
+
+  openClient({ id: 'd-area', tierId: 'tier-2-seo', extra: { seo: { scope: 'local' } } });
+  await skipBase('d-area');
+  await handleAssistantChat('d-area', { text: 'kajakkutleie' });
+  await handleAssistantChat('d-area', { text: 'Nei, hele landet' });
+  assert.equal(portal.getClientProfileByUserId('d-area').clientDataBank.websiteCreatorQuestions.town, 'hele landet');
+});
+
+test('a declined revisit of a finished step keeps the stored answer and the done flag', async () => {
+  writeSettings();
+  openClient({ id: 'd-rv-shop', tierId: 'tier-3-ecommerce', extra: { orgNumber: '123456780', legalName: 'Eksempel Sykkel AS', seo: { scope: 'national' } } });
+  await skipBase('d-rv-shop');
+  await handleAssistantChat('d-rv-shop', { text: 'Posten, 99 kr' });
+  await handleAssistantChat('d-rv-shop', { text: 'Standard 14 dagers angrerett' });
+  await handleAssistantChat('d-rv-shop', { focusStep: 'shop' });
+  await handleAssistantChat('d-rv-shop', { text: 'frakt' });
+  const ended = await handleAssistantChat('d-rv-shop', { text: 'Nei takk, ikke nå' });
+  assert.doesNotMatch(ended.assistantMessage, /fikk ikke med meg/i);
+  const shopBank = portal.getClientProfileByUserId('d-rv-shop').clientDataBank;
+  assert.equal(shopBank.shopSetup.shipping, 'Posten, 99 kr');
+  assert.equal(shopBank.assistantIntake.shop, 'done');
+  assert.equal(shopBank.assistantIntake.revisitPart || '', '');
+  assert.equal(shopBank.assistantIntake.focus, '');
+
+  openClient({ id: 'd-rv-kw', tierId: 'tier-2-seo', extra: { seo: { scope: 'national' } } });
+  await skipBase('d-rv-kw');
+  await handleAssistantChat('d-rv-kw', { text: 'sykkelservice' });
+  await handleAssistantChat('d-rv-kw', { focusStep: 'keywords' });
+  await handleAssistantChat('d-rv-kw', { text: 'Dere kan bestemme' });
+  const kwBank = portal.getClientProfileByUserId('d-rv-kw').clientDataBank;
+  assert.deepEqual(kwBank.websiteCreatorQuestions.importantKeywords, ['sykkelservice']);
+  assert.equal(kwBank.assistantIntake.keywords, 'done');
+  assert.equal(kwBank.assistantIntake.focus, '');
 });
