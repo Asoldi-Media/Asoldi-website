@@ -44,7 +44,7 @@ const { evaluateDeliveryGate } = await import('../lib/delivery-gate.js');
 const { readDeliveryAudit } = await import('../lib/delivery-audit.js');
 const { readSeoRecord } = await import('../lib/seo-ops/record.js');
 
-const PILOTS = ['shop-pilot', 'shop-open', 'tier1', 'book-1', 'seo-1', 'seo-known', 'kw-known', 'ship-known', 'prefill', 'skip-shop'];
+const PILOTS = ['shop-pilot', 'shop-open', 'tier1', 'book-1', 'seo-1', 'seo-known', 'kw-known', 'ship-known', 'prefill', 'skip-shop', 'q-pickup', 'q-ret', 'q-vat', 'q-side', 'q-dunno', 'q-nomore', 'q-revisit', 'q-exit', 'kw-again', 'o-1'];
 const BASE_INTAKE_KEYS = ['products', 'media', 'logo', 'staff', 'hours', 'affiliations', 'focus'];
 const BANK_KEYS = [
   'businessCard', 'generalInfo', 'brandIdentity', 'openingHours', 'assistantIntake',
@@ -145,6 +145,16 @@ test('parsers, plan steps and shop setup', () => {
   assert.equal(shipping.value, 'Posten, 99 kr');
   assert.equal(parseShopAnswer('ok', 'shipping').action, 'unclear');
   assert.equal(parseShopAnswer('hopp over', 'returns').action, 'skip');
+  assert.equal(parseShopAnswer('Ingen frakt, kun henting i butikken', 'shipping').action, 'save');
+  assert.equal(parseShopAnswer('Ingen retur på matvarer, ellers 14 dagers angrerett', 'returns').value, 'Ingen retur på matvarer, ellers 14 dagers angrerett');
+  assert.equal(parseShopAnswer('vet ikke', 'shipping').action, 'unclear');
+  assert.equal(parseShopAnswer('usikker', 'returns').action, 'unclear');
+  assert.equal(parseShopAnswer('det er alt', 'shipping').action, 'unclear');
+  const notRegistered = parseShopAnswer('Nei, ikke mva-registrert. Eksempel Sykkel AS 123456780', 'seller');
+  assert.equal(notRegistered.action, 'save');
+  assert.equal(notRegistered.value.vatRegistered, false);
+  assert.equal(notRegistered.value.orgNumber, '123456780');
+  assert.equal(notRegistered.value.legalName, 'Eksempel Sykkel AS');
   const seller = parseShopAnswer('Eksempel Sykkel AS, 123 456 780, MVA-registrert', 'seller');
   assert.equal(seller.action, 'save');
   assert.deepEqual(seller.value, { orgNumber: '123456780', legalName: 'Eksempel Sykkel AS', vatRegistered: true });
@@ -157,6 +167,7 @@ test('parsers, plan steps and shop setup', () => {
   assert.equal(words.action, 'save');
   assert.deepEqual(words.phrases, ['sykkelservice', 'reparasjon av elsykkel']);
   assert.deepEqual(words.dropped, ['melatonin']);
+  assert.deepEqual(parseKeywordAnswer('hus og hage, rør og bad').phrases, ['hus og hage', 'rør og bad']);
   assert.equal(parseKeywordAnswer('nei').action, 'skip');
   assert.equal(parseKeywordAnswer('melatonin').action, 'unclear');
   assert.equal(parseAreaAnswer('Eksempelby').action, 'save');
@@ -538,17 +549,139 @@ test('the panel markup without plan steps matches the previous panel', async () 
     'const plannedProps = { ...props, steps: ["products", "media", "logo", "staff", "hours", "affiliations", "shop"], viewStep: "shop", currentStep: "shop", bank: { ...props.bank, assistantIntake: { products: "skipped", media: "skipped", logo: "skipped", staff: "skipped", hours: "skipped", affiliations: "skipped" } } };',
     'export const planned = renderToStaticMarkup(React.createElement(AssistantIntakePanel, plannedProps));',
   ].join('\n');
-  const shown = spawnSync('git', ['show', 'HEAD:app/pages/client/AssistantIntakePanel.tsx'], { cwd: root, encoding: 'utf8' });
-  assert.equal(shown.status, 0, shown.stderr);
-  const previous = await markup([
-    "import React from 'react';",
-    "import { renderToStaticMarkup } from 'react-dom/server';",
-    shown.stdout,
-    `const props = ${props};`,
-    'export const html = renderToStaticMarkup(React.createElement(AssistantIntakePanel, props));',
-  ].join('\n'));
   const current = await markup(body, 'both');
-  assert.equal(current.html, previous);
+  const stored = readFileSync(join(root, 'scripts/fixtures/assistant-intake-panel-off.html'), 'utf8');
+  assert.equal(current.html, stored);
+  assert.equal(current.html.includes('Butikk'), false);
   assert.match(current.planned, /Butikk/);
   assert.match(current.planned, /Frakt/);
+});
+
+function gatePair(id) {
+  const client = sales.getSalesClientById(id);
+  const bank = portal.getClientProfileByUserId(id).clientDataBank;
+  const gate = evaluateDeliveryGate(client, { bank, plan: client.sitePlan });
+  const status = (lineId) => gate.lines.find((row) => row.id === lineId)?.status;
+  return { bank, shipping: status('shipping'), returns: status('returns') };
+}
+
+test('shop answers that start with ingen or nei are stored, and a non-answer is not', async () => {
+  writeSettings();
+  openClient({ id: 'q-pickup', tierId: 'tier-3-ecommerce', extra: { orgNumber: '123456780', legalName: 'Eksempel Sykkel AS' } });
+  await skipBase('q-pickup');
+  const pickupHours = portal.getClientProfileByUserId('q-pickup').clientDataBank.openingHours;
+  await handleAssistantChat('q-pickup', { text: 'Ingen frakt, kun henting i butikken' });
+  const pickup = gatePair('q-pickup');
+  assert.equal(pickup.bank.shopSetup.shipping, 'Ingen frakt, kun henting i butikken');
+  assert.equal(pickup.shipping, 'have');
+  assert.equal(pickup.returns, 'missing');
+  assert.deepEqual(pickup.bank.openingHours, pickupHours);
+
+  openClient({ id: 'q-ret', tierId: 'tier-3-ecommerce', extra: { orgNumber: '123456780', legalName: 'Eksempel Sykkel AS' } });
+  await skipBase('q-ret');
+  const returnHours = portal.getClientProfileByUserId('q-ret').clientDataBank.openingHours;
+  await handleAssistantChat('q-ret', { text: 'Posten, 99 kr' });
+  await handleAssistantChat('q-ret', { text: 'Ingen retur på matvarer, ellers 14 dagers angrerett' });
+  const returned = gatePair('q-ret');
+  assert.equal(returned.bank.shopSetup.shipping, 'Posten, 99 kr');
+  assert.equal(returned.bank.shopSetup.returns, 'Ingen retur på matvarer, ellers 14 dagers angrerett');
+  assert.equal(returned.shipping, 'have');
+  assert.equal(returned.returns, 'have');
+  assert.deepEqual(returned.bank.openingHours, returnHours);
+
+  openClient({ id: 'q-vat', tierId: 'tier-3-ecommerce' });
+  await skipBase('q-vat');
+  await handleAssistantChat('q-vat', { text: 'Posten, 99 kr' });
+  await handleAssistantChat('q-vat', { text: 'Standard 14 dagers angrerett' });
+  await handleAssistantChat('q-vat', { text: 'Nei, ikke mva-registrert. Eksempel Sykkel AS 123456780' });
+  const vat = portal.getClientProfileByUserId('q-vat').clientDataBank.shopSetup.sellerVat;
+  assert.equal(vat.vatRegistered, false);
+  assert.equal(vat.orgNumber, '123456780');
+  assert.equal(vat.legalName, 'Eksempel Sykkel AS');
+  assert.equal(portal.getClientProfileByUserId('q-vat').clientDataBank.assistantIntake.shop, 'done');
+
+  openClient({ id: 'q-side', tierId: 'tier-3-ecommerce', extra: { orgNumber: '123456780', legalName: 'Eksempel Sykkel AS' } });
+  await skipBase('q-side');
+  const sideHours = portal.getClientProfileByUserId('q-side').clientDataBank.openingHours;
+  const sideText = 'Vi sender med Posten for 99 kr, eller du kan hente hos oss mandag til fredag 10-16';
+  await handleAssistantChat('q-side', { text: sideText });
+  const side = gatePair('q-side');
+  assert.equal(side.bank.shopSetup.shipping, sideText);
+  assert.equal(side.shipping, 'have');
+  assert.deepEqual(side.bank.openingHours, sideHours);
+
+  openClient({ id: 'q-dunno', tierId: 'tier-3-ecommerce', extra: { orgNumber: '123456780', legalName: 'Eksempel Sykkel AS' } });
+  await skipBase('q-dunno');
+  await handleAssistantChat('q-dunno', { text: 'vet ikke' });
+  await handleAssistantChat('q-dunno', { text: 'usikker' });
+  const dunno = gatePair('q-dunno');
+  assert.equal(dunno.bank.shopSetup, undefined);
+  assert.equal(dunno.shipping, 'missing');
+  assert.equal(dunno.returns, 'missing');
+
+  openClient({ id: 'q-nomore', tierId: 'tier-3-ecommerce', extra: { orgNumber: '123456780', legalName: 'Eksempel Sykkel AS' } });
+  await skipBase('q-nomore');
+  await handleAssistantChat('q-nomore', { text: 'det er alt' });
+  const nomore = gatePair('q-nomore');
+  assert.equal(nomore.bank.shopSetup, undefined);
+  assert.equal(nomore.shipping, 'missing');
+  assert.equal(nomore.bank.openingHours.status, 'not-relevant');
+});
+
+test('a finished shop step replaces the named part, and nei does not skip it', async () => {
+  writeSettings();
+  openClient({ id: 'q-revisit', tierId: 'tier-3-ecommerce', extra: { orgNumber: '123456780', legalName: 'Eksempel Sykkel AS' } });
+  await skipBase('q-revisit');
+  await handleAssistantChat('q-revisit', { text: 'Posten, 99 kr' });
+  await handleAssistantChat('q-revisit', { text: 'Standard 14 dagers angrerett' });
+  const opened = await handleAssistantChat('q-revisit', { focusStep: 'shop' });
+  assert.match(opened.assistantMessage, /butikken/i);
+  const unnamed = await handleAssistantChat('q-revisit', { text: 'Bring, 129 kr' });
+  assert.match(unnamed.assistantMessage, /frakt, retur eller selger/i);
+  assert.equal(portal.getClientProfileByUserId('q-revisit').clientDataBank.shopSetup.shipping, 'Posten, 99 kr');
+  await handleAssistantChat('q-revisit', { text: 'frakt' });
+  await handleAssistantChat('q-revisit', { text: 'Bring, 129 kr' });
+  assert.equal(portal.getClientProfileByUserId('q-revisit').clientDataBank.shopSetup.shipping, 'Bring, 129 kr');
+  assert.equal(portal.getClientProfileByUserId('q-revisit').clientDataBank.shopSetup.returns, 'Standard 14 dagers angrerett');
+  const closed = await handleAssistantChat('q-revisit', { text: 'det er alt' });
+  const bank = portal.getClientProfileByUserId('q-revisit').clientDataBank;
+  assert.equal(bank.assistantIntake.shop, 'done');
+  assert.equal(bank.assistantIntake.focus, '');
+  assert.equal(bank.assistantIntake.revisitPart, undefined);
+  assert.equal(bank.shopSetup.shipping, 'Bring, 129 kr');
+  assert.notEqual(closed.currentStep, 'shop');
+
+  openClient({ id: 'q-exit', tierId: 'tier-3-ecommerce', extra: { orgNumber: '123456780', legalName: 'Eksempel Sykkel AS' } });
+  await skipBase('q-exit');
+  await handleAssistantChat('q-exit', { text: 'Posten, 99 kr' });
+  await handleAssistantChat('q-exit', { text: '14 dagers angrerett' });
+  await handleAssistantChat('q-exit', { focusStep: 'shop' });
+  await handleAssistantChat('q-exit', { text: 'nei' });
+  const exitBank = portal.getClientProfileByUserId('q-exit').clientDataBank;
+  assert.equal(exitBank.assistantIntake.shop, 'done');
+  assert.equal(exitBank.assistantIntake.focus, '');
+  assert.equal(exitBank.shopSetup.shipping, 'Posten, 99 kr');
+});
+
+test('a booking page on the offer is asked when there is no maker run', async () => {
+  writeSettings();
+  const offers = await import('../data/sales-offers.js');
+  openClient({ id: 'o-1', tierId: 'tier-1-standard' });
+  offers.createSalesOffer({ salesClientId: 'o-1', products: [{ id: 'p1', name: 'Nettside', priceExMva: 1000, includes: ['Forside', 'Timebestilling', 'Kontakt'] }] });
+  const ctx = await planIntakeContext('o-1');
+  assert.ok(ctx.steps.includes('booking'));
+  const walked = await skipBase('o-1');
+  assert.equal(walked.at(-1).currentStep, 'booking');
+});
+
+test('a finished keyword step keeps a phrase that contains og', async () => {
+  writeSettings();
+  openClient({ id: 'kw-again', tierId: 'tier-2-seo', extra: { seo: { scope: 'national' } } });
+  await skipBase('kw-again');
+  await handleAssistantChat('kw-again', { text: 'sykkelservice' });
+  await handleAssistantChat('kw-again', { focusStep: 'keywords' });
+  await handleAssistantChat('kw-again', { text: 'hus og hage' });
+  const bank = portal.getClientProfileByUserId('kw-again').clientDataBank;
+  assert.deepEqual(bank.websiteCreatorQuestions.importantKeywords, ['sykkelservice', 'hus og hage']);
+  assert.equal(bank.assistantIntake.keywords, 'done');
 });

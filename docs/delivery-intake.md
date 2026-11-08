@@ -32,7 +32,7 @@ A product list can be taken from the host of `generalInfo.websiteUrl` when the p
 
 `clientDataBank.shopSetup` is `{ shipping, returns, sellerVat: { legalName, orgNumber, vatRegistered }, bookingServices: [{ name, duration, price }] }`. The key is left out when all of those are empty, and a later save that does not send the key keeps the stored value. `assistantIntake` gains `shop`, `keywords` or `booking` only when the value is `done`, `skipped` or `more`.
 
-Search phrases are appended to `websiteCreatorQuestions.importantKeywords` (at most ten) and written on the SEO record as `proposed` rows with source `client`. Nothing here approves a phrase. A phrase the SEO record refuses (a prescription-only substance) is not stored, and the reply says so. Phrases heard in a meeting are a different path: [seo-transcript-keywords.md](seo-transcript-keywords.md).
+Search phrases are appended to `websiteCreatorQuestions.importantKeywords` (at most ten) and written on the SEO record as `proposed` rows with source `client`. Nothing here approves a phrase. A phrase the SEO record refuses (a prescription-only substance) is not stored, and the reply says so. Phrases heard in a meeting are a different path: [seo-meeting-keywords.md](seo-meeting-keywords.md).
 
 ## The gate
 

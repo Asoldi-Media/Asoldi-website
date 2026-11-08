@@ -257,6 +257,21 @@ test('step: auto proposes for a pilot, never approves, keeps the inputs hash, an
   assert.deepEqual(again, { wrote: false, skipped: 'unchanged' });
 });
 
+test('step: keyword talk an extraction did not quote is still sent to the second pass, once', async () => {
+  const transcript = 'Rådgiver: Hva vil dere bli funnet på?\nKunde: Vi vil rangere på kajakkutleie Eksempelby, det er hovedsaken.\nKunde: Vi har tolv kajakker og to kanoer.';
+  const client = { id: 'syn-kw-kajakk', businessName: 'Eksempel Padling AS' };
+  const llm = stubLlm([{ keywords: [{ phrase: 'kajakkutleie Eksempelby', quote: 'Vi vil rangere på kajakkutleie Eksempelby', speaker: 'Kunde' }] }]);
+  const deps = {
+    readExtraction: () => ({ inputHash: 'h1', items: [{ type: 'fact', path: 'positioning.services', value: 'Kajakker', quote: 'Vi har tolv kajakker og to kanoer', speaker: 'Kunde', meetingId: 'm-1', purpose: 'sales', chunkSha: 'x' }] }),
+    readTranscripts: () => [{ meetingId: 'm-1', purpose: 'sales', transcript }],
+    llm,
+    isRegulated: () => false,
+  };
+  const result = await kw.runTranscriptKeywordStep(stepCtx({ settings: settingsWith({}, ['syn-kw-kajakk']), deps }), client);
+  assert.deepEqual(result.added, ['kajakkutleie Eksempelby']);
+  assert.equal(llm.calls.length, 1);
+});
+
 test('step: without a brief extraction the second pass reads the chunks with keyword talk; a halted pass keeps no hash', async () => {
   const fixture = fixtures['tea-shop'];
   const client = { id: 'syn-kw-tea', businessName: fixture.business.name };

@@ -584,6 +584,11 @@ function normalizeClientDataBank(input = {}, fallback = {}) {
   }
   const focus = sanitizeText(src.assistantIntake?.focus ?? base.assistantIntake?.focus);
   assistantIntake.focus = [...intakeKeys, ...planKeys].includes(focus) ? focus : '';
+  const revisitSource = src.assistantIntake && Object.prototype.hasOwnProperty.call(src.assistantIntake, 'revisitPart')
+    ? src.assistantIntake.revisitPart
+    : base.assistantIntake?.revisitPart;
+  const revisitPart = sanitizeText(revisitSource);
+  if (revisitPart === 'shipping' || revisitPart === 'returns' || revisitPart === 'seller') assistantIntake.revisitPart = revisitPart;
 
   const media = {
     mainHeroImages: normalizeMediaList(src.media?.mainHeroImages || src.media?.heroImages, base.media.mainHeroImages),

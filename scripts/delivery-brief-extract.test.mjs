@@ -393,6 +393,22 @@ test('quotes: words cut out right after or right before a negation, or out of a 
   ];
   for (const [quote, why] of kept) assert.equal(verifier.verify(quote).ok, true, why);
 
+  const grouped = createQuoteVerifier([
+    'Kunde: Budsjettet vårt er 20\u00a0000 kroner for hele siden.',
+    'Kunde: Budsjettet vårt er 20\u202f000 kroner for hele siden.',
+    'Kunde: Budsjettet vårt er 20.000 kroner for hele siden.',
+    'Kunde: Vi omsetter for 2,5 millioner kroner i året.',
+    'Kunde: Vi omsetter for 2.5 millioner kroner i året.',
+    'Kunde: Vi vil ikke\nha bilder av de ansatte på forsiden.',
+  ].join('\n'));
+  for (const quote of ['Budsjettet vårt er 20', '000 kroner for hele siden', '5 millioner kroner i året', 'ha bilder av de ansatte på forsiden']) {
+    const result = grouped.verify(quote);
+    assert.equal(result.ok, false, quote);
+    assert.ok(result.how === 'number-cut' || result.how === 'negation-cut', `${quote} ${result.how}`);
+  }
+  assert.equal(grouped.verify('Budsjettet vårt er 20').how, 'number-cut');
+  assert.equal(grouped.verify('ha bilder av de ansatte på forsiden').how, 'negation-cut');
+
   // Through the extractor with a stubbed model: the cut quote is dropped, the whole statement is kept.
   const llm = {
     json: async () => ({
