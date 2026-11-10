@@ -59,6 +59,11 @@ export async function check(ctx) {
       if (!verdict.ok) findings.push(`${spec.id}: the post-workshop mail fails the guard check: ${verdict.code} (${verdict.reason})`);
     }
   }
+  // With every switch off nothing is recorded as a shadow mail, to anyone.
+  if (!on) {
+    const stray = rows.filter((row) => row.channel === SHADOW_CHANNEL).length;
+    if (stray || shadows.length) findings.push(`${stray + shadows.length} shadow mail records exist with every switch off`);
+  }
   const before = Number(ctx.timeline?.outboxBeforeDue);
   if (on && Number.isFinite(before)) {
     const early = rows.slice(0, before).filter((row) => row.channel === SHADOW_CHANNEL && shadows.some((entry) => entry.outboxId === row.id && entry.kind === 'postWorkshop'));

@@ -79,6 +79,17 @@ test('negative controls: a missing brief, a second pre-workshop mail and an unfi
   assert.equal(switchVerdicts(jobRows)['delivery.loop'].status, 'fail');
   stuck.cleanup();
 
+  // Control run: a shadow record to anybody fails the check with every switch off.
+  const offDir = mkdtempSync(join(tmpdir(), 'release-suite-off-'));
+  const offData = join(offDir, '.local-data', 'hub');
+  cpSync(run.runs.off.dataDir, offData, { recursive: true });
+  const offCtx = { ...run.runs.off, dataDir: offData };
+  assert.equal((await runDeliveryChecks(offCtx)).find((row) => row.id === 'delivery.outbox').status, 'pass', 'the untouched control passes');
+  appendFileSync(join(offData, 'outbox', 'index.jsonl'), `${JSON.stringify({ id: 'stray-shadow', channel: 'delivery-shadow', transport: 'shadow', to: ['staff@example.com'], subject: 'x' })}
+`);
+  assert.equal((await runDeliveryChecks(offCtx)).find((row) => row.id === 'delivery.outbox').status, 'fail');
+  rmSync(offDir, { recursive: true, force: true });
+
   // A transcript whose words no longer hold a directive's quote fails the quote check.
   const changed = { ...run.runs.on, transcripts: Object.fromEntries(Object.entries(run.runs.on.transcripts).map(([id, meetings]) => [id, meetings.map((meeting) => ({ ...meeting, text: 'Selger: Hei.\nKunde: Ingenting her.' }))])) };
   const quoteRows = await runDeliveryChecks(changed);
