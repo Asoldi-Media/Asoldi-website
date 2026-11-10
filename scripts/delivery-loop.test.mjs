@@ -364,6 +364,38 @@ test('step contract: bad steps are refused; missing modules are simply absent', 
   assert.equal(custom.errors[0].module, './bad.mjs');
 });
 
+test('a client-scope step waits for everyMs instead of running on every tick', async () => {
+  resetData();
+  seed({ clients: [{ id: 'l-1', product: 'asoldi', businessName: 'Eksempel AS', status: 'active', progression: signed }] });
+  setSettings({ delivery: { loop: { enabled: true, mode: 'shadow' } } });
+  let runs = 0;
+  const steps = [{ name: 'paced', scope: 'client', everyMs: 15 * 60 * 1000, run: async () => { runs += 1; return { wrote: false }; } }];
+  const loop = makeLoop({ steps });
+  let t = Date.parse('2026-11-08T12:00:00.000Z');
+  for (let i = 0; i < 5; i += 1) {
+    await loop.tick({ now: t });
+    t += 60_000;
+  }
+  assert.equal(runs, 1);
+  await loop.tick({ now: t + 15 * 60 * 1000 });
+  assert.equal(runs, 2);
+});
+
+test('a paced client step whose own switch is off is not stamped, so the loop state file is not rewritten for it', async () => {
+  resetData();
+  seed({ clients: [{ id: 'l-2', product: 'asoldi', businessName: 'Eksempel AS', status: 'active', progression: signed }] });
+  setSettings({ delivery: { loop: { enabled: true, mode: 'shadow' } } });
+  let runs = 0;
+  const steps = [{ name: 'paced-off', scope: 'client', everyMs: 15 * 60 * 1000, run: async () => { runs += 1; return { wrote: false, skipped: 'switch-off' }; } }];
+  const loop = makeLoop({ steps });
+  let t = Date.parse('2026-11-08T12:00:00.000Z');
+  for (let i = 0; i < 3; i += 1) {
+    await loop.tick({ now: t });
+    t += 60_000;
+  }
+  assert.equal(runs, 3, 'an off step is not paced');
+});
+
 test('client steps get the client and its mode; global steps get the in-scope list', async () => {
   resetData();
   seed({ clients: [

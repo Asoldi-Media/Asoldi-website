@@ -50,6 +50,7 @@ const OWN_SWITCH = {
   'post-workshop': (result) => result.skipped === 'mode-off',
   'data-reminder': (result) => result.skipped === 'mode-off',
   'retention-purge': (result) => result.ran === false && result.reason === 'disabled',
+  'seo-transcript-keywords': (result) => result.skipped === 'switch-off',
 };
 
 function writeSettings(extra = {}) {

@@ -300,6 +300,7 @@ Settings keys (`SETTINGS_KEYS`, dotted paths in the file):
 | Delivery loop | `delivery.loop.enabled` (default `false`), `delivery.loop.mode` (`shadow` or `auto`; `auto` needs at least one client in `pilotClientIds`), `delivery.loop.paused` (null or `{reason}`); see [Delivery loop and Maker jobs](#delivery-loop-and-maker-jobs) |
 | Gate | `gate.enabled` (default `false`), `gate.mode` (`shadow` only for now), `gate.paused` (see [Gate](#gate)) |
 | Signing | `signing.enabled`, `signing.mode` (`shadow` or `auto`; `auto` needs pilots), `signing.paused` (see [Signing](#signing)) |
+| Intake | `intake.tierSteps.enabled`, `intake.tierSteps.mode` (`shadow` or `auto`; `auto` needs pilots), `intake.tierSteps.paused`: the assistant steps the signed plan adds; `intake.transcriptKeywords.enabled`, `intake.transcriptKeywords.mode` (`shadow` or `auto`; `auto` needs pilots), `intake.transcriptKeywords.paused`: SEO keyword proposals from meeting transcripts. All default off; see [delivery-intake.md](delivery-intake.md). |
 
 ---
 

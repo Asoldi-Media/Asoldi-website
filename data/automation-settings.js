@@ -171,6 +171,19 @@ export function defaultAutomationSettings() {
     // pilot clients only (lib/spine-mode.js); every other client stays in shadow.
     signing: { enabled: false, mode: 'shadow', paused: null },
     // --- end signing
+    // --- intake
+    // intake.tierSteps: the client assistant also asks what the signed plan needs (shop terms for a shop,
+    // keywords and the service area for SEO, bookable services for booking). Off: today's six steps.
+    // Shadow: the extra steps are worked out and noted in the delivery audit; the client sees nothing new.
+    // Auto: pilot clients get the steps (lib/spine-mode.js); every other client stays in shadow.
+    // intake.transcriptKeywords: keyword talk in meeting transcripts becomes SEO keyword proposals, never
+    // approved automatically. Off: nothing runs. Shadow: the delivery loop notes what it would propose,
+    // with no model call and no SEO record write. Auto: pilot clients get the proposals.
+    intake: {
+      tierSteps: { enabled: false, mode: 'shadow', paused: null },
+      transcriptKeywords: { enabled: false, mode: 'shadow', paused: null },
+    },
+    // --- end intake
   };
 }
 
@@ -296,6 +309,10 @@ const ENUMS = {
   // --- signing
   'signing.mode': ['shadow', 'auto'],
   // --- end signing
+  // --- intake
+  'intake.tierSteps.mode': ['shadow', 'auto'],
+  'intake.transcriptKeywords.mode': ['shadow', 'auto'],
+  // --- end intake
 };
 
 const RANGES = {
@@ -359,6 +376,10 @@ const BOOLEANS = new Set([
   // --- signing
   'signing.enabled',
   // --- end signing
+  // --- intake
+  'intake.tierSteps.enabled',
+  'intake.transcriptKeywords.enabled',
+  // --- end intake
 ]);
 
 function knownPaths() {
@@ -499,6 +520,20 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
     fail('signing', 'Missing signing settings.');
   }
   // --- end signing
+  // --- intake: 'auto' reaches pilot clients only, so it needs a pilot list; a pause needs a reason.
+  for (const name of ['tierSteps', 'transcriptKeywords']) {
+    const node = value.intake?.[name];
+    if (!isPlainObject(node)) continue;
+    const mode = normalizeAutomationMode(node.mode);
+    if (mode) node.mode = mode;
+    const paused = normalizePaused(node.paused, { by, now });
+    if (paused === undefined) fail(`intake.${name}.paused`, 'Must be null or {reason}.');
+    else node.paused = paused;
+    if (node.enabled === true && node.mode === 'auto' && !(Array.isArray(value.pilotClientIds) && value.pilotClientIds.length)) {
+      fail(`intake.${name}.mode`, `intake.${name} runs in auto only for listed pilot clients. Add pilotClientIds first, or keep it in shadow.`);
+    }
+  }
+  // --- end intake
   const tiers = value.publish?.staging?.tiers;
   if (!Array.isArray(tiers) || tiers.some((tier) => !TIER_IDS.includes(tier))) {
     fail('publish.staging.tiers', `Must list tier ids (${TIER_IDS.join(', ')}).`);

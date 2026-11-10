@@ -1,0 +1,60 @@
+{
+  "business": {
+    "name": "Eksempel Snekkeri AS"
+  },
+  "purpose": "workshop",
+  "meetingId": "m-carpentry-workshop",
+  "text": "Rådgiver: Hvilke søkeord tenker dere er viktigst?\nKunde: Søkeordet kjøkken på mål er det vi tjener mest på.\nKunde: Og vi vil bli funnet når folk søker på snekker Eksempelby, selvfølgelig.\nKunde: Folk søker på Eksempel Snekkeri også, men der kommer vi opp uansett.\nRådgiver: Skal vi vise prosjektbilder fra kjøkkenene?\nKunde: Ja, vi har mange bilder fra ferdige kjøkken og bad.\nRådgiver: Hva med garderober?\nKunde: Garderobeløsninger gjør vi også, men det er en mindre del.\nKunde: Vi vil ha en egen side for kjøkken og en for bad.",
+  "items": [
+    {
+      "type": "fact",
+      "path": "positioning.services",
+      "value": "Kjøkken på mål",
+      "quote": "Søkeordet kjøkken på mål er det vi tjener mest på",
+      "speaker": "Kunde",
+      "meetingId": "m-carpentry-workshop",
+      "purpose": "workshop",
+      "confidence": 0.8
+    },
+    {
+      "type": "fact",
+      "path": "contact.serviceArea",
+      "value": "Eksempelby",
+      "quote": "vi vil bli funnet når folk søker på snekker Eksempelby, selvfølgelig",
+      "speaker": "Kunde",
+      "meetingId": "m-carpentry-workshop",
+      "purpose": "workshop",
+      "confidence": 0.8
+    },
+    {
+      "type": "fact",
+      "path": "identity.brandName",
+      "value": "Eksempel Snekkeri",
+      "quote": "Folk søker på Eksempel Snekkeri også, men der kommer vi opp uansett",
+      "speaker": "Kunde",
+      "meetingId": "m-carpentry-workshop",
+      "purpose": "workshop",
+      "confidence": 0.8
+    },
+    {
+      "type": "directive",
+      "kind": "add",
+      "scope": "page",
+      "area": "page:kitchen",
+      "ask": "Egen side for kjøkken og bad",
+      "priority": "should",
+      "quote": "Vi vil ha en egen side for kjøkken og en for bad",
+      "speaker": "Kunde",
+      "meetingId": "m-carpentry-workshop",
+      "purpose": "workshop",
+      "confidence": 0.8
+    }
+  ],
+  "expected": [
+    "kjøkken på mål",
+    "snekker Eksempelby"
+  ],
+  "mustNotPropose": [
+    "Eksempel Snekkeri"
+  ]
+}

@@ -484,6 +484,41 @@ function defaultClientDataBank(seed = {}) {
   };
 }
 
+/**
+ * Shop terms and bookable services. Returns null when nothing is stored.
+ * A source without its own `shopSetup` key keeps `base` (a settings save that
+ * does not send the field must not clear it).
+ * @param {object} [src]
+ * @param {object} [base]
+ */
+export function normalizeShopSetup(src, base) {
+  const hasSrc = Boolean(src) && typeof src === 'object' && Object.prototype.hasOwnProperty.call(src, 'shopSetup');
+  const raw = hasSrc ? src.shopSetup : (base && typeof base === 'object' ? base.shopSetup : null);
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const clip = (value, max) => sanitizeText(value).slice(0, max);
+  const shipping = clip(raw.shipping, 1000);
+  const returns = clip(raw.returns, 1000);
+  const sellerSrc = raw.sellerVat && typeof raw.sellerVat === 'object' && !Array.isArray(raw.sellerVat) ? raw.sellerVat : {};
+  const legalName = clip(sellerSrc.legalName, 200);
+  const orgNumber = clip(String(sellerSrc.orgNumber || '').replace(/\s+/g, ''), 32);
+  const vatRegistered = sellerSrc.vatRegistered === true || sellerSrc.vatRegistered === false ? sellerSrc.vatRegistered : null;
+  const sellerVat = (legalName || orgNumber) ? { legalName, orgNumber, vatRegistered } : null;
+  const bookingServices = [];
+  const listed = Array.isArray(raw.bookingServices) ? raw.bookingServices : [];
+  for (const row of listed) {
+    if (bookingServices.length >= 30) break;
+    const name = clip(typeof row === 'string' ? row : row?.name, 120);
+    if (!name) continue;
+    bookingServices.push({
+      name,
+      duration: clip(row?.duration, 40),
+      price: clip(row?.price, 40),
+    });
+  }
+  if (!shipping && !returns && !sellerVat && !bookingServices.length) return null;
+  return { shipping, returns, sellerVat, bookingServices };
+}
+
 function normalizeClientDataBank(input = {}, fallback = {}) {
   const base = {
     ...defaultClientDataBank(),
@@ -537,13 +572,23 @@ function normalizeClientDataBank(input = {}, fallback = {}) {
     days: normalizeOpeningHoursDays(src.openingHours?.days, base.openingHours.days),
   };
   const intakeKeys = ['products', 'media', 'logo', 'staff', 'hours', 'affiliations'];
+  const planKeys = ['shop', 'keywords', 'booking'];
   const assistantIntake = {};
   for (const key of intakeKeys) {
     const value = sanitizeText(src.assistantIntake?.[key] || base.assistantIntake?.[key]);
     assistantIntake[key] = value === 'done' || value === 'skipped' || value === 'more' ? value : '';
   }
+  for (const key of planKeys) {
+    const value = sanitizeText(src.assistantIntake?.[key] || base.assistantIntake?.[key]);
+    if (value === 'done' || value === 'skipped' || value === 'more') assistantIntake[key] = value;
+  }
   const focus = sanitizeText(src.assistantIntake?.focus ?? base.assistantIntake?.focus);
-  assistantIntake.focus = ['products', 'media', 'logo', 'staff', 'hours', 'affiliations'].includes(focus) ? focus : '';
+  assistantIntake.focus = [...intakeKeys, ...planKeys].includes(focus) ? focus : '';
+  const revisitSource = src.assistantIntake && Object.prototype.hasOwnProperty.call(src.assistantIntake, 'revisitPart')
+    ? src.assistantIntake.revisitPart
+    : base.assistantIntake?.revisitPart;
+  const revisitPart = sanitizeText(revisitSource);
+  if (revisitPart === 'shipping' || revisitPart === 'returns' || revisitPart === 'seller') assistantIntake.revisitPart = revisitPart;
 
   const media = {
     mainHeroImages: normalizeMediaList(src.media?.mainHeroImages || src.media?.heroImages, base.media.mainHeroImages),
@@ -628,7 +673,8 @@ function normalizeClientDataBank(input = {}, fallback = {}) {
     keepEmptyProducts: true,
   });
 
-  return {
+  const shopSetup = normalizeShopSetup(src, base);
+  const bank = {
     businessCard,
     generalInfo,
     brandIdentity,
@@ -646,6 +692,8 @@ function normalizeClientDataBank(input = {}, fallback = {}) {
     seo,
     makerLink,
   };
+  if (shopSetup) bank.shopSetup = shopSetup;
+  return bank;
 }
 
 function uniqueTexts(values = []) {

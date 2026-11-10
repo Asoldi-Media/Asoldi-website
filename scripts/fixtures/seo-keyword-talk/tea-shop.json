@@ -1,0 +1,57 @@
+{
+  "business": {
+    "name": "Testvik Te"
+  },
+  "purpose": "demo",
+  "meetingId": "m-tea-demo",
+  "text": "Rådgiver: Her er utkastet til forsiden. Hva tenker du?\nKunde: Det ser fint ut, men teksten om løs grønn te bør komme høyere opp.\nKunde: Vi vil at folk skal finne oss når de søker etter løs grønn te.\nKunde: Vi vil også dukke opp på økologisk te, det spør kundene mest om.\nRådgiver: Skal vi lage en egen side for teservise?\nKunde: Nei, det selger vi for lite av.\nKunde: SEO er viktig for oss, men jeg vet ikke helt hva folk skriver inn.\nRådgiver: Det finner vi ut sammen.",
+  "items": [
+    {
+      "type": "directive",
+      "kind": "change",
+      "scope": "section",
+      "area": "hero",
+      "ask": "Løs grønn te høyere opp",
+      "priority": "should",
+      "quote": "teksten om løs grønn te bør komme høyere opp",
+      "speaker": "Kunde",
+      "meetingId": "m-tea-demo",
+      "purpose": "demo",
+      "confidence": 0.8
+    },
+    {
+      "type": "fact",
+      "path": "positioning.services",
+      "value": "Løs grønn te",
+      "quote": "Vi vil at folk skal finne oss når de søker etter løs grønn te",
+      "speaker": "Kunde",
+      "meetingId": "m-tea-demo",
+      "purpose": "demo",
+      "confidence": 0.8
+    },
+    {
+      "type": "fact",
+      "path": "positioning.services",
+      "value": "Økologisk te",
+      "quote": "Vi vil også dukke opp på økologisk te, det spør kundene mest om",
+      "speaker": "Kunde",
+      "meetingId": "m-tea-demo",
+      "purpose": "demo",
+      "confidence": 0.8
+    },
+    {
+      "type": "openQuestion",
+      "text": "Hvilke søkeord?",
+      "quote": "SEO er viktig for oss, men jeg vet ikke helt hva folk skriver inn",
+      "speaker": "Kunde",
+      "meetingId": "m-tea-demo",
+      "purpose": "demo",
+      "confidence": 0.8
+    }
+  ],
+  "expected": [
+    "løs grønn te",
+    "økologisk te"
+  ],
+  "mustNotPropose": []
+}
