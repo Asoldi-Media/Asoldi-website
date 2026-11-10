@@ -78,17 +78,33 @@ export async function getAllUsers() {
 }
 
 /**
- * Phone numbers that must exist on the live install even though the data dir is never part of a deploy.
- * Seeded once (only when the user has no number yet); later edits in admin → Users win.
+ * Phone numbers a fresh install gets for named users, from the optional env HUB_SEED_USER_PHONES:
+ * a JSON object { "<username>": "<number>" }. The data dir is never part of a deploy, so a reset
+ * install can restore the numbers printed in staff e-mails this way. Seeded once (only when the
+ * user has no number yet); later edits in admin → Users win. Not set: nothing is seeded.
  */
-const SEED_PHONES = {
-  'alexander@asoldi.com': '+4792331098',
-};
+function seedPhones() {
+  const raw = String(process.env.HUB_SEED_USER_PHONES || '').trim();
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const out = {};
+    for (const [username, phone] of Object.entries(parsed)) {
+      const key = String(username || '').trim().toLowerCase();
+      if (key && typeof phone === 'string') out[key] = phone;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
 
 function seedKnownPhones(users) {
   let changed = false;
+  const known = seedPhones();
   for (const user of users) {
-    const seeded = SEED_PHONES[String(user?.username || '').trim().toLowerCase()];
+    const seeded = normalizePhone(known[String(user?.username || '').trim().toLowerCase()] || '');
     if (seeded && !normalizePhone(user.phone)) {
       user.phone = seeded;
       changed = true;

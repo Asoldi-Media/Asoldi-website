@@ -1,0 +1,9 @@
+{
+  "description": "Invented inbox messages for the safe-mode soak, stored the way the inbox bot lists handled mail. Nothing here is read from a real mailbox.",
+  "mailbox": "alexander@asoldi.com",
+  "messages": [
+    { "id": "soak-msg-1", "from": "garden-guest@example.invalid", "subject": "Can we move our meeting?", "kind": "reschedule", "status": "handled", "receivedHoursAgo": 5, "summary": "The guest asks for a later time next week.", "text": "Hello, can we meet an hour later on Thursday? Thanks." },
+    { "id": "soak-msg-2", "from": "bike-guest@example.invalid", "subject": "Signed agreement", "kind": "signed_contract", "status": "handled", "receivedHoursAgo": 3, "summary": "The guest sends the signed agreement.", "text": "Hi, the signed agreement is attached." },
+    { "id": "soak-msg-3", "from": "newsletter@example.invalid", "subject": "Weekly offers", "kind": "other", "status": "ignored", "receivedHoursAgo": 1, "summary": "An automated newsletter.", "text": "This week: example offers." }
+  ]
+}

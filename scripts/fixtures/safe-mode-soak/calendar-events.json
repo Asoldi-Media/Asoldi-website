@@ -1,0 +1,8 @@
+{
+  "description": "Invented booked meetings for the safe-mode soak. Each becomes one sales client with a calendar event record. All addresses are on example.invalid.",
+  "owner": "sales:soak-rep",
+  "events": [
+    { "id": "online-intro", "businessName": "Example Garden Supplies", "contactEmail": "garden-guest@example.invalid", "mode": "online", "startsInHours": 30, "meetLink": "https://meet.google.com/abc-defg-hij" },
+    { "id": "onsite-visit", "businessName": "Example Bike Repair", "contactEmail": "bike-guest@example.invalid", "mode": "in-person", "startsInHours": 54, "address": "Example Street 1, 0000 Exampletown" }
+  ]
+}

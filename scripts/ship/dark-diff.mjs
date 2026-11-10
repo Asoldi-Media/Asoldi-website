@@ -7,6 +7,7 @@
  *   node scripts/ship/dark-diff.mjs --base <ref> --head <ref> --data <dir> [--intended <json>]
  *        [--secrets] [--rollback] [--flows <dir>] [--out <report.json>] [--keep] [--json]
  *        [--repo <git dir>] [--node-modules <dir>] [--clock-start <iso>] [--no-inventory] [--fake-secrets]
+ *        [--min-ran <0..1>]   share of signed-in and value-saving steps that must run on both (default 0.5)
  *        [--secret-names <file>]   names-only listing of the live secrets folder (implies --fake-secrets)
  *        [--skip-data <folder,folder>]   top-level data folders left out of the copies (large media)
  *
@@ -133,6 +134,11 @@ export function parseArgs(argv = []) {
     else if (arg === '--secret-names') {
       opts.secretNames = value(i++, arg);
       opts.fakeSecrets = true;
+    }
+    else if (arg === '--min-ran') {
+      const ratio = Number(value(i++, arg));
+      if (!Number.isFinite(ratio) || ratio < 0 || ratio > 1) throw new HarnessError('--min-ran needs a number from 0 to 1');
+      opts.minRan = ratio;
     }
     else if (arg === '--skip-data') opts.skipData = value(i++, arg).split(',').map((s) => s.trim()).filter(Boolean);
     else if (arg === '--debug') opts.debug = true;
@@ -1018,6 +1024,49 @@ export function notRunOnBoth(base, head) {
   return head.filter((row) => baseKeys.has(row.key));
 }
 
+/** The share of signed-in and value-saving steps that must have run on both releases (see flowMinimum). */
+export const DEFAULT_MIN_RAN = 0.5;
+
+/**
+ * Counts the signed-in steps (auth admin, maker or bearer:*) and the value-saving steps (a step with
+ * `save`) of the flows, and how many of each actually ran on both releases: not skipped and not
+ * refused. Returns { signedIn: {total, ran}, saving: {total, ran}, problems: [text] }; a problem is
+ * listed when a kind ran on fewer than the minimum share of its steps (at least one when there are
+ * any). A run whose steps were all skipped for missing values, or refused on a few steps only, never
+ * passes by comparing two empty sets.
+ */
+export function flowMinimum(flows = [], baseRows = [], headRows = [], baseNotRun = [], headNotRun = [], minRan = DEFAULT_MIN_RAN) {
+  const ran = (rows, notRun) => {
+    const bad = new Set(notRun.map((row) => row.key));
+    return new Set(rows.filter((row) => !row.skipped && !bad.has(row.key) && row.status !== undefined).map((row) => row.key));
+  };
+  const onBase = ran(baseRows, baseNotRun);
+  const onHead = ran(headRows, headNotRun);
+  const out = { signedIn: { total: 0, ran: 0 }, saving: { total: 0, ran: 0 }, problems: [] };
+  for (const flow of flows) {
+    flow.steps.forEach((step, i) => {
+      if (!step.path) return;
+      const key = `${flow.name}#${i}`;
+      const both = onBase.has(key) && onHead.has(key);
+      if (SIGNED_IN(step.auth)) {
+        out.signedIn.total += 1;
+        if (both) out.signedIn.ran += 1;
+      }
+      if (step.save && Object.keys(step.save).length) {
+        out.saving.total += 1;
+        if (both) out.saving.ran += 1;
+      }
+    });
+  }
+  for (const [kind, label] of [['signedIn', 'signed-in'], ['saving', 'value-saving']]) {
+    const { total, ran: count } = out[kind];
+    if (!total) continue;
+    const need = Math.max(1, Math.ceil(total * minRan));
+    if (count < need) out.problems.push(`only ${count} of ${total} ${label} steps ran on both releases (the minimum is ${need})`);
+  }
+  return out;
+}
+
 /** Status differences between base and the control in the rollback pass: [{ key, detail }]. */
 export function rollbackStatusDifferences(base, control) {
   const out = [];
@@ -1290,6 +1339,12 @@ export async function runDarkDiff(options) {
     if (notRunBoth.length) {
       const sample = notRunBoth.slice(0, 6).map((row) => `${row.key} ${row.method} ${row.path}: ${row.reason}`).join('; ');
       throw Object.assign(new HarnessError(`the flows did not run: ${notRunBoth.length} step(s) were refused or skipped on both releases (${sample}${notRunBoth.length > 6 ? '; …' : ''}). Check the data's token policy (security-settings.json, token-revocations.json) and the clock start (${new Date(clockStart).toISOString()})`), { notRun: notRunBoth });
+    }
+
+    const minimum = flowMinimum(flows, sides.base.flows, sides.head.flows, notRun.base, notRun.head, opts.minRan ?? DEFAULT_MIN_RAN);
+    report.flowMinimum = { signedIn: minimum.signedIn, saving: minimum.saving, minRan: opts.minRan ?? DEFAULT_MIN_RAN };
+    if (minimum.problems.length) {
+      throw Object.assign(new HarnessError(`the flows ran too little: ${minimum.problems.join('; ')}. Check the seeded data (the sign-in and the values the steps save) before trusting a pass`), { flowMinimum: minimum });
     }
 
     const diffs = [

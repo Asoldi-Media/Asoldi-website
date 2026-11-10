@@ -9,7 +9,6 @@ import {
   callTimesCopyHasVolume,
   matchCallTimesIndividual,
 } from '../lib/ansatt-call-times.js';
-import { BAARD_BOOKER_EMAIL } from '../lib/sales-baard-farkas-assign.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const NAME_RE = /\b(b[åa]+rd|bhrat|alexander|gupta|fransson|kvalheim|farkas|both reps)\b/i;
@@ -17,7 +16,7 @@ const NAME_RE = /\b(b[åa]+rd|bhrat|alexander|gupta|fransson|kvalheim|farkas|bot
 test('all-reps vs individual match, never another named picker', () => {
   assert.equal(matchCallTimesIndividual({ name: 'Bård Ove' }), 'bard');
   assert.equal(matchCallTimesIndividual({ username: 'baard@asoldi.com' }), 'bard');
-  assert.equal(matchCallTimesIndividual({ fromEmail: BAARD_BOOKER_EMAIL }), 'bard');
+  assert.equal(matchCallTimesIndividual({ fromEmail: 'baard.booker@example.test' }), 'bard');
   assert.equal(matchCallTimesIndividual({ name: 'Bhrat Gupta' }), 'bhrat');
   assert.equal(matchCallTimesIndividual({ username: 'bhrat@asoldi.com' }), 'bhrat');
   assert.equal(matchCallTimesIndividual({ name: 'Damian' }), null);
