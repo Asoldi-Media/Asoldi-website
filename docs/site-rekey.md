@@ -37,6 +37,7 @@ Superadmin token.
 | 409 `site-key-held` | another site holds the key |
 | 422 `site-not-found` | no site matches the ids sent (deliberately not 404, which the Maker reads as "adopt unavailable") |
 
+Once the switch is on, a Maker host with the `callback` scope (the default for new hosts) can rekey any site, as can a Superadmin. When the request names a sales client linked to the site, the client's stored site key link is updated too.
 The switch is `siteRekey.enabled` in the automation settings (default `false`), with `siteRekey.paused`.
 Tests: `npm run test:hub-rekey`.
 

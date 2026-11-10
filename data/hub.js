@@ -386,7 +386,7 @@ export function adoptSiteKey(id, { from, to } = {}) {
     const i = sites.findIndex((s) => s.id === id);
     if (i === -1) return { result: { ok: false, reason: 'not-found' }, write: false };
     if (sites[i].site_key !== previous) return { result: { ok: false, reason: 'key-changed' }, write: false };
-    if (sites.some((s, j) => j !== i && s.site_key === next)) return { result: { ok: false, reason: 'key-taken' }, write: false };
+    if (sites.some((s, j) => j !== i && siteHoldsKey(s, next, Date.now()))) return { result: { ok: false, reason: 'key-taken' }, write: false };
     if (siteReachedByCms(sites[i])) return { result: { ok: false, reason: 'cms-reached' }, write: false };
     sites[i] = normalizeSite({ ...sites[i], site_key: next });
     return { result: { ok: true, site: publicSite(sites[i]) }, write: true };

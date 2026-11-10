@@ -11,7 +11,7 @@ const root = join(here, '..');
 test('sales list reads offers once and does not stat a video per meeting', () => {
   const server = readFileSync(join(root, 'server.js'), 'utf8');
   const salesGet = server.slice(
-    server.indexOf("app.get('/api/admin/sales', salesAuth"),
+    server.indexOf("app.get('/api/admin/sales', salesOrMakerRead"),
     server.indexOf("app.get('/api/admin/sales/client-search'")
   );
   assert.match(salesGet, /cachedSalesListRows\(\)/);
@@ -37,7 +37,7 @@ test('week calendar events load on open; free-busy stays off so Admin/Sales list
   assert.equal(SALES_WEEK_CALENDAR_DISABLED, true);
   const server = readFileSync(join(root, 'server.js'), 'utf8');
   const salesGet = server.slice(
-    server.indexOf("app.get('/api/admin/sales', salesAuth"),
+    server.indexOf("app.get('/api/admin/sales', salesOrMakerRead"),
     server.indexOf("app.post('/api/admin/sales/backfill-products'")
   );
   assert.match(salesGet, /getGoogleCalendarStatus\(req\.salesUser\.accountKey\)/);

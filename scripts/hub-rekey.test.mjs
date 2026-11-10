@@ -224,3 +224,42 @@ test('with the switch on: staff and host tokens rekey, anyone else gets 401', as
   });
   setSwitch(false);
 });
+
+test('a key another site holds as a live alias cannot be adopted, and a current key beats an alias', () => {
+  const { a, b } = fresh();
+  assert.equal(hub.rekeySite(a.id, NEW_A).ok, true);
+  const adopted = hub.adoptSiteKey(b.id, { from: KEY_B, to: OLD_A });
+  assert.equal(adopted.ok, false);
+  assert.equal(adopted.reason, 'key-taken');
+  // Even if a stored file already has the clash, the current key wins in the constant-time lookup.
+  const clash = [
+    { ...hub.getSiteById(a.id) },
+    { ...hub.getSiteById(b.id), site_key: OLD_A },
+  ];
+  assert.equal(findSiteByKeyConstantTime(clash, OLD_A).id, b.id);
+});
+
+test('the rekey route moves the linked sales client to the new key', async () => {
+  const { a } = fresh();
+  setSwitch(true);
+  const updates = [];
+  const sales = {
+    getSalesClientById: (id) => (id === 'sc-link' ? { id, hubSite: { id: a.id, siteKey: OLD_A } } : null),
+    updateSalesClient: (id, patch) => updates.push({ id, patch }),
+  };
+  const app = express();
+  app.use(express.json());
+  routes.register(app, { adminAuth: (req, res, next) => next(), makerAuth: createMakerAuth({ dataDir }), hub, sales, getDataDir: () => dataDir });
+  const server = app.listen(0, '127.0.0.1');
+  await new Promise((r) => server.once('listening', r));
+  try {
+    const base = `http://127.0.0.1:${server.address().port}`;
+    const res = await fetch(`${base}/api/admin/sites/rekey`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ siteId: a.id, salesClientId: 'sc-link', siteKey: NEW_A }) });
+    assert.equal(res.status, 200);
+    assert.equal(updates.length, 1);
+    assert.equal(updates[0].patch.hubSite.siteKey, NEW_A);
+  } finally {
+    server.close();
+    setSwitch(false);
+  }
+});
