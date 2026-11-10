@@ -2,16 +2,10 @@
   "about": "Tracked files that still carry internal planning words, with the number of findings each may have. scripts/project-docs.test.mjs (or the repo test that runs the ratchet) fails when a file that is not listed gets one or a count grows; a lower count passes. Lower the list with: node scripts/security/secret-scan.mjs --tracked --ratchet --shrink. Never add a file or raise a count.",
   "kind": "plan",
   "files": {
-    "data/cms-feature-tree.json": 85,
-    "data/cms-feature-tree.meta.json": 1,
-    "lib/cms-features.js": 10,
-    "lib/cms-spec-schema.js": 12,
     "packages/suite/core/llm/CONTRACT.md": 1,
     "packages/suite/core/llm/policy.js": 1,
     "packages/suite/core/llm/tasks-schema.js": 1,
     "packages/suite/harness/asoldi/llm.js": 19,
-    "scripts/cms-spec.test.mjs": 1,
-    "scripts/email-feature-keys.test.mjs": 1,
     "scripts/llm-harness.test.mjs": 1
   }
 }

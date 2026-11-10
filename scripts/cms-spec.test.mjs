@@ -230,7 +230,7 @@ test('the privacy section takes a retention mode of report or delete and nothing
   const bad = validateSection('privacy', { retention: { mode: 'purge' } }, { registry });
   assert.ok(bad.some((e) => e.path === 'sections.privacy.retention.mode'), JSON.stringify(bad));
   assert.match(SECTION_OWNERS.privacy, /^cms$/);
-  assert.doesNotMatch(Object.values(SECTION_OWNERS).join(' '), /WSd/);
+  for (const v of Object.values(SECTION_OWNERS)) assert.ok(['cms', 'email'].includes(v), 'owner is an area word: ' + v);
 });
 
 test('every route needs Superadmin, or the Maker token once Superadmin allows it; only Superadmin sets enforcement', async () => {
