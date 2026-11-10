@@ -187,9 +187,7 @@ test('the email section (email keys): a cart recovery spec with two steps passes
     email: {
       rev: 2,
       sender: { name: 'Testbutikken', replyTo: 'kontakt@testbutikken.test' },
-      identity: { legalName: 'Testbutikken AS', orgNumber: '123456789', personalName: 'Kari Test', address: 'Gate 1, 8000 Bodø', email: 'kontakt@testbutikken.test' },
-      design: { accent: '#224466', radius: 6, footerText: 'Takk' },
-      signup: { cooldownDays: 7, minFillSeconds: 3 },
+      identity: { legalName: 'Testbutikken AS', orgNumber: '123456789', address: 'Gate 1, 8000 Bodø', email: 'kontakt@testbutikken.test' },
       recovery: { enabled: true, steps: [{ delayMinutes: 60 }, { delayMinutes: 20160 }], discount: null },
       ownerNotifications: { checkoutStarted: 'instant' },
       winback: { enabled: true, afterDays: 90 },

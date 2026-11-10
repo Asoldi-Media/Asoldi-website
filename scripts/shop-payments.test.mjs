@@ -468,6 +468,13 @@ test('HP-7 shop checkout: shipping option, locked country, hold-length expiry, c
   assert.equal(hashed.metadata.reminder_consent, '1');
   assert.match(hashed.metadata.reminder_text_hash, /^sha256:0f1eb2daaa*$/);
   assert.equal(hashed.metadata.reminder_text_hash.length, 90, 'the stored hash is bounded and plain');
+  for (const [i, bad] of ['false', '0', {}, 1].entries()) {
+    await call('POST', '/api/hub/shop/stripe/checkout', { ref: `chk_shape${i}`, currency: 'nok', lineItems: [{ name: 'X', unitAmount: 100, quantity: 1 }], reminderConsent: bad, ...urls(`chk_shape${i}`) });
+    assert.equal(lastSession()[1].metadata.reminder_consent, '0', 'only a real true is a consent');
+  }
+  await call('POST', '/api/hub/shop/stripe/checkout', { ref: 'chk_hashobj', currency: 'nok', lineItems: [{ name: 'X', unitAmount: 100, quantity: 1 }], reminderConsent: true, reminderTextHash: { a: 1 }, ...urls('chk_hashobj') });
+  assert.equal(lastSession()[1].metadata.reminder_text_hash, undefined, 'a non-string hash is dropped');
+  assert.equal(lastSession()[1].payment_intent_data.metadata.reminder_consent, '1', 'the payment intent carries the consent too');
   assert.equal(noEmail.locale, 'auto');
   assert.equal(noEmail.shipping_options, undefined);
 
