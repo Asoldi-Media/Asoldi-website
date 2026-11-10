@@ -17,14 +17,14 @@ const client = {
   contactPhone: '40 00 08 41',
   industry: 'reklamebyrå',
   websiteDomain: 'juniper.test',
-  orgNumber: '925992720',
-  meetingPlace: 'Vasøyveien 103, 7167 Vallersund',
-  businessAddress: 'Vasøyveien 103, 7167 Vallersund',
+  orgNumber: '123456789',
+  meetingPlace: 'Exampleveien 1, 0000 Testby',
+  businessAddress: 'Exampleveien 1, 0000 Testby',
   notes: 'Salgsnotat her',
   details: {
-    instagramUrl: 'https://www.instagram.com/tass.norge/',
-    facebookUrl: 'https://www.facebook.com/tassnorge/',
-    proffUrl: 'https://www.proff.no/selskap/x/x/x/925992720',
+    instagramUrl: 'https://www.instagram.com/example.shop/',
+    facebookUrl: 'https://www.facebook.com/exampleshop/',
+    proffUrl: 'https://www.proff.no/selskap/x/x/x/123456789',
     googleBusinessProfile: 'https://maps.google.com/?cid=1',
     otherLinks: 'https://tiktok.com/@juniper\nmailto:skip@example.com',
   },
@@ -35,15 +35,15 @@ test('salesKundekortView copies Kundekort page 1 fields and splits other links',
   assert.equal(view.productLabel, 'Nettside');
   assert.equal(view.businessName, 'JUNIPER');
   assert.equal(view.websiteEmail, 'hei@juniper.test');
-  assert.equal(view.orgNumber, '925992720');
-  assert.equal(view.instagramUrl, 'https://www.instagram.com/tass.norge/');
+  assert.equal(view.orgNumber, '123456789');
+  assert.equal(view.instagramUrl, 'https://www.instagram.com/example.shop/');
   assert.deepEqual(view.otherLinks, ['https://tiktok.com/@juniper', 'mailto:skip@example.com']);
   assert.equal(view.notes, 'Salgsnotat her');
 });
 
 test('salesKundekortView reads a development item kundekort blob', () => {
   const view = salesKundekortView({ kundekort: salesKundekortView(client), notes: '' });
-  assert.equal(view.facebookUrl, 'https://www.facebook.com/tassnorge/');
+  assert.equal(view.facebookUrl, 'https://www.facebook.com/exampleshop/');
   assert.equal(view.industry, 'reklamebyrå');
 });
 
@@ -58,21 +58,21 @@ test('stored clientBrief is the card line and the full document text', () => {
     ...client,
     clientBrief: persistClientBrief({
       short: 'Markedsplass i Norge.',
-      full: 'JUNIPER er en markedsplass. Are driver den fra Vallersund.',
+      full: 'JUNIPER er en markedsplass. Are driver den fra Testby.',
       source: 'sales-card',
     }),
   };
   assert.equal(compactClientIdentityLine(withBrief), 'Markedsplass i Norge.');
   const brief = clientIdentityBrief(withBrief);
   assert.equal(brief.ready, true);
-  assert.match(brief.full, /Vallersund/);
+  assert.match(brief.full, /Testby/);
 });
 
 test('kundekortHref opens links, mail, phone, and a bare domain', () => {
   assert.equal(kundekortHref('juniper.test', 'domain'), 'https://juniper.test');
   assert.equal(kundekortHref('person-8688c1@juniper.test', 'email'), 'mailto:person-8688c1@juniper.test');
   assert.equal(kundekortHref('40 00 08 41', 'phone'), 'tel:40000841');
-  assert.equal(kundekortHref('https://www.instagram.com/tass.norge/'), 'https://www.instagram.com/tass.norge/');
+  assert.equal(kundekortHref('https://www.instagram.com/example.shop/'), 'https://www.instagram.com/example.shop/');
   assert.equal(kundekortHref('mailto:hei@juniper.test'), 'mailto:hei@juniper.test');
   assert.equal(kundekortHref(''), '');
 });

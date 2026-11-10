@@ -44,13 +44,16 @@ export function loadRoutes(file) {
     if (!/^\/[^\s]*$/.test(path)) throw new Error(`route ${i}: the path must start with /`);
     if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) throw new Error(`route ${i}: unknown method ${method}`);
     if (row.expect !== 'staff' && row.expect !== 'dark') throw new Error(`route ${i} (${method} ${path}): expect must be "staff" or "dark"`);
-    return { method, path, body: row.body, expect: row.expect };
+    return { method, path, body: row.body, expect: row.expect, expectCode: row.expectCode === undefined ? undefined : String(row.expectCode) };
   });
 }
 
-/** Whether a status is what the route's kind requires without credentials. */
-export function statusOk(expect, status) {
-  return expect === 'dark' ? status === 404 : status === 401 || status === 403;
+/** Whether a status (and, for a dark route, the answer code) is what the route's kind requires without credentials. */
+export function statusOk(expect, status, note, expectCode = 'disabled') {
+  if (expect !== 'dark') return status === 401 || status === 403;
+  // A dark route answers 404 with the code 'disabled'. Any other 404 (a route that is not there, or an
+  // unknown id on a live route) is not proof that the switch is off. Without a note only the status is checked.
+  return status === 404 && (note === undefined || note === expectCode);
 }
 
 /** Data files that changed between two snapshots, leaving out logs and the safe-mode outbox. */
@@ -148,7 +151,7 @@ export async function probeRoutes(tree, routes, { startTimeoutMs = 240_000 } = {
       } catch {
         note = text.slice(0, 40).replace(/\s+/g, ' ');
       }
-      rows.push({ ...route, body: undefined, status: res.status, note, ok: statusOk(route.expect, res.status) });
+      rows.push({ ...route, body: undefined, status: res.status, note, ok: statusOk(route.expect, res.status, note, route.expectCode) });
     }
     await new Promise((r) => setTimeout(r, 1500));
     const changed = changedFiles(before, snapshot(dataDir));

@@ -1341,6 +1341,12 @@ export async function runDarkDiff(options) {
       throw Object.assign(new HarnessError(`the flows did not run: ${notRunBoth.length} step(s) were refused or skipped on both releases (${sample}${notRunBoth.length > 6 ? '; …' : ''}). Check the data's token policy (security-settings.json, token-revocations.json) and the clock start (${new Date(clockStart).toISOString()})`), { notRun: notRunBoth });
     }
 
+    const minimum = flowMinimum(flows, sides.base.flows, sides.head.flows, notRun.base, notRun.head, opts.minRan ?? DEFAULT_MIN_RAN);
+    report.flowMinimum = { signedIn: minimum.signedIn, saving: minimum.saving, minRan: opts.minRan ?? DEFAULT_MIN_RAN };
+    if (minimum.problems.length) {
+      throw Object.assign(new HarnessError(`the flows ran too little: ${minimum.problems.join('; ')}. Check the seeded data (the sign-in and the values the steps save) before trusting a pass`), { flowMinimum: minimum });
+    }
+
     const diffs = [
       ...compareRecords('response', sides.base.flows, sides.head.flows),
       ...compareRecords('site-config', sides.base.siteConfig, sides.head.siteConfig),

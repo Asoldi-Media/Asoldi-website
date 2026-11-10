@@ -21,7 +21,7 @@ const offerMeetings = await import('../lib/offer-meetings.js');
 const CLIENT = {
   id: 'client-1',
   ownerId: 'sales-anna',
-  businessName: 'Byneset Bydelskafé AS',
+  businessName: 'Harbor Bydelskafé AS',
   contactPerson: 'Kari Nordmann',
   contactEmail: 'person-a17e62@dahlia.test',
   orgNumber: '923 456 789',
@@ -61,7 +61,7 @@ test('offer email: tier block shows package, "opp til N sider", ex/incl mva per 
   assert.match(email.html, /eks\. mva/i);
   assert.match(email.html, /inkl\. mva/i);
   assert.match(email.html, /per måned|\/ ?mnd/i);
-  assert.match(email.subject, /Byneset/);
+  assert.match(email.subject, /Harbor/);
 
   // Swapping tier replaces the block instead of appending a second one.
   const swapped = offerEmail.applyOfferProducts(email.html, offerEmail.productsWithTier(products, tiers.WEBSITE_TIERS[2].id));
@@ -122,10 +122,10 @@ test('offer AI skips a noise transcript under 10 lines and keeps a real conversa
 test('pasted Fireflies title finds the stored meeting', async () => {
   const hooks = await import('../lib/fireflies-webhook.js');
   const rows = [
-    { meetingId: 'aaa', title: 'Asoldi x Byneset Bydelskafé' },
+    { meetingId: 'aaa', title: 'Asoldi x Harbor Bydelskafé' },
     { meetingId: 'bbb', title: 'Internt standup' },
   ];
-  const hit = hooks.rankMeetingsByTitle(rows, 'Byneset Bydelskafé');
+  const hit = hooks.rankMeetingsByTitle(rows, 'Harbor Bydelskafé');
   assert.equal(hit[0].meetingId, 'aaa');
   assert.equal(hooks.rankMeetingsByTitle(rows, 'ab').length, 0);
   const linked = hooks.rankMeetingsByTitle(
@@ -161,20 +161,20 @@ test('offer draft shows the client and the editing rep instead of identity merge
   const html = offerEmail.resolveOfferIdentityTags(email.html, {
     firstName: 'Kari',
     fullName: 'Kari Nordmann',
-    businessName: 'Byneset Bydelskafé AS',
+    businessName: 'Harbor Bydelskafé AS',
     signerName: 'Alexander',
     signerEmail: 'alexander@asoldi.com',
     signerPhone: '+47 400 00 000',
   });
   const subject = offerEmail.resolveOfferIdentityTags(email.subject, {
-    businessName: 'Byneset Bydelskafé AS',
+    businessName: 'Harbor Bydelskafé AS',
   }, { escape: false });
   assert.match(html, /Hei Kari,/);
   assert.match(html, /Alexander fra Asoldi/);
   assert.match(html, /alexander@asoldi.com/);
   assert.match(html, /\+47 400 00 000/);
   assert.match(html, /\{\{need\}\}/);
-  assert.equal(subject, 'Tilbud til Byneset Bydelskafé AS fra Asoldi');
+  assert.equal(subject, 'Tilbud til Harbor Bydelskafé AS fra Asoldi');
   const old = offerEmail.refreshOfferShell('<p><strong>Kundebetingelser:</strong> Dere sender logo.</p><p>Nettsiden bygges i vårt eget CMS. Der ligger automatiserte prosesser.</p><h2>Hva som skjer fremover</h2><p>Vedlagt ligger kontrakten for valgt pakke. Den signeres først når dere har bestemt dere – ingenting betales før nettsiden er levert.</p>');
   assert.equal(old.includes('Kundebetingelser'), false);
   assert.match(old, /Dere sender logo/);
@@ -591,7 +591,7 @@ test('offer AI: transcript fill and contract reflection go through the injected 
     return { need: 'synlig nettside for kafeen', project: ['En nettside som viser meny og åpningstider.'], terms: 'Kunden sender logo.', benefits: 'Flere gjester via Google.' };
   };
   const profileFilled = await offerAi.fillOfferFromTranscript({
-    client: { ...CLIENT, industry: 'kafé', clientBrief: { short: 'Lokal kafé på Byneset.' } },
+    client: { ...CLIENT, industry: 'kafé', clientBrief: { short: 'Lokal kafé på Harbor.' } },
     quote: { productGoal: 'Flere gjester fra Google' },
     products: offerEmail.productsWithTier([], tiers.WEBSITE_TIERS[1].id),
     tierId: tiers.WEBSITE_TIERS[1].id,
@@ -603,7 +603,7 @@ test('offer AI: transcript fill and contract reflection go through the injected 
   assert.match(profileSeen[0].system, /kundekortet, produktnotatene og den valgte pakken/i);
   assert.doesNotMatch(profileSeen[0].user, /Transkript:/);
   assert.match(profileSeen[0].user, /kafé/i);
-  assert.match(profileSeen[0].user, /Lokal kafé på Byneset/);
+  assert.match(profileSeen[0].user, /Lokal kafé på Harbor/);
   assert.match(profileSeen[0].user, /SEO optimalisering/i);
   assert.doesNotMatch(profileSeen[0].user, /1499/);
 
@@ -1096,7 +1096,7 @@ test('portal contract html uses a document header, party columns, and numbered s
   assert.match(html, /Domenetilgang/);
   assert.doesNotMatch(html, /Google Business Profile development/);
   assert.match(html, /offer-contract-parties/);
-  assert.match(html, /Byneset Bydelskafé/);
+  assert.match(html, /Harbor Bydelskafé/);
   assert.match(html, /1\. Tjenesteomfang/);
   const englishHtml = contractHtmlForOffer(
     { tierId: tiers.WEBSITE_TIERS[0].id, contractLanguage: 'en', sentAt: '2026-09-28T08:00:00.000Z' },

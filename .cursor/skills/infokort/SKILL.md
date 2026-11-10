@@ -12,7 +12,7 @@ disable-model-invocation: true
 
 Build a complete sales client card. Fill empty fields. Check stored fields. Leave a field empty when nothing is certain. Do not invent a link, industry, or address to look finished.
 
-This is the same bar as the four-client research pass (Mc Verksted, Intermat, Deles / TASS, Bakkes): the page itself must be that company. A guess stays off the card.
+This is the same bar as earlier research passes: the page itself must be that company. A guess stays off the card.
 
 Do not run the pipeline. Do not call `POST /api/admin/sales/refresh-upcoming-links` or `discoverSalesLinks` as the writer — those can keep a weak match. Use them only as a search hint, then prove the page.
 
@@ -46,7 +46,7 @@ Write a value only when the opened page is this company:
 - Same legal or trading name **and** the same address **or** the same phone (or org.nr on Proff / Brønnøysund / the site).
 - Instagram / Facebook: profile name + bio/About + address or phone or official website.
 - Google Maps: place name + address or phone. Store `https://maps.google.com/?cid=<digits>` when you have a cid. A Maps pin for a **different** shop stays off, even if it was already on the card.
-- Website: the page names this company (about / footer / org.nr). Store the **host** only (`tass.no`), not `https://`.
+- Website: the page names this company (about / footer / org.nr). Store the **host** only (`example.no`), not `https://`.
 - Proff: `https://www.proff.no/selskap/x/x/x/<9-digit-orgnr>`. The page must be this org.nr. Fill `orgNumber` from that link when the card lacks it.
 
 **Exclude** when: the page does not exist, the match is another business, you are more unsure than sure, or you only have a similar name in the same town.
@@ -57,12 +57,12 @@ Empty is a valid result. Bakkes with only Proff is correct if no public socials 
 
 **Industry** is what they sell or do, in one short Norwegian word or phrase (`dagligvare`, `motorsykkelverksted`, `markedsplass`, `bilverksted`). Use their own site, Instagram, Facebook, and the live Maps category.
 
-Do **not** copy Brønnøysund `naeringskode` / Proff bransje when that code is leftover or wrong. Deles Are Terjesen is **markedsplass** (TASS), not `reklamebyrå`.
+Do **not** copy Brønnøysund `naeringskode` / Proff bransje when that code is leftover or wrong. A marketplace company is **markedsplass**, not `reklamebyrå`.
 
 **Address** is the current business address shown on the card (`meetingPlace`, labeled “Business address (shown on map)”). Also set `businessAddress` to the same string when you correct it.
 
 - Prefer the address that Maps + Facebook + the site + Brønnøysund **forretningsadresse** agree on.
-- An old Google place with the same phone and a different street is **not** the card address (Meieriveien vs Vasøyveien).
+- An old Google place with the same phone and a different street is **not** the card address (two different streets).
 - Tiny spelling drift on Facebook (`Innherrdsvegen`) is not a reason to overwrite a correct card street.
 
 ## Research

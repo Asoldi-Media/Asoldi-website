@@ -210,16 +210,22 @@ it stays on the operator PC and never goes into a repository.
 
 Three small tools next to the dark-diff, each with self-tests (`npm run test:ship-safety`).
 
-- `scripts/ship/switch-audit.mjs <base tree> <head tree> [--json]` loads both trees' data modules in
+- `scripts/ship/switch-audit.mjs <base tree> <head tree> [--json] [--accept <file>]` loads both trees' data modules in
   safe mode with a temp data folder. It prints every automation-settings default and e-mail
   settings default that head adds or changes, every settings key head adds (with the vocabulary
   version change), and every environment variable name head's runtime files read that base's do not.
   A new leaf that is false, `off`, null, empty or 0 is `off`, `shadow` is `shadow`, anything else is
-  `CHECK` and a person looks at it. Exit 1 when there is a `CHECK`, 2 when a module cannot be loaded.
+  `CHECK` and a person looks at it. Exit 1 when there is a `CHECK` (read it as: review by hand), 2 when a module cannot be loaded or
+  no longer exports `defaultAutomationSettings`, `SETTINGS_KEYS` or the e-mail defaults. A person
+  who has reviewed a `CHECK` leaf (a numeric limit, say) records it in a JSON file
+  `{ "accept": ["defaultAutomationSettings(): quota.perSiteTestMax"] }` and passes it with `--accept`;
+  accepted leaves print as `ACCEPTED` and do not count, and an entry that matches nothing is printed
+  as unused.
 - `scripts/ship/route-probe.mjs <hub tree> [--routes <file>] [--json]` boots the tree locally (safe
   mode, temp data folder and HOME, empty working folder, no .env), calls each route in
   `scripts/ship/probe-routes.json` without credentials and checks the answer: `staff` routes must
-  answer 401 or 403, `dark` routes 404. It then lists every data file the calls changed (logs and the
+  answer 401 or 403, `dark` routes 404 with the code `disabled` (a row can name another code with
+  `expectCode`; a plain 404 is not accepted as proof the switch is off). It then lists every data file the calls changed (logs and the
   outbox are left out). Add a row for every staff route or switched-off route a push brings. Exit 1
   on a wrong answer or a changed file, 2 when the tree does not start or the routes file lists
   nothing.

@@ -90,9 +90,42 @@ test('switch audit: exit codes, and a tree that cannot be read is exit 2, never 
   assert.equal(await quiet(() => auditMain([base])), 2);
 });
 
+test('switch audit: a missing export is exit 2 on either side, never an empty set (control); --accept records a reviewed CHECK leaf', async () => {
+  const quiet = async (fn) => {
+    const log = console.log;
+    const err = console.error;
+    console.log = () => {};
+    console.error = () => {};
+    try { return await fn(); } finally { console.log = log; console.error = err; }
+  };
+  const base = auditTree('mb', { automation: { feature: { enabled: false } } });
+  const renamed = auditTree('mr', { automation: { feature: { enabled: true }, other: { enabled: true } } });
+  put(renamed, 'data/automation-settings.js', 'export const defaultSettings = () => ({ feature: { enabled: true } });\n');
+  assert.equal(await quiet(() => auditMain([base, renamed])), 2);
+  assert.equal(await quiet(() => auditMain([renamed, base])), 2);
+  const noKeys = auditTree('mk', {});
+  put(noKeys, 'packages/suite/core/delivery/vocab.js', 'export const VOCAB_VERSION = 1;\n');
+  assert.equal(await quiet(() => auditMain([base, noKeys])), 2);
+  const noEmail = auditTree('me', {});
+  put(noEmail, 'data/email-store.js', 'export const other = 1;\n');
+  assert.equal(await quiet(() => auditMain([base, noEmail])), 2);
+
+  const limit = auditTree('ml', { automation: { feature: { enabled: false }, quota: { perSiteTestMax: 20 } } });
+  assert.equal(await quiet(() => auditMain([base, limit])), 1);
+  const accept = join(temp('acc'), 'accept.json');
+  writeFileSync(accept, JSON.stringify({ accept: ['defaultAutomationSettings(): quota.perSiteTestMax'] }));
+  assert.equal(await quiet(() => auditMain([base, limit, '--accept', accept])), 0);
+  const stale = join(temp('acc2'), 'accept.json');
+  writeFileSync(stale, JSON.stringify({ accept: ['defaultAutomationSettings(): quota.other'] }));
+  assert.equal(await quiet(() => auditMain([base, limit, '--accept', stale])), 1);
+  const result = await auditSwitches(base, limit, { accept: ['defaultAutomationSettings(): quota.other'] });
+  assert.deepEqual(result.unusedAccepts, ['defaultAutomationSettings(): quota.other']);
+  assert.equal(await quiet(() => auditMain([base, limit, '--accept', join(temp('acc3'), 'none.json')])), 2);
+});
+
 /* ------------------------------------------------------------------ route probe */
 
-function fakeHub(label, { darkAnswers = 404, writes = false } = {}) {
+function fakeHub(label, { darkAnswers = 404, writes = false, darkCode = 'disabled' } = {}) {
   const root = temp(label);
   put(root, 'server.js', `
 import http from 'node:http';
@@ -104,7 +137,7 @@ const server = http.createServer((req, res) => {
   if (req.url.startsWith('/staff')) return json(401, { code: 'sign-in' });
   if (req.url.startsWith('/dark')) {
     if (${writes}) writeFileSync(join(process.env.APP_DATA_DIR, 'written.json'), '{}');
-    return json(${darkAnswers}, { code: 'disabled' });
+    return json(${darkAnswers}, ${JSON.stringify(darkCode === null ? { message: 'not found' } : { code: darkCode })});
   }
   return json(404, {});
 });
@@ -132,6 +165,9 @@ test('route probe: routes file checks and status rules', () => {
   assert.equal(statusOk('staff', 200) || statusOk('staff', 404), false);
   assert.equal(statusOk('dark', 404), true);
   assert.equal(statusOk('dark', 401) || statusOk('dark', 200), false);
+  assert.equal(statusOk('dark', 404, 'disabled'), true);
+  assert.equal(statusOk('dark', 404, 'not found'), false, 'a plain 404 is not a switched-off route');
+  assert.equal(statusOk('dark', 404, 'gone', 'gone'), true);
   assert.deepEqual(changedFiles({ 'a.json': '1', 'logs/x': '1' }, { 'a.json': '2', 'logs/x': '2', 'b.json': '1' }), ['a.json', 'b.json']);
 });
 
@@ -144,6 +180,10 @@ test('route probe: a hub that answers as required passes; a dark route that answ
   const answering = await probeRoutes(fakeHub('answering', { darkAnswers: 200 }), loadRoutes(routesFile(ROUTES)), { startTimeoutMs: 30_000 });
   assert.equal(answering.problems, 1);
   assert.equal(answering.rows[1].ok, false);
+
+  const plain404 = await probeRoutes(fakeHub('plain404', { darkCode: null }), loadRoutes(routesFile(ROUTES)), { startTimeoutMs: 30_000 });
+  assert.equal(plain404.problems, 1);
+  assert.equal(plain404.rows[1].ok, false);
 
   const writing = await probeRoutes(fakeHub('writing', { writes: true }), loadRoutes(routesFile(ROUTES)), { startTimeoutMs: 30_000 });
   assert.deepEqual(writing.changed, ['written.json']);

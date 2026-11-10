@@ -2,7 +2,7 @@
 /**
  * Switch-off audit: compares the code defaults of two hub trees.
  *
- *   node scripts/ship/switch-audit.mjs <base tree> <head tree> [--json]
+ *   node scripts/ship/switch-audit.mjs <base tree> <head tree> [--json] [--accept <file>]
  *
  * Prints every automation-settings default leaf that head adds or changes, every SETTINGS_KEYS entry
  * head adds, the e-mail settings defaults head adds, and every process.env name that head's runtime
@@ -11,8 +11,13 @@
  * A new leaf counts as off when it is false, 'off', null, '', 0 or an empty list or object, and as
  * shadow when it is 'shadow' (shadow writes nothing live by the hub's own rules; it is listed so a
  * reader can check it). Any other new or changed leaf is CHECK: a person looks at it. Exit 1 when
- * there is a CHECK leaf, 0 otherwise. A tree whose module cannot be loaded is exit 2 (an audit
- * that read nothing would report nothing).
+ * there is a CHECK leaf, 0 otherwise. A tree whose module cannot be loaded, or that no longer
+ * exports what the audit reads (defaultAutomationSettings, SETTINGS_KEYS, the e-mail defaults), is
+ * exit 2 (an audit that read nothing would report nothing).
+ *
+ * --accept <file> names the CHECK leaves a person has reviewed: { "accept": ["<section title>: <leaf key>"] }.
+ * An accepted leaf is printed as ACCEPTED and does not count; a name that matches no CHECK leaf is
+ * printed as unused, so a stale list shows.
  *
  * The audit loads the trees' own data modules with a temp data folder and in safe mode; it never
  * writes to either tree.
@@ -88,27 +93,54 @@ async function load(dir, rel) {
   }
 }
 
-const emailDefaults = (m) => (typeof m.defaultEmailSettings === 'function' ? m.defaultEmailSettings() : (m.DEFAULT_EMAIL_SETTINGS || {}));
+/** The e-mail defaults of a module; a module with neither export is an error, never an empty set. */
+function emailDefaults(m, where) {
+  if (typeof m.defaultEmailSettings === 'function') return m.defaultEmailSettings();
+  if (m.DEFAULT_EMAIL_SETTINGS && typeof m.DEFAULT_EMAIL_SETTINGS === 'object') return m.DEFAULT_EMAIL_SETTINGS;
+  throw new Error(`${where}/data/email-store.js exports neither defaultEmailSettings nor DEFAULT_EMAIL_SETTINGS`);
+}
+
+function automationDefaults(m, where) {
+  if (typeof m.defaultAutomationSettings !== 'function') throw new Error(`${where}/data/automation-settings.js does not export defaultAutomationSettings`);
+  return m.defaultAutomationSettings();
+}
+
+function readSettingsKeys(m, where) {
+  if (!m.SETTINGS_KEYS || typeof m.SETTINGS_KEYS !== 'object') throw new Error(`${where}/packages/suite/core/delivery/vocab.js does not export SETTINGS_KEYS`);
+  return m.SETTINGS_KEYS;
+}
 
 /** Runs the audit on two trees. Returns { sections, settingsKeys, env, check }. */
-export async function auditSwitches(baseDir, headDir) {
+export async function auditSwitches(baseDir, headDir, { accept = [] } = {}) {
   const [ba, he] = [await load(baseDir, 'data/automation-settings.js'), await load(headDir, 'data/automation-settings.js')];
   const [bv, hv] = [await load(baseDir, 'packages/suite/core/delivery/vocab.js'), await load(headDir, 'packages/suite/core/delivery/vocab.js')];
   const [be, hee] = [await load(baseDir, 'data/email-store.js'), await load(headDir, 'data/email-store.js')];
   const sections = [
-    { title: 'defaultAutomationSettings()', ...compareLeaves(ba.defaultAutomationSettings?.() || {}, he.defaultAutomationSettings?.() || {}) },
-    { title: 'email settings defaults', ...compareLeaves(emailDefaults(be), emailDefaults(hee)) },
+    { title: 'defaultAutomationSettings()', ...compareLeaves(automationDefaults(ba, baseDir), automationDefaults(he, headDir)) },
+    { title: 'email settings defaults', ...compareLeaves(emailDefaults(be, baseDir), emailDefaults(hee, headDir)) },
   ];
-  const baseKeys = leaves(bv.SETTINGS_KEYS || {});
+  const baseKeys = leaves(readSettingsKeys(bv, baseDir));
   const settingsKeys = {
     from: bv.VOCAB_VERSION,
     to: hv.VOCAB_VERSION,
-    added: Object.entries(leaves(hv.SETTINGS_KEYS || {})).filter(([k]) => !(k in baseKeys)).map(([key, value]) => ({ key, value })),
+    added: Object.entries(leaves(readSettingsKeys(hv, headDir))).filter(([k]) => !(k in baseKeys)).map(([key, value]) => ({ key, value })),
   };
   const baseEnv = envNames(baseDir);
   const env = [...envNames(headDir)].filter((n) => !baseEnv.has(n)).sort();
+  const wanted = new Set(accept);
+  const used = new Set();
+  for (const section of sections) {
+    for (const row of section.rows) {
+      const name = `${section.title}: ${row.key}`;
+      if (row.state === 'CHECK' && wanted.has(name)) {
+        row.state = 'ACCEPTED';
+        used.add(name);
+      }
+    }
+  }
+  const unusedAccepts = accept.filter((name) => !used.has(name));
   const check = sections.reduce((n, s) => n + s.rows.filter((r) => r.state === 'CHECK').length, 0);
-  return { sections, settingsKeys, env, check };
+  return { sections, settingsKeys, env, check, unusedAccepts };
 }
 
 export function formatAudit(result) {
@@ -125,22 +157,38 @@ export function formatAudit(result) {
   for (const s of rest) section(s);
   lines.push(`== env names read by head runtime files and not by base (${result.env.length})`);
   for (const n of result.env) lines.push(`  ${n}`);
+  for (const name of result.unusedAccepts || []) lines.push(`  unused --accept entry: ${name}`);
   lines.push(`audit: ${result.check} default(s) to check by hand`);
   return lines.join('\n');
 }
 
 export async function main(argv = process.argv.slice(2)) {
   const json = argv.includes('--json');
-  const dirs = argv.filter((a) => !a.startsWith('--')).map((a) => resolve(a));
-  if (dirs.length !== 2) {
-    console.error('usage: switch-audit.mjs <base tree> <head tree> [--json]');
+  const aIdx = argv.indexOf('--accept');
+  const dirs = argv.filter((a, i) => !a.startsWith('--') && !(aIdx >= 0 && i === aIdx + 1)).map((a) => resolve(a));
+  if (dirs.length !== 2 || (aIdx >= 0 && !argv[aIdx + 1])) {
+    console.error('usage: switch-audit.mjs <base tree> <head tree> [--json] [--accept <file>]');
     return 2;
+  }
+  let accept = [];
+  if (aIdx >= 0) {
+    try {
+      const parsed = JSON.parse(readFileSync(resolve(argv[aIdx + 1]), 'utf8'));
+      accept = Array.isArray(parsed?.accept) ? parsed.accept.map(String) : null;
+    } catch (error) {
+      console.error(`switch-audit: cannot read the --accept file: ${error?.message || error}`);
+      return 2;
+    }
+    if (!accept) {
+      console.error('switch-audit: the --accept file needs { "accept": [ ... ] }');
+      return 2;
+    }
   }
   const dataDir = mkdtempSync(join(tmpdir(), 'switch-audit-'));
   process.env.APP_DATA_DIR = dataDir;
   process.env.HUB_SAFE_MODE = '1';
   try {
-    const result = await auditSwitches(dirs[0], dirs[1]);
+    const result = await auditSwitches(dirs[0], dirs[1], { accept });
     console.log(json ? JSON.stringify(result, null, 2) : formatAudit(result));
     return result.check ? 1 : 0;
   } catch (error) {

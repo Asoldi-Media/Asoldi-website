@@ -94,5 +94,5 @@ test('the booker address is matched by hash: a listed address matches in any cas
   assert.equal(isBaardBookerEmail(''), false);
   const { readFileSync } = await import('node:fs');
   const source = readFileSync(new URL('../lib/sales-baard-farkas-assign.js', import.meta.url), 'utf8');
-  assert.doesNotMatch(source, /[w.+-]+@(?!asoldi.com)[w-]+.[a-z]{2,}/i, 'no personal address in the source');
+  assert.doesNotMatch(source, /[\w.+-]+@(?!asoldi\.com)[\w-]+\.[a-z]{2,}/i, 'no personal address in the source');
 });

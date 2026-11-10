@@ -17,6 +17,9 @@
     { "method": "GET", "path": "/api/hub/email/unsubscribe", "expect": "dark" },
     { "method": "GET", "path": "/api/internal/maker/seo-record?salesClientId=x", "expect": "dark" },
     { "method": "GET", "path": "/api/legal/texts/vilkar", "expect": "dark" },
-    { "method": "GET", "path": "/api/client/legal", "expect": "dark" }
+    { "method": "GET", "path": "/api/client/legal", "expect": "dark" },
+    { "method": "GET", "path": "/api/hub/email/owner-recipients", "expect": "dark" },
+    { "method": "PUT", "path": "/api/hub/email/owner-recipients", "body": {}, "expect": "dark" },
+    { "method": "POST", "path": "/api/hub/email/owner-notify", "body": {}, "expect": "dark" }
   ]
 }

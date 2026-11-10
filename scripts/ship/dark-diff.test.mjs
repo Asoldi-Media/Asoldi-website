@@ -560,7 +560,11 @@ function copyTree(dest, patch = null) {
     for (const [rel, edit] of Object.entries(files)) {
       const file = join(dest, ...rel.split('/'));
       let text = readFileSync(file, 'utf8');
-      for (const [anchor, replacement] of edit.replace || []) {
+      for (let [anchor, replacement] of edit.replace || []) {
+        if (text.includes('\r\n')) {
+          anchor = anchor.replace(/\r?\n/g, '\r\n');
+          replacement = replacement.replace(/\r?\n/g, '\r\n');
+        }
         assert.ok(text.includes(anchor), `${rel} anchor missing: ${anchor.slice(0, 60)}`);
         text = text.replace(anchor, replacement);
       }
@@ -671,6 +675,14 @@ describe('dark-diff on a seeded data folder', { skip: !canBoot && 'no hub depend
         },
       },
     });
+    // A release whose client create answers without an id: every later step that needs the id is
+    // skipped for a missing value on both sides.
+    trees.noid = copyTree(join(root, 'tree-noid'), {
+      replace: [[
+        'res.status(201).json({\n      client,\n      warnings: syncResult.warnings',
+        'res.status(201).json({\n      client: { ...client, id: undefined },\n      warnings: syncResult.warnings',
+      ]],
+    });
     // A release that signs tokens but accepts none of them back: what a token cut-off after the
     // clock start does to both releases. Every signed-in step answers 401 on both sides.
     trees.refusing = copyTree(join(root, 'tree-refusing'), {
@@ -734,6 +746,18 @@ describe('dark-diff on a seeded data folder', { skip: !canBoot && 'no hub depend
     assert.deepEqual(both.unlisted, []);
     const one = classify(report.unlisted, { changes: [{ kind: 'site-config', match: 'site-config * body.seededChange' }], ignore: [] });
     assert.deepEqual(one.unlisted.map((d) => d.key), ['route GET /api/hub/dark-diff-seeded']);
+  });
+
+  test('the flow minimum is enforced by the run: steps skipped on both releases for a missing value fail with a harness error', { timeout: 900_000 }, async () => {
+    setup();
+    await assert.rejects(
+      runDarkDiff({ base: trees.noid, head: trees.noid, data, inventory: false, minRan: 1, nodeModules: NODE_MODULES }),
+      (error) => error instanceof HarnessError && /ran too little|did not run/.test(error.message),
+    );
+    // The same data with a release that creates the client properly passes the minimum.
+    const report = await runDarkDiff({ base: trees.same, head: trees.same, data, inventory: false, minRan: 1, nodeModules: NODE_MODULES });
+    assert.equal(report.ok, true);
+    assert.ok(report.flowMinimum.signedIn.total > 0 && report.flowMinimum.signedIn.ran === report.flowMinimum.signedIn.total);
   });
 
   test('--secrets: a release that writes secret files at boot fails', { timeout: 900_000 }, async () => {
