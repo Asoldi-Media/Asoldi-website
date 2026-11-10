@@ -327,12 +327,25 @@ export async function runDeliveryScenario({ hub, token, plan, banks = {}, makerR
     if (!banks[spec.id]) continue;
     timeline.clients[spec.id].kundedata = await fillKundedata(base, token, spec, salesClient(dataDir, spec.id), banks[spec.id]);
   }
+  // 1b. A run that exists before signing is linked first, as for a client whose sales preview was built
+  // already; signing, the workshop and the job must keep that link.
+  if (timeline.switches === 'on') {
+    for (const spec of plan.clients) {
+      const run = makerRuns[spec.id];
+      if (!run?.runId) continue;
+      const linked = await admin.post(`/api/admin/sales/${encodeURIComponent(spec.id)}/set-maker-run`, { makerRun: { runId: run.runId, templateSetId: run.templateSetId || '' } });
+      timeline.clients[spec.id].linkedRun = { runId: run.runId, status: linked.status };
+    }
+  }
   // 2. Signing.
   const before = readOutbox(dataDir).length;
   for (const spec of plan.clients) {
     const signed = await signClient(base, token, spec, salesClient(dataDir, spec.id));
     timeline.clients[spec.id].sign = { path: signed.path, status: signed.status, ok: signed.ok };
     log(`[delivery] ${spec.id}: signed through ${signed.path} -> ${signed.status}`);
+  }
+  for (const spec of plan.clients) {
+    if (timeline.clients[spec.id].linkedRun) timeline.clients[spec.id].linkedAfterSigning = String(salesClient(dataDir, spec.id)?.makerRun?.runId || '');
   }
   const afterSigning = await settledOutbox(dataDir);
   timeline.outboxAfterSigning = afterSigning.length - before;
@@ -387,11 +400,6 @@ export async function runDeliveryScenario({ hub, token, plan, banks = {}, makerR
   // 5. Preview jobs.
   if (timeline.switches === 'on') {
     for (const spec of plan.clients) {
-      const run = makerRuns[spec.id];
-      if (run?.runId) {
-        const linked = await admin.post(`/api/admin/sales/${encodeURIComponent(spec.id)}/set-maker-run`, { makerRun: { runId: run.runId, templateSetId: run.templateSetId || '' } });
-        timeline.clients[spec.id].linkedRun = { runId: run.runId, status: linked.status };
-      }
       const input = jobInputs[spec.id] || {};
       const queued = await admin.post('/api/admin/delivery/jobs', { salesClientId: spec.id, kind: 'preview', input });
       timeline.jobs[spec.id] = { enqueue: queued.status, jobId: queued.body?.job?.id || '', mode: queued.body?.mode || '' };

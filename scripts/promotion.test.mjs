@@ -18,6 +18,7 @@ const suite = await import('../lib/release-suite.js');
 const guards = await import('../lib/delivery-guards.js');
 const emails = await import('../lib/delivery-emails.js');
 const alerts = await import('../lib/delivery-alerts.js');
+const { VOCAB_VERSION } = await import('../packages/suite/core/delivery/vocab.js');
 
 const SETTINGS_FILE = join(DATA_DIR, 'automation-settings.json');
 const KEY = 'a'.repeat(64);
@@ -44,7 +45,7 @@ function report(switches, { createdAt = new Date().toISOString(), key = KEY } = 
     schema: suite.RELEASE_REPORT_SCHEMA,
     createdAt,
     suite: 'delivery-e2e',
-    code: { commit: '0123456789abcdef' },
+    code: { commit: '0123456789abcdef', vocabVersion: VOCAB_VERSION },
     profile: 'replay',
     clients: 4,
     switches,
@@ -342,4 +343,31 @@ test('guards: shadow and manual sends are not guarded (shadow never sends; a per
   assert.equal(manual.status, 'sent');
   assert.equal(pausedReason(), '');
   assert.equal(existsSync(guards.guardsPath({ dataDir: DATA_DIR })), false, 'no guard state for a manual send');
+});
+
+test('guards: provider events of the e-mail log reach the guard of the delivery kind (bounce pauses it; other kinds change nothing)', async () => {
+  resetData();
+  autoSettings();
+  const emailLog = await import('../lib/email-log.js');
+  const sent = [];
+  const at = Date.now();
+  for (let i = 0; i < 20; i += 1) await autoSend(message(), { sent, key: `p-${i}`, at });
+  // Every automatic mail carries the id the provider echoes and is logged under its delivery kind.
+  assert.match(sent[0].headers['X-Mailin-custom'], /^site:delivery\|delivery:postWorkshop\|/);
+  const id = sent[0].headers['X-Mailin-custom'].split('|')[2];
+  const other = sent[1].headers['X-Mailin-custom'].split('|')[2];
+  // Negative control: a bounce for a message of another kind counts for no delivery kind.
+  emailLog.appendMessage({ id: 'msg_other_kind', siteId: 'site-x', kind: 'order', status: 'accepted', to: 'a@example.com' });
+  emailLog.appendEvent({ messageId: 'msg_other_kind', t: 'hardBounce' });
+  emailLog.appendEvent({ messageId: 'msg_unknown', t: 'hardBounce' });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(guards.guardStats({ dataDir: DATA_DIR, now: at }).kinds.postWorkshop.bounce ?? 0, 0);
+  // A delivered event is not feedback.
+  emailLog.appendEvent({ messageId: id, t: 'delivered' });
+  // Two bounces on 20 sends (10 %) pause the kind.
+  emailLog.appendEvent({ messageId: id, t: 'hardBounce' });
+  emailLog.appendEvent({ messageId: other, t: 'softBounce' });
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.match(pausedReason(), /^guard bounce-rate/);
+  emailLog.flushEvents();
 });

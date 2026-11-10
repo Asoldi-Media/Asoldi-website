@@ -17,7 +17,7 @@ const { RELEASE_GATED_SWITCHES } = await import('../packages/suite/core/delivery
 const root = mkdtempSync(join(tmpdir(), 'release-suite-test-'));
 test.after(() => rmSync(root, { recursive: true, force: true }));
 
-const COVERED = ['signing', 'delivery.loop', 'gate', 'brief', 'emails.postWorkshop'];
+const COVERED = ['signing', 'delivery.loop', 'brief']; // gate and emails.postWorkshop run only in shadow here: not covered
 let run;
 
 test('the suite passes every switch it covers, marks the rest not covered, and signs the report', { timeout: 900_000 }, async () => {

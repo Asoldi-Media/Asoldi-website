@@ -105,8 +105,10 @@ async function runOnce({ out, label, switches, fixtures, keyFile, log }) {
     const token = await adminToken(hub.base, dataDir);
     const worker = createStubWorker({ base: hub.base, hostToken: hostTokenFrom(plan.makerHost.tokenOut) });
     const jobInputs = Object.fromEntries(clients.map((client) => [client.id, { templateSetId: 'stub-template', language: client.language }]));
-    const timeline = await runDeliveryScenario({ hub, token, plan, worker, jobInputs, jobTimeoutMs: 5 * 60_000, log });
-    const ctx = { dataDir, plan, timeline, transcripts: JSON.parse(readFileSync(plan.transcriptsOut, 'utf8')), labelsDir: '', expect: { continued: {} }, outDir: root };
+    // The first client already has a run (as after a built sales preview) when it signs; the job continues it.
+    const preRuns = plan.clients[0] ? { [plan.clients[0].id]: { runId: 'pre-signing-run' } } : {};
+    const timeline = await runDeliveryScenario({ hub, token, plan, worker, jobInputs, makerRuns: preRuns, jobTimeoutMs: 5 * 60_000, log });
+    const ctx = { dataDir, plan, timeline, transcripts: JSON.parse(readFileSync(plan.transcriptsOut, 'utf8')), labelsDir: '', expect: { continued: Object.fromEntries(Object.entries(preRuns).map(([id, run]) => [id, run.runId])) }, outDir: root };
     const checks = await runDeliveryChecks(ctx);
     const hosts = egressHosts(hub.egressFile);
     return { plan, seeded, timeline, checks, ctx, egress: { hosts, findings: egressFindings(hosts, `${label} hub`) }, log: hub.log() };

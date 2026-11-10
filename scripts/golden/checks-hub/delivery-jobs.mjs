@@ -26,6 +26,8 @@ export async function check(ctx) {
     if (job.status === 'done' && row.latestReadyStep !== PREVIEW_STEP) findings.push(`${spec.id}: the run is ready up to ${row.latestReadyStep || 'nothing'}, expected ${PREVIEW_STEP}`);
     if (continued[spec.id]) {
       if (row.runId !== continued[spec.id] || row.createdRun) findings.push(`${spec.id}: the linked run ${continued[spec.id]} was not continued (job run ${row.runId || 'none'}, created ${row.createdRun})`);
+      const pre = ctx.timeline?.clients?.[spec.id];
+      if (pre?.linkedRun && pre.linkedAfterSigning !== continued[spec.id]) findings.push(`${spec.id}: signing replaced the run linked before it (${pre.linkedAfterSigning || 'nothing'} vs ${continued[spec.id]})`);
       if (row.linkedRun !== continued[spec.id]) findings.push(`${spec.id}: the client is linked to ${row.linkedRun || 'nothing'}, not to its run ${continued[spec.id]}`);
     } else if (job.status === 'done') {
       if (!row.createdRun) findings.push(`${spec.id}: the job created no run for a client without one`);

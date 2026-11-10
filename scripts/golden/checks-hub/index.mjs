@@ -14,10 +14,10 @@ export const DELIVERY_CHECKS = Object.freeze([stages, outbox, gate, brief, jobs]
 export const SWITCH_COVERAGE = Object.freeze({
   signing: Object.freeze([stages.id, outbox.id]),
   'delivery.loop': Object.freeze([stages.id, jobs.id]),
-  gate: Object.freeze([gate.id]),
   brief: Object.freeze([brief.id]),
-  'emails.postWorkshop': Object.freeze([outbox.id]),
 });
+// gate and emails.postWorkshop are run only in shadow here (the auto send with a real transport is
+// not exercised), so they stay not-covered and this suite never gives them a pass.
 
 /** Runs every check; a check that throws is a failed check. */
 export async function runDeliveryChecks(ctx) {

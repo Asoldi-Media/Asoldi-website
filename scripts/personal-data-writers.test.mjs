@@ -15,7 +15,7 @@ process.env.APP_DATA_DIR = mkdtempSync(join(tmpdir(), 'asoldi-pd-writers-'));
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const { NON_PERSONAL_WRITERS, loadStoreModules } = await import('../lib/personal-data.js');
 
-const WRITER_CALL = /\b(writeDataJson|writeHotJson|updateJsonLocked|writeJsonAtomic|writeTextAtomic|createJsonOnce)\s*\(/g;
+const WRITER_CALL = /\b(writeDataJson|writeHotJson|updateJsonLocked|writeJsonAtomic|writeTextAtomic|createJsonOnce|updateHotJson)\s*\(/g;
 // Server code only: the browser bundle (app, src) cannot write the data disk; scripts are tools.
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', 'scripts', 'public', 'app', 'src', 'tmp', 'local', 'assets', 'docs']);
 const BACKSLASH = String.fromCharCode(92);
