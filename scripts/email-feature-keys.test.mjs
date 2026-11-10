@@ -34,7 +34,7 @@ test('the email rows carry the reconciled registry values (scope, default, requi
     assert.equal(row.scope, want.scope, `${key} scope`);
     assert.equal(row.default, want.default, `${key} default`);
     assert.deepEqual([...row.requires], want.requires || [], `${key} requires`);
-    assert.equal(row.owner, 'WS7', `${key} owner`);
+    assert.equal(row.owner, 'email', `${key} owner`);
   }
   // Review requests come with the shop (ecom) or the booking add-on, not with tier 2 alone.
   assert.equal(registry.resolveFeatures({ tierId: 'tier-2-seo' }).entitled.has('email.automations.reviewRequest'), false);
