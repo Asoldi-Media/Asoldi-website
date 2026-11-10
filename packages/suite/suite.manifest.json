@@ -1,8 +1,8 @@
 {
   "source": "asoldi-website/packages/suite",
-  "syncedAt": "2026-11-05T03:20:50.004Z",
+  "syncedAt": "2026-11-05T21:24:58.891Z",
   "files": {
-    "core/delivery/vocab.js": "99b18985f772970d8b042de0cb1e83a7bbf65b5e30dae929fe9b1512a6188493",
+    "core/delivery/vocab.js": "1a6f6aeedf60ef0a69400b31973f7ca4d2b7adef94c816992d82a01983049eff",
     "core/documents/kind.js": "2d619597ae6c457698c539b3b7ecd6923709e868922e5afd9a1eceb4b98ae109",
     "core/documents/text.js": "1bfd544013c84f6872c11e129d36d3a914df6c0ffb68c4ec321506bed8b9b7e0",
     "core/facts/merge.js": "d0a56882945c47f8f2d2a59b2996df3f9cebe2c8fb954ced7af40be85089ae09",

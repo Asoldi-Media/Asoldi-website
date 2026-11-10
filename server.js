@@ -12509,6 +12509,10 @@ async function handleStripeWebhook(req, res) {
         const invoice = event.data.object || {};
         const profile = clientPortal.getClientProfileByStripeCustomerId(sanitizeText(invoice.customer));
         if (profile) clientPortal.setClientPayment(profile.userId, { status: 'past_due' });
+        // Cancellation switch: the delivery state notes the failed payment (nothing while it is off).
+        await import('./lib/delivery-lifecycle.js')
+          .then((lifecycle) => lifecycle.onPaymentFailed(invoice))
+          .catch((error) => console.error('[lifecycle] payment failed', sanitizeText(error?.message) || error));
         break;
       }
       case 'customer.subscription.deleted': {
@@ -12521,6 +12525,17 @@ async function handleStripeWebhook(req, res) {
             canceledAt: nowIso(),
           });
         }
+        // Cancellation switch: the delivery state notes the cancellation (nothing while it is off).
+        await import('./lib/delivery-lifecycle.js')
+          .then((lifecycle) => lifecycle.onSubscriptionEnded(sub))
+          .catch((error) => console.error('[lifecycle] subscription ended', sanitizeText(error?.message) || error));
+        break;
+      }
+      case 'invoice.paid': {
+        // Cancellation switch: a paid invoice ends a failed-payment state (nothing while it is off).
+        await import('./lib/delivery-lifecycle.js')
+          .then((lifecycle) => lifecycle.onPaymentRecovered(event.data.object || {}))
+          .catch((error) => console.error('[lifecycle] payment recovered', sanitizeText(error?.message) || error));
         break;
       }
       default:
