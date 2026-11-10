@@ -128,6 +128,8 @@ Three items in the data dir belong to the delivery work. None is in git and none
 
 Restore runbook: hub `docs/delivery-runbooks.md`.
 
+`cms-fleet-monitor.json` (the CMS fleet monitor, hub `docs/cms-feature-tree.md`, Fleet monitor): site ids, enforcement proposal states, health ping results, the last digest and the last 50 enforcement changes. Written only while `cmsFleet.monitor` or `cmsFleet.wakePing` is on, or when Superadmin flips, reverts or dismisses a proposal. One file, written in place under a lock (no dated copies in `backups/`). Deleting it only restarts the 7-day watch.
+
 ## 5) Hostinger `backups/` folder (inodes)
 
 Every write to live JSON (`sales-clients.json`, `sites.json`, users, offers, …) also used to drop a **new timestamped copy** into `backups/` with **no cleanup**. That folder is never read by the app. Live data is the sibling `*.json` files in the parent directory.

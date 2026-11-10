@@ -184,6 +184,20 @@ export function defaultAutomationSettings() {
       transcriptKeywords: { enabled: false, mode: 'shadow', paused: null },
     },
     // --- end intake
+    // --- cms fleet monitor
+    // cmsFleet.monitor: the daily review of the client CMS sites (lib/cms-fleet-monitor.js). Off: nothing
+    // runs and nothing is written. shadow: proposals and the digest are worked out and stored, no mail.
+    // auto: the digest is also mailed to alerts.to (the safe-mode outbox while safe mode is on).
+    // cmsFleet.autoApplyFlip: with the monitor in auto and safe mode off, a proposal nobody dismissed for
+    // 3 days is applied (featureEnforcement 'on').
+    // cmsFleet.wakePing: the hourly GET /api/cms/health on every CMS site (5 s timeout).
+    // A paused switch ({reason}) counts as off.
+    cmsFleet: {
+      monitor: { enabled: false, mode: 'shadow', paused: null },
+      autoApplyFlip: false,
+      wakePing: { enabled: false, paused: null },
+    },
+    // --- end cms fleet monitor
   };
 }
 
@@ -313,6 +327,9 @@ const ENUMS = {
   'intake.tierSteps.mode': ['shadow', 'auto'],
   'intake.transcriptKeywords.mode': ['shadow', 'auto'],
   // --- end intake
+  // --- cms fleet monitor
+  'cmsFleet.monitor.mode': ['shadow', 'auto'],
+  // --- end cms fleet monitor
 };
 
 const RANGES = {
@@ -380,6 +397,11 @@ const BOOLEANS = new Set([
   'intake.tierSteps.enabled',
   'intake.transcriptKeywords.enabled',
   // --- end intake
+  // --- cms fleet monitor
+  'cmsFleet.monitor.enabled',
+  'cmsFleet.autoApplyFlip',
+  'cmsFleet.wakePing.enabled',
+  // --- end cms fleet monitor
 ]);
 
 function knownPaths() {
@@ -534,6 +556,15 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
     }
   }
   // --- end intake
+  // --- cms fleet monitor
+  for (const name of ['monitor', 'wakePing']) {
+    const node = value.cmsFleet?.[name];
+    if (!isPlainObject(node)) continue;
+    const paused = normalizePaused(node.paused, { by, now });
+    if (paused === undefined) fail(`cmsFleet.${name}.paused`, 'Must be null or {reason}.');
+    else node.paused = paused;
+  }
+  // --- end cms fleet monitor
   const tiers = value.publish?.staging?.tiers;
   if (!Array.isArray(tiers) || tiers.some((tier) => !TIER_IDS.includes(tier))) {
     fail('publish.staging.tiers', `Must list tier ids (${TIER_IDS.join(', ')}).`);

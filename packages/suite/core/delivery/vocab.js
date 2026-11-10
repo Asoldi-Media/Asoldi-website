@@ -536,6 +536,14 @@ export const SETTINGS_KEYS = Object.freeze({
   intakeTranscriptKeywordsMode: 'intake.transcriptKeywords.mode',
   intakeTranscriptKeywordsPaused: 'intake.transcriptKeywords.paused',
   // --- end intake
+  // --- cms fleet monitor
+  cmsFleetMonitor: 'cmsFleet.monitor.enabled',
+  cmsFleetMonitorMode: 'cmsFleet.monitor.mode',
+  cmsFleetMonitorPaused: 'cmsFleet.monitor.paused',
+  cmsFleetAutoApplyFlip: 'cmsFleet.autoApplyFlip',
+  cmsFleetWakePing: 'cmsFleet.wakePing.enabled',
+  cmsFleetWakePingPaused: 'cmsFleet.wakePing.paused',
+  // --- end cms fleet monitor
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);
