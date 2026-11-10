@@ -21,7 +21,7 @@ const offerMeetings = await import('../lib/offer-meetings.js');
 const CLIENT = {
   id: 'client-1',
   ownerId: 'sales-anna',
-  businessName: 'Byneset Bydelskafé AS',
+  businessName: 'Harbor Bydelskafé AS',
   contactPerson: 'Kari Nordmann',
   contactEmail: 'person-a17e62@dahlia.test',
   orgNumber: '923 456 789',
@@ -61,7 +61,7 @@ test('offer email: tier block shows package, "opp til N sider", ex/incl mva per 
   assert.match(email.html, /eks\. mva/i);
   assert.match(email.html, /inkl\. mva/i);
   assert.match(email.html, /per måned|\/ ?mnd/i);
-  assert.match(email.subject, /Byneset/);
+  assert.match(email.subject, /Harbor/);
 
   // Swapping tier replaces the block instead of appending a second one.
   const swapped = offerEmail.applyOfferProducts(email.html, offerEmail.productsWithTier(products, tiers.WEBSITE_TIERS[2].id));
@@ -122,10 +122,10 @@ test('offer AI skips a noise transcript under 10 lines and keeps a real conversa
 test('pasted Fireflies title finds the stored meeting', async () => {
   const hooks = await import('../lib/fireflies-webhook.js');
   const rows = [
-    { meetingId: 'aaa', title: 'Asoldi x Byneset Bydelskafé' },
+    { meetingId: 'aaa', title: 'Asoldi x Harbor Bydelskafé' },
     { meetingId: 'bbb', title: 'Internt standup' },
   ];
-  const hit = hooks.rankMeetingsByTitle(rows, 'Byneset Bydelskafé');
+  const hit = hooks.rankMeetingsByTitle(rows, 'Harbor Bydelskafé');
   assert.equal(hit[0].meetingId, 'aaa');
   assert.equal(hooks.rankMeetingsByTitle(rows, 'ab').length, 0);
   const linked = hooks.rankMeetingsByTitle(
@@ -156,25 +156,25 @@ test('fireflies matcher: only the booked sales meeting counts, not a later calen
 test('offer draft shows the client and the editing rep instead of identity merge tags', async () => {
   const templates = await import('../lib/email-templates-store.js');
   const email = templates.buildOfferEmailForClient(CLIENT, {}, {
-    sender: { name: 'Alexander', fromEmail: 'alexander@asoldi.com', phone: '+47 923 31 098' },
+    sender: { name: 'Alexander', fromEmail: 'alexander@asoldi.com', phone: '+47 400 00 000' },
   });
   const html = offerEmail.resolveOfferIdentityTags(email.html, {
     firstName: 'Kari',
     fullName: 'Kari Nordmann',
-    businessName: 'Byneset Bydelskafé AS',
+    businessName: 'Harbor Bydelskafé AS',
     signerName: 'Alexander',
     signerEmail: 'alexander@asoldi.com',
-    signerPhone: '+47 923 31 098',
+    signerPhone: '+47 400 00 000',
   });
   const subject = offerEmail.resolveOfferIdentityTags(email.subject, {
-    businessName: 'Byneset Bydelskafé AS',
+    businessName: 'Harbor Bydelskafé AS',
   }, { escape: false });
   assert.match(html, /Hei Kari,/);
   assert.match(html, /Alexander fra Asoldi/);
   assert.match(html, /alexander@asoldi.com/);
-  assert.match(html, /\+47 923 31 098/);
+  assert.match(html, /\+47 400 00 000/);
   assert.match(html, /\{\{need\}\}/);
-  assert.equal(subject, 'Tilbud til Byneset Bydelskafé AS fra Asoldi');
+  assert.equal(subject, 'Tilbud til Harbor Bydelskafé AS fra Asoldi');
   const old = offerEmail.refreshOfferShell('<p><strong>Kundebetingelser:</strong> Dere sender logo.</p><p>Nettsiden bygges i vårt eget CMS. Der ligger automatiserte prosesser.</p><h2>Hva som skjer fremover</h2><p>Vedlagt ligger kontrakten for valgt pakke. Den signeres først når dere har bestemt dere – ingenting betales før nettsiden er levert.</p>');
   assert.equal(old.includes('Kundebetingelser'), false);
   assert.match(old, /Dere sender logo/);
@@ -591,7 +591,7 @@ test('offer AI: transcript fill and contract reflection go through the injected 
     return { need: 'synlig nettside for kafeen', project: ['En nettside som viser meny og åpningstider.'], terms: 'Kunden sender logo.', benefits: 'Flere gjester via Google.' };
   };
   const profileFilled = await offerAi.fillOfferFromTranscript({
-    client: { ...CLIENT, industry: 'kafé', clientBrief: { short: 'Lokal kafé på Byneset.' } },
+    client: { ...CLIENT, industry: 'kafé', clientBrief: { short: 'Lokal kafé på Harbor.' } },
     quote: { productGoal: 'Flere gjester fra Google' },
     products: offerEmail.productsWithTier([], tiers.WEBSITE_TIERS[1].id),
     tierId: tiers.WEBSITE_TIERS[1].id,
@@ -603,7 +603,7 @@ test('offer AI: transcript fill and contract reflection go through the injected 
   assert.match(profileSeen[0].system, /kundekortet, produktnotatene og den valgte pakken/i);
   assert.doesNotMatch(profileSeen[0].user, /Transkript:/);
   assert.match(profileSeen[0].user, /kafé/i);
-  assert.match(profileSeen[0].user, /Lokal kafé på Byneset/);
+  assert.match(profileSeen[0].user, /Lokal kafé på Harbor/);
   assert.match(profileSeen[0].user, /SEO optimalisering/i);
   assert.doesNotMatch(profileSeen[0].user, /1499/);
 
@@ -832,29 +832,32 @@ test('users store + sender: phone is normalized, formatted and flows into {{sign
   const senderMod = await import('../lib/sales-sender.js');
   const salesEmail = await import('../lib/sales-email.js');
 
-  assert.equal(users.normalizePhone('+47 92331098'), '+4792331098');
-  assert.equal(users.normalizePhone('923 31 098'), '+4792331098');
-  assert.equal(users.normalizePhone('004792331098'), '+4792331098');
+  assert.equal(users.normalizePhone('+47 40000000'), '+4740000000');
+  assert.equal(users.normalizePhone('400 00 000'), '+4740000000');
+  assert.equal(users.normalizePhone('004740000000'), '+4740000000');
   assert.equal(users.normalizePhone('abc'), '');
   assert.equal(users.normalizePhone(''), '');
 
-  assert.equal(senderMod.formatPhoneNumber('+4792331098'), '+47 923 31 098');
+  assert.equal(senderMod.formatPhoneNumber('+4740000000'), '+47 400 00 000');
   assert.equal(senderMod.formatPhoneNumber('73 51 00 00'), '+47 73 51 00 00');
 
-  const sender = senderMod.buildSalesSender({ name: 'Alexander', username: 'alexander@asoldi.com', phone: '+4792331098' });
-  assert.equal(sender.phone, '+47 923 31 098');
+  const sender = senderMod.buildSalesSender({ name: 'Alexander', username: 'alexander@asoldi.com', phone: '+4740000000' });
+  assert.equal(sender.phone, '+47 400 00 000');
   assert.equal(sender.fromEmail, 'alexander@asoldi.com');
   const merge = salesEmail.salesEmailMergeMap(CLIENT, {}, sender);
-  assert.equal(merge.signerPhone, '+47 923 31 098');
+  assert.equal(merge.signerPhone, '+47 400 00 000');
   assert.equal(merge.signerEmail, 'alexander@asoldi.com');
   // No number on the profile → office fallback, never an empty signature.
   assert.match(salesEmail.salesEmailMergeMap(CLIENT, {}, senderMod.buildSalesSender({ name: 'Ola', username: 'ola@asoldi.com' })).signerPhone, /^\+47 /);
 
-  // Users created without a phone can get one later; alexander@asoldi.com is seeded on first read.
+  // Users created without a phone can get one later; with HUB_SEED_USER_PHONES set, a listed user is seeded on first read.
+  delete process.env.HUB_SEED_USER_PHONES;
   const created = await users.createUser('alexander@asoldi.com', 'secret-pass', 'sales', { name: 'Alexander' });
   assert.equal(created.ok, true);
+  assert.equal((await users.getUserByUsername('alexander@asoldi.com')).phone || '', '', 'nothing is seeded while the env is not set');
+  process.env.HUB_SEED_USER_PHONES = JSON.stringify({ 'Alexander@asoldi.com': '+47 400 00 000', 'broken': 5 });
   const seeded = await users.getUserByUsername('alexander@asoldi.com');
-  assert.equal(seeded.phone, '+4792331098', 'seeded number is written to users.json');
+  assert.equal(seeded.phone, '+4740000000', 'seeded number is written to users.json');
   const updated = await users.updateUserProfile(created.user.id, { phone: '+47 999 88 777' });
   assert.equal(updated.user.phone, '+4799988777', 'admin edit wins over the seed');
   assert.equal((await users.getUserByUsername('alexander@asoldi.com')).phone, '+4799988777', 'seed does not overwrite an existing number');
@@ -1093,7 +1096,7 @@ test('portal contract html uses a document header, party columns, and numbered s
   assert.match(html, /Domenetilgang/);
   assert.doesNotMatch(html, /Google Business Profile development/);
   assert.match(html, /offer-contract-parties/);
-  assert.match(html, /Byneset Bydelskafé/);
+  assert.match(html, /Harbor Bydelskafé/);
   assert.match(html, /1\. Tjenesteomfang/);
   const englishHtml = contractHtmlForOffer(
     { tierId: tiers.WEBSITE_TIERS[0].id, contractLanguage: 'en', sentAt: '2026-09-28T08:00:00.000Z' },

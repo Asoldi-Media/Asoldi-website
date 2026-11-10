@@ -24,7 +24,7 @@ import {
   normalizeValue, probePath, rollbackLosses, secretViolations, snapshotData, diffSnapshots,
 } from './dark-diff-lib.mjs';
 import {
-  addFakeSecrets, chooseClockStart, controlRefusals, HarnessError, latestTokenCutoff, linkNodeModules, loopbackOf, main, materializeRef,
+  addFakeSecrets, chooseClockStart, controlRefusals, DEFAULT_MIN_RAN, flowMinimum, HarnessError, latestTokenCutoff, linkNodeModules, loopbackOf, main, materializeRef,
   notRunOnBoth, notRunSteps, parseArgs, pick, readSecretNames, removeLink, REPO, rollbackStatusDifferences, runDarkDiff,
 } from './dark-diff.mjs';
 
@@ -176,6 +176,39 @@ test('the flows did not run: a signed-in step refused, or a step skipped after i
   assert.deepEqual(notRunOnBoth(notRunSteps(flows, refused), notRunSteps(flows, fine)), []);
   assert.deepEqual(notRunOnBoth(notRunSteps(flows, fine), notRunSteps(flows, refused)), []);
   assert.equal(notRunOnBoth(notRunSteps(flows, refused), notRunSteps(flows, refused)).length, 7);
+});
+
+const REQUIRED_ARGS = ['--base', 'a', '--head', 'b', '--data', 'd'];
+test('the flow minimum: a run where most signed-in or value-saving steps were skipped on both releases proves nothing', () => {
+  const flows = [
+    { name: 'f', steps: [
+      { method: 'POST', path: '/a', auth: 'admin', save: { id: 'body.id' } },
+      { method: 'GET', path: '/b/{{id}}', auth: 'admin' },
+      { method: 'PATCH', path: '/c/{{id}}', auth: 'admin' },
+      { method: 'GET', path: '/d/{{id}}', auth: 'admin' },
+      { settle: 1000 },
+      { method: 'POST', path: '/e', save: { token: 'body.token' } },
+    ] },
+  ];
+  const row = (key, extra) => ({ key, method: 'GET', path: `/${key}`, ...extra });
+  const everything = [row('f#0', { status: 201 }), row('f#1', { status: 200 }), row('f#2', { status: 200 }), row('f#3', { status: 200 }), row('f#5', { status: 201 })];
+  const ok = flowMinimum(flows, everything, everything, [], []);
+  assert.deepEqual(ok.problems, []);
+  assert.deepEqual([ok.signedIn, ok.saving], [{ total: 4, ran: 4 }, { total: 2, ran: 2 }]);
+  // Every step after the first was skipped for a missing value on both releases (the data's choice,
+  // so notRunSteps lists nothing), and the two sides compare equal: that is not a pass.
+  const skipped = [row('f#0', { status: 201 }), row('f#1', { skipped: 'missing id' }), row('f#2', { skipped: 'missing id' }), row('f#3', { skipped: 'missing id' }), row('f#5', { status: 201 })];
+  assert.deepEqual(notRunSteps(flows, skipped), [], 'the older check sees nothing wrong');
+  assert.deepEqual(flowMinimum(flows, skipped, skipped, [], []).problems, ['only 1 of 4 signed-in steps ran on both releases (the minimum is 2)']);
+  // A step that ran on one release only does not count.
+  assert.equal(flowMinimum(flows, everything, skipped, [], []).signedIn.ran, 1);
+  // A step in the not-run list does not count either, and the share can be set.
+  assert.equal(flowMinimum(flows, everything, everything, [{ key: 'f#1' }], []).signedIn.ran, 3);
+  assert.deepEqual(flowMinimum(flows, skipped, skipped, [], [], 0.25).problems, []);
+  assert.equal(DEFAULT_MIN_RAN, 0.5);
+  assert.deepEqual(flowMinimum([], [], [], [], []).problems, [], 'no flows, nothing to count');
+  assert.throws(() => parseArgs([...REQUIRED_ARGS, '--min-ran', '2']), /from 0 to 1/);
+  assert.equal(parseArgs([...REQUIRED_ARGS, '--min-ran', '0.8']).minRan, 0.8);
 });
 
 test('the clock starts after the data\'s latest token cut-off; an explicit earlier start is refused', async () => {
@@ -527,7 +560,11 @@ function copyTree(dest, patch = null) {
     for (const [rel, edit] of Object.entries(files)) {
       const file = join(dest, ...rel.split('/'));
       let text = readFileSync(file, 'utf8');
-      for (const [anchor, replacement] of edit.replace || []) {
+      for (let [anchor, replacement] of edit.replace || []) {
+        if (text.includes('\r\n')) {
+          anchor = anchor.replace(/\r?\n/g, '\r\n');
+          replacement = replacement.replace(/\r?\n/g, '\r\n');
+        }
         assert.ok(text.includes(anchor), `${rel} anchor missing: ${anchor.slice(0, 60)}`);
         text = text.replace(anchor, replacement);
       }
@@ -638,6 +675,14 @@ describe('dark-diff on a seeded data folder', { skip: !canBoot && 'no hub depend
         },
       },
     });
+    // A release whose client create answers without an id: every later step that needs the id is
+    // skipped for a missing value on both sides.
+    trees.noid = copyTree(join(root, 'tree-noid'), {
+      replace: [[
+        'res.status(201).json({\n      client,\n      warnings: syncResult.warnings',
+        'res.status(201).json({\n      client: { ...client, id: undefined },\n      warnings: syncResult.warnings',
+      ]],
+    });
     // A release that signs tokens but accepts none of them back: what a token cut-off after the
     // clock start does to both releases. Every signed-in step answers 401 on both sides.
     trees.refusing = copyTree(join(root, 'tree-refusing'), {
@@ -701,6 +746,18 @@ describe('dark-diff on a seeded data folder', { skip: !canBoot && 'no hub depend
     assert.deepEqual(both.unlisted, []);
     const one = classify(report.unlisted, { changes: [{ kind: 'site-config', match: 'site-config * body.seededChange' }], ignore: [] });
     assert.deepEqual(one.unlisted.map((d) => d.key), ['route GET /api/hub/dark-diff-seeded']);
+  });
+
+  test('the flow minimum is enforced by the run: steps skipped on both releases for a missing value fail with a harness error', { timeout: 900_000 }, async () => {
+    setup();
+    await assert.rejects(
+      runDarkDiff({ base: trees.noid, head: trees.noid, data, inventory: false, minRan: 1, nodeModules: NODE_MODULES }),
+      (error) => error instanceof HarnessError && /ran too little|did not run/.test(error.message),
+    );
+    // The same data with a release that creates the client properly passes the minimum.
+    const report = await runDarkDiff({ base: trees.same, head: trees.same, data, inventory: false, minRan: 1, nodeModules: NODE_MODULES });
+    assert.equal(report.ok, true);
+    assert.ok(report.flowMinimum.signedIn.total > 0 && report.flowMinimum.signedIn.ran === report.flowMinimum.signedIn.total);
   });
 
   test('--secrets: a release that writes secret files at boot fails', { timeout: 900_000 }, async () => {

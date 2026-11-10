@@ -192,6 +192,13 @@ export const ClientAiAssistant = () => {
   const [dragOver, setDragOver] = useState(false);
   const [currentStep, setCurrentStep] = useState('products');
   const [viewStep, setViewStep] = useState('products');
+  const [intakeSteps, setIntakeSteps] = useState<string[] | undefined>(undefined);
+
+  function rememberSteps(payload: { intakeSteps?: unknown }) {
+    if (!Array.isArray(payload?.intakeSteps)) return;
+    const steps = payload.intakeSteps.filter((step): step is string => typeof step === 'string' && step.length > 0);
+    if (steps.length) setIntakeSteps(steps);
+  }
 
   function applyCatalog(nextCatalogs: any[]) {
     const list = Array.isArray(nextCatalogs) ? nextCatalogs : [];
@@ -215,6 +222,7 @@ export const ClientAiAssistant = () => {
         applyCatalog(payload.profile?.clientDataBank?.productCatalogs || []);
         setMakerLinked(Boolean(payload.makerLinked || payload.profile?.clientDataBank?.makerLink?.bundleId));
         setPreviewUrl(String(payload.profile?.clientDataBank?.makerLink?.publicPreviewUrl || ''));
+        rememberSteps(payload);
         if (payload.currentStep) {
           setCurrentStep(payload.currentStep);
           setViewStep(payload.currentStep);
@@ -251,6 +259,7 @@ export const ClientAiAssistant = () => {
         if (payload.catalogs?.length) applyCatalog(payload.catalogs);
         else if (payload.catalog) applyCatalog([payload.catalog]);
         if (payload.profile) updateProfileState(payload.profile);
+        rememberSteps(payload);
         if (payload.status === 'done' || payload.status === 'failed') {
           setBusy(false);
           setJobId('');
@@ -424,6 +433,7 @@ export const ClientAiAssistant = () => {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.message || 'AI-assistenten svarte ikke.');
+      rememberSteps(payload);
       if (payload.profile) updateProfileState(payload.profile);
       if (payload.catalogs) applyCatalog(payload.catalogs);
       if (payload.jobId) {
@@ -483,6 +493,7 @@ export const ClientAiAssistant = () => {
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.message || 'AI-assistenten svarte ikke.');
+      rememberSteps(payload);
       if (payload.profile) updateProfileState(payload.profile);
       if (payload.currentStep) {
         setCurrentStep(payload.currentStep);
@@ -523,6 +534,7 @@ export const ClientAiAssistant = () => {
             <AssistantIntakePanel
               bank={profile?.clientDataBank || {}}
               token={token || ''}
+              steps={intakeSteps}
               currentStep={currentStep}
               productRows={productRows()}
               layoutText={progress.layout ? (progress.layoutLabel || layoutLabel(progress.layout)) : ''}

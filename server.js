@@ -38,6 +38,7 @@ import { createHeartbeatLimits, heartbeatMarksSeen, registerSiteCredentialRoutes
 import { registerDeliveryRoutes } from './lib/routes/delivery-routes.js';
 import { registerCmsFeatureRoutes } from './lib/routes/cms-feature-routes.js';
 import { registerOptionalRoutes } from './lib/routes/optional-routes.js';
+import { startEmailLogPruneLoop } from './lib/email-log.js';
 import { websitePlanForNewSite } from './lib/cms-entitlements.js';
 import { runDeliverySchemaStartupSnapshot } from './lib/delivery-snapshots.js';
 import { chosenWebsiteTier, makerSitePlanPayload, websiteTierIdForClient } from './lib/site-plan.js';
@@ -121,6 +122,7 @@ import { registerSecurityAdminRoutes } from './lib/security-admin-routes.js';
 import { createMakerAuth } from './lib/maker-auth.js';
 import { registerMakerHostRoutes } from './lib/routes/maker-host-routes.js';
 import { developmentGetLoopScope, startDeliveryLoop } from './lib/delivery-loop.js';
+import { startCmsFleetMonitor, startCmsWakePing } from './lib/cms-fleet-monitor.js';
 import { noteMakerAuthAlert } from './lib/delivery-alerts.js';
 import { noteDeveloperHandoffAccepted } from './lib/delivery-jobs.js';
 import { readBuildInfo } from './lib/build-info.js';
@@ -9977,7 +9979,7 @@ app.post('/api/admin/users', adminAuth, async (req, res) => {
     return res.status(400).json({ message: 'Send-from must be an @asoldi.com address, for example alexander@asoldi.com.' });
   }
   if (phoneIsInvalid(phone)) {
-    return res.status(400).json({ message: 'Phone number must be a valid number, for example +47 923 31 098.' });
+    return res.status(400).json({ message: 'Phone number must be a valid number, for example +47 400 00 000.' });
   }
   if (role === 'sales' && !store.normalizePhone(phone)) {
     return res.status(400).json({ message: PHONE_REQUIRED_MESSAGE });
@@ -9999,7 +10001,7 @@ app.put('/api/admin/users/:id', adminAuth, async (req, res) => {
   const existing = await store.getUserById(id);
   if (!existing) return res.status(404).json({ message: 'User not found' });
   if (phoneIsInvalid(phone)) {
-    return res.status(400).json({ message: 'Phone number must be a valid number, for example +47 923 31 098.' });
+    return res.status(400).json({ message: 'Phone number must be a valid number, for example +47 400 00 000.' });
   }
   // Sales reps are required to have a number: block clearing it, and block the role change without one.
   const nextPhone = phone === undefined ? store.normalizePhone(existing.phone) : store.normalizePhone(phone);
@@ -10055,7 +10057,7 @@ app.put('/api/admin/me/sender', adminAuth, async (req, res) => {
     return res.status(400).json({ message: 'Send-from must be an @asoldi.com address.' });
   }
   if (phoneIsInvalid(phone)) {
-    return res.status(400).json({ message: 'Phone number must be a valid number, for example +47 923 31 098.' });
+    return res.status(400).json({ message: 'Phone number must be a valid number, for example +47 400 00 000.' });
   }
   if (phone !== undefined && !store.normalizePhone(phone)) {
     return res.status(400).json({ message: 'Admin must have a phone number — it is printed in offers and confirmations you send.' });
@@ -21658,6 +21660,9 @@ function startBackgroundJobs() {
     },
     inboxBot: () => startInboxBotLoop(),
     delivery: () => startDeliveryLoop({ sales, hub, listDeveloperOwnerOptions: () => listDeveloperOwnerOptions({ isAdmin: true }) }),
+    emailLogPrune: () => startEmailLogPruneLoop(),
+    cmsEnforcement: () => startCmsFleetMonitor({ hub }),
+    cmsWakePing: () => startCmsWakePing({ hub }),
     signedContractBackfill: () => runSignedContractBackfillOnce().catch((error) => {
       console.error('[signed-contract] startup backfill failed', sanitizeText(error?.message) || error);
     }),

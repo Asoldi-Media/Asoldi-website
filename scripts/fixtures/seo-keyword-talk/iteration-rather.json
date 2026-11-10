@@ -1,0 +1,28 @@
+{
+  "business": {
+    "name": "Testvik Te"
+  },
+  "purpose": "iteration",
+  "meetingId": "m-tea-iteration",
+  "text": "Rådgiver: Nå har dere sett den nye versjonen av nettsiden.\nKunde: Den er fin. Men vi vil heller rangere på teblandinger Testvik enn på tekopper.\nKunde: Tekopper selger vi nesten ikke.\nRådgiver: Da bytter vi overskriften på forsiden.",
+  "items": [
+    {
+      "type": "iteration",
+      "area": "hero",
+      "route": "/",
+      "ask": "Teblandinger i stedet for tekopper",
+      "keepAsIs": false,
+      "quote": "Men vi vil heller rangere på teblandinger Testvik enn på tekopper",
+      "speaker": "Kunde",
+      "meetingId": "m-tea-iteration",
+      "purpose": "iteration",
+      "confidence": 0.8
+    }
+  ],
+  "expected": [
+    "teblandinger Testvik"
+  ],
+  "mustNotPropose": [
+    "tekopper"
+  ]
+}

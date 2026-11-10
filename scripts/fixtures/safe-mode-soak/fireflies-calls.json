@@ -1,0 +1,23 @@
+{
+  "description": "Invented Fireflies meetings for the safe-mode soak, stored the way the hub stores them. The ids are not real transcripts.",
+  "meetings": [
+    {
+      "meetingId": "soak-ff-meeting-1",
+      "title": "Example intro call",
+      "startsAgoHours": 20,
+      "durationMinutes": 32,
+      "attendeeEmails": ["garden-guest@example.invalid", "rep-one@example.invalid"],
+      "summary": "Invented summary: the guest asked about a small shop website and opening hours.",
+      "transcript": "Rep: Hello and welcome. Guest: We sell garden tools and want a simple site."
+    },
+    {
+      "meetingId": "soak-ff-meeting-2",
+      "title": "Example follow-up call",
+      "startsAgoHours": 6,
+      "durationMinutes": 18,
+      "attendeeEmails": ["bike-guest@example.invalid"],
+      "summary": "Invented summary: the guest wants a booking form.",
+      "transcript": "Rep: Thanks for joining. Guest: We repair bikes and need online booking."
+    }
+  ]
+}

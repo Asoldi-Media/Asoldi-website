@@ -541,6 +541,22 @@ export const SETTINGS_KEYS = Object.freeze({
   bookingSelfLinkMode: 'booking.selfLink.mode',
   bookingSelfLinkPaused: 'booking.selfLink.paused',
   // --- end booking
+  // --- intake
+  intakeTierStepsEnabled: 'intake.tierSteps.enabled',
+  intakeTierStepsMode: 'intake.tierSteps.mode',
+  intakeTierStepsPaused: 'intake.tierSteps.paused',
+  intakeTranscriptKeywordsEnabled: 'intake.transcriptKeywords.enabled',
+  intakeTranscriptKeywordsMode: 'intake.transcriptKeywords.mode',
+  intakeTranscriptKeywordsPaused: 'intake.transcriptKeywords.paused',
+  // --- end intake
+  // --- cms fleet monitor
+  cmsFleetMonitor: 'cmsFleet.monitor.enabled',
+  cmsFleetMonitorMode: 'cmsFleet.monitor.mode',
+  cmsFleetMonitorPaused: 'cmsFleet.monitor.paused',
+  cmsFleetAutoApplyFlip: 'cmsFleet.autoApplyFlip',
+  cmsFleetWakePing: 'cmsFleet.wakePing.enabled',
+  cmsFleetWakePingPaused: 'cmsFleet.wakePing.paused',
+  // --- end cms fleet monitor
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);

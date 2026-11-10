@@ -750,6 +750,55 @@ test('--redact keeps every other byte of a Latin-1 or Windows-1252 file and chan
   assert.equal(lib.decodeText(Buffer.from('Bjørn', 'utf8')).encoding, 'utf8', 'valid UTF-8 stays UTF-8');
 });
 
+test('a mostly UTF-8 file with one stray byte is scanned as UTF-8, and a redaction keeps the stray byte', async () => {
+  const cwd = makeRepo();
+  const dir = tempDir('asoldi-stray-');
+  const backups = tempDir('asoldi-stray-b-');
+  const namesFile = join(tempDir('asoldi-stray-n-'), 'names.txt');
+  writeFileSync(namesFile, 'Kari Østby\n');
+  // UTF-8 text with one stray single-byte é (0xE9) on the last line: not valid UTF-8 as a whole.
+  const original = Buffer.concat([
+    Buffer.from(`Møte med Kari Østby i går\nkey ${FAKE_ANTHROPIC}\nsiste: caf`, 'utf8'),
+    Buffer.from([0xe9]),
+    Buffer.from('\n', 'utf8'),
+  ]);
+  writeFileSync(join(dir, 'notes.txt'), original);
+  const env = { ...NO_ENV(cwd), SECRET_SCAN_NAMES: namesFile, ASOLDI_REDACT_BACKUPS: backups };
+
+  const read = lib.decodeText(original);
+  assert.equal(read.encoding, 'utf8-stray');
+  assert.ok(read.text.includes('Kari Østby'), 'the characters around the stray byte are read as UTF-8');
+  assert.deepEqual(lib.encodeText(read.text, read), original, 'read and written byte for byte');
+
+  const ws = await runScan(['--workspace', dir, '--profile', 'public', '--names', namesFile], { cwd, env });
+  assert.equal(ws.code, 1, ws.out);
+  assert.match(ws.out, /^notes\.txt:1 {2}listed-name {2}\(names file line 1\)$/m, 'a name with non-ASCII letters is found next to the stray byte');
+  assert.match(ws.out, /^notes\.txt:2 {2}anthropic-key$/m);
+  assert.doesNotMatch(ws.out, /not scanned/);
+
+  const applied = await runScan(['--redact', dir, '--apply'], { cwd, env });
+  assert.match(applied.out, /replaced 1 value\(s\) in 1 file\(s\)/, applied.out);
+  const expected = Buffer.concat([
+    Buffer.from('Møte med Kari Østby i går\nkey <redacted:anthropic-key>\nsiste: caf', 'utf8'),
+    Buffer.from([0xe9]),
+    Buffer.from('\n', 'utf8'),
+  ]);
+  assert.deepEqual(readFileSync(join(dir, 'notes.txt')), expected, 'the stray byte is written back unchanged, no replacement character');
+});
+
+test('decodeText: Latin-1 stays Latin-1 unless the file holds more valid UTF-8 characters than stray bytes', () => {
+  const lib2 = lib;
+  assert.equal(lib2.decodeText(Buffer.from([0x42, 0x6a, 0xf8, 0x72, 0x6e])).encoding, 'latin1', 'no valid multi-byte character');
+  // One accidental valid pair (C3 B8) among three Latin-1 bytes: more stray bytes than valid characters.
+  assert.equal(lib2.decodeText(Buffer.from([0xc3, 0xb8, 0xe5, 0xe6, 0xf8])).encoding, 'latin1');
+  assert.equal(lib2.decodeText(Buffer.from('Bjørn', 'utf8')).encoding, 'utf8', 'valid UTF-8 stays UTF-8');
+  const overlong = Buffer.concat([Buffer.from('å', 'utf8'), Buffer.from([0xc0, 0x80]), Buffer.from('ø', 'utf8')]);
+  const read = lib2.decodeText(overlong);
+  assert.equal(read.encoding, 'utf8-stray', 'an overlong pair is two stray bytes');
+  assert.deepEqual(lib2.encodeText(read.text, read), overlong);
+  assert.ok(![...read.text].some((ch) => ch === '\ufffd'), 'no replacement character in the text');
+});
+
 // ------------------------------------------------------------------------- ratchet
 
 test('offender lists: a new file or a higher count fails, a lower count passes, and --shrink only lowers', async () => {

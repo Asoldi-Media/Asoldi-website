@@ -1,0 +1,57 @@
+{
+  "business": {
+    "name": "Eksempel Hudklinikk AS"
+  },
+  "purpose": "sales",
+  "meetingId": "m-skin-sales",
+  "text": "Rådgiver: Hva vil dere at folk skal finne dere på?\nKunde: Vi vil rangere på hudpleie Eksempelby, det er det viktigste.\nKunde: Mange søker etter behandling av akne, så det må med.\nKunde: Vi vil også rangere på botox Eksempelby, det spør folk om hele tiden.\nRådgiver: Det kan vi ikke bruke som søkeord, det er reseptpliktig.\nKunde: Greit, da dropper vi det.\nKunde: Vi har to hudterapeuter og en lege som jobber her.\nRådgiver: Da lager vi en side for hver behandling.",
+  "items": [
+    {
+      "type": "fact",
+      "path": "positioning.services",
+      "value": "Hudpleie",
+      "quote": "Vi vil rangere på hudpleie Eksempelby, det er det viktigste",
+      "speaker": "Kunde",
+      "meetingId": "m-skin-sales",
+      "purpose": "sales",
+      "confidence": 0.8
+    },
+    {
+      "type": "fact",
+      "path": "positioning.services",
+      "value": "Aknebehandling",
+      "quote": "Mange søker etter behandling av akne, så det må med",
+      "speaker": "Kunde",
+      "meetingId": "m-skin-sales",
+      "purpose": "sales",
+      "confidence": 0.8
+    },
+    {
+      "type": "fact",
+      "path": "positioning.services",
+      "value": "Injeksjoner",
+      "quote": "Vi vil også rangere på botox Eksempelby, det spør folk om hele tiden",
+      "speaker": "Kunde",
+      "meetingId": "m-skin-sales",
+      "purpose": "sales",
+      "confidence": 0.8
+    },
+    {
+      "type": "fact",
+      "path": "positioning.differentiators",
+      "value": "Lege på klinikken",
+      "quote": "Vi har to hudterapeuter og en lege som jobber her",
+      "speaker": "Kunde",
+      "meetingId": "m-skin-sales",
+      "purpose": "sales",
+      "confidence": 0.8
+    }
+  ],
+  "expected": [
+    "hudpleie Eksempelby",
+    "behandling av akne"
+  ],
+  "mustNotPropose": [
+    "botox Eksempelby"
+  ]
+}

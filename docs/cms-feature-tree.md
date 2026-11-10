@@ -99,3 +99,35 @@ When the sales client has a `sitePlan`, the new hub site takes `websitePlan` fro
 ## Email keys
 
 The email keys are rows of the same registry. `lib/email-feature-keys.js` maps the relay's send kinds to them (`cart-recovery → email.automations.abandonedCart`, `welcome`, `double-opt-in`, `back-in-stock`, `review-request`, `winback`, `campaign → email.campaigns`, `test → email`). `emailKindsFor` allows a kind when its key is entitled; before the tree reaches a site, the legacy flags decide (`emailMarketing` gives welcome, double-opt-in and test; `ecommerce` adds the four shop kinds). `campaign` needs the caller's `campaignsAllowed`. The cms-spec `email` section carries sender, identity, recovery steps (1 to 3, 30 to 43,200 minutes, increasing), discounts, welcome, winback, review requests, campaigns, owner notifications, evidence quotes and `email.*` feature values.
+
+## Fleet monitor
+
+`lib/cms-fleet-monitor.js` watches the client CMS sites the hub knows (a CMS has reported in, and the site is not cancelled or archived). Both background jobs ship off; with `cmsFleet.monitor` and `cmsFleet.wakePing` off (the default) neither job reads or writes anything.
+
+**Proposals.** A site is proposed for enforcement (`featureEnforcement: 'on'`) when all of these hold, by Oslo dates:
+
+- it is in `log` (`not-log` otherwise);
+- a verified heartbeat (`cms.lastVerifiedAt` or `cms.lastHeartbeatAt`) arrived within 24 hours (`no-report`);
+- the CMS reports its feature tree (`featuresRev`, `effectiveHash` or `effective`; `no-tree`);
+- site-config serves the tree to the site (the CMS feature switch is `on` for it), so the CMS actually receives `featureEnforcement` (`not-served`);
+- `blockHistory` has no row with a would-block hit in the last 7 days, today included (`block-hits`);
+- the site has been watched for at least 7 days: since the first review that saw it in `log`, served and reporting the tree with a fresh verified heartbeat (the watch restarts when the site leaves `log`, stops being served or stops reporting the tree; a gap in heartbeats does not restart it), or since its oldest block history day, and never from before its last revert (`too-new`). The CMS reports only days with blocks, so for a clean site the watch is what counts.
+
+The codes in brackets are the `reasons` a site is not proposed, as `GET /api/admin/cms-fleet` lists them.
+
+**Daily review** (job `cmsEnforcement`, every 15 minutes it checks whether the review is due): once per Oslo day from 07:00, under the lease `cms-fleet-review`. It stores the proposals (`open`, `dismissed` or `applied`) and the digest. A proposal goes away when its site stops qualifying. The digest lists sites without any contact for more than 24 hours, new `settingsConflicts` (not in the previous digest), would-block hits from yesterday and today with the top keys and routes, failed migrations, sites the last health ping did not reach, and the open proposals. In `shadow` it is only stored; in `auto` it is also mailed to `alerts.to` through the hub transactional mail (the safe-mode outbox while safe mode is on). A day with nothing to report sends no mail. With `cmsFleet.autoApplyFlip`, the monitor in `auto` and safe mode off, a proposal that has been open for 3 days and still qualifies is applied by `cms-fleet-monitor`. In safe mode the review only reports.
+
+**Health ping** (job `cmsWakePing`, hourly): `GET https://<domain>/api/cms/health` on every monitored site with a domain (5 s timeout, 4 at a time, `http` for loopback hosts, Unicode names as punycode). It wakes idle apps so their schedulers catch up and stores `{ at, ok, status, ms }` or `{ at, ok: false, error }` per site. In safe mode the job stays off unless `HUB_SAFE_MODE_ALLOW` lists `publicRead`, and a ping run there reaches loopback hosts only (others are stored as `skipped: 'safe-mode'`).
+
+**Superadmin** (System safety, card "CMS-utrulling"; all routes need the Superadmin token and work whatever the switches say):
+
+| Route | Does |
+|---|---|
+| `GET /api/admin/cms-fleet` | The switches, every monitored site evaluated now (CMS version, last contact, block hits, conflicts, failed migrations, last ping, proposal and reasons), the proposals, the last review and digest, the last flips. Reads only. |
+| `POST /api/admin/cms-fleet/flip` | `{ siteIds }` or `{ all: true }`: `featureEnforcement` from `log` to `on` for the listed sites, or for every current proposal nobody dismissed. A site not in `log` gets a 409 row. |
+| `POST /api/admin/cms-fleet/revert` | `{ siteId }`: from `on` back to `log`; the site needs 7 new days before it is proposed again. |
+| `POST /api/admin/cms-fleet/dismiss` | `{ siteId }`: an objection; no bulk flip and no automatic apply for that proposal while the site keeps qualifying. |
+
+Every flip writes a `cmsSpecHistory` row (`featureEnforcement: { from, to }`, who and why) through `hub.updateSiteSpecs`, as `PUT /api/hub/sites/:id/cms-spec` does, and a row in the monitor's flip log. The next site-config for the site carries the new mode.
+
+**State:** `<data dir>/cms-fleet-monitor.json`: per site the watch start, the last revert, the proposal, the conflicts already reported and the last ping; the last review day, the last digest (text, counts, whether it was mailed) and the last 50 flips. Tests: `npm run test:cms-fleet-monitor`.

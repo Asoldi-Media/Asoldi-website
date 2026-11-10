@@ -188,6 +188,33 @@ export function defaultAutomationSettings() {
     // shadow: a record where a mail would have carried a link. auto: pilot clients only get the link.
     booking: { selfLink: { enabled: false, mode: 'shadow', paused: null } },
     // --- end booking
+    // --- intake
+    // intake.tierSteps: the client assistant also asks what the signed plan needs (shop terms for a shop,
+    // keywords and the service area for SEO, bookable services for booking). Off: today's six steps.
+    // Shadow: the extra steps are worked out and noted in the delivery audit; the client sees nothing new.
+    // Auto: pilot clients get the steps (lib/spine-mode.js); every other client stays in shadow.
+    // intake.transcriptKeywords: keyword talk in meeting transcripts becomes SEO keyword proposals, never
+    // approved automatically. Off: nothing runs. Shadow: the delivery loop notes what it would propose,
+    // with no model call and no SEO record write. Auto: pilot clients get the proposals.
+    intake: {
+      tierSteps: { enabled: false, mode: 'shadow', paused: null },
+      transcriptKeywords: { enabled: false, mode: 'shadow', paused: null },
+    },
+    // --- end intake
+    // --- cms fleet monitor
+    // cmsFleet.monitor: the daily review of the client CMS sites (lib/cms-fleet-monitor.js). Off: nothing
+    // runs and nothing is written. shadow: proposals and the digest are worked out and stored, no mail.
+    // auto: the digest is also mailed to alerts.to (the safe-mode outbox while safe mode is on).
+    // cmsFleet.autoApplyFlip: with the monitor in auto and safe mode off, a proposal nobody dismissed for
+    // 3 days is applied (featureEnforcement 'on').
+    // cmsFleet.wakePing: the hourly GET /api/cms/health on every CMS site (5 s timeout).
+    // A paused switch ({reason}) counts as off.
+    cmsFleet: {
+      monitor: { enabled: false, mode: 'shadow', paused: null },
+      autoApplyFlip: false,
+      wakePing: { enabled: false, paused: null },
+    },
+    // --- end cms fleet monitor
   };
 }
 
@@ -320,6 +347,13 @@ const ENUMS = {
   // --- booking
   'booking.selfLink.mode': ['shadow', 'auto'],
   // --- end booking
+  // --- intake
+  'intake.tierSteps.mode': ['shadow', 'auto'],
+  'intake.transcriptKeywords.mode': ['shadow', 'auto'],
+  // --- end intake
+  // --- cms fleet monitor
+  'cmsFleet.monitor.mode': ['shadow', 'auto'],
+  // --- end cms fleet monitor
 };
 
 const RANGES = {
@@ -390,6 +424,15 @@ const BOOLEANS = new Set([
   // --- booking
   'booking.selfLink.enabled',
   // --- end booking
+  // --- intake
+  'intake.tierSteps.enabled',
+  'intake.transcriptKeywords.enabled',
+  // --- end intake
+  // --- cms fleet monitor
+  'cmsFleet.monitor.enabled',
+  'cmsFleet.autoApplyFlip',
+  'cmsFleet.wakePing.enabled',
+  // --- end cms fleet monitor
 ]);
 
 function knownPaths() {
@@ -560,6 +603,29 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
   // --- booking
   validatePilotSwitch(value, 'booking.selfLink', { fail, by, now });
   // --- end booking
+  // --- intake: 'auto' reaches pilot clients only, so it needs a pilot list; a pause needs a reason.
+  for (const name of ['tierSteps', 'transcriptKeywords']) {
+    const node = value.intake?.[name];
+    if (!isPlainObject(node)) continue;
+    const mode = normalizeAutomationMode(node.mode);
+    if (mode) node.mode = mode;
+    const paused = normalizePaused(node.paused, { by, now });
+    if (paused === undefined) fail(`intake.${name}.paused`, 'Must be null or {reason}.');
+    else node.paused = paused;
+    if (node.enabled === true && node.mode === 'auto' && !(Array.isArray(value.pilotClientIds) && value.pilotClientIds.length)) {
+      fail(`intake.${name}.mode`, `intake.${name} runs in auto only for listed pilot clients. Add pilotClientIds first, or keep it in shadow.`);
+    }
+  }
+  // --- end intake
+  // --- cms fleet monitor
+  for (const name of ['monitor', 'wakePing']) {
+    const node = value.cmsFleet?.[name];
+    if (!isPlainObject(node)) continue;
+    const paused = normalizePaused(node.paused, { by, now });
+    if (paused === undefined) fail(`cmsFleet.${name}.paused`, 'Must be null or {reason}.');
+    else node.paused = paused;
+  }
+  // --- end cms fleet monitor
   const tiers = value.publish?.staging?.tiers;
   if (!Array.isArray(tiers) || tiers.some((tier) => !TIER_IDS.includes(tier))) {
     fail('publish.staging.tiers', `Must list tier ids (${TIER_IDS.join(', ')}).`);

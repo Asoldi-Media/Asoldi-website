@@ -1,7 +1,7 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ChevronRight } from 'lucide-react';
-import { INTAKE_STEPS, intakeReview, STEP_LABELS } from '../../../lib/ai-assistant/intake.js';
+import { INTAKE_STEPS, PLAN_STEPS, intakeReview, planMissingParts, STEP_LABELS } from '../../../lib/ai-assistant/intake.js';
 import { clientMediaSrc } from '../../components/client/settings/clientDataTypes';
 
 type ProductRow = {
@@ -33,12 +33,22 @@ type Props = {
   removingProducts: boolean;
   busy: boolean;
   viewStep: string;
+  steps?: string[];
   onSelectStep: (step: string) => void;
   onRemoveProduct: (row: ProductRow) => void;
   onClearProducts: () => void;
 };
 
 const EASE = [0.22, 1, 0.36, 1] as const;
+
+const PART_LABELS: Record<string, string> = {
+  shipping: 'Frakt',
+  returns: 'Retur',
+  seller: 'Selger',
+  keywords: 'Søkeord',
+  area: 'Område',
+  services: 'Tjenester',
+};
 
 function sceneFor(step: string) {
   if (step === 'media') return 'media';
@@ -48,6 +58,7 @@ function sceneFor(step: string) {
   if (step === 'hours') return 'hours';
   if (step === 'affiliations') return 'affiliations';
   if (step === 'done') return 'done';
+  if (step === 'shop' || step === 'keywords' || step === 'booking') return step;
   return 'products';
 }
 
@@ -81,11 +92,16 @@ export function AssistantIntakePanel({
   removingProducts,
   busy,
   viewStep,
+  steps,
   onSelectStep,
   onRemoveProduct,
   onClearProducts,
 }: Props) {
-  const review = intakeReview(bank || {}) as { steps: ReviewStep[]; current?: string };
+  const order = steps?.length ? steps : INTAKE_STEPS;
+  const planCtx = steps?.length
+    ? { steps: steps.filter((step) => (PLAN_STEPS as readonly string[]).includes(step)) }
+    : undefined;
+  const review = intakeReview(bank || {}, planCtx) as { steps: ReviewStep[]; current?: string };
   const byStep = Object.fromEntries(review.steps.map((step) => [step.step, step]));
   const mediaUrls = (byStep.media?.groups || []).flatMap((group) => group.urls || []);
   const people = byStep.staff?.people || [];
@@ -93,7 +109,7 @@ export function AssistantIntakePanel({
   const partnerGroups = byStep.affiliations?.groups || [];
   const hasLogo = Boolean(byStep.logo?.url);
 
-  const ordered = INTAKE_STEPS.map((step) => byStep[step]).filter(Boolean);
+  const ordered = order.map((step) => byStep[step]).filter(Boolean);
   const released = (chapter: ReviewStep) => {
     const flag = String((bank as { assistantIntake?: Record<string, string> })?.assistantIntake?.[chapter.step] || '');
     if (flag === 'more') return false;
@@ -310,6 +326,30 @@ export function AssistantIntakePanel({
             )) : (
               <GreySlot label="Partnere" />
             )}
+          </motion.div>
+        ) : null}
+
+        {scene === 'shop' || scene === 'keywords' || scene === 'booking' ? (
+          <motion.div
+            key={scene}
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -14 }}
+            transition={{ duration: 0.4, ease: EASE }}
+            className="flex flex-col gap-3"
+          >
+            {(byStep[scene]?.lines || []).map((line) => (
+              <p key={line} className="text-[14px] text-[#121212]">{line}</p>
+            ))}
+            {(() => {
+              const flag = String((bank as { assistantIntake?: Record<string, string> })?.assistantIntake?.[scene] || '');
+              if (flag === 'done' || flag === 'skipped') return null;
+              return planMissingParts(scene, bank, planCtx).map((part: string) => (
+                <React.Fragment key={part}>
+                  <GreySlot label={PART_LABELS[part] || part} />
+                </React.Fragment>
+              ));
+            })()}
           </motion.div>
         ) : null}
 

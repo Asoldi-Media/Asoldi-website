@@ -47,7 +47,8 @@ A hub that runs on a PC (or the office LAN box) has the same keys as asoldi.com.
 - **Inbox.** IMAP sessions use `EXAMINE` and `BODY.PEEK`, so mail stays unread (`imapFlags` lifts this).
 - **Background jobs.** Only these start:
   - the sales reminder and workshop desk email loops (their mail lands in the outbox);
-  - three local backfills.
+  - three local backfills;
+  - the daily CMS fleet review (`cmsEnforcement`; it does nothing while `cmsFleet.monitor` is off, and in safe mode it only reports: no enforcement change, the digest goes to the outbox). The hourly CMS health ping (`cmsWakePing`) stays off unless `publicRead` is allowed.
   - Fireflies ingest and live-join, the inbox bot, the Myphoner loops, geocoding, LAN autopublish, maps ranking and the network backfills stay off.
 - **Egress allowlist.** `fetch`, `http(s).request` and every TCP/TLS socket are checked before connecting. Allowed:
   - loopback;

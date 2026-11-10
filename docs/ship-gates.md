@@ -29,7 +29,13 @@ is compared with the release that is live (base) on a copy of the live data. The
    nothing (read the message): for example a clock start before the data's token cut-off, flows
    that both releases refused, `--secrets` with no secret file to check, or a rollback control
    that head itself refused. Leave `--clock-start` out unless a test needs a fixed one.
-4. After the push: the post-deploy check and the hub probe (`scripts/security/probe-hub.mjs`).
+4. The switch audit and the route probe on the same two commits (see "The committed tools" below):
+   `node scripts/ship/switch-audit.mjs <base tree> <head tree>` lists every new default and every new
+   environment variable name, and exits 1 on a default that is neither off nor shadow;
+   `node scripts/ship/route-probe.mjs <head tree>` calls the staff and switched-off routes
+   without credentials and exits 1 on any other answer or any data file the calls changed.
+5. The safe-mode soak (`npm run soak:safe -- --minutes 3`) passes: see "The safe-mode soak" below.
+6. After the push: the post-deploy check and the hub probe (`scripts/security/probe-hub.mjs`).
 
 ## What dark-diff does
 
@@ -57,9 +63,16 @@ is compared with the release that is live (base) on a copy of the live data. The
   step compare equal, so that is never a pass. A step that only one release refuses is a
   difference. A skip whose saving step answered 2xx without the value (no recording in the data,
   for example) is a note.
+- Refusing is not the only way to run too little. After the flows, the signed-in steps and the
+  value-saving steps (a step with `save`) that ran on both releases, not skipped and not refused,
+  are counted against the flow files. Fewer than half of either kind (`--min-ran <0 to 1>`, default
+  0.5; at least one when there are any) is exit 2: a copy of the data that has none of the records
+  the flows need (no clients, no recordings) would otherwise skip nearly every step on both
+  releases and pass. The counts are in the report (`flowMinimum`).
 - An interrupted run (Ctrl-C or SIGTERM) stops its hubs and deletes its temp folder, which holds
-  copies of the data. A temp folder that cannot be deleted is named in the report; delete it by
-  hand.
+  copies of the data, and exits 130 (SIGINT) or 143 (SIGTERM). A temp folder that cannot be deleted
+  is named in the report; delete it by hand. The same cleanup runs when the run ends in any other
+  way, and a deletion that fails is a warning in the report, never a replacement for it.
 - Runs, against each:
   - every flow in `scripts/ship/flows/*.json` (see below);
   - `GET /api/hub/site-config` by site key and by domain for every site in the data (the report
@@ -192,3 +205,60 @@ note. `backups/` is left out: every release prunes its own oldest copies at boot
 `--out` writes the whole report as JSON; the terminal shows the unlisted differences, the listed
 ones, secret and rollback failures and notes. The report can hold short excerpts of the data, so
 it stays on the operator PC and never goes into a repository.
+
+## The committed tools
+
+Three small tools next to the dark-diff, each with self-tests (`npm run test:ship-safety`).
+
+- `scripts/ship/switch-audit.mjs <base tree> <head tree> [--json] [--accept <file>]` loads both trees' data modules in
+  safe mode with a temp data folder. It prints every automation-settings default and e-mail
+  settings default that head adds or changes, every settings key head adds (with the vocabulary
+  version change), and every environment variable name head's runtime files read that base's do not.
+  A new leaf that is false, `off`, null, empty or 0 is `off`, `shadow` is `shadow`, anything else is
+  `CHECK` and a person looks at it. Exit 1 when there is a `CHECK` (read it as: review by hand), 2 when a module cannot be loaded or
+  no longer exports `defaultAutomationSettings`, `SETTINGS_KEYS` or the e-mail defaults. A person
+  who has reviewed a `CHECK` leaf (a numeric limit, say) records it in a JSON file
+  `{ "accept": ["defaultAutomationSettings(): quota.perSiteTestMax"] }` and passes it with `--accept`;
+  accepted leaves print as `ACCEPTED` and do not count, and an entry that matches nothing is printed
+  as unused.
+- `scripts/ship/route-probe.mjs <hub tree> [--routes <file>] [--json]` boots the tree locally (safe
+  mode, temp data folder and HOME, empty working folder, no .env), calls each route in
+  `scripts/ship/probe-routes.json` without credentials and checks the answer: `staff` routes must
+  answer 401 or 403, `dark` routes 404 with the code `disabled` (a row can name another code with
+  `expectCode`; a plain 404 is not accepted as proof the switch is off). It then lists every data file the calls changed (logs and the
+  outbox are left out). Add a row for every staff route or switched-off route a push brings. Exit 1
+  on a wrong answer or a changed file, 2 when the tree does not start or the routes file lists
+  nothing.
+- `scripts/ship/segments.mjs <checkout> <log folder> [script]` runs every `&&` segment of a package
+  script on its own, so one failing segment does not hide the others. It prints one line per segment,
+  the names of the failing tests and the totals, and keeps the output of each failing segment in
+  `<log folder>/seg-<n>.log`. `--find <text>` prints the segment that holds a test file name.
+
+Run them from an empty working folder through the same wrapper as the test suite. They read the
+trees they are given and write only to temp folders.
+
+## The safe-mode soak
+
+`npm run soak:safe -- --minutes 3` boots the hub in safe mode on a fresh data folder with an egress
+recorder, drives the actions that would reach the outside world and fails on any unlisted
+connection. Besides the original checks (production publish, payment webhooks, tunnel, Maker hand-off,
+reminder mail in the outbox) it runs on seeded fixtures from `scripts/fixtures/safe-mode-soak/`:
+
+- booked meetings with calendar records and a made-up connected calendar account: a calendar write
+  (open the Meet room, the calendar backfill) must be refused and recorded as an intent;
+- Fireflies meetings stored the way the hub stores them: a refresh of one must be refused (the
+  made-up API key never leaves the machine), a live join answers 423, and the list shows the seeded
+  meetings;
+- handled inbox messages: the bot's status lists them, the mailbox peek and the backfill answer
+  `skipped` without opening a connection, and the inbox and Fireflies background jobs are off.
+
+It also fails when any connection goes to a mail port or a mail provider host. The fixtures are
+invented (example.invalid addresses, no phone numbers); `scripts/safe-mode-soak-fixtures.test.mjs`
+checks that and that a missing or empty fixture file is an error, not an empty soak.
+
+## Reading files for the scanner
+
+`decodeText` in `scripts/security/secret-scan-lib.mjs` reads a file as UTF-8, UTF-16 or Latin-1. A
+file that is mostly UTF-8 with a few stray bytes (more valid multi-byte characters than stray bytes)
+is read as UTF-8, each stray byte standing as one lone surrogate that matches nothing, so a name or a
+secret next to Norwegian letters is still found. Redaction writes the stray bytes back unchanged.

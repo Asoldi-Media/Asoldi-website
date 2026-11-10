@@ -4,7 +4,7 @@
 //  - every site route needs the emailKey: the site key alone, or with the site credential, gets 401;
 //  - 120 requests a minute per site, then 429;
 //  - send, contacts, erasure, quota, suppressions, stats, lint and owner recipients for the calling
-//    site only; the routes whose platform part is not built yet answer 501;
+//    site only; the campaign routes, whose platform part is not built yet, answer 501;
 //  - the email block appears only for a site whose email is on, and is the only field that changes;
 //  - the Brevo webhook route and the signed wake of a CMS.
 import test from 'node:test';
@@ -311,8 +311,8 @@ test('quota, suppressions, stats, lint and owner recipients answer for the calli
   assert.deepEqual((await call('GET', '/api/hub/email/owner-recipients', siteHeaders('site_plain'))).data, []);
 });
 
-test('the campaign, owner-recipient change and owner-notify routes answer 501 not_available', async () => {
-  for (const route of ['POST /api/hub/email/campaigns', 'POST /api/hub/email/campaigns/:id/recipients', 'POST /api/hub/email/campaigns/:id/start', 'POST /api/hub/email/campaigns/:id/cancel', 'GET /api/hub/email/campaigns/:id', 'PUT /api/hub/email/owner-recipients', 'POST /api/hub/email/owner-notify']) {
+test('the campaign routes answer 501 not_available', async () => {
+  for (const route of ['POST /api/hub/email/campaigns', 'POST /api/hub/email/campaigns/:id/recipients', 'POST /api/hub/email/campaigns/:id/start', 'POST /api/hub/email/campaigns/:id/cancel', 'GET /api/hub/email/campaigns/:id']) {
     const [method] = route.split(' ');
     const res = await call(method, samplePath(route), siteHeaders('site_shop'), method === 'GET' ? undefined : {});
     assert.equal(res.status, 501, route);

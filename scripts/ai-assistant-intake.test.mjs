@@ -510,3 +510,18 @@ test('a finished client can still change hours and open a chapter that already h
   assert.equal(staff.currentStep, 'staff');
   assert.match(staff.assistantMessage, /legge til mer i ansattinformasjonen/i);
 });
+
+test('without a plan the review stays on the six steps', () => {
+  const review = intakeReview(bank());
+  assert.deepEqual(review.steps.map((row) => row.step), ['products', 'media', 'logo', 'staff', 'hours', 'affiliations']);
+  assert.equal(nextIntakeStep(bank({ assistantIntake: { focus: 'shop' } })), 'products');
+  const finished = withProducts({
+    media: { uncategorized: ['/a.jpg'] },
+    brandIdentity: { logos: { normal: '/logo.png' } },
+    staff: [{ id: 'ansatt-2', name: 'Kari' }],
+    openingHours: { status: 'always', days: alwaysOpenDays() },
+    affiliations: [{ categoryName: 'Partnere', items: [{ title: 'Acme' }] }],
+  });
+  assert.equal(nextIntakeStep(finished), 'done');
+  assert.equal(nextIntakeStep(finished, { steps: [] }), 'done');
+});

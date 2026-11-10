@@ -44,7 +44,7 @@ change is refused with 409.
 | `sales-link.discover` | `lib/sales-link-discovery.js` (Google Search grounding) | Gemini |
 | `infokort.agent` | `lib/infokort-agent.js` (tool loop) | Claude Haiku 5.5 |
 | `brief.map`, `brief.reduce`, `brief.iteration`, `change.classify`, `followups.extract` | Delivery (no call site yet) | Claude Haiku 5.5 |
-| `seo.agreed-extract` | SEO keyword proposals from meetings, a second pass on transcript chunks (no call site yet) | Claude Haiku 5.5 |
+| `seo.agreed-extract` | `lib/seo-ops/transcript-keywords.js` (SEO keyword proposals from meetings, a second pass on transcript chunks; budget scope `meetingKeywords`) | Claude Haiku 5.5 |
 
 - `lib/deepseek.js` (`deepseekChatJson`) and `lib/claude-messages.js` (`claudeMessages`,
   `claudeToolLoop`) are wrappers over the facade. Call sites pass `task` (and `ctx.salesClientId`

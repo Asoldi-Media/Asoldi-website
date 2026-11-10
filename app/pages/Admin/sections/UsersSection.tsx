@@ -30,7 +30,7 @@ function phoneRequiredFor(role: AdminUser['role']) {
   return role === 'sales';
 }
 
-/** "+4792331098" → "+47 923 31 098" for display; anything else is shown as stored. */
+/** "+4740000000" → "+47 400 00 000" for display; anything else is shown as stored. */
 export function displayPhone(value = '') {
   const raw = String(value || '').trim();
   if (/^\+47\d{8}$/.test(raw)) {
@@ -128,7 +128,7 @@ function AdminSenderCard() {
             type="tel"
             value={draft.phone}
             onChange={(e) => setDraft({ ...draft, phone: e.target.value })}
-            placeholder="+47 923 31 098"
+            placeholder="+47 400 00 000"
             className={`px-4 py-2 rounded-lg bg-[#1a1a1a] border text-white w-44 ${missingPhone ? 'border-amber-500/60' : 'border-white/20'}`}
           />
         </div>
@@ -260,7 +260,7 @@ export function UsersSection(props: Props) {
             <label className="block text-xs text-gray-400 mb-1">Phone</label>
             <input
               type="tel"
-              placeholder="+47 923 31 098"
+              placeholder="+47 400 00 000"
               value={userForm.phone}
               onChange={(e) => onUserFormChange({ ...userForm, phone: e.target.value })}
               className="px-4 py-2 rounded-lg bg-[#1a1a1a] border border-white/20 text-white w-44"
@@ -381,7 +381,7 @@ const EditableUserRow: React.FC<{
             type="tel"
             value={draftPhone}
             onChange={(e) => setDraftPhone(e.target.value)}
-            placeholder="+47 923 31 098"
+            placeholder="+47 400 00 000"
             className={`px-2 py-1 rounded bg-[#1a1a1a] border text-white w-40 ${phoneMissing ? 'border-amber-500/60' : 'border-white/20'}`}
           />
         ) : phoneMissing ? (

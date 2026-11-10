@@ -339,6 +339,8 @@ Settings keys (`SETTINGS_KEYS`, dotted paths in the file):
 | Gate | `gate.enabled` (default `false`), `gate.mode` (`shadow` only for now), `gate.paused` (see [Gate](#gate)) |
 | Signing | `signing.enabled`, `signing.mode` (`shadow` or `auto`; `auto` needs pilots), `signing.paused` (see [Signing](#signing)) |
 | Booking | `booking.selfLink.enabled` (default `false`), `booking.selfLink.mode` (`shadow` or `auto`; `auto` needs pilots), `booking.selfLink.paused` (see [Client self-booking](#client-self-booking)) |
+| Intake | `intake.tierSteps.enabled`, `intake.tierSteps.mode` (`shadow` or `auto`; `auto` needs pilots), `intake.tierSteps.paused`: the assistant steps the signed plan adds; `intake.transcriptKeywords.enabled`, `intake.transcriptKeywords.mode` (`shadow` or `auto`; `auto` needs pilots), `intake.transcriptKeywords.paused`: SEO keyword proposals from meeting transcripts. All default off; see [delivery-intake.md](delivery-intake.md). |
+| CMS fleet monitor | `cmsFleet.monitor.enabled` (default `false`), `cmsFleet.monitor.mode` (`shadow` stores the daily proposals and digest, `auto` also mails the digest to `alerts.to`), `cmsFleet.monitor.paused`, `cmsFleet.autoApplyFlip` (default `false`; applies a proposal nobody dismissed for 3 days, only in `auto` and never in safe mode), `cmsFleet.wakePing.enabled` (default `false`; the hourly health ping), `cmsFleet.wakePing.paused` (`null` or `{reason}`; a paused switch counts as off). See [Fleet monitor](cms-feature-tree.md#fleet-monitor). |
 
 ---
 
