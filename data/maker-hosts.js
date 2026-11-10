@@ -6,7 +6,7 @@
  *   { version: 1, hosts: [ {
  *       hostId: 'mh_<8 hex>', label, ownerAccountKey,
  *       tokenHash: 'sha256:<64 hex>', tokenPrefix: 'mkr_<8 hex>',
- *       scopes: ['callback', 'preview-push', 'client-bundle', 'jobs'],
+ *       scopes: ['callback', 'preview-push', 'client-bundle', 'jobs', 'sales-read'],
  *       createdAt, createdBy, lastSeenAt, revokedAt, revokedBy,
  *       runIds: [...], capabilities: { handlers: [...], vision, cdp }, version, makerPort   // Maker heartbeat
  *   } ] }
@@ -32,7 +32,8 @@ import { getPersistentDataDir } from './storage-path.js';
 import { JOB_KINDS } from '../packages/suite/core/delivery/vocab.js';
 
 export const MAKER_HOSTS_FILE = 'maker-hosts.json';
-export const MAKER_HOST_SCOPES = Object.freeze(['callback', 'preview-push', 'client-bundle', 'jobs']);
+// 'sales-read' lets a host read the sales list and a client's preview file list (GET only).
+export const MAKER_HOST_SCOPES = Object.freeze(['callback', 'preview-push', 'client-bundle', 'jobs', 'sales-read']);
 export const LAST_SEEN_WRITE_MS = 5 * 60 * 1000;
 export const MAX_MAKER_HOSTS = 100;
 export const MAX_HOST_RUN_IDS = 500;
