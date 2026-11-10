@@ -122,7 +122,7 @@ async function createHost(hub, scopes) {
   return created.json();
 }
 
-test('real hub: a host token with sales-read reads the two sales routes and nothing else', { timeout: 180_000 }, async (t) => {
+test('a Maker host token reads the sales list and preview files and nothing else', { timeout: 180_000 }, async (t) => {
   const hub = await bootHub(t, { seed: seedSalesClient });
   const { base } = hub;
   const { token } = await createHost(hub);
