@@ -18,6 +18,7 @@ const EmailMarketing = lazy(() => import('./pages/EmailMarketing').then((m) => (
 const PhotoVideo = lazy(() => import('./pages/PhotoVideo').then((m) => ({ default: m.PhotoVideo })));
 const Clients = lazy(() => import('./pages/Clients').then((m) => ({ default: m.Clients })));
 const Booking = lazy(() => import('./pages/Booking').then((m) => ({ default: m.Booking })));
+const ClientBookingPage = lazy(() => import('./pages/ClientBookingPage').then((m) => ({ default: m.ClientBookingPage })));
 const Page1000kr = lazy(() => import('./pages/1000kr').then((m) => ({ default: m.Page1000kr })));
 const BliAnsatt = lazy(() => import('./pages/BliAnsatt').then((m) => ({ default: m.BliAnsatt })));
 const Personvern = lazy(() => import('./pages/legal/CatalogLegalPage').then((m) => ({ default: m.Personvern })));
@@ -98,6 +99,7 @@ function AppLayout() {
           <Route path="/services/photo-video" element={<PhotoVideo />} />
           <Route path="/clients" element={<Clients />} />
           <Route path="/booking" element={<Booking />} />
+          <Route path="/book/:token" element={<ClientBookingPage />} />
           <Route path="/login" element={<Login />} />
           <Route path="/login/ansatt" element={<EmployeeLogin />} />
           <Route path="/login/kunde" element={<ClientAuth />} />

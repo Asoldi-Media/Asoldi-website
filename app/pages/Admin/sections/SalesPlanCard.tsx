@@ -9,7 +9,16 @@ type PlanHistoryEntry = {
   reason: string;
 };
 
-type PlanConflict = { source: string; tierId: string; at: string; status: string };
+type PlanConflict = { source: string; tierId: string; at: string; status: string; index?: number; tierName?: string };
+
+type LifecycleView = {
+  planChange: string;
+  cancellation: string;
+  canUnsign: boolean;
+  canChangePlan: boolean;
+  history: PlanHistoryEntry[];
+  conflicts: PlanConflict[];
+};
 
 type SitePlanView = {
   mode: 'off' | 'shadow' | 'auto';
@@ -71,16 +80,21 @@ function priceLabel(alternative: { billing: string; priceExMva: number }) {
  */
 export function SalesPlanCard<C = unknown>({ clientId, onClientSaved }: { clientId: string; onClientSaved?: (client: C) => void }) {
   const [view, setView] = React.useState<SitePlanView | null>(null);
+  const [lifecycle, setLifecycle] = React.useState<LifecycleView | null>(null);
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState('');
   const [reload, setReload] = React.useState(0);
 
   React.useEffect(() => {
     let alive = true;
-    if (!reload) setView(null);
+    if (!reload) {
+      setView(null);
+      setLifecycle(null);
+    }
     setError('');
     if (!clientId) return undefined;
-    fetch(`${API}/admin/sales/${encodeURIComponent(clientId)}/site-plan`, { headers: { ...salesAuthHeaders() } })
+    const headers = { ...salesAuthHeaders() };
+    fetch(`${API}/admin/sales/${encodeURIComponent(clientId)}/site-plan`, { headers })
       .then(async (res) => (res.ok ? ((await res.json()) as SitePlanView) : null))
       .then((next) => {
         if (alive) setView(next);
@@ -88,12 +102,21 @@ export function SalesPlanCard<C = unknown>({ clientId, onClientSaved }: { client
       .catch(() => {
         if (alive) setView(null);
       });
+    fetch(`${API}/admin/sales/${encodeURIComponent(clientId)}/plan-lifecycle`, { headers })
+      .then(async (res) => (res.ok ? ((await res.json()) as LifecycleView) : null))
+      .then((next) => {
+        if (alive) setLifecycle(next);
+      })
+      .catch(() => {
+        if (alive) setLifecycle(null);
+      });
     return () => {
       alive = false;
     };
   }, [clientId, reload]);
 
-  if (!view || view.mode === 'off') return null;
+  const planChangeOn = Boolean(lifecycle && lifecycle.planChange !== 'off');
+  const cancellationOn = Boolean(lifecycle && lifecycle.cancellation !== 'off');
 
   async function signWithAlternative(index: number, label: string) {
     if (!window.confirm(`Marker kontrakten som signert med ${label}?`)) return;
@@ -141,13 +164,64 @@ export function SalesPlanCard<C = unknown>({ clientId, onClientSaved }: { client
     }
   }
 
-  const { plan, shadow } = view;
-  const choice = view.choice && view.choice.alternatives.length === 2 ? view.choice : null;
+  async function resolveConflict(index: number, action: 'accept' | 'dismiss') {
+    setBusy(true);
+    setError('');
+    try {
+      const res = await fetch(`${API}/admin/sales/${encodeURIComponent(clientId)}/site-plan/conflicts/${index}/${action}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...salesAuthHeaders() },
+        body: '{}',
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(json.message || 'Kunne ikke oppdatere avviket.');
+        return;
+      }
+      setReload((value) => value + 1);
+    } catch {
+      setError('Kunne ikke oppdatere avviket.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function unsign() {
+    if (!window.confirm('Oppheve signeringen? Planen settes til side. Et nettsted som ikke er publisert arkiveres, det slettes ikke.')) return;
+    setBusy(true);
+    setError('');
+    try {
+      const res = await fetch(`${API}/admin/sales/${encodeURIComponent(clientId)}/unsign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...salesAuthHeaders() },
+        body: JSON.stringify({ reason: 'Opphevet fra salgskortet' }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(json.message || 'Kunne ikke oppheve signeringen.');
+        return;
+      }
+      setReload((value) => value + 1);
+    } catch {
+      setError('Kunne ikke oppheve signeringen.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if ((!view || view.mode === 'off') && !planChangeOn && !cancellationOn) return null;
+
+  const signing = view && view.mode !== 'off' ? view : null;
+  const plan = signing?.plan || null;
+  const shadow = signing?.shadow || null;
+  const history = planChangeOn ? (lifecycle?.history || []) : (signing?.history || []);
+  const conflicts = planChangeOn ? (lifecycle?.conflicts || []) : (signing?.conflicts || []);
+  const choice = signing?.choice && signing.choice.alternatives.length === 2 ? signing.choice : null;
   return (
     <div className="md:col-span-2 rounded-lg border border-white/10 bg-[#161616] p-3 space-y-2 text-sm text-gray-200">
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-medium">Plan</span>
-        {view.mode === 'shadow' ? <span className="rounded bg-white/10 px-2 py-0.5 text-xs text-gray-300">Skygge</span> : null}
+        {signing?.mode === 'shadow' ? <span className="rounded bg-white/10 px-2 py-0.5 text-xs text-gray-300">Skygge</span> : null}
         {plan ? (
           <span>
             {plan.tierName}
@@ -166,22 +240,44 @@ export function SalesPlanCard<C = unknown>({ clientId, onClientSaved }: { client
           ))}
         </div>
       ) : null}
-      {view.conflicts.length ? (
-        <div className="rounded border border-amber-400/40 bg-amber-400/10 px-2 py-1 text-amber-200">
-          {view.conflicts.map((conflict) => (
-            <div key={`${conflict.source}-${conflict.tierId}-${conflict.at}`}>
-              Avvik: {conflict.source} sier {conflict.tierId}{conflict.at ? ` (${shortDate(conflict.at)})` : ''}. Kontrakten gjelder til planen endres.
+      {conflicts.length ? (
+        <div className="rounded border border-amber-400/40 bg-amber-400/10 px-2 py-1 text-amber-200 space-y-2">
+          {conflicts.map((conflict) => (
+            <div key={`${conflict.source}-${conflict.tierId}-${conflict.at}-${conflict.index ?? ''}`} className="flex flex-wrap items-center gap-2">
+              <span>
+                Avvik: {conflict.source} sier {conflict.tierName || conflict.tierId}{conflict.at ? ` (${shortDate(conflict.at)})` : ''}. Kontrakten gjelder til planen endres.
+              </span>
+              {planChangeOn && Number.isInteger(conflict.index) ? (
+                <>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void resolveConflict(conflict.index as number, 'accept')}
+                    className="px-3 py-1.5 rounded-lg bg-white/10 text-gray-100 text-xs hover:bg-white/15 disabled:opacity-50"
+                  >
+                    Godta
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void resolveConflict(conflict.index as number, 'dismiss')}
+                    className="px-3 py-1.5 rounded-lg bg-white/10 text-gray-100 text-xs hover:bg-white/15 disabled:opacity-50"
+                  >
+                    Avvis
+                  </button>
+                </>
+              ) : null}
             </div>
           ))}
         </div>
       ) : null}
-      {view.siteConflicts && view.siteConflicts.length ? (
+      {signing?.siteConflicts && signing.siteConflicts.length ? (
         <div className="rounded border border-amber-400/40 bg-amber-400/10 px-2 py-1 text-amber-200">
           Nettstedet som domenet eller koblingen peker på tilhører en annen kunde, så planen er ikke lagt på noe nettsted.
           Sjekk koblingen før kunden flyttes til utvikling.
         </div>
       ) : null}
-      {choice ? (
+      {signing && choice ? (
         <div className="rounded border border-amber-400/40 bg-amber-400/10 px-2 py-1 text-amber-200 space-y-1">
           <div>
             {choice.contractReceived
@@ -206,7 +302,7 @@ export function SalesPlanCard<C = unknown>({ clientId, onClientSaved }: { client
           </div>
         </div>
       ) : null}
-      {shadow && view.mode === 'shadow' ? (
+      {shadow && signing?.mode === 'shadow' ? (
         <div className="text-xs text-gray-400">
           Signeringen ville lagret {shadow.tierId || 'ingen plan'}
           {shadow.needsChoice ? ' (tilbudet har to alternativer uten valg)' : ''}
@@ -217,7 +313,7 @@ export function SalesPlanCard<C = unknown>({ clientId, onClientSaved }: { client
       {plan && plan.confirmedAt ? (
         <div className="text-xs text-gray-400">Tjenestene bekreftet {shortDate(plan.confirmedAt)}{plan.confirmedBy ? ` av ${plan.confirmedBy}` : ''}.</div>
       ) : null}
-      {view.canConfirm ? (
+      {signing?.canConfirm ? (
         <button
           type="button"
           disabled={busy}
@@ -227,12 +323,22 @@ export function SalesPlanCard<C = unknown>({ clientId, onClientSaved }: { client
           Bekreft tjenester
         </button>
       ) : null}
+      {cancellationOn ? (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void unsign()}
+          className="px-3 py-1.5 rounded-lg bg-white/10 text-gray-100 text-xs hover:bg-white/15 disabled:opacity-50"
+        >
+          Opphev signering
+        </button>
+      ) : null}
       {error ? <div className="text-xs text-red-400">{error}</div> : null}
-      {view.history.length ? (
+      {history.length ? (
         <details className="text-xs text-gray-400">
           <summary className="cursor-pointer">Historikk</summary>
           <ul className="mt-1 space-y-0.5">
-            {view.history.map((entry, index) => (
+            {history.map((entry, index) => (
               <li key={`${entry.at}-${index}`}>
                 {shortDate(entry.at)} · {entry.from?.tierId || 'ingen'} → {entry.to?.tierId || '?'} · {SOURCE_LABELS[entry.reason] || entry.reason}
                 {entry.by ? ` · ${entry.by}` : ''}

@@ -465,6 +465,20 @@ The ETag is the brief hash, which leaves URL signatures out. When the build sign
 
 ---
 
+## Client self-booking
+
+A signed link lets a website client pick a workshop or iteration time without signing in. The switch is `booking.selfLink` (`booking.selfLink.enabled` default `false`, `booking.selfLink.mode` `shadow` or `auto`, `booking.selfLink.paused` null or `{reason}`). `auto` needs at least one id in `pilotClientIds` and a recorded release pass, the same rule as `signing`.
+
+- **Off** (`booking.selfLink.enabled` is `false`). No mail changes, and `GET /api/public/booking/:token/slots` and `POST /api/public/booking/:token` answer `404` `{ code: 'disabled' }` before the token is read.
+- **Shadow.** No link in the mail. A mail that would have carried one writes one delivery-audit row `booking-link-shadow`.
+- **Auto.** Only clients in `pilotClientIds` get a link (`spineModeForClient`). Everyone else stays in shadow. A paused switch counts as shadow for the link.
+
+The link is `<public base>/book/<token>`. The token is `v1.<payload>.<signature>`, HMAC-SHA256 with the disk secret `<dataDir>/secrets/booking-signing.key` (`booking-signing.key`). The payload carries the client id, the purpose (`workshop` or `iteration`), an expiry 21 days out and a nonce. Booking records the nonce in `<dataDir>/booking-tokens.json` (single use; a second booking answers `410` `{ code: 'used' }`). The answer includes a fresh link so the client can move the time. Slots are the next 10 Monday-to-Friday days, start hours 09, 10, 11, 13, 14 and 15 Europe/Oslo, from the workshop calendar. One audit row `booking` is written per booking. Nothing in the public answer carries a contact address, only the business name.
+
+The pre-workshop mail uses the link as the button **Velg tid for workshop** when no workshop is booked, and adds **Passer ikke tiden? Velg en ny tid** when one is. The post-workshop mail already calls `clientBookingLink(client, { purpose: 'iteration' })`. The preview-ready mail is not sent by the hub yet; when it is, it should call that same function.
+
+The page is `GET /book/:token` (the existing site shell). There is no separate server route for it.
+
 ## Data safety
 
 - **Forward-compatible keys.** `data/normalize-ext.js` lists what later batches store on sales clients (`sitePlan`, `delivery`, `nurture`, `isTest`, ...), `makerRun`, `hubSite`, hub sites (`planSource`, `stagingDomain`, `featureSpec`, ...), `site.cms` and offers (`plan`, `pricing`, `dpaVersion`), plus a reserved `ext` object. Normalizers pass them through unchanged from the stored record; the code that owns a key normalizes it itself. An incoming patch cannot write them: `mergeMakerRunPatch` drops future `makerRun` keys and step tokens from a patch (for example a set-maker-run body), so a value such as `makerRun.goLive` only ever comes from the batch that owns it. `updateSalesOffer` does the same for offers (`withoutFutureOfferPatchKeys`): `plan`, `pricing`, `dpaVersion`, `ext` and `products[].services` / `oneTimeAddOns` / `ext` in a patch (a rep's composer body, an admin edit, a meeting-quote rebuild, a contract summary) are dropped, and a product edit keeps the keys the stored product with the same id carries (alternatives: the stored one at the same index). `offerPatchFromBody` also normalizes body products in strict mode. `updateSite` drops the heartbeat-derived `site.cms` keys (`effective`, `featuresRev`, ...) from a `cms` patch. `offerContentHash` counts `plan`, `pricing` and `dpaVersion` only when an offer stores them (batch 2), so no existing offer hash changes. `site.deliveryPhase` keeps `cancelled` and `archived`.
