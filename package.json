@@ -22,6 +22,7 @@
     "test:ship-safety": "node --test scripts/secret-store.test.mjs && node --test scripts/ship/dark-diff.test.mjs",
     "test:seo-record": "node --test scripts/seo-record.test.mjs scripts/seo-consumers.test.mjs scripts/seo-dfs-ledger.test.mjs scripts/seo-schedulers-safe-mode.test.mjs scripts/seo-blog-scheduler.test.mjs scripts/seo-maps-gate.test.mjs scripts/seo-agreed-contract-text.test.mjs && node --test scripts/seo-gating-fleet.test.mjs scripts/seo-record-boot.test.mjs",
     "test:cms-email": "node --test scripts/email-routes.test.mjs scripts/email-route-coverage.test.mjs scripts/site-auth.test.mjs",
+    "test:hub-lifecycle-booking": "node --test scripts/plan-change.test.mjs scripts/delivery-lifecycle.test.mjs scripts/plan-lifecycle-routes.test.mjs scripts/delivery-residuals.test.mjs",
     "test:optional-routes": "node --test scripts/optional-routes.test.mjs",
     "test:email-hub": "node --test scripts/email-brevo.test.mjs scripts/email-brevo-sandbox.test.mjs scripts/email-quota.test.mjs scripts/email-site-auth.test.mjs scripts/email-unsubscribe.test.mjs scripts/email-relay.test.mjs scripts/owner-routing-default.test.mjs && node --test scripts/email-hub-boot.test.mjs",
     "test:gate": "node --test scripts/delivery-gate.test.mjs scripts/delivery-gate-emails.test.mjs scripts/delivery-emails.test.mjs",
