@@ -3,7 +3,7 @@
 // Real data modules on a temp data dir behind a fake adminAuth; mail goes to a spy, never a transport.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -16,6 +16,7 @@ const { register } = await import('../lib/routes/promotion-routes.js');
 const settingsStore = await import('../data/automation-settings.js');
 const suite = await import('../lib/release-suite.js');
 const guards = await import('../lib/delivery-guards.js');
+const promotionLib = await import('../lib/automation-promotion.js');
 const emails = await import('../lib/delivery-emails.js');
 const alerts = await import('../lib/delivery-alerts.js');
 const { VOCAB_VERSION } = await import('../packages/suite/core/delivery/vocab.js');
@@ -134,6 +135,13 @@ test('a pass is recorded from a signed report: superadmin only, key required, pr
   assert.equal(res.status, 200);
   const installed = await res.json();
   assert.deepEqual(installed, { installed: true, keyId: suite.keyId(KEY) });
+  // A second key does not silently replace the first (negative control: replace: true does).
+  res = await call('PUT', '/api/admin/automation/release-key', { key: OTHER_KEY });
+  assert.equal(res.status, 409);
+  assert.equal((await res.json()).code, 'key-exists');
+  assert.equal(readFileSync(join(DATA_DIR, 'secrets', 'release-suite.key'), 'utf8').trim(), KEY);
+  res = await call('PUT', '/api/admin/automation/release-key', { key: KEY, replace: true });
+  assert.equal(res.status, 200);
   // A report signed with another key, and a changed report, are refused.
   res = await call('POST', '/api/admin/automation/release-pass', { report: report({ signing: { status: 'pass' } }, { key: OTHER_KEY }) });
   assert.equal(res.status, 422);
@@ -345,6 +353,43 @@ test('guards: shadow and manual sends are not guarded (shadow never sends; a per
   assert.equal(existsSync(guards.guardsPath({ dataDir: DATA_DIR })), false, 'no guard state for a manual send');
 });
 
+test('no feedback feed: an e-mail kind cannot reach auto while no receiver feeds provider events (blocker, mode, and the positive control)', async () => {
+  resetData();
+  autoSettings();
+  const emailLog = await import('../lib/email-log.js');
+  const modeOf = () => emails.deliveryEmailMode('postWorkshop', CLIENT, { settings: settingsStore.getAutomationSettings({ dataDir: DATA_DIR, fresh: true }) });
+  const blockersOf = () => promotionLib.promotionBlockers(settingsStore.getAutomationSettings({ dataDir: DATA_DIR, fresh: true }), 'emails.postWorkshop');
+  emailLog.markEmailEventFeed(false);
+  assert.ok(blockersOf().includes('no-feedback-feed'));
+  assert.notEqual(modeOf(), 'auto');
+  // A non-mail spine switch is not held back by the feed.
+  assert.ok(!promotionLib.promotionBlockers(settingsStore.getAutomationSettings({ dataDir: DATA_DIR, fresh: true }), 'signing').includes('no-feedback-feed'));
+  emailLog.markEmailEventFeed(true);
+  try {
+    assert.ok(!blockersOf().includes('no-feedback-feed'));
+    assert.equal(blockersOf().length, 0);
+  } finally {
+    emailLog.markEmailEventFeed(false);
+  }
+});
+
+test('release pass: a report from another vocabulary version is refused with code-mismatch and records nothing', async () => {
+  resetData();
+  writeSettings({ pilotClientIds: ['pilot-1'] });
+  await call('PUT', '/api/admin/automation/release-key', { key: KEY });
+  const sw = { signing: { status: 'pass', checks: ['stages'], findings: [] } };
+  for (const vocabVersion of [VOCAB_VERSION - 1, undefined]) {
+    const stale = suite.signReleaseReport({ schema: suite.RELEASE_REPORT_SCHEMA, createdAt: new Date().toISOString(), suite: 'delivery-e2e', code: { commit: '0123456789abcdef', ...(vocabVersion === undefined ? {} : { vocabVersion }) }, profile: 'replay', clients: 4, switches: sw, metrics: {} }, KEY);
+    const res = await call('POST', '/api/admin/automation/release-pass', { report: stale });
+    assert.equal(res.status, 422);
+    assert.equal((await res.json()).code, 'code-mismatch');
+  }
+  assert.equal(settingsStore.readAutomationSettingsFile({ dataDir: DATA_DIR }).settings.releases?.signing, undefined);
+  // Positive control: the same report on this hub's vocabulary is accepted.
+  const res = await call('POST', '/api/admin/automation/release-pass', { report: report(sw) });
+  assert.equal(res.status, 200);
+});
+
 test('guards: provider events of the e-mail log reach the guard of the delivery kind (bounce pauses it; other kinds change nothing)', async () => {
   resetData();
   autoSettings();
@@ -352,10 +397,18 @@ test('guards: provider events of the e-mail log reach the guard of the delivery 
   const sent = [];
   const at = Date.now();
   for (let i = 0; i < 20; i += 1) await autoSend(message(), { sent, key: `p-${i}`, at });
-  // Every automatic mail carries the id the provider echoes and is logged under its delivery kind.
-  assert.match(sent[0].headers['X-Mailin-custom'], /^site:delivery\|delivery:postWorkshop\|/);
-  const id = sent[0].headers['X-Mailin-custom'].split('|')[2];
-  const other = sent[1].headers['X-Mailin-custom'].split('|')[2];
+  // Every automatic mail is logged under its delivery kind with the transport that sends it.
+  assert.equal(sent[0].headers?.['X-Mailin-custom'], undefined, 'no Brevo-only header on a mail the Brevo relay does not send');
+  const rows = [];
+  for (const name of readdirSync(join(DATA_DIR, 'email-log'))) {
+    if (!/^messages-/.test(name)) continue;
+    for (const line of readFileSync(join(DATA_DIR, 'email-log', name), 'utf8').split('\n')) if (line.trim()) rows.push(JSON.parse(line));
+  }
+  const logged = rows.filter((row) => row.kind === 'delivery:postWorkshop' && /:p-[0-9]+$/.test(row.dedupeKey));
+  assert.equal(logged.length, 20);
+  assert.ok(logged.every((row) => row.provider !== 'brevo'), 'logged under the real transport');
+  const id = logged[0].id;
+  const other = logged[1].id;
   // Negative control: a bounce for a message of another kind counts for no delivery kind.
   emailLog.appendMessage({ id: 'msg_other_kind', siteId: 'site-x', kind: 'order', status: 'accepted', to: 'a@example.com' });
   emailLog.appendEvent({ messageId: 'msg_other_kind', t: 'hardBounce' });

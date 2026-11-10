@@ -88,6 +88,26 @@ test('negative controls: a missing brief, a second pre-workshop mail and an unfi
   appendFileSync(join(offData, 'outbox', 'index.jsonl'), `${JSON.stringify({ id: 'stray-shadow', channel: 'delivery-shadow', transport: 'shadow', to: ['staff@example.com'], subject: 'x' })}
 `);
   assert.equal((await runDeliveryChecks(offCtx)).find((row) => row.id === 'delivery.outbox').status, 'fail');
+  // Control run: today's pre-workshop mail missing from the off run fails (a regression that stops it).
+  const outboxFile = join(offData, 'outbox', 'index.jsonl');
+  const keepOutbox = readFileSync(outboxFile, 'utf8');
+  const offRows = keepOutbox.split('\n').filter(Boolean).map((line) => JSON.parse(line));
+  const droppedPre = offRows.find((row) => row.channel !== 'delivery-shadow');
+  if (droppedPre) {
+    writeFileSync(outboxFile, offRows.filter((row) => row !== droppedPre).map((row) => JSON.stringify(row)).join('\n') + '\n');
+    assert.equal((await runDeliveryChecks(offCtx)).find((row) => row.id === 'delivery.outbox').status, 'fail', 'a missing pre-workshop mail fails the control');
+    writeFileSync(outboxFile, keepOutbox);
+  }
+  assert.equal((await runDeliveryChecks(offCtx)).find((row) => row.id === 'delivery.stages').status, 'pass', 'the untouched control passes the stages check');
+  // Control run: a stage history entry written with every switch off fails.
+  const clientsFile = join(offData, 'sales-clients.json');
+  const keepClients = readFileSync(clientsFile, 'utf8');
+  const parsed = JSON.parse(keepClients);
+  const clientList = Array.isArray(parsed) ? parsed : parsed.clients;
+  clientList[0].delivery = { stage: 'gathering', history: [{ to: 'gathering', at: '2026-11-05T10:00:00.000Z' }] };
+  writeFileSync(clientsFile, JSON.stringify(parsed));
+  assert.equal((await runDeliveryChecks(offCtx)).find((row) => row.id === 'delivery.stages').status, 'fail', 'a stage written with every switch off fails the control');
+  writeFileSync(clientsFile, keepClients);
   rmSync(offDir, { recursive: true, force: true });
 
   // A transcript whose words no longer hold a directive's quote fails the quote check.

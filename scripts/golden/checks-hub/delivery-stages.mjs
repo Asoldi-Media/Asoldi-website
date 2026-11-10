@@ -3,7 +3,7 @@
 // went through gathering to workshop_held, each stage transition recorded once; and it reached the
 // preview: its preview job is done with the run ready up to maps-embed-sync (a preview job does not
 // count as development, so the delivery stage itself stays at workshop_held or gate).
-// With every switch off: signed, and nothing more is checked here.
+// With every switch off: signed, and no site plan or delivery stage was written.
 import { clientById, hubSites, result } from './lib.mjs';
 
 export const id = 'delivery.stages';
@@ -32,7 +32,12 @@ export async function check(ctx) {
     row.sites = own.length;
     row.stage = client.delivery?.stage || '';
     row.history = (client.delivery?.history || []).map((entry) => `${entry.from || '-'}>${entry.to}`);
-    if (!on) continue;
+    if (!on) {
+      // With every switch off the run writes no plan and no stage history (a hub site can exist: a signing path creates it today).
+      if (plan) findings.push(`${spec.id}: a site plan was written with every switch off`);
+      if (row.history.length || row.stage) findings.push(`${spec.id}: a delivery stage was written with every switch off (${row.stage || row.history.join(', ')})`);
+      continue;
+    }
     if (plan?.status !== 'active') findings.push(`${spec.id}: no active site plan`);
     else if (plan.tierId !== spec.tier) findings.push(`${spec.id}: site plan tier ${plan.tierId}, expected ${spec.tier}`);
     if (own.length !== 1) findings.push(`${spec.id}: ${own.length} hub sites, expected 1`);

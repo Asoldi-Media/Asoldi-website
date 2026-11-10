@@ -43,6 +43,8 @@ const { readDeliveryAudit } = await import('../lib/delivery-audit.js');
 const { applyWorkshopTranscriptToRecord } = await import('../lib/workshop-project-document.js');
 const { buildFirefliesMeetingRecord } = await import('../lib/fireflies-webhook.js');
 const { register } = await import('../lib/routes/gate-routes.js');
+// A provider event feed is required for a mail kind to run in auto; these tests stand in for one.
+(await import('../lib/email-log.js')).markEmailEventFeed(true);
 
 const TIER1 = { status: 'active', tierId: 'tier-1-standard', services: ['site', 'changes', 'blog'], languages: ['nb'], billing: 'month', source: 'backfill' };
 const START = '2026-11-03T10:00:00.000Z';

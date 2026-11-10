@@ -42,6 +42,8 @@ const emails = await import('../lib/delivery-emails.js');
 const mail = await import('../lib/sales-email.js');
 const { listOutbox, readOutboxItem } = await import('../lib/safe-mode-outbox.js');
 const { readDeliveryAudit } = await import('../lib/delivery-audit.js');
+// A provider event feed is required for a mail kind to run in auto; these tests stand in for one.
+(await import('../lib/email-log.js')).markEmailEventFeed(true);
 
 const TIER3 = { status: 'active', tierId: 'tier-3-ecommerce', services: ['site', 'changes', 'blog', 'seo', 'social', 'email', 'backlinks', 'ecom', 'dashboard', 'multilingual'], languages: ['nb'], billing: 'month', source: 'backfill' };
 const deps = { fetchMakerRun: async () => ({ failed: true }), listMail: async () => ({ messages: [] }) };

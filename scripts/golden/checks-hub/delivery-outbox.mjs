@@ -30,8 +30,10 @@ export async function check(ctx) {
     const post = shadows.filter((entry) => entry.clientId === spec.id && entry.kind === 'postWorkshop');
     const row = { preWorkshop: preWorkshop.length, otherToClient: legacy.length - preWorkshop.length, postWorkshopShadow: post.length };
     value[spec.id] = row;
-    // Today's paths: got-client alone signs nothing, so with every switch off it sends nothing.
-    if (on ? preWorkshop.length !== 1 : preWorkshop.length > 1) findings.push(`${spec.id}: ${preWorkshop.length} pre-workshop mails, expected ${on ? '1' : 'at most 1'}`);
+    // Today's paths: got-client alone signs nothing, so with every switch off it sends nothing; every
+    // other path sends today's pre-workshop mail once, and a regression that stops it must fail here.
+    const expectedOff = spec.signing === 'got-client' ? 0 : 1;
+    if (on ? preWorkshop.length !== 1 : preWorkshop.length !== expectedOff) findings.push(`${spec.id}: ${preWorkshop.length} pre-workshop mails, expected ${on ? '1' : expectedOff}`);
     if (row.otherToClient) findings.push(`${spec.id}: ${row.otherToClient} other mails reached the outbox for the client`);
     for (const mail of preWorkshop) {
       const verdict = checkDeliveryMessage({ client, message: outboxItem(ctx.dataDir, mail.id) || mail, settings });
