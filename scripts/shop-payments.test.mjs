@@ -457,7 +457,17 @@ test('HP-7 shop checkout: shipping option, locked country, hold-length expiry, c
 
   await call('POST', '/api/hub/shop/stripe/checkout', { ref: 'chk_noemail', currency: 'nok', lineItems: [{ name: 'X', unitAmount: 100, quantity: 1 }], reminderConsent: true, locale: 'xx', ...urls('chk_noemail') });
   const [, noEmail] = lastSession();
-  assert.equal(noEmail.metadata.reminder_consent, '0', 'no reminder without an email');
+  assert.equal(noEmail.metadata.reminder_consent, '1', 'a ticked box is stored even when the shop has no e-mail yet');
+  assert.equal(noEmail.metadata.reminder_text_hash, undefined, 'no text hash unless the shop sends one');
+  await call('POST', '/api/hub/shop/stripe/checkout', { ref: 'chk_unticked', currency: 'nok', lineItems: [{ name: 'X', unitAmount: 100, quantity: 1 }], customerEmail: 'kari@example.com', reminderTextHash: 'sha256:abc', ...urls('chk_unticked') });
+  const [, unticked] = lastSession();
+  assert.equal(unticked.metadata.reminder_consent, '0', 'an unticked box is never a consent');
+  assert.equal(unticked.metadata.reminder_text_hash, undefined, 'the hash follows the consent');
+  await call('POST', '/api/hub/shop/stripe/checkout', { ref: 'chk_hash', currency: 'nok', lineItems: [{ name: 'X', unitAmount: 100, quantity: 1 }], reminderConsent: true, reminderTextHash: 'sha256:0f1e<b>2d'.padEnd(200, 'a'), ...urls('chk_hash') });
+  const [, hashed] = lastSession();
+  assert.equal(hashed.metadata.reminder_consent, '1');
+  assert.match(hashed.metadata.reminder_text_hash, /^sha256:0f1eb2daaa*$/);
+  assert.equal(hashed.metadata.reminder_text_hash.length, 90, 'the stored hash is bounded and plain');
   assert.equal(noEmail.locale, 'auto');
   assert.equal(noEmail.shipping_options, undefined);
 
