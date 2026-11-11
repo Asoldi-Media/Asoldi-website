@@ -150,3 +150,33 @@ test('signOffPlanCompliance writes one party and leaves the other intact', () =>
   assert.throws(() => signOffPlanCompliance(plan, { party: 'asoldi', name: 'A. Reviewer', at: '2026-11-08' }));
   assert.equal(signOffPlanCompliance(plan, { party: 'client', name: 'C'.repeat(120), at: '2026-11-08T11:00:00Z' }).compliance.client.name.length, 120);
 });
+
+test('a reworded claim that reverses or changes the register wording is not authorised', async () => {
+  const facts = { dailyDoseG: 3 };
+  const run = (s) => checkClaims(s, { industry: SUPP, productFacts: facts, extract: stub([s]) });
+  assert.equal((await run(NB_CREATINE)).ok, true);
+  for (const s of [
+    'Kreatin reduserer fysisk prestasjon ved gjentatte korte perioder med høyintensiv trening',
+    'Kreatin øker fysisk prestasjon ved gjentatte korte perioder med lavintensiv trening',
+    'Kreatin øker mental prestasjon ved gjentatte korte perioder med høyintensiv trening',
+    'Creatine decreases physical performance in successive bursts of short-term, high intensity exercise',
+    'Magnesium bidrar til å øke tretthet og utmattelse',
+  ]) {
+    const out = await run(s);
+    assert.equal(out.ok, false, s);
+    assert.equal(out.claims[0].status, 'unauthorised', s);
+  }
+});
+
+test('format characters and full-width letters do not hide a regulated substance', async () => {
+  for (const s of ['mela\u00adtonin er trygt', 'mela\u200btonin er trygt', '\uff4d\uff45\uff4c\uff41\uff54\uff4f\uff4e\uff49\uff4e er trygt']) {
+    const out = await checkClaims(s, { industry: SUPP, extract: async () => ({ claims: [] }) });
+    assert.equal(out.ok, false, s);
+  }
+});
+
+test('a plan with a string field or object entries does not throw', () => {
+  const out = checkPlanCompliance({ primary: 'melatonin kosttilskudd', byRole: { a: [{ keyword: 'melatonin' }] } }, { industry: SUPP });
+  assert.equal(out.ok, false);
+  assert.ok(out.reasons.some((r) => r.code === 'regulated-substance'));
+});
