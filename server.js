@@ -2981,6 +2981,15 @@ function getMakerCallbackToken() {
 // are counted (also header-less ones: that is what unauthenticated probing looks like).
 const makerAuth = createMakerAuth({ legacyHolder: MAKER_CALLBACK_TOKEN_HOLDER, dataDir: getPersistentDataDir(), onAlert: noteMakerAuthAlert });
 const { requireMakerHost } = makerAuth;
+// The two read routes the Maker handoff and run adoption call: staff sign-in as before, or a Maker host
+// token holding the sales-read scope (GET only; every other admin route refuses the token).
+const salesOrMakerRead = makerAuth.hostReadOr('sales-read', (req, res, next) => salesAuth(req, res, next), (result) => ({
+  accountKey: `maker-host:${result.hostId}`,
+  isAdmin: true,
+  role: 'admin',
+  username: 'maker-host',
+  makerHost: true,
+}));
 
 function secureStringEqual(left = '', right = '') {
   const a = String(left || '');
@@ -12511,6 +12520,10 @@ async function handleStripeWebhook(req, res) {
         const invoice = event.data.object || {};
         const profile = clientPortal.getClientProfileByStripeCustomerId(sanitizeText(invoice.customer));
         if (profile) clientPortal.setClientPayment(profile.userId, { status: 'past_due' });
+        // Cancellation switch: the delivery state notes the failed payment (nothing while it is off).
+        await import('./lib/delivery-lifecycle.js')
+          .then((lifecycle) => lifecycle.onPaymentFailed(invoice))
+          .catch((error) => console.error('[lifecycle] payment failed', sanitizeText(error?.message) || error));
         break;
       }
       case 'customer.subscription.deleted': {
@@ -12523,6 +12536,17 @@ async function handleStripeWebhook(req, res) {
             canceledAt: nowIso(),
           });
         }
+        // Cancellation switch: the delivery state notes the cancellation (nothing while it is off).
+        await import('./lib/delivery-lifecycle.js')
+          .then((lifecycle) => lifecycle.onSubscriptionEnded(sub))
+          .catch((error) => console.error('[lifecycle] subscription ended', sanitizeText(error?.message) || error));
+        break;
+      }
+      case 'invoice.paid': {
+        // Cancellation switch: a paid invoice ends a failed-payment state (nothing while it is off).
+        await import('./lib/delivery-lifecycle.js')
+          .then((lifecycle) => lifecycle.onPaymentRecovered(event.data.object || {}))
+          .catch((error) => console.error('[lifecycle] payment recovered', sanitizeText(error?.message) || error));
         break;
       }
       default:
@@ -13872,7 +13896,7 @@ app.get('/api/admin/sales/preview-backfill', salesAuth, (req, res) => {
 });
 
 // Debug: list the files stored for a client's public preview snapshot.
-app.get('/api/admin/sales/:id/preview-files', salesAuth, async (req, res) => {
+app.get('/api/admin/sales/:id/preview-files', salesOrMakerRead, async (req, res) => {
   const client = sales.getSalesClientById(req.params.id);
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
@@ -14044,9 +14068,16 @@ app.post('/api/admin/sales/refresh-upcoming-links', salesAuth, async (req, res) 
   res.json({ ok: true, count: results.length, results });
 });
 
-app.get('/api/admin/sales', salesAuth, async (req, res) => {
+app.get('/api/admin/sales', salesOrMakerRead, async (req, res) => {
   const all = cachedSalesListRows();
   const productFilter = sanitizeText(req.query?.product).toLowerCase();
+  if (req.makerHostRead) {
+    // A Maker host reads the client rows only: no calendar, sender or owner list.
+    const rows = productFilter === 'asoldi' || productFilter === 'ssu'
+      ? all.filter((client) => sales.normalizeSalesProduct(client.product) === productFilter)
+      : all;
+    return res.json({ clients: rows, isAdmin: false });
+  }
   const owned = req.salesUser.isAdmin
     ? all
     : all.filter((client) => canAccessSalesClient(req, client));
@@ -15493,44 +15524,11 @@ async function sendDueWorkshopDeskEmails() {
 }
 
 async function sendIterationMeetingEmail(client, meeting, salesUser) {
-  const recipient = sanitizeText(client?.contactEmail);
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(recipient)) {
-    return { sent: false, warning: 'Iterasjons-e-post ble ikke sendt: kunden mangler e-post.' };
-  }
-  if (!emailLib.canSendEmail()) {
-    return { sent: false, warning: 'Iterasjons-e-post ble ikke sendt: e-post er ikke konfigurert.' };
-  }
-  const sender = await resolveSalesSenderForAccount(salesUser);
-  const calendar = { meetLink: meeting.meetLink, eventId: meeting.calendarEventId };
-  const built = await tryBuildSalesIterationEmail(client, calendar, {
-    sender,
-    iteration: {
-      dueAt: meeting.dueAt,
-      meetLink: meeting.meetLink,
-    },
+  const { sendIterationMeetingMail } = await import('./lib/meeting-booking.js');
+  return sendIterationMeetingMail(client, meeting, {
+    resolveSender: () => resolveSalesSenderForAccount(salesUser),
+    bcc: (to) => salesEmailCopyBcc(to),
   });
-  if (!built) {
-    return { sent: false, warning: '' };
-  }
-  const synthetic = buildIterationSyntheticMeetingClient(client, meeting);
-  const invite = buildSalesCalendarInvite(synthetic, calendar, {
-    organizerEmail: DAMIAN_WORKSHOP_CALENDAR_EMAIL,
-    organizerName: 'Damian',
-    durationMinutes: ITERATION_DURATION_MINUTES,
-    summary: `Asoldi · ${ITERATION_DEFAULT_NAME} · ${sanitizeText(client.businessName) || 'kunde'}`,
-  });
-  await emailLib.sendEmail({
-    to: recipient,
-    from: built.from,
-    replyTo: built.replyTo,
-    bcc: salesEmailCopyBcc(recipient),
-    subject: built.subject,
-    text: built.text,
-    html: built.html,
-    attachments: built.attachments,
-    icalEvent: invite || undefined,
-  });
-  return { sent: true };
 }
 
 app.patch('/api/admin/sales/:id/workshop-action', salesAuth, async (req, res) => {
@@ -15869,98 +15867,16 @@ app.post('/api/admin/sales/:id/workshop/iteration-meeting', salesAuth, async (re
   if (!requireOfferAdmin(req, res)) return;
   const existing = sales.getSalesClientById(req.params.id);
   if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
-  const record = getWorkshopRecord(existing);
-  const body = req.body && typeof req.body === 'object' ? req.body : {};
-  const nextMeeting = normalizeIterationMeeting({
-    ...record.iterationMeeting,
-    dueAt: Object.prototype.hasOwnProperty.call(body, 'dueAt') ? body.dueAt : record.iterationMeeting.dueAt,
-    format: Object.prototype.hasOwnProperty.call(body, 'format') ? body.format : record.iterationMeeting.format,
-    addToCalendar: Object.prototype.hasOwnProperty.call(body, 'addToCalendar')
-      ? body.addToCalendar
-      : record.iterationMeeting.addToCalendar,
-    calendarEventId: record.iterationMeeting.calendarEventId,
-    meetLink: record.iterationMeeting.meetLink,
-    firefliesMeetingId: record.iterationMeeting.firefliesMeetingId,
-    confirmationSentAt: record.iterationMeeting.confirmationSentAt,
-  });
-  const send = Boolean(body.send);
-  if (send && !nextMeeting.dueAt) {
-    return res.status(400).json({ message: 'Sett tid før du sender iterasjonsmøtet.' });
-  }
-  const late = rejectActionAfterDueDate(nextMeeting.dueAt, existing);
-  if (late) return res.status(400).json({ message: late });
-  if (!send) {
-    const updated = sales.setSalesWorkshop(existing.id, mergeWorkshopRecord(record, {
-      iterationMeeting: nextMeeting,
-    }));
-    return res.json({ client: jsonSalesClient(updated), warnings: [] });
-  }
   try {
-    const sync = await syncIterationCalendar({
-      client: existing,
-      previousMeeting: record.iterationMeeting,
-      nextMeeting,
+    const { bookIterationMeeting } = await import('./lib/meeting-booking.js');
+    const result = await bookIterationMeeting(existing, req.body, {
+      sendMail: (client, meeting) => sendIterationMeetingEmail(client, meeting, req.salesUser),
     });
-    const warnings = [...(sync.warnings || [])];
-    if (sync.error) {
-      const meeting = {
-        ...sync.meeting,
-        confirmationSentAt: record.iterationMeeting.confirmationSentAt,
-        sentAt: '',
-      };
-      const updated = sales.setSalesWorkshop(existing.id, mergeWorkshopRecord(record, {
-        iterationMeeting: meeting,
-      }));
-      return res.status(409).json({
-        message: sync.error,
-        warnings,
-        client: jsonSalesClient(updated || existing),
-        emailSent: false,
-      });
-    }
-    let meeting = {
-      ...sync.meeting,
-      confirmationSentAt: record.iterationMeeting.confirmationSentAt,
-    };
-    let emailSent = false;
-    if (iterationEmailShouldSend(record.iterationMeeting, meeting, { send }) && iterationInvitesClient(meeting)) {
-      const hostOk = workshopInviteHostOk({
-        googleEmail: DAMIAN_WORKSHOP_CALENDAR_EMAIL,
-        organizerEmail: DAMIAN_WORKSHOP_CALENDAR_EMAIL,
-        meetLink: meeting.meetLink,
-        firefliesInvited: Boolean(meeting.firefliesInvitedAt),
-      });
-      if (!hostOk) {
-        const updated = sales.setSalesWorkshop(existing.id, mergeWorkshopRecord(record, {
-          iterationMeeting: {
-            ...meeting,
-            confirmationSentAt: record.iterationMeeting.confirmationSentAt,
-            sentAt: '',
-          },
-        }));
-        return res.status(409).json({
-          message: 'Google Meet ble ikke opprettet med damian@asoldi.com som eier. E-posten ble ikke sendt.',
-          warnings,
-          client: jsonSalesClient(updated || existing),
-          emailSent: false,
-        });
-      }
-      try {
-        const mailed = await sendIterationMeetingEmail(existing, meeting, req.salesUser);
-        emailSent = Boolean(mailed.sent);
-        if (mailed.warning) warnings.push(mailed.warning);
-        if (emailSent) meeting = { ...meeting, confirmationSentAt: new Date().toISOString() };
-      } catch (error) {
-        warnings.push(`Iterasjons-e-post feilet: ${sanitizeText(error?.message) || 'ukjent feil'}`);
-      }
-    }
-    const updated = sales.setSalesWorkshop(existing.id, mergeWorkshopRecord(record, {
-      iterationMeeting: meeting,
-    }));
-    const client = updated || existing;
-    // The live-join loop sends Fireflies at the iteration start, mail or not.
-    kickFirefliesLiveJoins(client);
-    return res.json({ client: jsonSalesClient(client), warnings, emailSent });
+    if (result.kick) kickFirefliesLiveJoins(result.payload.client);
+    const payload = { ...result.payload };
+    if (Object.prototype.hasOwnProperty.call(result.payload, 'client')) payload.client = jsonSalesClient(result.payload.client);
+    if (result.status === 200) return res.json(payload);
+    return res.status(result.status).json(payload);
   } catch (error) {
     return res.status(httpStatusFromError(error, 400)).json({
       message: sanitizeText(error?.message) || 'Kunne ikke sende iterasjonsmøtet.',
