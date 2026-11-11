@@ -49,7 +49,7 @@
     "test:llm-core": "node --test scripts/llm-core.test.mjs scripts/llm-contract.test.mjs scripts/llm-harness.test.mjs scripts/suite-boundary.test.mjs scripts/suite-drift.test.mjs",
     "test:llm-hub": "node --test scripts/llm-hub-facade.test.mjs scripts/llm-hub-callsites.test.mjs scripts/ai-spend-callback.test.mjs scripts/llm-ledger-retention.test.mjs",
     "test:hub-intake-brief": "node --test scripts/ai-assistant-plan-steps.test.mjs scripts/ai-assistant-intake.test.mjs scripts/seo-transcript-keywords.test.mjs scripts/intake-settings.test.mjs scripts/seo-keyword-proposals.test.mjs scripts/personal-data-file-stores.test.mjs",
-    "test:brief": "node --test scripts/brief-facts-contract.test.mjs scripts/delivery-brief-extract.test.mjs scripts/delivery-brief.test.mjs scripts/delivery-brief-routes.test.mjs && node --test scripts/delivery-brief-boot.test.mjs scripts/delivery-brief-dark-compare.test.mjs",
+    "test:brief": "node --test scripts/brief-facts-contract.test.mjs scripts/delivery-brief-contract.test.mjs scripts/delivery-brief-extract.test.mjs scripts/delivery-brief.test.mjs scripts/delivery-brief-routes.test.mjs && node --test scripts/delivery-brief-boot.test.mjs scripts/delivery-brief-dark-compare.test.mjs",
     "publish:previews": "node scripts/publish-previews-from-office.mjs",
     "sync:prod-users": "node scripts/sync-prod-users.mjs",
     "sync:prod-runtime": "node scripts/sync-prod-runtime.mjs",
