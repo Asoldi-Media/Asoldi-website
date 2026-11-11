@@ -110,7 +110,18 @@ export function defaultAutomationSettings() {
     },
     changeRequests: { enforce: 'track', slaWorkDays: 10, countAt: 'accepted' },
     pricing: { oneTimeMultiplier: 9, oneTimeMinExMva: 0, oneTimeMonths: 6 },
-    lifecycle: { paymentGraceDays: 14, cancellationGraceDays: CANCELLATION_GRACE_DAYS },
+    lifecycle: {
+      paymentGraceDays: 14,
+      cancellationGraceDays: CANCELLATION_GRACE_DAYS,
+      // --- lifecycle
+      // planChange: a plan change after signing (an accepted upgrade offer, a superadmin edit, an accepted
+      // Stripe conflict) goes through markPlanChanged. cancellation: a Stripe cancellation, a failed payment
+      // and un-signing (markContractUnsigned) change the delivery state. Off: today's paths, unchanged.
+      // shadow: today's paths plus a record of what would change. auto: pilot clients only.
+      planChange: { enabled: false, mode: 'shadow', paused: null },
+      cancellation: { enabled: false, mode: 'shadow', paused: null },
+      // --- end lifecycle
+    },
     promotion: { auto: true },
     guards: { errorRatePct: 20, bounceRatePct: 5, complaintsMax: 1, volumeSpikeFactor: 3, windowHours: 24, minSample: 5 },
     retention: {
@@ -171,6 +182,12 @@ export function defaultAutomationSettings() {
     // pilot clients only (lib/spine-mode.js); every other client stays in shadow.
     signing: { enabled: false, mode: 'shadow', paused: null },
     // --- end signing
+    // --- booking
+    // selfLink: signed links that let a client book its own workshop or iteration slot
+    // (lib/client-booking.js). Off: no link in any mail and the public booking routes answer 404.
+    // shadow: a record where a mail would have carried a link. auto: pilot clients only get the link.
+    booking: { selfLink: { enabled: false, mode: 'shadow', paused: null } },
+    // --- end booking
     // --- intake
     // intake.tierSteps: the client assistant also asks what the signed plan needs (shop terms for a shop,
     // keywords and the service area for SEO, bookable services for booking). Off: today's six steps.
@@ -329,6 +346,13 @@ const ENUMS = {
   // --- signing
   'signing.mode': ['shadow', 'auto'],
   // --- end signing
+  // --- lifecycle
+  'lifecycle.planChange.mode': ['shadow', 'auto'],
+  'lifecycle.cancellation.mode': ['shadow', 'auto'],
+  // --- end lifecycle
+  // --- booking
+  'booking.selfLink.mode': ['shadow', 'auto'],
+  // --- end booking
   // --- intake
   'intake.tierSteps.mode': ['shadow', 'auto'],
   'intake.transcriptKeywords.mode': ['shadow', 'auto'],
@@ -399,6 +423,13 @@ const BOOLEANS = new Set([
   // --- signing
   'signing.enabled',
   // --- end signing
+  // --- lifecycle
+  'lifecycle.planChange.enabled',
+  'lifecycle.cancellation.enabled',
+  // --- end lifecycle
+  // --- booking
+  'booking.selfLink.enabled',
+  // --- end booking
   // --- intake
   'intake.tierSteps.enabled',
   'intake.transcriptKeywords.enabled',
@@ -452,6 +483,29 @@ function normalizePaused(value, { by = '', now = new Date() } = {}) {
     by: String(value.by || by || '').slice(0, 120),
   };
 }
+
+// --- lifecycle
+/**
+ * A pilot switch node ({ enabled, mode, paused }) at `path`: shadow or auto (old names normalized), a pause
+ * needs a reason, and auto needs listed pilot clients. Used by the lifecycle and booking switches.
+ */
+function validatePilotSwitch(value, path, { fail, by, now }) {
+  const node = getPath(value, path);
+  if (!isPlainObject(node)) {
+    fail(path, `Missing ${path} settings.`);
+    return;
+  }
+  const mode = normalizeAutomationMode(node.mode);
+  if (mode) node.mode = mode;
+  const paused = normalizePaused(node.paused, { by, now });
+  if (paused === undefined) fail(`${path}.paused`, 'Must be null or {reason}.');
+  else node.paused = paused;
+  const pilotList = Array.isArray(value.pilotClientIds) ? value.pilotClientIds : [];
+  if (node.enabled === true && node.mode === 'auto' && !pilotList.length) {
+    fail(`${path}.mode`, `${path} runs in auto only for listed pilot clients. Add pilotClientIds first, or keep it in shadow.`);
+  }
+}
+// --- end lifecycle
 
 /**
  * Merges `patch` into `current` (or the defaults) and validates the whole result.
@@ -551,6 +605,13 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
     fail('signing', 'Missing signing settings.');
   }
   // --- end signing
+  // --- lifecycle
+  validatePilotSwitch(value, 'lifecycle.planChange', { fail, by, now });
+  validatePilotSwitch(value, 'lifecycle.cancellation', { fail, by, now });
+  // --- end lifecycle
+  // --- booking
+  validatePilotSwitch(value, 'booking.selfLink', { fail, by, now });
+  // --- end booking
   // --- intake: 'auto' reaches pilot clients only, so it needs a pilot list; a pause needs a reason.
   for (const name of ['tierSteps', 'transcriptKeywords']) {
     const node = value.intake?.[name];

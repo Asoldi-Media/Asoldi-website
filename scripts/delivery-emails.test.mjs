@@ -201,6 +201,15 @@ function utcDay(offsetDays = 0) {
   return new Date(Date.now() + offsetDays * 86_400_000).toISOString().slice(0, 10);
 }
 
+// The stored due time for a computed `due`: `due` itself while it is still ahead, else the time of
+// the call (a due time that has passed is stored as now).
+async function assertDueFrom(stored, due) {
+  const before = Date.now();
+  const got = await stored();
+  if (Date.parse(due) >= before) assert.equal(got, due);
+  else assert.ok(Date.parse(got) >= before && Date.parse(got) <= Date.now(), `${got} is the time of the call`);
+}
+
 test('the Prosjektdokument schedules the mail from the stored recording of the workshop', async () => {
   save({ gate: { enabled: true, mode: 'shadow' } });
   // Today 10:00-11:00 UTC: the due time 13:00 is at most 11 hours ago, so never stale.
@@ -208,13 +217,13 @@ test('the Prosjektdokument schedules the mail from the stored recording of the w
   const [start, due] = [`${today}T10:00:00.000Z`, `${today}T13:00:00.000Z`];
   // No booked workshop: the recording alone gives the time.
   seed('pw-doc');
-  assert.equal(await applyDocument('pw-doc', storedMeeting('m-doc', start, 60)), due);
+  await assertDueFrom(() => applyDocument('pw-doc', storedMeeting('m-doc', start, 60)), due);
   // A booking at 09:00 does not move it: the recording wins over the booked time.
   seed('pw-doc-booked', { workshopAction: { dueAt: `${today}T09:00:00.000Z` } });
-  assert.equal(await applyDocument('pw-doc-booked', storedMeeting('m-doc-2', start, 60)), due);
+  await assertDueFrom(() => applyDocument('pw-doc-booked', storedMeeting('m-doc-2', start, 60)), due);
   // A raw Fireflies answer still works.
   seed('pw-doc-raw');
-  assert.equal(await applyDocument('pw-doc-raw', { meetingId: 'm-doc-3', transcript: 'Workshop.', dateString: start, duration: 60 }), due);
+  await assertDueFrom(() => applyDocument('pw-doc-raw', { meetingId: 'm-doc-3', transcript: 'Workshop.', dateString: start, duration: 60 }), due);
 });
 
 test('a workshop recording linked days later schedules no post-workshop mail', async () => {
@@ -233,7 +242,9 @@ test('a workshop recording linked days later schedules no post-workshop mail', a
   seed('pw-stale-3');
   const within = emails.schedulePostWorkshop('pw-stale-3', { sales, startedAt: START, endedAt: END, now: '2026-11-04T12:59:00.000Z' });
   assert.equal(within.scheduled, true);
-  assert.equal(within.dueAt, DUE);
+  // The due time 13:00 has passed at 12:59 the next day: it is stored as that moment, not in the past.
+  assert.equal(within.dueAt, '2026-11-04T12:59:00.000Z');
+  assert.equal(deliveryEmailStamps(sales.getSalesClientById('pw-stale-3')).postWorkshopDueAt, '2026-11-04T12:59:00.000Z');
   // Nothing was recorded for the stale clients by a later tick either.
   for (const id of ['pw-stale-doc', 'pw-stale-1', 'pw-stale-2']) {
     const tick = await emails.runPostWorkshopStep({ mode: 'auto', now: '2026-11-07T10:00:00.000Z' }, sales.getSalesClientById(id));

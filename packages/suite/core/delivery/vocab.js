@@ -528,6 +528,19 @@ export const SETTINGS_KEYS = Object.freeze({
   signingMode: 'signing.mode',
   signingPaused: 'signing.paused',
   // --- end signing
+  // --- lifecycle
+  lifecyclePlanChangeEnabled: 'lifecycle.planChange.enabled',
+  lifecyclePlanChangeMode: 'lifecycle.planChange.mode',
+  lifecyclePlanChangePaused: 'lifecycle.planChange.paused',
+  lifecycleCancellationEnabled: 'lifecycle.cancellation.enabled',
+  lifecycleCancellationMode: 'lifecycle.cancellation.mode',
+  lifecycleCancellationPaused: 'lifecycle.cancellation.paused',
+  // --- end lifecycle
+  // --- booking
+  bookingSelfLinkEnabled: 'booking.selfLink.enabled',
+  bookingSelfLinkMode: 'booking.selfLink.mode',
+  bookingSelfLinkPaused: 'booking.selfLink.paused',
+  // --- end booking
   // --- intake
   intakeTierStepsEnabled: 'intake.tierSteps.enabled',
   intakeTierStepsMode: 'intake.tierSteps.mode',
@@ -569,6 +582,13 @@ export const RELEASE_GATED_SWITCHES = Object.freeze([
   // --- signing
   'signing',
   // --- end signing
+  // --- lifecycle
+  'lifecycle.planChange',
+  'lifecycle.cancellation',
+  // --- end lifecycle
+  // --- booking
+  'booking.selfLink',
+  // --- end booking
 ]);
 
 // ---------------------------------------------------------------- tier matrix and site plan (v2)
