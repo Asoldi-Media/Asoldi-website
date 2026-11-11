@@ -1,12 +1,16 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { API, authHeaders } from '../shared';
 import {
   INACTIVE_PROMOTION_TEXT,
+  canDemoteRow,
+  commitTypedText,
   demoteSwitchPatch,
   diffPatch,
   getAt,
   groupLabel,
-  parseList,
+  listInputValue,
+  parsePromotionResponse,
+  pilotPickerOptions,
   promotionModel,
   setAt,
   settingFields,
@@ -18,7 +22,6 @@ type Field = ReturnType<typeof settingFields>[number];
 type PromoRow = ReturnType<typeof promotionModel>['rows'][number];
 
 type Props = {
-  clients?: ClientOption[];
   onOpenTab?: (tab: string) => void;
 };
 
@@ -52,16 +55,69 @@ function errorText(errors: FieldError[], path: string) {
   return errors.find((error) => error.path === path)?.message || '';
 }
 
-function FieldControl({ field, onChange }: { field: Field; onChange: (value: unknown) => void }) {
+function DraftText({
+  initial,
+  wide,
+  numeric,
+  commitOnBlur,
+  onText,
+  onCommit,
+}: {
+  initial: string;
+  wide?: boolean;
+  numeric?: boolean;
+  commitOnBlur?: boolean;
+  onText: (text: string) => void;
+  onCommit: (text: string) => void;
+}) {
+  const [text, setText] = useState(initial);
+  const latest = useRef(initial);
+  const focused = useRef(false);
+  useEffect(() => {
+    if (!focused.current) {
+      latest.current = initial;
+      setText(initial);
+    }
+  }, [initial]);
+  return (
+    <input
+      className={wide ? `${input} w-full` : `${input} w-28`}
+      inputMode={numeric ? 'decimal' : 'text'}
+      value={text}
+      onFocus={() => { focused.current = true; }}
+      onChange={(event) => {
+        const next = listInputValue(event.target.value);
+        latest.current = next;
+        setText(next);
+        onText(next);
+      }}
+      onBlur={() => {
+        focused.current = false;
+        if (commitOnBlur) onCommit(latest.current);
+      }}
+    />
+  );
+}
+
+function FieldControl({
+  field,
+  onChange,
+  onText,
+  onCommit,
+}: {
+  field: Field;
+  onChange: (value: unknown) => void;
+  onText: (text: string) => void;
+  onCommit: (text: string) => void;
+}) {
   if (field.kind === 'boolean') {
     return (
       <input type="checkbox" checked={field.value === true} onChange={(event) => onChange(event.target.checked)} />
     );
   }
   if (field.kind === 'number') {
-    return (
-      <input type="number" className={`${input} w-28`} value={Number(field.value)} onChange={(event) => onChange(event.target.value === '' ? '' : Number(event.target.value))} />
-    );
+    const initial = field.value == null || field.value === '' ? '' : String(field.value);
+    return <DraftText initial={initial} numeric onText={onText} onCommit={onCommit} />;
   }
   if (field.kind === 'enum') {
     return (
@@ -71,14 +127,8 @@ function FieldControl({ field, onChange }: { field: Field; onChange: (value: unk
     );
   }
   if (field.kind === 'string-list' || field.kind === 'number-list') {
-    const text = Array.isArray(field.value) ? field.value.join(', ') : '';
-    return (
-      <input
-        className={`${input} w-full`}
-        value={text}
-        onChange={(event) => onChange(parseList(event.target.value, { numbers: field.kind === 'number-list' }))}
-      />
-    );
+    const initial = Array.isArray(field.value) ? field.value.join(', ') : '';
+    return <DraftText initial={initial} wide numeric={field.kind === 'number-list'} commitOnBlur onText={onText} onCommit={onCommit} />;
   }
   if (field.kind === 'mailbox-map') {
     const map = field.value && typeof field.value === 'object' ? field.value as Record<string, boolean> : {};
@@ -166,7 +216,7 @@ function RelatedLinks({ onOpenTab }: { onOpenTab?: (tab: string) => void }) {
   );
 }
 
-function PromotionPanel({ reason }: { reason: string }) {
+function PromotionPanel({ reason, settings }: { reason: string; settings: Record<string, unknown> | null }) {
   const [model, setModel] = useState<ReturnType<typeof promotionModel> | null>(null);
   const [failed, setFailed] = useState('');
   const [busy, setBusy] = useState('');
@@ -174,13 +224,14 @@ function PromotionPanel({ reason }: { reason: string }) {
   const load = useCallback(async () => {
     setFailed('');
     const res = await fetch(`${API}/admin/automation/promotion`, { headers: authHeaders() });
-    const body = await res.json().catch(() => ({}));
-    if (res.status === 404) {
-      setModel(promotionModel({ code: 'disabled' }));
+    const text = await res.text();
+    const body = parsePromotionResponse({ status: res.status, contentType: res.headers.get('content-type') || '', text });
+    if (!Array.isArray(body.switches)) {
+      setModel(promotionModel(body.code === 'disabled' || res.status === 404 ? { code: 'disabled' } : body));
       return;
     }
     if (!res.ok) {
-      setFailed(body.message || 'Kunne ikke hente opprykk.');
+      setFailed('Kunne ikke hente opprykk.');
       setModel(null);
       return;
     }
@@ -190,12 +241,14 @@ function PromotionPanel({ reason }: { reason: string }) {
   useEffect(() => { void load(); }, [load]);
 
   async function demote(row: PromoRow) {
+    const patch = demoteSwitchPatch(row.id, settings || undefined);
+    if (!patch) return;
     setBusy(row.id);
     try {
       const res = await fetch(`${API}/admin/automation-settings`, {
         method: 'PUT',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ settings: demoteSwitchPatch(row.id), reason: reason || 'Manuell overstyring' }),
+        body: JSON.stringify({ settings: patch, reason: reason || 'Manuell overstyring' }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -216,32 +269,54 @@ function PromotionPanel({ reason }: { reason: string }) {
       {failed && <p className="text-red-300 text-sm">{failed}</p>}
       {model && !model.active && <p className="text-gray-500 text-sm">{model.message || INACTIVE_PROMOTION_TEXT}</p>}
       {model?.active && (
-        <ul className="space-y-3">
-          {model.rows.map((row) => (
-            <li key={row.id} className="border-t border-white/10 pt-2 min-w-0">
-              <div className="flex flex-wrap items-center gap-2 min-w-0">
-                <span className="text-white truncate">{row.id}</span>
-                <span className="text-gray-400 text-xs">{valueLabel(String(row.mode || 'ukjent'))}</span>
-                {row.releasePassedAt && <span className="text-gray-500 text-xs">Utgivelse {row.releasePassedAt}</span>}
-                {row.streak != null && <span className="text-gray-400 text-xs">Serie {row.streak}{row.target != null ? ` / ${row.target}` : ''}</span>}
-              </div>
-              {!!row.blockers.length && (
-                <p className="text-amber-200 text-xs mt-1">{row.blockers.map((item) => item.label).join(', ')}</p>
-              )}
-              <button type="button" disabled={busy === row.id} onClick={() => void demote(row)} className="mt-1 text-xs text-[#FF5B00] hover:underline disabled:opacity-50">
-                Sett modus til godkjenning
-              </button>
-            </li>
-          ))}
-        </ul>
+        <>
+          <p className="text-gray-400 text-xs mb-2">
+            Piloter: {model.pilots}. Automatisk opprykk: {model.promotionAuto ? 'på' : 'av'}. Utgivelsesnøkkel: {model.releaseKey.installed ? `installert ${model.releaseKey.keyId}` : 'ikke installert'}.
+          </p>
+          {!!model.guards.trips.length && (
+            <ul className="text-xs text-gray-500 mb-2 space-y-1">
+              {model.guards.trips.map((trip, index) => (
+                <li key={`${trip.at || ''}-${index}`}>Tur {trip.kind || ''} {trip.code || ''} {trip.at || ''}</li>
+              ))}
+            </ul>
+          )}
+          <ul className="space-y-3">
+            {model.rows.map((row) => (
+              <li key={row.id} className="border-t border-white/10 pt-2 min-w-0">
+                <div className="flex flex-wrap items-center gap-2 min-w-0">
+                  <span className="text-white truncate">{row.id}</span>
+                  <span className="text-gray-400 text-xs">{row.spine ? 'Kjerne: ja' : 'Kjerne: nei'}</span>
+                  <span className="text-gray-400 text-xs">{valueLabel(String(row.mode || 'ukjent'))}</span>
+                  {row.releasePassedAt && <span className="text-gray-500 text-xs">Utgivelse {row.releasePassedAt}</span>}
+                </div>
+                {row.guard && (
+                  <p className="text-gray-400 text-xs mt-1">
+                    Sendt {row.guard.sent}, feil {row.guard.error}, retur {row.guard.bounce}, klage {row.guard.complaint}
+                    {row.guard.verdict?.code ? `, dom ${row.guard.verdict.code}` : ''}
+                  </p>
+                )}
+                {!!row.blockers.length && (
+                  <p className="text-amber-200 text-xs mt-1">{row.blockers.map((item) => item.label).join(', ')}</p>
+                )}
+                {canDemoteRow(row, settings) && (
+                  <button type="button" disabled={busy === row.id} onClick={() => void demote(row)} className="mt-1 text-xs text-[#FF5B00] hover:underline disabled:opacity-50">
+                    {row.id === 'development.autoQueue' ? 'Slå av' : row.id === 'emails.preWorkshop.gate' ? 'Tilbake til som i dag' : 'Sett til skygge'}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </section>
   );
 }
 
-export function AutomationSection({ clients = [], onOpenTab }: Props) {
+export function AutomationSection({ onOpenTab }: Props) {
+  const [salesClients, setSalesClients] = useState<ClientOption[]>([]);
   const [loaded, setLoaded] = useState<Record<string, unknown> | null>(null);
   const [draft, setDraft] = useState<Record<string, unknown> | null>(null);
+  const pendingText = useRef<Record<string, string>>({});
   const [defaults, setDefaults] = useState<Record<string, unknown>>({});
   const [envOverrides, setEnvOverrides] = useState<{ path: string }[]>([]);
   const [reason, setReason] = useState('');
@@ -265,9 +340,19 @@ export function AutomationSection({ clients = [], onOpenTab }: Props) {
 
   useEffect(() => { void load(); }, [load]);
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const res = await fetch(`${API}/admin/sales`, { headers: authHeaders() });
+      const body = await res.json().catch(() => ({}));
+      if (!cancelled) setSalesClients(res.ok ? pilotPickerOptions(body) : []);
+    })().catch(() => { if (!cancelled) setSalesClients([]); });
+    return () => { cancelled = true; };
+  }, []);
+
   const fields = useMemo(
-    () => (draft ? settingFields(draft, { defaults, envOverrides }) : []),
-    [draft, defaults, envOverrides],
+    () => (draft ? settingFields(draft, { defaults, envOverrides, loaded }) : []),
+    [draft, defaults, envOverrides, loaded],
   );
   const groups = useMemo(() => {
     const order: string[] = [];
@@ -279,9 +364,20 @@ export function AutomationSection({ clients = [], onOpenTab }: Props) {
     setDraft((current) => (current ? setAt(current, path, value) : current));
   }
 
+  function commitText(path: string, text: string) {
+    const value = commitTypedText(path, text, { defaults, loaded });
+    if (value === undefined) return;
+    update(path, value);
+  }
+
   async function save() {
     if (!loaded || !draft) return;
-    const patch = diffPatch(loaded, draft) || {};
+    let next = draft;
+    for (const [path, text] of Object.entries(pendingText.current)) {
+      const value = commitTypedText(path, text, { defaults, loaded });
+      if (value !== undefined) next = setAt(next, path, value);
+    }
+    const patch = diffPatch(loaded, next) || {};
     setSaving(true);
     setNotice('');
     try {
@@ -295,10 +391,11 @@ export function AutomationSection({ clients = [], onOpenTab }: Props) {
         setErrors(Array.isArray(body.errors) ? body.errors : [{ path: '', message: body.message || 'Kunne ikke lagre.' }]);
         return;
       }
+      pendingText.current = {};
       setErrors([]);
       setNotice('Lagret.');
-      setLoaded(body.settings || draft);
-      setDraft(body.settings || draft);
+      setLoaded(body.settings || next);
+      setDraft(body.settings || next);
     } finally {
       setSaving(false);
     }
@@ -331,9 +428,14 @@ export function AutomationSection({ clients = [], onOpenTab }: Props) {
                 </div>
                 <div className="min-w-0">
                   {field.path === 'pilotClientIds' ? (
-                    <PilotPicker clients={clients} selected={pilots} onChange={(ids) => update('pilotClientIds', ids)} />
+                    <PilotPicker clients={salesClients} selected={pilots} onChange={(ids) => update('pilotClientIds', ids)} />
                   ) : field.editable ? (
-                    <FieldControl field={field} onChange={(value) => update(field.path, value)} />
+                    <FieldControl
+                      field={field}
+                      onChange={(value) => update(field.path, value)}
+                      onText={(text) => { pendingText.current[field.path] = text; }}
+                      onCommit={(text) => commitText(field.path, text)}
+                    />
                   ) : (
                     <span className="text-gray-500 text-xs">Skrivebeskyttet</span>
                   )}
@@ -345,7 +447,7 @@ export function AutomationSection({ clients = [], onOpenTab }: Props) {
           </div>
         </section>
       ))}
-      <PromotionPanel reason={reason} />
+      <PromotionPanel reason={reason} settings={loaded} />
       <RelatedLinks onOpenTab={onOpenTab} />
     </div>
   );

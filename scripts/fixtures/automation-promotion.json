@@ -1,38 +1,77 @@
 {
-  "pilots": ["pilot-havn-1"],
+  "pilots": 2,
   "promotionAuto": true,
   "switches": [
     {
       "id": "emails.previewReady",
-      "spine": "email",
-      "release": { "passedAt": "2026-11-01T10:00:00.000Z" },
+      "spine": true,
+      "release": null,
       "stored": { "enabled": true, "mode": "shadow", "paused": null },
       "effective": "shadow",
       "autoReachable": false,
-      "blockers": ["mode-not-auto", "no-pilots"],
-      "guard": { "streak": 4, "target": 10, "sent": 4, "discards": 0 }
-    },
-    {
-      "id": "publish.staging",
-      "spine": "publish",
-      "release": null,
-      "stored": { "enabled": false, "mode": "shadow", "paused": { "reason": "feil" } },
-      "effective": "off",
-      "autoReachable": false,
-      "blockers": ["disabled", "paused", "no-release"],
-      "guard": null
+      "blockers": ["mode-not-auto", "no-release", "no-pilots", "no-feedback-feed"],
+      "guard": {
+        "sent": 4,
+        "error": 1,
+        "bounce": 0,
+        "complaint": 0,
+        "previous": [2, 3],
+        "verdict": { "code": "error-rate", "reason": "1 av 5" }
+      }
     },
     {
       "id": "emails.siteLive",
-      "spine": "email",
+      "spine": true,
       "release": { "passedAt": "2026-10-02T08:00:00.000Z" },
       "stored": { "enabled": true, "mode": "auto", "paused": null },
       "effective": "auto",
       "autoReachable": true,
       "blockers": [],
-      "guard": { "cleanStreak": 3, "cleanTarget": 3 }
+      "guard": {
+        "sent": 3,
+        "error": 0,
+        "bounce": 0,
+        "complaint": 0,
+        "previous": [3],
+        "verdict": null
+      }
+    },
+    {
+      "id": "publish.staging",
+      "spine": false,
+      "release": null,
+      "stored": { "enabled": false, "mode": "shadow", "paused": { "at": "2026-11-01T00:00:00.000Z", "reason": "kontroll", "by": "test" } },
+      "effective": "off",
+      "autoReachable": false,
+      "blockers": ["disabled", "paused", "mode-not-auto", "no-release"],
+      "guard": null
+    },
+    {
+      "id": "emails.preWorkshop.gate",
+      "spine": false,
+      "release": null,
+      "stored": { "enabled": true, "mode": "legacy-lines", "paused": null },
+      "effective": "auto",
+      "autoReachable": false,
+      "blockers": ["mode-not-auto"],
+      "guard": null
+    },
+    {
+      "id": "development.autoQueue",
+      "spine": false,
+      "release": null,
+      "stored": { "enabled": true, "mode": "auto", "paused": null },
+      "effective": "auto",
+      "autoReachable": false,
+      "blockers": ["no-release"],
+      "guard": null
     }
   ],
-  "guards": { "settings": { "minSample": 5 }, "trips": [] },
-  "releaseKey": { "installed": false, "keyId": "" }
+  "guards": {
+    "settings": { "errorRatePct": 20, "bounceRatePct": 5, "complaintsMax": 1, "windowHours": 24, "minSample": 10 },
+    "trips": [
+      { "at": "2026-11-01T12:00:00.000Z", "kind": "previewReady", "code": "error-rate", "reason": "kontroll", "paused": true }
+    ]
+  },
+  "releaseKey": { "installed": true, "keyId": "eksempel-nokkel" }
 }

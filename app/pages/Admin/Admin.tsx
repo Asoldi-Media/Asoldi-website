@@ -29,7 +29,39 @@ import {
 } from './shared';
 import { clientAdminPasswordProblem } from '../../../lib/client-admin-password.js';
 import { canSeeAutomation, roleFromAdminToken } from '../../../lib/automation-section-helpers.js';
+import { legacyFeaturesWrite, showFeatureTreeEditor, showLegacyFeatureFlags } from '../../../lib/feature-tree-editor-helpers.js';
 import { FeatureTreeEditor } from './sections/FeatureTreeEditor';
+
+const LEGACY_FEATURE_FIELDS: { key: keyof Features; label: string }[] = [
+  { key: 'users', label: 'Users' },
+  { key: 'analytics', label: 'Analytics' },
+  { key: 'ecommerce', label: 'Ecommerce' },
+  { key: 'blog', label: 'Blog' },
+  { key: 'socialSync', label: 'Social sync' },
+  { key: 'emailMarketing', label: 'Email marketing' },
+  { key: 'general', label: 'General (users & more)' },
+];
+
+function LegacyFeatureFlags({ features, onChange }: { features: Features; onChange: (next: Features) => void }) {
+  return (
+    <div>
+      <p className="text-xs text-gray-400 mb-1">Gamle funksjonsflagg</p>
+      <div className="flex flex-wrap gap-3">
+        {LEGACY_FEATURE_FIELDS.map(({ key, label }) => (
+          <label key={key} className="inline-flex items-center gap-2 text-sm text-gray-200">
+            <input
+              type="checkbox"
+              checked={!!features[key]}
+              onChange={(event) => onChange(legacyFeaturesWrite({ ...features, [key]: event.target.checked }))}
+              className="rounded border-white/20"
+            />
+            {label}
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 const EmailTemplateStudio = lazy(() =>
   import('../sales/EmailTemplateStudio').then((m) => ({ default: m.EmailTemplateStudio }))
@@ -95,6 +127,8 @@ export const Admin = () => {
   const [addSiteCatalogType, setAddSiteCatalogType] = useState<EcommerceCatalogType>('normal');
   const [addSiteGithubRepo, setAddSiteGithubRepo] = useState('');
   const [editingSiteId, setEditingSiteId] = useState<string | null>(null);
+  const [editConfigMode, setEditConfigMode] = useState('');
+  const [editLegacyOpen, setEditLegacyOpen] = useState(false);
   const [editSiteDomain, setEditSiteDomain] = useState('');
   const [editSiteName, setEditSiteName] = useState('');
   const [editSitePlan, setEditSitePlan] = useState<WebsitePlanId>('tier-1-standard');
@@ -111,6 +145,8 @@ export const Admin = () => {
   });
   const [copyKey, setCopyKey] = useState<string | null>(null);
   const [clientAdminSiteId, setClientAdminSiteId] = useState<string | null>(null);
+  const [adminConfigMode, setAdminConfigMode] = useState('');
+  const [adminLegacyOpen, setAdminLegacyOpen] = useState(false);
   const [clientAdminForm, setClientAdminForm] = useState({
     name: '',
     email: '',
@@ -419,7 +455,7 @@ export const Admin = () => {
           domain: editSiteDomain,
           name: editSiteName,
           websitePlan: editSitePlan,
-          features: editSiteFeatures,
+          features: legacyFeaturesWrite(editSiteFeatures),
           ecommerceCatalogType: editSiteFeatures.ecommerce ? editSiteCatalogType : null,
           githubRepo: editSiteGithubRepo.trim(),
         }),
@@ -486,7 +522,7 @@ export const Admin = () => {
       const featureRes = await fetch(`${API}/hub/sites/${clientAdminSiteId}`, {
         method: 'PUT',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ features: editSiteFeatures }),
+        body: JSON.stringify({ features: legacyFeaturesWrite(editSiteFeatures) }),
       });
       if (!featureRes.ok) {
         const data = await featureRes.json().catch(() => ({}));
@@ -654,6 +690,8 @@ export const Admin = () => {
               onAdd={() => setAddSiteOpen(true)}
               onEdit={(site) => {
                 setEditingSiteId(site.id);
+                setEditConfigMode('');
+                setEditLegacyOpen(false);
                 setEditSiteDomain(site.domain);
                 setEditSiteName(site.name);
                 setEditSitePlan(site.websitePlan || 'tier-1-standard');
@@ -675,6 +713,8 @@ export const Admin = () => {
               onIssueLocalBlogToken={handleIssueLocalBlogToken}
               onEditAdmin={(site) => {
                 setClientAdminSiteId(site.id);
+                setAdminConfigMode('');
+                setAdminLegacyOpen(false);
                 setClientAdminError('');
                 setClientAdminForm({
                   name: site.clientAdmin?.name || '',
@@ -747,10 +787,7 @@ export const Admin = () => {
           )}
           {tab === 'automation' && canSeeAutomation(gateRole) && (
             <Suspense fallback={<p className="text-gray-400">Laster automatisering…</p>}>
-              <AutomationSection
-                clients={sites.map((site) => ({ id: site.id, name: site.name }))}
-                onOpenTab={(id) => { if (id === 'system') setTab('system'); }}
-              />
+            <AutomationSection onOpenTab={(id) => { if (id === 'system') setTab('system'); }} />
             </Suspense>
           )}
         </main>
@@ -825,7 +862,16 @@ export const Admin = () => {
                 </select>
                 <p className="text-xs text-gray-500 mt-1">Endring av plan setter standardmoduler. Funksjonene redigeres i treet under.</p>
               </div>
-              {editingSiteId && <FeatureTreeEditor siteId={editingSiteId} compact />}
+              {editingSiteId && <FeatureTreeEditor siteId={editingSiteId} compact onSiteConfigMode={setEditConfigMode} />}
+              {showFeatureTreeEditor(editConfigMode) && (
+                <label className="flex items-center gap-2 text-xs text-gray-400">
+                  <input type="checkbox" checked={editLegacyOpen} onChange={(event) => setEditLegacyOpen(event.target.checked)} />
+                  Vis gamle funksjonsflagg
+                </label>
+              )}
+              {(showLegacyFeatureFlags(editConfigMode) || editLegacyOpen) && (
+                <LegacyFeatureFlags features={editSiteFeatures} onChange={setEditSiteFeatures} />
+              )}
               {editSiteFeatures.ecommerce && (
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">Ecommerce catalog type</label>
@@ -878,7 +924,16 @@ export const Admin = () => {
                 {clientAdminError || 'Minst 8 og høyst 1024 tegn. Vanlige standardpassord (changeme, admin, password, 12345678 …) avvises.'}
               </p>
               <p className="text-xs text-gray-500">Created {clientAdminForm.createdAt ? new Date(clientAdminForm.createdAt).toLocaleString() : 'when first saved'}</p>
-              {clientAdminSiteId && <FeatureTreeEditor siteId={clientAdminSiteId} compact />}
+              {clientAdminSiteId && <FeatureTreeEditor siteId={clientAdminSiteId} compact onSiteConfigMode={setAdminConfigMode} />}
+              {showFeatureTreeEditor(adminConfigMode) && (
+                <label className="flex items-center gap-2 text-xs text-gray-400">
+                  <input type="checkbox" checked={adminLegacyOpen} onChange={(event) => setAdminLegacyOpen(event.target.checked)} />
+                  Vis gamle funksjonsflagg
+                </label>
+              )}
+              {(showLegacyFeatureFlags(adminConfigMode) || adminLegacyOpen) && (
+                <LegacyFeatureFlags features={editSiteFeatures} onChange={setEditSiteFeatures} />
+              )}
               <div className="flex gap-2 pt-2">
                 <button type="button" onClick={handleSaveClientAdmin} disabled={loading} className="px-4 py-2 rounded-lg bg-[#FF5B00] text-white font-medium disabled:opacity-50">Save</button>
                 <button type="button" onClick={() => setClientAdminSiteId(null)} className="px-4 py-2 rounded-lg bg-white/10 text-white">Cancel</button>

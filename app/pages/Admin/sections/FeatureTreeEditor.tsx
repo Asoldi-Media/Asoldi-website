@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { API, authHeaders } from '../shared';
 import {
   applyDefaultEnabled,
@@ -6,14 +6,15 @@ import {
   applyLock,
   applyServiceTri,
   applyTriState,
-  diffFeatureSpecs,
   featureEditorModel,
+  featureSpecSavePatch,
+  showFeatureTreeEditor,
 } from '../../../../lib/feature-tree-editor-helpers.js';
 // The registry JSON has no type declaration. A global json module would hide an existing error.
 // @ts-ignore
 import registryJson from '../../../../data/cms-feature-tree.json';
 
-type Props = { siteId: string; onSaved?: () => void; compact?: boolean };
+type Props = { siteId: string; onSaved?: () => void; compact?: boolean; onSiteConfigMode?: (mode: string) => void };
 type FieldError = { path?: string; message?: string };
 
 const ENFORCEMENT = [
@@ -34,7 +35,7 @@ function errorText(errors: FieldError[], path: string) {
   return errors.find((error) => error.path === path)?.message || '';
 }
 
-export function FeatureTreeEditor({ siteId, onSaved, compact = false }: Props) {
+export function FeatureTreeEditor({ siteId, onSaved, compact = false, onSiteConfigMode }: Props) {
   const registry = registryJson as { nodes?: unknown[] };
   const [view, setView] = useState<Record<string, unknown> | null>(null);
   const [spec, setSpec] = useState<Record<string, unknown>>({});
@@ -43,17 +44,26 @@ export function FeatureTreeEditor({ siteId, onSaved, compact = false }: Props) {
   const [reason, setReason] = useState('');
   const [errors, setErrors] = useState<FieldError[]>([]);
   const [notice, setNotice] = useState('');
+  const [conflict, setConflict] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  const reload = useCallback(() => {
+    setConflict(false);
+    setReloadKey((current) => current + 1);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     setView(null);
     setErrors([]);
-    setNotice('');
+    if (reloadKey === 0) setNotice('');
     (async () => {
       const res = await fetch(`${API}/hub/sites/${encodeURIComponent(siteId)}/cms-spec`, { headers: authHeaders() });
       const body = await res.json().catch(() => ({}));
       if (cancelled) return;
+      const mode = String(body.siteConfigMode || '');
+      onSiteConfigMode?.(mode);
       if (!res.ok) {
         setErrors([{ path: '', message: body.message || 'Kunne ikke hente funksjonstreet.' }]);
         return;
@@ -64,7 +74,7 @@ export function FeatureTreeEditor({ siteId, onSaved, compact = false }: Props) {
       setLoadedEnforcement(body.featureEnforcement || 'log');
     })();
     return () => { cancelled = true; };
-  }, [siteId]);
+  }, [siteId, reloadKey, onSiteConfigMode]);
 
   const model = useMemo(() => (view ? featureEditorModel(registry, { ...view, featureSpec: spec, featureEnforcement: enforcement }) : null), [registry, view, spec, enforcement]);
 
@@ -81,9 +91,9 @@ export function FeatureTreeEditor({ siteId, onSaved, compact = false }: Props) {
 
   async function save() {
     if (!view) return;
-    const featureSpec = diffFeatureSpecs(view.featureSpec, spec);
+    const featureSpec = featureSpecSavePatch(view.featureSpec, spec);
     const body: Record<string, unknown> = { reason, cmsSpecRev: Number((view.cmsSpec as { rev?: number } | undefined)?.rev) || 0 };
-    if (Object.keys(featureSpec).length) body.featureSpec = featureSpec;
+    if (featureSpec) body.featureSpec = featureSpec;
     if (enforcement !== loadedEnforcement) body.featureEnforcement = enforcement;
     if (!body.featureSpec && body.featureEnforcement === undefined) {
       setNotice('Ingen endringer.');
@@ -97,15 +107,21 @@ export function FeatureTreeEditor({ siteId, onSaved, compact = false }: Props) {
         body: JSON.stringify(body),
       });
       const payload = await res.json().catch(() => ({}));
+      if (res.status === 409) {
+        setConflict(true);
+        setErrors([{ path: '', message: 'Noen andre lagret først. Last inn på nytt.' }]);
+        return;
+      }
       if (!res.ok) {
+        setConflict(false);
         setErrors(Array.isArray(payload.errors) ? payload.errors : [{ path: '', message: payload.message || 'Kunne ikke lagre.' }]);
         return;
       }
       setErrors([]);
+      setConflict(false);
       setNotice('Lagret.');
-      setView((current) => current ? { ...current, featureSpec: spec, featureEnforcement: enforcement } : current);
-      setLoadedEnforcement(enforcement);
       onSaved?.();
+      reload();
     } finally {
       setSaving(false);
     }
@@ -114,6 +130,8 @@ export function FeatureTreeEditor({ siteId, onSaved, compact = false }: Props) {
   if (!model) {
     return <p className="text-gray-400 text-sm">{errors[0]?.message || 'Laster funksjoner…'}</p>;
   }
+
+  if (!showFeatureTreeEditor(String(view?.siteConfigMode || ''))) return null;
 
   const reported = (model.cmsReported || {}) as {
     effective?: string[] | string | null;
@@ -131,6 +149,9 @@ export function FeatureTreeEditor({ siteId, onSaved, compact = false }: Props) {
         <p className="text-gray-500 text-xs">{model.count} funksjoner</p>
       </div>
       {errors.filter((error) => !error.path).map((error) => <p key={error.message} className="text-red-300 text-xs">{error.message}</p>)}
+      {conflict && (
+        <button type="button" onClick={reload} className="text-xs text-[#FF5B00] hover:underline">Last inn på nytt</button>
+      )}
       {notice && <p className="text-emerald-300 text-xs">{notice}</p>}
       <div className="space-y-1 min-w-0">
         <p className="text-xs text-gray-400">Tjenester</p>
