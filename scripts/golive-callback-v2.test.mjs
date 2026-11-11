@@ -135,11 +135,14 @@ test('a staging live stores goLive but sets neither progression.live nor the liv
 
 test('a verified production live sets live, domainConnected and liveVerifiedAt (auto)', async () => {
   setSettings(AUTO);
-  const result = await deliver('staging', fixture('v2-production-live.json'));
+  // The stage moves from live to maintenance a week after the go-live, so the test verifies the
+  // live an hour before now instead of on the fixture's fixed date.
+  const liveVerifiedAt = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const result = await deliver('staging', { ...fixture('v2-production-live.json'), liveVerifiedAt });
   assert.equal(result.client.progression.live, true);
   assert.equal(result.client.progression.domainConnected, true);
   assert.equal(result.client.makerRun.goLive.target, 'production');
-  assert.equal(result.client.makerRun.goLive.liveVerifiedAt, '2026-11-02T10:20:00.000Z');
+  assert.equal(result.client.makerRun.goLive.liveVerifiedAt, liveVerifiedAt);
   assert.equal(result.client.makerRun.goLive.staging.target, 'staging', 'the staging record is kept beside it');
   assert.equal(result.client.delivery.stage, 'live');
   const action = result.client.nextActions.find((entry) => entry.id === 'na-live');
