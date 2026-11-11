@@ -263,3 +263,21 @@ test('bookIterationMeeting stores a draft and refuses a send without a time; a s
     resetSafeModeForTests();
   }
 });
+
+test('the used-link ledger is a registered personal-data store: export lists the client, erase blanks it and keeps the single-use guard', async () => {
+  const personalData = await import('../lib/personal-data.js');
+  await personalData.loadStoreModules();
+  const store = personalData.getStore('booking-tokens');
+  assert.ok(store, 'the ledger is registered');
+  const nonce = randomBytes(16).toString('hex');
+  assert.equal(booking.consumeBookingToken(nonce, { exp: NOW + 86_400_000, clientId: 'cli-erase', purpose: 'workshop', start: '2026-03-26T08:00:00.000Z' }, { dataDir: DATA_DIR, now: NOW }), true);
+  const exported = store.export('cli-erase', { dataDir: DATA_DIR });
+  assert.equal(exported.records.length, 1);
+  assert.equal(exported.records[0].start, '2026-03-26T08:00:00.000Z');
+  assert.equal(store.erase('cli-erase', { dataDir: DATA_DIR, dryRun: true }).records, 1);
+  assert.equal(store.export('cli-erase', { dataDir: DATA_DIR }).records.length, 1, 'a dry run changes nothing');
+  assert.equal(store.erase('cli-erase', { dataDir: DATA_DIR, dryRun: false }).action, 'delete');
+  assert.equal(store.export('cli-erase', { dataDir: DATA_DIR }).records.length, 0);
+  assert.equal(booking.bookingTokenUsed(nonce, { dataDir: DATA_DIR }), true, 'the link stays single use');
+  assert.equal(store.erase('cli-erase', { dataDir: DATA_DIR, dryRun: false }).action, 'none');
+});

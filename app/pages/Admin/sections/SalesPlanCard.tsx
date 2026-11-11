@@ -16,6 +16,7 @@ type LifecycleView = {
   cancellation: string;
   canUnsign: boolean;
   canChangePlan: boolean;
+  tiers?: Array<{ id: string; name: string }>;
   history: PlanHistoryEntry[];
   conflicts: PlanConflict[];
 };
@@ -84,6 +85,8 @@ export function SalesPlanCard<C = unknown>({ clientId, onClientSaved }: { client
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState('');
   const [reload, setReload] = React.useState(0);
+  const [changing, setChanging] = React.useState(false);
+  const [nextTier, setNextTier] = React.useState('');
 
   React.useEffect(() => {
     let alive = true;
@@ -186,6 +189,32 @@ export function SalesPlanCard<C = unknown>({ clientId, onClientSaved }: { client
     }
   }
 
+  async function changePlan() {
+    if (!nextTier) return;
+    if (!window.confirm('Endre planen for denne kunden?')) return;
+    setBusy(true);
+    setError('');
+    try {
+      const res = await fetch(`${API}/admin/sales/${encodeURIComponent(clientId)}/site-plan`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', ...salesAuthHeaders() },
+        body: JSON.stringify({ tierId: nextTier, reason: 'Endret fra salgskortet' }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(json.message || 'Kunne ikke endre planen.');
+        return;
+      }
+      setChanging(false);
+      setNextTier('');
+      setReload((value) => value + 1);
+    } catch {
+      setError('Kunne ikke endre planen.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function unsign() {
     if (!window.confirm('Oppheve signeringen? Planen settes til side. Et nettsted som ikke er publisert arkiveres, det slettes ikke.')) return;
     setBusy(true);
@@ -247,7 +276,7 @@ export function SalesPlanCard<C = unknown>({ clientId, onClientSaved }: { client
               <span>
                 Avvik: {conflict.source} sier {conflict.tierName || conflict.tierId}{conflict.at ? ` (${shortDate(conflict.at)})` : ''}. Kontrakten gjelder til planen endres.
               </span>
-              {planChangeOn && Number.isInteger(conflict.index) ? (
+              {lifecycle?.canChangePlan && Number.isInteger(conflict.index) ? (
                 <>
                   <button
                     type="button"
@@ -323,14 +352,56 @@ export function SalesPlanCard<C = unknown>({ clientId, onClientSaved }: { client
           Bekreft tjenester
         </button>
       ) : null}
-      {cancellationOn ? (
+      {lifecycle?.canChangePlan ? (
+        changing ? (
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={nextTier}
+              disabled={busy}
+              onChange={(event) => setNextTier(event.target.value)}
+              className="rounded-lg bg-[#222] border border-white/10 px-2 py-1.5 text-xs text-gray-100"
+            >
+              <option value="">Velg plan</option>
+              {(lifecycle.tiers || []).map((tier) => (
+                <option key={tier.id} value={tier.id}>{tier.name}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              disabled={busy || !nextTier}
+              onClick={() => void changePlan()}
+              className="px-3 py-1.5 rounded-lg bg-white/10 text-gray-100 text-xs hover:bg-white/15 disabled:opacity-50"
+            >
+              Lagre plan
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => { setChanging(false); setNextTier(''); }}
+              className="px-3 py-1.5 rounded-lg bg-white/10 text-gray-100 text-xs hover:bg-white/15 disabled:opacity-50"
+            >
+              Avbryt
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => setChanging(true)}
+            className="px-3 py-1.5 rounded-lg bg-white/10 text-gray-100 text-xs hover:bg-white/15 disabled:opacity-50"
+          >
+            Endre plan
+          </button>
+        )
+      ) : null}
+      {lifecycle?.canUnsign ? (
         <button
           type="button"
           disabled={busy}
           onClick={() => void unsign()}
           className="px-3 py-1.5 rounded-lg bg-white/10 text-gray-100 text-xs hover:bg-white/15 disabled:opacity-50"
         >
-          Opphev signering
+          Angre signering
         </button>
       ) : null}
       {error ? <div className="text-xs text-red-400">{error}</div> : null}
