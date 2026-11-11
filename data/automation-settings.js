@@ -198,6 +198,12 @@ export function defaultAutomationSettings() {
       wakePing: { enabled: false, paused: null },
     },
     // --- end cms fleet monitor
+    // --- site rekey
+    // siteRekey: the staff route POST /api/admin/sites/rekey (lib/routes/site-rekey-routes.js) that gives a
+    // site the key its published site carries, keeping the old key as an alias for 90 days. Off: the route
+    // answers 404 disabled and nothing is written. A paused switch ({reason}) counts as off.
+    siteRekey: { enabled: false, paused: null },
+    // --- end site rekey
   };
 }
 
@@ -402,6 +408,9 @@ const BOOLEANS = new Set([
   'cmsFleet.autoApplyFlip',
   'cmsFleet.wakePing.enabled',
   // --- end cms fleet monitor
+  // --- site rekey
+  'siteRekey.enabled',
+  // --- end site rekey
 ]);
 
 function knownPaths() {
@@ -565,6 +574,13 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
     else node.paused = paused;
   }
   // --- end cms fleet monitor
+  // --- site rekey
+  if (isPlainObject(value.siteRekey)) {
+    const paused = normalizePaused(value.siteRekey.paused, { by, now });
+    if (paused === undefined) fail('siteRekey.paused', 'Must be null or {reason}.');
+    else value.siteRekey.paused = paused;
+  }
+  // --- end site rekey
   const tiers = value.publish?.staging?.tiers;
   if (!Array.isArray(tiers) || tiers.some((tier) => !TIER_IDS.includes(tier))) {
     fail('publish.staging.tiers', `Must list tier ids (${TIER_IDS.join(', ')}).`);

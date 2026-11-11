@@ -1,5 +1,5 @@
 import { readFileSync, existsSync } from 'fs';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import bcrypt from 'bcryptjs';
 import { getDataFilePath, ensurePersistentDataDir, writeDataJson } from './storage-path.js';
 import { withFileLock } from './atomic-json.js';
@@ -69,9 +69,64 @@ export function generateSiteKey() {
   return randomBytes(16).toString('hex');
 }
 
+/** How long a replaced site key keeps resolving to its site (see rekeySite). */
+export const KEY_ALIAS_DAYS = 90;
+const KEY_ALIAS_MAX = 20;
+const KEY_HISTORY_MAX = 20;
+
+/** The replaced keys of a site that still resolve: [{ key, until, at }]. Empty for a site never rekeyed. */
+function liveKeyAliases(site, nowMs = Date.now()) {
+  const list = Array.isArray(site?.keyAliases) ? site.keyAliases : [];
+  const out = [];
+  for (const row of list) {
+    const key = String(row?.key || '').trim();
+    const until = Date.parse(String(row?.until || ''));
+    if (key && Number.isFinite(until) && until > nowMs) out.push({ key, until: row.until, at: row.at || null });
+  }
+  return out;
+}
+
+/** A site's current key followed by its live aliases (just [site_key] for a site never rekeyed). */
+export function liveSiteKeys(site, nowMs = Date.now()) {
+  const keys = [String(site?.site_key ?? '')];
+  if (Array.isArray(site?.keyAliases) && site.keyAliases.length) for (const row of liveKeyAliases(site, nowMs)) keys.push(row.key);
+  return keys;
+}
+
+function siteHoldsKey(site, key, nowMs) {
+  if (site.site_key === key) return true;
+  return liveKeyAliases(site, nowMs).some((row) => row.key === key);
+}
+
+function siteByAlias(sites, key, nowMs = Date.now()) {
+  return sites.find((s) => Array.isArray(s.keyAliases) && s.keyAliases.length && liveKeyAliases(s, nowMs).some((row) => row.key === key)) || null;
+}
+
+/**
+ * The site that owns `siteKey`: its current key first, else a replaced key that is still inside its
+ * alias window. A hub with no stored alias answers exactly as a plain key match does.
+ */
 export function getSiteByKey(siteKey) {
   const sites = readSites();
-  return sites.find((s) => s.site_key === siteKey) || null;
+  const exact = sites.find((s) => s.site_key === siteKey);
+  if (exact) return exact;
+  const key = typeof siteKey === 'string' ? siteKey.trim() : '';
+  if (!key) return null;
+  return siteByAlias(sites, key);
+}
+
+/**
+ * Every key that reaches the same site as `siteKey`: the key itself first, then the site's current
+ * key and its live aliases. Stores keyed by site key read all of them. A key that no site holds,
+ * or a site that was never rekeyed, gives just [siteKey].
+ */
+export function siteKeysFor(siteKey) {
+  const key = typeof siteKey === 'string' ? siteKey.trim() : '';
+  if (!key) return [siteKey];
+  const sites = readSites();
+  const site = sites.find((s) => s.site_key === key) || siteByAlias(sites, key);
+  if (!site || !Array.isArray(site.keyAliases) || !site.keyAliases.length) return [siteKey];
+  return [...new Set([key, site.site_key, ...liveKeyAliases(site).map((row) => row.key)].filter(Boolean))];
 }
 
 export function getSiteByDomain(domain) {
@@ -331,10 +386,58 @@ export function adoptSiteKey(id, { from, to } = {}) {
     const i = sites.findIndex((s) => s.id === id);
     if (i === -1) return { result: { ok: false, reason: 'not-found' }, write: false };
     if (sites[i].site_key !== previous) return { result: { ok: false, reason: 'key-changed' }, write: false };
-    if (sites.some((s, j) => j !== i && s.site_key === next)) return { result: { ok: false, reason: 'key-taken' }, write: false };
+    if (sites.some((s, j) => j !== i && siteHoldsKey(s, next, Date.now()))) return { result: { ok: false, reason: 'key-taken' }, write: false };
     if (siteReachedByCms(sites[i])) return { result: { ok: false, reason: 'cms-reached' }, write: false };
     sites[i] = normalizeSite({ ...sites[i], site_key: next });
     return { result: { ok: true, site: publicSite(sites[i]) }, write: true };
+  });
+}
+
+function keyFingerprint(key) {
+  return createHash('sha256').update(String(key), 'utf8').digest('hex').slice(0, 8);
+}
+
+/**
+ * Gives a site a new site key, for a key the published site already carries. Unlike adoptSiteKey it
+ * works for a site a client CMS has already reached: the old key is kept in keyAliases for
+ * KEY_ALIAS_DAYS days, so the deployed CMS, forms, analytics and heartbeats under the old key keep
+ * resolving to this site. Refuses a key another site holds as its key or as a live alias
+ * ({ ok:false, code:'site-key-held' }). One locked write; the change is logged in ext.keyHistory
+ * (fingerprints only). Returns { ok:true, site, previousKey } or { ok:false, code } with code
+ * 'bad-key' | 'not-found' | 'site-key-held'. Asking for the key the site already has is
+ * { ok:true, unchanged:true } and writes nothing.
+ */
+export function rekeySite(siteId, newKey, { by = '', reason = '', now = Date.now() } = {}) {
+  const next = String(newKey || '').trim();
+  if (!SITE_KEY_RE.test(next)) return { ok: false, code: 'bad-key' };
+  const id = String(siteId || '').trim();
+  return withSitesLocked((sites) => {
+    const i = sites.findIndex((s) => s.id === id);
+    if (i === -1) return { result: { ok: false, code: 'not-found' }, write: false };
+    const current = sites[i];
+    if (current.site_key === next) return { result: { ok: true, unchanged: true, site: publicSite(current), previousKey: current.site_key }, write: false };
+    if (sites.some((s, j) => j !== i && siteHoldsKey(s, next, now))) return { result: { ok: false, code: 'site-key-held' }, write: false };
+    const previous = current.site_key;
+    const at = new Date(now).toISOString();
+    const until = new Date(now + KEY_ALIAS_DAYS * 86_400_000).toISOString();
+    const kept = liveKeyAliases(current, now).filter((row) => row.key !== next && row.key !== previous);
+    const aliases = previous ? [...kept, { key: previous, at, until }] : kept;
+    const ext = current.ext && typeof current.ext === 'object' && !Array.isArray(current.ext) ? current.ext : {};
+    const history = Array.isArray(ext.keyHistory) ? ext.keyHistory : [];
+    const entry = {
+      at,
+      from: previous ? keyFingerprint(previous) : '',
+      to: keyFingerprint(next),
+      by: String(by || '').slice(0, 100),
+      reason: String(reason || '').slice(0, 200),
+    };
+    sites[i] = normalizeSite({
+      ...current,
+      site_key: next,
+      keyAliases: aliases.slice(-KEY_ALIAS_MAX),
+      ext: { ...ext, keyHistory: [...history, entry].slice(-KEY_HISTORY_MAX) },
+    });
+    return { result: { ok: true, site: publicSite(sites[i]), previousKey: previous }, write: true };
   });
 }
 
@@ -373,7 +476,11 @@ export function recordHeartbeat(siteKey, { packageVersion, adminUrl, name, admin
   const key = String(siteKey || '').trim();
   if (!key) return { ok: false, error: 'site_key required' };
   return withSitesLocked((sites) => {
-    const i = sites.findIndex((s) => s.site_key === key);
+    let i = sites.findIndex((s) => s.site_key === key);
+    if (i === -1) {
+      const aliased = siteByAlias(sites, key);
+      if (aliased) i = sites.indexOf(aliased);
+    }
     if (i === -1) return { result: { ok: false, error: 'Site not found' }, write: false };
     const at = new Date().toISOString();
     if (verified !== true) {
