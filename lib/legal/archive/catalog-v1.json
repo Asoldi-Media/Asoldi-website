@@ -1838,7 +1838,7 @@
           "blocks": [
             {
               "type": "h3",
-              "text": "Nivå 1 – Standard (799 kr eks. mva per måned)"
+              "text": "Nivå 1 – Standard"
             },
             {
               "type": "list",
@@ -1850,7 +1850,7 @@
             },
             {
               "type": "h3",
-              "text": "Nivå 2 – SEO (1 499 kr eks. mva per måned)"
+              "text": "Nivå 2 – SEO"
             },
             {
               "type": "list",
@@ -1862,7 +1862,7 @@
             },
             {
               "type": "h3",
-              "text": "Nivå 3 – Nettbutikk (1 999 kr eks. mva per måned)"
+              "text": "Nivå 3 – Nettbutikk"
             },
             {
               "type": "list",
@@ -1871,6 +1871,10 @@
                 "Inneholder: Nettside og CMS, Hosting, domene og vedlikehold, Endringer, Blogg, Automatiske blogginnlegg, SEO-arbeid og avtalte søkeord, Omtaler og sosiale medier, E-postmarkedsføring, E-postautomatiseringer i nettbutikken, Nettbutikk, Utvidet statistikk og rapport, Flere språk, Lenkenettverk.",
                 "Leveringstid: 21 arbeidsdager. Hvis ingen egen oppstartstid er avtalt, starter fristen ved signert avtale."
               ]
+            },
+            {
+              "type": "p",
+              "text": "Prisen for hvert nivå står i tilbudet. Tilbudet viser prisen som gjaldt da det ble sendt, og den prisen gjelder for kunden."
             },
             {
               "type": "h3",

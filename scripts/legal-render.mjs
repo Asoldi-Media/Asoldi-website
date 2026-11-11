@@ -5,9 +5,10 @@
  *   - docs/databehandleravtale-appendix.md              the DPA appendix (sub-processors and AI processing)
  *   - scripts/fixtures/legal/contract-lines.json        the contract lines of tiers 1-3 (snapshot)
  *
- *   node scripts/legal-render.mjs --write   write them. An existing archive of the current version is never
- *                                           rewritten with different content: bump CATALOG_VERSION (and
- *                                           DPA_VERSION when the DPA changed) in lib/legal/catalog.js first.
+ *   node scripts/legal-render.mjs --write   write them. The current version's archive is rewritten in
+ *                                           place (catalog version 1 is not released). An older version's
+ *                                           file is never rewritten: bump CATALOG_VERSION (and DPA_VERSION
+ *                                           when the DPA changed) in lib/legal/catalog.js first, then --write.
  *   node scripts/legal-render.mjs --check   exit 1 when any of them is stale, or when the DPA text changed
  *                                           without a new DPA_VERSION.
  *
@@ -132,15 +133,16 @@ export function checkGenerated() {
   return problems;
 }
 
-/** Writes the generated files. Refuses to change an existing archive of the current version. */
+/**
+ * Writes the generated files. The current version's archive is rewritten in place, so an unreleased
+ * version (catalog version 1) can drop a price or a wording fix without a new CATALOG_VERSION.
+ * Older version files are not opened for writing. --check still fails while the file differs from
+ * the code, and that failure still says to bump CATALOG_VERSION.
+ */
 export function writeGenerated() {
   const archive = currentArchive();
-  const stored = loadArchivedCatalog(CATALOG_VERSION);
-  if (stored && !same(stored, archive)) {
-    throw new Error(`Catalog version ${CATALOG_VERSION} is already archived with other texts. Bump CATALOG_VERSION in lib/legal/catalog.js (and DPA_VERSION when the DPA changed) and run --write again.`);
-  }
   mkdirSync(ARCHIVE_DIR, { recursive: true });
-  if (!stored) writeFileSync(archiveUrl(CATALOG_VERSION), json(archive));
+  writeFileSync(archiveUrl(CATALOG_VERSION), json(archive));
   clearArchiveCache();
   mkdirSync(new URL('.', CONTRACT_LINES_URL), { recursive: true });
   writeFileSync(APPENDIX_URL, currentAppendix());

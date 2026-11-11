@@ -3,7 +3,7 @@
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -19,7 +19,7 @@ const { DPA_VERSION, dpaMissingAtSigning, dpaSignPatch, dpaStatus } = await impo
 const { CATALOG_VERSION } = await import('../lib/legal/catalog.js');
 const { legalBindingForClient, legalSnapshotPatch, legalSourceForOffer, setAgreedKeywordsResolver } = await import('../lib/legal/binding.js');
 const { draftTermsUpdateNotice, termsNoticePatch } = await import('../lib/legal/terms-update.js');
-const { register, sessionCanSignForBusiness } = await import('../lib/routes/legal-routes.js');
+const { register, sessionCanSignForBusiness, canSignForResolvedOffer } = await import('../lib/routes/legal-routes.js');
 const { productsWithTier } = await import('../lib/offer-email.js');
 const { contractHtmlForOffer } = await import('../lib/offer-contract-html.js');
 const { buildContractPdf, contractInputsForOffer } = await import('../lib/offer-contract-pdf.js');
@@ -353,6 +353,8 @@ test('only the business owner or an admin may sign for it', () => {
   assert.equal(sessionCanSignForBusiness({ businesses: [], membership: null }), true, 'an account without businesses is its own holder');
   assert.equal(sessionCanSignForBusiness({ businesses: [{ id: 'b1' }], membership: null }), false, 'no membership in the active business');
   assert.equal(sessionCanSignForBusiness(null), true);
+  assert.equal(canSignForResolvedOffer({ businesses: [], membership: null }, { businessId: 'other' }), true, 'no memberships: the account holder may still sign');
+  assert.equal(canSignForResolvedOffer(null, { businessId: 'other' }), true);
 });
 
 test('portal DPA signing is idempotent and keeps the other ext keys', () => {
@@ -453,4 +455,109 @@ test('switch on: the legal routes serve texts, the binding and DPA signing; term
   assert.equal(settingsStore.saveAutomationSettings({ lifecycle: { cancellationGraceDays: 30 } }, { by: 'test', reason: 'test' }).ok, true);
   assert.equal((await call('/api/admin/legal/terms-update')).status, 401);
   assert.deepEqual(readdirSync(dataDir).filter((name) => /outbox|email-log/i.test(name)), [], 'nothing was queued or sent');
+});
+
+test('a collaborator of the offer\'s business cannot sign, even when they own the active business', async () => {
+  setSwitch(true);
+  const store = await import('../data/store.js');
+  const clientPortal = await import('../data/client-portal.js');
+  const clientBusinesses = await import('../data/client-businesses.js');
+  const portalOffers = await import('../data/offers.js');
+  const createdA = await store.createUser('eier-a@example.com', 'secret-pass-1', 'client');
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const createdB = await store.createUser('eier-b@example.com', 'secret-pass-1', 'client');
+  assert.equal(createdA.ok, true);
+  assert.equal(createdB.ok, true);
+  const userA = await store.getUserById(createdA.user.id);
+  const userB = await store.getUserById(createdB.user.id);
+  clientPortal.presentClientSession(userA);
+  clientPortal.presentClientSession(userB);
+  const businessA = clientPortal.presentClientSession(userA).activeBusinessId;
+  const businessB = clientPortal.presentClientSession(userB).activeBusinessId;
+  assert.ok(businessA && businessB && businessA !== businessB);
+  const invited = clientBusinesses.inviteMember({
+    businessId: businessB,
+    email: userA.username,
+    role: 'collaborator',
+    userId: userA.id,
+    invitedBy: userB.id,
+  });
+  assert.equal(invited.ok, true, invited.message);
+  assert.equal(clientPortal.presentClientSession(userA).activeBusinessId, businessA, 'the active business stays the one they own');
+  const salesClient = sales.createSalesClient({ businessName: 'Nabobedrift AS', contactEmail: 'nabo@example.com', product: 'asoldi' });
+  portalOffers.createOffer({
+    businessId: businessB,
+    salesClientId: salesClient.id,
+    targetUserId: userA.id,
+    targetEmail: userA.username,
+    businessName: 'Nabobedrift AS',
+  });
+  const resolved = portalOffers.getActiveOfferForUser({
+    userId: userA.id,
+    email: userA.username,
+    businessId: businessA,
+    membershipBusinessIds: clientPortal.presentClientSession(userA).businesses.map((row) => row.id),
+  });
+  assert.equal(resolved?.businessId, businessB);
+  assert.equal(resolved?.salesClientId, salesClient.id);
+
+  const app = express();
+  app.use(express.json());
+  await register(app, {
+    adminAuth: (_req, res) => res.status(401).json({ message: 'Unauthorized' }),
+    clientAuth: (req, res, next) => {
+      const userId = req.get('x-test-user');
+      if (!userId) return res.status(401).json({ message: 'Unauthorized' });
+      req.client = { userId };
+      return next();
+    },
+    sales,
+    salesOffers: offers,
+  });
+  const extra = await new Promise((resolve) => {
+    const listening = app.listen(0, '127.0.0.1', () => resolve(listening));
+  });
+  try {
+    const root = `http://127.0.0.1:${extra.address().port}`;
+    const hit = async (path, method = 'GET') => {
+      const res = await fetch(`${root}${path}`, {
+        method,
+        headers: { 'content-type': 'application/json', 'x-test-user': userA.id },
+        ...(method === 'POST' ? { body: '{}' } : {}),
+      });
+      return { status: res.status, body: await res.json() };
+    };
+    const view = await hit('/api/client/legal');
+    assert.equal(view.status, 200);
+    assert.equal(view.body.client, true);
+    assert.equal(view.body.canSign, false, 'a collaborator of the offer\'s business cannot sign');
+    const before = readData('sales-clients.json');
+    const refused = await hit('/api/client/dpa/sign', 'POST');
+    assert.equal(refused.status, 403);
+    assert.equal(refused.body.code, 'not-authorized');
+    assert.equal(readData('sales-clients.json'), before, 'a refused signature writes nothing');
+
+    const membershipFile = join(dataDir, 'client-businesses.json');
+    const stored = JSON.parse(readFileSync(membershipFile, 'utf8'));
+    const row = stored.memberships.find((entry) => entry.userId === userA.id && entry.businessId === businessB);
+    assert.ok(row, 'the collaborator membership is stored');
+    row.role = 'admin';
+    row.status = 'pending';
+    row.email = 'ikke-denne@example.com';
+    writeFileSync(membershipFile, JSON.stringify(stored));
+    const inactive = await hit('/api/client/legal');
+    assert.equal(inactive.body.canSign, false, 'an inactive membership cannot sign');
+    const inactivePost = await hit('/api/client/dpa/sign', 'POST');
+    assert.equal(inactivePost.status, 403);
+    assert.equal(inactivePost.body.code, 'not-authorized');
+    assert.equal(readData('sales-clients.json'), before);
+
+    row.role = 'admin';
+    row.status = 'active';
+    row.email = userA.username;
+    writeFileSync(membershipFile, JSON.stringify(stored));
+    assert.equal((await hit('/api/client/legal')).body.canSign, true, 'an active admin of the offer\'s business may sign');
+  } finally {
+    await new Promise((resolve) => extra.close(resolve));
+  }
 });

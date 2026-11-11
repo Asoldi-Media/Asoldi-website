@@ -131,6 +131,7 @@ test('local hub in safe mode: legal routes are 404 while dark and serve the cata
       ['/api/client/legal', 'GET'],
       ['/api/client/dpa/sign', 'POST'],
       ['/api/admin/legal/terms-update', 'GET'],
+      ['/api/admin/legal/terms-update/boot-dark/send', 'POST'],
     ]) {
       const res = await json(path, { method, headers: { 'content-type': 'application/json' }, ...(method === 'POST' ? { body: '{}' } : {}) });
       assert.equal(res.status, 404, path);
@@ -197,8 +198,13 @@ test('local hub in safe mode: legal routes are 404 while dark and serve the cata
     const linked = await json('/api/legal/texts/vilkar?version=1');
     assert.equal(linked.status, 200, 'a stamped contract links /vilkar?versjon=1');
     assert.equal(linked.body.catalogVersion, 1);
-    for (const path of ['/api/legal/texts/vilkar', '/api/legal/texts/salg?version=1', '/api/admin/legal/terms-update']) {
-      assert.deepEqual((await json(path, { headers: admin })).body, { code: 'disabled' }, path);
+    for (const path of ['/api/legal/texts/vilkar', '/api/legal/texts/salg?version=1', '/api/admin/legal/terms-update', '/api/admin/legal/terms-update/boot-dark/send']) {
+      const init = { headers: admin };
+      if (path.endsWith('/send')) {
+        init.method = 'POST';
+        init.body = '{}';
+      }
+      assert.deepEqual((await json(path, init)).body, { code: 'disabled' }, path);
     }
   } catch (error) {
     error.message += `\n--- hub log ---\n${logs.slice(-4000)}`;

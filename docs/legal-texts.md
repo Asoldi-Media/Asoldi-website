@@ -31,7 +31,8 @@ keeps answering once stamped offers exist, so the links in those contracts resol
 | Host snapshots | `scripts/legal/hosts-{hub,maker,cms}.json`, written by `scripts/legal/scan-hosts.mjs` |
 | DPA versions and signing | `lib/legal/dpa.js` |
 | Version binding | `lib/legal/binding.js`; offers stamped in `data/sales-offers.js`, signing snapshot in `data/sales.js` |
-| Terms update list, notice draft and notice record | `lib/legal/terms-update.js` (sends nothing) |
+| Terms update list, notice draft and notice record | `lib/legal/terms-update.js` (drafts and records; does not send) |
+| Terms update notice mail | `lib/legal/terms-update-send.js`, `POST /api/admin/legal/terms-update/:clientId/send` |
 | Routes | `lib/routes/legal-routes.js` |
 | Pages | `app/pages/legal/CatalogLegalPage.tsx`, `app/data/catalogLegalTexts.js`, `app/components/client/ClientLegalCard.tsx`, the portal plan picker and checkout |
 
@@ -57,10 +58,13 @@ standard terms of sale.
 ## Versions
 
 - Every change to a clause, to the register or to a rendered document needs a new
-  `CATALOG_VERSION`; a change to the DPA or its appendix also needs a new `DPA_VERSION`.
-  `node scripts/legal-render.mjs --write` archives the new version and rewrites the generated files;
-  it refuses to rewrite an archived version with different content. `--check` (part of
-  `npm run test:legal`) fails when anything is stale.
+  `CATALOG_VERSION` once that version is released; a change to the DPA or its appendix also needs
+  a new `DPA_VERSION`. `node scripts/legal-render.mjs --write` writes the current version's archive
+  in place (catalog version 1 is not released, so a fix to it does not bump `CATALOG_VERSION`) and
+  rewrites the other generated files. It does not rewrite an older version's file: bump
+  `CATALOG_VERSION` first, then `--write`, and the previous file stays. `--check` (part of
+  `npm run test:legal`) fails when anything is stale, and that failure still says to bump
+  `CATALOG_VERSION`.
 - Published texts never depend on stored settings. The archive is rendered with the code defaults of
   the automation settings and the personal-data registry's retention text
   (`archiveRenderOptions()` in `lib/legal/texts.js`), records those values under `published`
@@ -71,8 +75,13 @@ standard terms of sale.
   `settingsDrift`: stored settings (grace days, one-time multiplier and months, change time,
   retention) that differ from the published values. Publishing a new value needs a new version.
 - The archive also holds the wording a catalog contract adds around the clauses (the introduction's
-  legal sentence and Section 4 from `lib/legal/contract.js`, under `contract`), so `--check` fails
-  when that wording changes without a new `CATALOG_VERSION`.
+  legal sentence and Section 4 from `lib/legal/contract.js`, under `contract`). A contract bound to
+  an older version renders that wording from the archive. The current version is rendered from the
+  code, which is what `--check` compares with the archive, so a wording change fails `--check`
+  until the current file is refreshed or a new `CATALOG_VERSION` is archived.
+- Published Vilkår name each tier without a list price and say the price is in the offer. The
+  price stays on the offer (stamped when it is sent) and on the pricing cards. A contract's own
+  lines still come from the offer.
 - An offer sent while the switch is on carries `dpaVersion` (also on each alternative) and
   `ext.legal = {catalogVersion, stampedAt, tiers, agreedKeywordsText?}`: what each tier contained
   and the client's agreed keywords at send. Its contract renders that version with that scope,
@@ -173,8 +182,9 @@ module evaluation (`personalDataReady`, `seoModulesReady`), so they may import t
 |---|---|---|
 | `GET /api/legal/texts/:doc?version=` | public | `vilkar`, `personvern`, `databehandleravtale` (`version=<n>` an archived version, `version=legacy` `{legacy:true}`), `salg` (with `checkoutPromises`), `kontrakt?tier=<tier id>`, `dpa-vedlegg` |
 | `GET /api/client/legal` | client | the bound version, the DPA status, the links to the texts in force and `canSign` |
-| `POST /api/client/dpa/sign` | client (owner or admin of the business) | signs the current DPA (idempotent); `403 {code:'not-authorized'}` for other members |
-| `GET /api/admin/legal/terms-update` | admin | clients on an older version with a draft notice each, `settingsDrift`; `sends: false` |
+| `POST /api/client/dpa/sign` | client (owner or admin of the business that owns the resolved offer) | signs the current DPA (idempotent); `403 {code:'not-authorized'}` for a collaborator or an inactive membership |
+| `GET /api/admin/legal/terms-update` | admin | clients on an older version with a draft notice each, `settingsDrift`; `sends: false` (this list sends nothing) |
+| `POST /api/admin/legal/terms-update/:clientId/send` | admin | sends that client's terms-update notice; see below |
 
 ## Sales copy and portal
 
@@ -183,9 +193,55 @@ With the switch on, the pricing cards and the portal plan picker and checkout sh
 today), so the static "30 dager penger tilbake", "Ingen oppstartsgebyr" and "24/7 support" promises
 are not shown.
 
+## Signing, older versions and English contracts
+
+`canSign` is the membership of the business that owns the resolved offer (the offer's `businessId`,
+or the portal profile linked to the offer's sales client), not the business that happens to be
+active in the portal. An owner or admin of that business may sign. A collaborator, or a membership
+that is not active, gets `canSign: false` and `403 {code:'not-authorized'}`. An account with no
+business memberships may still sign, as before.
+
+An English catalog contract explains Section 5 from the clauses' English texts for every tier,
+including a custom plan. A custom plan with no services has no Section 5 lines. It does not fall
+back to the static English service text.
+
+With the switch off, unsent offers (draft, review requested, verified) stay on the static contract.
+`scripts/contract-copy.test.mjs` compares them with the baseline, and a change to that static text
+makes the comparison fail. The baseline file is not rewritten for that.
+
+An accepted upgrade offer (`lifecycle.planChange` in auto, for a pilot) rebinds `client.ext.legal`
+to the accepted offer's stamped catalog version, offer id and DPA version. The notice and any other
+`ext` keys stay. An offer with no stamp changes nothing, whatever the legal switch is.
+
+## Terms update notice
+
+A staff member sends the notice. Nothing sends it on a timer.
+
+`POST /api/admin/legal/terms-update/:clientId/send` (admin). While `legal.catalogTexts` is off the
+route answers `404 {code:'disabled'}`, before authentication, like the other legal routes. Without
+admin credentials it answers 401.
+
+The client must be on an older version, and must not already have a pending notice for the current
+version. Otherwise the route answers `409 {code:'no-update'}`.
+
+The mail kind is `emails.termsUpdate` (service sender, not legacy, release-gated, default shadow).
+Its mode is its own (`spineModeForClient('emails.termsUpdate')`), not the delivery gate. The service
+sender is `sender.service`: account key `damian` is `damian@asoldi.com`, and the reply-to is the one
+in settings (`alexander@asoldi.com`).
+
+- off or paused: `409 {code:'off'|'paused'}`, nothing written.
+- shadow: one draft in the safe-mode outbox (channel `delivery-shadow`). Nothing is recorded on the client.
+- auto: sent through `deliverDeliveryEmail` (`lib/email.js`, so safe mode applies), then
+  `termsNoticePatch` records `client.ext.legal.notice`, and a delivery-audit row is written. A second
+  send is refused while that notice is pending. Auto still requires the client to be in `pilotClientIds`.
+
+`PUT /api/admin/automation-settings` cannot set `emails.termsUpdate.mode` to `auto` until
+`recordReleasePass('emails.termsUpdate', ...)` has recorded a pass.
+
+The end-to-end release case is added when the release-suite harness is merged. It is not on this tree.
+
 ## Not in this part
 
-- The terms-update notice mail and its email kind (sent by the release suite), and the DPA signing
-  mail.
+- The DPA signing mail.
 - Client-site legal pages built from the same clauses: they will read `GET /api/legal/texts/:doc`
   and the `consumerFacing` clauses.

@@ -243,7 +243,7 @@ test('the legal files use neutral public wording', () => {
     '../lib/legal/catalog.js', '../lib/legal/render.js', '../lib/legal/subprocessors.js', '../lib/legal/dpa.js',
     '../lib/legal/binding.js', '../lib/legal/terms-update.js', '../lib/legal/hosts-register.json', '../docs/legal-texts.md',
     '../docs/databehandleravtale-appendix.md', '../lib/routes/legal-routes.js', '../lib/legal/archive.js', '../lib/legal/contract.js',
-    '../lib/legal/sales.js', '../lib/legal/switch.js', '../lib/legal/texts.js', '../lib/legal/plan.js', './legal/scan-hosts.mjs', './legal-render.mjs',
+    '../lib/legal/sales.js', '../lib/legal/switch.js', '../lib/legal/texts.js', '../lib/legal/plan.js', '../lib/legal/terms-update-send.js', './legal/scan-hosts.mjs', './legal-render.mjs',
     '../app/data/catalogLegalTexts.js', '../app/pages/legal/CatalogLegalPage.tsx', '../app/components/client/ClientLegalCard.tsx',
   ];
   for (const file of files) {
@@ -251,4 +251,15 @@ test('the legal files use neutral public wording', () => {
     assert.doesNotMatch(text, /\bWS\d+|\bwave\s*\d|\bQ\d{1,2}\b/i, file);
     assert.doesNotMatch(text, /\b(leak|forge|spoof|exploit|vulnerability|attacker)\b/i, file);
   }
+});
+
+test('published terms, privacy policy and DPA do not embed a tier list price', async () => {
+  const texts = await import('../lib/legal/texts.js');
+  const { WEBSITE_TIERS, formatKr } = await import('../lib/website-tiers.js');
+  const prices = WEBSITE_TIERS.map((tier) => formatKr(tier.monthlyExMva));
+  for (const doc of ['vilkar', 'personvern', 'databehandleravtale']) {
+    const body = JSON.stringify(texts.legalTextResponse(doc).body);
+    for (const price of prices) assert.equal(body.includes(price), false, `${doc} contains ${price}`);
+  }
+  assert.match(JSON.stringify(texts.legalTextResponse('vilkar').body), /tilbudet/);
 });

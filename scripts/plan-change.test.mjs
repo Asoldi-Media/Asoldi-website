@@ -24,6 +24,14 @@ const QUOTES = {
   3: { tierId: 'nettbutikk', selected: [], pages: 10 },
 };
 
+function stampedOffer(id, salesClientId, tier, sentAt, catalogVersion, dpaVersion) {
+  return {
+    ...sentOffer(id, salesClientId, tier, sentAt),
+    dpaVersion,
+    ext: { legal: { catalogVersion, stampedAt: sentAt } },
+  };
+}
+
 function sentOffer(id, salesClientId, tier, sentAt) {
   const built = buildOfferFromMeetingQuote(QUOTES[tier]);
   return {
@@ -60,13 +68,14 @@ function client(id, name) {
   };
 }
 
-const PILOTS = ['pc-up', 'pc-down', 'pc-over', 'pc-off', 'pc-shadow'];
+const PILOTS = ['pc-up', 'pc-down', 'pc-over', 'pc-off', 'pc-shadow', 'pc-legal'];
 writeFileSync(join(DATA_DIR, 'sales-clients.json'), JSON.stringify([
   client('pc-up', 'Fjellstue Kafe AS'),
   client('pc-down', 'Brygga Butikk AS'),
   client('pc-over', 'Solsiden Snekker AS'),
   client('pc-off', 'Vindheim Maler AS'),
   client('pc-shadow', 'Bekkely Bakeri AS'),
+  client('pc-legal', 'Havn Kiosk AS'),
 ], null, 2));
 writeFileSync(join(DATA_DIR, 'sales-offers.json'), JSON.stringify([
   sentOffer('so-pc-up-1', 'pc-up', 1, '2026-10-21T09:00:00.000Z'),
@@ -79,6 +88,7 @@ writeFileSync(join(DATA_DIR, 'sales-offers.json'), JSON.stringify([
   sentOffer('so-pc-off-2', 'pc-off', 2, '2026-10-24T09:00:00.000Z'),
   sentOffer('so-pc-shadow-1', 'pc-shadow', 1, '2026-10-21T09:00:00.000Z'),
   sentOffer('so-pc-shadow-2', 'pc-shadow', 2, '2026-10-24T09:00:00.000Z'),
+  stampedOffer('so-pc-legal-1', 'pc-legal', 1, '2026-10-21T09:00:00.000Z', 1, 'dpa-1'),
 ], null, 2));
 
 const RELEASED = { passedAt: '2026-10-31T10:00:00.000Z', suite: 'plan-change-test', evidence: '', by: 'test' };
@@ -161,6 +171,35 @@ test('upgrade: tier 1 signed, then a tier 2 offer accepted, changes the plan, th
   await signOn('pc-up', 'so-pc-up-2');
   assert.equal(sales.getSalesClientById('pc-up').sitePlan.history.length, 2);
   assert.equal(jobs.listJobs({ clientId: 'pc-up', fresh: true }).length, 1);
+});
+
+test('an accepted upgrade rebinds the client to the new offer\'s catalog version and keeps the notice', async () => {
+  await signOn('pc-legal', 'so-pc-legal-1');
+  let client = sales.getSalesClientById('pc-legal');
+  assert.equal(client.ext.legal.catalogVersion, 1);
+  assert.equal(client.ext.legal.offerId, 'so-pc-legal-1');
+  assert.equal(client.ext.legal.dpaVersion, 'dpa-1');
+  const notice = {
+    catalogVersion: 1,
+    dpaVersion: 'dpa-1',
+    sentAt: '2026-10-22T09:00:00.000Z',
+    effectiveFrom: '2026-12-01',
+  };
+  sales.updateSalesClient('pc-legal', {
+    ext: { ...client.ext, other: { keep: 1 }, legal: { ...client.ext.legal, notice } },
+  });
+  const file = join(DATA_DIR, 'sales-offers.json');
+  const offers = JSON.parse(readFileSync(file, 'utf8'));
+  offers.push(stampedOffer('so-pc-legal-2', 'pc-legal', 2, '2026-11-02T09:00:00.000Z', 2, 'dpa-2'));
+  writeFileSync(file, JSON.stringify(offers, null, 2));
+  const upgraded = await signOn('pc-legal', 'so-pc-legal-2');
+  assert.equal(upgraded.upgraded, true);
+  client = sales.getSalesClientById('pc-legal');
+  assert.equal(client.ext.legal.catalogVersion, 2);
+  assert.equal(client.ext.legal.offerId, 'so-pc-legal-2');
+  assert.equal(client.ext.legal.dpaVersion, 'dpa-2');
+  assert.deepEqual(client.ext.legal.notice, notice);
+  assert.deepEqual(client.ext.other, { keep: 1 });
 });
 
 test('downgrade: tier 3 to tier 2 by a superadmin removes the shop lines and opens a developer task', async () => {

@@ -13,7 +13,11 @@ process.env.DATA_DIR = '';
 
 const settingsStore = await import('../data/automation-settings.js');
 const render = await import('../lib/legal/render.js');
-const { CATALOG_VERSION, DPA_VERSION } = await import('../lib/legal/catalog.js');
+const { CATALOG, CATALOG_VERSION, DPA_VERSION } = await import('../lib/legal/catalog.js');
+const { catalogContractCopy, catalogServiceTopics } = await import('../lib/legal/contract.js');
+const { contractCopy } = await import('../lib/offer-contract-copy.js');
+const { SERVICE_MEANINGS_EN } = await import('../lib/service-meanings.js');
+const vocab = await import('../packages/suite/core/delivery/vocab.js');
 const darkSurface = await import('./legal/dark-surface.mjs');
 const { contractHtmlForOffer } = await import('../lib/offer-contract-html.js');
 const { contractArticleModel, contractInputsForOffer } = await import('../lib/offer-contract-pdf.js');
@@ -84,6 +88,26 @@ test('negative control: with the switch off the contracts, copy, pricing cards, 
   assert.deepEqual(surface, baseline);
 });
 
+test('switch off: unsent offers match the baseline, and a change to their static text fails that comparison', () => {
+  setSwitch(false);
+  mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-05-04T09:00:00.000Z') });
+  try {
+    const unsent = Object.entries(darkSurface.FIXTURE_OFFERS).filter(([, offer]) => offer.status !== 'sent');
+    assert.ok(unsent.length >= 24);
+    for (const [key, offer] of unsent) {
+      assert.notEqual(offer.status, 'sent', key);
+      assert.equal(sha256(contractHtmlForOffer(offer, CLIENT)), baseline.contracts[key].htmlSha256, key);
+    }
+    const html = contractHtmlForOffer(darkSurface.FIXTURE_OFFERS.tier2Draft, CLIENT);
+    const sentence = 'Disse sidene, slik de lyder på signeringsdatoen, utgjør en del av Avtalen.';
+    assert.match(html, /Disse sidene, slik de lyder på signeringsdatoen, utgjør en del av Avtalen\./);
+    const mutated = html.replace(sentence, `${sentence} Endret setning.`);
+    assert.notEqual(sha256(mutated), baseline.contracts.tier2Draft.htmlSha256);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
 test('switch on: every unsent fixture renders the catalog contract, so the negative control covers the path the switch changes', () => {
   setSwitch(true);
   const unsent = Object.entries(darkSurface.FIXTURE_OFFERS).filter(([, offer]) => offer.status !== 'sent');
@@ -128,6 +152,37 @@ test('a contract bound to a version renders the values that version was publishe
   assert.equal(sha256(contractHtmlForOffer(offer, CLIENT)), sha256(today), 'back to the archive on disk');
 });
 
+test('a contract bound to an older catalog version keeps that version\'s introduction and Section 4', () => {
+  const stored = archive.loadArchivedCatalog(CATALOG_VERSION);
+  const legal = { mode: 'catalog', catalogVersion: CATALOG_VERSION, dpaVersion: DPA_VERSION };
+  const plan = { tierId: 'tier-2-seo' };
+  const code = catalogContractCopy(contractCopy('nb'), { legal, plan, language: 'nb' });
+  assert.equal(code.introLegal, stored.contract.nb.introLegal);
+  const archivedIntro = 'ARKIVERT INNLEDNING for versjon 1, som ikke er dagens tekst.';
+  const archivedSection4 = ['Arkivert punkt 4 for versjon 1.'];
+  archive.useArchivedCatalogForTests(CATALOG_VERSION, {
+    ...stored,
+    contract: {
+      ...stored.contract,
+      nb: { introLegal: archivedIntro, section4: archivedSection4 },
+      en: { introLegal: 'ARCHIVED INTRO for version 1.', section4: ['Archived section 4 for version 1.'] },
+    },
+  });
+  try {
+    const bound = catalogContractCopy(contractCopy('nb'), { legal, plan, language: 'nb', catalogCurrent: CATALOG_VERSION + 1 });
+    assert.equal(bound.introLegal, archivedIntro);
+    assert.deepEqual(bound.s4.bullets, archivedSection4);
+    const current = catalogContractCopy(contractCopy('nb'), { legal, plan, language: 'nb' });
+    assert.equal(current.introLegal, code.introLegal);
+    assert.notEqual(current.introLegal, archivedIntro);
+    const english = catalogContractCopy(contractCopy('en'), { legal, plan, language: 'en', catalogCurrent: CATALOG_VERSION + 1 });
+    assert.equal(english.introLegal, 'ARCHIVED INTRO for version 1.');
+    assert.deepEqual(english.s4.bullets, ['Archived section 4 for version 1.']);
+  } finally {
+    archive.clearArchiveCache();
+  }
+});
+
 test('switch on: an English catalog contract explains its services with the catalog, not the static English text', () => {
   setSwitch(true);
   const offer = { ...darkSurface.FIXTURE_OFFERS.tier2, status: 'draft', contractLanguage: 'en' };
@@ -143,6 +198,48 @@ test('switch on: an English catalog contract explains its services with the cata
   assert.doesNotMatch(text, /[æøå]/i, 'English only');
   setSwitch(false);
   assert.match(contractHtmlForOffer(offer, CLIENT), /outside this allowance/, 'negative control: the static English contract while off');
+});
+
+test('switch on: every tier\'s English Section 5 comes from the clause texts, including a custom plan with no services', () => {
+  setSwitch(true);
+  const staticTitles = new Set(SERVICE_MEANINGS_EN.map((row) => row.title));
+  const staticTexts = new Set(SERVICE_MEANINGS_EN.map((row) => row.text));
+  for (const tierId of vocab.TIER_IDS) {
+    const addOns = tierId === 'custom' ? [] : ['pos', 'thirdpartyhost'];
+    const services = vocab.expandServices(vocab.servicesForTier(tierId));
+    const clauses = CATALOG.filter((clause) => (
+      (clause.kind === 'service' && clause.covers.services.some((id) => services.includes(id)))
+      || (clause.kind === 'addon' && clause.covers.addOns.some((id) => addOns.includes(id)))
+    ));
+    for (const clause of clauses) {
+      const en = clause.en || {};
+      assert.ok(en.title, `${clause.id} has an English title`);
+      assert.ok((en.terms && en.terms.length) || (en.contract && en.contract.length), `${clause.id} has English text`);
+    }
+    const topics = catalogServiceTopics({
+      legal: { mode: 'catalog', catalogVersion: CATALOG_VERSION, dpaVersion: DPA_VERSION },
+      plan: { tierId, oneTimeAddOns: addOns },
+      language: 'en',
+      fallback: SERVICE_MEANINGS_EN,
+    });
+    if (tierId === 'custom') {
+      assert.deepEqual(topics, [], 'a custom plan with no services does not fall back to the static English text');
+      continue;
+    }
+    assert.ok(topics.length >= 1, tierId);
+    for (const topic of topics) {
+      const clause = clauses.find((entry) => entry.en?.title === topic.title);
+      assert.ok(clause, `${tierId}: ${topic.title} is a clause English title`);
+      assert.equal(staticTitles.has(topic.title), false, topic.title);
+      assert.equal(staticTexts.has(topic.text), false, topic.title);
+      assert.doesNotMatch(`${topic.title}\n${topic.text}`, /outside this allowance|social-media sync/);
+      assert.doesNotMatch(`${topic.title}\n${topic.text}`, /[æøå]/i);
+      const line = (clause.en.terms && clause.en.terms[0]) || clause.en.contract[0];
+      const pieces = line.split(/\{[a-zA-Z]+\}/).map((part) => part.trim()).filter((part) => part.length >= 12);
+      assert.ok(pieces.length > 0, `${clause.id} has a stable English fragment`);
+      for (const piece of pieces) assert.ok(topic.text.includes(piece), `${clause.id}: ${piece}`);
+    }
+  }
 });
 
 test('switch on: an unsent offer renders the catalog contract with its versions', () => {
