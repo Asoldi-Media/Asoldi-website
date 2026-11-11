@@ -1,0 +1,110 @@
+{
+  "schema": "asoldi.delivery-brief/1",
+  "version": 3,
+  "generatedAt": "2026-01-10T09:00:00Z",
+  "inputs": {
+    "meetings": [
+      {
+        "meetingId": "mtg-demo-1",
+        "purpose": "workshop",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ],
+    "bankRevision": 4
+  },
+  "clientApproved": false,
+  "transcripts": [
+    {
+      "meetingId": "mtg-demo-1",
+      "purpose": "workshop",
+      "startedAt": "2026-01-09T10:00:00Z",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "chars": 4800
+    }
+  ],
+  "hash": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+  "salesClientId": "client-demo-studio-1",
+  "sitePlan": {
+    "tierId": "tier-2-seo",
+    "services": [
+      "site",
+      "changes",
+      "blog",
+      "seo",
+      "social",
+      "email",
+      "backlinks"
+    ],
+    "pages": 7,
+    "billing": "month",
+    "languages": [
+      "nb"
+    ]
+  },
+  "facts": {
+    "schema": "asoldi.brief.facts/1",
+    "language": "no",
+    "identity": {
+      "brandName": "Studio Eksempel",
+      "legalName": "Studio Eksempel AS"
+    },
+    "contact": {
+      "email": "studio@eksempel-demo.example.com",
+      "scope": "contact-person",
+      "town": "Eksempelby"
+    },
+    "socials": {
+      "instagram": "https://www.instagram.com/studio.demo",
+      "youtube": "https://www.youtube.com/@studio-demo"
+    },
+    "positioning": {
+      "businessWhat": "Arkitektstudio",
+      "services": [
+        "Boliger",
+        "Rehabilitering"
+      ]
+    },
+    "team": [
+      {
+        "name": "Kari Eksempel",
+        "role": "Arkitekt",
+        "source": {
+          "kind": "client",
+          "quote": "Kari Eksempel er arkitekt hos oss"
+        }
+      },
+      {
+        "name": "Uten kilde",
+        "role": "Tegner",
+        "source": {
+          "kind": "client",
+          "quote": ""
+        }
+      }
+    ],
+    "projects": [
+      {
+        "title": "Rehabilitering Eksempelgata",
+        "source": {
+          "kind": "client",
+          "quote": "Rehabiliteringen i Eksempelgata er vårt beste prosjekt"
+        }
+      }
+    ]
+  },
+  "factSources": {
+    "positioning.services[0]": {
+      "kind": "client",
+      "quote": "Vi tegner boliger",
+      "confidence": 0.9,
+      "status": "accepted"
+    }
+  },
+  "directives": [],
+  "cmsSetup": {
+    "siteId": "site-demo-studio-1",
+    "integrations": {
+      "metaPixelId": "123456789012"
+    }
+  }
+}

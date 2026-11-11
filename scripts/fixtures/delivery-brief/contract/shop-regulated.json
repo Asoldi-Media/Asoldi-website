@@ -1,0 +1,196 @@
+{
+  "schema": "asoldi.delivery-brief/1",
+  "version": 3,
+  "generatedAt": "2026-01-10T09:00:00Z",
+  "inputs": {
+    "meetings": [
+      {
+        "meetingId": "mtg-demo-1",
+        "purpose": "workshop",
+        "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ],
+    "bankRevision": 4
+  },
+  "clientApproved": false,
+  "transcripts": [
+    {
+      "meetingId": "mtg-demo-1",
+      "purpose": "workshop",
+      "startedAt": "2026-01-09T10:00:00Z",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "chars": 4800
+    }
+  ],
+  "hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "salesClientId": "client-demo-shop-1",
+  "sitePlan": {
+    "tierId": "tier-3-ecommerce",
+    "services": [
+      "site",
+      "changes",
+      "blog",
+      "seo",
+      "social",
+      "email",
+      "backlinks",
+      "ecom"
+    ],
+    "pages": 10,
+    "billing": "month",
+    "languages": [
+      "nb"
+    ],
+    "signedAt": "2026-01-08T12:00:00Z"
+  },
+  "facts": {
+    "schema": "asoldi.brief.facts/1",
+    "language": "no",
+    "identity": {
+      "brandName": "Fjellvik Kosttilskudd",
+      "legalName": "Fjellvik Kosttilskudd AS",
+      "orgNumber": "123456789"
+    },
+    "contact": {
+      "email": "post@fjellvik-demo.example.com",
+      "scope": "public",
+      "phone": "+47 22 00 00 00",
+      "address": "Eksempelveien 1",
+      "postalCode": "0001",
+      "town": "Eksempelby",
+      "addressVisibility": "full",
+      "onlineOnly": true
+    },
+    "socials": {
+      "instagram": "https://www.instagram.com/fjellvik.demo",
+      "facebook": "https://www.facebook.com/fjellvik.demo",
+      "twitter": "https://x.com/fjellvik_demo"
+    },
+    "positioning": {
+      "businessWhat": "Nettbutikk for kosttilskudd",
+      "services": [
+        "Kosttilskudd",
+        "Rådgivning"
+      ],
+      "audience": "Voksne som vil trene smartere",
+      "priorities": [
+        "kvalitet"
+      ],
+      "toneOfVoice": "Rolig og saklig"
+    },
+    "claims": {
+      "regulated": {
+        "domain": "food-supplements",
+        "approvedClaims": [
+          {
+            "id": "c1",
+            "ingredient": "Vitamin D",
+            "wording": "Bidrar til å vedlikeholde normale bein",
+            "registerRef": "demo-register-1",
+            "status": "accepted"
+          }
+        ]
+      }
+    },
+    "products": {
+      "salesStatus": "pre-launch",
+      "focusProduct": "Vitamin D"
+    },
+    "content": {
+      "density": "concise",
+      "structure": "multi-page"
+    },
+    "brand": {
+      "textLogo": {
+        "case": "upper",
+        "weight": "bold",
+        "letterSpacing": "wide"
+      }
+    },
+    "media": {
+      "manifest": [
+        {
+          "id": "kd_demo_1",
+          "bucket": "products",
+          "fileName": "boks.jpg",
+          "mime": "image/jpeg",
+          "bytes": 1000,
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "url": "https://example.com/media/kd_demo_1?exp=1790000000&sig=abc123def",
+          "source": "inbox:demo",
+          "rightsConfirmed": true
+        }
+      ]
+    }
+  },
+  "directives": [
+    {
+      "id": "dir-a1",
+      "kind": "add",
+      "target": {
+        "scope": "site",
+        "area": "email"
+      },
+      "ask": "Send en påminnelse etter én time og en til etter to uker",
+      "quote": "En påminnelse rett etter, og så en til etter et par uker",
+      "meetingId": "mtg-demo-1",
+      "source": "workshop",
+      "confidence": 0.9,
+      "priority": "should",
+      "status": "open"
+    },
+    {
+      "id": "dir-a2",
+      "kind": "change",
+      "target": {
+        "scope": "site",
+        "area": "email"
+      },
+      "ask": "Ingen rabatt i påminnelsene",
+      "quote": "Ikke gi rabatt i påminnelsene, det passer ikke for kosttilskudd",
+      "meetingId": "mtg-demo-1",
+      "source": "workshop",
+      "confidence": 0.9,
+      "priority": "should",
+      "status": "open"
+    },
+    {
+      "id": "dir-a3",
+      "kind": "add",
+      "target": {
+        "scope": "site",
+        "area": "email"
+      },
+      "ask": "Varsle eier med en gang noen starter en bestilling",
+      "quote": "Jeg vil ha beskjed med en gang noen starter en bestilling",
+      "meetingId": "mtg-demo-1",
+      "source": "workshop",
+      "confidence": 0.9,
+      "priority": "should",
+      "status": "open"
+    },
+    {
+      "id": "dir-a4",
+      "kind": "add",
+      "target": {
+        "scope": "site",
+        "area": "email"
+      },
+      "ask": "E-post til kunder som ikke har handlet på lenge",
+      "quote": "Vi vil sende en e-post til de som ikke har handlet på lenge",
+      "meetingId": "mtg-demo-1",
+      "source": "workshop",
+      "confidence": 0.9,
+      "priority": "should",
+      "status": "open"
+    }
+  ],
+  "cmsSetup": {
+    "siteId": "site-demo-shop-1",
+    "seller": {
+      "legalName": "Fjellvik Kosttilskudd AS",
+      "orgNumber": "123456789",
+      "vatRegistered": true
+    }
+  }
+}
