@@ -13,6 +13,12 @@ Set these in production (e.g. Hostinger env or `.env`):
 
 On first run, if the admin data file does not exist yet, the server creates the default admin. Runtime data is stored outside the git-tracked app files by default, under `.builds/data` on the server, or in `APP_DATA_DIR` if you override it. After first login, change the password via **Admin → “Change my password”** in the sidebar.
 
+## Automatisering og funksjonstre
+
+Admin → **Automatisering** is only on the admin session. It reads and writes the existing automation settings. Changed fields are sent with a begrunnelse. A setting the environment already overrides is marked, and the value on disk is left as stored. The opprykk list stays quiet until that route answers with its switch list; a page of HTML is treated as not active yet. Pilot customers are sales clients (company name and sales client id). An empty list means there are no pilots. A manual step back stores shadow. The queue switch turns off. The workshop lines go back to the previous setting only while they are on the gate setting, and that button is shown only while the stored mode is auto.
+
+The edit-site dialog and the client-admin dialog keep the seven legacy feature flags while the site feature switch is off or unknown, and the site save still sends those flags. The catalog type stays next to that row. When the switch is not off, the feature tree is shown and the legacy flags stay behind a toggle. Creating a site still only sends the plan. Saving the tree calls the existing cms-spec route, includes the revision that was read, and loads the site again after a save. A conflict asks you to reload. Client cards keep the same badges. When a site payload carries a feature tree, those badges follow the tree; otherwise they follow the legacy flags.
+
 ## Users (employees)
 
 - Only users listed in **Admin → Users** can log in at `/login` as “Ansatt”.

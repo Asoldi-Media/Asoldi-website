@@ -1,6 +1,6 @@
 import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { BarChart3, Briefcase, ChevronDown, Code2, FileSignature, FileText, FolderCog, Globe, Image as ImageIcon, LayoutDashboard, LogOut, Mail, Newspaper, Share2, ShieldCheck, ShoppingBag, Users, UserPlus } from 'lucide-react';
+import { BarChart3, Briefcase, ChevronDown, Code2, FileSignature, FileText, FolderCog, Globe, Image as ImageIcon, LayoutDashboard, LogOut, Mail, Newspaper, Share2, ShieldCheck, ShoppingBag, SlidersHorizontal, Users, UserPlus } from 'lucide-react';
 import { Helmet } from 'react-helmet-async';
 import { ManageClientsSection } from './sections/ManageClientsSection';
 import { PagesSection } from './sections/PagesSection';
@@ -28,6 +28,40 @@ import {
   featuresFromPlan,
 } from './shared';
 import { clientAdminPasswordProblem } from '../../../lib/client-admin-password.js';
+import { canSeeAutomation, roleFromAdminToken } from '../../../lib/automation-section-helpers.js';
+import { legacyFeaturesWrite, showFeatureTreeEditor, showLegacyFeatureFlags } from '../../../lib/feature-tree-editor-helpers.js';
+import { FeatureTreeEditor } from './sections/FeatureTreeEditor';
+
+const LEGACY_FEATURE_FIELDS: { key: keyof Features; label: string }[] = [
+  { key: 'users', label: 'Users' },
+  { key: 'analytics', label: 'Analytics' },
+  { key: 'ecommerce', label: 'Ecommerce' },
+  { key: 'blog', label: 'Blog' },
+  { key: 'socialSync', label: 'Social sync' },
+  { key: 'emailMarketing', label: 'Email marketing' },
+  { key: 'general', label: 'General (users & more)' },
+];
+
+function LegacyFeatureFlags({ features, onChange }: { features: Features; onChange: (next: Features) => void }) {
+  return (
+    <div>
+      <p className="text-xs text-gray-400 mb-1">Gamle funksjonsflagg</p>
+      <div className="flex flex-wrap gap-3">
+        {LEGACY_FEATURE_FIELDS.map(({ key, label }) => (
+          <label key={key} className="inline-flex items-center gap-2 text-sm text-gray-200">
+            <input
+              type="checkbox"
+              checked={!!features[key]}
+              onChange={(event) => onChange(legacyFeaturesWrite({ ...features, [key]: event.target.checked }))}
+              className="rounded border-white/20"
+            />
+            {label}
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 const EmailTemplateStudio = lazy(() =>
   import('../sales/EmailTemplateStudio').then((m) => ({ default: m.EmailTemplateStudio }))
@@ -41,13 +75,17 @@ const MediaLibrarySection = lazy(() =>
 const SystemSafetySection = lazy(() =>
   import('./sections/SystemSafetySection').then((m) => ({ default: m.SystemSafetySection }))
 );
+const AutomationSection = lazy(() =>
+  import('./sections/AutomationSection').then((m) => ({ default: m.AutomationSection }))
+);
 
 export const Admin = () => {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loginError, setLoginError] = useState('');
-  const [tab, setTab] = useState<Tab>('clients');
+  const [tab, setTab] = useState<Tab | 'automation'>('clients');
+  const [gateRole, setGateRole] = useState(() => roleFromAdminToken(getToken()));
   const [websiteNavOpen, setWebsiteNavOpen] = useState(true);
   const [clientsNavOpen, setClientsNavOpen] = useState(true);
   const [clientsView, setClientsView] = useState<ManageClientsView>('clients');
@@ -89,6 +127,8 @@ export const Admin = () => {
   const [addSiteCatalogType, setAddSiteCatalogType] = useState<EcommerceCatalogType>('normal');
   const [addSiteGithubRepo, setAddSiteGithubRepo] = useState('');
   const [editingSiteId, setEditingSiteId] = useState<string | null>(null);
+  const [editConfigMode, setEditConfigMode] = useState('');
+  const [editLegacyOpen, setEditLegacyOpen] = useState(false);
   const [editSiteDomain, setEditSiteDomain] = useState('');
   const [editSiteName, setEditSiteName] = useState('');
   const [editSitePlan, setEditSitePlan] = useState<WebsitePlanId>('tier-1-standard');
@@ -105,6 +145,8 @@ export const Admin = () => {
   });
   const [copyKey, setCopyKey] = useState<string | null>(null);
   const [clientAdminSiteId, setClientAdminSiteId] = useState<string | null>(null);
+  const [adminConfigMode, setAdminConfigMode] = useState('');
+  const [adminLegacyOpen, setAdminLegacyOpen] = useState(false);
   const [clientAdminForm, setClientAdminForm] = useState({
     name: '',
     email: '',
@@ -207,6 +249,7 @@ export const Admin = () => {
         return;
       }
       setToken(data.token);
+      setGateRole(roleFromAdminToken(data.token));
       setLoggedIn(true);
       await Promise.all([fetchUsers(), fetchSites(), fetchPaymentRequests()]);
     } catch {
@@ -218,6 +261,7 @@ export const Admin = () => {
 
   function handleLogout() {
     clearToken();
+    setGateRole('');
     setLoggedIn(false);
   }
 
@@ -411,7 +455,7 @@ export const Admin = () => {
           domain: editSiteDomain,
           name: editSiteName,
           websitePlan: editSitePlan,
-          features: editSiteFeatures,
+          features: legacyFeaturesWrite(editSiteFeatures),
           ecommerceCatalogType: editSiteFeatures.ecommerce ? editSiteCatalogType : null,
           githubRepo: editSiteGithubRepo.trim(),
         }),
@@ -478,7 +522,7 @@ export const Admin = () => {
       const featureRes = await fetch(`${API}/hub/sites/${clientAdminSiteId}`, {
         method: 'PUT',
         headers: { ...authHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({ features: editSiteFeatures }),
+        body: JSON.stringify({ features: legacyFeaturesWrite(editSiteFeatures) }),
       });
       if (!featureRes.ok) {
         const data = await featureRes.json().catch(() => ({}));
@@ -612,6 +656,9 @@ export const Admin = () => {
             {features.socialSync && <SidebarButton active={tab === 'social'} onClick={() => setTab('social')} icon={<Share2 size={18} />} label="Social sync" />}
             {features.analytics && <SidebarButton active={tab === 'analytics'} onClick={() => setTab('analytics')} icon={<BarChart3 size={18} />} label="Analytics" />}
             <SidebarButton active={tab === 'system'} onClick={() => setTab('system')} icon={<ShieldCheck size={18} />} label="System safety" />
+            {canSeeAutomation(gateRole) && (
+              <SidebarButton active={tab === 'automation'} onClick={() => setTab('automation')} icon={<SlidersHorizontal size={18} />} label="Automatisering" />
+            )}
           </nav>
           <div className="p-2 border-t border-white/10 space-y-1">
             <button onClick={() => setChangePasswordOpen(true)} className="w-full px-3 py-2 text-left text-sm text-gray-400 hover:text-white">Change my password</button>
@@ -643,6 +690,8 @@ export const Admin = () => {
               onAdd={() => setAddSiteOpen(true)}
               onEdit={(site) => {
                 setEditingSiteId(site.id);
+                setEditConfigMode('');
+                setEditLegacyOpen(false);
                 setEditSiteDomain(site.domain);
                 setEditSiteName(site.name);
                 setEditSitePlan(site.websitePlan || 'tier-1-standard');
@@ -664,6 +713,8 @@ export const Admin = () => {
               onIssueLocalBlogToken={handleIssueLocalBlogToken}
               onEditAdmin={(site) => {
                 setClientAdminSiteId(site.id);
+                setAdminConfigMode('');
+                setAdminLegacyOpen(false);
                 setClientAdminError('');
                 setClientAdminForm({
                   name: site.clientAdmin?.name || '',
@@ -734,6 +785,11 @@ export const Admin = () => {
               <SystemSafetySection />
             </Suspense>
           )}
+          {tab === 'automation' && canSeeAutomation(gateRole) && (
+            <Suspense fallback={<p className="text-gray-400">Laster automatisering…</p>}>
+            <AutomationSection onOpenTab={(id) => { if (id === 'system') setTab('system'); }} />
+            </Suspense>
+          )}
         </main>
       </div>
 
@@ -755,7 +811,7 @@ export const Admin = () => {
                     <option key={plan.id} value={plan.id}>{plan.name}</option>
                   ))}
                 </select>
-                <p className="text-xs text-gray-500 mt-1">Sets default CMS modules. You can change them after adding the site.</p>
+                <p className="text-xs text-gray-500 mt-1">Funksjonene settes etter at nettstedet er opprettet. Treet bruker planen som standard.</p>
               </div>
               {(addSitePlan === 'tier-3-ecommerce' || addSitePlan === 'custom') && (
                 <div>
@@ -783,7 +839,7 @@ export const Admin = () => {
 
       {editingSiteId && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#2a2a2a] rounded-xl border border-white/10 p-6 max-w-md w-full">
+          <div className="bg-[#2a2a2a] rounded-xl border border-white/10 p-6 max-w-3xl w-full max-h-[90vh] overflow-y-auto overflow-x-hidden">
             <h2 className="text-lg font-semibold text-white mb-4">Edit site</h2>
             <div className="space-y-4">
               <input type="text" value={editSiteName} onChange={(e) => setEditSiteName(e.target.value)} className="w-full px-4 py-2 rounded-lg bg-[#1a1a1a] border border-white/20 text-white" />
@@ -804,17 +860,18 @@ export const Admin = () => {
                     <option key={plan.id} value={plan.id}>{plan.name}</option>
                   ))}
                 </select>
-                <p className="text-xs text-gray-500 mt-1">Changing plan applies default modules. You can still toggle them below.</p>
+                <p className="text-xs text-gray-500 mt-1">Endring av plan setter standardmoduler. Funksjonene redigeres i treet under.</p>
               </div>
-              <div className="flex flex-wrap gap-4">
-                <label className="flex items-center gap-2 text-white"><input type="checkbox" checked={!!editSiteFeatures.users} onChange={(e) => setEditSiteFeatures((prev) => ({ ...prev, users: e.target.checked }))} /> Users</label>
-                <label className="flex items-center gap-2 text-white"><input type="checkbox" checked={!!editSiteFeatures.analytics} onChange={(e) => setEditSiteFeatures((prev) => ({ ...prev, analytics: e.target.checked }))} /> Analytics</label>
-                <label className="flex items-center gap-2 text-white"><input type="checkbox" checked={!!editSiteFeatures.ecommerce} onChange={(e) => setEditSiteFeatures((prev) => ({ ...prev, ecommerce: e.target.checked }))} /> Ecommerce</label>
-                <label className="flex items-center gap-2 text-white"><input type="checkbox" checked={!!editSiteFeatures.blog} onChange={(e) => setEditSiteFeatures((prev) => ({ ...prev, blog: e.target.checked }))} /> Blog</label>
-                <label className="flex items-center gap-2 text-white"><input type="checkbox" checked={!!editSiteFeatures.socialSync} onChange={(e) => setEditSiteFeatures((prev) => ({ ...prev, socialSync: e.target.checked }))} /> Social sync</label>
-                <label className="flex items-center gap-2 text-white"><input type="checkbox" checked={!!editSiteFeatures.emailMarketing} onChange={(e) => setEditSiteFeatures((prev) => ({ ...prev, emailMarketing: e.target.checked }))} /> Email marketing</label>
-                <label className="flex items-center gap-2 text-white"><input type="checkbox" checked={!!editSiteFeatures.general} onChange={(e) => setEditSiteFeatures((prev) => ({ ...prev, general: e.target.checked }))} /> General (users & more)</label>
-              </div>
+              {editingSiteId && <FeatureTreeEditor siteId={editingSiteId} compact onSiteConfigMode={setEditConfigMode} />}
+              {showFeatureTreeEditor(editConfigMode) && (
+                <label className="flex items-center gap-2 text-xs text-gray-400">
+                  <input type="checkbox" checked={editLegacyOpen} onChange={(event) => setEditLegacyOpen(event.target.checked)} />
+                  Vis gamle funksjonsflagg
+                </label>
+              )}
+              {(showLegacyFeatureFlags(editConfigMode) || editLegacyOpen) && (
+                <LegacyFeatureFlags features={editSiteFeatures} onChange={setEditSiteFeatures} />
+              )}
               {editSiteFeatures.ecommerce && (
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">Ecommerce catalog type</label>
@@ -841,7 +898,7 @@ export const Admin = () => {
 
       {clientAdminSiteId && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#2a2a2a] rounded-xl border border-white/10 p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto">
+          <div className="bg-[#2a2a2a] rounded-xl border border-white/10 p-6 max-w-3xl w-full max-h-[90vh] overflow-y-auto overflow-x-hidden">
             <h2 className="text-lg font-semibold text-white mb-1">Client admin user</h2>
             <p className="text-xs text-gray-400 mb-4">Name, email, CMS login, avatar, and which services this client has. A new password syncs to their Hostinger CMS on the next config heartbeat.</p>
             <div className="space-y-3">
@@ -867,15 +924,16 @@ export const Admin = () => {
                 {clientAdminError || 'Minst 8 og høyst 1024 tegn. Vanlige standardpassord (changeme, admin, password, 12345678 …) avvises.'}
               </p>
               <p className="text-xs text-gray-500">Created {clientAdminForm.createdAt ? new Date(clientAdminForm.createdAt).toLocaleString() : 'when first saved'}</p>
-              <div className="flex flex-wrap gap-3 pt-2">
-                <label className="flex items-center gap-2 text-white text-sm"><input type="checkbox" checked={!!editSiteFeatures.users} onChange={(e) => setEditSiteFeatures((prev) => ({ ...prev, users: e.target.checked }))} /> Users</label>
-                <label className="flex items-center gap-2 text-white text-sm"><input type="checkbox" checked={!!editSiteFeatures.analytics} onChange={(e) => setEditSiteFeatures((prev) => ({ ...prev, analytics: e.target.checked }))} /> Analytics</label>
-                <label className="flex items-center gap-2 text-white text-sm"><input type="checkbox" checked={!!editSiteFeatures.ecommerce} onChange={(e) => setEditSiteFeatures((prev) => ({ ...prev, ecommerce: e.target.checked }))} /> Ecommerce</label>
-                <label className="flex items-center gap-2 text-white text-sm"><input type="checkbox" checked={!!editSiteFeatures.blog} onChange={(e) => setEditSiteFeatures((prev) => ({ ...prev, blog: e.target.checked }))} /> Blog</label>
-                <label className="flex items-center gap-2 text-white text-sm"><input type="checkbox" checked={!!editSiteFeatures.socialSync} onChange={(e) => setEditSiteFeatures((prev) => ({ ...prev, socialSync: e.target.checked }))} /> Social</label>
-                <label className="flex items-center gap-2 text-white text-sm"><input type="checkbox" checked={!!editSiteFeatures.emailMarketing} onChange={(e) => setEditSiteFeatures((prev) => ({ ...prev, emailMarketing: e.target.checked }))} /> Email</label>
-                <label className="flex items-center gap-2 text-white text-sm"><input type="checkbox" checked={!!editSiteFeatures.general} onChange={(e) => setEditSiteFeatures((prev) => ({ ...prev, general: e.target.checked }))} /> General</label>
-              </div>
+              {clientAdminSiteId && <FeatureTreeEditor siteId={clientAdminSiteId} compact onSiteConfigMode={setAdminConfigMode} />}
+              {showFeatureTreeEditor(adminConfigMode) && (
+                <label className="flex items-center gap-2 text-xs text-gray-400">
+                  <input type="checkbox" checked={adminLegacyOpen} onChange={(event) => setAdminLegacyOpen(event.target.checked)} />
+                  Vis gamle funksjonsflagg
+                </label>
+              )}
+              {(showLegacyFeatureFlags(adminConfigMode) || adminLegacyOpen) && (
+                <LegacyFeatureFlags features={editSiteFeatures} onChange={setEditSiteFeatures} />
+              )}
               <div className="flex gap-2 pt-2">
                 <button type="button" onClick={handleSaveClientAdmin} disabled={loading} className="px-4 py-2 rounded-lg bg-[#FF5B00] text-white font-medium disabled:opacity-50">Save</button>
                 <button type="button" onClick={() => setClientAdminSiteId(null)} className="px-4 py-2 rounded-lg bg-white/10 text-white">Cancel</button>

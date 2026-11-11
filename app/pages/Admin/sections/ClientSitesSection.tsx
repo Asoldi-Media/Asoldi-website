@@ -16,6 +16,7 @@ import { ShopPaymentsPlatformCard } from './ShopPaymentsPlatformCard';
 import { SecurityCard } from './SecurityCard';
 import { SiteCredentialStatus, useSiteCredentials } from './SiteCredentials';
 import { TestFlagToggle } from './TestFlagToggle';
+import { badgeFlagsForSite } from '../../../../lib/feature-tree-editor-helpers.js';
 
 type Props = {
   sites: Site[];
@@ -176,15 +177,22 @@ export function ClientSitesSection({
               )}
             </div>
             <div className="flex items-center gap-2 text-xs flex-wrap justify-end max-w-[220px]">
-              {site.features?.users && <FeatureBadge label="Users" color="green" />}
-              {site.features?.analytics && <FeatureBadge label="Analytics" color="blue" />}
-              {site.features?.ecommerce && (
-                <FeatureBadge label={site.ecommerceCatalogType ? `Ecommerce · ${catalogLabel(site.ecommerceCatalogType)}` : 'Ecommerce'} color="purple" />
-              )}
-              {site.features?.blog && <FeatureBadge label="Blog" color="orange" />}
-              {site.features?.socialSync && <FeatureBadge label="Social" color="teal" />}
-              {site.features?.emailMarketing && <FeatureBadge label="Email" color="pink" />}
-              {site.features?.general && <FeatureBadge label="General" color="gray" />}
+              {(() => {
+                const featureFlags = badgeFlagsForSite(site);
+                return (
+                  <>
+                    {featureFlags?.users && <FeatureBadge label="Users" color="green" />}
+                    {featureFlags?.analytics && <FeatureBadge label="Analytics" color="blue" />}
+                    {featureFlags?.ecommerce && (
+                      <FeatureBadge label={site.ecommerceCatalogType ? `Ecommerce · ${catalogLabel(site.ecommerceCatalogType)}` : 'Ecommerce'} color="purple" />
+                    )}
+                    {featureFlags?.blog && <FeatureBadge label="Blog" color="orange" />}
+                    {featureFlags?.socialSync && <FeatureBadge label="Social" color="teal" />}
+                    {featureFlags?.emailMarketing && <FeatureBadge label="Email" color="pink" />}
+                    {featureFlags?.general && <FeatureBadge label="General" color="gray" />}
+                  </>
+                );
+              })()}
             </div>
             <div className="flex items-center gap-2">
               <button
