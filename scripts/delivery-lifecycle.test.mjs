@@ -41,7 +41,7 @@ function client(id, name, extra = {}) {
   };
 }
 
-const PILOTS = ['lc-cancel', 'lc-active', 'lc-pay', 'lc-recover', 'lc-unsign', 'lc-live', 'lc-off'];
+const PILOTS = ['lc-cancel', 'lc-active', 'lc-pay', 'lc-recover', 'lc-unsign', 'lc-live', 'lc-off', 'lc-resume'];
 writeFileSync(join(DATA_DIR, 'sales-clients.json'), JSON.stringify([
   client('lc-cancel', 'Havblikk Frisør AS'),
   client('lc-active', 'Lindely Blomster AS'),
@@ -50,6 +50,7 @@ writeFileSync(join(DATA_DIR, 'sales-clients.json'), JSON.stringify([
   client('lc-unsign', 'Ospeli Keramikk AS', { ext: { dpa: { offerVersion: 'dpa-test-1' } } }),
   client('lc-live', 'Nordnes Sykkel AS', { hubSite: { liveUrl: 'https://nordnes-sykkel.example.com' } }),
   client('lc-off', 'Furuly Regnskap AS'),
+  client('lc-resume', 'Tangen Tekstil AS'),
 ], null, 2));
 writeFileSync(join(DATA_DIR, 'sites.json'), '[]');
 
@@ -82,10 +83,10 @@ function linkStripe(userId, salesClientId, customer) {
   clientPortal.upsertClientProfile(userId, { websiteBuilder: { salesClientId } }, { syncPortalState: false });
   clientPortal.setClientPayment(userId, { stripeCustomerId: customer, status: 'active' });
 }
-for (const [user, id] of [['u-lc-cancel', 'lc-cancel'], ['u-lc-active', 'lc-active'], ['u-lc-pay', 'lc-pay'], ['u-lc-recover', 'lc-recover'], ['u-lc-off', 'lc-off']]) {
+for (const [user, id] of [['u-lc-cancel', 'lc-cancel'], ['u-lc-active', 'lc-active'], ['u-lc-pay', 'lc-pay'], ['u-lc-recover', 'lc-recover'], ['u-lc-off', 'lc-off'], ['u-lc-resume', 'lc-resume']]) {
   linkStripe(user, id, `cus_test_${id}`);
 }
-for (const id of ['lc-cancel', 'lc-active', 'lc-unsign', 'lc-live', 'lc-off']) {
+for (const id of ['lc-cancel', 'lc-active', 'lc-unsign', 'lc-live', 'lc-off', 'lc-resume']) {
   assert.equal(apply.applySitePlanToHub(id, { by: 'test', now: T0 }).ok, true, id);
 }
 const ownSite = (id) => apply.findSiteForClient(sales.getSalesClientById(id));
@@ -233,4 +234,34 @@ test('with the switch off every entry point writes nothing and stops no job', as
   const offClient = sales.getSalesClientById('lc-off');
   assert.equal(offClient.progression.contractSigned, true);
   assert.equal(offClient.delivery?.events?.cancelled?.at || '', '');
+});
+
+test('a site delivered before the live fields existed counts as published, so un-signing keeps it', () => {
+  const bare = { id: 'lc-legacy', progression: { contractSigned: true } };
+  assert.equal(signing.wasPublished(bare), false, 'control: nothing says it was published');
+  assert.equal(signing.wasPublished(bare, { id: 's1', deliveryPhase: 'development' }), false);
+  assert.equal(signing.wasPublished(bare, { id: 's1', deliveryPhase: 'client' }), true, 'handed over to the client');
+  assert.equal(signing.wasPublished({ ...bare, development: { nettsideFerdig: true } }, { id: 's1', deliveryPhase: 'development' }), true, 'ticked as finished');
+});
+
+test('a paid invoice after the cancellation lifts it while the plan has not ended; one dated before it does not', async () => {
+  writeSettings({ enabled: true, mode: 'auto', paused: null });
+  settingsStore.invalidateAutomationSettingsCache();
+  const periodEnd = Date.parse('2026-12-01T00:00:00.000Z') / 1000;
+  await lifecycle.onSubscriptionEnded({ customer: 'cus_test_lc-resume', current_period_end: periodEnd }, { now: '2026-11-10T12:00:00.000Z' });
+  const cancelled = sales.getSalesClientById('lc-resume');
+  assert.ok(cancelled.delivery.events.cancelled.at, 'control: the client is cancelled');
+  assert.equal(ownSite('lc-resume').deliveryPhase, 'cancelled');
+  const cancelledMs = Date.parse(cancelled.delivery.events.cancelled.at);
+  const before = await lifecycle.onPaymentRecovered({ customer: 'cus_test_lc-resume', status_transitions: { paid_at: Math.floor((cancelledMs - 3600_000) / 1000) } }, { now: cancelledMs + 3600_000 });
+  assert.equal(before.changed, false, 'the last invoice before the cancellation changes nothing');
+  assert.ok(sales.getSalesClientById('lc-resume').delivery.events.cancelled.at);
+  const resumed = await lifecycle.onPaymentRecovered({ customer: 'cus_test_lc-resume', status_transitions: { paid_at: Math.floor((cancelledMs + 3600_000) / 1000) } }, { now: cancelledMs + 3600_000 });
+  assert.equal(resumed.changed, true);
+  assert.equal(resumed.resumed, true);
+  const after = sales.getSalesClientById('lc-resume');
+  assert.equal(after.delivery.events.cancelled.at, '');
+  assert.equal(after.delivery.events.serviceEndsAt, '');
+  assert.equal(lifecycle.lifecycleState(after).state, 'active');
+  assert.notEqual(ownSite('lc-resume').deliveryPhase, 'cancelled');
 });

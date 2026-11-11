@@ -22,7 +22,7 @@
     "test:ship-safety": "node --test scripts/secret-store.test.mjs && node --test scripts/ship/dark-diff.test.mjs && node --test scripts/ship/ship-tools.test.mjs scripts/safe-mode-soak-fixtures.test.mjs",
     "test:seo-record": "node --test scripts/seo-record.test.mjs scripts/seo-consumers.test.mjs scripts/seo-dfs-ledger.test.mjs scripts/seo-schedulers-safe-mode.test.mjs scripts/seo-blog-scheduler.test.mjs scripts/seo-maps-gate.test.mjs scripts/seo-agreed-contract-text.test.mjs && node --test scripts/seo-gating-fleet.test.mjs scripts/seo-record-boot.test.mjs",
     "test:cms-email": "node --test scripts/email-routes.test.mjs scripts/email-route-coverage.test.mjs scripts/site-auth.test.mjs",
-    "test:hub-lifecycle-booking": "node --test scripts/plan-change.test.mjs scripts/delivery-lifecycle.test.mjs scripts/plan-lifecycle-routes.test.mjs scripts/delivery-residuals.test.mjs scripts/client-booking.test.mjs scripts/client-booking-routes.test.mjs",
+    "test:hub-lifecycle-booking": "node --test scripts/plan-change.test.mjs scripts/delivery-lifecycle.test.mjs scripts/plan-lifecycle-routes.test.mjs scripts/plan-lifecycle-fixes.test.mjs scripts/delivery-residuals.test.mjs scripts/client-booking.test.mjs scripts/client-booking-routes.test.mjs",
     "test:optional-routes": "node --test scripts/optional-routes.test.mjs",
     "test:hub-email-hardening": "node --test scripts/email-owner.test.mjs scripts/email-log-prune.test.mjs scripts/email-forward-compat.test.mjs",
     "test:cms-fleet-monitor": "node --test scripts/cms-fleet-monitor.test.mjs scripts/cms-fleet-monitor-outbox.test.mjs",

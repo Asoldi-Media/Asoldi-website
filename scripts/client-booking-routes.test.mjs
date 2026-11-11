@@ -92,6 +92,7 @@ sales.createSalesClient({
   businessName: 'Fjellbakeriet Example',
   contactPerson: 'Kari Example',
   contactEmail: 'book-pilot@example.com',
+  progression: { contractSigned: true },
   status: 'active',
 });
 sales.createSalesClient({
@@ -106,6 +107,7 @@ sales.createSalesClient({
   product: 'asoldi',
   businessName: 'Other Example',
   contactEmail: 'book-other@example.com',
+  progression: { contractSigned: true },
   status: 'active',
 });
 
@@ -299,5 +301,104 @@ test('on a booted hub the public routes stay disabled, and the admin iteration r
     assert.equal(stored.workshopAction?.dueAt || '', '', 'the public routes did not book a workshop');
   } finally {
     await hub.stop();
+  }
+});
+
+// ---------------------------------------------------------------- a link that no longer fits the client
+
+const { getWorkshopRecord, mergeWorkshopRecord } = await import('../lib/workshop-record.js');
+const { rejectActionAfterDueDate } = await import('../lib/workshop-desk-actions.js');
+
+function signedClient(id, extra = {}) {
+  return sales.createSalesClient({
+    id,
+    product: 'asoldi',
+    businessName: `Closed Example ${id}`,
+    contactPerson: 'Kari Example',
+    contactEmail: `${id}@example.com`,
+    status: 'active',
+    progression: { contractSigned: true },
+    contractSignedAt: '2026-10-20T09:00:00.000Z',
+    ...extra,
+  });
+}
+
+test('a link minted while signed stops booking when the contract is taken back or the plan ended', async () => {
+  const ids = ['book-taken-back', 'book-cancelled'];
+  for (const id of ids) signedClient(id);
+  writeSettings(autoSettings(ids));
+  const { server, base } = await appWith({ queryBusy: async () => ({ ok: true, busy: [] }) });
+  try {
+    const open = tokenFor('book-taken-back');
+    assert.equal((await call(base, 'GET', `/api/public/booking/${open}/slots`)).status, 200, 'control: signed, the link works');
+    sales.setSalesProgress('book-taken-back', 'contractSigned', false);
+    const listed = await call(base, 'GET', `/api/public/booking/${open}/slots`);
+    assert.equal(listed.status, 410);
+    assert.equal(listed.body.code, 'closed');
+    const posted = await call(base, 'POST', `/api/public/booking/${open}`, { start: '2026-11-10T08:00:00.000Z' });
+    assert.equal(posted.status, 410);
+    assert.equal(booking.bookingTokenUsed(booking.verifyBookingToken(open, { dataDir: DATA_DIR, now: NOW }).nonce, { dataDir: DATA_DIR }), false, 'the token was not spent');
+
+    const cancelled = tokenFor('book-cancelled');
+    sales.setSalesDelivery('book-cancelled', { events: { cancelled: { at: '2026-10-25T09:00:00.000Z' }, serviceEndsAt: '2026-11-01T09:00:00.000Z' } }, { by: 'test', reason: 'test' });
+    assert.equal((await call(base, 'GET', `/api/public/booking/${cancelled}/slots`)).status, 410);
+  } finally {
+    server.close();
+  }
+});
+
+test('a workshop that has been held cannot be booked again from an old link; an iteration link still works', async () => {
+  signedClient('book-held');
+  writeSettings(autoSettings(['book-held']));
+  const c0 = sales.getSalesClientById('book-held');
+  sales.setSalesWorkshop('book-held', mergeWorkshopRecord(getWorkshopRecord(c0), { heldAt: '2026-11-02T10:00:00.000Z' }));
+  const { server, base } = await appWith({ queryBusy: async () => ({ ok: true, busy: [] }) });
+  try {
+    const workshop = tokenFor('book-held', 'workshop');
+    const res = await call(base, 'POST', `/api/public/booking/${workshop}`, { start: '2026-11-10T08:00:00.000Z' });
+    assert.equal(res.status, 410);
+    assert.equal(res.body.code, 'held');
+    assert.equal(sales.getSalesClientById('book-held').workshopAction?.dueAt || '', '', 'nothing was moved');
+    const iteration = await call(base, 'GET', `/api/public/booking/${tokenFor('book-held', 'iteration')}/slots`);
+    assert.equal(iteration.status, 200);
+  } finally {
+    server.close();
+  }
+});
+
+test('iteration slots after the website due date are not offered, and a rejected pick never shows the staff message', async () => {
+  signedClient('book-late', { contractSignedAt: '2026-11-03T09:00:00.000Z', websiteDeliveryWeeks: 1 });
+  writeSettings(autoSettings(['book-late']));
+  const late = sales.getSalesClientById('book-late');
+  const all = meetings.bookingSlots({ now: NOW, purpose: 'iteration' });
+  assert.ok(all.some((row) => rejectActionAfterDueDate(row.start, late)), 'control: some slots are after the due date');
+  const { server, base } = await appWith({ queryBusy: async () => ({ ok: true, busy: [] }) });
+  try {
+    const token = tokenFor('book-late', 'iteration');
+    const listed = await call(base, 'GET', `/api/public/booking/${token}/slots`);
+    assert.equal(listed.status, 200, JSON.stringify(listed.body));
+    assert.ok(listed.body.slots.every((row) => !rejectActionAfterDueDate(row.start, late)));
+    const afterDue = all.find((row) => rejectActionAfterDueDate(row.start, late));
+    const res = await call(base, 'POST', `/api/public/booking/${token}`, { start: afterDue.start });
+    assert.equal(res.status, 409);
+    assert.equal(res.body.code, 'slot-taken');
+    assert.equal(JSON.stringify(res.body).includes('leveringsfristen'), false);
+  } finally {
+    server.close();
+  }
+});
+
+test('the limiter counts the address the proxy appended, so junk from other visitors does not block a real one', async () => {
+  writeSettings(autoSettings());
+  const { server, base } = await appWith({ queryBusy: async () => ({ ok: true, busy: [] }) });
+  try {
+    const hit = (path, ip) => fetch(`${base}${path}`, { headers: { 'x-forwarded-for': ip } }).then((res) => res.status);
+    for (let i = 0; i < 31; i += 1) await hit('/api/public/booking/junk/slots', `203.0.113.${i}`);
+    assert.equal(await hit(`/api/public/booking/${tokenFor(PILOT, 'iteration')}/slots`, '198.51.100.7'), 200);
+    let last = 0;
+    for (let i = 0; i < 31; i += 1) last = await hit('/api/public/booking/junk/slots', '203.0.113.99');
+    assert.equal(last, 429, 'one address is still limited');
+  } finally {
+    server.close();
   }
 });
