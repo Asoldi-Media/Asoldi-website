@@ -22,6 +22,7 @@ import { clientAdminPasswordProblem } from '../lib/client-admin-password.js';
 import { normalizeDeliveryPhase, normalizeDevelopment, resolveSiteDeliveryPhase } from '../lib/development-phase.js';
 import { FUTURE_SITE_CMS_KEYS, withoutKeys } from './normalize-ext.js';
 import { CMS_REPORTED_KEYS, cmsPatchFromHeartbeat } from './feature-spec-model.js';
+import { emailConfigForSite } from '../lib/email-site-config.js';
 
 // The one client admin password rule (lib/client-admin-password.js), also under the names that
 // other hub code and tests import from here. Never define a second copy of it in this file.
@@ -85,15 +86,18 @@ export function getSiteByDomain(domain) {
  * turn it on only for a request that carries the site's valid credential (lib/site-credentials.js),
  * never for a site key or domain alone. `withFeatures(config, site, { byDomain, includeAdmin })`
  * (feature tree) may return a config with the feature tree; without it, or when it returns nothing, the
- * answer is unchanged.
+ * answer is unchanged. A site whose email is switched on (the email platform is on and its rollout
+ * lists the site) also gets the `email` block (lib/email-site-config.js); every other site's answer
+ * has no such field.
  */
 export function getSiteConfig(siteKeyOrDomain, byDomain = false, { withFeatures = null, includeAdmin = false } = {}) {
   const site = byDomain ? getSiteByDomain(siteKeyOrDomain) : getSiteByKey(siteKeyOrDomain);
   if (!site) return null;
   const trusted = !byDomain && includeAdmin === true;
   const config = baseSiteConfig(site, byDomain, trusted);
-  if (typeof withFeatures !== 'function') return config;
-  return withFeatures(config, site, { byDomain, includeAdmin: trusted }) || config;
+  const answer = typeof withFeatures === 'function' ? withFeatures(config, site, { byDomain, includeAdmin: trusted }) || config : config;
+  const email = emailConfigForSite(site, { config: answer });
+  return email ? { ...answer, email } : answer;
 }
 
 function baseSiteConfig(site, byDomain, includeAdmin) {

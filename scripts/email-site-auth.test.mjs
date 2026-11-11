@@ -144,10 +144,17 @@ test('a credential-valid request gets the pending key; the confirm commits it; a
   assert.deepEqual([ok.status, ok.body], [200, { ok: true, keyId: 'ek_1' }]);
   const repeat = await call('post', '/api/hub/email/provision/confirm', { 'x-email-key': firstKey });
   assert.deepEqual([repeat.status, repeat.body], [200, { ok: true, keyId: 'ek_1' }], 'a repeated confirm is idempotent');
-  const settled = await call('post', '/api/hub/email/provision-request', cms1);
-  assert.deepEqual(settled.body, { ok: true }, 'nothing pending: no key in the answer');
   assert.equal(store.readEmailSite('site_1').auth.keyId, 'ek_1');
   assert.ok(store.readEmailSite('site_1').auth.confirmedAt);
+  // A CMS that lost its key, or whose owner asks to reconnect, asks again with its credential: the
+  // hub hands out a new pending key (a rotation); the confirmed key keeps working until its confirm.
+  const again2 = await call('post', '/api/hub/email/provision-request', cms1);
+  assert.equal(again2.body.keyId, 'ek_2', 'a site with a key gets a new pending key');
+  assert.notEqual(again2.body.emailKey, firstKey);
+  assert.deepEqual(auth.findSiteByEmailKey(firstKey, { now: clock }), { siteId: 'site_1', keyId: 'ek_1', which: 'current' }, 'the confirmed key still works');
+  assert.equal(auth.findSiteByEmailKey(again2.body.emailKey, { now: clock }), null, 'the new key authenticates nothing until its confirm');
+  const limit = await call('post', '/api/hub/email/provision-request', cms1);
+  assert.deepEqual(limit.body, { ok: true }, 'the fourth credential-valid request of the day gets nothing');
 });
 
 test('the site key alone gets 401 on every email site route; only the emailKey opens them', async () => {
@@ -173,20 +180,20 @@ test('rotation: a signed hint goes to https://<domain> only; the old key works 1
   hints.length = 0;
   const rotated = await call('post', '/api/admin/email/sites/site_1/provision', admin);
   assert.equal(rotated.status, 200);
-  assert.equal(rotated.body.pendingKeyId, 'ek_2');
+  assert.equal(rotated.body.pendingKeyId, 'ek_3', 'a superadmin rotation replaces the unconfirmed ek_2');
   assert.equal(rotated.body.rotation, true);
   assert.equal(JSON.stringify(rotated.body).includes(firstKey), false, 'the admin answer carries no key');
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(hints.length, 1);
   assert.equal(hints[0].url, `https://shop.example.com${HUB_EVENT_PATH}`, 'never the heartbeat adminUrl');
   const cms = auth.createReferenceCmsVerifier({ key: firstKey });
-  assert.deepEqual(cms.check({ headers: hints[0].init.headers, body: hints[0].init.body, now: clock }), { ok: true, reason: 'ok' });
+  assert.deepEqual(cms.check({ headers: hints[0].init.headers, body: hints[0].init.body, url: hints[0].url, now: clock }), { ok: true, reason: 'ok' });
   assert.equal(JSON.parse(hints[0].init.body).type, 'key-rotation');
 
   const guarded = (key) => call('get', '/api/hub/email/quota', { 'x-email-key': key });
   assert.equal((await guarded(firstKey)).status, 200, 'the current key keeps working until the confirm');
   const pulled = await call('post', '/api/hub/email/provision-request', cms1);
-  assert.equal(pulled.body.keyId, 'ek_2');
+  assert.equal(pulled.body.keyId, 'ek_3');
   const secondKey = pulled.body.emailKey;
   assert.notEqual(secondKey, firstKey);
   const confirmAt = clock;
@@ -214,18 +221,28 @@ test('at most three credential-valid provision requests per site and day', async
   clock = T0;
 });
 
-test('hub → CMS signatures: the reference verifier accepts the emailKey only, within ±300 s', () => {
+test('hub → CMS signatures: the reference verifier accepts the emailKey only, for the signed method, path and body, within ±300 s', () => {
   const key = auth.generateEmailKey();
   const body = JSON.stringify({ type: 'suppression', siteId: 'site_1' });
-  const header = auth.signEmailPayload(key, body, { now: T0 });
+  const call = { method: 'POST', path: '/api/cms/email/hub-event' };
+  const header = auth.signEmailPayload(key, body, { now: T0, ...call });
   assert.match(header, /^t=\d+,v1=[a-f0-9]{64}$/);
-  assert.equal(auth.verifyEmailSignature({ header, body, key, now: T0 + 299_000 }), true);
-  assert.equal(auth.verifyEmailSignature({ header, body, key, now: T0 + 301_000 }), false, 'too old');
-  assert.equal(auth.verifyEmailSignature({ header, body, key, now: T0 - 301_000 }), false, 'too far ahead');
-  assert.equal(auth.verifyEmailSignature({ header, body: `${body} `, key, now: T0 }), false, 'a changed body');
-  const siteKeySigned = auth.signEmailPayload('public-key-one', body, { now: T0 });
-  assert.equal(auth.verifyEmailSignature({ header: siteKeySigned, body, key, now: T0 }), false, 'a hint signed with the site key is refused');
+  assert.equal(auth.verifyEmailSignature({ header, body, key, now: T0 + 299_000, ...call }), true);
+  assert.equal(auth.verifyEmailSignature({ header, body, key, now: T0 + 301_000, ...call }), false, 'too old');
+  assert.equal(auth.verifyEmailSignature({ header, body, key, now: T0 - 301_000, ...call }), false, 'too far ahead');
+  assert.equal(auth.verifyEmailSignature({ header, body: `${body} `, key, now: T0, ...call }), false, 'a changed body');
+  assert.equal(auth.verifyEmailSignature({ header, body, key, now: T0, method: 'POST', path: '/api/cms/email/tick' }), false, 'another path');
+  assert.equal(auth.verifyEmailSignature({ header, body, key, now: T0, method: 'PUT', path: call.path }), false, 'another method');
+  const siteKeySigned = auth.signEmailPayload('public-key-one', body, { now: T0, ...call });
+  assert.equal(auth.verifyEmailSignature({ header: siteKeySigned, body, key, now: T0, ...call }), false, 'a hint signed with the site key is refused');
   assert.equal(auth.createReferenceCmsVerifier({ key }).check({ headers: {}, body, now: T0 }).reason, 'missing-signature');
+  // A GET covers its query: the signature of one page of the mirror opens no other.
+  const get = { method: 'GET', path: '/api/cms/email/suppressions?since=2026-11-03T08%3A00%3A00.000Z' };
+  const getHeader = auth.signEmailPayload(key, '', { now: T0, ...get });
+  assert.equal(auth.verifyEmailSignature({ header: getHeader, key, now: T0, ...get }), true);
+  assert.equal(auth.verifyEmailSignature({ header: getHeader, key, now: T0, method: 'GET', path: '/api/cms/email/suppressions' }), false, 'without the query');
+  assert.equal(auth.verifyEmailSignature({ header: getHeader, key, now: T0, method: 'GET', path: '/api/cms/email/suppressions?since=2000-01-01T00%3A00%3A00.000Z' }), false, 'another query');
+  assert.equal(auth.signedPathOf('https://shop.example.com/api/cms/email/suppressions?since=2026-11-03T08%3A00%3A00.000Z'), get.path);
 });
 
 test('postCmsHint skips sites without a key or a public domain and never follows redirects', async () => {
@@ -295,9 +312,13 @@ test('the CMS-facing email routes: each needs the emailKey, and the site key alo
   const app = express();
   app.use(express.json());
   await mod.register(app, { adminAuth: (_q, r) => r.status(401).end(), hub, sales: { getSalesClients: () => [] } });
-  const routes = auth.emailRouteGuards(app).filter((r) => !PUBLIC_EMAIL_ROUTES.includes(`${r.method} ${r.path}`));
+  // The Brevo webhook takes Brevo's token instead of an emailKey; it is checked below on its own.
+  const webhookRoutes = mod.EMAIL_WEBHOOK_ROUTES || [];
+  const all = auth.emailRouteGuards(app);
+  const routes = all.filter((r) => !PUBLIC_EMAIL_ROUTES.includes(`${r.method} ${r.path}`) && !webhookRoutes.includes(`${r.method} ${r.path}`));
   assert.ok(routes.length > 0, 'the module registers CMS-facing routes');
   assert.deepEqual(routes.filter((r) => !r.guarded).map((r) => `${r.method} ${r.path}`), [], 'routes without requireEmailKey');
+  assert.deepEqual(webhookRoutes.filter((r) => !all.some((x) => `${x.method} ${x.path}` === r)), [], 'every exempted webhook route exists');
   const srv = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });
@@ -307,6 +328,12 @@ test('the CMS-facing email routes: each needs the emailKey, and the site key alo
       const res = await fetch(url, { method, headers: { ...cms1, ...(method === 'GET' ? {} : { 'content-type': 'application/json' }) }, ...(method === 'GET' ? {} : { body: '{}' }) });
       await res.text();
       assert.equal(res.status, 401, `${method} ${path} with the site key and credential only`);
+    }
+    for (const route of webhookRoutes) {
+      const [method, path] = route.split(' ');
+      const res = await fetch(`http://127.0.0.1:${srv.address().port}${path.replace(/:[A-Za-z_]+/g, 'x')}`, { method, headers: { ...cms1, 'content-type': 'application/json', 'x-asoldi-webhook': 'x' }, body: '{}' });
+      await res.text();
+      assert.equal(res.status, 404, `${route} with a token that is not the hub's`);
     }
   } finally {
     srv.closeAllConnections?.();

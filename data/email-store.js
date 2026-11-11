@@ -591,12 +591,16 @@ function readStoredSettings() {
   return isPlainObject(stored) ? stored : {};
 }
 
-/** Defaults merged with the stored file. A corrupt file with no backup gives defaults (rollout off). */
-export function readEmailSettings() {
+/**
+ * Defaults merged with the stored file. A corrupt file with no backup gives defaults (rollout off);
+ * with `strict` it throws EMAIL_STORE_UNREADABLE instead (a missing file still gives defaults).
+ */
+export function readEmailSettings({ strict = false } = {}) {
   let stored = {};
   try {
     stored = readStoredSettings();
-  } catch {
+  } catch (error) {
+    if (strict) throw error;
     stored = {};
   }
   return deepMerge(defaultEmailSettings(), stored);
