@@ -107,10 +107,15 @@ test('the sales card renders nothing unless the route answered; it is mounted on
   const card = readFileSync(new URL('../app/pages/Admin/sections/SalesPlanCard.tsx', import.meta.url), 'utf8');
   const section = readFileSync(new URL('../app/pages/Admin/sections/SalesClientsSection.tsx', import.meta.url), 'utf8');
   assert.match(card, /res\.ok \? \(\(await res\.json\(\)\) as SitePlanView\) : null/);
-  assert.match(card, /if \(!view \|\| view\.mode === 'off'\) return null;/);
+  assert.match(card, /if \(\(!view \|\| view\.mode === 'off'\) && !planChangeOn && !cancellationOn\) return null;/);
   assert.match(card, /\/site-plan\/confirm/);
   assert.match(card, /Bekreft tjenester/);
-  assert.doesNotMatch(card, /Endre plan|Angre signering|markPlanChanged|markContractUnsigned/);
+  assert.match(card, /lifecycle\?\.canChangePlan \? \(/);
+  assert.match(card, /lifecycle\?\.canUnsign \? \(/);
+  assert.match(card, /Endre plan/);
+  assert.match(card, /Angre signering/);
+  assert.match(card, /method: 'PATCH'[\s\S]{0,200}tierId: nextTier/);
+  assert.doesNotMatch(card, /markPlanChanged|markContractUnsigned/);
   assert.equal(section.match(/<SalesPlanCard /g)?.length, 1);
   assert.match(section, /import \{ SalesPlanCard \} from '\.\/SalesPlanCard';/);
 });

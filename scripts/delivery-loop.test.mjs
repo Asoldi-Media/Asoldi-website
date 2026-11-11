@@ -348,6 +348,7 @@ test('step contract: bad steps are refused; missing modules are simply absent', 
     './delivery-emails.js',
     './delivery-alerts.js',
     './seo-ops/record.js',
+    './delivery-lifecycle.js',
   ]);
   const loaded = await stepsLib.loadTickSteps();
   assert.ok(loaded.loaded.includes('./delivery-jobs.js'));

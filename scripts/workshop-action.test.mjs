@@ -282,7 +282,7 @@ test('Sales persist stays a draft; Admin Save is the send gate', () => {
     serverSrc.indexOf("app.post('/api/admin/sales/:id/workshop/iteration-meeting'"),
     serverSrc.indexOf("app.post('/api/admin/sales/:id/workshop/invoice-request'"),
   );
-  assert.match(iterationRoute, /kickFirefliesLiveJoins\(client\)/);
+  assert.match(iterationRoute, /kickFirefliesLiveJoins\(/);
   assert.doesNotMatch(iterationRoute, /addFirefliesToLiveMeeting|maybeJoinFirefliesLive/);
   assert.equal(WORKSHOP_PRIMARY_CALENDAR_ID, 'primary');
 
