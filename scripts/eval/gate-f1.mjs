@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Precision, recall and F1 of the delivery gate against expected-line label files.
 //
-//   node scripts/eval/gate-f1.mjs <dir> [--actual <dir>] [--min 0.9] [--json <file>]
+//   node scripts/eval/gate-f1.mjs <dir> [--actual <dir>] [--clients a,b] [--min 0.9] [--json <file>]
 //
 // <dir> holds one folder per client with gate-expected.json (schema asoldi.gate-expected/1:
 // lines [{id, status}]). The gate under test is <actual>/<id>/gate-actual.json (a stored gate,
@@ -86,10 +86,11 @@ async function evaluateInput(file) {
 }
 
 /** Scores every client folder under `dir`. Returns { clients, overall, perLine }. */
-export async function gateF1(dir, { actualDir = '' } = {}) {
+export async function gateF1(dir, { actualDir = '', clients: onlyClients = [] } = {}) {
   const counts = new Map();
   const clients = [];
-  const ids = existsSync(dir) && statSync(dir).isDirectory() ? readdirSync(dir).sort() : [];
+  const only = new Set((Array.isArray(onlyClients) ? onlyClients : []).filter(Boolean));
+  const ids = (existsSync(dir) && statSync(dir).isDirectory() ? readdirSync(dir).sort() : []).filter((id) => !only.size || only.has(id));
   for (const id of ids) {
     const folder = join(dir, id);
     if (!statSync(folder).isDirectory()) continue;
@@ -134,13 +135,14 @@ function pct(value) {
 }
 
 async function main(argv) {
-  const dir = argv.find((entry, index) => !entry.startsWith('--') && !['--actual', '--min', '--json'].includes(argv[index - 1]));
+  const dir = argv.find((entry, index) => !entry.startsWith('--') && !['--actual', '--min', '--json', '--clients'].includes(argv[index - 1]));
   if (!dir) {
-    console.error('usage: node scripts/eval/gate-f1.mjs <dir> [--actual <dir>] [--min 0.9] [--json <file>]');
+    console.error('usage: node scripts/eval/gate-f1.mjs <dir> [--actual <dir>] [--clients a,b] [--min 0.9] [--json <file>]');
     process.exit(2);
   }
   const min = Number(arg(argv, '--min', '0.9'));
-  const result = await gateF1(resolve(dir), { actualDir: arg(argv, '--actual') ? resolve(arg(argv, '--actual')) : '' });
+  const clients = arg(argv, '--clients').split(',').map((id) => id.trim()).filter(Boolean);
+  const result = await gateF1(resolve(dir), { actualDir: arg(argv, '--actual') ? resolve(arg(argv, '--actual')) : '', clients });
   for (const [id, row] of Object.entries(result.perLine)) {
     console.log(`${id.padEnd(18)} P ${pct(row.precision).padStart(6)}  R ${pct(row.recall).padStart(6)}  F1 ${pct(row.f1).padStart(6)}  (tp ${row.tp}, fp ${row.fp}, fn ${row.fn})`);
   }

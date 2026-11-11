@@ -48,7 +48,7 @@ function writeSettings(planChangeMode) {
       planChange: { enabled: planChangeMode !== 'off', mode: planChangeMode === 'off' ? 'shadow' : planChangeMode, paused: null },
       cancellation: { enabled: false, mode: 'shadow', paused: null },
     },
-    releases: { signing: RELEASED, 'lifecycle.planChange': RELEASED },
+    releases: { signing: RELEASED, 'delivery.loop': RELEASED, 'lifecycle.planChange': RELEASED },
   }, null, 2));
 }
 writeSettings('auto');

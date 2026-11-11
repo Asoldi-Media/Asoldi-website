@@ -1,0 +1,8 @@
+Selger: Hei Kari, hvordan går det med kafeen?
+Kunde: Det går fint, vi serverer frokost og lunsj midt i sentrum.
+Selger: Hva vil dere oppnå med en ny nettside?
+Kunde: Vi vil at turister og folk i byen finner oss når de søker etter frokost.
+Selger: Skal menyen ligge på nettsiden?
+Kunde: Ja, menyen må være lett å lese på mobilen og oppdateres hver uke.
+Selger: Ønsker dere å vise bilder fra kafeen?
+Kunde: Vi vil vise bilder av lokalet og av de mest populære rettene.

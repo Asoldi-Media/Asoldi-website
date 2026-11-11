@@ -27,12 +27,15 @@ const { installSafeMode, resetSafeModeForTests } = await import('../lib/safe-mod
 installSafeMode({ env: { HUB_SAFE_MODE: '1' }, dataDir: DATA_DIR, log: null, egress: false });
 test.after(() => resetSafeModeForTests());
 const settingsStore = await import('../data/automation-settings.js');
+// Auto needs a recorded release pass (lib/spine-mode.js); settings in auto hold the passes.
+const { testReleases } = await import('./fixtures/test-releases.mjs');
 const sales = await import('../data/sales.js');
 const signing = await import('../lib/contract-signing.js');
 
 function setLines(lines) {
   writeFileSync(join(DATA_DIR, 'automation-settings.json'), JSON.stringify({
     pilotClientIds: ['gate', 'legacy'],
+    releases: testReleases(),
     signing: { enabled: true, mode: 'auto', paused: null },
     emails: { preWorkshop: { enabled: true, mode: 'auto', paused: null, lines } },
   }));

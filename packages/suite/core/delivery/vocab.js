@@ -589,6 +589,11 @@ export const RELEASE_GATED_SWITCHES = Object.freeze([
   // --- booking
   'booking.selfLink',
   // --- end booking
+  // release suite: the other delivery spine switches
+  'delivery.loop',
+  'gate',
+  'privacy.purge',
+  // end release suite
 ]);
 
 // ---------------------------------------------------------------- tier matrix and site plan (v2)

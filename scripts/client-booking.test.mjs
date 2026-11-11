@@ -20,6 +20,8 @@ const settingsStore = await import('../data/automation-settings.js');
 const sales = await import('../data/sales.js');
 const { readDeliveryAudit } = await import('../lib/delivery-audit.js');
 const { osloWallToIso } = await import('../lib/website-due.js');
+// Auto needs a recorded release pass (lib/spine-mode.js); settings in auto hold the pass.
+const { testReleases } = await import('./fixtures/test-releases.mjs');
 
 test.after(() => rmSync(DATA_DIR, { recursive: true, force: true }));
 
@@ -39,6 +41,7 @@ function bookingSettings(node, pilots = []) {
     ...defaults,
     pilotClientIds: pilots,
     booking: { selfLink: { ...defaults.booking.selfLink, ...node } },
+    releases: testReleases(['booking.selfLink']),
   };
 }
 

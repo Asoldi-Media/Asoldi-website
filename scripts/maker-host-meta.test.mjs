@@ -23,6 +23,7 @@ const jobs = await import('../lib/delivery-jobs.js');
 const loopLib = await import('../lib/delivery-loop.js');
 const sales = await import('../data/sales.js');
 const settingsStore = await import('../data/automation-settings.js');
+const { writeReleasesFile } = await import('./fixtures/test-releases.mjs');
 const accessLog = await import('../lib/maker-access-log.js');
 const { clearJsonCacheForTests } = await import('../data/atomic-json.js');
 
@@ -31,7 +32,8 @@ test.after(() => rmSync(dataDir, { recursive: true, force: true }));
 const signed = { meetingHeld: true, offerSent: true, contractSigned: true };
 
 function setSettings(patch) {
-  rmSync(join(dataDir, 'automation-settings.json'), { force: true });
+  // Auto needs a recorded release pass (lib/spine-mode.js): start from settings that hold the passes.
+  writeReleasesFile(dataDir);
   settingsStore.invalidateAutomationSettingsCache();
   assert.equal(settingsStore.saveAutomationSettings(patch, { by: 'test' }).ok, true);
   settingsStore.invalidateAutomationSettingsCache();

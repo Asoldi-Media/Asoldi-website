@@ -20,6 +20,8 @@ const skip = !BASE ? 'SIGNING_DARK_BASE_DIR is not set' : (!existsSync(join(BASE
 
 process.env.APP_DATA_DIR = mkdtempSync(join(tmpdir(), 'asoldi-signing-dark-modules-'));
 const flows = await import('./fixtures/signing-flows.mjs');
+// Auto needs a recorded release pass (lib/spine-mode.js); settings in auto hold the passes.
+const { testReleases } = await import('./fixtures/test-releases.mjs');
 
 // Files that differ between any two boots of the same build (process logs, the egress recorder).
 const VOLATILE = [/^egress\.jsonl$/, /\.log$/, /^logs\//, /^http-requests/, /^secrets\//, /^security-events/, /^runtime-/];
@@ -143,7 +145,7 @@ test('control: with the switch on, the same comparison reports the differences',
     const seed = flows.seedSigningData(seedDir);
     const pilots = Object.values(seed.clients);
     const base = await runBuild(resolve(BASE), seedDir, seed);
-    const head = await runBuild(HEAD, seedDir, seed, { settings: { pilotClientIds: pilots, signing: { enabled: true, mode: 'auto', paused: null } } });
+    const head = await runBuild(HEAD, seedDir, seed, { settings: { pilotClientIds: pilots, releases: testReleases(), signing: { enabled: true, mode: 'auto', paused: null } } });
     const changed = diffKeys(base.data, head.data);
     assert.ok(changed.includes('sales-clients.json'), `sales-clients.json differs (${changed.join(', ')})`);
     assert.ok(changed.includes('sites.json'), 'sites.json differs');

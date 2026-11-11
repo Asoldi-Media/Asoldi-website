@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "id": "demo-shop",
+  "kind": "synthetic",
+  "label": "Eksempel Sko AS",
+  "salesClient": {
+    "id": "golden_demo-shop",
+    "businessName": "Eksempel Sko AS",
+    "contactPerson": "Kari Eksempel",
+    "contactEmail": "kari@sko.example.com",
+    "contactPhone": "",
+    "orgNumber": "",
+    "businessAddress": "",
+    "industry": "shoes",
+    "websiteDomain": "",
+    "status": "active"
+  },
+  "offer": { "status": "sent", "title": "Nettside", "summary": "Nettside med vedlikehold." }
+}

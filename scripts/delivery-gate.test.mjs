@@ -21,6 +21,8 @@ delete process.env.STRIPE_CONNECT_TEST_SECRET_KEY;
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const vocab = await import('../packages/suite/core/delivery/vocab.js');
 const settingsStore = await import('../data/automation-settings.js');
+// Auto needs a recorded release pass (lib/spine-mode.js); a settings object in auto holds them.
+const { testReleases } = await import('./fixtures/test-releases.mjs');
 const sales = await import('../data/sales.js');
 const hub = await import('../data/hub.js');
 const gateLib = await import('../lib/delivery-gate.js');
@@ -113,7 +115,7 @@ function spyNetwork() {
 // refuse gate.mode 'auto' for now, so the tests pass them in).
 function autoSettings(pilots) {
   const base = settingsStore.getAutomationSettings({ fresh: true });
-  return { ...base, pilotClientIds: pilots, gate: { enabled: true, mode: 'auto', paused: null } };
+  return { ...base, pilotClientIds: pilots, gate: { enabled: true, mode: 'auto', paused: null }, releases: testReleases() };
 }
 
 function salesFileMtime() {
@@ -487,6 +489,15 @@ test('gate-f1 exits non-zero when it has nothing to score', () => {
   assert.equal(unscored.status, 1);
   assert.match(unscored.stderr, /no gate to score for: syn-only-label/);
   assert.equal(run(join(root, 'scripts', 'fixtures', 'gate-labels')).status, 0, 'the synthetic labels pass');
+});
+
+test('gate-f1 scores only the named label folders when it is given clients', async () => {
+  const dir = join(root, 'scripts', 'fixtures', 'gate-labels');
+  const all = await gateF1(dir);
+  const first = all.clients[0].id;
+  const one = await gateF1(dir, { clients: [first] });
+  assert.deepEqual(one.clients.map((client) => client.id), [first]);
+  assert.deepEqual((await gateF1(dir, { clients: ['not-a-label'] })).clients, []);
 });
 
 test('gate-f1 scores at least 0.9 on the synthetic labels, and a wrong gate scores lower', async () => {

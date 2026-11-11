@@ -62,7 +62,7 @@ function writeSettings(cancellation) {
     delivery: { loop: { enabled: true, mode: 'auto', paused: null } },
     development: { seoJobs: true },
     lifecycle: { paymentGraceDays: 14, cancellationGraceDays: 30, planChange: { enabled: false, mode: 'shadow', paused: null }, cancellation },
-    releases: { signing: RELEASED, 'lifecycle.cancellation': RELEASED },
+    releases: { signing: RELEASED, 'delivery.loop': RELEASED, 'lifecycle.cancellation': RELEASED },
   }, null, 2));
 }
 writeSettings({ enabled: true, mode: 'auto', paused: null });

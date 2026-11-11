@@ -21,6 +21,8 @@ const routes = await import('../lib/routes/client-booking-routes.js');
 const { readDeliveryAudit } = await import('../lib/delivery-audit.js');
 const { installSafeMode, resetSafeModeForTests } = await import('../lib/safe-mode.js');
 const { bootHub } = await import('./safe-mode/hub-boot.mjs');
+// Auto needs a recorded release pass (lib/spine-mode.js); settings in auto hold the pass.
+const { testReleases } = await import('./fixtures/test-releases.mjs');
 
 // Safe mode so a booking writes the calendar stand-in and the outbox, never a live mailbox.
 writeFileSync(join(DATA_DIR, 'google-calendar-tokens.json'), JSON.stringify({
@@ -54,6 +56,7 @@ function autoSettings(pilots = [PILOT]) {
     ...defaults,
     pilotClientIds: pilots,
     booking: { selfLink: { enabled: true, mode: 'auto', paused: null } },
+    releases: testReleases(['booking.selfLink']),
   };
 }
 

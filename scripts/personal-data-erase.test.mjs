@@ -333,7 +333,9 @@ test('the purge on a fixed clock: a declined lead\'s archive goes 12 months afte
   const signed = archived('pe-signed');
   assert.equal(personalData.clientRetention(sales.getSalesClientById('pe-declined-13')).basis, 'not-sold');
 
-  assert.equal(settingsStore.saveAutomationSettings({ privacy: { purge: { enabled: true, mode: 'auto' } } }).ok, true);
+  // Auto deletes data: it needs a pilot list and a recorded release pass (lib/spine-mode.js).
+  assert.equal(settingsStore.recordReleasePass('privacy.purge', { suite: 'test' }).ok, true);
+  assert.equal(settingsStore.saveAutomationSettings({ pilotClientIds: ['pe-signed'], privacy: { purge: { enabled: true, mode: 'auto' } } }).ok, true);
   const run = await retention.runRetentionPurge({ settings: settingsStore.getAutomationSettings({ fresh: true }), now: CLOCK, force: true });
   assert.equal(run.dryRun, false);
   assert.equal(existsSync(gone), false, 'declined 13 months ago: purged');

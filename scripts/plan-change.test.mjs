@@ -89,7 +89,7 @@ function writeSettings(planChange) {
     delivery: { loop: { enabled: true, mode: 'auto', paused: null } },
     gate: { enabled: true, mode: 'shadow', paused: null },
     lifecycle: { paymentGraceDays: 14, cancellationGraceDays: 30, planChange, cancellation: { enabled: false, mode: 'shadow', paused: null } },
-    releases: { signing: RELEASED, 'lifecycle.planChange': RELEASED },
+    releases: { signing: RELEASED, 'delivery.loop': RELEASED, 'lifecycle.planChange': RELEASED },
   }, null, 2));
 }
 writeSettings({ enabled: true, mode: 'auto', paused: null });
