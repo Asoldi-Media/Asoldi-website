@@ -101,7 +101,7 @@ test('from 100% up to just under 5x: one alert and still allowed; at 5x refused'
   assert.equal(alerts.length, 1);
   assert.equal(alerts[0].key, 'soft:site-a:maps');
 
-  const refused = ledger.reserve({ purpose: 'maps', siteKey: 'site-a', tierId: 'tier-2-seo', estUsd: 5 });
+  const refused = ledger.reserve({ purpose: 'maps', siteKey: 'site-a', tierId: 'tier-2-seo', estUsd: 5.01 });
   assert.equal(refused.allowed, false);
   assert.equal(refused.reason, 'soft-budget-exceeded');
 
@@ -168,4 +168,35 @@ test('the monthly cap still only alerts when the soft budget is on', async () =>
   assert.ok(reserve.over.includes('monthly'));
   assert.ok(reserve.over.includes('purpose:maps'));
   assert.equal(ledger.reserve({ purpose: 'maps', siteKey: 'site-a', tierId: 'tier-2-seo', estUsd: 0.01 }).allowed, true);
+});
+
+test('project size scales the expected amount; only more than the multiple of it is refused', () => {
+  const { ledger } = fixtureLedger({ iso: '2026-05-15T12:00:00.000Z', settings: enabledSettings() });
+  const call = (estUsd, size) => ledger.reserve({ purpose: 'maps', siteKey: 'site-a', tierId: 'tier-2-seo', estUsd, size });
+  assert.equal(call(5.01).allowed, false);
+  assert.equal(call(5.01, { pages: 10, locales: 2, products: 3 }).allowed, true);
+  assert.equal(call(100, { pages: 10, locales: 2, products: 3 }).allowed, true);
+  assert.equal(call(1000.01, { pages: 10, locales: 1, products: 20 }).allowed, false);
+  assert.equal(call(5.01, 4).allowed, true);
+  assert.equal(call(5, undefined).allowed, true);
+});
+
+test('the per site spend survives the entry trim', async () => {
+  const { ledger, store } = fixtureLedger({ iso: '2026-06-15T12:00:00.000Z', settings: enabledSettings() });
+  for (let i = 0; i < 6; i++) await ledger.book({ purpose: 'maps', siteKey: 'site-a', tierId: 'tier-2-seo', costUsd: 1 });
+  await store.updateLedger('2026-06', (draft) => {
+    draft.entries = draft.entries.concat(Array.from({ length: 5000 }, () => ({ at: '2026-06-15T12:00:00.000Z', purpose: 'maps', costUsd: 0, siteKey: 'site-b' }))).slice(-5000);
+  });
+  const verdict = ledger.reserve({ purpose: 'maps', siteKey: 'site-a', tierId: 'tier-2-seo', estUsd: 0.01 });
+  assert.equal(verdict.allowed, false);
+  assert.equal(verdict.reason, 'soft-budget-exceeded');
+});
+
+test('loop detection is per site and purpose; a numeric progress key counts; one repeat never refuses a first call', () => {
+  const { ledger } = fixtureLedger({ iso: '2026-07-15T12:00:00.000Z', settings: enabledSettings() });
+  const call = (siteKey, progressKey) => ledger.reserve({ purpose: 'maps', siteKey, tierId: 'tier-2-seo', estUsd: 0.01, taskKey: 'rank-maps', progressKey });
+  assert.deepEqual(['site-a', 'site-b', 'site-c'].map((s) => call(s, 'step-1').allowed), [true, true, true]);
+  assert.deepEqual([1, 2, 3].map(() => call('site-d', 7).allowed), [true, true, false]);
+  const one = fixtureLedger({ iso: '2026-07-15T12:00:00.000Z', settings: enabledSettings({ loopRepeats: 1 }) });
+  assert.equal(one.ledger.reserve({ purpose: 'maps', siteKey: 'site-a', tierId: 'tier-2-seo', estUsd: 0.01, taskKey: 't', progressKey: 'p' }).allowed, true);
 });
