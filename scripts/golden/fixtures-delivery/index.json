@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "$comment": "Invented businesses for the delivery release suite (scripts/release-suite.mjs). example.com addresses only, no phone numbers.",
+  "clients": [
+    {
+      "id": "demo-shop",
+      "kind": "synthetic",
+      "tier": "tier-3-ecommerce",
+      "lang": "nb"
+    },
+    {
+      "id": "demo-clinic",
+      "kind": "synthetic",
+      "tier": "tier-2-seo",
+      "lang": "nb"
+    },
+    {
+      "id": "demo-studio",
+      "kind": "synthetic",
+      "tier": "tier-1-standard",
+      "lang": "nb"
+    },
+    {
+      "id": "demo-cafe",
+      "kind": "synthetic",
+      "tier": "tier-2-seo",
+      "lang": "nb"
+    }
+  ]
+}

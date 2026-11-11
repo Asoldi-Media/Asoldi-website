@@ -46,6 +46,7 @@ net.Socket.prototype.connect = function spyConnect(...args) {
 
 const safeMode = await import('../lib/safe-mode.js');
 const settingsStore = await import('../data/automation-settings.js');
+const { writeReleasesFile } = await import('./fixtures/test-releases.mjs');
 const loopLib = await import('../lib/delivery-loop.js');
 const alerts = await import('../lib/delivery-alerts.js');
 const sales = await import('../data/sales.js');
@@ -65,6 +66,9 @@ const AFTER_DIGEST = Date.parse('2026-11-02T09:00:00.000Z');
 const DAY = 24 * 60 * MIN;
 
 function pausedLoopInAuto() {
+  // Auto needs a recorded release pass (lib/spine-mode.js).
+  writeReleasesFile(dataDir);
+  settingsStore.invalidateAutomationSettingsCache();
   const saved = settingsStore.saveAutomationSettings(
     { pilotClientIds: ['p1'], alerts: { to: 'alerts@example.com' }, delivery: { loop: { enabled: true, mode: 'auto', paused: { reason: 'manual check' } } } },
     { by: 'test' },

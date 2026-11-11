@@ -1,0 +1,8 @@
+Selger: Velkommen, nå går vi gjennom tekstene og bildene.
+Kunde: Åpningstidene er hverdager fra åtte til fire og noen kvelder.
+Selger: Hvilke områder kommer pasientene fra?
+Kunde: De fleste kommer fra byen og kommunene rundt oss.
+Selger: Skal vi skrive om priser på nettsiden?
+Kunde: Vi vil vise prisene for første time og for oppfølging.
+Selger: Har dere tekster om behandlingene fra før?
+Kunde: Vi har korte tekster om hver behandling som dere kan bygge videre på.

@@ -1,0 +1,12 @@
+Selger: Hei Kari, takk for at du tok deg tid i dag.
+Kunde: Hei, vi selger håndlagde sko fra vårt eget verksted i byen.
+Selger: Hva ønsker dere at den nye nettsiden skal gjøre for dere?
+Kunde: Vi vil selge skoene på nett med en enkel nettbutikk og trygg betaling.
+Selger: Hvem kjøper skoene deres i dag?
+Kunde: Det er mest voksne som vil ha solide sko som varer i mange år.
+Selger: Har dere bilder av produktene?
+Kunde: Ja, vi har bilder av hver modell og av verkstedet vårt.
+Selger: Vi lager en forside med de mest populære modellene øverst.
+Kunde: Forsiden må vise at alt er laget for hånd her i Norge.
+Selger: Da tar vi med en egen side om verkstedet og historien deres.
+Kunde: Vi ønsker også en side med pleie av skinnsko og reparasjon.

@@ -1,0 +1,10 @@
+Selger: Velkommen til workshop, nå går vi gjennom innholdet.
+Kunde: Vi har tolv modeller som skal ligge i nettbutikken fra start.
+Selger: Hvordan vil dere sende skoene til kundene?
+Kunde: Vi sender med posten og kunden betaler frakt over en viss sum.
+Selger: Hva gjelder for retur og bytte?
+Kunde: Kunden kan returnere ubrukte sko innen tretti dager etter levering.
+Selger: Skal kontaktskjemaet ligge på en egen side?
+Kunde: Ja, og telefonnummeret skal stå tydelig i toppen av siden.
+Selger: Har dere en logo vi kan bruke?
+Kunde: Logoen vår er en enkel tegning av en sko i sort og hvitt.

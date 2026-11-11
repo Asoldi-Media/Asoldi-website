@@ -29,17 +29,25 @@ recording, erase request, payment not connected) are added by the batch that shi
 
 **Symptom.** An email kind or a publish target stopped sending; `effective.emails.<kind>.mode` is `paused`.
 
-**Check.** `GET /api/admin/automation-settings`: `settings.emails.<kind>.paused` has `{at, reason, by}`; the newest `audit` entry with `source: "guard"` shows when.
+**Check.** `GET /api/admin/automation-settings`: `settings.emails.<kind>.paused` has `{at, reason, by}`; the newest `audit` entry with `source: "guard"` shows when. `GET /api/admin/automation/promotion` shows the guard counters of the kind (`switches[].guard`: sends, errors, bounces and complaints in the window) and the latest trips; `GET /api/admin/system/delivery-alerts` shows the `switch-paused:emails.<kind>` alert. A reason that starts with `guard empty-fields` or `guard recipient-class` names a mail that was stopped before it went out.
 
-**Fix.** Fix the cause in the reason (bounces, complaints, errors, a volume spike, empty fields, a wrong recipient class). Then resume with `PUT /api/admin/automation-settings {"emails": {"<kind>": {"paused": null}}}`. To stop a kind on purpose, PUT `{"paused": {"reason": "..."}}` instead.
+**Fix.** Fix the cause in the reason (bounces, complaints, errors, a volume spike, empty fields, a wrong recipient class). Then resume with `PUT /api/admin/automation-settings {"emails": {"<kind>": {"paused": null}}}`. To stop a kind on purpose, PUT `{"paused": {"reason": "..."}}` instead. A rate guard counts the last `guards.windowHours`, so a kind resumed right away pauses again on the next send while the old failures are still in the window; wait for the window or fix the data first.
 
 ## A switch cannot be set to auto
 
 **Symptom.** PUT returns 400 with `... cannot run in auto before the pre-release suite has passed for it`.
 
-**Check.** `GET /api/admin/automation-settings`: `settings.releases` lists the switches that passed; `releaseGated` lists the switches that need a pass.
+**Check.** `GET /api/admin/automation-settings`: `settings.releases` lists the switches that passed; `releaseGated` lists the switches that need a pass. `GET /api/admin/automation/promotion` lists what still keeps each switch from `auto` (`blockers`).
 
-**Fix.** Keep the switch in `shadow` until the pre-release suite (golden clients, safe-mode outbox snapshots, the canary site) passes for it; the suite records the pass and, with `promotion.auto` on, switches it to `auto`. A settings PUT cannot write `releases`.
+**Fix.** Keep the switch in `shadow` until the pre-release suite (golden clients, safe-mode outbox snapshots, the canary site) passes for it; the suite records the pass and, with `promotion.auto` on, switches it to `auto`. A settings PUT cannot write `releases`. A spine switch (`signing`, `brief`, `delivery.loop`, `privacy.purge`) also needs at least one client in `pilotClientIds`.
+
+## Recording a release pass
+
+**Symptom.** A switch shows `no-release` in the promotion view, or the release suite passed but the hub still runs the switch in shadow.
+
+**Check.** `node scripts/release-suite.mjs --out <dir>` (a throwaway safe-mode hub with invented clients; nothing leaves the PC) prints the report path and `switches.<id>.status` for every release-gated switch. `GET /api/admin/automation/promotion`: `releaseKey.keyId` must equal the report's `signature.keyId`.
+
+**Fix.** Add the pilot clients first (`PUT /api/admin/automation-settings {"pilotClientIds": [...]}`); until a client is a pilot or a pass is recorded the promotion routes answer 404. Install the release key once if the hub has none (`PUT /api/admin/automation/release-key {"key": "<64 hex>"}`, from the operator PC's key file next to the reports), then `POST /api/admin/automation/release-pass {"report": <the report JSON>}`. A report older than 14 days, one with a changed byte, one signed with another key, or one where the switch is `fail` or `not-covered` is refused (422) and records nothing. Run the suite again after a code change: its report names the commit it ran.
 
 ## Snapshot restore
 

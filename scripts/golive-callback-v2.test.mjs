@@ -39,6 +39,8 @@ writeFileSync(join(DATA_DIR, 'sites.json'), JSON.stringify([
 ], null, 2));
 
 const settingsStore = await import('../data/automation-settings.js');
+// Auto needs a recorded release pass (lib/spine-mode.js); settings in auto hold the passes.
+const { testReleases } = await import('./fixtures/test-releases.mjs');
 const sales = await import('../data/sales.js');
 const hub = await import('../data/hub.js');
 const golive = await import('../lib/golive-callback.js');
@@ -49,7 +51,7 @@ function setSettings(value) {
   else rmSync(file, { force: true });
   settingsStore.invalidateAutomationSettingsCache();
 }
-const AUTO = { pilotClientIds: ['withsite', 'nosite', 'staging', 'signed', 'reached', 'enrolled', 'other'], signing: { enabled: true, mode: 'auto', paused: null } };
+const AUTO = { pilotClientIds: ['withsite', 'nosite', 'staging', 'signed', 'reached', 'enrolled', 'other'], releases: testReleases(), signing: { enabled: true, mode: 'auto', paused: null } };
 const apply = await import('../lib/site-plan-apply.js');
 const { siteCredentialStore } = await import('../lib/site-credentials.js');
 

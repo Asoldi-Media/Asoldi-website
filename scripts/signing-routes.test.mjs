@@ -29,6 +29,8 @@ writeFileSync(join(DATA_DIR, 'sites.json'), JSON.stringify([
 
 const express = (await import('express')).default;
 const settingsStore = await import('../data/automation-settings.js');
+// Auto needs a recorded release pass (lib/spine-mode.js); settings in auto hold the passes.
+const { testReleases } = await import('./fixtures/test-releases.mjs');
 const sales = await import('../data/sales.js');
 const hub = await import('../data/hub.js');
 const signing = await import('../lib/contract-signing.js');
@@ -42,7 +44,7 @@ function setSettings(value) {
   else rmSync(file, { force: true });
   settingsStore.invalidateAutomationSettingsCache();
 }
-const AUTO = { pilotClientIds: ['pilot', 'voided'], signing: { enabled: true, mode: 'auto', paused: null } };
+const AUTO = { pilotClientIds: ['pilot', 'voided'], releases: testReleases(), signing: { enabled: true, mode: 'auto', paused: null } };
 const SHADOW = { pilotClientIds: ['pilot'], signing: { enabled: true, mode: 'shadow', paused: null } };
 
 const app = express();

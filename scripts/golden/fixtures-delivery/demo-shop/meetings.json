@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "client": "demo-shop",
+  "meetings": {
+    "sales": { "storage": "inline", "file": "meetings/sales.txt", "format": "speaker-lines", "date": "2026-10-05", "language": "nb" },
+    "workshop": { "storage": "inline", "file": "meetings/workshop.txt", "format": "speaker-lines", "date": "2026-10-12", "language": "nb" }
+  }
+}

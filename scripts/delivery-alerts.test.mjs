@@ -16,6 +16,7 @@ process.env.PERSIST_PRODUCTION_ENV = '0';
 
 const alerts = await import('../lib/delivery-alerts.js');
 const settingsStore = await import('../data/automation-settings.js');
+const { testReleases, writeReleasesFile } = await import('./fixtures/test-releases.mjs');
 const loopLib = await import('../lib/delivery-loop.js');
 const makerAuthLib = await import('../lib/maker-auth.js');
 const { clearJsonCacheForTests } = await import('../data/atomic-json.js');
@@ -27,7 +28,7 @@ const T0 = Date.parse('2026-11-02T05:00:00.000Z'); // 06:00 in Oslo
 const quiet = { warn() {}, error() {}, log() {} };
 
 function settingsWith(patch = {}) {
-  return settingsStore.validateAutomationSettings(patch).value;
+  return settingsStore.validateAutomationSettings(patch, { current: { releases: testReleases() } }).value;
 }
 
 const autoSettings = (extra = {}) => settingsWith({ pilotClientIds: ['p1'], delivery: { loop: { enabled: true, mode: 'auto' } }, ...extra });
@@ -153,6 +154,9 @@ test('boot gap check: the first tick after a 20-minute outage raises loop-stalle
   writeFileSync(join(dataDir, 'sales-clients.json'), '[]');
   settingsStore.invalidateAutomationSettingsCache();
   // The loop was switched on an hour ago and last ticked 20 minutes ago: a real outage.
+  // Auto needs a recorded release pass (lib/spine-mode.js).
+  writeReleasesFile(dataDir);
+  settingsStore.invalidateAutomationSettingsCache();
   settingsStore.saveAutomationSettings({ pilotClientIds: ['p1'], delivery: { loop: { enabled: true, mode: 'auto' } } }, { by: 'test', now: new Date(Date.now() - 60 * 60 * 1000) });
   settingsStore.invalidateAutomationSettingsCache();
   mkdirSync(join(dataDir, 'delivery-hot'), { recursive: true });
@@ -178,6 +182,8 @@ test('no stall after the loop was off: a success from before the switch-on is no
   const oldSuccess = new Date(Date.now() - 3 * HOUR).toISOString();
   writeFileSync(join(dataDir, 'delivery-hot', 'loop-health.json'), JSON.stringify({ lastTickAt: oldSuccess, lastSuccessAt: oldSuccess }));
   // Switched on (again) just now, after three hours off: the settings audit says so.
+  writeReleasesFile(dataDir);
+  settingsStore.invalidateAutomationSettingsCache();
   settingsStore.saveAutomationSettings({ pilotClientIds: ['p1'], delivery: { loop: { enabled: true, mode: 'auto' } } }, { by: 'test' });
   settingsStore.invalidateAutomationSettingsCache();
   const mails = [];
@@ -191,7 +197,7 @@ test('no stall after the loop was off: a success from before the switch-on is no
   reset();
   writeFileSync(join(dataDir, 'sales-clients.json'), '[]');
   const write = (enabled) => {
-    writeFileSync(join(dataDir, 'automation-settings.json'), JSON.stringify({ version: 2, pilotClientIds: ['p1'], delivery: { loop: { enabled, mode: 'auto', paused: null } } }));
+    writeFileSync(join(dataDir, 'automation-settings.json'), JSON.stringify({ version: 2, pilotClientIds: ['p1'], releases: testReleases(), delivery: { loop: { enabled, mode: 'auto', paused: null } } }));
     settingsStore.invalidateAutomationSettingsCache();
   };
   let clock = Date.now() - 2 * HOUR;

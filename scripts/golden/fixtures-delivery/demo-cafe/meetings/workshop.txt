@@ -1,0 +1,6 @@
+Selger: Velkommen, la oss gå gjennom innholdet til nettsiden.
+Kunde: Vi har åpent fra sju om morgenen til fire hver dag.
+Selger: Har dere noen spesielle tilbud dere vil fremheve?
+Kunde: Vi har en egen meny med glutenfrie retter som mange spør etter.
+Selger: Hvordan vil dere at gjester skal bestille bord?
+Kunde: De kan ringe oss eller sende en melding gjennom skjemaet.

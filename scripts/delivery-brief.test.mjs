@@ -24,6 +24,7 @@ const { validateDeliveryBrief } = await import('../lib/delivery-brief/facts-cont
 const { normalizeSitePlan } = await import('../lib/site-plan-model.js');
 const { spineModeForClient } = await import('../lib/spine-mode.js');
 const { defaultAutomationSettings, validateAutomationSettings } = await import('../data/automation-settings.js');
+const { testReleases } = await import('./fixtures/test-releases.mjs');
 
 test.after(() => rmSync(dataDir, { recursive: true, force: true }));
 
@@ -489,10 +490,11 @@ test('the loop builds briefs only for clients who bought something or are pilots
 
 // ---------------------------------------------------------------- switch and loop step
 
+// Auto needs a recorded release pass (lib/spine-mode.js): these settings hold the passes.
 function settingsWith(briefNode, extra = {}) {
   const settings = defaultAutomationSettings();
   settings.brief = { ...settings.brief, ...briefNode };
-  return { ...settings, ...extra };
+  return { ...settings, releases: testReleases(), ...extra };
 }
 
 function filesUnder(dir) {
@@ -519,6 +521,7 @@ test('the switch: off by default; a non-pilot client in auto gets shadow; auto n
   assert.equal(spineModeForClient('brief', client, { settings: settingsWith({ enabled: true, mode: 'auto' }, { pilotClientIds: ['someone-else'] }) }), 'shadow', 'not a pilot: shadow');
   assert.equal(spineModeForClient('brief', client, { settings: settingsWith({ enabled: true, mode: 'auto' }, { pilotClientIds: [client.id] }) }), 'auto');
   assert.equal(brief.briefModeForClient(client, { settings: settingsWith({ enabled: true, mode: 'auto' }, { pilotClientIds: [client.id] }) }), 'auto');
+  assert.equal(spineModeForClient('brief', client, { settings: settingsWith({ enabled: true, mode: 'auto' }, { pilotClientIds: [client.id], releases: {} }) }), 'shadow', 'a pilot without a recorded pass: shadow');
 
   const noPilots = validateAutomationSettings({ brief: { enabled: true, mode: 'auto' } });
   assert.equal(noPilots.ok, false);

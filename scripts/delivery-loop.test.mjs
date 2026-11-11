@@ -22,6 +22,7 @@ const stepsLib = await import('../lib/delivery-steps.js');
 const sales = await import('../data/sales.js');
 const hub = await import('../data/hub.js');
 const settingsStore = await import('../data/automation-settings.js');
+const { testReleases, writeReleasesFile } = await import('./fixtures/test-releases.mjs');
 const { readDeliveryAudit } = await import('../lib/delivery-audit.js');
 const { clearJsonCacheForTests } = await import('../data/atomic-json.js');
 
@@ -35,7 +36,8 @@ const signed = { meetingHeld: true, offerSent: true, contractSigned: true };
 const T0 = Date.parse('2026-11-02T09:00:00.000Z');
 
 function setSettings(patch) {
-  rmSync(join(dataDir, 'automation-settings.json'), { force: true });
+  // Auto needs a recorded release pass (lib/spine-mode.js): start from settings that hold the passes.
+  writeReleasesFile(dataDir);
   settingsStore.invalidateAutomationSettingsCache();
   const result = settingsStore.saveAutomationSettings(patch, { by: 'test' });
   assert.equal(result.ok, true, JSON.stringify(result.errors));
@@ -169,9 +171,10 @@ test('auto with an empty pilot list runs everyone in shadow: no client is writte
 test('settings refuse delivery.loop auto without pilots', () => {
   const refused = settingsStore.validateAutomationSettings({ delivery: { loop: { enabled: true, mode: 'auto' } } });
   assert.equal(refused.ok, false);
-  assert.deepEqual(refused.errors.map((error) => error.path), ['delivery.loop.mode']);
+  assert.deepEqual(refused.errors.map((error) => error.path), ['delivery.loop.mode', 'delivery.loop'], 'no pilots, and no recorded release pass');
   assert.equal(settingsStore.validateAutomationSettings({ delivery: { loop: { enabled: true, mode: 'shadow' } } }).ok, true);
-  assert.equal(settingsStore.validateAutomationSettings({ pilotClientIds: ['p1'], delivery: { loop: { enabled: true, mode: 'auto' } } }).ok, true);
+  assert.equal(settingsStore.validateAutomationSettings({ pilotClientIds: ['p1'], delivery: { loop: { enabled: true, mode: 'auto' } } }).ok, false, 'auto also needs a recorded release pass');
+  assert.equal(settingsStore.validateAutomationSettings({ pilotClientIds: ['p1'], delivery: { loop: { enabled: true, mode: 'auto' } } }, { current: { releases: testReleases(['delivery.loop']) } }).ok, true);
   assert.equal(settingsStore.validateAutomationSettings({ delivery: { loop: { mode: 'sometimes' } } }).ok, false);
   assert.equal(settingsStore.defaultAutomationSettings().delivery.loop.enabled, false, 'off by default');
 });

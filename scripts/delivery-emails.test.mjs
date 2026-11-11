@@ -32,6 +32,8 @@ test.after(() => {
 });
 
 const settingsStore = await import('../data/automation-settings.js');
+// Auto needs a recorded release pass (lib/spine-mode.js); a settings object in auto holds them.
+const { testReleases } = await import('./fixtures/test-releases.mjs');
 const sales = await import('../data/sales.js');
 const hub = await import('../data/hub.js');
 const emails = await import('../lib/delivery-emails.js');
@@ -41,6 +43,8 @@ const { readDeliveryAudit } = await import('../lib/delivery-audit.js');
 const { applyWorkshopTranscriptToRecord } = await import('../lib/workshop-project-document.js');
 const { buildFirefliesMeetingRecord } = await import('../lib/fireflies-webhook.js');
 const { register } = await import('../lib/routes/gate-routes.js');
+// A provider event feed is required for a mail kind to run in auto; these tests stand in for one.
+(await import('../lib/email-log.js')).markEmailEventFeed(true);
 
 const TIER1 = { status: 'active', tierId: 'tier-1-standard', services: ['site', 'changes', 'blog'], languages: ['nb'], billing: 'month', source: 'backfill' };
 const START = '2026-11-03T10:00:00.000Z';
@@ -146,7 +150,7 @@ test('auto delivery sends once through the transport and stamps postWorkshopSent
   const settings = {
     ...base,
     pilotClientIds: ['pw-auto'],
-    gate: { enabled: true, mode: 'auto', paused: null },
+    gate: { enabled: true, mode: 'auto', paused: null }, releases: testReleases(),
     emails: { ...base.emails, postWorkshop: { ...base.emails.postWorkshop, enabled: true, mode: 'auto' } },
   };
   const sent = [];
@@ -480,7 +484,7 @@ test('the manual post-workshop desk mail in auto: two presses send once, a sent 
   writeFileSync(file, JSON.stringify({
     ...defaults,
     pilotClientIds: ['rt-auto'],
-    gate: { enabled: true, mode: 'auto', paused: null },
+    gate: { enabled: true, mode: 'auto', paused: null }, releases: testReleases(),
     emails: { ...defaults.emails, postWorkshop: { ...defaults.emails.postWorkshop, enabled: true, mode: 'auto' } },
   }));
   settingsStore.invalidateAutomationSettingsCache();

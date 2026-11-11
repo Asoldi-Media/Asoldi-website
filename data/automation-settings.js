@@ -31,11 +31,22 @@ export const AUTOMATION_CACHE_MS = 10_000;
 // Mailboxes the hub may read. Only these may appear in inbox.mailboxes.
 export const INBOX_MAILBOX_ALLOWLIST = Object.freeze(['alexander@asoldi.com', 'damian@asoldi.com']);
 
+// release suite
+// The delivery spine switches. Each reaches 'auto' for a client only when the client is a pilot
+// and the pre-release suite has recorded a pass for the switch (lib/spine-mode.js).
+export const SPINE_SWITCHES = Object.freeze(['signing', 'delivery.loop', 'brief', 'gate', 'privacy.purge']);
+// Spine switches whose 'auto' needs at least one client in pilotClientIds.
+export const PILOT_ONLY_SWITCHES = Object.freeze(['signing', 'delivery.loop', 'brief', 'privacy.purge']);
+// end release suite
+
 // Switch paths a runtime guard (or a person) can pause.
 export const PAUSABLE_SWITCHES = Object.freeze([
   ...EMAIL_KIND_IDS.map((kind) => `emails.${kind}`),
   'publish.staging',
   'publish.production',
+  // release suite
+  ...SPINE_SWITCHES,
+  // end release suite
 ]);
 
 // Env values that still override a setting. GET reports them as overriddenBy:'env'.
@@ -369,6 +380,25 @@ function releasePassed(settings, switchId) {
   return Boolean(settings?.releases?.[switchId]?.passedAt);
 }
 
+// release suite
+/**
+ * The release id a switch path needs before it runs in auto, or '' when the path is not
+ * release-gated (the legacy email kinds). The pre-workshop mail with the gate's lines has a
+ * release of its own.
+ */
+export function releaseIdForSwitch(switchPath, settings) {
+  const path = String(switchPath || '');
+  if (path === 'emails.preWorkshop' && settings?.emails?.preWorkshop?.lines === 'gate') return 'emails.preWorkshop.gate';
+  return RELEASE_GATED_SWITCHES.includes(path) ? path : '';
+}
+
+/** True when the switch path needs no release, or the pre-release suite has recorded one. */
+export function releasePassedFor(switchPath, settings) {
+  const id = releaseIdForSwitch(switchPath, settings);
+  return !id || releasePassed(settings, id);
+}
+// end release suite
+
 /** Every release-gated switch that `settings` sets to auto without a recorded pass. */
 export function unreleasedAutoSwitches(settings) {
   const out = [];
@@ -429,6 +459,8 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
   for (const path of leafPaths(input)) {
     if (known.has(path) || existing.has(path)) continue;
     if (/^emails\.[^.]+\.paused$/.test(path) || /^publish\.(staging|production)\.paused$/.test(path)) continue;
+    // release suite: a guard or a person may pause any spine switch
+    if (SPINE_SWITCHES.some((id) => path === `${id}.paused`)) continue;
     fail(path, 'Unknown setting.');
   }
 
@@ -597,6 +629,19 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
   if (value.brief?.enabled === true && value.brief?.mode === 'auto' && Array.isArray(pilots) && !pilots.length) {
     fail('brief.mode', 'brief can run in auto only for pilot clients: list them in pilotClientIds first, or keep it in shadow.');
   }
+  // release suite: the retention purge deletes data, so its auto also waits for a pilot list; a
+  // pause on brief or privacy.purge needs a reason like every other pause.
+  if (value.privacy?.purge?.enabled === true && value.privacy?.purge?.mode === 'auto' && Array.isArray(pilots) && !pilots.length) {
+    fail('privacy.purge.mode', 'privacy.purge can run in auto only with at least one client in pilotClientIds. Keep it in shadow.');
+  }
+  for (const id of ['brief', 'privacy.purge']) {
+    const node = getPath(value, id);
+    if (!isPlainObject(node) || !Object.prototype.hasOwnProperty.call(node, 'paused')) continue;
+    const paused = normalizePaused(node.paused, { by, now });
+    if (paused === undefined) fail(`${id}.paused`, 'Must be null or {reason}.');
+    else node.paused = paused;
+  }
+  // end release suite
 
   // No owner approval queue: a gated switch reaches auto only after the pre-release suite passed.
   for (const switchId of unreleasedAutoSwitches(value)) {
@@ -717,23 +762,39 @@ export function recordReleasePass(switchId, { suite = '', evidence = '', by = 'r
   if (!RELEASE_GATED_SWITCHES.includes(switchId)) return { ok: false, error: `Not a release-gated switch: ${switchId}` };
   const suiteName = String(suite || '').trim().slice(0, 120);
   if (!suiteName) return { ok: false, error: 'A release pass names the suite that passed.' };
-  return writeSystemChange({
+  let promotion = 'off';
+  const result = writeSystemChange({
     dataDir, now, by, source: 'release', reason: `pre-release suite passed: ${suiteName}`,
     mutate: (next) => {
       next.releases = { ...(next.releases || {}) };
       next.releases[switchId] = { passedAt: now.toISOString(), suite: suiteName, evidence: String(evidence || '').slice(0, 500), by };
       if (next.promotion?.auto !== true) return;
-      if (switchId === 'emails.preWorkshop.gate') {
-        next.emails.preWorkshop.lines = 'gate';
-        next.emails.preWorkshop.mode = 'auto';
-      } else if (switchId === 'development.autoQueue') {
-        next.development.autoQueue = true;
-      } else {
-        const node = getPath(next, switchId);
-        if (isPlainObject(node)) node.mode = 'auto';
+      // release suite: promote only to settings that validate (a pilot-only switch without pilots,
+      // or a mode the switch does not offer yet, keeps its mode and only records the pass).
+      const candidate = clone(next);
+      promoteReleased(candidate, switchId);
+      const pilots = Array.isArray(next.pilotClientIds) ? next.pilotClientIds : [];
+      if ((PILOT_ONLY_SWITCHES.includes(switchId) && !pilots.length) || !validateAutomationSettings({}, { current: candidate, by, now }).ok) {
+        promotion = 'refused';
+        return;
       }
+      promoteReleased(next, switchId);
+      promotion = 'promoted';
     },
   });
+  return { ...result, promotion };
+}
+
+function promoteReleased(next, switchId) {
+  if (switchId === 'emails.preWorkshop.gate') {
+    next.emails.preWorkshop.lines = 'gate';
+    next.emails.preWorkshop.mode = 'auto';
+  } else if (switchId === 'development.autoQueue') {
+    next.development.autoQueue = true;
+  } else {
+    const node = getPath(next, switchId);
+    if (isPlainObject(node)) node.mode = 'auto';
+  }
 }
 
 // ---------------------------------------------------------------- effective state
