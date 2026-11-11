@@ -20,6 +20,7 @@ const { readDeliveryAudit } = await import('../lib/delivery-audit.js');
 const { CATALOG_VERSION } = await import('../lib/legal/catalog.js');
 
 const sent = [];
+let failSend = false;
 let server = null;
 let base = '';
 
@@ -48,7 +49,10 @@ test.before(async () => {
     clientAuth: (_req, res) => res.status(401).json({ message: 'Unauthorized' }),
     sales,
     salesOffers: { listSalesOffers: () => [] },
-    sendEmail: async (message) => { sent.push(message); },
+    sendEmail: async (message) => {
+      if (failSend) throw new Error('smtp down');
+      sent.push(message);
+    },
   });
   await new Promise((resolve) => {
     server = app.listen(0, '127.0.0.1', resolve);
@@ -71,8 +75,13 @@ function outbox() {
   return readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
 }
 
+test('emails.termsUpdate starts switched off in shadow mode', () => {
+  const fresh = settingsStore.defaultAutomationSettings().emails.termsUpdate;
+  assert.deepEqual(fresh, { enabled: false, mode: 'shadow', paused: null });
+});
+
 test('emails.termsUpdate cannot be set to auto without a recorded release pass', () => {
-  const refused = settingsStore.saveAutomationSettings({ emails: { termsUpdate: { mode: 'auto' } } }, { by: 'test', reason: 'test' });
+  const refused = settingsStore.saveAutomationSettings({ emails: { termsUpdate: { enabled: true, mode: 'auto' } } }, { by: 'test', reason: 'test' });
   assert.equal(refused.ok, false);
   assert.ok(refused.errors.some((error) => error.path === 'emails.termsUpdate'));
   assert.equal(settingsStore.getAutomationSettings({ fresh: true }).emails.termsUpdate.mode, 'shadow');
@@ -154,6 +163,27 @@ test('auto sends once, records the notice, and a second send is refused', async 
   assert.equal(second.status, 409);
   assert.equal(second.body.code, 'no-update');
   assert.equal(sent.length, before + 1, 'the second call does not send');
+});
+
+test('a transport that throws answers 502 send-failed and records nothing; a missing recipient is told apart', async () => {
+  setSwitch(true);
+  const failing = signedLegacy('Feil Bakeri AS');
+  const noMail = sales.createSalesClient({ businessName: 'Tom Bakeri AS', contactEmail: '', contactPerson: 'Kari', product: 'asoldi' });
+  sales.setSalesProgress(noMail.id, 'contractSigned', true, { fastTrack: true });
+  const listed = settingsStore.saveAutomationSettings({ pilotClientIds: [failing.id, noMail.id] }, { by: 'test', reason: 'test' });
+  assert.equal(listed.ok, true, JSON.stringify(listed.errors));
+  failSend = true;
+  try {
+    const failed = await call(`/api/admin/legal/terms-update/${failing.id}/send`, { method: 'POST', admin: true });
+    assert.equal(failed.status, 502);
+    assert.deepEqual(failed.body, { code: 'send-failed' });
+    assert.equal(sales.getSalesClientById(failing.id).ext?.legal?.notice, undefined);
+  } finally {
+    failSend = false;
+  }
+  const empty = await call(`/api/admin/legal/terms-update/${noMail.id}/send`, { method: 'POST', admin: true });
+  assert.equal(empty.status, 409);
+  assert.equal(empty.body.code, 'no-recipient');
 });
 
 test('the send route answers 401 without admin credentials while the legal switch is on', async () => {

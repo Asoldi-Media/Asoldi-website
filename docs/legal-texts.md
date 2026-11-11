@@ -63,10 +63,11 @@ Besides the services and add-ons, the catalog has clauses for: changing the plan
 
 - Every change to a clause, to the register or to a rendered document needs a new
   `CATALOG_VERSION` once that version is released; a change to the DPA or its appendix also needs
-  a new `DPA_VERSION`. `node scripts/legal-render.mjs --write` writes the current version's archive
-  in place (catalog version 1 is not released, so a fix to it does not bump `CATALOG_VERSION`) and
-  rewrites the other generated files. It does not rewrite an older version's file: bump
-  `CATALOG_VERSION` first, then `--write`, and the previous file stays. `--check` (part of
+  a new `DPA_VERSION`. `node scripts/legal-render.mjs --write` writes a missing archive and the other
+  generated files, and refuses to change an archive that exists with other texts: bump
+  `CATALOG_VERSION` first, then `--write`, and the previous file stays. Only while no client is bound
+  to the version (catalog version 1 until the legal texts are switched on) may
+  `--write --unreleased` rewrite that version's archive in place. `--check` (part of
   `npm run test:legal`) fails when anything is stale, and that failure still says to bump
   `CATALOG_VERSION`.
 - Published texts never depend on stored settings. The archive is rendered with the code defaults of
@@ -226,7 +227,9 @@ route answers `404 {code:'disabled'}`, before authentication, like the other leg
 admin credentials it answers 401.
 
 The client must be on an older version, and must not already have a pending notice for the current
-version. Otherwise the route answers `409 {code:'no-update'}`.
+version. Otherwise the route answers `409 {code:'no-update'}`. Other refusals have their own code:
+`409 no-recipient` (the client has no contact e-mail), `409 busy` (another send holds the lease) and
+`409 already-sent`. A mail transport that throws gives `502 {code:'send-failed'}` and records nothing.
 
 The mail kind is `emails.termsUpdate` (service sender, not legacy, release-gated, default shadow).
 Its mode is its own (`spineModeForClient('emails.termsUpdate')`), not the delivery gate. The service

@@ -108,7 +108,9 @@ test('the owner decisions are in the texts', () => {
   assert.match(terms, /Ubegrensede endringer inngår i 6 måneder/);
   // Cancellation, export and hosting end after the paid period plus 30 days.
   assert.match(terms, /Nettsiden er oppe i 30 dager etter at den betalte perioden er over\. Deretter stopper hostingen/);
-  assert.match(terms, /Kunden kan be om eksport fram til hostingen stopper, i kundeportalen eller ved å kontakte Asoldi/);
+  assert.match(terms, /Kunden kan be Asoldi om eksport av nettsiden, CMS-data og mediefiler fram til hostingen stopper/);
+  // Nothing is promised that is not built: no portal export and no cancellation or hosting-stop mails.
+  assert.doesNotMatch(terms, /i kundeportalen eller ved å kontakte|sju dager før hostingen|Asoldi sender e-post når avtalen avsluttes/);
   // No commitments beyond the owner decisions: no export deadline, no manual approval of AI changes.
   assert.doesNotMatch(terms, /virkedager\. Eksporten|leverer eksporten innen|godkjennes av en utvikler/);
   // AI processing.
@@ -283,4 +285,39 @@ test('the documents describe plan changes, self-booking links, site mail, storag
   }
   const contract = JSON.stringify(CATALOG.filter((c) => c.id === 'general.planChange'));
   assert.match(contract, /signert tilbud endres ikke/);
+});
+
+test('the cancellation and booking clauses state only what the system does', () => {
+  const clauses = declaredClauses();
+  const cancellation = JSON.stringify(clauses.find((clause) => clause.id === 'general.cancellation'));
+  assert.doesNotMatch(cancellation, /kundeportalen|sju dager før|sender e-post når avtalen/);
+  const booking = JSON.stringify(clauses.find((clause) => clause.id === 'privacy.booking'));
+  assert.match(booking, /kunde-ID, formålet og tidspunktet/);
+  assert.match(booking, /tidligst 60 dager etter at lenken utløp/);
+  assert.doesNotMatch(booking, /slettes etter to måneder|bare et tilfeldig engangsnummer/);
+});
+
+test('legal-render --write refuses to change an archive that exists with other texts unless it is marked unreleased', async () => {
+  const { cpSync, mkdtempSync: mk, rmSync, existsSync } = await import('node:fs');
+  const archive = await import('../lib/legal/archive.js');
+  const file = new URL(`../lib/legal/archive/catalog-v${CATALOG_VERSION}.json`, import.meta.url);
+  const original = readFileSync(file, 'utf8');
+  const copy = join(mk(join(tmpdir(), 'legal-archive-')), 'backup.json');
+  cpSync(file, copy);
+  const { writeFileSync } = await import('node:fs');
+  try {
+    const stale = JSON.parse(original);
+    stale.docs.vilkar = { ...stale.docs.vilkar, title: 'Eldre tittel' };
+    writeFileSync(file, `${JSON.stringify(stale, null, 2)}\n`);
+    archive.clearArchiveCache();
+    assert.throws(() => legalRender.writeGenerated(), /already archived with other texts/);
+    assert.notEqual(readFileSync(file, 'utf8'), original, 'the refused write left the archive as it was');
+    legalRender.writeGenerated({ unreleased: true });
+    assert.equal(readFileSync(file, 'utf8'), original, 'the explicit unreleased write restores the current texts');
+  } finally {
+    writeFileSync(file, original);
+    archive.clearArchiveCache();
+    rmSync(copy, { force: true });
+    assert.ok(existsSync(file));
+  }
 });

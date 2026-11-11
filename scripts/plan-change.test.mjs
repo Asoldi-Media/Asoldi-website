@@ -68,7 +68,7 @@ function client(id, name) {
   };
 }
 
-const PILOTS = ['pc-up', 'pc-down', 'pc-over', 'pc-off', 'pc-shadow', 'pc-legal'];
+const PILOTS = ['pc-up', 'pc-down', 'pc-over', 'pc-off', 'pc-shadow', 'pc-legal', 'pc-legacy'];
 writeFileSync(join(DATA_DIR, 'sales-clients.json'), JSON.stringify([
   client('pc-up', 'Fjellstue Kafe AS'),
   client('pc-down', 'Brygga Butikk AS'),
@@ -76,6 +76,7 @@ writeFileSync(join(DATA_DIR, 'sales-clients.json'), JSON.stringify([
   client('pc-off', 'Vindheim Maler AS'),
   client('pc-shadow', 'Bekkely Bakeri AS'),
   client('pc-legal', 'Havn Kiosk AS'),
+  client('pc-legacy', 'Kaiskur Fisk AS'),
 ], null, 2));
 writeFileSync(join(DATA_DIR, 'sales-offers.json'), JSON.stringify([
   sentOffer('so-pc-up-1', 'pc-up', 1, '2026-10-21T09:00:00.000Z'),
@@ -89,6 +90,7 @@ writeFileSync(join(DATA_DIR, 'sales-offers.json'), JSON.stringify([
   sentOffer('so-pc-shadow-1', 'pc-shadow', 1, '2026-10-21T09:00:00.000Z'),
   sentOffer('so-pc-shadow-2', 'pc-shadow', 2, '2026-10-24T09:00:00.000Z'),
   stampedOffer('so-pc-legal-1', 'pc-legal', 1, '2026-10-21T09:00:00.000Z', 1, 'dpa-1'),
+  stampedOffer('so-pc-legacy-1', 'pc-legacy', 1, '2026-10-21T09:00:00.000Z', 1, 'dpa-1'),
 ], null, 2));
 
 const RELEASED = { passedAt: '2026-10-31T10:00:00.000Z', suite: 'plan-change-test', evidence: '', by: 'test' };
@@ -279,4 +281,23 @@ test('shadow: today\'s path plus one shadow record of what the plan change would
   assert.equal(sales.getSalesClientById('pc-shadow').sitePlan.tierId, 'tier-2-seo', 'shadow changes no plan');
   assert.ok(existsSync(join(DATA_DIR, 'sales-clients.json')));
   assert.ok(JSON.parse(readFileSync(join(DATA_DIR, 'sales-clients.json'), 'utf8')).length >= 5);
+});
+
+test('off: an accepted upgrade through the existing path also rebinds the client to the new offer catalog version', async () => {
+  writeSettings({ enabled: false, mode: 'shadow', paused: null });
+  settingsStore.invalidateAutomationSettingsCache();
+  await signOn('pc-legacy', 'so-pc-legacy-1');
+  let client = sales.getSalesClientById('pc-legacy');
+  assert.equal(client.ext.legal.catalogVersion, 1);
+  const file = join(DATA_DIR, 'sales-offers.json');
+  const offers = JSON.parse(readFileSync(file, 'utf8'));
+  offers.push(stampedOffer('so-pc-legacy-2', 'pc-legacy', 2, '2026-11-02T09:00:00.000Z', 2, 'dpa-2'));
+  writeFileSync(file, JSON.stringify(offers, null, 2));
+  const upgraded = await signOn('pc-legacy', 'so-pc-legacy-2');
+  assert.equal(upgraded.upgraded, true);
+  client = sales.getSalesClientById('pc-legacy');
+  assert.equal(client.sitePlan.tierId, 'tier-2-seo');
+  assert.equal(client.ext.legal.catalogVersion, 2);
+  assert.equal(client.ext.legal.offerId, 'so-pc-legacy-2');
+  assert.equal(client.ext.legal.dpaVersion, 'dpa-2');
 });

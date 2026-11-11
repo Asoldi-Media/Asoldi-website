@@ -62,6 +62,8 @@ const KIND_BASE_DEFAULTS = {
   workshopReminders: { enabled: false, mode: 'auto' },
   dataReminder: { enabled: false, mode: 'shadow' },
   nurture: { enabled: false, mode: 'shadow' },
+  // A terms-update notice is only ever sent by a person; the kind stays off until it is turned on.
+  termsUpdate: { enabled: false, mode: 'shadow' },
 };
 
 export function defaultAutomationSettings() {
