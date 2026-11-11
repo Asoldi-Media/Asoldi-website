@@ -1043,13 +1043,13 @@
       "nb": {
         "title": "Når avtalen avsluttes",
         "terms": [
-          "Når abonnementet avsluttes, stopper Asoldis løpende tjenester ved utløpet av den betalte perioden: oppdateringer av CMS, automatiske blogginnlegg, medlemskap i lenkenettverket, e-post sendt gjennom Asoldi og endringsforespørsler.",
+          "Når abonnementet avsluttes, stopper Asoldis løpende tjenester ved utløpet av den betalte perioden: oppdateringer av CMS, automatiske blogginnlegg, medlemskap i lenkenettverket, SEO-vedlikehold, e-post sendt gjennom Asoldi og endringsforespørsler.",
           "Nettsiden er oppe i {graceDays} dager etter at den betalte perioden er over. Deretter stopper hostingen. Asoldi sender e-post når avtalen avsluttes, sju dager før hostingen stopper og når den stopper.",
           "Kunden kan be om eksport fram til hostingen stopper, i kundeportalen eller ved å kontakte Asoldi. Eksporten inneholder nettsiden som statiske filer, CMS-data som JSON og CSV (produkter, ordrer, kunder, innlegg, skjemaer og samtykker) og mediefiler.",
           "Kunden eier innholdet, designet og kode som er laget spesielt for kunden. Asoldi CMS og felles plattformkomponenter følger sin lisens og overføres ikke. Å flytte nettsiden til en annen leverandør er kundens ansvar. Asoldi kan hjelpe mot betaling etter prisen som til enhver tid står på asoldi.com."
         ],
         "contract": [
-          "Ved oppsigelse stopper oppdateringer av CMS, automatiske blogginnlegg, lenkenettverket, e-post gjennom Asoldi og endringsforespørsler ved utløpet av den betalte perioden",
+          "Ved oppsigelse stopper oppdateringer av CMS, automatiske blogginnlegg, lenkenettverket, SEO-vedlikehold, e-post gjennom Asoldi og endringsforespørsler ved utløpet av den betalte perioden",
           "Nettsiden er oppe i {graceDays} dager etter den betalte perioden. Deretter stopper hostingen",
           "Kunden kan be om eksport av nettsiden, CMS-data og mediefiler fram til hostingen stopper",
           "Kunden eier innholdet, designet og kode laget spesielt for kunden. Asoldi CMS følger sin lisens og overføres ikke"
@@ -1058,10 +1058,39 @@
       "en": {
         "title": "When the agreement ends",
         "contract": [
-          "On cancellation, CMS updates, automatic blog posts, the link network, email through Asoldi and change requests stop at the end of the paid period",
+          "On cancellation, CMS updates, automatic blog posts, the link network, SEO maintenance, email through Asoldi and change requests stop at the end of the paid period",
           "The website stays online for {graceDays} days after the paid period. Then hosting stops",
           "The Client can request an export of the website, CMS data and media until hosting stops",
           "The Client owns the content, the design and code made specifically for the Client. The Asoldi CMS follows its licence and is not transferred"
+        ]
+      }
+    },
+    {
+      "id": "general.planChange",
+      "version": 1,
+      "kind": "general",
+      "section": "term",
+      "docs": [
+        "terms",
+        "contract"
+      ],
+      "nb": {
+        "title": "Endring av nivå og tjenester",
+        "terms": [
+          "Kunden kan oppgradere til et høyere nivå eller legge til tjenester når som helst. Asoldi sender et nytt tilbud, og endringen gjelder fra kunden godtar det. Prisen står i tilbudet, og den gjeldende avtalen og tilbudet kunden har signert endres aldri i ettertid.",
+          "Når kunden går til et lavere nivå eller fjerner en tjeneste, avtales det med Asoldi. Tjenestene som fjernes, stopper, og det kan hende nettsiden må justeres av en utvikler.",
+          "Hvis en betaling feiler, venter Asoldi i en frist før tjenestene settes på pause. Når kunden betaler igjen, åpnes tjenestene."
+        ],
+        "contract": [
+          "Oppgradering og nye tjenester skjer med et nytt tilbud som gjelder fra det godtas, og et signert tilbud endres ikke",
+          "Nedgradering og fjerning av tjenester avtales med Asoldi, og tjenestene som fjernes, stopper"
+        ]
+      },
+      "en": {
+        "title": "Changing the plan or services",
+        "contract": [
+          "An upgrade or new service is a new offer that applies from acceptance, and a signed offer is never changed",
+          "A downgrade or removal of a service is agreed with Asoldi, and the removed services stop"
         ]
       }
     },
@@ -1355,6 +1384,37 @@
       }
     },
     {
+      "id": "privacy.booking",
+      "version": 1,
+      "kind": "privacy",
+      "section": "collected",
+      "docs": [
+        "privacy"
+      ],
+      "nb": {
+        "title": "Bestilling av møtetid med lenke",
+        "terms": [
+          "Kunder kan få en personlig lenke i en e-post for å bestille eller flytte en tid til workshop eller endringsmøte uten å logge inn. Lenken er signert, kan brukes én gang og utløper etter tre uker. Vi lagrer bare et tilfeldig engangsnummer fra lenken, ikke navn eller e-postadresse, i en logg som slettes etter to måneder. Selve bestillingen lagres som en del av kundeforholdet."
+        ]
+      }
+    },
+    {
+      "id": "privacy.siteAnalytics",
+      "version": 1,
+      "kind": "privacy",
+      "section": "collected",
+      "docs": [
+        "privacy"
+      ],
+      "nb": {
+        "title": "Besøksstatistikk og innebygd innhold på kundens nettsider",
+        "terms": [
+          "Nettsidene Asoldi leverer, teller besøk uten informasjonskapsler og uten lagring i besøkendes nettleser. Vi lagrer et daglig anonymisert besøkstall med enhetstype og side, ikke en person.",
+          "Innebygd innhold fra tredjeparter, for eksempel kart og video, lastes først når den besøkende klikker for å vise det. Før klikket sendes ingen opplysninger til tredjeparten."
+        ]
+      }
+    },
+    {
       "id": "privacy.purposes",
       "version": 1,
       "kind": "privacy",
@@ -1481,6 +1541,42 @@
           "Registrerte: besøkende på nettsiden, personer som sender skjema, melder seg på e-postlister, bestiller time eller handler i nettbutikken, og kundens ansatte med tilgang til CMS.",
           "Opplysninger: navn, kontaktopplysninger, meldinger, bestillinger og betalingsstatus (selve kortbetalingen håndteres av betalingsleverandøren), samtykker og avmeldinger, omtaler, og tekniske logger som trengs for drift og sikkerhet.",
           "Asoldi behandler ikke særlige kategorier av personopplysninger på kundens vegne uten skriftlig avtale om tilleggsvilkår."
+        ]
+      }
+    },
+    {
+      "id": "dpa.siteMail",
+      "version": 1,
+      "kind": "dpa",
+      "section": "processing",
+      "docs": [
+        "dpa"
+      ],
+      "nb": {
+        "title": "Automatiske e-poster fra kundens nettside",
+        "terms": [
+          "Asoldi sender e-post på vegne av kunden til kundens egne kontakter: bekreftelse av påmelding med dobbel bekreftelse, kampanjer, påminnelse om forlatt handlekurv (bare når kjøperen har samtykket i kassen), tilbake på lager, omtaleforespørsel og tilbakeholdelseskampanje. Alle e-postene har en avmeldingslenke, og avmeldingen blokkerer videre utsendelse.",
+          "Kunden bestemmer hvilke automatiske e-poster som er på, og er ansvarlig for at kontaktene har samtykket der loven krever det."
+        ]
+      }
+    },
+    {
+      "id": "dpa.cmsRetention",
+      "version": 1,
+      "kind": "dpa",
+      "section": "processing",
+      "docs": [
+        "dpa"
+      ],
+      "nb": {
+        "title": "Lagringstid for opplysninger i kundens CMS",
+        "terms": [
+          "CMS-et rapporterer først hva som ville blitt slettet etter tabellen under (rapportmodus). Sletting skjer først når kunden slår det på, og da etter en sikkerhetskopi.",
+          "Henvendelser og skjemasvar: to år etter siste aktivitet, og abonnenter som fortsatt får e-post beholdes.",
+          "Kunder i nettbutikken: så lenge ordrene oppbevares. Påmelding som aldri ble bekreftet: 30 dager. Kontakt uten ordre, samtykke eller avmelding: to år etter siste endring.",
+          "Ordrer: regnskapsperioden. Adresse og kontaktopplysninger fjernes når en sletting krever det, men raden beholdes for regnskapet.",
+          "Fullførte handlekurver: 90 dager. E-posttrinn som er lukket: 90 dager. Rader uten samtykke: 30 dager. Arkiv fra test: 30 dager.",
+          "Hendelseslogg: 14 dager. Sikkerhetskopier: 30 dager og høyst ti sett. Logg over lesing av kundedata: 400 dager."
         ]
       }
     },
@@ -1945,6 +2041,22 @@
             {
               "type": "p",
               "text": "Kunden kan ikke nedgradere til et lavere nivå etter at funksjonalitet fra et høyere nivå er lagt til."
+            },
+            {
+              "type": "h3",
+              "text": "Endring av nivå og tjenester"
+            },
+            {
+              "type": "p",
+              "text": "Kunden kan oppgradere til et høyere nivå eller legge til tjenester når som helst. Asoldi sender et nytt tilbud, og endringen gjelder fra kunden godtar det. Prisen står i tilbudet, og den gjeldende avtalen og tilbudet kunden har signert endres aldri i ettertid."
+            },
+            {
+              "type": "p",
+              "text": "Når kunden går til et lavere nivå eller fjerner en tjeneste, avtales det med Asoldi. Tjenestene som fjernes, stopper, og det kan hende nettsiden må justeres av en utvikler."
+            },
+            {
+              "type": "p",
+              "text": "Hvis en betaling feiler, venter Asoldi i en frist før tjenestene settes på pause. Når kunden betaler igjen, åpnes tjenestene."
             }
           ]
         },
@@ -1954,7 +2066,7 @@
           "blocks": [
             {
               "type": "p",
-              "text": "Når abonnementet avsluttes, stopper Asoldis løpende tjenester ved utløpet av den betalte perioden: oppdateringer av CMS, automatiske blogginnlegg, medlemskap i lenkenettverket, e-post sendt gjennom Asoldi og endringsforespørsler."
+              "text": "Når abonnementet avsluttes, stopper Asoldis løpende tjenester ved utløpet av den betalte perioden: oppdateringer av CMS, automatiske blogginnlegg, medlemskap i lenkenettverket, SEO-vedlikehold, e-post sendt gjennom Asoldi og endringsforespørsler."
             },
             {
               "type": "p",
@@ -2226,6 +2338,26 @@
             {
               "type": "p",
               "text": "Asoldis bruk og overføring av informasjon fra Google API-er følger Google API Services User Data Policy, inkludert kravene til begrenset bruk (Limited Use). Vi bruker Google-data bare til funksjonene du har bedt om, selger dem ikke, bruker dem ikke til annonsering og lar ikke mennesker lese dem uten samtykke, med mindre det trengs for sikkerhet eller loven krever det."
+            },
+            {
+              "type": "h3",
+              "text": "Bestilling av møtetid med lenke"
+            },
+            {
+              "type": "p",
+              "text": "Kunder kan få en personlig lenke i en e-post for å bestille eller flytte en tid til workshop eller endringsmøte uten å logge inn. Lenken er signert, kan brukes én gang og utløper etter tre uker. Vi lagrer bare et tilfeldig engangsnummer fra lenken, ikke navn eller e-postadresse, i en logg som slettes etter to måneder. Selve bestillingen lagres som en del av kundeforholdet."
+            },
+            {
+              "type": "h3",
+              "text": "Besøksstatistikk og innebygd innhold på kundens nettsider"
+            },
+            {
+              "type": "p",
+              "text": "Nettsidene Asoldi leverer, teller besøk uten informasjonskapsler og uten lagring i besøkendes nettleser. Vi lagrer et daglig anonymisert besøkstall med enhetstype og side, ikke en person."
+            },
+            {
+              "type": "p",
+              "text": "Innebygd innhold fra tredjeparter, for eksempel kart og video, lastes først når den besøkende klikker for å vise det. Før klikket sendes ingen opplysninger til tredjeparten."
             }
           ]
         },
@@ -2493,6 +2625,46 @@
             {
               "type": "p",
               "text": "Asoldi behandler ikke særlige kategorier av personopplysninger på kundens vegne uten skriftlig avtale om tilleggsvilkår."
+            },
+            {
+              "type": "h3",
+              "text": "Automatiske e-poster fra kundens nettside"
+            },
+            {
+              "type": "p",
+              "text": "Asoldi sender e-post på vegne av kunden til kundens egne kontakter: bekreftelse av påmelding med dobbel bekreftelse, kampanjer, påminnelse om forlatt handlekurv (bare når kjøperen har samtykket i kassen), tilbake på lager, omtaleforespørsel og tilbakeholdelseskampanje. Alle e-postene har en avmeldingslenke, og avmeldingen blokkerer videre utsendelse."
+            },
+            {
+              "type": "p",
+              "text": "Kunden bestemmer hvilke automatiske e-poster som er på, og er ansvarlig for at kontaktene har samtykket der loven krever det."
+            },
+            {
+              "type": "h3",
+              "text": "Lagringstid for opplysninger i kundens CMS"
+            },
+            {
+              "type": "p",
+              "text": "CMS-et rapporterer først hva som ville blitt slettet etter tabellen under (rapportmodus). Sletting skjer først når kunden slår det på, og da etter en sikkerhetskopi."
+            },
+            {
+              "type": "p",
+              "text": "Henvendelser og skjemasvar: to år etter siste aktivitet, og abonnenter som fortsatt får e-post beholdes."
+            },
+            {
+              "type": "p",
+              "text": "Kunder i nettbutikken: så lenge ordrene oppbevares. Påmelding som aldri ble bekreftet: 30 dager. Kontakt uten ordre, samtykke eller avmelding: to år etter siste endring."
+            },
+            {
+              "type": "p",
+              "text": "Ordrer: regnskapsperioden. Adresse og kontaktopplysninger fjernes når en sletting krever det, men raden beholdes for regnskapet."
+            },
+            {
+              "type": "p",
+              "text": "Fullførte handlekurver: 90 dager. E-posttrinn som er lukket: 90 dager. Rader uten samtykke: 30 dager. Arkiv fra test: 30 dager."
+            },
+            {
+              "type": "p",
+              "text": "Hendelseslogg: 14 dager. Sikkerhetskopier: 30 dager og høyst ti sett. Logg over lesing av kundedata: 400 dager."
             }
           ]
         },

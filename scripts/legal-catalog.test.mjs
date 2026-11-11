@@ -263,3 +263,24 @@ test('published terms, privacy policy and DPA do not embed a tier list price', a
   }
   assert.match(JSON.stringify(texts.legalTextResponse('vilkar').body), /tilbudet/);
 });
+
+test('the documents describe plan changes, self-booking links, site mail, storage-free statistics and the CMS retention schedule', async () => {
+  const texts = await import('../lib/legal/texts.js');
+  const body = (doc) => JSON.stringify(texts.legalTextResponse(doc).body);
+  const terms = body('vilkar');
+  assert.match(terms, /Endring av nivå og tjenester/);
+  assert.match(terms, /SEO-vedlikehold/);
+  const privacy = body('personvern');
+  assert.match(privacy, /Bestilling av møtetid med lenke/);
+  assert.match(privacy, /uten informasjonskapsler/);
+  assert.match(privacy, /klikker for å vise/);
+  const dpa = body('databehandleravtale');
+  assert.match(dpa, /påminnelse om forlatt handlekurv/);
+  assert.match(dpa, /Lagringstid for opplysninger i kundens CMS/);
+  assert.match(dpa, /rapportmodus/);
+  for (const id of ['general.planChange', 'privacy.booking', 'privacy.siteAnalytics', 'dpa.siteMail', 'dpa.cmsRetention']) {
+    assert.ok(CATALOG.some((clause) => clause.id === id), id);
+  }
+  const contract = JSON.stringify(CATALOG.filter((c) => c.id === 'general.planChange'));
+  assert.match(contract, /signert tilbud endres ikke/);
+});

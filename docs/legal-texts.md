@@ -55,6 +55,10 @@ Asoldi's own terms are between businesses. Clauses about what a client's site sa
 consumers (shop, bookings, legal pages) are marked `consumerFacing` and follow Forbrukertilsynet's
 standard terms of sale.
 
+## What the clauses cover
+
+Besides the services and add-ons, the catalog has clauses for: changing the plan (: an upgrade is a new offer that applies from acceptance and never changes a signed offer; a downgrade is agreed with Asoldi); the end of the agreement (SEO maintenance stops with the other running services at the end of the paid period, the site stays up for the grace days, the export that exists today); the self-booking link (: a signed single-use link, only a random nonce kept for two months); statistics without cookies or browser storage and click-to-load embeds (); automatic mail from a client's site (: double opt-in, abandoned cart only with the buyer's consent, back in stock, review request, win-back, every mail with an unsubscribe link); and the retention schedule of the CMS (: report mode first, deletion only when the client turns it on and after a backup). The link network clause says links end with the subscription.  checks that these clauses reach the rendered documents.
+
 ## Versions
 
 - Every change to a clause, to the register or to a rendered document needs a new
