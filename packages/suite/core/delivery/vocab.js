@@ -582,6 +582,9 @@ export const RELEASE_GATED_SWITCHES = Object.freeze([
   // --- signing
   'signing',
   // --- end signing
+  // --- seo
+  'seo.jobGating',
+  // --- end seo
   // --- lifecycle
   'lifecycle.planChange',
   'lifecycle.cancellation',

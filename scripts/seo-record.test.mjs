@@ -319,7 +319,9 @@ test('each seo switch takes paused (null or {reason}), and a paused switch is of
     dfsLedger: { enabled: false, paused: null },
     recordPull: { enabled: false, paused: null },
   });
-  const on = settings.validateAutomationSettings({ seo: { jobGating: { enabled: true, mode: 'auto' }, dfsLedger: { enabled: true }, recordPull: { enabled: true } } }, { by: 'test' });
+  const current = settings.defaultAutomationSettings();
+  current.releases['seo.jobGating'] = { passedAt: '2026-11-01T00:00:00.000Z', suite: 'gating-diff', evidence: 'scripts/seo-gating-diff.mjs', by: 'test' };
+  const on = settings.validateAutomationSettings({ seo: { jobGating: { enabled: true, mode: 'auto' }, dfsLedger: { enabled: true }, recordPull: { enabled: true } } }, { current, by: 'test' });
   assert.equal(on.ok, true, JSON.stringify(on.errors));
   assert.deepEqual([seoJobGatingMode({ settings: on.value }), dfsLedgerEnabled({ settings: on.value }), seoRecordPullEnabled(on.value)], ['auto', true, true]);
   const reason = { reason: 'checking the gating diff' };

@@ -1,0 +1,10 @@
+{
+  "kind": "disease-terms",
+  "lang": "en",
+  "version": 1,
+  "source": "Reg. (EU) 1169/2011 art. 7(3) and Reg. (EC) 1924/2006: foods and supplements may not claim to prevent, treat or cure a disease",
+  "checkedAt": "2026-11-08",
+  "diseases": ["dementia", "demented", "alzheimer", "cancer", "diabetes", "diabetic", "diabetics", "depression", "depressed", "depressive", "anxiety disorder", "heart attack", "cardiovascular disease", "high blood pressure", "hypertension", "hypertensive", "high cholesterol", "osteoporosis", "arthritis", "arthritic", "asthma", "copd", "parkinson", "multiple sclerosis", "migraine", "epilepsy", "epileptic", "insomnia", "adhd", "covid", "influenza"],
+  "treatWording": ["cures", "heals", "prevents disease", "prevents cancer", "treats disease", "treats", "relieves disease", "protects against disease", "reduces the risk of disease", "remedy for", "stops disease"],
+  "wholeWord": ["treats"]
+}

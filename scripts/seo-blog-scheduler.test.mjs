@@ -13,10 +13,14 @@ process.env.APP_DATA_DIR = dataDir;
 
 const { buildLocalBlogBrief, legacyLocalBlogAutoPostsEnabled, localBlogAutoPostsEnabled } = await import('../lib/local-blog-brief.js');
 const { normalizeSite } = await import('../data/hub-model.js');
-const { saveAutomationSettings, invalidateAutomationSettingsCache } = await import('../data/automation-settings.js');
+const { saveAutomationSettings, recordReleasePass, invalidateAutomationSettingsCache } = await import('../data/automation-settings.js');
 const gating = await import('../lib/seo-ops/job-gating.js');
 
 function setGating(patch) {
+  if (patch?.mode === 'auto' && patch?.enabled !== false) {
+    const passed = recordReleasePass('seo.jobGating', { suite: 'gating-diff', evidence: 'scripts/seo-gating-diff.mjs' });
+    assert.equal(passed.ok, true, passed.error || '');
+  }
   const saved = saveAutomationSettings({ seo: { jobGating: patch } }, { by: 'test' });
   assert.equal(saved.ok, true, JSON.stringify(saved.errors));
   invalidateAutomationSettingsCache();
