@@ -46,13 +46,17 @@ const profile = (n, site) => ({
 writeFileSync(join(dataDir, 'sites.json'), JSON.stringify(SITES));
 writeFileSync(join(dataDir, 'client-portal-profiles.json'), JSON.stringify([profile(1, SITES[0]), profile(2, SITES[1])]));
 
-const { saveAutomationSettings, invalidateAutomationSettingsCache } = await import('../data/automation-settings.js');
+const { saveAutomationSettings, recordReleasePass, invalidateAutomationSettingsCache } = await import('../data/automation-settings.js');
 const { buildAnalyticsDashboard, ensureMapsRanking, mapsRankingGate } = await import('../lib/client-analytics-service.js');
 const scheduler = await import('../lib/maps-ranking-scheduler.js');
 const { getSiteByKey } = await import('../data/hub.js');
 const clientPortal = await import('../data/client-portal.js');
 
 function setGating(patch) {
+  if (patch?.mode === 'auto' && patch?.enabled !== false) {
+    const passed = recordReleasePass('seo.jobGating', { suite: 'gating-diff', evidence: 'scripts/seo-gating-diff.mjs' });
+    assert.equal(passed.ok, true, passed.error || '');
+  }
   const saved = saveAutomationSettings({ seo: { jobGating: patch } }, { by: 'test' });
   assert.equal(saved.ok, true, JSON.stringify(saved.errors));
   invalidateAutomationSettingsCache();

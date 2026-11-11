@@ -146,7 +146,8 @@ export function defaultAutomationSettings() {
     // seo
     // jobGating: off = the old gates decide automatic posts and Maps ranking; shadow = the old gates
     // still decide and every site where the feature-key gate would decide differently is logged; auto =
-    // the feature-key gate decides. dfsLedger: DataForSEO spend is also booked into the monthly seo-ops
+    // the feature-key gate decides, and only after a release pass whose evidence names the reviewed
+    // output of scripts/seo-gating-diff.mjs. dfsLedger: DataForSEO spend is also booked into the monthly seo-ops
     // ledger, which alerts at a cap and never stops a call. recordPull: the Maker may read a client's
     // SEO record. A paused switch ({reason}) counts as off.
     seo: {
@@ -412,6 +413,12 @@ function releasePassed(settings, switchId) {
   return Boolean(settings?.releases?.[switchId]?.passedAt);
 }
 
+/** seo.jobGating counts a pass only when its evidence names the reviewed gating diff. */
+function jobGatingReleasePassed(settings) {
+  const pass = settings?.releases?.['seo.jobGating'];
+  return Boolean(pass?.passedAt) && String(pass?.evidence || '').trim().length > 0;
+}
+
 /** Every release-gated switch that `settings` sets to auto without a recorded pass. */
 export function unreleasedAutoSwitches(settings) {
   const out = [];
@@ -423,6 +430,11 @@ export function unreleasedAutoSwitches(settings) {
     }
     if (switchId === 'development.autoQueue') {
       if (settings?.development?.autoQueue === true && !releasePassed(settings, switchId)) out.push(switchId);
+      continue;
+    }
+    if (switchId === 'seo.jobGating') {
+      const gating = getPath(settings, switchId);
+      if (isPlainObject(gating) && gating.mode === 'auto' && gating.enabled !== false && !jobGatingReleasePassed(settings)) out.push(switchId);
       continue;
     }
     const node = getPath(settings, switchId);
@@ -783,6 +795,9 @@ export function recordReleasePass(switchId, { suite = '', evidence = '', by = 'r
   if (!RELEASE_GATED_SWITCHES.includes(switchId)) return { ok: false, error: `Not a release-gated switch: ${switchId}` };
   const suiteName = String(suite || '').trim().slice(0, 120);
   if (!suiteName) return { ok: false, error: 'A release pass names the suite that passed.' };
+  if (switchId === 'seo.jobGating' && !String(evidence || '').trim()) {
+    return { ok: false, error: 'seo.jobGating needs evidence naming the reviewed output of scripts/seo-gating-diff.mjs.' };
+  }
   return writeSystemChange({
     dataDir, now, by, source: 'release', reason: `pre-release suite passed: ${suiteName}`,
     mutate: (next) => {

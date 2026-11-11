@@ -565,6 +565,9 @@ export const RELEASE_GATED_SWITCHES = Object.freeze([
   // --- signing
   'signing',
   // --- end signing
+  // --- seo
+  'seo.jobGating',
+  // --- end seo
 ]);
 
 // ---------------------------------------------------------------- tier matrix and site plan (v2)

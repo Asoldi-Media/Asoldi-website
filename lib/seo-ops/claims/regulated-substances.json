@@ -1,0 +1,18 @@
+{
+  "kind": "regulated-substances",
+  "version": 1,
+  "source": "Norwegian Medicines Agency (Direktoratet for medisinske produkter, dmp.no) public medicines register and classification lists; Norwegian Medicines Act advertising rules for prescription-only medicines",
+  "checkedAt": "2026-11-08",
+  "reviewNote": "Compiled from public classification knowledge; a compliance reviewer confirms each entry against the register before the file is relied on for a new market.",
+  "rule": "Prescription-only medicines and products classified as medicines may not be advertised to consumers. These terms are never generated as seeds, candidates, primaries, titles, descriptions, blog clusters or post text, whatever the approval status.",
+  "substances": [
+    { "id": "melatonin", "classification": "medicinal-product", "terms": ["melatonin", "melatonine", "circadin"] },
+    { "id": "semaglutide", "classification": "prescription-only", "terms": ["semaglutid", "semaglutide", "ozempic", "wegovy", "rybelsus"] },
+    { "id": "liraglutide", "classification": "prescription-only", "terms": ["liraglutid", "liraglutide", "saxenda", "victoza"] },
+    { "id": "botulinum-toxin", "classification": "prescription-only", "terms": ["botulinumtoksin", "botulinum toxin", "botox", "dysport"] },
+    { "id": "isotretinoin", "classification": "prescription-only", "terms": ["isotretinoin", "roaccutan", "accutane"] },
+    { "id": "finasteride", "classification": "prescription-only", "terms": ["finasterid", "finasteride", "propecia"] },
+    { "id": "sildenafil", "classification": "prescription-only", "terms": ["sildenafil", "viagra"] },
+    { "id": "tadalafil", "classification": "prescription-only", "terms": ["tadalafil", "cialis"] }
+  ]
+}

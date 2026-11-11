@@ -1,0 +1,54 @@
+{
+  "kind": "eu-health-claims",
+  "version": 1,
+  "source": "EU Register of nutrition and health claims, authorised health claims under Reg. (EU) 432/2012 and amendments (Reg. (EC) 1924/2006 art. 13)",
+  "checkedAt": "2026-11-08",
+  "reviewNote": "A subset. A statement is accepted only when it matches an entry's wording and the product facts meet the condition of use. A compliance reviewer extends the list one entry at a time, citing the register.",
+  "claims": [
+    {
+      "id": "creatine-performance",
+      "nutrient": "creatine",
+      "nutrientTerms": ["kreatin", "creatine"],
+      "nb": "Kreatin øker fysisk prestasjon ved gjentatte korte perioder med høyintensiv trening",
+      "en": "Creatine increases physical performance in successive bursts of short-term, high intensity exercise",
+      "conditions": { "minDailyDoseG": 3 },
+      "target": "adults performing high intensity exercise"
+    },
+    {
+      "id": "caffeine-alertness",
+      "nutrient": "caffeine",
+      "nutrientTerms": ["koffein", "caffeine"],
+      "nb": "Koffein bidrar til økt våkenhet",
+      "en": "Caffeine helps to increase alertness",
+      "conditions": { "minPerServingMg": 75 },
+      "target": "adults"
+    },
+    {
+      "id": "vitamin-d-immune",
+      "nutrient": "vitamin D",
+      "nutrientTerms": ["vitamin d"],
+      "nb": "Vitamin D bidrar til normal funksjon av immunsystemet",
+      "en": "Vitamin D contributes to the normal function of the immune system",
+      "conditions": { "minDailyDoseMcg": 0.75 },
+      "target": "general population"
+    },
+    {
+      "id": "vitamin-c-immune",
+      "nutrient": "vitamin C",
+      "nutrientTerms": ["vitamin c"],
+      "nb": "Vitamin C bidrar til normal funksjon av immunsystemet",
+      "en": "Vitamin C contributes to the normal function of the immune system",
+      "conditions": { "minDailyDoseMg": 12 },
+      "target": "general population"
+    },
+    {
+      "id": "magnesium-fatigue",
+      "nutrient": "magnesium",
+      "nutrientTerms": ["magnesium"],
+      "nb": "Magnesium bidrar til å redusere tretthet og utmattelse",
+      "en": "Magnesium contributes to a reduction of tiredness and fatigue",
+      "conditions": { "minDailyDoseMg": 56.25 },
+      "target": "general population"
+    }
+  ]
+}
