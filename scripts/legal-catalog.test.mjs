@@ -305,15 +305,18 @@ test('legal-render --write refuses to change an archive that exists with other t
   const copy = join(mk(join(tmpdir(), 'legal-archive-')), 'backup.json');
   cpSync(file, copy);
   const { writeFileSync } = await import('node:fs');
+  // A checkout may hold the archive with CRLF line endings while the writer writes LF; compare the
+  // text the way legal-render --check reads it.
+  const lf = (text) => text.replace(/\r\n/g, '\n');
   try {
     const stale = JSON.parse(original);
     stale.docs.vilkar = { ...stale.docs.vilkar, title: 'Eldre tittel' };
     writeFileSync(file, `${JSON.stringify(stale, null, 2)}\n`);
     archive.clearArchiveCache();
     assert.throws(() => legalRender.writeGenerated(), /already archived with other texts/);
-    assert.notEqual(readFileSync(file, 'utf8'), original, 'the refused write left the archive as it was');
+    assert.notEqual(lf(readFileSync(file, 'utf8')), lf(original), 'the refused write left the archive as it was');
     legalRender.writeGenerated({ unreleased: true });
-    assert.equal(readFileSync(file, 'utf8'), original, 'the explicit unreleased write restores the current texts');
+    assert.equal(lf(readFileSync(file, 'utf8')), lf(original), 'the explicit unreleased write restores the current texts');
   } finally {
     writeFileSync(file, original);
     archive.clearArchiveCache();
