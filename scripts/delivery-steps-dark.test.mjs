@@ -51,6 +51,7 @@ const OWN_SWITCH = {
   'data-reminder': (result) => result.skipped === 'mode-off',
   'retention-purge': (result) => result.ran === false && result.reason === 'disabled',
   'seo-transcript-keywords': (result) => result.skipped === 'switch-off',
+  lifecycle: (result) => result.skipped === 'switch',
 };
 
 function writeSettings(extra = {}) {
@@ -122,9 +123,9 @@ sales.stampDeliveryEmail(PILOT, 'postWorkshopDueAt', DUE);
 test('the step registry finds every step module of this build and loads it without errors', async () => {
   const { steps, loaded, errors } = await loadTickSteps();
   assert.deepEqual(errors, []);
-  assert.deepEqual(loaded, [...TICK_STEP_MODULES], 'gate, brief, retention, jobs, emails, alerts and the SEO record are all present');
+  assert.deepEqual(loaded, [...TICK_STEP_MODULES], 'gate, brief, retention, jobs, emails, alerts, the SEO record and the contract lifecycle are all present');
   const names = steps.map((step) => step.name);
-  for (const name of ['gate', 'brief-rebuild', 'retention-purge', 'jobs-requeue-stale', 'jobs-daily-snapshot', 'post-workshop', 'data-reminder', 'alerts']) {
+  for (const name of ['gate', 'brief-rebuild', 'retention-purge', 'jobs-requeue-stale', 'jobs-daily-snapshot', 'post-workshop', 'data-reminder', 'alerts', 'lifecycle']) {
     assert.ok(names.includes(name), `step ${name} is registered`);
   }
 });
