@@ -221,7 +221,16 @@ test('the email section (email keys): a cart recovery spec with two steps passes
     'sections.email.features.email.automations.welcome',
     'sections.email.ownProvider',
   ]) assert.ok(got.includes(path), `${path} in ${got.join(', ')}`);
-  assert.equal(SECTION_OWNERS.email, 'WS7');
+  assert.equal(SECTION_OWNERS.email, 'email');
+});
+
+test('the privacy section takes a retention mode of report or delete and nothing else', () => {
+  assert.deepEqual(validateSection('privacy', { retention: { mode: 'report' } }, { registry }), []);
+  assert.deepEqual(validateSection('privacy', { retention: { mode: 'delete' } }, { registry }), []);
+  const bad = validateSection('privacy', { retention: { mode: 'purge' } }, { registry });
+  assert.ok(bad.some((e) => e.path === 'sections.privacy.retention.mode'), JSON.stringify(bad));
+  assert.match(SECTION_OWNERS.privacy, /^cms$/);
+  for (const v of Object.values(SECTION_OWNERS)) assert.ok(['cms', 'email'].includes(v), 'owner is an area word: ' + v);
 });
 
 test('every route needs Superadmin, or the Maker token once Superadmin allows it; only Superadmin sets enforcement', async () => {

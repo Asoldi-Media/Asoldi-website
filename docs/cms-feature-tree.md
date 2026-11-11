@@ -131,3 +131,7 @@ The codes in brackets are the `reasons` a site is not proposed, as `GET /api/adm
 Every flip writes a `cmsSpecHistory` row (`featureEnforcement: { from, to }`, who and why) through `hub.updateSiteSpecs`, as `PUT /api/hub/sites/:id/cms-spec` does, and a row in the monitor's flip log. The next site-config for the site carries the new mode.
 
 **State:** `<data dir>/cms-fleet-monitor.json`: per site the watch start, the last revert, the proposal, the conflicts already reported and the last ping; the last review day, the last digest (text, counts, whether it was mailed) and the last 50 flips. Tests: `npm run test:cms-fleet-monitor`.
+
+## Settings validator owners
+
+`lib/cms-spec-schema.js` is a byte copy of the CMS `server/cms-spec-schema.js`. Section owners are area words (`cms`, `email`), so the `Owners:` line in the cms-spec prompt reads `Owners: ... email=email` and no longer carries planning ids. The `privacy` section takes `retention.mode` of `report` or `delete`.
