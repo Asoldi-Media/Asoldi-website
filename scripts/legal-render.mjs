@@ -5,9 +5,12 @@
  *   - docs/databehandleravtale-appendix.md              the DPA appendix (sub-processors and AI processing)
  *   - scripts/fixtures/legal/contract-lines.json        the contract lines of tiers 1-3 (snapshot)
  *
- *   node scripts/legal-render.mjs --write   write them. An existing archive of the current version is never
- *                                           rewritten with different content: bump CATALOG_VERSION (and
- *                                           DPA_VERSION when the DPA changed) in lib/legal/catalog.js first.
+ *   node scripts/legal-render.mjs --write   write them. An existing archive with other texts is never
+ *                                           rewritten: bump CATALOG_VERSION (and DPA_VERSION when the DPA
+ *                                           changed) in lib/legal/catalog.js first, then --write.
+ *   ... --write --unreleased                also rewrites the current version's archive, only for a
+ *                                           version no client is bound to yet (catalog version 1 until
+ *                                           the legal texts are switched on).
  *   node scripts/legal-render.mjs --check   exit 1 when any of them is stale, or when the DPA text changed
  *                                           without a new DPA_VERSION.
  *
@@ -132,15 +135,19 @@ export function checkGenerated() {
   return problems;
 }
 
-/** Writes the generated files. Refuses to change an existing archive of the current version. */
-export function writeGenerated() {
+/**
+ * Writes the generated files. An archive that exists with other texts is never overwritten, because
+ * clients may be bound to it. Pass { unreleased: true } (CLI: --unreleased) to rewrite the archive of a
+ * version that no client has been bound to yet (catalog version 1 until the legal texts go live).
+ */
+export function writeGenerated({ unreleased = false } = {}) {
   const archive = currentArchive();
   const stored = loadArchivedCatalog(CATALOG_VERSION);
-  if (stored && !same(stored, archive)) {
-    throw new Error(`Catalog version ${CATALOG_VERSION} is already archived with other texts. Bump CATALOG_VERSION in lib/legal/catalog.js (and DPA_VERSION when the DPA changed) and run --write again.`);
+  if (stored && !same(stored, archive) && !unreleased) {
+    throw new Error(`Catalog version ${CATALOG_VERSION} is already archived with other texts. Bump CATALOG_VERSION in lib/legal/catalog.js (and DPA_VERSION when the DPA changed) and run --write again. Use --write --unreleased only while no client is bound to this version.`);
   }
   mkdirSync(ARCHIVE_DIR, { recursive: true });
-  if (!stored) writeFileSync(archiveUrl(CATALOG_VERSION), json(archive));
+  if (!stored || unreleased) writeFileSync(archiveUrl(CATALOG_VERSION), json(archive));
   clearArchiveCache();
   mkdirSync(new URL('.', CONTRACT_LINES_URL), { recursive: true });
   writeFileSync(APPENDIX_URL, currentAppendix());
@@ -150,7 +157,12 @@ export function writeGenerated() {
 function main() {
   const args = process.argv.slice(2);
   if (args.includes('--write')) {
-    writeGenerated();
+    try {
+      writeGenerated({ unreleased: args.includes('--unreleased') });
+    } catch (error) {
+      console.error(error.message);
+      process.exit(1);
+    }
     const problems = checkGenerated();
     if (problems.length) {
       console.error(problems.join('\n'));
@@ -168,7 +180,7 @@ function main() {
     console.log(`Legal texts are current (catalog version ${CATALOG_VERSION}, ${DPA_VERSION}).`);
     return;
   }
-  console.error('Usage: node scripts/legal-render.mjs --write | --check');
+  console.error('Usage: node scripts/legal-render.mjs --write [--unreleased] | --check');
   process.exit(2);
 }
 

@@ -412,6 +412,7 @@ export const EMAIL_KINDS = freezeList([
   { id: 'changeRequestDone', sender: 'service', legacy: false },
   { id: 'nurture', sender: 'scheduling', legacy: false },
   { id: 'dpaSigning', sender: 'service', legacy: false },
+  { id: 'termsUpdate', sender: 'service', legacy: false },
 ]);
 
 export const EMAIL_KIND_IDS = Object.freeze(EMAIL_KINDS.map((kind) => kind.id));

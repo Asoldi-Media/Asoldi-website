@@ -281,6 +281,7 @@ Developer-only info lines (`GATE_INFO_LINES`, never sent to the client, never bl
 | `changeRequestDone` | service | no | shadow |
 | `nurture` | scheduling | no | off (sends only with a recorded consent) |
 | `dpaSigning` | service | no | shadow |
+| `termsUpdate` | service | no | shadow |
 
 Scheduling mails go out from the client's rep with the rep's reply-to, so replies reach a mailbox the inbox bot reads. Service mails use `sender.service`.
 

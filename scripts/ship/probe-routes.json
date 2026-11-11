@@ -12,6 +12,7 @@
     { "method": "POST", "path": "/api/admin/sales-clients/sc-x/seo/approve", "body": { "phrase": "x" }, "expect": "staff" },
     { "method": "POST", "path": "/api/admin/sales-clients/sc-x/seo/block", "body": { "phrase": "x" }, "expect": "staff" },
     { "method": "GET", "path": "/api/admin/legal/terms-update", "expect": "dark" },
+    { "method": "POST", "path": "/api/admin/legal/terms-update/sc-x/send", "body": {}, "expect": "dark" },
     { "method": "POST", "path": "/api/hub/email/provision-request", "body": {}, "expect": "dark" },
     { "method": "POST", "path": "/api/hub/email/provision/confirm", "body": {}, "expect": "dark" },
     { "method": "GET", "path": "/api/hub/email/unsubscribe", "expect": "dark" },

@@ -108,7 +108,9 @@ test('the owner decisions are in the texts', () => {
   assert.match(terms, /Ubegrensede endringer inngår i 6 måneder/);
   // Cancellation, export and hosting end after the paid period plus 30 days.
   assert.match(terms, /Nettsiden er oppe i 30 dager etter at den betalte perioden er over\. Deretter stopper hostingen/);
-  assert.match(terms, /Kunden kan be om eksport fram til hostingen stopper, i kundeportalen eller ved å kontakte Asoldi/);
+  assert.match(terms, /Kunden kan be Asoldi om eksport av nettsiden, CMS-data og mediefiler fram til hostingen stopper/);
+  // Nothing is promised that is not built: no portal export and no cancellation or hosting-stop mails.
+  assert.doesNotMatch(terms, /i kundeportalen eller ved å kontakte|sju dager før hostingen|Asoldi sender e-post når avtalen avsluttes/);
   // No commitments beyond the owner decisions: no export deadline, no manual approval of AI changes.
   assert.doesNotMatch(terms, /virkedager\. Eksporten|leverer eksporten innen|godkjennes av en utvikler/);
   // AI processing.
@@ -243,12 +245,79 @@ test('the legal files use neutral public wording', () => {
     '../lib/legal/catalog.js', '../lib/legal/render.js', '../lib/legal/subprocessors.js', '../lib/legal/dpa.js',
     '../lib/legal/binding.js', '../lib/legal/terms-update.js', '../lib/legal/hosts-register.json', '../docs/legal-texts.md',
     '../docs/databehandleravtale-appendix.md', '../lib/routes/legal-routes.js', '../lib/legal/archive.js', '../lib/legal/contract.js',
-    '../lib/legal/sales.js', '../lib/legal/switch.js', '../lib/legal/texts.js', '../lib/legal/plan.js', './legal/scan-hosts.mjs', './legal-render.mjs',
+    '../lib/legal/sales.js', '../lib/legal/switch.js', '../lib/legal/texts.js', '../lib/legal/plan.js', '../lib/legal/terms-update-send.js', './legal/scan-hosts.mjs', './legal-render.mjs',
     '../app/data/catalogLegalTexts.js', '../app/pages/legal/CatalogLegalPage.tsx', '../app/components/client/ClientLegalCard.tsx',
   ];
   for (const file of files) {
     const text = readFileSync(new URL(file, import.meta.url), 'utf8');
     assert.doesNotMatch(text, /\bWS\d+|\bwave\s*\d|\bQ\d{1,2}\b/i, file);
     assert.doesNotMatch(text, /\b(leak|forge|spoof|exploit|vulnerability|attacker)\b/i, file);
+  }
+});
+
+test('published terms, privacy policy and DPA do not embed a tier list price', async () => {
+  const texts = await import('../lib/legal/texts.js');
+  const { WEBSITE_TIERS, formatKr } = await import('../lib/website-tiers.js');
+  const prices = WEBSITE_TIERS.map((tier) => formatKr(tier.monthlyExMva));
+  for (const doc of ['vilkar', 'personvern', 'databehandleravtale']) {
+    const body = JSON.stringify(texts.legalTextResponse(doc).body);
+    for (const price of prices) assert.equal(body.includes(price), false, `${doc} contains ${price}`);
+  }
+  assert.match(JSON.stringify(texts.legalTextResponse('vilkar').body), /tilbudet/);
+});
+
+test('the documents describe plan changes, self-booking links, site mail, storage-free statistics and the CMS retention schedule', async () => {
+  const texts = await import('../lib/legal/texts.js');
+  const body = (doc) => JSON.stringify(texts.legalTextResponse(doc).body);
+  const terms = body('vilkar');
+  assert.match(terms, /Endring av nivå og tjenester/);
+  assert.match(terms, /SEO-vedlikehold/);
+  const privacy = body('personvern');
+  assert.match(privacy, /Bestilling av møtetid med lenke/);
+  assert.match(privacy, /uten informasjonskapsler/);
+  assert.match(privacy, /klikker for å vise/);
+  const dpa = body('databehandleravtale');
+  assert.match(dpa, /påminnelse om forlatt handlekurv/);
+  assert.match(dpa, /Lagringstid for opplysninger i kundens CMS/);
+  assert.match(dpa, /rapportmodus/);
+  for (const id of ['general.planChange', 'privacy.booking', 'privacy.siteAnalytics', 'dpa.siteMail', 'dpa.cmsRetention']) {
+    assert.ok(CATALOG.some((clause) => clause.id === id), id);
+  }
+  const contract = JSON.stringify(CATALOG.filter((c) => c.id === 'general.planChange'));
+  assert.match(contract, /signert tilbud endres ikke/);
+});
+
+test('the cancellation and booking clauses state only what the system does', () => {
+  const clauses = declaredClauses();
+  const cancellation = JSON.stringify(clauses.find((clause) => clause.id === 'general.cancellation'));
+  assert.doesNotMatch(cancellation, /kundeportalen|sju dager før|sender e-post når avtalen/);
+  const booking = JSON.stringify(clauses.find((clause) => clause.id === 'privacy.booking'));
+  assert.match(booking, /kunde-ID, formålet og tidspunktet/);
+  assert.match(booking, /tidligst 60 dager etter at lenken utløp/);
+  assert.doesNotMatch(booking, /slettes etter to måneder|bare et tilfeldig engangsnummer/);
+});
+
+test('legal-render --write refuses to change an archive that exists with other texts unless it is marked unreleased', async () => {
+  const { cpSync, mkdtempSync: mk, rmSync, existsSync } = await import('node:fs');
+  const archive = await import('../lib/legal/archive.js');
+  const file = new URL(`../lib/legal/archive/catalog-v${CATALOG_VERSION}.json`, import.meta.url);
+  const original = readFileSync(file, 'utf8');
+  const copy = join(mk(join(tmpdir(), 'legal-archive-')), 'backup.json');
+  cpSync(file, copy);
+  const { writeFileSync } = await import('node:fs');
+  try {
+    const stale = JSON.parse(original);
+    stale.docs.vilkar = { ...stale.docs.vilkar, title: 'Eldre tittel' };
+    writeFileSync(file, `${JSON.stringify(stale, null, 2)}\n`);
+    archive.clearArchiveCache();
+    assert.throws(() => legalRender.writeGenerated(), /already archived with other texts/);
+    assert.notEqual(readFileSync(file, 'utf8'), original, 'the refused write left the archive as it was');
+    legalRender.writeGenerated({ unreleased: true });
+    assert.equal(readFileSync(file, 'utf8'), original, 'the explicit unreleased write restores the current texts');
+  } finally {
+    writeFileSync(file, original);
+    archive.clearArchiveCache();
+    rmSync(copy, { force: true });
+    assert.ok(existsSync(file));
   }
 });
