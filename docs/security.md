@@ -94,8 +94,12 @@ System safety → **Maker hosts** lists, creates and revokes them:
 Scopes: `callback` (`maker-status-callback`, including the run spend event `run.ai.spend` and the
 Maker delivery events), `preview-push` (`maker-preview-push`), `client-bundle`
 (`/api/internal/maker/client-bundle`), `jobs` (`/api/maker/*`, and Maker access to
-`/api/hub/sites/:id/cms-spec` once `cmsSpec.makerAccess` is on, docs/cms-feature-tree.md). A new
-host gets all four unless the admin picks fewer. A client bundle sent through the status callback
+`/api/hub/sites/:id/cms-spec` once `cmsSpec.makerAccess` is on, docs/cms-feature-tree.md) and
+`sales-read` (read only: `GET /api/admin/sales`, which then answers with the client rows alone, and
+`GET /api/admin/sales/:id/preview-files`; every other admin route refuses the token, and the legacy
+token never passes there). A host created before `sales-read` existed lacks it and gets 403
+`maker-scope` on those two routes until a new host is created. A new host gets all five unless the
+admin picks fewer. Only hosts created after `sales-read` exists have it: the owner creates a new host and replaces the Maker's host token to use the two reads, and a rollback to a build without the scope drops it on the next hosts-file write. With no host configured the two routes answer staff and anonymous callers as before; a caller that sends a host-shaped token header is still refused with 401, but that refusal now carries `Cache-Control: no-store` and is counted in the Maker rejection counters. A client bundle sent through the status callback
 (`run.client-bundle.updated`) is the same portal write as the client-bundle route, so a host token
 needs both `callback` and `client-bundle` for it (403 `maker-scope` otherwise); the legacy token
 carries no scopes.

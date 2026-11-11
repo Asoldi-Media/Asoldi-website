@@ -544,6 +544,10 @@ export const SETTINGS_KEYS = Object.freeze({
   cmsFleetWakePing: 'cmsFleet.wakePing.enabled',
   cmsFleetWakePingPaused: 'cmsFleet.wakePing.paused',
   // --- end cms fleet monitor
+  // --- site rekey
+  siteRekey: 'siteRekey.enabled',
+  siteRekeyPaused: 'siteRekey.paused',
+  // --- end site rekey
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);

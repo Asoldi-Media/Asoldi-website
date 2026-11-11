@@ -52,7 +52,7 @@ test('a new host gets a mkr_ token shown once; the file keeps only its sha256', 
   assert.match(host.hostId, /^mh_[0-9a-f]{8}$/);
   assert.match(token, new RegExp(`^mkr_${host.hostId.slice(3)}_[A-Za-z0-9_-]{43}$`));
   assert.equal(host.tokenPrefix, `mkr_${host.hostId.slice(3)}`);
-  assert.deepEqual(host.scopes, ['callback', 'preview-push', 'client-bundle', 'jobs']);
+  assert.deepEqual(host.scopes, ['callback', 'preview-push', 'client-bundle', 'jobs', 'sales-read']);
   assert.equal(host.tokenHash, undefined, 'the public row carries no hash');
   const raw = readHostsRaw(dir);
   assert.equal(raw.includes(token), false, 'the token itself is never stored');
@@ -853,7 +853,7 @@ test('admin routes: create shows the token once (no-store), the list has no hash
   const listed = JSON.parse(listText);
   assert.equal(listed.hosts.length, 1);
   assert.equal(listed.legacyTokenSource, 'disk');
-  assert.deepEqual(listed.scopes, ['callback', 'preview-push', 'client-bundle', 'jobs']);
+  assert.deepEqual(listed.scopes, ['callback', 'preview-push', 'client-bundle', 'jobs', 'sales-read']);
 
   assert.equal((await fetch(`${base}/cb`, { method: 'POST', headers: { 'x-maker-host-token': made.token } })).status, 200);
   const revoked = await fetch(`${base}/api/admin/maker-hosts/${made.hostId}`, { method: 'DELETE' });

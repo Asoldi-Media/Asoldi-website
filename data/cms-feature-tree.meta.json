@@ -1,22 +1,22 @@
 {
   "source": "website-cms",
-  "ref": "wf/w1b-cms-integration",
-  "sourceCommit": "c8e237b457c30c44db8f479b356d9da161f391a9",
+  "ref": null,
+  "sourceCommit": "e22d6721341a5eb777d47a348d193471ee509727",
   "registryVersion": "2.3.0",
   "v": 1,
   "keyCount": 85,
   "files": {
     "data/cms-feature-tree.json": {
       "from": "server/feature-tree.json",
-      "sha256": "sha256:6e726298b4c7283024f828c5bb47377c8f2fc70d5cde912fe16f1b239ff4e474"
+      "sha256": "sha256:042eb5b2ec2234a28fc881ac06720a896c40062acbfa703dac464d1ae162c112"
     },
     "lib/cms-features.js": {
       "from": "server/features.js",
-      "sha256": "sha256:d29d06c1c808ba3a83243f4f12235d498991a241a82237366368f1271d7827e8"
+      "sha256": "sha256:aeae6253f4619189678b1fc16e6bf249e98fac36585ad9628d41c50d7e56f8c6"
     },
     "lib/cms-spec-schema.js": {
-      "from": null,
-      "note": "hub copy; the CMS has no source file yet"
+      "from": "server/cms-spec-schema.js",
+      "sha256": "sha256:939f2effcf1738d96d4fc24c067ff7e03fb1e5d89b23ddf2f43cd2b35e886b80"
     },
     "scripts/fixtures/cms-feature-matrix.json": {
       "from": "test/fixtures/feature-matrix.json",

@@ -2981,6 +2981,15 @@ function getMakerCallbackToken() {
 // are counted (also header-less ones: that is what unauthenticated probing looks like).
 const makerAuth = createMakerAuth({ legacyHolder: MAKER_CALLBACK_TOKEN_HOLDER, dataDir: getPersistentDataDir(), onAlert: noteMakerAuthAlert });
 const { requireMakerHost } = makerAuth;
+// The two read routes the Maker handoff and run adoption call: staff sign-in as before, or a Maker host
+// token holding the sales-read scope (GET only; every other admin route refuses the token).
+const salesOrMakerRead = makerAuth.hostReadOr('sales-read', (req, res, next) => salesAuth(req, res, next), (result) => ({
+  accountKey: `maker-host:${result.hostId}`,
+  isAdmin: true,
+  role: 'admin',
+  username: 'maker-host',
+  makerHost: true,
+}));
 
 function secureStringEqual(left = '', right = '') {
   const a = String(left || '');
@@ -13872,7 +13881,7 @@ app.get('/api/admin/sales/preview-backfill', salesAuth, (req, res) => {
 });
 
 // Debug: list the files stored for a client's public preview snapshot.
-app.get('/api/admin/sales/:id/preview-files', salesAuth, async (req, res) => {
+app.get('/api/admin/sales/:id/preview-files', salesOrMakerRead, async (req, res) => {
   const client = sales.getSalesClientById(req.params.id);
   if (!client) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, client)) return res.status(403).json({ message: 'Not your sales client.' });
@@ -14044,9 +14053,16 @@ app.post('/api/admin/sales/refresh-upcoming-links', salesAuth, async (req, res) 
   res.json({ ok: true, count: results.length, results });
 });
 
-app.get('/api/admin/sales', salesAuth, async (req, res) => {
+app.get('/api/admin/sales', salesOrMakerRead, async (req, res) => {
   const all = cachedSalesListRows();
   const productFilter = sanitizeText(req.query?.product).toLowerCase();
+  if (req.makerHostRead) {
+    // A Maker host reads the client rows only: no calendar, sender or owner list.
+    const rows = productFilter === 'asoldi' || productFilter === 'ssu'
+      ? all.filter((client) => sales.normalizeSalesProduct(client.product) === productFilter)
+      : all;
+    return res.json({ clients: rows, isAdmin: false });
+  }
   const owned = req.salesUser.isAdmin
     ? all
     : all.filter((client) => canAccessSalesClient(req, client));

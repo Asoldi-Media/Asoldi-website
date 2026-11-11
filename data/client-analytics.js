@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, appendFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { getDataFilePath, getPersistentDataDir, writeDataJson } from './storage-path.js';
+import { siteKeysFor } from './hub.js';
 
 const SNAPSHOTS_FILE = 'client-maps-ranking.json';
 const GBP_FILE = 'client-google-business.json';
@@ -42,6 +43,21 @@ function trafficDir() {
   return dir;
 }
 
+/**
+ * The row for a key in a map keyed by business id or site key. When the key has no row of its own and
+ * it is a site key that was replaced (or replaced another), the rows under the site's other keys are
+ * tried. A key with a row, or a site never rekeyed, behaves as a plain lookup.
+ */
+function rowForKey(map, key) {
+  const own = map[key];
+  if (own && typeof own === 'object') return own;
+  for (const other of siteKeysFor(key).slice(1)) {
+    const row = map[other];
+    if (row && typeof row === 'object') return row;
+  }
+  return null;
+}
+
 function subjectKey({ businessId = '', siteKey = '' } = {}) {
   return compact(businessId) || compact(siteKey);
 }
@@ -50,8 +66,7 @@ export function getMapsRankingRecord(id) {
   const key = compact(id);
   if (!key) return null;
   const map = readJson(snapshotsPath(), {});
-  const row = map[key];
-  return row && typeof row === 'object' ? row : null;
+  return rowForKey(map, key);
 }
 
 export function listMapsRankingDue(intervalMs, now = Date.now()) {
@@ -103,8 +118,7 @@ export function getGoogleBusinessConnection(businessId) {
   const key = compact(businessId);
   if (!key) return null;
   const map = readJson(gbpPath(), {});
-  const row = map[key];
-  return row && typeof row === 'object' ? row : null;
+  return rowForKey(map, key);
 }
 
 export function listGoogleBusinessConnections() {
@@ -166,6 +180,15 @@ export function appendTrafficEvents(siteKey, events = []) {
 export function readTrafficEvents(siteKey, fromMs, toMs) {
   const key = compact(siteKey);
   if (!key) return [];
+  const keys = siteKeysFor(key);
+  if (keys.length === 1) return readTrafficEventsForKey(key, fromMs, toMs);
+  // A rekeyed site: rows written under the old key and under the new one, oldest first.
+  return keys
+    .flatMap((each) => readTrafficEventsForKey(compact(each), fromMs, toMs))
+    .sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
+}
+
+function readTrafficEventsForKey(key, fromMs, toMs) {
   const dir = join(trafficDir(), key.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 80) || 'unknown');
   if (!existsSync(dir)) return [];
   const fromDay = new Date(fromMs).toISOString().slice(0, 10);
@@ -230,8 +253,7 @@ export function getCommerceSnapshot(siteKey) {
   const key = compact(siteKey);
   if (!key) return null;
   const map = readJson(commercePath(), {});
-  const row = map[key];
-  return row && typeof row === 'object' ? row : null;
+  return rowForKey(map, key);
 }
 
 export { subjectKey };
