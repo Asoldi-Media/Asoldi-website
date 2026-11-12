@@ -13,6 +13,7 @@ import {
   clientNeedsPublicPreviewSnapshot,
   injectPreviewBaseHref,
   injectPreviewRobotsMeta,
+  freezeRevolutionSliderHtml,
   injectSalesPreviewContractWidget,
   isPreviewCrawler,
   isPreviewProtectedPath,
@@ -156,6 +157,32 @@ assert.equal(
   '<p>no body</p><script src="/sales-preview-contract.js?v=kontrakt-8" data-sales-client-id="client-1" charset="utf-8" defer></script>'
 );
 assert.equal(injectSalesPreviewContractWidget('<p>x</p>', ''), '<p>x</p>');
+
+const frozenRev = `<!DOCTYPE html><html><head></head><body>
+<rs-module id="rev_slider_5_1" class="revslider-initialised">
+<rs-slide data-isactiveslide="true">
+<rs-sbg data-lazyload="//glowing.example/bg.jpg" src="uploads/hero.jpg" style="width: 100%; height: 100%;"><canvas></canvas></rs-sbg>
+<!--Runtime Modification - Img tag is Still Available for SEO Goals in Source - <img src="//glowing.example/dummy.png">-->
+<rs-layer>Headline</rs-layer>
+</rs-slide>
+</rs-module>
+<script>setREVStartSize({c:'rev_slider_5_1'});if (window.RS_MODULES!==undefined && window.RS_MODULES.modules!==undefined && window.RS_MODULES.modules["revslider51"]!==undefined) {window.RS_MODULES.modules["revslider51"].once = false;window.revapi5 = undefined;if (window.RS_MODULES.checkMinimal!==undefined) window.RS_MODULES.checkMinimal()}</script>
+<script src="main/wp-content/plugins/revslider/public/assets/js/rs6.min.js"></script>
+<script src="main/wp-content/plugins/js_composer/assets/lib/flexslider/jquery.flexslider.min.js"></script>
+</body></html>`;
+const frozenRevOut = freezeRevolutionSliderHtml(frozenRev);
+assert.match(frozenRevOut, /background-image:url\("uploads\/hero\.jpg"\)!important/);
+assert.match(frozenRevOut, /<img src="uploads\/hero\.jpg"/);
+assert.match(frozenRevOut, /asoldi-revslider-freeze/);
+assert.match(frozenRevOut, /setREVStartSize\(\{c:'rev_slider_5_1'\}\);/);
+assert.doesNotMatch(frozenRevOut, /once = false/);
+assert.doesNotMatch(frozenRevOut, /rs6\.min\.js/);
+assert.match(frozenRevOut, /flexslider/);
+assert.equal(freezeRevolutionSliderHtml(frozenRevOut), frozenRevOut);
+assert.equal(
+  freezeRevolutionSliderHtml('<html><body><img class="rev-slidebg" src="hero.jpg"><script src="wp-content/plugins/revslider/public/assets/js/rs6.min.js"></script></body></html>'),
+  '<html><body><img class="rev-slidebg" src="hero.jpg"><script src="wp-content/plugins/revslider/public/assets/js/rs6.min.js"></script></body></html>'
+);
 
 assert.equal(
   repairHtmlFileUsedAsDirectoryUrl(

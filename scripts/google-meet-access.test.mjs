@@ -60,10 +60,12 @@ function writeTokens(map) {
   writeFileSync(join(dataDir, 'google-calendar-tokens.json'), JSON.stringify(map));
 }
 
-/** Meet v2 spaces stub: remembers calls, and a patch really opens the room. */
-function fakeMeet({ accessType = 'TRUSTED', getError = null, patchError = null, keepAccess = '', gate = null } = {}) {
+/** Meet v2 spaces stub: remembers calls, and a patch really sets the asked access. */
+function fakeMeet({ accessType = 'TRUSTED', getError = null, patchError = null, keepAccess = '', gate = null, members = null } = {}) {
   const calls = [];
   let current = accessType;
+  const memberList = Array.isArray(members) ? [...members] : [];
+  const withMembers = members !== null;
   return {
     calls,
     kinds: () => calls.map((call) => call.kind),
@@ -80,6 +82,19 @@ function fakeMeet({ accessType = 'TRUSTED', getError = null, patchError = null, 
         current = keepAccess || params.requestBody.config.accessType;
         return { data: { name: params.name, config: { accessType: current } } };
       },
+      ...(withMembers ? {
+        members: {
+          async list(params, options) {
+            calls.push({ kind: 'members.list', params, options });
+            return { data: { members: memberList.map((email) => ({ email })) } };
+          },
+          async create(params, options) {
+            calls.push({ kind: 'members.create', params, options });
+            memberList.push(params.requestBody.email);
+            return { data: { email: params.requestBody.email, role: params.requestBody.role } };
+          },
+        },
+      } : {}),
     },
   };
 }
@@ -125,13 +140,15 @@ test('the Meet settings scope is read from a scope string, a list or a token', (
   assert.equal(meet.tokenHasMeetSettingsScope('https://www.googleapis.com/auth/meetings.space.readonly'), false);
   assert.equal(meet.tokenHasMeetSettingsScope({}), false);
   assert.equal(meet.tokenHasMeetSettingsScope(null), false);
+  assert.equal(meet.tokenHasMeetMembersScope(meet.MEET_MEMBERS_SCOPE), true);
+  assert.equal(meet.tokenHasMeetMembersScope(WITH_MEET), false);
 });
 
-test('a room that is already open is read and left alone', async () => {
-  const api = fakeMeet({ accessType: 'OPEN' });
+test('a room that is already trusted is read and left alone', async () => {
+  const api = fakeMeet({ accessType: 'TRUSTED' });
   const result = await meet.openMeetRoom({ meetLink: ROOM, meetApi: api, nowMs: NOW });
   assert.equal(result.ok, true);
-  assert.equal(result.accessType, 'OPEN');
+  assert.equal(result.accessType, 'TRUSTED');
   assert.equal(result.changed, false);
   assert.equal(result.checkedAt, '2026-10-23T09:30:00.000Z');
   assert.deepEqual(api.kinds(), ['get']);
@@ -139,20 +156,34 @@ test('a room that is already open is read and left alone', async () => {
   assert.equal(api.calls[0].options.timeout, 4000);
 });
 
-test('a trusted or restricted room is patched open by its space name', async () => {
-  for (const accessType of ['TRUSTED', 'RESTRICTED']) {
-    const api = fakeMeet({ accessType });
-    const result = await meet.openMeetRoom({ meetLink: ROOM, meetApi: api, nowMs: NOW });
-    assert.equal(result.ok, true, accessType);
-    assert.equal(result.changed, true);
-    assert.equal(result.accessType, 'OPEN');
-    assert.deepEqual(api.kinds(), ['get', 'patch']);
-    assert.deepEqual(api.calls[1].params, {
-      name: 'spaces/sp-test-1',
-      updateMask: 'config.accessType',
-      requestBody: { config: { accessType: 'OPEN' } },
-    });
-  }
+test('an open room is patched to trusted with moderation, not left open', async () => {
+  const api = fakeMeet({ accessType: 'OPEN' });
+  const result = await meet.openMeetRoom({ meetLink: ROOM, meetApi: api, nowMs: NOW });
+  assert.equal(result.ok, true);
+  assert.equal(result.changed, true);
+  assert.equal(result.accessType, 'TRUSTED');
+  assert.deepEqual(api.kinds(), ['get', 'patch']);
+  assert.deepEqual(api.calls[1].params, {
+    name: 'spaces/sp-test-1',
+    updateMask: 'config.accessType,config.moderation',
+    requestBody: { config: { accessType: 'TRUSTED', moderation: 'ON' } },
+  });
+});
+
+test('staff and Fireflies are added as co-hosts; the client is not in that list', async () => {
+  const api = fakeMeet({ accessType: 'TRUSTED', members: [] });
+  const result = await meet.openMeetRoom({
+    meetLink: ROOM,
+    meetApi: api,
+    nowMs: NOW,
+    memberEmails: ['damian@asoldi.com', 'fred@fireflies.ai', 'DAMIAN@asoldi.com'],
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.changed, true);
+  assert.deepEqual(result.memberEmails, ['damian@asoldi.com', 'fred@fireflies.ai']);
+  assert.deepEqual(api.kinds(), ['get', 'members.list', 'members.create', 'members.create']);
+  assert.equal(api.calls[2].params.requestBody.role, 'COHOST');
+  assert.equal(api.calls[2].params.requestBody.email, 'damian@asoldi.com');
 });
 
 test('Google refusals come back as soft reasons, never as throws', async () => {
@@ -162,8 +193,8 @@ test('Google refusals come back as soft reasons, never as throws', async () => {
   assert.deepEqual([forbidden.ok, forbidden.reason], [false, 'forbidden']);
   assert.match(forbidden.message, /caller does not have permission/);
 
-  const notOwner = await outcome({ patchError: googleError(403) });
-  assert.deepEqual([notOwner.reason, notOwner.accessType], ['not-owner', 'TRUSTED']);
+  const notOwner = await outcome({ accessType: 'OPEN', patchError: googleError(403) });
+  assert.deepEqual([notOwner.reason, notOwner.accessType], ['not-owner', 'OPEN']);
 
   assert.equal((await outcome({ getError: googleError(404) })).reason, 'not-found');
   assert.equal((await outcome({ getError: googleError(403, { reason: 'ACCESS_TOKEN_SCOPE_INSUFFICIENT', message: 'Request had insufficient authentication scopes.' }) })).reason, 'scope-missing');
@@ -172,13 +203,13 @@ test('Google refusals come back as soft reasons, never as throws', async () => {
   assert.equal(disabled.reason, 'forbidden');
   assert.match(disabled.message, /Google Meet REST API er ikke slått på/);
 
-  assert.equal((await outcome({ patchError: googleError(400, { message: 'Invalid access type.' }) })).reason, 'forbidden');
+  assert.equal((await outcome({ accessType: 'OPEN', patchError: googleError(400, { message: 'Invalid access type.' }) })).reason, 'forbidden');
   assert.equal((await outcome({ getError: googleError(401) })).reason, 'forbidden');
   assert.equal((await outcome({ getError: googleError(503) })).reason, 'error');
   assert.equal((await outcome({ getError: Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }) })).reason, 'error');
 
-  const kept = await outcome({ keepAccess: 'TRUSTED' });
-  assert.deepEqual([kept.ok, kept.reason, kept.accessType], [false, 'forbidden', 'TRUSTED']);
+  const kept = await outcome({ accessType: 'OPEN', keepAccess: 'OPEN' });
+  assert.deepEqual([kept.ok, kept.reason, kept.accessType], [false, 'forbidden', 'OPEN']);
 
   const stalled = await meet.openMeetRoom({
     meetLink: ROOM,
@@ -207,8 +238,8 @@ test('Google being busy is an error to retry soon, not a refusal', async () => {
     assert.equal(busy.reason, 'error', `${status}`);
     assert.match(busy.message, new RegExp(`ba oss vente \\(${status}\\)`));
   }
-  const quota = await outcome({ patchError: googleError(403, { reason: 'RATE_LIMIT_EXCEEDED', message: 'Quota exceeded for quota metric.' }) });
-  assert.deepEqual([quota.reason, quota.accessType], ['error', 'TRUSTED']);
+  const quota = await outcome({ accessType: 'OPEN', patchError: googleError(403, { reason: 'RATE_LIMIT_EXCEEDED', message: 'Quota exceeded for quota metric.' }) });
+  assert.deepEqual([quota.reason, quota.accessType], ['error', 'OPEN']);
 });
 
 test('safe mode blocks the Meet call, records a calendarWrite intent, and lets it through when allowed', async () => {
@@ -258,18 +289,18 @@ test('without an OAuth token that carries the scope, Google is never called', as
   assert.equal(api.calls.length, 0);
 });
 
-test('a scoped token opens the room, the result is stored, and an open room is not asked about for 6 hours', async () => {
+test('a scoped token prepares the room, the result is stored, and a trusted room is not asked about for 6 hours', async () => {
   writeTokens({ 'sales:rep-1': token('alexander@asoldi.com', WITH_MEET) });
-  const api = fakeMeet({ accessType: 'TRUSTED' });
+  const api = fakeMeet({ accessType: 'OPEN' });
   const ensure = (extra = {}) => meet.ensureMeetRoomOpen({ meetLink: ROOM, accountKey: 'sales:rep-1', deps: { meetApi: api }, ...extra });
 
   const first = await ensure({ nowMs: NOW });
-  assert.deepEqual([first.ok, first.accessType, first.cached, first.ownerKey], [true, 'OPEN', false, 'sales:rep-1']);
+  assert.deepEqual([first.ok, first.accessType, first.cached, first.ownerKey], [true, 'TRUSTED', false, 'sales:rep-1']);
   assert.deepEqual(api.kinds(), ['get', 'patch']);
   assert.deepEqual(meet.meetRoomAccessStatus(`${ROOM}?authuser=0`), {
     meetingCode: 'abc-defg-hij',
     ok: true,
-    accessType: 'OPEN',
+    accessType: 'TRUSTED',
     reason: '',
     message: first.message,
     checkedAt: '2026-10-23T09:30:00.000Z',
@@ -282,7 +313,7 @@ test('a scoped token opens the room, the result is stored, and an open room is n
 
   const forced = await ensure({ nowMs: NOW + 120_000, force: true });
   assert.equal(forced.cached, false);
-  assert.deepEqual(api.kinds(), ['get', 'patch', 'get'], 'force reads again, and an open room is not patched');
+  assert.deepEqual(api.kinds(), ['get', 'patch', 'get'], 'force reads again, and a trusted room is not patched');
 
   const later = await ensure({ nowMs: NOW + 120_000 + meet.MEET_ROOM_OPEN_TTL_MS + 1000 });
   assert.equal(later.cached, false);
@@ -292,7 +323,7 @@ test('a scoped token opens the room, the result is stored, and an open room is n
 
 test('a room Google refused is asked about again only after 15 minutes', async () => {
   writeTokens({ 'sales:rep-1': token('alexander@asoldi.com', WITH_MEET) });
-  const api = fakeMeet({ patchError: googleError(403) });
+  const api = fakeMeet({ accessType: 'OPEN', patchError: googleError(403) });
   const ensure = (nowMs) => meet.ensureMeetRoomOpen({ meetLink: ROOM, accountKey: 'sales:rep-1', nowMs, deps: { meetApi: api } });
   assert.equal((await ensure(NOW)).reason, 'not-owner');
   const again = await ensure(NOW + 60_000);
@@ -328,18 +359,18 @@ test('an error is not retried by the same login for 3 minutes, and a missing sco
   writeTokens({ 'sales:rep-1': token('alexander@asoldi.com', WITH_MEET, { updatedAt: new Date(NOW + 90_000).toISOString() }) });
   const opened = await check(NOW + 120_000);
   assert.deepEqual([opened.ok, opened.cached], [true, false]);
-  assert.deepEqual(api.kinds(), ['get', 'patch']);
+  assert.deepEqual(api.kinds(), ['get']);
 });
 
-test('the pre-meeting check can ask for a fresher read of an open room', async () => {
+test('the pre-meeting check can ask for a fresher read of a prepared room', async () => {
   writeTokens({ 'sales:rep-1': token('alexander@asoldi.com', WITH_MEET) });
   const api = fakeMeet();
   const ensure = (nowMs, extra = {}) => meet.ensureMeetRoomOpen({ meetLink: ROOM, accountKey: 'sales:rep-1', nowMs, deps: { meetApi: api }, ...extra });
   await ensure(NOW);
-  assert.equal((await ensure(NOW + 10 * 60_000)).cached, true, 'by default an open room holds for 6 hours');
+  assert.equal((await ensure(NOW + 10 * 60_000)).cached, true, 'by default a trusted room holds for 6 hours');
   const fresh = await ensure(NOW + 10 * 60_000, { maxAgeMs: 5 * 60_000 });
   assert.deepEqual([fresh.ok, fresh.cached], [true, false]);
-  assert.deepEqual(api.kinds(), ['get', 'patch', 'get'], 'an open room is read, not patched again');
+  assert.deepEqual(api.kinds(), ['get', 'get'], 'a trusted room is read, not patched again');
   assert.equal((await ensure(NOW + 12 * 60_000, { maxAgeMs: 5 * 60_000 })).cached, true);
 });
 
@@ -356,9 +387,9 @@ test('the login that opened a room is tried again when another login is refused,
   assert.deepEqual([opened.ok, opened.ownerKey], [true, 'admin:alexander@asoldi.com']);
   // The client moved to the other rep, whose event keeps the room; the open window has passed.
   const moved = await meet.ensureMeetRoomOpen({ meetLink: ROOM, ownerEmail: 'damian@asoldi.com', nowMs: NOW + meet.MEET_ROOM_OPEN_TTL_MS + 60_000 });
-  assert.deepEqual([moved.ok, moved.accessType, moved.ownerKey], [true, 'OPEN', 'admin:alexander@asoldi.com']);
+  assert.deepEqual([moved.ok, moved.accessType, moved.ownerKey], [true, 'TRUSTED', 'admin:alexander@asoldi.com']);
   assert.deepEqual(other.kinds(), ['get']);
-  assert.deepEqual(host.kinds(), ['get', 'patch', 'get']);
+  assert.deepEqual(host.kinds(), ['get', 'get']);
 
   // No login opened this one before: the refusal is stored, but the room's own host still gets asked.
   const room = 'https://meet.google.com/ppp-qqqq-rrr';
@@ -429,7 +460,7 @@ test('two checks of the same room at once share one Google round trip', async ()
   release();
   const [a, b] = await both;
   assert.equal(a.ok && b.ok, true);
-  assert.deepEqual(api.kinds(), ['get', 'patch']);
+  assert.deepEqual(api.kinds(), ['get']);
 });
 
 test('the background opener settles quietly', async () => {
@@ -454,12 +485,12 @@ test('Google status says whether the mailbox can open its rooms', () => {
   assert.deepEqual([missing.connected, missing.meetSettingsScope], [false, false]);
 });
 
-test('Connect asks for the Meet settings scope and keeps what was granted before', () => {
+test('Connect asks for the Meet settings and members scopes and keeps what was granted before', () => {
   const url = new URL(calendar.createGoogleCalendarAuthUrl('state-test'));
   const scopes = url.searchParams.get('scope').split(' ');
   assert.ok(scopes.includes(meet.MEET_SETTINGS_SCOPE));
+  assert.ok(scopes.includes(meet.MEET_MEMBERS_SCOPE));
   assert.ok(scopes.includes('https://www.googleapis.com/auth/calendar.events'));
-  assert.equal(scopes.some((scope) => scope.endsWith('meetings.space.created')), false);
   assert.equal(url.searchParams.get('include_granted_scopes'), 'true');
   assert.equal(url.searchParams.get('access_type'), 'offline');
 });
