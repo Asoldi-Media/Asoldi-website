@@ -6,7 +6,6 @@ import { ClientPortalLayout } from '../../components/client/ClientPortalLayout';
 import { ClientRouteGuard } from '../../components/client/ClientRouteGuard';
 import { useClientAuth } from '../../contexts/ClientAuthContext';
 import { CHECKOUT_BENEFITS, CLIENT_WEBSITE_PLANS, findWebsitePlan } from '../../data/clientWebsitePlans';
-import { catalogCheckoutBenefits, mergeCatalogPortalPlans, useCatalogSalesCopy } from '../../data/catalogLegalTexts.js';
 import { useClientOffer } from './useClientOffer';
 import {
   formatPriceAmount,
@@ -89,17 +88,10 @@ export const ClientWebsitePlans = () => {
     };
   }, [token, user?.id]);
 
-  // The legal clause catalog's "what's included" and checkout promises once its API answers; the static data until then.
-  const salesCopy = useCatalogSalesCopy();
-  const websitePlans = useMemo(() => mergeCatalogPortalPlans(CLIENT_WEBSITE_PLANS, salesCopy), [salesCopy]);
-  const checkoutBenefits = catalogCheckoutBenefits(CHECKOUT_BENEFITS, salesCopy);
-  const offerPlan = useMemo(
-    () => (offer ? websitePlans.find((plan) => plan.id === offer.planId) || null : null),
-    [offer, websitePlans],
-  );
+  const offerPlan = useMemo(() => (offer ? findWebsitePlan(offer.planId) || null : null), [offer]);
   const selectedPlan = useMemo(
-    () => websitePlans.find((plan) => plan.id === selectedPlanId) || websitePlans[0],
-    [selectedPlanId, websitePlans],
+    () => findWebsitePlan(selectedPlanId) || CLIENT_WEBSITE_PLANS[0],
+    [selectedPlanId],
   );
 
   const subtotalAmount = parsePriceAmount(selectedPlan?.price || '');
@@ -325,7 +317,7 @@ export const ClientWebsitePlans = () => {
                 <p className="mt-1 text-sm text-[#6B7280]">Planene er basert på nettsideutvikling i prisoversikten vår.</p>
 
                 <div className="mt-4 grid gap-4 md:grid-cols-3">
-                  {websitePlans.map((plan) => {
+                  {CLIENT_WEBSITE_PLANS.map((plan) => {
                     const isSelected = selectedPlanId === plan.id;
                     const isExpanded = Boolean(expandedCards[plan.id]);
                     const previewFeatures = plan.includedFeatures.slice(0, PREVIEW_FEATURE_COUNT);
@@ -492,16 +484,14 @@ export const ClientWebsitePlans = () => {
                 {couponError ? <p className="mt-2 text-xs text-red-500">{couponError}</p> : null}
               </div>
 
-              {checkoutBenefits.length ? (
               <div className="mt-4 grid grid-cols-3 gap-2 rounded-xl border border-[#EDEFF3] bg-[#FCFCFD] p-3">
-                {checkoutBenefits.map((benefit) => (
+                {CHECKOUT_BENEFITS.map((benefit) => (
                   <div key={benefit.key} className="text-center">
                     <img src={benefit.illustration} alt={benefit.label} className="mx-auto h-9 w-9 object-contain" />
                     <p className="mt-2 text-[11px] leading-4 text-[#6B7280]">{benefit.label}</p>
                   </div>
                 ))}
               </div>
-              ) : null}
 
               {error ? <p className="mt-3 text-sm text-red-500">{error}</p> : null}
 

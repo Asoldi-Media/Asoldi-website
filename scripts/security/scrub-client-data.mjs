@@ -41,8 +41,6 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   countFindingsByPath,
-  decodeText,
-  encodeText,
   isProbablyBinary,
   nationalPhoneDigits,
   piiHitsInLine,
@@ -395,10 +393,7 @@ export function run({ root, write = false } = {}) {
       continue;
     }
     if (isProbablyBinary(buffer)) continue;
-    // UTF-8, or other text (Latin-1) byte for byte, so a rewrite changes only the values it replaces.
-    const read = decodeText(buffer);
-    if (!read) continue;
-    const text = read.text;
+    const text = buffer.toString('utf8');
     texts.push(text);
     if (exclude.some((re) => re.test(path))) {
       const findings = scanLines(path, splitLines(text), ctx);
@@ -411,7 +406,7 @@ export function run({ root, write = false } = {}) {
       continue;
     }
     const own = fileHits(path, text, allowlist);
-    files.push({ path, text, read, hits: own });
+    files.push({ path, text, hits: own });
     hits.push(...own);
   }
   // Words an earlier cleanup already gave a company stay that company's.
@@ -429,7 +424,7 @@ export function run({ root, write = false } = {}) {
     if (result.text !== file.text) {
       changed.push({ path: file.path, count: result.count });
       touched.add(file.path);
-      if (write) writeFileSync(join(root, file.path), encodeText(result.text, file.read));
+      if (write) writeFileSync(join(root, file.path), result.text);
     }
     const findings = scanLines(file.path, splitLines(result.text), ctx);
     left.push(...findings);

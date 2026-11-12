@@ -37,7 +37,6 @@ import { registerCmsSsoRoutes } from './lib/cms-sso.js';
 import { createHeartbeatLimits, heartbeatMarksSeen, registerSiteCredentialRoutes, siteCredentialState } from './lib/site-credentials.js';
 import { registerDeliveryRoutes } from './lib/routes/delivery-routes.js';
 import { registerCmsFeatureRoutes } from './lib/routes/cms-feature-routes.js';
-import { registerOptionalRoutes } from './lib/routes/optional-routes.js';
 import { websitePlanForNewSite } from './lib/cms-entitlements.js';
 import { runDeliverySchemaStartupSnapshot } from './lib/delivery-snapshots.js';
 import { chosenWebsiteTier, makerSitePlanPayload, websiteTierIdForClient } from './lib/site-plan.js';
@@ -68,7 +67,6 @@ import {
 import {
   isAcceptedQueueTarget,
   resolveMakerQueueRunRequests,
-  step2SubstepOrderForQueueRequest,
   summarizeMakerRunForQueue,
 } from './lib/maker-queue.js';
 import {
@@ -86,7 +84,6 @@ import {
   serpApiKeyLabel,
 } from './lib/serpapi-keys.js';
 import { applyMakerBundleToPortal } from './lib/maker-bundle-sync.js';
-import { recordPlanSummaryFromPush, seoPushResponseFields, seoRecordForProfile } from './lib/seo-ops/record.js';
 import * as offers from './data/offers.js';
 import * as resetTokens from './data/reset-tokens.js';
 import { getPersistentDataDir, pruneAllDataBackups } from './data/storage-path.js';
@@ -11462,8 +11459,6 @@ app.get('/client-media/:userId/:fileName', clientAuth, async (req, res) => {
 });
 
 app.post('/api/internal/maker/client-bundle', requireMakerHost('client-bundle'), async (req, res) => {
-  // The SEO plan summary is kept before the portal sync, so it needs no portal user ({} without one).
-  const seo = seoPushResponseFields(await recordPlanSummaryFromPush(sanitizeText(req.body?.salesClientId), req.body?.bundle?.keywordPlanSummary, { sales }));
   const result = applyMakerBundleToPortal({
     portalUserId: sanitizeText(req.body?.portalUserId),
     salesClientId: sanitizeText(req.body?.salesClientId),
@@ -11474,8 +11469,8 @@ app.post('/api/internal/maker/client-bundle', requireMakerHost('client-bundle'),
     publicPreviewUrl: sanitizeText(req.body?.publicPreviewUrl),
     tunnelUrl: sanitizeText(req.body?.tunnelUrl),
   });
-  if (!result.ok) return res.status(result.status || 400).json({ message: result.message, ...seo });
-  return res.json({ ...result, ...seo });
+  if (!result.ok) return res.status(result.status || 400).json({ message: result.message });
+  return res.json(result);
 });
 
 app.get('/api/client/billing/overview', clientAuth, async (req, res) => {
@@ -13032,7 +13027,6 @@ const cmsFeatures = registerCmsFeatureRoutes(app, {
   makerAuth: requireMakerHost('jobs', { message: 'Unauthorized' }),
 });
 registerAiAdminRoutes(app, { adminAuth, sales });
-await registerOptionalRoutes(app, { adminAuth, makerAuth, salesAuth, developmentAuth, salesOrDevelopmentAuth, clientAuth, sales, hub, salesOffers, getDataDir: getPersistentDataDir });
 
 // --- Hub API (public: site config for client CMS)
 // The site key is public, so a key lookup gets the public fields only. The client admin contact and
@@ -13042,7 +13036,7 @@ app.get('/api/hub/site-config', (req, res) => {
   const domain = req.query.domain;
   function withGoals(config, key) {
     const { profile } = findProfileForSiteKey(key);
-    return { ...config, analyticsGoals: analyticsGoalsFromBank(profile?.clientDataBank, { seoRecord: seoRecordForProfile(profile) }) };
+    return { ...config, analyticsGoals: analyticsGoalsFromBank(profile?.clientDataBank) };
   }
   if (siteKey) {
     const site = hub.getSiteByKey(siteKey);
@@ -13601,7 +13595,6 @@ app.post('/api/admin/sales/maker-status-callback', requireMakerHost('callback'),
   if (event === 'run.client-bundle.updated' && req.body?.bundle) {
     // The same portal write as /api/internal/maker/client-bundle: a host token needs that scope too.
     if (!makerAuth.hostScopeAllows(req, res, 'client-bundle')) return;
-    const seo = seoPushResponseFields(await recordPlanSummaryFromPush(sanitizeText(req.body?.salesClientId), req.body.bundle?.keywordPlanSummary, { sales }));
     const result = applyMakerBundleToPortal({
       portalUserId: sanitizeText(req.body?.portalUserId),
       salesClientId: sanitizeText(req.body?.salesClientId),
@@ -13612,8 +13605,8 @@ app.post('/api/admin/sales/maker-status-callback', requireMakerHost('callback'),
       publicPreviewUrl: sanitizeText(req.body?.publicPreviewUrl),
       tunnelUrl: sanitizeText(req.body?.tunnelUrl),
     });
-    if (!result.ok) return res.status(result.status || 400).json({ message: result.message, ...seo });
-    return res.json({ ...result, ...seo });
+    if (!result.ok) return res.status(result.status || 400).json({ message: result.message });
+    return res.json(result);
   }
   const runId = sanitizeText(req.body?.runId);
   const salesClientId = sanitizeText(req.body?.salesClientId);
@@ -20194,8 +20187,7 @@ app.post('/api/admin/development/maker-queue', developmentAuth, async (req, res)
   const base = resolveDevelopmentMakerBase();
   const untilTarget = sanitizeText(req.body?.untilTarget);
   const target = sanitizeText(req.body?.target || untilTarget);
-  const queueOrder = { step2SubstepOrder: step2SubstepOrderForQueueRequest(req.body || {}, (id) => sales.getSalesClientById(id)) };
-  if (!isAcceptedQueueTarget(target, queueOrder) && !isAcceptedQueueTarget(untilTarget, queueOrder)) {
+  if (!isAcceptedQueueTarget(target) && !isAcceptedQueueTarget(untilTarget)) {
     return res.status(400).json({ message: 'Unknown pipeline queue target.' });
   }
   const salesClientIds = Array.isArray(req.body?.salesClientIds) ? req.body.salesClientIds : [];

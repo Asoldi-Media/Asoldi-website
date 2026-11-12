@@ -10,7 +10,6 @@ import {
 } from 'lucide-react';
 import { ClientRouteGuard } from '../../components/client/ClientRouteGuard';
 import { ClientPortalLayout } from '../../components/client/ClientPortalLayout';
-import { ClientLegalCard } from '../../components/client/ClientLegalCard';
 import { useClientAuth } from '../../contexts/ClientAuthContext';
 import { CLIENT_WEBSITE_PLANS } from '../../data/clientWebsitePlans';
 import { SettingsInnerNav } from '../../components/client/settings/SettingsInnerNav';
@@ -774,7 +773,6 @@ export const ClientSettings = () => {
                       <p><span className="text-[#6B7280]">Rolle:</span> {membership?.role === 'owner' ? 'Eier' : membership?.role === 'admin' ? 'Admin' : 'Samarbeidspartner'}</p>
                     </div>
                   </section>
-                  <ClientLegalCard />
                   <section className="rounded-2xl border border-[#E5E7EB] bg-white p-5">
                     <h2 className="text-lg font-semibold text-[#111827]">Bytt innloggings-e-post</h2>
                     <p className="mt-1 text-sm text-[#6B7280]">

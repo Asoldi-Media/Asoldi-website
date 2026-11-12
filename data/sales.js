@@ -38,8 +38,7 @@ import { mergeMakerRunPatch, normalizeDeveloperQa } from '../lib/developer-card.
 import { canonicalDeveloperOwnerId, normalizeDeveloperHandoff, applyAdminDeveloperOwnerSeed, shouldSeedExistingDeveloperOwners } from '../lib/developer-assignment.js';
 import { normalizeDeveloperGoals } from '../lib/developer-goals.js';
 import { normalizeDueDate } from '../lib/website-due.js';
-import { listSalesOffers, normalizeOfferSentContent } from './sales-offers.js';
-import { legalSnapshotPatch } from '../lib/legal/binding.js';
+import { normalizeOfferSentContent } from './sales-offers.js';
 import {
   carryFutureKeys,
   FUTURE_CLIENT_KEYS,
@@ -50,7 +49,6 @@ import {
   withoutKeys,
 } from './normalize-ext.js';
 import { normalizeRunAiSpend } from '../lib/ai-spend.js';
-import { makerRunStep2SubstepOrder, step2SubstepKeys, withStoredStep2SubstepOrder } from '../lib/step2-substeps.js';
 import { normalizeSitePlan, withPlanHistory } from '../lib/site-plan-model.js';
 import {
   deliveryEmailStampPatch,
@@ -312,12 +310,14 @@ function normalizeMakerRunSteps(value = {}) {
   }, input, FUTURE_MAKERRUN_STEP_KEYS);
 }
 
-// The four legacy substep keys always; with an order (sent by the Maker or stored in ext), its other ids too.
-export function normalizeMakerStep2Substeps(value = {}, order = null) {
+function normalizeMakerStep2Substeps(value = {}) {
   const input = value && typeof value === 'object' ? value : {};
-  const out = {};
-  for (const key of step2SubstepKeys(order)) out[key] = sanitizeText(input[key]) || 'idle';
-  return out;
+  return {
+    'generate-text': sanitizeText(input['generate-text']) || 'idle',
+    'inject-media': sanitizeText(input['inject-media']) || 'idle',
+    'layout-colors-style': sanitizeText(input['layout-colors-style']) || 'idle',
+    'maps-embed-sync': sanitizeText(input['maps-embed-sync']) || 'idle',
+  };
 }
 
 function normalizeMakerRun(value = {}) {
@@ -345,10 +345,10 @@ function normalizeMakerRun(value = {}) {
   const aiSpend = input.aiSpend ? normalizeRunAiSpend(input.aiSpend, { runId }) : null;
   if (aiSpend && runId && aiSpend.runId === runId) base.aiSpend = aiSpend;
   if (!runId) return withOwnedMakerRunKeys(carryFutureKeys(base, input, FUTURE_MAKERRUN_KEYS), input);
-  return withOwnedMakerRunKeys(withStoredStep2SubstepOrder(carryFutureKeys({
+  return withOwnedMakerRunKeys(carryFutureKeys({
     ...base,
     steps: normalizeMakerRunSteps(input.steps),
-    step2Substeps: normalizeMakerStep2Substeps(input.step2Substeps, makerRunStep2SubstepOrder(input)),
+    step2Substeps: normalizeMakerStep2Substeps(input.step2Substeps),
     language: {
       confirmed: Boolean(input.language?.confirmed),
       code: sanitizeText(input.language?.code),
@@ -360,7 +360,7 @@ function normalizeMakerRun(value = {}) {
     },
     productionDomain: sanitizeText(input.productionDomain),
     websiteDomain: sanitizeText(input.websiteDomain),
-  }, input, FUTURE_MAKERRUN_KEYS), input), input);
+  }, input, FUTURE_MAKERRUN_KEYS), input);
 }
 
 // Maker events owns materials and autopilot; previewPush has its shape here for preview and go-live.
@@ -963,7 +963,7 @@ function updateSalesClientInternal(id, updates = {}) {
   const ownerStamp = Object.prototype.hasOwnProperty.call(updates, 'ownerId')
     ? assignmentStampForOwnerChange(current.ownerId, updates.ownerId)
     : {};
-  const merged = {
+  const next = normalizeSalesClient({
     ...current,
     ...updates,
     ...ownerStamp,
@@ -1015,32 +1015,10 @@ function updateSalesClientInternal(id, updates = {}) {
       ? { ...(current.myphoner || {}), ...updates.myphoner }
       : current.myphoner,
     updatedAt: nowIso(),
-  };
-  const legalExt = legalExtOnSigning(current, merged);
-  const next = normalizeSalesClient(legalExt ? { ...merged, ext: legalExt } : merged);
+  });
   state[index] = next;
   writeState(state);
   return next;
-}
-
-/**
- * Legal clause catalog (legal.catalogTexts): when a write turns progression.contractSigned on, the
- * client.ext.legal snapshot of the catalog and DPA versions of the client's latest sent offer. Only
- * an offer sent with a legal stamp yields one, and such a stamp exists only when the switch was on
- * at send; otherwise this returns undefined and the write is unchanged (the client keeps the
- * legacy texts). Every writer goes through here: setSalesProgress, the got-client route and any
- * plain progression patch.
- */
-function legalExtOnSigning(current, merged) {
-  if (current?.progression?.contractSigned === true || !merged?.progression?.contractSigned) return undefined;
-  try {
-    const offer = listSalesOffers({ salesClientId: current.id, status: 'sent' })[0] || null;
-    const patch = legalSnapshotPatch({ ...current, ext: merged.ext }, offer);
-    return patch ? patch.ext : undefined;
-  } catch (error) {
-    console.error('[legal] signing snapshot failed', current?.id, error?.message || error);
-    return undefined;
-  }
 }
 
 /** Stamp or clear the card error when a send to contactEmail fails or succeeds. Not the inbox bot. */
@@ -1088,7 +1066,7 @@ export function patchSalesClientsById(entries = []) {
     const ownerStamp = Object.prototype.hasOwnProperty.call(patch, 'ownerId')
       ? assignmentStampForOwnerChange(client.ownerId, patch.ownerId)
       : {};
-    const merged = {
+    return normalizeSalesClient({
       ...client,
       ...patch,
       ...ownerStamp,
@@ -1097,9 +1075,7 @@ export function patchSalesClientsById(entries = []) {
         ? { ...(client.salesMigrations || {}), ...patch.salesMigrations }
         : client.salesMigrations,
       updatedAt: Object.prototype.hasOwnProperty.call(patch, 'updatedAt') ? patch.updatedAt : client.updatedAt,
-    };
-    const legalExt = legalExtOnSigning(client, merged);
-    return normalizeSalesClient(legalExt ? { ...merged, ext: legalExt } : merged);
+    });
   });
   if (updated) writeState(next);
   return { total: state.length, updated };

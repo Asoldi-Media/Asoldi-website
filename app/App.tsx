@@ -20,9 +20,9 @@ const Clients = lazy(() => import('./pages/Clients').then((m) => ({ default: m.C
 const Booking = lazy(() => import('./pages/Booking').then((m) => ({ default: m.Booking })));
 const Page1000kr = lazy(() => import('./pages/1000kr').then((m) => ({ default: m.Page1000kr })));
 const BliAnsatt = lazy(() => import('./pages/BliAnsatt').then((m) => ({ default: m.BliAnsatt })));
-const Personvern = lazy(() => import('./pages/legal/CatalogLegalPage').then((m) => ({ default: m.Personvern })));
-const Vilkar = lazy(() => import('./pages/legal/CatalogLegalPage').then((m) => ({ default: m.Vilkar })));
-const Databehandleravtale = lazy(() => import('./pages/legal/CatalogLegalPage').then((m) => ({ default: m.Databehandleravtale })));
+const Personvern = lazy(() => import('./pages/legal/Personvern').then((m) => ({ default: m.Personvern })));
+const Vilkar = lazy(() => import('./pages/legal/Vilkar').then((m) => ({ default: m.Vilkar })));
+const Databehandleravtale = lazy(() => import('./pages/legal/Databehandleravtale').then((m) => ({ default: m.Databehandleravtale })));
 const Informasjonskapsler = lazy(() => import('./pages/legal/Informasjonskapsler').then((m) => ({ default: m.Informasjonskapsler })));
 const Login = lazy(() => import('./pages/Login').then((m) => ({ default: m.Login })));
 const EmployeeLogin = lazy(() => import('./pages/login/EmployeeLogin').then((m) => ({ default: m.EmployeeLogin })));

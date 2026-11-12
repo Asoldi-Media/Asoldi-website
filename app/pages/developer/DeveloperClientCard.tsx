@@ -12,7 +12,6 @@ import { DeveloperRequestThread } from './DeveloperRequestThread';
 import { ClientNotesFeed, clientFeedMessages } from '../Admin/sections/ClientNotesFeed';
 import { DeveloperLanguageLockPopup } from './DeveloperLanguageLockPopup';
 import { DeveloperPagesPopup } from './DeveloperPagesPopup';
-import { DeveloperSeoPanel } from './DeveloperSeoPanel';
 import { DeveloperAuthImage, DeveloperClientBrief, DeveloperMediaLibrary, type BriefMediaFile, type MaterialDot } from './DeveloperClientBrief';
 import { DeveloperClientIdentityLine, type KundekortDraft } from './DeveloperKundedata';
 import { enqueueMakerQueue, ensureLocalMaker, fetchMakerRunStatus, findMakerRunBySalesClientId, saveMakerRunDomain } from './makerQueue';
@@ -20,7 +19,6 @@ import { createSalesMakerRun } from './MakerRunTools';
 import { summarizeMaterialDots } from '../../../lib/client-material-dots.js';
 import {
   DEVELOPER_PROGRESS_CHIPS,
-  developerProgressChips,
   developerCardTimeline,
   developerMediaLibraryView,
   makerLibraryFilesFromRun,
@@ -217,11 +215,6 @@ export function DeveloperClientCard({
 
   const persistedStatus = useMemo(
     () => pipelineStatusFromMakerRun(item.makerRun || {}),
-    [item.makerRun]
-  );
-  // DEVELOPER_PROGRESS_CHIPS, plus a chip per extra Step 2 substep this run's Maker reports.
-  const progressChips = useMemo(
-    () => developerProgressChips(item.makerRun || {}),
     [item.makerRun]
   );
   const status = mergeDeveloperPipelineStatus(persistedStatus, liveStatus);
@@ -603,7 +596,7 @@ export function DeveloperClientCard({
   }
 
   async function onProgressClick(chipId: string) {
-    const chip = progressChips.find((row) => row.id === chipId);
+    const chip = DEVELOPER_PROGRESS_CHIPS.find((row) => row.id === chipId);
     if (!chip) return;
     const resolved = resolveDeveloperProgressClick(chip, chipStatus);
     if (resolved.type === 'draft') {
@@ -883,7 +876,7 @@ export function DeveloperClientCard({
     const liveRun = liveStatus?.run && typeof liveStatus.run === 'object' ? liveStatus.run : null;
     return (
       <div className="flex flex-wrap gap-1.5">
-        {progressChips.map((chip) => {
+        {DEVELOPER_PROGRESS_CHIPS.map((chip) => {
           const resolved = resolveDeveloperProgressClick(chip, chipStatus);
           const visual = chipVisual(chip, resolved);
           const queueState = chip.target ? chipQueueState(chip.target) : '';
@@ -1513,8 +1506,7 @@ export function DeveloperClientCard({
   return (
     <div className="grid gap-3 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
       {card}
-      <div className="min-w-0 space-y-3">
-        {salesClientId ? <DeveloperSeoPanel salesClientId={salesClientId} authHeaders={developmentAuthHeaders()} canEdit={canWork || isAdmin} /> : null}
+      <div className="min-w-0">
         {salesClientId ? (
           <ClientNotesFeed
             salesClientId={salesClientId}

@@ -21,8 +21,7 @@
 // 1: batch 0 (delivery vocabulary). 2: tier service matrix, site plan contract, Maker events (service vocabulary, site plan, Maker events).
 // 3: automatic posts named blog.autoPosts, blog.localPosts read as an alias (feature tree).
 // 4: no id added, renamed or removed; the comments were reworded.
-// 5: settings keys for the legal texts switch and the SEO job gating, DataForSEO ledger and record pull switches.
-export const VOCAB_VERSION = 5;
+export const VOCAB_VERSION = 4;
 
 function freezeList(list) {
   return Object.freeze(list.map((item) => (item && typeof item === 'object' ? Object.freeze({ ...item }) : item)));
@@ -497,14 +496,6 @@ export const SETTINGS_KEYS = Object.freeze({
   // v2
   makerEvents: 'development.makerEvents',
   deliveryBackfill: 'migrations.deliveryBackfill',
-  // ---- legal texts
-  legalCatalogTexts: 'legal.catalogTexts.enabled',
-  // ---- end legal texts
-  // seo
-  seoJobGating: 'seo.jobGating.enabled',
-  seoJobGatingMode: 'seo.jobGating.mode',
-  seoDfsLedger: 'seo.dfsLedger.enabled',
-  seoRecordPull: 'seo.recordPull.enabled',
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);

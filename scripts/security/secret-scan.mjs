@@ -27,13 +27,11 @@
  * --redact and files: --allow-skipped, --max-file-bytes N (default 64 MiB).
  *
  * --workspace, --redact and files read UTF-8 and UTF-16 text (with a byte-order mark, or plainly
- * UTF-16 without one), and any other text without a NUL byte (a Windows-1252 or Latin-1 export)
- * byte for byte as Latin-1, so a redaction changes only the values it replaces. They list every
- * file or folder they did not read, with the reason: binary or another encoding, over the size
- * limit, a symbolic link or junction (never followed), .git, node_modules, an unreadable folder,
- * and for --redact env files and old .bak-redact copies. When anything was not read and nothing
- * was found, the exit status is 3, not 0: the folder is not proven clean. --allow-skipped accepts
- * the list (exit 0).
+ * UTF-16 without one). They list every file or folder they did not read, with the reason: binary
+ * or another encoding, over the size limit, a symbolic link or junction (never followed), .git,
+ * node_modules, an unreadable folder, and for --redact env files and old .bak-redact copies. When
+ * anything was not read and nothing was found, the exit status is 3, not 0: the folder is not
+ * proven clean. --allow-skipped accepts the list (exit 0).
  *
  * What counts as a finding (lib: secret-scan-lib.mjs):
  *   - credential patterns (private keys, sk-/AIza/ghp_/xkeysib-/sk_live_/whsec_/JWT service_role …);
@@ -738,7 +736,7 @@ const WALK_SKIP_DIRS = new Set(['.git', 'node_modules']);
 
 /** Why a file or folder under a --workspace or --redact folder was not read (printed after the path). */
 export const NOT_SCANNED_REASONS = Object.freeze({
-  binary: 'binary, or a text encoding the scan does not read (UTF-8, UTF-16 and single-byte text such as Latin-1 are read)',
+  binary: 'binary, or a text encoding the scan does not read (UTF-8 and UTF-16 are read)',
   'too-large': 'larger than the size limit (raise it with --max-file-bytes)',
   link: 'a symbolic link or junction, not followed (scan its target on its own)',
   'git-metadata': 'git metadata (run --history in that checkout and check its .git/config by hand)',
@@ -913,11 +911,10 @@ export function backupDirFor(root, backupRoot) {
  * --redact: the secrets in every text file under `dir`, replaced by <redacted:KEY>. A dry run
  * unless `apply`; with `apply` each changed file's original is kept once (never overwritten) as
  * <backupDirFor(dir)>/<path>.bak-redact, outside `dir`, so a later `git add` in `dir` cannot pick
- * it up. A file is written back in the encoding it was read in (UTF-8, UTF-16 with its byte-order
- * mark, or byte for byte for other text such as a Latin-1 export, where only the replaced values
- * change). A folder that holds one of `envSources` (the env files the known values come from) or
- * the backup root is refused: those files must keep their values. Any other env file (.env,
- * .env.*, production.env) is never changed either: it may be a live configuration.
+ * it up. A file is written back in the encoding it was read in (UTF-8, or UTF-16 with its
+ * byte-order mark). A folder that holds one of `envSources` (the env files the known values come
+ * from) or the backup root is refused: those files must keep their values. Any other env file
+ * (.env, .env.*, production.env) is never changed either: it may be a live configuration.
  * Returns { files: [{ path, redactions, backup }], notScanned: [{ path, reason }], backupDir } with
  * no values. notScanned lists every file and folder that was not read or not changed, with its
  * reason (NOT_SCANNED_REASONS): env files, old .bak-redact copies, binary and oversized files,
@@ -952,14 +949,12 @@ export function redactWorkspace(dir, ctx, { apply = false, backupRoot = defaultB
     if (!result.redactions.length) continue;
     const row = { path, redactions: result.redactions, backup: '' };
     if (apply) {
-      // Encoded before the backup is kept, so a text the encoding cannot write leaves no trace.
-      const bytes = encodeText(result.text, read);
       const backup = join(backupDir, `${path}.bak-redact`);
       if (!existsSync(backup)) {
         mkdirSync(dirname(backup), { recursive: true });
         writeFileSync(backup, readFileSync(abs));
       }
-      writeFileSync(abs, bytes);
+      writeFileSync(abs, encodeText(result.text, read));
       row.backup = backup;
     }
     files.push(row);

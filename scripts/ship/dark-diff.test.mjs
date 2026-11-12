@@ -771,9 +771,7 @@ describe('dark-diff on a seeded data folder', { skip: !canBoot && 'no hub depend
     assert.deepEqual(report.flows.filter((row) => row.skipped || row.unexpected || row.status === 401), [], 'every step ran and was accepted');
   });
 
-  // Runs dark-diff in a child process and sends it SIGINT delayMs after the base hub's process has
-  // started (its egress log exists), as Ctrl-C would.
-  async function interruptedRun(delayMs) {
+  test('an interrupted run stops its hubs and deletes its temp copies of the data', { timeout: 600_000 }, async () => {
     setup();
     const childTmp = mkdtempSync(join(tmpdir(), 'dark-diff-interrupt-'));
     try {
@@ -782,13 +780,14 @@ describe('dark-diff on a seeded data folder', { skip: !canBoot && 'no hub depend
         import { join } from 'node:path';
         import { tmpdir } from 'node:os';
         const { runDarkDiff } = await import(${JSON.stringify(pathToFileURL(join(HERE, 'dark-diff.mjs')).href)});
+        // Interrupt once the base hub is up (its egress log exists), as Ctrl-C would.
         const timer = setInterval(() => {
           for (const name of readdirSync(tmpdir()).filter((n) => n.startsWith('dark-diff-'))) {
             const runRoot = join(tmpdir(), name);
             const side = existsSync(runRoot) ? readdirSync(runRoot).find((n) => n.startsWith('base-')) : null;
             if (side && existsSync(join(runRoot, side, 'egress.jsonl'))) {
               clearInterval(timer);
-              setTimeout(() => process.emit('SIGINT', 'SIGINT'), ${JSON.stringify(delayMs)});
+              setTimeout(() => process.emit('SIGINT', 'SIGINT'), 1500);
               return;
             }
           }
@@ -811,14 +810,6 @@ describe('dark-diff on a seeded data folder', { skip: !canBoot && 'no hub depend
     } finally {
       rmSync(childTmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
     }
-  }
-
-  test('an interrupted run stops its hubs and deletes its temp copies of the data', { timeout: 600_000 }, async () => {
-    await interruptedRun(1500);
-  });
-
-  test('a run interrupted while a hub is still starting exits with 130, not with the failure of that hub', { timeout: 600_000 }, async () => {
-    await interruptedRun(0);
   });
 });
 

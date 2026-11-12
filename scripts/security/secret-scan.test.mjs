@@ -114,10 +114,7 @@ test('credential patterns are found, and fixture-looking values in allowlisted p
 });
 
 test('an allowlisted path does not hide a real-looking key', () => {
-  let real;
-  // A random key spells a fixture marker such as '1234' about once in 7000 draws; draw again then.
-  do real = `sk-ant-api03-${randomBytes(30).toString('base64url').replace(/[^A-Za-z0-9]/g, 'Q')}`;
-  while (lib.looksFake(real));
+  const real = `sk-ant-api03-${randomBytes(30).toString('base64url').replace(/[^A-Za-z0-9]/g, 'Q')}`;
   const allow = lib.normalizeAllowlist({ entries: [{ path: 'scripts/*.test.mjs', rule: 'anthropic-key', reason: 'fixture' }] });
   const findings = lib.scanLines('scripts/x.test.mjs', lib.splitLines(`const k = '${real}';`), { allowlist: allow });
   assert.equal(findings.length, 1);
