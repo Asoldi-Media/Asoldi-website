@@ -298,13 +298,14 @@ test('the cancellation and booking clauses state only what the system does', () 
 });
 
 // What the statistics clause must say for each field of a stored visit row. `ua` holds the device
-// class a client site sends (never a browser string from it), and `path` and `href` are the page address.
+// class a client site sends (never a browser string from it). `path` is the page address with its
+// query string; `href` is filled only on a click event and holds the address of the clicked link.
 const VISIT_ROW_WORDING = Object.freeze({
   type: /hendelsestype/,
   visitorId: /besøksnøkkel/,
   sessionId: /øktnøkkel/,
   path: /adressen til siden med eventuelle parametere/,
-  href: /adressen til siden med eventuelle parametere/,
+  href: /adressen til lenken som ble klikket/,
   referrer: /henvisningsadressen/,
   ua: /enhetstype \(datamaskin, mobil eller nettbrett\)/,
   host: /domenet/,
@@ -324,6 +325,9 @@ function visitRowWordingProblems(text, rowKeys) {
   if (!/lagres én rad/.test(text)) problems.push('does not say one row per event');
   if (/besøkstall/.test(text)) problems.push('calls the rows a count');
   if (!/ingen automatisk slettefrist/.test(text)) problems.push('no retention statement');
+  // Nothing removes the rows when hosting ends either, so the text may not give them an end point.
+  if (/så lenge Asoldi drifter nettsiden/.test(text)) problems.push('gives the rows an end point no code enforces');
+  else if (!/til Asoldi sletter dem manuelt, også etter at avtalen er avsluttet/.test(text)) problems.push('does not say the rows stay until deleted by hand');
   return problems;
 }
 
@@ -338,8 +342,9 @@ test('the statistics clause names every field of a stored visit row, one row per
     const store = await import('../data/client-analytics.js');
     const at = new Date().toISOString();
     // A client site sends server-made keys and the device class in `ua`; fields outside the list are dropped.
-    const sent = ['pageview', 'ping'].map((type) => ({
-      type, visitorId: 'a'.repeat(32), sessionId: 'b'.repeat(32), path: '/tjenester?kilde=x', href: 'https://kunde.example.com/tjenester?kilde=x',
+    // A click event carries the clicked link's path in `href`; the other events leave it empty.
+    const sent = ['pageview', 'cta'].map((type) => ({
+      type, visitorId: 'a'.repeat(32), sessionId: 'b'.repeat(32), path: '/tjenester?kilde=x', href: type === 'cta' ? '/bestill' : '',
       referrer: 'https://example.com/', ua: 'mobile', host: 'kunde.example.com', ms: 1500, at, ip: '203.0.113.9', email: 'person@example.com', name: 'Test Person',
     }));
     const events = guards.normalizeTrafficEvents(sent);
@@ -353,6 +358,8 @@ test('the statistics clause names every field of a stored visit row, one row per
   assert.deepEqual(files, [`${rows[0].at.slice(0, 10)}.jsonl`]);
   const keys = [...new Set(rows.flatMap((row) => Object.keys(row)))].sort();
   assert.deepEqual(keys, ['at', 'host', 'href', 'ms', 'path', 'referrer', 'sessionId', 'siteKey', 'type', 'ua', 'visitorId']);
+  // The page address with its query string is in `path`; `href` is the clicked link, on the click row only.
+  assert.deepEqual(rows.map((row) => [row.type, row.path, row.href]), [['pageview', '/tjenester?kilde=x', ''], ['cta', '/tjenester?kilde=x', '/bestill']]);
   // No name, e-mail address or IP address reaches a row.
   assert.doesNotMatch(JSON.stringify(rows), /203\.0\.113\.9|person@example\.com|Test Person/);
 
@@ -372,9 +379,17 @@ test('the statistics clause names every field of a stored visit row, one row per
   // Negative controls: the earlier sentence, and a row with a field the text does not describe.
   const earlier = 'Nettsidene Asoldi leverer, teller besøk uten informasjonskapsler og uten lagring i besøkendes nettleser. Vi lagrer et daglig anonymisert besøkstall med enhetstype og side, ikke en person.';
   const earlierProblems = visitRowWordingProblems(earlier, keys);
-  for (const expected of ['field not described: visitorId', 'field not described: sessionId', 'field not described: referrer', 'does not say one row per event', 'calls the rows a count', 'no retention statement']) {
+  for (const expected of ['field not described: visitorId', 'field not described: sessionId', 'field not described: href', 'field not described: referrer', 'does not say one row per event', 'calls the rows a count', 'no retention statement']) {
     assert.ok(earlierProblems.includes(expected), expected);
   }
+  // The wording that named the page address for both fields, and gave the rows an end point, also fails.
+  const previous = text
+    .replace(', ved et klikk på en lenke adressen til lenken som ble klikket', '')
+    .replace('Radene blir liggende til Asoldi sletter dem manuelt, også etter at avtalen er avsluttet.', 'De oppbevares så lenge Asoldi drifter nettsiden.');
+  assert.deepEqual(visitRowWordingProblems(previous, keys), ['field not described: href', 'gives the rows an end point no code enforces']);
+  // Nothing else that handles the rows on the hub deletes them either.
+  const hubSources = ['../lib/site-public-guards.js', '../lib/analytics-traffic.js'].map((file) => read(new URL(file, import.meta.url), 'utf8')).join('\n');
+  assert.doesNotMatch(hubSources, /\b(rmSync|unlinkSync|rmdirSync)\b/);
   assert.deepEqual(visitRowWordingProblems(text, [...keys, 'ip']), ['stored field without wording: ip']);
 });
 
@@ -392,6 +407,25 @@ test('the booking link, remembered embed and CMS retention clauses carry the per
   const analytics = textOf('privacy.siteAnalytics');
   assert.match(analytics, /huske valget, lagres det i en nødvendig informasjonskapsel i 180 dager/);
   assert.match(analytics, /lastes da uten nytt klikk/);
+  // Only cross-origin frames wait for a click; the text may not promise that for other third-party content.
+  const embedScopeProblems = (value) => [
+    ...(/Innebygde rammer \(iframe\) fra tredjeparter/.test(value) ? [] : ['click-to-load is not limited to frames']),
+    ...(/Før klikket sendes ingen opplysninger til tredjeparten/.test(value) ? ['says nothing reaches a third party before a click'] : []),
+    ...(/Annet innhold fra tredjeparter[^.]*lastes uten klikk/.test(value) ? [] : ['does not say other third-party content loads without a click']),
+  ];
+  assert.deepEqual(embedScopeProblems(analytics), []);
+  assert.deepEqual(
+    embedScopeProblems('Innebygd innhold fra tredjeparter, for eksempel kart og video, lastes først når den besøkende klikker for å vise det. Før klikket sendes ingen opplysninger til tredjeparten.'),
+    ['click-to-load is not limited to frames', 'says nothing reaches a third party before a click', 'does not say other third-party content loads without a click'],
+  );
+  // Orders and the other shop rows have no deletion period, so the text gives none.
+  const ordersProblems = (value) => [
+    ...(/Ordrer: ingen automatisk slettefrist/.test(value) ? [] : ['orders lack the no-period statement']),
+    ...(/Ordrer: regnskapsperioden/.test(value) ? ['orders are given a period'] : []),
+    ...(/timebestillinger, abonnementer, gavekort, anmeldelser og nettbutikkens endringslogg/.test(value) ? [] : ['shop rows not listed']),
+  ];
+  assert.deepEqual(ordersProblems(textOf('dpa.cmsRetention')), []);
+  assert.deepEqual(ordersProblems('Ordrer: regnskapsperioden. Adresse og kontaktopplysninger fjernes når en sletting krever det, men raden beholdes for regnskapet.'), ['orders lack the no-period statement', 'orders are given a period', 'shop rows not listed']);
   // Retention: Asoldi switches deletion on per site, form answers count from when they came in, and
   // the 30-day step rows are the ones without an address.
   const retention = textOf('dpa.cmsRetention');
