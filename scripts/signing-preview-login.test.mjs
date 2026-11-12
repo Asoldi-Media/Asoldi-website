@@ -3,6 +3,8 @@
 // on the signing seed runs that flow with the signing switch off, in shadow and in auto: off and
 // shadow sign the way the live site does, auto signs through the signer, and in every mode the login
 // is created or checked, the offer is accepted under that login and one pre-workshop mail goes out.
+// One card has no Møte or Tilbud tick, so it is signed only through the e-signature fast track, and
+// every signed card is linked to the login that signed it.
 //
 // node --test scripts/signing-preview-login.test.mjs
 import test from 'node:test';
@@ -112,6 +114,9 @@ for (const mode of ['off', 'shadow', 'auto']) {
     for (const [id, email] of [[C.preview, SIGNUP.email], [C.portalFresh, LOGIN.email]]) {
       assert.equal(client(id)?.progression?.contractSigned, true, `${id} is signed`);
       assert.equal(offer(id)?.acceptance?.email, email, `${id}'s offer is accepted under the preview login`);
+      // The live site links the sales card to the login that signed, so Solgt shows the user.
+      assert.ok(offer(id)?.acceptance?.userId, `${id}'s acceptance names the login`);
+      assert.equal(client(id)?.portalUserId, offer(id)?.acceptance?.userId, `${id}'s card is linked to that login`);
       const subject = buildPreWorkshopEmail({ businessName: client(id).businessName }, {}, { hasTime: false }).subject;
       const mails = run.outbox.filter((row) => (row.to || []).some((to) => String(to).toLowerCase() === `${id}@example.com`) && row.subject === subject);
       assert.equal(mails.length, 1, `${id} gets one pre-workshop mail`);

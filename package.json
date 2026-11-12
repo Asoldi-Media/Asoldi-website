@@ -53,7 +53,7 @@
     "test:signing": "node --test scripts/site-plan-apply.test.mjs scripts/signing-routes.test.mjs scripts/golive-callback-v2.test.mjs scripts/contract-signing-hooks.test.mjs scripts/contract-signing.test.mjs scripts/signing-dark.test.mjs",
     "test:release-suite": "node --test scripts/release-suite.test.mjs",
     "test:promotion": "node --test scripts/spine-mode.test.mjs scripts/promotion.test.mjs",
-    "test:spine-integration": "node --test scripts/delivery-steps-dark.test.mjs && node --test scripts/signing-preview-login.test.mjs",
+    "test:spine-integration": "node --test scripts/delivery-steps-dark.test.mjs && node --test scripts/signing-preview-login.test.mjs scripts/signed-contract-paths.test.mjs",
     "test:golden": "node --test scripts/golden/hub-golden.test.mjs"
   },
   "dependencies": {
