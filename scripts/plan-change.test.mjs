@@ -223,6 +223,51 @@ test('downgrade: tier 3 to tier 2 by a superadmin removes the shop lines and ope
   assert.equal(ownSite('pc-down').websitePlan, 'tier-2-seo');
   // Nothing was added, so no materials job.
   assert.equal(jobs.listJobs({ clientId: 'pc-down', fresh: true }).filter((job) => job.kind === 'materials_sync').length, 0);
+  // The change applied when it was recorded, which is the time the contract period clause names.
+  assert.ok(Date.parse(client.delivery.events.planChangedAt) > 0);
+  assert.equal(client.sitePlan.history.at(-1).to.tierId, 'tier-2-seo');
+});
+
+/** What a contract period clause says that the downgrade above contradicts or leaves out. */
+function downgradeWordingProblems(clause) {
+  const nbTerms = (clause?.nb?.terms || []).join(' ');
+  const nbContract = (clause?.nb?.contract || []).join(' ');
+  const en = (clause?.en?.contract || []).join(' ');
+  const problems = [];
+  if (/kan ikke nedgradere/i.test(`${nbTerms} ${nbContract}`) || /cannot downgrade/i.test(en)) problems.push('forbids a downgrade');
+  if (!/etter avtale med Asoldi/.test(nbTerms) || !/etter avtale med Asoldi/.test(nbContract) || !/by agreement with Asoldi/.test(en)) problems.push('no agreement with Asoldi');
+  if (!/gjelder fra Asoldi registrerer/.test(nbTerms) || !/gjelder fra Asoldi registrerer/.test(nbContract) || !/from the time Asoldi records the change/.test(en)) problems.push('no effective time');
+  if (!/fjerner dem fra nettsiden/.test(nbTerms) || !/fjernes da fra nettsiden/.test(nbContract) || !/removed from the website/.test(en)) problems.push('no removal of the higher-tier functions');
+  return problems;
+}
+
+test('the contract period clause allows the downgrade the system performs, by agreement and from the time it is recorded', async () => {
+  const legal = await import('../lib/legal/catalog.js');
+  const render = await import('../lib/legal/render.js');
+  const term = legal.declaredClauses().find((clause) => clause.id === 'general.term');
+  assert.deepEqual(downgradeWordingProblems(term), []);
+  // The plan change clause of the same section says the same thing.
+  const planChange = legal.declaredClauses().find((clause) => clause.id === 'general.planChange');
+  assert.match(planChange.nb.contract.join(' '), /Nedgradering og fjerning av tjenester avtales med Asoldi/);
+  // No rendered contract line of any tier, in either language, and no terms text forbids a downgrade.
+  for (const tierId of ['tier-1-standard', 'tier-2-seo', 'tier-3-ecommerce']) {
+    for (const language of ['nb', 'en']) {
+      const lines = render.contractLinesForPlan({ tierId }, { language }).flatMap((block) => block.lines).join('\n');
+      assert.ok(lines.length > 0, `${tierId} ${language}`);
+      assert.doesNotMatch(lines, /kan ikke nedgradere|cannot downgrade/i, `${tierId} ${language}`);
+      assert.match(lines, language === 'nb' ? /Nedgradering til et lavere nivå skjer etter avtale med Asoldi/ : /A downgrade to a lower tier is made by agreement with Asoldi/, `${tierId} ${language}`);
+    }
+  }
+  assert.doesNotMatch(render.documentPlainText(render.renderDocument('vilkar', { retentionText: null })), /kan ikke nedgradere/i);
+  // Negative control: the earlier sentence fails the same check.
+  const earlier = {
+    nb: {
+      terms: ['Kunden kan ikke nedgradere til et lavere nivå etter at funksjonalitet fra et høyere nivå er lagt til.'],
+      contract: ['Kunden kan ikke nedgradere til et lavere nivå etter at funksjonalitet fra et høyere nivå er lagt til'],
+    },
+    en: { contract: ['The Client cannot downgrade to a lower tier once functionality from a higher tier has been added'] },
+  };
+  assert.deepEqual(downgradeWordingProblems(earlier), ['forbids a downgrade', 'no agreement with Asoldi', 'no effective time', 'no removal of the higher-tier functions']);
 });
 
 test('a superadmin override beats an older offer, survives a re-resolve, and a newer offer replaces it', async () => {
