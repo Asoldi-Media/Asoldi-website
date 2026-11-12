@@ -297,6 +297,145 @@ test('the cancellation and booking clauses state only what the system does', () 
   assert.doesNotMatch(booking, /slettes etter to måneder|bare et tilfeldig engangsnummer/);
 });
 
+// What the statistics clause must say for each field of a stored visit row. `ua` holds the device
+// class a client site sends (never a browser string from it). `path` is the page address with its
+// query string; `href` is filled only on a click event and holds the address of the clicked link.
+const VISIT_ROW_WORDING = Object.freeze({
+  type: /hendelsestype/,
+  visitorId: /besøksnøkkel/,
+  sessionId: /øktnøkkel/,
+  path: /adressen til siden med eventuelle parametere/,
+  href: /adressen til lenken som ble klikket/,
+  referrer: /henvisningsadressen/,
+  ua: /enhetstype \(datamaskin, mobil eller nettbrett\)/,
+  host: /domenet/,
+  ms: /tid på siden/,
+  at: /tidspunktet/,
+  siteKey: /nettsidens CMS og hos Asoldi/,
+});
+
+/** What a statistics text leaves out or gets wrong about the stored visit rows. */
+function visitRowWordingProblems(text, rowKeys) {
+  const problems = [];
+  for (const key of rowKeys) {
+    const wording = VISIT_ROW_WORDING[key];
+    if (!wording) problems.push(`stored field without wording: ${key}`);
+    else if (!wording.test(text)) problems.push(`field not described: ${key}`);
+  }
+  if (!/lagres én rad/.test(text)) problems.push('does not say one row per event');
+  if (/besøkstall/.test(text)) problems.push('calls the rows a count');
+  if (!/ingen automatisk slettefrist/.test(text)) problems.push('no retention statement');
+  // Nothing removes the rows when hosting ends either, so the text may not give them an end point.
+  if (/så lenge Asoldi drifter nettsiden/.test(text)) problems.push('gives the rows an end point no code enforces');
+  else if (!/til Asoldi sletter dem manuelt, også etter at avtalen er avsluttet/.test(text)) problems.push('does not say the rows stay until deleted by hand');
+  return problems;
+}
+
+test('the statistics clause names every field of a stored visit row, one row per event, and how long rows are kept', async () => {
+  const { readdirSync: ls, readFileSync: read } = await import('node:fs');
+  const { getPersistentDataDir } = await import('../data/storage-path.js');
+  const dataDir = getPersistentDataDir();
+  let rows;
+  let files;
+  {
+    const guards = await import('../lib/site-public-guards.js');
+    const store = await import('../data/client-analytics.js');
+    const at = new Date().toISOString();
+    // A client site sends server-made keys and the device class in `ua`; fields outside the list are dropped.
+    // A click event carries the clicked link's path in `href`; the other events leave it empty.
+    const sent = ['pageview', 'cta'].map((type) => ({
+      type, visitorId: 'a'.repeat(32), sessionId: 'b'.repeat(32), path: '/tjenester?kilde=x', href: type === 'cta' ? '/bestill' : '',
+      referrer: 'https://example.com/', ua: 'mobile', host: 'kunde.example.com', ms: 1500, at, ip: '203.0.113.9', email: 'person@example.com', name: 'Test Person',
+    }));
+    const events = guards.normalizeTrafficEvents(sent);
+    assert.equal(store.appendTrafficEvents('legal-traffic-site', events), 2);
+    const dir = join(dataDir, 'client-analytics-traffic', 'legal-traffic-site');
+    files = ls(dir);
+    rows = files.flatMap((name) => read(join(dir, name), 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line)));
+  }
+  // One row per event in a file per day: not a daily count.
+  assert.equal(rows.length, 2);
+  assert.deepEqual(files, [`${rows[0].at.slice(0, 10)}.jsonl`]);
+  const keys = [...new Set(rows.flatMap((row) => Object.keys(row)))].sort();
+  assert.deepEqual(keys, ['at', 'host', 'href', 'ms', 'path', 'referrer', 'sessionId', 'siteKey', 'type', 'ua', 'visitorId']);
+  // The page address with its query string is in `path`; `href` is the clicked link, on the click row only.
+  assert.deepEqual(rows.map((row) => [row.type, row.path, row.href]), [['pageview', '/tjenester?kilde=x', ''], ['cta', '/tjenester?kilde=x', '/bestill']]);
+  // No name, e-mail address or IP address reaches a row.
+  assert.doesNotMatch(JSON.stringify(rows), /203\.0\.113\.9|person@example\.com|Test Person/);
+
+  const clause = declaredClauses().find((entry) => entry.id === 'privacy.siteAnalytics');
+  const text = clause.nb.terms.join(' ');
+  assert.deepEqual(visitRowWordingProblems(text, keys), []);
+  assert.match(text, /uten informasjonskapsler og uten lagring i besøkendes nettleser/);
+  assert.match(text, /byttes hver dag/);
+  assert.match(text, /inneholder ikke navn, e-postadresse eller IP-adresse/);
+  // The store has no code that deletes a day file, which is what "no automatic deletion" says. When a
+  // retention job is added, this fails and the clause gets the real period.
+  const source = read(new URL('../data/client-analytics.js', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /\b(rmSync|unlinkSync|rmdirSync|unlink|rm)\b/);
+  // The rendered privacy policy carries the same text.
+  assert.deepEqual(visitRowWordingProblems(render.documentPlainText(render.renderDocument('personvern', { retentionText: null })), keys), []);
+
+  // Negative controls: the earlier sentence, and a row with a field the text does not describe.
+  const earlier = 'Nettsidene Asoldi leverer, teller besøk uten informasjonskapsler og uten lagring i besøkendes nettleser. Vi lagrer et daglig anonymisert besøkstall med enhetstype og side, ikke en person.';
+  const earlierProblems = visitRowWordingProblems(earlier, keys);
+  for (const expected of ['field not described: visitorId', 'field not described: sessionId', 'field not described: href', 'field not described: referrer', 'does not say one row per event', 'calls the rows a count', 'no retention statement']) {
+    assert.ok(earlierProblems.includes(expected), expected);
+  }
+  // The wording that named the page address for both fields, and gave the rows an end point, also fails.
+  const previous = text
+    .replace(', ved et klikk på en lenke adressen til lenken som ble klikket', '')
+    .replace('Radene blir liggende til Asoldi sletter dem manuelt, også etter at avtalen er avsluttet.', 'De oppbevares så lenge Asoldi drifter nettsiden.');
+  assert.deepEqual(visitRowWordingProblems(previous, keys), ['field not described: href', 'gives the rows an end point no code enforces']);
+  // Nothing else that handles the rows on the hub deletes them either.
+  const hubSources = ['../lib/site-public-guards.js', '../lib/analytics-traffic.js'].map((file) => read(new URL(file, import.meta.url), 'utf8')).join('\n');
+  assert.doesNotMatch(hubSources, /\b(rmSync|unlinkSync|rmdirSync)\b/);
+  assert.deepEqual(visitRowWordingProblems(text, [...keys, 'ip']), ['stored field without wording: ip']);
+});
+
+test('the booking link, remembered embed and CMS retention clauses carry the periods and rules the code uses', async () => {
+  const booking = await import('../lib/client-booking.js');
+  const day = 24 * 60 * 60 * 1000;
+  const clauses = declaredClauses();
+  const textOf = (id) => clauses.find((clause) => clause.id === id).nb.terms.join(' ');
+  // The link's life and the ledger's keep time are the code's constants.
+  assert.equal(booking.BOOKING_TOKEN_TTL_MS, 21 * day);
+  assert.equal(booking.BOOKING_LEDGER_KEEP_MS, 60 * day);
+  assert.match(textOf('privacy.booking'), /utløper etter tre uker/);
+  assert.match(textOf('privacy.booking'), /tidligst 60 dager etter at lenken utløp/);
+  // A remembered embed choice is a cookie, so the text says so and does not claim every embed waits for a click.
+  const analytics = textOf('privacy.siteAnalytics');
+  assert.match(analytics, /huske valget, lagres det i en nødvendig informasjonskapsel i 180 dager/);
+  assert.match(analytics, /lastes da uten nytt klikk/);
+  // Only cross-origin frames wait for a click; the text may not promise that for other third-party content.
+  const embedScopeProblems = (value) => [
+    ...(/Innebygde rammer \(iframe\) fra tredjeparter/.test(value) ? [] : ['click-to-load is not limited to frames']),
+    ...(/Før klikket sendes ingen opplysninger til tredjeparten/.test(value) ? ['says nothing reaches a third party before a click'] : []),
+    ...(/Annet innhold fra tredjeparter[^.]*lastes uten klikk/.test(value) ? [] : ['does not say other third-party content loads without a click']),
+  ];
+  assert.deepEqual(embedScopeProblems(analytics), []);
+  assert.deepEqual(
+    embedScopeProblems('Innebygd innhold fra tredjeparter, for eksempel kart og video, lastes først når den besøkende klikker for å vise det. Før klikket sendes ingen opplysninger til tredjeparten.'),
+    ['click-to-load is not limited to frames', 'says nothing reaches a third party before a click', 'does not say other third-party content loads without a click'],
+  );
+  // Orders and the other shop rows have no deletion period, so the text gives none.
+  const ordersProblems = (value) => [
+    ...(/Ordrer: ingen automatisk slettefrist/.test(value) ? [] : ['orders lack the no-period statement']),
+    ...(/Ordrer: regnskapsperioden/.test(value) ? ['orders are given a period'] : []),
+    ...(/timebestillinger, abonnementer, gavekort, anmeldelser og nettbutikkens endringslogg/.test(value) ? [] : ['shop rows not listed']),
+  ];
+  assert.deepEqual(ordersProblems(textOf('dpa.cmsRetention')), []);
+  assert.deepEqual(ordersProblems('Ordrer: regnskapsperioden. Adresse og kontaktopplysninger fjernes når en sletting krever det, men raden beholdes for regnskapet.'), ['orders lack the no-period statement', 'orders are given a period', 'shop rows not listed']);
+  // Retention: Asoldi switches deletion on per site, form answers count from when they came in, and
+  // the 30-day step rows are the ones without an address.
+  const retention = textOf('dpa.cmsRetention');
+  assert.match(retention, /når Asoldi har slått det på for nettsiden etter å ha lest rapporten/);
+  assert.match(retention, /sikkerhetskopi før den første slettingen/);
+  assert.match(retention, /Skjemasvar: to år etter at de kom inn/);
+  assert.match(retention, /30 dager for rader uten e-postadresse/);
+  assert.doesNotMatch(retention, /når kunden slår det på|Henvendelser og skjemasvar: to år etter siste aktivitet|Rader uten samtykke/);
+});
+
 test('legal-render --write refuses to change an archive that exists with other texts unless it is marked unreleased', async () => {
   const { cpSync, mkdtempSync: mk, rmSync, existsSync } = await import('node:fs');
   const archive = await import('../lib/legal/archive.js');
