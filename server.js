@@ -13032,7 +13032,25 @@ const cmsFeatures = registerCmsFeatureRoutes(app, {
   makerAuth: requireMakerHost('jobs', { message: 'Unauthorized' }),
 });
 registerAiAdminRoutes(app, { adminAuth, sales });
-await registerOptionalRoutes(app, { adminAuth, makerAuth, salesAuth, developmentAuth, salesOrDevelopmentAuth, clientAuth, sales, hub, salesOffers, getDataDir: getPersistentDataDir });
+// No await here, or anywhere else at the top level of this file or of a module it imports: the
+// host loads server.js with require(), which refuses a module graph with a top-level await
+// (scripts/server-require-load.test.mjs). Every optional route is registered before this call
+// returns, so the routes below it and the page fallback keep their place.
+const optionalRoutes = registerOptionalRoutes(app, { adminAuth, makerAuth, salesAuth, developmentAuth, salesOrDevelopmentAuth, clientAuth, sales, hub, salesOffers, getDataDir: getPersistentDataDir });
+// The start-up work the optional route modules returned (loading a store, a registry) used to be
+// awaited before the rest of this file ran. Now the file runs to the end and listens at once, and
+// the requests that arrive before that work has finished wait for it, as do the background jobs.
+// Once it has finished, app.handle is Express's own again. A failure stops the hub, as before.
+const expressHandle = app.handle;
+const optionalRoutesStarted = optionalRoutes.ready.then(() => {
+  app.handle = expressHandle;
+}, (error) => {
+  console.error('[boot] an optional route module could not start:', error);
+  process.exit(1);
+});
+app.handle = (req, res, next) => {
+  optionalRoutesStarted.then(() => expressHandle.call(app, req, res, next));
+};
 
 // --- Hub API (public: site config for client CMS)
 // The site key is public, so a key lookup gets the public fields only. The client admin contact and
@@ -21739,7 +21757,7 @@ server.listen(PORT, hubListenHost(), () => {
   console.log(describeProxyTimeouts(server));
   console.log(`[audio] persistent=${MYPHONER_AUDIO_DIR} extra=${extraMyphonerAudioDirs().join('|') || '(none)'}`);
   setImmediate(() => {
-    ensureData().then(() => {
+    optionalRoutesStarted.then(() => ensureData()).then(() => {
       startBackgroundJobs();
     }).catch((err) => {
       console.error('Failed to init admin:', err);
