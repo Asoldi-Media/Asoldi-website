@@ -158,7 +158,7 @@ export const Vilkar = () => {
           items={[
             'Minste bindingstid er 6 måneder.',
             'Oppsigelse krever 15 dagers varsel, og kunden betaler for hele oppsigelsesmåneden.',
-            'Kunden kan ikke nedgradere til et lavere nivå etter at funksjonalitet fra et høyere nivå er lagt til.',
+            'Kunden kan gå ned til et lavere nivå etter avtale med Asoldi. Endringen gjelder fra Asoldi registrerer den. Funksjonene som bare hører til det høyere nivået, slås da av, og en utvikler fjerner dem fra nettsiden.',
             'Kunden eier varig innholdet på nettsiden, designet og eventuell kode utviklet spesifikt for kunden. Eierskapet går ikke automatisk tilbake til Asoldi etter oppsigelse eller etter en frist.',
             'Innen syv (7) virkedager etter at abonnementet er avsluttet, gir Asoldi kunden tilgang til nettsidefilene slik siden står ved opphør (et øyeblikksbilde av den levende siden).',
             'Dersom kunden ønsker at Asoldi skal sette opp siden hos en ny vert eller på et nytt domene, kan kunden engasjere oss til det. Arbeidet faktureres etter gebyret for hosting-oppsett / overføring som til enhver tid er oppgitt på asoldi.com. Beløpet skrives ikke inn her fordi det kan endres.',

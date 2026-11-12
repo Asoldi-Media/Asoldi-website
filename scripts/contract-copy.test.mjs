@@ -75,6 +75,22 @@ test('the agreed keywords text is added to the SEO lines when the SEO record pro
   assert.equal(render.contractLinesForPlan('tier-1-standard', { agreedKeywordsText: 'x' }).some((block) => block.lines.includes('x')), false);
 });
 
+test('switch off: a downgrade is by agreement, in both languages, on an unsent contract and on the terms page', () => {
+  setSwitch(false);
+  const nb = 'Kunden kan gå ned til et lavere nivå etter avtale med Asoldi. Endringen gjelder fra Asoldi registrerer den. Funksjonene som bare hører til det høyere nivået, slås da av, og en utvikler fjerner dem fra nettsiden.';
+  const en = 'The Client can move down to a lower tier by agreement with Asoldi. The change applies from the time Asoldi records it. The functions that belong only to the higher tier are then switched off, and a developer removes them from the website.';
+  assert.ok(contractCopy('nb').durationTerms.includes(nb));
+  assert.ok(contractCopy('en').durationTerms.includes(en));
+  assert.doesNotMatch(contractCopy('nb').durationTerms.join('\n'), /kan ikke nedgradere|cannot downgrade/i);
+  assert.doesNotMatch(contractCopy('en').durationTerms.join('\n'), /kan ikke nedgradere|cannot downgrade/i);
+  const unsent = Object.entries(darkSurface.FIXTURE_OFFERS).find(([, offer]) => offer.status !== 'sent' && offer.contractLanguage !== 'en');
+  assert.ok(unsent);
+  assert.match(contractHtmlForOffer(unsent[1], CLIENT), new RegExp(nb.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  const vilkar = readFileSync(new URL('../app/pages/legal/Vilkar.tsx', import.meta.url), 'utf8');
+  assert.match(vilkar, new RegExp(nb.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.doesNotMatch(vilkar, /kan ikke nedgradere/);
+});
+
 test('negative control: with the switch off the contracts, copy, pricing cards, offer letters and quote offers equal the baseline', async () => {
   setSwitch(false);
   setOfferTierIncludesResolver((tierId) => catalogOfferIncludes(tierId));
@@ -368,7 +384,8 @@ test('the legacy legal pages and pricing data are unchanged; the catalog pages f
     const bytes = Buffer.from(content, 'utf8');
     return createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`), bytes])).digest('hex');
   };
-  assert.equal(blob('../app/pages/legal/Vilkar.tsx'), '562bce444a4d07f0f3313b8b2284bae10da054d1');
+  // The terms page includes the agreed downgrade sentence, so this hash moves with that sentence.
+  assert.equal(blob('../app/pages/legal/Vilkar.tsx'), '8838c07245f9a3b834a8b16aa5e1a09c10d1e121');
   assert.equal(blob('../app/pages/legal/Personvern.tsx'), '76efae513dd2ee7b0cf52b2d002918bdb94c0547');
   assert.equal(blob('../app/pages/legal/Databehandleravtale.tsx'), '4cf302bb71167b6e06b1a24f577df75b7b280b10');
   assert.equal(blob('../app/data/websiteProducts.ts'), 'b3c263cb5488ef47e683d6f7a09404d65e554ad9');
