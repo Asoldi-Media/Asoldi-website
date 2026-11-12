@@ -230,14 +230,14 @@ test('preview acceptance backfill marks Solgt (fastTrack: the client e-signed), 
     contractHtml: '<article>Avtale</article>',
   });
   offers.recordOfferAcceptance(offer.id, { email: 'preview@nordlys.no' });
-  const early = seedClient({ id: 'sale-preview-bf-early', contactEmail: 'early@nordlys.no' });
+  const early = seedClient({ id: 'sale-preview-bf-early', contactEmail: 'early@nordlys.test' });
   const earlyOffer = offers.upsertPortalOffer({
     salesClientId: early.id,
     salesOfferId: 'offer-preview-bf-early',
-    targetEmail: 'early@nordlys.no',
+    targetEmail: 'early@nordlys.test',
     contractHtml: '<article>Avtale</article>',
   });
-  offers.recordOfferAcceptance(earlyOffer.id, { email: 'early@nordlys.no' });
+  offers.recordOfferAcceptance(earlyOffer.id, { email: 'early@nordlys.test' });
 
   const dry = await backfillRecognizedSignedContracts({ apply: false });
   assert.ok(dry.results.some((row) => row.id === client.id && row.needsSold));
@@ -255,7 +255,7 @@ test('preview acceptance backfill marks Solgt (fastTrack: the client e-signed), 
 });
 
 test('an Asoldi invoice with Fakturadato/Forfallsdato and a bottom-right total is not a signed contract', async () => {
-  const client = seedClient({ id: 'sale-contract-invoice', contactEmail: 'faktura@nordlys.no' });
+  const client = seedClient({ id: 'sale-contract-invoice', contactEmail: 'faktura@nordlys.test' });
   sales.updateSalesClient(client.id, { progression: { meetingHeld: true, offerSent: true } });
   assert.equal(clientDateSignals('Fakturadato: 30.10.2026 Forfallsdato: 13.11.2026').clientDateFilled, false);
   const { default: PDFDocument } = await import('pdfkit');
@@ -273,7 +273,7 @@ test('an Asoldi invoice with Fakturadato/Forfallsdato and a bottom-right total i
   const result = await ingestInboxMessage({
     id: 'imap-invoice-1',
     mailbox: 'alexander@asoldi.com',
-    from: 'faktura@nordlys.no',
+    from: 'faktura@nordlys.test',
     subject: 'Betaling',
     text: 'Hei, fakturaen er betalt.',
     mailAt: '2026-10-10T12:00:00.000Z',
