@@ -324,10 +324,10 @@ function visitRowWordingProblems(text, rowKeys) {
   }
   if (!/lagres én rad/.test(text)) problems.push('does not say one row per event');
   if (/besøkstall/.test(text)) problems.push('calls the rows a count');
-  if (!/ingen automatisk slettefrist/.test(text)) problems.push('no retention statement');
-  // Nothing removes the rows when hosting ends either, so the text may not give them an end point.
+  if (!/Radene slettes automatisk etter 26 måneder/.test(text)) problems.push('no retention statement');
+  if (/ingen automatisk slettefrist/.test(text) || /sletter dem manuelt/.test(text)) problems.push('says the rows are never deleted automatically');
+  // The rows are deleted after 26 months, not when hosting ends, so that phrase is still wrong.
   if (/så lenge Asoldi drifter nettsiden/.test(text)) problems.push('gives the rows an end point no code enforces');
-  else if (!/til Asoldi sletter dem manuelt, også etter at avtalen er avsluttet/.test(text)) problems.push('does not say the rows stay until deleted by hand');
   return problems;
 }
 
@@ -369,24 +369,50 @@ test('the statistics clause names every field of a stored visit row, one row per
   assert.match(text, /uten informasjonskapsler og uten lagring i besøkendes nettleser/);
   assert.match(text, /byttes hver dag/);
   assert.match(text, /inneholder ikke navn, e-postadresse eller IP-adresse/);
-  // The store has no code that deletes a day file, which is what "no automatic deletion" says. When a
-  // retention job is added, this fails and the clause gets the real period.
-  const source = read(new URL('../data/client-analytics.js', import.meta.url), 'utf8');
-  assert.doesNotMatch(source, /\b(rmSync|unlinkSync|rmdirSync|unlink|rm)\b/);
+  const retentionJob = await import('../lib/analytics-traffic-retention.js');
+  const { BACKGROUND_JOBS } = await import('../lib/safe-mode.js');
+  assert.equal(retentionJob.TRAFFIC_RETENTION_MONTHS, 26);
+  assert.match(text, new RegExp(`${retentionJob.TRAFFIC_RETENTION_MONTHS} måneder`));
+  assert.ok(BACKGROUND_JOBS.analyticsTrafficRetention);
+  const { mkdirSync, writeFileSync, existsSync } = await import('node:fs');
+  const oldStamp = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth() - 28, 1));
+  const oldDay = oldStamp.toISOString().slice(0, 10);
+  const oldDir = join(dataDir, 'client-analytics-traffic', 'legal-traffic-archive');
+  mkdirSync(oldDir, { recursive: true });
+  const oldFile = join(oldDir, `${oldDay}.jsonl`);
+  writeFileSync(oldFile, '{"type":"pageview"}\n');
+  const todayFile = join(dataDir, 'client-analytics-traffic', 'legal-traffic-site', files[0]);
+  const ran = await retentionJob.runTrafficRetention({
+    now: Date.now(),
+    settings: { retention: { analyticsTraffic: { enabled: true, mode: 'auto', paused: null } } },
+    logger: { log() {}, error() {} },
+  });
+  assert.equal(ran.ran, true);
+  assert.equal(existsSync(oldFile), false);
+  assert.equal(existsSync(todayFile), true);
   // The rendered privacy policy carries the same text.
   assert.deepEqual(visitRowWordingProblems(render.documentPlainText(render.renderDocument('personvern', { retentionText: null })), keys), []);
 
-  // Negative controls: the earlier sentence, and a row with a field the text does not describe.
+  // Negative controls: the earlier sentence, the wording that said the rows are never deleted
+  // automatically, a text with the 26-month sentence removed, and a row with a field the text
+  // does not describe.
   const earlier = 'Nettsidene Asoldi leverer, teller besøk uten informasjonskapsler og uten lagring i besøkendes nettleser. Vi lagrer et daglig anonymisert besøkstall med enhetstype og side, ikke en person.';
   const earlierProblems = visitRowWordingProblems(earlier, keys);
   for (const expected of ['field not described: visitorId', 'field not described: sessionId', 'field not described: href', 'field not described: referrer', 'does not say one row per event', 'calls the rows a count', 'no retention statement']) {
     assert.ok(earlierProblems.includes(expected), expected);
   }
+  const keptByHand = text.replace(
+    'Radene slettes automatisk etter 26 måneder, både i CMS-et og hos Asoldi, også når avtalen er avsluttet før det.',
+    'De har ingen automatisk slettefrist. Radene blir liggende til Asoldi sletter dem manuelt, også etter at avtalen er avsluttet.',
+  );
+  assert.deepEqual(visitRowWordingProblems(keptByHand, keys), ['no retention statement', 'says the rows are never deleted automatically']);
+  const dropped = text.replace(' Radene slettes automatisk etter 26 måneder, både i CMS-et og hos Asoldi, også når avtalen er avsluttet før det.', '');
+  assert.deepEqual(visitRowWordingProblems(dropped, keys), ['no retention statement']);
   // The wording that named the page address for both fields, and gave the rows an end point, also fails.
   const previous = text
     .replace(', ved et klikk på en lenke adressen til lenken som ble klikket', '')
-    .replace('Radene blir liggende til Asoldi sletter dem manuelt, også etter at avtalen er avsluttet.', 'De oppbevares så lenge Asoldi drifter nettsiden.');
-  assert.deepEqual(visitRowWordingProblems(previous, keys), ['field not described: href', 'gives the rows an end point no code enforces']);
+    .replace('Radene slettes automatisk etter 26 måneder, både i CMS-et og hos Asoldi, også når avtalen er avsluttet før det.', 'De oppbevares så lenge Asoldi drifter nettsiden.');
+  assert.deepEqual(visitRowWordingProblems(previous, keys), ['field not described: href', 'no retention statement', 'gives the rows an end point no code enforces']);
   // Nothing else that handles the rows on the hub deletes them either.
   const hubSources = ['../lib/site-public-guards.js', '../lib/analytics-traffic.js'].map((file) => read(new URL(file, import.meta.url), 'utf8')).join('\n');
   assert.doesNotMatch(hubSources, /\b(rmSync|unlinkSync|rmdirSync)\b/);
@@ -433,6 +459,7 @@ test('the booking link, remembered embed and CMS retention clauses carry the per
   assert.match(retention, /sikkerhetskopi før den første slettingen/);
   assert.match(retention, /Skjemasvar: to år etter at de kom inn/);
   assert.match(retention, /30 dager for rader uten e-postadresse/);
+  assert.match(retention, /Besøksstatistikk: 26 måneder/);
   assert.doesNotMatch(retention, /når kunden slår det på|Henvendelser og skjemasvar: to år etter siste aktivitet|Rader uten samtykke/);
 });
 
