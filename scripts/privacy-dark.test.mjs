@@ -1,5 +1,6 @@
 // Negative controls for the privacy switches against the base commit (PRIVACY_DARK_REF, default
-// 859429c), extracted with `git archive` into build/ (ignored):
+// 9fceb2d, the live release this branch builds on: it stores two meeting fields on the sales card
+// that 859429c lacks), extracted with `git archive` into build/ (ignored):
 //   1. With every switch off, the Fireflies link and unlink paths (admin link, automatic link, purpose
 //      pick, admin unlink, move, exclude, backfill) and the ingest store paths (list page, full fetch,
 //      media write, failed fetch) write byte-identical data to the base commit and return the same.
@@ -18,7 +19,7 @@ import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const REF = String(process.env.PRIVACY_DARK_REF || '859429c').trim();
+const REF = String(process.env.PRIVACY_DARK_REF || '9fceb2d').trim();
 const flow = join(root, 'scripts', 'fixtures', 'privacy-link-flow.mjs');
 
 function baseSha() {
