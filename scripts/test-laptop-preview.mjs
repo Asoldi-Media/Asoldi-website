@@ -15,6 +15,7 @@ import {
   injectPreviewRobotsMeta,
   freezeRevolutionSliderHtml,
   injectSalesPreviewContractWidget,
+  renderSalesPreviewSigningEmbed,
   isPreviewCrawler,
   isPreviewProtectedPath,
   PREVIEW_ROBOTS_TAG,
@@ -157,6 +158,11 @@ assert.equal(
   '<p>no body</p><script src="/sales-preview-contract.js?v=kontrakt-8" data-sales-client-id="client-1" charset="utf-8" defer></script>'
 );
 assert.equal(injectSalesPreviewContractWidget('<p>x</p>', ''), '<p>x</p>');
+
+const signingEmbed = renderSalesPreviewSigningEmbed({ title: 'Bakeriet Pub og Kafe', clientId: 'client-1' });
+assert.match(signingEmbed, /src="\/sales-preview-contract\.js\?v=kontrakt-8"/);
+assert.match(signingEmbed, /data-sales-client-id="client-1"/);
+assert.match(signingEmbed, /Bakeriet Pub og Kafe/);
 
 const frozenRev = `<!DOCTYPE html><html><head></head><body>
 <rs-module id="rev_slider_5_1" class="revslider-initialised">
