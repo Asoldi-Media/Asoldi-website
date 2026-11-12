@@ -1035,7 +1035,7 @@ function FocusCard(props: FocusCardProps) {
                   type="button"
                   onClick={() => onOpenContract(client)}
                   className={HEADER_BUTTON}
-                  title={hasPreview ? 'Åpne preview med kontrakten allerede åpen' : 'Ingen preview publisert ennå'}
+                  title="Åpne signeringslenken"
                 >
                   <FileText size={13} />
                   Åpne kontraktlenke
