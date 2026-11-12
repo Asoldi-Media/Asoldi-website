@@ -386,6 +386,7 @@ import {
   injectPreviewRobotsMeta,
   freezeRevolutionSliderHtml,
   injectSalesPreviewContractWidget,
+  renderSalesPreviewSigningEmbed,
   isAllowedPreviewBridgeExportUrl,
   isPreviewCrawler,
   isPreviewProtectedPath,
@@ -401,6 +402,7 @@ import {
   isPreviewContractSlug,
   listSalesPreviewPagesCached,
   previewBaseFromRequestPath,
+  previewPathAllowsSigningWithoutSite,
   previewWantsEmbed,
   renderSalesPreviewChrome,
   routeFromPreviewRelativePath,
@@ -21051,6 +21053,27 @@ function refusePreviewCrawler(req, res) {
   return true;
 }
 
+function sendSalesPreviewSigningShell(req, res, client) {
+  applySalesPreviewSecurityHeaders(res);
+  const title = sanitizeText(client.businessName) || 'Kontrakt';
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  if (previewWantsEmbed(req)) {
+    res.send(renderSalesPreviewSigningEmbed({ title, clientId: client.id }));
+    return;
+  }
+  const previewBase = previewBaseFromRequestPath(req.path, client.id);
+  res.send(
+    renderSalesPreviewChrome({
+      previewBase,
+      pages: [{ route: '/', label: 'Hjem' }],
+      currentRoute: '/',
+      iframeSrc: embedSrcFromRequest(req),
+      title,
+    })
+  );
+}
+
 async function sendSalesPreviewFile(req, res, relativePath = '') {
   if (refusePreviewCrawler(req, res)) return;
   applySalesPreviewSecurityHeaders(res);
@@ -21072,6 +21095,10 @@ async function sendSalesPreviewFile(req, res, relativePath = '') {
     (resolvedStored && existsSync(path.join(resolvedStored, 'index.html')) && resolvedStored) ||
     (await salesPreview.resolveSalesPreviewRoot(client, SALES_IMPORTS_ROOT));
   if (!root) {
+    if (previewPathAllowsSigningWithoutSite(relativePath, req)) {
+      sendSalesPreviewSigningShell(req, res, client);
+      return;
+    }
     res.setHeader('Cache-Control', 'no-store');
     return res.status(404).send(
       'Preview not available. This sales client has a Maker run, but the website files are not on asoldi.com yet. Open the client run in Website Maker and click Update public website now.'

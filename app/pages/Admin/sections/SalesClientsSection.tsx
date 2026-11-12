@@ -2470,14 +2470,6 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
   }
 
   function openPublicContract(client: SalesClient) {
-    if (!clientHasPublicPreviewSnapshot(client)) {
-      setPreviewMissingToastId(client.id);
-      if (previewMissingTimerRef.current) window.clearTimeout(previewMissingTimerRef.current);
-      previewMissingTimerRef.current = window.setTimeout(() => {
-        setPreviewMissingToastId((current) => (current === client.id ? null : current));
-      }, 3000);
-      return;
-    }
     const href = getPublicClientContractUrl(client);
     if (!href) return;
     window.open(href, '_blank');
@@ -2628,7 +2620,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                     type="button"
                     onClick={() => openPublicContract(client)}
                     className={detailsBtn}
-                    title={clientHasPublicPreviewSnapshot(client) ? 'Åpne preview med kontrakten allerede åpen' : 'Ingen preview publisert ennå'}
+                    title="Åpne signeringslenken"
                   >
                     <FileText size={13} />
                     Åpne kontraktlenke
@@ -3956,10 +3948,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
             if (clientHasPublicPreviewSnapshot(client)) openPublicPreview(client);
             else setNotice(`${client.businessName || 'Kunden'} har ingen preview ennå.`);
           }}
-          onOpenContract={(client) => {
-            if (clientHasPublicPreviewSnapshot(client)) openPublicContract(client);
-            else setNotice(`${client.businessName || 'Kunden'} har ingen preview ennå.`);
-          }}
+          onOpenContract={(client) => openPublicContract(client)}
           onCopyContract={(client) => copyPublicContract(client)}
           onApproveLetter={(client) => void approveOfferLetter(client)}
           onAssign={(client, ownerId) => void assignClientOwner(client, ownerId)}
