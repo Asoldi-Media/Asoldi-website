@@ -144,6 +144,12 @@ export function defaultAutomationSettings() {
       changeRequestsMonths: 24,
       nurtureProofYears: 3,
       inboxSkipLogDays: 30,
+      // --- visit statistics retention
+      // Off: nothing runs and nothing is written. shadow: count day files older than 26 months
+      // and store a report, delete nothing. auto: delete those files (report only while safe mode is on).
+      // A paused switch ({reason}) counts as off.
+      analyticsTraffic: { enabled: false, mode: 'shadow', paused: null },
+      // --- end visit statistics retention
     },
     // privacy
     // privacy.archive: a copy of each linked transcript under transcript-archive/ (off: nothing written).
@@ -374,6 +380,9 @@ const ENUMS = {
   // --- cms fleet monitor
   'cmsFleet.monitor.mode': ['shadow', 'auto'],
   // --- end cms fleet monitor
+  // --- visit statistics retention
+  'retention.analyticsTraffic.mode': ['shadow', 'auto'],
+  // --- end visit statistics retention
 };
 
 const RANGES = {
@@ -456,6 +465,9 @@ const BOOLEANS = new Set([
   // --- site rekey
   'siteRekey.enabled',
   // --- end site rekey
+  // --- visit statistics retention
+  'retention.analyticsTraffic.enabled',
+  // --- end visit statistics retention
 ]);
 
 function knownPaths() {
@@ -688,6 +700,13 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
     else value.siteRekey.paused = paused;
   }
   // --- end site rekey
+  // --- visit statistics retention
+  if (isPlainObject(value.retention?.analyticsTraffic)) {
+    const paused = normalizePaused(value.retention.analyticsTraffic.paused, { by, now });
+    if (paused === undefined) fail('retention.analyticsTraffic.paused', 'Must be null or {reason}.');
+    else value.retention.analyticsTraffic.paused = paused;
+  }
+  // --- end visit statistics retention
   const tiers = value.publish?.staging?.tiers;
   if (!Array.isArray(tiers) || tiers.some((tier) => !TIER_IDS.includes(tier))) {
     fail('publish.staging.tiers', `Must list tier ids (${TIER_IDS.join(', ')}).`);

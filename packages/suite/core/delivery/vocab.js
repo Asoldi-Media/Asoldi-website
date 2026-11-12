@@ -490,6 +490,11 @@ export const SETTINGS_KEYS = Object.freeze({
   retentionChangeRequestsMonths: 'retention.changeRequestsMonths',
   retentionNurtureProofYears: 'retention.nurtureProofYears',
   retentionInboxSkipLogDays: 'retention.inboxSkipLogDays',
+  // --- visit statistics retention
+  retentionAnalyticsTraffic: 'retention.analyticsTraffic.enabled',
+  retentionAnalyticsTrafficMode: 'retention.analyticsTraffic.mode',
+  retentionAnalyticsTrafficPaused: 'retention.analyticsTraffic.paused',
+  // --- end visit statistics retention
   storageBudgetFiles: 'storage.budgetFiles',
   storageBudgetMb: 'storage.budgetMb',
   alertsTo: 'alerts.to',

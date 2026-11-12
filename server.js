@@ -39,6 +39,7 @@ import { registerDeliveryRoutes } from './lib/routes/delivery-routes.js';
 import { registerCmsFeatureRoutes } from './lib/routes/cms-feature-routes.js';
 import { registerOptionalRoutes } from './lib/routes/optional-routes.js';
 import { startEmailLogPruneLoop } from './lib/email-log.js';
+import { startTrafficRetentionLoop } from './lib/analytics-traffic-retention.js';
 import { websitePlanForNewSite } from './lib/cms-entitlements.js';
 import { runDeliverySchemaStartupSnapshot } from './lib/delivery-snapshots.js';
 import { chosenWebsiteTier, makerSitePlanPayload, websiteTierIdForClient } from './lib/site-plan.js';
@@ -21677,6 +21678,7 @@ function startBackgroundJobs() {
     inboxBot: () => startInboxBotLoop(),
     delivery: () => startDeliveryLoop({ sales, hub, listDeveloperOwnerOptions: () => listDeveloperOwnerOptions({ isAdmin: true }) }),
     emailLogPrune: () => startEmailLogPruneLoop(),
+    analyticsTrafficRetention: () => startTrafficRetentionLoop(),
     cmsEnforcement: () => startCmsFleetMonitor({ hub }),
     cmsWakePing: () => startCmsWakePing({ hub }),
     signedContractBackfill: () => runSignedContractBackfillOnce().catch((error) => {
