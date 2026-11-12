@@ -34,10 +34,10 @@ let seq = 0;
 function seed(stage = 'meeting', overrides = {}) {
   seq += 1;
   const id = `sale-intent-${seq}`;
-  const email = `kunde${seq}@intent-test.no`;
+  const email = `kunde${seq}@moss.test`;
   sales.createSalesClient({
     id,
-    businessName: `Intent Test ${seq} AS`,
+    businessName: `Moss ${seq} AS`,
     contactEmail: email,
     clientEmail: `intent${seq}@asoldi-kunde.no`,
     orgNumber: String(900000000 + seq),
@@ -590,16 +590,16 @@ test("common can't-come phrasings cancel the meeting, a plain no thanks walks aw
 });
 
 test('the reply goes to the address the client wrote from, with Reply-To the bot mailbox and our own subject', async () => {
-  const client = seed('meeting', { websiteEmail: 'post-reply@intent-test.no' });
-  const { sent } = await mail(client, 'Hva koster det?', { from: 'post-reply@intent-test.no' });
-  assert.equal(sent[0].to, 'post-reply@intent-test.no');
+  const client = seed('meeting', { websiteEmail: 'person-d36e7c@moss.test' });
+  const { sent } = await mail(client, 'Hva koster det?', { from: 'person-d36e7c@moss.test' });
+  assert.equal(sent[0].to, 'person-d36e7c@moss.test');
   assert.equal(sent[0].replyTo, 'alexander@asoldi.com');
   assert.equal(sent[0].subject, 'Re: Online møte med Asoldi');
   // No contact address on the card: the cancel still reaches the sender instead of voiding in silence.
-  const bare = seed('meeting', { contactEmail: '', websiteEmail: 'post-bare@intent-test.no' });
-  const cancelled = await mail(bare, 'Jeg kan dessverre ikke komme på møtet likevel.', { from: 'post-bare@intent-test.no' });
+  const bare = seed('meeting', { contactEmail: '', websiteEmail: 'person-728401@moss.test' });
+  const cancelled = await mail(bare, 'Jeg kan dessverre ikke komme på møtet likevel.', { from: 'person-728401@moss.test' });
   assert.equal(cancelled.card.agreedTime, false);
-  assert.equal(cancelled.sent[0].to, 'post-bare@intent-test.no');
+  assert.equal(cancelled.sent[0].to, 'person-728401@moss.test');
   assert.equal(lastRow(bare.id).status, 'applied');
 });
 
@@ -844,7 +844,7 @@ test('a newer side note never drops an older reschedule request in the same batc
 });
 
 test('an address on two cards is never acted on; a person sees it', async () => {
-  const shared = 'delt@intent-test.no';
+  const shared = 'person-e87da4@moss.test';
   const first = seed('signature', { contactEmail: shared });
   const second = seed('meeting', { contactEmail: shared });
   const matched = matchSalesClient(sales.getSalesClients(), { from: shared });
@@ -883,7 +883,7 @@ test('a reply that fails after the void is flagged for a person, never lost', as
 test('client files from an address that is not the card own are never filed on the card', async () => {
   const client = seed('meeting');
   const { result } = await mail(client, 'Her er logoen vår.', {
-    from: 'faktura@annet-firma.no',
+    from: 'faktura@hazel.test',
     attachments: [{ filename: 'logo.png', mimeType: 'image/png', buffer: Buffer.from('png-bytes') }],
     categorize: async (input) => ({ ...(await categorizeEmailHeuristic(input)), kind: 'client_elements', match: { businessName: client.businessName } }),
   });
@@ -895,7 +895,7 @@ test('client files from an address that is not the card own are never filed on t
 test('mail from another address than the card own is logged for a person, with its own label', async () => {
   const client = seed('meeting');
   const { sent, card } = await mail(client, 'Jeg kan ikke torsdag, kan vi ta fredag kl 13 i stedet?', {
-    from: 'kari.privat@gmail.com',
+    from: 'person-23f334@example.com',
     categorize: async (input) => ({ ...(await categorizeEmailHeuristic(input)), match: { email: client.contactEmail } }),
   });
   assert.equal(sent.length, 0);
@@ -940,7 +940,7 @@ test('a reply written one line per thought books the time on its own line', asyn
 test('a forwarded mail with no words of the client own still reaches the Kundedata facts filer', async () => {
   const client = seed('meeting');
   const calls = [];
-  await mail(client, '-------- Videresendt melding --------\nFra: Regnskap AS <post@regnskap.no>\nDato: 1. mars 2031\nEmne: Info til nettsiden\n\nHei Kari, her er info: Org.nr 987 654 321, adresse Storgata 1, 0155 Oslo. Åpningstider man-fre 09-17.', {
+  await mail(client, '-------- Videresendt melding --------\nFra: Regnskap AS <post@sage.test>\nDato: 1. mars 2031\nEmne: Info til nettsiden\n\nHei Kari, her er info: Org.nr 987 654 321, adresse Storgata 1, 0155 Oslo. Åpningstider man-fre 09-17.', {
     subject: 'VS: Info til nettsiden',
     interpretNote: async (args) => { calls.push(typeof args === 'string' ? args : JSON.stringify(args)); return { facts: {} }; },
   });

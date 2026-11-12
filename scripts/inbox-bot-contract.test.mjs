@@ -157,7 +157,7 @@ function envFor(client, { buffer, filename = CONTRACT_NAME, from, mailbox = 'ale
     message: {
       id,
       mailbox,
-      from: from || client?.contactEmail || 'ukjent@x.no',
+      from: from || client?.contactEmail || 'person-5fb108@oak.test',
       subject,
       text,
       mailAt: '2026-10-30T08:00:00.000Z',
@@ -279,12 +279,12 @@ test('emailLooksSigned: negations and questions do not count as signed', () => {
 
 test('signature area: the generated unsigned contract has no client writing, even with long names that wrap', async () => {
   for (const client of [
-    { businessName: 'Cafe Nordlys', orgNumber: '123456789', contactPerson: 'Ola Nord', contactEmail: 'a@b.no', businessAddress: 'Gate 1' },
+    { businessName: 'Cafe Nordlys', orgNumber: '123456789', contactPerson: 'Ola Nord', contactEmail: 'a@heather.test', businessAddress: 'Gate 1' },
     {
       businessName: 'Frisør Kasal AS med et veldig langt navn som går over flere linjer',
       orgNumber: '987654321',
       contactPerson: 'Kari Elisabeth Nordmann-Hansen von Trondheimsfjorden',
-      contactEmail: 'k@b.no',
+      contactEmail: 'k@heather.test',
       businessAddress: 'Storgata 100',
     },
     // A 104-character business name wraps "For kunden (…):" over four lines, across the Signatur line.
@@ -292,7 +292,7 @@ test('signature area: the generated unsigned contract has no client writing, eve
       businessName: 'Norsk Rørleggerservice Vedlikehold Og Rehabilitering Av Bad Og Kjøkken I Trøndelag Og Møre Og Romsdal AS',
       orgNumber: '987654321',
       contactPerson: 'Per',
-      contactEmail: 'p@b.no',
+      contactEmail: 'p@heather.test',
       businessAddress: 'Storgata 1',
     },
     // An 81-character signatory wraps "Signatur (…):" over three lines.
@@ -300,7 +300,7 @@ test('signature area: the generated unsigned contract has no client writing, eve
       businessName: 'Cafe Nordlys AS',
       orgNumber: '987654321',
       contactPerson: 'Kari Elisabeth Nordmann-Hansen von Trondheimsfjorden og Lars Petter Johansen-Berg',
-      contactEmail: 'k@b.no',
+      contactEmail: 'k@heather.test',
       businessAddress: 'Storgata 1',
     },
   ]) {
@@ -544,7 +544,7 @@ test('only the fresh reply and a subject the client wrote count as "says signed"
 test('not the client address: an AI-read hint, org or name match never marks Solgt', async () => {
   for (const via of ['hint', 'org', 'name']) {
     const client = seed(`live-via-${via}`, 'signature');
-    const result = await fileSignedContract(envFor(client, { buffer: await signedPdf(), id: `m-via-${via}`, from: 'regnskap@byra.no', via }));
+    const result = await fileSignedContract(envFor(client, { buffer: await signedPdf(), id: `m-via-${via}`, from: 'regnskap@laurel.test', via }));
     assert.equal(result.status, 'pending', via);
     assert.equal(result.reason, 'not-client-address', via);
     assert.equal(progressionOf(client.id).contractSigned, false, via);
@@ -638,7 +638,7 @@ test('ingest: an AI-read client address in a bookkeeper mail is a hint, not the 
   const result = await ingest({
     id: 'm-ingest-hint',
     mailbox: 'alexander@asoldi.com',
-    from: 'regnskap@byra.no',
+    from: 'regnskap@laurel.test',
     text: `Signert avtale for ${client.contactEmail}.`,
     attachments: [pdfPart(await signedPdf())],
   }, {
@@ -849,7 +849,7 @@ test('backfill uses the same gates: stage, verdict, signal, address and Asoldi c
   const menuClient = seed('bf-menu', 'meeting');
   await fileSignedContract(envFor(menuClient, { buffer: await pdfFromLines(['Meny', 'Pizza 189', 'Burger 169']), filename: 'meny.pdf', id: 'bf-m-menu' }));
   const bookkeeper = seed('bf-bookkeeper', 'signature');
-  await fileSignedContract(envFor(bookkeeper, { buffer: await signedPdf(), id: 'bf-m-bookkeeper', from: 'regnskap@byra.no', via: 'org' }));
+  await fileSignedContract(envFor(bookkeeper, { buffer: await signedPdf(), id: 'bf-m-bookkeeper', from: 'regnskap@laurel.test', via: 'org' }));
   // A legacy item without isAsoldiContract: a Word file with a "likely" verdict stays out.
   const legacy = seed('bf-legacy', 'signature');
   const legacyItem = saveSignedContract({

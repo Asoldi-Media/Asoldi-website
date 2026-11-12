@@ -221,7 +221,7 @@ test('decimals, prices, versions and deadlines are not meeting days or times', (
   const noise = [
     'Vi har 3.5 ansatte og omsetning på 2.3 mill',
     'Versjon 2.10 av appen funker ikke',
-    'Hei! Prisen er kr 1.500 per måned. Tlf 92 80 78 81. Storgata 12, 0155 Oslo',
+    'Hei! Prisen er kr 1.500 per måned. Tlf 90 00 04 70. Storgata 12, 0155 Oslo',
     'Hei, vi er åpne 24/7 og har 15 års erfaring',
   ];
   for (const text of noise) {

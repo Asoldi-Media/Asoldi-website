@@ -20,7 +20,7 @@ function assertTopPosted(text, fresh) {
 
 test('thread: probe rows E05, E06, E11 keep only the client words above the quote', () => {
   const e05 = 'Ok\n\nDen 04.11.2026 07:00, skrev Alexander:\nPåminnelse: møte torsdag 12. nov kl 10:00';
-  const e06 = 'Passer fint\n\nFra: Alexander <alexander@asoldi.com>\nSendt: onsdag 4. november 2026 07:00\nTil: kari@kunde.no\nEmne: Påminnelse: Online møte med Asoldi i morgen\n\nPåminnelse: møte torsdag 31. okt kl 10:00';
+  const e06 = 'Passer fint\n\nFra: Alexander <alexander@asoldi.com>\nSendt: onsdag 4. november 2026 07:00\nTil: person-817aa3@quince.test\nEmne: Påminnelse: Online møte med Asoldi i morgen\n\nPåminnelse: møte torsdag 31. okt kl 10:00';
   const e11 = 'Supert, det passer\n\n04.11.2026 kl. 07:00 skrev Alexander <alexander@asoldi.com>:\n\nVennlig påminnelse: møtet vårt starter i morgen. fredag 13. nov kl 10:00.';
   assertTopPosted(e05, 'Ok');
   assertTopPosted(e06, 'Passer fint');
@@ -38,8 +38,8 @@ test('thread: probe row E08 — a "Svar:" subject is our own subject and never r
 });
 
 test('thread: root-cause section 1 — Outlook CRLF headers (nb + en), one-line Outlook, Thunderbird numeric', () => {
-  const outlookNb = 'Passer fint\r\n\r\nFra: Alexander <alexander@asoldi.com>\r\nSendt: onsdag 4. november 2026 07:00\r\nTil: kari@kunde.no\r\nEmne: Påminnelse\r\n\r\nVennlig påminnelse: møtet vårt starter i morgen. torsdag 5. nov kl 10:00.';
-  const outlookEn = 'Sounds good\r\n\r\nFrom: Alexander <alexander@asoldi.com>\r\nSent: Wednesday, November 4, 2026 7:00 AM\r\nTo: kari@kunde.no\r\nSubject: Påminnelse\r\n\r\nmøtet starter torsdag 12. nov kl 10:00.';
+  const outlookNb = 'Passer fint\r\n\r\nFra: Alexander <alexander@asoldi.com>\r\nSendt: onsdag 4. november 2026 07:00\r\nTil: person-817aa3@quince.test\r\nEmne: Påminnelse\r\n\r\nVennlig påminnelse: møtet vårt starter i morgen. torsdag 5. nov kl 10:00.';
+  const outlookEn = 'Sounds good\r\n\r\nFrom: Alexander <alexander@asoldi.com>\r\nSent: Wednesday, November 4, 2026 7:00 AM\r\nTo: person-817aa3@quince.test\r\nSubject: Påminnelse\r\n\r\nmøtet starter torsdag 12. nov kl 10:00.';
   const outlookOneLine = 'Passer fint Fra: Alexander <alexander@asoldi.com> Sendt: onsdag 4. november 2026 07:00';
   const thunderNb = 'Ok\n\nDen 04.11.2026 07:00, skrev Alexander:\n> torsdag 12. nov kl 10:00';
   assert.equal(freshReplyText(outlookNb), 'Passer fint');
@@ -49,8 +49,8 @@ test('thread: root-cause section 1 — Outlook CRLF headers (nb + en), one-line 
 });
 
 test('thread: multi-line Outlook headers, also with blank lines between the header lines', () => {
-  assertTopPosted('OK\n\nFra: Alexander <a@asoldi.com>\n\nSendt: onsdag 4. november 2026 07:00\n\nTil: kari@kunde.no\n\nEmne: Møte\n\ntorsdag kl 10', 'OK');
-  assertTopPosted('Fint\n\nFrom: Alexander <a@asoldi.com>\nSent: Wednesday, November 4, 2026 7:00 AM\nTo: kari@kunde.no\nSubject: Meeting\n\nThursday 10:00', 'Fint');
+  assertTopPosted('OK\n\nFra: Alexander <a@asoldi.com>\n\nSendt: onsdag 4. november 2026 07:00\n\nTil: person-817aa3@quince.test\n\nEmne: Møte\n\ntorsdag kl 10', 'OK');
+  assertTopPosted('Fint\n\nFrom: Alexander <a@asoldi.com>\nSent: Wednesday, November 4, 2026 7:00 AM\nTo: person-817aa3@quince.test\nSubject: Meeting\n\nThursday 10:00', 'Fint');
   assertTopPosted('Fint\n\n________________________________\nFra: Alexander <a@asoldi.com>\nSendt: onsdag 4. november 2026 07:00', 'Fint');
   assertTopPosted('Takk\n\n*Fra:* Alexander <a@asoldi.com>\n*Sendt:* onsdag 4. november 2026 07:00', 'Takk');
   assertTopPosted('Takk\n\nFrom: Alexander <a@asoldi.com>\nDate: Wed, 4 Nov 2026 07:00\nSubject: Møte', 'Takk');
@@ -109,14 +109,14 @@ test('thread: a body that is only quote or forward reads as empty, never as the 
   assert.equal(freshReplyText(`Den 04.11.2026 07:00, skrev Alexander:\n${gtQuote()}`), '');
   assert.equal(freshReplyText(`Den 04.11.2026 07:00, skrev Alexander:\n${REMINDER}`), '');
   assert.equal(freshReplyText('Fra: Alexander <a@asoldi.com>\nSendt: onsdag 4. november 2026 07:00\nEmne: Påminnelse\n\ntorsdag kl 10'), '');
-  assert.equal(freshReplyText('-------- Videresendt melding --------\nFra: Regnskap <r@x.no>\nDato: 4. nov. 2026\nHer er logoen'), '');
+  assert.equal(freshReplyText('-------- Videresendt melding --------\nFra: Regnskap <r@oak.test>\nDato: 4. nov. 2026\nHer er logoen'), '');
   assert.equal(freshReplyText('-----Original Message-----\nFrom: A\nSent: B'), '');
   assert.equal(freshReplyText('Sendt fra min iPhone\n\n> kl 10'), '');
   assert.equal(freshReplyText(''), '');
   assert.equal(freshReplyText(undefined), '');
   // One-line (IMAP) text cannot show where a leading quote ends, so it reads as empty.
   assert.equal(freshReplyText('> Påminnelse: møte torsdag 12. nov kl 10:00 Kan ikke, beklager'), '');
-  assert.equal(freshReplyText('Fra: Regnskap <r@x.no> Sendt: onsdag 4. november 2026 07:00 Her er logoen'), '');
+  assert.equal(freshReplyText('Fra: Regnskap <r@oak.test> Sendt: onsdag 4. november 2026 07:00 Her er logoen'), '');
   assert.equal(inboxWriteBlob({ subject: 'Re: Påminnelse', text: '> torsdag kl 10' }).trim(), '');
 });
 
@@ -131,8 +131,8 @@ test('thread: unquoted text is returned whole; dates and "wrote" in the client t
 });
 
 test('thread: production one-line fixtures still cut before the quoted history', () => {
-  const cancelToday = 'Blir mailene mine mottatt? Jeg kan ikke idag likevel Kari Founder Tel.+47 92 80 78 81 ons. 14. okt. 2026 kl. 15:47 skrev Kari <kari@example.no>: > Hei igjen';
-  assert.equal(freshReplyText(cancelToday), 'Blir mailene mine mottatt? Jeg kan ikke idag likevel Kari Founder Tel.+47 92 80 78 81');
+  const cancelToday = 'Blir mailene mine mottatt? Jeg kan ikke idag likevel Kari Founder Tel.+47 90 00 04 70 ons. 14. okt. 2026 kl. 15:47 skrev Kari <kari@example.no>: > Hei igjen';
+  assert.equal(freshReplyText(cancelToday), 'Blir mailene mine mottatt? Jeg kan ikke idag likevel Kari Founder Tel.+47 90 00 04 70');
   const cancelTomorrow = 'Hei! Jeg har svart deg flere ganger at jeg må avlyse møtet i morgen. Mvh Marie 15. okt. 2026 kl. 12:00 skrev Alexander fra Asoldi <alexander@asoldi.com>: Påminnelse: Online møte';
   assert.equal(freshReplyText(cancelTomorrow), 'Hei! Jeg har svart deg flere ganger at jeg må avlyse møtet i morgen. Mvh Marie');
   const moved = 'Hei, Kan vi flytte møtet til onsdag neste uke istedet? Gjerne kl. 15. Med vennlig hilsen Ali ________________________________ Fra: Alexander (Google Kalender) <calendar-notification@google.com> Sendt: fredag 16. oktober 2026 13:59';
@@ -176,16 +176,16 @@ test('review: real footers and attributions still cut (own line, end of text, or
 });
 
 test('forwardedBodyText: the forwarded body below the header block, never a plain reply quote', () => {
-  const nb = '-------- Videresendt melding --------\nFra: Regnskap AS <post@regnskap.no>\nDato: 1. mars 2031\nEmne: Info til nettsiden\n\nHei Kari, her er info: Org.nr 987 654 321, adresse Storgata 1, 0155 Oslo.';
+  const nb = '-------- Videresendt melding --------\nFra: Regnskap AS <post@sage.test>\nDato: 1. mars 2031\nEmne: Info til nettsiden\n\nHei Kari, her er info: Org.nr 987 654 321, adresse Storgata 1, 0155 Oslo.';
   assert.equal(freshReplyText(nb), '');
   assert.equal(forwardedBodyText(nb), 'Hei Kari, her er info: Org.nr 987 654 321, adresse Storgata 1, 0155 Oslo.');
   assert.match(forwardedBodyText(flat(nb)), /Hei Kari, her er info: Org\.nr 987 654 321/);
   assert.doesNotMatch(forwardedBodyText(flat(nb)), /post@regnskap|Dato/);
-  const iphone = 'Sendt fra min iPhone\n\nStart på videresendt melding:\n\nFra: Regnskap <r@x.no>\nDato: 1. mars 2031 kl. 10:00:00 CET\nTil: Kari <k@x.no>\nEmne: Info\n\nHer er logoen og åpningstidene.';
+  const iphone = 'Sendt fra min iPhone\n\nStart på videresendt melding:\n\nFra: Regnskap <r@oak.test>\nDato: 1. mars 2031 kl. 10:00:00 CET\nTil: Kari <k@oak.test>\nEmne: Info\n\nHer er logoen og åpningstidene.';
   assert.equal(forwardedBodyText(iphone), 'Her er logoen og åpningstidene.');
-  const outlook = '________________________________\nFra: Regnskap <r@x.no>\nSendt: fredag 1. mars 2031 10:00\nTil: Kari\nEmne: Info\n\nÅpent man-fre 9-17';
+  const outlook = '________________________________\nFra: Regnskap <r@oak.test>\nSendt: fredag 1. mars 2031 10:00\nTil: Kari\nEmne: Info\n\nÅpent man-fre 9-17';
   assert.equal(forwardedBodyText(outlook), 'Åpent man-fre 9-17');
-  const gmail = '---------- Forwarded message ---------\nFrom: Alexander <alexander@asoldi.com>\nDate: Wed, 4 Nov 2026 at 07:00\nSubject: Påminnelse\nTo: <k@x.no>\n\n\nPåminnelse: møte torsdag kl 10';
+  const gmail = '---------- Forwarded message ---------\nFrom: Alexander <alexander@asoldi.com>\nDate: Wed, 4 Nov 2026 at 07:00\nSubject: Påminnelse\nTo: <k@oak.test>\n\n\nPåminnelse: møte torsdag kl 10';
   assert.equal(forwardedBodyText(gmail), 'Påminnelse: møte torsdag kl 10');
   // Our own mail forwarded back is skipped when the caller names its sender.
   assert.equal(forwardedBodyText(gmail, { ignoreFrom: /@asoldi\.com/i }), '');
@@ -214,8 +214,8 @@ test('subject: reply/forward prefixes are stripped, and a reply subject stays ou
 });
 
 test('callers: quote-only REQUEST is machine mail; the pipeline hands an empty fresh text to classify', async () => {
-  assert.equal(isAutomatedMail({ from: 'kari@kunde.no', calendarMethod: 'REQUEST', text: '-------- Videresendt melding --------\nFra: Google Kalender' }), true);
-  assert.equal(isAutomatedMail({ from: 'kari@kunde.no', calendarMethod: 'REQUEST', text: 'Passer dette?\n\n> invitasjon' }), false);
+  assert.equal(isAutomatedMail({ from: 'person-817aa3@quince.test', calendarMethod: 'REQUEST', text: '-------- Videresendt melding --------\nFra: Google Kalender' }), true);
+  assert.equal(isAutomatedMail({ from: 'person-817aa3@quince.test', calendarMethod: 'REQUEST', text: 'Passer dette?\n\n> invitasjon' }), false);
   const seen = [];
   const adapters = {
     isProcessed: () => false,
@@ -295,14 +295,14 @@ test('thread: a client line that starts with "Fra:" or "Dato:" is not a header b
     'Hei\nFra: mandag til fredag har vi åpent 10-18.',
   );
   // Real blocks: an address or name, a date with a year, a recipient, a subject (any two of them).
-  assertTopPosted('Ok\n\nFrån: Alexander <a@asoldi.com>\nSkickat: den 4 november 2026 07:00\nTill: kari@kunde.no\nÄmne: Möte\n\ntorsdag kl 10', 'Ok');
-  assertTopPosted('Ok\n\nVon: Alexander <a@asoldi.com>\nGesendet: Mittwoch, 4. November 2026 07:00\nAn: kari@kunde.no\nBetreff: Termin\n\ntorsdag kl 10', 'Ok');
-  assertTopPosted('Ok\n\nFrom: noreply\nSent: Wednesday, November 4, 2026 7:00 AM\nTo: kari@kunde.no\nSubject: Møte\n\ntorsdag kl 10', 'Ok');
+  assertTopPosted('Ok\n\nFrån: Alexander <a@asoldi.com>\nSkickat: den 4 november 2026 07:00\nTill: person-817aa3@quince.test\nÄmne: Möte\n\ntorsdag kl 10', 'Ok');
+  assertTopPosted('Ok\n\nVon: Alexander <a@asoldi.com>\nGesendet: Mittwoch, 4. November 2026 07:00\nAn: person-817aa3@quince.test\nBetreff: Termin\n\ntorsdag kl 10', 'Ok');
+  assertTopPosted('Ok\n\nFrom: noreply\nSent: Wednesday, November 4, 2026 7:00 AM\nTo: person-817aa3@quince.test\nSubject: Møte\n\ntorsdag kl 10', 'Ok');
   assertTopPosted('Ok\n\nFra: Alexander\nTil: Kari Nordmann; Ola\nEmne: Påminnelse\n\ntorsdag kl 10', 'Ok');
 });
 
 test('thread: a one-line Outlook quote glued to the reply ("…beklager!Fra: …") is cut at "Fra:" (recheck x21)', () => {
-  const quote = 'Fra: Alexander Asoldi <alexander@asoldi.com> Sendt: mandag 3. mars 2031 07:00 Til: kari@kunde.no Emne: Påminnelse: Online møte med Asoldi om 3 dager Hei Kari, Vennlig påminnelse: møtet vårt starter torsdag 6. mars kl 10:00.';
+  const quote = 'Fra: Alexander Asoldi <alexander@asoldi.com> Sendt: mandag 3. mars 2031 07:00 Til: person-817aa3@quince.test Emne: Påminnelse: Online møte med Asoldi om 3 dager Hei Kari, Vennlig påminnelse: møtet vårt starter torsdag 6. mars kl 10:00.';
   assert.equal(freshReplyText(`Det passer ikke likevel, beklager!${quote}`), 'Det passer ikke likevel, beklager!');
   assert.equal(freshReplyText(`Det passer ikke likevel, beklager!\n${quote}`), 'Det passer ikke likevel, beklager!');
   // HTML that lost the break can glue "Fra:" straight onto the sign-off.
