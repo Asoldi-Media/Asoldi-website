@@ -1,11 +1,13 @@
-import { existsSync, mkdirSync, readFileSync, appendFileSync, readdirSync } from 'fs';
-import { join } from 'path';
+import { existsSync, mkdirSync, readFileSync, appendFileSync, readdirSync, lstatSync, unlinkSync } from 'fs';
+import { isAbsolute, join, relative, resolve, sep } from 'path';
 import { getDataFilePath, getPersistentDataDir, writeDataJson } from './storage-path.js';
 import { siteKeysFor } from './hub.js';
 
 const SNAPSHOTS_FILE = 'client-maps-ranking.json';
 const GBP_FILE = 'client-google-business.json';
 const TRAFFIC_DIR = 'client-analytics-traffic';
+const TRAFFIC_RETENTION_REPORT = 'client-analytics-traffic-retention.json';
+const DAY_FILE_RE = /^(\d{4}-\d{2}-\d{2})\.jsonl$/;
 const COMMERCE_FILE = 'client-commerce-snapshots.json';
 
 function nowIso() {
@@ -41,6 +43,26 @@ function trafficDir() {
   const dir = join(getPersistentDataDir(), TRAFFIC_DIR);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   return dir;
+}
+
+/** The traffic folder path. Does not create it. */
+function trafficRoot() {
+  return join(getPersistentDataDir(), TRAFFIC_DIR);
+}
+
+/** True when the traffic folder is a real directory. A symbolic link or junction does not count. */
+function isRealDirectory(path) {
+  try {
+    const st = lstatSync(path);
+    return st.isDirectory() && !st.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/** Whether the traffic folder exists. Does not create it. */
+export function trafficFolderExists() {
+  return isRealDirectory(trafficRoot());
 }
 
 /**
@@ -212,6 +234,83 @@ function readTrafficEventsForKey(key, fromMs, toMs) {
     }
   }
   return out;
+}
+
+/**
+ * Every day file directly inside a site folder. Does not create the traffic folder, and does not
+ * follow a symbolic link or junction (lstat): anything that is not a real directory or a regular
+ * file is skipped, and every other file name is ignored.
+ */
+export function listTrafficDayFiles() {
+  const root = trafficRoot();
+  if (!isRealDirectory(root)) return [];
+  const out = [];
+  for (const site of readdirSync(root)) {
+    const siteDir = join(root, site);
+    if (!isRealDirectory(siteDir)) continue;
+    for (const name of readdirSync(siteDir)) {
+      const match = DAY_FILE_RE.exec(name);
+      if (!match) continue;
+      const path = join(siteDir, name);
+      let st;
+      try {
+        st = lstatSync(path);
+      } catch {
+        continue;
+      }
+      if (!st.isFile() || st.isSymbolicLink()) continue;
+      out.push({ siteDir, day: match[1], path, bytes: st.size });
+    }
+  }
+  return out;
+}
+
+/**
+ * Deletes one day file. The resolved path must sit inside the traffic folder, two levels down,
+ * and the name must be a UTC day. Anything else, including a directory or a link, is left in place.
+ */
+export function removeTrafficDayFile(entry) {
+  const raw = entry && typeof entry.path === 'string' ? entry.path : '';
+  if (!raw) return false;
+  const root = resolve(trafficRoot());
+  if (!isRealDirectory(root)) return false;
+  const file = resolve(raw);
+  const rel = relative(root, file);
+  if (!rel || rel.startsWith('..') || isAbsolute(rel)) return false;
+  const parts = rel.split(sep);
+  if (parts.length !== 2 || parts.some((part) => part === '' || part === '.' || part === '..')) return false;
+  if (!DAY_FILE_RE.test(parts[1])) return false;
+  let walked = root;
+  for (let i = 0; i < parts.length; i += 1) {
+    walked = join(walked, parts[i]);
+    let st;
+    try {
+      st = lstatSync(walked);
+    } catch {
+      return false;
+    }
+    if (st.isSymbolicLink()) return false;
+    const last = i === parts.length - 1;
+    if (!last && !st.isDirectory()) return false;
+    if (last && !st.isFile()) return false;
+  }
+  try {
+    unlinkSync(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Counts from the visit-statistics retention job. The path is `file` so the writer scan stays on the existing row. */
+export function writeTrafficRetentionReport(report) {
+  const file = join(getPersistentDataDir(), TRAFFIC_RETENTION_REPORT);
+  writeJson(file, report);
+}
+
+export function readTrafficRetentionReport() {
+  const file = join(getPersistentDataDir(), TRAFFIC_RETENTION_REPORT);
+  return readJson(file, null);
 }
 
 export function publicGbpStatus(row) {
