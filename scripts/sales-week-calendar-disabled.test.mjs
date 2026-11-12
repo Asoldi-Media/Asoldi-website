@@ -40,8 +40,13 @@ test('week calendar events load on open; free-busy stays off so Admin/Sales list
     server.indexOf("app.get('/api/admin/sales', salesAuth"),
     server.indexOf("app.post('/api/admin/sales/backfill-products'")
   );
-  assert.match(salesGet, /getGoogleCalendarStatus\(req\.salesUser\.accountKey\)/);
-  assert.equal(salesGet.includes('ensureSharedCalendarTokens'), false);
+  assert.match(salesGet, /ensureSharedCalendarTokens\(req\.salesUser\.accountKey\)/);
+  assert.equal(salesGet.includes('loadSalesCalendarWeek'), false);
+  const statusGet = server.slice(
+    server.indexOf("app.get('/api/admin/sales/google/status'"),
+    server.indexOf("app.get('/api/admin/sales/google/events'")
+  );
+  assert.match(statusGet, /ensureSharedCalendarTokens\(req\.salesUser\.accountKey\)/);
 
   const salesUi = readFileSync(join(root, 'app/pages/Admin/sections/SalesClientsSection.tsx'), 'utf8');
   assert.match(salesUi, /toggleHeaderPanel\('calendar'\)/);
@@ -209,6 +214,11 @@ test('Tildel selger assigns on select, stays on the tab, and does not toast', ()
   const nextRoute = server.slice(nextStart, server.indexOf("app.post('/api/admin/sales/:id/playbook'"));
   assert.match(nextRoute, /const assigned = isSalesRepAccountKey\(client\.ownerId\)/);
   assert.match(nextRoute, /notifyAttendees: assigned/);
+  const lookup = server.slice(server.indexOf('async function accountKeyToEmail'), server.indexOf('setCalendarAccountEmailLookup(accountKeyToEmail)'));
+  assert.match(lookup, /staffMailboxFromProfile/);
+  assert.match(lookup, /findStaffProfileForAccountKey/);
+  const syncFn = server.slice(server.indexOf('async function maybeSyncCalendar'), server.indexOf('async function maybeSyncNextActionCalendars'));
+  assert.match(syncFn, /ownerMailbox: ownerEmail/);
 });
 
 test('møte extras resend confirmation after Åpne preview without changing the time', () => {

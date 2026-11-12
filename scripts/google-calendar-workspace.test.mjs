@@ -89,6 +89,39 @@ test('oauth token for the same mailbox is copied onto the sales key', () => {
   assert.equal(getGoogleCalendarStatus('sales:rep-1').googleEmail, 'alexander@asoldi.com');
 });
 
+test('Damian as actor cannot take a meeting owned by Alexander’s mailbox', () => {
+  writeFileSync(join(dataDir, 'google-calendar-tokens.json'), JSON.stringify({
+    'admin:damian@asoldi.com': {
+      refresh_token: 'rt-damian',
+      access_token: 'at-damian',
+      googleEmail: 'damian@asoldi.com',
+    },
+    'admin:alexander@asoldi.com': {
+      refresh_token: 'rt-alex',
+      access_token: 'at-alex',
+      googleEmail: 'alexander@asoldi.com',
+    },
+  }));
+  rememberCalendarAccountEmail('sales:1789355644760', 'alexander@asoldi.com');
+  assert.equal(resolveCalendarSyncAccountKey({
+    ownerId: 'sales:1789355644760',
+    actorAccountKey: 'admin:damian@asoldi.com',
+    ownerMailbox: 'alexander@asoldi.com',
+  }), 'sales:1789355644760');
+  writeFileSync(join(dataDir, 'google-calendar-tokens.json'), JSON.stringify({
+    'admin:damian@asoldi.com': {
+      refresh_token: 'rt-damian',
+      access_token: 'at-damian',
+      googleEmail: 'damian@asoldi.com',
+    },
+  }));
+  assert.equal(resolveCalendarSyncAccountKey({
+    ownerId: 'sales:1789355644760',
+    actorAccountKey: 'admin:damian@asoldi.com',
+    ownerMailbox: 'alexander@asoldi.com',
+  }), 'sales:1789355644760');
+});
+
 test('sales login reuses the admin oauth token for that mailbox without Connect', () => {
   writeFileSync(join(dataDir, 'google-calendar-tokens.json'), JSON.stringify({
     'admin:asoldi.com': {
