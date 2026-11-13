@@ -2,7 +2,7 @@
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -11,7 +11,7 @@ process.env.APP_DATA_DIR = dataDir;
 process.env.DATA_DIR = '';
 
 const { FIXTURE_OFFERS, FIXTURE_CLIENT } = await import('./legal/dark-surface.mjs');
-const { recordContractTermsCutover, resetContractTermsCutoverCache } = await import('../data/contract-terms-cutover.js');
+const { contractTermsCutoverMs, recordContractTermsCutover, resetContractTermsCutoverCache } = await import('../data/contract-terms-cutover.js');
 const { DURATION_TERMS_VERSION, contractCopy } = await import('../lib/offer-contract-copy.js');
 const { contractHtmlForOffer } = await import('../lib/offer-contract-html.js');
 const { buildContractPdf, contractArticleModel, contractInputsForOffer } = await import('../lib/offer-contract-pdf.js');
@@ -159,6 +159,103 @@ test('signed contracts from before the wording change match the recorded hashes,
     }
   } finally {
     mock.timers.reset();
+  }
+});
+
+test('an offer sent at or after the cut-over renders version 2 even when the signature time is missing', () => {
+  const bare = { progression: { contractSigned: true } };
+  const bad = { progression: { contractSigned: true }, contractSignedAt: 'x' };
+  const late = { ...FIXTURE_OFFERS.tier1, sentAt: '2026-11-21T08:00:00.000Z' };
+  const atCutover = { ...FIXTURE_OFFERS.tier1, sentAt: CUTOVER_ISO };
+  for (const client of [bare, bad]) {
+    assert.equal(durationTermsVersionForOffer(late, client, { cutoverMs: CUTOVER_MS }), DURATION_TERMS_VERSION);
+    assert.equal(contractInputsForOffer(late, client).durationTermsVersion, DURATION_TERMS_VERSION);
+    assert.equal(durationTermsVersionForOffer(atCutover, client, { cutoverMs: CUTOVER_MS }), DURATION_TERMS_VERSION);
+    assert.equal(durationTermsVersionForOffer(FIXTURE_OFFERS.tier1, client, { cutoverMs: CUTOVER_MS }), 1);
+    assert.equal(durationTermsVersionForOffer({ ...FIXTURE_OFFERS.tier1, sentAt: '' }, client, { cutoverMs: CUTOVER_MS }), 1);
+    assert.equal(durationTermsVersionForOffer(late, client, {}), 1);
+  }
+});
+
+test('the earliest signature time at or after the send time decides the version', () => {
+  const sentAt = '2026-11-01T00:00:00.000Z';
+  const beforeCutover = '2026-11-10T00:00:00.000Z';
+  const afterCutover = '2026-11-21T00:00:00.000Z';
+  const offer = { ...FIXTURE_OFFERS.tier1, sentAt };
+  const remembered = {
+    ...FIXTURE_CLIENT,
+    progression: { contractSigned: true },
+    contractSignedAt: afterCutover,
+    ext: { contractSigning: { earlierSignedAt: beforeCutover } },
+  };
+  assert.equal(contractSignatureForOffer(offer, remembered).at, beforeCutover);
+  assert.equal(durationTermsVersionForOffer(offer, remembered, { cutoverMs: CUTOVER_MS }), 1);
+
+  const olderOffer = {
+    ...remembered,
+    ext: { contractSigning: { earlierSignedAt: '2026-10-01T00:00:00.000Z' } },
+  };
+  assert.equal(contractSignatureForOffer(offer, olderOffer).at, afterCutover);
+  assert.equal(durationTermsVersionForOffer(offer, olderOffer, { cutoverMs: CUTOVER_MS }), DURATION_TERMS_VERSION);
+
+  const unsigned = {
+    ...FIXTURE_CLIENT,
+    progression: { contractSigned: false },
+    ext: { contractSigning: { earlierSignedAt: '2026-05-01T00:00:00.000Z' } },
+  };
+  assert.deepEqual(contractSignatureForOffer(FIXTURE_OFFERS.tier1, unsigned), { signed: false, at: '' });
+  assert.equal(durationTermsVersionForOffer(FIXTURE_OFFERS.tier1, unsigned, { cutoverMs: CUTOVER_MS }), DURATION_TERMS_VERSION);
+});
+
+test('an unreadable cut-over file is left in place and its modification time is used', () => {
+  const original = readFileSync(cutoverFile);
+  const tmpPath = join(dataDir, 'contract-terms-cutover.json.tmp');
+  const errors = [];
+  const logger = { error(line) { errors.push(line); } };
+  const message = '[contract-terms] contract-terms-cutover.json is unreadable; using the time the file was last written. Repair or remove the file.';
+  function assertUnreadable(contents, read) {
+    writeFileSync(cutoverFile, contents);
+    const past = new Date('2024-03-01T00:00:00.000Z');
+    utimesSync(cutoverFile, past, past);
+    const before = readFileSync(cutoverFile);
+    const mtime = Math.floor(statSync(cutoverFile).mtimeMs);
+    resetContractTermsCutoverCache();
+    errors.length = 0;
+    const now = Date.parse('2026-12-01T00:00:00.000Z');
+    assert.equal(read({ now, logger }), mtime);
+    assert.notEqual(mtime, now);
+    assert.deepEqual(readFileSync(cutoverFile), before);
+    assert.deepEqual(errors, [message]);
+    recordContractTermsCutover({ now: now + 60_000, logger });
+    assert.deepEqual(errors, [message]);
+    assert.equal(existsSync(tmpPath), false);
+  }
+  try {
+    unlinkSync(cutoverFile);
+    resetContractTermsCutoverCache();
+    errors.length = 0;
+    const first = Date.parse('2026-08-01T00:00:00.000Z');
+    assert.equal(recordContractTermsCutover({ now: first, logger }), first);
+    assert.equal(existsSync(tmpPath), false);
+    resetContractTermsCutoverCache();
+    assert.equal(recordContractTermsCutover({ now: Date.parse('2026-09-01T00:00:00.000Z'), logger }), first);
+    assert.deepEqual(errors, []);
+
+    assertUnreadable('{bad', recordContractTermsCutover);
+    assertUnreadable('', contractTermsCutoverMs);
+    assertUnreadable('{"durationTerms":{}}', recordContractTermsCutover);
+
+    writeFileSync(cutoverFile, original);
+    resetContractTermsCutoverCache();
+    errors.length = 0;
+    const beforeValid = readFileSync(cutoverFile);
+    assert.equal(recordContractTermsCutover({ now: Date.parse('2027-01-01T00:00:00.000Z'), logger }), CUTOVER_MS);
+    assert.deepEqual(readFileSync(cutoverFile), beforeValid);
+    assert.deepEqual(errors, []);
+    assert.equal(existsSync(tmpPath), false);
+  } finally {
+    writeFileSync(cutoverFile, original);
+    resetContractTermsCutoverCache();
   }
 });
 

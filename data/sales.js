@@ -1031,7 +1031,9 @@ function updateSalesClientInternal(id, updates = {}) {
     updatedAt: nowIso(),
   };
   const legalExt = legalExtOnSigning(current, merged);
-  const next = normalizeSalesClient(legalExt ? { ...merged, ext: legalExt } : merged);
+  const signingExt = earlierSignatureExt(current, merged, legalExt);
+  const ext = signingExt || legalExt;
+  const next = normalizeSalesClient(ext ? { ...merged, ext } : merged);
   state[index] = next;
   writeState(state);
   return next;
@@ -1053,6 +1055,28 @@ function legalExtOnSigning(current, merged) {
     return patch ? patch.ext : undefined;
   } catch (error) {
     console.error('[legal] signing snapshot failed', current?.id, error?.message || error);
+    return undefined;
+  }
+}
+
+// The earliest signature time that was recorded and later removed, so a corrected tick keeps it.
+function earlierSignatureExt(current, merged, legalExt) {
+  if (current?.progression?.contractSigned !== true || merged?.progression?.contractSigned === true) return undefined;
+  try {
+    const currentMs = Date.parse(String(current?.contractSignedAt ?? ''));
+    if (!Number.isFinite(currentMs)) return undefined;
+    const source = legalExt || merged?.ext;
+    const base = source && typeof source === 'object' && !Array.isArray(source) ? source : {};
+    const previous = base.contractSigning;
+    const signing = previous && typeof previous === 'object' && !Array.isArray(previous) ? previous : {};
+    const earlierMs = Date.parse(String(signing.earlierSignedAt ?? ''));
+    const chosen = Number.isFinite(earlierMs) && earlierMs < currentMs ? earlierMs : currentMs;
+    return {
+      ...base,
+      contractSigning: { ...signing, earlierSignedAt: new Date(chosen).toISOString() },
+    };
+  } catch (error) {
+    console.error('[contract-terms] earlier signature time was not stored', current?.id, error?.message || error);
     return undefined;
   }
 }

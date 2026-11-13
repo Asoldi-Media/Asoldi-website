@@ -30,7 +30,7 @@
     "test:cms-fleet-monitor": "node --test scripts/cms-fleet-monitor.test.mjs scripts/cms-fleet-monitor-outbox.test.mjs",
     "test:hub-automation-ui": "node --test scripts/feature-tree-editor.test.mjs scripts/automation-section.test.mjs",
     "test:traffic-retention": "node --test scripts/analytics-traffic-retention.test.mjs",
-    "test:contract-terms": "node --test scripts/contract-terms-version.test.mjs",
+    "test:contract-terms": "node --test scripts/contract-terms-version.test.mjs scripts/contract-signing-time.test.mjs",
     "test:email-hub": "node --test scripts/email-brevo.test.mjs scripts/email-brevo-sandbox.test.mjs scripts/email-quota.test.mjs scripts/email-site-auth.test.mjs scripts/email-unsubscribe.test.mjs scripts/email-relay.test.mjs scripts/owner-routing-default.test.mjs && node --test scripts/email-hub-boot.test.mjs",
     "test:gate": "node --test scripts/delivery-gate.test.mjs scripts/delivery-gate-emails.test.mjs scripts/delivery-emails.test.mjs",
     "test:privacy-intake": "node --test scripts/personal-data.test.mjs scripts/personal-data-erase.test.mjs scripts/personal-data-shared-business.test.mjs scripts/personal-data-writers.test.mjs scripts/transcript-archive.test.mjs scripts/media-manifest.test.mjs scripts/fireflies-candidate-rank.test.mjs scripts/privacy-dark.test.mjs && node --test scripts/privacy-boot.test.mjs",
