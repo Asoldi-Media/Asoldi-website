@@ -107,6 +107,71 @@ async function runBuild(repo, seedDir, seed, { settings = null } = {}) {
   }
 }
 
+// Two differences from an older build are intended while the switch is off, so the comparison takes
+// them out and checks each one on its own:
+// - the contract sentence about moving to a lower tier (and so the size of the contract PDF);
+// - the wording stamp this build writes when a signature is recorded (client.ext.contractTerms).
+// Both go away by themselves when the base build has them too.
+const TIER_SENTENCES = [
+  ['Kunden kan ikke nedgradere til et lavere nivå etter at funksjonalitet fra et høyere nivå er lagt til.', 'Kunden kan gå ned til et lavere nivå etter avtale med Asoldi. Endringen gjelder fra Asoldi registrerer den. Funksjonene som bare hører til det høyere nivået, slås da av, og en utvikler fjerner dem fra nettsiden.'],
+  ['Clients cannot downgrade to a lower tier once higher-level functionality has been added.', 'The Client can move down to a lower tier by agreement with Asoldi. The change applies from the time Asoldi records it. The functions that belong only to the higher tier are then switched off, and a developer removes them from the website.'],
+];
+
+function withCurrentSentence(text) {
+  let out = String(text);
+  for (const [earlier, current] of TIER_SENTENCES) {
+    // The same sentence as plain text, and as it stands inside a JSON string inside a JSON string.
+    for (const wrap of [(v) => v, (v) => JSON.stringify(v).slice(1, -1)]) out = out.split(wrap(earlier)).join(wrap(current));
+  }
+  return out.replace(/"(byteLength|inboundBytes)":\s?\d+/g, '"$1":"<size>"');
+}
+
+/** Removes every wording stamp from a parsed value and returns the stamps it removed. */
+function takeWordingStamps(value, found = []) {
+  if (Array.isArray(value)) {
+    for (const item of value) takeWordingStamps(item, found);
+  } else if (value && typeof value === 'object') {
+    const ext = value.ext;
+    if (ext && typeof ext === 'object' && !Array.isArray(ext) && ext.contractTerms !== undefined) {
+      found.push({ stamp: ext.contractTerms, signed: value.progression?.contractSigned, signedAt: value.contractSignedAt });
+      delete ext.contractTerms;
+      if (!Object.keys(ext).length) delete value.ext;
+    }
+    for (const item of Object.values(value)) takeWordingStamps(item, found);
+  }
+  return found;
+}
+
+function assertWordingStamps(found, where) {
+  for (const { stamp, signed, signedAt } of found) {
+    assert.deepEqual(Object.keys(stamp), ['signed'], `${where}: only the signature stamp`);
+    assert.deepEqual(Object.keys(stamp.signed).sort(), ['at', 'signedAt', 'version'], where);
+    assert.equal(Number.isInteger(stamp.signed.version) && stamp.signed.version >= 1, true, where);
+    assert.equal(signed, true, `${where}: a stamp only on a signed client`);
+    assert.equal(stamp.signed.signedAt, signedAt, `${where}: the stamp names the stored signature time`);
+  }
+}
+
+/** A build's result with the two intended differences taken out. `stamps` is how many stamps the store held. */
+function withoutIntendedDifferences(result) {
+  const steps = JSON.parse(withCurrentSentence(JSON.stringify(result.steps)));
+  assertWordingStamps(takeWordingStamps(steps), 'answers');
+  const configs = JSON.parse(withCurrentSentence(JSON.stringify(result.configs)));
+  const data = {};
+  let stamps = 0;
+  for (const [key, text] of Object.entries(result.data)) {
+    data[key] = withCurrentSentence(text);
+    // The store and its newest backup copy; the timed backups are compared by their number only.
+    if (key !== 'sales-clients.json' && key !== 'backups/sales-clients.json.latest.json') continue;
+    const clients = JSON.parse(data[key]);
+    const found = takeWordingStamps(clients);
+    assertWordingStamps(found, key);
+    if (key === 'sales-clients.json') stamps = found.length;
+    data[key] = JSON.stringify(clients, null, 2);
+  }
+  return { steps, configs, data, stamps };
+}
+
 function diffKeys(a, b) {
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
   return [...keys].filter((key) => a[key] !== b[key]).sort();
@@ -116,8 +181,14 @@ test('switch off: every flow, every site-config answer and the data folder match
   const seedDir = mkdtempSync(join(tmpdir(), 'asoldi-signing-dark-seed-'));
   try {
     const seed = flows.seedSigningData(seedDir);
-    const base = await runBuild(resolve(BASE), seedDir, seed);
-    const head = await runBuild(HEAD, seedDir, seed);
+    const base = withoutIntendedDifferences(await runBuild(resolve(BASE), seedDir, seed));
+    const head = withoutIntendedDifferences(await runBuild(HEAD, seedDir, seed));
+    const signedClients = JSON.parse(head.data['sales-clients.json']).filter((client) => client.progression?.contractSigned === true).length;
+    // Clients the seed already holds as signed were not signed by this build, so they carry no stamp.
+    const seededSigned = JSON.parse(readFileSync(join(seedDir, 'sales-clients.json'), 'utf8')).filter((client) => client.progression?.contractSigned === true).length;
+    assert.ok(signedClients > seededSigned, 'the flows sign at least one client');
+    assert.equal(head.stamps, signedClients - seededSigned, 'this build stamps every signature the flows record, and no other client');
+    assert.equal(base.stamps, 0, 'the base build writes no stamp');
     for (const name of Object.keys(base.steps)) {
       assert.deepEqual(head.steps[name], base.steps[name], `step ${name}`);
     }
