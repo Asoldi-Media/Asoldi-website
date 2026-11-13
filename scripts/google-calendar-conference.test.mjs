@@ -184,6 +184,17 @@ function fakeMeet() {
         calls.push({ kind: 'patch', params });
         return { data: { name: params.name, config: { accessType: 'TRUSTED' } } };
       },
+      // Co-hosts: a room Calendar made refuses them (Google only allows them on app-made rooms).
+      members: {
+        async list(params) {
+          calls.push({ kind: 'members.list', params });
+          return { data: { members: [] } };
+        },
+        async create(params) {
+          calls.push({ kind: 'members.create', params });
+          throw Object.assign(new Error('Permission denied on resource MeetingSpace'), { status: 403 });
+        },
+      },
     },
   };
 }
@@ -371,6 +382,44 @@ test('a booking without a room still mints a new one, and forceNewMeet never cop
   assert.equal(forced.meetLink, 'https://meet.google.com/new-mint-002');
 });
 
+test('a new booking gets a hub-made room with co-hosts as conferenceData, and Damian as a guest', async () => {
+  const fake = fakeCalendar();
+  useFakes({ calendarApi: fake.api });
+  const made = [];
+  const hubLink = 'https://meet.google.com/hub-room-abc';
+  const meta = await calendar.upsertMeetingEvent(bookedClient({ calendar: {} }), '', 'sales:rep-1', {
+    sendUpdates: 'all',
+    includeAttendees: true,
+    expectedOwnerEmail: HOST,
+    createMeetSpace: async (input) => {
+      made.push(input);
+      return { ok: true, meetLink: hubLink, meetingCode: 'hub-room-abc', cohostsOk: true };
+    },
+  });
+  assert.equal(made.length, 1);
+  assert.equal(made[0].ownerEmail, HOST);
+  const [insert] = insertsOf(fake);
+  assert.equal(insert.requestBody.conferenceData.createRequest, undefined, 'Calendar mints no second room');
+  assert.deepEqual(insert.requestBody.conferenceData, calendar.keptMeetConferenceData(hubLink));
+  assert.equal(insert.requestBody.location, hubLink);
+  assert.ok(insert.requestBody.attendees.some((row) => row.email === 'damian@asoldi.com'), 'Damian joins without knocking');
+  assert.equal(meta.meetLink, hubLink, 'the link the client is mailed is the hub room');
+  assert.equal(meta.meetCreatedByHub, true);
+  assert.equal(meta.meetHostVerifiedEmail, HOST);
+
+  // Google refuses to make the room: Calendar mints it as before.
+  const fallback = fakeCalendar();
+  useFakes({ calendarApi: fallback.api });
+  const minted = await calendar.upsertMeetingEvent(bookedClient({ calendar: {} }), '', 'sales:rep-1', {
+    sendUpdates: 'all',
+    includeAttendees: true,
+    expectedOwnerEmail: HOST,
+    createMeetSpace: async () => ({ ok: false, reason: 'scope-missing' }),
+  });
+  assert.ok(insertsOf(fallback)[0].requestBody.conferenceData.createRequest);
+  assert.equal(minted.meetCreatedByHub, false);
+});
+
 test('an offline meeting never gets a conference', async () => {
   const fake = fakeCalendar();
   useFakes({ calendarApi: fake.api });
@@ -409,7 +458,7 @@ test('after the upsert, the organizer’s own OAuth login opens the room in the 
   const meetApi = useFakes({ calendarApi: fake.api });
   await calendar.upsertMeetingEvent(bookedClient({ calendar: { eventId: 'evt-4', meetLink: ROOM } }), 'evt-4', 'sales:rep-1', { sendUpdates: 'none', lockedMeetLink: ROOM });
   await meet.settleMeetRoomOpensForTests();
-  assert.deepEqual(meetApi.calls.map((call) => call.kind), ['get', 'patch']);
+  assert.deepEqual(meetApi.calls.map((call) => call.kind).filter((kind) => !kind.startsWith('members.')), ['get', 'patch']);
   assert.equal(meetApi.calls[0].params.name, 'spaces/abc-defg-hij');
   const status = meet.meetRoomAccessStatus(ROOM);
   assert.deepEqual([status.ok, status.accessType, status.ownerKey], [true, 'TRUSTED', 'sales:rep-1']);

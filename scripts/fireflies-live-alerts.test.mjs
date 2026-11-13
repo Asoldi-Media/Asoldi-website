@@ -1096,6 +1096,20 @@ test('health: a missing key near a meeting, a stalled loop, or failing ticks; no
   assert.equal(alerts.firefliesLiveJoinAlertReason({ status: { ...ok, apiKeyPresent: false }, booked, nowMs: at(-90), liveJoinEnabled: false }), '');
 });
 
+test('health: a room the host cannot open within 2 hours of a meeting is told, with the reason in the mail', () => {
+  const booked = live.collectLiveSessions([salesClient()], at(-90));
+  const ok = { apiKeyPresent: true, lastTickAt: iso(-91), failingSince: '' };
+  const refused = () => ({ ok: false, reason: 'scope-missing', message: 'Google-tilkoblingen mangler tilgang til Meet-innstillinger.' });
+  assert.equal(alerts.firefliesLiveJoinAlertReason({ status: ok, booked, nowMs: at(-90), roomStatusOf: refused }), 'meet-room-unready');
+  assert.equal(alerts.firefliesLiveJoinAlertReason({ status: ok, booked, nowMs: at(-130), roomStatusOf: refused }), '', 'more than 2 hours ahead');
+  assert.equal(alerts.firefliesLiveJoinAlertReason({ status: ok, booked, nowMs: at(-90), roomStatusOf: () => ({ ok: false, reason: 'error' }) }), '', 'a passing Google error is retried, not told');
+  assert.equal(alerts.firefliesLiveJoinAlertReason({ status: ok, booked, nowMs: at(-90), roomStatusOf: () => null }), '', 'not checked yet');
+  const email = alerts.buildLiveJoinAlertEmail({ reason: 'meet-room-unready', status: ok, booked, nowMs: at(-90), roomStatusOf: refused });
+  assert.match(email.subject, /møterommet kan ikke åpnes/);
+  assert.match(email.text, /mangler tilgang til Meet-innstillinger/);
+  assert.match(email.text, /kobler til Google på nytt/);
+});
+
 test('health: the engine reports since when every tick has failed', async () => {
   resetAll();
   const state = { clients: [salesClient()], active: [], sent: [], reply: null };

@@ -108,7 +108,7 @@ test('HUB_SAFE_MODE_ALLOW: known keys kept, unknown reported, paymentsTest on by
   assert.equal(state.allow.has('paymentsTest'), true);
   assert.equal(state.allow.has('aiCalls'), false);
   assert.deepEqual(parseSafeModeAllow('').known, []);
-  for (const key of ['aiCalls', 'firefliesIngest', 'accountingWrite', 'stripeWebhookAdmin', 'paidApi', 'imapFlags', 'calendarWrite', 'firefliesLiveJoin', 'prodPublish', 'emailRedirect', 'brevoSend']) {
+  for (const key of ['aiCalls', 'firefliesIngest', 'accountingWrite', 'stripeWebhookAdmin', 'paidApi', 'calendarWrite', 'firefliesLiveJoin', 'prodPublish', 'emailRedirect', 'brevoSend']) {
     assert.ok(SAFE_MODE_ALLOW_KEYS[key], `${key} is documented`);
   }
 });

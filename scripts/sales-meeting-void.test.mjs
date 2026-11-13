@@ -938,7 +938,7 @@ test('PATCH next-actions runs the shared chain with the signed-in rep as actor',
 
 test('the inbox loop and the backfill route get both meeting hooks', () => {
   const loop = serverFunctionSource('startInboxBotLoop');
-  assert.match(loop, /tickInboxBot\(\{ moveMeeting: moveSalesMeetingFromInbox, voidMeeting: voidSalesMeetingFromInbox \}\)/);
+  assert.match(loop, /tickInboxBot\(\{ moveMeeting: moveSalesMeetingFromInbox, voidMeeting: voidSalesMeetingFromInbox, notifyRep: notifyRepOfInboxBounce, notifyOwner: notifyOwnerOfForeignNotetaker \}\)/);
   assert.ok(loop.indexOf('inboxBotLoopEnabled()') < loop.indexOf('setInterval'), 'the kill switch stops the loop before it is scheduled');
   const start = serverSrc.indexOf("app.post('/api/admin/inbox-bot/backfill'");
   const route = serverSrc.slice(start, serverSrc.indexOf('\n});', start));
@@ -964,6 +964,8 @@ test('the inbox loop and the backfill route share one lock: neither starts while
     inboxBotLoopEnabled: () => true,
     moveSalesMeetingFromInbox: () => {},
     voidSalesMeetingFromInbox: () => {},
+    notifyRepOfInboxBounce: () => {},
+    notifyOwnerOfForeignNotetaker: () => {},
     tickInboxBot: () => { calls.push('tick'); return new Promise((resolve) => { finishTick = resolve; }); },
     backfillInboxReplies: (options) => {
       calls.push(`backfill:${options.apply}`);
@@ -1042,6 +1044,8 @@ test('a portal / preview e-signature marks Solgt with fastTrack, even on a card 
       return sales.setSalesProgress(clientId, 'contractSigned', true, { fastTrack: Boolean(options.fastTrack) });
     },
     storePreviewAcceptedContract: async () => {},
+    contractSigningSettled: async () => {},
+    linkSalesClientPortalFromAcceptance: () => null,
     console: { log() {}, warn() {}, error() {} },
   });
   const req = { body: {}, ip: '127.0.0.1', socket: {}, get: () => 'test-agent' };
@@ -1050,7 +1054,7 @@ test('a portal / preview e-signature marks Solgt with fastTrack, even on a card 
   assert.deepEqual(soldCalls, [{ clientId: card.id, options: { fastTrack: true } }]);
   const signed = sales.getSalesClientById(card.id);
   assert.equal(signed.progression.contractSigned, true, 'the client e-signed: Solgt');
-  assert.match(serverFunctionSource('acceptPortalOfferForUser'), /markClientSoldFromSignedContract\(salesClient\.id, \{ fastTrack: true \}\)/);
+  assert.match(serverFunctionSource('acceptPortalOfferForUser'), /markClientSoldFromSignedContract\(salesClient\.id, \{ fastTrack: true \}[,)]/);
   // Control: without fastTrack the same card stays put (the email rule).
   const other = seedConfirmed();
   assert.throws(() => sales.setSalesProgress(other.id, 'contractSigned', true), /Marker/);
@@ -1062,17 +1066,22 @@ test('INBOX_BOT_ENABLED: the loop stays on unless it is 0, false or off', () => 
   for (const value of ['0', 'false', 'off', 'OFF', ' False ', ' off ']) assert.equal(inboxBotLoopEnabled(value), false, value);
 });
 
-test('the sales list cache key follows the inbox store, so a new inbox item shows at once', () => {
+test('the sales list cache key follows the inbox store and the live-join store', () => {
   let inboxRev = 3;
+  let liveRev = 5;
   const { salesListCacheKey } = loadServerFunctions(['salesListCacheKey'], {
     sales: { salesDataRevision: () => 7 },
     salesOffers: { offersDataRevision: () => 2 },
     inboxStoreRevision: () => inboxRev,
+    liveRecordingsRevision: () => liveRev,
   });
   const first = salesListCacheKey();
   inboxRev += 1;
   assert.notEqual(salesListCacheKey(), first);
+  const second = salesListCacheKey();
+  liveRev += 1;
+  assert.notEqual(salesListCacheKey(), second);
   const cached = serverFunctionSource('cachedSalesListRows');
   assert.equal((cached.match(/salesListCacheKey\(\)/g) || []).length, 2);
-  assert.match(serverSrc, /import \{ inboxStoreRevision \} from '\.\/lib\/inbox-bot\/store\.js';/);
+  assert.match(serverSrc, /import \{ inboxStoreRevision(?:, \w+)* \} from '\.\/lib\/inbox-bot\/store\.js';/);
 });

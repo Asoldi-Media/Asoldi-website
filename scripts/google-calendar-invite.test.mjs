@@ -67,8 +67,7 @@ test('Fireflies is added only when the sales meeting asks for it', () => {
   assert.equal(botOnly[0].email, firefliesNotetakerEmail());
 });
 
-test('silent calendar creates do not add Fred until the invite is actually sent', () => {
-  // The Fireflies key owner hosts these events (fred@ never goes on anyone else's; see below).
+test('no event carries Fred, silent or invited, the key owner\'s included: the live join is the one notetaker', () => {
   const organizerEmail = 'damian@asoldi.com';
   assert.equal(shouldIncludeFireflies({
     isOnline: true,
@@ -83,7 +82,7 @@ test('silent calendar creates do not add Fred until the invite is actually sent'
     sendUpdates: 'all',
     alreadyOnEvent: false,
     organizerEmail,
-  }), true);
+  }), false, 'a second notetaker from the same account would leave a silent fragment');
   assert.equal(shouldIncludeFireflies({
     isOnline: true,
     addFireflies: false,
@@ -132,7 +131,7 @@ test('recorded extra Møte plans Meet plus Fireflies and no client email', () =>
   assert.equal(resolveSalesReminderDurationMinutes(), 15);
 });
 
-test('fred@ only goes on events the Fireflies key owner hosts; other reps\' events never carry him', () => {
+test('fred@ goes on no rep\'s event and no event of the key owner; calendar writes still pass the host', () => {
   // Fireflies answers fred@ for the ORGANIZER's own account, which the hub key cannot read.
   assert.equal(shouldIncludeFireflies({
     isOnline: true,
@@ -152,7 +151,7 @@ test('fred@ only goes on events the Fireflies key owner hosts; other reps\' even
     addFireflies: true,
     sendUpdates: 'all',
     organizerEmail: 'Damian@asoldi.com',
-  }), true);
+  }), false);
   // A host we cannot name fails closed: it might be another rep (a token with no e-mail, a shared calendar).
   assert.equal(shouldIncludeFireflies({ isOnline: true, addFireflies: true, sendUpdates: 'all', organizerEmail: '' }), false);
   assert.equal(shouldIncludeFireflies({ isOnline: true, addFireflies: true, sendUpdates: 'all' }), false);
@@ -161,7 +160,7 @@ test('fred@ only goes on events the Fireflies key owner hosts; other reps\' even
   const unknownHost = buildMeetingAttendees(client, { includeAttendees: false, includeFireflies: true, organizerEmail: '' });
   assert.deepEqual(unknownHost, [], 'the extra Møte of a mailbox we cannot name gets no fred@');
   const ownerHosted = buildMeetingAttendees(client, { includeAttendees: false, includeFireflies: true, organizerEmail: 'damian@asoldi.com' });
-  assert.deepEqual(ownerHosted.map((entry) => entry.email), [firefliesNotetakerEmail()]);
+  assert.deepEqual(ownerHosted, [], 'the key owner\'s own events get no fred@ either');
   // The calendar writes pass the mailbox that hosts the event.
   const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../lib/google-calendar.js'), 'utf8');
   const upsert = src.slice(src.indexOf('export async function upsertMeetingEvent'));
@@ -176,14 +175,14 @@ test('fred@ only goes on events the Fireflies key owner hosts; other reps\' even
   assert.equal(server.includes('inviteFirefliesAfterConfirmation'), false);
 });
 
-test('silent updates keep Fred after he was already invited', () => {
+test('a Fred already on an older event is not kept on the next update', () => {
   assert.equal(shouldIncludeFireflies({
     isOnline: true,
     addFireflies: false,
     sendUpdates: 'none',
     alreadyOnEvent: true,
     organizerEmail: 'damian@asoldi.com',
-  }), true);
+  }), false);
   assert.equal(shouldIncludeFireflies({
     isOnline: true,
     addFireflies: true,

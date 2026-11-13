@@ -876,6 +876,11 @@ export type SalesClient = {
     missedAt?: string;
     missedMeetingAt?: string;
     missedCalledAt?: string;
+    /** Last meeting time the client cancelled; declined* when that cancel was a declined calendar invite. */
+    cancelledMeetingAt?: string;
+    cancelledAt?: string;
+    declinedMeetingAt?: string;
+    declinedAt?: string;
   };
   myphoner: SalesMyphonerMeta;
   progression: SalesProgression;
@@ -959,7 +964,16 @@ export type SalesClient = {
       summary?: string;
       subject?: string;
       receivedAt?: string;
+      /** True for the bot's decision on a client mail, a decline or a bounce (shown in the card log). */
+      cardLog?: boolean;
+      /** The client's new words (trimmed). */
+      text?: string;
+      /** What the bot sent the client, and when. */
+      replyText?: string;
+      repliedAt?: string;
     }[];
+    /** Newest bounce in the last 14 days: a mail to this address did not arrive. */
+    bounce?: { address: string; receivedAt: string } | null;
   };
   websiteDueOverride?: string;
   websiteDeliveryWeeks?: number;

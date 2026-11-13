@@ -38,7 +38,7 @@ import { SalesFlowSteps } from '../../sales/SalesFlowSteps';
 import { SalesScriptsDock } from '../../sales/SalesScriptsDock';
 import { offerMissingFields, offerReadinessMessage } from '../../../../lib/offer-readiness.js';
 import { SalesGoalTimeline } from './SalesGoalTimeline';
-import { InboxNeedsReplyPill, SignedContractPill } from './InboxBotPanel';
+import { InboxPills, SignedContractPill } from './InboxBotPanel';
 import { SalesFocusBoard, type SalesFocusCategoryId } from './SalesFocusBoard';
 import { ClientSalesLog } from './ClientSalesLog';
 import { SalesCalendarWeek } from './SalesCalendarWeek';
@@ -3129,7 +3129,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
                       ) : null}
                       {showCompact ? <FirefliesLiveChip client={client} /> : null}
                       <SignedContractPill client={client} className="shrink-0" />
-                      <InboxNeedsReplyPill client={client} className="shrink-0" />
+                      <InboxPills client={client} className="shrink-0" />
                       {interestLabel ? (
                         <span className={`shrink-0 px-2 py-0.5 rounded text-[11px] bg-violet-500/15 border border-violet-400/40 text-violet-100 truncate ${showCompact ? 'max-w-[52%]' : 'max-w-[46%]'}`}>
                           {interestLabel}

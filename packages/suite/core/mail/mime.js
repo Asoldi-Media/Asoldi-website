@@ -1,5 +1,9 @@
 // RFC 822 / MIME parsing: headers, encoded words, multipart trees, attachments.
 // Raw messages are latin1 strings (one char per byte), as IMAP FETCH returns them.
+import { parseIcsEvent } from './ics.js';
+
+/** Marks a copy a bot appended to its own mailbox, so the bot never reads it back as new mail. */
+export const BOT_COPY_HEADER = 'X-Bot-Copy';
 
 function decodeQuotedPrintable(value = '') {
   return String(value || '')
@@ -152,11 +156,22 @@ export function walkMime(node, acc = { text: [], attachments: [], calendar: [] }
   const isCalendar = /^(text\/calendar|application\/ics)/.test(type) || /\.ics$/i.test(filename);
   if (isCalendar && node.body) {
     const raw = node.body.toString('utf8').slice(0, 8000);
+    const event = parseIcsEvent(raw);
     acc.calendar.push({
       filename: filename || 'invite.ics',
       mimeType: type.split(';')[0].trim() || 'text/calendar',
       method: calendarMethodOfPart(node.contentType, raw),
+      uid: event.uid,
+      dtstart: event.dtstart,
+      partstat: event.partstat,
+      attendee: event.attendee,
+      comment: event.comment,
     });
+    return acc;
+  }
+  // A bounce's machine-readable part: Final-Recipient / Action / Status lines.
+  if (/^message\/(?:global-)?delivery-status/.test(type) && node.body) {
+    acc.deliveryStatus = `${acc.deliveryStatus || ''}${node.body.toString('utf8').slice(0, 4000)}\n`;
     return acc;
   }
   if (filename && node.body) {
@@ -197,10 +212,16 @@ export function parseRfc822(raw = '') {
     subject: decodeMimeWords(headers.subject).trim(),
     date: headers.date || '',
     messageId: String(headers['message-id'] || '').trim(),
+    references: String(headers.references || '').trim(),
+    inReplyTo: String(headers['in-reply-to'] || '').trim(),
     autoSubmitted: String(headers['auto-submitted'] || '').trim(),
+    // A copy the bot filed in its own mailbox (BOT_COPY_HEADER); a reader skips it.
+    botCopy: Boolean(String(headers[BOT_COPY_HEADER.toLowerCase()] || '').trim()),
     contentType,
     calendar,
     calendarMethod,
+    calendarReply: calendar.find((row) => row.partstat || row.dtstart) || null,
+    deliveryStatus: String(walked.deliveryStatus || '').trim(),
     text: normalizeBodyText(walked.text.join('\n')),
     attachments: walked.attachments,
     attachmentNames: walked.attachments.map((part) => part.filename),

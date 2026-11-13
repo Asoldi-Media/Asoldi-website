@@ -149,7 +149,7 @@ test('iteration Møte is a 30-minute invite with Meet and Fireflies', () => {
   assert.notEqual(invite.client.calendar?.eventId, 'sales-event');
   assert.equal(invite.client.meetingAt, DUE);
   assert.notEqual(invite.client.meetingAt, client.workshopAction.dueAt);
-  // Damian hosts iterations; fred@ goes only on events of the Fireflies key owner.
+  // Fireflies joins through the live-join engine, never as a calendar guest.
   const includeFireflies = shouldIncludeFireflies({
     isOnline: true,
     addFireflies: true,
@@ -159,7 +159,7 @@ test('iteration Møte is a 30-minute invite with Meet and Fireflies', () => {
   });
   const attendees = buildMeetingAttendees(invite.client, { includeAttendees: true, includeFireflies });
   assert.equal(attendees.some((entry) => entry.email === 'daracha777@gmail.com'), true);
-  assert.equal(attendees.some((entry) => String(entry.email).endsWith('@fireflies.ai')), true);
+  assert.equal(attendees.some((entry) => String(entry.email).endsWith('@fireflies.ai')), false);
   assert.equal(resolveMeetingEventDurationMinutes({ meetingMode: 'online' }, invite.options), 30);
 });
 

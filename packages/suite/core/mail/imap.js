@@ -1,7 +1,7 @@
 import tls from 'node:tls';
 import { parseRfc822 } from './mime.js';
 
-// Minimal IMAP over TLS: LOGIN, SELECT, UID SEARCH, UID FETCH RFC822. Read-only.
+// Minimal IMAP over TLS: LOGIN, SELECT/EXAMINE, UID SEARCH, UID FETCH, and APPEND of a new message.
 // Credentials are passed in ({host, port, user, pass, mailbox}); this file reads no env.
 
 /** LOGIN + SELECT only. */
@@ -80,7 +80,7 @@ async function imapSession(creds, fn, { timeoutMs = LOGIN_TIMEOUT_MS } = {}) {
         socket.on('data', feed);
         await waitFor('\n');
         await tagged(`LOGIN ${quoteImap(creds.user)} ${quoteImap(creds.pass)}`);
-        return fn({ tagged, send, waitFor });
+        return fn({ tagged, send, waitFor, write: (buffer) => socket.write(buffer) });
       })(),
     ]);
   } finally {
@@ -172,13 +172,17 @@ export async function listImapMessages(creds, {
         mailAt: parsed.date,
         // The RFC Message-ID ("<x@y>"), so a reply can set In-Reply-To / References and stay in the thread.
         rfcMessageId: parsed.messageId,
+        references: parsed.references,
         from: parsed.from,
         to: parsed.to,
         subject: parsed.subject,
         text: headersOnly ? '' : parsed.text,
         autoSubmitted: parsed.autoSubmitted,
+        botCopy: parsed.botCopy,
         contentType: parsed.contentType,
         calendarMethod: parsed.calendarMethod,
+        calendarReply: parsed.calendarReply,
+        deliveryStatus: parsed.deliveryStatus,
         attachmentNames: headersOnly ? [] : parsed.attachmentNames,
         attachments: headersOnly ? [] : parsed.attachments.map((part) => ({
           filename: part.filename,
@@ -189,4 +193,38 @@ export async function listImapMessages(creds, {
     });
   }, { timeoutMs: waitMs });
   return messages;
+}
+
+function imapMailboxName(folder = '') {
+  const box = String(folder || 'INBOX').replace(/[\r\n"\\]/g, '') || 'INBOX';
+  return /^[A-Za-z0-9._-]+$/.test(box) ? box : quoteImap(box);
+}
+
+/**
+ * Store one raw RFC 822 message in `folder` (APPEND with a synchronizing literal). The only write this
+ * file does; it never touches existing mail. `flags` default to \Seen so a filed copy is not "new".
+ */
+export async function appendImapMessage(creds, folder, raw, { flags = ['\\Seen'], timeoutMs = FETCH_TIMEOUT_MS } = {}) {
+  const bytes = Buffer.isBuffer(raw) ? raw : Buffer.from(String(raw || ''), 'utf8');
+  if (!bytes.length) throw new Error('IMAP append: empty message');
+  await imapSession(creds, (session) => imapAppendConversation(session, folder, bytes, flags), { timeoutMs });
+}
+
+/** The APPEND exchange on a logged-in session: command, wait for "+", literal, tagged OK. */
+export async function imapAppendConversation({ send, write, waitFor }, folder, bytes, flags = ['\\Seen']) {
+  const flagList = (Array.isArray(flags) ? flags : []).filter((flag) => /^\\?[A-Za-z]+$/.test(flag)).join(' ');
+  const nextLine = async () => (await waitFor('\n')).toString('utf8').trim();
+  send(`APP1 APPEND ${imapMailboxName(folder)}${flagList ? ` (${flagList})` : ''} {${bytes.length}}`);
+  for (;;) {
+    const line = await nextLine();
+    if (line.startsWith('+')) break;
+    if (/^APP1 /i.test(line)) throw new Error(`IMAP append refused: ${line.slice(5, 125)}`);
+  }
+  write(Buffer.concat([bytes, Buffer.from('\r\n')]));
+  for (;;) {
+    const line = await nextLine();
+    if (!/^APP1 /i.test(line)) continue;
+    if (!/^APP1 OK\b/i.test(line)) throw new Error(`IMAP append failed: ${line.slice(5, 125)}`);
+    return;
+  }
 }

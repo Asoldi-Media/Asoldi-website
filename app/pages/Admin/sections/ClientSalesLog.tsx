@@ -46,6 +46,7 @@ const KIND_LABEL: Record<string, string> = {
   action: 'Handling',
   meeting: 'Møte',
   playbook: 'Steg',
+  email: 'E-post',
 };
 
 type Props = {

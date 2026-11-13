@@ -15,7 +15,7 @@ const { renderToStaticMarkup } = await import('react-dom/server');
 const panel = await tsImport('../app/pages/Admin/sections/InboxBotPanel.tsx', import.meta.url);
 const store = await import('../lib/inbox-bot/store.js');
 
-const { InboxBotPanel, InboxNeedsReplyPill, SignedContractPill, inboxActivityLabel, inboxActivityText } = panel;
+const { EmailBouncedPill, InboxBotPanel, InboxNeedsReplyPill, InboxPills, MeetingDeclinedPill, SignedContractPill, inboxActivityLabel, inboxActivityText } = panel;
 
 /** A sales card with only the fields the panel reads. */
 function card(inboxBot = {}) {
@@ -245,10 +245,30 @@ test('store payload renders straight into the panel and pill', () => {
   assert.match(render(InboxNeedsReplyPill, client), /title="Kunden vil endre tilbudet"/);
 });
 
-test('both rep card headers render the needs-reply pill next to the signed pill', () => {
+test('both rep card headers render the inbox pills next to the signed pill', () => {
   for (const file of ['SalesFocusBoard.tsx', 'SalesClientsSection.tsx']) {
     const src = readFileSync(join(root, 'app/pages/Admin/sections', file), 'utf8');
-    assert.match(src, /import \{ InboxNeedsReplyPill, SignedContractPill \} from '\.\/InboxBotPanel';/, file);
-    assert.match(src, /<SignedContractPill client=\{client\}[^>]*\/>\s*<InboxNeedsReplyPill client=\{client\}[^>]*\/>/, file);
+    assert.match(src, /import \{ InboxPills, SignedContractPill \} from '\.\/InboxBotPanel';/, file);
+    assert.match(src, /<SignedContractPill client=\{client\}[^>]*\/>\s*<InboxPills client=\{client\}[^>]*\/>/, file);
   }
+});
+
+test('"Avslo møtet" shows while a declined meeting has no new time; it goes once a time is booked', () => {
+  const declined = {
+    ...card(),
+    agreedTime: false,
+    salesPlaybook: { declinedMeetingAt: '2026-11-09T15:00:00.000Z', declinedAt: '2026-11-09T11:02:33.000Z' },
+  };
+  assert.match(render(MeetingDeclinedPill, declined), /Avslo møtet/);
+  assert.match(render(InboxPills, declined), /Avslo møtet/);
+  assert.equal(render(MeetingDeclinedPill, { ...declined, agreedTime: true }), '', 'a new time is booked');
+  assert.equal(render(MeetingDeclinedPill, { ...declined, salesPlaybook: { declinedMeetingAt: '', declinedAt: '' } }), '');
+});
+
+test('"E-post kom ikke fram" shows for a recent bounce and names the address', () => {
+  const bounced = card({ bounce: { address: 'post@byggfirma.example', receivedAt: '2026-11-02T12:08:43.000Z' } });
+  const html = render(EmailBouncedPill, bounced);
+  assert.match(html, /E-post kom ikke fram/);
+  assert.match(html, /post@byggfirma\.example/);
+  assert.equal(render(EmailBouncedPill, card({ bounce: null })), '');
 });
