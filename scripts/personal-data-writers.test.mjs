@@ -160,7 +160,7 @@ test('plain file writes are scanned too: the stores they write are registered, a
     ["lib/email.js:join(getPersistentDataDir(), 'last-email-send.json')", 'last-mail-send'],
     ['server.js:SALES_GEOCODE_CACHE_PATH', 'sales-map-places'],
     ['lib/fireflies-media.js:transcriptPath', 'fireflies-meetings'],
-    ['lib/inbox-bot/apply-contract.js:dest', 'signed-contracts'],
+    ['lib/inbox-bot/apply-contract.js:filePath', 'signed-contracts'],
     ['lib/transcript-archive.js:tmp', 'transcript-archive'],
   ]) assert.equal(owner(key), store, key);
   assert.deepEqual(found.filter((key) => !owner(key)), [], 'every plain write has a store or a reason');
