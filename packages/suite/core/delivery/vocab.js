@@ -23,7 +23,9 @@
 // 4: no id added, renamed or removed; the comments were reworded.
 // 5: settings keys for the legal texts switch and the SEO job gating, DataForSEO ledger and record pull switches.
 // 6: settings keys for the delivery loop, gate, brief, privacy, media and signing switches; brief and signing are release-gated.
-export const VOCAB_VERSION = 6;
+// 7: settings keys for the visit statistics retention, plan change, cancellation, booking link, intake steps, transcript keywords,
+// CMS fleet monitor and wake ping, and site rekey switches.
+export const VOCAB_VERSION = 7;
 
 function freezeList(list) {
   return Object.freeze(list.map((item) => (item && typeof item === 'object' ? Object.freeze({ ...item }) : item)));
