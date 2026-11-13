@@ -2,7 +2,7 @@
 // off, and while it is off the job creates nothing. shadow counts; auto deletes, except in safe mode.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -316,4 +316,62 @@ test('settings validation refuses a pause without a reason and a mode other than
   const read = settingsStore.readAutomationSettingsFile();
   assert.deepEqual(read.settings.retention.analyticsTraffic, { enabled: false, mode: 'shadow', paused: null });
   assert.equal(read.settings.retention.leadMonths, 18);
+});
+
+test('any truthy paused value pauses, and null, false, an empty string and zero still run', async () => {
+  const path = writeDay('pause-values', '2020-04-04', 'stay-or-go\n');
+  for (const paused of [true, 'yes', 1, { reason: 'x' }]) {
+    let leases = 0;
+    const result = await job.runTrafficRetention({
+      now: WINTER,
+      settings: switchSettings({ enabled: true, mode: 'auto', paused }),
+      acquire: async () => { leases += 1; return { release: async () => {} }; },
+      logger: quiet,
+    });
+    assert.deepEqual(result, { ran: false, reason: 'paused' }, JSON.stringify(paused));
+    assert.equal(leases, 0, JSON.stringify(paused));
+    assert.equal(readFileSync(path, 'utf8'), 'stay-or-go\n');
+  }
+  for (const paused of [null, false, '', 0]) {
+    let leases = 0;
+    const result = await job.runTrafficRetention({
+      now: WINTER,
+      settings: switchSettings({ enabled: true, mode: 'auto', paused }),
+      acquire: async () => { leases += 1; return null; },
+      logger: quiet,
+    });
+    assert.equal(leases, 1, JSON.stringify(paused));
+    assert.deepEqual(result, { ran: false, busy: true });
+    assert.equal(readFileSync(path, 'utf8'), 'stay-or-go\n');
+  }
+});
+
+test('removedBytes counts only the files that were actually deleted', async () => {
+  rmSync(join(dataDir, 'client-analytics-traffic'), { recursive: true, force: true });
+  const kept = writeDay('bytes-site', '2020-05-01', 'aa\n');
+  const failed = writeDay('bytes-site', '2020-05-02', 'bbbb\n');
+  const gone = writeDay('bytes-site', '2020-05-03', 'cccccc\n');
+  const keptBytes = statSync(kept).size;
+  const failedBytes = statSync(failed).size;
+  const goneBytes = statSync(gone).size;
+  const lines = [];
+  const result = await job.runTrafficRetention({
+    now: WINTER,
+    settings: switchSettings({ enabled: true, mode: 'auto' }),
+    logger: { log(line) { lines.push(line); }, error() {} },
+    remove(entry) {
+      if (entry.path === failed) return false;
+      return store.removeTrafficDayFile(entry);
+    },
+  });
+  assert.equal(result.removed, 2);
+  assert.equal(result.failed, 1);
+  assert.equal(result.removedBytes, keptBytes + goneBytes);
+  assert.equal(result.bytes, keptBytes + failedBytes + goneBytes);
+  assert.match(lines.join('\n'), new RegExp(`deleted 2 day file\\(s\\), ${result.removedBytes} byte\\(s\\)`));
+  assert.equal(lines.some((line) => line.includes(`${result.bytes} byte(s)`)), false);
+  assert.equal(existsSync(failed), true);
+  assert.equal(existsSync(kept), false);
+  assert.equal(existsSync(gone), false);
+  assert.equal(store.readTrafficRetentionReport().removedBytes, result.removedBytes);
 });
