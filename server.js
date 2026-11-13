@@ -282,6 +282,7 @@ import { firefliesRankSettings } from './lib/privacy-settings.js';
 import { slotOwnerAmongClients } from './lib/fireflies-slots.js';
 import { firefliesNotetakerAllowedForOrganizer, refreshFirefliesKeyOwnerEmail } from './lib/fireflies-key-owner.js';
 import {
+  bookedLiveSlots,
   currentSessionKeyForSlot,
   ensureLivePlaceholders,
   findLiveSessionForSlot,
@@ -494,7 +495,7 @@ import {
   pickDamianCalendarAccountKey,
   resolveDamianWorkshopAccountKey,
 } from './lib/workshop-action.js';
-import { ensureMeetRoomOpen, setMeetRoomAccess } from './lib/google-meet-access.js';
+import { ensureMeetRoomOpen, meetRoomAccessStatus, setMeetRoomAccess } from './lib/google-meet-access.js';
 import { sendPreWorkshopAfterContractSigned } from './lib/workshop-prep-send.js';
 import { gateMailLinesFor } from './lib/delivery-gate.js';
 import {
@@ -18564,6 +18565,40 @@ app.get('/api/admin/fireflies/live-join-status', salesAuth, (req, res) => {
     // Can each host's own Google login open its rooms (window) and make rooms with co-hosts?
     meetHosts: meetHostReadiness(),
   });
+});
+
+/**
+ * Every booked online meeting ahead, checked now instead of at T-30: the host's own login sets its room to
+ * knock-only, the same change the notetaker's open window needs. Meetings within 15 minutes are skipped so a
+ * window that is open now is never closed.
+ */
+app.post('/api/admin/fireflies/rooms/check', adminAuth, async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const nowMs = Date.now();
+  const rows = [];
+  for (const client of sales.getSalesClients()) {
+    for (const slot of bookedLiveSlots(client, nowMs, { anyTime: true })) {
+      const startMs = Date.parse(slot.startAt);
+      if (!(startMs > nowMs + 15 * 60 * 1000) || rows.length >= 80) continue;
+      const host = liveSessionMeetHost({ slots: [slot] });
+      const result = await setMeetRoomAccess({ meetLink: slot.meetLink, accountKey: host.accountKey, ownerEmail: host.ownerEmail, accessType: 'TRUSTED' });
+      const stored = meetRoomAccessStatus(slot.meetLink) || {};
+      rows.push({
+        clientId: client.id,
+        businessName: sanitizeText(client.businessName),
+        isTest: client.isTest === true,
+        kind: slot.kind,
+        startAt: slot.startAt,
+        meetLink: slot.meetLink,
+        host: host.ownerEmail,
+        ok: Boolean(result.ok),
+        reason: sanitizeText(result.reason),
+        message: sanitizeText(result.message).slice(0, 240),
+        createdByHub: stored.createdByHub === true,
+      });
+    }
+  }
+  res.json({ checked: rows.length, failed: rows.filter((row) => !row.ok).length, rows });
 });
 
 // Booked online meetings with no recording (lib/fireflies-recording-watchdog.js missingRecordingRows):
