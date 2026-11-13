@@ -507,6 +507,29 @@ test('a login Google withdrew (invalid_grant) shows as expired until fresh crede
   assert.equal(calendar.meetRoomOwnerToken({ accountKey: 'sales:rep-1' }).invalidGrantAt, '', 'a reconnect clears it');
 });
 
+test('a withdrawn login heals from a newer grant of the same mailbox under another key', async () => {
+  writeFileSync(join(dataDir, 'google-calendar-tokens.json'), JSON.stringify({
+    'sales:rep-1': { access_token: 'at-dead', refresh_token: 'rt-dead', googleEmail: HOST, scope: BASE_SCOPES },
+    [`admin:${HOST}`]: { access_token: 'at-fresh', refresh_token: 'rt-fresh', googleEmail: HOST, scope: BASE_SCOPES },
+  }));
+  clearJsonCacheForTests();
+  const renew = mock.method(google.auth.OAuth2.prototype, 'getAccessToken', async function getAccessToken() {
+    if (this.credentials.refresh_token === 'rt-dead') {
+      throw Object.assign(new Error('invalid_grant'), { response: { status: 400, data: { error: 'invalid_grant' } } });
+    }
+    return { token: this.credentials.access_token };
+  });
+  try {
+    const auth = await calendar.getAuthorizedClient('sales:rep-1');
+    assert.equal(auth.authMode, 'oauth');
+    assert.equal(auth.oauthClient.credentials.refresh_token, 'rt-fresh', 'the sales key now uses the mailbox grant');
+  } finally {
+    renew.mock.restore();
+  }
+  const healed = calendar.meetRoomOwnerToken({ accountKey: 'sales:rep-1' });
+  assert.deepEqual([healed.accountKey, healed.invalidGrantAt], ['sales:rep-1', ''], 'and it is no longer flagged');
+});
+
 test('no test request reached a real socket past the stubs', () => {
   assert.deepEqual(leakedSockets, []);
 });
