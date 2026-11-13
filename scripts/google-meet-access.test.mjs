@@ -411,6 +411,7 @@ test('the owner mailbox token with the scope wins over a stale alias token', asy
     googleEmail: 'alexander@asoldi.com',
     scope: WITH_MEET,
     updatedAt: '',
+    invalidGrantAt: '',
     usable: true,
   });
   assert.equal(calendar.meetRoomOwnerToken({ accountKey: 'admin:damian@asoldi.com', ownerEmail: 'alexander@asoldi.com' }).accountKey, 'admin:alexander@asoldi.com');
@@ -595,6 +596,11 @@ test('a hub-made room gets its co-hosts; no members scope means Calendar mints t
   const fallback = await meet.createMeetSpaceWithCohosts({ memberEmails: ['damian@asoldi.com'], nowMs: NOW, deps: { meetApi: api, calendar: noScope.calendar } });
   assert.deepEqual([fallback.ok, fallback.reason], [false, 'scope-missing']);
   assert.equal(created.length, 1, 'no room was made');
+
+  // What production answered on 13 Nov: a personal (non-Workspace) account may not have co-hosts at all.
+  const refused = restCalendar(() => { throw googleError(403, { message: 'Permission denied on resource Member (or it might not exist)' }); });
+  const plain = await meet.createMeetSpaceWithCohosts({ memberEmails: ['damian@asoldi.com'], nowMs: NOW, deps: { meetApi: api, calendar: refused.calendar } });
+  assert.deepEqual([plain.ok, plain.cohostsOk, plain.cohostReason], [true, false, 'account-type'], 'the room still works, filed under the account, not as a Calendar room');
 });
 
 test('no test request reached a real socket past the stubs', () => {

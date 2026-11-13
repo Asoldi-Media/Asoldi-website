@@ -9810,6 +9810,28 @@ async function setLiveSessionMeetAccess(session, accessType) {
   });
 }
 
+/** Fireflies shows two notetakers on one booked meeting: tell the Fireflies owner at once (once per meeting). */
+async function notifyDuplicateLiveBots(session) {
+  if (!emailLib.canSendEmail()) return;
+  const startMs = Date.parse(session.startAt);
+  const when = Number.isFinite(startMs)
+    ? new Date(startMs).toLocaleString('nb-NO', { timeZone: 'Europe/Oslo', weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' })
+    : '';
+  const title = sanitizeText(session.title) || 'møtet';
+  await emailLib.sendEmail({
+    to: sanitizeText(process.env.FIREFLIES_ALERT_EMAIL) || 'damian@asoldi.com',
+    subject: `To notetakere i ${title}`,
+    text: [
+      `Fireflies viser to notetakere i ${title}${when ? ` (${when})` : ''}: ${session.meetLink}`,
+      'Hubben sender bare én. Den andre kommer fra en Fireflies-, Fathom- eller annen notetaker-konto som blir med fra kalenderen på egen hånd.',
+      '',
+      'Nå: fjern den ekstra notetakeren fra møtet i Meet (Personer → ⋮ → Fjern). Den fra Asoldi heter «Fireflies.ai Notetaker Damian».',
+      'Så: slå av automatisk deltakelse i kontoen den kom fra, eller koble kalenderen fra den.',
+    ].join('\n'),
+    bcc: false,
+  });
+}
+
 /** Optional FIREFLIES_LIVE_JOIN_ONE_BOT=1: the Fireflies plan runs one bot at a time (default off). */
 function firefliesLiveJoinOneBot() {
   return parseBoolean(process.env.FIREFLIES_LIVE_JOIN_ONE_BOT, false);
@@ -9836,6 +9858,7 @@ function firefliesLiveJoinDeps() {
     onSessionChange: syncLiveJoinPlaceholders,
     openMeetRoom: openLiveSessionMeetRoom,
     setMeetAccess: setLiveSessionMeetAccess,
+    onDuplicateBots: notifyDuplicateLiveBots,
     log: console,
   };
 }

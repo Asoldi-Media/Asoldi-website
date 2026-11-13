@@ -528,8 +528,14 @@ test('the notetaker window: OPEN from T-5 until the bot is in, again if it drops
   assert.equal(meetWindowAccess({ ...open, state: 'recording' }, at(-1)), 'TRUSTED', 'the bot is in: knock-only again');
   const locked = { ...open, state: 'recording', meetWindowState: 'locked' };
   assert.equal(meetWindowAccess(locked, at(5)), null);
-  assert.equal(meetWindowAccess({ ...locked, state: 'ended' }, at(8)), 'OPEN', 'it dropped out before T+30: open for the send-back');
-  assert.equal(meetWindowAccess({ ...locked, state: 'ended' }, at(31)), null, 'after T+30 the room stays knock-only');
+  const left = { ...dispatched(locked, -3), state: 'ended', firstSeenActiveAt: iso(-2), lastSeenActiveAt: iso(6) };
+  assert.equal(meetWindowAccess(left, at(8)), null, 'a bot that left with the meeting does not open the room');
+  const sentBack = dispatched(left, 7, 'rejoin');
+  assert.equal(meetWindowAccess(sentBack, at(8)), 'OPEN', 'sent back before T+30: open for that send');
+  assert.equal(meetWindowAccess(sentBack, at(19)), null, 'only for the lobby wait of that send');
+  assert.equal(meetWindowAccess({ ...sentBack, state: 'ended' }, at(31)), null, 'after T+30 the room stays knock-only');
+  const failedLock = { ...open, state: 'recording', meetWindowFailedAt: iso(-1) };
+  assert.equal(meetWindowAccess(failedLock, at(-1) + 30_000), 'TRUSTED', 'a failed lock is tried again on the next tick');
   assert.equal(meetWindowAccess(open, at(30)), 'TRUSTED', 'never left open past the first-send window');
   assert.equal(meetWindowAccess({ ...open, declinedAt: iso(-1) }, at(-1)), 'TRUSTED', 'marked without recording');
   assert.equal(meetWindowAccess({ ...session, detachedAt: iso(-10) }, at(-4)), null, 'a moved meeting never opens');
@@ -574,6 +580,32 @@ test('the engine opens the room, sends the bot, and locks it once the bot is see
   assert.ok(events.some((row) => row.type === 'bot.sent' && row.kind === 'first' && row.minutesFromStart === -3));
   assert.ok(events.some((row) => row.type === 'bot.seen' && Number.isFinite(row.minutesFromStart)));
   assert.ok(events.some((row) => row.type === 'session.state' && row.to === 'recording'));
+  resetStore();
+});
+
+test('two notetakers on one booked meeting: stamped once, told once, never for an earlier meeting\'s bot', async () => {
+  const session = dispatched(sessionFor(salesClient()), -3);
+  const two = [activeRow(), activeRow(ROOM, { id: 'ff-calendar-bot', startTime: iso(0) })];
+  const seen = planAt(1, session, { active: two }).session;
+  assert.ok(seen.duplicateBotsAt, 'the hub bot and a calendar auto-join bot on the same link');
+  assert.equal(planAt(1, session, { active: [activeRow()] }).session.duplicateBotsAt, '', 'one bot is fine');
+  const leftover = [activeRow(), activeRow(ROOM, { id: 'ff-earlier', startTime: iso(-60) })];
+  assert.equal(planAt(1, session, { active: leftover }).session.duplicateBotsAt, '', 'a bot from an hour before is the earlier meeting\'s');
+
+  resetStore();
+  const state = engineState([salesClient()]);
+  const told = [];
+  const deps = () => engineDeps(state, { onDuplicateBots: async (row) => { told.push(row.key); } });
+  state.now = at(-3);
+  await runFirefliesLiveJoinTick(deps());
+  state.active = two;
+  state.now = at(1);
+  await runFirefliesLiveJoinTick(deps());
+  state.now = at(2);
+  await runFirefliesLiveJoinTick(deps());
+  assert.deepEqual(told, [`${ROOM}|${T}`], 'told once, not every tick');
+  const server = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  assert.match(server, /onDuplicateBots: notifyDuplicateLiveBots,/);
   resetStore();
 });
 

@@ -155,9 +155,11 @@ carries `meetings.space.created`, the hub creates the room itself (`createMeetSp
 REST when the client library lacks it): Damian, every sales user in Admin → Users, and every other
 connected @asoldi.com sales mailbox. The room goes onto the event as `conferenceData` with its
 meeting code. Without that permission, or when Google refuses, Calendar mints the room as before
-(`createRequest`). Google allows co-hosts only on rooms an app created: on a Calendar-made room the
-co-host step stores `cohostsOk: false, cohostReason: 'calendar-room'` and goes on. The client's own
-email is never added.
+(`createRequest`). Google allows co-hosts only on rooms an app created, and only on paid Workspace
+accounts: on a Calendar-made room the co-host step stores `cohostsOk: false, cohostReason:
+'calendar-room'`, on a hub-made room of a personal account (asoldi.com today, checked 13 Nov)
+`cohostReason: 'account-type'`, and goes on. Neither is asked again. The client's own email is never
+added.
 
 **Damian on every meeting.** On an online meeting someone else hosts, damian@asoldi.com is a guest
 on the event (`meetStaffGuestEmail`), so he can always join and admit. Meetings booked before this
@@ -212,8 +214,15 @@ The engine opens the room just for the notetaker (`meetWindowAccess` in
 `server.js`). From 5 minutes before the start to T+30 the room is OPEN, so the bot sent at T-3
 walks in without a knock. As soon as `active_meetings` shows the bot (`recording`), or the meeting is
 declined or moved away, or T+30 passes, the room goes back to TRUSTED: the client knocks again and
-staff admit them. A bot that drops out before T+30 gets the room opened again for its send-back. A
-failed change is tried again after 2 minutes. The room row keeps the window (`window: { accessType,
+the host admits them. After the bot has been in, the room opens again only when the engine sends it
+back before T+30, for that send's lobby wait; a bot that left with the meeting does not open it. A
+failed close is tried again on the next tick, so a late calendar bot meets a closed room; a failed
+opening waits 2 minutes.
+
+When Fireflies shows two different notetakers on a booked meeting's link at once (the hub's and one a
+calendar auto-join of another notetaker account sent), the session is stamped `duplicateBotsAt`, the
+event `bot.duplicate` is logged, and `FIREFLIES_ALERT_EMAIL` gets **To notetakere i \<møtet>** once,
+with how to remove the extra one and switch off its auto-join. The room row keeps the window (`window: { accessType,
 untilMs }`), so the room check after a calendar sync does not close a room the engine opened, and an
 open room that outlives its window (a hub that died at the wrong moment) is closed by the next tick or
 room check.

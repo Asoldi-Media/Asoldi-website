@@ -50,7 +50,7 @@ type LiveJoinStatus = {
   oneBot?: boolean;
   rateLimit?: RateLimitStatus;
   /** server.js meetHostReadiness(): can each host's own Google login open (window) and make rooms (co-hosts). */
-  meetHosts?: Array<{ googleEmail: string; ownLogin: boolean; meetSettingsScope: boolean; meetMembersScope: boolean }>;
+  meetHosts?: Array<{ googleEmail: string; ownLogin: boolean; meetSettingsScope: boolean; meetMembersScope: boolean; loginExpired?: boolean }>;
   /** Upcoming rooms and their last check (lib/google-meet-access.js). */
   meetRooms?: Array<{
     key: string;
@@ -73,7 +73,10 @@ function roomLine(room: NonNullable<NonNullable<LiveJoinStatus['meetRooms']>[num
   const parts = [room.ok ? 'klart' : `ikke klart (${room.reason || 'feil'})`];
   if (room.createdByHub) parts.push('laget av Asoldi');
   if (room.cohostsOk === true) parts.push('medverter lagt til');
-  if (room.cohostsOk === false) parts.push(room.cohostReason === 'calendar-room' ? 'ingen medverter (Kalender-rom)' : 'medverter mangler');
+  if (room.cohostsOk === false) {
+    parts.push(room.cohostReason === 'calendar-room' ? 'ingen medverter (Kalender-rom)'
+      : room.cohostReason === 'account-type' ? 'ingen medverter (Google tillater det ikke på disse kontoene)' : 'medverter mangler');
+  }
   if (room.window?.state === 'open') parts.push('åpent for notetakeren');
   return parts.join(' · ');
 }
@@ -191,7 +194,11 @@ export function FirefliesHealthCard() {
   if (engineStopped && !sendingOff) {
     alarms.push(`Live-join har ikke kjørt ${liveData?.lastTickAt ? `siden ${when(liveData.lastTickAt)}` : 'ennå'}, selv om ${count(liveData?.sessionsInWindow)} møte(r) er nær nå. Fireflies sendes ikke inn før huben kjører igjen.`);
   }
-  const hostsWithoutMeet = (liveData?.meetHosts || []).filter((host) => !host.meetSettingsScope);
+  const expiredLogins = (liveData?.meetHosts || []).filter((host) => host.loginExpired);
+  if (expiredLogins.length) {
+    alarms.push(`Google har trukket tilbake innloggingen til ${expiredLogins.map((host) => host.googleEmail).join(', ')}: kalenderen synker ikke, og møterommene kan ikke åpnes for notetakeren. Logg inn på /sales som den personen og koble til Google på nytt.`);
+  }
+  const hostsWithoutMeet = (liveData?.meetHosts || []).filter((host) => !host.meetSettingsScope && !host.loginExpired);
   if (hostsWithoutMeet.length) {
     alarms.push(`${hostsWithoutMeet.map((host) => host.googleEmail).join(', ')} mangler Google Meet-tilgang: møterommene kan ikke åpnes for notetakeren, og noen i møtet må slippe den inn. Logg inn på /sales som den personen og koble til Google på nytt (kryss av for Google Meet).`);
   }
@@ -327,8 +334,9 @@ export function FirefliesHealthCard() {
                     <React.Fragment key={host.googleEmail}>
                       <Row
                         label={host.googleEmail}
-                        value={host.meetSettingsScope ? (host.meetMembersScope ? 'kan åpne rom og legge til medverter' : 'kan åpne rom, mangler medverter-tilgang') : 'mangler Google Meet-tilgang'}
-                        warn={!host.meetSettingsScope || !host.meetMembersScope}
+                        value={host.loginExpired ? 'Google-innloggingen er trukket tilbake – koble til på nytt på /sales'
+                          : host.meetSettingsScope ? (host.meetMembersScope ? 'kan åpne rom og legge til medverter' : 'kan åpne rom, mangler medverter-tilgang') : 'mangler Google Meet-tilgang'}
+                        warn={Boolean(host.loginExpired) || !host.meetSettingsScope || !host.meetMembersScope}
                       />
                     </React.Fragment>
                   ))}

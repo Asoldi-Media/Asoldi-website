@@ -491,6 +491,22 @@ test('no room is touched for an event another mailbox organizes', async () => {
   assert.equal(meet.meetRoomAccessStatus(ROOM), null);
 });
 
+test('a login Google withdrew (invalid_grant) shows as expired until fresh credentials arrive', async () => {
+  writeTokens(`${BASE_SCOPES} ${meet.MEET_SETTINGS_SCOPE}`);
+  clearJsonCacheForTests();
+  const refused = mock.method(google.auth.OAuth2.prototype, 'getAccessToken', async () => {
+    throw Object.assign(new Error('invalid_grant'), { response: { status: 400, data: { error: 'invalid_grant' } } });
+  });
+  try {
+    await assert.rejects(calendar.getAuthorizedClient('sales:rep-1'), /invalid_grant/);
+  } finally {
+    refused.mock.restore();
+  }
+  assert.ok(calendar.meetRoomOwnerToken({ accountKey: 'sales:rep-1' }).invalidGrantAt, 'marked as withdrawn');
+  calendar.persistGoogleMailboxToken('sales:rep-1', { access_token: 'at-new', refresh_token: 'rt-new', googleEmail: HOST });
+  assert.equal(calendar.meetRoomOwnerToken({ accountKey: 'sales:rep-1' }).invalidGrantAt, '', 'a reconnect clears it');
+});
+
 test('no test request reached a real socket past the stubs', () => {
   assert.deepEqual(leakedSockets, []);
 });
