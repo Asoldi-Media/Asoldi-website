@@ -265,6 +265,15 @@ export function listTrafficDayFiles() {
   return out;
 }
 
+/** Current size of a listed day file, or the size from the listing when the file cannot be read. */
+export function trafficDayFileBytes(entry) {
+  try {
+    return lstatSync(entry.path).size;
+  } catch {
+    return entry?.bytes;
+  }
+}
+
 /**
  * Deletes one day file. The resolved path must sit inside the traffic folder, two levels down,
  * and the name must be a UTC day. Anything else, including a directory or a link, is left in place.

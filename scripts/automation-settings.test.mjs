@@ -34,6 +34,37 @@ function errorPaths(result) {
   return result.errors.map((error) => error.path);
 }
 
+const LEGAL_RETENTION_WARNING = 'The legal texts are on and say that visit statistics are deleted after 26 months, but retention.analyticsTraffic is not running in auto. Switch the deletion back on, or switch legal.catalogTexts off.';
+
+test('legal texts on while visit statistics deletion is not running warns and the save is accepted', () => {
+  reset();
+  assert.equal(Object.hasOwn(store.automationSettingsView(), 'warnings'), false);
+  const both = store.saveAutomationSettings({
+    retention: { analyticsTraffic: { enabled: true, mode: 'auto' } },
+    legal: { catalogTexts: { enabled: true } },
+  }, { by: 'test', reason: 'test' });
+  assert.equal(both.ok, true, JSON.stringify(both.errors));
+  assert.equal(Object.hasOwn(store.automationSettingsView(), 'warnings'), false);
+
+  function stopped(patch) {
+    const saved = store.saveAutomationSettings(patch, { by: 'test', reason: 'test' });
+    assert.equal(saved.ok, true, JSON.stringify(saved.errors));
+    assert.equal(saved.settings.legal.catalogTexts.enabled, true);
+    assert.deepEqual(store.automationSettingsView().warnings, [{
+      path: 'legal.catalogTexts.enabled',
+      message: LEGAL_RETENTION_WARNING,
+    }]);
+  }
+  stopped({ retention: { analyticsTraffic: { enabled: false } } });
+  stopped({ retention: { analyticsTraffic: { enabled: true, mode: 'shadow', paused: null } } });
+  stopped({ retention: { analyticsTraffic: { enabled: true, mode: 'auto', paused: { reason: 'hold' } } } });
+
+  const off = store.saveAutomationSettings({ legal: { catalogTexts: { enabled: false } } }, { by: 'test', reason: 'test' });
+  assert.equal(off.ok, true, JSON.stringify(off.errors));
+  assert.equal(Object.hasOwn(store.automationSettingsView(), 'warnings'), false);
+  reset();
+});
+
 test('defaults reproduce today: legacy pre-workshop autosend only, no new autosend, no auto-queue', () => {
   reset();
   const view = store.automationSettingsView();

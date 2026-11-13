@@ -321,6 +321,7 @@ export function AutomationSection({ onOpenTab }: Props) {
   const [envOverrides, setEnvOverrides] = useState<{ path: string }[]>([]);
   const [reason, setReason] = useState('');
   const [errors, setErrors] = useState<FieldError[]>([]);
+  const [warnings, setWarnings] = useState<FieldError[]>([]);
   const [notice, setNotice] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -329,6 +330,7 @@ export function AutomationSection({ onOpenTab }: Props) {
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
       setErrors([{ path: '', message: body.message || 'Kunne ikke hente innstillinger.' }]);
+      setWarnings([]);
       return;
     }
     setLoaded(body.settings || {});
@@ -336,6 +338,7 @@ export function AutomationSection({ onOpenTab }: Props) {
     setDefaults(body.defaults || {});
     setEnvOverrides(Array.isArray(body.envOverrides) ? body.envOverrides : []);
     setErrors([]);
+    setWarnings(Array.isArray(body.warnings) ? body.warnings : []);
   }, []);
 
   useEffect(() => { void load(); }, [load]);
@@ -393,6 +396,7 @@ export function AutomationSection({ onOpenTab }: Props) {
       }
       pendingText.current = {};
       setErrors([]);
+      setWarnings(Array.isArray(body.warnings) ? body.warnings : []);
       setNotice('Lagret.');
       setLoaded(body.settings || next);
       setDraft(body.settings || next);
@@ -408,6 +412,7 @@ export function AutomationSection({ onOpenTab }: Props) {
       <h1 className="text-2xl font-bold">Automatisering</h1>
       <p className="text-gray-400 text-sm">Innstillingene lagres bare for feltene du endrer. Ingenting slås på av seg selv.</p>
       {errors.filter((error) => !error.path).map((error) => <p key={error.message} className="text-red-300 text-sm">{error.message}</p>)}
+      {warnings.filter((warning) => !warning.path).map((warning) => <p key={warning.message} className="text-amber-300 text-sm">{warning.message}</p>)}
       {notice && <p className="text-emerald-300 text-sm">{notice}</p>}
       <div className={card}>
         <label className="block text-xs text-gray-400 mb-1">Begrunnelse</label>
@@ -441,6 +446,7 @@ export function AutomationSection({ onOpenTab }: Props) {
                   )}
                   {field.overriddenBy === 'env' && <span className="ml-2 text-[11px] text-amber-200">Overstyrt av miljø</span>}
                   {errorText(errors, field.path) && <p className="text-red-300 text-xs mt-1">{errorText(errors, field.path)}</p>}
+                  {errorText(warnings, field.path) && <p className="text-amber-300 text-xs mt-1">{errorText(warnings, field.path)}</p>}
                 </div>
               </div>
             ))}

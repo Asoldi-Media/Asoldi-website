@@ -25,7 +25,9 @@ let server = null;
 let base = '';
 
 function setSwitch(enabled) {
-  const result = settingsStore.saveAutomationSettings({ legal: { catalogTexts: { enabled } } }, { by: 'test', reason: 'test' });
+  const patch = { legal: { catalogTexts: { enabled } } };
+  if (enabled) patch.retention = { analyticsTraffic: { enabled: true, mode: 'auto' } };
+  const result = settingsStore.saveAutomationSettings(patch, { by: 'test', reason: 'test' });
   assert.equal(result.ok, true, JSON.stringify(result.errors));
 }
 
@@ -139,6 +141,7 @@ test('auto sends once, records the notice, and a second send is refused', async 
   const client = signedLegacy('Auto Bakeri AS');
   const listed = settingsStore.saveAutomationSettings({
     legal: { catalogTexts: { enabled: true } },
+    retention: { analyticsTraffic: { enabled: true, mode: 'auto' } },
     pilotClientIds: [client.id],
   }, { by: 'test', reason: 'test' });
   assert.equal(listed.ok, true, JSON.stringify(listed.errors));

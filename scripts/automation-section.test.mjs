@@ -235,3 +235,11 @@ test('demotion patches are values the store accepts', () => {
   assert.match(section, /canDemote/);
   assert.doesNotMatch(section, /Sett modus til godkjenning/);
 });
+
+test('a settings warning is shown in amber under the field with the same path', () => {
+  assert.match(section, /body\.warnings/);
+  assert.match(section, /setWarnings\(Array\.isArray\(body\.warnings\) \? body\.warnings : \[\]\)/);
+  assert.match(section, /errorText\(warnings, field\.path\)/);
+  assert.match(section, /text-amber-300 text-xs mt-1/);
+  assert.match(section, /warnings\.filter\(\(warning\) => !warning\.path\)/);
+});
