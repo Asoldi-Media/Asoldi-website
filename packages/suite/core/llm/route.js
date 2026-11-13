@@ -328,10 +328,13 @@ function dedupe(chain) {
  * @param {string} task registry key
  * @param {object} ctx  see CTX_FIELDS
  * @param {{tasks:object, routes:object, policy:object, env?:object, legacyRoute?:Function, payload?:any, images?:number}} options
- *   images: the number of image blocks the call carries (request.images plus those in messages and tool results)
+ *   images: the number of image blocks the call carries (request.images plus those in messages and tool results).
+ *   callLlm always passes the real count. When it is not given (a route preview: status pages, availability
+ *   checks), a call of an image task is taken to carry an image, unless ctx.vision is false: the preview then
+ *   shows where a picture would go. Pass images: 0 for the route of a call without one.
  */
 export function resolveRoute(task, ctx = {}, options = {}) {
-  const { tasks, routes, policy = {}, env = {}, legacyRoute = null, payload, images = 0 } = options;
+  const { tasks, routes, policy = {}, env = {}, legacyRoute = null, payload, images = null } = options;
   const spec = getTask(tasks, task);
   const { ctx: c, ignored, warnings: ctxWarnings } = normalizeCtx(ctx);
   const warnings = [...ctxWarnings];
@@ -388,7 +391,7 @@ export function resolveRoute(task, ctx = {}, options = {}) {
     if (!chain.length) throw new RouteConfigError(`Task "${task}" needs ${needs} but no route entry supports it in profile "${profile}".`, { task, profile });
   }
 
-  const dataClass = effectiveDataClass({ task: spec, ctx: c, payload, images });
+  const dataClass = effectiveDataClass({ task: spec, ctx: c, payload, images: images === null || images === undefined ? (vision ? 1 : 0) : images });
   const original = dedupe(chain);
   // Policy blocks carry the task, profile and route so the caller can write a policy_blocked ledger row.
   const blockedContext = { task, profile, route: formatRoute(original), primary: { provider: original[0].provider, model: original[0].model }, reasons: [...dataClass.reasons], ledger: { ...dataClass.ledger }, images: dataClass.images };

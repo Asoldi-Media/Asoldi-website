@@ -132,7 +132,8 @@ test('Gemini is on: the shipped policy records the paid tier, and a copy without
   assert.equal(gemini.allowUnpaidPublic, false);
   const r = core.createRouter({ ...asoldiLlmConfig(), legacyRoute, now: NOW });
   const planted = core.createRouter({ ...asoldiLlmConfig(), policy: unpaidGeminiPolicy(), legacyRoute, now: NOW });
-  // The same calls under both policies: business data on routes that name Gemini.
+  // The same calls under both policies: business data on routes that name Gemini, in a call without a picture
+  // (images: 0; a picture of client data stays on Claude whatever the route says).
   const calls = [
     ['dev.judge', { profile: 'prod', escalation: 1 }, 'claude:claude-opus-5-5:medium|gemini:gemini-2.5-pro'],
     ['media.categorize', { profile: 'prod' }, 'claude:claude-haiku-5-5:low|gemini:gemini-2.5-flash-lite'],
@@ -140,13 +141,14 @@ test('Gemini is on: the shipped policy records the paid tier, and a copy without
   ];
   let run = 0;
   for (const [task, ctx, expected] of calls) {
-    const route = r.resolveRoute(task, ctx);
+    const route = r.resolveRoute(task, ctx, { images: 0 });
     run += 1;
     assert.equal(route.dataClass.effective, 'business', task);
+    assert.deepEqual(r.resolveRoute(task, ctx).chain.map((e) => e.provider), ['claude'], `${task}: with a picture only Claude is left`);
     assert.equal(route.route, expected, `${task}: Gemini is allowed for business data`);
     assert.equal(core.providerAllows(ASOLDI_LLM_POLICY, 'gemini', 'business', { task }).allowed, true, task);
     // Negative control: the planted policy copy refuses the same call.
-    assert.ok(!planted.resolveRoute(task, ctx).chain.some((e) => e.provider === 'gemini'), `${task}: the copy without paidTierConfirmedAt refuses Gemini`);
+    assert.ok(!planted.resolveRoute(task, ctx, { images: 0 }).chain.some((e) => e.provider === 'gemini'), `${task}: the copy without paidTierConfirmedAt refuses Gemini`);
     assert.equal(core.providerAllows(unpaidGeminiPolicy(), 'gemini', 'business', { task }).allowed, false, task);
   }
   assert.ok(run > 0, 'assertions run');

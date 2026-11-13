@@ -350,7 +350,22 @@ test('Q5: a business task with a real payload never reaches DeepSeek or OpenAI (
   const redacted = router({ AI_PROFILE: 'test' }).resolveRoute('copy.write', { redacted: true }, { payload: { user: 'The bakery sells bread. Contact [NAME] at [EMAIL].' } });
   assert.equal(redacted.primary.provider, 'deepseek', 'a redacted payload may use DeepSeek');
   assert.equal(redacted.dataClass.redacted, true);
-  assert.equal(router({ AI_PROFILE: 'prod' }).resolveRoute('eval.judge', { route: 'openai:gpt-4.1' }).primary.provider, 'openai', 'OpenAI stays usable as the evaluation judge');
+  // The judge task is an image task: OpenAI judges text and synthetic or redacted pictures, never a client picture.
+  assert.equal(router({ AI_PROFILE: 'prod' }).resolveRoute('eval.judge', { route: 'openai:gpt-4.1' }, { images: 0 }).primary.provider, 'openai', 'OpenAI stays usable as the evaluation judge');
+  assert.equal(router({ AI_PROFILE: 'prod' }).resolveRoute('eval.judge', { route: 'openai:gpt-4.1', synthetic: true }).primary.provider, 'openai', 'and for a synthetic picture');
+  assert.equal(router({ AI_PROFILE: 'prod' }).resolveRoute('eval.judge', { route: 'openai:gpt-4.1' }).primary.provider, 'claude', 'a client picture stays on Claude');
+});
+
+test('route preview: a route resolved without an image count shows where a picture of an image task would go', () => {
+  const paid = withGemini({ billingTier: 'paid', paidTierConfirmedAt: '2026-11-10' });
+  const r = createRouter({ tasks: TASKS, routes: ROUTES, policy: paid, env: { AI_PROFILE: 'test' }, legacyRoute });
+  const preview = r.resolveRoute('qa.client-shot', {});
+  assert.deepEqual([preview.route, preview.dataClass.imageCall, preview.dataClass.images], ['claude:claude-haiku-5-5:medium', true, 1]);
+  assert.equal(r.resolveRoute('qa.client-shot', {}, { images: 0 }).route, 'gemini:gemini-2.5-flash-lite', 'a call without a picture');
+  assert.equal(r.resolveRoute('qa.client-shot', {}, { images: 2 }).dataClass.images, 2);
+  assert.equal(r.resolveRoute('qa.client-shot', { vision: false }).dataClass.imageCall, false, 'ctx.vision false is a text call');
+  assert.equal(r.resolveRoute('copy.write', {}).dataClass.imageCall, false, 'a text task is never taken to carry a picture');
+  assert.equal(r.resolveRoute('qa.shot', {}).route, 'gemini:gemini-2.5-flash-lite', 'a public template capture is not touched');
 });
 
 test('Q5: ctx.synthetic / ctx.redacted cannot carry real person data past the policy', () => {

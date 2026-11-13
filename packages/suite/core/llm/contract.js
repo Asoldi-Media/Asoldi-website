@@ -203,6 +203,7 @@ export const LLM_CONTRACT = deepFreeze({
       rule: 'a call with at least one image block and a class above public keeps only these providers, unless the call is synthetic or carries an accepted imagesRedacted',
       providers: [...IMAGE_PROVIDERS_FOR_CLIENT_DATA],
       imageCall: 'request.images, or an image block inside a message or a tool result',
+      preview: 'a route resolved without an image count (no call) takes a call of an image task to carry an image, unless ctx.vision is false; images: 0 asks for the route of a call without one',
       imagesRedacted: 'accepted only when redacted is also set and accepted for the text, the base class is not transcript and the person-field scan was not truncated; the plain redacted flag never covers images',
       templateOnlyImageTasks: 'every image task is business class or higher, except the template-only tasks a registry lists with a reason',
     },
@@ -418,8 +419,11 @@ export function runContractChecks({ core, facade = null, fingerprint = null } = 
   attempt('images of real-client data go only to Claude', () => {
     const paid = { ...MINI_POLICY, providers: { ...MINI_POLICY.providers, gemini: { ...MINI_POLICY.providers.gemini, billingTier: 'paid', paidTierConfirmedAt: '2026-11-10' } } };
     const router = core.createRouter({ tasks: core.parseTaskRegistry(MINI_TASKS), routes: MINI_ROUTES, policy: paid, env: { AI_PROFILE: 'test' } });
-    const text = router.resolveRoute('contract.vision', {});
+    const text = router.resolveRoute('contract.vision', {}, { images: 0 });
     if (text.primary.provider !== 'gemini') fail('paid Gemini must be usable for business data on a call without images');
+    const preview = router.resolveRoute('contract.vision', {});
+    if (preview.chain.some((e) => e.provider !== 'claude') || preview.dataClass.imageCall !== true) fail('a route preview of an image task must show where a picture would go');
+    if (router.resolveRoute('contract.vision', { vision: false }).dataClass.imageCall !== false) fail('ctx.vision false means a text call: no image is assumed');
     const image = router.resolveRoute('contract.vision', {}, { images: 1 });
     if (image.chain.some((e) => e.provider !== 'claude')) fail('an image of real-client data reached a provider other than Claude');
     if (image.dataClass.imageCall !== true || image.dataClass.ledger.redacted !== false) fail('an image call must be marked as one, with redacted false');

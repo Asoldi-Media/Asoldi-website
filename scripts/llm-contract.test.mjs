@@ -16,7 +16,7 @@ const TASKS = {
 const ROUTES = { version: 1, profiles: { legacy: { default: 'claude:claude-haiku-5-5:medium' }, prod: { default: 'claude:claude-haiku-5-5:medium|deepseek:deepseek-flash' } } };
 const POLICY = { version: 1, providers: { claude: { allow: ['public', 'business', 'personal', 'transcript'] }, deepseek: { allow: ['public', 'business'] } } };
 
-const PINNED_FINGERPRINT = 'sha256:87f447a5603fe34f130bb4fbf53af3b94b6922e72e2330bb2cf34a59345deb07';
+const PINNED_FINGERPRINT = 'sha256:e458135a6b53aea205dc86b7d0cb85995efa5463d21e1bcb9f6fcd6aa99c8cf2';
 
 test('contract version and fingerprint are pinned', () => {
   assert.equal(core.LLM_CONTRACT.version, PINNED_VERSION);

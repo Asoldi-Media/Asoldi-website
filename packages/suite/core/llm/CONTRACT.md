@@ -178,6 +178,10 @@ warning: the call then uses no tier routes and the default budget base. Malforme
     - The policy accepts `imagesRedacted` only when all three hold: `redacted` is also set and was accepted
       for the call's text; the base class (the task class and `ctx.dataClass`, before any flag) is not
       `transcript`; and the person-field scan was not cut short. Otherwise the mark is ignored.
+    - A route resolved without calling (`resolveRoute(task, ctx)` with no `images` count: a status page, an
+      availability check) takes a call of an image task to carry an image, unless `ctx.vision` is false. It
+      then shows where a picture would go. `resolveRoute(task, ctx, {images: 0})` gives the route of a call
+      without one. `callLlm` always uses the real count.
     - `synthetic` is the second way an image call can leave Claude, and the policy cannot check it against
       pixels either. A caller sets it on a call that carries images only as a value derived from a fixture
       registry (the client is a synthetic fixture), never from a session or script option.

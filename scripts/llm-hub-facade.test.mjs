@@ -162,7 +162,7 @@ const { runInfokortAgent } = await import('../lib/infokort-agent.js');
 const { asoldiLlmConfig } = await import('../packages/suite/harness/asoldi/llm.js');
 const sharp = (await import('sharp')).default;
 
-const PINNED_FINGERPRINT = 'sha256:87f447a5603fe34f130bb4fbf53af3b94b6922e72e2330bb2cf34a59345deb07';
+const PINNED_FINGERPRINT = 'sha256:e458135a6b53aea205dc86b7d0cb85995efa5463d21e1bcb9f6fcd6aa99c8cf2';
 const HUB_TASKS = Object.keys(asoldiLlmConfig('hub').tasks);
 const CLIENT = { id: 'client-fixture-1', businessName: 'Fjordbakeriet AS', industry: 'bakeri', contactPerson: 'Kari', notes: 'Vil ha nettbutikk for brød.' };
 const TRANSCRIPT = Array.from({ length: 14 }, (_, i) => `Speaker ${i % 2 ? 'Asoldi' : 'Kunde'}: Vi snakker om nettsiden og hva den skal vise, punkt nummer ${i + 1}.`).join('\n');
