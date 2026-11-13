@@ -8607,6 +8607,42 @@ async function finalizeClientGoogleSignIn(googleProfile) {
   return { token, redirectPath, ...session };
 }
 
+const CALENDAR_SYNC_RETRY_MS = 5 * 60 * 1000;
+const calendarSyncRetry = { at: 0, running: false };
+
+/**
+ * A booked meeting whose Google sync failed (a withdrawn login, Google down) is synced again, at most every
+ * 5 minutes and right after a reconnect, until it lands: a move then reaches the calendar and the client.
+ */
+async function retryFailedCalendarSyncs({ force = false, nowMs = Date.now() } = {}) {
+  if (calendarSyncRetry.running || (!force && nowMs - calendarSyncRetry.at < CALENDAR_SYNC_RETRY_MS)) return { retried: 0, landed: 0 };
+  calendarSyncRetry.running = true;
+  calendarSyncRetry.at = nowMs;
+  let retried = 0;
+  let landed = 0;
+  try {
+    const due = sales.getSalesClients()
+      .filter((client) => sanitizeText(client?.calendar?.syncFailedAt) && client.agreedTime && Date.parse(client.meetingAt) > nowMs)
+      .slice(0, 10);
+    for (const client of due) {
+      retried += 1;
+      try {
+        const result = await maybeSyncCalendar(client, client, {
+          notifyAttendees: client.calendar.syncNotify === true,
+          actorAccountKey: sanitizeText(client.ownerId),
+        });
+        if (!sanitizeText(result?.client?.calendar?.syncFailedAt)) landed += 1;
+      } catch (error) {
+        console.warn(`[calendar] sync retry id=${sanitizeText(client.id)} failed: ${sanitizeText(error?.message)}`);
+      }
+    }
+  } finally {
+    calendarSyncRetry.running = false;
+  }
+  if (retried) console.log(`[calendar] sync retry landed=${landed}/${retried}`);
+  return { retried, landed };
+}
+
 async function maybeSyncCalendar(client, previousClient = null, options = {}) {
   const requireMeetLink = Boolean(options?.requireMeetLink);
   const actorAccountKey = sanitizeText(options?.actorAccountKey);
@@ -8862,6 +8898,7 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
       if (sameMailbox && isSalesRepAccountKey(nextClient?.ownerId)) {
         calendarMeta.accountKey = sanitizeText(nextClient.ownerId);
       }
+      Object.assign(calendarMeta, { syncFailedAt: '', syncError: '', syncNotify: false });
       const withCalendar = sales.setSalesCalendar(nextClient.id, calendarMeta);
       if (withCalendar) nextClient = withCalendar;
       // The live-join loop sends the bot; a new room or time only has to reach it.
@@ -8889,6 +8926,12 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
       }
     } catch (error) {
       warnings.push(`Calendar sync failed: ${error.message}`);
+      const failed = sales.setSalesCalendar(nextClient.id, {
+        syncFailedAt: new Date().toISOString(),
+        syncError: sanitizeText(error?.message),
+        syncNotify: notifyAttendees || nextClient?.calendar?.syncNotify === true,
+      });
+      if (failed) nextClient = failed;
     }
   } else if (calendarStatus.configured && !calendarStatus.connected) {
     warnings.push('Google Calendar is not connected for this salesperson yet. Connect it from the Sales page.');
@@ -9973,6 +10016,7 @@ function startSalesReminderLoop() {
   if (salesReminderInterval) return;
   salesReminderInterval = setInterval(() => {
     sendDueSalesReminders().catch((error) => console.error('Sales reminder tick failed:', error));
+    retryFailedCalendarSyncs().catch((error) => console.error('[calendar] sync retry tick failed', error));
   }, SALES_REMINDER_POLL_MS);
 }
 
@@ -13748,6 +13792,8 @@ app.get('/api/admin/sales/google/oauth/callback', async (req, res) => {
       const mailboxSiblings = await resolveSiblingCalendarAccountKeys(`admin:${mailbox}`);
       if (mailboxSiblings.length) shareGoogleCalendarToken(`admin:${mailbox}`, mailboxSiblings);
     }
+    // Meetings whose sync failed while the login was gone go out now.
+    void retryFailedCalendarSyncs({ force: true }).catch(() => {});
     return res.send(renderGoogleCalendarOAuthResultHtml({
       ok: true,
       googleEmail: sanitizeText(status?.googleEmail),

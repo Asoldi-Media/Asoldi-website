@@ -1060,6 +1060,45 @@ test('a portal / preview e-signature marks Solgt with fastTrack, even on a card 
   assert.throws(() => sales.setSalesProgress(other.id, 'contractSigned', true), /Marker/);
 });
 
+test('a failed Google sync stays on the card and is tried again until it lands', async () => {
+  const card = seedConfirmed();
+  let stored = sales.setSalesCalendar(card.id, { syncFailedAt: '2026-11-13T19:47:55.000Z', syncError: 'invalid_grant', syncNotify: true });
+  assert.deepEqual([stored.calendar.syncFailedAt, stored.calendar.syncError, stored.calendar.syncNotify], ['2026-11-13T19:47:55.000Z', 'invalid_grant', true]);
+  stored = sales.setSalesCalendar(card.id, { syncFailedAt: '', syncError: '', syncNotify: false });
+  assert.equal('syncFailedAt' in stored.calendar, false, 'a sync that lands leaves no trace on the card');
+
+  const nowMs = Date.parse('2026-11-13T20:00:00.000Z');
+  const failed = (id, meetingAt, syncNotify) => ({ id, ownerId: 'sales:rep-1', agreedTime: true, meetingAt, calendar: { syncFailedAt: '2026-11-13T19:00:00.000Z', syncNotify } });
+  const clients = [
+    failed('moved', '2026-11-14T09:00:00.000Z', true),
+    failed('silent', '2026-11-14T10:00:00.000Z', false),
+    failed('past', '2026-11-13T08:00:00.000Z', true),
+    { id: 'fine', ownerId: 'sales:rep-1', agreedTime: true, meetingAt: '2026-11-14T11:00:00.000Z', calendar: {} },
+  ];
+  const calls = [];
+  const { retryFailedCalendarSyncs } = loadServerFunctions(['retryFailedCalendarSyncs'], {
+    sales: { getSalesClients: () => clients },
+    sanitizeText: helpers.sanitizeText,
+    CALENDAR_SYNC_RETRY_MS: 5 * 60 * 1000,
+    calendarSyncRetry: { at: 0, running: false },
+    maybeSyncCalendar: async (client, previous, options) => {
+      calls.push([client.id, previous.id, options.notifyAttendees, options.actorAccountKey]);
+      return { client: { ...client, calendar: {} } };
+    },
+    console: { log() {}, warn() {}, error() {} },
+  });
+  assert.deepEqual(await retryFailedCalendarSyncs({ nowMs }), { retried: 2, landed: 2 });
+  assert.deepEqual(calls, [['moved', 'moved', true, 'sales:rep-1'], ['silent', 'silent', false, 'sales:rep-1']], 'only upcoming failed syncs; the client is told only when the move would have told them');
+  assert.deepEqual(await retryFailedCalendarSyncs({ nowMs: nowMs + 60_000 }), { retried: 0, landed: 0 }, 'at most every 5 minutes');
+  assert.deepEqual(await retryFailedCalendarSyncs({ nowMs: nowMs + 60_000, force: true }), { retried: 2, landed: 2 }, 'a reconnect retries at once');
+
+  const syncSource = serverFunctionSource('maybeSyncCalendar');
+  assert.match(syncSource, /syncFailedAt: new Date\(\)\.toISOString\(\)/);
+  assert.match(syncSource, /syncFailedAt: '', syncError: '', syncNotify: false/);
+  assert.match(serverFunctionSource('startSalesReminderLoop'), /retryFailedCalendarSyncs\(\)/);
+  assert.match(serverSrc, /void retryFailedCalendarSyncs\(\{ force: true \}\)/);
+});
+
 test('INBOX_BOT_ENABLED: the loop stays on unless it is 0, false or off', () => {
   const { inboxBotLoopEnabled } = loadServerFunctions(['inboxBotLoopEnabled'], {});
   for (const value of [undefined, '', '1', 'true', 'on', 'yes']) assert.equal(inboxBotLoopEnabled(value), true, String(value));

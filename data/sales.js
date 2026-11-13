@@ -415,6 +415,10 @@ function normalizeCalendar(value = {}) {
     inviteSequence: Number.isFinite(Number(input.inviteSequence)) && Number(input.inviteSequence) > 0
       ? Math.trunc(Number(input.inviteSequence))
       : 0,
+    // A Google sync that failed and is tried again until one lands (server.js retryFailedCalendarSyncs).
+    ...(sanitizeText(input.syncFailedAt)
+      ? { syncFailedAt: sanitizeText(input.syncFailedAt), syncError: sanitizeText(input.syncError).slice(0, 200), syncNotify: input.syncNotify === true }
+      : {}),
   };
 }
 
