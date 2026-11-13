@@ -155,7 +155,8 @@ test('local hub in safe mode: legal routes are 404 while dark and serve the cata
     assert.equal(darkWin.status, 200, JSON.stringify(darkWin.body).slice(0, 300));
     const dark = storedClient(dataDir, 'boot-dark');
     assert.equal(dark.progression.contractSigned, true);
-    assert.equal(dark.ext, undefined, 'no legal snapshot while dark');
+    assert.equal(dark.ext?.legal, undefined, 'no legal snapshot while dark');
+    assert.equal(dark.ext?.dpa, undefined);
     assert.doesNotMatch(readFileSync(join(dataDir, 'sales-clients.json'), 'utf8'), /"legal"|"dpa"/);
     const settingsFile = join(dataDir, 'automation-settings.json');
     assert.equal(existsSync(settingsFile), false, 'nothing stored while dark');

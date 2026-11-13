@@ -35,29 +35,47 @@ funksjonalitet fra et høyere nivå er lagt til.` / `Clients cannot downgrade to
 higher-level functionality has been added.`). Version 2, the current wording, says the client can
 move down to a lower tier by agreement with Asoldi.
 
-The time version 2 starts is stored once, in `contract-terms-cutover.json`, the first time the code
-that carries the current wording starts. An offer that is not signed renders version 2. An offer
-sent at or after that cut-over always renders version 2. A signed client with no recorded time
-renders version 1 only for an offer sent before the cut-over (also when the offer has no send time,
-or when no cut-over time is stored). Otherwise a signed offer renders version 1 when its signature
-time is before the cut-over, and version 2 when the signature time is at or after it.
+A signature recorded by this build is stamped with the wording version in force at that moment, on
+`client.ext.contractTerms`. A signed contract renders the stamped version of the signature that
+applies to that offer. A signature with no stamp was recorded by the earlier build and renders
+version 1. An offer that is not signed renders the current version. Nothing reads a clock or a
+file while rendering. A stamp version higher than the current one renders as the current version.
+A stamp counts only when its version is a whole number of at least 1.
 
-The signature time is the earliest recorded time at or after the offer's send time, chosen from the
-client's `contractSignedAt` and the remembered earlier time `ext.contractSigning.earlierSignedAt`
-(the earliest signature time that was recorded and later removed; a change of several clients in
-one write does not record it). When the offer has no send time, the earliest of
-those times is used. When every recorded time is before the send time, the offer counts as signed
-only when the client's site plan names that offer; its time is then the latest `offer-upgrade`
-entry in the plan history at or after the send time, or the send time when there is no such entry.
-When nothing was recorded, the offer is signed with no time. A signed PDF already filed is never
-rewritten.
+The signature that applies is the earliest recorded time at or after the offer's send time, chosen
+from the client's `contractSignedAt` (the current signature) and the remembered earlier time
+`ext.contractSigning.earlierSignedAt` (the earliest signature time that was recorded and later
+removed; a change of several clients in one write does not record it). When those two times are
+equal, the current signature applies. When the offer has no send time, the earliest of those times
+is used. When every recorded time is before the send time, the offer counts as signed only when the
+client's site plan names that offer (the site-plan signature); its time is then the latest
+`offer-upgrade` entry in the plan history at or after the send time, or the send time when there is
+no such entry. When nothing was recorded, the offer is signed with no time.
 
-**Limits.** The recorded time is when the hub recorded the signature, not the moment of signing, so
-a contract signed before the cut-over but first recorded after it (no earlier tick; the arrival
-time of a mail with the signed PDF is not read) renders version 2, and a tick set by mistake after the offer was sent and removed again still
-counts as the first recorded time. When a release is rolled back to a build without the current
-wording, delete `contract-terms-cutover.json` as part of the rollback; see
-[runtime-data.md](runtime-data.md).
+The current signature renders the version on `ext.contractTerms.signed` when that stamp is valid,
+and version 1 when it is missing or not. The stamp is valid when its version is a whole number of
+at least 1 and `signedAt` is the same text as the client's stored `contractSignedAt` (surrounding
+space removed on both). The earlier signature renders `ext.contractTerms.earlierVersion` when that
+is a valid version, and version 1 when it is absent or not. The site-plan signature renders
+`ext.contractTerms.plan.version` when `plan.offerId` is that offer's id and the version is valid,
+and version 1 otherwise.
+
+`ext.contractTerms.signed` is `{ version, signedAt, at }`, written when the signed tick turns on.
+`signedAt` is the `contractSignedAt` the store keeps after that write, or `''` when the write
+recorded no time. `at` is when the stamp was written. `earlierVersion` is the version of the
+signature whose time is kept in `ext.contractSigning.earlierSignedAt`; it is omitted when that
+signature had no valid stamp. `plan` is `{ offerId, version, at }`, written when an offer is taken
+into the site plan. `ext.contractSigning` still holds only `earlierSignedAt`. A signed PDF already
+filed is never rewritten.
+
+**Limits.** The recorded time is when the hub recorded the signature, not the moment of signing. A
+paper contract signed earlier and first ticked under this build is stamped with the current
+version, and so is a signed PDF that was sent out by the earlier build and arrives by mail after
+this build went live (the filed signed PDF itself is never rewritten). Correcting such a stamp is a
+manual data change for the owner. A tick set by mistake after the offer was sent and removed again
+still counts as the first recorded time. A rollback needs no step: the earlier build ignores
+`ext.contractTerms`, and signatures it records get no stamp and so keep version 1 after a later
+deploy.
 
 ## Parts
 

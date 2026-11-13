@@ -122,7 +122,8 @@ test('switch off: no stamps, no snapshot, no DPA data, every legal route answers
   assert.equal(offer.dpaVersion, undefined);
   assert.equal(offer.ext, undefined);
   assert.equal(client.progression.contractSigned, true);
-  assert.equal(client.ext, undefined);
+  assert.equal(client.ext?.legal, undefined, 'no legal snapshot while the switch is off');
+  assert.equal(client.ext?.dpa, undefined);
   assert.equal(legalSourceForOffer(offer).mode, 'legacy');
   assert.equal(dpaStatus(client).status, 'disabled');
   portalUsers.set('u-off', client.id);
@@ -195,7 +196,7 @@ test('an offer sent before the switch keeps the legacy texts and never yields a 
   assert.equal(offers.getSalesOfferById(offer.id).dpaVersion, undefined, 'turning the switch on stamps nothing that was sent');
   assert.equal(legalSourceForOffer(offers.getSalesOfferById(offer.id)).mode, 'legacy');
   const signed = sales.setSalesProgress(client.id, 'contractSigned', true, { fastTrack: true });
-  assert.equal(signed.ext, undefined, 'no snapshot without a stamped offer');
+  assert.equal(signed.ext?.legal, undefined, 'no snapshot without a stamped offer');
   assert.equal(legalBindingForClient(signed).mode, 'legacy');
   // The legacy contract incorporates the DPA as published on the signing date: in force, not missing.
   assert.equal(dpaStatus(signed).status, 'accepted-legacy');

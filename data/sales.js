@@ -40,6 +40,7 @@ import { normalizeDeveloperGoals } from '../lib/developer-goals.js';
 import { normalizeDueDate } from '../lib/website-due.js';
 import { listSalesOffers, normalizeOfferSentContent } from './sales-offers.js';
 import { legalSnapshotPatch } from '../lib/legal/binding.js';
+import { contractTermsExtOnWrite } from '../lib/contract-terms-version.js';
 import {
   carryFutureKeys,
   FUTURE_CLIENT_KEYS,
@@ -1035,7 +1036,7 @@ function updateSalesClientInternal(id, updates = {}) {
   };
   const legalExt = legalExtOnSigning(current, merged);
   const signingExt = earlierSignatureExt(current, merged, legalExt);
-  const ext = signingExt || legalExt;
+  const ext = extWithContractTerms(current, merged, signingExt || legalExt, true);
   const next = normalizeSalesClient(ext ? { ...merged, ext } : merged);
   state[index] = next;
   writeState(state);
@@ -1081,6 +1082,15 @@ function earlierSignatureExt(current, merged, legalExt) {
   } catch (error) {
     console.error('[contract-terms] earlier signature time was not stored', current?.id, error?.message || error);
     return undefined;
+  }
+}
+
+function extWithContractTerms(current, merged, baseExt, recordEarlier) {
+  try {
+    return contractTermsExtOnWrite(current, merged, baseExt, { now: nowIso(), recordEarlier });
+  } catch (error) {
+    console.error('[contract-terms] stamp was not stored', current?.id, error?.message || error);
+    return baseExt;
   }
 }
 
@@ -1140,7 +1150,8 @@ export function patchSalesClientsById(entries = []) {
       updatedAt: Object.prototype.hasOwnProperty.call(patch, 'updatedAt') ? patch.updatedAt : client.updatedAt,
     };
     const legalExt = legalExtOnSigning(client, merged);
-    return normalizeSalesClient(legalExt ? { ...merged, ext: legalExt } : merged);
+    const ext = extWithContractTerms(client, merged, legalExt, false);
+    return normalizeSalesClient(ext ? { ...merged, ext } : merged);
   });
   if (updated) writeState(next);
   return { total: state.length, updated };
