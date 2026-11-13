@@ -44,7 +44,7 @@ A hub that runs on a PC (or the office LAN box) has the same keys as asoldi.com.
   - `HUB_SAFE_MODE_AI=replay|error` throws the provider's own "not available" error instead of returning a stub.
   - To record cassettes, run with `HUB_SAFE_MODE_ALLOW=aiCalls HUB_SAFE_MODE_AI_RECORD=1`.
   - The hub LLM facade (`lib/llm`, see `docs/ai-layer.md`) sends every provider call through this guard, on every profile; its ledger rows for guarded calls cost $0.
-- **Inbox.** IMAP sessions use `EXAMINE` and `BODY.PEEK`, so mail stays unread (`imapFlags` lifts this).
+- **Inbox.** IMAP sessions use `EXAMINE` and `BODY.PEEK`, so mail stays unread. The same holds on production: the bot never changes a flag.
 - **Background jobs.** Only these start:
   - the sales reminder and workshop desk email loops (their mail lands in the outbox);
   - three local backfills;
@@ -76,7 +76,7 @@ A hub that runs on a PC (or the office LAN box) has the same keys as asoldi.com.
 | `stripeWebhookAdmin` | Stripe webhook endpoint create/delete (a live account also needs `paymentsLive`) |
 | `prodPublish` | asoldi.com logins and preview pushes, and LAN autopublish |
 | `wordpressWrite`, `accountingWrite` | WordPress writes, Luca mutations |
-| `inboxRead`, `imapFlags` | The inbox bot loop and IMAP hosts / IMAP flag changes |
+| `inboxRead` | The inbox bot loop and IMAP hosts |
 | `aiCalls` | Real LLM calls |
 | `paidApi` | DataForSEO, SerpAPI, Google Places/Geocoding, Deepgram, Brave |
 | `publicRead` | GET to public websites (not APIs, not asoldi.com) |

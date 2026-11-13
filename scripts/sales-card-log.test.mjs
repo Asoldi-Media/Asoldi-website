@@ -114,6 +114,70 @@ test('a held meeting lands in the log at the meeting time, not as an open row', 
   assert.ok(rows.some((row) => row.id === 'playbook:readUp'));
 });
 
+test('the log shows the client mail and what the bot sent, with their own times', () => {
+  const MAIL_AT = '2026-11-06T10:03:53.000Z';
+  const REPLY_AT = '2026-11-06T10:04:40.000Z';
+  const rows = buildSalesCardLog(client({
+    inboxBot: {
+      activity: [
+        {
+          id: 'ib-1',
+          kind: 'sales_cancel',
+          status: 'applied',
+          cardLog: true,
+          receivedAt: MAIL_AT,
+          text: 'Jeg rekker dessverre ikke møtet i dag. Kan du på et annet tidspunkt?',
+          replyText: 'Helt i orden, takk for at du sier ifra. Hvilken dag og tid passer bedre for deg?',
+          repliedAt: REPLY_AT,
+          summary: 'Bot tok bort møtet (kunden kan ikke) og ba om en ny tid.',
+        },
+        {
+          id: 'ib-2',
+          kind: 'silent',
+          status: 'needs_human',
+          cardLog: true,
+          receivedAt: '2026-11-05T08:00:00.000Z',
+          text: 'Når kommer kontrakten?',
+          summary: 'Kunden spør om kontrakten.',
+        },
+        {
+          id: 'ib-alert',
+          kind: 'other',
+          status: 'unmatched',
+          cardLog: false,
+          receivedAt: '2026-11-06T12:00:00.000Z',
+          text: 'Internt varsel om at det mangler Fireflies-opptak.',
+        },
+      ],
+    },
+  }), Date.parse('2026-11-06T15:00:00.000Z'));
+  const mail = rows.find((row) => row.id === 'inbox:ib-1');
+  assert.deepEqual([mail.kind, mail.name, mail.at], ['email', 'E-post fra kunden', MAIL_AT]);
+  const reply = rows.find((row) => row.id === 'inbox:ib-1:reply');
+  assert.deepEqual([reply.name, reply.at], ['Møtet avlyst på e-post', REPLY_AT]);
+  assert.match(reply.text, /Hvilken dag og tid passer/);
+  assert.ok(rows.indexOf(reply) < rows.indexOf(mail), 'newest first: the answer above the mail');
+  const waiting = rows.find((row) => row.id === 'inbox:ib-2');
+  assert.match(waiting.text, /Venter svar fra selger: Kunden spør om kontrakten\./);
+  assert.equal(rows.some((row) => row.id === 'inbox:ib-2:reply'), false, 'no answer, no answer row');
+  assert.equal(rows.some((row) => row.id === 'inbox:ib-alert'), false, 'internal mail filed on the card is not a client mail');
+});
+
+test('a declined invite and a bounce are their own log rows', () => {
+  const rows = buildSalesCardLog(client({
+    inboxBot: {
+      activity: [
+        { id: 'ib-d', kind: 'sales_declined', status: 'applied', cardLog: true, receivedAt: '2026-11-09T11:02:33.000Z', summary: 'Kunden avslo møteinvitasjonen for 9. nov kl 16:00.', replyText: 'Så synd at tiden ikke passet. Passer noe av dette: …?', repliedAt: '2026-11-09T11:03:10.000Z' },
+        { id: 'ib-b', kind: 'bounce', status: 'needs_human', cardLog: true, receivedAt: '2026-11-02T12:08:43.000Z', summary: 'E-post til post@teobygg.example kom ikke fram.' },
+      ],
+    },
+  }));
+  assert.equal(rows.find((row) => row.id === 'inbox:ib-d').name, 'Avslo møteinvitasjonen');
+  assert.equal(rows.find((row) => row.id === 'inbox:ib-d:reply').name, 'Svar sendt (ledige tider)');
+  const bounce = rows.find((row) => row.id === 'inbox:ib-b');
+  assert.deepEqual([bounce.name, bounce.kind], ['E-post kom ikke fram', 'email']);
+});
+
 test('the sales card right column is the log, not a free-edit notes blob', () => {
   const board = readFileSync(new URL('../app/pages/Admin/sections/SalesClientsSection.tsx', import.meta.url), 'utf8');
   assert.match(board, /renderNotes=\{renderClientSalesLog\}/);

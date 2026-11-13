@@ -311,10 +311,30 @@ test('owner-meet backfill only repairs leftover assigned online rooms', () => {
     ...leftover,
     meetingAt: '2026-11-03T09:00:00.000Z',
   }, now), false);
+  // Running now, or starting within two hours: the client, the rep and the notetaker keep the mailed room.
   assert.equal(salesClientNeedsOwnerMeetBackfill({
     ...leftover,
     meetingAt: '2026-11-03T11:00:00.000Z',
-  }, now), true);
+  }, now), false);
+  assert.equal(salesClientNeedsOwnerMeetBackfill({
+    ...leftover,
+    meetingAt: '2026-11-03T13:00:00.000Z',
+  }, now), false);
+  assert.equal(salesClientNeedsOwnerMeetBackfill({
+    ...leftover,
+    meetingAt: '2026-11-03T11:00:00.000Z',
+    calendar: { meetLink: '', meetHostVerifiedEmail: '' },
+  }, now), true, 'a meeting with no room at all still gets one');
+});
+
+test('the confirmation never re-mints a room the client has within two hours of the start', () => {
+  const room = 'https://meet.google.com/omf-uiwc-ddr';
+  const now = Date.parse('2026-11-03T11:20:00.000Z');
+  const ask = (meetingAt) => salesMeetNeedsFreshConference({ expectedOwnerEmail: 'alexander@asoldi.com', hangoutLink: room, forceOwnerMeet: true, verifiedHostEmail: '', meetingAt, nowMs: now });
+  assert.equal(ask('2026-11-04T10:00:00.000Z'), true, 'a day ahead: an unverified room is replaced as before');
+  assert.equal(ask('2026-11-03T12:30:00.000Z'), false);
+  assert.equal(ask('2026-11-03T11:00:00.000Z'), false, 'running');
+  assert.equal(salesMeetNeedsFreshConference({ expectedOwnerEmail: 'alexander@asoldi.com', hangoutLink: '', meetingAt: '2026-11-03T11:30:00.000Z', nowMs: now }), true, 'no room: always one');
 });
 
 test('confirmed Meet is the emailed URL, not a later calendar swap', () => {

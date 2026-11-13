@@ -196,6 +196,7 @@ export const DEFAULT_ALLOWED_EMAIL_DOMAINS = [
   'anthropic.com',
   'cursor.com',
   'fireflies.ai',
+  'fathom.video',
   'sentry.io',
   'stripe.com',
   'google.com',

@@ -317,6 +317,24 @@ test('a later meeting in the same reused room is not this one: only offered, and
   assert.match(h.sent[0].text, /https:\/\/app\.fireflies\.ai\/view\/FFNEXT01/);
 });
 
+test('a sales meeting moved at the last minute and recorded at the new time is not "ingen opptak" at the old one', async () => {
+  const start = Date.parse('2026-11-04T08:30:00.000Z');
+  const client = booking(start);
+  // Moved to 08:51 in a new room; that recording is on the card already.
+  const room = 'https://meet.google.com/new-room-xyz';
+  Object.assign(client, { agreedTime: true, meetingMode: 'online', meetingAt: iso(start + 21 * MIN), calendar: { meetLink: room, confirmedMeetLink: room } });
+  client.meetings.push({ meetingId: 'FFMOVED01', meetLink: room, startedAt: iso(start + 22 * MIN), hasTranscript: true, sentenceCount: 400 });
+  const h = hub([client]);
+  const fake = fireflies({ list: [], transcripts: {} });
+  const result = await run(h, fake, start + 200 * MIN);
+  assert.deepEqual(result.checked, [], 'nothing to follow: the meeting was recorded');
+  assert.equal(h.sent.length, 0, 'no "ingen opptak" e-mail');
+  assert.equal(watchdog.missingRecordingRows([client], { nowMs: start + 200 * MIN }).count, 0, 'not listed under Møter uten opptak');
+  // Control: with only a two-sentence fragment at the new time, the old time is still followed.
+  client.meetings[1] = { ...client.meetings[1], sentenceCount: 2 };
+  assert.equal(watchdog.missingRecordingRows([client], { nowMs: start + 200 * MIN }).count, 1);
+});
+
 test('a recording Fireflies is still working on beats an empty fragment; still unfinished hours later it is missing', async () => {
   const start = Date.parse('2026-10-22T09:00:00.000Z');
   const client = booking(start, { state: 'ended' });

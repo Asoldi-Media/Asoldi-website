@@ -2,6 +2,8 @@
 
 `lib/inbox-bot/` reads new mail in alexander@asoldi.com over IMAP every minute (`startInboxBotLoop` in `server.js`), matches the sender to a sales card and decides what to do. Set `INBOX_BOT_ENABLED=0` to stop the loop.
 
+The mailbox is always listed read-only (`EXAMINE` and `BODY.PEEK`, `READ_ONLY` in `lib/inbox-bot/mail-imap.js`): the bot never marks a client mail as read, so Alexander still sees it as new.
+
 The rule throughout: when the bot is not sure, it hands the mail to a person (`needs_human`). It never guesses a booking or a cancel.
 
 ## Who gets an answer
@@ -10,7 +12,13 @@ Only clients **before Tilbud**: the card is active, not SSU, and has none of Mø
 
 Clients in **Tilbud**, **Venter signering** or **Solgt** (and Ikke solgt / Sekundær cards) never get a reply, a booking or a card change from the bot. Their mail is logged as `needs_human` with reason `stage:offer`, `stage:signature`, `stage:won` or `stage:off`. A plain "takk" is logged without the flag. The card shows the amber pill "E-post venter svar", and the Admin card lists the mail under "E-post fra kunden".
 
-The sender must be the card's own address (`via: 'email'`: contact, client or website e-mail). The reply goes to that address. Reply-To is always alexander@asoldi.com (the mailbox the bot reads), so the client's answer comes back to the bot. The subject is always ours ("Re: …").
+The sender must be the card's own address (`via: 'email'`: contact, client or website e-mail). The reply goes to that address, From "Alexander fra Asoldi <alexander@asoldi.com>" with Reply-To the same mailbox, so the client's answer comes back to the bot. The subject is always ours ("Re: …"), and `In-Reply-To` and `References` keep it in the client's thread.
+
+Where a reply shows (`lib/mailbox-copy.js`, called from `sendEmail` in `lib/email.js` after a real send):
+
+- **Sendt**: every mail sent From an @asoldi.com mailbox that has `INBOX_IMAP_<NAME>_PASS` is appended to its Sent folder (the first of `INBOX.Sent`, `Sent`, `Sent Items` that exists).
+- **Innboks**: a bot reply (`copyToInbox`) is also appended to the inbox, marked read, with the header `X-Bot-Copy`. The bot skips any mail with that header, so it never answers its own copy.
+- A failed copy is logged (event `copy.appended`, `sent.ok` or `inbox.ok` false) and never fails the send. Safe mode sends nothing, so it copies nothing.
 
 - An address the AI found (in the body, by org number or business name) is `via: 'hint' | 'org' | 'name'`. No reply; logged `needs_human` with reason `other-address`.
 - An address that is on two cards is `via: 'ambiguous'`. No reply on either card; logged `needs_human` (`ambiguous-sender`) on the later-stage card.
@@ -51,7 +59,7 @@ How the words are read:
 - English works the same way ("Could we do Friday at 2pm instead?" books Friday 14:00 and is not a side question). "Vi snakkes" counts as a yes; past tense "hadde passet bedre" counts as a preference.
 - A question about the meeting link ("Kan du sende lenken på nytt?", "jeg kan ikke åpne lenken") gets the link from the card. With no link on the card a person answers (`no-meet-link`). Teams, Zoom or a physical meeting is the rep's call: a person answers.
 
-The AI (`decide.js`, DeepSeek) writes the reply text and may veto an action. It can never book or cancel on its own, and it never turns a mail meant for a person (contract, unclear, another day) into an automatic answer; such a mail keeps its own reason (`time-unclear`, `decline-all` …) even when the AI reads it as a booking. When an AI is configured and the call fails or returns no valid request for a card change, the mail goes to a person (`ai-unavailable`); with no AI at all, the words alone decide. A model reply is dropped when it names a day or clock time (Oslo date and HH:MM together) we did not offer, uses "klokka 14", "14-tiden" or "2 pm", quotes a price (kr, kroner, NOK, ",-"), links a domain other than the meeting link, or claims it moved, booked, set up, cancelled or confirmed anything.
+The AI (`decide.js`, DeepSeek) writes the reply text and may veto an action. Within the rebook family (`reschedule`, `reschedule_day`, `cancel`, `sameFamily`) the words decide: the AI reading "Jeg kan dessverre ikke komme på torsdag" as a new-day request instead of a cancel is no veto, and the row keeps the AI's reading in `aiRequest` for review. It can never book or cancel on its own, and it never turns a mail meant for a person (contract, unclear, another day) into an automatic answer; such a mail keeps its own reason (`time-unclear`, `decline-all` …) even when the AI reads it as a booking. When an AI is configured and the call fails or returns no valid request for a card change, the mail goes to a person (`ai-unavailable`); with no AI at all, the words alone decide. A model reply is dropped when it names a day or clock time (Oslo date and HH:MM together) we did not offer, uses "klokka 14", "14-tiden" or "2 pm", quotes a price (kr, kroner, NOK, ",-"), links a domain other than the meeting link, or claims it moved, booked, set up, cancelled or confirmed anything.
 
 ## Booking and cancelling
 
@@ -65,6 +73,34 @@ The AI (`decide.js`, DeepSeek) writes the reply text and may veto an action. It 
 - **Mail that does not go out**: a card change or an answer whose reply fails is `needs_human` (`reply-failed`), with the error in the summary. Only times the client actually received count as offered.
 - The reminder loop also skips Tilbud, Venter signering, Solgt, inactive cards and meetings marked no-show/skip. It re-keys stale stamps before it sends, so a reminder can never name a wrong or cancelled time.
 - When the client answers the bot's offered times with a day ("mandag passer"), the bot books the one slot it offered that day.
+
+## Calendar answers and bounces
+
+Machine mail is routed before the normal gate (`lib/inbox-bot/calendar-answers.js`), so it is no longer dropped as automated.
+
+The card for a calendar answer is the one whose `calendar.eventId` matches the event UID; else the one whose Meet code is in the mail and whose meeting is at the event's time; else the one with the attendee's own address. Two cards that fit is `ambiguous-sender` and nothing changes. No card is `calendar-unmatched`.
+
+- **Avslå** (`METHOD:REPLY`, `PARTSTAT=DECLINED`, `parseIcsEvent` in `packages/suite/core/mail/ics.js`, Outlook's Windows zone names included) is treated as "jeg kan ikke komme". It applies only to the time on the card now, in the meeting stage, before the meeting starts. The hub's own cancellation is not sent, because the client declined in their own calendar. The meeting is voided and `salesPlaybook.declinedMeetingAt` is set, the card moves to Venter møtebekreftelse with the pill "Avslo møtet", and a "Ny møtetid" task is added. The bot then mails free times (subject "Ny tid for møtet med Asoldi", not threaded, since a calendar notification is no thread). An answer about an older time is logged (`calendar-other-time`). A decline after the start goes to a person (`calendar-after-start`).
+- **Foreslå ny tid** (`METHOD:COUNTER`) is found by event UID only and is booked through the same checks as a mailed new time (hours, the rep's calendar, not passed). A time it cannot book goes to a person (`time-unavailable`).
+- **Accepted and tentative** answers change nothing.
+- **Bounce** (from `mailer-daemon@` / `postmaster@`, a `multipart/report`, or an "Undeliverable" subject): the addresses come from the `Final-Recipient` / `Original-Recipient` lines, else from the bounce text. Every card with such an address gets a `bounce` row and the pill "E-post kom ikke fram" for 14 days. The card's rep gets a mail ("E-post kom ikke fram – <firma>"), at most once per card and address a day.
+- Backfill logs calendar answers but never changes a meeting.
+
+## On the sales card
+
+The inbox item keeps the client's text, the bot's reply and when it went out (`replyText`, `repliedAt`, `replyTo`). The Admin card shows both under "E-post fra kunden". The sales log on the right (`lib/sales-card-log.js`, kind `email`) gets a timed row for each of these:
+
+| Row | When |
+|---|---|
+| Møtet flyttet på e-post | The bot booked a new time. |
+| Møtet avlyst på e-post | The bot cancelled the meeting. |
+| Avslo møteinvitasjonen, Svar sendt (ledige tider) | The client declined the invite and got free times. |
+| E-post kom ikke fram | A mail to the card's address bounced. |
+| E-post fra kunden, Venter svar fra selger: … | A mail went to a person. |
+
+## A rep's own notetaker
+
+The hub sends Fireflies into every booked meeting itself (see `docs/fireflies-recording.md`). A rep who still has a personal Fireflies or Fathom on their calendar gets a second notetaker in the lobby, and that recording lands in an account the hub cannot read. `lib/inbox-bot/notetaker-watch.js` spots mail in a rep's mailbox showing that ("Fireflies … on behalf of <mailbox>", "Your Fireflies notetaker", Fathom notetaker reminders; never the Fireflies key owner's own account). It then mails `FIREFLIES_ALERT_EMAIL` (default damian@asoldi.com) once a day per mailbox and tool, with the steps to switch it off.
 
 ## Contracts
 
@@ -115,13 +151,16 @@ Each `needs_human` row has a `reason` (the part before `:` picks the Admin label
 | `void-failed:<error>` | The cancel failed; nothing was added or sent. |
 | `reply-failed` | The card changed (or an answer was ready) but the mail did not go out. |
 | `ai-unavailable` | The AI was configured but did not answer about a card change. |
-| `ai-disagrees:<request>`, `ai-sees:<request>` | The AI read a different request than the words; a person decides. |
+| `ai-disagrees:<request>`, `ai-sees:<request>` | The AI read a different request than the words, outside the rebook family; a person decides. |
+| `calendar-after-start` | The client declined the invite after the meeting started. |
 | `info-about-meeting` | A facts mail with no AI reply names a weekday, a clock or the meeting. |
 | `unclear` | Nothing the words settle. |
 
 ## Data and routes
 
-- `~/.asoldi-website-data/inbox-bot.json`: processed ids, mailbox baselines and the last 400 items. Each item has `kind`, `status` (`applied`, `logged`, `needs_human`, `skipped`, `pending` …), `intent`, `reason`, `stage` and `offeredSlots`.
+- `~/.asoldi-website-data/inbox-bot.json`: processed ids, mailbox baselines and the last 400 items. Each item has `kind`, `status` (`applied`, `logged`, `needs_human`, `skipped`, `pending` …), `intent`, `reason`, `stage`, `offeredSlots`, `replyText`, `repliedAt`, and the AI's and the words' reading (`aiRequest`, `wordsRequest`).
+- `~/.asoldi-website-data/ops-events/<YYYY-MM>.jsonl` (`lib/ops-events.js`): one line per event, kept 90 days, with no mail text, bodies, passwords or tokens. Inbox events: `mail.decided` (words, AI, action, status, reason, `lagMs`), `reply.sent`, `copy.appended`, `calendar.answer`, `bounce`, `tick`.
+- `GET /api/admin/inbox-bot/report?days=7` (1–90 days, `inboxBotReport` in `lib/ops-reports.js`) gives the numbers to judge the bot by: outcomes, actions, reasons a mail went to a person, answer times (median and p90), failures, AI disagreements, Sendt and Innboks copies, AI calls and cost, and a review list.
 - `~/.asoldi-website-data/inbox-contracts/<clientId>/`: contract PDFs.
 - `GET /api/admin/inbox-bot/status` and `GET /api/admin/inbox-bot/peek` (dry run, no sends). `POST /api/admin/inbox-bot/backfill` with `confirm: 'backfill-once'` answers missed mail; it uses the same gates, never voids or moves a meeting, and checks again right before each mail that the live tick has not handled it. It answers 409 (with `busy: 'tick'` or `busy: 'backfill'`) while the minute tick or another backfill runs; try again a minute later.
-- Tests: `scripts/inbox-bot.test.mjs`, `scripts/inbox-bot-intents.test.mjs`, `scripts/inbox-bot-contract.test.mjs`, `scripts/inbox-bot-panel.test.mjs`, `scripts/mail-thread.test.mjs`, `scripts/workshop-time-parse.test.mjs`, `scripts/sales-meeting-void.test.mjs`.
+- Tests: `scripts/inbox-bot.test.mjs`, `scripts/inbox-bot-intents.test.mjs`, `scripts/inbox-bot-contract.test.mjs`, `scripts/inbox-bot-panel.test.mjs`, `scripts/mail-thread.test.mjs`, `scripts/workshop-time-parse.test.mjs`, `scripts/sales-meeting-void.test.mjs`, `scripts/inbox-reply-copy.test.mjs`, `scripts/inbox-bot-replay.test.mjs` (anonymized real mails), `scripts/inbox-calendar-answers.test.mjs`, `scripts/ops-reports.test.mjs`.

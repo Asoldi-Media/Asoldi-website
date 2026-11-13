@@ -179,7 +179,7 @@ import {
   salesEmailMergeMap,
   buildSalesCalendarInvite,
 } from './lib/sales-email.js';
-import { assignmentStampForOwnerChange, clientIsSalesWin, confirmationSendGaps, confirmationShouldSendOnChange, decorateNextActions, isRecordedSalesAction, meetingTimeHasPassed, normalizeSecondaryInterest, osloWeekRange, resolveMeetingAtOnMyphonerMerge, resolveMeetingModeOnMyphonerMerge, sameMeetingInstant } from './lib/sales-next-actions.js';
+import { appendActionNote, assignmentStampForOwnerChange, clientIsSalesWin, confirmationSendGaps, confirmationShouldSendOnChange, decorateNextActions, isRecordedSalesAction, meetingIsVoided, meetingTimeHasPassed, myphonerMeetingTimeAllowed, normalizeSecondaryInterest, osloWeekRange, resolveMeetingAtOnMyphonerMerge, resolveMeetingModeOnMyphonerMerge, sameMeetingInstant } from './lib/sales-next-actions.js';
 import { isPlaceholderMeetingId, meetingHasOfferTalk, normalizeOfferMeetingIds, offerAutoFillDecision, seedOfferMeetingIds, selectOfferMeetingId } from './lib/offer-meetings.js';
 import { normalizeStoredWebsiteEmail, resolveWebsiteEmail } from './lib/sales-website-email.js';
 import { extractBookingFromLead, salesBookingFacts } from './lib/sales-booking-facts.js';
@@ -324,6 +324,8 @@ import {
   runFirefliesIngestTick,
 } from './lib/fireflies-ingest.js';
 import { missingRecordingRows, recordingDecision, runFirefliesRecordingWatchdog } from './lib/fireflies-recording-watchdog.js';
+import { firefliesReport, inboxBotReport, readAiLedgerRows } from './lib/ops-reports.js';
+import { readOpsEvents } from './lib/ops-events.js';
 import { CUSTOM_TIER_ID, WEBSITE_TIERS, formatKr, resolveTier, tierById, toClientWebsitePlan } from './lib/website-tiers.js';
 import { buildSalesSender, normalizeAsoldiFromEmail } from './lib/sales-sender.js';
 import {
@@ -438,6 +440,8 @@ import {
   queryWorkshopFreeBusy,
   rememberCalendarAccountEmail,
   setCalendarAccountEmailLookup,
+  addStaffGuestToEvent,
+  meetHostReadiness,
 } from './lib/google-calendar.js';
 import { loadWorkshopNeedsDocument, patchWorkshopNeedLine, openNeedLines } from './lib/workshop-needs.js';
 import {
@@ -451,6 +455,7 @@ import {
   resolveInboxContractPath,
   tickInboxBot,
 } from './lib/inbox-bot/index.js';
+import { inboxStoreRevision, listInboxItems } from './lib/inbox-bot/store.js';
 import {
   backfillRecognizedSignedContracts,
   linkSalesClientPortalFromAcceptance,
@@ -489,7 +494,7 @@ import {
   pickDamianCalendarAccountKey,
   resolveDamianWorkshopAccountKey,
 } from './lib/workshop-action.js';
-import { ensureMeetRoomOpen } from './lib/google-meet-access.js';
+import { ensureMeetRoomOpen, setMeetRoomAccess } from './lib/google-meet-access.js';
 import { sendPreWorkshopAfterContractSigned } from './lib/workshop-prep-send.js';
 import { gateMailLinesFor } from './lib/delivery-gate.js';
 import {
@@ -5947,13 +5952,30 @@ function buildSalesInputFromMyphonerLead(lead = {}, resourcePath = '') {
   );
 }
 
-function mergeMyphonerSalesInput(existing = {}, incoming = {}) {
+/** Newest winner event time on a MyPhoner lead ('' when the lead carries none). */
+function latestMyphonerWinnerAt(lead = {}) {
+  const source = lead && typeof lead === 'object' ? lead : {};
+  const events = [...(Array.isArray(source.events) ? source.events : []), source.last_event, source.last_action_or_note];
+  let latest = '';
+  for (const event of events) {
+    if (!event || typeof event !== 'object') continue;
+    const marks = [event.kind || event.type || event.event || event.action, event.state].map((value) => sanitizeText(value).toLowerCase());
+    if (!marks.some((value) => value === 'winner' || value === 'won')) continue;
+    const at = myphonerApi.parseMyPhonerDateToIso(event.created_at || event.createdAt);
+    if (at && (!latest || Date.parse(at) > Date.parse(latest))) latest = at;
+  }
+  return latest;
+}
+
+/** Card fields after a MyPhoner winner. `winnerAt` (newest winner event) decides whether a voided card may take a time. */
+function mergeMyphonerSalesInput(existing = {}, incoming = {}, { winnerAt = '' } = {}) {
   const current = existing && typeof existing === 'object' ? existing : {};
   const next = incoming && typeof incoming === 'object' ? incoming : {};
   const incomingHasMeeting = Boolean(next.meetingAt);
   const meeting = resolveMeetingAtOnMyphonerMerge(
     current,
-    incomingHasMeeting ? next.meetingAt : ''
+    incomingHasMeeting ? next.meetingAt : '',
+    { winnerAt }
   );
   const mergedMeetingMode = resolveMeetingModeOnMyphonerMerge(current, next.meetingMode);
   const nextEmail = sanitizeText(next.contactEmail);
@@ -6249,7 +6271,8 @@ async function upsertSalesClientFromMyphonerLead({
   );
   let client;
   if (existing) {
-    const mergedInput = mergeMyphonerSalesInput(existing, incomingInput);
+    // A replay of the booking the client cancelled must not come back; only a newer winner event may set a time.
+    const mergedInput = mergeMyphonerSalesInput(existing, incomingInput, { winnerAt: latestMyphonerWinnerAt(source) });
     const product = sales.resolveSalesProductFromMyphoner({
       listId: myphonerPatch.listId || existing?.myphoner?.listId,
       listName: myphonerPatch.listName || existing?.myphoner?.listName,
@@ -9424,6 +9447,9 @@ async function sendSalesReminderNow(client, kind = '24h', { salesUser = null, ac
   const gaps = confirmationSendGaps({ ...client, contactEmail: recipient });
   if (gaps.length) return { sent: false, reason: 'missing-fields', gaps, client };
   if (!client?.agreedTime || !client?.meetingAt) return { sent: false, reason: 'meeting-not-scheduled', client };
+  // A meeting reminder never goes to a Tilbud / Venter signering / Solgt card or an archived one.
+  if (sales.salesMeetingStageBlockedReason(client)) return { sent: false, reason: 'not-meeting-stage', client };
+  if (meetingTimeHasPassed(client)) return { sent: false, reason: 'reminder-meeting-passed', client };
   if (!recipient) return { sent: false, reason: 'missing-email', client };
   if (!emailLib.canSendEmail()) return { sent: false, reason: 'smtp-not-configured' };
   const reminderKind = normalizeSalesReminderKind(kind);
@@ -9480,6 +9506,10 @@ function salesEmailCopyBcc(clientEmail = '') {
 
 function salesEmailFailureMessage(reason = '') {
   if (reason === 'meeting-not-scheduled') return 'Meeting date/time must be set before sending this email.';
+  if (reason === 'not-meeting-stage') {
+    return 'Kunden er forbi møtet (Tilbud, Venter signering, Solgt) eller ikke aktiv. Påminnelsen ble ikke sendt.';
+  }
+  if (reason === 'reminder-meeting-passed') return 'Møtetiden har passert. Påminnelsen ble ikke sendt.';
   if (reason === 'missing-email') return 'Client contact email is missing.';
   if (reason === 'smtp-not-configured') {
     return 'Email sending is not configured. Set RESEND_API_KEY on the server.';
@@ -9524,16 +9554,20 @@ function formatSmtpSendError(error) {
 async function sendDueRemindersForClient(client, { nowMs = Date.now(), generalOwners = null } = {}) {
   if (!SALES_EMAIL_AUTOSEND_ENABLED) return;
   if (!client) return;
-  if (sanitizeText(client.status) === 'not-sold') return;
-  if (!isSalesRepAccountKey(client.ownerId)) return;
-  if (generalOwners?.has(sanitizeText(client.ownerId))) return;
-  if (!client.reminders?.thankYouSentAt) return;
-  if (!client.agreedTime || !client.meetingAt) return;
-  const meetingMs = new Date(client.meetingAt).getTime();
-  if (!Number.isFinite(meetingMs) || meetingMs <= nowMs) return;
+  // The loop walks one snapshot and awaits a mail per card: decide on the stored card (the bot may have voided it since).
+  let current = sales.getSalesClientById(client.id);
+  if (!current) return;
+  if (!isSalesRepAccountKey(current.ownerId)) return;
+  if (generalOwners?.has(sanitizeText(current.ownerId))) return;
+  // Backstop: not confirmed, no future meeting, past the meeting stage, not active, or skipped/no-show for this time.
+  if (sales.salesReminderBlockedReason(current, nowMs)) return;
 
-  const due = (atIso, sentAt) => sales.salesReminderIsDue(atIso, sentAt, { nowMs, meetingAt: client.meetingAt });
-  let current = client;
+  // A stamp keyed to an older meeting time would fire "om 1 time" days early: re-key from the real meetingAt first.
+  // A 24h mail that already went out stays counted when the new time is inside 24 hours (no second "om 24 timer").
+  if (sales.salesReminderStampsStale(current)) {
+    current = sales.rescheduleSalesReminders(current.id, nowMs, { keepSent24h: true }) || current;
+  }
+  const due = (atIso, sentAt) => sales.salesReminderIsDue(atIso, sentAt, { nowMs, meetingAt: current.meetingAt });
   if (due(current.reminders?.reminder3dAt, current.reminders?.reminder3dSentAt)) {
     await sendSalesReminderNow(current, '3d', { actorAccountKey: current.ownerId });
     current = sales.getSalesClientById(current.id) || current;
@@ -9759,6 +9793,23 @@ async function openLiveSessionMeetRoom(session) {
   });
 }
 
+/**
+ * The live join's notetaker window on the room's host login: OPEN around the start so the notetaker walks
+ * in, TRUSTED again once it is in (or at T+30, also on the first tick after a restart). `untilMs` only keeps
+ * the ordinary room check (ensureMeetRoomOpen) from locking the room while the window is meant to be open.
+ */
+async function setLiveSessionMeetAccess(session, accessType) {
+  const host = liveSessionMeetHost(session);
+  const startMs = Date.parse(session.startAt);
+  return setMeetRoomAccess({
+    meetLink: session.meetLink,
+    accountKey: host.accountKey,
+    ownerEmail: host.ownerEmail,
+    accessType,
+    untilMs: Number.isFinite(startMs) ? startMs + 35 * 60 * 1000 : Date.now() + 40 * 60 * 1000,
+  });
+}
+
 /** Optional FIREFLIES_LIVE_JOIN_ONE_BOT=1: the Fireflies plan runs one bot at a time (default off). */
 function firefliesLiveJoinOneBot() {
   return parseBoolean(process.env.FIREFLIES_LIVE_JOIN_ONE_BOT, false);
@@ -9784,6 +9835,7 @@ function firefliesLiveJoinDeps() {
     onDispatch: recordLiveJoinDispatch,
     onSessionChange: syncLiveJoinPlaceholders,
     openMeetRoom: openLiveSessionMeetRoom,
+    setMeetAccess: setLiveSessionMeetAccess,
     log: console,
   };
 }
@@ -9916,17 +9968,65 @@ function startFirefliesLiveJoinLoop() {
 }
 
 let inboxBotInterval = null;
-let inboxBotLoopRunning = false;
+// One lock for the inbox: '' (free), 'tick' (the minute loop) or 'backfill' (the admin route).
+// Neither starts while the other runs, so the same mail is never answered twice.
+let inboxBotBusy = '';
+
+/** Kill switch: the inbox bot loop runs unless INBOX_BOT_ENABLED is 0, false or off. */
+function inboxBotLoopEnabled(value = process.env.INBOX_BOT_ENABLED) {
+  return !['0', 'false', 'off'].includes(String(value ?? '').trim().toLowerCase());
+}
+
+/** A mail to the client bounced: one plain note to the card's rep (Damian when nobody owns the card). */
+async function notifyRepOfInboxBounce(client, { address = '', summary = '' } = {}) {
+  if (!emailLib.canSendEmail()) return;
+  const to = sanitizeText(await accountKeyToEmail(sanitizeText(client?.ownerId))) || 'damian@asoldi.com';
+  const name = sanitizeText(client?.businessName) || 'kunden';
+  await emailLib.sendEmail({
+    to,
+    subject: `E-post kom ikke fram – ${name}`,
+    text: `${summary || `E-post til ${address} kom ikke fram.`}\n\nKunden får ikke bekreftelser, påminnelser eller møtelenken før adressen er rettet på kortet for ${name}.`,
+    bcc: false,
+  });
+}
+
+const FOREIGN_NOTETAKER_STEPS = {
+  Fireflies: 'Logg inn på app.fireflies.ai med den e-posten, gå til Settings → Auto-join og slå det av (eller koble fra kalenderen under Integrations).',
+  Fathom: 'Logg inn på fathom.video med den e-posten, gå til Settings → Calendar og slå av at Fathom blir med i møter (eller koble fra kalenderen).',
+};
+
+/** A rep's own Fireflies/Fathom is still on their calendar: tell the Fireflies owner once a day. */
+async function notifyOwnerOfForeignNotetaker({ tool = '', mailbox = '' } = {}) {
+  if (!emailLib.canSendEmail()) return;
+  const to = sanitizeText(process.env.FIREFLIES_ALERT_EMAIL) || 'damian@asoldi.com';
+  await emailLib.sendEmail({
+    to,
+    subject: `${mailbox} har sin egen ${tool} i møtene`,
+    text: [
+      `${mailbox} har fortsatt sin egen ${tool} koblet til kalenderen. Den blir med i møtene ved siden av Fireflies fra hubben.`,
+      'Da banker to notetakere på, selgeren slipper inn sin egen, og opptaket havner i en konto hubben ikke kan lese. Kortet får da «ingen opptak».',
+      '',
+      `Slik slås den av: ${FOREIGN_NOTETAKER_STEPS[tool] || 'slå av at den blir med i møter.'}`,
+      'Hubben sender selv Fireflies inn i alle bookede møter.',
+    ].join('\n'),
+    bcc: false,
+  });
+}
 
 function startInboxBotLoop() {
   if (inboxBotInterval) return;
+  if (!inboxBotLoopEnabled()) {
+    console.log('[inbox-bot] loop off (INBOX_BOT_ENABLED)');
+    return;
+  }
   inboxBotInterval = setInterval(() => {
-    if (inboxBotLoopRunning) return;
-    inboxBotLoopRunning = true;
-    tickInboxBot()
+    if (inboxBotBusy) return;
+    inboxBotBusy = 'tick';
+    // A bot move or void runs the same chain as a rep in the sales panel.
+    tickInboxBot({ moveMeeting: moveSalesMeetingFromInbox, voidMeeting: voidSalesMeetingFromInbox, notifyRep: notifyRepOfInboxBounce, notifyOwner: notifyOwnerOfForeignNotetaker })
       .catch((error) => console.error('[inbox-bot] tick failed', error))
       .finally(() => {
-        inboxBotLoopRunning = false;
+        inboxBotBusy = '';
       });
   }, SALES_REMINDER_POLL_MS);
 }
@@ -14050,9 +14150,16 @@ app.post('/api/admin/sales/preview-send-emails', salesAuth, async (req, res) => 
 
 let salesListCache = { key: '', rows: null };
 
+/**
+ * Sales, offers, inbox-bot and live-join revisions: a new inbox item or a recording state shows without waiting
+ * for another sales write. liveRecordings also move with the clock near a meeting.
+ */
+function salesListCacheKey() {
+  return `${sales.salesDataRevision()}:${salesOffers.offersDataRevision()}:${inboxStoreRevision()}:${liveRecordingsRevision()}`;
+}
+
 function cachedSalesListRows() {
-  // liveRecordings move with the live-join store and, near a meeting, with the clock.
-  const key = `${sales.salesDataRevision()}:${salesOffers.offersDataRevision()}:${liveRecordingsRevision()}`;
+  const key = salesListCacheKey();
   if (salesListCache.key === key && Array.isArray(salesListCache.rows)) return salesListCache.rows;
   const offersByClient = salesOffers.latestOffersByClient();
   const storedMap = readStoredFirefliesMeetingMap();
@@ -14061,7 +14168,7 @@ function cachedSalesListRows() {
     return { ...jsonSalesClient(client, storedMap), offerStatus: offer ? offer.status : '' };
   });
   salesListCache = {
-    key: `${sales.salesDataRevision()}:${salesOffers.offersDataRevision()}:${liveRecordingsRevision()}`,
+    key: salesListCacheKey(),
     rows,
   };
   return rows;
@@ -15182,44 +15289,167 @@ app.patch('/api/admin/sales/:id/next-actions', salesAuth, async (req, res) => {
   if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, existing)) return res.status(403).json({ message: 'Not your sales client.' });
   try {
-    const updated = sales.setSalesNextAction(req.params.id, req.body || {});
-    if (!updated) return res.status(404).json({ message: 'Sales client not found.' });
-    let client = updated;
-    const timeChanged = !sameCalendarInstant(existing.meetingAt, client.meetingAt)
-      || existing.agreedTime !== client.agreedTime;
-    const modeChanged = normalizeMeetingMode(existing.meetingMode) !== normalizeMeetingMode(client.meetingMode);
-    const meetingChanged = timeChanged || modeChanged;
-    const warnings = [];
-    let thankYouSent = false;
-    if (meetingChanged) {
-      const assigned = isSalesRepAccountKey(client.ownerId);
-      const syncResult = await maybeSyncCalendar(client, existing, {
-        notifyAttendees: assigned,
-        forceGuestInvite: assigned,
-        actorAccountKey: req.salesUser.accountKey,
-      });
-      client = syncResult.client || client;
-      warnings.push(...(syncResult.warnings || []));
-      if (assigned) {
-        const thankYou = await autoSendThankYouFromOwner(client, { existing });
-        if (thankYou?.client) client = thankYou.client;
-        thankYouSent = Boolean(thankYou?.sent);
-        warnings.push(...(thankYou?.warnings || []));
-      }
-    }
-    const reminderSync = await maybeSyncNextActionCalendars(existing, client, {
+    const result = await applySalesNextActionWithSync(existing, req.body || {}, {
       actorAccountKey: req.salesUser.accountKey,
     });
-    client = reminderSync.client || client;
-    warnings.push(...(reminderSync.warnings || []));
+    if (!result) return res.status(404).json({ message: 'Sales client not found.' });
     // A booked Møte (or a moved one) reaches the live-join loop now instead of on its next minute.
-    kickFirefliesLiveJoins(client);
-    res.json({ client, warnings, thankYouSent, meetingChanged });
+    kickFirefliesLiveJoins(result.client);
+    res.json(result);
   } catch (error) {
     const message = sanitizeText(error?.message) || 'Failed updating next action.';
     res.status(400).json({ message });
   }
 });
+
+/**
+ * One next-action write plus the meeting chain a rep's "Endre møtetid" runs: calendar sync (notify the client
+ * when a rep owns the card), the branded confirmation, then the rep's task events. Null when the card is gone.
+ * Throws on an invalid patch (the route turns that into a 400).
+ */
+async function applySalesNextActionWithSync(existing, patch = {}, { actorAccountKey = '' } = {}) {
+  const updated = sales.setSalesNextAction(existing.id, patch || {});
+  if (!updated) return null;
+  let client = updated;
+  const timeChanged = !sameCalendarInstant(existing.meetingAt, client.meetingAt)
+    || existing.agreedTime !== client.agreedTime;
+  const modeChanged = normalizeMeetingMode(existing.meetingMode) !== normalizeMeetingMode(client.meetingMode);
+  const meetingChanged = timeChanged || modeChanged;
+  const warnings = [];
+  let thankYouSent = false;
+  if (meetingChanged) {
+    const assigned = isSalesRepAccountKey(client.ownerId);
+    const syncResult = await maybeSyncCalendar(client, existing, {
+      notifyAttendees: assigned,
+      forceGuestInvite: assigned,
+      actorAccountKey,
+    });
+    client = syncResult.client || client;
+    warnings.push(...(syncResult.warnings || []));
+    if (assigned) {
+      const thankYou = await autoSendThankYouFromOwner(client, { existing });
+      if (thankYou?.client) client = thankYou.client;
+      thankYouSent = Boolean(thankYou?.sent);
+      warnings.push(...(thankYou?.warnings || []));
+    }
+  }
+  const reminderSync = await maybeSyncNextActionCalendars(existing, client, { actorAccountKey });
+  client = reminderSync.client || client;
+  warnings.push(...(reminderSync.warnings || []));
+  return { client, warnings, thankYouSent, meetingChanged };
+}
+
+/** Fresh card for a hook result; never throws. */
+function inboxHookClient(id = '') {
+  try {
+    return id ? sales.getSalesClientById(id) : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Inbox bot hook: the client gave a new date and time. Same chain as a rep moving the open Møte row, as the
+ * card's rep. The bot's note goes on the row. ok:false only when the card did not move; a later step that
+ * failed after the move comes back as `warning`. Never throws.
+ */
+async function moveSalesMeetingFromInbox(client, dueAt, { note = '' } = {}) {
+  const id = sanitizeText(client?.id);
+  const target = dueAt instanceof Date ? dueAt.toISOString() : dueAt;
+  let existing = null;
+  try {
+    existing = inboxHookClient(id);
+    if (!existing) return { ok: false, client: null, confirmationSent: false, error: 'client-not-found' };
+    if (sales.salesMeetingStageBlockedReason(existing)) {
+      return { ok: false, client: existing, confirmationSent: false, error: 'not-meeting-stage' };
+    }
+    const row = (existing.nextActions || []).find((action) => action?.presetKey === 'meeting' && !action.doneAt);
+    if (!row) return { ok: false, client: existing, confirmationSent: false, error: 'no-meeting-row' };
+    const patch = { op: 'update', id: row.id, dueAt: target };
+    if (sanitizeText(note)) patch.note = appendActionNote(row.note, note);
+    const result = await applySalesNextActionWithSync(existing, patch, { actorAccountKey: existing.ownerId });
+    if (!result) return { ok: false, client: null, confirmationSent: false, error: 'client-not-found' };
+    return { ok: true, client: inboxMovedClient(id, result.client), confirmationSent: Boolean(result.thankYouSent), error: '' };
+  } catch (error) {
+    const message = sanitizeText(error?.message) || 'move-failed';
+    const fresh = inboxHookClient(id);
+    // The row write comes first: when the calendar sync or the confirmation mail threw after it, the card already moved.
+    if (existing && inboxMeetingIsAt(fresh, target)) {
+      console.warn(`[inbox-bot] meeting moved, a later step failed client=${id}: ${message}`);
+      const sentAt = sanitizeText(fresh.reminders?.thankYouSentAt);
+      const confirmationSent = Boolean(sentAt) && sentAt !== sanitizeText(existing.reminders?.thankYouSentAt);
+      return { ok: true, client: inboxMovedClient(id, fresh), confirmationSent, error: '', warning: message };
+    }
+    console.warn(`[inbox-bot] move meeting failed client=${id}: ${message}`);
+    return { ok: false, client: fresh, confirmationSent: false, error: message };
+  }
+}
+
+/** Card after a bot move with no stamps left from the old time (unassigned cards skip the calendar sync that re-keys). */
+function inboxMovedClient(id = '', fallback = null) {
+  const fresh = inboxHookClient(id) || fallback;
+  if (!fresh || !sales.salesReminderStampsStale(fresh)) return fresh;
+  try {
+    return sales.rescheduleSalesReminders(id, Date.now(), { keepSent24h: true }) || fresh;
+  } catch {
+    return fresh; // the reminder loop re-keys stale stamps before it sends
+  }
+}
+
+/** True when the card's open Møte row, or its agreed meetingAt, already holds this time. */
+function inboxMeetingIsAt(client, dueAt = '') {
+  if (!client || !Number.isFinite(Date.parse(dueAt))) return false;
+  const row = (client.nextActions || []).find((action) => action?.presetKey === 'meeting' && !action.doneAt);
+  if (row && sameCalendarInstant(row.dueAt, dueAt)) return true;
+  return Boolean(client.agreedTime) && sameCalendarInstant(client.meetingAt, dueAt);
+}
+
+/** Best-effort delete of the card's Google meeting event. 'all' also removes the client's calendar copy. */
+async function deleteSalesMeetingEventForVoid(client, { notifyClient = true } = {}) {
+  const eventId = sanitizeText(client?.calendar?.eventId);
+  if (!eventId) return false;
+  const calendarId = sanitizeText(client?.calendar?.calendarId);
+  const accountKey = sanitizeText(client?.calendar?.accountKey) || calendarOwnerIdForSync(client?.ownerId || '');
+  // An event on the blocked personal mailbox is removed silently, like maybeSyncCalendar does.
+  const notify = notifyClient && !calendarRecordIsOnBlockedMailbox(client?.calendar || {});
+  try {
+    await ensureSharedCalendarTokens(accountKey);
+    await deleteMeetingEvent(eventId, accountKey, {
+      ...(calendarId ? { calendarId } : {}),
+      sendUpdates: notify ? 'all' : 'none',
+    });
+    return true;
+  } catch (error) {
+    console.warn(`[inbox-bot] meeting event delete failed client=${client?.id || ''}: ${sanitizeText(error?.message) || error}`);
+    return false;
+  }
+}
+
+/**
+ * Inbox bot hook: the client can't attend and gave no new time. Removes the Google event, then voids the
+ * meeting time on the card (no reminder can name it), then drops the rep's task events for closed rows.
+ * Never throws.
+ */
+async function voidSalesMeetingFromInbox(client, { note = '', notifyClient = true, declined = false } = {}) {
+  const id = sanitizeText(client?.id);
+  try {
+    const existing = inboxHookClient(id);
+    if (!existing) return { ok: false, client: null, error: 'client-not-found' };
+    if (sales.salesMeetingStageBlockedReason(existing)) return { ok: false, client: existing, error: 'not-meeting-stage' };
+    await deleteSalesMeetingEventForVoid(existing, { notifyClient });
+    const voided = sales.voidSalesMeetingTime(id, { note, declined });
+    if (!voided) return { ok: false, client: null, error: 'client-not-found' };
+    try {
+      await maybeSyncNextActionCalendars(existing, voided, { actorAccountKey: existing.ownerId });
+    } catch (error) {
+      console.warn(`[inbox-bot] task calendar sync after void failed client=${id}: ${sanitizeText(error?.message) || error}`);
+    }
+    return { ok: true, client: inboxHookClient(id) || voided, error: '' };
+  } catch (error) {
+    console.warn(`[inbox-bot] void meeting failed client=${id}: ${sanitizeText(error?.message) || error}`);
+    return { ok: false, client: inboxHookClient(id), error: sanitizeText(error?.message) || 'void-failed' };
+  }
+}
 
 app.post('/api/admin/sales/:id/playbook', salesAuth, (req, res) => {
   const existing = sales.getSalesClientById(req.params.id);
@@ -15319,6 +15549,41 @@ app.get('/api/admin/sales/:id/inbox-contracts/:fileName', salesAuth, (req, res) 
   return res.sendFile(filePath, { etag: false, lastModified: false });
 });
 
+function reportWindow(req) {
+  const days = Math.min(90, Math.max(1, Number(req.query?.days) || 7));
+  const nowMs = Date.now();
+  return { days, nowMs, sinceMs: nowMs - days * 86400000 };
+}
+
+// The numbers to judge the inbox bot by (lib/ops-reports.js): outcomes, answer times, failures, AI cost, review list.
+app.get('/api/admin/inbox-bot/report', adminAuth, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const { days, nowMs, sinceMs } = reportWindow(req);
+  res.json(inboxBotReport({
+    days,
+    nowMs,
+    items: listInboxItems(),
+    events: readOpsEvents({ system: 'inbox', sinceMs, untilMs: nowMs }),
+    clients: sales.getSalesClients(),
+    ledgerRows: readAiLedgerRows({ sinceMs }),
+  }));
+});
+
+// The numbers to judge the Fireflies live join by: recorded rate, time to bot in, sends, the room window, co-hosts.
+app.get('/api/admin/fireflies/report', adminAuth, (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const { days, nowMs, sinceMs } = reportWindow(req);
+  const clients = sales.getSalesClients();
+  res.json(firefliesReport({
+    days,
+    nowMs,
+    clients,
+    sessions: readLiveSessionStore().sessions,
+    events: readOpsEvents({ system: 'fireflies', sinceMs, untilMs: nowMs }),
+    missingRows: missingRecordingRows(clients, { nowMs, days }).rows,
+  }));
+});
+
 app.get('/api/admin/inbox-bot/status', adminAuth, async (_req, res) => {
   try {
     const payload = await presentInboxBotStatus();
@@ -15362,12 +15627,21 @@ app.post('/api/admin/inbox-bot/backfill', adminAuth, async (req, res) => {
   if (apply && String(req.body?.confirm || '') !== 'backfill-once') {
     return res.status(400).json({ message: 'Confirm backfill-once to send.' });
   }
+  if (inboxBotBusy) {
+    const message = inboxBotBusy === 'tick'
+      ? 'Innboksen leses akkurat nå. Prøv igjen om et minutt.'
+      : 'En innboks-backfill kjører allerede. Vent til den er ferdig.';
+    return res.status(409).json({ message, busy: inboxBotBusy });
+  }
+  inboxBotBusy = 'backfill';
   try {
     const payload = await backfillInboxReplies({
       mailbox: String(req.body?.mailbox || 'alexander@asoldi.com').trim().toLowerCase(),
       days: Number(req.body?.days) || 14,
       maxResults: Math.min(40, Number(req.body?.maxResults) || 24),
       apply,
+      moveMeeting: moveSalesMeetingFromInbox,
+      voidMeeting: voidSalesMeetingFromInbox,
     });
     if (payload.reason === 'mailbox-not-allowed') {
       return res.status(400).json({ message: 'Mailbox is not allowed.', ...payload });
@@ -15376,6 +15650,8 @@ app.post('/api/admin/inbox-bot/backfill', adminAuth, async (req, res) => {
   } catch (error) {
     console.error('[inbox-bot] backfill failed', error?.message || error);
     res.status(500).json({ message: 'Kunne ikke kjøre innboks-backfill.' });
+  } finally {
+    inboxBotBusy = '';
   }
 });
 
@@ -18209,12 +18485,16 @@ app.get('/api/admin/fireflies/ingest-status', salesAuth, (req, res) => {
 app.get('/api/admin/fireflies/live-join-status', salesAuth, (req, res) => {
   if (!requireOfferAdmin(req, res)) return;
   res.setHeader('Cache-Control', 'no-store');
-  res.json(liveJoinStatusPayload({
-    clients: sales.getSalesClients(),
-    apiKeyPresent: Boolean(resolveFirefliesApiKey().apiKey),
-    liveJoinEnabled: safeModeAllows('firefliesLiveJoin'),
-    lobbyAlertsEnabled: firefliesLobbyAlertEnabled(),
-  }));
+  res.json({
+    ...liveJoinStatusPayload({
+      clients: sales.getSalesClients(),
+      apiKeyPresent: Boolean(resolveFirefliesApiKey().apiKey),
+      liveJoinEnabled: safeModeAllows('firefliesLiveJoin'),
+      lobbyAlertsEnabled: firefliesLobbyAlertEnabled(),
+    }),
+    // Can each host's own Google login open its rooms (window) and make rooms with co-hosts?
+    meetHosts: meetHostReadiness(),
+  });
 });
 
 // Booked online meetings with no recording (lib/fireflies-recording-watchdog.js missingRecordingRows):
@@ -21532,7 +21812,9 @@ async function backfillSalesBookingFacts({ force = false } = {}) {
     for (const client of sales.getSalesClients()) {
       summary.scanned += 1;
       const existingFacts = salesBookingFacts(client);
-      if (!force && existingFacts.booker && existingFacts.bookedAt && existingFacts.listName && existingFacts.meetingFor) {
+      // A voided meeting (client cancelled, no new time) is not a missing time: MyPhoner's old booking never comes back.
+      const voided = meetingIsVoided(client);
+      if (!force && existingFacts.booker && existingFacts.bookedAt && existingFacts.listName && (existingFacts.meetingFor || voided)) {
         continue;
       }
       const my = client.myphoner || {};
@@ -21543,7 +21825,7 @@ async function backfillSalesBookingFacts({ force = false } = {}) {
       let listId = sanitizeText(my.listId);
       let meetingAt = sanitizeText(client.meetingAt);
       const leadId = sanitizeText(my.leadId);
-      const missing = () => !(bookedByEmail || bookedByName) || !bookedAt || !listName || !meetingAt;
+      const missing = () => !(bookedByEmail || bookedByName) || !bookedAt || !listName || (!meetingAt && !voided);
       let fetchFailed = false;
       if (leadId && missing() && myphonerApi.isMyPhonerConfigured()) {
         summary.fetched += 1;
@@ -21571,7 +21853,7 @@ async function backfillSalesBookingFacts({ force = false } = {}) {
           if (!bookedAt) bookedAt = sanitizeText(extracted.bookedAt);
           if (!listName && extracted.listName) listName = sanitizeText(extracted.listName);
           if (!listId && extracted.listId) listId = sanitizeText(extracted.listId);
-          if (!meetingAt) meetingAt = sanitizeText(parseMyphonerMeetingAt(lead, getLeadDataMap(lead)));
+          if (!meetingAt && !voided) meetingAt = sanitizeText(parseMyphonerMeetingAt(lead, getLeadDataMap(lead)));
           if (!(bookedByEmail || bookedByName) && sanitizeText(my.latestCallId)) {
             const callRes = await myphonerApi.fetchMyPhonerCallById(my.latestCallId);
             if (callRes.success) {
@@ -21586,7 +21868,7 @@ async function backfillSalesBookingFacts({ force = false } = {}) {
       if (fetchFailed) continue;
       if (!bookedByName && bookedByEmail) bookedByName = nameByEmail.get(bookedByEmail.toLowerCase()) || '';
       if (!bookedAt && leadId) bookedAt = sanitizeText(client.createdAt);
-      if (!(bookedByEmail || bookedByName) || !bookedAt || !listName || !meetingAt) summary.stillMissing += 1;
+      if (missing()) summary.stillMissing += 1;
       const myphonerPatch = {};
       if (bookedByEmail && bookedByEmail !== sanitizeText(my.bookedByEmail)) myphonerPatch.bookedByEmail = bookedByEmail;
       if (bookedByName && bookedByName !== sanitizeText(my.bookedByName)) myphonerPatch.bookedByName = bookedByName;
@@ -21595,7 +21877,7 @@ async function backfillSalesBookingFacts({ force = false } = {}) {
       if (listId && listId !== sanitizeText(my.listId)) myphonerPatch.listId = listId;
       const patch = { salesMigrations: { bookingFactsV1: true, bookingFactsV2: true } };
       if (Object.keys(myphonerPatch).length) patch.myphoner = myphonerPatch;
-      if (!sanitizeText(client.meetingAt) && meetingAt) {
+      if (!sanitizeText(client.meetingAt) && meetingAt && myphonerMeetingTimeAllowed(client, meetingAt)) {
         patch.meetingAt = meetingAt;
         patch.agreedTime = true;
       }
@@ -21734,6 +22016,29 @@ async function runStartupOwnerMeetHostBackfill() {
   );
 }
 
+/**
+ * Meetings booked before the staff-guest rule: Damian goes on each upcoming online sales event another rep
+ * hosts, silently (sendUpdates none), so he joins without knocking. Idempotent; the room and link stay.
+ */
+async function runStartupStaffGuestBackfill(nowMs = Date.now()) {
+  let added = 0;
+  let checked = 0;
+  for (const client of sales.getSalesClients()) {
+    const eventId = sanitizeText(client?.calendar?.eventId);
+    const accountKey = sanitizeText(client?.calendar?.accountKey);
+    if (!eventId || !accountKey || !client.agreedTime || normalizeMeetingMode(client.meetingMode) !== 'online') continue;
+    if (!(Date.parse(client.meetingAt) > nowMs)) continue;
+    checked += 1;
+    try {
+      const result = await addStaffGuestToEvent(eventId, accountKey, { calendarId: sanitizeText(client.calendar.calendarId) });
+      if (result.added) added += 1;
+    } catch (error) {
+      console.warn(`[sales] staff guest not added client=${client.id}: ${sanitizeText(error?.message) || error}`);
+    }
+  }
+  console.log(`[sales] staff-guest backfill checked=${checked} added=${added}`);
+}
+
 // Every loop and startup backfill by name. lib/safe-mode.js BACKGROUND_JOBS decides which
 // run while hub safe mode is on (all run on asoldi.com). A new job needs an entry there.
 function startBackgroundJobs() {
@@ -21761,6 +22066,9 @@ function startBackgroundJobs() {
     }),
     ownerMeetHostBackfill: () => runStartupOwnerMeetHostBackfill().catch((error) => {
       console.error('[sales] owner-meet startup backfill failed', sanitizeText(error?.message) || error);
+    }),
+    staffGuestBackfill: () => runStartupStaffGuestBackfill().catch((error) => {
+      console.error('[sales] staff-guest startup backfill failed', sanitizeText(error?.message) || error);
     }),
     myphonerWebhookReconcile: () => startMyphonerWebhookReconcileLoop(),
     myphonerRecordingRetry: () => startMyphonerRecordingRetryLoop(),

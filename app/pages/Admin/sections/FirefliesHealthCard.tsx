@@ -49,7 +49,34 @@ type LiveJoinStatus = {
   keyOwnerEmail?: string;
   oneBot?: boolean;
   rateLimit?: RateLimitStatus;
+  /** server.js meetHostReadiness(): can each host's own Google login open (window) and make rooms (co-hosts). */
+  meetHosts?: Array<{ googleEmail: string; ownLogin: boolean; meetSettingsScope: boolean; meetMembersScope: boolean }>;
+  /** Upcoming rooms and their last check (lib/google-meet-access.js). */
+  meetRooms?: Array<{
+    key: string;
+    startAt: string;
+    title: string;
+    room: null | {
+      ok: boolean;
+      accessType?: string;
+      reason?: string;
+      message?: string;
+      cohostsOk?: boolean;
+      cohostReason?: string;
+      createdByHub?: boolean;
+      window?: { state: string; at: string };
+    };
+  }>;
 };
+
+function roomLine(room: NonNullable<NonNullable<LiveJoinStatus['meetRooms']>[number]['room']>) {
+  const parts = [room.ok ? 'klart' : `ikke klart (${room.reason || 'feil'})`];
+  if (room.createdByHub) parts.push('laget av Asoldi');
+  if (room.cohostsOk === true) parts.push('medverter lagt til');
+  if (room.cohostsOk === false) parts.push(room.cohostReason === 'calendar-room' ? 'ingen medverter (Kalender-rom)' : 'medverter mangler');
+  if (room.window?.state === 'open') parts.push('åpent for notetakeren');
+  return parts.join(' · ');
+}
 
 type Loaded<T> = { status: 'loading' } | { status: 'missing' } | { status: 'error'; message: string } | { status: 'ok'; data: T };
 
@@ -163,6 +190,10 @@ export function FirefliesHealthCard() {
     || ingestData?.keyConfigured === false || liveData?.apiKeyPresent === false;
   if (engineStopped && !sendingOff) {
     alarms.push(`Live-join har ikke kjørt ${liveData?.lastTickAt ? `siden ${when(liveData.lastTickAt)}` : 'ennå'}, selv om ${count(liveData?.sessionsInWindow)} møte(r) er nær nå. Fireflies sendes ikke inn før huben kjører igjen.`);
+  }
+  const hostsWithoutMeet = (liveData?.meetHosts || []).filter((host) => !host.meetSettingsScope);
+  if (hostsWithoutMeet.length) {
+    alarms.push(`${hostsWithoutMeet.map((host) => host.googleEmail).join(', ')} mangler Google Meet-tilgang: møterommene kan ikke åpnes for notetakeren, og noen i møtet må slippe den inn. Logg inn på /sales som den personen og koble til Google på nytt (kryss av for Google Meet).`);
   }
 
   const warnings: string[] = [];
@@ -287,6 +318,31 @@ export function FirefliesHealthCard() {
                   </li>
                 ))}
               </ul>
+            ) : null}
+            {liveData.meetHosts?.length || liveData.meetRooms?.length ? (
+              <div className="mt-3">
+                <h4 className="text-white font-medium mb-1">Møterom</h4>
+                <ul className="text-xs space-y-1">
+                  {(liveData.meetHosts || []).map((host) => (
+                    <React.Fragment key={host.googleEmail}>
+                      <Row
+                        label={host.googleEmail}
+                        value={host.meetSettingsScope ? (host.meetMembersScope ? 'kan åpne rom og legge til medverter' : 'kan åpne rom, mangler medverter-tilgang') : 'mangler Google Meet-tilgang'}
+                        warn={!host.meetSettingsScope || !host.meetMembersScope}
+                      />
+                    </React.Fragment>
+                  ))}
+                </ul>
+                {liveData.meetRooms?.length ? (
+                  <ul className="mt-2 text-xs space-y-1">
+                    {liveData.meetRooms.map((row) => (
+                      <li key={row.key} className={row.room && !row.room.ok ? 'text-amber-300' : 'text-gray-300'}>
+                        {when(row.startAt)} · {row.title || 'Møte'} · {row.room ? roomLine(row.room) : 'ikke sjekket ennå'}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
             ) : null}
           </div>
         ) : (

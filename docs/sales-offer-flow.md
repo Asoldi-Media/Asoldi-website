@@ -152,10 +152,10 @@ For an offer: tier contract when only a tier is present; admin-verified summary 
     `recording` state; intake's `missing`/`empty` and a rep's `declined` on it are never overwritten (only the
     bot back in the room, or an accepted "send again", reopens `missing`/`empty`). A send an older hub made
     (the slot's stamp or placeholder) is picked up and checked, not reported as never sent.
-* Fred (`fred@fireflies.ai`) goes on a Google Calendar event only when the mailbox hosting it is known and owns
-  the hub's Fireflies key (`lib/fireflies-key-owner.js`; asked once per 6 hours, damian@asoldi.com until then).
-  On another rep's event he would start that rep's own Fireflies, whose recording the hub cannot read. He is
-  still only added when the confirmation is actually sent, and recording never depends on him.
+* Fred (`fred@fireflies.ai`) never goes on a Google Calendar event (`firefliesNotetakerAllowedForOrganizer`
+  in `lib/fireflies-key-owner.js` is false): on any event he starts the inviting account's own Fireflies beside
+  the hub's live send, so two notetakers knock, and on a rep's event that recording lands where the hub cannot
+  read it. The live send is the only notetaker (`docs/fireflies-recording.md`).
 * Webhook `POST /api/webhooks/fireflies?token=…` (`lib/fireflies-webhook.js`) stores the meeting record and links
   it to a client by its Meet room (see "Fireflies matching" below). Matched meetings land in
   `client.meetings[]`; the notify e-mail still goes to `FIREFLIES_NOTIFY_EMAIL`.

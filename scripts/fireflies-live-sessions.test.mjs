@@ -518,6 +518,65 @@ test('Track D hook: open the Meet room once within 30 minutes of start', () => {
   assert.equal(planAt(-29, { ...session, meetRoomRequestedAt: iso(-30) }, { meetRooms: true }).actions.length, 0);
 });
 
+test('the notetaker window: OPEN from T-5 until the bot is in, again if it drops out, TRUSTED at T+30 or when stopped', () => {
+  const { meetWindowAccess } = live;
+  const session = sessionFor(salesClient());
+  assert.equal(meetWindowAccess(session, at(-6)), null, 'not yet');
+  assert.equal(meetWindowAccess(session, at(-5)), 'OPEN');
+  const open = { ...session, meetWindowState: 'open', meetWindowAt: iso(-5) };
+  assert.equal(meetWindowAccess(open, at(-2)), null, 'stays open while the bot is on its way');
+  assert.equal(meetWindowAccess({ ...open, state: 'recording' }, at(-1)), 'TRUSTED', 'the bot is in: knock-only again');
+  const locked = { ...open, state: 'recording', meetWindowState: 'locked' };
+  assert.equal(meetWindowAccess(locked, at(5)), null);
+  assert.equal(meetWindowAccess({ ...locked, state: 'ended' }, at(8)), 'OPEN', 'it dropped out before T+30: open for the send-back');
+  assert.equal(meetWindowAccess({ ...locked, state: 'ended' }, at(31)), null, 'after T+30 the room stays knock-only');
+  assert.equal(meetWindowAccess(open, at(30)), 'TRUSTED', 'never left open past the first-send window');
+  assert.equal(meetWindowAccess({ ...open, declinedAt: iso(-1) }, at(-1)), 'TRUSTED', 'marked without recording');
+  assert.equal(meetWindowAccess({ ...session, detachedAt: iso(-10) }, at(-4)), null, 'a moved meeting never opens');
+  assert.equal(meetWindowAccess({ ...session, meetWindowFailedAt: iso(-5) }, at(-4)), null, 'a refused change waits two minutes');
+  assert.equal(meetWindowAccess({ ...session, meetWindowFailedAt: iso(-5) }, at(-3)), 'OPEN');
+
+  const plan = planLiveSessionTick({ sessions: [session], activeMeetings: [], nowMs: at(-3), meetWindow: true });
+  assert.deepEqual(plan.actions.map((action) => action.type), ['meet-window', 'dispatch'], 'the room opens before the first send');
+  assert.equal(plan.actions[0].access, 'OPEN');
+  assert.equal(planLiveSessionTick({ sessions: [session], activeMeetings: [], nowMs: at(-3) }).actions.some((action) => action.type === 'meet-window'), false, 'no hook, no window');
+  const server = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  assert.match(server, /setMeetAccess: setLiveSessionMeetAccess,/);
+});
+
+test('the engine opens the room, sends the bot, and locks it once the bot is seen', async () => {
+  resetStore();
+  const state = engineState([salesClient()]);
+  const accessCalls = [];
+  const deps = () => engineDeps(state, {
+    setMeetAccess: async (_session, access) => {
+      accessCalls.push(access);
+      return { ok: true, accessType: access };
+    },
+  });
+  const key = `${ROOM}|${T}`;
+  state.now = at(-3);
+  await runFirefliesLiveJoinTick(deps());
+  assert.deepEqual(accessCalls, ['OPEN']);
+  assert.equal(state.sent.length, 1, 'the bot goes out into the open room');
+  assert.equal(readLiveSessionStore().sessions[key].meetWindowState, 'open');
+  state.now = at(-1);
+  state.active = [activeRow()];
+  await runFirefliesLiveJoinTick(deps());
+  assert.equal(readLiveSessionStore().sessions[key].state, 'recording');
+  state.now = at(0);
+  await runFirefliesLiveJoinTick(deps());
+  assert.deepEqual(accessCalls, ['OPEN', 'TRUSTED']);
+  assert.equal(readLiveSessionStore().sessions[key].meetWindowState, 'locked');
+  // The decision log is stamped with the real clock, not the engine's test clock.
+  const events = (await import('../lib/ops-events.js')).readOpsEvents({ system: 'fireflies', sinceMs: 0, untilMs: Date.now() + 60_000 });
+  assert.deepEqual(events.filter((row) => row.type === 'room.access').map((row) => [row.access, row.ok]), [['OPEN', true], ['TRUSTED', true]]);
+  assert.ok(events.some((row) => row.type === 'bot.sent' && row.kind === 'first' && row.minutesFromStart === -3));
+  assert.ok(events.some((row) => row.type === 'bot.seen' && Number.isFinite(row.minutesFromStart)));
+  assert.ok(events.some((row) => row.type === 'session.state' && row.to === 'recording'));
+  resetStore();
+});
+
 test('a rep who marked the meeting held without recording stops every automatic send', () => {
   const session = { ...dispatched(sessionFor(salesClient()), -3), declinedAt: iso(0) };
   assert.equal(dispatches(planAt(1, session, { active: [] })).length, 0);
@@ -1167,7 +1226,8 @@ test('the fred@ owner: damian@asoldi.com until Fireflies says otherwise, asked a
   const owner = await import('../lib/fireflies-key-owner.js');
   owner.resetFirefliesKeyOwnerForTests();
   assert.equal(owner.firefliesKeyOwnerEmail(), 'damian@asoldi.com');
-  assert.equal(owner.firefliesNotetakerAllowedForOrganizer('Damian@asoldi.com'), true);
+  // One notetaker per meeting: the live join. fred@ goes on no event, the key owner's included.
+  assert.equal(owner.firefliesNotetakerAllowedForOrganizer('Damian@asoldi.com'), false);
   assert.equal(owner.firefliesNotetakerAllowedForOrganizer('alexander@asoldi.com'), false);
   assert.equal(owner.firefliesNotetakerAllowedForOrganizer(''), false, 'an unknown organizer gets no fred@');
   let asked = 0;

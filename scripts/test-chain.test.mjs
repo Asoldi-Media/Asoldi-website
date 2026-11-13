@@ -19,7 +19,6 @@ const NAMED_FILE = /(?:scripts|data)\/[\w./-]+\.test\.(?:mjs|js)|scripts\/[\w./-
 // not be in the chain yet; once it is, drop it from this list.
 const NOT_YET_CHAINED = new Set([
   'scripts/inbox-bot-contract.test.mjs',
-  'scripts/sales-meeting-void.test.mjs',
 ]);
 
 function listTestFiles(dir, out = []) {

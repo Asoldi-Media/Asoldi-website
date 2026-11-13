@@ -1,6 +1,6 @@
 {
   "source": "asoldi-website/packages/suite",
-  "syncedAt": "2026-11-13T01:18:10.576Z",
+  "syncedAt": "2026-11-13T04:10:06.521Z",
   "files": {
     "core/delivery/vocab.js": "690df2815f3d2ed87f70e9be8155ce4686ce691bd012189e2d2117a96a245a96",
     "core/documents/kind.js": "2d619597ae6c457698c539b3b7ecd6923709e868922e5afd9a1eceb4b98ae109",
@@ -26,8 +26,9 @@
     "core/llm/route.js": "6f80c21b49d0c3a1b50e9b888c3c4139e9fee3a9b29fd2073504eeb6bda2bd83",
     "core/llm/tasks-schema.js": "a0886f86f93aace13fba565efbf5383cb13c7e59bc4cccd016d90efce9ba6516",
     "core/mail/automated.js": "f937f45cbd3dcbbfdabab10f6e0f82606cd4f030613debc6e9ee21e7a2c92a25",
-    "core/mail/imap.js": "d197b56d5e2a7405e7c260ae3ab941b444da1ca19e17560fa15f47520ba408ba",
-    "core/mail/mime.js": "63415fcda32652c5ecc944986d56450845c2f4f3bad3fd72561e9cf9abdefb5a",
+    "core/mail/ics.js": "bdc0659f004eac6b0ce5f256bcc47b9f58e88d3d0ee6e19e4a21323ca5b261cf",
+    "core/mail/imap.js": "9eec5455c962068948210fede2c701917914ef5436f93efa4f39f99a94520633",
+    "core/mail/mime.js": "7a761ac63dcd3a199e91a91f73a87b49d4f20aabff71f4e4021fd4ce6042b99d",
     "core/mail/thread.js": "48577e248f108f59f7b162824139aaa70241b27e443afda1c61ac80503d1af8a",
     "core/mail/unpack.js": "a118aa9112481b12f03031b84bbf420c5a5a75e2300f3f877b44fb01bc74ef93",
     "core/media/describe.js": "b4a48884f4db6935a53264b92b429d80e47cbae9dba01be3840f81e84d2b31e5",

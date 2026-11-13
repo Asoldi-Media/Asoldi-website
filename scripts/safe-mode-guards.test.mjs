@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -61,7 +61,6 @@ const stripe = await import('../lib/stripe.js');
 const { deepseekChatJson, DeepseekError } = await import('../lib/deepseek.js');
 const { claudeMessages } = await import('../lib/claude-messages.js');
 const { imapListCommands } = await import('../packages/suite/core/mail/imap.js');
-const { imapReadOnly } = await import('../lib/inbox-bot/mail-imap.js');
 
 function install(allow = '', extra = {}) {
   safeMode.installSafeMode({ env: { ...process.env, HUB_SAFE_MODE: '1', HUB_SAFE_MODE_ALLOW: allow, ...extra }, dataDir, log: null });
@@ -311,14 +310,13 @@ test('loopback stays reachable: a local server answers through http and fetch', 
   server.close();
 });
 
-test('inbox: IMAP opens read-only (EXAMINE + BODY.PEEK) in safe mode unless imapFlags is allowed', () => {
-  install('inboxRead');
-  assert.equal(imapReadOnly(), true);
+test('inbox: the bot opens IMAP read-only (EXAMINE + BODY.PEEK) in every mode', () => {
   assert.deepEqual(imapListCommands({ readOnly: true }), { open: 'EXAMINE INBOX', fetchSpec: '(UID BODY.PEEK[])' });
   assert.deepEqual(imapListCommands({ readOnly: true, headersOnly: true }).fetchSpec, '(UID BODY.PEEK[HEADER])');
   assert.deepEqual(imapListCommands({}), { open: 'SELECT INBOX', fetchSpec: '(UID RFC822)' }, 'default unchanged');
-  install('inboxRead,imapFlags');
-  assert.equal(imapReadOnly(), false);
+  const source = readFileSync(new URL('../lib/inbox-bot/mail-imap.js', import.meta.url), 'utf8');
+  assert.match(source, /const READ_ONLY = true;/);
+  assert.equal((source.match(/readOnly: READ_ONLY/g) || []).length, 2, 'the inbox and the Sent listing both peek');
 });
 
 test('Google read-only traffic is allowed, writes are not', () => {
@@ -350,7 +348,6 @@ test('on Hostinger every guard is a pass-through and no egress guard is installe
   assert.equal(egress.isEgressGuardInstalled(), false);
   assert.equal(safeMode.guardExternal('calendarWrite', 'x').allowed, true);
   assert.equal(safeMode.safeModeAllows('prodPublish'), true);
-  assert.equal(imapReadOnly(), false);
   assert.equal(ai.aiKeyOrBlank('gemini', 'k'), 'k');
   fetchCalls.length = 0;
   const write = await myphoner.myPhonerRequest('/leads/1', { method: 'POST', body: {} });

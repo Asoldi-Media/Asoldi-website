@@ -70,14 +70,19 @@ start and the session's end. Without a Fireflies key nothing is looked up: a mee
 hub's was sent to or seen in is still followed to its deadline and reported (the e-mail says the hub
 could not look in Fireflies), and one a bot may have recorded waits for the key.
 
+A sales meeting moved at the last minute, or held in a new room, leaves the old time's placeholder
+behind. When the card holds a sales recording with real talk that started from 30 minutes before
+to under 2 hours after that placeholder's start, the placeholder counts as covered
+(`movedSalesPlaceholderIds` in `lib/fireflies-cover.js`) and is never reported "ingen opptak".
+
 ### E-mails, who gets them, and what to do
 
 | E-mail | When | To | What to do |
 |---|---|---|---|
-| **Slipp inn Fireflies – \<bedrift>** | Fireflies accepted a send, and by max(T+3, the first accepted send + 4 minutes) a look at the room since that send finds no bot (one seen only before it, such as an earlier meeting's, does not count), while the first-send window (to T+30) lasts. Once for those first sends. **Slipp inn Fireflies igjen – \<bedrift>**: a send after the bot had been in (sent back after it dropped out, a continuation near its end time, a rep's send) that no look finds in the room 4 minutes later, while it still waits in the lobby (10 minutes). Once per such send. | The client's owning rep (`FIREFLIES_NOTIFY_EMAIL`, ansatte@, only when that rep has no e-mail), and the room's Meet host when that is someone else: only someone in the meeting can admit the bot, and Damian's calendar hosts workshops and iterations (server.js `liveSessionMeetHost`). One copy per address. Only the host when the client has no rep; nobody for a test client that is not an automation pilot. | In the meeting: admit «Fireflies.ai Notetaker» (Meet may list it under «Med potensielle risikoer»), and only one if two knock. Nobody there yet: nothing, the hub knocks again; the e-mail says so only while another automatic knock is due before T+30, and otherwise asks to admit it now. |
+| **Slipp inn Fireflies – \<bedrift>** | Fireflies accepted a send, and by max(T+3, the first accepted send + 4 minutes) a look at the room since that send finds no bot (one seen only before it, such as an earlier meeting's, does not count), while the first-send window (to T+30) lasts. Once for those first sends. **Slipp inn Fireflies igjen – \<bedrift>**: a send after the bot had been in (sent back after it dropped out, a continuation near its end time, a rep's send) that no look finds in the room 4 minutes later, while it still waits in the lobby (10 minutes). Once per such send. | The client's owning rep (`FIREFLIES_NOTIFY_EMAIL`, ansatte@, only when that rep has no e-mail), and the room's Meet host when that is someone else: only someone in the meeting can admit the bot, and Damian's calendar hosts workshops and iterations (server.js `liveSessionMeetHost`). One copy per address. Only the host when the client has no rep; nobody for a test client that is not an automation pilot. | In the meeting: admit «Fireflies.ai Notetaker» (Meet may list it under «Med potensielle risikoer»), and only Fireflies from Asoldi: a rep's own Fireflies or Fathom stays out. Nobody there yet: nothing, the hub knocks again; the e-mail says so only while another automatic knock is due before T+30, and otherwise asks to admit it now. |
 | **Fireflies: ingen opptak av \<møtet> med \<bedrift>** | The deadline passed with no recording (also for a meeting the bot was never sent to, and also without a Fireflies key for one no bot was sent to). Once. | `FIREFLIES_NOTIFY_EMAIL` and the owning rep. None for a test client that is not an automation pilot (its row is still marked). | Paste a Fireflies link under Bytt opptak on Tilbud if someone recorded it (a recording from the same room at another time is listed), write product notes on the card, or mark the meeting "uten opptak". |
 | **Fireflies: tomt opptak av \<møtet> med \<bedrift>** | At the deadline Fireflies only has a recording with no talk, or a few sentences. Once (it shares the stamp with the missing e-mail, so a meeting is reported one way). | Same as above. | Same as above. Usually the notetaker sat alone, or the meeting was held somewhere else. |
-| **Fireflies: live-join står stille / live-join feiler / tar ikke imot innsendinger til møtene / nøkkelen mangler, ingen opptak av møtene** | The live-join loop has not run for 10 minutes while a booked meeting is in its window, every round has failed for 15 minutes, Fireflies refused or rate-limited every send of the last 15 minutes (the e-mail quotes its last answer), or the Fireflies key is missing while a booked meeting starts within 2 hours. At most once per 12 hours for each of these, so a new kind of trouble is told at once. | `FIREFLIES_ALERT_EMAIL` (default damian@asoldi.com). | Check that the hub runs and logs `[fireflies] live-join …`, that the key is set and valid, that the Fireflies plan takes live joins, and that Fireflies answers. |
+| **Fireflies: live-join står stille / live-join feiler / tar ikke imot innsendinger til møtene / nøkkelen mangler, ingen opptak av møtene / møterommet kan ikke åpnes for notetakeren** | The live-join loop has not run for 10 minutes while a booked meeting is in its window, every round has failed for 15 minutes, Fireflies refused or rate-limited every send of the last 15 minutes (the e-mail quotes its last answer), the Fireflies key is missing while a booked meeting starts within 2 hours, or a meeting within 2 hours has a room its host's login cannot open (the e-mail lists the meetings and why). At most once per 12 hours for each of these, so a new kind of trouble is told at once. | `FIREFLIES_ALERT_EMAIL` (default damian@asoldi.com). | Check that the hub runs and logs `[fireflies] live-join …`, that the key is set and valid, that the Fireflies plan takes live joins, and that Fireflies answers. |
 | **Fireflies: opptak hentes ikke inn** (and the other ingest alerts) | The transcript pull keeps failing (`docs/sales-offer-flow.md`, intake). **Fireflies: arkivet er tomt**: the archive reads empty while cards hold recordings, so the meet-link backfill stands still; once each time it happens. | `FIREFLIES_ALERT_EMAIL`. | As the e-mail says. |
 
 The lobby stamps (`lobbyAlertAt` for the first knocks, `lobbyAlertKnockAt` for the knock after the bot
@@ -118,26 +123,52 @@ Optional `FIREFLIES_LOBBY_ALERT=0` turns the lobby e-mail off (default on).
 - `GET /api/admin/fireflies/live-join-status` (admin) → `firefliesLiveJoinStatus()` (last tick, last
   tick without errors, `failingSince`, sessions in their window with `unsentReason` and
   `lobbyAlertAt`, the limiter, `apiKeyPresent`, `safeModeBlocking`), plus `rateLimit`
-  (Fireflies' pauses), `liveJoinEnabled`, `lobbyAlertsEnabled` and `alert: { reason, lastAlertAt }`.
+  (Fireflies' pauses), `liveJoinEnabled`, `lobbyAlertsEnabled`, `alert: { reason, lastAlertAt }`,
+  `meetHosts` (each connected host's Meet permissions) and `meetRooms` (rooms from 2 hours ago to 36
+  hours ahead).
 - `GET /api/admin/fireflies/ingest-status` (admin): the transcript pull's health.
+- `GET /api/admin/fireflies/report?days=7` (admin, 1–90 days, `firefliesReport` in
+  `lib/ops-reports.js`): the numbers to judge recording by, per meeting and in total: meetings,
+  recorded and the recorded rate, bot in by T-3 (median and p90 minutes), declined, moved, duplicate
+  bots, sends per meeting, Fireflies looks, the open window, rooms the hub made, missing, missing
+  reports avoided for moved meetings, and rep notetakers seen. It reads the events in
+  `<dataDir>/ops-events/<YYYY-MM>.jsonl` (`room.prepared`, `room.access`, `bot.sent`, `bot.seen`,
+  `look`, `session.state`, `session.final`, `recording.linked`, `notetaker.foreign`; kept 90 days).
 
-## Meet rooms: staff and Fred as co-hosts; the client still knocks
+## Meet rooms: one notetaker, staff as co-hosts, open only for the bot
 
-The notetaker joins the Meet as an anonymous guest ("Fireflies.ai Notetaker …"), not as
-fred@fireflies.ai, even when fred@ is invited on the event. In a room at Google's default access
-it knocks, and Meet often files it under "With potential risks". A signed-in sales rep who is
-not the host knocks too. The client must still knock; OPEN is not used, because anyone with the
-link would walk in.
+The notetaker joins the Meet as an anonymous guest ("Fireflies.ai Notetaker …"). In a room at
+Google's default access it knocks, and Meet often files it under "With potential risks". A
+signed-in sales rep who is not the host knocks too.
 
-So the hub prepares the rooms it books. Right after a calendar sync writes an event with a real Meet
+**One notetaker.** The hub's live send is the only Fireflies in a meeting. fred@fireflies.ai is
+never put on a calendar event (`firefliesNotetakerAllowedForOrganizer` in
+`lib/fireflies-key-owner.js` is false for every organizer): a calendar-invited Fireflies starts
+from the inviting account's own Fireflies, beside the hub's, and two bots knock. A rep's personal
+Fireflies or Fathom on their own calendar does the same and records into an account the hub cannot
+read; the inbox bot spots its mails and tells Damian (`docs/inbox-bot.md`, "A rep's own
+notetaker"). The lobby e-mail says to admit only Fireflies from Asoldi.
+
+**Rooms the hub creates.** When a calendar sync inserts a new online event, and the host's login
+carries `meetings.space.created`, the hub creates the room itself (`createMeetSpaceWithCohosts`:
+`spaces.create`, TRUSTED, moderation ON) and adds the co-hosts (`spaces.members`, role COHOST, over
+REST when the client library lacks it): Damian, every sales user in Admin → Users, and every other
+connected @asoldi.com sales mailbox. The room goes onto the event as `conferenceData` with its
+meeting code. Without that permission, or when Google refuses, Calendar mints the room as before
+(`createRequest`). Google allows co-hosts only on rooms an app created: on a Calendar-made room the
+co-host step stores `cohostsOk: false, cohostReason: 'calendar-room'` and goes on. The client's own
+email is never added.
+
+**Damian on every meeting.** On an online meeting someone else hosts, damian@asoldi.com is a guest
+on the event (`meetStaffGuestEmail`), so he can always join and admit. Meetings booked before this
+got him added once at startup (`runStartupStaffGuestBackfill`, `sendUpdates: 'none'`, off in safe
+mode); their room and link stay as they were.
+
+**Existing rooms.** Right after a calendar sync writes an event with a real Meet
 (`upsertMeetingEvent` for sales, workshop and iteration; `upsertRecordedSalesActionEvent` for an
 extra Møte), and only when the event's organizer is the mailbox of the OAuth login that wrote it,
 `lib/google-meet-access.js` reads the room (`spaces.get` on the meeting code). If access is OPEN
-(or not TRUSTED/RESTRICTED), it patches to TRUSTED with moderation ON. Then it adds co-hosts
-(`spaces.members.create`, role COHOST): Damian, every sales user in Admin → Users (a new rep
-counts as soon as they are added), every other connected @asoldi.com sales mailbox, and
-fred@fireflies.ai. Those people join without knocking and can admit the client and the
-notetaker. The client's own email is never added.
+outside the bot's window (or not TRUSTED/RESTRICTED), it patches to TRUSTED with moderation ON.
 
 ### For the live-join engine
 
@@ -165,7 +196,7 @@ person has joined is not proof of a recording: keep checking until people are in
 until about T+10), and send the notetaker again if it drops out before then.
 
 The engine does both. `server.js` passes `openLiveSessionMeetRoom` as `deps.openMeetRoom`: from
-T-30 it asks for the room each tick until it is open, with the host taken from the sales calendar
+T-30 it asks for the room each tick until it is prepared, with the host taken from the sales calendar
 (`meetHostVerifiedEmail`, else the organizer) or Damian's login for workshops and iterations. A
 notetaker that leaves before T+30 is sent back again, more than once if the one sent back also
 sits alone and leaves (the open room's version of an unanswered knock), within the five-send cap.
@@ -174,18 +205,25 @@ last 10 booked minutes get no send-back. A notetaker sent back that leaves withi
 walking in was taken out by someone in the meeting, so it is not sent again; the card points the
 rep to «Marker uten opptak» when the client does not want a recording.
 
-### Before switching it on
+### The bot's window: OPEN from T-5 until the bot is in
 
-- Single notetaker first. An open room lets every notetaker in, not only the hub's: a rep's own
-  Fireflies (started by fred@ on events that rep hosts) and the hub-key owner's calendar
-  auto-join on workshops and iterations. Today the knock keeps them out of an empty room. Two
-  notetakers from the hub-key account in one room have left a silent one-minute fragment beside
-  the real transcript. Ship this together with, or after, the host-aware fred@ policy, and have
-  the hosts turn off their own Fireflies auto-join for hub meetings.
-- Not verified yet: whether a consumer (non-Workspace) account may open a room that Calendar
-  created, and whether Meet lets an anonymous guest into an open room of a consumer account
-  before the host has joined. Check both once on a test booking (owner step 4) before relying on
-  it.
+The engine opens the room just for the notetaker (`meetWindowAccess` in
+`lib/fireflies-live-sessions.js`, the `meet-window` action, `setLiveSessionMeetAccess` in
+`server.js`). From 5 minutes before the start to T+30 the room is OPEN, so the bot sent at T-3
+walks in without a knock. As soon as `active_meetings` shows the bot (`recording`), or the meeting is
+declined or moved away, or T+30 passes, the room goes back to TRUSTED: the client knocks again and
+staff admit them. A bot that drops out before T+30 gets the room opened again for its send-back. A
+failed change is tried again after 2 minutes. The room row keeps the window (`window: { accessType,
+untilMs }`), so the room check after a calendar sync does not close a room the engine opened, and an
+open room that outlives its window (a hub that died at the wrong moment) is closed by the next tick or
+room check.
+The session keeps `meetWindowState` (`open` / `locked`), `meetWindowAt` and `meetWindowError`.
+
+The open window needs the host's own login with `meetings.space.settings`. When a booked meeting
+starts within 2 hours and its room check says that login cannot change the room (`scope-missing`,
+`forbidden`, `not-owner`), the health alert **Fireflies: møterommet kan ikke åpnes for notetakeren**
+goes to `FIREFLIES_ALERT_EMAIL` with the meetings and the reason; then someone in the meeting must
+admit the bot.
 
 ### Owner steps (once)
 
@@ -200,23 +238,34 @@ rep to «Marker uten opptak» when the client does not want a recording.
    rep hosts their own sales meetings and Møte). On Google's consent page, tick the Google Meet
    permissions (or Select all) before Continue: new permissions may start unticked. The connect
    URL keeps `include_granted_scopes`, so calendar and Gmail access stay as they were. Then
-   check that `GET /api/admin/sales/google/status` for that login shows `meetSettingsScope: true`.
-4. Test once: book an online test meeting for yourself and wait until its room shows as prepared (the
-   log line `[meet-room] <code> open`, or its row in `meet-room-access.json` with
-   `accessType: "TRUSTED"`). Sign in as another @asoldi.com rep and join without knocking. Open the
-   Meet link in a private window without signing in: that guest (the client) should still knock.
+   check the Fireflies health card on Admin (Møterom: the mailbox says "kan åpne rom og legge til
+   medverter") or `meetHosts` in `GET /api/admin/fireflies/live-join-status`: that login shows
+   `meetSettingsScope: true` and `meetMembersScope: true`.
+4. Every host and Damian turn off their own notetakers: Fireflies (app.fireflies.ai → Settings →
+   Auto-join off, or disconnect the calendar under Integrations) and Fathom (fathom.video →
+   Settings → Calendar). The hub sends Fireflies itself.
+5. Test once: book an online test meeting and wait until its room shows as prepared (its row in
+   `meet-room-access.json` with `createdByHub: true`, `cohostsOk: true` and `accessType:
+   "TRUSTED"`). Sign in as another @asoldi.com rep and join without knocking. Open the Meet link in a
+   private window without signing in: that guest (the client) should knock. At T-5 the row shows
+   `window.accessType: "OPEN"`, and once the bot is in it is back to TRUSTED.
 
 No Hostinger env change and no Google Admin step: asoldi.com has no Google Workspace, so a
 service account cannot act for a mailbox, and only each host's own login can change their rooms.
 
 ### Seeing whether rooms are open
 
+- The Fireflies health card (Admin) has a Møterom part: each connected host with both Meet
+  permissions (an alarm when one is missing), and each room from 2 hours ago to 36 hours ahead with
+  its access, co-hosts and window (`meetHosts` and `meetRooms` in
+  `GET /api/admin/fireflies/live-join-status`).
 - `GET /api/admin/sales/google/status` (and the `calendar` block of the sales list) carries
   `meetSettingsScope: true` once that mailbox has a token with the scope. `false` means: reconnect.
 - `<dataDir>/meet-room-access.json` keeps one row per meeting code (dropped after 90 days):
-  `{ accessType, checkedAt, ok, reason, message, ownerKey, memberEmails? }`. `ok: true` with
-  `accessType: "TRUSTED"` (or `RESTRICTED`) is a prepared room. `OPEN` is treated as stale and
-  patched again.
+  `{ accessType, checkedAt, ok, reason, message, ownerKey, memberEmails?, cohostsOk, cohostReason,
+  createdByHub, window? }`. `ok: true` with `accessType: "TRUSTED"` (or `RESTRICTED`) is a prepared
+  room. `OPEN` inside the bot's window is expected; outside it, it is treated as stale and patched
+  again.
 - The log prints `[meet-room] <code> open owner=…` or `[meet-room] <code> not opened: <reason> …`
   whenever a room's result changes.
 - In Google Calendar: open the event → the Meet host controls → Meeting access shows Open.
@@ -240,10 +289,10 @@ read again after 6 hours (sooner when the caller asks). A login Google refused, 
 the scope, is asked again after 15 minutes or as soon as the host reconnects; after an error,
 after 3 minutes.
 
-If rooms the host created keep coming back `forbidden` or `not-owner`, Google does not let a
-consumer account open a room Calendar made. The fallback then is to mint rooms with
-`spaces.create` (scope `meetings.space.created`, sensitive) and attach them to the event as
-conferenceData.
+A room Calendar made (meetings booked before hub-made rooms, or when the host lacks
+`meetings.space.created`) never gets co-hosts: Google refuses member changes on it
+(`cohostReason: 'calendar-room'`). Damian is still a guest on the event, and the open window still
+works when the host's login has `meetings.space.settings`.
 
 ### Rescheduling keeps the room attached
 
@@ -255,3 +304,8 @@ from the meeting code. A room the hub's own patch just minted on the stale event
 way. Guests keep the "Join with Google Meet" button, not just a link in location. If Google
 refuses the copy, or attaches some other room, the event is inserted again with the link in
 location only, as before.
+
+The hub does not give a meeting a new room on its own within 2 hours of its start or while it runs
+(`KEEP_ROOM_BEFORE_START_MS` in `lib/sales-calendar-owner.js`): the client already has that link,
+and a fresh room then would send them to an empty one. The owner-Meet backfill skips such a meeting
+too. Only a rep's explicit new Meet (`forceNewMeet`) still makes one.

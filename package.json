@@ -40,7 +40,7 @@
     "test:security": "node --test scripts/auth-hardening.test.mjs scripts/token-revocation.test.mjs scripts/fireflies-webhook-rotation.test.mjs scripts/client-admin-password-policy.test.mjs scripts/secret-rotation.test.mjs scripts/maker-auth.test.mjs scripts/security-boot.test.mjs scripts/secret-rotation-boot.test.mjs scripts/maker-hosts-boot.test.mjs",
     "test:secret-scan": "node --test scripts/security/secret-scan.test.mjs",
     "test:repo-guards": "node --test scripts/security/public-hygiene.test.mjs",
-    "test:inbox-mail": "node --test scripts/inbox-bot-intents.test.mjs scripts/inbox-bot-panel.test.mjs scripts/mail-thread.test.mjs scripts/workshop-time-parse.test.mjs",
+    "test:inbox-mail": "node --test scripts/inbox-bot-intents.test.mjs scripts/inbox-bot-panel.test.mjs scripts/mail-thread.test.mjs scripts/workshop-time-parse.test.mjs && node --test scripts/sales-meeting-void.test.mjs scripts/inbox-reply-copy.test.mjs scripts/inbox-bot-replay.test.mjs scripts/inbox-calendar-answers.test.mjs scripts/ops-reports.test.mjs",
     "hooks:install": "node scripts/security/install-git-hooks.mjs",
     "scan:secrets": "node scripts/security/secret-scan.mjs --tracked --secrets-only",
     "scan:public": "node scripts/security/secret-scan.mjs --tracked --summary",

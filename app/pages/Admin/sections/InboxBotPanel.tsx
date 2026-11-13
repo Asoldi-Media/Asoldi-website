@@ -1,5 +1,5 @@
 import React, { Suspense, lazy, useState } from 'react';
-import { Check, FileText, Loader2, Mail, UserRound } from 'lucide-react';
+import { CalendarX, Check, FileText, Loader2, Mail, MailX, UserRound } from 'lucide-react';
 import { API, salesAuthHeaders, type SalesClient } from '../shared';
 
 const PdfPreviewOverlay = lazy(() =>
@@ -116,6 +116,49 @@ export function InboxNeedsReplyPill({ client, className = '' }: { client: SalesC
       <Mail size={11} strokeWidth={2.5} />
       E-post venter svar
     </span>
+  );
+}
+
+/** The client declined the calendar invite and no new time is booked yet. */
+export function MeetingDeclinedPill({ client, className = '' }: { client: SalesClient; className?: string }) {
+  const declinedAt = String(client.salesPlaybook?.declinedAt || '').trim();
+  const meetingAt = String(client.salesPlaybook?.declinedMeetingAt || '').trim();
+  if (!declinedAt || !meetingAt || client.agreedTime) return null;
+  const when = formatSignedAt(meetingAt);
+  return (
+    <span
+      title={`Kunden avslo møteinvitasjonen${when ? ` for ${when}` : ''} (${formatSignedAt(declinedAt)}). Boten tok bort møtet og sendte ledige tider.`}
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-rose-400/50 bg-rose-500/20 text-rose-100 text-[11px] font-medium ${className}`}
+    >
+      <CalendarX size={11} strokeWidth={2.5} />
+      Avslo møtet
+    </span>
+  );
+}
+
+/** A mail to the card's address bounced in the last 14 days. */
+export function EmailBouncedPill({ client, className = '' }: { client: SalesClient; className?: string }) {
+  const bounce = client.inboxBot?.bounce;
+  if (!bounce?.receivedAt) return null;
+  return (
+    <span
+      title={`E-post til ${bounce.address || 'kunden'} kom ikke fram (${formatSignedAt(bounce.receivedAt)}). Sjekk adressen på kortet.`}
+      className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-rose-400/50 bg-rose-500/20 text-rose-100 text-[11px] font-medium ${className}`}
+    >
+      <MailX size={11} strokeWidth={2.5} />
+      E-post kom ikke fram
+    </span>
+  );
+}
+
+/** Every inbox state pill a card can carry, in one place for the boards. */
+export function InboxPills({ client, className = '' }: { client: SalesClient; className?: string }) {
+  return (
+    <>
+      <InboxNeedsReplyPill client={client} className={className} />
+      <MeetingDeclinedPill client={client} className={className} />
+      <EmailBouncedPill client={client} className={className} />
+    </>
   );
 }
 

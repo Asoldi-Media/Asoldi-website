@@ -640,6 +640,9 @@ function normalizeSalesPlaybook(raw) {
     // Last voided meeting time (client cancelled, no new time). MyPhoner may not restore it.
     cancelledMeetingAt: iso(raw?.cancelledMeetingAt),
     cancelledAt: iso(raw?.cancelledAt),
+    // Only when that cancel was the client declining the calendar invite ("Avslo møtet" on the card), so
+    // other cards are stored byte for byte as before.
+    ...(iso(raw?.declinedAt) ? { declinedMeetingAt: iso(raw?.declinedMeetingAt), declinedAt: iso(raw?.declinedAt) } : {}),
   };
 }
 
@@ -2150,7 +2153,7 @@ function voidedMeetingAction(action, { note, stamp, cancelledMeetingAt }) {
  * MyPhoner cannot bring it back. The Google event is the caller's job. Null (nothing written) when the card
  * is missing, past the meeting stage (Tilbud, Venter signering, Solgt) or not active.
  */
-export function voidSalesMeetingTime(id, { note = '', nowMs = Date.now() } = {}) {
+export function voidSalesMeetingTime(id, { note = '', nowMs = Date.now(), declined = false } = {}) {
   const current = getSalesClientById(id);
   if (!current || salesMeetingStageBlockedReason(current)) return null;
   const stamp = new Date(nowMs).toISOString();
@@ -2170,6 +2173,8 @@ export function voidSalesMeetingTime(id, { note = '', nowMs = Date.now() } = {})
       ...previousPlaybook,
       cancelledMeetingAt,
       cancelledAt: stamp,
+      declinedMeetingAt: declined ? cancelledMeetingAt : '',
+      declinedAt: declined ? stamp : '',
     },
   });
 }

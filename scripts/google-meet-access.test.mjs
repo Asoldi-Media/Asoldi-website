@@ -495,6 +495,108 @@ test('Connect asks for the Meet settings and members scopes and keeps what was g
   assert.equal(url.searchParams.get('access_type'), 'offline');
 });
 
+const WITH_MEET_CREATE = `${WITH_MEET} ${meet.MEET_MEMBERS_SCOPE}`;
+
+/** A host login whose OAuth client answers the members REST calls with `answer(request)`. */
+function restCalendar(answer, scope = WITH_MEET_CREATE) {
+  const requests = [];
+  return {
+    requests,
+    calendar: {
+      meetRoomOwnerToken: () => ({ accountKey: 'sales:rep-1', googleEmail: 'alexander@asoldi.com', scope, usable: true }),
+      getAuthorizedClient: async () => ({
+        authMode: 'oauth',
+        oauthClient: {
+          request: async (request) => {
+            requests.push(request);
+            return answer(request);
+          },
+        },
+      }),
+    },
+  };
+}
+
+test('the notetaker window: OPEN for the live join, the room check leaves it open, TRUSTED locks it again', async () => {
+  writeTokens({ 'sales:rep-1': token('alexander@asoldi.com', WITH_MEET) });
+  const api = fakeMeet({ accessType: 'TRUSTED' });
+  const deps = { meetApi: api };
+  await meet.ensureMeetRoomOpen({ meetLink: ROOM, accountKey: 'sales:rep-1', nowMs: NOW, deps });
+  const opened = await meet.setMeetRoomAccess({ meetLink: ROOM, accountKey: 'sales:rep-1', accessType: 'OPEN', untilMs: NOW + 35 * 60_000, nowMs: NOW, deps });
+  assert.deepEqual([opened.ok, opened.accessType], [true, 'OPEN']);
+  const patch = api.calls.filter((call) => call.kind === 'patch').at(-1);
+  assert.deepEqual([patch.params.updateMask, patch.params.requestBody.config.accessType], ['config.accessType', 'OPEN']);
+  assert.equal(meet.meetRoomAccessStatus(ROOM).window.state, 'open');
+
+  const during = await meet.ensureMeetRoomOpen({ meetLink: ROOM, accountKey: 'sales:rep-1', nowMs: NOW + 60_000, maxAgeMs: 0, deps });
+  assert.equal(during.cached, true, 'a calendar sync during the window does not lock the room on the notetaker');
+  assert.equal(api.calls.filter((call) => call.kind === 'patch').length, 1);
+
+  const locked = await meet.setMeetRoomAccess({ meetLink: ROOM, accountKey: 'sales:rep-1', accessType: 'TRUSTED', nowMs: NOW + 120_000, deps });
+  assert.deepEqual([locked.ok, locked.accessType], [true, 'TRUSTED']);
+  assert.deepEqual([meet.meetRoomAccessStatus(ROOM).window.state, meet.meetRoomAccessStatus(ROOM).ok], ['locked', true]);
+
+  // A window nobody closed (the hub was down) runs out, and the next room check locks the room.
+  await meet.setMeetRoomAccess({ meetLink: ROOM, accountKey: 'sales:rep-1', accessType: 'OPEN', untilMs: NOW + 5 * 60_000, nowMs: NOW + 180_000, deps });
+  const after = await meet.ensureMeetRoomOpen({ meetLink: ROOM, accountKey: 'sales:rep-1', nowMs: NOW + 10 * 60_000, maxAgeMs: 0, deps });
+  assert.deepEqual([after.ok, after.accessType, after.cached], [true, 'TRUSTED', false]);
+});
+
+test('the window needs the host\'s own login with the Meet permission; nothing is patched without it', async () => {
+  writeTokens({ 'sales:rep-1': token('alexander@asoldi.com') });
+  const api = fakeMeet();
+  const refused = await meet.setMeetRoomAccess({ meetLink: ROOM, accountKey: 'sales:rep-1', accessType: 'OPEN', nowMs: NOW, deps: { meetApi: api } });
+  assert.deepEqual([refused.ok, refused.reason], [false, 'scope-missing']);
+  assert.equal(api.calls.length, 0);
+});
+
+test('co-hosts use the REST members call on the host\'s OAuth client; a Calendar room records calendar-room, not success', async () => {
+  const api = fakeMeet({ accessType: 'TRUSTED' });
+  const rest = restCalendar((request) => {
+    if (request.method === 'GET') return { data: { members: [] } };
+    throw googleError(403, { message: 'Permission denied on resource MeetingSpace (or it might not exist)' });
+  });
+  const result = await meet.ensureMeetRoomOpen({
+    meetLink: ROOM,
+    memberEmails: ['damian@asoldi.com', 'nina@asoldi.com'],
+    nowMs: NOW,
+    deps: { meetApi: api, calendar: rest.calendar },
+  });
+  assert.deepEqual(rest.requests.map((request) => [request.method, request.url]), [
+    ['GET', 'https://meet.googleapis.com/v2/spaces/sp-test-1/members'],
+    ['POST', 'https://meet.googleapis.com/v2/spaces/sp-test-1/members'],
+  ]);
+  assert.deepEqual(rest.requests[1].data, { email: 'damian@asoldi.com', role: 'COHOST' });
+  assert.equal(result.ok, true, 'the room is still knock-only and prepared');
+  assert.deepEqual([result.cohostsOk, result.cohostReason], [false, 'calendar-room']);
+  const again = await meet.ensureMeetRoomOpen({ meetLink: ROOM, memberEmails: ['damian@asoldi.com'], nowMs: NOW + 20 * 60_000, deps: { meetApi: api, calendar: rest.calendar } });
+  assert.equal(again.cached, true, 'Google never allows it on this room, so it is not asked again and again');
+});
+
+test('a hub-made room gets its co-hosts; no members scope means Calendar mints the room as before', async () => {
+  const created = [];
+  const api = {
+    spaces: {
+      async create(params) {
+        created.push(params.requestBody);
+        return { data: { name: 'spaces/new-1', meetingCode: 'kkk-llll-mmm', meetingUri: 'https://meet.google.com/kkk-llll-mmm', config: { accessType: 'TRUSTED' } } };
+      },
+    },
+  };
+  const rest = restCalendar((request) => (request.method === 'GET' ? { data: { members: [] } } : { data: { email: request.data.email, role: 'COHOST' } }));
+  const room = await meet.createMeetSpaceWithCohosts({ memberEmails: ['damian@asoldi.com', 'nina@asoldi.com'], nowMs: NOW, deps: { meetApi: api, calendar: rest.calendar } });
+  assert.deepEqual([room.ok, room.meetLink, room.meetingCode, room.cohostsOk], [true, 'https://meet.google.com/kkk-llll-mmm', 'kkk-llll-mmm', true]);
+  assert.deepEqual(created, [{ config: { accessType: 'TRUSTED', moderation: 'ON' } }]);
+  assert.equal(rest.requests.filter((request) => request.method === 'POST').length, 2);
+  const status = meet.meetRoomAccessStatus(room.meetLink);
+  assert.deepEqual([status.createdByHub, status.cohostsOk, status.memberEmails], [true, true, ['damian@asoldi.com', 'nina@asoldi.com']]);
+
+  const noScope = restCalendar(() => ({ data: {} }), WITH_MEET);
+  const fallback = await meet.createMeetSpaceWithCohosts({ memberEmails: ['damian@asoldi.com'], nowMs: NOW, deps: { meetApi: api, calendar: noScope.calendar } });
+  assert.deepEqual([fallback.ok, fallback.reason], [false, 'scope-missing']);
+  assert.equal(created.length, 1, 'no room was made');
+});
+
 test('no test request reached a real socket past the stubs', () => {
   assert.deepEqual(leakedSockets, []);
 });
