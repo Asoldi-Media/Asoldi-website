@@ -23,6 +23,23 @@ offer stamped while the switch was on keeps rendering its version (preview, PDF,
 stored at acceptance), and `GET /api/legal/texts/<vilkar|personvern|databehandleravtale>?version=<n>`
 keeps answering once stamped offers exist, so the links in those contracts resolve.
 
+## Contract period wording by signature time
+
+Section 3 of a contract has two wordings for moving to a lower tier. Version 1, the sentence a
+contract kept when it was signed before the current wording, says the client cannot downgrade once
+higher-level functionality has been added (`Kunden kan ikke nedgradere til et lavere nivå etter at
+funksjonalitet fra et høyere nivå er lagt til.` / `Clients cannot downgrade to a lower tier once
+higher-level functionality has been added.`). Version 2, the current wording, says the client can
+move down to a lower tier by agreement with Asoldi.
+
+The time version 2 starts is stored once, in `contract-terms-cutover.json`, the first time this code
+starts. An offer that is not signed renders version 2. A signed offer renders version 1 when its
+signature time is before that cut-over, or when the signature was recorded without a time. The
+signature time is the client's `contractSignedAt` for the offer that was sent and signed. An offer
+sent after that time counts as signed only when the client's site plan names that offer; its time is
+then the latest `offer-upgrade` entry in the plan history at or after the send time, or the send
+time when there is no such entry. A signed PDF already filed is never rewritten.
+
 ## Parts
 
 | Part | Code |
