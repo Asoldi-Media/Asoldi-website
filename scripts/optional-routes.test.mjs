@@ -2,19 +2,20 @@
 // once; a listed module the build does not contain is skipped without an error, so a build boots with
 // any subset of them and server.js needs no new line when one is added; a present module must export
 // register(app, deps), is called once with the deps it is given and is reported; a present module
-// without register stops the registration with its name. The skip and register cases run on a copy
-// of the real file in a temp folder, so they hold whichever modules this build contains.
+// without register stops the registration with its name. The modules are imported statically and
+// registered before the call returns (the host loads server.js with require(), so nothing may wait
+// at the top level); the skip and register cases pass their own set of present modules, so they
+// hold whichever modules this build contains.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const routesDir = join(here, '..', 'lib', 'routes');
 const source = join(routesDir, 'optional-routes.js');
-const { OPTIONAL_ROUTE_MODULES, registerOptionalRoutes } = await import(pathToFileURL(source).href);
+const { OPTIONAL_ROUTE_MODULES, PRESENT_ROUTE_MODULES, registerOptionalRoutes } = await import(pathToFileURL(source).href);
 
 // Route modules reserved in the shared list for features that add their routes later.
 const RESERVED = [
@@ -24,23 +25,6 @@ const RESERVED = [
   './email-owner-routes.js',
   './site-rekey-routes.js',
 ];
-
-const temps = [];
-test.after(() => {
-  for (const dir of temps) rmSync(dir, { recursive: true, force: true });
-});
-
-// A copy of optional-routes.js in an empty routes folder, plus the given modules, imported fresh.
-async function isolatedCopy(files = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'asoldi-optional-routes-'));
-  temps.push(root);
-  writeFileSync(join(root, 'package.json'), '{"type":"module"}\n');
-  const dir = join(root, 'routes');
-  mkdirSync(dir);
-  copyFileSync(source, join(dir, 'optional-routes.js'));
-  for (const [name, text] of Object.entries(files)) writeFileSync(join(dir, name), text);
-  return import(pathToFileURL(join(dir, 'optional-routes.js')).href);
-}
 
 function recordingApp() {
   const calls = [];
@@ -79,44 +63,55 @@ test('every listed module this build contains exports register(app, deps)', () =
 });
 
 test('a build that contains none of the listed modules registers nothing and does not throw', async () => {
-  const copy = await isolatedCopy();
-  assert.deepEqual([...copy.OPTIONAL_ROUTE_MODULES], [...OPTIONAL_ROUTE_MODULES]);
   const { app, calls } = recordingApp();
-  assert.deepEqual(await copy.registerOptionalRoutes(app, {}), []);
+  const result = registerOptionalRoutes(app, {}, { present: {} });
+  assert.deepEqual(result.registered, []);
+  assert.deepEqual(await result.ready, []);
   assert.deepEqual(calls, []);
 });
 
 test('each reserved module the build does not contain is skipped while a present one around it registers once with its deps', async () => {
   for (const present of RESERVED) {
-    const copy = await isolatedCopy({
-      [present.slice(2)]: 'export async function register(app, deps) { app.get(`/probe/${deps.marker}`); }\n',
-    });
     const { app, calls } = recordingApp();
-    const registered = await copy.registerOptionalRoutes(app, { marker: 'm1' });
-    assert.deepEqual(registered, [present]);
+    const result = registerOptionalRoutes(app, { marker: 'm1' }, {
+      present: { [present]: { register: async (target, deps) => { target.get(`/probe/${deps.marker}`); } } },
+    });
+    // The route is there when the call returns, not only once the start-up work has settled.
     assert.deepEqual(calls, [['get', '/probe/m1']]);
+    assert.deepEqual(result.registered, [present]);
+    assert.deepEqual(await result.ready, [present]);
   }
 });
 
-test('the modules option limits registration to the names given, absent ones skipped', async () => {
-  const copy = await isolatedCopy({ 'client-booking-routes.js': 'export function register(app) { app.post("/probe"); }\n' });
+test('the modules option limits registration to the names given, absent ones skipped', () => {
   const { app, calls } = recordingApp();
-  const registered = await copy.registerOptionalRoutes(app, {}, { modules: ['./site-rekey-routes.js', './client-booking-routes.js', './no-such-routes.js'] });
-  assert.deepEqual(registered, ['./client-booking-routes.js']);
+  const result = registerOptionalRoutes(app, {}, {
+    modules: ['./site-rekey-routes.js', './client-booking-routes.js', './no-such-routes.js'],
+    present: { './client-booking-routes.js': { register: (target) => { target.post('/probe'); } } },
+  });
+  assert.deepEqual(result.registered, ['./client-booking-routes.js']);
   assert.deepEqual(calls, [['post', '/probe']]);
 });
 
-test('a present module without register stops the registration with its name', async () => {
-  const copy = await isolatedCopy({ 'site-rekey-routes.js': 'export const routes = [];\n' });
+test('a present module without register stops the registration with its name', () => {
   const { app, calls } = recordingApp();
-  await assert.rejects(copy.registerOptionalRoutes(app, {}), /\.\/site-rekey-routes\.js must export register\(app, deps\)/);
+  assert.throws(
+    () => registerOptionalRoutes(app, {}, { present: { './site-rekey-routes.js': { routes: [] } } }),
+    /\.\/site-rekey-routes\.js must export register\(app, deps\)/,
+  );
   assert.deepEqual(calls, []);
 });
 
-test('the real list registers the same way through the shared function', async () => {
-  // The function exported by the real file honours the modules option: only absent names given.
+test('the real list imports every listed module the build contains and skips the names it does not', async () => {
+  const onDisk = OPTIONAL_ROUTE_MODULES.filter((name) => existsSync(join(routesDir, name)));
+  assert.deepEqual(Object.keys(PRESENT_ROUTE_MODULES), onDisk, 'the present modules are the listed files that exist, in list order');
+  for (const name of RESERVED) {
+    if (existsSync(join(routesDir, name))) assert.equal(typeof PRESENT_ROUTE_MODULES[name]?.register, 'function', `${name} is in the build but not imported`);
+  }
+  // The function exported by the real file honours the modules option: only unknown names given.
   const { app, calls } = recordingApp();
-  const absent = RESERVED.filter((name) => !existsSync(join(routesDir, name)));
-  assert.deepEqual(await registerOptionalRoutes(app, {}, { modules: absent }), []);
+  const result = registerOptionalRoutes(app, {}, { modules: ['./no-such-routes.js'] });
+  assert.deepEqual(result.registered, []);
+  assert.deepEqual(await result.ready, []);
   assert.deepEqual(calls, []);
 });

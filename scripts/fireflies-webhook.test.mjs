@@ -371,7 +371,7 @@ test('only transcripts Fireflies has not finished are fetched again, longest-wai
   assert.deepEqual(rows.map((row) => row.meetingId), ['ff-legacy', 'ff-processing', 'ff-new', 'ff-queued']);
 });
 
-test('a bot never seen in the room is sent again at T+1, then T+5 (after a look at the room)', () => {
+test('a bot never seen in the room is sent again after the 10-minute lobby wait (after a look at the room)', () => {
   // The old per-slot 6-minute wait is gone: the session planner owns the schedule and the account limiter.
   const meetingAt = '2026-09-26T10:00:00.000Z';
   const start = Date.parse(meetingAt);
@@ -381,8 +381,9 @@ test('a bot never seen in the room is sent again at T+1, then T+5 (after a look 
     ok: true,
   });
   assert.equal(liveDispatches(sent, start).length, 0);
-  assert.deepEqual(liveDispatches(sent, start + (60 * 1000)).map((row) => row.kind), ['retry']);
-  assert.equal(liveDispatches(sent, start + (60 * 1000), null).length, 0, 'no second bot without a fresh look');
+  assert.deepEqual(liveDispatches(sent, start + (7 * 60 * 1000)).map((row) => row.kind), ['retry']);
+  const looked = { ...sent, checkedAt: new Date(start + (6 * 60 * 1000)).toISOString() };
+  assert.equal(liveDispatches(looked, start + (7 * 60 * 1000), null).length, 0, 'no second bot without a fresh look');
 });
 
 function liveReply(payload) {
@@ -476,6 +477,14 @@ test('active_meetings is read on the live lane and parsed by room', async () => 
     startTime: '2026-10-23T09:57:02.000Z',
     endTime: '2026-10-23T11:57:02.000Z',
     state: 'active',
+  }, {
+    id: 'no-link',
+    title: '',
+    organizerEmail: '',
+    meetingLink: '',
+    startTime: '',
+    endTime: '',
+    state: 'paused',
   }]);
   await assert.rejects(
     () => fetchActiveFirefliesMeetings({ apiKey: 'ff-key', fetchImpl: async () => liveReply({ data: null, errors: [{ message: 'nope' }] }) }),

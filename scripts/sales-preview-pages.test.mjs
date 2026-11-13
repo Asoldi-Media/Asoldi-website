@@ -10,6 +10,7 @@ import {
   listSalesPreviewPages,
   pagesFromSitemapXml,
   previewBaseFromRequestPath,
+  previewPathAllowsSigningWithoutSite,
   previewWantsContract,
   previewWantsEmbed,
   renderSalesPreviewChrome,
@@ -64,6 +65,11 @@ assert.equal(
   embedSrcFromRequest({ originalUrl: '/sales-preview/client-1/kontrakt' }),
   '/sales-preview/client-1/?kontrakt=1&asoldi-embed=1'
 );
+assert.equal(previewPathAllowsSigningWithoutSite('kontrakt', { query: {} }), true);
+assert.equal(previewPathAllowsSigningWithoutSite('', { query: { kontrakt: '1' } }), true);
+assert.equal(previewPathAllowsSigningWithoutSite('', { query: {} }), true);
+assert.equal(previewPathAllowsSigningWithoutSite('index.html', { query: {} }), true);
+assert.equal(previewPathAllowsSigningWithoutSite('about-us', { query: {} }), false);
 
 const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
 <urlset>

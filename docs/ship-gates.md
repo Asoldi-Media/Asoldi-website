@@ -8,6 +8,14 @@ is compared with the release that is live (base) on a copy of the live data. The
 
 1. `npm test` is green on the head commit (it includes the dark-diff self-tests,
    `npm run test:ship-safety`).
+   It starts with `npm run test:server-load`, which loads `server.js` the way the host does. The
+   host (LiteSpeed `lsnode.js`, Node 22) calls `require()` on `server.js`, and `require()` refuses
+   an ES module graph with a top-level await: one `await` outside a function in `server.js` or in
+   a module it imports, and the hub does not start there (HTTP 503). `node server.js` accepts
+   such an await, so the dark-diff and every test that starts the hub that way cannot see it.
+   Run this test on Node 22 before a push; on a Node older than 22.12 its two load tests are
+   skipped. Optional route modules (`lib/routes/optional-routes.js`) add their routes before
+   `register(app, deps)` returns and return a promise for start-up work that has to wait.
 2. `node scripts/security/secret-scan.mjs --range <base>..<head>` is clean (the pre-push hook
    runs the same scan).
 3. Dark-diff on a copy of the live data, with every new switch at its default:

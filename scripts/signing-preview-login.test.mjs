@@ -3,6 +3,9 @@
 // on the signing seed runs that flow with the signing switch off, in shadow and in auto: off and
 // shadow sign the way the live site does, auto signs through the signer, and in every mode the login
 // is created or checked, the offer is accepted under that login and one pre-workshop mail goes out.
+// One card has no Møte or Tilbud tick, so it is signed only through the e-signature fast track, and
+// every signed card is linked to the login that signed it. None of the cards has a published website
+// preview, so the contract page they sign on is the signing page the live site serves without one.
 //
 // node --test scripts/signing-preview-login.test.mjs
 import test from 'node:test';
@@ -58,6 +61,11 @@ async function post(hub, path, body, headers = JSON_HEADERS) {
   return { status: res.status, body: parsed };
 }
 
+async function page(hub, path) {
+  const res = await fetch(`${hub.base}${path}`, { redirect: 'manual' });
+  return { status: res.status, text: await res.text() };
+}
+
 async function runMode(mode) {
   const hub = await bootHub(flows.BOOT_ENV, {
     seed: (dir) => {
@@ -68,6 +76,11 @@ async function runMode(mode) {
   });
   try {
     assert.equal(hub.health?.safeMode, true, hub.log().slice(-3000));
+    // No website files are published for this card: the contract link still opens a signing page.
+    const contractPage = await page(hub, `/sales-preview/${C.preview}/kontrakt`);
+    const contractFrame = await page(hub, `/sales-preview/${C.preview}/?kontrakt=1&asoldi-embed=1`);
+    const otherPage = await page(hub, `/sales-preview/${C.preview}/about-us`);
+    const contractInfo = await page(hub, `/api/public/sales-preview/${C.preview}/contract`);
     // A login that does not exist yet is refused and signs nothing.
     const unknown = await post(hub, `/api/public/sales-preview/${C.portal}/contract/accept`, { ...AGREED, mode: 'login', email: 'nobody@example.com', password: 'Nobody-local-1234' });
     // A new login made on the preview, with no signature field in the request.
@@ -78,6 +91,10 @@ async function runMode(mode) {
     const signIn = await post(hub, '/api/client-auth/login', { email: SIGNUP.email, password: SIGNUP.password });
     const outbox = await flows.settledOutbox(hub.dataDir);
     return {
+      contractPage,
+      contractFrame,
+      otherPage,
+      contractInfo,
       unknown,
       signup,
       registered,
@@ -101,6 +118,15 @@ for (const mode of ['off', 'shadow', 'auto']) {
     const client = (id) => run.clients.find((entry) => entry.id === id);
     const offer = (id) => run.offers.find((entry) => entry.salesClientId === id);
 
+    // The live site lets a client sign before the website preview is published.
+    assert.equal(run.contractPage.status, 200, 'the contract link opens without a published preview');
+    assert.match(run.contractPage.text, /<iframe[^>]+kontrakt=1/, 'the page frames the contract view');
+    assert.equal(run.contractFrame.status, 200, 'the framed contract view opens without a published preview');
+    assert.match(run.contractFrame.text, /sales-preview-contract.js/, 'the framed view loads the signing widget');
+    assert.ok(run.contractFrame.text.includes(`data-sales-client-id="${C.preview}"`), 'the widget is bound to this card');
+    assert.equal(run.otherPage.status, 404, 'any other page still says the preview is not there');
+    assert.equal(run.contractInfo.status, 200, 'the widget can read the offer to sign');
+
     assert.equal(run.unknown.status, 404, JSON.stringify(run.unknown.body));
     assert.notEqual(client(C.portal)?.progression?.contractSigned, true, 'a refused login signs nothing');
 
@@ -112,6 +138,9 @@ for (const mode of ['off', 'shadow', 'auto']) {
     for (const [id, email] of [[C.preview, SIGNUP.email], [C.portalFresh, LOGIN.email]]) {
       assert.equal(client(id)?.progression?.contractSigned, true, `${id} is signed`);
       assert.equal(offer(id)?.acceptance?.email, email, `${id}'s offer is accepted under the preview login`);
+      // The live site links the sales card to the login that signed, so Solgt shows the user.
+      assert.ok(offer(id)?.acceptance?.userId, `${id}'s acceptance names the login`);
+      assert.equal(client(id)?.portalUserId, offer(id)?.acceptance?.userId, `${id}'s card is linked to that login`);
       const subject = buildPreWorkshopEmail({ businessName: client(id).businessName }, {}, { hasTime: false }).subject;
       const mails = run.outbox.filter((row) => (row.to || []).some((to) => String(to).toLowerCase() === `${id}@example.com`) && row.subject === subject);
       assert.equal(mails.length, 1, `${id} gets one pre-workshop mail`);
@@ -146,7 +175,7 @@ function stable(value) {
 
 test('off and shadow answer the preview client exactly alike', () => {
   assert.ok(runs.off && runs.shadow, 'both runs finished');
-  for (const key of ['unknown', 'signup', 'registered', 'login', 'signIn']) {
+  for (const key of ['contractPage', 'contractFrame', 'otherPage', 'contractInfo', 'unknown', 'signup', 'registered', 'login', 'signIn']) {
     assert.deepEqual(stable(runs.shadow[key]), stable(runs.off[key]), `${key} answers alike`);
   }
 });

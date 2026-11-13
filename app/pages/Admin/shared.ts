@@ -943,6 +943,23 @@ export type SalesClient = {
       status: string;
       buckets: string[];
     }[];
+    /** Client mails from the last week the bot left for a rep to answer. */
+    needsHuman?: number;
+    /** Bot handling of the client's mails, newest first (max 8). */
+    activity?: {
+      id: string;
+      /** Write row (`sales_book`, `sales_cancel`, `silent`, …) or the categorized mail kind. */
+      kind: string;
+      /** `applied` | `logged` | `needs_human` | `skipped` | `unmatched`. */
+      status: string;
+      intent?: string;
+      /** e.g. `stage:offer`, `stage:signature`, `stage:won`, `stage:off`, `question:contract`, `unclear`. */
+      reason?: string;
+      stage?: string;
+      summary?: string;
+      subject?: string;
+      receivedAt?: string;
+    }[];
   };
   websiteDueOverride?: string;
   websiteDeliveryWeeks?: number;

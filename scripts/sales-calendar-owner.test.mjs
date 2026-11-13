@@ -8,7 +8,11 @@ import {
   isBlockedCalendarAccountKey,
   isBlockedCalendarGoogleEmail,
   isUnacceptableMeetingHostEmail,
+  findStaffProfileForAccountKey,
   pickCalendarSyncAccountKey,
+  staffMailboxFromProfile,
+  staffMeetMemberEmails,
+  listSalesStaffProfiles,
   salesClientNeedsCalendarMove,
   overlaySalesInboxMeetOnEvents,
   overlaySalesMeetingsOnEvents,
@@ -73,6 +77,82 @@ test('existing Gmail events are migrated even before a rep is assigned', () => {
   assert.equal(calendarRecordIsOnBlockedMailbox({
     calendarId: 'daracha777@gmail.com',
   }), true);
+});
+
+test('staff mailbox comes from fromEmail, username, or alexander → alexander@asoldi.com', () => {
+  assert.equal(staffMailboxFromProfile({ fromEmail: 'alexander@asoldi.com', username: 'alexander' }), 'alexander@asoldi.com');
+  assert.equal(staffMailboxFromProfile({ username: 'alexander@asoldi.com' }), 'alexander@asoldi.com');
+  assert.equal(staffMailboxFromProfile({ username: 'alexander' }), 'alexander@asoldi.com');
+  assert.equal(staffMailboxFromProfile({ fromEmail: 'contact@asoldi.com', username: 'alexander' }), 'alexander@asoldi.com');
+  assert.equal(staffMailboxFromProfile({ username: 'admin' }), '');
+  const users = [
+    { id: '1789355644760', username: 'alexander@asoldi.com', fromEmail: '' },
+    { id: 'rep-2', username: 'baard', fromEmail: 'baard@asoldi.com' },
+  ];
+  assert.equal(findStaffProfileForAccountKey('sales:1789355644760', users)?.id, '1789355644760');
+  assert.equal(findStaffProfileForAccountKey('sales:alexander', users)?.id, '1789355644760');
+  assert.equal(findStaffProfileForAccountKey('sales:alexander@asoldi.com', users)?.id, '1789355644760');
+  assert.equal(findStaffProfileForAccountKey('sales:baard', users)?.fromEmail, 'baard@asoldi.com');
+  assert.equal(findStaffProfileForAccountKey('admin:damian@asoldi.com', users), null);
+});
+
+test('staff Meet co-hosts are connected asoldi mailboxes plus extras, never the client', () => {
+  assert.deepEqual(
+    staffMeetMemberEmails({
+      connectedSources: [
+        { googleEmail: 'alexander@asoldi.com' },
+        { googleEmail: 'contact@asoldi.com' },
+        { googleEmail: 'kari@example.com' },
+      ],
+      extraEmails: ['fred@fireflies.ai', 'alexander@asoldi.com'],
+      organizerEmail: 'alexander@asoldi.com',
+      clientEmail: 'kari@example.com',
+      staffProfiles: [{ username: 'future', fromEmail: 'future@asoldi.com' }],
+    }),
+    ['damian@asoldi.com', 'fred@fireflies.ai', 'future@asoldi.com'],
+  );
+});
+
+test('a new sales user is a Meet co-host; clients and employees are not', () => {
+  const users = [
+    { id: 'n1', username: 'nina', role: 'sales' },
+    { id: 'c1', username: 'kunde@asoldi.com', role: 'client' },
+    { id: 'e1', username: 'ansatt@asoldi.com', role: 'employee' },
+    { username: 'ghost', role: 'sales' },
+  ];
+  assert.deepEqual(listSalesStaffProfiles(users).map((user) => user.id), ['n1']);
+  assert.deepEqual(
+    staffMeetMemberEmails({
+      organizerEmail: 'alexander@asoldi.com',
+      staffProfiles: listSalesStaffProfiles(users),
+    }),
+    ['damian@asoldi.com', 'nina@asoldi.com'],
+  );
+});
+
+test('known owner mailbox never falls back to Damian’s token', () => {
+  const mailboxOf = (key) => ({
+    [alexanderSales]: 'alexander@asoldi.com',
+    [damianAdmin]: 'damian@asoldi.com',
+    [damianSales]: 'damian@asoldi.com',
+  }[key] || '');
+  const onlyDamianUsable = (key) => key === damianAdmin;
+  assert.equal(pickCalendarSyncAccountKey({
+    ownerId: alexanderSales,
+    actorAccountKey: damianAdmin,
+    fallbackAccountKeys: [damianAdmin],
+    ownerMailbox: 'alexander@asoldi.com',
+    mailboxOf,
+    isUsable: onlyDamianUsable,
+  }), alexanderSales);
+  assert.equal(pickCalendarSyncAccountKey({
+    ownerId: alexanderSales,
+    actorAccountKey: damianAdmin,
+    preferredAccountKeys: [alexanderSales],
+    ownerMailbox: 'alexander@asoldi.com',
+    mailboxOf,
+    isUsable: (key) => key === alexanderSales || key === damianAdmin,
+  }), alexanderSales);
 });
 
 test('Damian’s connected token wins; Daracha is never selected', () => {

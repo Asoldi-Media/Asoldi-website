@@ -506,9 +506,11 @@ test('optional routes: the brief module registers through the shared list', asyn
   const fakeApp = new Proxy(app, { get: (target, key) => (['get', 'post', 'patch'].includes(key) ? (path, ...rest) => { seen.push(`${key} ${path}`); return target[key](path, ...rest); } : target[key]) });
   const dir = tempDir();
   const makerAuth = makerAuthLib.createMakerAuth({ legacyHolder: hardening.createHubSecretHolder({ envValue: '', envRule: 'any', lazy: true, dataDir: dir, name: 'maker-callback-token', bytes: 32 }), dataDir: dir, env: {} });
-  const registered = await registerOptionalRoutes(fakeApp, { developmentAuth, makerAuth, sales: { getSalesClientById: () => null }, getDataDir: () => dir }, { modules: ['./brief-routes.js'] });
+  const { registered, ready } = registerOptionalRoutes(fakeApp, { developmentAuth, makerAuth, sales: { getSalesClientById: () => null }, getDataDir: () => dir }, { modules: ['./brief-routes.js'] });
   assert.deepEqual(registered, ['./brief-routes.js']);
   assert.ok(seen.includes('get /api/maker/clients/:id/brief'));
   assert.ok(seen.includes('get /api/maker/clients/:id/transcripts/:sha256'));
   assert.ok(seen.includes('post /api/admin/development/:id/brief/rebuild'));
+  // The routes above were all registered before the call returned; the start-up work follows.
+  assert.deepEqual(await ready, ['./brief-routes.js']);
 });

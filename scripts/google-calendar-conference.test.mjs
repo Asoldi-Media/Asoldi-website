@@ -178,11 +178,11 @@ function fakeMeet() {
     spaces: {
       async get(params) {
         calls.push({ kind: 'get', params });
-        return { data: { name: 'spaces/sp-test-1', config: { accessType: 'TRUSTED' } } };
+        return { data: { name: 'spaces/sp-test-1', config: { accessType: 'OPEN' } } };
       },
       async patch(params) {
         calls.push({ kind: 'patch', params });
-        return { data: { name: params.name, config: { accessType: 'OPEN' } } };
+        return { data: { name: params.name, config: { accessType: 'TRUSTED' } } };
       },
     },
   };
@@ -412,7 +412,7 @@ test('after the upsert, the organizer’s own OAuth login opens the room in the 
   assert.deepEqual(meetApi.calls.map((call) => call.kind), ['get', 'patch']);
   assert.equal(meetApi.calls[0].params.name, 'spaces/abc-defg-hij');
   const status = meet.meetRoomAccessStatus(ROOM);
-  assert.deepEqual([status.ok, status.accessType, status.ownerKey], [true, 'OPEN', 'sales:rep-1']);
+  assert.deepEqual([status.ok, status.accessType, status.ownerKey], [true, 'TRUSTED', 'sales:rep-1']);
 
   // The recorded Møte path does the same for its own room.
   const actionRoom = 'https://meet.google.com/mte-room-abc';
