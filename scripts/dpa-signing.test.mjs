@@ -33,7 +33,9 @@ function sha256(value) {
 }
 
 function setSwitch(enabled) {
-  const result = settingsStore.saveAutomationSettings({ legal: { catalogTexts: { enabled } } }, { by: 'test', reason: 'test' });
+  const patch = { legal: { catalogTexts: { enabled } } };
+  if (enabled) patch.retention = { analyticsTraffic: { enabled: true, mode: 'auto' } };
+  const result = settingsStore.saveAutomationSettings(patch, { by: 'test', reason: 'test' });
   assert.equal(result.ok, true, JSON.stringify(result.errors));
 }
 

@@ -347,7 +347,7 @@ Settings keys (`SETTINGS_KEYS`, dotted paths in the file):
 | Media | `media.signedUrls.enabled` (media manifest and signed downloads; default off), `media.rightsConfirm.enabled` (per-upload rights checkbox in the portal; default off) |
 | Storage | `storage.budgetFiles`, `storage.budgetMb` |
 | Alerts | `alerts.to`, `alerts.hostOfflineHours`, `alerts.jobBlockedHours`, `alerts.digestAt` |
-| Legal texts | `legal.catalogTexts.enabled` (default `false`; see [legal-texts.md](legal-texts.md)) |
+| Legal texts | `legal.catalogTexts.enabled` (default `false`; see [legal-texts.md](legal-texts.md)). Switching it on requires `retention.analyticsTraffic.enabled` in `auto` and not paused (the save refuses otherwise). Each client CMS must also be running its own deletion rule for visit rows; the hub cannot see a CMS's rule, so that is checked by hand per CMS. |
 | SEO | `seo.jobGating.enabled`, `seo.jobGating.mode` (`shadow` or `auto`; default off, see [SEO record, job gating and the DataForSEO ledger](seo-record.md)), `seo.dfsLedger.enabled` (default off), `seo.recordPull.enabled` (default off); `seo.jobGating.paused`, `seo.dfsLedger.paused`, `seo.recordPull.paused` (`null` or `{reason}`; a paused switch counts as off) |
 | Delivery loop | `delivery.loop.enabled` (default `false`), `delivery.loop.mode` (`shadow` or `auto`; `auto` needs at least one client in `pilotClientIds` and a recorded release pass), `delivery.loop.paused` (null or `{reason}`); see [Delivery loop and Maker jobs](#delivery-loop-and-maker-jobs) |
 | Gate | `gate.enabled` (default `false`), `gate.mode` (`shadow` only for now), `gate.paused` (see [Gate](#gate)) |

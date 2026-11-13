@@ -31,7 +31,9 @@ const archive = await import('../lib/legal/archive.js');
 const { legalTextResponse } = await import('../lib/legal/texts.js');
 
 function setSwitch(enabled) {
-  assert.equal(settingsStore.saveAutomationSettings({ legal: { catalogTexts: { enabled } } }, { by: 'test' }).ok, true);
+  const patch = { legal: { catalogTexts: { enabled } } };
+  if (enabled) patch.retention = { analyticsTraffic: { enabled: true, mode: 'auto' } };
+  assert.equal(settingsStore.saveAutomationSettings(patch, { by: 'test' }).ok, true);
 }
 
 function sha256(value) {

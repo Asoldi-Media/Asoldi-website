@@ -707,6 +707,15 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
     else value.retention.analyticsTraffic.paused = paused;
   }
   // --- end visit statistics retention
+  // --- legal texts need visit statistics retention
+  if (value.legal?.catalogTexts?.enabled === true && base.legal?.catalogTexts?.enabled !== true) {
+    const traffic = value.retention?.analyticsTraffic;
+    const retentionOn = traffic?.enabled === true && traffic?.mode === 'auto' && traffic?.paused === null;
+    if (!retentionOn) {
+      fail('legal.catalogTexts.enabled', 'The legal texts say that visit statistics are deleted after 26 months, so legal.catalogTexts can be switched on only while retention.analyticsTraffic is enabled in auto and not paused. Each client CMS must also run its own deletion rule; the hub cannot check that, so confirm it before switching on.');
+    }
+  }
+  // --- end legal texts need visit statistics retention
   const tiers = value.publish?.staging?.tiers;
   if (!Array.isArray(tiers) || tiers.some((tier) => !TIER_IDS.includes(tier))) {
     fail('publish.staging.tiers', `Must list tier ids (${TIER_IDS.join(', ')}).`);

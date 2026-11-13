@@ -161,7 +161,7 @@ test('local hub in safe mode: legal routes are 404 while dark and serve the cata
     assert.equal(existsSync(settingsFile), false, 'nothing stored while dark');
 
     // Switched on from Superadmin.
-    const on = await json('/api/admin/automation-settings', { method: 'PUT', headers: admin, body: JSON.stringify({ settings: { legal: { catalogTexts: { enabled: true } } }, reason: 'boot test' }) });
+    const on = await json('/api/admin/automation-settings', { method: 'PUT', headers: admin, body: JSON.stringify({ settings: { legal: { catalogTexts: { enabled: true } }, retention: { analyticsTraffic: { enabled: true, mode: 'auto' } } }, reason: 'boot test' }) });
     assert.equal(on.status, 200, JSON.stringify(on.body).slice(0, 300));
     await new Promise((resolve) => setTimeout(resolve, 50));
     const terms = await json('/api/legal/texts/vilkar');

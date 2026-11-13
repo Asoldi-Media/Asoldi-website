@@ -234,10 +234,42 @@ test('the generated appendix file is the committed one', () => {
 test('the legal switch is a boolean that defaults to off', () => {
   assert.deepEqual(defaultAutomationSettings().legal, { catalogTexts: { enabled: false } });
   assert.equal(vocab.SETTINGS_KEYS.legalCatalogTexts, 'legal.catalogTexts.enabled');
-  assert.equal(validateAutomationSettings({ legal: { catalogTexts: { enabled: true } } }).ok, true);
+  assert.equal(validateAutomationSettings({
+    retention: { analyticsTraffic: { enabled: true, mode: 'auto' } },
+    legal: { catalogTexts: { enabled: true } },
+  }).ok, true);
   const bad = validateAutomationSettings({ legal: { catalogTexts: { enabled: 'yes' } } });
   assert.equal(bad.ok, false);
   assert.ok(bad.errors.some((error) => error.path === 'legal.catalogTexts.enabled'));
+});
+
+test('legal texts can be switched on only while visit statistics retention runs in auto', () => {
+  function refusal(result) {
+    assert.equal(result.ok, false);
+    const error = result.errors.find((entry) => entry.path === 'legal.catalogTexts.enabled');
+    assert.ok(error, JSON.stringify(result.errors));
+    assert.match(error.message, /retention\.analyticsTraffic/);
+    assert.match(error.message, /client CMS/);
+  }
+  refusal(validateAutomationSettings({ legal: { catalogTexts: { enabled: true } } }));
+  refusal(validateAutomationSettings({
+    retention: { analyticsTraffic: { enabled: true, mode: 'shadow' } },
+    legal: { catalogTexts: { enabled: true } },
+  }));
+  refusal(validateAutomationSettings({
+    retention: { analyticsTraffic: { enabled: true, mode: 'auto', paused: { reason: 'x' } } },
+    legal: { catalogTexts: { enabled: true } },
+  }));
+  assert.equal(validateAutomationSettings({
+    retention: { analyticsTraffic: { enabled: true, mode: 'auto' } },
+    legal: { catalogTexts: { enabled: true } },
+  }).ok, true);
+  assert.equal(validateAutomationSettings({}, {
+    current: {
+      legal: { catalogTexts: { enabled: true } },
+      retention: { analyticsTraffic: { enabled: false } },
+    },
+  }).ok, true);
 });
 
 test('the legal files use neutral public wording', () => {
