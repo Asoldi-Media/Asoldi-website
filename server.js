@@ -197,9 +197,11 @@ import { calendarDurationForMode } from './lib/sales-meeting-duration.js';
 import {
   calendarOwnerIdForSync,
   calendarRecordIsOnBlockedMailbox,
+  findStaffProfileForAccountKey,
   isBlockedCalendarAccountKey,
   isBlockedCalendarGoogleEmail,
   isUnacceptableMeetingHostEmail,
+  staffMailboxFromProfile,
   salesClientNeedsCalendarMove,
   overlaySalesInboxMeetOnEvents,
   overlaySalesMeetingsOnEvents,
@@ -385,7 +387,9 @@ import {
   applySalesPreviewSecurityHeaders,
   injectPreviewBaseHref,
   injectPreviewRobotsMeta,
+  freezeRevolutionSliderHtml,
   injectSalesPreviewContractWidget,
+  renderSalesPreviewSigningEmbed,
   isAllowedPreviewBridgeExportUrl,
   isPreviewCrawler,
   isPreviewProtectedPath,
@@ -401,6 +405,7 @@ import {
   isPreviewContractSlug,
   listSalesPreviewPagesCached,
   previewBaseFromRequestPath,
+  previewPathAllowsSigningWithoutSite,
   previewWantsEmbed,
   renderSalesPreviewChrome,
   routeFromPreviewRelativePath,
@@ -414,6 +419,7 @@ import {
   getGoogleCalendarStatus,
   isRealGoogleMeetLink,
   listConnectedAsoldiCalendarSources,
+  meetCohostEmails,
   loadSalesCalendarWeek,
   prepareSalesCalendarEmbed,
   SALES_WEEK_CALENDAR_DISABLED,
@@ -447,6 +453,7 @@ import {
 } from './lib/inbox-bot/index.js';
 import {
   backfillRecognizedSignedContracts,
+  linkSalesClientPortalFromAcceptance,
   markClientSoldFromSignedContract,
   runSignedContractBackfillOnce,
   storePreviewAcceptedContract,
@@ -8343,12 +8350,22 @@ async function salesOrDevelopmentAuth(req, res, next) {
 async function accountKeyToEmail(accountKey = '') {
   const key = sanitizeText(accountKey);
   if (!key) return '';
-  if (key.startsWith('admin:')) return normalizeEmail(key.slice('admin:'.length));
-  if (key.startsWith('sales:') || key.startsWith('developer:')) {
-    const userId = key.includes(':') ? key.slice(key.indexOf(':') + 1) : '';
+  if (key.startsWith('admin:')) {
+    const fromKey = normalizeEmail(key.slice('admin:'.length));
+    if (fromKey.endsWith('@asoldi.com') && !isUnacceptableMeetingHostEmail(fromKey)) return fromKey;
     try {
-      const user = (await store.getUserById(userId)) || (await store.getUserByUsername(userId));
-      return normalizeEmail(user?.username);
+      return staffMailboxFromProfile(await store.getAdmin()) || fromKey;
+    } catch {
+      return fromKey;
+    }
+  }
+  if (key.startsWith('sales:') || key.startsWith('developer:')) {
+    try {
+      const slice = key.includes(':') ? key.slice(key.indexOf(':') + 1) : '';
+      const user = (await store.getUserById(slice))
+        || (await store.getUserByUsername(slice))
+        || findStaffProfileForAccountKey(key, await store.getAllUsers());
+      return staffMailboxFromProfile(user);
     } catch {
       return '';
     }
@@ -8379,7 +8396,7 @@ async function resolveSiblingCalendarAccountKeys(accountKey = '') {
   try {
     const users = await store.getAllUsers();
     for (const user of Array.isArray(users) ? users : []) {
-      if (normalizeEmail(user?.username) !== email) continue;
+      if (staffMailboxFromProfile(user) !== email) continue;
       const userId = sanitizeText(user?.id);
       const username = sanitizeText(user?.username);
       if (userId) {
@@ -8595,6 +8612,7 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
     ? options.fallbackAccountKeys.filter((key) => !isBlockedCalendarAccountKey(key))
     : await resolveCalendarFallbackAccountKeys(nextClient?.ownerId || '', actorAccountKey);
   const preferredAccountKeys = await preferredCalendarAccountKeysForOwner(nextClient?.ownerId || '');
+  const ownerEmail = (await accountKeyToEmail(calendarOwnerIdForSync(nextClient?.ownerId || ''))).toLowerCase();
 
   // Copy tokens onto the current owner/actor even if that key is not connected yet
   // (OAuth may live under a sibling sales:/admin: key for the same Google inbox).
@@ -8610,6 +8628,7 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
     fallbackAccountKeys,
     previousAccountKey: isBlockedCalendarAccountKey(previousAccountKey) ? '' : previousAccountKey,
     preferredAccountKeys,
+    ownerMailbox: ownerEmail,
   });
   const syncCalendarStatus = getGoogleCalendarStatus(accountKey);
   if (isBlockedCalendarAccountKey(accountKey) || isBlockedCalendarGoogleEmail(syncCalendarStatus.googleEmail)) {
@@ -8649,7 +8668,6 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
 
   const calendarStatus = getGoogleCalendarStatus(accountKey);
   if (calendarStatus.configured && calendarStatus.connected) {
-    const ownerEmail = (await accountKeyToEmail(calendarOwnerIdForSync(nextClient?.ownerId || ''))).toLowerCase();
     const tokenEmail = sanitizeText(calendarStatus.googleEmail).toLowerCase();
     const expectedOwnerEmail = ownerEmail && !isUnacceptableMeetingHostEmail(ownerEmail)
       ? ownerEmail
@@ -8885,6 +8903,7 @@ async function maybeSyncNextActionCalendars(previousClient, nextClient, { actorA
     fallbackAccountKeys,
     previousAccountKey: isBlockedCalendarAccountKey(previousAccountKey) ? '' : previousAccountKey,
     preferredAccountKeys,
+    ownerMailbox: await accountKeyToEmail(calendarOwnerIdForSync(nextClient?.ownerId || '')),
   });
   if (isBlockedCalendarAccountKey(accountKey) || isBlockedCalendarGoogleEmail(getGoogleCalendarStatus(accountKey).googleEmail)) {
     return { client, warnings };
@@ -9723,9 +9742,9 @@ function liveSessionMeetHost(session) {
 }
 
 /**
- * From T-30 the engine asks for the room to be opened, so the notetaker walks in without a knock
- * (lib/google-meet-access.js; inert until the host has granted the Meet settings scope). Asked again each tick
- * until it is open: the opener caches its own refusals and errors, so a repeat costs a file read.
+ * From T-30 the engine prepares the room: staff and Fred as co-hosts, client still knocks
+ * (lib/google-meet-access.js; inert until the host has granted the Meet settings/members scopes).
+ * Asked again each tick until it is prepared: the opener caches its own refusals and errors.
  */
 async function openLiveSessionMeetRoom(session) {
   const host = liveSessionMeetHost(session);
@@ -9733,6 +9752,9 @@ async function openLiveSessionMeetRoom(session) {
     meetLink: session.meetLink,
     accountKey: host.accountKey,
     ownerEmail: host.ownerEmail,
+    memberEmails: meetCohostEmails({
+      organizerEmail: host.ownerEmail,
+    }),
     maxAgeMs: 15 * 60 * 1000,
   });
 }
@@ -12320,7 +12342,7 @@ async function salesOwnerEmailMap() {
     for (const user of Array.isArray(users) ? users : []) {
       if (!user?.id) continue;
       // Staff usernames are e-mail addresses; fromEmail is the sender override if set.
-      const email = sanitizeText(user.fromEmail || user.email || (String(user.username || '').includes('@') ? user.username : '')).toLowerCase();
+      const email = staffMailboxFromProfile(user);
       if (!email) continue;
       // Owner keys follow salesUserOwnerKeys(): sales:<userId> / sales:<username>.
       map[`sales:${user.id}`] = email;
@@ -12680,13 +12702,18 @@ async function acceptPortalOfferForUser(offer, user, req, { signingSource = 'por
   if (working.salesClientId) {
     const salesClient = sales.getSalesClientById(working.salesClientId);
     if (salesClient) {
-      markClientSoldFromSignedContract(salesClient.id, {
+      markClientSoldFromSignedContract(salesClient.id, { fastTrack: true }, {
         source: signingSource,
         offerId: salesOffer?.id || '',
         alternativeIndex: choice.index,
         actor: 'client',
       });
       await contractSigningSettled(salesClient.id);
+      linkSalesClientPortalFromAcceptance(sales.getSalesClientById(salesClient.id) || salesClient, {
+        userId: user?.id || saved?.acceptance?.userId || '',
+        email: user?.username || saved?.acceptance?.email || '',
+        acceptedAt: saved?.acceptance?.acceptedAt || '',
+      });
       try {
         await storePreviewAcceptedContract(sales.getSalesClientById(salesClient.id) || salesClient, {
           email: user?.username || saved?.acceptance?.email || '',
@@ -13064,7 +13091,25 @@ const cmsFeatures = registerCmsFeatureRoutes(app, {
   makerAuth: requireMakerHost('jobs', { message: 'Unauthorized' }),
 });
 registerAiAdminRoutes(app, { adminAuth, sales });
-await registerOptionalRoutes(app, { adminAuth, makerAuth, salesAuth, developmentAuth, salesOrDevelopmentAuth, clientAuth, sales, hub, salesOffers, getDataDir: getPersistentDataDir });
+// No await here, or anywhere else at the top level of this file or of a module it imports: the
+// host loads server.js with require(), which refuses a module graph with a top-level await
+// (scripts/server-require-load.test.mjs). Every optional route is registered before this call
+// returns, so the routes below it and the page fallback keep their place.
+const optionalRoutes = registerOptionalRoutes(app, { adminAuth, makerAuth, salesAuth, developmentAuth, salesOrDevelopmentAuth, clientAuth, sales, hub, salesOffers, getDataDir: getPersistentDataDir });
+// The start-up work the optional route modules returned (loading a store, a registry) used to be
+// awaited before the rest of this file ran. Now the file runs to the end and listens at once, and
+// the requests that arrive before that work has finished wait for it, as do the background jobs.
+// Once it has finished, app.handle is Express's own again. A failure stops the hub, as before.
+const expressHandle = app.handle;
+const optionalRoutesStarted = optionalRoutes.ready.then(() => {
+  app.handle = expressHandle;
+}, (error) => {
+  console.error('[boot] an optional route module could not start:', error);
+  process.exit(1);
+});
+app.handle = (req, res, next) => {
+  optionalRoutesStarted.then(() => expressHandle.call(app, req, res, next));
+};
 
 // --- Hub API (public: site config for client CMS)
 // The site key is public, so a key lookup gets the public fields only. The client admin contact and
@@ -13263,9 +13308,9 @@ app.get('/api/admin/sales/session', salesAuth, (req, res) => {
   });
 });
 
-app.get('/api/admin/sales/google/status', salesAuth, (req, res) => {
+app.get('/api/admin/sales/google/status', salesAuth, async (req, res) => {
   res.json(presentCalendarStatus(
-    getGoogleCalendarStatus(req.salesUser.accountKey),
+    await ensureSharedCalendarTokens(req.salesUser.accountKey),
     req.salesUser
   ));
 });
@@ -14088,7 +14133,7 @@ app.get('/api/admin/sales', salesOrMakerRead, async (req, res) => {
       : owned;
   const clients = filtered;
   const calendar = presentCalendarStatus(
-    getGoogleCalendarStatus(req.salesUser.accountKey),
+    await ensureSharedCalendarTokens(req.salesUser.accountKey),
     req.salesUser
   );
   const sender = await resolveSalesSenderForAccount(req.salesUser);
@@ -15414,16 +15459,19 @@ app.patch('/api/admin/sales/:id/notes', salesAuth, (req, res) => {
   const existing = sales.getSalesClientById(req.params.id);
   if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
   if (!canAccessSalesClient(req, existing)) return res.status(403).json({ message: 'Not your sales client.' });
+  const append = sanitizeText(req.body?.append);
   const hasNotes = Object.prototype.hasOwnProperty.call(req.body || {}, 'notes');
   const hasQuote = req.body?.meetingQuote && typeof req.body.meetingQuote === 'object';
-  if (!hasNotes && !hasQuote) {
+  if (!append && !hasNotes && !hasQuote) {
     return res.status(400).json({ message: 'Notes are required.' });
   }
-  const updated = sales.setSalesNotes(
-    req.params.id,
-    hasNotes ? req.body?.notes : undefined,
-    hasQuote ? req.body.meetingQuote : undefined,
-  );
+  const updated = append
+    ? sales.appendSalesNote(req.params.id, append)
+    : sales.setSalesNotes(
+      req.params.id,
+      hasNotes ? req.body?.notes : undefined,
+      hasQuote ? req.body.meetingQuote : undefined,
+    );
   if (!updated) return res.status(404).json({ message: 'Sales client not found.' });
   res.json({ client: updated });
 });
@@ -20942,6 +20990,27 @@ function refusePreviewCrawler(req, res) {
   return true;
 }
 
+function sendSalesPreviewSigningShell(req, res, client) {
+  applySalesPreviewSecurityHeaders(res);
+  const title = sanitizeText(client.businessName) || 'Kontrakt';
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  if (previewWantsEmbed(req)) {
+    res.send(renderSalesPreviewSigningEmbed({ title, clientId: client.id }));
+    return;
+  }
+  const previewBase = previewBaseFromRequestPath(req.path, client.id);
+  res.send(
+    renderSalesPreviewChrome({
+      previewBase,
+      pages: [{ route: '/', label: 'Hjem' }],
+      currentRoute: '/',
+      iframeSrc: embedSrcFromRequest(req),
+      title,
+    })
+  );
+}
+
 async function sendSalesPreviewFile(req, res, relativePath = '') {
   if (refusePreviewCrawler(req, res)) return;
   applySalesPreviewSecurityHeaders(res);
@@ -20963,6 +21032,10 @@ async function sendSalesPreviewFile(req, res, relativePath = '') {
     (resolvedStored && existsSync(path.join(resolvedStored, 'index.html')) && resolvedStored) ||
     (await salesPreview.resolveSalesPreviewRoot(client, SALES_IMPORTS_ROOT));
   if (!root) {
+    if (previewPathAllowsSigningWithoutSite(relativePath, req)) {
+      sendSalesPreviewSigningShell(req, res, client);
+      return;
+    }
     res.setHeader('Cache-Control', 'no-store');
     return res.status(404).send(
       'Preview not available. This sales client has a Maker run, but the website files are not on asoldi.com yet. Open the client run in Website Maker and click Update public website now.'
@@ -21028,8 +21101,10 @@ async function sendSalesPreviewFile(req, res, relativePath = '') {
           res.setHeader('Content-Type', 'text/html; charset=utf-8');
           res.send(
             injectSalesPreviewContractWidget(
-              injectPreviewRobotsMeta(
-                ensureSharedPreviewStyles(rewritePreviewAssetPaths(injectPreviewBaseHref(text, client.id), client.id), roots)
+              freezeRevolutionSliderHtml(
+                injectPreviewRobotsMeta(
+                  ensureSharedPreviewStyles(rewritePreviewAssetPaths(injectPreviewBaseHref(text, client.id), client.id), roots)
+                )
               ),
               client.id
             )
@@ -21741,7 +21816,7 @@ server.listen(PORT, hubListenHost(), () => {
   console.log(describeProxyTimeouts(server));
   console.log(`[audio] persistent=${MYPHONER_AUDIO_DIR} extra=${extraMyphonerAudioDirs().join('|') || '(none)'}`);
   setImmediate(() => {
-    ensureData().then(() => {
+    optionalRoutesStarted.then(() => ensureData()).then(() => {
       startBackgroundJobs();
     }).catch((err) => {
       console.error('Failed to init admin:', err);

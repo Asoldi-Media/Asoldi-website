@@ -24,7 +24,7 @@ import {
   UserRound,
 } from 'lucide-react';
 import type { SalesClient, SalesGoalKey, SalesNextAction } from '../shared';
-import { SignedContractPill } from './InboxBotPanel';
+import { InboxNeedsReplyPill, SignedContractPill } from './InboxBotPanel';
 import { SalesGoalTimeline, type SalesFixedRow } from './SalesGoalTimeline';
 import {
   defaultSalesFocusCategory,
@@ -977,6 +977,7 @@ function FocusCard(props: FocusCardProps) {
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-lg sm:text-xl font-semibold text-white truncate">{client.businessName || 'Uten navn'}</h2>
                 <SignedContractPill client={client} />
+                <InboxNeedsReplyPill client={client} />
                 <ModeChip client={client} />
                 {status ? (
                   <span className={`inline-flex items-center px-2 py-0.5 rounded border text-[11px] ${TONE_CLASS[status.tone]}`}>{status.text}</span>
@@ -1034,7 +1035,7 @@ function FocusCard(props: FocusCardProps) {
                   type="button"
                   onClick={() => onOpenContract(client)}
                   className={HEADER_BUTTON}
-                  title={hasPreview ? 'Åpne preview med kontrakten allerede åpen' : 'Ingen preview publisert ennå'}
+                  title="Åpne signeringslenken"
                 >
                   <FileText size={13} />
                   Åpne kontraktlenke
@@ -1149,7 +1150,7 @@ function FocusCard(props: FocusCardProps) {
         </div>
       </div>
 
-      <div className="space-y-3 min-w-0">
+      <div className="min-w-0 lg:min-h-[24rem] flex flex-col">
         {renderNotes(client)}
       </div>
     </div>

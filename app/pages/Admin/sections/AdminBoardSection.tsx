@@ -34,7 +34,7 @@ import { useLiveRecordingRefresh } from './useLiveRecordingRefresh';
 import { WorkshopAdminActionRow } from './WorkshopAdminActionRow';
 import { WebsiteDueField } from './WebsiteDueField';
 import { WorkshopNeedsPanel } from './WorkshopNeedsPanel';
-import { InboxBotPanel, SignedContractPill } from './InboxBotPanel';
+import { InboxBotPanel, InboxNeedsReplyPill, SignedContractPill } from './InboxBotPanel';
 import { SalesCalendarWeek } from './SalesCalendarWeek';
 import {
   FocusBoardShell,
@@ -452,6 +452,7 @@ function AdminFocusCard({
               <div className="flex flex-wrap items-center gap-2">
                 <h2 className="text-lg sm:text-xl font-semibold text-white truncate">{client.businessName || 'Uten navn'}</h2>
                 <SignedContractPill client={client} />
+                <InboxNeedsReplyPill client={client} />
                 <FocusStatusChip status={adminStatus(entry, nowMs)} />
                 {thread?.unreadForAdmin ? (
                   <span className="inline-flex items-center px-2 py-0.5 rounded border text-[11px] border-amber-500/40 bg-amber-500/15 text-amber-200">

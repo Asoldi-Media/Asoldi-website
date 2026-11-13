@@ -121,21 +121,23 @@ Optional `FIREFLIES_LOBBY_ALERT=0` turns the lobby e-mail off (default on).
   (Fireflies' pauses), `liveJoinEnabled`, `lobbyAlertsEnabled` and `alert: { reason, lastAlertAt }`.
 - `GET /api/admin/fireflies/ingest-status` (admin): the transcript pull's health.
 
-## Meet rooms: let the notetaker in without anyone admitting it
+## Meet rooms: staff and Fred as co-hosts; the client still knocks
 
 The notetaker joins the Meet as an anonymous guest ("Fireflies.ai Notetaker …"), not as
 fred@fireflies.ai, even when fred@ is invited on the event. In a room at Google's default access
-it knocks, and Meet often files it under "With potential risks". It gets in only if someone is
-already in the room and admits it. A rep who is late, alone with the client, or who does not
-recognise the knock loses the recording, and Fireflies stores nothing.
+it knocks, and Meet often files it under "With potential risks". A signed-in sales rep who is
+not the host knocks too. The client must still knock; OPEN is not used, because anyone with the
+link would walk in.
 
-So the hub opens the rooms it books. Right after a calendar sync writes an event with a real Meet
+So the hub prepares the rooms it books. Right after a calendar sync writes an event with a real Meet
 (`upsertMeetingEvent` for sales, workshop and iteration; `upsertRecordedSalesActionEvent` for an
 extra Møte), and only when the event's organizer is the mailbox of the OAuth login that wrote it,
-`lib/google-meet-access.js` reads the room with the Google Meet REST API (`spaces.get` on the
-meeting code). If its `config.accessType` is not `OPEN`, it patches it to `OPEN`
-(`spaces.patch`, `updateMask=config.accessType`). Anyone with the link then joins without
-knocking, the notetaker included. The trade-off: so would anyone else who has the link.
+`lib/google-meet-access.js` reads the room (`spaces.get` on the meeting code). If access is OPEN
+(or not TRUSTED/RESTRICTED), it patches to TRUSTED with moderation ON. Then it adds co-hosts
+(`spaces.members.create`, role COHOST): Damian, every sales user in Admin → Users (a new rep
+counts as soon as they are added), every other connected @asoldi.com sales mailbox, and
+fred@fireflies.ai. Those people join without knocking and can admit the client and the
+notetaker. The client's own email is never added.
 
 ### For the live-join engine
 
@@ -143,13 +145,13 @@ Live join asks again shortly before the start, for rooms minted before the host 
 in case a host closed the room again in Meet:
 
 ```js
-ensureMeetRoomOpen({ meetLink, accountKey, ownerEmail, maxAgeMs: 15 * 60 * 1000 })
+ensureMeetRoomOpen({ meetLink, accountKey, ownerEmail, memberEmails, maxAgeMs: 15 * 60 * 1000 })
 ```
 
 - `ownerEmail` is the mailbox that hosts the room: `calendar.meetHostVerifiedEmail` when set,
   else the event organizer. If that login is refused and another login opened this room before,
   that login is tried once too.
-- Calling it on every tick is fine. An open room is read again only after `maxAgeMs` (default
+- Calling it on every tick is fine. A prepared room is read again only after `maxAgeMs` (default
   6 hours). The same login is not asked again within 15 minutes of a refusal or a missing scope
   (a reconnect lifts that at once), or within 3 minutes of an error. `force: true` asks anyway.
 - Never await it on a mail path. It never rejects, but each Google call may take up to 4 s:
@@ -190,18 +192,19 @@ rep to «Marker uten opptak» when the client does not want a recording.
 1. Google Cloud console, the project that owns `GOOGLE_OAUTH_CLIENT_ID`: APIs & Services →
    Library → **Google Meet REST API** → Enable.
 2. Same project, OAuth consent screen (Google Auth Platform → Data access) → Add or remove scopes →
-   add `https://www.googleapis.com/auth/meetings.space.settings` and save. Google classes it as
-   non-sensitive ("Edit and see the settings for all of your Google Meet calls"), so no review.
+   add `https://www.googleapis.com/auth/meetings.space.settings` and
+   `https://www.googleapis.com/auth/meetings.space.created` and save. Settings is non-sensitive;
+   created is sensitive (co-hosts) and needs a reconnect.
 3. Every Meet host logs in on `/sales` as themselves and clicks Connect Google Calendar once:
    today alexander@asoldi.com and damian@asoldi.com (Damian hosts workshops and iterations; each
    rep hosts their own sales meetings and Møte). On Google's consent page, tick the Google Meet
-   permission (or Select all) before Continue: new permissions may start unticked. The connect
+   permissions (or Select all) before Continue: new permissions may start unticked. The connect
    URL keeps `include_granted_scopes`, so calendar and Gmail access stay as they were. Then
    check that `GET /api/admin/sales/google/status` for that login shows `meetSettingsScope: true`.
-4. Test once: book an online test meeting for yourself and wait until its room shows as open (the
-   log line `[meet-room] <code> open`, or its row in `meet-room-access.json`). Then open the Meet
-   link in a private window without signing in. With nobody in the room, and again with the host
-   in it, you should get straight in without knocking.
+4. Test once: book an online test meeting for yourself and wait until its room shows as prepared (the
+   log line `[meet-room] <code> open`, or its row in `meet-room-access.json` with
+   `accessType: "TRUSTED"`). Sign in as another @asoldi.com rep and join without knocking. Open the
+   Meet link in a private window without signing in: that guest (the client) should still knock.
 
 No Hostinger env change and no Google Admin step: asoldi.com has no Google Workspace, so a
 service account cannot act for a mailbox, and only each host's own login can change their rooms.
@@ -211,8 +214,9 @@ service account cannot act for a mailbox, and only each host's own login can cha
 - `GET /api/admin/sales/google/status` (and the `calendar` block of the sales list) carries
   `meetSettingsScope: true` once that mailbox has a token with the scope. `false` means: reconnect.
 - `<dataDir>/meet-room-access.json` keeps one row per meeting code (dropped after 90 days):
-  `{ accessType, checkedAt, ok, reason, message, ownerKey }`. `ok: true` with `accessType: "OPEN"`
-  is an open room.
+  `{ accessType, checkedAt, ok, reason, message, ownerKey, memberEmails? }`. `ok: true` with
+  `accessType: "TRUSTED"` (or `RESTRICTED`) is a prepared room. `OPEN` is treated as stale and
+  patched again.
 - The log prints `[meet-room] <code> open owner=…` or `[meet-room] <code> not opened: <reason> …`
   whenever a room's result changes.
 - In Google Calendar: open the event → the Meet host controls → Meeting access shows Open.

@@ -4,6 +4,6 @@
   "files": {
     "scripts/inbox-bot.test.mjs": 37,
     "scripts/suite-bot-core.test.mjs": 1,
-    "scripts/workshop-prep.test.mjs": 15
+    "scripts/workshop-prep.test.mjs": 9
   }
 }

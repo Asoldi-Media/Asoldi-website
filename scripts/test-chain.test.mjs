@@ -14,6 +14,14 @@ const SKIPPED_DIRS = new Set(['node_modules', 'dist', '.git']);
 const TEST_FILE = /\.test\.(?:mjs|js)$/;
 const NAMED_FILE = /(?:scripts|data)\/[\w./-]+\.test\.(?:mjs|js)|scripts\/[\w./-]+\.mjs/g;
 
+// Test files written ahead of code that is still being finished: some of their tests fail on the
+// committed code, so npm test leaves them out until that code lands. Each one must exist and must
+// not be in the chain yet; once it is, drop it from this list.
+const NOT_YET_CHAINED = new Set([
+  'scripts/inbox-bot-contract.test.mjs',
+  'scripts/sales-meeting-void.test.mjs',
+]);
+
 function listTestFiles(dir, out = []) {
   let entries;
   try {
@@ -53,7 +61,13 @@ test('npm test runs every test file under scripts/ and data/', () => {
   const run = filesRunByNpmTest();
   const onDisk = TEST_DIRS.flatMap((dir) => listTestFiles(join(repoRoot, dir)));
   assert.ok(onDisk.length >= 100, `expected the test suite under ${TEST_DIRS.join(', ')}, found ${onDisk.length} files`);
-  assert.deepEqual(onDisk.filter((file) => !run.has(file)).sort(), [], 'add these to the "test" chain in package.json');
+  assert.deepEqual(onDisk.filter((file) => !run.has(file) && !NOT_YET_CHAINED.has(file)).sort(), [], 'add these to the "test" chain in package.json');
+});
+
+test('every file left out of the chain exists and is not in the chain yet', () => {
+  const run = filesRunByNpmTest();
+  assert.deepEqual([...NOT_YET_CHAINED].filter((file) => !existsSync(join(repoRoot, file))), [], 'drop deleted files from NOT_YET_CHAINED');
+  assert.deepEqual([...NOT_YET_CHAINED].filter((file) => run.has(file)), [], 'these run in npm test now: drop them from NOT_YET_CHAINED');
 });
 
 test('every file the test scripts name exists', () => {

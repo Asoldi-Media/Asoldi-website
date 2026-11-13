@@ -1,10 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import tls from 'node:tls';
+import { fileURLToPath } from 'node:url';
 import { mergeFieldValue, applyFieldOps, normalizeFieldOps, mergeWeekHours } from '../packages/suite/core/facts/merge.js';
 import { buildFactPrompt } from '../packages/suite/core/facts/prompt.js';
 import { ingestMessage, createInboxTicker } from '../packages/suite/core/inbox/pipeline.js';
 import { parseRfc822 } from '../packages/suite/core/mail/mime.js';
+import { listImapMessages } from '../packages/suite/core/mail/imap.js';
 import { isAutomatedMail } from '../packages/suite/core/mail/automated.js';
 import { extractDocumentText } from '../packages/suite/core/documents/text.js';
 import { ASOLDI_FACT_PROMPT, KUNDEDATA_FACT_SCHEMA } from '../packages/suite/harness/asoldi/facts.js';
@@ -132,4 +139,67 @@ test('machine mail is iTIP / Auto-Submitted / DSN, never the subject', () => {
   }), false);
   assert.equal(isAutomatedMail({ from: 'mailer-daemon@x.test', contentType: 'multipart/report' }), true);
   assert.equal(isAutomatedMail({ from: 'a@x.test', autoSubmitted: 'auto-replied', text: 'OOO' }), true);
+});
+
+test('IMAP: each listed message carries its RFC Message-ID, so the reply can set In-Reply-To / References', async () => {
+  const raw = Buffer.from([
+    'From: Kari <kari@x.test>',
+    'To: alexander@x.test',
+    'Subject: Re: Mote',
+    'Message-ID: <CAF.abc123@mail.x.test>',
+    'Content-Type: text/plain; charset=utf-8',
+    '',
+    'Fredag kl 13 passer',
+  ].join('\r\n'), 'utf8');
+  // A scripted IMAP server on a fake TLS socket: no network.
+  const realConnect = tls.connect;
+  tls.connect = () => {
+    const socket = new EventEmitter();
+    const say = (...parts) => setImmediate(() => socket.emit('data', Buffer.concat(parts.map((part) => Buffer.from(part)))));
+    socket.write = (line) => {
+      const [tag, verb, sub] = String(line).trim().split(' ');
+      if (verb === 'UID' && sub === 'SEARCH') say(`* SEARCH 41\r\n${tag} OK done\r\n`);
+      else if (verb === 'UID' && sub === 'FETCH') say(`* 1 FETCH (UID 41 RFC822 {${raw.length}}\r\n`, raw, `)\r\n${tag} OK done\r\n`);
+      else if (verb !== 'LOGOUT') say(`${tag} OK done\r\n`);
+      return true;
+    };
+    socket.destroy = () => {};
+    say('* OK IMAP ready\r\n');
+    return socket;
+  };
+  try {
+    const creds = { host: 'imap.x.test', port: 993, user: 'u', pass: 'p', mailbox: 'alexander@x.test' };
+    const [message] = await listImapMessages(creds);
+    assert.equal(message.id, 'imap:alexander@x.test:uid:41');
+    assert.equal(message.text, 'Fredag kl 13 passer');
+    assert.equal(message.rfcMessageId, '<CAF.abc123@mail.x.test>');
+    // The shape lib/inbox-bot/write.js threads on.
+    assert.match(message.rfcMessageId, /^<[^<>\s]+@[^<>\s]+>$/);
+    const [header] = await listImapMessages(creds, { headersOnly: true });
+    assert.equal(header.rfcMessageId, '<CAF.abc123@mail.x.test>');
+  } finally {
+    tls.connect = realConnect;
+  }
+});
+
+test('sync-suite refuses to delete files only the vendored copy has (website-maker core/llm) and changes nothing', () => {
+  const target = mkdtempSync(join(tmpdir(), 'suite-sync-guard-'));
+  try {
+    writeFileSync(join(target, 'suite.manifest.json'), '{"files":{}}\n');
+    mkdirSync(join(target, 'core', 'llm'), { recursive: true });
+    writeFileSync(join(target, 'core', 'llm', 'maker-only-guard.js'), '// website-maker only\n');
+    mkdirSync(join(target, 'node_modules', 'dep'), { recursive: true });
+    writeFileSync(join(target, 'node_modules', 'dep', 'index.js'), '');
+    const manifest = new URL('../packages/suite/suite.manifest.json', import.meta.url);
+    const before = readFileSync(manifest, 'utf8');
+    const run = spawnSync(process.execPath, [fileURLToPath(new URL('./sync-suite.mjs', import.meta.url)), target], { encoding: 'utf8' });
+    assert.equal(run.status, 1, run.stderr);
+    assert.match(run.stderr, /has 1 file\(s\) that packages\/suite does not have/);
+    assert.match(run.stderr, /core\/llm\/maker-only-guard\.js/);
+    assert.doesNotMatch(run.stderr, /node_modules/);
+    assert.equal(readFileSync(join(target, 'core', 'llm', 'maker-only-guard.js'), 'utf8'), '// website-maker only\n');
+    assert.equal(readFileSync(manifest, 'utf8'), before, 'a refused sync does not restamp packages/suite');
+  } finally {
+    rmSync(target, { recursive: true, force: true });
+  }
 });

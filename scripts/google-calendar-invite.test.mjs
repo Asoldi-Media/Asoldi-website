@@ -329,9 +329,15 @@ test('sales calendar oauth asks to read the whole calendar, not only events the 
 test('sales calendar oauth may open the host’s own Meet rooms; delegation never asks for Meet', () => {
   const scopes = googleCalendarOauthScopes();
   assert.equal(scopes.includes('https://www.googleapis.com/auth/meetings.space.settings'), true);
-  assert.equal(scopes.some((scope) => scope.endsWith('/meetings.space.created')), false, 'no sensitive create scope');
+  assert.equal(scopes.includes('https://www.googleapis.com/auth/meetings.space.created'), true);
   // asoldi.com has no Workspace: a service account can never act on a mailbox's rooms.
   assert.equal(googleWorkspaceCalendarScopes().some((scope) => scope.includes('/auth/meetings.')), false);
+});
+
+test('Meet co-hosts always load every sales user, so a new rep is included', () => {
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../lib/google-calendar.js'), 'utf8');
+  const fn = src.slice(src.indexOf('export function meetCohostEmails'), src.indexOf('export const MAX_CALENDAR_WEEK_SOURCES'));
+  assert.match(fn, /listSalesStaffProfiles\(\)/);
 });
 
 test('admin week view uses the filtered rep, or every connected sales mailbox', () => {

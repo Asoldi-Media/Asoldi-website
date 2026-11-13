@@ -8,7 +8,8 @@
 // substeps (negative control).
 //
 // node --test scripts/step2-substeps-handoff.test.mjs
-// STEP2_SUBSTEPS_BASE_REF=<ref> picks the older commit for the comparison (default 859429c). In a
+// STEP2_SUBSTEPS_BASE_REF=<ref> picks the older commit for the comparison (default 9fceb2d, the
+// live release this branch builds on; its stored sales client has two fields 859429c lacks). In a
 // checkout without that commit (a shallow clone or an exported tree) the comparisons with it are
 // skipped, unless STEP2_SUBSTEPS_BASE_REF is set: then a missing commit fails the run.
 import test from 'node:test';
@@ -45,7 +46,7 @@ import { LEGACY_STEP2_SUBSTEP_KEYS, normalizeStep2SubstepOrder } from '../lib/st
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const writer = join(root, 'scripts', 'fixtures', 'step2-substeps-writer.mjs');
 const BASE_REF_SET = Boolean(String(process.env.STEP2_SUBSTEPS_BASE_REF || '').trim());
-const BASE_REF = String(process.env.STEP2_SUBSTEPS_BASE_REF || '859429c').trim();
+const BASE_REF = String(process.env.STEP2_SUBSTEPS_BASE_REF || '9fceb2d').trim();
 
 function baseRefResolves() {
   try {
