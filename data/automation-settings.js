@@ -1031,6 +1031,19 @@ export function effectiveModeForClient(switchPath, client, options = {}) {
   return scope.live ? 'auto' : 'shadow';
 }
 
+// --- legal texts need visit statistics retention
+const LEGAL_RETENTION_WARNING = 'The legal texts are on and say that visit statistics are deleted after 26 months, but retention.analyticsTraffic is not running in auto. Switch the deletion back on, or switch legal.catalogTexts off.';
+
+/** Warnings for a saved settings object. Empty when the legal texts are off or visit-statistics deletion is running. */
+export function automationSettingsWarnings(settings) {
+  if (settings?.legal?.catalogTexts?.enabled !== true) return [];
+  const traffic = settings.retention?.analyticsTraffic;
+  const running = traffic?.enabled === true && traffic?.mode === 'auto' && !traffic?.paused;
+  if (running) return [];
+  return [{ path: 'legal.catalogTexts.enabled', message: LEGAL_RETENTION_WARNING }];
+}
+// --- end legal texts need visit statistics retention
+
 /** Superadmin view: settings, defaults, effective modes, env overrides and the audit list. */
 export function automationSettingsView({ dataDir, env = process.env } = {}) {
   const { settings, audit, stored } = readAutomationSettingsFile({ dataDir });
@@ -1045,6 +1058,7 @@ export function automationSettingsView({ dataDir, env = process.env } = {}) {
   for (const target of ['staging', 'production']) {
     effective.publish[target] = { mode: effectiveSwitchMode(`publish.${target}`, { settings, env }) };
   }
+  const warnings = automationSettingsWarnings(settings);
   return {
     settings,
     stored,
@@ -1055,5 +1069,6 @@ export function automationSettingsView({ dataDir, env = process.env } = {}) {
     pausable: [...PAUSABLE_SWITCHES],
     mailboxAllowlist: [...INBOX_MAILBOX_ALLOWLIST],
     audit,
+    ...(warnings.length ? { warnings } : {}),
   };
 }

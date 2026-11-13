@@ -375,3 +375,128 @@ test('removedBytes counts only the files that were actually deleted', async () =
   assert.equal(existsSync(gone), false);
   assert.equal(store.readTrafficRetentionReport().removedBytes, result.removedBytes);
 });
+
+test('removedBytes is the size at deletion, after the file has grown', async () => {
+  rmSync(join(dataDir, 'client-analytics-traffic'), { recursive: true, force: true });
+  const path = writeDay('grow-site', '2020-06-01', 'small\n');
+  const listed = statSync(path).size;
+  const grown = `small\n${'x'.repeat(40)}`;
+  const result = await job.runTrafficRetention({
+    now: WINTER,
+    settings: switchSettings({ enabled: true, mode: 'auto' }),
+    logger: quiet,
+    // sizeOf runs immediately before remove, so growing the file here is the size that is deleted.
+    sizeOf(entry) {
+      writeFileSync(entry.path, grown);
+      return store.trafficDayFileBytes(entry);
+    },
+  });
+  assert.equal(result.removed, 1);
+  assert.equal(result.failed, 0);
+  assert.equal(result.bytes, listed);
+  assert.equal(result.removedBytes, Buffer.byteLength(grown));
+  assert.equal(existsSync(path), false);
+});
+
+test('a remove that throws is counted as failed and the pass still writes the report', async () => {
+  rmSync(join(dataDir, 'client-analytics-traffic'), { recursive: true, force: true });
+  const kept = writeDay('throw-site', '2020-07-01', 'aa\n');
+  const broken = writeDay('throw-site', '2020-07-02', 'bbb\n');
+  const gone = writeDay('throw-site', '2020-07-03', 'cccc\n');
+  const keptBytes = statSync(kept).size;
+  const goneBytes = statSync(gone).size;
+  const errors = [];
+  const result = await job.runTrafficRetention({
+    now: WINTER,
+    settings: switchSettings({ enabled: true, mode: 'auto' }),
+    logger: { log() {}, error(line) { errors.push(line); } },
+    remove(entry) {
+      if (entry.path === broken) throw new Error('disk full');
+      return store.removeTrafficDayFile(entry);
+    },
+  });
+  assert.equal(result.removed, 2);
+  assert.equal(result.failed, 1);
+  assert.equal(result.removedBytes, keptBytes + goneBytes);
+  assert.equal(existsSync(broken), true);
+  assert.equal(existsSync(kept), false);
+  assert.equal(existsSync(gone), false);
+  assert.match(errors.join('\n'), /1 day file\(s\) could not be deleted/);
+  assert.equal(store.readTrafficRetentionReport().failed, 1);
+});
+
+test('legal texts on while deletion is off logs an error and still reports off', async () => {
+  const legalOn = {
+    retention: { analyticsTraffic: { enabled: false, mode: 'shadow', paused: null } },
+    legal: { catalogTexts: { enabled: true } },
+  };
+  const errors = [];
+  let leases = 0;
+  const logger = { log() {}, error(line) { errors.push(line); } };
+  const off = await job.runTrafficRetention({
+    now: WINTER,
+    settings: legalOn,
+    acquire: async () => { leases += 1; return null; },
+    logger,
+  });
+  assert.deepEqual(off, { ran: false, reason: 'off' });
+  assert.equal(leases, 0);
+  assert.deepEqual(errors, ['[analytics-retention] the legal texts are on but visit statistics are not being deleted (off)']);
+
+  errors.length = 0;
+  const paused = await job.runTrafficRetention({
+    now: WINTER,
+    settings: {
+      retention: { analyticsTraffic: { enabled: true, mode: 'auto', paused: { reason: 'hold' } } },
+      legal: { catalogTexts: { enabled: true } },
+    },
+    acquire: async () => { leases += 1; return null; },
+    logger,
+  });
+  assert.deepEqual(paused, { ran: false, reason: 'paused' });
+  assert.equal(leases, 0);
+  assert.deepEqual(errors, ['[analytics-retention] the legal texts are on but visit statistics are not being deleted (paused)']);
+
+  errors.length = 0;
+  const quietOff = await job.runTrafficRetention({
+    now: WINTER,
+    settings: switchSettings({ enabled: false }),
+    acquire: async () => { leases += 1; return null; },
+    logger,
+  });
+  assert.deepEqual(quietOff, { ran: false, reason: 'off' });
+  assert.equal(leases, 0);
+  assert.deepEqual(errors, []);
+
+  writeDay('warn-site', '2020-08-01', 'x\n');
+  errors.length = 0;
+  const shadow = await job.runTrafficRetention({
+    now: WINTER,
+    settings: {
+      retention: { analyticsTraffic: { enabled: true, mode: 'shadow', paused: null } },
+      legal: { catalogTexts: { enabled: true } },
+    },
+    logger,
+  });
+  assert.equal(shadow.mode, 'shadow');
+  assert.equal(shadow.removed, 0);
+  assert.deepEqual(errors, ['[analytics-retention] the legal texts are on but visit statistics are not being deleted (shadow)']);
+
+  safeMode.installSafeMode({ env: { HUB_SAFE_MODE: '1' }, dataDir, log: null, egress: false });
+  try {
+    errors.length = 0;
+    const safe = await job.runTrafficRetention({
+      now: WINTER,
+      settings: {
+        retention: { analyticsTraffic: { enabled: true, mode: 'auto', paused: null } },
+        legal: { catalogTexts: { enabled: true } },
+      },
+      logger,
+    });
+    assert.equal(safe.mode, 'shadow');
+    assert.equal(safe.removed, 0);
+    assert.deepEqual(errors, ['[analytics-retention] the legal texts are on but visit statistics are not being deleted (safe mode)']);
+  } finally {
+    safeMode.resetSafeModeForTests();
+  }
+});

@@ -16,7 +16,10 @@ and the signed contract show. A hub that never turned the switch on writes no ne
 snapshot needs an offer stamped while the switch was on. Before switching on,
 `retention.analyticsTraffic` must be enabled in `auto` (the settings save refuses otherwise), and
 each client CMS must also be running its own deletion rule for visit rows; the hub cannot see a
-CMS's rule, so that is checked by hand per CMS.
+CMS's rule, so that is checked by hand per CMS. A later save may turn the deletion off, switch it
+to shadow or pause it, and a pause must always work. While the legal texts stay on and
+`retention.analyticsTraffic` is not running in auto, the settings screen shows a warning and the
+retention job logs one.
 
 Turning the switch off after an on-period stops new catalog contracts, but keeps what was sent: an
 offer stamped while the switch was on keeps rendering its version (preview, PDF, the signed copy
@@ -32,13 +35,29 @@ funksjonalitet fra et høyere nivå er lagt til.` / `Clients cannot downgrade to
 higher-level functionality has been added.`). Version 2, the current wording, says the client can
 move down to a lower tier by agreement with Asoldi.
 
-The time version 2 starts is stored once, in `contract-terms-cutover.json`, the first time this code
-starts. An offer that is not signed renders version 2. A signed offer renders version 1 when its
-signature time is before that cut-over, or when the signature was recorded without a time. The
-signature time is the client's `contractSignedAt` for the offer that was sent and signed. An offer
-sent after that time counts as signed only when the client's site plan names that offer; its time is
-then the latest `offer-upgrade` entry in the plan history at or after the send time, or the send
-time when there is no such entry. A signed PDF already filed is never rewritten.
+The time version 2 starts is stored once, in `contract-terms-cutover.json`, the first time the code
+that carries the current wording starts. An offer that is not signed renders version 2. An offer
+sent at or after that cut-over always renders version 2. A signed client with no recorded time
+renders version 1 only for an offer sent before the cut-over (also when the offer has no send time,
+or when no cut-over time is stored). Otherwise a signed offer renders version 1 when its signature
+time is before the cut-over, and version 2 when the signature time is at or after it.
+
+The signature time is the earliest recorded time at or after the offer's send time, chosen from the
+client's `contractSignedAt` and the remembered earlier time `ext.contractSigning.earlierSignedAt`
+(the earliest signature time that was recorded and later removed; a change of several clients in
+one write does not record it). When the offer has no send time, the earliest of
+those times is used. When every recorded time is before the send time, the offer counts as signed
+only when the client's site plan names that offer; its time is then the latest `offer-upgrade`
+entry in the plan history at or after the send time, or the send time when there is no such entry.
+When nothing was recorded, the offer is signed with no time. A signed PDF already filed is never
+rewritten.
+
+**Limits.** The recorded time is when the hub recorded the signature, not the moment of signing, so
+a contract signed before the cut-over but first recorded after it (no earlier tick; the arrival
+time of a mail with the signed PDF is not read) renders version 2, and a tick set by mistake after the offer was sent and removed again still
+counts as the first recorded time. When a release is rolled back to a build without the current
+wording, delete `contract-terms-cutover.json` as part of the rollback; see
+[runtime-data.md](runtime-data.md).
 
 ## Parts
 
