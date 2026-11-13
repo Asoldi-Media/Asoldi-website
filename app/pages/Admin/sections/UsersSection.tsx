@@ -276,7 +276,7 @@ export function UsersSection(props: Props) {
         </form>
       </div>
 
-      <div className="rounded-xl bg-[#2a2a2a] border border-white/10 overflow-hidden">
+      <div className="rounded-xl bg-[#2a2a2a] border border-white/10 overflow-x-auto">
         <table className="w-full text-left">
           <thead>
             <tr className="border-b border-white/10">
@@ -349,7 +349,8 @@ const EditableUserRow: React.FC<{
   }, [editing, user.username, user.name, user.phone]);
 
   return (
-    <tr className="border-b border-white/5">
+    <>
+    <tr className={editing ? '' : 'border-b border-white/5'}>
       <td className="px-4 py-3 text-white">
         {editing ? (
           <input
@@ -417,28 +418,13 @@ const EditableUserRow: React.FC<{
         <div className="flex items-center gap-2">
           {editing ? (
             <>
-              <input
-                type="password"
-                placeholder="New password"
-                value={editPassword}
-                onChange={(e) => onEditPasswordChange(e.target.value)}
-                className="px-2 py-1 rounded bg-[#1a1a1a] border border-white/20 text-white w-32 text-sm"
-              />
               <button
                 type="button"
                 disabled={saving}
-                onClick={() => onUpdateUser(user.id, { username: draftUsername, name: draftName, phone: draftPhone })}
+                onClick={() => onUpdateUser(user.id, { username: draftUsername, name: draftName, phone: draftPhone, password: editPassword })}
                 className="text-xs px-2 py-1 rounded bg-white/10 text-white disabled:opacity-50"
               >
                 {saving ? 'Saving…' : 'Save'}
-              </button>
-              <button
-                type="button"
-                disabled={saving || !editPassword}
-                onClick={() => editPassword && onUpdateUser(user.id, { password: editPassword })}
-                className="text-xs px-2 py-1 rounded bg-[#FF5B00] text-white disabled:opacity-50"
-              >
-                Set password
               </button>
               <button type="button" onClick={() => onStartEdit(null)} className="text-gray-400 hover:text-white text-xs">Cancel</button>
             </>
@@ -451,5 +437,32 @@ const EditableUserRow: React.FC<{
         </div>
       </td>
     </tr>
+    {editing && (
+      <tr className="border-b border-white/5">
+        <td colSpan={6} className="px-4 pb-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <label htmlFor={`new-password-${user.id}`} className="text-xs text-gray-400">New password for {user.username}</label>
+            <input
+              id={`new-password-${user.id}`}
+              type="password"
+              autoComplete="new-password"
+              placeholder="Leave empty to keep the current one"
+              value={editPassword}
+              onChange={(e) => onEditPasswordChange(e.target.value)}
+              className="px-2 py-1 rounded bg-[#1a1a1a] border border-white/20 text-white w-72 text-sm"
+            />
+            <button
+              type="button"
+              disabled={saving || !editPassword}
+              onClick={() => editPassword && onUpdateUser(user.id, { password: editPassword })}
+              className="text-xs px-2 py-1 rounded bg-[#FF5B00] text-white disabled:opacity-50"
+            >
+              Set password
+            </button>
+          </div>
+        </td>
+      </tr>
+    )}
+    </>
   );
 };
