@@ -29,6 +29,17 @@
     { "method": "POST", "path": "/api/admin/sales/sc-x/site-plan/conflicts/0/dismiss", "body": {}, "expect": "staff" },
     { "method": "POST", "path": "/api/admin/sales/sc-x/unsign", "body": {}, "expect": "staff" },
     { "method": "GET", "path": "/api/public/booking/x/slots", "expect": "dark" },
-    { "method": "POST", "path": "/api/public/booking/x", "body": { "start": "2030-01-07T09:00:00.000Z" }, "expect": "dark" }
+    { "method": "POST", "path": "/api/public/booking/x", "body": { "start": "2030-01-07T09:00:00.000Z" }, "expect": "dark" },
+    { "method": "GET", "path": "/api/admin/cms-fleet", "expect": "staff" },
+    { "method": "POST", "path": "/api/admin/cms-fleet/flip", "body": { "siteIds": ["site-x"] }, "expect": "staff" },
+    { "method": "POST", "path": "/api/admin/cms-fleet/revert", "body": { "siteId": "site-x" }, "expect": "staff" },
+    { "method": "POST", "path": "/api/admin/cms-fleet/dismiss", "body": { "siteId": "site-x" }, "expect": "staff" },
+    { "method": "GET", "path": "/api/hub/email/owner-recipients/confirm?t=x", "expect": "dark" },
+    { "method": "POST", "path": "/api/hub/email/owner-recipients/confirm?t=x", "body": {}, "expect": "dark" },
+    { "method": "GET", "path": "/api/hub/email/owner-recipients/revert?t=x", "expect": "dark" },
+    { "method": "POST", "path": "/api/hub/email/owner-recipients/revert?t=x", "body": {}, "expect": "dark" },
+    { "method": "PATCH", "path": "/api/admin/sales/sc-x/progression", "body": { "key": "contractSigned", "value": false }, "expect": "staff" },
+    { "method": "GET", "path": "/api/admin/sales", "expect": "staff" },
+    { "method": "GET", "path": "/api/admin/sales/sc-x/preview-files", "expect": "staff" }
   ]
 }
