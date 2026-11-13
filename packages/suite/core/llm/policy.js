@@ -10,12 +10,19 @@
 //      so a redacted transcript stays a transcript.
 //   5. The person-field scan fails closed: a payload too large or deep to scan fully counts as personal,
 //      and `synthetic` / `redacted` are then not accepted.
+//   6. Images of real-client data go only to Claude. For a call that carries at least one image block
+//      (request.images, or an image block inside a message or a tool result) and whose class is above
+//      `public`, every route entry on another provider (Gemini, DeepSeek, OpenAI) is dropped, unless the call
+//      is synthetic or its images are marked redacted (`ctx.imagesRedacted`) and the mark is accepted. The mark
+//      is accepted only when `redacted` is also set and accepted for the text, the base class (task class and
+//      ctx.dataClass, before any flag) is not transcript, and the person-field scan was not cut short. The
+//      payload check reads text, not pixels, so the plain `redacted` flag never covers images.
 // A provider spec may also carry `tasks` / `families`: the provider is then used only for those tasks
 // (OpenAI is the third evaluation judge and nothing else).
 // Any payload carrying person fields (names of people, email, phone, address) counts as personal.
 // The policy applies in every profile, `legacy` included.
 
-import { DATA_CLASSES, PROVIDERS, dataClassRank, maxDataClass } from './constants.js';
+import { DATA_CLASSES, IMAGE_PROVIDERS_FOR_CLIENT_DATA, LEDGER_DATA_CLASSES, PROVIDERS, dataClassRank, maxDataClass } from './constants.js';
 import { PolicyBlockedError, RouteConfigError } from './errors.js';
 import { formatRouteEntry, parseRoute } from './route-string.js';
 import { FAMILY_PATTERN, TASK_KEY_PATTERN } from './tasks-schema.js';
@@ -23,6 +30,7 @@ import { FAMILY_PATTERN, TASK_KEY_PATTERN } from './tasks-schema.js';
 export const DEFAULT_REDIRECT = 'claude:claude-haiku-5-5';
 const NEVER_PERSONAL = new Set(['deepseek']);
 const CLIENT_DATA_ONLY_SYNTHETIC_OR_REDACTED = new Set(['deepseek']);
+const CLIENT_IMAGES_ALLOWED = new Set([...IMAGE_PROVIDERS_FOR_CLIENT_DATA, 'replay']);
 const BILLING_TIERS = ['paid', 'free', 'unknown'];
 const EXCEPTION_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -315,9 +323,13 @@ const NO_DETECTION = Object.freeze({ found: false, fields: [], patterns: [], rea
  *                             email or phone that is not a fixture value, or the scan was truncated. Transcript
  *                             data is never lowered by redaction (names in free text cannot be detected); only
  *                             synthetic lowers it.
- * `synthetic` / `redacted` in the result say whether the flag was accepted; the policy reads them.
+ *   ctx.imagesRedacted === true -> counts only on a call with images, and only when `redacted` was accepted
+ *                             above, the base class is not transcript and the scan was not truncated.
+ * `synthetic` / `redacted` / `imagesRedacted` in the result say whether the flag was accepted; the policy reads
+ * them. `images` is the number of image blocks of the call (request.images plus those in messages and tool
+ * results); `imageCall` is true when it is above 0. `ledger` is what a ledger row records for the call.
  */
-export function effectiveDataClass({ task = {}, ctx = {}, payload } = {}) {
+export function effectiveDataClass({ task = {}, ctx = {}, payload, images = 0 } = {}) {
   const declared = task.dataClass || 'public';
   const call = DATA_CLASSES.includes(ctx.dataClass) ? ctx.dataClass : null;
   const detection = payload === undefined ? NO_DETECTION : detectPersonFields(payload);
@@ -355,7 +367,40 @@ export function effectiveDataClass({ task = {}, ctx = {}, payload } = {}) {
       reasons.push('redacted payload');
     }
   }
-  return { declared, call, detected, effective, reasons, synthetic, redacted, personFields: detection };
+  const imageCount = Math.max(0, Math.floor(Number(images) || 0));
+  const imageCall = imageCount > 0;
+  let imagesRedacted = false;
+  if (imageCall && ctx.imagesRedacted === true && !synthetic) {
+    if (!redacted) reasons.push('imagesRedacted ignored: the redacted flag is not set or was not accepted for the text');
+    else if (base === 'transcript') reasons.push('imagesRedacted ignored: transcript data');
+    else if (detection.truncated) reasons.push('imagesRedacted ignored: person-field scan truncated');
+    else {
+      imagesRedacted = true;
+      reasons.push('images rendered from redacted content');
+    }
+  }
+  const result = { declared, call, base, detected, effective, reasons, synthetic, redacted, images: imageCount, imageCall, imagesRedacted, personFields: detection };
+  result.ledger = ledgerDataClass(result);
+  return result;
+}
+
+/**
+ * What a ledger row records for a call, from the policy's own result (effectiveDataClass), never from the
+ * caller's ctx: `dataClass` is one of LEDGER_DATA_CLASSES (`synthetic` only when the flag was accepted), and
+ * `redacted` is true only when the policy accepted the redaction, for the images too on a call with images.
+ */
+export function ledgerDataClass(result = {}) {
+  const effective = DATA_CLASSES.includes(result.effective) ? result.effective : 'personal';
+  const dataClass = result.synthetic === true ? 'synthetic' : effective;
+  const redacted = result.synthetic !== true && result.redacted === true && (!result.imageCall || result.imagesRedacted === true);
+  return { dataClass: LEDGER_DATA_CLASSES.includes(dataClass) ? dataClass : 'personal', redacted };
+}
+
+/** Hard rule 6: whether `provider` may receive this call's images. `call` = {imageCall, synthetic, imagesRedacted}. */
+export function imageRuleAllows(provider, dataClass, call = {}) {
+  if (!call.imageCall || CLIENT_IMAGES_ALLOWED.has(provider)) return { allowed: true, reason: '' };
+  if (dataClass === 'public' || call.synthetic === true || call.imagesRedacted === true) return { allowed: true, reason: '' };
+  return { allowed: false, reason: `${provider} receives images of ${dataClass} client data only when they are synthetic or redacted (images go to Claude)` };
 }
 
 function paidGemini(spec) {
@@ -364,10 +409,12 @@ function paidGemini(spec) {
 
 /**
  * Whether `provider` may see `dataClass` under `policy`.
- * @param {object} [call] {synthetic, redacted, task, family} from effectiveDataClass and the task registry
+ * @param {object} [call] {synthetic, redacted, imageCall, imagesRedacted, task, family} from effectiveDataClass and the task registry
  */
 export function providerAllows(policy, provider, dataClass, call = {}) {
   if (provider === 'replay') return { allowed: true, reason: 'replay' };
+  const imageVerdict = imageRuleAllows(provider, dataClass, call); // hard rule 6
+  if (!imageVerdict.allowed) return imageVerdict;
   if (NEVER_PERSONAL.has(provider) && (dataClass === 'personal' || dataClass === 'transcript')) {
     return { allowed: false, reason: `${provider} never receives ${dataClass} data` };
   }
@@ -394,7 +441,7 @@ export function providerAllows(policy, provider, dataClass, call = {}) {
 /**
  * Drops chain entries the policy forbids. When nothing is left, the policy redirect route is used
  * if it is allowed; otherwise PolicyBlockedError.
- * @param {object} [call] {synthetic, redacted, task, family}
+ * @param {object} [call] {synthetic, redacted, imageCall, imagesRedacted, task, family}
  * @returns {{chain:object[], redirected:boolean, redirects:{from:string, to:string|null, reason:string}[]}}
  *   redirected: every original entry was blocked and the chain is the redirect route
  */

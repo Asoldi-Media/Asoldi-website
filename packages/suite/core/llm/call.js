@@ -46,6 +46,15 @@ import { formatRouteEntry } from './route-string.js';
 import { getTask } from './tasks-schema.js';
 import { IMAGE_RULES, checkMessageImages } from './images.js';
 
+/**
+ * The data-policy fields and the image count of a call's ledger rows, from the route the policy produced
+ * (never from the caller's ctx): { dataClass, redacted, images }.
+ */
+function dataOf(route) {
+  const ledger = route?.dataClass?.ledger || {};
+  return { dataClass: ledger.dataClass, redacted: ledger.redacted === true, images: Number(route?.dataClass?.images) || 0 };
+}
+
 /** Parsed JSON of a response: the adapter's `data` when it has one (replay, Gemini), else the text. Validated against the schema. */
 function readJsonData(response, schema) {
   const raw = response?.data;
@@ -211,7 +220,7 @@ export function createLlmCore(options = {}) {
     const adapter = providers[entry.provider];
     if (typeof adapter !== 'function') {
       const error = new ProviderDeadError(`No adapter for provider "${entry.provider}".`, { provider: entry.provider });
-      const row = buildLedgerRow({ at: isoAt(clock), repo, task: route.task, provider: entry.provider, requestedModel: entry.model, effort: entry.effort, profile: route.profile, ctx, status: 'error', fallbackFrom, policyRedirect: route.policyRedirects[0] || null, error });
+      const row = buildLedgerRow({ at: isoAt(clock), repo, task: route.task, provider: entry.provider, requestedModel: entry.model, effort: entry.effort, profile: route.profile, ctx, ...dataOf(route), status: 'error', fallbackFrom, policyRedirect: route.policyRedirects[0] || null, error });
       await appendRow(row);
       error.ledgerRows = [row];
       throw error;
@@ -256,7 +265,7 @@ export function createLlmCore(options = {}) {
           effort: entry.effort,
           profile: route.profile,
           ctx,
-          images: request.images?.length || 0,
+          ...dataOf(route),
           latencyMs: nowMs(clock) - started,
           status: 'error',
           attempt,
@@ -296,7 +305,7 @@ export function createLlmCore(options = {}) {
         ctx,
         usage: response?.usage || {},
         response: entry.provider === 'claude' ? { model: response?.servedModel || entry.model, usage: response?.usage || {} } : null,
-        images: request.images?.length || 0,
+        ...dataOf(route),
         latencyMs: nowMs(clock) - started,
         status,
         stopReason,
@@ -345,7 +354,7 @@ export function createLlmCore(options = {}) {
       if (request.signal?.aborted) throw Object.assign(abortError(request.signal), { failures });
       if (dead.has(entry.provider)) {
         failures.push({ entry: label, code: 'provider_dead', skipped: true });
-        const row = buildLedgerRow({ at: isoAt(clock), repo, task: route.task, provider: entry.provider, requestedModel: entry.model, effort: entry.effort, profile: route.profile, ctx, status: 'skipped_dead', fallbackFrom, policyRedirect: route.policyRedirects[0] || null });
+        const row = buildLedgerRow({ at: isoAt(clock), repo, task: route.task, provider: entry.provider, requestedModel: entry.model, effort: entry.effort, profile: route.profile, ctx, ...dataOf(route), status: 'skipped_dead', fallbackFrom, policyRedirect: route.policyRedirects[0] || null });
         await appendRow(row);
         allRows.push(row);
         fallbackFrom = label;
@@ -384,11 +393,13 @@ export function createLlmCore(options = {}) {
     // Images already in messages (tool results included) follow the same rules: JPEG, long edge, total count.
     const messageImages = Array.isArray(request.messages) ? checkMessageImages(request.messages) : 0;
     if (images.length + messageImages > IMAGE_RULES.maxImages) throw new InvalidRequestError(`${images.length + messageImages} images in one call; the limit is ${IMAGE_RULES.maxImages}.`);
+    // Every image block of the request: the data policy's image rule and the ledger row both use this count.
+    const imageCount = images.length + messageImages;
     // Everything that is sent (and request.data) is checked for person fields; the system prompt can carry client facts too.
     const payload = { system: request.system, user: request.user, data: request.data, messages: request.messages };
     let route;
     try {
-      route = router.resolveRoute(request.task, request.ctx || {}, { payload });
+      route = router.resolveRoute(request.task, request.ctx || {}, { payload, images: imageCount });
     } catch (error) {
       if (error?.code === 'policy_blocked') {
         const raw = request.ctx && typeof request.ctx === 'object' ? request.ctx : {};
@@ -402,6 +413,10 @@ export function createLlmCore(options = {}) {
             requestedModel: error.primary?.model || '',
             profile: error.profile || '',
             ctx: { runId: raw.runId, salesClientId: raw.salesClientId, sessionId: raw.sessionId, tier: raw.tier },
+            // The policy's own result for the blocked call (resolveRoute puts it on the error).
+            dataClass: error.ledger?.dataClass,
+            redacted: error.ledger?.redacted === true,
+            images: imageCount,
             status: 'policy_blocked',
             policyRedirect: { from: blocked?.from || error.route || '', to: null, reason: blocked?.reason || error.message, dataClass: error.dataClass || null },
             error,
@@ -427,7 +442,7 @@ export function createLlmCore(options = {}) {
       const loop = loopDetector.before(request.task, loopKey);
       if (loop.loop) {
         const error = new LoopDetectedError(`"${request.task}" repeated ${loop.count} times with no progress; stopped.`, { task: request.task, count: loop.count, loopReason: loop.reason });
-        await appendRow(buildLedgerRow({ at: isoAt(clock), repo, task: request.task, provider: route.primary.provider, requestedModel: route.primary.model, profile: route.profile, ctx, status: 'loop_blocked', error }));
+        await appendRow(buildLedgerRow({ at: isoAt(clock), repo, task: request.task, provider: route.primary.provider, requestedModel: route.primary.model, profile: route.profile, ctx, ...dataOf(route), status: 'loop_blocked', error }));
         throw error;
       }
     }
@@ -440,7 +455,7 @@ export function createLlmCore(options = {}) {
         { scope: budget.scope, expectedUsd: budget.expectedUsd, spentUsd: budget.spentUsd, estimateUsd: budget.estimateUsd, sizeKnown: budget.decision.sizeKnown },
       );
       await appendRow(
-        buildLedgerRow({ at: isoAt(clock), repo, task: request.task, provider: route.primary.provider, requestedModel: route.primary.model, profile: route.profile, ctx, status: 'budget_blocked', budget: { scope: budget.scope, ...budget.decision }, error }),
+        buildLedgerRow({ at: isoAt(clock), repo, task: request.task, provider: route.primary.provider, requestedModel: route.primary.model, profile: route.profile, ctx, ...dataOf(route), status: 'budget_blocked', budget: { scope: budget.scope, ...budget.decision }, error }),
       );
       throw error;
     }

@@ -1,4 +1,4 @@
-# LLM core contract 1.2.0 (frozen 2026-10-23)
+# LLM core contract 1.3.0 (frozen 2026-11-13)
 
 `core/llm` is the one place where LLM routing, data policy, prices, Claude request rules, budgets and
 ledger rows are defined. Both facades build on it: the Maker facade (`lib/ai-pipeline/_shared/llm`) and
@@ -9,7 +9,7 @@ The machine-readable form is `LLM_CONTRACT` in `contract.js`. Its fingerprint is
 tests of both repos:
 
 ```
-version      1.2.0
+version      1.3.0
 fingerprint  sha256:<see scripts/llm-contract.test.mjs>
 ```
 
@@ -35,6 +35,17 @@ Claude-only `max_tokens` retry, caller aborts, free replay rows and open-map sch
 - The image rules apply to images in messages and tool results.
 - The ledger gets `policy_blocked` and `skipped_dead` rows.
 - The policy gets an `exceptions` list.
+
+1.3.0 (2026-11-13) replaced 1.2.0. Changes:
+
+- **Image rule.** An image of real-client data goes only to Claude, unless the call is synthetic or carries
+  an accepted `ctx.imagesRedacted` (section 5). Every profile, `legacy` included.
+- **Ledger data fields.** Every row carries `dataClass` and `redacted`: what the policy decided for the
+  payload, never the caller's flag (section 10). The ledger is the policy log.
+- The row's `images` field counts every image block of the request, those inside messages and tool results
+  included.
+- A new ctx field, `imagesRedacted`, and a new profile, `eval`, with explicit `candidates` and `judges` lists
+  (section 3).
 
 ## 1. Exported names
 
@@ -88,7 +99,12 @@ Every core export the contract relies on is listed in `CORE_EXPORTS`.
 
 - Route string: `provider:model[:effort]`, `|` separates fallbacks. Providers: `claude deepseek gemini openai replay`.
 - Claude models: `claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-opus-5-5` only.
-- Profiles: `legacy prod test replay record`; `production` is an alias of `prod`.
+- Profiles: `legacy prod test replay record eval`; `production` is an alias of `prod`.
+- `eval` is the model-evaluation profile. It inherits another profile's routes and adds two explicit lists,
+  `candidates` (the models an evaluation compares) and `judges` (the blind panel). Each item is one
+  `provider:model[:effort]` entry: no fallback and no placeholder, so an answer or a verdict always comes from
+  the model the list names. Every listed model needs a price. The data policy applies to these calls like to
+  any other.
 - Profile choice: `ctx.profile` beats `AI_PROFILE`; `AI_TEST_MODE=1` means `test`; default `legacy`.
 - Resolution order: `ctx.route` (tests) → `AI_ROUTE_<TASK>` → `AI_ROUTE_DEFAULT`/`AI_ROUTE_VISION_DEFAULT`
   → escalation → `tiers[tier].tasks` → `tasks` → `tiers[tier].kinds` → `kinds` → `vision` → `default`.
@@ -105,13 +121,15 @@ Every core export the contract relies on is listed in `CORE_EXPORTS`.
 ## 4. ctx
 
 `runId salesClientId sessionId taskId jobId step tier profile kind escalation maxEscalation dataClass
-synthetic redacted vision route budgetScope expectedUsd projectSize retryOf attempt`. Other keys are ignored
+synthetic redacted imagesRedacted vision route budgetScope expectedUsd projectSize retryOf attempt`. Other keys are ignored
 and listed in `route.ignoredCtx`. Tiers: `tier-1-standard tier-2-seo tier-3-ecommerce` (1, 2, 3 accepted).
 
 - `expectedUsd` counts only when it is above 0. 0 or a negative value means "not given", never "no limit".
 - `retryOf` (any id of the call being retried) or `attempt` (2 or more) marks a call as the caller's retry
   of the same request. Loop detection counts such calls even when they succeed (section 9).
 - `dataClass` raises the class of one call. Pass `business` for a client's live site read by a public task.
+- `imagesRedacted` says that every image of the call was rendered from redacted (tokenized) content. A caller
+  sets it only then. It counts only together with `redacted` (section 5).
 
 Values that come from client data never throw. An unknown tier (for example the hub's `custom` tier) adds a
 warning: the call then uses no tier routes and the default budget base. Malformed values that come from code
@@ -149,6 +167,30 @@ warning: the call then uses no tier routes and the default budget base. Malforme
     agreed: no real client data goes to DeepSeek.
   - Gemini gets nothing until the policy records `billingTier: "paid"` and a `paidTierConfirmedAt` date.
     `allowUnpaidPublic: true` opts public data back in; it is off by default.
+  - **Images of real-client data go only to Claude.** An image call is a call with at least one image block:
+    `request.images`, or an image block inside a message or a tool result. For an image call whose class is
+    above `public`, every route entry on another provider (Gemini, DeepSeek, OpenAI) is dropped, unless the
+    call is synthetic or its images are marked redacted and the policy accepts the mark. When no entry is
+    left, the call goes to the policy `redirect` route (Claude) and the row records the `policyRedirect`, or
+    it ends `policy_blocked`.
+    - The mark is its own flag, `ctx.imagesRedacted`: the payload check reads text, not pixels, so the plain
+      `redacted` flag never covers images.
+    - The policy accepts `imagesRedacted` only when all three hold: `redacted` is also set and was accepted
+      for the call's text; the base class (the task class and `ctx.dataClass`, before any flag) is not
+      `transcript`; and the person-field scan was not cut short. Otherwise the mark is ignored.
+    - `synthetic` is the second way an image call can leave Claude, and the policy cannot check it against
+      pixels either. A caller sets it on a call that carries images only as a value derived from a fixture
+      registry (the client is a synthetic fixture), never from a session or script option.
+- **Image tasks are business class or higher.** The rule applies above `public`, so a public image task that
+  carried a client capture would pass unseen. Every task with `vision: true` therefore declares `business` or
+  higher, except the template-only tasks on one list, each with its reason. A registry's test holds the list
+  and fails on a public image task that is not on it. In the reference registry the list is:
+  - `template-import.qa-vision`: judges render pairs of a template import, where no client run exists;
+  - `siteintel.golden-judge-vision`: labels pages of the template library for the site-intelligence golden set
+    and never runs inside a run.
+
+  A listed task stays public only while its callers send template captures; a caller that sends it a capture
+  of a client run passes `ctx.dataClass: "business"`.
 - `providers.<name>.tasks` / `families` limit a provider to those tasks. The reference policy limits OpenAI
   to the evaluation judges.
 - Blocked entries are dropped. If none is left, the policy `redirect` route (default `claude:claude-haiku-5-5`)
@@ -248,8 +290,28 @@ CEILING ($5/$25 per MTok). Replay rows cost $0; the recorded model is kept in `r
 
 `v kind at repo task provider requestedModel model effort profile runId salesClientId sessionId tier
 inputTokens outputTokens cacheReadTokens cacheWriteTokens images usd priceVerified latencyMs status
-stopReason attempt maxTokens fallbackFrom policyRedirect needsReview budget`. Statuses: `ok error refusal
-max_tokens schema_invalid budget_blocked loop_blocked policy_blocked skipped_dead`.
+stopReason attempt maxTokens fallbackFrom policyRedirect needsReview budget dataClass redacted`. Statuses:
+`ok error refusal max_tokens schema_invalid budget_blocked loop_blocked policy_blocked skipped_dead`.
+
+The ledger is the policy log. Two fields record what the policy decided for the call's payload, on every
+status, `policy_blocked` included:
+
+- `dataClass`, from this fixed list (`LEDGER_DATA_CLASSES`):
+  - `synthetic`: fixture data, and the policy accepted the caller's `synthetic` flag;
+  - `public`: no client data (template HTML, a template's demo text);
+  - `business`, `personal`, `transcript`: real-client data, by its effective class.
+- `redacted`: `true` only when the caller set `redacted` and the policy accepted it for this payload; on a row
+  with images, only when the policy also accepted `imagesRedacted`. Otherwise `false`.
+
+Both come from the policy's result for the call (`route.dataClass.ledger`), never from the caller's ctx. A
+flag the policy ignores (a real-looking email or phone is left, person fields remain, the payload is a
+transcript, or the scan was cut short) gives `redacted: false` and a `dataClass` that is neither `synthetic`
+nor `public`. A row builder outside the core (a facade's own passthrough or provider-specific call) runs the
+same check (`effectiveDataClass`) and sets both fields. `ledgerRowProblems(row)` lists what a row lacks; a
+row built without a data class fails it. Readers accept older rows that lack the two fields.
+
+`images` is the number of image blocks of the request: `request.images` plus the image blocks inside messages
+and tool results.
 
 The core writes:
 

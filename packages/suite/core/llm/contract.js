@@ -1,4 +1,4 @@
-// The frozen LLM contract (version 1.2.0). Both facades (Maker lib/ai-pipeline/_shared/llm and the hub's
+// The frozen LLM contract (version 1.3.0). Both facades (Maker lib/ai-pipeline/_shared/llm and the hub's
 // lib/llm) build on it, and both run runContractChecks() in their test suites. Changing anything here is a
 // contract change: bump `version`, update CONTRACT.md and the pinned fingerprint in both repos' tests.
 // 1.1.0 (2026-10-23, before any facade adopted 1.0.0): Q5 client-data rule for DeepSeek, synthetic/redacted
@@ -11,6 +11,10 @@
 // replays are never loops, DEFAULT_BUDGETS when no budgets config is given, expectedUsd <= 0 means "not
 // given", no in-process tally without an id, oneOf/not/recursive-$ref schema handling, image rules for
 // images in messages and tool results, policy_blocked and skipped_dead ledger rows, policy.exceptions.
+// 1.3.0 (2026-11-13): the image rule (images of real-client data go only to Claude unless the call is synthetic
+// or carries an accepted ctx.imagesRedacted), the ledger row fields dataClass and redacted (what the policy
+// decided, never the caller's flag), the row's images field counts every image block of the request, the `eval`
+// profile with explicit candidates and judges.
 
 import { createHash } from 'node:crypto';
 import {
@@ -20,6 +24,8 @@ import {
   CLAUDE_RULES,
   DATA_CLASSES,
   EFFORTS,
+  IMAGE_PROVIDERS_FOR_CLIENT_DATA,
+  LEDGER_DATA_CLASSES,
   PROFILES,
   PROFILE_ALIASES,
   PROVIDERS,
@@ -27,8 +33,8 @@ import {
   TIERS,
 } from './constants.js';
 import { ERROR_CODES, RefusalError } from './errors.js';
-import { LEDGER_FIELDS, LEDGER_STATUSES, LEDGER_VERSION } from './ledger-row.js';
-import { CTX_FIELDS } from './route.js';
+import { LEDGER_DATA_FIELDS, LEDGER_FIELDS, LEDGER_STATUSES, LEDGER_VERSION } from './ledger-row.js';
+import { CTX_FIELDS, ROUTE_LIST_KEYS } from './route.js';
 import { canonicalJson } from './cassette.js';
 import { DEFAULT_BUDGETS, PERIODIC_SCOPES } from './budget.js';
 import { FIXTURE_RULES, PERSON_SCAN_LIMITS } from './policy.js';
@@ -105,6 +111,10 @@ export const CORE_EXPORTS = Object.freeze([
   'validateJson',
   'parseJsonOutput',
   'buildLedgerRow',
+  'ledgerRowProblems',
+  'ledgerDataClass',
+  'imageRuleAllows',
+  'countImageBlocks',
   'buildApiSpendRow',
   'readLedgerRow',
   'summarizeLedger',
@@ -140,8 +150,8 @@ export const FACADE_METHODS = Object.freeze(['json', 'text', 'tools', 'callLlm',
 
 export const LLM_CONTRACT = deepFreeze({
   id: 'llm-core',
-  version: '1.2.0',
-  frozenAt: '2026-10-23',
+  version: '1.3.0',
+  frozenAt: '2026-11-13',
   providers: [...PROVIDERS],
   dataClasses: [...DATA_CLASSES],
   taskKinds: [...TASK_KINDS],
@@ -189,6 +199,13 @@ export const LLM_CONTRACT = deepFreeze({
     },
     exceptions: 'policy.exceptions lists known LLM calls outside the core (id, provider, where, owner, reason); validated, not routed',
     fixtureValues: { ...FIXTURE_RULES },
+    images: {
+      rule: 'a call with at least one image block and a class above public keeps only these providers, unless the call is synthetic or carries an accepted imagesRedacted',
+      providers: [...IMAGE_PROVIDERS_FOR_CLIENT_DATA],
+      imageCall: 'request.images, or an image block inside a message or a tool result',
+      imagesRedacted: 'accepted only when redacted is also set and accepted for the text, the base class is not transcript and the person-field scan was not truncated; the plain redacted flag never covers images',
+      templateOnlyImageTasks: 'every image task is business class or higher, except the template-only tasks a registry lists with a reason',
+    },
     redirectEffort: 'task effort, else the replaced entry effort, else the redirect route effort, else medium',
     defaultRedirect: 'claude:claude-haiku-5-5',
     appliesToProfiles: 'all, legacy included',
@@ -200,6 +217,8 @@ export const LLM_CONTRACT = deepFreeze({
     unknownTier: 'warning, no tier routes, default budget base',
     escalation: 'escalate[task] or escalateKinds[family], index ctx.escalation (1-based), capped by ctx.maxEscalation',
     resultFields: [...ROUTE_RESULT_FIELDS],
+    listKeys: [...ROUTE_LIST_KEYS],
+    lists: 'candidates and judges of a profile are explicit single-entry routes (no fallback, no placeholder)',
   },
   ctxFields: [...CTX_FIELDS],
   prices: { source: 'core/llm/prices.js', pricedFrom: 'response.model (+ usage.iterations)', maxAgeDays: 120, unverifiedBudgetRate: 'CEILING 5/25 per MTok', replayUsd: 0 },
@@ -229,6 +248,11 @@ export const LLM_CONTRACT = deepFreeze({
     fields: [...LEDGER_FIELDS],
     statuses: [...LEDGER_STATUSES],
     rows: 'one per provider attempt, one per dead-provider skip (skipped_dead), one per budget, loop or policy block',
+    dataFields: [...LEDGER_DATA_FIELDS],
+    dataClasses: [...LEDGER_DATA_CLASSES],
+    dataFieldsFrom: 'the policy result for the call (route.dataClass.ledger), never the caller ctx; redacted is true only when the policy accepted the redaction, for the images too on a call with images',
+    images: 'every image block of the request: request.images plus those inside messages and tool results',
+    olderRows: 'readers accept rows that lack dataClass and redacted',
   },
   errors: [...ERROR_CODES],
   facadeMethods: [...FACADE_METHODS],
@@ -389,6 +413,38 @@ export function runContractChecks({ core, facade = null, fingerprint = null } = 
       threw = error?.code === 'invalid_request';
     }
     if (!threw) fail('images inside tool results must count toward the image limit');
+  });
+
+  attempt('images of real-client data go only to Claude', () => {
+    const paid = { ...MINI_POLICY, providers: { ...MINI_POLICY.providers, gemini: { ...MINI_POLICY.providers.gemini, billingTier: 'paid', paidTierConfirmedAt: '2026-11-10' } } };
+    const router = core.createRouter({ tasks: core.parseTaskRegistry(MINI_TASKS), routes: MINI_ROUTES, policy: paid, env: { AI_PROFILE: 'test' } });
+    const text = router.resolveRoute('contract.vision', {});
+    if (text.primary.provider !== 'gemini') fail('paid Gemini must be usable for business data on a call without images');
+    const image = router.resolveRoute('contract.vision', {}, { images: 1 });
+    if (image.chain.some((e) => e.provider !== 'claude')) fail('an image of real-client data reached a provider other than Claude');
+    if (image.dataClass.imageCall !== true || image.dataClass.ledger.redacted !== false) fail('an image call must be marked as one, with redacted false');
+    const onlyText = router.resolveRoute('contract.vision', { redacted: true }, { images: 1, payload: { user: 'Shop page, contact [EMAIL]' } });
+    if (onlyText.chain.some((e) => e.provider !== 'claude') || onlyText.dataClass.ledger.redacted !== false) fail('the plain redacted flag must not cover images');
+    const markOnly = router.resolveRoute('contract.vision', { imagesRedacted: true }, { images: 1, payload: { user: 'Shop page' } });
+    if (markOnly.chain.some((e) => e.provider !== 'claude') || markOnly.dataClass.imagesRedacted) fail('imagesRedacted without an accepted redacted flag must be ignored');
+    const both = router.resolveRoute('contract.vision', { redacted: true, imagesRedacted: true }, { images: 1, payload: { user: 'Shop page, contact [EMAIL]' } });
+    if (both.primary.provider !== 'gemini' || both.dataClass.ledger.redacted !== true) fail('accepted redacted + imagesRedacted must let the image call use the route');
+    const synthetic = router.resolveRoute('contract.vision', { synthetic: true }, { images: 1 });
+    if (synthetic.primary.provider !== 'gemini' || synthetic.dataClass.ledger.dataClass !== 'synthetic') fail('a synthetic image call must use the route and be recorded as synthetic');
+    const shot = router.resolveRoute('contract.shot', {}, { images: 1 });
+    if (shot.primary.provider !== 'gemini') fail('the image rule applies only above public');
+  });
+
+  attempt('ledger rows record what the policy decided', () => {
+    const route = core.createRouter({ tasks: core.parseTaskRegistry(MINI_TASKS), routes: MINI_ROUTES, policy: MINI_POLICY, env: { AI_PROFILE: 'test' } }).resolveRoute('contract.plan', { synthetic: true }, { payload: { user: 'kari@firma.no' } });
+    if (route.dataClass.ledger.dataClass === 'synthetic' || route.dataClass.ledger.dataClass === 'public') fail('a refused synthetic flag must not be recorded as synthetic or public');
+    const row = core.buildLedgerRow({ provider: 'claude', requestedModel: 'claude-haiku-5-5', ...route.dataClass.ledger });
+    if (core.ledgerRowProblems(row).length) fail(`a row with the policy's data fields must be complete: ${core.ledgerRowProblems(row).join('; ')}`);
+    const bare = core.buildLedgerRow({ provider: 'claude', requestedModel: 'claude-haiku-5-5' });
+    if (!core.ledgerRowProblems(bare).some((p) => /dataClass/.test(p))) fail('a row built without a data class must fail the row check');
+    if (core.ledgerRowProblems({ v: 1, provider: 'deepseek' }).length) fail('older rows without the data fields must still be accepted');
+    const blocks = core.countImageBlocks([{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: [{ type: 'image', source: { type: 'url', url: 'https://example.com/a.jpg' } }] }] }]);
+    if (blocks !== 1) fail('an image inside a tool result must count as an image block');
   });
 
   attempt('replay rows cost nothing', () => {
