@@ -504,6 +504,39 @@ test.describe('change requests', { concurrency: 1 }, () => {
     assert.ok(listed.json.items.some((item) => item.id === first.json.id));
   });
 
+  test('a rejected request frees its quota, private attachment hosts and unauthenticated oversize bodies are refused', async () => {
+    resetFiles();
+    enableSwitch(true);
+    client.sitePlan = plan('block');
+    nowIso = '2026-12-02T08:00:00.000Z';
+    const ids = [];
+    for (let n = 0; n < 4; n += 1) {
+      const posted = await call(base, 'POST', '/api/hub/change-requests', { headers: credentialHeaders, body: fixture.intake.body });
+      ids.push(posted.json.id);
+      const accepted = await call(base, 'PATCH', `/api/admin/change-requests/${posted.json.id}`, { headers: adminHeaders, body: { action: 'accept' } });
+      assert.equal(accepted.status, 200);
+    }
+    const rejected = await call(base, 'PATCH', `/api/admin/change-requests/${ids[0]}`, { headers: adminHeaders, body: { action: 'reject' } });
+    assert.equal(rejected.status, 200);
+    assert.equal(rejected.json.quota.used, 3);
+    const fifth = await call(base, 'POST', '/api/hub/change-requests', { headers: credentialHeaders, body: fixture.intake.body });
+    const acceptedFifth = await call(base, 'PATCH', `/api/admin/change-requests/${fifth.json.id}`, { headers: adminHeaders, body: { action: 'accept' } });
+    assert.equal(acceptedFifth.status, 200);
+    assert.equal(acceptedFifth.json.quota.used, 4);
+    client.sitePlan = plan('track');
+
+    for (const host of ['127.0.0.1', 'localhost', '10.0.0.5', '192.168.1.2', '169.254.169.254', '172.16.0.1', '[::1]', 'printer.local', 'db.internal']) {
+      const response = await call(base, 'POST', '/api/hub/change-requests', { headers: credentialHeaders, body: { ...fixture.intake.body, attachments: ['https://' + host + '/a.png'] } });
+      assert.equal(response.status, 400, host);
+      assert.equal(response.json.field, 'attachments', host);
+    }
+    const publicHost = await call(base, 'POST', '/api/hub/change-requests', { headers: credentialHeaders, body: { ...fixture.intake.body, attachments: ['https://cdn.example.com/a.png'] } });
+    assert.equal(publicHost.status, 201);
+
+    const noAuth = await call(base, 'POST', '/api/hub/change-requests', { body: paddedBody(20000) });
+    assert.equal(noAuth.status, 401);
+  });
+
   test('with the switch off, existing route answers stay byte-identical', async () => {
     enableSwitch(false);
     const seoDeps = {
