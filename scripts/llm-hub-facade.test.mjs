@@ -162,7 +162,7 @@ const { runInfokortAgent } = await import('../lib/infokort-agent.js');
 const { asoldiLlmConfig } = await import('../packages/suite/harness/asoldi/llm.js');
 const sharp = (await import('sharp')).default;
 
-const PINNED_FINGERPRINT = 'sha256:315a1b5ede91dc78db6553f472e29fc9fa535955494e0ec19fc03d7418a7bdf7';
+const PINNED_FINGERPRINT = 'sha256:e458135a6b53aea205dc86b7d0cb85995efa5463d21e1bcb9f6fcd6aa99c8cf2';
 const HUB_TASKS = Object.keys(asoldiLlmConfig('hub').tasks);
 const CLIENT = { id: 'client-fixture-1', businessName: 'Fjordbakeriet AS', industry: 'bakeri', contactPerson: 'Kari', notes: 'Vil ha nettbutikk for brød.' };
 const TRANSCRIPT = Array.from({ length: 14 }, (_, i) => `Speaker ${i % 2 ? 'Asoldi' : 'Kunde'}: Vi snakker om nettsiden og hva den skal vise, punkt nummer ${i + 1}.`).join('\n');
@@ -197,7 +197,7 @@ test.after(() => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-test('the facade meets the frozen LLM contract (1.2.0) with its own methods', () => {
+test('the facade meets the frozen LLM contract (1.3.0) with its own methods', () => {
   const facade = facadeAt(freshDir('contract'));
   assert.deepEqual(core.runContractChecks({ core, facade, fingerprint: PINNED_FINGERPRINT }), []);
   assert.equal(facade.routeFor, facade.resolveRoute);
@@ -452,7 +452,18 @@ test('the ledger records 100% of calls in a scripted run of every hub task (lega
   for (const task of HUB_TASKS) assert.ok(seen.has(task), `no ledger row for ${task}`);
   const providersByTask = Object.fromEntries(rows.map((row) => [row.task, row.provider]));
   assert.equal(providersByTask['offer.fill-from-transcript'], 'deepseek');
-  assert.equal(providersByTask['inbox.inspect-contract'], 'gemini');
+  // Image rule: the three call sites that send a client's picture leave Gemini on the legacy profile too. The
+  // policy moves each to Claude and the row says so.
+  for (const task of ['inbox.inspect-contract', 'assistant.products-image', 'assistant.media-brief']) {
+    const row = rows.find((item) => item.task === task);
+    assert.equal(row.provider, 'claude', task);
+    assert.equal(row.images, 1, task);
+    assert.match(row.policyRedirect?.from || '', /^gemini:/, task);
+    assert.match(row.policyRedirect?.reason || '', /images/, task);
+  }
+  assert.equal(rows.filter((row) => row.images > 0 && row.provider !== 'claude').length, 0, 'no image row on another provider');
+  assert.deepEqual(rows.flatMap((row) => core.ledgerRowProblems(row)), [], 'every row has the data-policy fields');
+  // A call without images keeps today's provider.
   assert.equal(providersByTask['sales-link.discover'], 'gemini');
   assert.equal(providersByTask['infokort.agent'], 'claude');
   assert.equal(providersByTask['brief.map'], 'claude');
@@ -565,21 +576,25 @@ test('safe mode: legacy and prod-profile calls never reach a provider; each is g
     assert.deepEqual(prod.data, {});
     const turn = await facade.turn({ task: 'infokort.agent', system: 's', messages: [{ role: 'user', content: 'hi' }], tools: [] });
     assert.equal(turn.stopReason, 'end_turn');
-    // The Gemini call sites on the legacy profile: their own key check refuses and records the intent.
+    // The Gemini call sites on the legacy profile. A text call: its own key check refuses and records the
+    // intent. An image call no longer runs today's Gemini request (image rule): it goes through the core to
+    // Claude, whose adapter is guarded and records the intent.
     facade.setRoutesOverride({ profile: 'legacy' });
     const intentsBefore = safeMode.readRecentIntents(200).filter((intent) => intent.kind === 'aiCalls').length;
     const png = await tinyPng();
     await extractIngestText({ buffer: png, originalName: 'meny.png', mimeType: 'image/png' });
-    assert.equal(await askVisionIfSigned({ bytes: png, mimeType: 'image/png' }), null);
+    const signed = await askVisionIfSigned({ bytes: png, mimeType: 'image/png' });
+    assert.equal(signed?.clientSigned, false, 'the guarded stub answers nothing, so nothing counts as signed');
     const links = await askGeminiForLinks({ businessName: CLIENT.businessName, city: 'Bergen' }, ['instagramUrl'], { fetchImpl: globalThis.fetch });
     assert.equal(links.reason, 'no-gemini-key');
     registerHubLlm(null);
     assert.equal(providerCalls.length, 0, 'no provider request left the process');
     const allIntents = safeMode.readRecentIntents(200).filter((intent) => intent.kind === 'aiCalls');
     const geminiIntents = allIntents.slice(0, allIntents.length - intentsBefore); // newest first
-    for (const site of ['products-ingest', 'inspect-contract', 'link-discovery']) {
+    for (const site of ['anthropic assistant.products-image', 'anthropic inbox.inspect-contract', 'link-discovery']) {
       assert.ok(geminiIntents.some((intent) => String(intent.detail || '').includes(site)), `${site}: ${JSON.stringify(geminiIntents)}`);
     }
+    assert.equal(geminiIntents.filter((intent) => /^gemini (assistant\.products-image|inbox\.inspect-contract)/.test(String(intent.detail || ''))).length, 0, 'no image call was offered to Gemini');
     const intents = safeMode.readRecentIntents(50).filter((intent) => intent.kind === 'aiCalls');
     assert.ok(intents.length >= 3, JSON.stringify(intents));
     const rows = ledgerRows(dir);
@@ -607,7 +622,7 @@ test('safe-mode cassette keys tell different inputs apart (Gemini images, provid
   const dir = freshDir('native-key');
   const facade = facadeAt(dir);
   facade.setRoutesOverride({ profile: 'prod' });
-  // sales-link.discover is business data; Gemini is not paid-confirmed, so the route has no Gemini.
+  // sales-link.discover is business data on the extraction route, which has no Gemini entry.
   await assert.rejects(
     () => facade.native({ task: 'sales-link.discover', provider: 'gemini', payload: { user: 'Find links for one business.' }, run: async () => ({}) }),
     (error) => error.code === 'route_unavailable',
@@ -642,9 +657,10 @@ test('a legacy call that tries twice writes a ledger row for each attempt (groun
     geminiFailures.push(400);
     const links = await askGeminiForLinks({ businessName: CLIENT.businessName, city: 'Bergen', salesClientId: 'c-att' }, ['instagramUrl'], { fetchImpl: globalThis.fetch });
     assert.equal(links.reason, 'gemini');
-    // The media brief's first model answers 503; the helper moves on to the next model.
+    // The media brief's first model answers 503; the helper moves on to the next model. A video is not an
+    // image block, so the call stays provider-specific on Gemini (a picture would go to Claude: image rule).
     geminiFailures.push(503);
-    const brief = await transcribeClientMedia({ buffer: await tinyJpeg(), fileName: 'kaffe.jpg', context: { businessName: CLIENT.businessName } });
+    const brief = await transcribeClientMedia({ buffer: Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypmp42'), Buffer.alloc(64, 1)]), fileName: 'kaffe.mp4', context: { businessName: CLIENT.businessName } });
     assert.ok(brief, 'the second model gave the brief');
   } finally {
     registerHubLlm(null);
@@ -855,4 +871,193 @@ test('status probes run side by side and each gives up after its time limit', { 
   assert.deepEqual(started.sort(), ['claude', 'deepseek', 'gemini'], 'all three started before any finished');
   const out = await pending;
   for (const name of ['claude', 'deepseek', 'gemini']) assert.equal(out[name].probe.error, 'timeout', name);
+});
+
+// ---------------------------------------------------------------- data-policy fields and the image rule on every hub path
+const { hubCallRows, requestImageCount } = await import('../lib/llm/index.js');
+const REAL_CLIENT_CLASSES = ['business', 'personal', 'transcript'];
+const reachedProvider = (row) => !['policy_blocked', 'budget_blocked', 'loop_blocked', 'skipped_dead'].includes(row.status);
+
+test('ledger rows of every hub path carry dataClass and redacted (core call, legacy passthrough, prior attempt, provider-specific)', async () => {
+  const usage = { inputTokens: 100, outputTokens: 20 };
+  const paths = {};
+
+  // Core call (prod profile).
+  const coreDir = freshDir('fields-core');
+  const prod = facadeAt(coreDir);
+  assert.equal(prod.setRoutesOverride({ profile: 'prod' }).ok, true);
+  await prod.json({ task: 'brief.map', system: 'Extract the facts.', user: 'Kunden vil ha en ny forside.' });
+  paths['core call'] = ledgerRows(coreDir);
+  assert.deepEqual(paths['core call'].map((row) => [row.provider, row.dataClass, row.redacted]), [['claude', 'transcript', false]]);
+
+  // Legacy passthrough: today's request runs unchanged, and the row says what the policy check found.
+  const legacyDir = freshDir('fields-legacy');
+  const legacy = facadeAt(legacyDir);
+  const run = async () => ({ data: { ok: true }, usage });
+  const deepseek = { provider: 'deepseek', model: 'deepseek-chat', run };
+  await legacy.json({ task: 'inbox.categorize', system: 's', user: 'Hei, når er siden klar?', legacy: deepseek });
+  // The caller's flag is not copied: a redacted flag on text that still holds a real-looking address stays false.
+  const address = ['kari.hansen', 'fjordbakeriet.no'].join('@');
+  await legacy.json({ task: 'booker.preview-document', system: 's', user: `Skriv til ${address}`, ctx: { redacted: true }, legacy: deepseek });
+  await legacy.json({ task: 'booker.preview-document', system: 's', user: 'Skriv til [EMAIL]', ctx: { redacted: true }, legacy: deepseek });
+  await legacy.json({ task: 'booker.preview-document', system: 's', user: 'Fixture shop, write to post@example.no', ctx: { synthetic: true }, legacy: deepseek });
+  paths['legacy passthrough'] = ledgerRows(legacyDir);
+  assert.ok(paths['legacy passthrough'].every((row) => row.passthrough === true && row.provider === 'deepseek'));
+  assert.deepEqual(paths['legacy passthrough'].map((row) => [row.task, row.dataClass, row.redacted]), [
+    ['inbox.categorize', 'personal', false],
+    ['booker.preview-document', 'personal', false],
+    ['booker.preview-document', 'business', true],
+    ['booker.preview-document', 'synthetic', false],
+  ]);
+
+  // Prior attempts of a legacy call and of a provider-specific call.
+  const priorDir = freshDir('fields-prior');
+  const prior = facadeAt(priorDir);
+  const priorAttempts = [{ provider: 'gemini', model: 'gemini-2.5-flash-lite', status: 'error', error: { code: 'http', message: 'Gemini HTTP 503' }, latencyMs: 5 }];
+  await prior.native({ task: 'sales-link.discover', provider: 'gemini', payload: { user: 'Find links for one business.' }, legacy: { provider: 'gemini', model: 'gemini-2.5-flash', run: async () => ({ text: '{}', usage, priorAttempts }) } });
+  const priorRows = ledgerRows(priorDir);
+  assert.deepEqual(priorRows.map((row) => [row.status, row.attempt]), [['error', 1], ['ok', 2]]);
+  paths['prior attempt'] = priorRows.filter((row) => row.attempt === 1);
+
+  // Provider-specific call on a non-legacy profile.
+  const nativeDir = freshDir('fields-native');
+  const native = facadeAt(nativeDir);
+  assert.equal(native.setRoutesOverride({ profile: 'prod' }).ok, true);
+  await native.native({ task: 'sales-link.discover', provider: 'claude', payload: { user: 'Find links for one business.' }, run: async () => ({ text: '{}', usage, servedModel: 'claude-haiku-5-5', priorAttempts: [{ provider: 'claude', model: 'claude-haiku-5-5', status: 'error', error: { code: 'http', message: 'HTTP 529' } }] }) });
+  paths.native = ledgerRows(nativeDir);
+  assert.deepEqual(paths.native.map((row) => [row.provider, row.status, row.dataClass, row.redacted]), [['claude', 'error', 'business', false], ['claude', 'ok', 'business', false]]);
+
+  for (const [path, rows] of Object.entries(paths)) {
+    assert.ok(rows.length > 0, `rows written for ${path}`);
+    assert.deepEqual(rows.flatMap((row) => core.ledgerRowProblems(row)), [], `${path}: 0 rows missing either field`);
+    for (const row of rows) assert.ok(core.LEDGER_DATA_CLASSES.includes(row.dataClass) && typeof row.redacted === 'boolean', path);
+  }
+  assert.deepEqual(Object.keys(paths), ['core call', 'legacy passthrough', 'prior attempt', 'native']);
+
+  // Negative control: a copy of the passthrough builder that drops dataClass fails the same check.
+  const base = { repo: 'hub', task: 'inbox.categorize', provider: 'deepseek', requestedModel: 'deepseek-chat', profile: 'legacy', ctx: {}, dataClass: 'personal', redacted: false };
+  const kept = hubCallRows({ base, prior: priorAttempts, final: { status: 'ok' } });
+  assert.equal(kept.length, 2);
+  assert.deepEqual(kept.flatMap((row) => core.ledgerRowProblems(row)), []);
+  const { dataClass: _dropped, ...withoutClass } = base;
+  const dropped = hubCallRows({ base: withoutClass, prior: priorAttempts, final: { status: 'ok' } });
+  assert.equal(dropped.flatMap((row) => core.ledgerRowProblems(row)).filter((problem) => /row lacks dataClass/.test(problem)).length, 2, 'both rows of the copy are caught');
+});
+
+test('image rule on every hub path that can carry a picture: a planted client picture never reaches another provider than Claude', async () => {
+  const jpeg = await tinyJpeg();
+  const picture = () => [{ mime: 'image/jpeg', buffer: jpeg }];
+  const usage = { inputTokens: 100, outputTokens: 20 };
+  const testEnv = { ...process.env, AI_PROFILE: 'test' };
+  let checked = 0;
+  const offClaude = (rows) => rows.filter((row) => row.images > 0 && reachedProvider(row) && row.provider !== 'claude' && row.provider !== 'replay' && REAL_CLIENT_CLASSES.includes(row.dataClass) && row.redacted === false);
+  const geminiCalls = () => providerCalls.filter((call) => call.provider === 'gemini').length;
+
+  // 1. Core call (test profile: the vision route lists Gemini first).
+  {
+    const dir = freshDir('image-core');
+    const facade = facadeAt(dir, { env: testEnv });
+    assert.match(facade.resolveRoute('assistant.media-brief', { synthetic: true }, { images: 1 }).route, /^gemini:/);
+    providerCalls.length = 0;
+    await facade.json({ task: 'assistant.media-brief', user: 'Describe the picture.', images: picture(), ctx: { salesClientId: 'c-img' } });
+    const rows = ledgerRows(dir);
+    assert.deepEqual(rows.map((row) => [row.provider, row.images, row.dataClass, row.redacted]), [['claude', 1, 'business', false]]);
+    assert.match(rows[0].policyRedirect.from, /^gemini:/);
+    assert.equal(geminiCalls(), 0);
+    assert.deepEqual(offClaude(rows), []);
+    // Positive control: the same call marked synthetic reaches the Gemini mock.
+    await facade.json({ task: 'assistant.media-brief', user: 'Describe the picture.', images: picture(), ctx: { synthetic: true } });
+    assert.equal(geminiCalls(), 1, 'the synthetic picture reached Gemini');
+    assert.deepEqual(ledgerRows(dir).at(-1).provider, 'gemini');
+    assert.equal(ledgerRows(dir).at(-1).dataClass, 'synthetic');
+    checked += 1;
+  }
+
+  // 2. Legacy passthrough of a json or text call: today's Gemini request does not run; the core sends it to Claude.
+  {
+    const dir = freshDir('image-legacy');
+    const facade = facadeAt(dir);
+    assert.equal(facade.profile(), 'legacy');
+    let legacyRuns = 0;
+    const legacy = { provider: 'gemini', model: 'gemini-2.5-flash', images: 1, run: async () => ((legacyRuns += 1), { data: { ok: true }, usage, priorAttempts: [{ provider: 'gemini', model: 'gemini-2.5-flash-lite', status: 'error' }] }) };
+    providerCalls.length = 0;
+    const result = await facade.json({ task: 'assistant.media-brief', user: 'Describe the picture.', images: picture(), ctx: { salesClientId: 'c-img' }, legacy });
+    assert.equal(legacyRuns, 0, 'the legacy Gemini request did not run');
+    assert.equal(result.provider, 'claude');
+    const rows = ledgerRows(dir);
+    assert.deepEqual(rows.map((row) => [row.provider, row.images, row.profile]), [['claude', 1, 'legacy']]);
+    assert.match(rows[0].policyRedirect.from, /^gemini:/);
+    assert.equal(rows.filter((row) => row.provider === 'gemini').length, 0, '0 rows on Gemini, prior attempts included');
+    assert.equal(geminiCalls(), 0);
+    assert.deepEqual(offClaude(rows), []);
+    // Positive control: a synthetic picture runs today's request.
+    await facade.json({ task: 'assistant.media-brief', user: 'Describe the picture.', images: picture(), ctx: { synthetic: true }, legacy });
+    assert.equal(legacyRuns, 1, 'the synthetic picture reached the legacy provider');
+    assert.deepEqual(ledgerRows(dir).slice(1).map((row) => [row.provider, row.status, row.dataClass]), [['gemini', 'error', 'synthetic'], ['gemini', 'ok', 'synthetic']]);
+    // A call without a picture keeps today's provider (the rule is about images only).
+    await facade.json({ task: 'assistant.media-brief', user: 'Describe the clip.', ctx: { salesClientId: 'c-img' }, legacy: { ...legacy, images: 0 } });
+    assert.equal(legacyRuns, 2);
+    checked += 1;
+  }
+
+  // 3. Provider-specific call on the legacy profile: no Claude route exists for it, so it is refused and recorded.
+  {
+    const dir = freshDir('image-native-legacy');
+    const facade = facadeAt(dir);
+    let runs = 0;
+    const legacy = { provider: 'gemini', model: 'gemini-2.5-flash', run: async () => ((runs += 1), { data: { ok: true }, usage }) };
+    await assert.rejects(() => facade.native({ task: 'assistant.media-brief', provider: 'gemini', images: 1, payload: { user: 'Describe the picture.' }, ctx: { salesClientId: 'c-img' }, legacy }), (error) => error.code === 'policy_blocked');
+    assert.equal(runs, 0);
+    const rows = ledgerRows(dir);
+    assert.deepEqual(rows.map((row) => [row.provider, row.status, row.images, row.dataClass]), [['gemini', 'policy_blocked', 1, 'business']]);
+    assert.deepEqual(offClaude(rows), [], 'a policy_blocked row did not reach the provider');
+    assert.deepEqual(core.ledgerRowProblems(rows[0]), []);
+    await facade.native({ task: 'assistant.media-brief', provider: 'gemini', images: 1, payload: { user: 'Describe the picture.' }, ctx: { synthetic: true }, legacy });
+    assert.equal(runs, 1, 'the synthetic picture reached the legacy provider');
+    // Video and audio carry no image block: the call runs as before.
+    await facade.native({ task: 'assistant.media-brief', provider: 'gemini', payload: { user: 'Describe the clip.' }, legacy });
+    assert.equal(runs, 2);
+    checked += 1;
+  }
+
+  // 4. Provider-specific call on a routed profile.
+  {
+    const dir = freshDir('image-native-routed');
+    const facade = facadeAt(dir, { env: testEnv });
+    let runs = 0;
+    const run = async () => ((runs += 1), { data: { ok: true }, usage, servedModel: 'gemini-2.5-flash-lite' });
+    await assert.rejects(() => facade.native({ task: 'assistant.media-brief', provider: 'gemini', images: 1, payload: { user: 'Describe the picture.' }, run }), (error) => error.code === 'route_unavailable');
+    assert.equal(runs, 0);
+    const rows = ledgerRows(dir);
+    assert.deepEqual(rows.map((row) => [row.provider, row.status, row.images]), [['gemini', 'policy_blocked', 1]]);
+    assert.deepEqual(offClaude(rows), []);
+    await facade.native({ task: 'assistant.media-brief', provider: 'gemini', images: 1, payload: { user: 'Describe the picture.' }, ctx: { synthetic: true }, run });
+    assert.equal(runs, 1, 'the synthetic picture reached Gemini');
+    assert.deepEqual(ledgerRows(dir).at(-1).provider, 'gemini');
+    checked += 1;
+  }
+
+  assert.equal(checked, 4, 'hub paths checked');
+  // The check itself bites: a planted Gemini picture row is counted.
+  const plantedRow = core.buildLedgerRow({ provider: 'gemini', requestedModel: 'gemini-2.5-flash', images: 1, status: 'ok', dataClass: 'business', redacted: false });
+  assert.equal(offClaude([plantedRow]).length, 1);
+  assert.equal(requestImageCount({ images: picture(), messages: [{ role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: [{ type: 'image', source: { type: 'url', url: 'https://example.com/a.jpg' } }] }] }] }), 2);
+  assert.equal(requestImageCount({ images: 3 }), 3);
+  assert.equal(requestImageCount({}), 0);
+});
+
+test('legacy resolver on the facade: a DeepSeek call site with a personal task ends with no DeepSeek entry; a synthetic payload keeps it', () => {
+  const facade = facadeAt(freshDir('legacy-resolver'));
+  assert.equal(facade.profile(), 'legacy');
+  assert.equal(facade.resolveRoute('inbox.categorize').route, 'deepseek:deepseek-chat', 'the passthrough view shows the call site provider');
+  let cases = 0;
+  const real = facade.resolveRoute('inbox.categorize', { profile: 'legacy' }, { payload: { user: 'Kari Nordmann spør når siden er klar.' } });
+  cases += 1;
+  assert.equal(real.legacy, true);
+  assert.equal(real.chain.filter((entry) => entry.provider === 'deepseek').length, 0, real.route);
+  assert.equal(real.primary.provider, 'claude');
+  assert.match(real.policyRedirects[0].from, /^deepseek:deepseek-chat/);
+  assert.equal(cases, 1, 'cases run');
+  const synthetic = facade.resolveRoute('inbox.categorize', { profile: 'legacy', synthetic: true }, { payload: { user: 'A fixture customer asks when the site is ready.' } });
+  assert.equal(synthetic.route, 'deepseek:deepseek-chat', 'positive control: the entry is kept for a synthetic payload');
 });

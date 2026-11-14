@@ -15,12 +15,23 @@ export const PROVIDER_CAPABILITIES = Object.freeze({
 /** Ordered from least to most sensitive. The effective class of a call is the max of all inputs. */
 export const DATA_CLASSES = Object.freeze(['public', 'business', 'personal', 'transcript']);
 
+/**
+ * The data class a ledger row records: what the policy decided for the payload, never the caller's flag.
+ * `synthetic` is fixture data the policy accepted as such; `public` holds no client data; `business`,
+ * `personal` and `transcript` are real-client data (a row's `redacted` says whether an accepted redaction applies).
+ */
+export const LEDGER_DATA_CLASSES = Object.freeze(['synthetic', 'public', 'business', 'personal', 'transcript']);
+
+/** Providers that may receive an image of real-client data. Every other provider gets only synthetic or redacted images. */
+export const IMAGE_PROVIDERS_FOR_CLIENT_DATA = Object.freeze(['claude']);
+
 export const TASK_KINDS = Object.freeze(['json', 'text', 'tools']);
 
 export const EFFORTS = Object.freeze(['low', 'medium', 'high', 'xhigh', 'max']);
 
 /** `production` is accepted as an alias of `prod`. */
-export const PROFILES = Object.freeze(['legacy', 'prod', 'test', 'replay', 'record']);
+/** `eval` is the model-evaluation profile: production routes plus explicit candidate and judge lists. */
+export const PROFILES = Object.freeze(['legacy', 'prod', 'test', 'replay', 'record', 'eval']);
 export const PROFILE_ALIASES = Object.freeze({ production: 'prod' });
 export const DEFAULT_PROFILE = 'legacy';
 
