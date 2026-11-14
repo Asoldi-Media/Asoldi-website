@@ -337,7 +337,7 @@ Settings keys (`SETTINGS_KEYS`, dotted paths in the file):
 | Development | `development.autoQueue`, `development.directivesForAutoDev`, `development.defaultHostId`, `development.requireConfirmForCustom`, `development.previewJobs`, `development.seoJobs`, `development.makerEvents` (`off` or `record`; default `off`, see [Maker events](#maker-events)) |
 | Migrations | `migrations.deliveryBackfill` (`off`, `dry-run` or `apply`; default `off`, see [Backfill](#backfill)) |
 | Publish | `publish.staging.mode`, `publish.staging.tiers`, `publish.production.mode` |
-| Change requests | `changeRequests.enforce`, `changeRequests.slaWorkDays`, `changeRequests.countAt` (counted at acceptance) |
+| Change requests | `changeRequests.enforce`, `changeRequests.slaWorkDays`, `changeRequests.countAt` (counted at acceptance); the switch `changeRequests.enabled` (default off), `changeRequests.mode`, `changeRequests.paused` (`null` or `{reason}`; a paused switch counts as off) |
 | Pricing | `pricing.oneTimeMultiplier`, `pricing.oneTimeMinExMva`, `pricing.oneTimeMonths` |
 | Lifecycle | `lifecycle.paymentGraceDays`, `lifecycle.cancellationGraceDays`; the switches `lifecycle.planChange.enabled`, `lifecycle.planChange.mode`, `lifecycle.planChange.paused`, `lifecycle.cancellation.enabled`, `lifecycle.cancellation.mode`, `lifecycle.cancellation.paused` (default off; `auto` needs pilots; see [Plan changes and cancellation](#plan-changes-and-cancellation)) |
 | Promotion | `promotion.auto` |
