@@ -191,6 +191,12 @@ export function defaultAutomationSettings() {
     // output of scripts/seo-gating-diff.mjs. dfsLedger: DataForSEO spend is also booked into the monthly seo-ops
     // ledger, which alerts at a cap and never stops a call. recordPull: the Maker may read a client's
     // SEO record. A paused switch ({reason}) counts as off.
+    // --- keyword jobs
+    // development.seoJobs and seo.jobGating also gate keyword research jobs (lib/seo-ops/job-producer.js).
+    // No new switch: both already exist and default off. Off (seoJobs false, or jobGating disabled or
+    // paused): the producer returns immediately and does not read its state file. On: a delivery tick
+    // may queue seo.refresh and seo.maintenance. mode is not a third gate for those jobs.
+    // --- end keyword jobs
     seo: {
       jobGating: { enabled: false, mode: 'shadow', paused: null },
       dfsLedger: { enabled: false, paused: null },
