@@ -133,6 +133,13 @@ export function defaultAutomationSettings() {
       paused: null,
       // --- end change requests
     },
+    // --- dev reports and purge
+    // devReport: the developer-agent report routes the Maker calls and the capability the heartbeat lists.
+    // purgeJobs: the admin route that erases one client's stored reports and thumbnails (report first, then delete).
+    // Off: those routes answer 404 disabled and nothing is written. A paused switch counts as off.
+    devReport: { enabled: false, mode: 'shadow', paused: null },
+    purgeJobs: { enabled: false, mode: 'shadow', paused: null },
+    // --- end dev reports and purge
     pricing: { oneTimeMultiplier: 9, oneTimeMinExMva: 0, oneTimeMonths: 6 },
     lifecycle: {
       paymentGraceDays: 14,
@@ -364,6 +371,10 @@ const ENUMS = {
   // --- change requests
   'changeRequests.mode': ['shadow', 'auto'],
   // --- end change requests
+  // --- dev reports and purge
+  'devReport.mode': ['shadow', 'auto'],
+  'purgeJobs.mode': ['shadow', 'auto'],
+  // --- end dev reports and purge
   'development.makerEvents': [...MAKER_EVENT_MODES],
   'migrations.deliveryBackfill': [...BACKFILL_MODES],
   // seo
@@ -482,6 +493,10 @@ const BOOLEANS = new Set([
   // --- change requests
   'changeRequests.enabled',
   // --- end change requests
+  // --- dev reports and purge
+  'devReport.enabled',
+  'purgeJobs.enabled',
+  // --- end dev reports and purge
   // --- visit statistics retention
   'retention.analyticsTraffic.enabled',
   // --- end visit statistics retention
@@ -726,6 +741,16 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
     else value.changeRequests.paused = paused;
   }
   // --- end change requests
+  // --- dev reports and purge
+  for (const key of ['devReport', 'purgeJobs']) {
+    if (!isPlainObject(value[key])) continue;
+    const mode = normalizeAutomationMode(value[key].mode);
+    if (mode) value[key].mode = mode;
+    const paused = normalizePaused(value[key].paused, { by, now });
+    if (paused === undefined) fail(key + '.paused', 'Must be null or {reason}.');
+    else value[key].paused = paused;
+  }
+  // --- end dev reports and purge
   // --- visit statistics retention
   if (isPlainObject(value.retention?.analyticsTraffic)) {
     const paused = normalizePaused(value.retention.analyticsTraffic.paused, { by, now });

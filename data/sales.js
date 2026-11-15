@@ -1818,6 +1818,15 @@ export function setSalesMakerRunGoLive(id, goLive) {
 }
 
 /**
+ * makerRun.dev, the summary of the latest developer-agent report. Only the dev-report route calls this;
+ * generic makerRun patches never carry dev.
+ */
+export function setSalesMakerRunDev(id, dev) {
+  if (!dev || typeof dev !== 'object' || Array.isArray(dev)) return getSalesClientById(id);
+  return updateSalesClientInternal(id, { makerRun: { dev } });
+}
+
+/**
  * Site plan: stores client.sitePlan (normalized) with a history entry when the tier, services, billing
  * or status change. Returns the client, or null when the client or the plan is not valid.
  */
