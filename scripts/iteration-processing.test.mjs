@@ -370,6 +370,22 @@ test('the link hook stores pendingIteration only in auto', () => {
   assert.equal(auto.getSalesClientById('client-fjordlys').delivery.pendingIteration, 'meet-hook-3');
 });
 
+test('the loop step skips a client without a pending iteration and one that is not in auto mode', async () => {
+  const { runIterationPendingStep, tickSteps } = await import('../lib/delivery-brief/index.js');
+  assert.equal(tickSteps.filter((step) => step.name === 'iteration-pending').length, 1);
+  let requests = 0;
+  const none = await runIterationPendingStep({ settings: settingsFor('client-fjordlys', 'auto'), dataDir: dataDirFor('step-') }, clientSeed());
+  requests += 1;
+  assert.deepEqual(none, { wrote: false });
+  const dir = dataDirFor('step-shadow-');
+  const pending = { ...clientSeed(), delivery: { pendingIteration: 'meet-step-1' } };
+  const shadow = await runIterationPendingStep({ settings: settingsFor('client-fjordlys', 'shadow'), dataDir: dir }, pending);
+  requests += 1;
+  assert.deepEqual(shadow, { wrote: false });
+  assert.deepEqual(filesUnder(dir), []);
+  assert.equal(requests, 2, 'requests made');
+});
+
 test.after(() => {
   rmSync(root, { recursive: true, force: true });
 });

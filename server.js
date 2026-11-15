@@ -123,8 +123,7 @@ import { registerSecurityAdminRoutes } from './lib/security-admin-routes.js';
 import { createMakerAuth } from './lib/maker-auth.js';
 import { registerMakerHostRoutes } from './lib/routes/maker-host-routes.js';
 import { developmentGetLoopScope, startDeliveryLoop } from './lib/delivery-loop.js';
-import { notePendingIteration, processIterationMeeting } from './lib/iteration-processing.js';
-import { spineModeForClient } from './lib/spine-mode.js';
+import { notePendingIteration } from './lib/iteration-processing.js';
 import { startCmsFleetMonitor, startCmsWakePing } from './lib/cms-fleet-monitor.js';
 import { noteMakerAuthAlert } from './lib/delivery-alerts.js';
 import { noteDeveloperHandoffAccepted } from './lib/delivery-jobs.js';
@@ -22163,32 +22162,7 @@ function startBackgroundJobs() {
       sendDueFirefliesLiveJoins().catch((error) => console.error('[fireflies] initial live-join failed:', error));
     },
     inboxBot: () => startInboxBotLoop(),
-    delivery: () => {
-      const loop = startDeliveryLoop({ sales, hub, listDeveloperOwnerOptions: () => listDeveloperOwnerOptions({ isAdmin: true }) });
-      loop.registerTickStep({
-        name: 'iteration-pending',
-        order: 80,
-        scope: 'client',
-        run: async (ctx, client) => {
-          const meetingId = String(client?.delivery?.pendingIteration || '').trim();
-          if (!meetingId) return { wrote: false };
-          if (spineModeForClient('iteration.processing', client, { settings: ctx.settings, dataDir: ctx.dataDir }) !== 'auto') {
-            return { wrote: false };
-          }
-          const stored = readStoredFirefliesMeeting(meetingId);
-          const row = (client.meetings || []).find((item) => String(item?.meetingId || '') === meetingId);
-          const transcript = String(stored?.transcript || row?.transcript || '');
-          const result = await processIterationMeeting({
-            clientId: client.id,
-            meetingId,
-            transcript,
-            now: ctx.now,
-            deps: { sales: ctx.sales || sales, dataDir: ctx.dataDir, settings: ctx.settings },
-          });
-          return { wrote: result.wrote === true };
-        },
-      });
-    },
+    delivery: () => startDeliveryLoop({ sales, hub, listDeveloperOwnerOptions: () => listDeveloperOwnerOptions({ isAdmin: true }) }),
     emailLogPrune: () => startEmailLogPruneLoop(),
     analyticsTrafficRetention: () => startTrafficRetentionLoop(),
     cmsEnforcement: () => startCmsFleetMonitor({ hub }),
