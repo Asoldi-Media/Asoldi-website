@@ -1,0 +1,37 @@
+{
+  "ok": true,
+  "receivedAt": "2026-12-01T09:12:00.000Z",
+  "shots": [],
+  "report": {
+    "contract": "dev-report/1",
+    "runId": "syn-bakery-run-01",
+    "salesClientId": "bakery-1",
+    "reportRev": 1,
+    "dev": {
+      "sessionId": "ds_20261201_0900_b1",
+      "kind": "initial",
+      "status": "review",
+      "profile": "test",
+      "briefHash": "sha256:c4c0a5054a09953fb7e53c8e050bb48ac5236f7440c30304e832c71732541b0c",
+      "costUsd": 0.21,
+      "startedAt": "2026-12-01T09:00:00.000Z",
+      "endedAt": "2026-12-01T09:11:40.000Z",
+      "counts": { "tasks": 6, "done": 4, "needsHuman": 1, "failed": 1, "reverted": 0 },
+      "auditBefore": { "hard": 7, "soft": 12 },
+      "auditAfter": { "hard": 0, "soft": 3 },
+      "directives": [
+        { "id": "dir-bakeri01", "status": "applied", "taskId": "t02" },
+        { "id": "dir-bakeri02", "status": "needs-human", "reason": "Seksjonen flyttes manuelt" }
+      ],
+      "questions": [{ "id": "q1", "text": "Finnes et bilde av lokalet?", "askClient": true }],
+      "qaProposal": {
+        "textOk": true,
+        "mediaOk": false,
+        "responsiveOk": true,
+        "evidence": "1 bildefelt uten godkjent bilde"
+      },
+      "thumbs": [{ "taskId": "t02", "before": "thumb_01", "after": "thumb_02" }],
+      "steps": { "cms": "ready", "dev": "ready", "dev-verify": "ready" }
+    }
+  }
+}
