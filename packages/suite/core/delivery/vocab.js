@@ -574,6 +574,11 @@ export const SETTINGS_KEYS = Object.freeze({
   changeRequestsMode: 'changeRequests.mode',
   changeRequestsPaused: 'changeRequests.paused',
   // --- end change requests
+  // --- legal clauses
+  legalClauses: 'legalClauses.enabled',
+  legalClausesMode: 'legalClauses.mode',
+  legalClausesPaused: 'legalClauses.paused',
+  // --- end legal clauses
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);
