@@ -309,3 +309,15 @@ test('board-status and detail: 401 without credentials, no write, only visible c
   assert.equal((await get('/api/admin/development/sales:nope/detail', admin)).status, 404);
   assert.deepEqual(snapshot(routeDir), before, 'reads wrote nothing');
 });
+
+test('board-status: revisions are kept per caller; a developer never sees removed ids of items it cannot see, and a newly assigned item is returned', () => {
+  const revisions = board.createBoardRevisions();
+  const a = { id: 'sales:a', v: 1 };
+  const b = { id: 'sales:b', v: 1 };
+  revisions.status([a, b], 0, 'admin');
+  const dev = revisions.status([a], 0, 'developer:x');
+  assert.deepEqual(dev.removed, []);
+  const after = revisions.status([a, b], dev.rev, 'developer:x');
+  assert.deepEqual(after.changed.map((row) => row.id), ['sales:b']);
+  assert.deepEqual(after.removed, []);
+});
