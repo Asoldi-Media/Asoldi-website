@@ -1,13 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { deepgramListenQuery, formatDeepgramChat, transcribePrerecordedBuffer } from '../lib/deepgram-transcribe.js';
 import { buildBookerPreviewUserPrompt, persistPreviewDocument, PREVIEW_SYSTEM, shouldEnqueueBookerPreview } from '../lib/booker-preview-document.js';
 import { clientRecordingUrl, prepareRecordingStream } from '../lib/sales-recording-stream.js';
 import { hardGateWorkshopTranscript } from '../lib/workshop-transcript-eval.js';
-import { applyWorkshopTranscriptToRecord } from '../lib/workshop-project-document.js';
+import { applyWorkshopTranscriptToRecord, buildWorkshopProjectUserPrompt, generateWorkshopProjectDocument } from '../lib/workshop-project-document.js';
+import { asoldiLlmConfig } from '../packages/suite/harness/asoldi/llm.js';
+import { createRouter } from '../packages/suite/core/llm/route.js';
+import { legacyRouteFor } from '../lib/llm/config.js';
 import { markProjectTodoDone, persistProjectDocument } from '../lib/workshop-record.js';
 import { primaryDeveloperDocument, DOCUMENT_LABELS } from '../lib/developer-card.js';
 import { workshopGoalHeld } from '../lib/workshop-goal-timeline.js';
@@ -323,4 +327,155 @@ test('tracked files: planning words and client data only go down, and no secret 
     assert.deepEqual(row.unlisted.map((item) => `${item.path} (${item.count})`), [], `${kind}: files with findings that ${row.file} does not list`);
     assert.deepEqual(row.grown.map((item) => `${item.path} (${item.count} > ${item.allowed})`), [], `${kind}: counts above ${row.file}`);
   }
+});
+
+const TRANSCRIPT_SLICE = /slice\(0,\s*12_000\)|slice\(0,\s*28_000\)/g;
+
+function legacyProjectPrompt(collected = {}) {
+  return [
+    `Kunde: ${collected.businessName || 'ukjent'}${collected.industry ? ` (${collected.industry})` : ''}`,
+    collected.offerPlan ? `Tilbud / pakke:\n${collected.offerPlan}` : '',
+    collected.offerGoal ? `Mål med nettsiden:\n${collected.offerGoal}` : '',
+    collected.offerIdentity ? `Identitet:\n${collected.offerIdentity}` : '',
+    collected.offerCustomSections ? `Egne seksjoner:\n${collected.offerCustomSections}` : '',
+    collected.salesNotes ? `Salgsnotater:\n${String(collected.salesNotes).slice(0, 4000)}` : '',
+    collected.productNotes ? `Produktnotater:\n${String(collected.productNotes).slice(0, 4000)}` : '',
+    collected.workshopNotes?.length ? `Manuelle workshop-notater:\n${collected.workshopNotes.join('\n')}` : '',
+    collected.salesTranscript ? `Salgsmøte (støtte):\n${String(collected.salesTranscript).slice(0, 12_000)}` : '',
+    collected.workshopTranscript
+      ? `Workshop-møte (hovedkilde):\n${String(collected.workshopTranscript).slice(0, 28_000)}`
+      : '(Ingen workshop-transkript.)',
+  ].filter(Boolean).join('\n\n');
+}
+
+test('the project prompt keeps the previous text while iteration.projectDocument is off', () => {
+  const collected = {
+    businessName: 'Fjordlys Keramikk AS',
+    industry: 'keramikk',
+    offerPlan: 'Standard',
+    offerGoal: 'Selge krukker',
+    offerIdentity: 'Rolige farger',
+    offerCustomSections: 'Galleri',
+    salesNotes: 'Notat fra salg',
+    productNotes: 'Krukker og fat',
+    workshopNotes: ['Ta med logo'],
+    salesTranscript: 'S'.repeat(100),
+    workshopTranscript: 'W'.repeat(100),
+    offerProducts: [{ name: 'Krukker', pages: 3 }],
+    offerLetter: 'Tilbud om krukker.',
+    tier: 'tier-1-standard',
+    services: ['site'],
+  };
+  assert.equal(buildWorkshopProjectUserPrompt(collected), legacyProjectPrompt(collected));
+  assert.equal(buildWorkshopProjectUserPrompt(collected, { upgrade: false }), legacyProjectPrompt(collected));
+  assert.notEqual(buildWorkshopProjectUserPrompt(collected, { upgrade: true }), legacyProjectPrompt(collected));
+});
+
+test('the upgraded project prompt names the tier and products and stops cutting the transcript', async () => {
+  const sourcePath = join(repoRoot, 'lib/workshop-project-document.js');
+  const source = readFileSync(sourcePath, 'utf8');
+  assert.ok(source.length > 0, `source files read 1, bytes ${source.length}`);
+  assert.equal((source.match(TRANSCRIPT_SLICE) || []).length, 0, `source files read 1, bytes ${source.length}`);
+  const dir = mkdtempSync(join(tmpdir(), 'asoldi-clip-'));
+  const copyPath = join(dir, 'workshop-project-document.js');
+  writeFileSync(copyPath, `${source}\nconst planted = ''.slice(0, 12_000);\n`);
+  const copy = readFileSync(copyPath, 'utf8');
+  assert.ok(copy.length > 0, `copy files read 1, bytes ${copy.length}`);
+  assert.equal((copy.match(/slice\(0,\s*12_000\)/g) || []).length, 1);
+  rmSync(dir, { recursive: true, force: true });
+
+  const whole = 'A'.repeat(20_000);
+  const long = 'B'.repeat(40_000);
+  const map = 'KART-OPPSUMMERING';
+  const collected = {
+    businessName: 'Fjordlys Keramikk AS',
+    tier: 'tier-1-standard',
+    services: ['site'],
+    offerProducts: [{ name: 'Krukker', pages: 3 }],
+    offerLetter: 'Tilbud om krukker.',
+    workshopTranscript: whole,
+    workshopMap: map,
+    salesTranscript: 'S'.repeat(100),
+    salesMap: 'SALG-KART',
+  };
+  const upgraded = buildWorkshopProjectUserPrompt(collected, { upgrade: true });
+  assert.match(upgraded, /Nivå: tier-1-standard/);
+  assert.match(upgraded, /Oppsummering: nivå tier-1-standard/);
+  assert.match(upgraded, /Tjenester: site/);
+  assert.match(upgraded, /Krukker \(3 sider\)/);
+  assert.match(upgraded, /Tilbud om krukker\./);
+  assert.ok(upgraded.includes(whole), 'a 20000-character transcript is included whole');
+  const over = buildWorkshopProjectUserPrompt({ ...collected, workshopTranscript: long }, { upgrade: true });
+  assert.match(over, /KART-OPPSUMMERING/);
+  assert.equal(over.includes('B'.repeat(100)), false, 'a 40000-character transcript is replaced by the map');
+
+  const settingsOff = { iteration: { projectDocument: { enabled: false, mode: 'shadow', paused: null } } };
+  const settingsOn = { iteration: { projectDocument: { enabled: true, mode: 'shadow', paused: null } } };
+  const seen = [];
+  const chat = async (request) => {
+    seen.push(request);
+    return { goalExplanation: 'Mål for nettsiden.', clientDocumentation: 'Fjordlys Keramikk AS lager krukker.', todos: [] };
+  };
+  await generateWorkshopProjectDocument({
+    client: { id: 'client-fjordlys', businessName: 'Fjordlys Keramikk AS', sitePlan: { tierId: 'tier-1-standard', services: ['site'] } },
+    workshopMeeting: { transcript: whole, summary: map },
+    offer: { products: [{ name: 'Krukker', pages: 3 }], email: { html: '<p>Tilbud om krukker.</p>' } },
+    deps: { settings: settingsOff, chat },
+  });
+  await generateWorkshopProjectDocument({
+    client: { id: 'client-fjordlys', businessName: 'Fjordlys Keramikk AS', sitePlan: { tierId: 'tier-1-standard', services: ['site'] } },
+    workshopMeeting: { transcript: long, summary: map },
+    offer: { products: [{ name: 'Krukker', pages: 3 }], email: { html: '<p>Tilbud om krukker.</p>' } },
+    deps: { settings: settingsOn, chat },
+  });
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0].maxTokens, 2200);
+  assert.equal(seen[1].maxTokens, 4000);
+  assert.ok(seen[0].user.includes(whole));
+  assert.equal(seen[0].user.includes('Nivå:'), false);
+  assert.match(seen[1].user, /tier-1-standard/);
+  assert.match(seen[1].user, /Krukker/);
+  assert.match(seen[1].user, /KART-OPPSUMMERING/);
+  assert.equal(seen[1].user.includes('B'.repeat(100)), false);
+  assert.notEqual(seen[1].user, seen[0].user);
+});
+
+function projectRoutes({ synthetic = false } = {}) {
+  const config = asoldiLlmConfig('hub');
+  const router = createRouter({
+    tasks: config.tasks,
+    routes: config.routes,
+    policy: config.policy,
+    legacyRoute: legacyRouteFor({}),
+    env: {},
+    unknownTasks: 'warn',
+    stalePrices: 'warn',
+  });
+  const tasks = ['workshop.project-document', 'brief.iteration'];
+  const profiles = ['legacy', 'prod'];
+  const rows = [];
+  for (const task of tasks) {
+    for (const profile of profiles) {
+      const resolved = router.resolveRoute(task, { profile, ...(synthetic ? { synthetic: true } : {}) }, {
+        payload: 'Kunden vil ha en ny headerfarge.',
+        images: 0,
+      });
+      rows.push({ task, profile, provider: resolved.primary.provider });
+    }
+  }
+  return { tasks: tasks.length, profiles: profiles.length, rows };
+}
+
+test('workshop.project-document and brief.iteration do not resolve to DeepSeek', () => {
+  const routed = projectRoutes();
+  assert.equal(routed.tasks, 2);
+  assert.equal(routed.profiles, 2);
+  assert.equal(routed.rows.length, routed.tasks * routed.profiles);
+  for (const row of routed.rows) assert.notEqual(row.provider, 'deepseek', `${row.task} ${row.profile}`);
+  assert.throws(() => {
+    const bypassed = projectRoutes({ synthetic: true });
+    assert.equal(bypassed.tasks, 2);
+    assert.equal(bypassed.profiles, 2);
+    for (const row of bypassed.rows) assert.notEqual(row.provider, 'deepseek', `${row.task} ${row.profile}`);
+  });
 });
