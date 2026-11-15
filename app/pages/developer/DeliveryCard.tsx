@@ -25,6 +25,7 @@ import type { BoardDetail, BoardDirective, BoardItem, CardCache, DevReportRespon
 import { boardFetch, readBoardJson } from './board/useBoardPoll';
 
 type Props = {
+  key?: React.Key;
   item: BoardItem;
   pageHostname?: string;
   defaultExpanded?: boolean;

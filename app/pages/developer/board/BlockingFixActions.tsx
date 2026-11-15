@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { DeveloperLanguageLockPopup } from '../DeveloperLanguageLockPopup';
 import { DeveloperPagesPopup } from '../DeveloperPagesPopup';
 import { MakerRunTools } from '../MakerRunTools';
-import { authHeaders, developmentAuthHeaders } from '../../Admin/shared';
+import { authHeaders, developmentAuthHeaders, type SalesMakerRunMeta } from '../../Admin/shared';
 import type { BoardItem } from './types';
 import { blockingCodesOf, clientIdOf, makerOrigin, stagingCmsHref } from './lanes';
 import { boardFetch, readBoardJson } from './useBoardPoll';
@@ -55,6 +55,23 @@ export function fixActionElement(
 
 function labelFor(code: string): string {
   return LABELS[code] || `Blokkering ${code}`;
+}
+
+/** The fields the existing Maker tools read. Missing strings stay empty. */
+function makerRunMeta(item: BoardItem): SalesMakerRunMeta | null {
+  const runId = String(item.makerRun?.runId || '').trim();
+  if (!runId) return null;
+  return {
+    runId,
+    dashboardUrl: '',
+    previewUrl: '',
+    latestReadyStep: '',
+    latestStepStatus: '',
+    exportPath: '',
+    statusUpdatedAt: '',
+    industry: String(item.industry || ''),
+    createdAt: '',
+  };
 }
 
 /** One inline action per blocking code. Language and pages reuse the existing popups. */
@@ -176,7 +193,7 @@ export function BlockingFixActions({
           {origin && salesId ? (
             <MakerRunTools
               salesClientId={salesId}
-              client={{ id: salesId, makerRun: item.makerRun || null }}
+              client={{ id: salesId, makerRun: makerRunMeta(item) }}
               websiteMakerBaseUrl={origin}
               authHeaders={{ ...authHeaders(), ...developmentAuthHeaders() }}
               onReload={() => onChanged?.()}
