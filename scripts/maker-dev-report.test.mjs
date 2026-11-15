@@ -363,8 +363,9 @@ test('directive status: a host may set done once; accepted and rejected are staf
 
 test('run.dev.updated on the legacy callback answers 202 ignored and writes nothing; the generic branch does write', { timeout: 240_000 }, async (t) => {
   const callbackToken = `dev-report-callback-${Date.now()}`;
+  const adminPassword = `dev-report-${Date.now()}-pw`;
   const hub = await bootHub(
-    { ADMIN_USERNAME: 'dev-report-admin', ADMIN_PASSWORD: `dev-report-${Date.now()}-pw`, WEBSITE_MAKER_STATUS_CALLBACK_TOKEN: callbackToken, PERSIST_PRODUCTION_ENV: '0', HUB_SAFE_MODE: '1' },
+    { ADMIN_USERNAME: 'dev-report-admin', ADMIN_PASSWORD: adminPassword, WEBSITE_MAKER_STATUS_CALLBACK_TOKEN: callbackToken, PERSIST_PRODUCTION_ENV: '0', HUB_SAFE_MODE: '1' },
     { seed: (dir) => writeFileSync(join(dir, 'sales-clients.json'), JSON.stringify([{ id: CLIENT_ID, product: 'asoldi', businessName: 'Syn Salon AS', status: 'active', progression: { meetingHeld: true }, makerRun: { runId: RUN } }])) }
   );
   t.after(() => hub.stop());
@@ -375,6 +376,12 @@ test('run.dev.updated on the legacy callback answers 202 ignored and writes noth
     headers: { 'content-type': 'application/json', 'x-sales-callback-token': token },
     body: JSON.stringify(body),
   });
+  // The loop's first tick (and the store's own normalizing read) write right after boot; let both finish, then measure.
+  const adminToken = await hub.adminToken('dev-report-admin', adminPassword);
+  assert.ok(adminToken, 'admin login');
+  await new Promise((resolve) => setTimeout(resolve, 4000));
+  assert.equal((await fetch(`${hub.base}/api/admin/sales`, { headers: { authorization: `Bearer ${adminToken}` } })).status, 200);
+  await new Promise((resolve) => setTimeout(resolve, 1500));
   const before = read();
   const noAuth = await send(fixture.legacyCallback.body, 'wrong-token');
   assert.equal(noAuth.status, 401, 'the callback keeps its own auth in front');
@@ -396,13 +403,18 @@ test('step keys cms, dev and dev-verify and the dev summary round-trip through t
   writeFileSync(join(baseDir, 'sales-clients.json'), JSON.stringify([{ id: 'syn-steps', product: 'asoldi', businessName: 'Syn Steps AS', status: 'active', makerRun: { runId: 'syn-steps-run-1' } }]));
   sales.getSalesClients();
   const patch = { runId: 'syn-steps-run-1', steps: { 1: 'ready', 2: 'running', cms: 'ready', dev: 'running', 'dev-verify': 'idle' }, dev: { forged: true } };
-  const stored = sales.setSalesMakerRun('syn-steps', patch);
+  // A patch from a rep (the default call) cannot write the agent's tokens; the authenticated callback can.
+  const forged = sales.setSalesMakerRun('syn-steps', patch);
+  assert.equal(forged.makerRun.steps.cms, undefined);
+  assert.equal(forged.makerRun.steps.dev, undefined);
+  assert.equal(forged.makerRun.steps['1'], 'ready', 'ordinary keys still apply');
+  const stored = sales.setSalesMakerRun('syn-steps', patch, { devSteps: true });
   assert.equal(stored.makerRun.steps.cms, 'ready');
   assert.equal(stored.makerRun.steps.dev, 'running');
   assert.equal(stored.makerRun.steps['dev-verify'], 'idle');
   assert.equal(stored.makerRun.steps['1'], 'ready', 'the legacy keys are unchanged');
   assert.equal(stored.makerRun.dev, undefined, 'a generic patch cannot write the dev summary');
-  const again = sales.setSalesMakerRun('syn-steps', { steps: { 1: 'ready', dev: 'ready' } });
+  const again = sales.setSalesMakerRun('syn-steps', { steps: { 1: 'ready', dev: 'ready' } }, { devSteps: true });
   assert.equal(again.makerRun.steps.dev, 'ready');
   assert.equal(again.makerRun.steps.cms, 'ready', 'a token not in the patch is kept');
   const summary = reports.devSummaryOf(reportCase('review-initial').body, { receivedAt: '2026-12-01T09:12:00.000Z', reportRev: 1 });
@@ -411,5 +423,6 @@ test('step keys cms, dev and dev-verify and the dev summary round-trip through t
   const reread = sales.getSalesClientById('syn-steps');
   assert.deepEqual(reread.makerRun.dev, summary, 'the summary survives normalization');
   assert.equal(reread.makerRun.steps.dev, 'ready');
-  assert.equal(sales.setSalesMakerRun('syn-steps', { dev: { forged: true } }).makerRun.dev.sessionId, SESSION, 'a later generic patch leaves it alone');
+  assert.equal(sales.setSalesMakerRun('syn-steps', { dev: { forged: true } }, { devSteps: true }).makerRun.dev.sessionId, SESSION, 'a later patch leaves it alone');
+  assert.equal(sales.setSalesMakerRun('syn-steps', { steps: { dev: 'idle' } }).makerRun.steps.dev, 'ready', 'a rep patch cannot change an agent token');
 });

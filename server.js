@@ -14062,7 +14062,8 @@ app.post('/api/admin/sales/maker-status-callback', requireMakerHost('callback'),
   if (sanitizeText(linked.intakeStatus)) patch.intakeStatus = linked.intakeStatus;
   Object.assign(patch, makerProgressPatchFromHandoff(handoff));
 
-  const updated = sales.setSalesMakerRun(client.id, patch);
+  // This branch answers an authenticated Maker callback, so it may carry the developer agent's step tokens.
+  const updated = sales.setSalesMakerRun(client.id, patch, { devSteps: true });
   if (sanitizeText(patch.latestReadyStep) && resolveProdAdminBaseUrl()) {
     void syncSalesClientFromMakerRun({
       client: updated || client,

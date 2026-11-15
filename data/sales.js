@@ -1790,9 +1790,9 @@ export function setSalesTestFlag(id, isTest) {
   return updateSalesClient(id, { isTest: isTest === true });
 }
 
-export function setSalesMakerRun(id, makerPatch = {}) {
+export function setSalesMakerRun(id, makerPatch = {}, options = {}) {
   const current = getSalesClientById(id);
-  return updateSalesClient(id, { makerRun: mergeMakerRunPatch(current?.makerRun || {}, makerPatch) });
+  return updateSalesClient(id, { makerRun: mergeMakerRunPatch(current?.makerRun || {}, makerPatch, options) });
 }
 
 /**
