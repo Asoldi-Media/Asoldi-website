@@ -442,13 +442,19 @@ test('developmentGetLoopScope: with auto pilots the GET leaves their sites and o
   assert.equal(loopLib.developmentGetLoopScope(() => sales.getSalesClients()).owners, undefined, 'a paused loop hands everything back to the GET');
 });
 
-test('server.js wires the loop into the background plan and the development GET', () => {
+test('server.js wires the loop into the background plan; the development GET only reads and the loop makes its writes', () => {
   const source = readFileSync(join(root, 'server.js'), 'utf8').replace(/\r\n/g, '\n');
-  assert.match(source, /^ {4}delivery: \(\) => startDeliveryLoop\(\{ sales, hub, listDeveloperOwnerOptions: /m);
-  assert.match(source, /const loopScope = developmentGetLoopScope\(\(\) => sales\.getSalesClients\(\)\);/);
-  assert.match(source, /hub\.reconcileDeliveryPhases\(sales\.getSalesClients\(\), loopScope\.reconcile\);/);
-  assert.match(source, /^ {2}sales\.seedExistingDeveloperOwnersToAdmin\(\);$/m, 'the one-time owner seed in the GET is unscoped, as before');
-  assert.match(source, /if \(onlyAdmin\) sales\.assignOpenDeveloperClientsToAdmin\(loopScope\.owners\);/);
+  assert.match(source, /^ {4}delivery: \(\) => startDeliveryLoop\(\{$/m);
+  assert.match(source, /legacyDevelopmentWrites: \(\{ settings \} = \{\}\) => runLegacyDevelopmentWrites\(/);
+  const get = source.slice(source.indexOf("app.get('/api/admin/development', developmentAuth"), source.indexOf("app.post('/api/admin/development/:id/assign'"));
+  for (const write of ['reconcileDeliveryPhases', 'seedExistingDeveloperOwnersToAdmin', 'assignOpenDeveloperClientsToAdmin']) {
+    assert.ok(!get.includes(write), `the GET does not call ${write}`);
+  }
+  const board = readFileSync(join(root, 'lib', 'development-board.js'), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(board, /const loopScope = developmentGetLoopScope\(\(\) => sales\.getSalesClients\(\), \{ dataDir, settings \}\);/);
+  assert.match(board, /hub\.reconcileDeliveryPhases\(sales\.getSalesClients\(\), loopScope\.reconcile\);/);
+  assert.match(board, /^ {4}sales\.seedExistingDeveloperOwnersToAdmin\(\);$/m, 'the one-time owner seed is unscoped, as before');
+  assert.match(board, /if \(onlyAdmin\) \{\n\s+sales\.assignOpenDeveloperClientsToAdmin\(loopScope\.owners\);/);
   assert.match(source, /createMakerAuth\(\{ legacyHolder: MAKER_CALLBACK_TOKEN_HOLDER, dataDir: getPersistentDataDir\(\), onAlert: noteMakerAuthAlert \}\)/);
 });
 

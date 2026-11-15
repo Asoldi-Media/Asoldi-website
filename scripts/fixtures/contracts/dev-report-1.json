@@ -1,0 +1,1755 @@
+{
+  "$comment": "Synthetic fixture for the dev-report/1 routes. Invented clients, sites and texts only: .test and .example hosts, reserved numbers, no real run.",
+  "contract": "dev-report/1",
+  "provenance": {
+    "scope": "file",
+    "kind": "contract-rule",
+    "source": "the dev-report/1 contract"
+  },
+  "limits": {
+    "maxBodyBytes": 65536,
+    "maxShotBytes": 153600,
+    "maxShotsPerSession": 12,
+    "maxDirectives": 200,
+    "maxQuestions": 50,
+    "maxThumbs": 12,
+    "maxRenderRoutes": 60
+  },
+  "reports": [
+    {
+      "id": "review-initial",
+      "valid": true,
+      "route": {
+        "runId": "syn-salon-run-0001"
+      },
+      "body": {
+        "contract": "dev-report/1",
+        "runId": "syn-salon-run-0001",
+        "salesClientId": "syn-salon-client",
+        "reportRev": 1,
+        "dev": {
+          "sessionId": "ds_20261201_0900_a1",
+          "kind": "initial",
+          "status": "review",
+          "profile": "test",
+          "jobId": null,
+          "briefHash": "sha256:c4c0a5054a09953fb7e53c8e050bb48ac5236f7440c30304e832c71732541b0c",
+          "costUsd": 0.21,
+          "startedAt": "2026-12-01T09:00:00.000Z",
+          "endedAt": "2026-12-01T09:11:40.000Z",
+          "counts": {
+            "tasks": 6,
+            "done": 4,
+            "needsHuman": 1,
+            "failed": 1,
+            "reverted": 0
+          },
+          "auditBefore": {
+            "hard": 7,
+            "soft": 12
+          },
+          "auditAfter": {
+            "hard": 0,
+            "soft": 3
+          },
+          "directives": [
+            {
+              "id": "dir-synsal001",
+              "status": "applied",
+              "taskId": "t02"
+            },
+            {
+              "id": "dir-synsal002",
+              "status": "lock"
+            },
+            {
+              "id": "dir-synsal003",
+              "status": "question"
+            },
+            {
+              "id": "dir-synsal004",
+              "status": "needs-human",
+              "reason": "Flytting av seksjoner gjøres manuelt"
+            },
+            {
+              "id": "dir-synsal005",
+              "status": "skipped",
+              "reason": "Utenfor avtalt omfang"
+            },
+            {
+              "id": "dir-synsal006",
+              "status": "failed",
+              "taskId": "t05"
+            }
+          ],
+          "questions": [
+            {
+              "id": "q1",
+              "text": "Har vi et bilde av lokalet i høy oppløsning?",
+              "askClient": true
+            }
+          ],
+          "qaProposal": {
+            "textOk": true,
+            "mediaOk": false,
+            "responsiveOk": true,
+            "evidence": "1 bildefelt uten godkjent bilde"
+          },
+          "thumbs": [
+            {
+              "taskId": "t02",
+              "before": "thumb_01",
+              "after": "thumb_02"
+            }
+          ],
+          "steps": {
+            "cms": "ready",
+            "dev": "ready",
+            "dev-verify": "ready"
+          },
+          "render": {
+            "status": "ok",
+            "required": true,
+            "endpoint": "172.28.7.11:9222",
+            "widths": [
+              390,
+              768,
+              1280
+            ],
+            "routes": [
+              {
+                "route": "/",
+                "captures": {
+                  "390": 3,
+                  "768": 3,
+                  "1280": 3
+                }
+              },
+              {
+                "route": "/kontakt",
+                "captures": {
+                  "390": 2,
+                  "768": 2,
+                  "1280": 2
+                }
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "status": 200,
+        "stored": true
+      }
+    },
+    {
+      "id": "iteration-accepted",
+      "valid": true,
+      "route": {
+        "runId": "syn-salon-run-0001"
+      },
+      "body": {
+        "contract": "dev-report/1",
+        "runId": "syn-salon-run-0001",
+        "salesClientId": "syn-salon-client",
+        "reportRev": 2,
+        "dev": {
+          "sessionId": "ds_20261208_1000_b1",
+          "kind": "iteration",
+          "status": "accepted",
+          "profile": "test",
+          "jobId": "job_synsalon0002",
+          "briefHash": "sha256:c4c0a5054a09953fb7e53c8e050bb48ac5236f7440c30304e832c71732541b0c",
+          "costUsd": 0.21,
+          "startedAt": "2026-12-01T09:00:00.000Z",
+          "endedAt": "2026-12-01T09:11:40.000Z",
+          "counts": {
+            "tasks": 3,
+            "done": 3,
+            "needsHuman": 0,
+            "failed": 0,
+            "reverted": 0
+          },
+          "auditBefore": {
+            "hard": 0,
+            "soft": 3
+          },
+          "auditAfter": {
+            "hard": 0,
+            "soft": 2
+          },
+          "directives": [
+            {
+              "id": "dir-synsal010",
+              "status": "applied",
+              "taskId": "t01"
+            },
+            {
+              "id": "dir-synsal011",
+              "status": "applied",
+              "taskId": "t02"
+            },
+            {
+              "id": "dir-synsal012",
+              "status": "lock"
+            }
+          ],
+          "questions": [],
+          "qaProposal": {
+            "textOk": true,
+            "mediaOk": false,
+            "responsiveOk": true,
+            "evidence": "1 bildefelt uten godkjent bilde"
+          },
+          "thumbs": [],
+          "steps": {
+            "cms": "ready",
+            "dev": "ready",
+            "dev-verify": "ready"
+          },
+          "render": {
+            "status": "ok",
+            "required": true,
+            "endpoint": "172.28.7.11:9222",
+            "widths": [
+              390,
+              768,
+              1280
+            ],
+            "routes": [
+              {
+                "route": "/",
+                "captures": {
+                  "390": 3,
+                  "768": 3,
+                  "1280": 3
+                }
+              },
+              {
+                "route": "/kontakt",
+                "captures": {
+                  "390": 2,
+                  "768": 2,
+                  "1280": 2
+                }
+              }
+            ]
+          },
+          "changesSinceClientPreview": [
+            "Åpningstiden for lørdag er rettet",
+            "Varigheten for barneklipp er rettet",
+            "Bildet i teamseksjonen er snudd riktig vei"
+          ]
+        }
+      },
+      "expect": {
+        "status": 200,
+        "stored": true
+      }
+    },
+    {
+      "id": "change-request-review",
+      "valid": true,
+      "route": {
+        "runId": "syn-salon-run-0001"
+      },
+      "body": {
+        "contract": "dev-report/1",
+        "runId": "syn-salon-run-0001",
+        "salesClientId": "syn-salon-client",
+        "reportRev": 1,
+        "dev": {
+          "sessionId": "ds_20261210_1400_c1",
+          "kind": "change_request",
+          "status": "review",
+          "profile": "test",
+          "jobId": "job_synsalon0003",
+          "briefHash": "sha256:c4c0a5054a09953fb7e53c8e050bb48ac5236f7440c30304e832c71732541b0c",
+          "costUsd": 0.21,
+          "startedAt": "2026-12-01T09:00:00.000Z",
+          "endedAt": "2026-12-01T09:11:40.000Z",
+          "counts": {
+            "tasks": 1,
+            "done": 1,
+            "needsHuman": 0,
+            "failed": 0,
+            "reverted": 0
+          },
+          "auditBefore": {
+            "hard": 7,
+            "soft": 12
+          },
+          "auditAfter": {
+            "hard": 0,
+            "soft": 3
+          },
+          "directives": [],
+          "questions": [],
+          "qaProposal": {
+            "textOk": true,
+            "mediaOk": false,
+            "responsiveOk": true,
+            "evidence": "1 bildefelt uten godkjent bilde"
+          },
+          "thumbs": [
+            {
+              "taskId": "t01",
+              "before": "thumb_01",
+              "after": "thumb_02"
+            }
+          ],
+          "steps": {
+            "cms": "ready",
+            "dev": "ready",
+            "dev-verify": "ready"
+          },
+          "render": {
+            "status": "ok",
+            "required": true,
+            "endpoint": "172.28.7.11:9222",
+            "widths": [
+              390,
+              768,
+              1280
+            ],
+            "routes": [
+              {
+                "route": "/",
+                "captures": {
+                  "390": 3,
+                  "768": 3,
+                  "1280": 3
+                }
+              },
+              {
+                "route": "/kontakt",
+                "captures": {
+                  "390": 2,
+                  "768": 2,
+                  "1280": 2
+                }
+              }
+            ]
+          },
+          "quotaUnits": 1,
+          "changeRequestId": "cr_k3v9q2m7x1"
+        }
+      },
+      "expect": {
+        "status": 200,
+        "stored": true,
+        "agentQuotaUnits": 1
+      }
+    },
+    {
+      "id": "render-unavailable",
+      "valid": true,
+      "route": {
+        "runId": "syn-salon-run-0001"
+      },
+      "body": {
+        "contract": "dev-report/1",
+        "runId": "syn-salon-run-0001",
+        "salesClientId": "syn-salon-client",
+        "reportRev": 1,
+        "dev": {
+          "sessionId": "ds_20261201_1100_d1",
+          "kind": "initial",
+          "status": "render-unavailable",
+          "profile": "test",
+          "jobId": null,
+          "briefHash": "sha256:c4c0a5054a09953fb7e53c8e050bb48ac5236f7440c30304e832c71732541b0c",
+          "costUsd": 0,
+          "startedAt": "2026-12-01T09:00:00.000Z",
+          "endedAt": "2026-12-01T11:00:20.000Z",
+          "counts": {
+            "tasks": 0,
+            "done": 0,
+            "needsHuman": 0,
+            "failed": 0,
+            "reverted": 0
+          },
+          "auditBefore": {
+            "hard": 7,
+            "soft": 12
+          },
+          "auditAfter": {
+            "hard": 7,
+            "soft": 12
+          },
+          "directives": [
+            {
+              "id": "dir-synsal001",
+              "status": "pending"
+            },
+            {
+              "id": "dir-synsal002",
+              "status": "pending"
+            },
+            {
+              "id": "dir-synsal003",
+              "status": "pending"
+            },
+            {
+              "id": "dir-synsal004",
+              "status": "pending"
+            },
+            {
+              "id": "dir-synsal005",
+              "status": "pending"
+            },
+            {
+              "id": "dir-synsal006",
+              "status": "pending"
+            }
+          ],
+          "questions": [],
+          "qaProposal": {
+            "textOk": true,
+            "mediaOk": false,
+            "responsiveOk": true,
+            "evidence": "1 bildefelt uten godkjent bilde"
+          },
+          "thumbs": [],
+          "steps": {
+            "cms": "ready",
+            "dev": "failed",
+            "dev-verify": "idle"
+          },
+          "render": {
+            "status": "render-unavailable",
+            "required": true,
+            "endpoint": "",
+            "widths": [
+              390,
+              768,
+              1280
+            ],
+            "routes": []
+          }
+        }
+      },
+      "expect": {
+        "status": 200,
+        "stored": true,
+        "renderMissing": true
+      }
+    },
+    {
+      "id": "duplicate-rev",
+      "valid": true,
+      "sendAfter": "review-initial",
+      "route": {
+        "runId": "syn-salon-run-0001"
+      },
+      "body": {
+        "contract": "dev-report/1",
+        "runId": "syn-salon-run-0001",
+        "salesClientId": "syn-salon-client",
+        "reportRev": 1,
+        "dev": {
+          "sessionId": "ds_20261201_0900_a1",
+          "kind": "initial",
+          "status": "review",
+          "profile": "test",
+          "jobId": null,
+          "briefHash": "sha256:c4c0a5054a09953fb7e53c8e050bb48ac5236f7440c30304e832c71732541b0c",
+          "costUsd": 0.21,
+          "startedAt": "2026-12-01T09:00:00.000Z",
+          "endedAt": "2026-12-01T09:11:40.000Z",
+          "counts": {
+            "tasks": 6,
+            "done": 4,
+            "needsHuman": 1,
+            "failed": 1,
+            "reverted": 0
+          },
+          "auditBefore": {
+            "hard": 7,
+            "soft": 12
+          },
+          "auditAfter": {
+            "hard": 0,
+            "soft": 3
+          },
+          "directives": [
+            {
+              "id": "dir-synsal001",
+              "status": "applied",
+              "taskId": "t02"
+            },
+            {
+              "id": "dir-synsal002",
+              "status": "lock"
+            },
+            {
+              "id": "dir-synsal003",
+              "status": "question"
+            },
+            {
+              "id": "dir-synsal004",
+              "status": "needs-human",
+              "reason": "Flytting av seksjoner gjøres manuelt"
+            },
+            {
+              "id": "dir-synsal005",
+              "status": "skipped",
+              "reason": "Utenfor avtalt omfang"
+            },
+            {
+              "id": "dir-synsal006",
+              "status": "failed",
+              "taskId": "t05"
+            }
+          ],
+          "questions": [
+            {
+              "id": "q1",
+              "text": "Har vi et bilde av lokalet i høy oppløsning?",
+              "askClient": true
+            }
+          ],
+          "qaProposal": {
+            "textOk": true,
+            "mediaOk": false,
+            "responsiveOk": true,
+            "evidence": "1 bildefelt uten godkjent bilde"
+          },
+          "thumbs": [
+            {
+              "taskId": "t02",
+              "before": "thumb_01",
+              "after": "thumb_02"
+            }
+          ],
+          "steps": {
+            "cms": "ready",
+            "dev": "ready",
+            "dev-verify": "ready"
+          },
+          "render": {
+            "status": "ok",
+            "required": true,
+            "endpoint": "172.28.7.11:9222",
+            "widths": [
+              390,
+              768,
+              1280
+            ],
+            "routes": [
+              {
+                "route": "/",
+                "captures": {
+                  "390": 3,
+                  "768": 3,
+                  "1280": 3
+                }
+              },
+              {
+                "route": "/kontakt",
+                "captures": {
+                  "390": 2,
+                  "768": 2,
+                  "1280": 2
+                }
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "status": 200,
+        "stored": false,
+        "duplicate": true
+      }
+    },
+    {
+      "id": "loopback-url",
+      "valid": false,
+      "route": {
+        "runId": "syn-salon-run-0001"
+      },
+      "body": {
+        "contract": "dev-report/1",
+        "runId": "syn-salon-run-0001",
+        "salesClientId": "syn-salon-client",
+        "reportRev": 1,
+        "dev": {
+          "sessionId": "ds_20261201_0900_a1",
+          "kind": "initial",
+          "status": "review",
+          "profile": "test",
+          "jobId": null,
+          "briefHash": "sha256:c4c0a5054a09953fb7e53c8e050bb48ac5236f7440c30304e832c71732541b0c",
+          "costUsd": 0.21,
+          "startedAt": "2026-12-01T09:00:00.000Z",
+          "endedAt": "2026-12-01T09:11:40.000Z",
+          "counts": {
+            "tasks": 6,
+            "done": 4,
+            "needsHuman": 1,
+            "failed": 1,
+            "reverted": 0
+          },
+          "auditBefore": {
+            "hard": 7,
+            "soft": 12
+          },
+          "auditAfter": {
+            "hard": 0,
+            "soft": 3
+          },
+          "directives": [
+            {
+              "id": "dir-synsal001",
+              "status": "applied",
+              "taskId": "t02"
+            },
+            {
+              "id": "dir-synsal002",
+              "status": "lock"
+            },
+            {
+              "id": "dir-synsal003",
+              "status": "question"
+            },
+            {
+              "id": "dir-synsal004",
+              "status": "needs-human",
+              "reason": "Flytting av seksjoner gjøres manuelt"
+            },
+            {
+              "id": "dir-synsal005",
+              "status": "skipped",
+              "reason": "Utenfor avtalt omfang"
+            },
+            {
+              "id": "dir-synsal006",
+              "status": "failed",
+              "taskId": "t05"
+            }
+          ],
+          "questions": [
+            {
+              "id": "q1",
+              "text": "Se http://127.0.0.1:3000/run/syn-salon-run-0001",
+              "askClient": true
+            }
+          ],
+          "qaProposal": {
+            "textOk": true,
+            "mediaOk": false,
+            "responsiveOk": true,
+            "evidence": "1 bildefelt uten godkjent bilde"
+          },
+          "thumbs": [
+            {
+              "taskId": "t02",
+              "before": "thumb_01",
+              "after": "thumb_02"
+            }
+          ],
+          "steps": {
+            "cms": "ready",
+            "dev": "ready",
+            "dev-verify": "ready"
+          },
+          "render": {
+            "status": "ok",
+            "required": true,
+            "endpoint": "172.28.7.11:9222",
+            "widths": [
+              390,
+              768,
+              1280
+            ],
+            "routes": [
+              {
+                "route": "/",
+                "captures": {
+                  "390": 3,
+                  "768": 3,
+                  "1280": 3
+                }
+              },
+              {
+                "route": "/kontakt",
+                "captures": {
+                  "390": 2,
+                  "768": 2,
+                  "1280": 2
+                }
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "status": 422,
+        "code": "forbidden-content",
+        "field": "dev.questions[0].text"
+      }
+    },
+    {
+      "id": "private-url",
+      "valid": false,
+      "route": {
+        "runId": "syn-salon-run-0001"
+      },
+      "body": {
+        "contract": "dev-report/1",
+        "runId": "syn-salon-run-0001",
+        "salesClientId": "syn-salon-client",
+        "reportRev": 1,
+        "dev": {
+          "sessionId": "ds_20261201_0900_a1",
+          "kind": "initial",
+          "status": "review",
+          "profile": "test",
+          "jobId": null,
+          "briefHash": "sha256:c4c0a5054a09953fb7e53c8e050bb48ac5236f7440c30304e832c71732541b0c",
+          "costUsd": 0.21,
+          "startedAt": "2026-12-01T09:00:00.000Z",
+          "endedAt": "2026-12-01T09:11:40.000Z",
+          "counts": {
+            "tasks": 6,
+            "done": 4,
+            "needsHuman": 1,
+            "failed": 1,
+            "reverted": 0
+          },
+          "auditBefore": {
+            "hard": 7,
+            "soft": 12
+          },
+          "auditAfter": {
+            "hard": 0,
+            "soft": 3
+          },
+          "directives": [
+            {
+              "id": "dir-synsal001",
+              "status": "applied",
+              "taskId": "t02"
+            },
+            {
+              "id": "dir-synsal002",
+              "status": "lock"
+            },
+            {
+              "id": "dir-synsal003",
+              "status": "question"
+            },
+            {
+              "id": "dir-synsal004",
+              "status": "needs-human",
+              "reason": "Flytting av seksjoner gjøres manuelt"
+            },
+            {
+              "id": "dir-synsal005",
+              "status": "skipped",
+              "reason": "Utenfor avtalt omfang"
+            },
+            {
+              "id": "dir-synsal006",
+              "status": "failed",
+              "taskId": "t05"
+            }
+          ],
+          "questions": [
+            {
+              "id": "q1",
+              "text": "Har vi et bilde av lokalet i høy oppløsning?",
+              "askClient": true
+            }
+          ],
+          "qaProposal": {
+            "textOk": true,
+            "mediaOk": false,
+            "responsiveOk": true,
+            "evidence": "Bilde fra http://192.168.1.20/bilde.jpg"
+          },
+          "thumbs": [
+            {
+              "taskId": "t02",
+              "before": "thumb_01",
+              "after": "thumb_02"
+            }
+          ],
+          "steps": {
+            "cms": "ready",
+            "dev": "ready",
+            "dev-verify": "ready"
+          },
+          "render": {
+            "status": "ok",
+            "required": true,
+            "endpoint": "172.28.7.11:9222",
+            "widths": [
+              390,
+              768,
+              1280
+            ],
+            "routes": [
+              {
+                "route": "/",
+                "captures": {
+                  "390": 3,
+                  "768": 3,
+                  "1280": 3
+                }
+              },
+              {
+                "route": "/kontakt",
+                "captures": {
+                  "390": 2,
+                  "768": 2,
+                  "1280": 2
+                }
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "status": 422,
+        "code": "forbidden-content",
+        "field": "dev.qaProposal.evidence"
+      }
+    },
+    {
+      "id": "endpoint-with-scheme",
+      "valid": false,
+      "route": {
+        "runId": "syn-salon-run-0001"
+      },
+      "body": {
+        "contract": "dev-report/1",
+        "runId": "syn-salon-run-0001",
+        "salesClientId": "syn-salon-client",
+        "reportRev": 1,
+        "dev": {
+          "sessionId": "ds_20261201_0900_a1",
+          "kind": "initial",
+          "status": "review",
+          "profile": "test",
+          "jobId": null,
+          "briefHash": "sha256:c4c0a5054a09953fb7e53c8e050bb48ac5236f7440c30304e832c71732541b0c",
+          "costUsd": 0.21,
+          "startedAt": "2026-12-01T09:00:00.000Z",
+          "endedAt": "2026-12-01T09:11:40.000Z",
+          "counts": {
+            "tasks": 6,
+            "done": 4,
+            "needsHuman": 1,
+            "failed": 1,
+            "reverted": 0
+          },
+          "auditBefore": {
+            "hard": 7,
+            "soft": 12
+          },
+          "auditAfter": {
+            "hard": 0,
+            "soft": 3
+          },
+          "directives": [
+            {
+              "id": "dir-synsal001",
+              "status": "applied",
+              "taskId": "t02"
+            },
+            {
+              "id": "dir-synsal002",
+              "status": "lock"
+            },
+            {
+              "id": "dir-synsal003",
+              "status": "question"
+            },
+            {
+              "id": "dir-synsal004",
+              "status": "needs-human",
+              "reason": "Flytting av seksjoner gjøres manuelt"
+            },
+            {
+              "id": "dir-synsal005",
+              "status": "skipped",
+              "reason": "Utenfor avtalt omfang"
+            },
+            {
+              "id": "dir-synsal006",
+              "status": "failed",
+              "taskId": "t05"
+            }
+          ],
+          "questions": [
+            {
+              "id": "q1",
+              "text": "Har vi et bilde av lokalet i høy oppløsning?",
+              "askClient": true
+            }
+          ],
+          "qaProposal": {
+            "textOk": true,
+            "mediaOk": false,
+            "responsiveOk": true,
+            "evidence": "1 bildefelt uten godkjent bilde"
+          },
+          "thumbs": [
+            {
+              "taskId": "t02",
+              "before": "thumb_01",
+              "after": "thumb_02"
+            }
+          ],
+          "steps": {
+            "cms": "ready",
+            "dev": "ready",
+            "dev-verify": "ready"
+          },
+          "render": {
+            "status": "ok",
+            "required": true,
+            "endpoint": "http://172.28.7.11:9222",
+            "widths": [
+              390,
+              768,
+              1280
+            ],
+            "routes": [
+              {
+                "route": "/",
+                "captures": {
+                  "390": 3,
+                  "768": 3,
+                  "1280": 3
+                }
+              },
+              {
+                "route": "/kontakt",
+                "captures": {
+                  "390": 2,
+                  "768": 2,
+                  "1280": 2
+                }
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "status": 422,
+        "code": "forbidden-content",
+        "field": "dev.render.endpoint"
+      }
+    },
+    {
+      "id": "unknown-field",
+      "valid": false,
+      "route": {
+        "runId": "syn-salon-run-0001"
+      },
+      "body": {
+        "contract": "dev-report/1",
+        "runId": "syn-salon-run-0001",
+        "salesClientId": "syn-salon-client",
+        "reportRev": 1,
+        "dev": {
+          "sessionId": "ds_20261201_0900_a1",
+          "kind": "initial",
+          "status": "review",
+          "profile": "test",
+          "jobId": null,
+          "briefHash": "sha256:c4c0a5054a09953fb7e53c8e050bb48ac5236f7440c30304e832c71732541b0c",
+          "costUsd": 0.21,
+          "startedAt": "2026-12-01T09:00:00.000Z",
+          "endedAt": "2026-12-01T09:11:40.000Z",
+          "counts": {
+            "tasks": 6,
+            "done": 4,
+            "needsHuman": 1,
+            "failed": 1,
+            "reverted": 0
+          },
+          "auditBefore": {
+            "hard": 7,
+            "soft": 12
+          },
+          "auditAfter": {
+            "hard": 0,
+            "soft": 3
+          },
+          "directives": [
+            {
+              "id": "dir-synsal001",
+              "status": "applied",
+              "taskId": "t02"
+            },
+            {
+              "id": "dir-synsal002",
+              "status": "lock"
+            },
+            {
+              "id": "dir-synsal003",
+              "status": "question"
+            },
+            {
+              "id": "dir-synsal004",
+              "status": "needs-human",
+              "reason": "Flytting av seksjoner gjøres manuelt"
+            },
+            {
+              "id": "dir-synsal005",
+              "status": "skipped",
+              "reason": "Utenfor avtalt omfang"
+            },
+            {
+              "id": "dir-synsal006",
+              "status": "failed",
+              "taskId": "t05"
+            }
+          ],
+          "questions": [
+            {
+              "id": "q1",
+              "text": "Har vi et bilde av lokalet i høy oppløsning?",
+              "askClient": true
+            }
+          ],
+          "qaProposal": {
+            "textOk": true,
+            "mediaOk": false,
+            "responsiveOk": true,
+            "evidence": "1 bildefelt uten godkjent bilde"
+          },
+          "thumbs": [
+            {
+              "taskId": "t02",
+              "before": "thumb_01",
+              "after": "thumb_02"
+            }
+          ],
+          "steps": {
+            "cms": "ready",
+            "dev": "ready",
+            "dev-verify": "ready"
+          },
+          "render": {
+            "status": "ok",
+            "required": true,
+            "endpoint": "172.28.7.11:9222",
+            "widths": [
+              390,
+              768,
+              1280
+            ],
+            "routes": [
+              {
+                "route": "/",
+                "captures": {
+                  "390": 3,
+                  "768": 3,
+                  "1280": 3
+                }
+              },
+              {
+                "route": "/kontakt",
+                "captures": {
+                  "390": 2,
+                  "768": 2,
+                  "1280": 2
+                }
+              }
+            ]
+          },
+          "extra": true
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "bad-report",
+        "field": "dev.extra"
+      }
+    },
+    {
+      "id": "directive-twice",
+      "valid": false,
+      "route": {
+        "runId": "syn-salon-run-0001"
+      },
+      "body": {
+        "contract": "dev-report/1",
+        "runId": "syn-salon-run-0001",
+        "salesClientId": "syn-salon-client",
+        "reportRev": 1,
+        "dev": {
+          "sessionId": "ds_20261201_0900_a1",
+          "kind": "initial",
+          "status": "review",
+          "profile": "test",
+          "jobId": null,
+          "briefHash": "sha256:c4c0a5054a09953fb7e53c8e050bb48ac5236f7440c30304e832c71732541b0c",
+          "costUsd": 0.21,
+          "startedAt": "2026-12-01T09:00:00.000Z",
+          "endedAt": "2026-12-01T09:11:40.000Z",
+          "counts": {
+            "tasks": 6,
+            "done": 4,
+            "needsHuman": 1,
+            "failed": 1,
+            "reverted": 0
+          },
+          "auditBefore": {
+            "hard": 7,
+            "soft": 12
+          },
+          "auditAfter": {
+            "hard": 0,
+            "soft": 3
+          },
+          "directives": [
+            {
+              "id": "dir-synsal001",
+              "status": "applied",
+              "taskId": "t02"
+            },
+            {
+              "id": "dir-synsal002",
+              "status": "lock"
+            },
+            {
+              "id": "dir-synsal003",
+              "status": "question"
+            },
+            {
+              "id": "dir-synsal004",
+              "status": "needs-human",
+              "reason": "Flytting av seksjoner gjøres manuelt"
+            },
+            {
+              "id": "dir-synsal005",
+              "status": "skipped",
+              "reason": "Utenfor avtalt omfang"
+            },
+            {
+              "id": "dir-synsal006",
+              "status": "failed",
+              "taskId": "t05"
+            },
+            {
+              "id": "dir-synsal001",
+              "status": "failed",
+              "taskId": "t02"
+            }
+          ],
+          "questions": [
+            {
+              "id": "q1",
+              "text": "Har vi et bilde av lokalet i høy oppløsning?",
+              "askClient": true
+            }
+          ],
+          "qaProposal": {
+            "textOk": true,
+            "mediaOk": false,
+            "responsiveOk": true,
+            "evidence": "1 bildefelt uten godkjent bilde"
+          },
+          "thumbs": [
+            {
+              "taskId": "t02",
+              "before": "thumb_01",
+              "after": "thumb_02"
+            }
+          ],
+          "steps": {
+            "cms": "ready",
+            "dev": "ready",
+            "dev-verify": "ready"
+          },
+          "render": {
+            "status": "ok",
+            "required": true,
+            "endpoint": "172.28.7.11:9222",
+            "widths": [
+              390,
+              768,
+              1280
+            ],
+            "routes": [
+              {
+                "route": "/",
+                "captures": {
+                  "390": 3,
+                  "768": 3,
+                  "1280": 3
+                }
+              },
+              {
+                "route": "/kontakt",
+                "captures": {
+                  "390": 2,
+                  "768": 2,
+                  "1280": 2
+                }
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "bad-report",
+        "field": "dev.directives"
+      }
+    },
+    {
+      "id": "skipped-without-reason",
+      "valid": false,
+      "route": {
+        "runId": "syn-salon-run-0001"
+      },
+      "body": {
+        "contract": "dev-report/1",
+        "runId": "syn-salon-run-0001",
+        "salesClientId": "syn-salon-client",
+        "reportRev": 1,
+        "dev": {
+          "sessionId": "ds_20261201_0900_a1",
+          "kind": "initial",
+          "status": "review",
+          "profile": "test",
+          "jobId": null,
+          "briefHash": "sha256:c4c0a5054a09953fb7e53c8e050bb48ac5236f7440c30304e832c71732541b0c",
+          "costUsd": 0.21,
+          "startedAt": "2026-12-01T09:00:00.000Z",
+          "endedAt": "2026-12-01T09:11:40.000Z",
+          "counts": {
+            "tasks": 6,
+            "done": 4,
+            "needsHuman": 1,
+            "failed": 1,
+            "reverted": 0
+          },
+          "auditBefore": {
+            "hard": 7,
+            "soft": 12
+          },
+          "auditAfter": {
+            "hard": 0,
+            "soft": 3
+          },
+          "directives": [
+            {
+              "id": "dir-synsal001",
+              "status": "applied",
+              "taskId": "t02"
+            },
+            {
+              "id": "dir-synsal002",
+              "status": "lock"
+            },
+            {
+              "id": "dir-synsal003",
+              "status": "question"
+            },
+            {
+              "id": "dir-synsal004",
+              "status": "needs-human",
+              "reason": "Flytting av seksjoner gjøres manuelt"
+            },
+            {
+              "id": "dir-synsal005",
+              "status": "skipped"
+            },
+            {
+              "id": "dir-synsal006",
+              "status": "failed",
+              "taskId": "t05"
+            }
+          ],
+          "questions": [
+            {
+              "id": "q1",
+              "text": "Har vi et bilde av lokalet i høy oppløsning?",
+              "askClient": true
+            }
+          ],
+          "qaProposal": {
+            "textOk": true,
+            "mediaOk": false,
+            "responsiveOk": true,
+            "evidence": "1 bildefelt uten godkjent bilde"
+          },
+          "thumbs": [
+            {
+              "taskId": "t02",
+              "before": "thumb_01",
+              "after": "thumb_02"
+            }
+          ],
+          "steps": {
+            "cms": "ready",
+            "dev": "ready",
+            "dev-verify": "ready"
+          },
+          "render": {
+            "status": "ok",
+            "required": true,
+            "endpoint": "172.28.7.11:9222",
+            "widths": [
+              390,
+              768,
+              1280
+            ],
+            "routes": [
+              {
+                "route": "/",
+                "captures": {
+                  "390": 3,
+                  "768": 3,
+                  "1280": 3
+                }
+              },
+              {
+                "route": "/kontakt",
+                "captures": {
+                  "390": 2,
+                  "768": 2,
+                  "1280": 2
+                }
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "bad-report",
+        "field": "dev.directives[4].reason"
+      }
+    },
+    {
+      "id": "run-mismatch",
+      "valid": false,
+      "route": {
+        "runId": "syn-salon-run-0002"
+      },
+      "body": {
+        "contract": "dev-report/1",
+        "runId": "syn-salon-run-0001",
+        "salesClientId": "syn-salon-client",
+        "reportRev": 1,
+        "dev": {
+          "sessionId": "ds_20261201_0900_a1",
+          "kind": "initial",
+          "status": "review",
+          "profile": "test",
+          "jobId": null,
+          "briefHash": "sha256:c4c0a5054a09953fb7e53c8e050bb48ac5236f7440c30304e832c71732541b0c",
+          "costUsd": 0.21,
+          "startedAt": "2026-12-01T09:00:00.000Z",
+          "endedAt": "2026-12-01T09:11:40.000Z",
+          "counts": {
+            "tasks": 6,
+            "done": 4,
+            "needsHuman": 1,
+            "failed": 1,
+            "reverted": 0
+          },
+          "auditBefore": {
+            "hard": 7,
+            "soft": 12
+          },
+          "auditAfter": {
+            "hard": 0,
+            "soft": 3
+          },
+          "directives": [
+            {
+              "id": "dir-synsal001",
+              "status": "applied",
+              "taskId": "t02"
+            },
+            {
+              "id": "dir-synsal002",
+              "status": "lock"
+            },
+            {
+              "id": "dir-synsal003",
+              "status": "question"
+            },
+            {
+              "id": "dir-synsal004",
+              "status": "needs-human",
+              "reason": "Flytting av seksjoner gjøres manuelt"
+            },
+            {
+              "id": "dir-synsal005",
+              "status": "skipped",
+              "reason": "Utenfor avtalt omfang"
+            },
+            {
+              "id": "dir-synsal006",
+              "status": "failed",
+              "taskId": "t05"
+            }
+          ],
+          "questions": [
+            {
+              "id": "q1",
+              "text": "Har vi et bilde av lokalet i høy oppløsning?",
+              "askClient": true
+            }
+          ],
+          "qaProposal": {
+            "textOk": true,
+            "mediaOk": false,
+            "responsiveOk": true,
+            "evidence": "1 bildefelt uten godkjent bilde"
+          },
+          "thumbs": [
+            {
+              "taskId": "t02",
+              "before": "thumb_01",
+              "after": "thumb_02"
+            }
+          ],
+          "steps": {
+            "cms": "ready",
+            "dev": "ready",
+            "dev-verify": "ready"
+          },
+          "render": {
+            "status": "ok",
+            "required": true,
+            "endpoint": "172.28.7.11:9222",
+            "widths": [
+              390,
+              768,
+              1280
+            ],
+            "routes": [
+              {
+                "route": "/",
+                "captures": {
+                  "390": 3,
+                  "768": 3,
+                  "1280": 3
+                }
+              },
+              {
+                "route": "/kontakt",
+                "captures": {
+                  "390": 2,
+                  "768": 2,
+                  "1280": 2
+                }
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "status": 400,
+        "code": "bad-report",
+        "field": "runId"
+      }
+    }
+  ],
+  "recipes": [
+    {
+      "id": "oversize",
+      "base": "review-initial",
+      "note": "build at test time: set dev.qaProposal.evidence to ASCII 'x' repeated until the serialized body is exactly 65537 bytes (the size check runs before the field checks)",
+      "toTotalBytes": 65537,
+      "expect": {
+        "status": 413,
+        "code": "too-large"
+      }
+    },
+    {
+      "id": "exact-limit",
+      "base": "review-initial",
+      "note": "the same padding to exactly 65536 bytes passes the size check and then fails only the evidence length rule",
+      "toTotalBytes": 65536,
+      "expect": {
+        "status": 400,
+        "code": "bad-report",
+        "field": "dev.qaProposal.evidence"
+      }
+    }
+  ],
+  "auth": [
+    {
+      "id": "no-token",
+      "expect": {
+        "status": 401,
+        "code": "unauthorized"
+      },
+      "writes": 0
+    },
+    {
+      "id": "switch-off",
+      "note": "valid token, hub dev-report switch off",
+      "expect": {
+        "status": 404,
+        "code": "disabled"
+      },
+      "writes": 0
+    },
+    {
+      "id": "run-not-on-host",
+      "note": "valid token, the run belongs to no client with a job routed to this host and is not in its runIds",
+      "expect": {
+        "status": 403,
+        "code": "run-not-on-host"
+      },
+      "writes": 0
+    }
+  ],
+  "shots": [
+    {
+      "id": "first-shot",
+      "query": {
+        "sessionId": "ds_20261201_0900_a1",
+        "shot": "thumb_01"
+      },
+      "contentType": "image/jpeg",
+      "magicHex": "ffd8ff",
+      "bytes": 48213,
+      "expect": {
+        "status": 200
+      }
+    },
+    {
+      "id": "bad-shot-id",
+      "query": {
+        "sessionId": "ds_20261201_0900_a1",
+        "shot": "thumb_1"
+      },
+      "contentType": "image/jpeg",
+      "magicHex": "ffd8ff",
+      "bytes": 1000,
+      "expect": {
+        "status": 400,
+        "code": "bad-shot-id"
+      }
+    },
+    {
+      "id": "png",
+      "query": {
+        "sessionId": "ds_20261201_0900_a1",
+        "shot": "thumb_03"
+      },
+      "contentType": "image/png",
+      "magicHex": "89504e47",
+      "bytes": 1000,
+      "expect": {
+        "status": 415,
+        "code": "unsupported-media-type"
+      }
+    },
+    {
+      "id": "too-big",
+      "query": {
+        "sessionId": "ds_20261201_0900_a1",
+        "shot": "thumb_04"
+      },
+      "contentType": "image/jpeg",
+      "magicHex": "ffd8ff",
+      "bytes": 153601,
+      "expect": {
+        "status": 413,
+        "code": "too-large"
+      }
+    },
+    {
+      "id": "thirteenth",
+      "note": "after 12 stored shots for the session",
+      "query": {
+        "sessionId": "ds_20261201_0900_a1",
+        "shot": "thumb_13"
+      },
+      "contentType": "image/jpeg",
+      "magicHex": "ffd8ff",
+      "bytes": 1000,
+      "expect": {
+        "status": 409,
+        "code": "too-many-shots"
+      }
+    },
+    {
+      "id": "unknown-session",
+      "query": {
+        "sessionId": "ds_20261231_0000_z9",
+        "shot": "thumb_01"
+      },
+      "contentType": "image/jpeg",
+      "magicHex": "ffd8ff",
+      "bytes": 1000,
+      "expect": {
+        "status": 404,
+        "code": "unknown-session"
+      }
+    }
+  ],
+  "directiveStatus": [
+    {
+      "id": "host-done",
+      "caller": "maker-host",
+      "path": {
+        "clientId": "syn-salon-client",
+        "directiveId": "dir-synsal001"
+      },
+      "body": {
+        "status": "done",
+        "jobId": "job_synsalon0002",
+        "sessionId": "ds_20261208_1000_b1"
+      },
+      "expect": {
+        "status": 200,
+        "directiveStatus": "done",
+        "appliedInJobs": [
+          "job_synsalon0002"
+        ]
+      }
+    },
+    {
+      "id": "host-done-again",
+      "caller": "maker-host",
+      "sendAfter": "host-done",
+      "path": {
+        "clientId": "syn-salon-client",
+        "directiveId": "dir-synsal001"
+      },
+      "body": {
+        "status": "done",
+        "jobId": "job_synsalon0002",
+        "sessionId": "ds_20261208_1000_b1"
+      },
+      "expect": {
+        "status": 200,
+        "unchanged": true
+      }
+    },
+    {
+      "id": "host-accepted",
+      "caller": "maker-host",
+      "path": {
+        "clientId": "syn-salon-client",
+        "directiveId": "dir-synsal002"
+      },
+      "body": {
+        "status": "accepted"
+      },
+      "expect": {
+        "status": 403,
+        "code": "status-not-allowed"
+      },
+      "writes": 0
+    },
+    {
+      "id": "staff-rejected",
+      "caller": "developmentAuth",
+      "path": {
+        "clientId": "syn-salon-client",
+        "directiveId": "dir-synsal003"
+      },
+      "body": {
+        "status": "rejected",
+        "note": "Ikke aktuelt"
+      },
+      "expect": {
+        "status": 200,
+        "directiveStatus": "rejected"
+      }
+    },
+    {
+      "id": "bad-id",
+      "caller": "maker-host",
+      "path": {
+        "clientId": "syn-salon-client",
+        "directiveId": "d_hdr_1"
+      },
+      "body": {
+        "status": "done"
+      },
+      "expect": {
+        "status": 400,
+        "code": "bad-directive-id"
+      },
+      "writes": 0
+    },
+    {
+      "id": "no-credentials",
+      "caller": "none",
+      "path": {
+        "clientId": "syn-salon-client",
+        "directiveId": "dir-synsal001"
+      },
+      "body": {
+        "status": "done"
+      },
+      "expect": {
+        "status": 401
+      },
+      "writes": 0
+    }
+  ],
+  "jobResult": {
+    "id": "job-result-iteration",
+    "body": {
+      "runId": "syn-salon-run-0001",
+      "dev": {
+        "sessionId": "ds_20261208_1000_b1",
+        "kind": "iteration",
+        "status": "accepted",
+        "profile": "test",
+        "counts": {
+          "tasks": 3,
+          "done": 3,
+          "needsHuman": 0,
+          "failed": 0,
+          "reverted": 0
+        },
+        "auditBefore": {
+          "hard": 0,
+          "soft": 3
+        },
+        "auditAfter": {
+          "hard": 0,
+          "soft": 2
+        },
+        "steps": {
+          "cms": "ready",
+          "dev": "ready",
+          "dev-verify": "ready"
+        },
+        "render": {
+          "status": "ok",
+          "endpoint": "172.28.7.11:9222",
+          "routes": 2,
+          "minCaptures": 2
+        }
+      }
+    }
+  },
+  "legacyCallback": {
+    "id": "run-dev-updated",
+    "body": {
+      "event": "run.dev.updated",
+      "runId": "syn-salon-run-0001"
+    },
+    "expect": {
+      "status": 202,
+      "body": {
+        "ok": true,
+        "ignored": true
+      },
+      "clientSyncCalls": 0,
+      "previewPushCalls": 0
+    }
+  }
+}
