@@ -242,7 +242,7 @@ export function defaultAutomationSettings() {
     siteRekey: { enabled: false, paused: null },
     // --- end site rekey
     // --- legal clauses
-    // legalClauses: the site-authenticated route GET /api/site/legal/clauses (lib/routes/legal-clause-routes.js)
+    // legalClauses: the site-authenticated route GET /api/hub/legal/clauses (lib/routes/legal-clause-routes.js)
     // that gives a client CMS the clauses in which Asoldi appears as processor, for the privacy page the CMS
     // generates. Off: the route answers 404 disabled before any credential check, and a CMS treats that like
     // offline. In shadow mode the answer is marked shadow and a CMS shows it in the admin preview only. A paused
