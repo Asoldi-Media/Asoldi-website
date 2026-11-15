@@ -702,11 +702,11 @@ test('loop step: a chunk the model always fails on costs a bounded number of cal
 });
 
 test('tickSteps has the loop contract', () => {
-  assert.equal(brief.tickSteps.length, 1);
-  const [step] = brief.tickSteps;
-  assert.equal(step.name, 'brief-rebuild');
-  assert.equal(step.scope, 'client');
-  assert.equal(typeof step.run, 'function');
+  assert.deepEqual(brief.tickSteps.map((item) => item.name), ['brief-rebuild', 'iteration-pending']);
+  for (const item of brief.tickSteps) {
+    assert.equal(item.scope, 'client');
+    assert.equal(typeof item.run, 'function');
+  }
   assert.equal(brief.REBUILD_DEBOUNCE_MS, 600_000);
   assert.equal(brief.MAX_STARTS_PER_TICK, 2);
   assert.equal(brief.TICK_WALL_MS, 300_000);

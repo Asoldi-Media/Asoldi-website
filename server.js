@@ -124,6 +124,7 @@ import { createMakerAuth } from './lib/maker-auth.js';
 import { registerMakerHostRoutes } from './lib/routes/maker-host-routes.js';
 import { startDeliveryLoop } from './lib/delivery-loop.js';
 import { decorateBoardItems, runLegacyDevelopmentWrites } from './lib/development-board.js';
+import { notePendingIteration } from './lib/iteration-processing.js';
 import { startCmsFleetMonitor, startCmsWakePing } from './lib/cms-fleet-monitor.js';
 import { noteMakerAuthAlert } from './lib/delivery-alerts.js';
 import { noteDeveloperHandoffAccepted } from './lib/delivery-jobs.js';
@@ -12571,6 +12572,7 @@ function firefliesLinker() {
       sales,
       stripFromOffer: (clientId, meetingId) => stripMeetingFromClientOffer(clientId, meetingId),
       onWorkshopRecording: (clientId) => scheduleWorkshopProjectDocument(clientId),
+      onIterationRecording: (clientId, meetingId) => notePendingIteration({ clientId, meetingId, sales }),
       // Transcript archive and link audit; each writes nothing while its switch is off.
       onLinked: (clientId, meetingId, info) => privacyOnLinked(clientId, meetingId, info),
       onUnlinked: (clientId, meetingId) => privacyOnUnlinked(clientId, meetingId),

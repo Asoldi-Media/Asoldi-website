@@ -574,6 +574,17 @@ export const SETTINGS_KEYS = Object.freeze({
   changeRequestsMode: 'changeRequests.mode',
   changeRequestsPaused: 'changeRequests.paused',
   // --- end change requests
+  // --- iteration
+  iterationProjectDocumentEnabled: 'iteration.projectDocument.enabled',
+  iterationProjectDocumentMode: 'iteration.projectDocument.mode',
+  iterationProjectDocumentPaused: 'iteration.projectDocument.paused',
+  iterationProcessingEnabled: 'iteration.processing.enabled',
+  iterationProcessingMode: 'iteration.processing.mode',
+  iterationProcessingPaused: 'iteration.processing.paused',
+  iterationCursorPromptEnabled: 'iteration.cursorPrompt.enabled',
+  iterationCursorPromptMode: 'iteration.cursorPrompt.mode',
+  iterationCursorPromptPaused: 'iteration.cursorPrompt.paused',
+  // --- end iteration
   // --- legal clauses
   legalClauses: 'legalClauses.enabled',
   legalClausesMode: 'legalClauses.mode',
@@ -618,6 +629,11 @@ export const RELEASE_GATED_SWITCHES = Object.freeze([
   // --- booking
   'booking.selfLink',
   // --- end booking
+  // --- iteration
+  'iteration.projectDocument',
+  'iteration.processing',
+  'iteration.cursorPrompt',
+  // --- end iteration
   // release suite: the other delivery spine switches
   'delivery.loop',
   'gate',

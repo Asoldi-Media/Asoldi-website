@@ -265,6 +265,18 @@ export function defaultAutomationSettings() {
     // answers 404 disabled and nothing is written. A paused switch ({reason}) counts as off.
     siteRekey: { enabled: false, paused: null },
     // --- end site rekey
+    // --- iteration
+    // projectDocument: the workshop project prompt (tier, services, offer products, offer letter, map instead
+    // of a hard transcript cut). processing: an iteration recording becomes keep/change items, change
+    // requests and, when a must item is open, an iteration job. cursorPrompt: the developer prompt route.
+    // Off: today's answers. shadow: processing writes one delivery-audit row and nothing else.
+    // auto: pilot clients only, after a release pass (lib/spine-mode.js). A paused switch ({reason}) counts as off.
+    iteration: {
+      projectDocument: { enabled: false, mode: 'shadow', paused: null },
+      processing: { enabled: false, mode: 'shadow', paused: null },
+      cursorPrompt: { enabled: false, mode: 'shadow', paused: null },
+    },
+    // --- end iteration
     // --- legal clauses
     // legalClauses: the site-authenticated route GET /api/hub/legal/clauses (lib/routes/legal-clause-routes.js)
     // that gives a client CMS the clauses in which Asoldi appears as processor, for the privacy page the CMS
@@ -412,6 +424,11 @@ const ENUMS = {
   // --- booking
   'booking.selfLink.mode': ['shadow', 'auto'],
   // --- end booking
+  // --- iteration
+  'iteration.projectDocument.mode': ['shadow', 'auto'],
+  'iteration.processing.mode': ['shadow', 'auto'],
+  'iteration.cursorPrompt.mode': ['shadow', 'auto'],
+  // --- end iteration
   // --- intake
   'intake.tierSteps.mode': ['shadow', 'auto'],
   'intake.transcriptKeywords.mode': ['shadow', 'auto'],
@@ -495,6 +512,11 @@ const BOOLEANS = new Set([
   // --- booking
   'booking.selfLink.enabled',
   // --- end booking
+  // --- iteration
+  'iteration.projectDocument.enabled',
+  'iteration.processing.enabled',
+  'iteration.cursorPrompt.enabled',
+  // --- end iteration
   // --- intake
   'intake.tierSteps.enabled',
   'intake.transcriptKeywords.enabled',
@@ -722,6 +744,11 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
   // --- booking
   validatePilotSwitch(value, 'booking.selfLink', { fail, by, now });
   // --- end booking
+  // --- iteration
+  validatePilotSwitch(value, 'iteration.projectDocument', { fail, by, now });
+  validatePilotSwitch(value, 'iteration.processing', { fail, by, now });
+  validatePilotSwitch(value, 'iteration.cursorPrompt', { fail, by, now });
+  // --- end iteration
   // --- intake: 'auto' reaches pilot clients only, so it needs a pilot list; a pause needs a reason.
   for (const name of ['tierSteps', 'transcriptKeywords']) {
     const node = value.intake?.[name];
