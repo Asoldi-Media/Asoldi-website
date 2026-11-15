@@ -334,3 +334,55 @@ test('developer board copies booker recording URL from MyPhoner, else previewDoc
     'https://asoldi.com/myphoner-audio/c.wav',
   );
 });
+
+// ---------------------------------------------------------------- the GET only reads
+
+test('GET /api/admin/development makes no writes and still returns previewItems and ssuItems', { timeout: 240_000 }, async (t) => {
+  const { writeFileSync, readFileSync, existsSync } = await import('node:fs');
+  const { join } = await import('node:path');
+  const { bootHub } = await import('./safe-mode/hub-boot.mjs');
+  const password = `phase-${Date.now()}-pw`;
+  const signedProgress = { meetingHeld: true, offerSent: true, contractSigned: true };
+  const clients = (extra = []) => [
+    { id: 'syn-phase-a', product: 'asoldi', businessName: 'Alpha Salong AS', status: 'active', progression: signedProgress, developerOwnerId: 'admin', hubSite: { id: 'site-a', siteKey: 'key-a' } },
+    { id: 'syn-phase-ssu', product: 'ssu', businessName: 'Syn Ssu AS', status: 'active', progression: { meetingHeld: true } },
+    ...extra,
+  ];
+  const sites = [{ id: 'site-a', site_key: 'key-a', name: 'Alpha', domain: 'alpha.example', deliveryPhase: 'development', createdAt: '2026-09-01T10:00:00.000Z' }];
+  const hub = await bootHub(
+    { ADMIN_USERNAME: 'phase-admin', ADMIN_PASSWORD: password, PERSIST_PRODUCTION_ENV: '0', HUB_SAFE_MODE: '1' },
+    { seed: (dir) => { writeFileSync(join(dir, 'sales-clients.json'), JSON.stringify(clients())); writeFileSync(join(dir, 'sites.json'), JSON.stringify(sites)); } }
+  );
+  t.after(() => hub.stop());
+  assert.ok(hub.health, `hub did not start:\n${hub.log().slice(-2000)}`);
+  const token = await hub.adminToken('phase-admin', password);
+  assert.ok(token, 'admin login');
+  // The loop's first tick runs right after boot. Once it has, add a client that still needs an owner:
+  // the old GET would have assigned it; now nothing does until the next tick.
+  await new Promise((resolve) => setTimeout(resolve, 4000));
+  const file = join(hub.dataDir, 'sales-clients.json');
+  const unowned = { id: 'syn-phase-b', product: 'asoldi', businessName: 'Beta Frisor AS', status: 'active', progression: signedProgress, developerOwnerId: '', hubSite: { id: 'site-b', siteKey: 'key-b' } };
+  writeFileSync(file, JSON.stringify(clients([unowned])));
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  // The store normalizes the file the first time it reads it; let that happen before the snapshot.
+  assert.equal((await fetch(`${hub.base}/api/admin/sales`, { headers: { authorization: `Bearer ${token}` } })).status, 200);
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  const snapshot = () => ({ clients: readFileSync(file, 'utf8'), sites: readFileSync(join(hub.dataDir, 'sites.json'), 'utf8'), seed: existsSync(join(hub.dataDir, 'developer-owner-seed.json')) });
+  const before = snapshot();
+  let responses = 0;
+  let body = null;
+  for (let i = 0; i < 3; i += 1) {
+    const res = await fetch(`${hub.base}/api/admin/development`, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(res.status, 200);
+    body = await res.json();
+    responses += 1;
+  }
+  assert.ok(responses > 0);
+  assert.deepEqual(snapshot(), before, 'store snapshot before and after the GET is equal (files compared > 0)');
+  assert.equal(JSON.parse(readFileSync(file, 'utf8')).find((row) => row.id === 'syn-phase-b').developerOwnerId, '', 'the GET assigned no owner');
+  assert.ok(Array.isArray(body.previewItems) && Array.isArray(body.ssuItems), 'previewItems and ssuItems are still returned');
+  assert.ok(body.ssuItems.some((row) => row.salesClientId === 'syn-phase-ssu'));
+  const developed = [...body.developmentItems, ...body.previewItems].find((row) => row.salesClientId === 'syn-phase-a');
+  assert.ok(developed, 'the signed client is on the board');
+  for (const key of ['delivery', 'briefSummary', 'changeRequestSummary', 'hostStatus', 'devSummary', 'aiSpendSummary', 'goLiveSummary']) assert.ok(Object.hasOwn(developed, key), `item field ${key}`);
+});

@@ -579,6 +579,14 @@ export const SETTINGS_KEYS = Object.freeze({
   legalClausesMode: 'legalClauses.mode',
   legalClausesPaused: 'legalClauses.paused',
   // --- end legal clauses
+  // --- dev reports and purge
+  devReport: 'devReport.enabled',
+  devReportMode: 'devReport.mode',
+  devReportPaused: 'devReport.paused',
+  purgeJobs: 'purgeJobs.enabled',
+  purgeJobsMode: 'purgeJobs.mode',
+  purgeJobsPaused: 'purgeJobs.paused',
+  // --- end dev reports and purge
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);
