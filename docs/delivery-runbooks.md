@@ -194,3 +194,11 @@ What each code means and how to clear it. Jobs and the board arrive in later bat
 | `loop-detected` | The same task retried with no progress | Fix the cause the job log shows, then retry |
 
 Warnings (`WARNING_CODES`) never block: `dev-skipped` (no dev agent ran), `seo-deferred-no-domain` (Step 5 waits for a domain), `cms-review-pending` (CMS bindings proposed, not accepted), `plan-changed-rerun` (the plan changed; re-run development), `budget-soft-limit` (expected cost reached; work continues).
+
+## Keyword jobs not queued
+
+**Symptom.** A brief change in tier, agreed keywords, services or audience did not queue `seo.refresh`, or a new month did not queue `seo.maintenance` for a live tier 2 or tier 3 client.
+
+**Check.** `GET /api/admin/automation-settings`. `development.seoJobs` is false by default. `seo.jobGating` is `{enabled:false, mode:'shadow', paused:null}` (`seo.jobGating.enabled`, `seo.jobGating.mode`, `seo.jobGating.paused`). The producer runs only when `development.seoJobs` is true and `seo.jobGating.enabled` is true with `seo.jobGating.paused` null. While either is off it does not read `<dataDir>/seo-ops/keyword-jobs.json`. See [Keyword research jobs](seo-jobs.md).
+
+**Fix.** Turn on `development.seoJobs` and enable `seo.jobGating` (auto still needs the release pass for `seo.jobGating`). The next delivery tick queues at most one `seo.refresh` per client and SEO inputs hash, and one `seo.maintenance` per live tier 2 or higher client per Europe/Oslo month. The recorded hash moves forward only after the queue accepts the job. A note-only brief edit queues nothing. A state file that is not versioned JSON is kept as `keyword-jobs.json.bak` and read as empty.
