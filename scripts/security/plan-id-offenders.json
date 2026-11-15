@@ -5,7 +5,7 @@
     "packages/suite/core/llm/CONTRACT.md": 1,
     "packages/suite/core/llm/policy.js": 1,
     "packages/suite/core/llm/tasks-schema.js": 1,
-    "packages/suite/harness/asoldi/llm.js": 19,
+    "packages/suite/harness/asoldi/llm.js": 18,
     "scripts/llm-harness.test.mjs": 1
   }
 }

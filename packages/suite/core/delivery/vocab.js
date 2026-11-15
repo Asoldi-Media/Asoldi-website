@@ -585,6 +585,11 @@ export const SETTINGS_KEYS = Object.freeze({
   iterationCursorPromptMode: 'iteration.cursorPrompt.mode',
   iterationCursorPromptPaused: 'iteration.cursorPrompt.paused',
   // --- end iteration
+  // --- legal clauses
+  legalClauses: 'legalClauses.enabled',
+  legalClausesMode: 'legalClauses.mode',
+  legalClausesPaused: 'legalClauses.paused',
+  // --- end legal clauses
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);

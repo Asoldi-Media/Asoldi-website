@@ -522,3 +522,27 @@ test('legal-render --write refuses to change an archive that exists with other t
     assert.ok(existsSync(file));
   }
 });
+
+test('every feature that changes how Asoldi processes a client\'s data has a processor clause (negative control)', async () => {
+  const processor = await import('../lib/legal/processor-clauses.js');
+  assert.ok(processor.PROCESSING_FEATURES.length >= 5, 'processing features checked');
+  for (const feature of ['changeRequests', 'devAgent', 'iterationProcessing']) {
+    assert.ok(processor.PROCESSING_FEATURES.includes(feature), `${feature} is a processing feature`);
+  }
+  assert.deepEqual(processor.processingGaps(), []);
+  // A clause removed, or a new processing feature without a clause, is a gap.
+  const withoutIteration = processor.declaredProcessorClauses().filter((clause) => clause.id !== 'processor.iteration');
+  assert.deepEqual(processor.processingGaps({ clauses: withoutIteration }), ['iterationProcessing']);
+  assert.deepEqual(processor.processingGaps({ required: [...processor.PROCESSING_FEATURES, 'nextProcessingFeature'] }), ['nextProcessingFeature']);
+  // A clause that applies when a feature is effective names a feature key of the feature tree.
+  const keys = new Set(catalogModule.featureTreeKeys());
+  for (const clause of processor.PROCESSOR_CLAUSES) {
+    for (const key of clause.appliesWhen || []) assert.ok(keys.has(key), `${clause.id}: ${key} is a feature tree key`);
+  }
+  // Every sub-processor a clause relies on has a register row with scope client.
+  const subprocessors = await import('../lib/legal/subprocessors.js');
+  const ids = new Set(subprocessors.subprocessorList({ scope: 'client' }).map((entry) => entry.id));
+  for (const clause of processor.PROCESSOR_CLAUSES) {
+    for (const id of clause.uses || []) assert.ok(ids.has(id), `${clause.id} uses ${id}`);
+  }
+});

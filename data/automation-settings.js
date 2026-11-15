@@ -264,6 +264,14 @@ export function defaultAutomationSettings() {
       cursorPrompt: { enabled: false, mode: 'shadow', paused: null },
     },
     // --- end iteration
+    // --- legal clauses
+    // legalClauses: the site-authenticated route GET /api/hub/legal/clauses (lib/routes/legal-clause-routes.js)
+    // that gives a client CMS the clauses in which Asoldi appears as processor, for the privacy page the CMS
+    // generates. Off: the route answers 404 disabled before any credential check, and a CMS treats that like
+    // offline. In shadow mode the answer is marked shadow and a CMS shows it in the admin preview only. A paused
+    // switch ({reason}) counts as off.
+    legalClauses: { enabled: false, mode: 'shadow', paused: null },
+    // --- end legal clauses
   };
 }
 
@@ -411,6 +419,9 @@ const ENUMS = {
   // --- cms fleet monitor
   'cmsFleet.monitor.mode': ['shadow', 'auto'],
   // --- end cms fleet monitor
+  // --- legal clauses
+  'legalClauses.mode': ['shadow', 'auto'],
+  // --- end legal clauses
   // --- visit statistics retention
   'retention.analyticsTraffic.mode': ['shadow', 'auto'],
   // --- end visit statistics retention
@@ -498,6 +509,9 @@ const BOOLEANS = new Set([
   'cmsFleet.autoApplyFlip',
   'cmsFleet.wakePing.enabled',
   // --- end cms fleet monitor
+  // --- legal clauses
+  'legalClauses.enabled',
+  // --- end legal clauses
   // --- site rekey
   'siteRekey.enabled',
   // --- end site rekey
@@ -753,6 +767,13 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
     else value.changeRequests.paused = paused;
   }
   // --- end change requests
+  // --- legal clauses
+  if (isPlainObject(value.legalClauses)) {
+    const paused = normalizePaused(value.legalClauses.paused, { by, now });
+    if (paused === undefined) fail('legalClauses.paused', 'Must be null or {reason}.');
+    else value.legalClauses.paused = paused;
+  }
+  // --- end legal clauses
   // --- visit statistics retention
   if (isPlainObject(value.retention?.analyticsTraffic)) {
     const paused = normalizePaused(value.retention.analyticsTraffic.paused, { by, now });
