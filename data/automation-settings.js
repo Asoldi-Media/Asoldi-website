@@ -121,7 +121,18 @@ export function defaultAutomationSettings() {
       staging: { mode: 'shadow', tiers: ['tier-3-ecommerce'], paused: null },
       production: { mode: 'shadow', paused: null },
     },
-    changeRequests: { enforce: 'track', slaWorkDays: 10, countAt: 'accepted' },
+    changeRequests: {
+      enforce: 'track',
+      slaWorkDays: 10,
+      countAt: 'accepted',
+      // --- change requests
+      // Intake, the quota and the staff routes for a change a client asks for.
+      // Off: those routes answer 404 disabled and nothing is written. A paused switch counts as off.
+      enabled: false,
+      mode: 'shadow',
+      paused: null,
+      // --- end change requests
+    },
     pricing: { oneTimeMultiplier: 9, oneTimeMinExMva: 0, oneTimeMonths: 6 },
     lifecycle: {
       paymentGraceDays: 14,
@@ -350,6 +361,9 @@ const ENUMS = {
   'development.directivesForAutoDev': ['accepted+must', 'accepted', 'none'],
   'changeRequests.enforce': ['track', 'enforce'],
   'changeRequests.countAt': ['accepted'],
+  // --- change requests
+  'changeRequests.mode': ['shadow', 'auto'],
+  // --- end change requests
   'development.makerEvents': [...MAKER_EVENT_MODES],
   'migrations.deliveryBackfill': [...BACKFILL_MODES],
   // seo
@@ -465,6 +479,9 @@ const BOOLEANS = new Set([
   // --- site rekey
   'siteRekey.enabled',
   // --- end site rekey
+  // --- change requests
+  'changeRequests.enabled',
+  // --- end change requests
   // --- visit statistics retention
   'retention.analyticsTraffic.enabled',
   // --- end visit statistics retention
@@ -700,6 +717,15 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
     else value.siteRekey.paused = paused;
   }
   // --- end site rekey
+  // --- change requests
+  if (isPlainObject(value.changeRequests)) {
+    const mode = normalizeAutomationMode(value.changeRequests.mode);
+    if (mode) value.changeRequests.mode = mode;
+    const paused = normalizePaused(value.changeRequests.paused, { by, now });
+    if (paused === undefined) fail('changeRequests.paused', 'Must be null or {reason}.');
+    else value.changeRequests.paused = paused;
+  }
+  // --- end change requests
   // --- visit statistics retention
   if (isPlainObject(value.retention?.analyticsTraffic)) {
     const paused = normalizePaused(value.retention.analyticsTraffic.paused, { by, now });

@@ -569,6 +569,11 @@ export const SETTINGS_KEYS = Object.freeze({
   siteRekey: 'siteRekey.enabled',
   siteRekeyPaused: 'siteRekey.paused',
   // --- end site rekey
+  // --- change requests
+  changeRequestsEnabled: 'changeRequests.enabled',
+  changeRequestsMode: 'changeRequests.mode',
+  changeRequestsPaused: 'changeRequests.paused',
+  // --- end change requests
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);
