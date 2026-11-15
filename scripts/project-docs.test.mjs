@@ -407,7 +407,8 @@ test('the upgraded project prompt names the tier and products and stops cutting 
   assert.ok(upgraded.includes(whole), 'a 20000-character transcript is included whole');
   const over = buildWorkshopProjectUserPrompt({ ...collected, workshopTranscript: long }, { upgrade: true });
   assert.match(over, /KART-OPPSUMMERING/);
-  assert.equal(over.includes('B'.repeat(100)), false, 'a 40000-character transcript is replaced by the map');
+  assert.ok(over.indexOf('KART-OPPSUMMERING') < over.indexOf('B'.repeat(100)), 'the summary sits above the transcript');
+  assert.ok(over.includes('B'.repeat(100)), 'the transcript is not replaced by the summary');
 
   const settingsOff = { iteration: { projectDocument: { enabled: false, mode: 'shadow', paused: null } } };
   const settingsOn = { iteration: { projectDocument: { enabled: true, mode: 'shadow', paused: null } } };
@@ -436,7 +437,7 @@ test('the upgraded project prompt names the tier and products and stops cutting 
   assert.match(seen[1].user, /tier-1-standard/);
   assert.match(seen[1].user, /Krukker/);
   assert.match(seen[1].user, /KART-OPPSUMMERING/);
-  assert.equal(seen[1].user.includes('B'.repeat(100)), false);
+  assert.ok(seen[1].user.indexOf('KART-OPPSUMMERING') < seen[1].user.indexOf('B'.repeat(100)));
   assert.notEqual(seen[1].user, seen[0].user);
 });
 
@@ -478,4 +479,25 @@ test('workshop.project-document and brief.iteration do not resolve to DeepSeek',
     assert.equal(bypassed.profiles, 2);
     for (const row of bypassed.rows) assert.notEqual(row.provider, 'deepseek', `${row.task} ${row.profile}`);
   });
+});
+
+test('an over-long transcript with no summary is still in the upgraded project prompt', () => {
+  const workshop = 'Kunde sier viktig. '.repeat(2100);
+  assert.ok(workshop.length > 28_000);
+  const prompt = buildWorkshopProjectUserPrompt({
+    businessName: 'X',
+    workshopTranscript: workshop,
+    salesTranscript: 'Salg sier noe. '.repeat(1000),
+    workshopMap: '',
+    salesMap: '',
+  }, { upgrade: true });
+  assert.ok(prompt.includes(workshop.trim()), 'the full workshop transcript is in the prompt');
+  assert.match(prompt, /Salg sier noe/);
+  const withMap = buildWorkshopProjectUserPrompt({
+    businessName: 'X',
+    workshopTranscript: workshop,
+    workshopMap: 'SAMMENDRAG-MARKØR',
+  }, { upgrade: true });
+  const at = withMap.indexOf('SAMMENDRAG-MARKØR');
+  assert.ok(at >= 0 && at < withMap.indexOf('Kunde sier viktig'), 'summary sits above the transcript');
 });

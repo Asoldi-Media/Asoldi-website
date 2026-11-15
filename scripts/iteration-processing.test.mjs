@@ -389,3 +389,29 @@ test('the loop step skips a client without a pending iteration and one that is n
 test.after(() => {
   rmSync(root, { recursive: true, force: true });
 });
+
+test('an empty transcript or a failed extraction keeps pendingIteration for the next tick', async () => {
+  const run = async (name, transcript, llm) => {
+    const dir = dataDirFor(name);
+    const sales = memorySales({ ...clientSeed(), delivery: { pendingIteration: 'meet-1' } });
+    const result = await processIterationMeeting({
+      clientId: 'client-fjordlys',
+      meetingId: 'meet-1',
+      transcript,
+      now: '2026-11-02T10:00:00.000Z',
+      deps: { sales, dataDir: dir, settings: settingsFor('client-fjordlys', 'auto'), llm },
+    });
+    return { result, pending: sales.getSalesClientById('client-fjordlys').delivery?.pendingIteration, dir };
+  };
+  const empty = await run('retry-empty-', '', llmOf(successMap()));
+  assert.equal(empty.result.wrote, false);
+  assert.equal(empty.pending, 'meet-1');
+  const failed = await run('retry-fail-', TRANSCRIPT, { json: async () => { throw new Error('boom'); } });
+  assert.equal(failed.result.wrote, false);
+  assert.equal(failed.pending, 'meet-1');
+  assert.equal(listForClient('client-fjordlys', { dataDir: failed.dir }).length, 0);
+  // Control: a real transcript with a working model still clears it.
+  const good = await run('retry-ok-', TRANSCRIPT, llmOf(successMap()));
+  assert.equal(good.result.wrote, true);
+  assert.equal(good.pending || '', '');
+});

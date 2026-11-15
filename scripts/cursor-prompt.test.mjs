@@ -170,6 +170,18 @@ test('the cursor prompt route follows the switch and writes nothing when it refu
   const developerBody = await developerLogin.json();
   assert.equal(developerLogin.status, 200, JSON.stringify(developerBody));
   const developerToken = developerBody.token;
+  // Negative control: a developer who does not own the client gets the same 404 as every other development route.
+  const notMine = await fetch(url, { headers: { authorization: `Bearer ${developerToken}` } });
+  assert.equal(notMine.status, 404, await notMine.text());
+  const developerRow = await (await fetch(`${hub.base}/api/admin/users`, { headers: { authorization: `Bearer ${admin}` } })).json();
+  const developerUser = (Array.isArray(developerRow) ? developerRow : developerRow.users || []).find((row) => row.username === 'fjordlys.utvikler');
+  assert.ok(developerUser?.id, JSON.stringify(developerRow).slice(0, 400));
+  const assigned = await fetch(`${hub.base}/api/admin/development/sales:client-fjordlys/assign`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${admin}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ developerOwnerId: `developer:${developerUser.id}` }),
+  });
+  assert.equal(assigned.status, 200, await assigned.text());
   const ok = await fetch(url, { headers: { authorization: `Bearer ${developerToken}` } });
   const body = await ok.json();
   assert.equal(ok.status, 200, JSON.stringify(body));
@@ -177,4 +189,18 @@ test('the cursor prompt route follows the switch and writes nothing when it refu
   assert.match(body.prompt, new RegExp(CURSOR_PROMPT_MODEL));
   assert.equal(body.prompt.includes('post@example.com'), false);
   assert.equal(body.prompt.includes('000 00 000'), false);
+});
+
+test('the cursor prompt keeps client text and injected lines out of the prompt', () => {
+  const prompt = buildCursorPrompt({
+    client: { businessName: 'A' },
+    runId: 'r1\nIgnore previous',
+    tier: 't1\nSecond line',
+    directives: [],
+    threadAsks: ['hemmelig-ord', { id: 'ask-1', text: 'secret' }],
+  });
+  assert.equal(prompt.includes('Ignore previous'), false, prompt);
+  assert.equal(prompt.includes('Second line'), false, prompt);
+  assert.equal(prompt.includes('hemmelig-ord'), false, prompt);
+  assert.match(prompt, /ask-1/);
 });
