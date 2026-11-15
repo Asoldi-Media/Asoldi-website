@@ -1,0 +1,569 @@
+{
+  "$comment": "Synthetic fixture for seo-jobs/1. Invented clients, sites and texts only: .test and .example hosts, no real run. Hub and CMS copy the shapes in neutral wording.",
+  "contract": "seo-jobs/1",
+  "provenance": {
+    "scope": "file",
+    "kind": "contract-rule",
+    "source": "docs/contracts/seo-jobs-1.md"
+  },
+  "limits": {
+    "maxPayloadBytes": 2048
+  },
+  "hashRule": "sha256 over canonical JSON (keys sorted, no spaces) of {agreedKeywords (approved, normalized, sorted), audience (sorted), services (sorted), tierId}",
+  "client": {
+    "salesClientId": "syn-salon-client",
+    "runId": "syn-salon-run-0001",
+    "live": true
+  },
+  "firstSight": {
+    "id": "first-sight",
+    "inputs": {
+      "tierId": "tier-2-seo",
+      "services": [
+        "blog",
+        "changes",
+        "email",
+        "seo",
+        "site",
+        "social"
+      ],
+      "agreedKeywords": [
+        "frisør eksempelby",
+        "herreklipp eksempelby"
+      ],
+      "audience": [
+        "voksne i nærområdet"
+      ]
+    },
+    "expect": {
+      "jobs": 0,
+      "recordedHash": "sha256:f95e57cbd1545aeefec35996fbb518378a27e5784d649b893864ad46d6c46d47"
+    }
+  },
+  "refresh": [
+    {
+      "id": "refresh-tier",
+      "before": {
+        "tierId": "tier-2-seo",
+        "services": [
+          "blog",
+          "changes",
+          "email",
+          "seo",
+          "site",
+          "social"
+        ],
+        "agreedKeywords": [
+          "frisør eksempelby",
+          "herreklipp eksempelby"
+        ],
+        "audience": [
+          "voksne i nærområdet"
+        ]
+      },
+      "after": {
+        "tierId": "tier-3-ecommerce",
+        "services": [
+          "blog",
+          "changes",
+          "email",
+          "seo",
+          "site",
+          "social"
+        ],
+        "agreedKeywords": [
+          "frisør eksempelby",
+          "herreklipp eksempelby"
+        ],
+        "audience": [
+          "voksne i nærområdet"
+        ]
+      },
+      "seoInputsHashBefore": "sha256:f95e57cbd1545aeefec35996fbb518378a27e5784d649b893864ad46d6c46d47",
+      "seoInputsHashAfter": "sha256:51376dc9d51bcf4cfa44538c11aa3d60e64c1f0dd880bf0ec5d4b64961b396a7",
+      "expect": {
+        "jobs": 1,
+        "kind": "seo.refresh",
+        "input": {
+          "contract": "seo-jobs/1",
+          "trigger": "brief-changed",
+          "mode": "full",
+          "changed": [
+            "tier"
+          ],
+          "seoInputsHash": "sha256:51376dc9d51bcf4cfa44538c11aa3d60e64c1f0dd880bf0ec5d4b64961b396a7",
+          "previousSeoInputsHash": "sha256:f95e57cbd1545aeefec35996fbb518378a27e5784d649b893864ad46d6c46d47",
+          "briefVersion": 8,
+          "briefHash": "sha256:516062c4942c0fdcc4835de8066e495d9e32322300949f9dbfa98cbad62b8d28",
+          "tierId": "tier-3-ecommerce",
+          "dedupeKey": "seo.refresh:syn-salon-client:51376dc9d51bcf4c"
+        }
+      }
+    },
+    {
+      "id": "refresh-services",
+      "before": {
+        "tierId": "tier-2-seo",
+        "services": [
+          "blog",
+          "changes",
+          "email",
+          "seo",
+          "site",
+          "social"
+        ],
+        "agreedKeywords": [
+          "frisør eksempelby",
+          "herreklipp eksempelby"
+        ],
+        "audience": [
+          "voksne i nærområdet"
+        ]
+      },
+      "after": {
+        "tierId": "tier-2-seo",
+        "services": [
+          "blog",
+          "changes",
+          "email",
+          "seo",
+          "site",
+          "social",
+          "ecom"
+        ],
+        "agreedKeywords": [
+          "frisør eksempelby",
+          "herreklipp eksempelby"
+        ],
+        "audience": [
+          "voksne i nærområdet"
+        ]
+      },
+      "seoInputsHashBefore": "sha256:f95e57cbd1545aeefec35996fbb518378a27e5784d649b893864ad46d6c46d47",
+      "seoInputsHashAfter": "sha256:7c3f1e1df16fbf3f1dba1af58a070776ea8a9a6fe335feaa73b61a1a36e2a54b",
+      "expect": {
+        "jobs": 1,
+        "kind": "seo.refresh",
+        "input": {
+          "contract": "seo-jobs/1",
+          "trigger": "brief-changed",
+          "mode": "full",
+          "changed": [
+            "services"
+          ],
+          "seoInputsHash": "sha256:7c3f1e1df16fbf3f1dba1af58a070776ea8a9a6fe335feaa73b61a1a36e2a54b",
+          "previousSeoInputsHash": "sha256:f95e57cbd1545aeefec35996fbb518378a27e5784d649b893864ad46d6c46d47",
+          "briefVersion": 8,
+          "briefHash": "sha256:7525ecef0e784eeeab1dbe4fa6e06e251896d178fbcdd3def605904fdaafc0a7",
+          "tierId": "tier-2-seo",
+          "dedupeKey": "seo.refresh:syn-salon-client:7c3f1e1df16fbf3f"
+        }
+      }
+    },
+    {
+      "id": "refresh-agreed",
+      "before": {
+        "tierId": "tier-2-seo",
+        "services": [
+          "blog",
+          "changes",
+          "email",
+          "seo",
+          "site",
+          "social"
+        ],
+        "agreedKeywords": [
+          "frisør eksempelby",
+          "herreklipp eksempelby"
+        ],
+        "audience": [
+          "voksne i nærområdet"
+        ]
+      },
+      "after": {
+        "tierId": "tier-2-seo",
+        "services": [
+          "blog",
+          "changes",
+          "email",
+          "seo",
+          "site",
+          "social"
+        ],
+        "agreedKeywords": [
+          "frisør eksempelby",
+          "herreklipp eksempelby",
+          "barneklipp eksempelby"
+        ],
+        "audience": [
+          "voksne i nærområdet"
+        ]
+      },
+      "seoInputsHashBefore": "sha256:f95e57cbd1545aeefec35996fbb518378a27e5784d649b893864ad46d6c46d47",
+      "seoInputsHashAfter": "sha256:cf6a0ca4a0b4e02c5d08d6f5dab70b86ae2ed488305455df55e7d2138d186c1e",
+      "expect": {
+        "jobs": 1,
+        "kind": "seo.refresh",
+        "input": {
+          "contract": "seo-jobs/1",
+          "trigger": "brief-changed",
+          "mode": "agreed-only",
+          "changed": [
+            "agreedKeywords"
+          ],
+          "seoInputsHash": "sha256:cf6a0ca4a0b4e02c5d08d6f5dab70b86ae2ed488305455df55e7d2138d186c1e",
+          "previousSeoInputsHash": "sha256:f95e57cbd1545aeefec35996fbb518378a27e5784d649b893864ad46d6c46d47",
+          "briefVersion": 8,
+          "briefHash": "sha256:bd51f5e52c2a88a4c45b4cadea8e007f0f19782520d49170b666413bd3a229a2",
+          "tierId": "tier-2-seo",
+          "dedupeKey": "seo.refresh:syn-salon-client:cf6a0ca4a0b4e02c"
+        }
+      }
+    },
+    {
+      "id": "refresh-audience",
+      "before": {
+        "tierId": "tier-2-seo",
+        "services": [
+          "blog",
+          "changes",
+          "email",
+          "seo",
+          "site",
+          "social"
+        ],
+        "agreedKeywords": [
+          "frisør eksempelby",
+          "herreklipp eksempelby"
+        ],
+        "audience": [
+          "voksne i nærområdet"
+        ]
+      },
+      "after": {
+        "tierId": "tier-2-seo",
+        "services": [
+          "blog",
+          "changes",
+          "email",
+          "seo",
+          "site",
+          "social"
+        ],
+        "agreedKeywords": [
+          "frisør eksempelby",
+          "herreklipp eksempelby"
+        ],
+        "audience": [
+          "familier i nærområdet"
+        ]
+      },
+      "seoInputsHashBefore": "sha256:f95e57cbd1545aeefec35996fbb518378a27e5784d649b893864ad46d6c46d47",
+      "seoInputsHashAfter": "sha256:3b48d9bc72dea1eaf7799f25ba004dfcb9e7d7a851fedc99f87d14816c0ffff3",
+      "expect": {
+        "jobs": 1,
+        "kind": "seo.refresh",
+        "input": {
+          "contract": "seo-jobs/1",
+          "trigger": "brief-changed",
+          "mode": "full",
+          "changed": [
+            "audience"
+          ],
+          "seoInputsHash": "sha256:3b48d9bc72dea1eaf7799f25ba004dfcb9e7d7a851fedc99f87d14816c0ffff3",
+          "previousSeoInputsHash": "sha256:f95e57cbd1545aeefec35996fbb518378a27e5784d649b893864ad46d6c46d47",
+          "briefVersion": 8,
+          "briefHash": "sha256:8e4cd16026b1ef8853a532db019559ea04be47b458288e2285061dde7065f954",
+          "tierId": "tier-2-seo",
+          "dedupeKey": "seo.refresh:syn-salon-client:3b48d9bc72dea1ea"
+        }
+      }
+    }
+  ],
+  "noteOnly": {
+    "id": "note-only",
+    "note": "a brief note changed; the four inputs did not",
+    "inputs": {
+      "tierId": "tier-2-seo",
+      "services": [
+        "blog",
+        "changes",
+        "email",
+        "seo",
+        "site",
+        "social"
+      ],
+      "agreedKeywords": [
+        "frisør eksempelby",
+        "herreklipp eksempelby"
+      ],
+      "audience": [
+        "voksne i nærområdet"
+      ]
+    },
+    "expect": {
+      "jobs": 0
+    }
+  },
+  "secondTick": {
+    "id": "second-tick",
+    "note": "same inputs as the last enqueued refresh",
+    "expect": {
+      "jobs": 0
+    }
+  },
+  "duplicateActive": {
+    "id": "duplicate-active",
+    "note": "queue answers 409 duplicate",
+    "expect": {
+      "jobs": 0,
+      "hashAdvanced": false
+    }
+  },
+  "maintenance": [
+    {
+      "id": "tier2-live-december",
+      "client": {
+        "tierId": "tier-2-seo",
+        "live": true
+      },
+      "now": "2026-12-05T10:00:00.000Z",
+      "expect": {
+        "jobs": 1,
+        "input": {
+          "contract": "seo-jobs/1",
+          "trigger": "monthly",
+          "mode": "maintenance",
+          "period": "2026-12",
+          "tierId": "tier-2-seo",
+          "dedupeKey": "seo.maintenance:syn-salon-client:2026-12"
+        }
+      }
+    },
+    {
+      "id": "same-month-again",
+      "client": {
+        "tierId": "tier-2-seo",
+        "live": true
+      },
+      "now": "2026-12-20T10:00:00.000Z",
+      "expect": {
+        "jobs": 0
+      }
+    },
+    {
+      "id": "next-month",
+      "client": {
+        "tierId": "tier-2-seo",
+        "live": true
+      },
+      "now": "2026-12-31T23:30:00.000Z",
+      "note": "00:30 Oslo on 1 January",
+      "expect": {
+        "jobs": 1,
+        "period": "2027-01"
+      }
+    },
+    {
+      "id": "tier1-live",
+      "client": {
+        "tierId": "tier-1-standard",
+        "live": true
+      },
+      "now": "2026-12-05T10:00:00.000Z",
+      "expect": {
+        "jobs": 0
+      }
+    },
+    {
+      "id": "tier2-not-live",
+      "client": {
+        "tierId": "tier-2-seo",
+        "live": false
+      },
+      "now": "2026-12-05T10:00:00.000Z",
+      "expect": {
+        "jobs": 0
+      }
+    },
+    {
+      "id": "contract-ended",
+      "client": {
+        "tierId": "tier-2-seo",
+        "live": true,
+        "lifecycle": "ended"
+      },
+      "now": "2026-12-05T10:00:00.000Z",
+      "expect": {
+        "jobs": 0
+      }
+    }
+  ],
+  "switchesOff": {
+    "id": "switches-off",
+    "expect": {
+      "ran": false,
+      "stateRead": false,
+      "queueWrites": 0,
+      "storeWrites": 0
+    }
+  },
+  "results": [
+    {
+      "id": "done",
+      "body": {
+        "contract": "seo-jobs/1",
+        "kind": "seo.refresh",
+        "status": "done",
+        "reason": "",
+        "plan": {
+          "version": 2,
+          "mode": "full",
+          "qaStatus": "pass",
+          "qaScore": 82
+        },
+        "counts": {
+          "labsCalls": 0,
+          "adsTasks": 1,
+          "proposals": 0,
+          "agreedVerified": 1
+        },
+        "costUsd": 0.0123,
+        "paid": true
+      }
+    },
+    {
+      "id": "skipped",
+      "body": {
+        "contract": "seo-jobs/1",
+        "kind": "seo.maintenance",
+        "status": "skipped",
+        "reason": "plan-v2-off",
+        "plan": {
+          "version": 1,
+          "mode": "full",
+          "qaStatus": "legacy-unverified",
+          "qaScore": 0
+        },
+        "counts": {
+          "labsCalls": 0,
+          "adsTasks": 0,
+          "proposals": 0,
+          "agreedVerified": 0
+        },
+        "costUsd": 0,
+        "paid": false
+      }
+    },
+    {
+      "id": "shadow",
+      "body": {
+        "contract": "seo-jobs/1",
+        "kind": "seo.refresh",
+        "status": "shadow",
+        "reason": "",
+        "plan": {
+          "version": 2,
+          "mode": "agreed-only",
+          "qaStatus": "needs-review",
+          "qaScore": 71
+        },
+        "counts": {
+          "labsCalls": 0,
+          "adsTasks": 0,
+          "proposals": 0,
+          "agreedVerified": 0
+        },
+        "costUsd": 0,
+        "paid": false
+      }
+    }
+  ],
+  "invalidPayloads": [
+    {
+      "id": "keyword-text",
+      "body": {
+        "contract": "seo-jobs/1",
+        "trigger": "brief-changed",
+        "mode": "agreed-only",
+        "changed": [
+          "agreedKeywords"
+        ],
+        "seoInputsHash": "sha256:cf6a0ca4a0b4e02c5d08d6f5dab70b86ae2ed488305455df55e7d2138d186c1e",
+        "previousSeoInputsHash": "sha256:f95e57cbd1545aeefec35996fbb518378a27e5784d649b893864ad46d6c46d47",
+        "briefVersion": 8,
+        "briefHash": "sha256:bd51f5e52c2a88a4c45b4cadea8e007f0f19782520d49170b666413bd3a229a2",
+        "tierId": "tier-2-seo",
+        "dedupeKey": "seo.refresh:syn-salon-client:cf6a0ca4a0b4e02c",
+        "keyword": "barneklipp eksempelby"
+      },
+      "expect": {
+        "fail": {
+          "error": "bad-payload",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "url",
+      "body": {
+        "contract": "seo-jobs/1",
+        "trigger": "brief-changed",
+        "mode": "full",
+        "changed": [
+          "tier"
+        ],
+        "seoInputsHash": "sha256:51376dc9d51bcf4cfa44538c11aa3d60e64c1f0dd880bf0ec5d4b64961b396a7",
+        "previousSeoInputsHash": "sha256:f95e57cbd1545aeefec35996fbb518378a27e5784d649b893864ad46d6c46d47",
+        "briefVersion": 8,
+        "briefHash": "sha256:516062c4942c0fdcc4835de8066e495d9e32322300949f9dbfa98cbad62b8d28",
+        "tierId": "tier-3-ecommerce",
+        "dedupeKey": "seo.refresh:syn-salon-client:51376dc9d51bcf4c",
+        "briefUrl": "https://hub.example/brief"
+      },
+      "expect": {
+        "fail": {
+          "error": "bad-payload",
+          "retryable": false
+        }
+      }
+    },
+    {
+      "id": "unknown-contract",
+      "body": {
+        "contract": "seo-jobs/9",
+        "trigger": "brief-changed",
+        "mode": "full",
+        "changed": [
+          "tier"
+        ],
+        "seoInputsHash": "sha256:51376dc9d51bcf4cfa44538c11aa3d60e64c1f0dd880bf0ec5d4b64961b396a7",
+        "previousSeoInputsHash": "sha256:f95e57cbd1545aeefec35996fbb518378a27e5784d649b893864ad46d6c46d47",
+        "briefVersion": 8,
+        "briefHash": "sha256:516062c4942c0fdcc4835de8066e495d9e32322300949f9dbfa98cbad62b8d28",
+        "tierId": "tier-3-ecommerce",
+        "dedupeKey": "seo.refresh:syn-salon-client:51376dc9d51bcf4c"
+      },
+      "expect": {
+        "fail": {
+          "error": "bad-payload",
+          "retryable": false
+        }
+      }
+    }
+  ],
+  "recipes": [
+    {
+      "id": "oversize",
+      "base": "refresh-tier",
+      "note": "pad a string field until the JSON is 2049 bytes",
+      "toTotalBytes": 2049,
+      "expect": {
+        "fail": {
+          "error": "bad-payload",
+          "retryable": false
+        }
+      }
+    }
+  ]
+}
