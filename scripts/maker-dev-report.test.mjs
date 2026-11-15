@@ -387,3 +387,29 @@ test('run.dev.updated on the legacy callback answers 202 ignored and writes noth
   assert.equal(generic.status, 200);
   assert.notEqual(read(), before, 'the generic branch writes (the control the 202 is measured against)');
 });
+
+test('step keys cms, dev and dev-verify and the dev summary round-trip through the client store', async () => {
+  const sales = await import('../data/sales.js');
+  const { clearJsonCacheForTests } = await import('../data/atomic-json.js');
+  for (const name of readdirSync(baseDir)) if (name === 'sales-clients.json') rmSync(join(baseDir, name), { force: true });
+  clearJsonCacheForTests();
+  writeFileSync(join(baseDir, 'sales-clients.json'), JSON.stringify([{ id: 'syn-steps', product: 'asoldi', businessName: 'Syn Steps AS', status: 'active', makerRun: { runId: 'syn-steps-run-1' } }]));
+  sales.getSalesClients();
+  const patch = { runId: 'syn-steps-run-1', steps: { 1: 'ready', 2: 'running', cms: 'ready', dev: 'running', 'dev-verify': 'idle' }, dev: { forged: true } };
+  const stored = sales.setSalesMakerRun('syn-steps', patch);
+  assert.equal(stored.makerRun.steps.cms, 'ready');
+  assert.equal(stored.makerRun.steps.dev, 'running');
+  assert.equal(stored.makerRun.steps['dev-verify'], 'idle');
+  assert.equal(stored.makerRun.steps['1'], 'ready', 'the legacy keys are unchanged');
+  assert.equal(stored.makerRun.dev, undefined, 'a generic patch cannot write the dev summary');
+  const again = sales.setSalesMakerRun('syn-steps', { steps: { 1: 'ready', dev: 'ready' } });
+  assert.equal(again.makerRun.steps.dev, 'ready');
+  assert.equal(again.makerRun.steps.cms, 'ready', 'a token not in the patch is kept');
+  const summary = reports.devSummaryOf(reportCase('review-initial').body, { receivedAt: '2026-12-01T09:12:00.000Z', reportRev: 1 });
+  const withDev = sales.setSalesMakerRunDev('syn-steps', summary);
+  assert.equal(withDev.makerRun.dev.sessionId, SESSION);
+  const reread = sales.getSalesClientById('syn-steps');
+  assert.deepEqual(reread.makerRun.dev, summary, 'the summary survives normalization');
+  assert.equal(reread.makerRun.steps.dev, 'ready');
+  assert.equal(sales.setSalesMakerRun('syn-steps', { dev: { forged: true } }).makerRun.dev.sessionId, SESSION, 'a later generic patch leaves it alone');
+});
