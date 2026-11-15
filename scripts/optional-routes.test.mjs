@@ -115,3 +115,18 @@ test('the real list imports every listed module the build contains and skips the
   assert.deepEqual(await result.ready, []);
   assert.deepEqual(calls, []);
 });
+
+test('the list also reserves the change request, cursor prompt, dev report and legal clause route modules, after the earlier ones', () => {
+  const added = ['./change-request-routes.js', './cursor-prompt-routes.js', './dev-report-routes.js', './legal-clause-routes.js'];
+  const lastEarlier = Math.max(...RESERVED.map((name) => OPTIONAL_ROUTE_MODULES.indexOf(name)));
+  let previous = lastEarlier;
+  for (const name of added) {
+    const at = OPTIONAL_ROUTE_MODULES.indexOf(name);
+    assert.ok(at > previous, `${name} is missing or out of order`);
+    previous = at;
+  }
+  // A listed module the build does not contain is skipped, so naming them changes nothing until a file exists.
+  for (const name of added) {
+    if (!existsSync(join(routesDir, name))) assert.equal(PRESENT_ROUTE_MODULES[name], undefined, `${name} is imported without a file`);
+  }
+});

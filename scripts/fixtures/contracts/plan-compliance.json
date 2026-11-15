@@ -1,0 +1,290 @@
+{
+  "$comment": "Synthetic fixture for the plan compliance shapes (version 1). Invented clients, sites and texts only: .test and .example hosts, reserved numbers, no real run. Neutral copy: no plan ids, no private file names. Committed in the hub as scripts/fixtures/contracts/plan-compliance.json; the shapes and rules are in plan-compliance.md next to this folder.",
+  "name": "plan-compliance",
+  "version": 1,
+  "provenance": {
+    "scope": "file",
+    "kind": "contract-rule",
+    "source": "plan-compliance.md (neutral copy of the shapes and rules)"
+  },
+  "defaultField": {
+    "regulated": false,
+    "signoffs": []
+  },
+  "records": [
+    {
+      "id": "default",
+      "compliance": {
+        "regulated": false,
+        "signoffs": []
+      },
+      "state": {
+        "asoldi": "missing",
+        "client": "missing"
+      },
+      "makerPlanCompliance": {
+        "required": true,
+        "source": "hub-record",
+        "asoldi": null,
+        "client": null
+      },
+      "signedOff": false
+    },
+    {
+      "id": "signed-both",
+      "compliance": {
+        "regulated": true,
+        "signoffs": [
+          {
+            "role": "asoldi",
+            "by": "dev-one",
+            "at": "2026-12-03T10:00:00.000Z",
+            "approve": true
+          },
+          {
+            "role": "client",
+            "by": "dev-one",
+            "at": "2026-12-04T09:30:00.000Z",
+            "approve": true
+          }
+        ]
+      },
+      "state": {
+        "asoldi": "signed",
+        "client": "signed"
+      },
+      "makerPlanCompliance": {
+        "required": true,
+        "source": "hub-record",
+        "asoldi": {
+          "name": "dev-one",
+          "by": "dev-one",
+          "at": "2026-12-03T10:00:00.000Z"
+        },
+        "client": {
+          "name": "dev-one",
+          "by": "dev-one",
+          "at": "2026-12-04T09:30:00.000Z"
+        }
+      },
+      "signedOff": true
+    },
+    {
+      "id": "client-withdrawn",
+      "compliance": {
+        "regulated": true,
+        "signoffs": [
+          {
+            "role": "asoldi",
+            "by": "dev-one",
+            "at": "2026-12-03T10:00:00.000Z",
+            "approve": true
+          },
+          {
+            "role": "client",
+            "by": "dev-one",
+            "at": "2026-12-04T09:30:00.000Z",
+            "approve": true
+          },
+          {
+            "role": "client",
+            "by": "admin",
+            "at": "2026-12-05T12:00:00.000Z",
+            "approve": false
+          }
+        ]
+      },
+      "state": {
+        "asoldi": "signed",
+        "client": "withdrawn"
+      },
+      "makerPlanCompliance": {
+        "required": true,
+        "source": "hub-record",
+        "asoldi": {
+          "name": "dev-one",
+          "by": "dev-one",
+          "at": "2026-12-03T10:00:00.000Z"
+        },
+        "client": null
+      },
+      "signedOff": false
+    }
+  ],
+  "put": [
+    {
+      "id": "admin-asoldi",
+      "caller": "admin",
+      "body": {
+        "role": "asoldi",
+        "approve": true
+      },
+      "expect": {
+        "status": 200,
+        "historyAdded": 1,
+        "signoffsAdded": 1
+      }
+    },
+    {
+      "id": "developer-own-client",
+      "caller": "developer (may work on the client now)",
+      "body": {
+        "role": "client",
+        "approve": true
+      },
+      "expect": {
+        "status": 200,
+        "historyAdded": 1,
+        "signoffsAdded": 1
+      }
+    },
+    {
+      "id": "developer-handoff",
+      "caller": "developer during a handoff",
+      "body": {
+        "role": "asoldi",
+        "approve": true
+      },
+      "expect": {
+        "status": 403,
+        "code": "forbidden",
+        "recordUnchanged": true
+      }
+    },
+    {
+      "id": "developer-other-client",
+      "caller": "developer of another client (visible)",
+      "body": {
+        "role": "asoldi",
+        "approve": true
+      },
+      "expect": {
+        "status": 403,
+        "code": "forbidden",
+        "recordUnchanged": true
+      }
+    },
+    {
+      "id": "developer-not-visible",
+      "caller": "developer who cannot see the client",
+      "body": {
+        "role": "asoldi",
+        "approve": true
+      },
+      "expect": {
+        "status": 404,
+        "code": "not-found",
+        "recordUnchanged": true
+      }
+    },
+    {
+      "id": "sales",
+      "caller": "sales role",
+      "body": {
+        "role": "asoldi",
+        "approve": true
+      },
+      "expect": {
+        "status": 403,
+        "code": "forbidden",
+        "recordUnchanged": true
+      }
+    },
+    {
+      "id": "maker-host",
+      "caller": "Maker host token only",
+      "body": {
+        "role": "asoldi",
+        "approve": true
+      },
+      "expect": {
+        "statusIn": [
+          401,
+          403
+        ],
+        "recordUnchanged": true
+      }
+    },
+    {
+      "id": "no-credentials",
+      "caller": "none",
+      "body": {
+        "role": "asoldi",
+        "approve": true
+      },
+      "expect": {
+        "status": 401,
+        "recordUnchanged": true
+      }
+    },
+    {
+      "id": "bad-role",
+      "caller": "admin",
+      "body": {
+        "role": "owner",
+        "approve": true
+      },
+      "expect": {
+        "status": 400,
+        "code": "bad-request",
+        "field": "role",
+        "recordUnchanged": true
+      }
+    },
+    {
+      "id": "bad-approve",
+      "caller": "admin",
+      "body": {
+        "role": "asoldi",
+        "approve": "yes"
+      },
+      "expect": {
+        "status": 400,
+        "code": "bad-request",
+        "field": "approve",
+        "recordUnchanged": true
+      }
+    },
+    {
+      "id": "by-from-body-ignored",
+      "caller": "admin (username admin)",
+      "body": {
+        "role": "asoldi",
+        "approve": true,
+        "by": "someone-else"
+      },
+      "expect": {
+        "status": 200,
+        "storedBy": "admin"
+      }
+    }
+  ],
+  "historyEntry": {
+    "at": "2026-12-03T10:00:00.000Z",
+    "by": "dev-one",
+    "action": "compliance",
+    "role": "asoldi",
+    "approve": true
+  },
+  "makerView": {
+    "id": "maker-read",
+    "note": "GET /api/internal/maker/seo-record adds compliance after the existing fields",
+    "compliance": {
+      "regulated": true,
+      "signoffs": [
+        {
+          "role": "asoldi",
+          "by": "dev-one",
+          "at": "2026-12-03T10:00:00.000Z",
+          "approve": true
+        },
+        {
+          "role": "client",
+          "by": "dev-one",
+          "at": "2026-12-04T09:30:00.000Z",
+          "approve": true
+        }
+      ]
+    }
+  }
+}

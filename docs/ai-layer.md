@@ -1,7 +1,7 @@
 # Hub AI layer (`lib/llm`)
 
 Every LLM call the hub makes goes through one facade on the shared core (`packages/suite/core/llm`,
-contract 1.2.0). The facade adds the hub's provider clients, the AI ledger, data-dir overrides, budget
+contract 1.3.0). The facade adds the hub's provider clients, the AI ledger, data-dir overrides, budget
 alerts and the Superadmin view. The shared task registry, reference routes, data policy and budgets are
 in `packages/suite/harness/asoldi/llm.js`.
 
@@ -9,9 +9,9 @@ in `packages/suite/harness/asoldi/llm.js`.
 
 | Profile | What a call does |
 |---|---|
-| `legacy` (default) | Each call site sends its own request exactly as before the facade (same provider, model, temperature, prompts and `max_tokens`). The facade only records it in the ledger, with `shadowRoute`: the route the `prod` profile would take. |
-| `prod` | Per-task routes from the shared config, filtered by the data policy: transcripts and personal data never go to DeepSeek, and client data goes to Gemini only after its paid tier is confirmed. Claude requests are built by the core (no `temperature`/`top_p`/`top_k`, adaptive thinking, `output_config.effort`, a `max_tokens` floor of 4096, strict tools). |
-| `test`, `replay`, `record` | Local use: DeepSeek for synthetic data, cassette replay, cassette recording. The data override can choose them only while hub safe mode is on (or in a local run with `AI_PROFILE` set); elsewhere the override may choose `legacy` or `prod`. |
+| `legacy` (default) | Each call site sends its own request exactly as before the facade (same provider, model, temperature, prompts and `max_tokens`). The facade only records it in the ledger, with `shadowRoute`: the route the `prod` profile would take. One exception, the image rule below: a call that carries a picture of client data never runs a request to another provider than Claude. |
+| `prod` | Per-task routes from the shared config, filtered by the data policy: transcripts and personal data never go to DeepSeek, pictures of client data go only to Claude, and Gemini is used as a paid provider (confirmed 2026-11-10). Claude requests are built by the core (no `temperature`/`top_p`/`top_k`, adaptive thinking, `output_config.effort`, a `max_tokens` floor of 4096, strict tools). |
+| `test`, `replay`, `record`, `eval` | Local use: DeepSeek for synthetic data, cassette replay, cassette recording, model evaluation. The data override can choose them only while hub safe mode is on (or in a local run with `AI_PROFILE` set); elsewhere the override may choose `legacy` or `prod`. |
 
 The profile comes from, in order: env `AI_PROFILE` (local runs and tests), the `profile` field of
 `<dataDir>/ai-routes.override.json`, `AI_TEST_MODE=1` (test), else `legacy`. Production switches only
@@ -29,6 +29,37 @@ recorded:
 While either is set, `GET /api/admin/ai/status` reports `facade.callSites: "direct"` and a profile
 change is refused with 409.
 
+## Data policy: pictures, DeepSeek and Gemini
+
+The hard rules live in the core (`packages/suite/core/llm/policy.js`, `CONTRACT.md` section 5). A config file
+can only make them stricter. They apply in every profile, `legacy` included.
+
+- **Pictures of client data go only to Claude.** A call with at least one image block (in `images`, or inside
+  a message or a tool result) and a data class above `public` keeps only its Claude route entries. If none is
+  left, the policy moves the call to Claude Haiku 5.5 and the ledger row records the `policyRedirect`. Two
+  cases may use another provider: a synthetic call, and a call whose text redaction the policy accepted and
+  which also carries `ctx.imagesRedacted` (every picture was rendered from redacted content). No hub call site
+  sets `imagesRedacted`.
+  - On the `legacy` profile this changes three call sites that sent a picture to Gemini: the price list or
+    menu photo (`assistant.products-image`), the client media brief for a picture (`assistant.media-brief`)
+    and the signed-contract check (`inbox.inspect-contract`). Their calls now go through the core to Claude.
+    Their feature switch is unchanged (they still look for the Gemini key first), and they need a working
+    Anthropic key.
+  - Video and audio media briefs and the grounded link search carry no image block and stay on Gemini.
+  - A provider-specific call (`native`) that sends pictures passes `images` (a list or a count). The core
+    cannot shape such a call, so when the rule refuses it there is no Claude route to move it to: it ends with
+    one `policy_blocked` row and an error.
+- **DeepSeek in production: fallback for synthetic or redacted payloads only; the policy skips this entry
+  for unredacted real-client data.** The `prod` routes keep DeepSeek as second choice for the classification
+  and extraction families. Personal and transcript data never reach it; other client data only when the call
+  is synthetic or carries a redaction the policy accepted.
+- **Gemini is a paid provider** (`billingTier: "paid"`, `paidTierConfirmedAt: "2026-11-10"` in the shared
+  policy; the core needs both). Its entries in the vision, visual-qa and media routes are used when the Claude
+  first choice fails, never for a picture of client data.
+- Every image task in the shared registry is business class or higher, except two template-only tasks listed
+  with their reason in `scripts/llm-harness.test.mjs` and in `CONTRACT.md` (`template-import.qa-vision`,
+  `siteintel.golden-judge-vision`).
+
 ## Call sites and task keys
 
 | Task | Call site | Legacy provider |
@@ -37,10 +68,10 @@ change is refused with 409.
 | `workshop.summary`, `workshop.project-document`, `workshop.transcript-eval` | `lib/workshop-*.js` | DeepSeek |
 | `booker.preview-document` | `lib/booker-preview-document.js` | DeepSeek |
 | `assistant.chat`, `assistant.gather`, `assistant.products-ingest` | `lib/ai-assistant/*` | DeepSeek |
-| `assistant.products-image` | `lib/ai-assistant/products-ingest.js` (price list photo to text) | Gemini |
-| `assistant.media-brief` | `lib/ai-assistant/media-transcript.js` (client media brief) | Gemini |
+| `assistant.products-image` | `lib/ai-assistant/products-ingest.js` (price list photo to text) | Gemini before; a picture now goes to Claude (image rule) |
+| `assistant.media-brief` | `lib/ai-assistant/media-transcript.js` (client media brief) | Gemini for video and audio; a picture goes to Claude (image rule) |
 | `inbox.categorize`, `inbox.decide` | `lib/inbox-bot/*` | DeepSeek |
-| `inbox.inspect-contract` | `lib/inbox-bot/inspect-contract.js` | Gemini |
+| `inbox.inspect-contract` | `lib/inbox-bot/inspect-contract.js` | Gemini before; the screenshot now goes to Claude (image rule) |
 | `sales-link.discover` | `lib/sales-link-discovery.js` (Google Search grounding) | Gemini |
 | `infokort.agent` | `lib/infokort-agent.js` (tool loop) | Claude Haiku 5.5 |
 | `brief.map`, `brief.reduce`, `brief.iteration`, `change.classify`, `followups.extract` | Delivery (no call site yet) | Claude Haiku 5.5 |
@@ -59,7 +90,7 @@ change is refused with 409.
 ## Newer shared tasks: data class and starting route
 
 The shared registry holds the Maker's tasks too. These newer ones route by family (`arbiter`, `brief`,
-`compliance`), so the shared routes name none of them and neither repo gets an unknown-task warning.
+`compliance`, `seo`), so the shared routes name none of them and neither repo gets an unknown-task warning.
 Production never falls back to DeepSeek for these families, not even for synthetic data; the `test`
 profile uses DeepSeek only where the data policy allows it.
 
@@ -70,6 +101,17 @@ profile uses DeepSeek only where the data policy allows it.
 | `cms.spec-writer`, `cms-spec.email` | Maker | transcript (brief directives quote meetings) | Haiku 5.5 medium | DeepSeek only for a synthetic brief, else Haiku 5.5 medium | Sonnet 5.5 medium |
 | `seo.claims-extract` | Maker | business | Haiku 5.5 medium | DeepSeek for synthetic data or a clean redaction, else Haiku 5.5 medium | Sonnet 5.5 medium |
 | `seo.agreed-extract` | hub | transcript | Haiku 5.5 medium | DeepSeek only for synthetic transcripts, else Haiku 5.5 medium | Sonnet 5.5 medium |
+| `seo.scope`, `seo.facts-nouns` | Maker | business | Haiku 5.5 low | DeepSeek for synthetic data or a clean redaction, else Haiku 5.5 low | Sonnet 5.5 medium |
+| `seo.page-map` | Maker | business | Haiku 5.5 medium | DeepSeek for synthetic data or a clean redaction, else Haiku 5.5 medium | Sonnet 5.5 medium |
+| `change.classify` | hub | personal | Haiku 5.5 low | DeepSeek for synthetic data or a clean redaction, else Haiku 5.5 low | Haiku 5.5 medium |
+
+Two more route rules:
+
+- The judge of the development agent never runs on the planner's model. `dev.plan` goes Haiku 5.5, then
+  Sonnet 5.5, then Opus 5.5; `dev.judge` goes Sonnet 5.5, then Opus 5.5, then Sonnet 5.5 at high effort.
+- The `eval` profile is the `prod` routes plus two explicit lists for model evaluation: `candidates` (DeepSeek,
+  Claude and Gemini models) and `judges` (Claude Opus 5.5, Gemini 2.5 Pro and one OpenAI model). Each item is
+  one model with no fallback. OpenAI is a judge only.
 
 Budget scopes a caller may opt into with `ctx.budgetScope` (plus its run or job id): `cmsHookup` (one CMS
 hookup attempt, $0.30, $0.50 on tier 3, scaled by pages like the run), `seoPass` ($0.40, scaled by pages)
@@ -78,6 +120,12 @@ stops. A call without a scope counts toward its run as before.
 
 ## Ledger, spend and budgets
 
+- The ledger is also the policy log. Every row carries `dataClass` (`synthetic`, `public`, `business`,
+  `personal` or `transcript`) and `redacted` (`true` or `false`): what the policy decided for the call's
+  payload, never a copy of the caller's flag. A `synthetic` or `redacted` flag the policy did not accept gives
+  `redacted: false` and a real-client class. The legacy passthrough, the rows of earlier attempts and the
+  provider-specific calls carry both fields too. `images` counts every image block of the request, those
+  inside messages and tool results included. Rows written before this have neither field; readers accept them.
 - `<dataDir>/ai/ledger-YYYY-MM.jsonl`: one v2 row per provider attempt (task, provider, requested and
   served model, profile, tokens, USD priced from the served model, status, `attempt`, `salesClientId`).
   A call that tried more than once (the grounded search retry without `thinkingConfig`, the next media

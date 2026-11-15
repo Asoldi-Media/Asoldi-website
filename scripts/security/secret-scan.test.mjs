@@ -28,8 +28,16 @@ test.after(() => {
   for (const dir of temps) rmSync(dir, { recursive: true, force: true });
 });
 
+/** process.env without the GIT_* variables git exports to hooks (GIT_DIR, GIT_INDEX_FILE, ...).
+ * With them, git in a temp dir would act on the repository that runs this file. */
+function envWithoutGit(extra = {}) {
+  const env = {};
+  for (const [key, value] of Object.entries(process.env)) if (!/^GIT_/i.test(key)) env[key] = value;
+  return { ...env, ...extra };
+}
+
 function git(cwd, args, env = {}) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
+  return execFileSync('git', args, { cwd, encoding: 'utf8', env: envWithoutGit(env), stdio: ['pipe', 'pipe', 'pipe'] });
 }
 
 function makeRepo() {
@@ -652,13 +660,17 @@ test('installed hooks refuse a commit with a secret and a push that fails npm te
     "const fs = require('fs'); const path = require('path'); const os = require('os');",
     "const d = process.env.APP_DATA_DIR || '';",
     "fs.writeFileSync('data-dir-seen.txt', d);",
-    "const ok = d && fs.existsSync(d) && fs.readdirSync(d).length === 0",
+    // git exports GIT_DIR and friends to the hook; npm test must not see them (2026-11-16: tests
+    // that ran git in temp dirs acted on the pushing repository instead).
+    "const gitVars = Object.keys(process.env).filter((k) => /^GIT_/i.test(k));",
+    "fs.writeFileSync('git-env-seen.txt', gitVars.join(','));",
+    "const ok = d && fs.existsSync(d) && fs.readdirSync(d).length === 0 && gitVars.length === 0",
     "  && path.resolve(d) !== path.join(os.homedir(), '.asoldi-website-data') && process.env.PERSIST_PRODUCTION_ENV === '0';",
     'process.exit(ok ? 0 : 1);',
     '',
   ].join('\n'));
   copyTooling(dir, 'node data-dir-check.cjs');
-  const env = { ...process.env, SECRET_SCAN_ENV_FILES: '', ASOLDI_RETIRED_SECRETS: join(dir, 'none.json'), APP_DATA_DIR: '' };
+  const env = envWithoutGit({ SECRET_SCAN_ENV_FILES: '', ASOLDI_RETIRED_SECRETS: join(dir, 'none.json'), APP_DATA_DIR: '' });
   const run = (cmd, args) => spawnSync(cmd, args, { cwd: dir, env, encoding: 'utf8', shell: false });
 
   const install = run(process.execPath, ['scripts/security/install-git-hooks.mjs']);
@@ -692,6 +704,7 @@ test('installed hooks refuse a commit with a secret and a push that fails npm te
   const seenDataDir = readFileSync(join(dir, 'data-dir-seen.txt'), 'utf8').trim();
   assert.ok(seenDataDir, 'npm test ran with APP_DATA_DIR set');
   assert.equal(existsSync(seenDataDir), false, 'the hook removes the throwaway data dir after npm test');
+  assert.equal(readFileSync(join(dir, 'git-env-seen.txt'), 'utf8'), '', 'npm test under the hook sees no GIT_* variables');
 
   copyTooling(dir, 'node -e "process.exit(1)"');
   run('git', ['add', 'package.json']);

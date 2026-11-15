@@ -53,6 +53,7 @@ export const CTX_FIELDS = Object.freeze([
   'dataClass',
   'synthetic',
   'redacted',
+  'imagesRedacted',
   'vision',
   'route',
   'budgetScope',
@@ -113,6 +114,7 @@ export function normalizeCtx(ctx = {}) {
   }
   if (src.synthetic === true) out.synthetic = true;
   if (src.redacted === true) out.redacted = true;
+  if (src.imagesRedacted === true) out.imagesRedacted = true;
   if (src.vision === false) out.vision = false;
   if (typeof src.route === 'string' && src.route.trim()) out.route = src.route.trim();
   // 0 or a negative value would switch the runaway stop off; it means "not given".
@@ -168,6 +170,9 @@ export function profileView(routes, profileName) {
   return view;
 }
 
+/** The list keys of a profile that name explicit single-entry routes (the `eval` profile's candidates and judges). */
+export const ROUTE_LIST_KEYS = Object.freeze(['candidates', 'judges']);
+
 function routeStrings(level = {}) {
   const out = [];
   for (const key of ['default', 'vision']) if (level[key]) out.push({ at: key, route: level[key] });
@@ -215,6 +220,29 @@ export function validateRoutesConfig(routes, { tasks = null, prices = PRICES, no
     for (const [tier, level] of Object.entries(prof.tiers || {})) {
       if (!TIERS.includes(tier)) errors.push(`${at}.tiers.${tier}: unknown tier`);
       levels.push({ at: `${at}.tiers.${tier}`, level: level || {} });
+    }
+    // Explicit lists (candidates, judges): each item is one route entry with no fallback, so an answer always
+    // comes from the model the list names.
+    for (const key of ROUTE_LIST_KEYS) {
+      if (prof[key] === undefined) continue;
+      if (!Array.isArray(prof[key]) || !prof[key].length) {
+        errors.push(`${at}.${key} must be a non-empty list of routes`);
+        continue;
+      }
+      prof[key].forEach((route, i) => {
+        let chain;
+        try {
+          chain = parseRoute(route);
+        } catch (error) {
+          errors.push(`${at}.${key}[${i}]: ${error.message}`);
+          return;
+        }
+        if (chain.length !== 1 || chain[0].provider === 'legacy' || chain[0].provider === 'replay') {
+          errors.push(`${at}.${key}[${i}]: must be one provider:model[:effort] entry (no fallback, no placeholder)`);
+          return;
+        }
+        models.push(chain[0].model);
+      });
     }
     for (const { at: levelAt, level } of levels) {
       for (const key of ['tasks', 'escalate']) {
@@ -299,10 +327,14 @@ function dedupe(chain) {
  * Resolves the provider chain for one call.
  * @param {string} task registry key
  * @param {object} ctx  see CTX_FIELDS
- * @param {{tasks:object, routes:object, policy:object, env?:object, legacyRoute?:Function, payload?:any}} options
+ * @param {{tasks:object, routes:object, policy:object, env?:object, legacyRoute?:Function, payload?:any, images?:number}} options
+ *   images: the number of image blocks the call carries (request.images plus those in messages and tool results).
+ *   callLlm always passes the real count. When it is not given (a route preview: status pages, availability
+ *   checks), a call of an image task is taken to carry an image, unless ctx.vision is false: the preview then
+ *   shows where a picture would go. Pass images: 0 for the route of a call without one.
  */
 export function resolveRoute(task, ctx = {}, options = {}) {
-  const { tasks, routes, policy = {}, env = {}, legacyRoute = null, payload } = options;
+  const { tasks, routes, policy = {}, env = {}, legacyRoute = null, payload, images = null } = options;
   const spec = getTask(tasks, task);
   const { ctx: c, ignored, warnings: ctxWarnings } = normalizeCtx(ctx);
   const warnings = [...ctxWarnings];
@@ -359,13 +391,13 @@ export function resolveRoute(task, ctx = {}, options = {}) {
     if (!chain.length) throw new RouteConfigError(`Task "${task}" needs ${needs} but no route entry supports it in profile "${profile}".`, { task, profile });
   }
 
-  const dataClass = effectiveDataClass({ task: spec, ctx: c, payload });
+  const dataClass = effectiveDataClass({ task: spec, ctx: c, payload, images: images === null || images === undefined ? (vision ? 1 : 0) : images });
   const original = dedupe(chain);
   // Policy blocks carry the task, profile and route so the caller can write a policy_blocked ledger row.
-  const blockedContext = { task, profile, route: formatRoute(original), primary: { provider: original[0].provider, model: original[0].model }, reasons: [...dataClass.reasons] };
+  const blockedContext = { task, profile, route: formatRoute(original), primary: { provider: original[0].provider, model: original[0].model }, reasons: [...dataClass.reasons], ledger: { ...dataClass.ledger }, images: dataClass.images };
   let policyResult;
   try {
-    policyResult = applyPolicy(original, dataClass.effective, policy, { synthetic: dataClass.synthetic, redacted: dataClass.redacted, task, family: family || null });
+    policyResult = applyPolicy(original, dataClass.effective, policy, { synthetic: dataClass.synthetic, redacted: dataClass.redacted, imageCall: dataClass.imageCall, imagesRedacted: dataClass.imagesRedacted, task, family: family || null });
   } catch (error) {
     if (error?.code === 'policy_blocked') Object.assign(error, blockedContext);
     throw error;
@@ -400,7 +432,18 @@ export function resolveRoute(task, ctx = {}, options = {}) {
     record: Boolean(view.record),
     replay: view0.provider === 'replay',
     escalation: Object.freeze({ requested: escalation.requested, applied: source === 'escalate' ? escalation.applied : 0, available: escalation.available, ceiling: escalation.ceiling, exhausted: escalation.exhausted }),
-    dataClass: Object.freeze({ declared: dataClass.declared, call: dataClass.call, effective: dataClass.effective, synthetic: dataClass.synthetic, redacted: dataClass.redacted, reasons: Object.freeze([...dataClass.reasons]) }),
+    dataClass: Object.freeze({
+      declared: dataClass.declared,
+      call: dataClass.call,
+      effective: dataClass.effective,
+      synthetic: dataClass.synthetic,
+      redacted: dataClass.redacted,
+      images: dataClass.images,
+      imageCall: dataClass.imageCall,
+      imagesRedacted: dataClass.imagesRedacted,
+      ledger: Object.freeze({ ...dataClass.ledger }),
+      reasons: Object.freeze([...dataClass.reasons]),
+    }),
     primary: Object.freeze({ ...view0 }),
     fallbacks: Object.freeze(finalChain.slice(1).map((e) => Object.freeze({ ...e }))),
     chain: Object.freeze(finalChain.map((e) => Object.freeze({ ...e }))),
@@ -426,7 +469,7 @@ export function createRouter({ tasks, routes, policy, env = {}, legacyRoute = nu
   const envCheck = validateEnvRoutes(env, { tasks, prices });
   const errors = [...routeCheck.errors, ...policyCheck.errors, ...envCheck.errors];
   if (errors.length) throw new RouteConfigError(`Invalid LLM config:\n- ${errors.join('\n- ')}`, { errors });
-  const resolve = (task, ctx = {}, extra = {}) => resolveRoute(task, ctx, { tasks, routes, policy, env, legacyRoute, payload: extra.payload });
+  const resolve = (task, ctx = {}, extra = {}) => resolveRoute(task, ctx, { tasks, routes, policy, env, legacyRoute, payload: extra.payload, images: extra.images });
   return Object.freeze({
     resolveRoute: resolve,
     routeFor: resolve,

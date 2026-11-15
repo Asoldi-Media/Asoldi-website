@@ -25,7 +25,8 @@
 // 6: settings keys for the delivery loop, gate, brief, privacy, media and signing switches; brief and signing are release-gated.
 // 7: settings keys for the visit statistics retention, plan change, cancellation, booking link, intake steps, transcript keywords,
 // CMS fleet monitor and wake ping, and site rekey switches.
-export const VOCAB_VERSION = 7;
+// 8: settings keys for the change request and iteration (project document, processing, Cursor prompt) switches.
+export const VOCAB_VERSION = 8;
 
 function freezeList(list) {
   return Object.freeze(list.map((item) => (item && typeof item === 'object' ? Object.freeze({ ...item }) : item)));
@@ -569,6 +570,22 @@ export const SETTINGS_KEYS = Object.freeze({
   siteRekey: 'siteRekey.enabled',
   siteRekeyPaused: 'siteRekey.paused',
   // --- end site rekey
+  // --- change requests
+  changeRequestsEnabled: 'changeRequests.enabled',
+  changeRequestsMode: 'changeRequests.mode',
+  changeRequestsPaused: 'changeRequests.paused',
+  // --- end change requests
+  // --- iteration
+  iterationProjectDocumentEnabled: 'iteration.projectDocument.enabled',
+  iterationProjectDocumentMode: 'iteration.projectDocument.mode',
+  iterationProjectDocumentPaused: 'iteration.projectDocument.paused',
+  iterationProcessingEnabled: 'iteration.processing.enabled',
+  iterationProcessingMode: 'iteration.processing.mode',
+  iterationProcessingPaused: 'iteration.processing.paused',
+  iterationCursorPromptEnabled: 'iteration.cursorPrompt.enabled',
+  iterationCursorPromptMode: 'iteration.cursorPrompt.mode',
+  iterationCursorPromptPaused: 'iteration.cursorPrompt.paused',
+  // --- end iteration
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);
@@ -600,6 +617,11 @@ export const RELEASE_GATED_SWITCHES = Object.freeze([
   // --- booking
   'booking.selfLink',
   // --- end booking
+  // --- iteration
+  'iteration.projectDocument',
+  'iteration.processing',
+  'iteration.cursorPrompt',
+  // --- end iteration
   // release suite: the other delivery spine switches
   'delivery.loop',
   'gate',

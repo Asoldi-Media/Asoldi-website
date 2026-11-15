@@ -21,7 +21,7 @@ Vedlegget hører til databehandleravtalen versjon dpa-1. Det lister underleveran
 ## AI-behandling
 
 - Anthropic: kan få personopplysninger og møtetranskripsjoner når oppgaven krever det.
-- Google: kan få personopplysninger og møtetranskripsjoner når oppgaven krever det. Brukes for slike data først når betalt tjenestenivå med databehandleravtale er bekreftet.
+- Google: kan få personopplysninger og møtetranskripsjoner når oppgaven krever det.
 - DeepSeek: får bare offentlige opplysninger, opplysninger om bedriften eller anonymiserte data, aldri personopplysninger.
 - OpenAI: brukes bare til automatisk kvalitetskontroll og får aldri personopplysninger.
 

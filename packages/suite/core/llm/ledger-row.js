@@ -1,6 +1,7 @@
 // Ledger rows (v2). One row per provider attempt, priced from the model that actually served it.
 // Storage (JSONL files, rotation, summaries) is the facade's job; this module only shapes rows.
 
+import { LEDGER_DATA_CLASSES } from './constants.js';
 import { normalizeUsage, priceResponse, priceUsage } from './prices.js';
 
 export const LEDGER_VERSION = 2;
@@ -49,7 +50,32 @@ export const LEDGER_FIELDS = Object.freeze([
   'policyRedirect',
   'needsReview',
   'budget',
+  'dataClass',
+  'redacted',
 ]);
+
+/**
+ * The two data-policy fields of a row (the ledger is the policy log). `dataClass` is one of
+ * LEDGER_DATA_CLASSES and `redacted` is true or false. Both record what the policy decided for the call's
+ * payload (route.dataClass.ledger, or the same check on a call that has no route), never the caller's flag.
+ * Readers accept older rows that lack them.
+ */
+export const LEDGER_DATA_FIELDS = Object.freeze(['dataClass', 'redacted']);
+
+/**
+ * Problems of one v2 LLM row against the contract: a missing field, a data class outside the fixed list, or a
+ * `redacted` that is not true or false. An empty list means the row is complete. Rows of kind `api` and
+ * migrated v1 rows are not checked.
+ */
+export function ledgerRowProblems(row = {}) {
+  if (!row || typeof row !== 'object') return ['row is not an object'];
+  if (row.kind !== 'llm' || row.v !== LEDGER_VERSION || row.migratedFrom) return [];
+  const problems = [];
+  for (const field of LEDGER_FIELDS) if (!(field in row)) problems.push(`row lacks ${field}`);
+  if ('dataClass' in row && !LEDGER_DATA_CLASSES.includes(row.dataClass)) problems.push(`dataClass "${row.dataClass}" is not one of ${LEDGER_DATA_CLASSES.join(', ')}`);
+  if ('redacted' in row && typeof row.redacted !== 'boolean') problems.push('redacted must be true or false');
+  return problems;
+}
 
 function str(value) {
   return value === undefined || value === null ? '' : String(value);
@@ -62,6 +88,9 @@ function round(value) {
 /**
  * Builds one v2 row. `servedModel` (response.model) prices the row; `requestedModel` is what the route asked for.
  * With `response` given (Claude shape), usage.iterations from a server-side fallback are priced per attempt.
+ * `dataClass` and `redacted` come from the policy's result for the call (route.dataClass.ledger). A row built
+ * without a data class from the fixed list has no `dataClass` field, and ledgerRowProblems() reports it.
+ * `images` is the number of image blocks of the request, those inside messages and tool results included.
  */
 export function buildLedgerRow({
   at = new Date().toISOString(),
@@ -88,6 +117,8 @@ export function buildLedgerRow({
   batch = false,
   inferenceGeo = '',
   error = null,
+  dataClass = '',
+  redacted = false,
 } = {}) {
   // A replay serves a recorded response: nothing is spent. The recorded model goes to `replayOf`.
   const replay = provider === 'replay';
@@ -130,6 +161,8 @@ export function buildLedgerRow({
     policyRedirect: policyRedirect || null,
     needsReview: Boolean(needsReview),
     budget: budget || null,
+    ...(LEDGER_DATA_CLASSES.includes(dataClass) ? { dataClass } : {}),
+    redacted: redacted === true,
   };
   if (batch) row.batch = true;
   if (replay && recorded) row.replayOf = recorded;

@@ -3,6 +3,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as core from '../packages/suite/core/llm/index.js';
+import { ASOLDI_LLM_POLICY, asoldiLlmConfig } from '../packages/suite/harness/asoldi/llm.js';
+import { coreWithoutRules } from './llm-core-copy.mjs';
 
 const {
   parseRoute,
@@ -348,7 +350,22 @@ test('Q5: a business task with a real payload never reaches DeepSeek or OpenAI (
   const redacted = router({ AI_PROFILE: 'test' }).resolveRoute('copy.write', { redacted: true }, { payload: { user: 'The bakery sells bread. Contact [NAME] at [EMAIL].' } });
   assert.equal(redacted.primary.provider, 'deepseek', 'a redacted payload may use DeepSeek');
   assert.equal(redacted.dataClass.redacted, true);
-  assert.equal(router({ AI_PROFILE: 'prod' }).resolveRoute('eval.judge', { route: 'openai:gpt-4.1' }).primary.provider, 'openai', 'OpenAI stays usable as the evaluation judge');
+  // The judge task is an image task: OpenAI judges text and synthetic or redacted pictures, never a client picture.
+  assert.equal(router({ AI_PROFILE: 'prod' }).resolveRoute('eval.judge', { route: 'openai:gpt-4.1' }, { images: 0 }).primary.provider, 'openai', 'OpenAI stays usable as the evaluation judge');
+  assert.equal(router({ AI_PROFILE: 'prod' }).resolveRoute('eval.judge', { route: 'openai:gpt-4.1', synthetic: true }).primary.provider, 'openai', 'and for a synthetic picture');
+  assert.equal(router({ AI_PROFILE: 'prod' }).resolveRoute('eval.judge', { route: 'openai:gpt-4.1' }).primary.provider, 'claude', 'a client picture stays on Claude');
+});
+
+test('route preview: a route resolved without an image count shows where a picture of an image task would go', () => {
+  const paid = withGemini({ billingTier: 'paid', paidTierConfirmedAt: '2026-11-10' });
+  const r = createRouter({ tasks: TASKS, routes: ROUTES, policy: paid, env: { AI_PROFILE: 'test' }, legacyRoute });
+  const preview = r.resolveRoute('qa.client-shot', {});
+  assert.deepEqual([preview.route, preview.dataClass.imageCall, preview.dataClass.images], ['claude:claude-haiku-5-5:medium', true, 1]);
+  assert.equal(r.resolveRoute('qa.client-shot', {}, { images: 0 }).route, 'gemini:gemini-2.5-flash-lite', 'a call without a picture');
+  assert.equal(r.resolveRoute('qa.client-shot', {}, { images: 2 }).dataClass.images, 2);
+  assert.equal(r.resolveRoute('qa.client-shot', { vision: false }).dataClass.imageCall, false, 'ctx.vision false is a text call');
+  assert.equal(r.resolveRoute('copy.write', {}).dataClass.imageCall, false, 'a text task is never taken to carry a picture');
+  assert.equal(r.resolveRoute('qa.shot', {}).route, 'gemini:gemini-2.5-flash-lite', 'a public template capture is not touched');
 });
 
 test('Q5: ctx.synthetic / ctx.redacted cannot carry real person data past the policy', () => {
@@ -713,8 +730,9 @@ test('json: schema validation covers the subset the facades rely on', () => {
 
 // ---------- ledger ----------
 test('ledger: v2 row priced from the served model, with every contract field', () => {
-  const row = buildLedgerRow({ at: '2026-10-24T10:02:11.120Z', repo: 'maker', task: 'step2.copy-judge', provider: 'claude', requestedModel: 'claude-opus-5-5', servedModel: 'claude-haiku-5-5', effort: 'medium', profile: 'prod', ctx: { runId: 'r1', salesClientId: 'sc_1', tier: 'tier-3-ecommerce' }, usage: { inputTokens: 50_000 }, images: 2, latencyMs: 4120.4 });
+  const row = buildLedgerRow({ at: '2026-10-24T10:02:11.120Z', repo: 'maker', task: 'step2.copy-judge', provider: 'claude', requestedModel: 'claude-opus-5-5', servedModel: 'claude-haiku-5-5', effort: 'medium', profile: 'prod', ctx: { runId: 'r1', salesClientId: 'sc_1', tier: 'tier-3-ecommerce' }, usage: { inputTokens: 50_000 }, images: 2, latencyMs: 4120.4, dataClass: 'business', redacted: false });
   for (const field of LEDGER_FIELDS) assert.ok(field in row, field);
+  assert.deepEqual(core.ledgerRowProblems(row), []);
   assert.equal(row.v, 2);
   assert.equal(row.model, 'claude-haiku-5-5');
   assert.equal(row.requestedModel, 'claude-opus-5-5');
@@ -764,7 +782,7 @@ test('cassette records hold no keys or tokens, and keep the model output keys as
     model: 'claude-haiku-5-5',
     response: {
       text: `used key ${FAKE_KEY} and ${FAKE_BEARER}`,
-      data: { fields: [{ name: 'password', type: 'password' }], token: 'csrf-field', note: `leaked ${FAKE_KEY}` },
+      data: { fields: [{ name: 'password', type: 'password' }], token: 'csrf-field', note: `escaped ${FAKE_KEY}` },
       content: [{ type: 'tool_use', id: 'tu', name: 'form', input: { password: { label: 'Passord' }, auth: 'none' } }],
       usage: { input_tokens: 1 },
       apiKey: 'x',
@@ -887,9 +905,17 @@ function claudeMessage({ model = 'claude-haiku-5-5', text = '{"ok":true}', stop 
   return normalizeClaudeResponse({ id: 'msg', model, stop_reason: stop, content: content || [{ type: 'text', text }], usage });
 }
 
-function makeCore({ env = { AI_PROFILE: 'prod' }, providers, ...rest } = {}) {
+// Every row a core of this file wrote through the call path; the last tests read it (a row per status, both
+// data-policy fields on each).
+const ALL_ROWS = [];
+
+function makeCore({ env = { AI_PROFILE: 'prod' }, providers, ledger = null, ...rest } = {}) {
   const rows = [];
-  const llm = createLlmCore({ tasks: TASKS, routes: ROUTES, policy: POLICY, env, legacyRoute, providers, ledger: { append: (row) => rows.push(row) }, repo: 'test', clock: () => new Date('2026-10-24T10:00:00Z'), ...rest });
+  const append = (row) => {
+    ALL_ROWS.push(row);
+    return ledger ? ledger.append(row) : rows.push(row);
+  };
+  const llm = createLlmCore({ tasks: TASKS, routes: ROUTES, policy: POLICY, env, legacyRoute, providers, repo: 'test', clock: () => new Date('2026-10-24T10:00:00Z'), ...rest, ledger: { append } });
   return { llm, rows };
 }
 
@@ -1491,7 +1517,7 @@ test('budgets: a budgetScope without an id is never pooled across runs or client
 test('ledger: policy blocks and dead-provider skips are written as rows', async () => {
   const strict = { version: 1, providers: { claude: { allow: ['public'] }, deepseek: { allow: ['public', 'business'] } }, redirect: 'claude:claude-haiku-5-5' };
   const rows = [];
-  const llm = createLlmCore({ tasks: TASKS, routes: ROUTES, policy: strict, env: { AI_PROFILE: 'prod' }, providers: {}, ledger: { append: (row) => rows.push(row) }, repo: 'hub' });
+  const llm = createLlmCore({ tasks: TASKS, routes: ROUTES, policy: strict, env: { AI_PROFILE: 'prod' }, providers: {}, ledger: { append: (row) => (ALL_ROWS.push(row), rows.push(row)) }, repo: 'hub' });
   await assert.rejects(llm.json({ task: 'brief.read', user: 'Transcript', ctx: { runId: 'r-policy', salesClientId: 'sc-1' } }), (e) => e.code === 'policy_blocked');
   assert.equal(rows.length, 1);
   assert.equal(rows[0].status, 'policy_blocked');
@@ -1536,4 +1562,342 @@ test('policy: exceptions record known calls outside the core and are validated',
     assert.ok(bad.errors.some((e) => e.includes(fragment)), fragment);
   }
   assert.equal(core.validatePolicy({ ...POLICY, exceptions: 'none' }).ok, false);
+});
+
+// ---------- ledger data-policy fields, image count, the image rule, DeepSeek as a fallback ----------
+// These run on the shipped registry, routes and policy (the Asoldi harness), where Gemini is a paid provider:
+// a refusal below cannot come from Gemini being switched off.
+
+const SHOT = Object.freeze({ mime: 'image/jpeg', base64: tinyJpeg(800, 600).toString('base64') });
+const REAL_CLIENT_CLASSES = ['business', 'personal', 'transcript'];
+
+function mockProviders() {
+  const reached = [];
+  const answer = (provider) => async (call) => {
+    reached.push(provider);
+    if (provider === 'claude') return claudeMessage({ model: call.model });
+    return { servedModel: call.model, text: '{"ok":true}', stopReason: 'end_turn', usage: { inputTokens: 100, outputTokens: 10 } };
+  };
+  return { reached, providers: { claude: answer('claude'), gemini: answer('gemini'), deepseek: answer('deepseek'), openai: answer('openai') } };
+}
+
+/** A core on the shipped config. `coreModule` may be a copy of the core without a hard rule (negative controls). */
+function shippedCore({ env = { AI_PROFILE: 'test' }, providers, policy = ASOLDI_LLM_POLICY, coreModule = core } = {}) {
+  const rows = [];
+  const real = coreModule === core;
+  const llm = coreModule.createLlmCore({
+    ...asoldiLlmConfig(),
+    policy,
+    env,
+    legacyRoute,
+    providers,
+    repo: 'test',
+    clock: () => new Date('2026-11-13T10:00:00Z'),
+    ledger: { append: (row) => (real && ALL_ROWS.push(row), rows.push(row)) },
+  });
+  return { llm, rows };
+}
+
+async function shippedCall(request, options = {}) {
+  const mocks = mockProviders();
+  const { llm, rows } = shippedCore({ providers: options.providers || mocks.providers, ...options });
+  let error = null;
+  try {
+    await llm.json(request);
+  } catch (caught) {
+    error = caught;
+  }
+  return { rows, reached: mocks.reached, error };
+}
+
+/** The call was kept off `provider`: exactly one row, policy_blocked or moved to Claude by the policy, none on the provider. */
+function assertKeptOff(result, provider, label) {
+  assert.equal(result.rows.length, 1, `${label}: exactly 1 row (${JSON.stringify(result.rows.map((r) => [r.provider, r.status]))})`);
+  const [row] = result.rows;
+  const blocked = row.status === 'policy_blocked';
+  const moved = row.provider === 'claude' && /^claude:/.test(row.policyRedirect?.to || '');
+  assert.ok(blocked || moved, `${label}: the row is policy_blocked or carries a policyRedirect to Claude`);
+  assert.equal(result.rows.filter((r) => r.provider === provider && r.status !== 'policy_blocked').length, 0, `${label}: 0 rows on ${provider}`);
+  assert.equal(result.reached.includes(provider), false, `${label}: ${provider} was not called`);
+  assert.deepEqual(core.ledgerRowProblems(row), [], label);
+  return row;
+}
+
+/** The call reached `provider`: exactly one row on it, status ok. */
+function assertReached(result, provider, label) {
+  assert.equal(result.error, null, `${label}: ${result.error?.message}`);
+  assert.deepEqual(result.rows.map((r) => [r.provider, r.status]), [[provider, 'ok']], label);
+  assert.deepEqual(result.reached, [provider], label);
+  assert.deepEqual(core.ledgerRowProblems(result.rows[0]), [], label);
+  return result.rows[0];
+}
+
+const imageInToolResult = () => [{
+  role: 'user',
+  content: [
+    { type: 'tool_result', tool_use_id: 'shot-1', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: SHOT.base64 } }] },
+    { type: 'text', text: 'Does the page look right?' },
+  ],
+}];
+
+test('ledger: a row for every status carries dataClass and redacted; a row built without a data class fails the row check', () => {
+  let built = 0;
+  for (const status of core.LEDGER_STATUSES) {
+    for (const dataClass of core.LEDGER_DATA_CLASSES) {
+      const row = buildLedgerRow({ task: 'cls.page', provider: 'claude', requestedModel: 'claude-haiku-5-5', status, dataClass, redacted: dataClass === 'business' });
+      built += 1;
+      assert.equal(row.status, status);
+      assert.equal(row.dataClass, dataClass, status);
+      assert.equal(typeof row.redacted, 'boolean', status);
+      for (const field of LEDGER_FIELDS) assert.ok(field in row, `${status}: ${field}`);
+      assert.deepEqual(core.ledgerRowProblems(row), [], status);
+    }
+    const bare = buildLedgerRow({ task: 'cls.page', provider: 'claude', requestedModel: 'claude-haiku-5-5', status });
+    assert.equal('dataClass' in bare, false, 'no data class is invented');
+    assert.match(core.ledgerRowProblems(bare).join('; '), /row lacks dataClass/, `${status}: a row built without a data class fails`);
+    assert.match(core.ledgerRowProblems(buildLedgerRow({ provider: 'claude', status, dataClass: 'real-client' })).join('; '), /row lacks dataClass/, 'a class outside the fixed list is not written');
+  }
+  assert.equal(built, core.LEDGER_STATUSES.length * core.LEDGER_DATA_CLASSES.length);
+  assert.ok(built > 0);
+  assert.deepEqual(core.LEDGER_DATA_CLASSES, ['synthetic', 'public', 'business', 'personal', 'transcript']);
+  assert.deepEqual(LEDGER_FIELDS.slice(-2), ['dataClass', 'redacted']);
+  // Readers accept older rows that lack the two fields.
+  assert.deepEqual(core.ledgerRowProblems(readLedgerRow({ at: '2026-10-01T00:00:00Z', provider: 'deepseek', model: 'deepseek-chat', purpose: 'copy', usd: 0.01 })), []);
+  const older = { ...buildLedgerRow({ provider: 'claude', requestedModel: 'claude-haiku-5-5', dataClass: 'public' }) };
+  delete older.dataClass;
+  delete older.redacted;
+  assert.equal(readLedgerRow(older), older, 'an older v2 row is read as it is');
+  assert.equal(summarizeLedger([older]).calls, 1);
+});
+
+test('ledger: images counts every image block of the request (request.images, and an image inside a tool result)', async () => {
+  const direct = await shippedCall({ task: 'dev.judge', user: 'Check', images: [SHOT], ctx: { synthetic: true } });
+  const nested = await shippedCall({ task: 'dev.judge', messages: imageInToolResult(), ctx: { synthetic: true } });
+  const both = await shippedCall({ task: 'dev.judge', messages: imageInToolResult(), images: [SHOT], ctx: { synthetic: true } });
+  const built = [direct, nested, both].map((result) => result.rows.length);
+  assert.deepEqual(built, [1, 1, 1], 'rows built');
+  assert.equal(direct.rows[0].images, 1, 'an image in request.images');
+  assert.equal(nested.rows[0].images, 1, 'an image block inside a tool result (0 before the row counted message images)');
+  assert.equal(both.rows[0].images, 2);
+  const none = await shippedCall({ task: 'step2.copywriter', user: 'Write the hero text.', ctx: { synthetic: true } });
+  assert.equal(none.rows[0].images, 0);
+});
+
+test('ledger: dataClass and redacted come from the policy result, never from the caller flag (2 planted controls, full call path)', async () => {
+  // Invented people. The values are built from parts so no committed file holds a real-looking address or number.
+  const email = ['kari.hansen', 'fjordbakeriet.no'].join('@');
+  const phone = ['+47', '412', '34', '567'].join(' ');
+  assert.equal(detectPersonFields({ user: email }).realPatterns.includes('email'), true, 'the planted e-mail is not a reserved fixture value');
+  assert.equal(detectPersonFields({ user: phone }).realPatterns.includes('phone'), true, 'the planted phone is not a reserved fixture value');
+  const controls = [
+    { label: 'redacted set, a real-looking e-mail left', ctx: { redacted: true }, user: `Bakery copy. Contact: ${email}` },
+    { label: 'synthetic set, a real-looking phone left', ctx: { synthetic: true }, user: `Fixture bakery. Call ${phone}` },
+  ];
+  let run = 0;
+  for (const control of controls) {
+    const result = await shippedCall({ task: 'step2.copywriter', user: control.user, ctx: { runId: 'r-planted', ...control.ctx } });
+    run += 1;
+    assert.ok(result.rows.length > 0, control.label);
+    for (const row of result.rows) {
+      assert.equal(row.redacted, false, `${control.label}: redacted`);
+      assert.ok(REAL_CLIENT_CLASSES.includes(row.dataClass), `${control.label}: dataClass ${row.dataClass} is neither synthetic nor public`);
+      assert.deepEqual(core.ledgerRowProblems(row), [], control.label);
+    }
+    assert.equal(result.rows.filter((row) => row.provider === 'deepseek').length, 0, `${control.label}: 0 rows with provider deepseek`);
+    assert.equal(result.reached.includes('deepseek'), false, control.label);
+    // A row builder that copies the caller's flag fails the same assertions.
+    const copied = result.rows.map((row) => ({ ...row, redacted: control.ctx.redacted === true, dataClass: control.ctx.synthetic ? 'synthetic' : row.dataClass }));
+    assert.ok(copied.some((row) => row.redacted !== false || !REAL_CLIENT_CLASSES.includes(row.dataClass)), `${control.label}: a builder that copies the flag is caught`);
+  }
+  assert.equal(run, 2, 'controls run');
+  // The accepted forms: a clean redaction and a clean synthetic payload are recorded as such.
+  const clean = await shippedCall({ task: 'step2.copywriter', user: 'Bakery copy. Contact: [EMAIL]', ctx: { redacted: true } });
+  assert.deepEqual([clean.rows[0].provider, clean.rows[0].dataClass, clean.rows[0].redacted], ['deepseek', 'business', true]);
+  const fixture = await shippedCall({ task: 'step2.copywriter', user: 'Fixture bakery. Write to post@example.no', ctx: { synthetic: true } });
+  assert.deepEqual([fixture.rows[0].provider, fixture.rows[0].dataClass, fixture.rows[0].redacted], ['deepseek', 'synthetic', false]);
+});
+
+test('image rule: an image of real-client data goes only to Claude unless synthetic or redacted with an accepted imagesRedacted (10 cases, shipped policy, Gemini paid)', async () => {
+  assert.equal(ASOLDI_LLM_POLICY.providers.gemini.billingTier, 'paid');
+  assert.ok(ASOLDI_LLM_POLICY.providers.gemini.paidTierConfirmedAt);
+  const imageCall = (extra = {}, options = {}) => shippedCall({ task: 'dev.judge', user: 'Does the page look right?', images: [SHOT], ...extra, ctx: { runId: 'r-image', ...(extra.ctx || {}) } }, options);
+  const shipped = core.createRouter({ ...asoldiLlmConfig(), legacyRoute });
+  assert.match(shipped.resolveRoute('dev.judge', { profile: 'test', synthetic: true }).route, /^gemini:/, 'the test-profile vision route lists Gemini first');
+  let cases = 0;
+
+  // (a) a planted real-client image (business class, 1 image in request.images, no flag) on a Gemini-first route.
+  const a = await imageCall();
+  cases += 1;
+  const rowA = assertKeptOff(a, 'gemini', 'a');
+  assert.match(rowA.policyRedirect.from, /^gemini:/);
+  assert.equal(rowA.images, 1);
+  assert.deepEqual([rowA.dataClass, rowA.redacted], ['business', false]);
+
+  // (b) the same call on a DeepSeek-first route.
+  const b = await imageCall({ ctx: { route: 'deepseek:deepseek-flash' } });
+  cases += 1;
+  assertKeptOff(b, 'deepseek', 'b');
+  // DeepSeek has no image input, so the capability filter also drops it. The policy rule is shown on its own:
+  // an accepted text redaction lets business text reach DeepSeek, but never with an image.
+  assert.equal(providerAllows(ASOLDI_LLM_POLICY, 'deepseek', 'business', { redacted: true }).allowed, true);
+  assert.equal(providerAllows(ASOLDI_LLM_POLICY, 'deepseek', 'business', { redacted: true, imageCall: true }).allowed, false);
+  const viaMessage = await shippedCall({ task: 'step15.judge', messages: imageInToolResult(), ctx: { vision: false, redacted: true, route: 'deepseek:deepseek-flash' } });
+  assertKeptOff(viaMessage, 'deepseek', 'b (image in a message of a text call)');
+
+  // (c) the same on an OpenAI-first route (OpenAI serves only the evaluation tasks, so the call is eval.judge).
+  const c = await imageCall({ task: 'eval.judge', ctx: { route: 'openai:gpt-4.1' } });
+  cases += 1;
+  assert.match(assertKeptOff(c, 'openai', 'c').policyRedirect.from, /^openai:/);
+  assertReached(await imageCall({ task: 'eval.judge', ctx: { route: 'openai:gpt-4.1', synthetic: true } }), 'openai', 'c control: the refusal is the image rule, not the task scope');
+
+  // (d) the image inside a tool result.
+  const d = await imageCall({ user: undefined, images: undefined, messages: imageInToolResult() });
+  cases += 1;
+  assert.equal(assertKeptOff(d, 'gemini', 'd').images, 1);
+
+  // (e) redacted set and accepted for the text, imagesRedacted not set: still refused.
+  const e = await imageCall({ user: 'Shop page, contact [EMAIL]', ctx: { redacted: true } });
+  cases += 1;
+  assert.equal(assertKeptOff(e, 'gemini', 'e').redacted, false, 'on an image row redacted is true only when the images are covered too');
+
+  // (f) positive control: the same image call marked synthetic reaches Gemini.
+  const f = await imageCall({ ctx: { synthetic: true } });
+  cases += 1;
+  assert.deepEqual([assertReached(f, 'gemini', 'f').dataClass, f.rows[0].images], ['synthetic', 1]);
+
+  // (g) positive control: redacted and imagesRedacted both set and accepted.
+  const g = await imageCall({ user: 'Shop page, contact [EMAIL]', ctx: { redacted: true, imagesRedacted: true } });
+  cases += 1;
+  assert.deepEqual([assertReached(g, 'gemini', 'g').redacted, g.rows[0].dataClass], [true, 'business']);
+
+  // (h) imagesRedacted without redacted: the mark alone is never accepted.
+  const h = await imageCall({ user: 'Shop page, contact [EMAIL]', ctx: { imagesRedacted: true } });
+  cases += 1;
+  assert.equal(assertKeptOff(h, 'gemini', 'h').redacted, false);
+
+  // (i) the text case of the class change: step15.judge is business class, so its text call (no image) leaves
+  // a DeepSeek-first route.
+  const textCall = (ctx = {}) => shippedCall({ task: 'step15.judge', user: 'Template page outline: header, hero, three cards, footer.', ctx: { runId: 'r-text', vision: false, ...ctx } });
+  assert.match(shipped.resolveRoute('step15.judge', { profile: 'test', vision: false, synthetic: true }).route, /^deepseek:/, 'the test-profile text route lists DeepSeek first');
+  const i = await textCall();
+  cases += 1;
+  const rowI = assertKeptOff(i, 'deepseek', 'i');
+  assert.match(rowI.policyRedirect.from, /^deepseek:/);
+  assert.deepEqual([rowI.images, rowI.dataClass, rowI.model], [0, 'business', 'claude-haiku-5-5']);
+
+  // (j) positive control: the same text call marked synthetic reaches DeepSeek.
+  const j = await textCall({ synthetic: true });
+  cases += 1;
+  assertReached(j, 'deepseek', 'j');
+
+  assert.equal(cases, 10, 'cases run');
+  for (const result of [a, b, c, d, e, f, g, h, i, j]) assert.ok(result.rows.length > 0);
+
+  // imagesRedacted is never accepted for a transcript-class call or after a cut-short scan.
+  const transcript = await imageCall({ user: 'Shop page, contact [EMAIL]', ctx: { dataClass: 'transcript', redacted: true, imagesRedacted: true } });
+  assertKeptOff(transcript, 'gemini', 'transcript');
+  const cut = effectiveDataClass({ task: { dataClass: 'business' }, ctx: { redacted: true, imagesRedacted: true }, payload: { user: 'x'.repeat(200) }, images: 1 });
+  assert.equal(cut.imagesRedacted, true, 'a full scan accepts the mark');
+  const truncatedScan = effectiveDataClass({ task: { dataClass: 'business' }, ctx: { redacted: true, imagesRedacted: true }, payload: { user: `${'x'.repeat(core.PERSON_SCAN_LIMITS.maxChars)} tail` }, images: 1 });
+  assert.deepEqual([truncatedScan.imagesRedacted, truncatedScan.redacted], [false, false], 'a cut-short scan accepts neither mark');
+
+  // Negative control built at test time: a copy of the policy without the rule lets case (a) reach Gemini.
+  const copy = await coreWithoutRules(['client-images-claude-only']);
+  try {
+    const escaped = await imageCall({}, { coreModule: copy.core });
+    assert.deepEqual(escaped.rows.map((row) => row.provider), ['gemini'], 'without the rule the planted image reaches Gemini, so assertion (a) fails on the copy');
+    assert.throws(() => assertKeptOff(escaped, 'gemini', 'a on the copy'));
+  } finally {
+    copy.dispose();
+  }
+});
+
+test('image rule: it applies in every profile and to every provider but Claude; public template captures are not touched', () => {
+  const r = core.createRouter({ ...asoldiLlmConfig(), legacyRoute });
+  let checked = 0;
+  for (const profile of ['prod', 'test', 'legacy', 'record', 'eval']) {
+    for (const [task, spec] of Object.entries(asoldiLlmConfig().tasks)) {
+      if (!spec.vision) continue;
+      const route = r.resolveRoute(task, { profile }, { images: 1 });
+      checked += 1;
+      if (route.dataClass.effective !== 'public') assert.deepEqual([...new Set(route.chain.map((entry) => entry.provider))], ['claude'], `${profile} ${task}: ${route.route}`);
+    }
+  }
+  assert.ok(checked > 0);
+  // The two template-only image tasks stay public: their route is not changed by the rule.
+  assert.match(r.resolveRoute('template-import.qa-vision', { profile: 'test' }, { images: 1 }).route, /^gemini:/);
+  // A caller that sends such a task a capture of a client run passes ctx.dataClass business.
+  assert.deepEqual(r.resolveRoute('template-import.qa-vision', { profile: 'test', dataClass: 'business' }, { images: 1 }).chain.map((entry) => entry.provider), ['claude']);
+  for (const provider of ['gemini', 'deepseek', 'openai']) {
+    assert.equal(core.imageRuleAllows(provider, 'business', { imageCall: true }).allowed, false, provider);
+    assert.equal(core.imageRuleAllows(provider, 'business', { imageCall: true, synthetic: true }).allowed, true, provider);
+    assert.equal(core.imageRuleAllows(provider, 'business', { imageCall: true, imagesRedacted: true }).allowed, true, provider);
+    assert.equal(core.imageRuleAllows(provider, 'public', { imageCall: true }).allowed, true, provider);
+    assert.equal(core.imageRuleAllows(provider, 'personal', {}).allowed, true, `${provider}: a call without images`);
+  }
+  assert.equal(core.imageRuleAllows('claude', 'transcript', { imageCall: true }).allowed, true);
+  // A config file cannot switch the rule off: a policy that allows everything everywhere still loses the entry.
+  const loose = { version: 1, providers: Object.fromEntries(['claude', 'gemini', 'deepseek', 'openai'].map((name) => [name, { allow: ['public', 'business', 'personal', 'transcript'], billingTier: 'paid', paidTierConfirmedAt: '2026-11-10' }])) };
+  for (const provider of ['gemini', 'deepseek', 'openai']) assert.equal(providerAllows(loose, provider, 'business', { imageCall: true, redacted: true }).allowed, false, provider);
+});
+
+test('DeepSeek in production is a fallback for synthetic or redacted payloads only (2 cases, Claude made to fail)', async () => {
+  const failingClaude = (mocks) => ({
+    ...mocks.providers,
+    claude: async () => {
+      mocks.reached.push('claude');
+      throw Object.assign(new Error('overloaded'), { status: 529 });
+    },
+  });
+  const run = async (ctx, user, options = {}) => {
+    const mocks = mockProviders();
+    const { llm, rows } = shippedCore({ env: { AI_PROFILE: 'prod' }, providers: failingClaude(mocks), ...options });
+    let error = null;
+    try {
+      await llm.json({ task: 'cms.page-kinds', user, ctx: { runId: 'r-fallback', ...ctx } });
+    } catch (caught) {
+      error = caught;
+    }
+    return { rows, reached: mocks.reached, error };
+  };
+  const shipped = core.createRouter({ ...asoldiLlmConfig(), legacyRoute });
+  assert.equal(shipped.resolveRoute('cms.page-kinds', { profile: 'prod', synthetic: true }).route, 'claude:claude-haiku-5-5:low|deepseek:deepseek-flash', 'the prod route keeps DeepSeek second');
+  let cases = 0;
+
+  // An unredacted real-client classification payload: the policy skips the DeepSeek entry, so the call ends on Claude.
+  const real = await run({}, 'Pages of the client site: /om-oss, /tjenester, /kontakt');
+  cases += 1;
+  assert.ok(real.rows.length > 0);
+  assert.equal(real.rows.filter((row) => row.provider === 'deepseek').length, 0, '0 rows with provider deepseek');
+  assert.equal(real.reached.includes('deepseek'), false);
+  assert.deepEqual(real.rows.map((row) => [row.provider, row.status]), [['claude', 'error']]);
+  assert.match(real.rows[0].policyRedirect.from, /^deepseek:/, 'the row records that the policy skipped the DeepSeek entry');
+  assert.deepEqual([real.rows[0].dataClass, real.rows[0].redacted], ['business', false]);
+  assert.ok(real.error);
+
+  // Positive control: the same failure with a synthetic payload reaches DeepSeek.
+  const synthetic = await run({ synthetic: true }, 'Pages of the fixture site: /about, /services, /contact');
+  cases += 1;
+  assert.ok(synthetic.rows.length > 0);
+  assert.deepEqual(synthetic.rows.map((row) => [row.provider, row.status]), [['claude', 'error'], ['deepseek', 'ok']]);
+  assert.equal(synthetic.rows.filter((row) => row.provider === 'deepseek').length, 1, 'exactly 1 row with provider deepseek');
+  assert.equal(synthetic.rows[1].dataClass, 'synthetic');
+  assert.equal(cases, 2, 'cases run');
+
+  // Negative control built at test time: without hard rule 2 the unredacted payload reaches DeepSeek.
+  const copy = await coreWithoutRules(['deepseek-client-data']);
+  try {
+    const escaped = await run({}, 'Pages of the client site: /om-oss, /tjenester, /kontakt', { coreModule: copy.core });
+    assert.equal(escaped.rows.filter((row) => row.provider === 'deepseek').length, 1, 'the copy without the rule sends it to DeepSeek');
+  } finally {
+    copy.dispose();
+  }
+});
+
+test('ledger: the call path wrote a row for every status in this file, each with both data-policy fields', () => {
+  const perStatus = Object.fromEntries(core.LEDGER_STATUSES.map((status) => [status, ALL_ROWS.filter((row) => row.status === status).length]));
+  for (const [status, count] of Object.entries(perStatus)) assert.ok(count > 0, `rows built through the call path for status ${status}: ${count}`);
+  const problems = ALL_ROWS.flatMap((row) => core.ledgerRowProblems(row).map((problem) => `${row.task} ${row.status}: ${problem}`));
+  assert.deepEqual(problems, [], 'no row lacks dataClass or redacted');
+  assert.ok(ALL_ROWS.length > 0);
 });

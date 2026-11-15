@@ -337,7 +337,7 @@ Settings keys (`SETTINGS_KEYS`, dotted paths in the file):
 | Development | `development.autoQueue`, `development.directivesForAutoDev`, `development.defaultHostId`, `development.requireConfirmForCustom`, `development.previewJobs`, `development.seoJobs`, `development.makerEvents` (`off` or `record`; default `off`, see [Maker events](#maker-events)) |
 | Migrations | `migrations.deliveryBackfill` (`off`, `dry-run` or `apply`; default `off`, see [Backfill](#backfill)) |
 | Publish | `publish.staging.mode`, `publish.staging.tiers`, `publish.production.mode` |
-| Change requests | `changeRequests.enforce`, `changeRequests.slaWorkDays`, `changeRequests.countAt` (counted at acceptance) |
+| Change requests | `changeRequests.enforce`, `changeRequests.slaWorkDays`, `changeRequests.countAt` (counted at acceptance); the switch `changeRequests.enabled` (default off), `changeRequests.mode`, `changeRequests.paused` (`null` or `{reason}`; a paused switch counts as off) |
 | Pricing | `pricing.oneTimeMultiplier`, `pricing.oneTimeMinExMva`, `pricing.oneTimeMonths` |
 | Lifecycle | `lifecycle.paymentGraceDays`, `lifecycle.cancellationGraceDays`; the switches `lifecycle.planChange.enabled`, `lifecycle.planChange.mode`, `lifecycle.planChange.paused`, `lifecycle.cancellation.enabled`, `lifecycle.cancellation.mode`, `lifecycle.cancellation.paused` (default off; `auto` needs pilots; see [Plan changes and cancellation](#plan-changes-and-cancellation)) |
 | Promotion | `promotion.auto` |
@@ -495,6 +495,14 @@ The link is `<public base>/book/<token>`. The token is `v1.<payload>.<signature>
 The pre-workshop mail uses the link as the button **Velg tid for workshop** when no workshop is booked, and adds **Passer ikke tiden? Velg en ny tid** when one is. The post-workshop mail already calls `clientBookingLink(client, { purpose: 'iteration' })`. The preview-ready mail is not sent by the hub yet; when it is, it should call that same function.
 
 The page is `GET /book/:token` (the existing site shell). There is no separate server route for it.
+
+## Iteration
+
+Three switches, each `{enabled: false, mode: 'shadow', paused: null}`. `auto` needs at least one id in `pilotClientIds` and a recorded release pass. Per client the mode is `spineModeForClient`. A paused switch (`paused` is `{reason}`) counts as off.
+
+- `iteration.projectDocument` (`iteration.projectDocument.enabled`, `iteration.projectDocument.mode`, `iteration.projectDocument.paused`). Off: the workshop project prompt is the previous text, with the previous transcript limits and `maxTokens` 2200. On (enabled, not paused): the prompt also names the tier, services, offer products and offer-letter text, a transcript of at most 28,000 characters is included whole, a longer one is replaced by the meeting summary, and `maxTokens` is 4000.
+- `iteration.processing` (`iteration.processing.enabled`, `iteration.processing.mode`, `iteration.processing.paused`). Off: a linked iteration recording changes nothing. Shadow: one delivery-audit row and no other write. Auto (pilot clients only): the recording is archived with the existing transcript archive, items are extracted (`keep`, `change`, `add`, `remove`) with a quote that must be a substring of the transcript, the brief is rebuilt, change requests with source `iteration` are opened, and an `iteration` job is queued when a must item is still open. Those requests count against the monthly quota only after go-live. An approval with no open ask is stored on `delivery.events.approvalProposed` and does not create a task or send mail. The link stores `delivery.pendingIteration`; the delivery loop step `iteration-pending` runs the processing when this switch is in auto for that client.
+- `iteration.cursorPrompt` (`iteration.cursorPrompt.enabled`, `iteration.cursorPrompt.mode`, `iteration.cursorPrompt.paused`). Off: `GET /api/admin/development/:id/cursor-prompt` answers `404` `{code: 'disabled'}` before auth and writes nothing. On: no credentials is `401`, a sales-only role is `403`, and an admin or developer (`developmentAuth`) is `200` `{prompt}`. The prompt is at most 6,000 characters, names a Claude model on the first line, and carries ids and counts only.
 
 ## Data safety
 

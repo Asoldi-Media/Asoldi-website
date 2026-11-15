@@ -1,0 +1,442 @@
+{
+  "$comment": "Synthetic fixture for the change requests shapes (version 1). Invented clients, sites and texts only: .test and .example hosts, reserved numbers, no real run. Neutral copy: no plan ids, no private file names. Committed in the hub as scripts/fixtures/contracts/change-requests.json and the client CMS as test/fixtures/contracts/change-requests.json; the shapes and rules are in change-requests.md next to this folder.",
+  "name": "change-requests",
+  "version": 1,
+  "provenance": {
+    "scope": "file",
+    "kind": "contract-rule",
+    "source": "change-requests.md (neutral copy of the shapes and rules)"
+  },
+  "limits": {
+    "maxBodyBytes": 16384,
+    "titleMax": 120,
+    "descriptionMax": 4000,
+    "pageUrlMax": 300,
+    "excerptMax": 200,
+    "attachmentsMax": 10,
+    "unverifiedPerSiteDay": 20,
+    "jobDescriptionMax": 500,
+    "slaWorkDaysDefault": 10
+  },
+  "intake": {
+    "id": "intake-image",
+    "headers": {
+      "x-site-key": "sk_syn_salon",
+      "x-site-credential": "<enrolled synthetic credential>"
+    },
+    "body": {
+      "type": "image",
+      "title": "Bytt bilde på forsiden",
+      "description": "Bildet øverst skal byttes med det nye fra galleriet.",
+      "pageUrl": "/",
+      "elementRef": {
+        "route": "/",
+        "selectorKey": "hero-1/image/1",
+        "textExcerpt": ""
+      },
+      "attachments": [
+        "https://salon.example/media/ny-forside.jpg"
+      ],
+      "priority": "normal"
+    },
+    "expect": {
+      "status": 201,
+      "body": {
+        "ok": true,
+        "id": "<cr_ id>",
+        "status": "received",
+        "sourceVerified": true,
+        "quota": {
+          "used": 3,
+          "limit": 4,
+          "period": "2026-12"
+        }
+      }
+    }
+  },
+  "listCredential": {
+    "id": "list-credential",
+    "expect": {
+      "status": 200,
+      "body": {
+        "ok": true,
+        "items": [
+          {
+            "id": "cr_k3v9q2m7x1",
+            "title": "Bytt bilde på forsiden",
+            "status": "accepted",
+            "createdAt": "2026-12-01T19:20:00.000Z",
+            "doneAt": ""
+          }
+        ],
+        "quota": {
+          "used": 4,
+          "limit": 4,
+          "period": "2026-12"
+        }
+      }
+    }
+  },
+  "listKeyOnly": {
+    "id": "list-key-only",
+    "expect": {
+      "status": 200,
+      "body": {
+        "ok": true,
+        "items": [],
+        "itemsHidden": true,
+        "quota": {
+          "used": 4,
+          "limit": 4,
+          "period": "2026-12"
+        }
+      }
+    }
+  },
+  "record": {
+    "id": "cr_k3v9q2m7x1",
+    "salesClientId": "syn-salon-client",
+    "siteKey": "sk_syn_salon",
+    "source": "cms",
+    "sourceVerified": true,
+    "requestedBy": "cms:admin",
+    "type": "image",
+    "title": "Bytt bilde på forsiden",
+    "description": "Bildet øverst skal byttes med det nye fra galleriet.",
+    "pageUrl": "/",
+    "elementRef": {
+      "route": "/",
+      "selectorKey": "hero-1/image/1",
+      "textExcerpt": ""
+    },
+    "attachments": [
+      {
+        "url": "https://salon.example/media/ny-forside.jpg",
+        "name": "ny-forside.jpg"
+      }
+    ],
+    "priority": "normal",
+    "size": "small",
+    "outOfScope": false,
+    "summary": "Bytte hovedbilde på forsiden",
+    "status": "accepted",
+    "month": "2026-12",
+    "quotaUnits": 1,
+    "countedAt": "2026-12-02T08:00:00.000Z",
+    "overQuota": false,
+    "dueAt": "2026-12-16",
+    "jobId": "",
+    "agentQuotaUnits": null,
+    "createdAt": "2026-12-01T19:20:00.000Z",
+    "doneAt": "",
+    "history": [
+      {
+        "at": "2026-12-01T19:20:00.000Z",
+        "by": "cms:admin",
+        "action": "create",
+        "to": "received"
+      },
+      {
+        "at": "2026-12-02T08:00:00.000Z",
+        "by": "admin",
+        "action": "accept",
+        "from": "received",
+        "to": "accepted"
+      }
+    ]
+  },
+  "jobView": {
+    "id": "cr_k3v9q2m7x1",
+    "type": "image",
+    "title": "Bytt bilde på forsiden",
+    "description": "Bildet øverst skal byttes med det nye fra galleriet.",
+    "descriptionTruncated": false,
+    "pageUrl": "/",
+    "elementRef": {
+      "route": "/",
+      "selectorKey": "hero-1/image/1",
+      "textExcerpt": ""
+    },
+    "attachmentUrls": [
+      "https://salon.example/media/ny-forside.jpg"
+    ],
+    "priority": "normal",
+    "size": "small",
+    "outOfScope": false,
+    "summary": "Bytte hovedbilde på forsiden",
+    "quotaUnits": 1
+  },
+  "jobInput": {
+    "changeRequestIds": [
+      "cr_k3v9q2m7x1"
+    ],
+    "changeRequests": [
+      {
+        "id": "cr_k3v9q2m7x1",
+        "type": "image",
+        "title": "Bytt bilde på forsiden",
+        "description": "Bildet øverst skal byttes med det nye fra galleriet.",
+        "descriptionTruncated": false,
+        "pageUrl": "/",
+        "elementRef": {
+          "route": "/",
+          "selectorKey": "hero-1/image/1",
+          "textExcerpt": ""
+        },
+        "attachmentUrls": [
+          "https://salon.example/media/ny-forside.jpg"
+        ],
+        "priority": "normal",
+        "size": "small",
+        "outOfScope": false,
+        "summary": "Bytte hovedbilde på forsiden",
+        "quotaUnits": 1
+      }
+    ]
+  },
+  "quota": [
+    {
+      "id": "limited",
+      "body": {
+        "used": 4,
+        "limit": 4,
+        "period": "2026-12"
+      }
+    },
+    {
+      "id": "unlimited",
+      "body": {
+        "used": 9,
+        "limit": null,
+        "period": "2026-12"
+      }
+    }
+  ],
+  "quotaScenario": {
+    "plan": {
+      "changesPerMonth": 4,
+      "enforcement": "track"
+    },
+    "steps": [
+      {
+        "action": "accept 4 requests in 2026-12",
+        "expect": {
+          "used": 4,
+          "overQuota": false
+        }
+      },
+      {
+        "action": "receive a 5th request (not accepted)",
+        "expect": {
+          "used": 4
+        }
+      },
+      {
+        "action": "accept the 5th (track)",
+        "expect": {
+          "used": 5,
+          "overQuota": true,
+          "status": 200
+        }
+      },
+      {
+        "action": "accept the 5th (block plan)",
+        "expect": {
+          "status": 409,
+          "code": "over-quota",
+          "used": 4,
+          "writes": 0
+        }
+      },
+      {
+        "action": "accept a request before go-live",
+        "expect": {
+          "counted": false,
+          "month": ""
+        }
+      }
+    ],
+    "osloMonth": [
+      {
+        "countedAt": "2026-11-30T22:30:00.000Z",
+        "month": "2026-11",
+        "note": "23:30 Oslo, winter time"
+      },
+      {
+        "countedAt": "2026-11-30T23:30:00.000Z",
+        "month": "2026-12",
+        "note": "00:30 Oslo on 1 December"
+      },
+      {
+        "countedAt": "2026-06-30T21:30:00.000Z",
+        "month": "2026-06",
+        "note": "23:30 Oslo, summer time"
+      },
+      {
+        "countedAt": "2026-06-30T22:30:00.000Z",
+        "month": "2026-07",
+        "note": "00:30 Oslo on 1 July"
+      }
+    ],
+    "dueAt": [
+      {
+        "countedAt": "2026-12-02T08:00:00.000Z",
+        "slaWorkDays": 10,
+        "dueAt": "2026-12-16"
+      }
+    ]
+  },
+  "refused": [
+    {
+      "id": "unknown-type",
+      "body": {
+        "type": "colour",
+        "title": "Bytt bilde på forsiden",
+        "description": "Bildet øverst skal byttes med det nye fra galleriet.",
+        "pageUrl": "/",
+        "elementRef": {
+          "route": "/",
+          "selectorKey": "hero-1/image/1",
+          "textExcerpt": ""
+        },
+        "attachments": [
+          "https://salon.example/media/ny-forside.jpg"
+        ],
+        "priority": "normal"
+      },
+      "expect": {
+        "status": 400,
+        "code": "bad-request",
+        "field": "type"
+      }
+    },
+    {
+      "id": "long-title",
+      "body": {
+        "type": "image",
+        "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "description": "Bildet øverst skal byttes med det nye fra galleriet.",
+        "pageUrl": "/",
+        "elementRef": {
+          "route": "/",
+          "selectorKey": "hero-1/image/1",
+          "textExcerpt": ""
+        },
+        "attachments": [
+          "https://salon.example/media/ny-forside.jpg"
+        ],
+        "priority": "normal"
+      },
+      "expect": {
+        "status": 400,
+        "code": "bad-request",
+        "field": "title"
+      }
+    },
+    {
+      "id": "long-excerpt-cut",
+      "body": {
+        "type": "image",
+        "title": "Bytt bilde på forsiden",
+        "description": "Bildet øverst skal byttes med det nye fra galleriet.",
+        "pageUrl": "/",
+        "elementRef": {
+          "route": "/",
+          "selectorKey": "hero-1/image/1",
+          "textExcerpt": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+        },
+        "attachments": [
+          "https://salon.example/media/ny-forside.jpg"
+        ],
+        "priority": "normal"
+      },
+      "expect": {
+        "status": 201,
+        "storedExcerptLength": 200
+      }
+    },
+    {
+      "id": "key-only-21st",
+      "note": "x-site-key alone, after 20 key-only requests today for this site",
+      "expect": {
+        "status": 429,
+        "code": "rate-limited",
+        "jobsEnqueued": 0
+      }
+    },
+    {
+      "id": "key-only-no-job",
+      "note": "x-site-key alone, then a staff accept",
+      "expect": {
+        "status": 201,
+        "sourceVerified": false,
+        "jobsEnqueued": 0
+      }
+    },
+    {
+      "id": "cancelled-client",
+      "note": "the client's cancellation switch runs in auto and the contract is ended",
+      "expect": {
+        "status": 409,
+        "code": "contract-ended",
+        "message": "Avtalen er avsluttet"
+      }
+    },
+    {
+      "id": "switch-off",
+      "note": "changeRequests switch off, valid credential",
+      "expect": {
+        "status": 404,
+        "code": "disabled",
+        "writes": 0
+      }
+    },
+    {
+      "id": "no-auth",
+      "note": "neither x-site-credential nor x-site-key",
+      "expect": {
+        "status": 401,
+        "code": "unauthorized",
+        "writes": 0
+      }
+    },
+    {
+      "id": "bad-credential",
+      "note": "enrolled site, wrong credential",
+      "expect": {
+        "status": 401,
+        "code": "unauthorized",
+        "writes": 0
+      }
+    },
+    {
+      "id": "staff-sales-only",
+      "note": "PATCH and admin POST by a sales-only role",
+      "expect": {
+        "status": 403,
+        "code": "forbidden",
+        "writes": 0
+      }
+    },
+    {
+      "id": "invalid-transition",
+      "note": "PATCH action 'done' on a received request",
+      "expect": {
+        "status": 409,
+        "code": "invalid-transition",
+        "writes": 0
+      }
+    }
+  ],
+  "recipes": [
+    {
+      "id": "oversize-intake",
+      "note": "description padded until the body is 16385 bytes",
+      "toTotalBytes": 16385,
+      "expect": {
+        "status": 413,
+        "code": "too-large"
+      }
+    }
+  ]
+}

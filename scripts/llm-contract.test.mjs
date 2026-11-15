@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as core from '../packages/suite/core/llm/index.js';
 
-const PINNED_VERSION = '1.2.0';
+const PINNED_VERSION = '1.3.0';
 const TASKS = {
   version: 1,
   tasks: {
@@ -16,7 +16,7 @@ const TASKS = {
 const ROUTES = { version: 1, profiles: { legacy: { default: 'claude:claude-haiku-5-5:medium' }, prod: { default: 'claude:claude-haiku-5-5:medium|deepseek:deepseek-flash' } } };
 const POLICY = { version: 1, providers: { claude: { allow: ['public', 'business', 'personal', 'transcript'] }, deepseek: { allow: ['public', 'business'] } } };
 
-const PINNED_FINGERPRINT = 'sha256:315a1b5ede91dc78db6553f472e29fc9fa535955494e0ec19fc03d7418a7bdf7';
+const PINNED_FINGERPRINT = 'sha256:e458135a6b53aea205dc86b7d0cb85995efa5463d21e1bcb9f6fcd6aa99c8cf2';
 
 test('contract version and fingerprint are pinned', () => {
   assert.equal(core.LLM_CONTRACT.version, PINNED_VERSION);
@@ -60,7 +60,7 @@ test('the frozen rules say what the owner and the plan decided', () => {
   assert.equal(c.budgets.alertRatio, 1);
   assert.deepEqual(c.budgets.hardStop, ['runaway', 'loop']);
   assert.equal(c.prices.pricedFrom, 'response.model (+ usage.iterations)');
-  assert.deepEqual(c.profiles, ['legacy', 'prod', 'test', 'replay', 'record']);
+  assert.deepEqual(c.profiles, ['legacy', 'prod', 'test', 'replay', 'record', 'eval']);
   assert.deepEqual(c.profileAliases, { production: 'prod' });
   for (const field of ['escalation', 'maxEscalation', 'tier', 'kind', 'profile', 'budgetScope', 'expectedUsd', 'projectSize', 'sessionId', 'retryOf', 'attempt']) {
     assert.ok(c.ctxFields.includes(field), field);
@@ -78,6 +78,19 @@ test('the frozen rules say what the owner and the plan decided', () => {
   assert.match(c.claude.schemaMapping, /oneOf is sent as anyOf/);
   assert.match(c.ledger.rows, /skipped_dead/);
   for (const name of ['recursiveRefPaths', 'checkMessageImages', 'requestKey', 'DEFAULT_BUDGETS']) assert.ok(c.coreExports.includes(name), name);
+  // 1.3.0
+  assert.deepEqual(c.policy.images.providers, ['claude'], 'images of real-client data go only to Claude');
+  assert.match(c.policy.images.rule, /unless the call is synthetic or carries an accepted imagesRedacted/);
+  assert.match(c.policy.images.imagesRedacted, /redacted is also set and accepted.*not transcript.*not truncated/);
+  assert.match(c.policy.images.imageCall, /inside a message or a tool result/);
+  assert.ok(c.ctxFields.includes('imagesRedacted'));
+  assert.deepEqual(c.ledger.fields.slice(-2), ['dataClass', 'redacted']);
+  assert.deepEqual(c.ledger.dataFields, ['dataClass', 'redacted']);
+  assert.deepEqual(c.ledger.dataClasses, ['synthetic', 'public', 'business', 'personal', 'transcript']);
+  assert.match(c.ledger.dataFieldsFrom, /never the caller ctx/);
+  assert.match(c.ledger.images, /inside messages and tool results/);
+  assert.deepEqual(c.routing.listKeys, ['candidates', 'judges']);
+  for (const name of ['ledgerRowProblems', 'ledgerDataClass', 'imageRuleAllows', 'countImageBlocks']) assert.ok(c.coreExports.includes(name), name);
 });
 
 test('a facade built on createLlmCore satisfies the facade contract', () => {
@@ -110,6 +123,11 @@ test('a drifted core is caught (missing export, changed rule)', () => {
   assert.match(core.runContractChecks({ core: strictLoops }).join('\n'), /successful repeats/);
   const noDefaults = { ...core, DEFAULT_BUDGETS: { version: 1, scopes: {} } };
   assert.match(core.runContractChecks({ core: noDefaults }).join('\n'), /runaway stop is on by default/);
+  // 1.3.0: a row builder that invents a data class, and a core that counts no images in tool results.
+  const inventsClass = { ...core, buildLedgerRow: (input) => ({ ...core.buildLedgerRow(input), dataClass: 'public' }), ledgerRowProblems: () => [] };
+  assert.match(core.runContractChecks({ core: inventsClass }).join('\n'), /a row built without a data class must fail the row check/);
+  const blindCount = { ...core, countImageBlocks: () => 0 };
+  assert.match(core.runContractChecks({ core: blindCount }).join('\n'), /inside a tool result must count/);
 });
 
 test('one price source: routes naming an unpriced model fail at load', () => {

@@ -38,8 +38,16 @@ test.after(() => {
   for (const dir of temps) rmSync(dir, { recursive: true, force: true });
 });
 
+/** process.env without the GIT_* variables git exports to hooks; with them, git in a temp dir
+ * would act on the repository that runs this file. */
+function envWithoutGit() {
+  const env = {};
+  for (const [key, value] of Object.entries(process.env)) if (!/^GIT_/i.test(key)) env[key] = value;
+  return env;
+}
+
 function git(cwd, args) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+  return execFileSync('git', args, { cwd, encoding: 'utf8', env: envWithoutGit(), stdio: ['pipe', 'pipe', 'pipe'] });
 }
 
 function makeRepo() {
@@ -862,7 +870,7 @@ function copyTooling(dir) {
 test('installed hooks refuse a staged task id, a staged fake key and a commit message with a task id', { timeout: 120_000 }, () => {
   const dir = makeRepo();
   copyTooling(dir);
-  const env = { ...process.env, ...NO_ENV(dir) };
+  const env = { ...envWithoutGit(), ...NO_ENV(dir) };
   const run = (cmd, args) => spawnSync(cmd, args, { cwd: dir, env, encoding: 'utf8' });
   assert.equal(run(process.execPath, ['scripts/security/install-git-hooks.mjs']).status, 0);
   run('git', ['add', '-A']);

@@ -20,7 +20,13 @@ if [ -z "$test_data" ] || [ ! -d "$test_data" ]; then
   echo "pre-push: could not create a temp data dir for npm test; push refused."
   exit 1
 fi
-APP_DATA_DIR="$test_data" DATA_DIR="" PERSIST_PRODUCTION_ENV=0 npm test
+# git exports GIT_DIR, GIT_INDEX_FILE and similar variables to hooks. npm test must not inherit
+# them: a test that runs git in its own temporary directory would otherwise act on this
+# repository (moving its branches, committing fixtures, rewriting its config).
+(
+  for name in $(env | sed -n 's/^\(GIT_[A-Za-z0-9_]*\)=.*/\1/p'); do unset "$name"; done
+  APP_DATA_DIR="$test_data" DATA_DIR="" PERSIST_PRODUCTION_ENV=0 npm test
+)
 status=$?
 rm -rf "$test_data"
 if [ "$status" -ne 0 ]; then

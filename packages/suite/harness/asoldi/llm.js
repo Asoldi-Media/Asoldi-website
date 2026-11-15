@@ -18,6 +18,12 @@ function t(kind, vision, dataClass, maxTokens, extra = {}) {
 // data policy keeps it off DeepSeek and unpaid Gemini.
 const LIVE_SITE = { note: "public for template sources; pass ctx.dataClass 'business' when the source is a client's live site" };
 
+// Image tasks that run inside a client run: what they capture is client data, so they are business class and the
+// core's image rule keeps their images on Claude unless the call is synthetic or carries an accepted
+// imagesRedacted. Every image task is business class or higher except the template-only tasks (see
+// TEMPLATE_ONLY_IMAGE_TASKS in CONTRACT.md and the registry test).
+const IN_RUN_CAPTURE = { note: 'runs inside a client run: its captures are client data, also when the page comes from a template; images go to Claude unless the call is synthetic or carries an accepted imagesRedacted' };
+
 export const ASOLDI_LLM_TASKS = {
   version: 1,
   tasks: {
@@ -26,9 +32,9 @@ export const ASOLDI_LLM_TASKS = {
     'step15.curate': t('json', false, 'public', 6000, { family: 'extraction', repo: M, ...LIVE_SITE }),
     'step15.finalize': t('json', false, 'public', 6000, { family: 'extraction', repo: M, ...LIVE_SITE }),
     'step15.nav-resolve': t('json', false, 'public', 2000, { family: 'classification', effort: 'low', repo: M, ...LIVE_SITE }),
-    'step15.judge': t('json', true, 'public', 4000, { family: 'visual-qa', repo: M, ...LIVE_SITE }),
+    'step15.judge': t('json', true, 'business', 4000, { family: 'visual-qa', repo: M, ...IN_RUN_CAPTURE }),
     'step15.media-vision': t('json', true, 'business', 2000, { family: 'media', repo: M }),
-    'siteintel.page-kind-vision': t('json', true, 'public', 1000, { family: 'visual-qa', repo: M, owner: 'WS2', ...LIVE_SITE }),
+    'siteintel.page-kind-vision': t('json', true, 'business', 1000, { family: 'visual-qa', repo: M, owner: 'siteintel', ...IN_RUN_CAPTURE }),
     'siteintel.golden-judge-text': t('json', false, 'public', 1000, { family: 'judge', repo: M, owner: 'WS2', ...LIVE_SITE }),
     'siteintel.golden-judge-vision': t('json', true, 'public', 1000, { family: 'judge', repo: M, owner: 'WS2', ...LIVE_SITE }),
     // Maker: Step 2 branding
@@ -78,6 +84,12 @@ export const ASOLDI_LLM_TASKS = {
     }),
     // Health and benefit statements in a draft or keyword plan, each with its span; any error rejects (fail closed).
     'seo.claims-extract': t('json', false, 'business', 8000, { family: 'compliance', effort: 'medium', repo: M, owner: 'SEO' }),
+    // Keyword research: the scope of a business (a closed choice), the nouns of its facts, and the page map
+    // (which page targets which keyword). They read client facts, so production is Claude only; DeepSeek runs
+    // them only in the test profile, on synthetic data.
+    'seo.scope': t('json', false, 'business', 2000, { family: 'seo', effort: 'low', repo: M, owner: 'SEO' }),
+    'seo.facts-nouns': t('json', false, 'business', 4000, { family: 'seo', effort: 'low', repo: M, owner: 'SEO' }),
+    'seo.page-map': t('json', false, 'business', 8000, { family: 'seo', effort: 'medium', repo: M, owner: 'SEO' }),
     // Maker: intake, media, import
     'quickfill.narrative': t('json', false, 'business', 4000, { family: 'copy', repo: M }),
     'quickfill.colors': t('json', true, 'business', 1000, { family: 'media', repo: M }),
@@ -85,7 +97,7 @@ export const ASOLDI_LLM_TASKS = {
     'media.transcript': t('json', true, 'business', 1500, { family: 'media', repo: M }),
     'media.categorize': t('json', true, 'business', 1500, { family: 'media', repo: M }),
     'icon.resolve': t('json', false, 'public', 1000, { family: 'classification', effort: 'low', repo: M }),
-    'icon.resolve-vision': t('json', true, 'public', 1000, { family: 'classification', effort: 'low', repo: M }),
+    'icon.resolve-vision': t('json', true, 'business', 1000, { family: 'classification', effort: 'low', repo: M, ...IN_RUN_CAPTURE }),
     'products.import': t('json', false, 'business', 8000, { family: 'extraction', repo: M }),
     'template-import.classify': t('json', false, 'public', 4000, { family: 'classification', effort: 'low', repo: M, ...LIVE_SITE }),
     'template-import.qa-vision': t('json', true, 'public', 4000, { family: 'visual-qa', repo: M, owner: 'WS1', ...LIVE_SITE }),
@@ -121,7 +133,9 @@ export const ASOLDI_LLM_TASKS = {
     'brief.map': t('json', false, 'transcript', 8000, { family: 'brief', repo: H, owner: 'WS8' }),
     'brief.reduce': t('json', false, 'transcript', 16000, { family: 'brief', repo: H, owner: 'WS8' }),
     'brief.iteration': t('json', false, 'transcript', 8000, { family: 'brief', repo: H, owner: 'WS8' }),
-    'change.classify': t('json', false, 'personal', 2000, { family: 'classification', effort: 'low', repo: H, owner: 'WS8' }),
+    // A closed choice over a client's own words (personal data): Claude only in production, with no DeepSeek
+    // fallback even for synthetic or redacted text (the arbiter family).
+    'change.classify': t('json', false, 'personal', 2000, { family: 'arbiter', effort: 'low', repo: H, owner: 'delivery' }),
     'followups.extract': t('json', false, 'transcript', 4000, { family: 'extraction', repo: H, owner: 'WS8' }),
     // Hub: SEO keyword proposals from meetings, a focused second pass on transcript chunks with keyword talk
     // but no clean phrase. Proposals are never approved automatically.
@@ -135,7 +149,17 @@ export const ASOLDI_LLM_TASKS = {
  * Q5: real client data runs on Claude (or replay). DeepSeek stays only as a fallback for families whose tasks
  * are mostly public (template HTML, template classification); the data policy removes it for any client data.
  * When such a task reads a client's live site, the caller passes ctx.dataClass 'business' (see LIVE_SITE).
- * Gemini entries take effect once data protection confirms the paid tier; until then the policy removes them.
+ * Gemini entries are in effect: the owner confirmed the paid tier on 2026-11-10 (ASOLDI_LLM_POLICY below). The
+ * core's image rule still keeps every image of real-client data on Claude, so a Gemini second choice of a vision
+ * route is used only for synthetic data, accepted redacted images and the template-only image tasks.
+ * DeepSeek in production (owner decision 2026-11-13): fallback for synthetic or redacted payloads only; the
+ * policy skips this entry for unredacted real-client data. It stays second choice for classification and extraction.
+ * The judge of the development agent never runs on the planner's model: dev.judge starts on Sonnet 5.5 where
+ * dev.plan starts on Haiku 5.5, and their escalation lists differ at every step.
+ * `eval` is the model-evaluation profile: production routes plus explicit lists. `candidates` are the models an
+ * evaluation compares and `judges` the blind panel; each item is one route entry with no fallback, so an answer
+ * or verdict always comes from the model named. OpenAI appears only as a judge (the policy limits it to the
+ * evaluation tasks); Gemini is a candidate and a judge.
  */
 export const ASOLDI_LLM_ROUTES = {
   version: 1,
@@ -148,7 +172,10 @@ export const ASOLDI_LLM_ROUTES = {
     prod: {
       default: 'claude:claude-haiku-5-5:medium',
       vision: 'claude:claude-haiku-5-5:medium|gemini:gemini-2.5-flash',
+      note: 'DeepSeek (second choice of classification and extraction): fallback for synthetic or redacted payloads only; the policy skips this entry for unredacted real-client data.',
       kinds: {
+        // DeepSeek here: fallback for synthetic or redacted payloads only; the policy skips this entry for
+        // unredacted real-client data.
         classification: 'claude:claude-haiku-5-5:low|deepseek:deepseek-flash',
         extraction: 'claude:claude-haiku-5-5:low|deepseek:deepseek-flash',
         copy: 'claude:claude-haiku-5-5:medium',
@@ -163,13 +190,18 @@ export const ASOLDI_LLM_ROUTES = {
         // with no DeepSeek fallback even for synthetic data (the test profile is where DeepSeek runs).
         arbiter: 'claude:claude-haiku-5-5:low',
         compliance: 'claude:claude-haiku-5-5:medium',
+        // Keyword research reads client facts: Claude only (the task sets low or medium effort).
+        seo: 'claude:claude-haiku-5-5:medium',
       },
       tasks: {
         'eval.judge': 'claude:claude-opus-5-5:high',
+        // The judge is never the planner's model (dev.plan starts on Haiku 5.5).
+        'dev.judge': 'claude:claude-sonnet-5-5:medium',
       },
       escalate: {
+        // Step by step: plan Haiku -> Sonnet -> Opus, judge Sonnet -> Opus -> Sonnet (high): never the same model.
         'dev.plan': ['claude:claude-sonnet-5-5:medium', 'claude:claude-opus-5-5:medium'],
-        'dev.judge': ['claude:claude-sonnet-5-5:medium|gemini:gemini-2.5-pro'],
+        'dev.judge': ['claude:claude-opus-5-5:medium|gemini:gemini-2.5-pro', 'claude:claude-sonnet-5-5:high|gemini:gemini-2.5-pro'],
       },
       escalateKinds: {
         classification: ['claude:claude-haiku-5-5:medium'],
@@ -182,6 +214,7 @@ export const ASOLDI_LLM_ROUTES = {
         judge: ['claude:claude-sonnet-5-5:medium'],
         arbiter: ['claude:claude-haiku-5-5:medium'],
         compliance: ['claude:claude-sonnet-5-5:medium'],
+        seo: ['claude:claude-sonnet-5-5:medium'],
       },
     },
     test: {
@@ -192,6 +225,25 @@ export const ASOLDI_LLM_ROUTES = {
     },
     replay: { default: 'replay:strict', vision: 'replay:strict' },
     record: { inherit: 'test', record: true },
+    eval: {
+      inherit: 'prod',
+      // Owner order: DeepSeek, then Haiku 5.5, then other Claude, then Gemini. DeepSeek candidates run only on
+      // synthetic or redacted items (the data policy removes them otherwise).
+      candidates: [
+        'deepseek:deepseek-flash',
+        'deepseek:deepseek-v4-pro',
+        'claude:claude-haiku-5-5:low',
+        'claude:claude-haiku-5-5:medium',
+        'claude:claude-haiku-5-5:high',
+        'claude:claude-sonnet-5-5:medium',
+        'claude:claude-sonnet-5-5:high',
+        'claude:claude-opus-5-5:medium',
+        'gemini:gemini-2.5-flash',
+        'gemini:gemini-2.5-pro',
+      ],
+      judges: ['claude:claude-opus-5-5:high', 'gemini:gemini-2.5-pro', 'openai:gpt-4.1'],
+      note: 'Model evaluation: production routes plus explicit candidates and judges (one entry each, no fallback). OpenAI is a judge only; images of real-client data stay on Claude unless redacted.',
+    },
   },
 };
 
@@ -202,10 +254,10 @@ export const ASOLDI_LLM_POLICY = {
     claude: { allow: ['public', 'business', 'personal', 'transcript'], dpa: 'anthropic-commercial-terms' },
     gemini: {
       allow: ['public', 'business', 'personal', 'transcript'],
-      billingTier: 'unknown',
-      paidTierConfirmedAt: null,
+      billingTier: 'paid',
+      paidTierConfirmedAt: '2026-11-10',
       allowUnpaidPublic: false,
-      note: 'Gemini only after the paid tier is confirmed (Q5; WS0.34 sets billingTier and the date).',
+      note: 'Paid tier confirmed by the owner on 2026-11-10 (the core needs both billingTier paid and the date). Images of real-client data still go only to Claude unless they are synthetic or redacted (core image rule).',
     },
     deepseek: { allow: ['public', 'business'], note: 'Never personal or transcript data; client data only when synthetic or redacted (Q5).' },
     openai: {

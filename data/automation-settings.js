@@ -121,7 +121,18 @@ export function defaultAutomationSettings() {
       staging: { mode: 'shadow', tiers: ['tier-3-ecommerce'], paused: null },
       production: { mode: 'shadow', paused: null },
     },
-    changeRequests: { enforce: 'track', slaWorkDays: 10, countAt: 'accepted' },
+    changeRequests: {
+      enforce: 'track',
+      slaWorkDays: 10,
+      countAt: 'accepted',
+      // --- change requests
+      // Intake, the quota and the staff routes for a change a client asks for.
+      // Off: those routes answer 404 disabled and nothing is written. A paused switch counts as off.
+      enabled: false,
+      mode: 'shadow',
+      paused: null,
+      // --- end change requests
+    },
     pricing: { oneTimeMultiplier: 9, oneTimeMinExMva: 0, oneTimeMonths: 6 },
     lifecycle: {
       paymentGraceDays: 14,
@@ -241,6 +252,18 @@ export function defaultAutomationSettings() {
     // answers 404 disabled and nothing is written. A paused switch ({reason}) counts as off.
     siteRekey: { enabled: false, paused: null },
     // --- end site rekey
+    // --- iteration
+    // projectDocument: the workshop project prompt (tier, services, offer products, offer letter, map instead
+    // of a hard transcript cut). processing: an iteration recording becomes keep/change items, change
+    // requests and, when a must item is open, an iteration job. cursorPrompt: the developer prompt route.
+    // Off: today's answers. shadow: processing writes one delivery-audit row and nothing else.
+    // auto: pilot clients only, after a release pass (lib/spine-mode.js). A paused switch ({reason}) counts as off.
+    iteration: {
+      projectDocument: { enabled: false, mode: 'shadow', paused: null },
+      processing: { enabled: false, mode: 'shadow', paused: null },
+      cursorPrompt: { enabled: false, mode: 'shadow', paused: null },
+    },
+    // --- end iteration
   };
 }
 
@@ -350,6 +373,9 @@ const ENUMS = {
   'development.directivesForAutoDev': ['accepted+must', 'accepted', 'none'],
   'changeRequests.enforce': ['track', 'enforce'],
   'changeRequests.countAt': ['accepted'],
+  // --- change requests
+  'changeRequests.mode': ['shadow', 'auto'],
+  // --- end change requests
   'development.makerEvents': [...MAKER_EVENT_MODES],
   'migrations.deliveryBackfill': [...BACKFILL_MODES],
   // seo
@@ -373,6 +399,11 @@ const ENUMS = {
   // --- booking
   'booking.selfLink.mode': ['shadow', 'auto'],
   // --- end booking
+  // --- iteration
+  'iteration.projectDocument.mode': ['shadow', 'auto'],
+  'iteration.processing.mode': ['shadow', 'auto'],
+  'iteration.cursorPrompt.mode': ['shadow', 'auto'],
+  // --- end iteration
   // --- intake
   'intake.tierSteps.mode': ['shadow', 'auto'],
   'intake.transcriptKeywords.mode': ['shadow', 'auto'],
@@ -453,6 +484,11 @@ const BOOLEANS = new Set([
   // --- booking
   'booking.selfLink.enabled',
   // --- end booking
+  // --- iteration
+  'iteration.projectDocument.enabled',
+  'iteration.processing.enabled',
+  'iteration.cursorPrompt.enabled',
+  // --- end iteration
   // --- intake
   'intake.tierSteps.enabled',
   'intake.transcriptKeywords.enabled',
@@ -465,6 +501,9 @@ const BOOLEANS = new Set([
   // --- site rekey
   'siteRekey.enabled',
   // --- end site rekey
+  // --- change requests
+  'changeRequests.enabled',
+  // --- end change requests
   // --- visit statistics retention
   'retention.analyticsTraffic.enabled',
   // --- end visit statistics retention
@@ -670,6 +709,11 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
   // --- booking
   validatePilotSwitch(value, 'booking.selfLink', { fail, by, now });
   // --- end booking
+  // --- iteration
+  validatePilotSwitch(value, 'iteration.projectDocument', { fail, by, now });
+  validatePilotSwitch(value, 'iteration.processing', { fail, by, now });
+  validatePilotSwitch(value, 'iteration.cursorPrompt', { fail, by, now });
+  // --- end iteration
   // --- intake: 'auto' reaches pilot clients only, so it needs a pilot list; a pause needs a reason.
   for (const name of ['tierSteps', 'transcriptKeywords']) {
     const node = value.intake?.[name];
@@ -700,6 +744,15 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
     else value.siteRekey.paused = paused;
   }
   // --- end site rekey
+  // --- change requests
+  if (isPlainObject(value.changeRequests)) {
+    const mode = normalizeAutomationMode(value.changeRequests.mode);
+    if (mode) value.changeRequests.mode = mode;
+    const paused = normalizePaused(value.changeRequests.paused, { by, now });
+    if (paused === undefined) fail('changeRequests.paused', 'Must be null or {reason}.');
+    else value.changeRequests.paused = paused;
+  }
+  // --- end change requests
   // --- visit statistics retention
   if (isPlainObject(value.retention?.analyticsTraffic)) {
     const paused = normalizePaused(value.retention.analyticsTraffic.paused, { by, now });
