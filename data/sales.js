@@ -1790,9 +1790,9 @@ export function setSalesTestFlag(id, isTest) {
   return updateSalesClient(id, { isTest: isTest === true });
 }
 
-export function setSalesMakerRun(id, makerPatch = {}) {
+export function setSalesMakerRun(id, makerPatch = {}, options = {}) {
   const current = getSalesClientById(id);
-  return updateSalesClient(id, { makerRun: mergeMakerRunPatch(current?.makerRun || {}, makerPatch) });
+  return updateSalesClient(id, { makerRun: mergeMakerRunPatch(current?.makerRun || {}, makerPatch, options) });
 }
 
 /**
@@ -1815,6 +1815,15 @@ export function setSalesMakerRunOwned(id, ownedPatch = {}) {
 export function setSalesMakerRunGoLive(id, goLive) {
   if (!goLive || typeof goLive !== 'object' || Array.isArray(goLive)) return getSalesClientById(id);
   return updateSalesClientInternal(id, { makerRun: { goLive } });
+}
+
+/**
+ * makerRun.dev, the summary of the latest developer-agent report. Only the dev-report route calls this;
+ * generic makerRun patches never carry dev.
+ */
+export function setSalesMakerRunDev(id, dev) {
+  if (!dev || typeof dev !== 'object' || Array.isArray(dev)) return getSalesClientById(id);
+  return updateSalesClientInternal(id, { makerRun: { dev } });
 }
 
 /**

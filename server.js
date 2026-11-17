@@ -122,7 +122,8 @@ import { noteSecurityEvent } from './lib/security-counters.js';
 import { registerSecurityAdminRoutes } from './lib/security-admin-routes.js';
 import { createMakerAuth } from './lib/maker-auth.js';
 import { registerMakerHostRoutes } from './lib/routes/maker-host-routes.js';
-import { developmentGetLoopScope, startDeliveryLoop } from './lib/delivery-loop.js';
+import { startDeliveryLoop } from './lib/delivery-loop.js';
+import { decorateBoardItems, runLegacyDevelopmentWrites } from './lib/development-board.js';
 import { notePendingIteration } from './lib/iteration-processing.js';
 import { startCmsFleetMonitor, startCmsWakePing } from './lib/cms-fleet-monitor.js';
 import { noteMakerAuthAlert } from './lib/delivery-alerts.js';
@@ -302,7 +303,7 @@ import {
   upsertLiveSessionsForClient,
 } from './lib/fireflies-live-sessions.js';
 import { liveJoinStatusPayload, maybeAlertFirefliesLiveJoin, runFirefliesLobbyAlerts } from './lib/fireflies-live-alerts.js';
-import { automationScopeForClient } from './data/automation-settings.js';
+import { automationScopeForClient, getAutomationSettings as getAutomationSettingsForBoard } from './data/automation-settings.js';
 import { describeFirefliesMedia, firefliesMediaFilePath, saveFirefliesMediaForMeeting } from './lib/fireflies-media.js';
 import { runFirefliesPullFollowUp } from './lib/fireflies-pull-followup.js';
 import {
@@ -13265,7 +13266,7 @@ registerAiAdminRoutes(app, { adminAuth, sales });
 // host loads server.js with require(), which refuses a module graph with a top-level await
 // (scripts/server-require-load.test.mjs). Every optional route is registered before this call
 // returns, so the routes below it and the page fallback keep their place.
-const optionalRoutes = registerOptionalRoutes(app, { adminAuth, makerAuth, salesAuth, developmentAuth, salesOrDevelopmentAuth, clientAuth, sales, hub, salesOffers, getDataDir: getPersistentDataDir });
+const optionalRoutes = registerOptionalRoutes(app, { adminAuth, makerAuth, salesAuth, developmentAuth, salesOrDevelopmentAuth, clientAuth, sales, hub, salesOffers, getDataDir: getPersistentDataDir, boardItems: (caller) => { const parts = developmentBoardPartsFor(caller); return [...parts.developmentItems, ...parts.previewItems]; } });
 // The start-up work the optional route modules returned (loading a store, a registry) used to be
 // awaited before the rest of this file ran. Now the file runs to the end and listens at once, and
 // the requests that arrive before that work has finished wait for it, as do the background jobs.
@@ -13849,6 +13850,11 @@ app.get('/api/admin/sales/maker-status-callback', requireMakerHost('callback'), 
 
 app.post('/api/admin/sales/maker-status-callback', requireMakerHost('callback'), async (req, res) => {
   const event = sanitizeText(req.body?.event) || 'run.step.updated';
+  if (event === 'run.dev.updated') {
+    // Developer-agent progress is reported through the dev-report routes; it never reaches the client sync or the preview push.
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(202).json({ ok: true, ignored: true });
+  }
   if (event === 'run.client-bundle.updated' && req.body?.bundle) {
     // The same portal write as /api/internal/maker/client-bundle: a host token needs that scope too.
     if (!makerAuth.hostScopeAllows(req, res, 'client-bundle')) return;
@@ -14058,7 +14064,8 @@ app.post('/api/admin/sales/maker-status-callback', requireMakerHost('callback'),
   if (sanitizeText(linked.intakeStatus)) patch.intakeStatus = linked.intakeStatus;
   Object.assign(patch, makerProgressPatchFromHandoff(handoff));
 
-  const updated = sales.setSalesMakerRun(client.id, patch);
+  // This branch answers an authenticated Maker callback, so it may carry the developer agent's step tokens.
+  const updated = sales.setSalesMakerRun(client.id, patch, { devSteps: true });
   if (sanitizeText(patch.latestReadyStep) && resolveProdAdminBaseUrl()) {
     void syncSalesClientFromMakerRun({
       client: updated || client,
@@ -20167,29 +20174,33 @@ function resolveDevelopmentTarget(itemId) {
   return null;
 }
 
-let lastDeliveryReconcileAt = 0;
-const DEVELOPMENT_RECONCILE_MS = 20_000;
+// The board GET only reads. The phase reconcile and the developer-owner writes it used to do on every call
+// run from the delivery loop tick (lib/development-board.js runLegacyDevelopmentWrites).
+function developmentBoardPartsFor(caller) {
+  const parts = listDeveloperBoardParts();
+  const visible = (rows) => (Array.isArray(rows) ? rows : []).filter((item) => developmentItemVisible(caller, item));
+  const developmentItems = visible(parts.developmentItems);
+  const previewItems = visible(parts.previewItems);
+  const ssuItems = visible(parts.ssuItems);
+  const decorate = { salesClientById: (id) => sales.getSalesClientById(id), dataDir: getPersistentDataDir() };
+  decorateBoardItems(developmentItems, decorate);
+  decorateBoardItems(previewItems, decorate);
+  return { developmentItems, previewItems, ssuItems };
+}
+
+function developmentBoardV2Enabled() {
+  try {
+    return getAutomationSettingsForBoard().development?.boardV2 === true;
+  } catch {
+    return false;
+  }
+}
 
 app.get('/api/admin/development', developmentAuth, async (req, res) => {
-  const now = Date.now();
-  // Clients the delivery loop runs in auto get the phase reconcile and the open-client owner from
-  // the loop; with the loop off both options are undefined and this runs exactly as before. The
-  // one-time owner seed stays here for every client.
-  const loopScope = developmentGetLoopScope(() => sales.getSalesClients());
-  if (now - lastDeliveryReconcileAt >= DEVELOPMENT_RECONCILE_MS) {
-    lastDeliveryReconcileAt = now;
-    hub.reconcileDeliveryPhases(sales.getSalesClients(), loopScope.reconcile);
-  }
-  sales.seedExistingDeveloperOwnersToAdmin();
   const caller = req.developmentUser || {};
   const developerOptions = await listDeveloperOwnerOptions(caller);
-  const onlyAdmin = !developerOptions.some((row) => sanitizeText(row.accountKey).startsWith('developer:'));
-  if (onlyAdmin) sales.assignOpenDeveloperClientsToAdmin(loopScope.owners);
   const developers = caller.isAdmin ? developerOptions : [];
-  const parts = listDeveloperBoardParts();
-  const developmentItems = parts.developmentItems.filter((item) => developmentItemVisible(caller, item));
-  const previewItems = parts.previewItems.filter((item) => developmentItemVisible(caller, item));
-  const ssuItems = (Array.isArray(parts.ssuItems) ? parts.ssuItems : []).filter((item) => developmentItemVisible(caller, item));
+  const { developmentItems, previewItems, ssuItems } = developmentBoardPartsFor(caller);
   res.json({
     items: [...developmentItems, ...previewItems],
     developmentItems,
@@ -20206,6 +20217,7 @@ app.get('/api/admin/development', developmentAuth, async (req, res) => {
       username: sanitizeText(caller.username),
     },
     developers,
+    settings: { devBoardV2: developmentBoardV2Enabled() },
   });
 });
 
@@ -22162,7 +22174,12 @@ function startBackgroundJobs() {
       sendDueFirefliesLiveJoins().catch((error) => console.error('[fireflies] initial live-join failed:', error));
     },
     inboxBot: () => startInboxBotLoop(),
-    delivery: () => startDeliveryLoop({ sales, hub, listDeveloperOwnerOptions: () => listDeveloperOwnerOptions({ isAdmin: true }) }),
+    delivery: () => startDeliveryLoop({
+      sales,
+      hub,
+      listDeveloperOwnerOptions: () => listDeveloperOwnerOptions({ isAdmin: true }),
+      legacyDevelopmentWrites: ({ settings } = {}) => runLegacyDevelopmentWrites({ sales, hub, listDeveloperOwnerOptions: () => listDeveloperOwnerOptions({ isAdmin: true }), settings }),
+    }),
     emailLogPrune: () => startEmailLogPruneLoop(),
     analyticsTrafficRetention: () => startTrafficRetentionLoop(),
     cmsEnforcement: () => startCmsFleetMonitor({ hub }),

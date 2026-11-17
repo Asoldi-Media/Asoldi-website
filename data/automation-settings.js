@@ -112,6 +112,8 @@ export function defaultAutomationSettings() {
       requireConfirmForCustom: true,
       previewJobs: false,
       seoJobs: false,
+      // Shows the delivery board view on the developer page.
+      boardV2: false,
       // Maker delivery events are recorded on makerRun only when set to 'record'.
       makerEvents: 'off',
     },
@@ -133,6 +135,13 @@ export function defaultAutomationSettings() {
       paused: null,
       // --- end change requests
     },
+    // --- dev reports and purge
+    // devReport: the developer-agent report routes the Maker calls and the capability the heartbeat lists.
+    // purgeJobs: the admin route that erases one client's stored reports and thumbnails (report first, then delete).
+    // Off: those routes answer 404 disabled and nothing is written. A paused switch counts as off.
+    devReport: { enabled: false, mode: 'shadow', paused: null },
+    purgeJobs: { enabled: false, mode: 'shadow', paused: null },
+    // --- end dev reports and purge
     pricing: { oneTimeMultiplier: 9, oneTimeMinExMva: 0, oneTimeMonths: 6 },
     lifecycle: {
       paymentGraceDays: 14,
@@ -191,6 +200,12 @@ export function defaultAutomationSettings() {
     // output of scripts/seo-gating-diff.mjs. dfsLedger: DataForSEO spend is also booked into the monthly seo-ops
     // ledger, which alerts at a cap and never stops a call. recordPull: the Maker may read a client's
     // SEO record. A paused switch ({reason}) counts as off.
+    // --- keyword jobs
+    // development.seoJobs and seo.jobGating also gate keyword research jobs (lib/seo-ops/job-producer.js).
+    // No new switch: both already exist and default off. Off (seoJobs false, or jobGating disabled or
+    // paused): the producer returns immediately and does not read its state file. On: a delivery tick
+    // may queue seo.refresh and seo.maintenance. mode is not a third gate for those jobs.
+    // --- end keyword jobs
     seo: {
       jobGating: { enabled: false, mode: 'shadow', paused: null },
       dfsLedger: { enabled: false, paused: null },
@@ -264,6 +279,14 @@ export function defaultAutomationSettings() {
       cursorPrompt: { enabled: false, mode: 'shadow', paused: null },
     },
     // --- end iteration
+    // --- legal clauses
+    // legalClauses: the site-authenticated route GET /api/hub/legal/clauses (lib/routes/legal-clause-routes.js)
+    // that gives a client CMS the clauses in which Asoldi appears as processor, for the privacy page the CMS
+    // generates. Off: the route answers 404 disabled before any credential check, and a CMS treats that like
+    // offline. In shadow mode the answer is marked shadow and a CMS shows it in the admin preview only. A paused
+    // switch ({reason}) counts as off.
+    legalClauses: { enabled: false, mode: 'shadow', paused: null },
+    // --- end legal clauses
   };
 }
 
@@ -376,6 +399,10 @@ const ENUMS = {
   // --- change requests
   'changeRequests.mode': ['shadow', 'auto'],
   // --- end change requests
+  // --- dev reports and purge
+  'devReport.mode': ['shadow', 'auto'],
+  'purgeJobs.mode': ['shadow', 'auto'],
+  // --- end dev reports and purge
   'development.makerEvents': [...MAKER_EVENT_MODES],
   'migrations.deliveryBackfill': [...BACKFILL_MODES],
   // seo
@@ -411,6 +438,9 @@ const ENUMS = {
   // --- cms fleet monitor
   'cmsFleet.monitor.mode': ['shadow', 'auto'],
   // --- end cms fleet monitor
+  // --- legal clauses
+  'legalClauses.mode': ['shadow', 'auto'],
+  // --- end legal clauses
   // --- visit statistics retention
   'retention.analyticsTraffic.mode': ['shadow', 'auto'],
   // --- end visit statistics retention
@@ -454,6 +484,7 @@ const BOOLEANS = new Set([
   'development.requireConfirmForCustom',
   'development.previewJobs',
   'development.seoJobs',
+  'development.boardV2',
   'promotion.auto',
   // ---- legal texts
   'legal.catalogTexts.enabled',
@@ -498,12 +529,19 @@ const BOOLEANS = new Set([
   'cmsFleet.autoApplyFlip',
   'cmsFleet.wakePing.enabled',
   // --- end cms fleet monitor
+  // --- legal clauses
+  'legalClauses.enabled',
+  // --- end legal clauses
   // --- site rekey
   'siteRekey.enabled',
   // --- end site rekey
   // --- change requests
   'changeRequests.enabled',
   // --- end change requests
+  // --- dev reports and purge
+  'devReport.enabled',
+  'purgeJobs.enabled',
+  // --- end dev reports and purge
   // --- visit statistics retention
   'retention.analyticsTraffic.enabled',
   // --- end visit statistics retention
@@ -753,6 +791,23 @@ export function validateAutomationSettings(patch, { current = null, by = '', now
     else value.changeRequests.paused = paused;
   }
   // --- end change requests
+  // --- dev reports and purge
+  for (const key of ['devReport', 'purgeJobs']) {
+    if (!isPlainObject(value[key])) continue;
+    const mode = normalizeAutomationMode(value[key].mode);
+    if (mode) value[key].mode = mode;
+    const paused = normalizePaused(value[key].paused, { by, now });
+    if (paused === undefined) fail(key + '.paused', 'Must be null or {reason}.');
+    else value[key].paused = paused;
+  }
+  // --- end dev reports and purge
+  // --- legal clauses
+  if (isPlainObject(value.legalClauses)) {
+    const paused = normalizePaused(value.legalClauses.paused, { by, now });
+    if (paused === undefined) fail('legalClauses.paused', 'Must be null or {reason}.');
+    else value.legalClauses.paused = paused;
+  }
+  // --- end legal clauses
   // --- visit statistics retention
   if (isPlainObject(value.retention?.analyticsTraffic)) {
     const paused = normalizePaused(value.retention.analyticsTraffic.paused, { by, now });

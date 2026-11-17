@@ -4,16 +4,33 @@ import { Helmet } from 'react-helmet-async';
 import { Loader2 } from 'lucide-react';
 import { DevelopmentClientsSection } from '../Admin/sections/DevelopmentClientsSection';
 import { API, getDevelopmentToken } from '../Admin/shared';
+import { DeliveryBoard } from './DeliveryBoard';
 
-export const DeveloperWorkspace = () => {
+type WorkspaceSettings = { devBoardV2?: boolean } | null | undefined;
+
+/** True only when the optional flag is exactly true. A missing flag stays off. */
+export function devBoardEnabled(settings: WorkspaceSettings): boolean {
+  return Boolean(settings && settings.devBoardV2 === true);
+}
+
+type WorkspaceProps = {
+  initialStatus?: 'checking' | 'ready' | 'denied';
+  settings?: WorkspaceSettings;
+  startLegacy?: boolean;
+};
+
+export const DeveloperWorkspace = ({ initialStatus, settings, startLegacy = false }: WorkspaceProps = {}) => {
   const navigate = useNavigate();
-  const [status, setStatus] = useState<'checking' | 'ready' | 'denied'>('checking');
+  const [status, setStatus] = useState<'checking' | 'ready' | 'denied'>(initialStatus || 'checking');
+  const [boardOn, setBoardOn] = useState(() => devBoardEnabled(settings));
+  const [legacyView, setLegacyView] = useState(startLegacy);
 
   useEffect(() => {
+    if (initialStatus) return undefined;
     const token = getDevelopmentToken();
     if (!token) {
       navigate('/login/ansatt', { replace: true });
-      return;
+      return undefined;
     }
     let active = true;
     (async () => {
@@ -26,7 +43,14 @@ export const DeveloperWorkspace = () => {
           setStatus('denied');
           return;
         }
-        setStatus('ready');
+        try {
+          const body = await response.clone().json();
+          const nested = body && typeof body === 'object' ? body.settings : undefined;
+          if (active && (devBoardEnabled(nested) || devBoardEnabled(body))) setBoardOn(true);
+        } catch {
+          // The list body is optional. A missing flag stays off.
+        }
+        if (active) setStatus('ready');
       } catch {
         if (active) setStatus('ready');
       }
@@ -34,7 +58,7 @@ export const DeveloperWorkspace = () => {
     return () => {
       active = false;
     };
-  }, [navigate]);
+  }, [navigate, initialStatus]);
 
   function logout() {
     localStorage.removeItem('employeeToken');
@@ -61,6 +85,56 @@ export const DeveloperWorkspace = () => {
           Til innlogging
         </button>
       </div>
+    );
+  }
+
+  if (boardOn && !legacyView) {
+    return (
+      <>
+        <Helmet>
+          <title>Utviklerterminal – Asoldi</title>
+          <meta name="robots" content="noindex,nofollow" />
+        </Helmet>
+        <div className="staff-light developer-fill flex h-dvh w-full flex-col overflow-hidden bg-[#1a1a1a] text-white">
+          <div className="flex shrink-0 items-center justify-end px-4 py-2">
+            <button
+              type="button"
+              data-testid="legacy-view-toggle"
+              aria-pressed="false"
+              onClick={() => setLegacyView(true)}
+              className="rounded-lg border border-white/15 px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10"
+            >
+              Gammel visning
+            </button>
+          </div>
+          <DeliveryBoard onLogout={() => logout()} />
+        </div>
+      </>
+    );
+  }
+
+  if (boardOn && legacyView) {
+    return (
+      <>
+        <Helmet>
+          <title>Utviklerterminal – Asoldi</title>
+          <meta name="robots" content="noindex,nofollow" />
+        </Helmet>
+        <div className="staff-light developer-fill flex h-dvh w-full flex-col overflow-hidden bg-[#1a1a1a] text-white">
+          <div className="flex shrink-0 items-center justify-end px-4 py-2">
+            <button
+              type="button"
+              data-testid="legacy-view-toggle"
+              aria-pressed="true"
+              onClick={() => setLegacyView(false)}
+              className="rounded-lg border border-white/15 px-3 py-1.5 text-xs text-gray-200 hover:bg-white/10"
+            >
+              Gammel visning
+            </button>
+          </div>
+          <DevelopmentClientsSection onLogout={logout} />
+        </div>
+      </>
     );
   }
 

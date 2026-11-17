@@ -1,0 +1,59 @@
+{
+  "rev": 3,
+  "viewer": { "isAdmin": false, "accountKey": "developer:example", "username": "developer" },
+  "alerts": [
+    { "key": "host-offline:mh_example", "kind": "host-offline", "message": "Maker-verten eksempel har ikke vært i kontakt." }
+  ],
+  "developmentItems": [
+    {
+      "id": "sales:bakery-1",
+      "salesClientId": "bakery-1",
+      "businessName": "Solsiden Bakeri",
+      "product": "asoldi",
+      "contractSigned": true,
+      "developerOwnerId": "developer:example",
+      "offerTierId": "tier-1-standard",
+      "deliveryStage": "developing",
+      "websiteDomain": "solsiden-bakeri.example",
+      "makerPort": 4317,
+      "websiteDue": { "dueAt": "2026-12-01T10:00:00.000Z", "label": "1. des. 2026" },
+      "sitePlan": { "tierId": "tier-1-standard", "services": ["site", "blog"], "status": "active" },
+      "hubSite": { "id": "site-bakery-1", "domain": "solsiden-bakeri.example" },
+      "delivery": {
+        "stage": "developing",
+        "gate": { "status": "open", "lines": 2, "open": 1, "blocking": 1 },
+        "job": { "id": "job_bakeri01", "kind": "continue", "status": "blocked", "blocking": "needs-language", "warnings": ["dev-skipped"] }
+      },
+      "hostStatus": { "hostId": "mh_example", "online": false, "lastHeartbeatAt": "2026-11-14T08:00:00.000Z" },
+      "aiSpendSummary": { "totalUsd": 0.4, "calls": 3 },
+      "changeRequestSummary": { "open": 1, "used": 5, "quota": 4 },
+      "briefSummary": { "version": 1, "hash": "sha256:c4c0a5054a09953f", "status": "ready" },
+      "makerRun": { "runId": "syn-bakery-run-01" },
+      "development": { "nettsideFerdig": false },
+      "blocking": ["needs-language", "needs-pages"]
+    }
+  ],
+  "previewItems": [
+    {
+      "id": "sales:clinic-1",
+      "salesClientId": "clinic-1",
+      "businessName": "Nordlys Tannklinikk",
+      "product": "asoldi",
+      "contractSigned": false,
+      "developerOwnerId": "developer:example",
+      "deliveryStage": "lead",
+      "websiteDue": { "dueAt": "2026-11-20T10:00:00.000Z", "label": "20. nov. 2026" },
+      "offerTierId": "tier-2-seo"
+    }
+  ],
+  "ssuItems": [
+    {
+      "id": "sales:studio-1",
+      "salesClientId": "studio-1",
+      "businessName": "Eksempel Fotoatelier",
+      "product": "ssu",
+      "developerOwnerId": "developer:example",
+      "websiteDue": { "dueAt": "2026-11-18T10:00:00.000Z", "label": "18. nov. 2026" }
+    }
+  ]
+}

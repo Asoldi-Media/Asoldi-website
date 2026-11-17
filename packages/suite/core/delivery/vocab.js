@@ -26,7 +26,8 @@
 // 7: settings keys for the visit statistics retention, plan change, cancellation, booking link, intake steps, transcript keywords,
 // CMS fleet monitor and wake ping, and site rekey switches.
 // 8: settings keys for the change request and iteration (project document, processing, Cursor prompt) switches.
-export const VOCAB_VERSION = 8;
+// 9: settings keys for the developer board view, developer report, client purge and legal clause switches.
+export const VOCAB_VERSION = 9;
 
 function freezeList(list) {
   return Object.freeze(list.map((item) => (item && typeof item === 'object' ? Object.freeze({ ...item }) : item)));
@@ -469,6 +470,7 @@ export const SETTINGS_KEYS = Object.freeze({
   requireConfirmForCustom: 'development.requireConfirmForCustom',
   previewJobs: 'development.previewJobs',
   seoJobs: 'development.seoJobs',
+  boardV2: 'development.boardV2',
   publishStagingMode: 'publish.staging.mode',
   publishStagingTiers: 'publish.staging.tiers',
   publishProductionMode: 'publish.production.mode',
@@ -586,6 +588,19 @@ export const SETTINGS_KEYS = Object.freeze({
   iterationCursorPromptMode: 'iteration.cursorPrompt.mode',
   iterationCursorPromptPaused: 'iteration.cursorPrompt.paused',
   // --- end iteration
+  // --- legal clauses
+  legalClauses: 'legalClauses.enabled',
+  legalClausesMode: 'legalClauses.mode',
+  legalClausesPaused: 'legalClauses.paused',
+  // --- end legal clauses
+  // --- dev reports and purge
+  devReport: 'devReport.enabled',
+  devReportMode: 'devReport.mode',
+  devReportPaused: 'devReport.paused',
+  purgeJobs: 'purgeJobs.enabled',
+  purgeJobsMode: 'purgeJobs.mode',
+  purgeJobsPaused: 'purgeJobs.paused',
+  // --- end dev reports and purge
 });
 
 export const EMAIL_SETTINGS_FIELDS = Object.freeze(['enabled', 'mode', 'paused']);
