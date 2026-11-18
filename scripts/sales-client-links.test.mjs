@@ -98,26 +98,26 @@ test('Proff URL is left empty without an org number', () => {
 });
 
 test('Norwegian org numbers extract from dots, hyphens, extra spaces, and NO prefix', () => {
-  assert.equal(isValidNorwegianOrgNumber('936585345'), true);
-  assert.equal(extractOrganizationNumberFromText('936.585.345'), '936585345');
-  assert.equal(extractOrganizationNumberFromText('936-585-345'), '936585345');
-  assert.equal(extractOrganizationNumberFromText('936  585  345'), '936585345');
-  assert.equal(extractOrganizationNumberFromText('NO 936 585 345'), '936585345');
-  assert.equal(extractOrganizationNumberFromText('Org.nr: 936585345'), '936585345');
+  assert.equal(isValidNorwegianOrgNumber('912346625'), true);
+  assert.equal(extractOrganizationNumberFromText('912.346.625'), '912346625');
+  assert.equal(extractOrganizationNumberFromText('912-346-625'), '912346625');
+  assert.equal(extractOrganizationNumberFromText('912  346  625'), '912346625');
+  assert.equal(extractOrganizationNumberFromText('NO 912 346 625'), '912346625');
+  assert.equal(extractOrganizationNumberFromText('Org.nr: 912346625'), '912346625');
 });
 
 test('MyPhoner Org. nummer and organisasjonsnr fields fill the org number', () => {
   assert.equal(
-    extractOrganizationNumberFromLead({}, new Map([['orgnummer', '936.585.345']])),
-    '936585345'
+    extractOrganizationNumberFromLead({}, new Map([['orgnummer', '912.346.625']])),
+    '912346625'
   );
   assert.equal(
-    extractOrganizationNumberFromLead({}, new Map([['organisasjonsnr', '936 585 345']])),
-    '936585345'
+    extractOrganizationNumberFromLead({}, new Map([['organisasjonsnr', '912 346 625']])),
+    '912346625'
   );
   assert.equal(
-    extractOrganizationNumberFromLead({ organizationNumber: '936585345' }, new Map()),
-    '936585345'
+    extractOrganizationNumberFromLead({ organizationNumber: '912346625' }, new Map()),
+    '912346625'
   );
 });
 
@@ -125,29 +125,29 @@ test('a checksum-valid org number in a random MyPhoner field is used', () => {
   assert.equal(
     extractOrganizationNumberFromLead(
       {},
-      new Map([['notes', 'Se Brreg 936 585 345 Trondheim']])
+      new Map([['notes', 'Se Brreg 912 346 625 Trondheim']])
     ),
-    '936585345'
+    '912346625'
   );
 });
 
 test('pretty Proff URLs without a 9-digit org are replaced from MyPhoner org number', () => {
-  const pretty = 'https://www.proff.no/selskap/byggmester-jan-overrein/trondheim/bygg-og-anleggsleverandorer/IFHM9VL0CVG';
+  const pretty = 'https://www.proff.no/selskap/byggmester-jan-eksempelsen/trondheim/bygg-og-anleggsleverandorer/XQRT0AAAAAA';
   assert.equal(organizationNumberFromProffUrl(pretty), '');
   assert.equal(
-    fillProffUrlFromOrgNumber(pretty, '936585345'),
-    'https://www.proff.no/selskap/x/x/x/936585345'
+    fillProffUrlFromOrgNumber(pretty, '912346625'),
+    'https://www.proff.no/selskap/x/x/x/912346625'
   );
   assert.equal(
-    fillProffUrlFromOrgNumber('', '936585345'),
-    buildDirectProffUrlFromOrgNumber('936585345')
+    fillProffUrlFromOrgNumber('', '912346625'),
+    buildDirectProffUrlFromOrgNumber('912346625')
   );
 });
 
 test('an existing Proff URL that already has the org number is kept', () => {
-  const current = 'https://www.proff.no/selskap/x/x/x/936585345';
-  assert.equal(organizationNumberFromProffUrl(current), '936585345');
-  assert.equal(fillProffUrlFromOrgNumber(current, '936585345'), current);
+  const current = 'https://www.proff.no/selskap/x/x/x/912346625';
+  assert.equal(organizationNumberFromProffUrl(current), '912346625');
+  assert.equal(fillProffUrlFromOrgNumber(current, '912346625'), current);
 });
 
 test('other links drop maps, emails, and copies of dedicated fields', () => {

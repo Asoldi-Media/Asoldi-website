@@ -15,8 +15,8 @@ Until Infokort has written a brief, the card shows the industry word alone.
 
 Not org.nr, legal form, “registrert i Brønnøysund”, or a NACE dump.
 
-Good: `Bakkes Bilpleie er bilpleie i Kristiansand. De vasker og pleier biler.`
-Bad: `Bakkes Bilpleie er et enkeltpersonforetak registrert i Brønnøysundregistrene med org.nr. 937366221.`
+Good: `Fjordvik Bilpleie er bilpleie i Kristiansand. De vasker og pleier biler.`
+Bad: `Fjordvik Bilpleie er et enkeltpersonforetak registrert i Brønnøysundregistrene med org.nr. 912346285.`
 
 ## Who writes it
 

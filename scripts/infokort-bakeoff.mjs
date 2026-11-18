@@ -15,11 +15,11 @@ dotenv.config({ path: join(root, '.env.local') });
 
 const CASES = [
   {
-    name: 'Deles Are Terjesen',
+    name: 'Torg Kari Eksempelsen',
     input: {
-      businessName: 'Deles Are Terjesen',
-      orgNumber: '925992720',
-      contactPhone: '40 00 08 41',
+      businessName: 'Torg Kari Eksempelsen',
+      orgNumber: '912346919',
+      contactPhone: '22 00 00 01',
       industry: 'reklamebyrå',
       meetingPlace: 'Meieriveien 5',
       websiteDomain: '',
@@ -27,20 +27,20 @@ const CASES = [
     },
     expected: {
       industry: 'markedsplass',
-      websiteDomain: 'tass.no',
-      orgNumber: '925992720',
-      meetingPlace: 'Vasøyveien 103, 7167 Vallersund',
-      instagramUrl: 'https://www.instagram.com/tass.norge/',
-      facebookUrl: 'https://www.facebook.com/tassnorge/',
-      googleBusinessProfile: 'https://maps.google.com/?cid=5208062932965149043',
+      websiteDomain: 'torgli.example',
+      orgNumber: '912346919',
+      meetingPlace: 'Prøvegata 103, 7167 Vallersund',
+      instagramUrl: 'https://www.instagram.com/torgli.example/',
+      facebookUrl: 'https://www.facebook.com/torgli.example.fb/',
+      googleBusinessProfile: 'https://maps.google.com/?cid=4000000000000000002',
     },
   },
   {
-    name: 'BAKKES BILPLEIE',
+    name: 'FJORDVIK BILPLEIE',
     input: {
-      businessName: 'BAKKES BILPLEIE',
-      orgNumber: '937366221',
-      meetingPlace: 'Bråvann platå 64, 4624 KRISTIANSAND S',
+      businessName: 'FJORDVIK BILPLEIE',
+      orgNumber: '912346285',
+      meetingPlace: 'Prøvegata 64, 4624 KRISTIANSAND S',
       industry: '',
       websiteDomain: '',
       details: {},
@@ -48,8 +48,8 @@ const CASES = [
     expected: {
       industry: 'bilverksted',
       websiteDomain: '',
-      orgNumber: '937366221',
-      meetingPlace: 'Bråvann platå 64, 4624 KRISTIANSAND S',
+      orgNumber: '912346285',
+      meetingPlace: 'Prøvegata 64, 4624 KRISTIANSAND S',
       instagramUrl: '',
       facebookUrl: '',
       googleBusinessProfile: '',

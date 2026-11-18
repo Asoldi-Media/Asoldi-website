@@ -14,7 +14,7 @@ const client = {
   contactPerson: 'Are',
   contactEmail: 'person-8688c1@juniper.test',
   websiteEmail: 'hei@juniper.test',
-  contactPhone: '40 00 08 41',
+  contactPhone: '22 00 00 01',
   industry: 'reklamebyrå',
   websiteDomain: 'juniper.test',
   orgNumber: '123456789',
@@ -71,7 +71,7 @@ test('stored clientBrief is the card line and the full document text', () => {
 test('kundekortHref opens links, mail, phone, and a bare domain', () => {
   assert.equal(kundekortHref('juniper.test', 'domain'), 'https://juniper.test');
   assert.equal(kundekortHref('person-8688c1@juniper.test', 'email'), 'mailto:person-8688c1@juniper.test');
-  assert.equal(kundekortHref('40 00 08 41', 'phone'), 'tel:40000841');
+  assert.equal(kundekortHref('22 00 00 01', 'phone'), 'tel:22000001');
   assert.equal(kundekortHref('https://www.instagram.com/example.shop/'), 'https://www.instagram.com/example.shop/');
   assert.equal(kundekortHref('mailto:hei@juniper.test'), 'mailto:hei@juniper.test');
   assert.equal(kundekortHref(''), '');

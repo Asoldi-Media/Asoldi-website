@@ -14,12 +14,12 @@ import {
 } from '../lib/infokort-agent.js';
 
 test('registry dump is replaced by industry + what they do', () => {
-  assert.equal(isRegistryBrief('et enkeltpersonforetak registrert i Brønnøysundregistrene med org.nr. 937366221'), true);
+  assert.equal(isRegistryBrief('et enkeltpersonforetak registrert i Brønnøysundregistrene med org.nr. 912346285'), true);
   const brief = composeIdentityBrief({
-    businessName: 'BAKKES BILPLEIE',
+    businessName: 'FJORDVIK BILPLEIE',
     industry: 'bilpleie',
-    meetingPlace: 'Bråvann platå 64, 4624 KRISTIANSAND S',
-    extra: 'Bakkes Bilpleie er et enkeltpersonforetak registrert i Brønnøysundregistrene.',
+    meetingPlace: 'Prøvegata 64, 4624 KRISTIANSAND S',
+    extra: 'Fjordvik Bilpleie er et enkeltpersonforetak registrert i Brønnøysundregistrene.',
   });
   assert.match(brief.short, /bilpleie/i);
   assert.match(brief.short, /Kristiansand/i);
@@ -31,50 +31,50 @@ test('applyInfokortResult keeps an existing Maps CID when the agent leaves Maps 
     'client-1',
     {
       industry: 'bilpleie',
-      meetingPlace: 'Bråvann platå 64, 4624 KRISTIANSAND S',
-      orgNumber: '937366221',
+      meetingPlace: 'Prøvegata 64, 4624 KRISTIANSAND S',
+      orgNumber: '912346285',
       websiteDomain: '',
       details: { instagramUrl: '', facebookUrl: '', googleBusinessProfile: '' },
-      clientBrief: { short: 'Bakkes Bilpleie er bilpleie i Kristiansand.' },
+      clientBrief: { short: 'Fjordvik Bilpleie er bilpleie i Kristiansand.' },
     },
     {
       persist: false,
       current: {
-        orgNumber: '937366221',
-        details: { googleBusinessProfile: 'https://maps.google.com/?cid=4582029138078882824' },
+        orgNumber: '912346285',
+        details: { googleBusinessProfile: 'https://maps.google.com/?cid=4000000000000000001' },
       },
     }
   );
-  assert.equal(applied.details.googleBusinessProfile, 'https://maps.google.com/?cid=4582029138078882824');
-  assert.equal(applied.orgNumber, '937366221');
+  assert.equal(applied.details.googleBusinessProfile, 'https://maps.google.com/?cid=4000000000000000001');
+  assert.equal(applied.orgNumber, '912346285');
 });
 
 test('normalizeInfokortSubmission stores host-only website, cid maps, and brief', () => {
   const submission = normalizeInfokortSubmission({
     industry: 'markedsplass',
-    meetingPlace: 'Vasøyveien 103, 7167 Vallersund',
-    orgNumber: '925992720',
-    websiteDomain: 'https://www.tass.no/om-oss',
-    instagramUrl: 'https://www.instagram.com/tass.norge/',
-    facebookUrl: 'https://www.facebook.com/tassnorge/',
-    proffUrl: 'https://www.proff.no/selskap/deles/x/x/925992720',
-    googleBusinessProfile: 'https://maps.google.com/?cid=5208062932965149043',
-    briefShort: 'TASS er en markedsplass.',
-    briefFull: 'TASS drives av Deles Are Terjesen.',
+    meetingPlace: 'Prøvegata 103, 7167 Vallersund',
+    orgNumber: '912346919',
+    websiteDomain: 'https://www.torgli.example/om-oss',
+    instagramUrl: 'https://www.instagram.com/torgli.example/',
+    facebookUrl: 'https://www.facebook.com/torgli.example.fb/',
+    proffUrl: 'https://www.proff.no/selskap/torg/x/x/912346919',
+    googleBusinessProfile: 'https://maps.google.com/?cid=4000000000000000002',
+    briefShort: 'TORGLI er en markedsplass.',
+    briefFull: 'TORGLI drives av Torg Kari Eksempelsen.',
   });
-  assert.equal(submission.websiteDomain, 'tass.no');
-  assert.equal(submission.details.proffUrl, 'https://www.proff.no/selskap/x/x/x/925992720');
-  assert.equal(submission.details.googleBusinessProfile, 'https://maps.google.com/?cid=5208062932965149043');
+  assert.equal(submission.websiteDomain, 'torgli.example');
+  assert.equal(submission.details.proffUrl, 'https://www.proff.no/selskap/x/x/x/912346919');
+  assert.equal(submission.details.googleBusinessProfile, 'https://maps.google.com/?cid=4000000000000000002');
   assert.equal(submission.clientBrief.source, 'infokort-haiku');
-  assert.match(submission.clientBrief.short, /TASS/);
+  assert.match(submission.clientBrief.short, /TORGLI/);
 });
 
-test('scoreInfokortMatch accepts empty Bakkes-style socials and alias industry', () => {
+test('scoreInfokortMatch accepts empty Fjordvik-style socials and alias industry', () => {
   const expected = {
     industry: 'bilverksted',
     websiteDomain: '',
-    orgNumber: '937366221',
-    meetingPlace: 'Bråvann platå 64, 4624 KRISTIANSAND S',
+    orgNumber: '912346285',
+    meetingPlace: 'Prøvegata 64, 4624 KRISTIANSAND S',
     instagramUrl: '',
     facebookUrl: '',
     googleBusinessProfile: '',
@@ -82,12 +82,12 @@ test('scoreInfokortMatch accepts empty Bakkes-style socials and alias industry',
   const actual = {
     industry: 'bilpleie',
     websiteDomain: '',
-    orgNumber: '937366221',
-    meetingPlace: 'Bråvann platå 64, 4624 Kristiansand S',
+    orgNumber: '912346285',
+    meetingPlace: 'Prøvegata 64, 4624 Kristiansand S',
     details: {
       instagramUrl: '',
       facebookUrl: '',
-      proffUrl: 'https://www.proff.no/selskap/x/x/x/937366221',
+      proffUrl: 'https://www.proff.no/selskap/x/x/x/912346285',
       googleBusinessProfile: '',
     },
   };
@@ -97,8 +97,8 @@ test('scoreInfokortMatch accepts empty Bakkes-style socials and alias industry',
 
 test('scoreInfokortMatch fails when industry is the leftover NACE', () => {
   const score = scoreInfokortMatch(
-    { industry: 'markedsplass', websiteDomain: 'tass.no', orgNumber: '925992720', instagramUrl: '', facebookUrl: '', googleBusinessProfile: '' },
-    { industry: 'reklamebyrå', websiteDomain: 'tass.no', orgNumber: '925992720', details: {} }
+    { industry: 'markedsplass', websiteDomain: 'torgli.example', orgNumber: '912346919', instagramUrl: '', facebookUrl: '', googleBusinessProfile: '' },
+    { industry: 'reklamebyrå', websiteDomain: 'torgli.example', orgNumber: '912346919', details: {} }
   );
   assert.equal(score.ok, false);
   assert.ok(score.failed.includes('industry'));
@@ -114,7 +114,7 @@ test('runInfokortAgent follows tools then submit_card without calling Claude', a
           type: 'tool_use',
           id: '1',
           name: 'brreg_get',
-          input: { orgNumber: '925992720' },
+          input: { orgNumber: '912346919' },
         }],
         usage: {},
       };
@@ -126,21 +126,21 @@ test('runInfokortAgent follows tools then submit_card without calling Claude', a
         name: 'submit_card',
         input: {
           industry: 'markedsplass',
-          meetingPlace: 'Vasøyveien 103, 7167 Vallersund',
-          orgNumber: '925992720',
-          websiteDomain: 'tass.no',
+          meetingPlace: 'Prøvegata 103, 7167 Vallersund',
+          orgNumber: '912346919',
+          websiteDomain: 'torgli.example',
           instagramUrl: '',
           facebookUrl: '',
-          proffUrl: 'https://www.proff.no/selskap/x/x/x/925992720',
+          proffUrl: 'https://www.proff.no/selskap/x/x/x/912346919',
           googleBusinessProfile: '',
-          briefShort: 'TASS er en markedsplass i Norge.',
+          briefShort: 'TORGLI er en markedsplass i Norge.',
         },
       }],
       usage: {},
     };
   };
   const result = await runInfokortAgent(
-    { businessName: 'Deles Are Terjesen', orgNumber: '925992720' },
+    { businessName: 'Torg Kari Eksempelsen', orgNumber: '912346919' },
     {
       chat,
       search: async () => [],
@@ -150,23 +150,23 @@ test('runInfokortAgent follows tools then submit_card without calling Claude', a
         ok: true,
         status: 200,
         json: async () => ({
-          navn: 'DELES ARE TERJESEN',
-          organisasjonsnummer: '925992720',
-          forretningsadresse: { adresse: ['Vasøyveien 103'], postnummer: '7167', poststed: 'VALLERSUND' },
-          hjemmeside: 'tass.no',
+          navn: 'TORG KARI EKSEMPELSEN',
+          organisasjonsnummer: '912346919',
+          forretningsadresse: { adresse: ['Prøvegata 103'], postnummer: '7167', poststed: 'VALLERSUND' },
+          hjemmeside: 'torgli.example',
         }),
       }),
     }
   );
   assert.equal(result.ok, true);
   assert.equal(result.submission.industry, 'markedsplass');
-  assert.equal(result.submission.websiteDomain, 'tass.no');
+  assert.equal(result.submission.websiteDomain, 'torgli.example');
   const applied = applyInfokortResult('client-1', result.submission, {
     persist: true,
     update: (id, patch) => ({ id, ...patch }),
   });
   assert.equal(applied.id, 'client-1');
-  assert.equal(applied.details.proffUrl, 'https://www.proff.no/selskap/x/x/x/925992720');
+  assert.equal(applied.details.proffUrl, 'https://www.proff.no/selskap/x/x/x/912346919');
 });
 
 test('attachRegistryDefaults replaces a stale stored street with Brreg', async () => {
@@ -174,67 +174,67 @@ test('attachRegistryDefaults replaces a stale stored street with Brreg', async (
     {
       industry: 'markedsplass',
       meetingPlace: 'Meieriveien 5',
-      websiteDomain: 'tass.no',
-      orgNumber: '925992720',
+      websiteDomain: 'torgli.example',
+      orgNumber: '912346919',
       details: {},
     },
-    { businessName: 'Deles Are Terjesen', meetingPlace: 'Meieriveien 5', orgNumber: '925992720' },
+    { businessName: 'Torg Kari Eksempelsen', meetingPlace: 'Meieriveien 5', orgNumber: '912346919' },
     async () => ({
       ok: true,
       status: 200,
       json: async () => ({
-        navn: 'DELES ARE TERJESEN',
-        organisasjonsnummer: '925992720',
-        forretningsadresse: { adresse: ['Vasøyveien 103'], postnummer: '7167', poststed: 'VALLERSUND' },
-        hjemmeside: 'tass.no',
+        navn: 'TORG KARI EKSEMPELSEN',
+        organisasjonsnummer: '912346919',
+        forretningsadresse: { adresse: ['Prøvegata 103'], postnummer: '7167', poststed: 'VALLERSUND' },
+        hjemmeside: 'torgli.example',
       }),
     })
   );
-  assert.match(next.meetingPlace, /Vasøyveien 103/i);
+  assert.match(next.meetingPlace, /Prøvegata 103/i);
 });
 
-test('fillProvenPublicLinks writes TASS socials and Maps from trading-name hits', async () => {
+test('fillProvenPublicLinks writes TORGLI socials and Maps from trading-name hits', async () => {
   const filled = await fillProvenPublicLinks(
     {
       industry: 'markedsplass',
-      meetingPlace: 'Vasøyveien 103 7167 VALLERSUND',
-      websiteDomain: 'tass.no',
-      orgNumber: '925992720',
+      meetingPlace: 'Prøvegata 103 7167 VALLERSUND',
+      websiteDomain: 'torgli.example',
+      orgNumber: '912346919',
       details: {
         instagramUrl: '',
         facebookUrl: '',
         googleBusinessProfile: '',
-        proffUrl: 'https://www.proff.no/selskap/x/x/x/925992720',
+        proffUrl: 'https://www.proff.no/selskap/x/x/x/912346919',
       },
     },
-    { businessName: 'Deles Are Terjesen', contactPhone: '40 00 08 41' },
+    { businessName: 'Torg Kari Eksempelsen', contactPhone: '22 00 00 01' },
     {
       readWebsite: async () => ([
-        { url: 'https://www.instagram.com/tass.norge/', title: 'tass.no', snippet: 'tass.no' },
-        { url: 'https://www.facebook.com/tassnorge/', title: 'tass.no', snippet: 'tass.no' },
+        { url: 'https://www.instagram.com/torgli.example/', title: 'torgli.example', snippet: 'torgli.example' },
+        { url: 'https://www.facebook.com/torgli.example.fb/', title: 'torgli.example', snippet: 'torgli.example' },
       ]),
       search: async () => [],
       mapsSearch: async () => ({
         ok: true,
         results: [{
-          title: 'TASS',
-          address: 'Vasøyveien 103, 7167 Vallersund',
-          phone: '40 00 08 41',
-          website: 'https://tass.no',
-          cid: '5208062932965149043',
-          mapsUrl: 'https://maps.google.com/?cid=5208062932965149043',
+          title: 'TORGLI',
+          address: 'Prøvegata 103, 7167 Vallersund',
+          phone: '22 00 00 01',
+          website: 'https://torgli.example',
+          cid: '4000000000000000002',
+          mapsUrl: 'https://maps.google.com/?cid=4000000000000000002',
         }],
       }),
     }
   );
   const score = scoreInfokortMatch({
     industry: 'markedsplass',
-    websiteDomain: 'tass.no',
-    orgNumber: '925992720',
-    meetingPlace: 'Vasøyveien 103, 7167 Vallersund',
-    instagramUrl: 'https://www.instagram.com/tass.norge/',
-    facebookUrl: 'https://www.facebook.com/tassnorge/',
-    googleBusinessProfile: 'https://maps.google.com/?cid=5208062932965149043',
+    websiteDomain: 'torgli.example',
+    orgNumber: '912346919',
+    meetingPlace: 'Prøvegata 103, 7167 Vallersund',
+    instagramUrl: 'https://www.instagram.com/torgli.example/',
+    facebookUrl: 'https://www.facebook.com/torgli.example.fb/',
+    googleBusinessProfile: 'https://maps.google.com/?cid=4000000000000000002',
   }, filled);
   assert.equal(score.ok, true, String(score.failed));
 });
@@ -274,21 +274,21 @@ test('runInfokortAgent spends at most 2 Google searches and 1 Maps search', asyn
         name: 'submit_card',
         input: {
           industry: 'markedsplass',
-          meetingPlace: 'Vasøyveien 103, 7167 Vallersund',
-          orgNumber: '925992720',
-          websiteDomain: 'tass.no',
+          meetingPlace: 'Prøvegata 103, 7167 Vallersund',
+          orgNumber: '912346919',
+          websiteDomain: 'torgli.example',
           instagramUrl: '',
           facebookUrl: '',
           proffUrl: '',
           googleBusinessProfile: '',
-          briefShort: 'TASS er en markedsplass.',
+          briefShort: 'TORGLI er en markedsplass.',
         },
       }],
       usage: {},
     };
   };
   const result = await runInfokortAgent(
-    { businessName: 'Deles Are Terjesen', orgNumber: '925992720' },
+    { businessName: 'Torg Kari Eksempelsen', orgNumber: '912346919' },
     {
       chat,
       search: async (query) => {
@@ -304,10 +304,10 @@ test('runInfokortAgent spends at most 2 Google searches and 1 Maps search', asyn
         ok: true,
         status: 200,
         json: async () => ({
-          navn: 'DELES ARE TERJESEN',
-          organisasjonsnummer: '925992720',
-          forretningsadresse: { adresse: ['Vasøyveien 103'], postnummer: '7167', poststed: 'VALLERSUND' },
-          hjemmeside: 'tass.no',
+          navn: 'TORG KARI EKSEMPELSEN',
+          organisasjonsnummer: '912346919',
+          forretningsadresse: { adresse: ['Prøvegata 103'], postnummer: '7167', poststed: 'VALLERSUND' },
+          hjemmeside: 'torgli.example',
         }),
       }),
     }
@@ -317,16 +317,16 @@ test('runInfokortAgent spends at most 2 Google searches and 1 Maps search', asyn
   assert.equal(maps.length, INFOKORT_MAPS_SEARCH_LIMIT);
 });
 
-test('fillProvenPublicLinks leaves Bakkes socials empty when search is empty', async () => {
+test('fillProvenPublicLinks leaves Fjordvik socials empty when search is empty', async () => {
   const filled = await fillProvenPublicLinks(
     {
       industry: 'bilpleie',
-      meetingPlace: 'Bråvann platå 64, 4624 Kristiansand S',
+      meetingPlace: 'Prøvegata 64, 4624 Kristiansand S',
       websiteDomain: '',
-      orgNumber: '937366221',
+      orgNumber: '912346285',
       details: {},
     },
-    { businessName: 'BAKKES BILPLEIE' },
+    { businessName: 'FJORDVIK BILPLEIE' },
     { search: async () => [], mapsSearch: async () => ({ ok: true, results: [] }) }
   );
   assert.equal(filled.details.instagramUrl, '');

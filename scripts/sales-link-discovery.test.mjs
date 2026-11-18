@@ -91,8 +91,8 @@ test('DataForSEO organic and local pack become the same result rows', () => {
 });
 
 test('paid Google operators are stripped so site: cannot 5x the SERP bill', () => {
-  assert.equal(stripPaidSearchOperators('site:instagram.com "TASS" Trondheim'), 'instagram.com TASS Trondheim');
-  assert.equal(stripPaidSearchOperators('intitle:bakkes inurl:om-oss'), 'bakkes om-oss');
+  assert.equal(stripPaidSearchOperators('site:instagram.com "TORGLI" Trondheim'), 'instagram.com TORGLI Trondheim');
+  assert.equal(stripPaidSearchOperators('intitle:fjordvik inurl:om-oss'), 'fjordvik om-oss');
   assert.equal(
     shouldRefuseSerpCall({ spentUsd: 4.999, dailyUsd: 0, budgetUsd: 5, dailyBudgetUsd: 0.4 }, { worstCase: 0.002 }),
     true
@@ -113,7 +113,7 @@ test('searchGoogle uses DataForSEO first when auth is set', async () => {
   process.env.DATAFORSEO_AUTH = Buffer.from('x:y').toString('base64');
   resetSerpSpendForTests();
   try {
-    const rows = await searchGoogle('tass instagram', {
+    const rows = await searchGoogle('torgli instagram', {
       persist: false,
       fetchImpl: async (url) => {
         assert.match(String(url), /dataforseo\.com/);
@@ -126,7 +126,7 @@ test('searchGoogle uses DataForSEO first when auth is set', async () => {
               cost: 0,
               result: [{
                 items: [
-                  { type: 'organic', url: 'https://www.instagram.com/tass.norge/', title: 'TASS Norge', description: 'tass.no', rank_group: 1 },
+                  { type: 'organic', url: 'https://www.instagram.com/torgli.example/', title: 'TORGLI Norge', description: 'torgli.example', rank_group: 1 },
                 ],
               }],
             }],
@@ -134,7 +134,7 @@ test('searchGoogle uses DataForSEO first when auth is set', async () => {
         };
       },
     });
-    assert.equal(rows[0].url, 'https://www.instagram.com/tass.norge/');
+    assert.equal(rows[0].url, 'https://www.instagram.com/torgli.example/');
   } finally {
     if (previous == null) delete process.env.DATAFORSEO_AUTH;
     else process.env.DATAFORSEO_AUTH = previous;
@@ -151,7 +151,7 @@ test('a spent lifetime or daily SERP budget refuses the live call', async () => 
   resetSerpSpendForTests({ totalUsd: 5, dailyUsd: 0.4 });
   let fetched = 0;
   try {
-    const rows = await searchDataForSeoOrganic('tass instagram', {
+    const rows = await searchDataForSeoOrganic('torgli instagram', {
       persist: false,
       fetchImpl: async () => {
         fetched += 1;
@@ -177,7 +177,7 @@ test('live organic search strips site: from the paid keyword', async () => {
   resetSerpSpendForTests();
   let keyword = '';
   try {
-    await searchDataForSeoOrganic('site:instagram.com tass', {
+    await searchDataForSeoOrganic('site:instagram.com torgli', {
       persist: false,
       fetchImpl: async (_url, init) => {
         keyword = JSON.parse(init.body)[0].keyword;
@@ -209,17 +209,17 @@ test('DataForSEO Maps items become cid places', () => {
     tasks: [{
       result: [{
         items: [{
-          title: 'TASS',
-          address: 'Vasøyveien 103, 7167 Vallersund',
-          phone: '40 00 08 41',
-          cid: '5208062932965149043',
-          url: 'https://tass.no',
+          title: 'TORGLI',
+          address: 'Prøvegata 103, 7167 Vallersund',
+          phone: '22 00 00 01',
+          cid: '4000000000000000002',
+          url: 'https://torgli.example',
         }],
       }],
     }],
   });
-  assert.equal(rows[0].mapsUrl, 'https://maps.google.com/?cid=5208062932965149043');
-  assert.equal(rows[0].title, 'TASS');
+  assert.equal(rows[0].mapsUrl, 'https://maps.google.com/?cid=4000000000000000002');
+  assert.equal(rows[0].title, 'TORGLI');
 });
 
 test('two equal name matches are left empty', () => {

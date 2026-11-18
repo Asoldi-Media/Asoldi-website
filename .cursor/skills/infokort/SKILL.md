@@ -51,7 +51,7 @@ Write a value only when the opened page is this company:
 
 **Exclude** when: the page does not exist, the match is another business, you are more unsure than sure, or you only have a similar name in the same town.
 
-Empty is a valid result. Bakkes with only Proff is correct if no public socials or Maps exist.
+Empty is a valid result. Fjordvik with only Proff is correct if no public socials or Maps exist.
 
 ## Industry and address
 
@@ -63,7 +63,7 @@ Do **not** copy Brønnøysund `naeringskode` / Proff bransje when that code is l
 
 - Prefer the address that Maps + Facebook + the site + Brønnøysund **forretningsadresse** agree on.
 - An old Google place with the same phone and a different street is **not** the card address (two different streets).
-- Tiny spelling drift on Facebook (`Innherrdsvegen`) is not a reason to overwrite a correct card street.
+- Tiny spelling drift on Facebook (`Prøvevegen`) is not a reason to overwrite a correct card street.
 
 ## Research
 
