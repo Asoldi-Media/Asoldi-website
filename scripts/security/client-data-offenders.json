@@ -2,7 +2,7 @@
   "about": "Tracked files that still carry client personal data (e-mail addresses and phone numbers in test fixtures), with the number of findings each may have. A file that is not listed or a higher count fails the repo tests; a lower count passes. Lower the list with: node scripts/security/secret-scan.mjs --tracked --ratchet --shrink. Never add a file or raise a count.",
   "kind": "pii",
   "files": {
-    "scripts/inbox-bot.test.mjs": 37,
+    "scripts/inbox-bot.test.mjs": 31,
     "scripts/suite-bot-core.test.mjs": 1,
     "scripts/workshop-prep.test.mjs": 9
   }
