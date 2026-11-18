@@ -159,7 +159,7 @@ const stub = async ({ fileName }) => ({ ...normalizePortalTranscript(BRIEFS[file
 
 test('every saved media file gets a brief; product-info images go to product extraction', async () => {
   const userId = 'portal-media-brief';
-  clientPortal.upsertClientProfile(userId, { businessName: 'Bakkes' });
+  clientPortal.upsertClientProfile(userId, { businessName: 'Fjordvik' });
   const saved = await persistMediaFiles(userId, [
     { originalName: 'meny.jpg', buffer: JPG },
     { originalName: 'logo.png', buffer: PNG },
@@ -186,7 +186,7 @@ test('every saved media file gets a brief; product-info images go to product ext
 
 test('Kundedata upload returns the brief and suggested bucket for the page to apply', async () => {
   const userId = 'portal-media-upload';
-  clientPortal.upsertClientProfile(userId, { businessName: 'Bakkes' });
+  clientPortal.upsertClientProfile(userId, { businessName: 'Fjordvik' });
   const out = await categorizeClientUpload(userId, { url: '/client-media/x/ansatte.jpg', buffer: JPG, originalName: 'ansatte.jpg', transcribe: stub });
   assert.equal(out.placement.bucket, 'teamImages');
   assert.equal(out.productCatalogs, null);

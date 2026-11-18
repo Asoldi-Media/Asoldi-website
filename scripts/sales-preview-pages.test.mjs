@@ -35,7 +35,7 @@ assert.equal(labelForPreviewRoute('/single-post'), 'Blogginnlegg');
 assert.equal(labelForPreviewRoute('/news/hello', 'post'), 'Blogginnlegg');
 assert.equal(labelForPreviewRoute('/blog/hello', 'blog'), 'Blogginnlegg');
 assert.equal(labelForPreviewRoute('/blog', 'blog'), 'Blog');
-assert.equal(previewBaseFromRequestPath('/sales-preview/garnstogo/shop', 'id-1'), '/sales-preview/garnstogo/');
+assert.equal(previewBaseFromRequestPath('/sales-preview/garnhagen/shop', 'id-1'), '/sales-preview/garnhagen/');
 assert.equal(
   hrefForPreviewRoute('/sales-preview/client-1/', '/shop'),
   '/sales-preview/client-1/shop?asoldi-embed=1'
@@ -108,14 +108,14 @@ const chrome = renderSalesPreviewChrome({
   ],
   currentRoute: '/',
   iframeSrc: '/sales-preview/client-1/?asoldi-embed=1',
-  title: 'Garnstogo',
+  title: 'Garnhagen',
 });
 assert.match(chrome, /id="asoldi-preview-chrome"/);
 assert.match(chrome, /asoldi-contract-cover/);
 assert.match(chrome, /asoldi-preview-contract/);
 assert.match(chrome, /<label[^>]*>Sider<\/label>/);
 assert.match(chrome, /<select id="asoldi-preview-pages">/);
-assert.match(chrome, /Garnstogo/);
+assert.match(chrome, /Garnhagen/);
 assert.match(chrome, /iframe id="asoldi-preview-frame"/);
 assert.match(chrome, /\/sales-preview\/client-1\/shop\?asoldi-embed=1/);
 assert.doesNotMatch(chrome, /Signer kontrakt/);

@@ -57,7 +57,7 @@ function dib32(size) {
   return Buffer.concat([header, pixels, Buffer.alloc(Math.ceil(size / 32) * 4 * size)]);
 }
 
-const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 60"><title>Bakkes Bakeri</title><rect width="240" height="60" fill="#c33"/><text x="10" y="40">Bakkes</text></svg>');
+const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 60"><title>Fjordvik Bakeri</title><rect width="240" height="60" fill="#c33"/><text x="10" y="40">Fjordvik</text></svg>');
 
 async function fixtures() {
   const png = await sharp({ create: { width: 1600, height: 900, channels: 3, background: red } }).png().toBuffer();
@@ -105,7 +105,7 @@ test('svg, gif, avif, bmp, ico and tiff all become png/jpeg Gemini can read', as
     assert.ok(Math.max(meta.width, meta.height) <= 768, name);
   }
   const vector = await prepareForVision(svg, 'logo.svg');
-  assert.match(vector.textHint, /Bakkes Bakeri/);
+  assert.match(vector.textHint, /Fjordvik Bakeri/);
   assert.ok((await sharp(vector.buffer).metadata()).width >= 600, 'small viewBox is rendered near maxEdge, not upscaled');
 });
 
@@ -152,19 +152,19 @@ test('describeMedia sends the converted image and returns a harnessed brief; not
   const brief = await describeMedia({
     buffer: svg,
     fileName: 'logo.svg',
-    context: { businessName: 'Bakkes Bakeri' },
+    context: { businessName: 'Fjordvik Bakeri' },
     harness: ASOLDI_MEDIA_HARNESS,
     generate: async (input) => {
       seen = input;
       return {
         ok: true,
         model: 'stub',
-        parsed: { depicts: 'Red wordmark reading Bakkes.', visibleText: ['Bakkes'], medium: 'logo', primarySection: 'logo', primaryWhy: 'Header logo, the wordmark names the bakery.', logoKind: 'client', productInfo: false },
+        parsed: { depicts: 'Red wordmark reading Fjordvik.', visibleText: ['Fjordvik'], medium: 'logo', primarySection: 'logo', primaryWhy: 'Header logo, the wordmark names the bakery.', logoKind: 'client', productInfo: false },
       };
     },
   });
   assert.equal(seen.mimeType, 'image/png');
-  assert.match(seen.prompt, /Words written inside this vector file.*Bakkes Bakeri/);
+  assert.match(seen.prompt, /Words written inside this vector file.*Fjordvik Bakeri/);
   assert.match(seen.prompt, /productInfo/);
   assert.equal(brief.ok, true);
   assert.equal(brief.promptVersion, 5);
@@ -181,7 +181,7 @@ test('a foreign brand logo is demoted to work, and a menu photo is product info'
   const partner = await describeMedia({
     buffer: f.png,
     fileName: 'client-logo.png',
-    context: { businessName: 'Bakkes Bakeri' },
+    context: { businessName: 'Fjordvik Bakeri' },
     harness: ASOLDI_MEDIA_HARNESS,
     generate: async () => ({ ok: true, model: 'stub', parsed: { depicts: 'Logo of Superhero Burger.', visibleText: ['SUPERHERO BURGER'], medium: 'logo', primarySection: 'logo', primaryWhy: 'Logo.' } }),
   });
@@ -192,14 +192,14 @@ test('a foreign brand logo is demoted to work, and a menu photo is product info'
   assert.equal(transcriptNamesForeignBrand({ visibleText: ['STERK', 'SNILL', 'SS&U'] }, 'SS&U'), false);
   assert.equal(transcriptNamesForeignBrand({ visibleText: ['STERK', 'SNILL', 'S&U'] }, 'Bakeriet'), true);
   // Gemini sometimes calls a printed price list medium "logo"; its own non-logo section must survive.
-  const priceList = demoteForeignBrandLogo({ medium: 'logo', primarySection: 'offerings', alternateSection: 'gallery', logoKind: 'client', visibleText: ['PRISLISTE', 'Surdeigsbrød 69,-'] }, 'Bakkes Bakeri');
+  const priceList = demoteForeignBrandLogo({ medium: 'logo', primarySection: 'offerings', alternateSection: 'gallery', logoKind: 'client', visibleText: ['PRISLISTE', 'Surdeigsbrød 69,-'] }, 'Fjordvik Bakeri');
   assert.equal(priceList.primarySection, 'offerings');
   assert.equal(priceList.logoKind, 'partner');
-  assert.deepEqual(demoteForeignBrandLogo(priceList, 'Bakkes Bakeri'), priceList);
+  assert.deepEqual(demoteForeignBrandLogo(priceList, 'Fjordvik Bakeri'), priceList);
   const landscapeList = await describeMedia({
     buffer: await sharp({ create: { width: 800, height: 600, channels: 3, background: red } }).jpeg().toBuffer(),
     fileName: 'IMG_2041.jpg',
-    context: { businessName: 'Bakkes Bakeri' },
+    context: { businessName: 'Fjordvik Bakeri' },
     harness: ASOLDI_MEDIA_HARNESS,
     generate: async () => ({ ok: true, model: 'stub', parsed: { depicts: 'Price list.', visibleText: ['PRISLISTE', 'Surdeigsbrød 69,-'], medium: 'logo', primarySection: 'offerings', alternateSection: 'gallery', logoKind: 'client', primaryWhy: 'Offerings.', productInfo: true } }),
   });

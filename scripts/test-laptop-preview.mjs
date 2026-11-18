@@ -159,10 +159,10 @@ assert.equal(
 );
 assert.equal(injectSalesPreviewContractWidget('<p>x</p>', ''), '<p>x</p>');
 
-const signingEmbed = renderSalesPreviewSigningEmbed({ title: 'Bakeriet Pub og Kafe', clientId: 'client-1' });
+const signingEmbed = renderSalesPreviewSigningEmbed({ title: 'Torvet Pub og Kafe', clientId: 'client-1' });
 assert.match(signingEmbed, /src="\/sales-preview-contract\.js\?v=kontrakt-8"/);
 assert.match(signingEmbed, /data-sales-client-id="client-1"/);
-assert.match(signingEmbed, /Bakeriet Pub og Kafe/);
+assert.match(signingEmbed, /Torvet Pub og Kafe/);
 
 const frozenRev = `<!DOCTYPE html><html><head></head><body>
 <rs-module id="rev_slider_5_1" class="revslider-initialised">

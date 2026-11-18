@@ -740,15 +740,15 @@ test('a reminder that only repeats the card meeting is skipped; an older real ti
 test('machine mail is skipped from MIME/headers, not from the subject line', async () => {
   const { isAutomatedMail } = await import('../lib/inbox-bot/write.js');
   const rsvpRaw = [
-    'From: Spireriet <eier@spireriet.no>',
-    'Subject: Godkjent: Asoldi · Online møte · SPIRERIET AS @ tor. 15. okt 2026 10am - 11am (CEST) (alexander@asoldi.com)',
+    'From: Lysthuset <eier@lysthuset.example.com>',
+    'Subject: Godkjent: Asoldi · Online møte · LYSTHUSET AS @ tor. 15. okt 2026 10am - 11am (CEST) (alexander@asoldi.com)',
     'Auto-Submitted: auto-generated',
     'Content-Type: multipart/mixed; boundary="b1"',
     '',
     '--b1',
     'Content-Type: text/plain',
     '',
-    'Spireriet has accepted this invitation.',
+    'Lysthuset has accepted this invitation.',
     '--b1',
     'Content-Type: text/calendar; method=REPLY; charset=UTF-8',
     '',
@@ -762,9 +762,9 @@ test('machine mail is skipped from MIME/headers, not from the subject line', asy
   assert.equal(isAutomatedMail(rsvp), true);
   assert.equal(isAutomatedMail({
     subject: 'Godkjent: logoen er ferdig',
-    from: 'eier@spireriet.no',
+    from: 'eier@lysthuset.example.com',
     text: 'Kan vi ta tirsdag kl 14?',
-    listId: '<team@spireriet.no>',
+    listId: '<team@lysthuset.example.com>',
     precedence: 'list',
   }), false);
   assert.equal(isAutomatedMail({
@@ -778,7 +778,7 @@ test('machine mail is skipped from MIME/headers, not from the subject line', asy
     text: 'Jeg er på ferie.',
   }), true);
 
-  const client = seedClient({ id: 'sale-rsvp-1', contactEmail: 'eier@spireriet.no' });
+  const client = seedClient({ id: 'sale-rsvp-1', contactEmail: 'eier@lysthuset.example.com' });
   // A booking is always for the card's own sales rep.
   sales.updateSalesClient(client.id, { ownerId: 'sales:rep-1' });
   const sent = [];
@@ -798,7 +798,7 @@ test('machine mail is skipped from MIME/headers, not from the subject line', asy
   const human = await ingestInboxMessage({
     id: 'imap-rsvp-human',
     mailbox: 'alexander@asoldi.com',
-    from: 'Spireriet <eier@spireriet.no>',
+    from: 'Lysthuset <eier@lysthuset.example.com>',
     subject: 'Godkjent: logoen er ferdig',
     text: 'Kan vi ta tirsdag kl 14?',
     mailAt: '2026-10-10T16:30:00.000Z',

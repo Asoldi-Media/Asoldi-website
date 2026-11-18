@@ -167,7 +167,7 @@ test('developer can tick a project todo without regenerating', () => {
 
 test('booker preview context is about the preview, not who called', () => {
   const user = buildBookerPreviewUserPrompt({
-    client: { businessName: 'Stolt Leveranse AS', contactPerson: 'Hein' },
+    client: { businessName: 'Rask Leveranse AS', contactPerson: 'Hein' },
     transcriptChat: 'Taler 0: Vi mangler nettside og vil ha booking.',
   });
   assert.equal(user.includes('Stolt'), false);

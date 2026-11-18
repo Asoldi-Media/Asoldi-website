@@ -175,7 +175,7 @@ function sameCaseStart(original, replacement) {
   return /^[A-Z]/.test(original) ? replacement[0].toUpperCase() + replacement.slice(1) : replacement;
 }
 
-/** The word in the case of the text it replaces: TASS → OAK, Tass → Oak, tass → oak. */
+/** The word in the case of the text it replaces: TORGLI → OAK, Torgli → Oak, torgli → oak. */
 function caseLike(found, word) {
   if (/\p{Lu}/u.test(found) && found === found.toUpperCase()) return word.toUpperCase();
   if (/^\p{Lu}/u.test(found)) return word[0].toUpperCase() + word.slice(1);

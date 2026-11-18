@@ -525,11 +525,11 @@ test('a bot_joined event resolves its room with one cheap read; the key owner is
 test('storing a metadata-only Fireflies row does not wipe an existing transcript', () => {
   const merged = mergeStoredFirefliesRecord(
     { meetingId: 'ff-1', transcript: 'Alexander: Hei.', summary: 'Vi avtalte tilbud.' },
-    { meetingId: 'ff-1', title: 'Muldvarpen', transcript: '', summary: '', meetingLink: 'https://meet.google.com/aaa-bbbb-ccc' },
+    { meetingId: 'ff-1', title: 'Gnagvik', transcript: '', summary: '', meetingLink: 'https://meet.google.com/aaa-bbbb-ccc' },
   );
   assert.equal(merged.transcript, 'Alexander: Hei.');
   assert.equal(merged.summary, 'Vi avtalte tilbud.');
-  assert.equal(merged.title, 'Muldvarpen');
+  assert.equal(merged.title, 'Gnagvik');
   storeFirefliesMeeting({ meetingId: 'ff-keep', transcript: 'Kunde: Vi trenger nettside.', summary: 'Nettside.' });
   storeFirefliesMeeting({ meetingId: 'ff-keep', title: 'Senere metadata', transcript: '', summary: '' });
   const stored = readStoredFirefliesMeeting('ff-keep');

@@ -411,40 +411,40 @@ test('client card hides a live stub when the transcript of its slot is on the fr
 
 test('fireflies matcher: only the booked Google Meet owns the recording', () => {
   const janMeet = 'https://meet.google.com/aaa-bbbb-ccc';
-  const khanaMeet = 'https://meet.google.com/xxx-yyyy-zzz';
+  const krydderMeet = 'https://meet.google.com/xxx-yyyy-zzz';
   const jan = {
     id: '1788440525558-7amjs3',
-    businessName: 'Byggmester Jan Overrein',
+    businessName: 'Byggmester Jan Eksempelsen',
     contactEmail: 'jan@example.com',
     calendar: { meetLink: janMeet },
     meetings: [{
-      meetingId: 'khana-rec',
-      title: 'Asoldi · Online møte · Khana Khajana',
+      meetingId: 'krydder-rec',
+      title: 'Asoldi · Online møte · Krydder Huset',
       linkedBy: 'title',
     }],
   };
-  const khana = {
-    id: 'khana-1',
-    businessName: 'Khana Khajana',
-    contactEmail: 'khana@example.com',
-    calendar: { meetLink: khanaMeet },
+  const krydder = {
+    id: 'krydder-1',
+    businessName: 'Krydder Huset',
+    contactEmail: 'krydder@example.com',
+    calendar: { meetLink: krydderMeet },
     meetings: [],
   };
-  const clients = [jan, khana];
+  const clients = [jan, krydder];
 
   assert.equal(matcher.matchMeetingToClients({
-    title: 'Asoldi · Online møte · Khana Khajana',
-    attendeeEmails: ['jan@example.com', 'khana@example.com'],
+    title: 'Asoldi · Online møte · Krydder Huset',
+    attendeeEmails: ['jan@example.com', 'krydder@example.com'],
     hostEmail: 'anna@asoldi.com',
   }, clients).best, null);
 
   assert.equal(matcher.matchMeetingToClients({
-    title: 'Asoldi · Online møte · Byggmester Jan Overrein',
-    meetingLink: khanaMeet,
-  }, clients).best?.clientId, 'khana-1');
+    title: 'Asoldi · Online møte · Byggmester Jan Eksempelsen',
+    meetingLink: krydderMeet,
+  }, clients).best?.clientId, 'krydder-1');
 
   assert.equal(matcher.matchMeetingToClients({
-    title: 'Khana Khajana',
+    title: 'Krydder Huset',
     meetingLink: janMeet,
   }, clients).best?.clientId, jan.id);
 
@@ -459,7 +459,7 @@ test('fireflies matcher: only the booked Google Meet owns the recording', () => 
 
   const ambiguous = matcher.matchMeetingToClients({ meetingLink: janMeet }, [
     jan,
-    { ...khana, calendar: { meetLink: janMeet } },
+    { ...krydder, calendar: { meetLink: janMeet } },
   ]);
   assert.equal(ambiguous.best, null);
   assert.equal(ambiguous.candidates.length, 2);
@@ -467,13 +467,13 @@ test('fireflies matcher: only the booked Google Meet owns the recording', () => 
   const plan = matcher.planFirefliesMeetLinkBackfill({
     clients,
     meetings: [{
-      meetingId: 'khana-rec',
-      title: 'Asoldi · Online møte · Khana Khajana',
-      meetingLink: khanaMeet,
+      meetingId: 'krydder-rec',
+      title: 'Asoldi · Online møte · Krydder Huset',
+      meetingLink: krydderMeet,
     }],
   });
   assert.equal(plan.moves.length, 1);
-  assert.equal(plan.moves[0].toClientId, 'khana-1');
+  assert.equal(plan.moves[0].toClientId, 'krydder-1');
   assert.deepEqual(plan.unlinks.map((row) => row.fromClientId), [jan.id]);
 
   // A title link of the old hub with no stored record is still cleaned up (the archive has other
@@ -482,31 +482,31 @@ test('fireflies matcher: only the booked Google Meet owns the recording', () => 
     clients: [{
       ...jan,
       meetings: [
-        { meetingId: 'listed-rec', meetLink: khanaMeet, linkedBy: 'title' },
+        { meetingId: 'listed-rec', meetLink: krydderMeet, linkedBy: 'title' },
         { meetingId: 'auto-rec', meetLink: janMeet, linkedBy: 'auto' },
       ],
-    }, khana],
+    }, krydder],
     meetings: [{ meetingId: 'other-rec', title: 'Et annet møte', meetingLink: 'https://meet.google.com/ooo-oooo-ooo' }],
   });
   assert.equal(fromListedLink.moves.length, 0);
   assert.deepEqual(fromListedLink.unlinks.map((row) => [row.meetingId, row.fromClientId]), [['listed-rec', jan.id]]);
   // An archive that yields nothing while cards hold recordings is unreadable or lost, not proof.
   const emptyStore = matcher.planFirefliesMeetLinkBackfill({
-    clients: [{ ...jan, meetings: [{ meetingId: 'listed-rec', meetLink: khanaMeet, linkedBy: 'title' }] }, khana],
+    clients: [{ ...jan, meetings: [{ meetingId: 'listed-rec', meetLink: krydderMeet, linkedBy: 'title' }] }, krydder],
     meetings: [],
   });
   assert.equal(emptyStore.skipped, 'empty-store');
   assert.equal(emptyStore.unlinks.length, 0);
 
   const afterReschedule = matcher.matchMeetingToClients(
-    { meetingLink: khanaMeet },
+    { meetingLink: krydderMeet },
     [{
-      ...khana,
+      ...krydder,
       calendar: { meetLink: 'https://meet.google.com/new-neww-new' },
-      recordedMeetLinks: [khanaMeet],
+      recordedMeetLinks: [krydderMeet],
     }],
   );
-  assert.equal(afterReschedule.best?.clientId, 'khana-1');
+  assert.equal(afterReschedule.best?.clientId, 'krydder-1');
 
   const keepHistorical = matcher.planFirefliesMeetLinkBackfill({
     clients: [{
@@ -522,9 +522,9 @@ test('fireflies matcher: only the booked Google Meet owns the recording', () => 
   const titleOnly = matcher.planFirefliesMeetLinkBackfill({
     clients: [{
       ...jan,
-      meetings: [{ meetingId: 'stolen', title: 'Khana Khajana', linkedBy: 'title' }],
-    }, khana],
-    meetings: [{ meetingId: 'stolen', title: 'Asoldi · Online møte · Khana Khajana' }],
+      meetings: [{ meetingId: 'stolen', title: 'Krydder Huset', linkedBy: 'title' }],
+    }, krydder],
+    meetings: [{ meetingId: 'stolen', title: 'Asoldi · Online møte · Krydder Huset' }],
   });
   assert.equal(titleOnly.moves.length, 0);
   assert.equal(titleOnly.unlinks[0]?.fromClientId, jan.id);
