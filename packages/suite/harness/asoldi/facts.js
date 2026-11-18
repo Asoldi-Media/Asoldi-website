@@ -29,7 +29,7 @@ export const KUNDEDATA_FACT_SCHEMA = {
     customSections: { path: ['websiteCreatorQuestions', 'customSections'], kind: 'append', hint: 'egne seksjoner de vil ha på siden' },
     mainCtaText: { path: ['websiteCreatorQuestions', 'mainCtaText'], kind: 'single', hint: 'teksten på hovedknappen, f.eks. «Bestill time»' },
     reviews: { path: ['websiteCreatorQuestions', 'reviews'], kind: 'append', maxChars: 3000, hint: 'kundeomtaler de limte inn, én per linje' },
-    websiteDomain: { path: ['websiteCreatorQuestions', 'websiteDomain'], kind: 'single', hint: 'domenet de har eller vil ha, f.eks. bakkes.no' },
+    websiteDomain: { path: ['websiteCreatorQuestions', 'websiteDomain'], kind: 'single', hint: 'domenet de har eller vil ha, f.eks. fjordvik.example' },
     orgNumber: { path: ['brandIdentity', 'orgNumber'], kind: 'single' },
     primaryColor: { path: ['brandIdentity', 'colors', 'primary'], kind: 'single', pattern: HEX, patternFlags: 'i' },
     secondaryColor: { path: ['brandIdentity', 'colors', 'secondary'], kind: 'single', pattern: HEX, patternFlags: 'i' },

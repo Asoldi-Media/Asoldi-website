@@ -492,7 +492,7 @@ test('replies are read without the quoted thread: cancels never book, a moved ti
   const { classifyInboxWrite, freshReplyText } = await import('../lib/inbox-bot/write.js');
   const client = { progression: {} };
   const bookedToday = { progression: {}, agreedTime: true, meetingAt: '2026-10-14T15:00:00.000Z' };
-  const cancelToday = 'Blir mailene mine mottatt? Jeg kan ikke idag likevel Kari Founder Tel.+47 92 80 78 81 ons. 14. okt. 2026 kl. 15:47 skrev Kari <kari@example.no>: > Hei igjen';
+  const cancelToday = 'Blir mailene mine mottatt? Jeg kan ikke idag likevel Kari Founder Tel.+47 22 00 00 01 ons. 14. okt. 2026 kl. 15:47 skrev Kari <kari@example.no>: > Hei igjen';
   assert.equal(freshReplyText(cancelToday).includes('15:47'), false);
   const today = classifyInboxWrite(freshReplyText(cancelToday), bookedToday, { now: new Date('2026-10-14T14:00:00Z') });
   assert.equal(today.request, 'cancel');
