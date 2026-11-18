@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Rebind Påminnelse to 1h before the meeting, set Pokebutikk / Terjesen times,
+ * Rebind Påminnelse to 1h before the meeting, set Kortbutikk / Eksempelsen times,
  * resync Google Calendar, and send confirmation with the new time.
  *
  *   node scripts/backfill-meeting-times.mjs --dry-run

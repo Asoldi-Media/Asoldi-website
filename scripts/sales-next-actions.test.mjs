@@ -570,8 +570,8 @@ test('a clock typed into notes is stored as dueAt, not as the note', () => {
 test('oslo wall clock backfill targets are 15:00 local on 1 Oct and 7 Oct 2026', () => {
   assert.equal(osloWallClockToIso(2026, 10, 1, 15, 0), '2026-10-01T13:00:00.000Z');
   assert.equal(osloWallClockToIso(2026, 10, 7, 15, 0), '2026-10-07T13:00:00.000Z');
-  assert.equal(MEETING_TIME_BACKFILL_TARGETS[0].match({ businessName: 'Pokebutikk Khogiani' }), true);
-  assert.equal(MEETING_TIME_BACKFILL_TARGETS[1].match({ contactPerson: 'Deles Are Terjesen' }), true);
+  assert.equal(MEETING_TIME_BACKFILL_TARGETS[0].match({ businessName: 'Kortbutikk Hagelund' }), true);
+  assert.equal(MEETING_TIME_BACKFILL_TARGETS[1].match({ contactPerson: 'Torg Kari Eksempelsen' }), true);
 });
 
 test('påminnelse can be set sticky, and starts off', () => {

@@ -15,14 +15,14 @@ import {
 } from '../lib/sales-baard-farkas-assign.js';
 
 const TO_DAMIAN_QUERIES = [
-  'lundamo camping',
-  'rolands betongservice',
-  'trondheim leilighets hotell',
+  'skogheim camping',
+  'torvalds betongservice',
+  'nordby leilighets hotell',
 ];
 const TO_ALEXANDER_QUERIES = [
-  'muldvarpen as',
-  'nv renhold heyerdahl',
-  'pokebutikk khogiani',
+  'gnagvik as',
+  'kb renhold bjerkvik',
+  'kortbutikk hagelund',
 ];
 
 const HOSTINGER_USER = 'u439392007';
