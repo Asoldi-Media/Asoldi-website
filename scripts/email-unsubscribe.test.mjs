@@ -70,15 +70,38 @@ test.after(() => server?.close());
 const suppressionsFile = () => join(dataDir, 'email-suppressions.json');
 const fileState = () => (existsSync(suppressionsFile()) ? `${statSync(suppressionsFile()).mtimeMs}:${readFileSync(suppressionsFile(), 'utf8')}` : 'none');
 
+/** True when `text` (any case) shows up in the token as written, or in the bytes the token decodes to (so also base64url of it). */
+function carriesText(token, text) {
+  const needle = text.toLowerCase();
+  if (token.toLowerCase().includes(needle)) return true;
+  const raw = Buffer.from(token, 'base64url');
+  return raw.toString('latin1').toLowerCase().includes(needle);
+}
+
 async function page(method, path, { body, headers = {} } = {}) {
   const res = await fetch(`${base}${path}`, { method, headers: { ...(body ? { 'content-type': 'application/x-www-form-urlencoded' } : {}), ...headers }, ...(body ? { body } : {}) });
   return { status: res.status, headers: res.headers, text: await res.text() };
 }
 
+test('the address check finds an address in a token that carries it and passes encrypted tokens', () => {
+  const payload = JSON.stringify({ v: 1, s: 'site_a', e: 'ola@example.com' });
+  assert.equal(carriesText(Buffer.from(payload).toString('base64url'), 'Ola@Example.com'), true, 'base64url of the payload');
+  assert.equal(carriesText(`x-${payload.replace(/[^A-Za-z0-9@.]/g, '')}`, 'ola@example.com'), true, 'the address as written');
+  for (let i = 0; i < 300; i += 1) {
+    const t = unsub.mintUnsubToken({ siteId: 'site_a', email: 'Ola@Example.com', kind: 'cart-recovery', messageId: 'em_1' });
+    assert.equal(carriesText(t, 'Ola@Example.com'), false);
+    assert.equal(carriesText(t, 'example.com'), false);
+  }
+});
+
 test('(a) a token round-trips; a changed or foreign token gives 400 and changes nothing', async () => {
   const t = unsub.mintUnsubToken({ siteId: 'site_a', email: 'Ola@Example.com', kind: 'cart-recovery', messageId: 'em_1' });
   assert.match(t, /^[A-Za-z0-9_-]+$/);
-  assert.equal(t.toLowerCase().includes('ola'), false, 'no plain address in the link');
+  // The token is encrypted with a random IV, so a short substring such as the first letters of the local part can
+  // show up in it by chance (about once in 300 mints for three letters). Only the whole address, the domain and the
+  // same text in base64url or raw bytes count as carrying it, and those cannot occur by chance.
+  assert.equal(carriesText(t, 'Ola@Example.com'), false, 'no plain address in the link');
+  assert.equal(carriesText(t, 'example.com'), false, 'no plain domain in the link');
   assert.deepEqual(unsub.readUnsubToken(t), { siteId: 'site_a', email: 'ola@example.com', kind: 'cart-recovery', messageId: 'em_1', scope: 'marketing' });
   const flipped = `${t.slice(0, 20)}${t[20] === 'A' ? 'B' : 'A'}${t.slice(21)}`;
   assert.equal(unsub.readUnsubToken(flipped), null);
