@@ -418,6 +418,8 @@ import {
   buildEventSummary,
   createGoogleCalendarAuthUrl,
   deleteMeetingEvent,
+  addGuestsToEvent,
+  removeGuestsFromEvent,
   exchangeGoogleCalendarCode,
   firefliesNotetakerEmail,
   getGoogleCalendarStatus,
@@ -2438,6 +2440,24 @@ function buildSalesQuickFillLinks(details = {}, websiteDomain = '') {
   };
 }
 
+/** meetingGuests from a card save: the body list when given (known guests keep their stamps), else the stored one. */
+function buildMeetingGuestsInput(source, existing) {
+  const stored = Array.isArray(existing?.meetingGuests) ? existing.meetingGuests : [];
+  if (!Array.isArray(source?.meetingGuests)) return stored;
+  const own = {
+    contactEmail: sanitizeText(source.contactEmail ?? existing?.contactEmail),
+    clientEmail: normalizeEmail(source.clientEmail ?? existing?.clientEmail),
+    websiteEmail: sanitizeText(source.websiteEmail ?? existing?.websiteEmail),
+  };
+  const stamp = new Date().toISOString();
+  return sales.normalizeMeetingGuests(source.meetingGuests, own).map((guest) => {
+    const known = stored.find((entry) => entry.email === guest.email);
+    return known
+      ? { ...known, name: guest.name || known.name }
+      : { ...guest, addedBy: 'rep', addedAt: stamp, invitedAt: '' };
+  });
+}
+
 function buildSalesInput(body = {}, { existing = null, requireCore = false, lockMeetingSchedule = false } = {}) {
   const source = body && typeof body === 'object' ? body : {};
   const keepSchedule = Boolean(lockMeetingSchedule && existing);
@@ -2480,6 +2500,7 @@ function buildSalesInput(body = {}, { existing = null, requireCore = false, lock
     ),
     contactPhone: sanitizeText(source.contactPhone ?? existing?.contactPhone),
     meetingPlace: meetingPlaceRaw,
+    meetingGuests: buildMeetingGuestsInput(source, existing),
     orgNumber,
     businessAddress: sanitizeText(source.businessAddress ?? existing?.businessAddress),
     industry: sanitizeText(source.industry ?? existing?.industry),
@@ -8645,6 +8666,89 @@ async function retryFailedCalendarSyncs({ force = false, nowMs = Date.now() } = 
   return { retried, landed };
 }
 
+/** Attendees a sync must take off the live event: the contact the card no longer has and removed guests. */
+function droppedMeetingAttendees(previousClient, nextClient) {
+  const drop = new Set();
+  const nextContact = sanitizeText(nextClient?.contactEmail).toLowerCase();
+  // The previous card is not always at hand (a retried sync runs as (client, client)), so the contact the hub
+  // actually invited is remembered on the calendar record as well.
+  for (const known of [
+    previousClient?.contactEmail,
+    previousClient?.calendar?.invitedContactEmail,
+    nextClient?.calendar?.invitedContactEmail,
+  ]) {
+    const email = sanitizeText(known).toLowerCase();
+    if (email && email !== nextContact) drop.add(email);
+  }
+  const kept = new Set((nextClient?.meetingGuests || []).map((guest) => guest.email));
+  for (const guest of previousClient?.meetingGuests || []) {
+    if (!kept.has(guest.email)) drop.add(guest.email);
+  }
+  return [...drop];
+}
+
+/**
+ * Guests added to or removed from a card whose invite already went out: patch the live Google event so only
+ * those people are mailed. Without an event (or before the invite) nothing happens, since the first invite
+ * is built from the card. { invited, warning }.
+ */
+async function syncSalesMeetingGuests(client, { added = [], removed = [] } = {}) {
+  const none = { invited: false, warning: '' };
+  const calendar = client?.calendar || {};
+  const eventId = sanitizeText(calendar.eventId);
+  if (!client?.agreedTime || !client?.meetingAt || !eventId) return none;
+  if (!sanitizeText(calendar.guestInvitedAt) && !sanitizeText(client?.reminders?.thankYouSentAt)) return none;
+  if (!added.length && !removed.length) return none;
+  if (!shouldSyncSalesMeetingCalendar({ ownerId: client.ownerId || '', calendar })) {
+    return { invited: false, warning: 'Gjesteendringen ble lagret, men kalenderen ble ikke oppdatert (møtet synkroniseres ikke for denne eieren).' };
+  }
+  try {
+    const actorAccountKey = '';
+    const fallbackAccountKeys = (await resolveCalendarFallbackAccountKeys(client.ownerId || '', actorAccountKey))
+      .filter((key) => !isBlockedCalendarAccountKey(key));
+    const preferredAccountKeys = await preferredCalendarAccountKeysForOwner(client.ownerId || '');
+    const previousAccountKey = sanitizeText(calendar.accountKey);
+    for (const key of [client.ownerId, previousAccountKey, ...preferredAccountKeys, ...fallbackAccountKeys]) {
+      const candidate = sanitizeText(key);
+      if (candidate && !isBlockedCalendarAccountKey(candidate)) await ensureSharedCalendarTokens(candidate);
+    }
+    const accountKey = resolveCalendarSyncAccountKey({
+      ownerId: calendarOwnerIdForSync(client.ownerId || ''),
+      actorAccountKey,
+      fallbackAccountKeys,
+      previousAccountKey: isBlockedCalendarAccountKey(previousAccountKey) ? '' : previousAccountKey,
+      preferredAccountKeys,
+      ownerMailbox: (await accountKeyToEmail(calendarOwnerIdForSync(client.ownerId || ''))).toLowerCase(),
+    });
+    const status = getGoogleCalendarStatus(accountKey);
+    if (
+      isBlockedCalendarAccountKey(accountKey)
+      || isBlockedCalendarGoogleEmail(status.googleEmail)
+      || isUnacceptableMeetingHostEmail(status.googleEmail)
+    ) {
+      return { invited: false, warning: 'Gjesteendringen ble lagret, men kalenderen ble ikke oppdatert (ingen gyldig kalenderkonto).' };
+    }
+    if (!status.configured || !status.connected) {
+      return { invited: false, warning: 'Gjesteendringen ble lagret, men Google Kalender er ikke koblet til.' };
+    }
+    const calendarOptions = sanitizeText(calendar.calendarId) ? { calendarId: sanitizeText(calendar.calendarId) } : {};
+    let invited = false;
+    if (added.length) {
+      const guests = (client.meetingGuests || []).filter((guest) => added.includes(guest.email));
+      const result = await addGuestsToEvent(eventId, accountKey, guests, calendarOptions);
+      if (result.reason === 'cancelled') {
+        return { invited: false, warning: 'Gjesteendringen ble lagret, men kalenderhendelsen er avlyst.' };
+      }
+      invited = result.added.length > 0 && !result.safeMode;
+      if (!result.safeMode) sales.markSalesMeetingGuestsInvited(client.id, added, new Date().toISOString());
+    }
+    if (removed.length) await removeGuestsFromEvent(eventId, accountKey, removed, calendarOptions);
+    return { invited, warning: '' };
+  } catch (error) {
+    return { invited: false, warning: `Gjesteendringen ble lagret, men kalenderen ble ikke oppdatert: ${sanitizeText(error?.message)}` };
+  }
+}
+
 async function maybeSyncCalendar(client, previousClient = null, options = {}) {
   const requireMeetLink = Boolean(options?.requireMeetLink);
   const actorAccountKey = sanitizeText(options?.actorAccountKey);
@@ -8824,6 +8928,8 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
           addFireflies: isOnline && firefliesWanted && !Boolean(nextClient?.progression?.meetingHeld) && (notifyAttendees || firefliesAlreadyInvited),
           keepFireflies: firefliesWanted && firefliesAlreadyInvited,
           forceRecreate,
+          // The old contact and removed guests leave the event; anyone else on it is kept.
+          dropAttendeeEmails: droppedMeetingAttendees(previousClient, nextClient),
           forceOwnerMeet,
           expectedOwnerEmail,
           verifiedHostEmail: sanitizeText(nextClient?.calendar?.meetHostVerifiedEmail),
@@ -8901,8 +9007,25 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
         calendarMeta.accountKey = sanitizeText(nextClient.ownerId);
       }
       Object.assign(calendarMeta, { syncFailedAt: '', syncError: '', syncNotify: false });
+      calendarMeta.invitedContactEmail = sanitizeText(nextClient?.contactEmail).toLowerCase();
+      const foreignAttendees = Array.isArray(calendarMeta.foreignAttendees) ? calendarMeta.foreignAttendees : [];
+      delete calendarMeta.foreignAttendees;
       const withCalendar = sales.setSalesCalendar(nextClient.id, calendarMeta);
       if (withCalendar) nextClient = withCalendar;
+      // A guest the client forwarded the invite to is kept on the card from now on, so a later move re-invites them.
+      if (foreignAttendees.length) {
+        const kept = sales.addSalesMeetingGuests(nextClient.id, foreignAttendees, { addedBy: 'calendar' });
+        const onEvent = sales.markSalesMeetingGuestsInvited(
+          nextClient.id,
+          kept?.added || [],
+          sanitizeText(calendarMeta.syncedAt) || new Date().toISOString()
+        );
+        if (onEvent) nextClient = onEvent;
+      }
+      if (notifyAttendees || calendarMeta.replacedForeignMeet) {
+        const invited = sales.markSalesMeetingGuestsInvited(nextClient.id, null, sanitizeText(calendarMeta.guestInvitedAt));
+        if (invited) nextClient = invited;
+      }
       // The live-join loop sends the bot; a new room or time only has to reach it.
       if (isOnline) kickFirefliesLiveJoins(nextClient);
       calendarInviteSent = notifyAttendees || Boolean(calendarMeta.replacedForeignMeet);
@@ -10092,7 +10215,7 @@ function startInboxBotLoop() {
     if (inboxBotBusy) return;
     inboxBotBusy = 'tick';
     // A bot move or void runs the same chain as a rep in the sales panel.
-    tickInboxBot({ moveMeeting: moveSalesMeetingFromInbox, voidMeeting: voidSalesMeetingFromInbox, notifyRep: notifyRepOfInboxBounce, notifyOwner: notifyOwnerOfForeignNotetaker })
+    tickInboxBot({ moveMeeting: moveSalesMeetingFromInbox, voidMeeting: voidSalesMeetingFromInbox, addMeetingGuests: addSalesMeetingGuestsFromInbox, notifyRep: notifyRepOfInboxBounce, notifyOwner: notifyOwnerOfForeignNotetaker })
       .catch((error) => console.error('[inbox-bot] tick failed', error))
       .finally(() => {
         inboxBotBusy = '';
@@ -15246,6 +15369,16 @@ app.put('/api/admin/sales/:id', salesAuth, async (req, res) => {
         })
       : { client, warnings: [], calendarInviteSent: false };
     client = syncResult.client || client;
+    // A changed guest list never re-runs the whole sync: only the difference reaches the live event.
+    if (!meetingChanged) {
+      const before = new Set((existing.meetingGuests || []).map((guest) => guest.email));
+      const after = new Set((client.meetingGuests || []).map((guest) => guest.email));
+      const added = [...after].filter((email) => !before.has(email));
+      const removed = [...before].filter((email) => !after.has(email));
+      const guestSync = await syncSalesMeetingGuests(client, { added, removed });
+      if (guestSync.warning) syncResult.warnings = [...(syncResult.warnings || []), guestSync.warning];
+      client = sales.getSalesClientById(client.id) || client;
+    }
 
     const thankYou = await autoSendThankYouFromOwner(client, { existing });
     if (thankYou?.client) client = thankYou.client;
@@ -15425,6 +15558,47 @@ function inboxHookClient(id = '') {
  * card's rep. The bot's note goes on the row. ok:false only when the card did not move; a later step that
  * failed after the move comes back as `warning`. Never throws.
  */
+/**
+ * Inbox bot hook: people the client asked to have on the meeting. Saves them on the card (addedBy 'bot'),
+ * then puts them on the live Google event when the invite already went out. Never throws; a Google failure
+ * after the card was saved is ok:true with a warning.
+ */
+async function addSalesMeetingGuestsFromInbox(client, guests = [], { note = '' } = {}) {
+  const id = sanitizeText(client?.id);
+  const fail = (error, current = null) => ({
+    ok: false, client: current, added: [], already: [], rejected: [], invited: false, error, warning: '',
+  });
+  try {
+    const existing = inboxHookClient(id);
+    if (!existing) return fail('client-not-found');
+    if (sales.salesMeetingStageBlockedReason(existing)) return fail('not-meeting-stage', existing);
+    const result = sales.addSalesMeetingGuests(id, guests, { addedBy: 'bot' });
+    if (!result) return fail('client-not-found');
+    let invited = false;
+    let warning = '';
+    if (result.added.length) {
+      const sync = await syncSalesMeetingGuests(result.client, { added: result.added });
+      invited = sync.invited;
+      warning = sync.warning;
+      if (sanitizeText(note)) console.log(`[inbox-bot] guests added client=${id} n=${result.added.length} note=${sanitizeText(note).slice(0, 120)}`);
+    }
+    return {
+      ok: true,
+      client: inboxHookClient(id) || result.client,
+      added: result.added,
+      already: result.already,
+      rejected: result.rejected,
+      invited,
+      error: '',
+      warning,
+    };
+  } catch (error) {
+    const message = sanitizeText(error?.message) || 'guests-failed';
+    console.warn(`[inbox-bot] add guests failed client=${id}: ${message}`);
+    return fail(message, inboxHookClient(id));
+  }
+}
+
 async function moveSalesMeetingFromInbox(client, dueAt, { note = '' } = {}) {
   const id = sanitizeText(client?.id);
   const target = dueAt instanceof Date ? dueAt.toISOString() : dueAt;
@@ -15545,6 +15719,51 @@ app.patch('/api/admin/sales/:id/client-email', salesAuth, (req, res) => {
   }
   const updated = sales.updateSalesClient(req.params.id, { clientEmail });
   res.json({ client: updated });
+});
+
+app.patch('/api/admin/sales/:id/meeting-guests', salesAuth, async (req, res) => {
+  const existing = sales.getSalesClientById(req.params.id);
+  if (!existing) return res.status(404).json({ message: 'Sales client not found.' });
+  if (!canAccessSalesClient(req, existing)) return res.status(403).json({ message: 'Not your sales client.' });
+  const add = Array.isArray(req.body?.add) ? req.body.add : [];
+  const remove = Array.isArray(req.body?.remove) ? req.body.remove : [];
+  if (!add.length && !remove.length) return res.status(400).json({ message: 'Ingen gjester å legge til eller fjerne.' });
+  if (add.length > 10 || remove.length > 10) return res.status(400).json({ message: 'For mange gjester i én forespørsel.' });
+  try {
+    const guests = add.map((entry) => ({
+      email: normalizeEmail(typeof entry === 'string' ? entry : entry?.email),
+      name: sanitizeText(typeof entry === 'string' ? '' : entry?.name),
+    }));
+    const added = [];
+    const already = [];
+    const rejected = [];
+    const removed = [];
+    if (guests.length) {
+      const result = sales.addSalesMeetingGuests(existing.id, guests, { addedBy: 'rep' });
+      if (!result) return res.status(404).json({ message: 'Sales client not found.' });
+      added.push(...result.added);
+      already.push(...result.already);
+      rejected.push(...result.rejected);
+    }
+    for (const raw of remove) {
+      const result = sales.removeSalesMeetingGuest(existing.id, normalizeEmail(raw));
+      if (result?.removed) removed.push(normalizeEmail(raw));
+    }
+    let client = sales.getSalesClientById(existing.id);
+    const sync = await syncSalesMeetingGuests(client, { added, removed });
+    client = sales.getSalesClientById(existing.id) || client;
+    res.json({
+      client: jsonSalesClient(client),
+      added,
+      already,
+      rejected,
+      removed,
+      invited: sync.invited,
+      warnings: sync.warning ? [sync.warning] : [],
+    });
+  } catch (error) {
+    res.status(400).json({ message: sanitizeText(error?.message) || 'Kunne ikke lagre gjestene.' });
+  }
 });
 
 app.post('/api/admin/sales/:id/connect-portal', salesAuth, async (req, res) => {
@@ -15714,6 +15933,7 @@ app.post('/api/admin/inbox-bot/backfill', adminAuth, async (req, res) => {
       apply,
       moveMeeting: moveSalesMeetingFromInbox,
       voidMeeting: voidSalesMeetingFromInbox,
+      addMeetingGuests: addSalesMeetingGuestsFromInbox,
     });
     if (payload.reason === 'mailbox-not-allowed') {
       return res.status(400).json({ message: 'Mailbox is not allowed.', ...payload });
