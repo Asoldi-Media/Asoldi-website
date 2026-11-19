@@ -391,6 +391,120 @@ function normalizeArchive(value = {}) {
   };
 }
 
+const MEETING_GUEST_LIMIT = 10;
+const MEETING_GUEST_SOURCES = new Set(['rep', 'bot', 'calendar']);
+const MEETING_GUEST_EMAIL_RE = /^[^\s@<>,;"']+@[^\s@<>,;"']+\.[^\s@<>,;"']+$/;
+
+/** Why an address can never be a meeting guest on this card ('' when it can). */
+function meetingGuestExclusion(email, client = {}) {
+  if (!MEETING_GUEST_EMAIL_RE.test(email)) return 'invalid';
+  const own = [client?.contactEmail, client?.clientEmail, client?.websiteEmail]
+    .map((value) => sanitizeText(value).toLowerCase())
+    .filter(Boolean);
+  if (own.includes(email)) return 'contact';
+  if (email.endsWith('@asoldi.com') || email.endsWith('@fireflies.ai')) return 'excluded';
+  return '';
+}
+
+/**
+ * client.meetingGuests: people besides the contact who get the calendar invite. Lowercased, valid, deduped,
+ * never the card's own addresses, staff or Fireflies; the first MEETING_GUEST_LIMIT are kept.
+ */
+export function normalizeMeetingGuests(raw, client = {}) {
+  const out = [];
+  const seen = new Set();
+  for (const entry of Array.isArray(raw) ? raw : []) {
+    const source = typeof entry === 'string' ? { email: entry } : entry;
+    const email = sanitizeText(source?.email).toLowerCase();
+    if (!email || seen.has(email) || meetingGuestExclusion(email, client)) continue;
+    seen.add(email);
+    const addedBy = sanitizeText(source?.addedBy);
+    out.push({
+      email,
+      name: sanitizeText(source?.name).slice(0, 120),
+      addedBy: MEETING_GUEST_SOURCES.has(addedBy) ? addedBy : 'rep',
+      addedAt: sanitizeText(source?.addedAt),
+      invitedAt: sanitizeText(source?.invitedAt),
+    });
+    if (out.length >= MEETING_GUEST_LIMIT) break;
+  }
+  return out;
+}
+
+function uninvitedMeetingGuests(guests) {
+  return (Array.isArray(guests) ? guests : []).map((guest) => ({ ...guest, invitedAt: '' }));
+}
+
+/**
+ * Add guests to the card. { client, added, already, rejected: [{ email, reason }] }; null when the card is
+ * missing. Nothing is written when no address was new. The Google event is the caller's job.
+ */
+export function addSalesMeetingGuests(clientId, guests = [], { addedBy = 'rep' } = {}) {
+  const current = getSalesClientById(clientId);
+  if (!current) return null;
+  const list = [...(current.meetingGuests || [])];
+  const added = [];
+  const already = [];
+  const rejected = [];
+  const stamp = nowIso();
+  const source = MEETING_GUEST_SOURCES.has(addedBy) ? addedBy : 'rep';
+  for (const entry of Array.isArray(guests) ? guests : []) {
+    const email = sanitizeText(typeof entry === 'string' ? entry : entry?.email).toLowerCase();
+    if (!email) continue;
+    if (added.includes(email) || already.includes(email)) continue;
+    const reason = meetingGuestExclusion(email, current);
+    if (reason) {
+      rejected.push({ email, reason });
+      continue;
+    }
+    if (list.some((guest) => guest.email === email)) {
+      already.push(email);
+      continue;
+    }
+    if (list.length >= MEETING_GUEST_LIMIT) {
+      rejected.push({ email, reason: 'limit' });
+      continue;
+    }
+    list.push({
+      email,
+      name: sanitizeText(typeof entry === 'string' ? '' : entry?.name),
+      addedBy: source,
+      addedAt: stamp,
+      invitedAt: '',
+    });
+    added.push(email);
+  }
+  if (!added.length) return { client: current, added, already, rejected };
+  const client = updateSalesClient(clientId, { meetingGuests: list }) || current;
+  return { client, added, already, rejected };
+}
+
+/** Take one guest off the card. { client, removed }; null when the card is missing. */
+export function removeSalesMeetingGuest(clientId, email) {
+  const current = getSalesClientById(clientId);
+  if (!current) return null;
+  const needle = sanitizeText(email).toLowerCase();
+  const list = (current.meetingGuests || []).filter((guest) => guest.email !== needle);
+  if (list.length === (current.meetingGuests || []).length) return { client: current, removed: false };
+  const client = updateSalesClient(clientId, { meetingGuests: list }) || current;
+  return { client, removed: true };
+}
+
+/** Stamp the guests (those in `emails`, or all when it is not an array) as invited at `at`. */
+export function markSalesMeetingGuestsInvited(clientId, emails = null, at = nowIso()) {
+  const current = getSalesClientById(clientId);
+  if (!current) return null;
+  const only = Array.isArray(emails) ? new Set(emails.map((email) => sanitizeText(email).toLowerCase())) : null;
+  let changed = false;
+  const list = (current.meetingGuests || []).map((guest) => {
+    if ((only && !only.has(guest.email)) || guest.invitedAt) return guest;
+    changed = true;
+    return { ...guest, invitedAt: sanitizeText(at) || nowIso() };
+  });
+  if (!changed) return current;
+  return updateSalesClient(clientId, { meetingGuests: list }) || current;
+}
+
 function normalizeCalendar(value = {}) {
   const input = value && typeof value === 'object' ? value : {};
   return {
@@ -689,6 +803,7 @@ function normalizeSalesClient(raw = {}) {
     contactEmailError: normalizeContactEmailError(raw.contactEmailError, raw.contactEmail),
     websiteEmail: normalizeStoredWebsiteEmail(raw.websiteEmail, raw.contactEmail),
     clientEmail: sanitizeText(raw.clientEmail).toLowerCase(),
+    meetingGuests: normalizeMeetingGuests(raw.meetingGuests, raw),
     portalUserId: sanitizeText(raw.portalUserId),
     portalBusinessId: sanitizeText(raw.portalBusinessId),
     portalConnectedAt: sanitizeText(raw.portalConnectedAt),
@@ -2126,6 +2241,7 @@ export function clearSalesMeetingScheduling(id) {
       skipDueToShortNotice: false,
     },
     calendar: emptyMeetingCalendar(),
+    meetingGuests: uninvitedMeetingGuests(getSalesClientById(id)?.meetingGuests),
   });
 }
 
@@ -2184,6 +2300,8 @@ export function voidSalesMeetingTime(id, { note = '', nowMs = Date.now(), declin
     nextActions,
     reminders: emptyReminders(),
     calendar: emptyMeetingCalendar(),
+    // A re-booked meeting re-invites the guests.
+    meetingGuests: uninvitedMeetingGuests(current.meetingGuests),
     salesPlaybook: {
       ...previousPlaybook,
       cancelledMeetingAt,

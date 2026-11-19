@@ -824,6 +824,15 @@ export type SalesOffer = {
   placeholders?: string[];
 };
 
+/** A person besides the contact who gets the meeting invite. */
+export type MeetingGuest = {
+  email: string;
+  name: string;
+  addedBy: 'rep' | 'bot' | 'calendar';
+  addedAt: string;
+  invitedAt: string;
+};
+
 export type SalesClient = {
   id: string;
   /** Test-client flag: test client, left out of reports, Myphoner sync and social proof. */
@@ -835,6 +844,8 @@ export type SalesClient = {
   contactEmailError?: { message: string; at?: string; to?: string } | null;
   /** Account email on asoldi.com. Separate from the contact email used for meeting mail. */
   clientEmail?: string;
+  /** Extra people on the calendar invite (the contact is not in this list). */
+  meetingGuests?: MeetingGuest[];
   portalUserId?: string;
   portalBusinessId?: string;
   portalConnectedAt?: string;
