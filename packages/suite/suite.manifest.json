@@ -28,7 +28,7 @@
     "core/mail/automated.js": "f937f45cbd3dcbbfdabab10f6e0f82606cd4f030613debc6e9ee21e7a2c92a25",
     "core/mail/ics.js": "bdc0659f004eac6b0ce5f256bcc47b9f58e88d3d0ee6e19e4a21323ca5b261cf",
     "core/mail/imap.js": "338cc2807c7d5969bd3244423943f03780070b78ac3f2b1f805097370c7c1808",
-    "core/mail/mime.js": "4c278355846cd86db07eadc5147130babdbbeef5de788902215bebe5040593b3",
+    "core/mail/mime.js": "8f29d6d6fc825411281f0900491069ea46f29fd26de2dd89cf2b8e7ea15b83f9",
     "core/mail/thread.js": "48577e248f108f59f7b162824139aaa70241b27e443afda1c61ac80503d1af8a",
     "core/mail/unpack.js": "a118aa9112481b12f03031b84bbf420c5a5a75e2300f3f877b44fb01bc74ef93",
     "core/media/describe.js": "b4a48884f4db6935a53264b92b429d80e47cbae9dba01be3840f81e84d2b31e5",

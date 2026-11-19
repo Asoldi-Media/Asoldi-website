@@ -1562,6 +1562,10 @@ test('the AI is no veto on a dated booking, but still is on a no, a call or a co
     assert.equal(merged.needsHuman, true, request);
     assert.equal(merged.reason, `ai-disagrees:${request}`, request);
   }
+  // While a meeting is booked, a yes from the AI is a veto too: it may be a yes to the booked day.
+  const vetoYes = mergeWriteDecision(heuristic, { request: 'confirm' }, { bookedFuture: true });
+  assert.deepEqual([vetoYes.needsHuman, vetoYes.reason], [true, 'ai-disagrees:confirm']);
+  assert.equal(mergeWriteDecision(heuristic, { request: 'question' }, { bookedFuture: true }).needsHuman, false);
   // Without a dated time the old veto stays.
   assert.equal(mergeWriteDecision({ request: 'reschedule_day', intent: 'sales_propose', cancel: true }, { request: 'question' }, {}).needsHuman, true);
   assert.equal(mergeWriteDecision({ request: 'cancel', intent: 'sales_cancel', cancel: true }, { request: 'confirm' }, {}).needsHuman, true);
@@ -1572,7 +1576,6 @@ test('the AI is no veto on a dated booking, but still is on a no, a call or a co
 
 test('a dated booking is booked when the AI says confirm, says nothing or is down', async () => {
   for (const decideAi of [
-    async () => ({ request: 'confirm', reply: '' }),
     async () => ({ request: 'question', reply: '' }),
     async () => ({ request: '', reply: '' }),
     async () => { throw new Error('timeout'); },
@@ -1587,6 +1590,14 @@ test('a dated booking is booked when the AI says confirm, says nothing or is dow
     assert.doesNotMatch(String(row.reason || ''), /^ai-/);
     if (row.status === 'needs_human') assert.match(row.reason, /^guest-unknown-address:Kari/);
   }
+  // A yes from the AI against a booked meeting stops it (it may be a yes to the booked day); with nothing booked it does not.
+  const yes = seed('meeting');
+  const yesMail = await mail(yes, 'Kan vi skyve til fredag kl 13?', { decideAi: async () => ({ request: 'confirm', reply: '' }) });
+  assert.equal(yesMail.card.meetingAt, BOOKED);
+  assert.equal(lastRow(yes.id).reason, 'ai-disagrees:confirm');
+  const unbooked = seed('meeting', { meetingAt: '', agreedTime: false });
+  const open = await mail(unbooked, 'Kan vi skyve til fredag kl 13?', { decideAi: async () => ({ request: 'confirm', reply: '' }) });
+  assert.equal(open.write.kind, 'sales_book');
   // A no from the AI still stops it.
   const vetoed = seed('meeting');
   const { card } = await mail(vetoed, 'Fredag kl 13?', { decideAi: async () => ({ request: 'not_interested', reply: '' }) });
@@ -1766,4 +1777,90 @@ test('"kan ikke onsdag, lørdag?" rejects the booked meeting and voids it; "hell
   assert.equal(voids.length, 1);
   assert.equal(card.agreedTime, false);
   assert.doesNotMatch(sent[0].text, /står fortsatt/);
+});
+
+test('after "Møtet står fortsatt, vil du heller flytte?" a plain no or "passer ikke" never voids the working meeting', async () => {
+  const busy = async () => ({ busy: [{ start: FRIDAY_13, end: '2031-03-07T13:00:00.000Z' }] });
+  const offerKept = async () => {
+    const client = seed('meeting');
+    const first = await mail(client, 'Kan vi ta fredag kl 13 i stedet?', { queryBusy: busy });
+    assert.equal(first.write.kind, 'sales_propose');
+    assert.match(first.sent[0].text, /står fortsatt/);
+    assert.ok(lastRow(client.id).keptMeetingAt, 'the offer row remembers that the meeting was kept');
+    return { client, slots: first.write.slots };
+  };
+  const answer = async (client, text, hours = 1) => {
+    const voids = [];
+    const out = await mail(client, text, {
+      ...later(hours),
+      queryBusy: busy,
+      voidMeeting: async (current, opts) => { voids.push(opts); return { ok: true, client: current, error: '' }; },
+    });
+    return { ...out, voids };
+  };
+  for (const text of ['Nei takk, vi holder oss til torsdag', 'Nei takk', 'Den første passer ikke', 'Nei takk, det går fint']) {
+    const { client } = await offerKept();
+    const { voids, card, write, sent } = await answer(client, text);
+    assert.equal(voids.length, 0, `${text}: the meeting is not voided`);
+    assert.equal(card.meetingAt, BOOKED, text);
+    assert.equal(write.needsHuman, true, text);
+    assert.equal(lastRow(client.id).reason, 'declines-kept-offer', text);
+    assert.equal(sent.length, 0, `${text}: nothing is mailed to the client`);
+  }
+  // Words that cancel the meeting itself still do.
+  const { client } = await offerKept();
+  const cancel = await answer(client, 'Vi må dessverre avlyse møtet');
+  assert.equal(cancel.voids.length, 1);
+});
+
+test('a "passer ikke" about one offered time does not stop the pick of another one', async () => {
+  const busy = async () => ({ busy: [{ start: FRIDAY_13, end: '2031-03-07T13:00:00.000Z' }] });
+  for (const text of ['Den første passer ikke, men den siste går', 'Nr 1 passer ikke, nr 3 passer', 'Den første passer dårlig, ta den andre']) {
+    const client = seed('meeting');
+    const first = await mail(client, 'Kan vi ta fredag kl 13 i stedet?', { queryBusy: busy });
+    const slots = first.write.slots;
+    assert.ok(slots.length >= 3, 'three times offered');
+    const pick = await mail(client, text, { ...later(1), queryBusy: busy });
+    assert.equal(pick.write.kind, 'sales_book', text);
+    const index = /andre/.test(text) ? 1 : (/nr 3/i.test(text) ? 2 : slots.length - 1);
+    assert.equal(pick.card.meetingAt, slots[index], text);
+  }
+});
+
+test('a time that is only named (busy then, turned down, conditional, after the sign-off, next to the booked day) never moves the meeting', async () => {
+  const texts = [
+    'Jeg har et annet møte fredag kl 12, så torsdag passer bedre.',
+    'Jeg har tannlege fredag kl 12, men torsdag går fint.',
+    'Fredag kl 12 er jeg i et annet møte, så torsdag passer best',
+    'Fredag kl 12 er vi på kurs',
+    'Vi har allerede en avtale fredag kl 12',
+    'Jeg vil ikke flytte til fredag kl 12',
+    'Du trenger ikke flytte det til fredag kl 12, torsdag går fint',
+    'Ikke skyv det til fredag kl 12',
+    'Hvis det ikke passer torsdag, kan vi ta fredag kl 12',
+    'Torsdag går fint, men hvis dere vil flytte, fredag kl 12 passer også',
+    'Takk, det passer fint.\n\nMvh Ola\nTelefontid: fredag kl 12–14',
+    'Takk, det passer fint.\n\nP.S. Vi har julebord fredag kl 18',
+  ];
+  for (const text of texts) {
+    for (const decideAi of [undefined, async () => ({ request: 'confirm', reply: '' })]) {
+      const client = seed('meeting');
+      const { card, write, sent } = await mail(client, text, { decideAi });
+      assert.equal(card.meetingAt, BOOKED, `${text}: the meeting is not moved`);
+      assert.equal(write.kind === 'sales_book', false, text);
+      assert.equal(sent.some((row) => /flyttet møtet/.test(row.text)), false, text);
+    }
+  }
+  // A time next to a chat or lunch is a weak booking: the AI keeps its veto.
+  const lunch = seed('meeting');
+  const asked = await mail(lunch, 'Hva med lunsj fredag kl 12?', { decideAi: async () => ({ request: 'question', reply: '' }) });
+  assert.equal(asked.card.meetingAt, BOOKED);
+  assert.equal(lastRow(lunch.id).status, 'needs_human');
+  // A plain ask still books.
+  const plain = seed('meeting');
+  const booked = await mail(plain, 'Kan vi ta fredag kl 12 i stedet?');
+  assert.equal(booked.write.kind, 'sales_book');
+  const cancelThenAsk = seed('meeting');
+  const after = await mail(cancelThenAsk, 'Torsdag passer ikke, fredag kl 12 passer bedre.');
+  assert.equal(after.write.kind, 'sales_book');
 });

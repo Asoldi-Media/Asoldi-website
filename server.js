@@ -9051,6 +9051,16 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
       }
     } catch (error) {
       warnings.push(`Calendar sync failed: ${error.message}`);
+      // The old event was already deleted and the new one not written: the guests only it listed (a colleague the
+      // client forwarded the invite to) are kept on the card, so the retry invites them again.
+      if (Array.isArray(error?.foreignAttendees) && error.foreignAttendees.length) {
+        try {
+          const kept = sales.addSalesMeetingGuests(nextClient.id, error.foreignAttendees, { addedBy: 'calendar' });
+          if (kept?.client) nextClient = kept.client;
+        } catch {
+          // The sync failure below is what a rep sees.
+        }
+      }
       const failed = sales.setSalesCalendar(nextClient.id, {
         syncFailedAt: new Date().toISOString(),
         syncError: sanitizeText(error?.message),
@@ -15562,8 +15572,10 @@ function inboxHookClient(id = '') {
  * Inbox bot hook: people the client asked to have on the meeting. Saves them on the card (addedBy 'bot'),
  * then puts them on the live Google event when the invite already went out. Never throws; a Google failure
  * after the card was saved is ok:true with a warning.
+ * `deferCalendar`: the same mail moves the meeting, whose new invite carries the guest, so the old event is left alone.
+ * `catchUp`: the meeting did not move after all; the guests already on the card get onto the live event now.
  */
-async function addSalesMeetingGuestsFromInbox(client, guests = [], { note = '' } = {}) {
+async function addSalesMeetingGuestsFromInbox(client, guests = [], { note = '', deferCalendar = false, catchUp = false } = {}) {
   const id = sanitizeText(client?.id);
   const fail = (error, current = null) => ({
     ok: false, client: current, added: [], already: [], rejected: [], invited: false, error, warning: '',
@@ -15576,8 +15588,9 @@ async function addSalesMeetingGuestsFromInbox(client, guests = [], { note = '' }
     if (!result) return fail('client-not-found');
     let invited = false;
     let warning = '';
-    if (result.added.length) {
-      const sync = await syncSalesMeetingGuests(result.client, { added: result.added });
+    const toInvite = catchUp ? [...result.added, ...result.already] : result.added;
+    if (toInvite.length && !deferCalendar) {
+      const sync = await syncSalesMeetingGuests(result.client, { added: toInvite });
       invited = sync.invited;
       warning = sync.warning;
       if (sanitizeText(note)) console.log(`[inbox-bot] guests added client=${id} n=${result.added.length} note=${sanitizeText(note).slice(0, 120)}`);
