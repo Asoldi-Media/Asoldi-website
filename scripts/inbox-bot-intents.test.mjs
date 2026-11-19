@@ -1581,7 +1581,11 @@ test('a dated booking is booked when the AI says confirm, says nothing or is dow
     const { card, write } = await mail(client, 'Hei, kan vi skyve til fredag kl 13?\n\nFint om du legger Kari på inviten. (CC)', { decideAi });
     assert.equal(write.kind, 'sales_book');
     assert.equal(card.meetingAt, FRIDAY_13);
-    assert.notEqual(lastRow(client.id).status, 'needs_human');
+    // The AI is never the reason a person is asked. Kari is on no Cc line here, so her address is
+    // still flagged for a person after the booking (the guest part, not the time).
+    const row = lastRow(client.id);
+    assert.doesNotMatch(String(row.reason || ''), /^ai-/);
+    if (row.status === 'needs_human') assert.match(row.reason, /^guest-unknown-address:Kari/);
   }
   // A no from the AI still stops it.
   const vetoed = seed('meeting');
@@ -1738,6 +1742,10 @@ test('extra content after a time is not a signature; a real signature block stil
   }
   assert.equal(classifyIncident('Torsdag kl 12\n\nOla Nordmann\nDaglig leder\n+47 123 45 678').request, 'reschedule');
   assert.equal(classifyIncident('Torsdag kl 12\n\nMvh\nOla').request, 'reschedule');
+  // A long title line is still part of the signature; a long line with a verb is a sentence.
+  const longTitle = '\n\nOla Nordmann\nHead of Finance & Accounting Manager | økonomisjef\n\nKunde Gruppen\n\nMobile: +47 400 00 000';
+  assert.equal(classifyIncident(`Torsdag kl 12?${longTitle}`).request, 'reschedule');
+  assert.notEqual(classifyIncident('Torsdag kl 12\n\nVår nye daglig leder har mange spørsmål om prisen').request, 'reschedule');
 });
 
 test('a time the client says is taken is never booked as the first of several', () => {

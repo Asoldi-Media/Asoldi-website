@@ -249,7 +249,7 @@ test('incident mail 1: Kari is added from the sentence, the rest is read on its 
   assert.ok(sent.every((payload) => !payload.to.includes('kari@')), 'Kari is never the recipient');
 });
 
-test('incident mail 1 books Thursday 12:00 and tells the client Kari is on the invitation', { todo: 'needs the parser fix in track B ("skyve" is a move verb)' }, async () => {
+test('incident mail 1 books Thursday 12:00 and tells the client Kari is on the invitation', async () => {
   const client = seed();
   const { moves, sent, adds } = await run(mail({ text: `Hei, kan vi skyve til torsdag kl 12?\n\nFint om du legger Kari på inviten. (CC)${SIGNATURE}` }));
   assert.deepEqual(adds.map((row) => row.guests), [[KARI]]);
@@ -270,10 +270,52 @@ test('incident mail 2 "Torsdag kl 12? Ta gjerne med Kari" with nothing booked ad
   assert.ok(sent.every((payload) => !/legg|ta gjerne med/i.test(payload.text)));
 });
 
-test('incident mail 2 books Thursday 12:00 for a voided card', { todo: 'needs the parser fix in track B' }, async () => {
+test('incident mail 2 books Thursday 12:00 for a voided card', async () => {
   seed({ booked: false });
   const { moves } = await run(mail({ text: 'Torsdag kl 12? Ta gjerne med Kari' }));
   assert.deepEqual(moves.map((row) => row.dueAt), [THURSDAY]);
+});
+
+// The real thread had a signature with a long title line and no "--": cutting the guest sentence
+// must not glue it to the time, and the title line must not count as a sentence.
+const LONG_SIGNATURE = '\n\nOla Nordmann\nHead of Finance & Accounting Manager | økonomisjef\n\nKunde Gruppen\n\nMobile: +47 400 00 000';
+
+test('incident mail 2 with a long-title signature still books Thursday 12:00 and adds Kari', async () => {
+  seed({ booked: false });
+  const { moves, adds } = await run(mail({ text: `Torsdag kl 12? Ta gjerne med Kari${LONG_SIGNATURE}` }));
+  assert.deepEqual(adds.map((row) => row.guests), [[KARI]]);
+  assert.deepEqual(moves.map((row) => row.dueAt), [THURSDAY]);
+});
+
+test('incident mail 1 with a long-title signature books Thursday 12:00', async () => {
+  seed();
+  const { moves, adds } = await run(mail({ text: `Hei, kan vi skyve til torsdag kl 12?\n\nFint om du legger Kari på inviten. (CC)${LONG_SIGNATURE}` }));
+  assert.deepEqual(adds.map((row) => row.guests), [[KARI]]);
+  assert.deepEqual(moves.map((row) => row.dueAt), [THURSDAY]);
+});
+
+test('extractGuestRequest keeps the line break of a dropped guest sentence', () => {
+  const ask = extractGuestRequest(`Torsdag kl 12? Ta gjerne med Kari${LONG_SIGNATURE}`, { from: OLA, cc: [KARI] });
+  assert.match(ask.strippedText, /^Torsdag kl 12\?\n\nOla Nordmann\n/);
+});
+
+test('a guest-only mail with an address and a long-title signature gets the short thanks, not a person', async () => {
+  const client = seed();
+  const { sent, moves, voids, adds } = await run(mail({ text: `Kan du legge til kari@partner.example på møtet?${LONG_SIGNATURE}`, cc: [] }));
+  assert.equal(adds.length, 1);
+  assert.equal(moves.length + voids.length, 0);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].text, /^Takk! Jeg har lagt til/);
+  const item = lastItem(client);
+  assert.deepEqual([item.kind, item.status], ['guest_add', 'applied']);
+});
+
+test('"Nei" left after the guest sentence is not taken for a signature', async () => {
+  const client = seed();
+  const { sent } = await run(mail({ text: 'Nei\n\nLegg Kari til på inviten' }));
+  const item = lastItem(client);
+  assert.notEqual(item.kind, 'guest_add', 'a bare "Nei" is an answer, not a greeting');
+  assert.ok(sent.every((payload) => !/^Takk! Jeg har lagt til/.test(payload.text)));
 });
 
 test('a mail that only asks for a guest gets a short thanks that claims only what happened', async () => {
