@@ -12,7 +12,7 @@ Only clients **before Tilbud**: the card is active, not SSU, and has none of Mø
 
 Clients in **Tilbud**, **Venter signering** or **Solgt** (and Ikke solgt / Sekundær cards) never get a reply, a booking or a card change from the bot. Their mail is logged as `needs_human` with reason `stage:offer`, `stage:signature`, `stage:won` or `stage:off`. A plain "takk" is logged without the flag. The card shows the amber pill "E-post venter svar", and the Admin card lists the mail under "E-post fra kunden".
 
-The sender must be the card's own address (`via: 'email'`: contact, client or website e-mail). The reply goes to that address, From "Alexander fra Asoldi <alexander@asoldi.com>" with Reply-To the same mailbox, so the client's answer comes back to the bot. The subject is always ours ("Re: …"), and `In-Reply-To` and `References` keep it in the client's thread.
+The sender must be the card's own address (`via: 'email'`: contact, client or website e-mail) or a guest the client added to the meeting (`via: 'guest'`, see "Guests on the meeting"). The reply goes to that address, From "Alexander fra Asoldi <alexander@asoldi.com>" with Reply-To the same mailbox, so the client's answer comes back to the bot. The subject is always ours ("Re: …"), and `In-Reply-To` and `References` keep it in the client's thread.
 
 Where a reply shows (`lib/mailbox-copy.js`, called from `sendEmail` in `lib/email.js` after a real send):
 
@@ -20,8 +20,11 @@ Where a reply shows (`lib/mailbox-copy.js`, called from `sendEmail` in `lib/emai
 - **Innboks**: a bot reply (`copyToInbox`) is also appended to the inbox, marked read, with the header `X-Bot-Copy`. The bot skips any mail with that header, so it never answers its own copy.
 - A failed copy is logged (event `copy.appended`, `sent.ok` or `inbox.ok` false) and never fails the send. Safe mode sends nothing, so it copies nothing.
 
+**Cc.** Colleagues stay in the thread: the bot's reply goes To the sender and Cc to the client-side people on the incoming mail (Cc and To, minus the reply target, the bot mailbox, @asoldi.com and Fireflies; at most 5). A reply to a guest also Cc's the card contact. `sendEmail` takes an optional `cc` (string or list; SMTP envelope and header, Resend `cc`); safe mode's redirect drops it, and the Sendt/Innboks copy keeps the header. Calendar answers are no thread and carry no Cc.
+
 - An address the AI found (in the body, by org number or business name) is `via: 'hint' | 'org' | 'name'`. No reply; logged `needs_human` with reason `other-address`.
 - An address that is on two cards is `via: 'ambiguous'`. No reply on either card; logged `needs_human` (`ambiguous-sender`) on the later-stage card.
+- An address in `client.meetingGuests` is `via: 'guest'`, checked after the card's own addresses; one address that is a guest on two cards is `ambiguous`.
 - Mail from @asoldi.com and machine mail are never answered.
 
 ## What the client asks for
@@ -78,13 +81,42 @@ The AI (`decide.js`, DeepSeek) writes the reply text and may veto an action. Wit
 
 Machine mail is routed before the normal gate (`lib/inbox-bot/calendar-answers.js`), so it is no longer dropped as automated.
 
-The card for a calendar answer is the one whose `calendar.eventId` matches the event UID; else the one whose Meet code is in the mail and whose meeting is at the event's time; else the one with the attendee's own address. Two cards that fit is `ambiguous-sender` and nothing changes. No card is `calendar-unmatched`.
+The card for a calendar answer is the one whose `calendar.eventId` matches the event UID; else the one whose Meet code is in the mail and whose meeting is at the event's time; else the one with the attendee's own address, else the one that has the attendee as a guest (so a guest's answer on an event the hub has since replaced, a move is delete + insert, still finds the card). Two cards that fit is `ambiguous-sender` and nothing changes. No card is `calendar-unmatched`.
 
-- **Avslå** (`METHOD:REPLY`, `PARTSTAT=DECLINED`, `parseIcsEvent` in `packages/suite/core/mail/ics.js`, Outlook's Windows zone names included) is treated as "jeg kan ikke komme". It applies only to the time on the card now, in the meeting stage, before the meeting starts. The hub's own cancellation is not sent, because the client declined in their own calendar. The meeting is voided and `salesPlaybook.declinedMeetingAt` is set, the card moves to Venter møtebekreftelse with the pill "Avslo møtet", and a "Ny møtetid" task is added. The bot then mails free times (subject "Ny tid for møtet med Asoldi", not threaded, since a calendar notification is no thread). An answer about an older time is logged (`calendar-other-time`). A decline after the start goes to a person (`calendar-after-start`).
+**Who answered.** Only the card's own address (contact, client, website) speaks for the client. A decline or a proposal from any other attendee, a guest or someone the invite was forwarded to, never voids or books:
+
+- A guest's **Avslå**: no void, no mail to anyone. Logged `guest-declined` (status `logged`, kind `guest_declined`) with the sales log row "Gjest avslo møtet: <e-post>".
+- A guest's **Foreslå ny tid**: logged `needs_human` (`guest-counter`); the meeting is unchanged.
+
+- **Avslå** (`METHOD:REPLY`, `PARTSTAT=DECLINED`, `parseIcsEvent` in `packages/suite/core/mail/ics.js`, Outlook's Windows zone names included) is treated as "jeg kan ikke komme". It applies only to the time on the card now, in the meeting stage, before the meeting starts. The hub's own cancellation is not sent, because the client declined in their own calendar. The meeting is voided and `salesPlaybook.declinedMeetingAt` is set, the card moves to Venter møtebekreftelse with the pill "Avslo møtet", and a "Ny møtetid" task is added. The bot then mails free times (subject "Ny tid for møtet med Asoldi", not threaded, since a calendar notification is no thread). **Open request.** When the card's own address declines the booked meeting and the same card has a mail from the last 72 hours that went to a person (`needs_human`) whose words named one concrete future time, that time is booked through the normal checks (hours, the rep's calendar, not passed) instead of void + offer, and the reply names it. Every inbox row stores the time its words named (`wordsDueAt`, `wordsCandidates`) for this. Not used when the mail named two different times, when the meeting was confirmed after the mail, or when the request is the meeting being declined. If the time cannot be booked, the decline voids and offers as above, with the requested day first and a line "Du ba tidligere om …". An answer about an older time is logged (`calendar-other-time`). A decline after the start goes to a person (`calendar-after-start`).
 - **Foreslå ny tid** (`METHOD:COUNTER`) is found by event UID only and is booked through the same checks as a mailed new time (hours, the rep's calendar, not passed). A time it cannot book goes to a person (`time-unavailable`).
 - **Accepted and tentative** answers change nothing.
 - **Bounce** (from `mailer-daemon@` / `postmaster@`, a `multipart/report`, or an "Undeliverable" subject): the addresses come from the `Final-Recipient` / `Original-Recipient` lines, else from the bounce text. Every card with such an address gets a `bounce` row and the pill "E-post kom ikke fram" for 14 days. The card's rep gets a mail ("E-post kom ikke fram – <firma>"), at most once per card and address a day.
 - Backfill logs calendar answers but never changes a meeting.
+
+## Guests on the meeting
+
+A client can ask the bot to add a person to the booked meeting. `guests.js` (`extractGuestRequest`) reads the client's new words, in Norwegian and English, also inside a sentence with other content:
+
+| Cue | Example |
+|---|---|
+| legg (til) X på inviten / møtet / innkallingen | "Fint om du legger Kari på inviten. (CC)" |
+| legg til, inkluder, inviter (også), add, invite, include, loop in | "Legg til per@firma.example" |
+| ta (gjerne / også) med X | "Torsdag kl 12? Ta gjerne med Kari" |
+| X blir / skal (også) (være) med, kan X (også) bli / være med | "Kari blir også med" |
+| send invitasjonen til X (også) | not a request for the meeting link |
+| sett X på kopi / invitasjonen | |
+
+X is an address in the text, else a name, first name or address start matched against the people on Cc and To, the card's stored guests and the "Name <address>" pairs in the quoted thread. "(CC)", "på kopi", "i kopi" or "kollegaen min" next to the cue mean the people on Cc. The sender, @asoldi.com, the bot mailbox, Fireflies and the card's own addresses are never guests. A name that resolves to nothing, or to two people, is `unresolved`. A word that is not a person ("legg til rette", "ta med laptopen") is no cue.
+
+What the bot does (meeting stage only; Tilbud and later log `needs_human` `stage:*` and add nothing; a backfill or an old mail adds nothing, `stale-mail`):
+
+1. The guest sentence is cut out and the rest is classified on its own ("Hei, kan vi skyve til torsdag kl 12?"). The guest sentence wins over the meeting-link FAQ and over info filing. A mail that is only a guest request plus a greeting is never a question, unclear or info.
+2. The guests are added first (hook `addMeetingGuests`, card field `client.meetingGuests`), then the rest is handled as usual, so a booking in the same mail sends the new invite to the guests too.
+3. The reply claims only what happened: with a booking "Jeg har også lagt til <Navn> (<e-post>) på invitasjonen."; guest only "Takk! Jeg har lagt til <Navn> på møteinvitasjonen for <tid>." (or "… står allerede på …"), with nothing booked "Takk! <Navn> får invitasjonen når vi har satt en tid.". When the rep chain's confirmation already went out, no extra mail is sent, and the row records the add. The row keeps `guestsRequested`, `guestsAdded`, `guestsAlready`, `guestsRejected`, `guestsUnresolved`; a guest-only mail is kind `guest_add` ("Bot la til gjest i møtet").
+4. Unresolved names: the rest of the mail is still handled, then `needs_human` `guest-unknown-address` (the summary names who) and the reply asks for the address. A failing hook: `guest-add-failed:<error>`, nothing else is done.
+
+A **guest as sender** (`via: 'guest'`) may confirm, ask, add more guests and book a new time. Anything that would cancel or void the meeting (cancel, not interested, later, decline-all, a day offer that voids) goes to a person (`guest-cancel`), and a void is refused even if a later step asks for it. The reply goes to the guest and Cc's the card contact. A guest's calendar click never changes the meeting (see "Calendar answers and bounces").
 
 ## On the sales card
 
@@ -97,6 +129,8 @@ The inbox item keeps the client's text, the bot's reply and when it went out (`r
 | Avslo møteinvitasjonen, Svar sendt (ledige tider) | The client declined the invite and got free times. |
 | E-post kom ikke fram | A mail to the card's address bounced. |
 | E-post fra kunden, Venter svar fra selger: … | A mail went to a person. |
+| Gjest lagt til (svar sendt) | The bot added a guest on a client's request. |
+| Gjest avslo møtet: <e-post> | A guest declined the invite; nothing changed. |
 
 ## A rep's own notetaker
 
@@ -148,6 +182,10 @@ Each `needs_human` row has a `reason` (the part before `:` picks the Admin label
 | `move-warning:<warning>` | The meeting moved, but the calendar sync or the confirmation failed afterwards. |
 | `no-assigned-rep` | A booking was asked for, but the card has no sales rep. |
 | `book-failed:<error>` | The move hook failed; nothing changed. |
+| `guest-unknown-address:<names>` | The client named a person to add, but no address was found (not on Cc, not in the mail, not a stored guest). The rest of the mail is handled first, and the reply asks for the address. |
+| `guest-add-failed:<error>` | The guest hook failed, a guest was rejected (limit, invalid), or the invitation could not be sent. A failed hook stops the whole mail: a person reads it. |
+| `guest-cancel` | A guest (`via: 'guest'`) wrote something that would cancel, decline or void the client's meeting (cancel, no thanks, "ingen av disse", a day offer that voids). Nothing is changed or sent. |
+| `guest-counter` | A guest proposed a new time in the calendar. The meeting stays. |
 | `void-failed:<error>` | The cancel failed; nothing was added or sent. |
 | `reply-failed` | The card changed (or an answer was ready) but the mail did not go out. |
 | `ai-unavailable` | The AI was configured but did not answer about a card change. |
