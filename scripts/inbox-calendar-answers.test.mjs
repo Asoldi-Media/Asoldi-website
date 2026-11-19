@@ -321,7 +321,7 @@ test("a guest's decline on an event we have since replaced still finds the card 
 });
 
 /** The client's own earlier mail, left for a person, with the Friday 13:00 it asked for. */
-function openRequest(client, { at = '2031-03-07T12:00:00.000Z', receivedAt = '2031-03-03T07:00:00.000Z', candidates = [at] } = {}) {
+function openRequest(client, { at = '2031-03-07T12:00:00.000Z', receivedAt = '2031-03-03T07:00:00.000Z', candidates = [at], ...extra } = {}) {
   return appendInboxItem({
     kind: 'silent',
     mailbox: 'alexander@asoldi.com',
@@ -333,6 +333,10 @@ function openRequest(client, { at = '2031-03-07T12:00:00.000Z', receivedAt = '20
     text: 'Kan vi skyve til fredag kl 13?',
     wordsDueAt: at,
     wordsCandidates: candidates,
+    from: `Ola <${client.contactEmail}>`,
+    wordsRequest: 'question',
+    aiRequest: 'reschedule',
+    ...extra,
   });
 }
 
@@ -383,4 +387,22 @@ test('an old, ambiguous or already booked open request does not turn a decline i
   openRequest(same, { at: BOOKED });
   const third = await ingest(asMessage(calendarMail({ from: 'Ola <ola-o5@kalender.test>', calendar: ics({ uid: 'evt-o5@google.com', attendee: 'ola-o5@kalender.test' }) })));
   assert.deepEqual([third.moves.length, third.voids.length], [0, 1], 'the request is the very meeting being declined');
+});
+
+test('a decline never books a date from a mail that was not a move request, or from a guest', async () => {
+  const cases = [
+    ['unclear', { wordsRequest: 'unclear', aiRequest: '', reason: 'unclear' }],
+    ['question', { wordsRequest: 'question', aiRequest: 'question', reason: 'ai-disagrees:question' }],
+    ['guest sender', { from: 'Kari Hansen <kari@partner.example>' }],
+  ];
+  for (const [index, [label, extra]] of cases.entries()) {
+    const email = `ola-n${index}@kalender.test`;
+    const client = seed({ email, eventId: `evt-n${index}` });
+    openRequest(client, extra);
+    const { moves, voids } = await ingest(asMessage(calendarMail({
+      from: `Ola <${email}>`,
+      calendar: ics({ uid: `evt-n${index}@google.com`, attendee: email }),
+    })));
+    assert.deepEqual([moves.length, voids.length], [0, 1], label);
+  }
 });

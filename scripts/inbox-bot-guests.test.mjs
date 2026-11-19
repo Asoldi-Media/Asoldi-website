@@ -451,3 +451,42 @@ test('sendEmail over Resend carries cc, and nothing changes without one', async 
   assert.deepEqual(bodies[0].cc, ['kari@partner.example']);
   assert.equal('cc' in bodies[1], false);
 });
+
+test('extractGuestRequest: a name written in the client\'s own sentence is not polluted by the thread scan', () => {
+  const full = 'Hei! Legg gjerne til Per Olsen <per@x.example> på møtet';
+  const ask = extractGuestRequest(full, { from: OLA, threadText: full });
+  assert.deepEqual(ask.guests, [{ email: 'per@x.example', name: 'Per Olsen' }]);
+  assert.deepEqual(ask.unresolved, []);
+  const second = 'Legg Per Olsen <per@x.example> til på møtet.';
+  const other = extractGuestRequest(second, { from: OLA, threadText: second });
+  assert.deepEqual(other.guests, [{ email: 'per@x.example', name: 'Per Olsen' }]);
+  assert.deepEqual(other.unresolved, [], 'a trailing "til" is not a person');
+});
+
+test('extractGuestRequest: a cue verb with a non-person object is not a guest request', () => {
+  for (const plain of ['Legg gjerne inn agenda i invitasjonen', 'Kan du legge til Teams-lenke i invitasjonen?', 'Legg til adressen i invitasjonen', 'Inkluder prisen i invitasjonen', 'Ta med dokumentene til møtet', 'Please include the agenda in the invite']) {
+    const none = extractGuestRequest(plain, { from: OLA, cc: [KARI] });
+    assert.equal(none.asked, false, plain);
+    assert.equal(none.strippedText, plain);
+  }
+});
+
+test('extractGuestRequest: "send invitasjonen til meg" and "legg meg til" are not guest requests', () => {
+  for (const plain of ['Kan du sende invitasjonen til meg?', 'Legg meg til også']) {
+    const none = extractGuestRequest(plain, { from: OLA, cc: [KARI] });
+    assert.equal(none.asked, false, plain);
+    assert.equal(none.strippedText, plain);
+  }
+});
+
+test('a cancel or "no thanks" with a guest sentence is not swallowed as a guest-only mail', async () => {
+  for (const text of ['Avlys møtet. Legg Kari på inviten.', 'Ikke aktuelt. Legg Kari på inviten.', 'Kan ikke. Legg Kari til.', 'Nei takk. Ta med Kari']) {
+    const client = seed();
+    const { result, sent, voids } = await run(mail({ text }));
+    const item = lastItem(client);
+    assert.notEqual(item.kind, 'guest_add', text);
+    assert.ok(!(result.write?.reason === 'guest-added'), text);
+    assert.ok(!sent.some((row) => /har lagt til/.test(row.text)), text);
+    assert.ok(item.status === 'needs_human' || voids.length > 0 || item.intent !== 'guest', text);
+  }
+});
