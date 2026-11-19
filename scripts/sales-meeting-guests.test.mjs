@@ -73,9 +73,11 @@ function seedCard(extra = {}) {
   return sales.getSalesClientById(id);
 }
 
-test('old cards get an empty guest list without a migration', () => {
+test('old cards need no migration: no guests means no meetingGuests key, so the stored card matches older code', () => {
   const card = seedCard();
-  assert.deepEqual(card.meetingGuests, []);
+  assert.equal(Object.prototype.hasOwnProperty.call(card, 'meetingGuests'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(card.calendar, 'invitedContactEmail'), false);
+  assert.deepEqual(sales.normalizeMeetingGuests(card.meetingGuests, card), []);
 });
 
 test('normalizeMeetingGuests lowercases, validates, dedupes, applies exclusions and caps at 10', () => {
@@ -119,7 +121,7 @@ test('addSalesMeetingGuests reports added, already and rejected, and removeSales
 
   const removed = sales.removeSalesMeetingGuest(card.id, KARI.toUpperCase());
   assert.equal(removed.removed, true);
-  assert.deepEqual(removed.client.meetingGuests, []);
+  assert.deepEqual(removed.client.meetingGuests || [], [], 'the last guest removed leaves no guests');
   assert.equal(sales.removeSalesMeetingGuest(card.id, KARI).removed, false);
   assert.equal(sales.removeSalesMeetingGuest('missing-card', KARI), null);
 });

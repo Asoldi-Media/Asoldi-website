@@ -522,7 +522,10 @@ function normalizeCalendar(value = {}) {
     syncedAt: sanitizeText(input.syncedAt),
     guestInvitedAt: sanitizeText(input.guestInvitedAt),
     // The contact e-mail the hub last put on the Google event, so a later contact change can take it off again.
-    invitedContactEmail: sanitizeText(input.invitedContactEmail).toLowerCase(),
+    // Stored only when set, so a card without one is byte-identical to what older code writes.
+    ...(sanitizeText(input.invitedContactEmail)
+      ? { invitedContactEmail: sanitizeText(input.invitedContactEmail).toLowerCase() }
+      : {}),
     firefliesInvitedAt: sanitizeText(input.firefliesInvitedAt),
     firefliesLiveJoinedAt: sanitizeText(input.firefliesLiveJoinedAt),
     firefliesLiveJoinAttemptAt: sanitizeText(input.firefliesLiveJoinAttemptAt),
@@ -793,6 +796,9 @@ function normalizeSalesClient(raw = {}) {
     nextProgression.live = false;
   }
 
+  // Stored only when the card has guests, so a card without any is byte-identical to what older code writes.
+  const meetingGuests = normalizeMeetingGuests(raw.meetingGuests, raw);
+
   const client = {
     id: sanitizeText(raw.id) || makeId(),
     ownerId: sanitizeText(raw.ownerId),
@@ -805,7 +811,7 @@ function normalizeSalesClient(raw = {}) {
     contactEmailError: normalizeContactEmailError(raw.contactEmailError, raw.contactEmail),
     websiteEmail: normalizeStoredWebsiteEmail(raw.websiteEmail, raw.contactEmail),
     clientEmail: sanitizeText(raw.clientEmail).toLowerCase(),
-    meetingGuests: normalizeMeetingGuests(raw.meetingGuests, raw),
+    ...(meetingGuests.length ? { meetingGuests } : {}),
     portalUserId: sanitizeText(raw.portalUserId),
     portalBusinessId: sanitizeText(raw.portalBusinessId),
     portalConnectedAt: sanitizeText(raw.portalConnectedAt),
