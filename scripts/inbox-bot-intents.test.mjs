@@ -1683,3 +1683,79 @@ test('stale mail: 30 minutes when a future meeting would move, 12 hours when not
   assert.equal(stale.card.agreedTime, false);
   assert.equal(lastRow(tooOld.id).reason, 'stale-mail');
 });
+
+test('a week number that holds the booked meeting, or an unrelated week mention, never voids the meeting', () => {
+  // Booked Wed 18 Nov (week 47), now Tue 17 Nov.
+  const confirm = classifyIncident('Ses i uke 47');
+  assert.equal(confirm.request, 'confirm');
+  assert.equal(confirm.cancel, false);
+  assert.equal(classifyIncident('Møtet i uke 47 passer fint').request, 'confirm');
+  for (const text of ['Hva gjør dere i uke 48?', 'Er du ledig uke 48?']) {
+    const out = classifyIncident(text);
+    assert.equal(out.request, 'question', text);
+    assert.equal(out.cancel, false, text);
+  }
+  // A week mention inside a statement is for a person, not a void.
+  const campaign = classifyIncident('Vi har kampanje uke 48');
+  assert.equal(campaign.cancel, false);
+  assert.notEqual(campaign.request, 'reschedule_day');
+  // A week asked for still offers times in it.
+  for (const text of ['uke 48', 'Passer uke 48?', 'Kan vi ta uke 48?']) {
+    assert.equal(classifyIncident(text).request, 'reschedule_day', text);
+  }
+});
+
+test('a weak booking (only a short mail carried it) keeps the model veto; a strong one does not', () => {
+  const weak = classifyIncident('Vi har styremøte torsdag kl 12');
+  assert.equal(weak.request, 'reschedule');
+  assert.equal(weak.weak, true);
+  assert.equal(mergeWriteDecision(weak, { request: 'info' }).needsHuman, true);
+  assert.equal(mergeWriteDecision(weak, { request: 'info' }).reason, 'ai-disagrees:info');
+  const strong = classifyIncident('Torsdag kl 12?');
+  assert.ok(!strong.weak);
+  assert.equal(mergeWriteDecision(strong, { request: 'question' }).needsHuman, false);
+});
+
+test('an ordinal in front of a period noun, an "if" or a question is no pick of an offered time', () => {
+  const offered = ['2026-11-20T09:00:00.000Z', '2026-11-23T09:00:00.000Z', '2026-11-24T09:00:00.000Z'];
+  for (const text of [
+    'Den første uken i desember passer bedre',
+    'Takk, den andre uken passer',
+    'Den siste uken i november er bedre',
+    'Hvis den første går fint, så tar vi den',
+    'Er den første fortsatt ledig?',
+  ]) {
+    const out = classifyIncident(text, { offered });
+    assert.ok(!out.pick, text);
+    assert.notEqual(out.intent, 'sales_book', text);
+  }
+  assert.equal(classifyIncident('Den første går fint', { offered }).pick, 1);
+});
+
+test('extra content after a time is not a signature; a real signature block still is', () => {
+  for (const text of ['Torsdag kl 12\n\nJeg har fått ny jobb', 'Torsdag kl 12\n\nVi er flere som skal være med']) {
+    assert.notEqual(classifyIncident(text).request, 'reschedule', text);
+  }
+  assert.equal(classifyIncident('Torsdag kl 12\n\nOla Nordmann\nDaglig leder\n+47 123 45 678').request, 'reschedule');
+  assert.equal(classifyIncident('Torsdag kl 12\n\nMvh\nOla').request, 'reschedule');
+});
+
+test('a time the client says is taken is never booked as the first of several', () => {
+  const out = classifyIncident('Jeg har møte tirsdag kl 10 eller onsdag kl 14, men torsdag kl 12 går fint');
+  assert.equal(out.request, 'unclear');
+  assert.equal(out.intent, 'none');
+});
+
+test('"kan ikke onsdag, lørdag?" rejects the booked meeting and voids it; "heller lørdag" keeps it', async () => {
+  assert.equal(classifyIncident('Jeg kan ikke onsdag. Kan vi ta lørdag kl 10?').rejectsBooked, true);
+  assert.equal(classifyIncident('Kan vi heller ta lørdag kl 10?').rejectsBooked, false);
+  const client = seed('meeting');
+  const voids = [];
+  const { card, sent, write } = await mail(client, 'Jeg kan ikke torsdag. Kan vi ta lørdag kl 10?', {
+    voidMeeting: async (current, opts) => { voids.push(opts); return { ok: true, client: sales.voidSalesMeetingTime(current.id, { note: opts?.note || 'test' }) || current, error: '' }; },
+  });
+  assert.equal(write.kind, 'sales_propose');
+  assert.equal(voids.length, 1);
+  assert.equal(card.agreedTime, false);
+  assert.doesNotMatch(sent[0].text, /står fortsatt/);
+});
