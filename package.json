@@ -67,7 +67,7 @@
     "test:promotion": "node --test scripts/spine-mode.test.mjs scripts/promotion.test.mjs",
     "test:spine-integration": "node --test scripts/delivery-steps-dark.test.mjs && node --test scripts/signing-preview-login.test.mjs scripts/signed-contract-paths.test.mjs",
     "test:golden": "node --test scripts/golden/hub-golden.test.mjs",
-    "test:dev-report-hub": "node --test scripts/development-board-status.test.mjs scripts/maker-dev-report.test.mjs scripts/purge-jobs.test.mjs"
+    "test:dev-report-hub": "node --test scripts/development-board-status.test.mjs scripts/development-board-reads.test.mjs scripts/development-board-boot.test.mjs scripts/maker-dev-report.test.mjs scripts/purge-jobs.test.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.133.0",

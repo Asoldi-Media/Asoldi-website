@@ -20130,13 +20130,16 @@ function websiteDueViewForTarget({ client = null, site = null } = {}) {
   };
 }
 
+// One sales read per call: clientsById is the same read, for the board decoration.
 function listDeveloperBoardParts() {
-  const salesClients = clientsWithWebsiteDue(sales.getSalesClients());
+  const { clients, byId } = sales.getSalesClientsWithIndex();
+  const salesClients = clientsWithWebsiteDue(clients);
   const sites = hub.getAllSites();
   return {
     developmentItems: buildDevelopmentItems(salesClients, sites),
     previewItems: buildPreviewItems(salesClients, sites),
     ssuItems: buildSsuBoardItems(salesClients, sites),
+    clientsById: byId,
   };
 }
 
@@ -20182,9 +20185,7 @@ function developmentBoardPartsFor(caller) {
   const developmentItems = visible(parts.developmentItems);
   const previewItems = visible(parts.previewItems);
   const ssuItems = visible(parts.ssuItems);
-  const decorate = { salesClientById: (id) => sales.getSalesClientById(id), dataDir: getPersistentDataDir() };
-  decorateBoardItems(developmentItems, decorate);
-  decorateBoardItems(previewItems, decorate);
+  decorateBoardItems([...developmentItems, ...previewItems], { clientsById: parts.clientsById, dataDir: getPersistentDataDir() });
   return { developmentItems, previewItems, ssuItems };
 }
 

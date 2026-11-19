@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, statSync } from 'fs';
 import { getDataFilePath, ensurePersistentDataDir, writeDataJson } from './storage-path.js';
 import { DEVELOPMENT_KEYS, normalizeDevelopment } from '../lib/development-phase.js';
 import { normalizeStoredWebsiteEmail } from '../lib/sales-website-email.js';
@@ -242,6 +242,23 @@ let salesRevision = 0;
 
 export function salesDataRevision() {
   return salesRevision;
+}
+
+/**
+ * A short string that changes whenever the sales store or the one-time developer-owner seed marker
+ * changes: a counter of this process's writes plus each file's size and modification time (a change
+ * made outside this process). Reads no file content.
+ */
+export function salesStoreStamp() {
+  const part = (path) => {
+    try {
+      const info = statSync(path);
+      return `${info.size}:${info.mtimeMs}`;
+    } catch {
+      return 'none';
+    }
+  };
+  return `${salesRevision}:${part(SALES_PATH)}:${part(DEVELOPER_OWNER_SEED_PATH)}`;
 }
 
 /** Call after sales-clients.json was replaced outside writeSalesFile (snapshot restore). */
@@ -938,6 +955,18 @@ export function getSalesClients() {
 
 export function getSalesClientById(id) {
   return readState().find((entry) => entry.id === id) || null;
+}
+
+/**
+ * One read of the sales store for a request that needs the list and several clients by id (the
+ * development board): { clients } is what getSalesClients() returns, and byId answers like
+ * getSalesClientById (the first client of a repeated id in file order), without a read per client.
+ */
+export function getSalesClientsWithIndex() {
+  const list = readState();
+  const byId = new Map();
+  for (const entry of list) if (!byId.has(entry.id)) byId.set(entry.id, entry);
+  return { clients: list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()), byId };
 }
 
 export function getSalesClientByMyphonerLeadId(leadId) {

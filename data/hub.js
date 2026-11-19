@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, statSync } from 'fs';
 import { createHash, randomBytes } from 'crypto';
 import bcrypt from 'bcryptjs';
 import { getDataFilePath, ensurePersistentDataDir, writeDataJson } from './storage-path.js';
@@ -49,7 +49,25 @@ function readSites() {
   }
 }
 
+let sitesRevision = 0;
+
+/**
+ * A short string that changes whenever the sites store changes: a counter of this process's writes plus
+ * the file's size and modification time (a change made outside this process). Reads nothing.
+ */
+export function sitesStoreStamp() {
+  let file = 'none';
+  try {
+    const info = statSync(SITES_PATH);
+    file = `${info.size}:${info.mtimeMs}`;
+  } catch {
+    // No file yet.
+  }
+  return `${sitesRevision}:${file}`;
+}
+
 function writeSites(sites) {
+  sitesRevision += 1;
   ensureDataDir();
   writeDataJson(SITES_PATH, sites.map(normalizeSite).filter(Boolean));
 }
