@@ -290,7 +290,7 @@ const MINI_ROUTES = {
       escalate: { 'contract.plan': ['claude:claude-sonnet-5-5:medium', 'claude:claude-opus-5-5:medium'] },
     },
     // The test profile keeps a non-Claude vision provider on purpose: the image-rule checks below need one
-    // to prove that an image of client data never reaches it. It is a fixture, not a route Asoldi runs.
+    // to prove that an image of client data never reaches it. It is a fixture, not a production route.
     test: { default: 'deepseek:deepseek-flash|openai:gpt-4.1', vision: 'gemini:gemini-2.5-flash-lite|claude:claude-haiku-5-5:low' },
     replay: { default: 'replay:strict', vision: 'replay:strict' },
     record: { inherit: 'test', record: true },

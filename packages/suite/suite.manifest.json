@@ -1,6 +1,6 @@
 {
   "source": "asoldi-website/packages/suite",
-  "syncedAt": "2026-11-19T14:50:20.693Z",
+  "syncedAt": "2026-11-19T15:38:08.919Z",
   "files": {
     "core/delivery/vocab.js": "879e77a29dc56e403c6ec7b6ac1c47c37324c2317e8bdf784838edfbebd2685e",
     "core/documents/kind.js": "2d619597ae6c457698c539b3b7ecd6923709e868922e5afd9a1eceb4b98ae109",
@@ -14,7 +14,7 @@
     "core/llm/cassette.js": "3e2df35da1280a68a0fbed19c7aea04f8d756f903f14a705750a23e67e72696c",
     "core/llm/claude-shape.js": "e17a702a9c4f2621db82623de982a9f62a4935dadb55640f65261cf633e71bbd",
     "core/llm/constants.js": "8bbd8fdd091bb15e1935d657ae205dafa10e8c596615db3560db6c9529879ff0",
-    "core/llm/contract.js": "853afe7dd72eb0d367e04927c7a7e5d336805230a8435f785aff1cc404f66d67",
+    "core/llm/contract.js": "5b2915b067080daff4b14b0f27e7642fff3e1fc515fc5a8897da0f3db36a17ce",
     "core/llm/errors.js": "c0fd3da424953a6f6a190e3088432e93bf9506157dba642cb953e39eac69ad4b",
     "core/llm/images.js": "5c116612456e02b4b17ada4f10746e94e63e01f3907568567fe2913449609bd8",
     "core/llm/index.js": "8a0a38413c7ddc4040c8fce9db45bef5dde19c534fb55ce4292a45069e9ce146",
