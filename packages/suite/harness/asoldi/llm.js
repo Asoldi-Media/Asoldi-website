@@ -42,7 +42,7 @@ export const ASOLDI_LLM_TASKS = {
     'siteintel.golden-judge-text': t('json', false, 'public', 1000, { family: 'judge', repo: M, owner: 'WS2', ...LIVE_SITE }),
     'siteintel.golden-judge-vision': t('json', true, 'public', 1000, { family: 'judge', repo: M, owner: 'WS2', ...LIVE_SITE }),
     // Maker: Step 2 branding
-    'step2.copywriter': t('json', false, 'business', 16000, { family: 'copy', repo: M }),
+    'step2.copywriter': t('json', false, 'business', 8192, { family: 'copy', repo: M }),
     'step2.typesetter': t('json', false, 'business', 8192, { family: 'copy', repo: M }),
     'step2.copy-judge': t('json', false, 'business', 4000, { family: 'judge', repo: M }),
     'step2.repair': t('json', false, 'business', 4000, { family: 'copy', repo: M }),
