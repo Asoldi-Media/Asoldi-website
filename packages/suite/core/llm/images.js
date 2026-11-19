@@ -81,11 +81,11 @@ export function imageBlocks(images = [], { maxImages = IMAGE_RULES.maxImages, ma
 }
 
 /** Image blocks inside a list of content blocks, including those nested in tool_result content. */
-function collectImageBlocks(blocks, out, depth = 0) {
+function collectImageBlocks(blocks, out, depth = 0, type = 'image') {
   if (depth > 8) return out;
   for (const block of Array.isArray(blocks) ? blocks : []) {
-    if (block?.type === 'image') out.push(block);
-    else if (block?.type === 'tool_result' && Array.isArray(block.content)) collectImageBlocks(block.content, out, depth + 1);
+    if (block?.type === type) out.push(block);
+    else if (block?.type === 'tool_result' && Array.isArray(block.content)) collectImageBlocks(block.content, out, depth + 1, type);
   }
   return out;
 }
@@ -100,6 +100,17 @@ export function messageImageBlocks(messages = []) {
 /** The number of image blocks in a messages array, tool results included. */
 export function countImageBlocks(messages = []) {
   return messageImageBlocks(messages).length;
+}
+
+/**
+ * The number of `document` blocks (PDFs) in a messages array, tool results included. A PDF carries the pixels and
+ * the text of its pages, so the data policy treats a call that holds one like a call with an image: it stays on
+ * Claude unless the call is synthetic or its pictures are marked redacted. They do not count toward the image limit.
+ */
+export function countDocumentBlocks(messages = []) {
+  const out = [];
+  for (const message of Array.isArray(messages) ? messages : []) collectImageBlocks(message?.content, out, 0, 'document');
+  return out.length;
 }
 
 /**

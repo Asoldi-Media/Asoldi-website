@@ -44,7 +44,7 @@ import { estimateCallUsd } from './prices.js';
 import { createRouter } from './route.js';
 import { formatRouteEntry } from './route-string.js';
 import { getTask } from './tasks-schema.js';
-import { IMAGE_RULES, checkMessageImages } from './images.js';
+import { IMAGE_RULES, checkMessageImages, countDocumentBlocks } from './images.js';
 
 /**
  * The data-policy fields and the image count of a call's ledger rows, from the route the policy produced
@@ -394,7 +394,9 @@ export function createLlmCore(options = {}) {
     const messageImages = Array.isArray(request.messages) ? checkMessageImages(request.messages) : 0;
     if (images.length + messageImages > IMAGE_RULES.maxImages) throw new InvalidRequestError(`${images.length + messageImages} images in one call; the limit is ${IMAGE_RULES.maxImages}.`);
     // Every image block of the request: the data policy's image rule and the ledger row both use this count.
-    const imageCount = images.length + messageImages;
+    // A PDF document block counts for the data rule like an image (it carries page pixels): only Claude reads it
+    // unless the call is synthetic or its pictures are marked redacted.
+    const imageCount = images.length + messageImages + (Array.isArray(request.messages) ? countDocumentBlocks(request.messages) : 0);
     // Everything that is sent (and request.data) is checked for person fields; the system prompt can carry client facts too.
     const payload = { system: request.system, user: request.user, data: request.data, messages: request.messages };
     let route;

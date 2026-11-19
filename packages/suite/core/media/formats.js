@@ -1,9 +1,10 @@
-// Every media format a client or template can send, turned into something Gemini can read.
+// Every media format a client or template can send, turned into something a vision model can read: JPEG, PNG,
+// GIF or WebP for images (the formats Claude accepts), and the audio and video types Gemini reads.
 // Pure: buffers in, buffers out. No disk, no network.
 
 const MB = 1024 * 1024;
 
-/** Gemini reads these directly. They are only downscaled. */
+/** These are read as they are (only downscaled). HEIC and HEIF are listed so they are recognised, but see prepareForVision. */
 export const IMAGE_PASS = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -12,7 +13,7 @@ export const IMAGE_PASS = {
   '.heic': 'image/heic',
   '.heif': 'image/heif',
 };
-/** Gemini rejects or misreads these. They are rasterized first. */
+/** These are rasterized first (Claude and Gemini reject or misread them). */
 export const IMAGE_CONVERT = new Set(['.gif', '.avif', '.bmp', '.ico', '.cur', '.tif', '.tiff', '.svg']);
 export const VIDEO_MIME = { '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm' };
 export const AUDIO_MIME = {
@@ -262,8 +263,18 @@ export async function prepareForVision(buffer, fileName = '', limits = {}) {
 
   if (IMAGE_PASS[ext]) {
     const passThrough = { ...base, ok: true, mimeType: IMAGE_PASS[ext], buffer: bytes, textHint };
-    // sharp's prebuilt libvips has no HEVC decoder; Gemini reads HEIC itself.
-    if (ext === '.heic' || ext === '.heif') return passThrough;
+    if (ext === '.heic' || ext === '.heif') {
+      // Claude takes only JPEG, PNG, GIF and WebP, so HEIC must be decoded here. sharp's prebuilt libvips has no
+      // HEVC decoder; a libvips build that has one decodes it, otherwise the file is skipped with a reason
+      // (it is still filed by name) and never sent as HEIC to a provider.
+      try {
+        const out = await rasterize(bytes, ext, maxEdge);
+        if (out) return { ...passThrough, ...out, converted: true };
+      } catch {
+        // falls through to the skip below
+      }
+      return { ...base, textHint, error: `${ext.slice(1)} is not readable here (no HEVC decoder installed); the file is skipped` };
+    }
     try {
       const image = await openImage(bytes, ext);
       if (!image) return passThrough;

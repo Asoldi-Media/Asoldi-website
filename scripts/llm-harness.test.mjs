@@ -3,12 +3,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as core from '../packages/suite/core/llm/index.js';
-import { ASOLDI_LLM_TASKS, ASOLDI_LLM_ROUTES, ASOLDI_LLM_POLICY, ASOLDI_LLM_BUDGETS, asoldiLlmConfig } from '../packages/suite/harness/asoldi/llm.js';
+import { ASOLDI_LLM_TASKS, ASOLDI_LLM_ROUTES, ASOLDI_LLM_POLICY, ASOLDI_LLM_BUDGETS, AUDIO_VIDEO_TASKS, asoldiLlmConfig } from '../packages/suite/harness/asoldi/llm.js';
 import { coreWithoutRules } from './llm-core-copy.mjs';
 
 const NOW = new Date('2026-10-24T00:00:00Z');
-// Stand-in for the facades' legacy resolver: tools on Claude, vision on Gemini, text on DeepSeek.
-const legacyRoute = (task, ctx, spec) => (spec.kind === 'tools' ? 'claude:claude-haiku-5-5' : spec.vision ? 'gemini:gemini-2.5-flash' : 'deepseek:deepseek-chat');
+// Stand-in for the facades' legacy resolver: tools and vision on Claude, text on DeepSeek.
+const legacyRoute = (task, ctx, spec) => (spec.kind === 'tools' || spec.vision ? 'claude:claude-haiku-5-5' : 'deepseek:deepseek-chat');
 
 test('registry, routes, policy and budgets are valid', () => {
   const cfg = asoldiLlmConfig();
@@ -49,7 +49,10 @@ test('every task resolves in every profile, and the data policy holds for all of
       const route = r.resolveRoute(task, { profile });
       assert.ok(route.chain.length > 0, `${profile} ${task}`);
       if (route.dataClass.effective !== 'public') assert.ok(!route.chain.some((e) => e.provider === 'deepseek'), `${profile} ${task} sent client data to DeepSeek`);
-      if (route.chain.some((e) => e.provider === 'gemini')) geminiRoutes += 1;
+      if (route.chain.some((e) => e.provider === 'gemini')) {
+        geminiRoutes += 1;
+        assert.ok(AUDIO_VIDEO_TASKS.includes(task), `${profile} ${task} routes to Gemini but is not an audio or video task`);
+      }
       assert.ok(!unpaid.resolveRoute(task, { profile }).chain.some((e) => e.provider === 'gemini'), `${profile} ${task} reached Gemini under a policy without a confirmed paid tier`);
       if (route.chain.some((e) => e.provider === 'openai')) assert.ok(ASOLDI_LLM_POLICY.providers.openai.tasks.includes(task), `${profile} ${task} reached OpenAI outside evaluation`);
       if (spec.vision) assert.ok(route.chain.every((e) => core.PROVIDER_CAPABILITIES[e.provider].vision), `${profile} ${task} vision`);
@@ -60,7 +63,7 @@ test('every task resolves in every profile, and the data policy holds for all of
       }
     }
   }
-  assert.ok(geminiRoutes > 0, 'the shipped policy lets Gemini entries through (paid tier confirmed)');
+  assert.ok(geminiRoutes > 0, 'the shipped policy lets the audio and video tasks reach Gemini (paid tier confirmed)');
 });
 
 test('Developer automation change requests are in: dev.copy and dev.locate exist, dev.plan is JSON and personal', () => {
@@ -108,7 +111,7 @@ test('test profile (Q5): DeepSeek for public, synthetic or redacted data; real c
   assert.equal(r.resolveRoute('step2.copywriter', { profile: 'test' }, { payload: { owner: { firstName: 'Kari' } } }).primary.provider, 'claude');
   // step15.judge is business class (it runs inside a client run): a capture goes to Claude, and so does its text call.
   assert.equal(r.resolveRoute('step15.judge', { profile: 'test' }, { images: 1 }).route, 'claude:claude-haiku-5-5:low', 'a client capture stays on Claude');
-  assert.equal(r.resolveRoute('step15.judge', { profile: 'test', synthetic: true }, { images: 1 }).primary.provider, 'gemini', 'a synthetic capture may use Gemini');
+  assert.equal(r.resolveRoute('step15.judge', { profile: 'test', synthetic: true }, { images: 1 }).route, 'claude:claude-haiku-5-5:low', 'a synthetic capture reads on Claude too: no picture task has a Gemini route');
   assert.equal(r.resolveRoute('step15.judge', { profile: 'test', vision: false }).primary.provider, 'claude', 'its text call leaves DeepSeek');
   assert.equal(r.resolveRoute('step15.judge', { profile: 'test', vision: false, synthetic: true }).primary.provider, 'deepseek');
 });
@@ -125,28 +128,33 @@ function unpaidGeminiPolicy() {
   return { ...ASOLDI_LLM_POLICY, providers: { ...ASOLDI_LLM_POLICY.providers, gemini: { ...ASOLDI_LLM_POLICY.providers.gemini, paidTierConfirmedAt: null } } };
 }
 
-test('Gemini is on: the shipped policy records the paid tier, and a copy without the confirmation date refuses the same call', () => {
+test('Gemini is on for audio and video only: the shipped policy records the paid tier and limits it to those tasks; a copy without the confirmation date refuses the same call', () => {
   const gemini = ASOLDI_LLM_POLICY.providers.gemini;
   assert.equal(gemini.billingTier, 'paid');
   assert.equal(gemini.paidTierConfirmedAt, '2026-11-10');
   assert.equal(gemini.allowUnpaidPublic, false);
+  assert.deepEqual(gemini.tasks, [...AUDIO_VIDEO_TASKS, 'sales-link.discover'], 'Gemini is limited to audio and video (and the grounded link search, which is no picture task)');
   const r = core.createRouter({ ...asoldiLlmConfig(), legacyRoute, now: NOW });
   const planted = core.createRouter({ ...asoldiLlmConfig(), policy: unpaidGeminiPolicy(), legacyRoute, now: NOW });
   // The same calls under both policies: business data on routes that name Gemini, in a call without a picture
   // (images: 0; a picture of client data stays on Claude whatever the route says).
+  const AV_ROUTE = 'gemini:gemini-2.5-flash-lite|gemini:gemini-2.5-flash';
   const calls = [
-    ['dev.judge', { profile: 'prod', escalation: 1 }, 'claude:claude-opus-5-5:medium|gemini:gemini-2.5-pro'],
-    ['media.categorize', { profile: 'prod' }, 'claude:claude-haiku-5-5:low|gemini:gemini-2.5-flash-lite'],
-    ['dev.locate', { profile: 'test' }, 'gemini:gemini-2.5-flash-lite|claude:claude-haiku-5-5:low'],
+    ['assistant.media-brief-av', { profile: 'prod' }, AV_ROUTE],
+    ['assistant.media-brief-av', { profile: 'test' }, AV_ROUTE],
+    ['media.transcript-av', { profile: 'prod' }, AV_ROUTE],
+    ['media.transcript-av', { profile: 'test' }, AV_ROUTE],
   ];
   let run = 0;
   for (const [task, ctx, expected] of calls) {
     const route = r.resolveRoute(task, ctx, { images: 0 });
     run += 1;
     assert.equal(route.dataClass.effective, 'business', task);
-    assert.deepEqual(r.resolveRoute(task, ctx).chain.map((e) => e.provider), ['claude'], `${task}: with a picture only Claude is left`);
+    assert.deepEqual(r.resolveRoute(task, ctx, { images: 1 }).chain.map((e) => e.provider), ['claude'], `${task}: if a picture were sent it would go to Claude, not Gemini`);
     assert.equal(route.route, expected, `${task}: Gemini is allowed for business data`);
     assert.equal(core.providerAllows(ASOLDI_LLM_POLICY, 'gemini', 'business', { task }).allowed, true, task);
+    // No other task may use Gemini, whatever its route says.
+    assert.equal(core.providerAllows(ASOLDI_LLM_POLICY, 'gemini', 'public', { task: 'step15.judge' }).allowed, false, 'a picture task is not on the Gemini list');
     // Negative control: the planted policy copy refuses the same call.
     assert.ok(!planted.resolveRoute(task, ctx, { images: 0 }).chain.some((e) => e.provider === 'gemini'), `${task}: the copy without paidTierConfirmedAt refuses Gemini`);
     assert.equal(core.providerAllows(unpaidGeminiPolicy(), 'gemini', 'business', { task }).allowed, false, task);
@@ -381,7 +389,7 @@ test('the judge of the development agent never runs on the planner model, at any
   assert.equal(old.resolveRoute('dev.judge', { profile: 'prod' }, { images: 1 }).primary.model, old.resolveRoute('dev.plan', { profile: 'prod' }).primary.model, 'without the task route the two share a model');
 });
 
-test('the eval profile: production routes plus explicit candidates and judges; OpenAI is a judge only, Gemini is a candidate and a judge', () => {
+test('the eval profile: production routes plus explicit candidates and judges; OpenAI is a judge only, Gemini is neither', () => {
   const cfg = asoldiLlmConfig();
   const view = core.profileView(ASOLDI_LLM_ROUTES, 'eval');
   assert.ok(core.PROFILES.includes('eval'));
@@ -395,10 +403,10 @@ test('the eval profile: production routes plus explicit candidates and judges; O
   }
   const candidates = entries(view.candidates).map(([entry]) => entry);
   const judges = entries(view.judges).map(([entry]) => entry);
-  assert.deepEqual(candidates.map((e) => e.provider).filter((p, i, all) => all.indexOf(p) === i), ['deepseek', 'claude', 'gemini'], 'owner order: DeepSeek, Claude, Gemini');
+  assert.deepEqual(candidates.map((e) => e.provider).filter((p, i, all) => all.indexOf(p) === i), ['deepseek', 'claude'], 'owner order: DeepSeek, Claude');
   assert.equal(candidates.some((e) => e.provider === 'openai'), false, 'OpenAI is never a candidate');
-  assert.deepEqual(judges.map((e) => e.provider).sort(), ['claude', 'gemini', 'openai'], 'the panel has three vendors');
-  assert.ok(candidates.some((e) => e.provider === 'gemini'));
+  assert.deepEqual(judges.map((e) => e.provider).sort(), ['claude', 'openai'], 'the panel has two vendors');
+  assert.equal([...candidates, ...judges].some((e) => e.provider === 'gemini'), false, 'Gemini is neither a candidate nor a judge');
   // The policy lets each judge serve eval.judge on synthetic items, and keeps a client image on Claude.
   const r = core.createRouter({ ...cfg, legacyRoute, now: NOW });
   for (const route of view.judges) {
@@ -602,8 +610,6 @@ const SNAPSHOT = JSON.parse(readFileSync(new URL('./fixtures/llm-route-snapshot.
 /** First choices that differ from the snapshot on purpose, each with its reason. */
 const DECLARED_ROUTE_CHANGES = Object.freeze({
   'prod dev.judge': ['claude:claude-sonnet-5-5', 'the judge never runs on the planner model (dev.plan starts on Haiku 5.5)'],
-  'legacy template-import.qa-vision': ['gemini:gemini-2.5-flash', 'Gemini is a paid provider now, so a call site whose own provider is Gemini keeps it for public template captures'],
-  'legacy siteintel.golden-judge-vision': ['gemini:gemini-2.5-flash', 'Gemini is a paid provider now, so a call site whose own provider is Gemini keeps it for public template captures'],
 });
 
 function snapshotDifferences(routes, { policy = ASOLDI_LLM_POLICY, declared = DECLARED_ROUTE_CHANGES } = {}) {

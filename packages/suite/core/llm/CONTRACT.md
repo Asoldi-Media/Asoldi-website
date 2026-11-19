@@ -88,7 +88,7 @@ Every core export the contract relies on is listed in `CORE_EXPORTS`.
 { "version": 1, "profiles": {
   "legacy": { "default": "${legacy}", "vision": "${legacy}" },
   "prod":   { "default": "claude:claude-haiku-5-5:medium",
-              "vision":  "claude:claude-haiku-5-5:medium|gemini:gemini-2.5-flash",
+              "vision":  "claude:claude-haiku-5-5:medium",
               "tasks": { "<task>": "<route>" }, "kinds": { "<family>": "<route>" },
               "escalate": { "<task>": ["<route>", "..."] }, "escalateKinds": { "<family>": ["<route>"] },
               "tiers": { "tier-3-ecommerce": { "tasks": {}, "kinds": {}, "escalate": {} } } },

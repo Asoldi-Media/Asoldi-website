@@ -24,6 +24,10 @@ const LIVE_SITE = { note: "public for template sources; pass ctx.dataClass 'busi
 // TEMPLATE_ONLY_IMAGE_TASKS in CONTRACT.md and the registry test).
 const IN_RUN_CAPTURE = { note: 'runs inside a client run: its captures are client data, also when the page comes from a template; images go to Claude unless the call is synthetic or carries an accepted imagesRedacted' };
 
+// Audio and video input exists on Gemini only. These tasks are the one place a Gemini route may appear
+// (see AUDIO_VIDEO_TASKS and the registry test); every image or PDF task is Claude only.
+const AV_ONLY = { note: 'audio and video of a client upload; Claude cannot read them, so this task stays on Gemini (paid tier) until the owner chooses another route' };
+
 export const ASOLDI_LLM_TASKS = {
   version: 1,
   tasks: {
@@ -95,6 +99,9 @@ export const ASOLDI_LLM_TASKS = {
     'quickfill.colors': t('json', true, 'business', 1000, { family: 'media', repo: M }),
     'quickfill.social': t('json', true, 'business', 2000, { family: 'media', repo: M }),
     'media.transcript': t('json', true, 'business', 1500, { family: 'media', repo: M }),
+    // Audio and video of a client upload. Claude has no audio or video input, so this is the one task family that
+    // stays on Gemini (paid tier). It sends no image; images use media.transcript on Claude.
+    'media.transcript-av': t('json', false, 'business', 1500, { family: 'media-av', repo: M, ...AV_ONLY }),
     'media.categorize': t('json', true, 'business', 1500, { family: 'media', repo: M }),
     'icon.resolve': t('json', false, 'public', 1000, { family: 'classification', effort: 'low', repo: M }),
     'icon.resolve-vision': t('json', true, 'business', 1000, { family: 'classification', effort: 'low', repo: M, ...IN_RUN_CAPTURE }),
@@ -123,6 +130,8 @@ export const ASOLDI_LLM_TASKS = {
     // Hub: a price list or menu photo read as plain text lines, and a client media file's placement brief.
     'assistant.products-image': t('text', true, 'business', 4000, { family: 'extraction', repo: H }),
     'assistant.media-brief': t('json', true, 'business', 2000, { family: 'media', repo: H }),
+    // The audio and video part of a client file's placement brief: Gemini only (Claude has no audio or video input).
+    'assistant.media-brief-av': t('json', false, 'business', 2000, { family: 'media-av', repo: H, ...AV_ONLY }),
     'inbox.categorize': t('json', false, 'personal', 2000, { family: 'classification', effort: 'low', repo: H }),
     'inbox.decide': t('json', false, 'personal', 4000, { family: 'extraction', repo: H }),
     'inbox.inspect-contract': t('json', true, 'personal', 4000, { family: 'extraction', repo: H }),
@@ -149,9 +158,9 @@ export const ASOLDI_LLM_TASKS = {
  * Q5: real client data runs on Claude (or replay). DeepSeek stays only as a fallback for families whose tasks
  * are mostly public (template HTML, template classification); the data policy removes it for any client data.
  * When such a task reads a client's live site, the caller passes ctx.dataClass 'business' (see LIVE_SITE).
- * Gemini entries are in effect: the owner confirmed the paid tier on 2026-11-10 (ASOLDI_LLM_POLICY below). The
- * core's image rule still keeps every image of real-client data on Claude, so a Gemini second choice of a vision
- * route is used only for synthetic data, accepted redacted images and the template-only image tasks.
+ * Every image or PDF read is Claude only (owner decision 2026-11-19: one vendor wallet for vision). The only Gemini
+ * entries left are the audio and video tasks (AUDIO_VIDEO_TASKS): Claude has no audio or video input, and the
+ * owner confirmed the paid Gemini tier on 2026-11-10 (ASOLDI_LLM_POLICY below).
  * DeepSeek in production (owner decision 2026-11-13): fallback for synthetic or redacted payloads only; the
  * policy skips this entry for unredacted real-client data. It stays second choice for classification and extraction.
  * The judge of the development agent never runs on the planner's model: dev.judge starts on Sonnet 5.5 where
@@ -159,8 +168,12 @@ export const ASOLDI_LLM_TASKS = {
  * `eval` is the model-evaluation profile: production routes plus explicit lists. `candidates` are the models an
  * evaluation compares and `judges` the blind panel; each item is one route entry with no fallback, so an answer
  * or verdict always comes from the model named. OpenAI appears only as a judge (the policy limits it to the
- * evaluation tasks); Gemini is a candidate and a judge.
+ * evaluation tasks); Gemini is neither a candidate nor a judge.
  */
+/** The tasks that carry audio or video. The only tasks whose routes may name Gemini (every other task is Claude, DeepSeek or OpenAI). */
+export const AUDIO_VIDEO_TASKS = Object.freeze(['media.transcript-av', 'assistant.media-brief-av']);
+const AV_ROUTE = 'gemini:gemini-2.5-flash-lite|gemini:gemini-2.5-flash';
+
 export const ASOLDI_LLM_ROUTES = {
   version: 1,
   profiles: {
@@ -171,7 +184,7 @@ export const ASOLDI_LLM_ROUTES = {
     },
     prod: {
       default: 'claude:claude-haiku-5-5:medium',
-      vision: 'claude:claude-haiku-5-5:medium|gemini:gemini-2.5-flash',
+      vision: 'claude:claude-haiku-5-5:medium',
       note: 'DeepSeek (second choice of classification and extraction): fallback for synthetic or redacted payloads only; the policy skips this entry for unredacted real-client data.',
       kinds: {
         // DeepSeek here: fallback for synthetic or redacted payloads only; the policy skips this entry for
@@ -180,8 +193,8 @@ export const ASOLDI_LLM_ROUTES = {
         extraction: 'claude:claude-haiku-5-5:low|deepseek:deepseek-flash',
         copy: 'claude:claude-haiku-5-5:medium',
         plan: 'claude:claude-haiku-5-5:medium',
-        'visual-qa': 'claude:claude-haiku-5-5:medium|gemini:gemini-2.5-flash',
-        media: 'claude:claude-haiku-5-5:low|gemini:gemini-2.5-flash-lite',
+        'visual-qa': 'claude:claude-haiku-5-5:medium',
+        media: 'claude:claude-haiku-5-5:low',
         brief: 'claude:claude-haiku-5-5:medium',
         'keyword-judge': 'claude:claude-haiku-5-5:low',
         judge: 'claude:claude-haiku-5-5:medium',
@@ -197,18 +210,23 @@ export const ASOLDI_LLM_ROUTES = {
         'eval.judge': 'claude:claude-opus-5-5:high',
         // The judge is never the planner's model (dev.plan starts on Haiku 5.5).
         'dev.judge': 'claude:claude-sonnet-5-5:medium',
+        // One signature question on a contract page: accuracy matters and the cost is cents.
+        'inbox.inspect-contract': 'claude:claude-haiku-5-5:medium',
+        // Audio and video: Gemini only (flash-lite, then flash), no image is sent.
+        'assistant.media-brief-av': AV_ROUTE,
+        'media.transcript-av': AV_ROUTE,
       },
       escalate: {
         // Step by step: plan Haiku -> Sonnet -> Opus, judge Sonnet -> Opus -> Sonnet (high): never the same model.
         'dev.plan': ['claude:claude-sonnet-5-5:medium', 'claude:claude-opus-5-5:medium'],
-        'dev.judge': ['claude:claude-opus-5-5:medium|gemini:gemini-2.5-pro', 'claude:claude-sonnet-5-5:high|gemini:gemini-2.5-pro'],
+        'dev.judge': ['claude:claude-opus-5-5:medium', 'claude:claude-sonnet-5-5:high'],
       },
       escalateKinds: {
         classification: ['claude:claude-haiku-5-5:medium'],
         extraction: ['claude:claude-haiku-5-5:medium'],
         copy: ['claude:claude-sonnet-5-5:medium'],
         plan: ['claude:claude-sonnet-5-5:medium', 'claude:claude-sonnet-5-5:high'],
-        'visual-qa': ['claude:claude-sonnet-5-5:medium|gemini:gemini-2.5-pro'],
+        'visual-qa': ['claude:claude-sonnet-5-5:medium'],
         brief: ['claude:claude-sonnet-5-5:medium'],
         'keyword-judge': ['claude:claude-haiku-5-5:medium'],
         judge: ['claude:claude-sonnet-5-5:medium'],
@@ -219,15 +237,16 @@ export const ASOLDI_LLM_ROUTES = {
     },
     test: {
       default: 'deepseek:deepseek-flash',
-      vision: 'gemini:gemini-2.5-flash-lite|claude:claude-haiku-5-5:low',
+      vision: 'claude:claude-haiku-5-5:low',
       kinds: { agent: 'claude:claude-haiku-5-5:low' },
+      tasks: { 'assistant.media-brief-av': AV_ROUTE, 'media.transcript-av': AV_ROUTE },
       note: 'DeepSeek for text on public or synthetic data, and on redacted data that is not a transcript (Q5); the policy moves real client data and every non-synthetic transcript to Claude Haiku at the task effort.',
     },
     replay: { default: 'replay:strict', vision: 'replay:strict' },
     record: { inherit: 'test', record: true },
     eval: {
       inherit: 'prod',
-      // Owner order: DeepSeek, then Haiku 5.5, then other Claude, then Gemini. DeepSeek candidates run only on
+      // Owner order: DeepSeek, then Haiku 5.5, then other Claude. DeepSeek candidates run only on
       // synthetic or redacted items (the data policy removes them otherwise).
       candidates: [
         'deepseek:deepseek-flash',
@@ -238,10 +257,8 @@ export const ASOLDI_LLM_ROUTES = {
         'claude:claude-sonnet-5-5:medium',
         'claude:claude-sonnet-5-5:high',
         'claude:claude-opus-5-5:medium',
-        'gemini:gemini-2.5-flash',
-        'gemini:gemini-2.5-pro',
       ],
-      judges: ['claude:claude-opus-5-5:high', 'gemini:gemini-2.5-pro', 'openai:gpt-4.1'],
+      judges: ['claude:claude-opus-5-5:high', 'openai:gpt-4.1'],
       note: 'Model evaluation: production routes plus explicit candidates and judges (one entry each, no fallback). OpenAI is a judge only; images of real-client data stay on Claude unless redacted.',
     },
   },
@@ -257,7 +274,8 @@ export const ASOLDI_LLM_POLICY = {
       billingTier: 'paid',
       paidTierConfirmedAt: '2026-11-10',
       allowUnpaidPublic: false,
-      note: 'Paid tier confirmed by the owner on 2026-11-10 (the core needs both billingTier paid and the date). Images of real-client data still go only to Claude unless they are synthetic or redacted (core image rule).',
+      tasks: [...AUDIO_VIDEO_TASKS, 'sales-link.discover'],
+      note: 'Audio and video of client uploads only (media.transcript-av, assistant.media-brief-av; Claude has no audio or video input), plus the grounded link search of sales-link.discover. Paid tier confirmed by the owner on 2026-11-10 (the core needs both billingTier paid and the date). Images of real-client data go only to Claude (core image rule), and no image or PDF task has a Gemini route.',
     },
     deepseek: { allow: ['public', 'business'], note: 'Never personal or transcript data; client data only when synthetic or redacted (Q5).' },
     openai: {

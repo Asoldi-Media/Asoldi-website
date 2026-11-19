@@ -116,8 +116,13 @@ test('png/jpeg pass through or downscale; video/audio respect the cost caps; unk
   assert.ok((await sharp(big.buffer).metadata()).width <= 768);
   const small = await prepareForVision(f.smallPng, 'icon.png');
   assert.equal(small.buffer, f.smallPng);
-  const heic = await prepareForVision(Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypheic'), Buffer.alloc(32)]), 'iphone.heic');
-  assert.equal(heic.mimeType, 'image/heic');
+  // Claude takes JPEG, PNG, GIF and WebP only, and sharp's libvips has no HEVC decoder: HEIC and HEIF are skipped with a
+  // reason, never passed on as HEIC to a provider.
+  for (const name of ['iphone.heic', 'iphone.heif']) {
+    const heic = await prepareForVision(Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypheic'), Buffer.alloc(32)]), name);
+    assert.deepEqual([heic.ok, heic.mimeType, heic.buffer], [false, '', null], name);
+    assert.match(heic.error, /not readable here \(no HEVC decoder installed\)/, name);
+  }
   const video = await prepareForVision(Buffer.alloc(4 * 1024 * 1024, 1), 'clip.mp4');
   assert.equal(video.ok, false);
   assert.match(video.error, /video larger/);
@@ -216,4 +221,18 @@ test('a foreign brand logo is demoted to work, and a menu photo is product info'
   const failed = await describeMedia({ buffer: f.png, fileName: 'x.png', generate: async () => ({ ok: false, error: 'boom' }) });
   assert.equal(failed.ok, false);
   assert.equal(failed.error, 'boom');
+});
+
+test('describeMedia never sends a picture to the Gemini default: an image needs a generate function (Claude reads it)', async () => {
+  const realFetch = globalThis.fetch;
+  let fetched = 0;
+  globalThis.fetch = async () => ((fetched += 1), new Response('{}'));
+  try {
+    const refused = await describeMedia({ buffer: svg, fileName: 'logo.svg', context: { businessName: 'Fjordvik Bakeri' }, harness: ASOLDI_MEDIA_HARNESS });
+    assert.equal(refused.ok, false);
+    assert.match(refused.error, /images are read by Claude/);
+    assert.equal(fetched, 0, 'no Gemini request was made');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });

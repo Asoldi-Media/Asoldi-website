@@ -12,8 +12,9 @@ import { generateGeminiJson, geminiVisionMaxEdge } from './gemini.js';
  * @param {string} input.fileName
  * @param {{businessName?: string, industry?: string, businessWhat?: string}} [input.context]
  * @param {object} [input.harness] promptVersion, extraRules, extraFields, fieldForSection, labelForSection, limits
- * @param {Function} [input.generate] ({prompt, mimeType, buffer}) => {ok, parsed, model, error}; defaults to Gemini
- * @param {string[]} [input.models] Gemini model order for the default generate
+ * @param {Function} [input.generate] ({prompt, mimeType, buffer}) => {ok, parsed, model, error}. Images need one (a
+ *   Claude read through the facade). Without it only audio and video run, on the Gemini default below.
+ * @param {string[]} [input.models] Gemini model order for the default generate (audio and video only)
  * @param {Function} [input.onUsage] token usage hook for the default generate
  */
 export async function describeMedia({
@@ -39,6 +40,8 @@ export async function describeMedia({
   };
   const prepared = await prepareForVision(bytes, fileName, { maxEdge: geminiVisionMaxEdge(), ...(harness.limits || {}) });
   if (!prepared.ok) return { ...base, error: prepared.error };
+  // Claude reads images, Gemini only audio and video: the Gemini default never receives a picture.
+  if (!generate && prepared.kind === 'image') return { ...base, error: 'images are read by Claude: pass a generate function' };
   const measured = prepared.kind === 'image' ? await measureMedia(bytes, fileName) : null;
   const prompt = buildMediaBriefPrompt({ ...context, fileName, kind: prepared.kind, measured, textHint: prepared.textHint, harness });
   const call = generate

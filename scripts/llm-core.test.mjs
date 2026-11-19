@@ -1565,8 +1565,10 @@ test('policy: exceptions record known calls outside the core and are validated',
 });
 
 // ---------- ledger data-policy fields, image count, the image rule, DeepSeek as a fallback ----------
-// These run on the shipped registry, routes and policy (the Asoldi harness), where Gemini is a paid provider:
-// a refusal below cannot come from Gemini being switched off.
+// These run on the shipped registry, routes and policy (the Asoldi harness), where Gemini is a paid provider
+// limited to audio and video tasks. No shipped route sends a picture to Gemini any more, so the image-rule cases
+// below plant a Gemini route (ctx.route) and a copy of the policy without Gemini's task scope: a refusal there
+// comes from the image rule alone, not from Gemini being switched off or scoped.
 
 const SHOT = Object.freeze({ mime: 'image/jpeg', base64: tinyJpeg(800, 600).toString('base64') });
 const REAL_CLIENT_CLASSES = ['business', 'personal', 'transcript'];
@@ -1580,6 +1582,13 @@ function mockProviders() {
   };
   return { reached, providers: { claude: answer('claude'), gemini: answer('gemini'), deepseek: answer('deepseek'), openai: answer('openai') } };
 }
+
+/** The shipped policy without Gemini's task scope: it lets Gemini take any task, so only the image rule can keep a picture off it. */
+const GEMINI_UNSCOPED = (() => {
+  const { tasks: _scope, ...gemini } = ASOLDI_LLM_POLICY.providers.gemini;
+  return { ...ASOLDI_LLM_POLICY, providers: { ...ASOLDI_LLM_POLICY.providers, gemini } };
+})();
+const PLANTED_GEMINI_ROUTE = 'gemini:gemini-2.5-flash-lite';
 
 /** A core on the shipped config. `coreModule` may be a copy of the core without a hard rule (negative controls). */
 function shippedCore({ env = { AI_PROFILE: 'test' }, providers, policy = ASOLDI_LLM_POLICY, coreModule = core } = {}) {
@@ -1671,9 +1680,12 @@ test('ledger: a row for every status carries dataClass and redacted; a row built
 });
 
 test('ledger: images counts every image block of the request (request.images, and an image inside a tool result)', async () => {
-  const direct = await shippedCall({ task: 'dev.judge', user: 'Check', images: [SHOT], ctx: { synthetic: true } });
-  const nested = await shippedCall({ task: 'dev.judge', messages: imageInToolResult(), ctx: { synthetic: true } });
-  const both = await shippedCall({ task: 'dev.judge', messages: imageInToolResult(), images: [SHOT], ctx: { synthetic: true } });
+  // Route-agnostic counting: a synthetic call on a planted Gemini route (Claude takes pictures in either place but not both).
+  const planted = { policy: GEMINI_UNSCOPED };
+  const ctx = { synthetic: true, route: PLANTED_GEMINI_ROUTE };
+  const direct = await shippedCall({ task: 'dev.judge', user: 'Check', images: [SHOT], ctx }, planted);
+  const nested = await shippedCall({ task: 'dev.judge', messages: imageInToolResult(), ctx }, planted);
+  const both = await shippedCall({ task: 'dev.judge', messages: imageInToolResult(), images: [SHOT], ctx }, planted);
   const built = [direct, nested, both].map((result) => result.rows.length);
   assert.deepEqual(built, [1, 1, 1], 'rows built');
   assert.equal(direct.rows[0].images, 1, 'an image in request.images');
@@ -1720,9 +1732,11 @@ test('ledger: dataClass and redacted come from the policy result, never from the
 test('image rule: an image of real-client data goes only to Claude unless synthetic or redacted with an accepted imagesRedacted (10 cases, shipped policy, Gemini paid)', async () => {
   assert.equal(ASOLDI_LLM_POLICY.providers.gemini.billingTier, 'paid');
   assert.ok(ASOLDI_LLM_POLICY.providers.gemini.paidTierConfirmedAt);
-  const imageCall = (extra = {}, options = {}) => shippedCall({ task: 'dev.judge', user: 'Does the page look right?', images: [SHOT], ...extra, ctx: { runId: 'r-image', ...(extra.ctx || {}) } }, options);
+  // Cases (a) and (d) to (h) run on a planted Gemini route and a policy copy where Gemini may take any task.
+  const imageCall = (extra = {}, options = {}) => shippedCall({ task: 'dev.judge', user: 'Does the page look right?', images: [SHOT], ...extra, ctx: { runId: 'r-image', route: PLANTED_GEMINI_ROUTE, ...(extra.ctx || {}) } }, { policy: GEMINI_UNSCOPED, ...options });
   const shipped = core.createRouter({ ...asoldiLlmConfig(), legacyRoute });
-  assert.match(shipped.resolveRoute('dev.judge', { profile: 'test', synthetic: true }).route, /^gemini:/, 'the test-profile vision route lists Gemini first');
+  assert.match(shipped.resolveRoute('dev.judge', { profile: 'test', synthetic: true }).route, /^claude:/, 'the shipped test-profile vision route is Claude only');
+  assert.equal(providerAllows(ASOLDI_LLM_POLICY, 'gemini', 'public', { task: 'dev.judge' }).allowed, false, 'and the shipped policy keeps Gemini off a picture task by scope as well');
   let cases = 0;
 
   // (a) a planted real-client image (business class, 1 image in request.images, no flag) on a Gemini-first route.
@@ -1734,7 +1748,7 @@ test('image rule: an image of real-client data goes only to Claude unless synthe
   assert.deepEqual([rowA.dataClass, rowA.redacted], ['business', false]);
 
   // (b) the same call on a DeepSeek-first route.
-  const b = await imageCall({ ctx: { route: 'deepseek:deepseek-flash' } });
+  const b = await imageCall({ ctx: { route: 'deepseek:deepseek-flash|gemini:gemini-2.5-flash-lite' } });
   cases += 1;
   assertKeptOff(b, 'deepseek', 'b');
   // DeepSeek has no image input, so the capability filter also drops it. The policy rule is shown on its own:
@@ -1804,7 +1818,7 @@ test('image rule: an image of real-client data goes only to Claude unless synthe
   // Negative control built at test time: a copy of the policy without the rule lets case (a) reach Gemini.
   const copy = await coreWithoutRules(['client-images-claude-only']);
   try {
-    const escaped = await imageCall({}, { coreModule: copy.core });
+    const escaped = await imageCall({}, { policy: GEMINI_UNSCOPED, coreModule: copy.core });
     assert.deepEqual(escaped.rows.map((row) => row.provider), ['gemini'], 'without the rule the planted image reaches Gemini, so assertion (a) fails on the copy');
     assert.throws(() => assertKeptOff(escaped, 'gemini', 'a on the copy'));
   } finally {
@@ -1824,8 +1838,8 @@ test('image rule: it applies in every profile and to every provider but Claude; 
     }
   }
   assert.ok(checked > 0);
-  // The two template-only image tasks stay public: their route is not changed by the rule.
-  assert.match(r.resolveRoute('template-import.qa-vision', { profile: 'test' }, { images: 1 }).route, /^gemini:/);
+  // The two template-only image tasks stay public: the rule does not touch them (and no picture task routes to Gemini any more).
+  assert.match(r.resolveRoute('template-import.qa-vision', { profile: 'test' }, { images: 1 }).route, /^claude:/);
   // A caller that sends such a task a capture of a client run passes ctx.dataClass business.
   assert.deepEqual(r.resolveRoute('template-import.qa-vision', { profile: 'test', dataClass: 'business' }, { images: 1 }).chain.map((entry) => entry.provider), ['claude']);
   for (const provider of ['gemini', 'deepseek', 'openai']) {
