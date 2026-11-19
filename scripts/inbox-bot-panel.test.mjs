@@ -74,6 +74,10 @@ test('each newer needs_human reason has its own Norwegian label, also with a `:d
     'move-warning:calendar sync failed': 'Bot flyttet møtet — sjekk kalenderen, et steg etterpå feilet',
     'no-meet-link': 'Trenger svar fra selger — kunden spør etter møtelenken',
     'book-failed:no-meeting-row': 'Trenger svar fra selger — boten fikk ikke flyttet møtet',
+    'guest-unknown-address:Kari': 'Trenger svar fra selger — kunden vil ha med en person uten kjent e-postadresse',
+    'guest-add-failed:calendar': 'Trenger svar fra selger — boten fikk ikke lagt til gjesten',
+    'guest-cancel': 'Trenger svar fra selger — en gjest vil avlyse, møtet står',
+    'guest-counter': 'Trenger svar fra selger — en gjest foreslo ny tid, møtet står',
   };
   for (const [reason, label] of Object.entries(labels)) {
     assert.equal(inboxActivityLabel(row({ status: 'needs_human', reason })), label, reason);
@@ -92,6 +96,11 @@ test('applied rows say what the bot did', () => {
   assert.equal(inboxActivityLabel(row({ status: 'applied', kind: 'sales_propose' })), 'Bot svarte med ledige tider');
   assert.equal(inboxActivityLabel(row({ status: 'applied', kind: 'sales_call' })), 'Bot svarte og lovet å ta kontakt');
   assert.equal(inboxActivityLabel(row({ status: 'applied', kind: 'something_new' })), 'Bot svarte');
+  assert.equal(inboxActivityLabel(row({ status: 'applied', kind: 'guest_add' })), 'Bot la til gjest i møtet');
+});
+
+test('a guest that declined the invite is logged, not a reason to answer', () => {
+  assert.equal(inboxActivityLabel(row({ status: 'logged', kind: 'guest_declined', reason: 'guest-declined' })), 'Gjest avslo møtet — møtet står');
 });
 
 test('logged, skipped and unmatched rows never claim a reply', () => {

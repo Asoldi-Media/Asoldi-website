@@ -43,6 +43,69 @@ export function decodeMimeWords(value = '') {
     });
 }
 
+/** Split a header at top-level commas/semicolons: quotes, angle brackets and comments hide theirs. */
+function splitAddressHeader(value = '') {
+  const parts = [];
+  let current = '';
+  let quoted = false;
+  let angle = false;
+  let comment = 0;
+  const raw = String(value || '');
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i];
+    if (quoted) {
+      current += ch;
+      if (ch === '\\' && i + 1 < raw.length) {
+        i += 1;
+        current += raw[i];
+      } else if (ch === '"') quoted = false;
+      continue;
+    }
+    if (comment) {
+      current += ch;
+      if (ch === '(') comment += 1;
+      else if (ch === ')') comment -= 1;
+      continue;
+    }
+    if (ch === '"') quoted = true;
+    else if (ch === '(') comment = 1;
+    else if (ch === '<') angle = true;
+    else if (ch === '>') angle = false;
+    else if ((ch === ',' || ch === ';') && !angle) {
+      parts.push(current);
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  parts.push(current);
+  return parts.map((part) => part.trim()).filter(Boolean);
+}
+
+/** An address header ("To", "Cc") as [{ name, email }]: quoted names, encoded words and group labels handled. */
+export function parseAddressList(value = '') {
+  const out = [];
+  for (const part of splitAddressHeader(value)) {
+    // "Team: a@x" keeps the member; the group label is not a person.
+    const entry = part.replace(/^[^"<@]*:\s*/, '');
+    const angled = entry.match(/^(.*?)<\s*([^<>\s]+)\s*>\s*$/s);
+    let name = '';
+    let email = '';
+    if (angled) {
+      name = angled[1];
+      email = angled[2];
+    } else {
+      email = entry.replace(/\([^)]*\)/g, '').trim();
+      name = (entry.match(/\(([^)]*)\)/) || [])[1] || '';
+    }
+    name = decodeMimeWords(name.trim().replace(/^"(.*)"$/s, '$1').replace(/\\(.)/g, '$1')).trim();
+    email = decodeMimeWords(email).trim().replace(/^mailto:/i, '').toLowerCase();
+    if (!/^[^\s@<>",]+@[^\s@<>",]+\.[^\s@<>",]+$/.test(email)) continue;
+    out.push({ name, email });
+  }
+  return out;
+}
+
 export function htmlToText(html = '') {
   return String(html || '')
     .replace(/<(style|script|head)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
@@ -77,7 +140,9 @@ function headerMap(block = '') {
     const idx = line.indexOf(':');
     if (idx < 1) continue;
     current = line.slice(0, idx).toLowerCase();
-    map[current] = line.slice(idx + 1).trim();
+    const value = line.slice(idx + 1).trim();
+    // A repeated To/Cc header lists more people, never replaces the first.
+    map[current] = (current === 'to' || current === 'cc') && map[current] ? `${map[current]}, ${value}` : value;
   }
   return map;
 }
@@ -209,6 +274,8 @@ export function parseRfc822(raw = '') {
   return {
     from: decodeMimeWords(headers.from),
     to: decodeMimeWords(headers.to),
+    toList: parseAddressList(headers.to),
+    cc: parseAddressList(headers.cc),
     subject: decodeMimeWords(headers.subject).trim(),
     date: headers.date || '',
     messageId: String(headers['message-id'] || '').trim(),
