@@ -215,7 +215,12 @@ test('the default profile is legacy: every migrated task keeps today\'s provider
     assert.equal(byTask[task].route, 'deepseek:deepseek-chat', task);
     assert.equal(byTask[task].source, 'legacy-passthrough', task);
   }
-  for (const task of ['assistant.products-image', 'inbox.inspect-contract', 'sales-link.discover', 'assistant.media-brief']) assert.equal(byTask[task].route, 'gemini:gemini-2.5-flash', task);
+  // Every picture read is Claude Haiku 5.5; Gemini is left for audio and video and the grounded link search.
+  assert.equal(byTask['assistant.products-image'].route, 'claude:claude-haiku-5-5:low');
+  assert.equal(byTask['inbox.inspect-contract'].route, 'claude:claude-haiku-5-5:medium');
+  assert.equal(byTask['assistant.media-brief'].route, 'claude:claude-haiku-5-5:low');
+  for (const task of ['sales-link.discover', 'assistant.media-brief-av']) assert.equal(byTask[task].route, 'gemini:gemini-2.5-flash', task);
+  for (const task of ['assistant.products-image', 'inbox.inspect-contract', 'assistant.media-brief']) assert.doesNotMatch(byTask[task].shadowRoute || '', /gemini/, task);
   assert.equal(byTask['infokort.agent'].route, 'claude:claude-haiku-5-5:medium');
   // The shadow route is what the prod profile would do: transcripts go to Claude Haiku 5.5, never DeepSeek.
   assert.equal(byTask['offer.fill-from-transcript'].shadowRoute, 'claude:claude-haiku-5-5:low');
@@ -427,6 +432,7 @@ test('the ledger records 100% of calls in a scripted run of every hub task (lega
   await structureProductsFromText({ texts: [{ fileName: 'liste.txt', text: 'Brød 45 kr\nKanelbolle 35 kr', preferAi: true }], salesClientId });
   await extractIngestText({ buffer: png, originalName: 'meny.png', mimeType: 'image/png' }, { salesClientId });
   await transcribeClientMedia({ buffer: jpeg, fileName: 'kaffe.jpg', context: { businessName: CLIENT.businessName }, salesClientId });
+  await transcribeClientMedia({ buffer: Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypmp42'), Buffer.alloc(64, 1)]), fileName: 'klipp.mp4', context: { businessName: CLIENT.businessName }, salesClientId });
   await categorizeEmail({ from: 'kunde@firma.test', subject: 'Spørsmål', text: 'Hei, når er siden klar?', salesClientId });
   await decideInboxWrite({ client: CLIENT, message: { text: 'Hei, kan vi flytte møtet?', subject: 'Møte', from: 'kunde@firma.test' }, heuristic: { intent: 'question' } });
   await askVisionIfSigned({ bytes: png, mimeType: 'image/png' }, { salesClientId });
@@ -452,16 +458,20 @@ test('the ledger records 100% of calls in a scripted run of every hub task (lega
   for (const task of HUB_TASKS) assert.ok(seen.has(task), `no ledger row for ${task}`);
   const providersByTask = Object.fromEntries(rows.map((row) => [row.task, row.provider]));
   assert.equal(providersByTask['offer.fill-from-transcript'], 'deepseek');
-  // Image rule: the three call sites that send a client's picture leave Gemini on the legacy profile too. The
-  // policy moves each to Claude and the row says so.
+  // The three call sites that send a client's picture read it on Claude on the legacy profile too: today's
+  // request is the plain Claude Haiku 5.5 request, so there is no redirect to record.
   for (const task of ['inbox.inspect-contract', 'assistant.products-image', 'assistant.media-brief']) {
     const row = rows.find((item) => item.task === task);
     assert.equal(row.provider, 'claude', task);
+    assert.equal(row.requestedModel, 'claude-haiku-5-5', task);
     assert.equal(row.images, 1, task);
-    assert.match(row.policyRedirect?.from || '', /^gemini:/, task);
-    assert.match(row.policyRedirect?.reason || '', /images/, task);
+    assert.equal(row.passthrough, true, task);
+    assert.ok(!row.policyRedirect, task);
   }
   assert.equal(rows.filter((row) => row.images > 0 && row.provider !== 'claude').length, 0, 'no image row on another provider');
+  // Audio and video are the one thing Gemini still reads: no picture, its own task, today's request.
+  const av = rows.find((item) => item.task === 'assistant.media-brief-av');
+  assert.deepEqual([av.provider, av.images], ['gemini', 0]);
   assert.deepEqual(rows.flatMap((row) => core.ledgerRowProblems(row)), [], 'every row has the data-policy fields');
   // A call without images keeps today's provider.
   assert.equal(providersByTask['sales-link.discover'], 'gemini');
@@ -576,15 +586,15 @@ test('safe mode: legacy and prod-profile calls never reach a provider; each is g
     assert.deepEqual(prod.data, {});
     const turn = await facade.turn({ task: 'infokort.agent', system: 's', messages: [{ role: 'user', content: 'hi' }], tools: [] });
     assert.equal(turn.stopReason, 'end_turn');
-    // The Gemini call sites on the legacy profile. A text call: its own key check refuses and records the
-    // intent. An image call no longer runs today's Gemini request (image rule): it goes through the core to
-    // Claude, whose adapter is guarded and records the intent.
+    // The legacy call sites. The picture reads send the plain Claude request, which the aiCalls guard stubs and
+    // records (task name included); the grounded link search is the one Gemini site left, and its own key check
+    // refuses and records the intent.
     facade.setRoutesOverride({ profile: 'legacy' });
     const intentsBefore = safeMode.readRecentIntents(200).filter((intent) => intent.kind === 'aiCalls').length;
     const png = await tinyPng();
     await extractIngestText({ buffer: png, originalName: 'meny.png', mimeType: 'image/png' });
     const signed = await askVisionIfSigned({ bytes: png, mimeType: 'image/png' });
-    assert.equal(signed?.clientSigned, false, 'the guarded stub answers nothing, so nothing counts as signed');
+    assert.ok(!signed?.clientSigned, 'the guarded stub answers nothing, so nothing counts as signed');
     const links = await askGeminiForLinks({ businessName: CLIENT.businessName, city: 'Bergen' }, ['instagramUrl'], { fetchImpl: globalThis.fetch });
     assert.equal(links.reason, 'no-gemini-key');
     registerHubLlm(null);
@@ -594,7 +604,7 @@ test('safe mode: legacy and prod-profile calls never reach a provider; each is g
     for (const site of ['anthropic assistant.products-image', 'anthropic inbox.inspect-contract', 'link-discovery']) {
       assert.ok(geminiIntents.some((intent) => String(intent.detail || '').includes(site)), `${site}: ${JSON.stringify(geminiIntents)}`);
     }
-    assert.equal(geminiIntents.filter((intent) => /^gemini (assistant\.products-image|inbox\.inspect-contract)/.test(String(intent.detail || ''))).length, 0, 'no image call was offered to Gemini');
+    assert.equal(geminiIntents.filter((intent) => /^gemini (assistant\.products-image|inbox\.inspect-contract|assistant\.media-brief)/.test(String(intent.detail || ''))).length, 0, 'no image call was offered to Gemini');
     const intents = safeMode.readRecentIntents(50).filter((intent) => intent.kind === 'aiCalls');
     assert.ok(intents.length >= 3, JSON.stringify(intents));
     const rows = ledgerRows(dir);
@@ -672,7 +682,7 @@ test('a legacy call that tries twice writes a ledger row for each attempt (groun
   assert.deepEqual(links.map((row) => [row.status, row.attempt]), [['error', 1], ['ok', 2]]);
   assert.equal(links[0].salesClientId, 'c-att');
   assert.ok(links[0].error?.message, 'the failed attempt keeps its error');
-  const media = rows.filter((row) => row.task === 'assistant.media-brief');
+  const media = rows.filter((row) => row.task === 'assistant.media-brief-av');
   assert.deepEqual(media.map((row) => [row.status, row.attempt]), [['error', 1], ['ok', 2]]);
   assert.deepEqual(media.map((row) => row.requestedModel), ['gemini-2.5-flash-lite', 'gemini-2.5-flash']);
   assert.ok(media[1].inputTokens > 0, 'the answer that was used is priced');
@@ -953,27 +963,35 @@ test('image rule on every hub path that can carry a picture: a planted client pi
   const offClaude = (rows) => rows.filter((row) => row.images > 0 && reachedProvider(row) && row.provider !== 'claude' && row.provider !== 'replay' && REAL_CLIENT_CLASSES.includes(row.dataClass) && row.redacted === false);
   const geminiCalls = () => providerCalls.filter((call) => call.provider === 'gemini').length;
 
-  // 1. Core call (test profile: the vision route lists Gemini first).
+  // 1. Core call (test profile): the picture route is Claude only, so a client picture and a synthetic one both
+  // go to Claude, and a planted Gemini route is dropped (Gemini is scoped to audio and video).
   {
     const dir = freshDir('image-core');
     const facade = facadeAt(dir, { env: testEnv });
-    assert.match(facade.resolveRoute('assistant.media-brief', { synthetic: true }, { images: 1 }).route, /^gemini:/);
+    assert.equal(facade.resolveRoute('assistant.media-brief', { synthetic: true }, { images: 1 }).route, 'claude:claude-haiku-5-5:low');
     providerCalls.length = 0;
     await facade.json({ task: 'assistant.media-brief', user: 'Describe the picture.', images: picture(), ctx: { salesClientId: 'c-img' } });
     const rows = ledgerRows(dir);
     assert.deepEqual(rows.map((row) => [row.provider, row.images, row.dataClass, row.redacted]), [['claude', 1, 'business', false]]);
-    assert.match(rows[0].policyRedirect.from, /^gemini:/);
+    assert.ok(!rows[0].policyRedirect, 'the route is Claude: nothing was redirected');
     assert.equal(geminiCalls(), 0);
     assert.deepEqual(offClaude(rows), []);
-    // Positive control: the same call marked synthetic reaches the Gemini mock.
+    // A synthetic picture reads on Claude too: no picture task has a Gemini route.
     await facade.json({ task: 'assistant.media-brief', user: 'Describe the picture.', images: picture(), ctx: { synthetic: true } });
-    assert.equal(geminiCalls(), 1, 'the synthetic picture reached Gemini');
-    assert.deepEqual(ledgerRows(dir).at(-1).provider, 'gemini');
+    assert.equal(geminiCalls(), 0, 'not even a synthetic picture reaches Gemini');
+    assert.deepEqual(ledgerRows(dir).at(-1).provider, 'claude');
     assert.equal(ledgerRows(dir).at(-1).dataClass, 'synthetic');
+    // A planted Gemini route for the picture task is dropped by the policy (a task scope and the image rule).
+    for (const ctx of [{ route: 'gemini:gemini-2.5-flash-lite' }, { route: 'gemini:gemini-2.5-flash-lite', synthetic: true }]) {
+      await facade.json({ task: 'assistant.media-brief', user: 'Describe the picture.', images: picture(), ctx });
+      assert.equal(ledgerRows(dir).at(-1).provider, 'claude');
+      assert.match(ledgerRows(dir).at(-1).policyRedirect.from, /^gemini:/);
+    }
+    assert.equal(geminiCalls(), 0);
     checked += 1;
   }
 
-  // 2. Legacy passthrough of a json or text call: today's Gemini request does not run; the core sends it to Claude.
+  // 2. Legacy passthrough of a json or text call that a (planted) Gemini legacy request would carry: it does not run; the core sends it to Claude.
   {
     const dir = freshDir('image-legacy');
     const facade = facadeAt(dir);
@@ -982,11 +1000,10 @@ test('image rule on every hub path that can carry a picture: a planted client pi
     const legacy = { provider: 'gemini', model: 'gemini-2.5-flash', images: 1, run: async () => ((legacyRuns += 1), { data: { ok: true }, usage, priorAttempts: [{ provider: 'gemini', model: 'gemini-2.5-flash-lite', status: 'error' }] }) };
     providerCalls.length = 0;
     const result = await facade.json({ task: 'assistant.media-brief', user: 'Describe the picture.', images: picture(), ctx: { salesClientId: 'c-img' }, legacy });
-    assert.equal(legacyRuns, 0, 'the legacy Gemini request did not run');
+    assert.equal(legacyRuns, 0, 'the planted legacy Gemini request did not run');
     assert.equal(result.provider, 'claude');
     const rows = ledgerRows(dir);
     assert.deepEqual(rows.map((row) => [row.provider, row.images, row.profile]), [['claude', 1, 'legacy']]);
-    assert.match(rows[0].policyRedirect.from, /^gemini:/);
     assert.equal(rows.filter((row) => row.provider === 'gemini').length, 0, '0 rows on Gemini, prior attempts included');
     assert.equal(geminiCalls(), 0);
     assert.deepEqual(offClaude(rows), []);
@@ -1020,19 +1037,28 @@ test('image rule on every hub path that can carry a picture: a planted client pi
     checked += 1;
   }
 
-  // 4. Provider-specific call on a routed profile.
+  // 4. Provider-specific call on a routed profile. The picture task has no Gemini route, so even a synthetic
+  // picture is refused; the audio and video task has one, and the image rule still keeps a client picture off it.
   {
     const dir = freshDir('image-native-routed');
     const facade = facadeAt(dir, { env: testEnv });
     let runs = 0;
     const run = async () => ((runs += 1), { data: { ok: true }, usage, servedModel: 'gemini-2.5-flash-lite' });
-    await assert.rejects(() => facade.native({ task: 'assistant.media-brief', provider: 'gemini', images: 1, payload: { user: 'Describe the picture.' }, run }), (error) => error.code === 'route_unavailable');
+    for (const ctx of [{}, { synthetic: true }]) {
+      await assert.rejects(() => facade.native({ task: 'assistant.media-brief', provider: 'gemini', images: 1, payload: { user: 'Describe the picture.' }, ctx, run }), (error) => error.code === 'route_unavailable');
+    }
+    assert.equal(runs, 0);
+    assert.deepEqual(ledgerRows(dir), [], 'no Gemini entry on the picture route, so nothing was attempted or recorded');
+    // The audio and video task: a client picture sent to it is refused and recorded; a synthetic one and a clip run.
+    await assert.rejects(() => facade.native({ task: 'assistant.media-brief-av', provider: 'gemini', images: 1, payload: { user: 'Describe the picture.' }, run }), (error) => error.code === 'route_unavailable');
     assert.equal(runs, 0);
     const rows = ledgerRows(dir);
     assert.deepEqual(rows.map((row) => [row.provider, row.status, row.images]), [['gemini', 'policy_blocked', 1]]);
     assert.deepEqual(offClaude(rows), []);
-    await facade.native({ task: 'assistant.media-brief', provider: 'gemini', images: 1, payload: { user: 'Describe the picture.' }, ctx: { synthetic: true }, run });
-    assert.equal(runs, 1, 'the synthetic picture reached Gemini');
+    await facade.native({ task: 'assistant.media-brief-av', provider: 'gemini', images: 1, payload: { user: 'Describe the picture.' }, ctx: { synthetic: true }, run });
+    assert.equal(runs, 1, 'a synthetic picture may reach the audio and video route');
+    await facade.native({ task: 'assistant.media-brief-av', provider: 'gemini', payload: { user: 'Describe the clip.' }, run });
+    assert.equal(runs, 2, 'a clip carries no image block and runs');
     assert.deepEqual(ledgerRows(dir).at(-1).provider, 'gemini');
     checked += 1;
   }
@@ -1060,4 +1086,89 @@ test('legacy resolver on the facade: a DeepSeek call site with a personal task e
   assert.equal(cases, 1, 'cases run');
   const synthetic = facade.resolveRoute('inbox.categorize', { profile: 'legacy', synthetic: true }, { payload: { user: 'A fixture customer asks when the site is ready.' } });
   assert.equal(synthetic.route, 'deepseek:deepseek-chat', 'positive control: the entry is kept for a synthetic payload');
+});
+
+test('legacy picture reads send one plain Claude Haiku 5.5 request with a JPEG block and never a Gemini request, with or without the facade', async () => {
+  const png = await tinyPng();
+  const claudeRequests = () => providerCalls.filter((call) => call.provider === 'claude');
+  const geminiRequests = () => providerCalls.filter((call) => call.provider === 'gemini');
+  const assertPictureRequest = (call, effort, label) => {
+    assert.equal(call.url, 'https://api.anthropic.com/v1/messages', label);
+    assert.equal(call.body.model, 'claude-haiku-5-5', label);
+    assert.deepEqual(call.body.thinking, { type: 'adaptive' }, label);
+    assert.equal(call.body.output_config.effort, effort, label);
+    assert.ok(call.body.max_tokens >= 4096, `${label}: adaptive thinking counts toward max_tokens`);
+    for (const key of ['temperature', 'top_p', 'top_k']) assert.equal(key in call.body, false, `${label}: no ${key}`);
+    const [message] = call.body.messages;
+    const image = message.content.find((block) => block.type === 'image');
+    assert.equal(image.source.media_type, 'image/jpeg', label);
+    assert.equal(message.content[0].type, 'image', `${label}: the picture comes before the question`);
+    assert.equal(message.content.at(-1).type, 'text', label);
+    assert.ok(Buffer.from(image.source.data, 'base64').length < 1_000_000, label);
+  };
+  for (const [label, facaded] of [['with the facade', true], ['without the facade', false]]) {
+    const dir = freshDir(`picture-${facaded ? 'on' : 'off'}`);
+    if (facaded) registerHubLlm(facadeAt(dir));
+    else registerHubLlm(null);
+    try {
+      providerCalls.length = 0;
+      await extractIngestText({ buffer: png, originalName: 'meny.png', mimeType: 'image/png' }, { salesClientId: 'c-pic' });
+      await askVisionIfSigned({ bytes: png, mimeType: 'image/png' }, { salesClientId: 'c-pic' });
+      await transcribeClientMedia({ buffer: await tinyJpeg(), fileName: 'kaffe.jpg', context: { businessName: CLIENT.businessName }, salesClientId: 'c-pic' });
+      assert.equal(claudeRequests().length, 3, `${label}: one Claude request per picture read`);
+      assert.equal(geminiRequests().length, 0, `${label}: no Gemini request for a picture`);
+      assertPictureRequest(claudeRequests()[0], 'low', `${label}: price list photo`);
+      assertPictureRequest(claudeRequests()[1], 'medium', `${label}: contract page`);
+      assertPictureRequest(claudeRequests()[2], 'low', `${label}: media brief`);
+      if (facaded) {
+        const rows = ledgerRows(dir);
+        assert.deepEqual(rows.map((row) => [row.task, row.provider, row.images, row.status]), [
+          ['assistant.products-image', 'claude', 1, 'ok'],
+          ['inbox.inspect-contract', 'claude', 1, 'ok'],
+          ['assistant.media-brief', 'claude', 1, 'ok'],
+        ]);
+      }
+      // HEIC cannot be decoded here (no HEVC decoder): the file is skipped before any provider, not sent as HEIC.
+      providerCalls.length = 0;
+      const heic = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypheic'), Buffer.alloc(64, 1)]);
+      const read = await extractIngestText({ buffer: heic, originalName: 'foto.heic', mimeType: 'image/heic' });
+      assert.equal(read.text, '', `${label}: an unreadable HEIC gives no text`);
+      assert.equal(await transcribeClientMedia({ buffer: heic, fileName: 'foto.heic' }), null);
+      assert.equal(providerCalls.length, 0, `${label}: nothing was sent for the HEIC file`);
+    } finally {
+      registerHubLlm(null);
+    }
+  }
+  // Audio and video are the exception: they still go to Gemini, on their own task, in both modes.
+  providerCalls.length = 0;
+  const clip = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from('ftypmp42'), Buffer.alloc(64, 1)]);
+  const dir = freshDir('clip');
+  registerHubLlm(facadeAt(dir));
+  try {
+    assert.ok(await transcribeClientMedia({ buffer: clip, fileName: 'klipp.mp4', context: { businessName: CLIENT.businessName } }));
+  } finally {
+    registerHubLlm(null);
+  }
+  assert.deepEqual([claudeRequests().length, geminiRequests().length], [0, 1], 'a clip goes to Gemini only');
+  assert.deepEqual(ledgerRows(dir).map((row) => [row.task, row.provider, row.images]), [['assistant.media-brief-av', 'gemini', 0]]);
+});
+
+test('without a Claude key a picture read does nothing (no other vision provider), while a clip still needs the Gemini key', async () => {
+  const keep = { anthropic: process.env.ANTHROPIC_API_KEY, gemini: process.env.GEMINI_API_KEY };
+  delete process.env.ANTHROPIC_API_KEY;
+  try {
+    providerCalls.length = 0;
+    registerHubLlm(facadeAt(freshDir('nokey')));
+    assert.equal(await transcribeClientMedia({ buffer: await tinyJpeg(), fileName: 'kaffe.jpg' }), null);
+    assert.equal((await extractIngestText({ buffer: await tinyPng(), originalName: 'meny.png', mimeType: 'image/png' })).text, '');
+    assert.equal(await askVisionIfSigned({ bytes: await tinyPng(), mimeType: 'image/png' }), null);
+    assert.equal(providerCalls.length, 0, 'the Gemini key alone never reads a picture');
+    const status = await facadeAt(freshDir('nokey-status')).status();
+    assert.ok(status.warnings.some((line) => /ANTHROPIC_API_KEY/.test(line)), 'the status says every picture read has no provider');
+    assert.deepEqual([status.gemini.scope, status.gemini.tasks.includes('assistant.media-brief-av')], ['audio-video', true]);
+  } finally {
+    registerHubLlm(null);
+    process.env.ANTHROPIC_API_KEY = keep.anthropic;
+    process.env.GEMINI_API_KEY = keep.gemini;
+  }
 });

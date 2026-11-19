@@ -59,12 +59,27 @@ test('no direct provider endpoint or SDK outside lib/llm/ and the two wrappers',
   assert.deepEqual(offenders, []);
 });
 
-test('the suite\'s direct Gemini helper is reached only through the facade\'s media-brief task', () => {
+test('the suite\'s direct Gemini helper is reached only through the facade\'s audio and video media-brief task', () => {
   const users = SERVER_FILES.filter((file) => /generateGeminiJson/.test(read(file)));
   assert.deepEqual(users, ['lib/ai-assistant/media-transcript.js']);
   const media = read('lib/ai-assistant/media-transcript.js');
   assert.match(media, /: mediaBriefThroughFacade\(models, \{ salesClientId \}\)/, 'describeMedia always gets a generate function, so its default Gemini call is never used');
-  assert.match(media, /runLlmTask\(isImage \? 'json' : 'native', \{\n\s+task: 'assistant\.media-brief'/);
+  assert.match(media, /runLlmTask\('native', \{\n\s+task: 'assistant\.media-brief-av'/, 'audio and video: Gemini, on their own task');
+  assert.match(media, /runLlmTask\('json', \{\n\s+task: 'assistant\.media-brief'/, 'a picture: the task whose route is Claude only');
+});
+
+test('no picture call site can reach Gemini: the price list photo and the contract page read through Claude only', () => {
+  for (const file of ['lib/ai-assistant/products-ingest.js', 'lib/inbox-bot/inspect-contract.js']) {
+    assert.doesNotMatch(code(file), /gemini/i, `${file} has no Gemini call, key or provider name`);
+    assert.match(code(file), /claudeVisionLegacy\(/, `${file} sends its picture through the Claude helper`);
+  }
+  const legacy = read('lib/llm/claude-vision.js');
+  assert.doesNotMatch(code('lib/llm/claude-vision.js'), /gemini/i);
+  assert.match(legacy, /claudeLegacyMessages\(/, 'the helper is today\'s Claude request, guarded by safe mode');
+  // The picture branch of the media brief names Claude, and Gemini appears there only in the audio and video branch.
+  const media = code('lib/ai-assistant/media-transcript.js');
+  const pictureBranch = media.slice(media.indexOf("runLlmTask('json'"), media.indexOf("runLlmTask('native'"));
+  assert.ok(pictureBranch.length > 100 && !/gemini/i.test(pictureBranch), 'the picture branch of the media brief has no Gemini');
 });
 
 // Every call that can reach a model, with the task keys each file must use.
@@ -77,7 +92,7 @@ const CALL_SITES = {
   'lib/ai-assistant/chat.js': ['assistant.chat'],
   'lib/ai-assistant/gather.js': ['assistant.gather'],
   'lib/ai-assistant/products-ingest.js': ['assistant.products-ingest', 'assistant.products-image'],
-  'lib/ai-assistant/media-transcript.js': ['assistant.media-brief'],
+  'lib/ai-assistant/media-transcript.js': ['assistant.media-brief', 'assistant.media-brief-av'],
   'lib/inbox-bot/categorize.js': ['inbox.categorize'],
   'lib/inbox-bot/decide.js': ['inbox.decide'],
   'lib/inbox-bot/inspect-contract.js': ['inbox.inspect-contract'],
@@ -172,15 +187,17 @@ test('the safe-mode guard (aiCalls) is on every provider call path', () => {
   const facade = read('lib/llm/index.js');
   assert.match(facade, /guard = guardAiCall,/, 'the facade defaults to the hub guard');
   assert.match(facade, /async function native[\s\S]*?await guard\(\{/, 'native calls go through the guard');
-  // Gemini legacy calls keep their key check, which records the aiCalls intent in safe mode.
-  for (const file of ['lib/ai-assistant/products-ingest.js', 'lib/inbox-bot/inspect-contract.js', 'lib/sales-link-discovery.js', 'lib/ai-assistant/media-transcript.js']) {
+  // Gemini legacy calls (audio and video, the grounded link search) keep their key check, which records the aiCalls intent in safe mode.
+  for (const file of ['lib/sales-link-discovery.js', 'lib/ai-assistant/media-transcript.js']) {
     assert.match(read(file), /aiKeyOrBlank\('gemini'/, file);
   }
+  // The picture legacy calls are the plain Claude request, which runs through claudeLegacyMessages and its guard.
+  assert.match(read('lib/ai-assistant/media-transcript.js'), /aiKeyOrBlank\('anthropic'/);
   // The DeepSeek legacy path is the only caller of the raw request besides the facade's adapter.
   const rawUsers = SERVER_FILES.filter((file) => /deepseekChatRaw\(/.test(read(file)));
   assert.deepEqual(rawUsers.sort(), ['lib/deepseek.js', 'lib/llm/providers/deepseek.js']);
   const geminiRawUsers = SERVER_FILES.filter((file) => /geminiGenerateRaw\(/.test(read(file))).sort();
-  assert.deepEqual(geminiRawUsers, ['lib/ai-assistant/products-ingest.js', 'lib/inbox-bot/inspect-contract.js', 'lib/llm/providers/gemini.js', 'lib/sales-link-discovery.js']);
+  assert.deepEqual(geminiRawUsers, ['lib/llm/providers/gemini.js', 'lib/sales-link-discovery.js']);
 });
 
 test('the facade\'s Claude path never sends sampling parameters (the core builds the request)', () => {

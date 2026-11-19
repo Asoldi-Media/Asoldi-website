@@ -14,7 +14,7 @@ type AiStatus = {
   legacyPassthrough: boolean;
   overrides: { routes: { exists: boolean; applied: boolean; error: string; updatedAt: string; updatedBy: string }; budgets: { exists: boolean; applied: boolean; error: string } };
   providers: Record<string, ProviderState>;
-  gemini: { billingTier: string; paidTierConfirmedAt: string | null };
+  gemini?: { billingTier: string; paidTierConfirmedAt: string | null; scope?: string };
   safeMode: { active: boolean; aiCallsAllowed: boolean };
   routes: RouteRow[];
   spend: { month: string; monthUsd: number; todayUsd: number; calls: number; byTask: Record<string, number>; byProvider: Record<string, number>; alerts: Alert[] };
@@ -186,7 +186,7 @@ export function AiStatusCard() {
           <ul className="space-y-1">
             {(Object.entries(status.providers) as [string, ProviderState][]).map(([name, state]) => (
               <li key={name} className="flex justify-between gap-2">
-                <span className="text-gray-300">{name}</span>
+                <span className="text-gray-300">{name}{name === 'gemini' ? ' (audio and video only)' : ''}</span>
                 <span className={state.dead ? 'text-red-400' : state.configured ? 'text-green-400' : 'text-gray-500'}>
                   {state.dead ? 'key refused' : state.configured ? 'key set' : 'no key'}
                   {state.probe ? ` · ${state.probe.ok ? 'ok' : state.probe.error || 'failed'}` : ''}
@@ -194,7 +194,9 @@ export function AiStatusCard() {
               </li>
             ))}
           </ul>
-          <p className="text-gray-500 text-xs mt-1">Gemini billing: {status.gemini.billingTier}{status.gemini.paidTierConfirmedAt ? ` (${status.gemini.paidTierConfirmedAt})` : ''}</p>
+          {status.gemini && (
+            <p className="text-gray-500 text-xs mt-1">Gemini billing (audio and video only): {status.gemini.billingTier}{status.gemini.paidTierConfirmedAt ? ` (${status.gemini.paidTierConfirmedAt})` : ''}</p>
+          )}
         </div>
         <div>
           <h4 className="text-gray-400 text-xs uppercase mb-1">Spend ({status.spend.month})</h4>
