@@ -394,6 +394,11 @@ test('a decline never books a date from a mail that was not a move request, or f
     ['unclear', { wordsRequest: 'unclear', aiRequest: '', reason: 'unclear' }],
     ['question', { wordsRequest: 'question', aiRequest: 'question', reason: 'ai-disagrees:question' }],
     ['guest sender', { from: 'Kari Hansen <kari@partner.example>' }],
+    // The AI read a call, a deadline or a bare date where the words read a move: the time was never a request.
+    ['words move, AI call', { wordsRequest: 'reschedule', aiRequest: 'call', reason: 'ai-disagrees:call' }],
+    ['words move, AI other', { wordsRequest: 'reschedule', aiRequest: 'other', reason: 'ai-disagrees:other' }],
+    ['words other, AI move', { wordsRequest: 'other', aiRequest: 'reschedule', reason: 'ai-sees:reschedule' }],
+    ['weak words booking', { wordsRequest: 'reschedule', aiRequest: '', weakBooking: true, reason: 'ai-unavailable' }],
   ];
   for (const [index, [label, extra]] of cases.entries()) {
     const email = `ola-n${index}@kalender.test`;
@@ -404,5 +409,18 @@ test('a decline never books a date from a mail that was not a move request, or f
       calendar: ics({ uid: `evt-n${index}@google.com`, attendee: email }),
     })));
     assert.deepEqual([moves.length, voids.length], [0, 1], label);
+  }
+});
+
+test('a time the words named is still booked by a decline when the mail only went to a person for safety (too old, a failed guest step)', async () => {
+  for (const [index, reason] of ['stale-mail', 'guest-add-failed:calendar-down'].entries()) {
+    const email = `ola-s${index}@kalender.test`;
+    const client = seed({ email, eventId: `evt-s${index}` });
+    openRequest(client, { wordsRequest: 'reschedule', aiRequest: '', reason });
+    const { moves, voids } = await ingest(asMessage(calendarMail({
+      from: `Ola <${email}>`,
+      calendar: ics({ uid: `evt-s${index}@google.com`, attendee: email }),
+    })));
+    assert.deepEqual([moves.length, voids.length], [1, 0], reason);
   }
 });

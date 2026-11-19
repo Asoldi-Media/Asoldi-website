@@ -13,13 +13,13 @@ delete process.env.GEMINI_API_KEY;
 delete process.env.ANTHROPIC_API_KEY;
 
 const sales = await import('../data/sales.js');
-const { ingestInboxMessage } = await import('../lib/inbox-bot/index.js');
+const { ingestInboxMessage, tickInboxBot } = await import('../lib/inbox-bot/index.js');
 const { categorizeEmailHeuristic } = await import('../lib/inbox-bot/categorize.js');
 const { extractGuestRequest, isExcludedGuestAddress } = await import('../lib/inbox-bot/guests.js');
 const { matchSalesClient } = await import('../lib/inbox-bot/match-client.js');
 const { handleInboxWrite, replyCcList, needsHumanSummary } = await import('../lib/inbox-bot/write.js');
 const { defaultAddMeetingGuests } = await import('../lib/inbox-bot/meeting.js');
-const { listInboxItems } = await import('../lib/inbox-bot/store.js');
+const { appendInboxItem, listInboxItems } = await import('../lib/inbox-bot/store.js');
 const { parseAddressList, parseRfc822 } = await import('../packages/suite/core/mail/mime.js');
 const { presentGmailMessage } = await import('../lib/gmail-readonly.js');
 const { buildMessage, normalizeCcList } = await import('../lib/email.js');
@@ -71,7 +71,7 @@ function mail({ text, from = `Ola Nordmann <${contact}>`, cc = [KARI], toList = 
 }
 
 /** Run one mail through the whole bot with fakes for every side effect. */
-async function run(message, { addResult, decideAi, clients } = {}) {
+async function run(message, { addResult, decideAi, clients, queryBusy, realNow } = {}) {
   const sent = [];
   const adds = [];
   const voids = [];
@@ -80,7 +80,7 @@ async function run(message, { addResult, decideAi, clients } = {}) {
     clients,
     categorize: categorizeEmailHeuristic,
     sendEmail: async (payload) => { sent.push(payload); },
-    queryBusy: async () => ({ busy: [] }),
+    queryBusy: queryBusy || (async () => ({ busy: [] })),
     addMeetingGuests: async (card, guests, options) => {
       adds.push({ guests, options });
       if (addResult) return addResult(card, guests);
@@ -93,6 +93,7 @@ async function run(message, { addResult, decideAi, clients } = {}) {
     },
     decideAi,
     now: NOW,
+    ...(realNow ? { realNow } : {}),
   });
   return { result, sent, adds, voids, moves };
 }
@@ -531,4 +532,197 @@ test('a cancel or "no thanks" with a guest sentence is not swallowed as a guest-
     assert.ok(!sent.some((row) => /har lagt til/.test(row.text)), text);
     assert.ok(item.status === 'needs_human' || voids.length > 0 || item.intent !== 'guest', text);
   }
+});
+
+// ---------------------------------------------------------------------------
+// Review fixes: the guest cue stops at the person list, negated and off-topic cues add nobody,
+// unread phrasings are flagged, and the guest step never loses what the words read.
+// ---------------------------------------------------------------------------
+
+const INCIDENT_TEXT = 'Hei, kan vi skyve til torsdag kl 12?\n\nFint om du legger Kari på inviten. (CC)';
+
+test('extractGuestRequest ends the cue at the person list: a move, a cancel or a pick joined with "og" / ", men" stays in the mail', () => {
+  const cases = [
+    ['Legg Kari på inviten og flytt møtet til torsdag kl 12.', 'flytt møtet til torsdag kl 12.'],
+    ['Legg Kari på inviten, og avlys møtet', 'avlys møtet'],
+    ['Legg Kari på inviten, men hun kan ikke onsdag', 'hun kan ikke onsdag'],
+    ['Ta med Kari, møtet må flyttes til torsdag kl 12', 'møtet må flyttes til torsdag kl 12'],
+    ['Legg Kari på inviten, og den tredje passer best', 'den tredje passer best'],
+    ['Legg Kari på inviten, ikke aktuelt for oss likevel', 'ikke aktuelt for oss likevel'],
+    ['Sett Kari på kopi og flytt til torsdag kl 12', 'flytt til torsdag kl 12'],
+    ['Kan du legge Kari til på inviten og ta torsdag kl 12 i stedet?', 'ta torsdag kl 12 i stedet?'],
+  ];
+  for (const [text, rest] of cases) {
+    const ask = extractGuestRequest(text, { from: OLA, cc: [KARI] });
+    assert.deepEqual(ask.guests, [KARI], text);
+    assert.equal(ask.strippedText, rest, text);
+  }
+});
+
+test('a guest sentence joined to a move books the move; a joined cancel still cancels; "hun kan ikke" goes to a person', async () => {
+  seed();
+  const move = await run(mail({ text: 'Legg Kari på inviten og flytt møtet til torsdag kl 12.' }));
+  assert.deepEqual(move.moves.map((row) => row.dueAt), [THURSDAY]);
+  assert.deepEqual(move.adds.map((row) => row.guests), [[KARI]]);
+  assert.match(move.sent[0].text, /Kari Hansen/);
+  const client = seed();
+  const cancel = await run(mail({ text: 'Legg Kari på inviten, og avlys møtet' }));
+  assert.equal(cancel.voids.length, 1);
+  assert.equal(lastItem(client).kind, 'sales_cancel');
+  const other = seed();
+  const no = await run(mail({ text: 'Legg Kari på inviten, men hun kan ikke onsdag' }));
+  assert.deepEqual([no.voids.length, no.moves.length, no.adds.length, no.sent.length], [0, 0, 0, 0]);
+  assert.deepEqual([lastItem(other).status, lastItem(other).reason], ['needs_human', 'guest-cannot-attend']);
+});
+
+test('a negated guest sentence adds and invites nobody, and a person reads the mail', async () => {
+  for (const text of ['Ikke inviter Kari', 'Ikke legg til Kari', 'Du trenger ikke legge til Kari', 'Vi trenger ikke å ta med Kari', "Please don't add Kari", 'Jeg legger Kari på inviten selv']) {
+    const client = seed();
+    const out = await run(mail({ text }));
+    assert.equal(out.adds.length, 0, text);
+    assert.equal(out.sent.length, 0, text);
+    assert.deepEqual([lastItem(client).status, lastItem(client).reason], ['needs_human', 'guest-negated'], text);
+    assert.equal(extractGuestRequest(text, { from: OLA, cc: [KARI] }).asked, false, text);
+  }
+});
+
+test('a cue for something else (a bill, a newsletter, "på kopi" of all mails) is no request to invite', async () => {
+  for (const text of [
+    'Legg til kari@partner.example som kontaktperson for faktura',
+    'Legg til kari@partner.example i mottakerlisten for nyhetsbrevet',
+    'Inviter kari@partner.example til webinaret vårt',
+    'Ta med kari@partner.example på kopi når du sender tilbudet',
+    'Kan du legge Kari på kopi når du sender tilbud?',
+    'Legg Kari i cc på alle mailer',
+    'Jeg legger Kari på kopi',
+  ]) {
+    assert.equal(extractGuestRequest(text, { from: OLA, cc: [KARI] }).asked, false, text);
+  }
+  const client = seed();
+  const out = await run(mail({ text: 'Ta med kari@partner.example på kopi når du sender tilbudet' }));
+  assert.equal(out.adds.length, 0);
+  assert.equal(out.sent.length, 0, 'no "Takk, lagt til"');
+  assert.equal(lastItem(client).status, 'needs_human', 'the offer request still reaches a person');
+});
+
+test('more ways to ask for a guest are read, and a name next to a word about taking part that is not read is flagged', async () => {
+  for (const text of ['Kari ønsker også å delta.', 'Kari skal delta.', 'Kari deltar også.', 'Kari bør også være med.', 'Kari will join too.']) {
+    const ask = extractGuestRequest(text, { from: OLA, cc: [KARI] });
+    assert.deepEqual(ask.guests, [KARI], text);
+    assert.equal(ask.strippedText, '', text);
+  }
+  const client = seed();
+  const out = await run(mail({ text: 'Kan vi flytte til torsdag kl 12? Ta Kari med også.' }));
+  assert.deepEqual(out.moves.map((row) => row.dueAt), [THURSDAY], 'the move itself is booked');
+  assert.equal(out.adds.length, 0, 'nobody is added on a guess');
+  assert.deepEqual([lastItem(client).status, lastItem(client).reason], ['needs_human', 'guest-unread']);
+  const alone = seed();
+  const bare = await run(mail({ text: 'Ta Kari med også.' }));
+  assert.equal(bare.adds.length, 0);
+  assert.equal(lastItem(alone).status, 'needs_human', 'on its own it already goes to a person');
+});
+
+test('"Ja takk, legg Kari på inviten" after a time offer adds Kari but the yes still goes to a person', async () => {
+  for (const text of ['Ja takk, legg Kari på inviten', 'Greit. Legg Kari på inviten.', 'Faktura. Legg Kari på inviten']) {
+    const client = seed({ booked: false });
+    appendInboxItem({
+      kind: 'sales_propose',
+      mailbox: 'alexander@asoldi.com',
+      messageId: `offer-${client.id}:write`,
+      salesClientId: client.id,
+      receivedAt: '2026-11-17T12:00:00.000Z',
+      status: 'applied',
+      offeredSlots: ['2026-11-20T08:00:00.000Z', '2026-11-23T08:00:00.000Z'],
+      from: 'Alexander fra Asoldi <alexander@asoldi.com>',
+    });
+    const out = await run(mail({ text }));
+    assert.equal(out.adds.length, 1, text);
+    assert.equal(out.sent.length, 0, `${text}: no "Kari får invitasjonen når vi har satt en tid"`);
+    assert.equal(lastItem(client).status, 'needs_human', text);
+  }
+});
+
+test('a handoff in the guest step keeps the time the words named, and a guest ask with nothing booked is not stale after 40 minutes', async () => {
+  const late = new Date(NOW.getTime() + 40 * 60000);
+  // Nothing booked: a mail up to 12 hours old can still book.
+  seed({ booked: false });
+  const quiet = await run(mail({ text: INCIDENT_TEXT }), { realNow: late });
+  assert.deepEqual(quiet.moves.map((row) => row.dueAt), [THURSDAY]);
+  assert.equal(quiet.adds.length, 1);
+  // A booked meeting would move: too old, a person decides, and the Thursday stays on the row.
+  const stale = seed();
+  const old = await run(mail({ text: INCIDENT_TEXT }), { realNow: late });
+  assert.equal(old.moves.length, 0);
+  assert.deepEqual([lastItem(stale).reason, lastItem(stale).wordsRequest, lastItem(stale).wordsDueAt], ['stale-mail', 'reschedule', THURSDAY]);
+  // The calendar failed: still the Thursday on the row.
+  const broken = seed();
+  await run(mail({ text: INCIDENT_TEXT }), { addResult: () => ({ ok: false, error: 'calendar-down' }) });
+  assert.match(lastItem(broken).reason, /^guest-add-failed:calendar-down/);
+  assert.equal(lastItem(broken).wordsDueAt, THURSDAY);
+  // The bot's own confirmation after the mail does not make a guest-only mail stale.
+  const stamped = seed();
+  sales.updateSalesClient(stamped.id, { reminders: { thankYouSentAt: '2026-11-17T13:54:00.000Z' } });
+  const only = await run(mail({ text: 'Fint om du legger Kari på inviten.' }), { realNow: new Date(NOW.getTime() + 5 * 60000) });
+  assert.equal(only.adds.length, 1);
+});
+
+test('a guest asked for in the mail that moves the meeting is saved on the card only, then carried by the new invite', async () => {
+  seed();
+  const moved = await run(mail({ text: INCIDENT_TEXT }));
+  assert.equal(moved.moves.length, 1);
+  assert.equal(moved.adds.length, 1, 'no second call once the meeting moved');
+  assert.equal(moved.adds[0].options.deferCalendar, true);
+  // The time is busy: the meeting stays, so the guest gets onto the live event afterwards.
+  seed();
+  const busy = await run(mail({ text: INCIDENT_TEXT }), {
+    queryBusy: async () => ({ busy: [{ start: THURSDAY, end: new Date(Date.parse(THURSDAY) + 3600e3).toISOString() }] }),
+  });
+  assert.equal(busy.moves.length, 0);
+  assert.deepEqual(busy.adds.map((row) => [Boolean(row.options.deferCalendar), Boolean(row.options.catchUp)]), [[true, false], [false, true]]);
+  // A mail with nothing but the guest sentence patches the live event right away.
+  seed();
+  const only = await run(mail({ text: 'Fint om du legger Kari på inviten.' }));
+  assert.equal(only.adds.length, 1);
+  assert.equal(only.adds[0].options.deferCalendar, undefined);
+});
+
+test('an older mail with a guest ask is not skipped when a newer mail without one is in the same batch', async () => {
+  const client = seed();
+  const older = { ...mail({ text: 'Fint om du legger Kari på inviten.\n\nMvh Ola' }), id: 'tick-guest-old', mailAt: new Date(NOW.getTime() - 120000).toISOString() };
+  const newer = { ...mail({ text: 'Hva koster det?' }), id: 'tick-guest-new', mailAt: NOW.toISOString() };
+  const adds = [];
+  await tickInboxBot({
+    listMessages: async () => ({ skipped: false, messages: [older, newer] }),
+    clients: () => sales.getSalesClients(),
+    categorize: categorizeEmailHeuristic,
+    sendEmail: async () => {},
+    queryBusy: async () => ({ busy: [] }),
+    addMeetingGuests: async (card, guests) => {
+      adds.push(guests.map((guest) => guest.email));
+      return { ok: true, client: card, added: guests.map((guest) => guest.email), already: [], rejected: [], invited: true, error: '', warning: '' };
+    },
+    now: NOW,
+  });
+  const rows = listInboxItems({ salesClientId: client.id });
+  assert.ok(!rows.some((row) => row.messageId === 'tick-guest-old' && row.status === 'skipped'), 'not silently skipped');
+  assert.deepEqual(adds, [['kari@partner.example']], 'Kari is added');
+});
+
+test('a hostile To/Cc header (unclosed comments, endless addresses) is read in linear time and capped', () => {
+  const started = Date.now();
+  assert.deepEqual(parseAddressList('a(b'.repeat(40000)), []);
+  assert.deepEqual(parseAddressList('a<b'.repeat(40000)), []);
+  assert.equal(parseAddressList('ann@team.example, '.repeat(20000)).length, 100, 'at most 100 addresses');
+  const folded = 'a(b'.repeat(30000).match(/.{1,70}/g).join('\r\n ');
+  const raw = `From: Ola <ola@kunde.example>\r\nTo: alexander@asoldi.com\r\nCc: ${folded}\r\nSubject: hei\r\nMessage-ID: <x@kunde.example>\r\n\r\nHei\r\n`;
+  assert.deepEqual(parseRfc822(Buffer.from(raw)).cc, []);
+  assert.ok(Date.now() - started < 2000, `took ${Date.now() - started} ms`);
+  // Real headers still read as before: names, quotes, comments, groups.
+  assert.deepEqual(parseAddressList('Kari Hansen <kari@partner.example>, "Per, Olsen" <per@x.example>, ola@kunde.example (Ola N), Team: ann@team.example; cat@team.example'), [
+    { name: 'Kari Hansen', email: 'kari@partner.example' },
+    { name: 'Per, Olsen', email: 'per@x.example' },
+    { name: 'Ola N', email: 'ola@kunde.example' },
+    { name: '', email: 'ann@team.example' },
+    { name: '', email: 'cat@team.example' },
+  ]);
 });

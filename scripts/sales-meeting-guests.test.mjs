@@ -396,3 +396,48 @@ test('server: a retried sync still drops the invited contact the card no longer 
   assert.match(guestFn, /isUnacceptableMeetingHostEmail\(status\.googleEmail\)/);
   assert.match(guestFn, /invited = result\.added\.length > 0 && !result\.safeMode/);
 });
+
+test('a network error (no numeric code) on the live events.get aborts a move before anything is deleted', async () => {
+  const fake = fakeCalendar({ 'evt-1': liveEvent('evt-1', { attendees: [CONTACT_LIVE, COLLEAGUE] }) });
+  fake.api.events.get = async ({ eventId }) => {
+    fake.calls.push({ op: 'get', eventId });
+    throw Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+  };
+  mock.method(google, 'calendar', () => fake.api);
+  await assert.rejects(
+    calendar.upsertMeetingEvent(bookedClient(), 'evt-1', 'sales:rep-1', {
+      sendUpdates: 'all', includeAttendees: true, forceRecreate: true, expectedOwnerEmail: HOST,
+    }),
+    /socket hang up/
+  );
+  assert.deepEqual(fake.calls.map((call) => call.op), ['get'], 'no delete, no insert without the guests');
+});
+
+test('a failed insert after the old event was deleted hands the guests only it listed to the caller', async () => {
+  const fake = fakeCalendar({ 'evt-1': liveEvent('evt-1', { attendees: [CONTACT_LIVE, COLLEAGUE] }) });
+  fake.api.events.insert = async ({ requestBody, sendUpdates }) => {
+    fake.calls.push({ op: 'insert', requestBody: structuredClone(requestBody), sendUpdates });
+    throw googleError(503, 'Backend Error');
+  };
+  mock.method(google, 'calendar', () => fake.api);
+  let caught = null;
+  try {
+    await calendar.upsertMeetingEvent(bookedClient(), 'evt-1', 'sales:rep-1', {
+      sendUpdates: 'all', includeAttendees: true, forceRecreate: true, expectedOwnerEmail: HOST,
+    });
+  } catch (error) {
+    caught = error;
+  }
+  assert.ok(caught, 'the insert failure is thrown');
+  assert.deepEqual(fake.calls.map((call) => call.op).slice(0, 3), ['get', 'delete', 'insert']);
+  assert.deepEqual(caught.foreignAttendees, [{ email: KARI, name: 'Kari Hansen' }]);
+});
+
+test('server: a failed sync keeps the guests the error carries on the card, and the inbox hook can defer the calendar write', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  assert.match(source, /error\?\.foreignAttendees[\s\S]{0,400}sales\.addSalesMeetingGuests\(nextClient\.id, error\.foreignAttendees, \{ addedBy: 'calendar' \}\)/);
+  const hook = source.slice(source.indexOf('async function addSalesMeetingGuestsFromInbox'), source.indexOf('async function addSalesMeetingGuestsFromInbox') + 1800);
+  assert.match(hook, /\{ note = '', deferCalendar = false, catchUp = false \}/);
+  assert.match(hook, /toInvite\.length && !deferCalendar/);
+});
