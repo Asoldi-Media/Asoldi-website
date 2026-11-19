@@ -358,3 +358,41 @@ test('removeGuestsFromEvent patches the attendees without the guest and lets Goo
   assert.equal(patch.sendUpdates, 'all');
   assert.deepEqual(emails(patch.requestBody.attendees), [OLA]);
 });
+
+test('a transient events.get failure aborts a move before anything is deleted', async () => {
+  const fake = fakeCalendar({ 'evt-1': liveEvent('evt-1', { attendees: [CONTACT_LIVE, COLLEAGUE] }) });
+  fake.api.events.get = async ({ eventId }) => {
+    fake.calls.push({ op: 'get', eventId });
+    throw googleError(503, 'Backend Error');
+  };
+  mock.method(google, 'calendar', () => fake.api);
+  await assert.rejects(
+    calendar.upsertMeetingEvent(bookedClient(), 'evt-1', 'sales:rep-1', {
+      sendUpdates: 'all', includeAttendees: true, forceRecreate: true, expectedOwnerEmail: HOST,
+    }),
+    /Backend Error/
+  );
+  assert.deepEqual(fake.calls.map((call) => call.op), ['get'], 'no delete, no insert without the guests');
+});
+
+test('the calendar record remembers the invited contact e-mail', () => {
+  const { id } = seedCard();
+  const updated = sales.setSalesCalendar(id, { eventId: 'evt-9', invitedContactEmail: 'OLD@Kunde.example' });
+  assert.equal(updated.calendar.invitedContactEmail, 'old@kunde.example');
+});
+
+test('server: a retried sync still drops the invited contact the card no longer has, and the guest patch honours the gates', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../server.js', import.meta.url), 'utf8');
+  const start = source.indexOf('function droppedMeetingAttendees');
+  const fn = source.slice(start, source.indexOf('\n}\n', start) + 3);
+  const dropped = new Function('sanitizeText', `${fn}; return droppedMeetingAttendees;`)((v) => String(v ?? '').trim());
+  const card = { contactEmail: 'new@kunde.example', calendar: { invitedContactEmail: 'old@kunde.example' }, meetingGuests: [] };
+  assert.deepEqual(dropped(card, card), ['old@kunde.example']);
+  const same = { contactEmail: OLA, calendar: { invitedContactEmail: OLA }, meetingGuests: [] };
+  assert.deepEqual(dropped(same, same), []);
+  const guestFn = source.slice(source.indexOf('async function syncSalesMeetingGuests'), source.indexOf('async function maybeSyncCalendar'));
+  assert.match(guestFn, /shouldSyncSalesMeetingCalendar/);
+  assert.match(guestFn, /isUnacceptableMeetingHostEmail\(status\.googleEmail\)/);
+  assert.match(guestFn, /invited = result\.added\.length > 0 && !result\.safeMode/);
+});

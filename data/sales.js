@@ -521,6 +521,8 @@ function normalizeCalendar(value = {}) {
     iCalUID: sanitizeText(input.iCalUID),
     syncedAt: sanitizeText(input.syncedAt),
     guestInvitedAt: sanitizeText(input.guestInvitedAt),
+    // The contact e-mail the hub last put on the Google event, so a later contact change can take it off again.
+    invitedContactEmail: sanitizeText(input.invitedContactEmail).toLowerCase(),
     firefliesInvitedAt: sanitizeText(input.firefliesInvitedAt),
     firefliesLiveJoinedAt: sanitizeText(input.firefliesLiveJoinedAt),
     firefliesLiveJoinAttemptAt: sanitizeText(input.firefliesLiveJoinAttemptAt),

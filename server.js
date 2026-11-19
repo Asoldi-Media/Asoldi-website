@@ -8669,8 +8669,17 @@ async function retryFailedCalendarSyncs({ force = false, nowMs = Date.now() } = 
 /** Attendees a sync must take off the live event: the contact the card no longer has and removed guests. */
 function droppedMeetingAttendees(previousClient, nextClient) {
   const drop = new Set();
-  const previousContact = sanitizeText(previousClient?.contactEmail).toLowerCase();
-  if (previousContact && previousContact !== sanitizeText(nextClient?.contactEmail).toLowerCase()) drop.add(previousContact);
+  const nextContact = sanitizeText(nextClient?.contactEmail).toLowerCase();
+  // The previous card is not always at hand (a retried sync runs as (client, client)), so the contact the hub
+  // actually invited is remembered on the calendar record as well.
+  for (const known of [
+    previousClient?.contactEmail,
+    previousClient?.calendar?.invitedContactEmail,
+    nextClient?.calendar?.invitedContactEmail,
+  ]) {
+    const email = sanitizeText(known).toLowerCase();
+    if (email && email !== nextContact) drop.add(email);
+  }
   const kept = new Set((nextClient?.meetingGuests || []).map((guest) => guest.email));
   for (const guest of previousClient?.meetingGuests || []) {
     if (!kept.has(guest.email)) drop.add(guest.email);
@@ -8690,6 +8699,9 @@ async function syncSalesMeetingGuests(client, { added = [], removed = [] } = {})
   if (!client?.agreedTime || !client?.meetingAt || !eventId) return none;
   if (!sanitizeText(calendar.guestInvitedAt) && !sanitizeText(client?.reminders?.thankYouSentAt)) return none;
   if (!added.length && !removed.length) return none;
+  if (!shouldSyncSalesMeetingCalendar({ ownerId: client.ownerId || '', calendar })) {
+    return { invited: false, warning: 'Gjesteendringen ble lagret, men kalenderen ble ikke oppdatert (møtet synkroniseres ikke for denne eieren).' };
+  }
   try {
     const actorAccountKey = '';
     const fallbackAccountKeys = (await resolveCalendarFallbackAccountKeys(client.ownerId || '', actorAccountKey))
@@ -8709,7 +8721,11 @@ async function syncSalesMeetingGuests(client, { added = [], removed = [] } = {})
       ownerMailbox: (await accountKeyToEmail(calendarOwnerIdForSync(client.ownerId || ''))).toLowerCase(),
     });
     const status = getGoogleCalendarStatus(accountKey);
-    if (isBlockedCalendarAccountKey(accountKey) || isBlockedCalendarGoogleEmail(status.googleEmail)) {
+    if (
+      isBlockedCalendarAccountKey(accountKey)
+      || isBlockedCalendarGoogleEmail(status.googleEmail)
+      || isUnacceptableMeetingHostEmail(status.googleEmail)
+    ) {
       return { invited: false, warning: 'Gjesteendringen ble lagret, men kalenderen ble ikke oppdatert (ingen gyldig kalenderkonto).' };
     }
     if (!status.configured || !status.connected) {
@@ -8723,7 +8739,7 @@ async function syncSalesMeetingGuests(client, { added = [], removed = [] } = {})
       if (result.reason === 'cancelled') {
         return { invited: false, warning: 'Gjesteendringen ble lagret, men kalenderhendelsen er avlyst.' };
       }
-      invited = guests.length > 0;
+      invited = result.added.length > 0 && !result.safeMode;
       if (!result.safeMode) sales.markSalesMeetingGuestsInvited(client.id, added, new Date().toISOString());
     }
     if (removed.length) await removeGuestsFromEvent(eventId, accountKey, removed, calendarOptions);
@@ -8991,6 +9007,7 @@ async function maybeSyncCalendar(client, previousClient = null, options = {}) {
         calendarMeta.accountKey = sanitizeText(nextClient.ownerId);
       }
       Object.assign(calendarMeta, { syncFailedAt: '', syncError: '', syncNotify: false });
+      calendarMeta.invitedContactEmail = sanitizeText(nextClient?.contactEmail).toLowerCase();
       const foreignAttendees = Array.isArray(calendarMeta.foreignAttendees) ? calendarMeta.foreignAttendees : [];
       delete calendarMeta.foreignAttendees;
       const withCalendar = sales.setSalesCalendar(nextClient.id, calendarMeta);
