@@ -381,3 +381,53 @@ test('Unicode word edges: "akkurat nå" and "travelt nå" now match', () => {
   // Weekday names with å/ø neighbours still match.
   assert.deepEqual(parseDayHint('På fredag går det fint', { now: WED }), { ymd: '2026-11-06', band: 'day' });
 });
+
+test('week numbers resolve to ISO weeks on or after this week (Europe/Oslo)', () => {
+  const thursday = new Date('2026-11-19T10:00:00.000Z');
+  // Weekday + week is that date, not the next such weekday.
+  assert.equal(parseTimeDetail('tirsdag i uke 49 kl 10', { now: thursday }).dueAt, '2026-12-01T09:00:00.000Z');
+  assert.equal(parseTimeDetail('Uke 49, tirsdag kl 10', { now: thursday }).dueAt, '2026-12-01T09:00:00.000Z');
+  assert.equal(parseTimeDetail('fredag veke 48 kl 13', { now: thursday }).dueAt, '2026-11-27T12:00:00.000Z');
+  assert.equal(parseTimeDetail('onsdag i week 50 at 2pm', { now: thursday }).dueAt, '2026-12-09T13:00:00.000Z');
+  // A week alone is a week anchor (its Monday), flagged weekOnly with the number.
+  const week = parseTimeDetail('Passer uke 48?', { now: thursday });
+  assert.equal(week.dueAt, '');
+  assert.equal(week.day.ymd, '2026-11-23');
+  assert.equal(week.weekOnly, true);
+  assert.equal(week.weekNumber, 48);
+  // This week: the anchor is today, never a Monday in the past.
+  assert.equal(parseDayHint('uke 47', { now: thursday }).ymd, '2026-11-19');
+  // Past the year end the first such week is next year; 2026 has 53 weeks.
+  assert.equal(parseDayHint('uke 2', { now: new Date('2026-12-20T10:00:00.000Z') }).ymd, '2027-01-11');
+  assert.equal(parseDayHint('uke 53', { now: thursday }).ymd, '2026-12-28');
+  // A weekday earlier in this week than today is not a time.
+  assert.equal(parseTimeDetail('mandag i uke 47 kl 10', { now: thursday }).dueAt, '');
+  // A date against the week is a conflict, never a guess.
+  const clash = parseTimeDetail('tirsdag 24.11 i uke 49 kl 10', { now: thursday });
+  assert.equal(clash.dueAt, '');
+  assert.equal(clash.conflict, true);
+  assert.equal(clash.weekConflict, true);
+  const agrees = parseTimeDetail('tirsdag 1.12 i uke 49 kl 10', { now: thursday });
+  assert.equal(agrees.dueAt, '2026-12-01T09:00:00.000Z');
+  // "uke 48 passer ikke" excludes that week's days.
+  assert.deepEqual(parseExcludedDays('uke 48 passer ikke', { now: thursday }), ['2026-11-23', '2026-11-24', '2026-11-25', '2026-11-26', '2026-11-27']);
+  // "om 2 uker" and "neste uke" are unchanged.
+  assert.equal(parseTimeDetail('om 2 uker', { now: thursday }).weekNumber, undefined);
+});
+
+test('alternatives are listed in the order written; a bare hour range is its start; "skyve" is a move away from the old time', () => {
+  const thursday = new Date('2026-11-19T10:00:00.000Z');
+  assert.deepEqual(
+    parseTimeDetail('Hva med tirsdag 24.11 kl 10 eller onsdag 25.11 kl 14?', { now: thursday }).candidates,
+    ['2026-11-24T09:00:00.000Z', '2026-11-25T13:00:00.000Z'],
+  );
+  assert.equal(parseTimeDetail('tirsdag kl 10', { now: thursday }).candidates, undefined);
+  assert.equal(parseTimeDetail('Fredag 13-14 passer fint', { now: thursday }).dueAt, '2026-11-20T12:00:00.000Z');
+  assert.equal(parseTimeDetail('fredag 9-11', { now: thursday }).dueAt, '2026-11-20T08:00:00.000Z');
+  // Date ranges, opening hours and counts are not clocks.
+  assert.equal(parseTimeDetail('Fredag 13-14 november', { now: thursday }).dueAt, '');
+  assert.equal(parseTimeDetail('Fredag har vi åpent 9-17', { now: thursday }).dueAt, '');
+  assert.equal(parseTimeDetail('Fredag kommer 10-12 personer', { now: thursday }).dueAt, '');
+  // "skyve fra kl 10 til kl 14" takes the new time, like "flytte fra ... til ...".
+  assert.equal(parseTimeDetail('Kan vi skyve fra torsdag kl 10 til fredag kl 14?', { now: thursday }).dueAt, '2026-11-20T13:00:00.000Z');
+});
