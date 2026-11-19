@@ -1,7 +1,7 @@
 import path from 'path';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { BUILD_INFO_FILE, buildInfoForBuild } from './lib/build-info.js';
@@ -37,8 +37,7 @@ function stripLeftoverDistMedia() {
   };
 }
 
-export default defineConfig(({ command, mode }) => {
-  const env = loadEnv(mode, '.', '');
+export default defineConfig(({ command }) => {
   return {
     root: 'app',
     // Dev serves /media from public/. Production Vite must not copy that
@@ -46,10 +45,7 @@ export default defineConfig(({ command, mode }) => {
     publicDir: command === 'serve' ? path.resolve(__dirname, 'public') : false,
     cacheDir: path.join(homedir(), 'Library', 'Caches', 'asoldi-website', 'vite'),
     plugins: [react(), tailwindcss(), stripLeftoverDistMedia(), writeBuildInfo()],
-    // npm run dev:safe (HUB_DEV_SAFE=1) never inlines .env values into the bundle.
-    define: process.env.HUB_DEV_SAFE === '1' ? {} : {
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-    },
+    // No .env value is inlined into the bundle: keys are read on the server only (the browser app never used the Gemini define).
     optimizeDeps: {
       include: ['grapesjs', 'grapesjs-preset-newsletter', 'pdfjs-dist'],
     },

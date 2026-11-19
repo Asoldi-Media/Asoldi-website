@@ -114,7 +114,7 @@ How the generated `.env` is built:
 How `dev:safe` behaves:
 - It refuses to start when safe mode would be off. `--unsafe-i-know` overrides this.
 - It never uses port 3000, which belongs to the Maker.
-- Vite gets the shell environment only, not the `.env` values, plus `HUB_DEV_SAFE=1`, which makes `vite.config.ts` skip its `GEMINI_API_KEY` define.
+- Vite gets the shell environment only, not the `.env` values, plus `HUB_DEV_SAFE=1`. `vite.config.ts` inlines no `.env` value into the bundle in any mode.
 - It sets `HUB_PUBLIC_URL_FOR_MAKER=http://host.docker.internal:3101`, so the Maker's pushes and status callbacks reach this hub.
 
 A plain `node server.js` (or `npm run dev:api`) on the PC with the live `.env` is also in safe mode: email to the outbox, the guards and the egress allowlist on, local Maker URLs, `127.0.0.1` only. It still takes `PORT` and the default data dir (`~/.asoldi-website-data`) from that `.env`, so prefer `npm run dev:safe`.

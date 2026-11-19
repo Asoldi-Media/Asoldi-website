@@ -20,7 +20,7 @@ export type CategorizedUpload = {
   productCatalogs?: unknown[] | null;
 };
 
-/** Upload + Gemini brief: suggested media bucket, and products when the file is a menu or price list. */
+/** Upload + media brief: suggested media bucket, and products when the file is a menu or price list. */
 export async function uploadClientMediaCategorized(token: string, file: File): Promise<CategorizedUpload> {
   const body = new FormData();
   body.append('file', file);

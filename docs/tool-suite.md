@@ -12,7 +12,7 @@ One media categorizer, one mail/document/facts core, used by website-maker and b
 
 A boundary test (`scripts/suite-boundary.test.mjs`) fails if core mentions Asoldi/Kundedata, if `core/media` imports `fs`, if `core/llm` touches fs, network, `fetch` or the process environment, or if the harness imports app code.
 
-The categorizer stores nothing. `describeMedia` takes a buffer, converts formats in memory (SVG/GIF/AVIF → PNG/JPEG), calls Gemini, returns a ~1–2 KB JSON brief. Each app decides what to keep: website-maker writes `.generated-runs/` on the developer machine; asoldi.com keeps briefs in the client bank (capped). No extra media copies on Hostinger from this layer.
+The categorizer stores nothing. `describeMedia` takes a buffer, converts formats in memory (SVG/GIF/AVIF → PNG/JPEG), has a generate function read it (Claude for pictures; Gemini only for audio and video), returns a ~1–2 KB JSON brief. Each app decides what to keep: website-maker writes `.generated-runs/` on the developer machine; asoldi.com keeps briefs in the client bank (capped). No extra media copies on Hostinger from this layer.
 
 ## Sync rule
 
@@ -46,5 +46,5 @@ Do not rewrite the core. Add:
 
 ## Production notes
 
-- asoldi.com needs `GEMINI_API_KEY` and Hostinger `npm install` of `sharp` (prebuilt `@img/sharp-linux-x64`). First deploy after this change is the check.
+- asoldi.com needs `ANTHROPIC_API_KEY` for every picture read (`GEMINI_API_KEY` is optional: audio and video only) and Hostinger `npm install` of `sharp` (prebuilt `@img/sharp-linux-x64`). First deploy after this change is the check.
 - Real Outlook `winmail.dat` and Mac `.pages` were not re-tested against live files; the unpackers are the same as before the split.

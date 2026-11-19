@@ -39,7 +39,7 @@ Do not commit the real email if the repo is public; use a private repo or deploy
 
 ## 3. GEMINI_API_KEY
 
-**Status:** Only placeholders were in the repo (`.env.example` with `MY_GEMINI_API_KEY`). Real keys should live in:
+**Status:** Optional since 2026-11-19: only audio and video of client uploads use Gemini; pictures use `ANTHROPIC_API_KEY`. Only placeholders were in the repo (`.env.example` with `MY_GEMINI_API_KEY`). Real keys should live in:
 
 - Local: `.env.local` (in `.gitignore`)
 - Hosting: Environment variables in your host (e.g. Hostinger) or GitHub Actions secrets.
