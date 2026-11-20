@@ -343,6 +343,14 @@ test('addGuestsToEvent patches only the attendees with sendUpdates all and skips
   assert.equal(fake.calls.filter((call) => call.op === 'patch').length, 1, 'no second write when everyone is listed');
 });
 
+test('addGuestsToEvent with notify false patches silently', async () => {
+  const fake = fakeCalendar({ 'evt-1': liveEvent('evt-1', { attendees: [CONTACT_LIVE] }) });
+  mock.method(google, 'calendar', () => fake.api);
+  const result = await calendar.addGuestsToEvent('evt-1', 'sales:rep-1', [{ email: KARI, name: 'Kari Hansen' }], { notify: false });
+  assert.deepEqual(result, { added: [KARI], reason: '' });
+  assert.equal(fake.calls.find((call) => call.op === 'patch').sendUpdates, 'none');
+});
+
 test('addGuestsToEvent leaves a cancelled event alone', async () => {
   const fake = fakeCalendar({ 'evt-1': liveEvent('evt-1', { status: 'cancelled' }) });
   mock.method(google, 'calendar', () => fake.api);
@@ -397,6 +405,7 @@ test('server: a retried sync still drops the invited contact the card no longer 
   assert.match(guestFn, /shouldSyncSalesMeetingCalendar/);
   assert.match(guestFn, /isUnacceptableMeetingHostEmail\(status\.googleEmail\)/);
   assert.match(guestFn, /invited = result\.added\.length > 0 && !result\.safeMode/);
+  assert.match(guestFn, /notify/);
 });
 
 test('a network error (no numeric code) on the live events.get aborts a move before anything is deleted', async () => {

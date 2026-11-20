@@ -8689,10 +8689,10 @@ function droppedMeetingAttendees(previousClient, nextClient) {
 
 /**
  * Guests added to or removed from a card whose invite already went out: patch the live Google event so only
- * those people are mailed. Without an event (or before the invite) nothing happens, since the first invite
- * is built from the card. { invited, warning }.
+ * those people are mailed (`notify: false` skips the mail). Without an event (or before the invite) nothing
+ * happens, since the first invite is built from the card. { invited, warning }.
  */
-async function syncSalesMeetingGuests(client, { added = [], removed = [] } = {}) {
+async function syncSalesMeetingGuests(client, { added = [], removed = [], notify = true } = {}) {
   const none = { invited: false, warning: '' };
   const calendar = client?.calendar || {};
   const eventId = sanitizeText(calendar.eventId);
@@ -8731,7 +8731,10 @@ async function syncSalesMeetingGuests(client, { added = [], removed = [] } = {})
     if (!status.configured || !status.connected) {
       return { invited: false, warning: 'Gjesteendringen ble lagret, men Google Kalender er ikke koblet til.' };
     }
-    const calendarOptions = sanitizeText(calendar.calendarId) ? { calendarId: sanitizeText(calendar.calendarId) } : {};
+    const calendarOptions = {
+      ...(sanitizeText(calendar.calendarId) ? { calendarId: sanitizeText(calendar.calendarId) } : {}),
+      notify,
+    };
     let invited = false;
     if (added.length) {
       const guests = (client.meetingGuests || []).filter((guest) => added.includes(guest.email));
@@ -15763,7 +15766,8 @@ app.patch('/api/admin/sales/:id/meeting-guests', salesAuth, async (req, res) => 
       if (result?.removed) removed.push(normalizeEmail(raw));
     }
     let client = sales.getSalesClientById(existing.id);
-    const sync = await syncSalesMeetingGuests(client, { added, removed });
+    const notify = req.body?.notify !== false;
+    const sync = await syncSalesMeetingGuests(client, { added, removed, notify });
     client = sales.getSalesClientById(existing.id) || client;
     res.json({
       client: jsonSalesClient(client),

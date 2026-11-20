@@ -54,7 +54,7 @@ function seed({ booked = true } = {}) {
 }
 
 /** An incoming mail as the IMAP reader hands it over. */
-function mail({ text, from = `Ola Nordmann <${contact}>`, cc = [KARI], toList = [BOT], subject = 'Re: Invitasjon: Asoldi · Online møte' }) {
+function mail({ text, from = `Ola Nordmann <${contact}>`, cc = [KARI], toList = [BOT], subject = 'Re: Invitasjon: Asoldi · Online møte', mailAt = NOW.toISOString() }) {
   seq += 1;
   return {
     id: `guest-msg-${seq}`,
@@ -65,13 +65,13 @@ function mail({ text, from = `Ola Nordmann <${contact}>`, cc = [KARI], toList = 
     cc,
     subject,
     text,
-    mailAt: NOW.toISOString(),
+    mailAt,
     rfcMessageId: `<guest-${seq}@kunde.example>`,
   };
 }
 
 /** Run one mail through the whole bot with fakes for every side effect. */
-async function run(message, { addResult, decideAi, clients, queryBusy, realNow } = {}) {
+async function run(message, { addResult, decideAi, clients, queryBusy, realNow, now } = {}) {
   const sent = [];
   const adds = [];
   const voids = [];
@@ -92,7 +92,7 @@ async function run(message, { addResult, decideAi, clients, queryBusy, realNow }
       return { ok: true, client: sales.updateSalesClient(card.id, { meetingAt: dueAt, agreedTime: true }), confirmationSent: false };
     },
     decideAi,
-    now: NOW,
+    now: now || NOW,
     ...(realNow ? { realNow } : {}),
   });
   return { result, sent, adds, voids, moves };
@@ -280,6 +280,36 @@ test('incident mail 2 books Thursday 12:00 for a voided card', async () => {
 // The real thread had a signature with a long title line and no "--": cutting the guest sentence
 // must not glue it to the time, and the title line must not count as a sentence.
 const LONG_SIGNATURE = '\n\nOla Nordmann\nHead of Finance & Accounting Manager | økonomisjef\n\nKunde Gruppen\n\nMobile: +47 400 00 000';
+
+test('incident mail 3 "Ta det kl 10 du" books 10:00 on the booked day and does not add Kari from "Ref mail"', async () => {
+  const MAIL3 = `Ref mail Kari.
+
+Ta det kl 10 du.
+
+${LONG_SIGNATURE.trimStart()}`;
+  const FRIDAY_12 = '2026-11-20T11:00:00.000Z';
+  const FRIDAY_10 = '2026-11-20T09:00:00.000Z';
+  const thuNow = new Date('2026-11-19T11:18:20.000Z');
+  const client = seed();
+  const meetingRow = (sales.getSalesClientById(client.id).nextActions || []).find((row) => row.presetKey === 'meeting' && !row.doneAt);
+  sales.setSalesNextAction(client.id, { op: 'update', id: meetingRow.id, dueAt: FRIDAY_12 });
+  sales.rescheduleSalesReminders(client.id, thuNow.getTime());
+  const ask = extractGuestRequest(MAIL3, { from: OLA, cc: [KARI] });
+  assert.equal(ask.asked, false);
+  const { moves, adds, sent } = await run(
+    mail({ text: MAIL3, cc: [KARI], mailAt: thuNow.toISOString() }),
+    {
+      now: thuNow,
+      realNow: thuNow,
+      decideAi: async () => ({ request: 'question', reply: '' }),
+    },
+  );
+  assert.equal(adds.length, 0, 'a "Ref mail Kari" is not a guest request');
+  assert.deepEqual(moves.map((row) => row.dueAt), [FRIDAY_10]);
+  assert.equal(sales.getSalesClientById(client.id).meetingAt, FRIDAY_10);
+  assert.equal(sent.length, 1);
+  assert.ok(sent.every((payload) => !payload.to.includes('kari@')), 'Kari is never the recipient');
+});
 
 test('incident mail 2 with a long-title signature still books Thursday 12:00 and adds Kari', async () => {
   seed({ booked: false });

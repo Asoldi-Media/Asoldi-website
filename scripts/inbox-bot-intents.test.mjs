@@ -1222,6 +1222,8 @@ test('a new clock with no day named moves the meeting on the booked day, never c
     ['Går det an å flytte til kl 13?', THU_AT(13)],
     ['Kan vi utsette møtet til kl 14?', THU_AT(14)],
     ['Jeg rekker ikke kl 10. Kl 12 da?', THU_AT(12)],
+    ['Ta det kl 11 du', THU_AT(11)],
+    ['Ta møtet kl 11', THU_AT(11)],
   ]) {
     const client = seed('meeting');
     const out = classifyInboxRequest(text, client, { now: NOW });
@@ -1432,6 +1434,30 @@ test('a bare day + clock is a new time, asked or not; the booked instant stays a
   const thursday = { agreedTime: true, meetingAt: INCIDENT_THU_12 };
   assert.equal(classifyIncident('Torsdag kl 12?', { client: thursday }).request, 'question');
   assert.equal(classifyIncident('Er møtet torsdag kl 12?', { client: thursday }).request, 'question');
+});
+
+test('incident mail 3 "Ta det kl 10 du" books 10:00 on the booked day, signature and AI question included', () => {
+  const text = `Ref mail Kari.
+
+Ta det kl 10 du.
+
+Ola Nordmann
+Group Finance & Accounting Manager | regnskapssjef
+
+Kunde Gruppen
+Mobile: +47 400 00 000`;
+  const friday = { agreedTime: true, meetingAt: '2026-11-20T11:00:00.000Z' };
+  const now = new Date('2026-11-19T11:18:20.000Z');
+  const out = classifyInboxRequest(text, friday, { now });
+  assert.equal(out.request, 'reschedule');
+  assert.equal(out.dueAt, '2026-11-20T09:00:00.000Z');
+  const merged = mergeWriteDecision(out, { request: 'question' }, { bookedFuture: true });
+  assert.equal(merged.needsHuman, false);
+  assert.equal(merged.request, 'reschedule');
+  assert.equal(merged.dueAt, '2026-11-20T09:00:00.000Z');
+});
+
+test('incident leftover questions stay questions', () => {
   // The documented questions stay questions.
   for (const text of ['Hva koster det?', 'Hvilken dag var det vi hadde møte igjen?', 'står det kl 12 eller 13?', 'Hvordan blir jeg med?']) {
     assert.equal(classifyIncident(text).request, 'question', text);
