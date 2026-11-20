@@ -1457,6 +1457,37 @@ Mobile: +47 400 00 000`;
   assert.equal(merged.dueAt, '2026-11-20T09:00:00.000Z');
 });
 
+test('"ta det" moves the meeting only with the clock right after it; two clocks go to a person', () => {
+  const friday = { agreedTime: true, meetingAt: '2026-11-20T11:00:00.000Z' };
+  const now = new Date('2026-11-19T11:18:20.000Z');
+  for (const text of [
+    'Ta det med ro, vi sees kl 10',
+    'Ta det rolig, vi ses kl 10',
+    'Ta det opp på møtet kl 10',
+    'Ta det videre på møtet kl 11',
+    'Ta møtet med Kari kl 10',
+    'Ta det med deg, jeg har kl 10 fri',
+    'Ta det som en fordel at vi møtes kl 11',
+    'Take it kl 10',
+  ]) {
+    const out = classifyInboxRequest(text, friday, { now });
+    assert.notEqual(out.request, 'reschedule', text);
+    assert.equal(out.dueAt || '', '', text);
+    const merged = mergeWriteDecision(out, { request: 'question' }, { bookedFuture: true });
+    assert.equal(merged.dueAt || '', '', text);
+  }
+  for (const text of ['Ta det kl 10 eller 11', 'Ta det kl 10 eller kl 11']) {
+    const out = classifyInboxRequest(text, friday, { now });
+    assert.equal(out.request, 'unclear', text);
+    assert.equal(out.reason, 'time-unclear', text);
+  }
+  for (const [text, at] of [['Ta det kl 11 da', '2026-11-20T10:00:00.000Z'], ['Ta det kl. 10.30', '2026-11-20T09:30:00.000Z'], ['Ta møtet heller kl 10', '2026-11-20T09:00:00.000Z']]) {
+    const out = classifyInboxRequest(text, friday, { now });
+    assert.equal(out.request, 'reschedule', text);
+    assert.equal(out.dueAt, at, text);
+  }
+});
+
 test('incident leftover questions stay questions', () => {
   // The documented questions stay questions.
   for (const text of ['Hva koster det?', 'Hvilken dag var det vi hadde møte igjen?', 'står det kl 12 eller 13?', 'Hvordan blir jeg med?']) {
