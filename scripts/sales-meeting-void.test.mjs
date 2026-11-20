@@ -938,11 +938,11 @@ test('PATCH next-actions runs the shared chain with the signed-in rep as actor',
 
 test('the inbox loop and the backfill route get both meeting hooks', () => {
   const loop = serverFunctionSource('startInboxBotLoop');
-  assert.match(loop, /tickInboxBot\(\{ moveMeeting: moveSalesMeetingFromInbox, voidMeeting: voidSalesMeetingFromInbox, notifyRep: notifyRepOfInboxBounce, notifyOwner: notifyOwnerOfForeignNotetaker \}\)/);
+  assert.match(loop, /tickInboxBot\(\{.*addMeetingGuests: addSalesMeetingGuestsFromInbox/);
   assert.ok(loop.indexOf('inboxBotLoopEnabled()') < loop.indexOf('setInterval'), 'the kill switch stops the loop before it is scheduled');
   const start = serverSrc.indexOf("app.post('/api/admin/inbox-bot/backfill'");
   const route = serverSrc.slice(start, serverSrc.indexOf('\n});', start));
-  assert.match(route, /backfillInboxReplies\(\{[\s\S]*moveMeeting: moveSalesMeetingFromInbox,\s*voidMeeting: voidSalesMeetingFromInbox,/);
+  assert.match(route, /backfillInboxReplies\(\{[\s\S]*moveMeeting: moveSalesMeetingFromInbox,\s*voidMeeting: voidSalesMeetingFromInbox,\s*addMeetingGuests: addSalesMeetingGuestsFromInbox,/);
 });
 
 test('the inbox loop and the backfill route share one lock: neither starts while the other runs', async () => {
@@ -964,6 +964,7 @@ test('the inbox loop and the backfill route share one lock: neither starts while
     inboxBotLoopEnabled: () => true,
     moveSalesMeetingFromInbox: () => {},
     voidSalesMeetingFromInbox: () => {},
+    addSalesMeetingGuestsFromInbox: () => {},
     notifyRepOfInboxBounce: () => {},
     notifyOwnerOfForeignNotetaker: () => {},
     tickInboxBot: () => { calls.push('tick'); return new Promise((resolve) => { finishTick = resolve; }); },

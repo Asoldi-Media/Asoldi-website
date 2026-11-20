@@ -38,6 +38,7 @@ import { SalesFlowSteps } from '../../sales/SalesFlowSteps';
 import { SalesScriptsDock } from '../../sales/SalesScriptsDock';
 import { offerMissingFields, offerReadinessMessage } from '../../../../lib/offer-readiness.js';
 import { SalesGoalTimeline } from './SalesGoalTimeline';
+import { MeetingGuestsEditor } from './MeetingGuestsEditor';
 import { InboxPills, SignedContractPill } from './InboxBotPanel';
 import { SalesFocusBoard, type SalesFocusCategoryId } from './SalesFocusBoard';
 import { ClientSalesLog } from './ClientSalesLog';
@@ -2800,6 +2801,7 @@ export function SalesClientsSection({ onLogout, showScriptsDock = false, active 
           </button>
         </div>
       )}
+      <MeetingGuestsEditor client={client} request={request} onSaved={applySavedClient} onError={setError} />
       <div className="rounded-xl bg-black/20 border border-white/10 p-3 space-y-2">
         <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">Kundekonto</div>
         <label className="block text-xs text-gray-400">

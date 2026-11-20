@@ -161,3 +161,42 @@ test('reschedule, reschedule_day and cancel are one family: the AI reading anoth
   assert.equal(item.status, 'applied', 'answered, not left for a person');
   assert.equal(sent.length, 1);
 });
+
+test('"Fint om du legger Kari på inviten. (CC)" with Kari on Cc: she is added, the answer keeps her on Cc and the card log says so', async () => {
+  const client = seed(TOMORROW_14);
+  seq += 1;
+  const sent = [];
+  const added = [];
+  await ingestInboxMessage({
+    id: `replay-msg-${seq}`,
+    mailbox: 'alexander@asoldi.com',
+    from: `Ola Nordmann <${client.contactEmail}>`,
+    to: 'alexander@asoldi.com',
+    toList: [{ name: '', email: 'alexander@asoldi.com' }],
+    cc: [{ name: 'Kari Hansen', email: 'kari@partner.example' }],
+    subject: 'Re: Invitasjon: Asoldi · Online møte',
+    text: 'Hei!\n\nFint om du legger Kari på inviten. (CC)\n\nMvh Ola',
+    mailAt: NOW.toISOString(),
+    rfcMessageId: `<replay-${seq}@replay.test>`,
+  }, {
+    categorize: categorizeEmailHeuristic,
+    sendEmail: async (payload) => { sent.push(payload); },
+    queryBusy: async () => ({ busy: [] }),
+    addMeetingGuests: async (card, guests) => {
+      added.push(...guests);
+      return { ok: true, client: card, added: guests.map((guest) => guest.email), already: [], rejected: [], invited: true, error: '', warning: '' };
+    },
+    now: NOW,
+  });
+  assert.deepEqual(added, [{ email: 'kari@partner.example', name: 'Kari Hansen' }]);
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].to, client.contactEmail);
+  assert.deepEqual(sent[0].cc, ['kari@partner.example']);
+  assert.match(sent[0].text, /^Takk! Jeg har lagt til Kari Hansen på møteinvitasjonen for /);
+  const item = listInboxItems({ salesClientId: client.id }).at(-1);
+  assert.deepEqual([item.kind, item.status], ['guest_add', 'applied']);
+  const { presentInboxForClient } = await import('../lib/inbox-bot/store.js');
+  const rows = buildSalesCardLog({ ...sales.getSalesClientById(client.id), inboxBot: presentInboxForClient(client.id) }, NOW.getTime());
+  assert.ok(rows.some((row) => row.name === 'E-post fra kunden' && /legger Kari på inviten/.test(row.text)));
+  assert.ok(rows.some((row) => row.name === 'Gjest lagt til (svar sendt)' && /Kari Hansen/.test(row.text)));
+});

@@ -43,6 +43,94 @@ export function decodeMimeWords(value = '') {
     });
 }
 
+/** Longest To/Cc header that is read, and most addresses taken from it: a hostile header must not stall the poll. */
+const MAX_ADDRESS_HEADER = 16 * 1024;
+const MAX_ADDRESSES = 100;
+
+/**
+ * Split a header at top-level commas/semicolons: quotes, angle brackets and comments hide theirs. One pass, so an
+ * unclosed "(" costs no more than any other character. Each part: { text, plain (comments taken out), note (the first comment) }.
+ */
+function splitAddressHeader(value = '') {
+  const parts = [];
+  let current = '';
+  let plain = '';
+  let note = '';
+  let noteDone = false;
+  let quoted = false;
+  let angle = false;
+  let comment = 0;
+  const raw = String(value || '').slice(0, MAX_ADDRESS_HEADER);
+  const flush = () => {
+    parts.push({ text: current.trim(), plain: plain.trim(), note });
+    current = '';
+    plain = '';
+    note = '';
+    noteDone = false;
+  };
+  for (let i = 0; i < raw.length; i += 1) {
+    const ch = raw[i];
+    if (quoted) {
+      current += ch;
+      plain += ch;
+      if (ch === '\\' && i + 1 < raw.length) {
+        i += 1;
+        current += raw[i];
+        plain += raw[i];
+      } else if (ch === '"') quoted = false;
+      continue;
+    }
+    if (comment) {
+      current += ch;
+      if (ch === '(') comment += 1;
+      else if (ch === ')') comment -= 1;
+      if (comment > 0 && !noteDone) note += ch;
+      else if (comment === 0) noteDone = true;
+      continue;
+    }
+    if (ch === '"') quoted = true;
+    else if (ch === '(') {
+      comment = 1;
+      current += ch;
+      continue;
+    } else if (ch === '<') angle = true;
+    else if (ch === '>') angle = false;
+    else if ((ch === ',' || ch === ';') && !angle) {
+      flush();
+      if (parts.length >= MAX_ADDRESSES) return parts.filter((part) => part.text);
+      continue;
+    }
+    current += ch;
+    plain += ch;
+  }
+  flush();
+  return parts.filter((part) => part.text);
+}
+
+/** An address header ("To", "Cc") as [{ name, email }]: quoted names, encoded words and group labels handled. */
+export function parseAddressList(value = '') {
+  const out = [];
+  for (const { text: part, plain, note } of splitAddressHeader(value)) {
+    // "Team: a@x" keeps the member; the group label is not a person.
+    const entry = part.replace(/^[^"<@]*:\s*/, '');
+    const angled = entry.match(/^(.*?)<\s*([^<>\s]+)\s*>\s*$/s);
+    let name = '';
+    let email = '';
+    if (angled) {
+      name = angled[1];
+      email = angled[2];
+    } else {
+      email = plain.replace(/^[^"<@]*:\s*/, '').trim();
+      name = note;
+    }
+    name = decodeMimeWords(name.trim().replace(/^"(.*)"$/s, '$1').replace(/\\(.)/g, '$1')).trim();
+    email = decodeMimeWords(email).trim().replace(/^mailto:/i, '').toLowerCase();
+    if (!/^[^\s@<>",]+@[^\s@<>",]+\.[^\s@<>",]+$/.test(email)) continue;
+    out.push({ name, email });
+  }
+  return out;
+}
+
 export function htmlToText(html = '') {
   return String(html || '')
     .replace(/<(style|script|head)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
@@ -77,7 +165,9 @@ function headerMap(block = '') {
     const idx = line.indexOf(':');
     if (idx < 1) continue;
     current = line.slice(0, idx).toLowerCase();
-    map[current] = line.slice(idx + 1).trim();
+    const value = line.slice(idx + 1).trim();
+    // A repeated To/Cc header lists more people, never replaces the first.
+    map[current] = (current === 'to' || current === 'cc') && map[current] ? `${map[current]}, ${value}` : value;
   }
   return map;
 }
@@ -209,6 +299,8 @@ export function parseRfc822(raw = '') {
   return {
     from: decodeMimeWords(headers.from),
     to: decodeMimeWords(headers.to),
+    toList: parseAddressList(headers.to),
+    cc: parseAddressList(headers.cc),
     subject: decodeMimeWords(headers.subject).trim(),
     date: headers.date || '',
     messageId: String(headers['message-id'] || '').trim(),

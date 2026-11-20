@@ -47,8 +47,8 @@ Svar JSON:
   "checkupNote": "ALLTID: 1–2 setninger til selgeren om hva kunden vil, f.eks. «Kunden kan ikke torsdag og ba om en ny tid.» Ingen klokkeslett."
 }
 request:
-- confirm: bekrefter, takker, «sees». reply = tom.
-- reschedule: gir en ny dato OG et klokkeslett for møtet. reply = tom (systemet bekrefter selv).
+- confirm: bekrefter, takker, «sees» om møtet som allerede står. Navngir kunden en annen dag/tid, eller velger en av tidene i offerTimes, er det reschedule, ikke confirm. reply = tom.
+- reschedule: gir en ny dato OG et klokkeslett for møtet. Også «<dag> kl <tid>?» som spørsmål (f.eks. «Torsdag kl 12?») når tiden er en annen enn bookedMeeting (er det bookedMeeting, er det question), «kan vi skyve/flytte/utsette til ...» og «passer fint» / «den første går fint» om en av tidene i offerTimes: det er et ønske om den tiden, ikke en bekreftelse av møtet som står. Å be oss legge en person på invitasjonen endrer ikke dette. reply = tom (systemet bekrefter selv).
 - reschedule_day: vil ha en annen dag, uten klokkeslett. reply: spør hvilken av tidene i offerTimes som passer.
 - cancel: kan ikke møte, men gir ingen ny tid. reply: takk for beskjed, si at det er helt i orden, og spør hvilken dag og tid som passer bedre — nevn gjerne tidene i offerTimes.
 - question: et enkelt spørsmål om hva dette er, hvem vi er, pris, hvordan møtet foregår. reply: svar kort med faktaene over, og si at møtet står som avtalt (bookedMeeting) eller spør hvilken dag som passer.

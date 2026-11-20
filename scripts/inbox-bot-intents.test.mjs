@@ -352,7 +352,7 @@ test('not interested voids the meeting before the polite follow-up', async () =>
 
 test('the AI can veto a booking but never start one', async () => {
   const vetoed = seed('meeting');
-  const veto = await mail(vetoed, 'Kan vi ta fredag 7. mars kl 13 i stedet?', { decideAi: async () => ({ request: 'info', reply: '' }) });
+  const veto = await mail(vetoed, 'Kan vi ta fredag 7. mars kl 13 i stedet?', { decideAi: async () => ({ request: 'not_interested', reply: '' }) });
   assert.equal(veto.card.meetingAt, BOOKED);
   assert.equal(veto.sent.length, 0);
   assert.equal(lastRow(vetoed.id).status, 'needs_human');
@@ -1222,6 +1222,8 @@ test('a new clock with no day named moves the meeting on the booked day, never c
     ['Går det an å flytte til kl 13?', THU_AT(13)],
     ['Kan vi utsette møtet til kl 14?', THU_AT(14)],
     ['Jeg rekker ikke kl 10. Kl 12 da?', THU_AT(12)],
+    ['Ta det kl 11 du', THU_AT(11)],
+    ['Ta møtet kl 11', THU_AT(11)],
   ]) {
     const client = seed('meeting');
     const out = classifyInboxRequest(text, client, { now: NOW });
@@ -1374,4 +1376,548 @@ test('the booked time is answered from the card, how long it lasts stays with a 
     assert.equal(sent.length, 0, text);
     assert.equal(lastRow(client.id).status, 'logged', text);
   }
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// The bot books the time the client asks for (skyve, bare day + clock, dotted dates, more yes cues, weeks,
+// alternatives, ordinal picks, the AI veto, a busy target that keeps the meeting, the stale rule).
+// The incident frame: Tue 17 Nov 2026 14:53 Oslo, meeting booked Wed 18 Nov 12:00 Oslo.
+// ---------------------------------------------------------------------------------------------------------------
+const INCIDENT_NOW = new Date('2026-11-17T13:53:00.000Z');
+const INCIDENT_WED_12 = '2026-11-18T11:00:00.000Z';
+const INCIDENT_THU_12 = '2026-11-19T11:00:00.000Z';
+const incidentCard = { agreedTime: true, meetingAt: INCIDENT_WED_12 };
+
+function classifyIncident(text, { client = incidentCard, offered = [], now = INCIDENT_NOW } = {}) {
+  return classifyInboxRequest(text, client, { now, offeredSlots: offered });
+}
+
+test('"skyve" and "skubbe" are move verbs: the incident mails book Thursday 12:00, guest sentence or not', () => {
+  for (const text of [
+    'Hei, kan vi skyve til torsdag kl 12?\n\nFint om du legger Kari på inviten. (CC)',
+    'Hei, kan vi skyve til torsdag kl 12?',
+    'Kan vi skyve møtet til torsdag kl 12?',
+    'Kan vi skubbe det til torsdag kl 12?',
+    'Vi må skyve møtet til torsdag kl 12.',
+    'Skyver vi det til torsdag kl 12?',
+  ]) {
+    const out = classifyIncident(text);
+    assert.equal(out.request, 'reschedule', text);
+    assert.equal(out.dueAt, INCIDENT_THU_12, text);
+  }
+  // A clock-only move with "skyve" is a move on the booked day, like "flytte".
+  const clock = classifyIncident('Kan vi skyve møtet til kl 13?');
+  assert.equal(clock.request, 'reschedule');
+  assert.equal(clock.dueAt, '2026-11-18T12:00:00.000Z');
+  assert.equal(classifyIncident('Kan vi skyve møtet en uke?').request, 'reschedule_day');
+});
+
+test('a bare day + clock is a new time, asked or not; the booked instant stays a question', () => {
+  for (const text of [
+    'Torsdag kl 12?',
+    'Torsdag kl 12 da?',
+    'Torsdag kl 12 i stedet?',
+    'Torsdag kl 12',
+    'Torsdag kl 12? Ta gjerne med Kari\n\nOla Nordmann\nDaglig leder\n+47 123 45 678',
+    'Hei, torsdag kl 12?\n\nMvh\nOla Nordmann',
+  ]) {
+    const out = classifyIncident(text);
+    assert.equal(out.request, 'reschedule', text);
+    assert.equal(out.dueAt, INCIDENT_THU_12, text);
+  }
+  // Nothing booked, or after offered times that do not include it.
+  assert.equal(classifyIncident('Torsdag kl 12?', { client: {} }).request, 'reschedule');
+  assert.equal(classifyIncident('Torsdag kl 12?', { client: {}, offered: ['2026-11-20T08:00:00.000Z', '2026-11-23T09:00:00.000Z'] }).dueAt, INCIDENT_THU_12);
+  // The booked instant is a question about the booked time.
+  assert.equal(classifyIncident('Onsdag kl 12?').request, 'question');
+  assert.equal(classifyIncident('Er møtet fortsatt onsdag kl 12?').request, 'question');
+  const thursday = { agreedTime: true, meetingAt: INCIDENT_THU_12 };
+  assert.equal(classifyIncident('Torsdag kl 12?', { client: thursday }).request, 'question');
+  assert.equal(classifyIncident('Er møtet torsdag kl 12?', { client: thursday }).request, 'question');
+});
+
+test('incident mail 3 "Ta det kl 10 du" books 10:00 on the booked day, signature and AI question included', () => {
+  const text = `Ref mail Kari.
+
+Ta det kl 10 du.
+
+Ola Nordmann
+Group Finance & Accounting Manager | regnskapssjef
+
+Kunde Gruppen
+Mobile: +47 400 00 000`;
+  const friday = { agreedTime: true, meetingAt: '2026-11-20T11:00:00.000Z' };
+  const now = new Date('2026-11-19T11:18:20.000Z');
+  const out = classifyInboxRequest(text, friday, { now });
+  assert.equal(out.request, 'reschedule');
+  assert.equal(out.dueAt, '2026-11-20T09:00:00.000Z');
+  const merged = mergeWriteDecision(out, { request: 'question' }, { bookedFuture: true });
+  assert.equal(merged.needsHuman, false);
+  assert.equal(merged.request, 'reschedule');
+  assert.equal(merged.dueAt, '2026-11-20T09:00:00.000Z');
+});
+
+test('"ta det" moves the meeting only with the clock right after it; two clocks go to a person', () => {
+  const friday = { agreedTime: true, meetingAt: '2026-11-20T11:00:00.000Z' };
+  const now = new Date('2026-11-19T11:18:20.000Z');
+  for (const text of [
+    'Ta det med ro, vi sees kl 10',
+    'Ta det rolig, vi ses kl 10',
+    'Ta det opp på møtet kl 10',
+    'Ta det videre på møtet kl 11',
+    'Ta møtet med Kari kl 10',
+    'Ta det med deg, jeg har kl 10 fri',
+    'Ta det som en fordel at vi møtes kl 11',
+    'Take it kl 10',
+  ]) {
+    const out = classifyInboxRequest(text, friday, { now });
+    assert.notEqual(out.request, 'reschedule', text);
+    assert.equal(out.dueAt || '', '', text);
+    const merged = mergeWriteDecision(out, { request: 'question' }, { bookedFuture: true });
+    assert.equal(merged.dueAt || '', '', text);
+  }
+  for (const text of ['Ta det kl 10 eller 11', 'Ta det kl 10 eller kl 11']) {
+    const out = classifyInboxRequest(text, friday, { now });
+    assert.equal(out.request, 'unclear', text);
+    assert.equal(out.reason, 'time-unclear', text);
+  }
+  for (const [text, at] of [['Ta det kl 11 da', '2026-11-20T10:00:00.000Z'], ['Ta det kl. 10.30', '2026-11-20T09:30:00.000Z'], ['Ta møtet heller kl 10', '2026-11-20T09:00:00.000Z']]) {
+    const out = classifyInboxRequest(text, friday, { now });
+    assert.equal(out.request, 'reschedule', text);
+    assert.equal(out.dueAt, at, text);
+  }
+});
+
+test('incident leftover questions stay questions', () => {
+  // The documented questions stay questions.
+  for (const text of ['Hva koster det?', 'Hvilken dag var det vi hadde møte igjen?', 'står det kl 12 eller 13?', 'Hvordan blir jeg med?']) {
+    assert.equal(classifyIncident(text).request, 'question', text);
+  }
+});
+
+test('dotted dates and "kl." do not split the sentence, so a lone date + clock books', () => {
+  for (const [text, dueAt] of [
+    ['25.11 kl 13', '2026-11-25T12:00:00.000Z'],
+    ['25.11 kl. 13', '2026-11-25T12:00:00.000Z'],
+    ['Torsdag 26. november kl 10.', '2026-11-26T09:00:00.000Z'],
+    ['Fredag den 27. kl 10', '2026-11-27T09:00:00.000Z'],
+    ['Onsdag 25.11 kl 13', '2026-11-25T12:00:00.000Z'],
+    ['Fredag 27. nov. kl 10', '2026-11-27T09:00:00.000Z'],
+  ]) {
+    for (const client of [incidentCard, {}]) {
+      const out = classifyIncident(text, { client });
+      assert.equal(out.request, 'reschedule', text);
+      assert.equal(out.dueAt, dueAt, text);
+    }
+  }
+  // Two real sentences are still not "just a time".
+  assert.notEqual(classifyIncident('Vi jobber med regnskapet. Fredag 27. kl 10 kommer revisoren.').request, 'reschedule');
+});
+
+test('more yes and ask cues book the time, a time in an unrelated sentence still never does', () => {
+  for (const [text, dueAt] of [
+    ['Vi tar torsdag kl 12', INCIDENT_THU_12],
+    ['Tar vi torsdag kl 12?', INCIDENT_THU_12],
+    ['Vi kan møtes torsdag kl 12', INCIDENT_THU_12],
+    ['Vi kan ta torsdag kl 12, passer det?', INCIDENT_THU_12],
+    ['Er det mulig å møtes torsdag kl 12?', INCIDENT_THU_12],
+    ['Kunne vi tatt torsdag kl 12?', INCIDENT_THU_12],
+    ['Går det an å ta torsdag kl 12?', INCIDENT_THU_12],
+    ['Torsdag kl 12 passer for oss', INCIDENT_THU_12],
+    ['Ok, torsdag kl 12', INCIDENT_THU_12],
+    // The clock is not dropped: Wednesday at 11, not the booked 12.
+    ['Er det mulig å møtes onsdag klokken 11?', '2026-11-18T10:00:00.000Z'],
+    ['Vi kan møtes onsdag kl 11', '2026-11-18T10:00:00.000Z'],
+  ]) {
+    const out = classifyIncident(text);
+    assert.equal(out.request, 'reschedule', text);
+    assert.equal(out.dueAt, dueAt, text);
+  }
+  for (const text of [
+    'Vi tar imot bildene fredag kl 12.',
+    'Takk! Regnskapsføreren vår er her fredag kl 13.',
+    'Jeg sender bildene fredag kl 12.',
+  ]) {
+    assert.notEqual(classifyIncident(text).request, 'reschedule', text);
+  }
+});
+
+test('week numbers: "uke N" offers that week, weekday + week is that date, a date against the week is unclear', () => {
+  const week = classifyIncident('Passer uke 48?');
+  assert.equal(week.request, 'reschedule_day');
+  assert.equal(week.day.ymd, '2026-11-23');
+  assert.equal(week.day.week, true);
+  for (const text of ['uke 48', 'Kan vi ta uke 48?', 'Kan vi skyve til uke 48?', 'Hva med week 48?']) {
+    const out = classifyIncident(text);
+    assert.equal(out.request, 'reschedule_day', text);
+    assert.equal(out.day.ymd, '2026-11-23', text);
+  }
+  const tuesday = classifyInboxRequest('Kan vi ta tirsdag i uke 49 kl 10?', {}, { now: new Date('2026-11-19T10:00:00.000Z') });
+  assert.equal(tuesday.request, 'reschedule');
+  assert.equal(tuesday.dueAt, '2026-12-01T09:00:00.000Z');
+  const conflict = classifyIncident('Tirsdag 24.11 i uke 49 kl 10 passer');
+  assert.equal(conflict.request, 'unclear');
+  assert.equal(conflict.reason, 'time-unclear');
+  // A week before the booked meeting's week does not read the meeting week as booked.
+  const sameWeek = classifyInboxRequest('Passer uke 47?', { agreedTime: true, meetingAt: '2026-11-23T09:00:00.000Z' }, { now: INCIDENT_NOW });
+  assert.equal(sameWeek.request, 'reschedule_day');
+});
+
+test('two alternatives come back as candidates in the order written', () => {
+  const out = classifyIncident('Hva med tirsdag 24.11 kl 10 eller onsdag 25.11 kl 14?');
+  assert.equal(out.request, 'reschedule');
+  assert.equal(out.dueAt, '2026-11-24T09:00:00.000Z');
+  assert.deepEqual(out.candidates, ['2026-11-24T09:00:00.000Z', '2026-11-25T13:00:00.000Z']);
+  const plain = classifyIncident('tirsdag kl 10 eller torsdag kl 14 eller fredag kl 9 eller mandag kl 8');
+  assert.equal(plain.candidates.length, 3);
+  assert.equal(plain.dueAt, plain.candidates[0]);
+  // One time, or the booked meeting among the alternatives, is no list.
+  assert.equal(classifyIncident('tirsdag kl 10').candidates, undefined);
+  assert.equal(classifyIncident('Er møtet onsdag kl 12 eller torsdag kl 12?').candidates, undefined);
+});
+
+test('an ordinal pick of the offered times books that slot', () => {
+  const offered = ['2026-11-20T08:00:00.000Z', '2026-11-23T09:00:00.000Z', '2026-11-24T09:00:00.000Z'];
+  for (const [text, index] of [
+    ['Den første går fint', 0],
+    ['Det andre forslaget passer', 1],
+    ['Siste alternativ', 2],
+    ['nr 2', 1],
+    ['alternativ 2', 1],
+    ['Hei, den tredje passer fint for oss', 2],
+  ]) {
+    const out = classifyIncident(text, { offered });
+    assert.equal(out.request, 'reschedule', text);
+    assert.equal(out.dueAt, offered[index], text);
+  }
+  // No offer, a number beyond the offer, or a no is not a pick.
+  assert.notEqual(classifyIncident('Den første går fint').request, 'reschedule');
+  assert.notEqual(classifyIncident('Den fjerde passer', { offered }).request, 'reschedule');
+  assert.notEqual(classifyIncident('Den andre passer ikke', { offered }).dueAt, offered[1]);
+});
+
+test('a bare hour range without "kl" is its start, a date range is not a clock', () => {
+  const friday = classifyIncident('Fredag 13-14 passer fint');
+  assert.equal(friday.request, 'reschedule');
+  assert.equal(friday.dueAt, '2026-11-20T12:00:00.000Z');
+  assert.equal(classifyIncident('Fredag kl 13-14 passer fint').dueAt, '2026-11-20T12:00:00.000Z');
+  assert.notEqual(classifyIncident('Vi har åpent mandag-fredag 9-17.').request, 'reschedule');
+  const date = classifyIncident('Vi kan ta 13-14 november');
+  assert.notEqual(date.dueAt, '2026-11-13T12:00:00.000Z');
+});
+
+test('the AI is no veto on a dated booking, but still is on a no, a call or a contract', () => {
+  const heuristic = { request: 'reschedule', intent: 'sales_book', dueAt: INCIDENT_THU_12, cancel: true, excludedDays: [] };
+  for (const request of ['confirm', 'question', 'other', 'info']) {
+    const merged = mergeWriteDecision(heuristic, { request }, {});
+    assert.equal(merged.needsHuman, false, request);
+    assert.equal(merged.request, 'reschedule', request);
+    assert.equal(merged.aiRequest, request);
+  }
+  for (const request of ['not_interested', 'call', 'not_now', 'contract', 'unclear']) {
+    const merged = mergeWriteDecision(heuristic, { request }, {});
+    assert.equal(merged.needsHuman, true, request);
+    assert.equal(merged.reason, `ai-disagrees:${request}`, request);
+  }
+  // While a meeting is booked, a yes from the AI is a veto too: it may be a yes to the booked day.
+  const vetoYes = mergeWriteDecision(heuristic, { request: 'confirm' }, { bookedFuture: true });
+  assert.deepEqual([vetoYes.needsHuman, vetoYes.reason], [true, 'ai-disagrees:confirm']);
+  assert.equal(mergeWriteDecision(heuristic, { request: 'question' }, { bookedFuture: true }).needsHuman, false);
+  // Without a dated time the old veto stays.
+  assert.equal(mergeWriteDecision({ request: 'reschedule_day', intent: 'sales_propose', cancel: true }, { request: 'question' }, {}).needsHuman, true);
+  assert.equal(mergeWriteDecision({ request: 'cancel', intent: 'sales_cancel', cancel: true }, { request: 'confirm' }, {}).needsHuman, true);
+  // A pick or alternatives carry through.
+  const alt = mergeWriteDecision({ ...heuristic, candidates: [INCIDENT_THU_12, '2026-11-20T12:00:00.000Z'] }, {}, {});
+  assert.equal(alt.candidates.length, 2);
+});
+
+test('a dated booking is booked when the AI says confirm, says nothing or is down', async () => {
+  for (const decideAi of [
+    async () => ({ request: 'question', reply: '' }),
+    async () => ({ request: '', reply: '' }),
+    async () => { throw new Error('timeout'); },
+  ]) {
+    const client = seed('meeting');
+    const { card, write } = await mail(client, 'Hei, kan vi skyve til fredag kl 13?\n\nFint om du legger Kari på inviten. (CC)', { decideAi });
+    assert.equal(write.kind, 'sales_book');
+    assert.equal(card.meetingAt, FRIDAY_13);
+    // The AI is never the reason a person is asked. Kari is on no Cc line here, so her address is
+    // still flagged for a person after the booking (the guest part, not the time).
+    const row = lastRow(client.id);
+    assert.doesNotMatch(String(row.reason || ''), /^ai-/);
+    if (row.status === 'needs_human') assert.match(row.reason, /^guest-unknown-address:Kari/);
+  }
+  // A yes from the AI against a booked meeting stops it (it may be a yes to the booked day); with nothing booked it does not.
+  const yes = seed('meeting');
+  const yesMail = await mail(yes, 'Kan vi skyve til fredag kl 13?', { decideAi: async () => ({ request: 'confirm', reply: '' }) });
+  assert.equal(yesMail.card.meetingAt, BOOKED);
+  assert.equal(lastRow(yes.id).reason, 'ai-disagrees:confirm');
+  const unbooked = seed('meeting', { meetingAt: '', agreedTime: false });
+  const open = await mail(unbooked, 'Kan vi skyve til fredag kl 13?', { decideAi: async () => ({ request: 'confirm', reply: '' }) });
+  assert.equal(open.write.kind, 'sales_book');
+  // A no from the AI still stops it.
+  const vetoed = seed('meeting');
+  const { card } = await mail(vetoed, 'Fredag kl 13?', { decideAi: async () => ({ request: 'not_interested', reply: '' }) });
+  assert.equal(card.meetingAt, BOOKED);
+  assert.equal(lastRow(vetoed.id).reason, 'ai-disagrees:not_interested');
+});
+
+test('alternatives: the first one that is free is booked, the confirmation names it', async () => {
+  const client = seed('meeting');
+  const { card, sent, write } = await mail(client, 'Kan vi ta fredag kl 13 eller mandag kl 10?', {
+    queryBusy: async () => ({ busy: [{ start: FRIDAY_13, end: '2031-03-07T13:00:00.000Z' }] }),
+  });
+  assert.equal(write.kind, 'sales_book');
+  assert.equal(card.meetingAt, '2031-03-10T09:00:00.000Z');
+  assert.match(sent[0].text, /mandag 10\. mars 2031 kl\. 10:00/);
+  assert.doesNotMatch(sent[0].text, /fredag/i);
+
+  const first = seed('meeting');
+  const free = await mail(first, 'Kan vi ta fredag kl 13 eller mandag kl 10?');
+  assert.equal(free.card.meetingAt, FRIDAY_13);
+
+  // Outside hours is skipped too; none fitting falls back to the busy handling and keeps the meeting.
+  const hours = seed('meeting');
+  const night = await mail(hours, 'Fredag kl 6 eller mandag kl 10?');
+  assert.equal(night.card.meetingAt === BOOKED || night.card.meetingAt === '2031-03-10T09:00:00.000Z', true);
+  const none = seed('meeting');
+  const busyAll = await mail(none, 'Kan vi ta fredag kl 13 eller mandag kl 10?', {
+    queryBusy: async () => ({ busy: [
+      { start: FRIDAY_13, end: '2031-03-07T13:00:00.000Z' },
+      { start: '2031-03-10T09:00:00.000Z', end: '2031-03-10T10:00:00.000Z' },
+    ] }),
+  });
+  assert.equal(busyAll.write.kind, 'sales_propose');
+  assert.equal(busyAll.card.meetingAt, BOOKED);
+  assert.match(busyAll.sent[0].text, /står fortsatt/);
+});
+
+test('a busy target on another day keeps the working meeting; the pick of an offered time then moves it', async () => {
+  const client = seed('meeting');
+  const voids = [];
+  const { card, sent, write } = await mail(client, 'Kan vi ta fredag kl 13 i stedet?', {
+    queryBusy: async () => ({ busy: [{ start: FRIDAY_13, end: '2031-03-07T13:00:00.000Z' }] }),
+    voidMeeting: async (current, opts) => { voids.push(opts); return { ok: true, client: current, error: '' }; },
+  });
+  assert.equal(write.kind, 'sales_propose');
+  assert.equal(voids.length, 0);
+  assert.equal(card.agreedTime, true);
+  assert.equal(card.meetingAt, BOOKED);
+  assert.equal((card.nextActions || []).filter((row) => row.presetKey === 'findMeetingTime' && !row.doneAt).length, 0);
+  assert.match(sent[0].text, /Fredag 7\. mars 2031 kl\. 14:00|Fredag 7\. mars 2031 kl\. 13:00 er dessverre opptatt/);
+  assert.match(sent[0].text, /Møtet torsdag 6\. mars 2031 kl\. 10:00 står fortsatt/);
+  assert.ok(write.slots.length >= 1);
+  assert.ok(write.slots.every((iso) => iso !== FRIDAY_13));
+
+  const pick = await mail(client, 'Den siste går fint', {
+    ...later(1),
+    queryBusy: async () => ({ busy: [{ start: FRIDAY_13, end: '2031-03-07T13:00:00.000Z' }] }),
+  });
+  assert.equal(pick.write.kind, 'sales_book');
+  assert.equal(pick.card.meetingAt, write.slots.at(-1));
+
+  // A weekend request keeps the meeting too.
+  const weekend = seed('meeting');
+  const sat = await mail(weekend, 'Kan vi ta lørdag kl 10 i stedet?');
+  assert.equal(sat.card.agreedTime, true);
+  assert.equal(sat.card.meetingAt, BOOKED);
+  assert.match(sat.sent[0].text, /ikke møter i helgen/);
+  assert.match(sat.sent[0].text, /står fortsatt/);
+  // With nothing booked the old behaviour stands: no "står fortsatt".
+  const empty = seed('meeting');
+  await mail(empty, 'Jeg kan dessverre ikke komme på møtet likevel.');
+  const nothing = await mail(empty, 'Kan vi ta fredag kl 13 i stedet?', {
+    ...later(1),
+    queryBusy: async () => ({ busy: [{ start: FRIDAY_13, end: '2031-03-07T13:00:00.000Z' }] }),
+  });
+  assert.equal(nothing.write.kind, 'sales_propose');
+  assert.doesNotMatch(nothing.sent[0].text, /står fortsatt/);
+});
+
+test('stale mail: 30 minutes when a future meeting would move, 12 hours when nothing is booked', async () => {
+  const old = (hours) => new Date(NOW.getTime() - hours * 3600000).toISOString();
+  const booked = seed('meeting');
+  const bookedOld = await mail(booked, 'Fredag kl 13?', { mailAt: old(2), now: NOW, realNow: NOW });
+  assert.equal(bookedOld.card.meetingAt, BOOKED);
+  assert.equal(lastRow(booked.id).reason, 'stale-mail');
+
+  const nothing = seed('meeting');
+  sales.voidSalesMeetingTime(nothing.id, { note: 'test' });
+  const fresh = sales.getSalesClientById(nothing.id);
+  assert.equal(fresh.agreedTime, false);
+  const ok = await mail(fresh, 'Fredag kl 13?', { mailAt: old(2), now: NOW, realNow: NOW });
+  assert.equal(ok.write.kind, 'sales_book');
+  assert.equal(ok.card.meetingAt, FRIDAY_13);
+
+  const tooOld = seed('meeting');
+  sales.voidSalesMeetingTime(tooOld.id, { note: 'test' });
+  const stale = await mail(sales.getSalesClientById(tooOld.id), 'Fredag kl 13?', { mailAt: old(13), now: NOW, realNow: NOW });
+  assert.equal(stale.card.agreedTime, false);
+  assert.equal(lastRow(tooOld.id).reason, 'stale-mail');
+});
+
+test('a week number that holds the booked meeting, or an unrelated week mention, never voids the meeting', () => {
+  // Booked Wed 18 Nov (week 47), now Tue 17 Nov.
+  const confirm = classifyIncident('Ses i uke 47');
+  assert.equal(confirm.request, 'confirm');
+  assert.equal(confirm.cancel, false);
+  assert.equal(classifyIncident('Møtet i uke 47 passer fint').request, 'confirm');
+  for (const text of ['Hva gjør dere i uke 48?', 'Er du ledig uke 48?']) {
+    const out = classifyIncident(text);
+    assert.equal(out.request, 'question', text);
+    assert.equal(out.cancel, false, text);
+  }
+  // A week mention inside a statement is for a person, not a void.
+  const campaign = classifyIncident('Vi har kampanje uke 48');
+  assert.equal(campaign.cancel, false);
+  assert.notEqual(campaign.request, 'reschedule_day');
+  // A week asked for still offers times in it.
+  for (const text of ['uke 48', 'Passer uke 48?', 'Kan vi ta uke 48?']) {
+    assert.equal(classifyIncident(text).request, 'reschedule_day', text);
+  }
+});
+
+test('a weak booking (only a short mail carried it) keeps the model veto; a strong one does not', () => {
+  const weak = classifyIncident('Vi har styremøte torsdag kl 12');
+  assert.equal(weak.request, 'reschedule');
+  assert.equal(weak.weak, true);
+  assert.equal(mergeWriteDecision(weak, { request: 'info' }).needsHuman, true);
+  assert.equal(mergeWriteDecision(weak, { request: 'info' }).reason, 'ai-disagrees:info');
+  const strong = classifyIncident('Torsdag kl 12?');
+  assert.ok(!strong.weak);
+  assert.equal(mergeWriteDecision(strong, { request: 'question' }).needsHuman, false);
+});
+
+test('an ordinal in front of a period noun, an "if" or a question is no pick of an offered time', () => {
+  const offered = ['2026-11-20T09:00:00.000Z', '2026-11-23T09:00:00.000Z', '2026-11-24T09:00:00.000Z'];
+  for (const text of [
+    'Den første uken i desember passer bedre',
+    'Takk, den andre uken passer',
+    'Den siste uken i november er bedre',
+    'Hvis den første går fint, så tar vi den',
+    'Er den første fortsatt ledig?',
+  ]) {
+    const out = classifyIncident(text, { offered });
+    assert.ok(!out.pick, text);
+    assert.notEqual(out.intent, 'sales_book', text);
+  }
+  assert.equal(classifyIncident('Den første går fint', { offered }).pick, 1);
+});
+
+test('extra content after a time is not a signature; a real signature block still is', () => {
+  for (const text of ['Torsdag kl 12\n\nJeg har fått ny jobb', 'Torsdag kl 12\n\nVi er flere som skal være med']) {
+    assert.notEqual(classifyIncident(text).request, 'reschedule', text);
+  }
+  assert.equal(classifyIncident('Torsdag kl 12\n\nOla Nordmann\nDaglig leder\n+47 123 45 678').request, 'reschedule');
+  assert.equal(classifyIncident('Torsdag kl 12\n\nMvh\nOla').request, 'reschedule');
+  // A long title line is still part of the signature; a long line with a verb is a sentence.
+  const longTitle = '\n\nOla Nordmann\nHead of Finance & Accounting Manager | økonomisjef\n\nKunde Gruppen\n\nMobile: +47 400 00 000';
+  assert.equal(classifyIncident(`Torsdag kl 12?${longTitle}`).request, 'reschedule');
+  assert.notEqual(classifyIncident('Torsdag kl 12\n\nVår nye daglig leder har mange spørsmål om prisen').request, 'reschedule');
+});
+
+test('a time the client says is taken is never booked as the first of several', () => {
+  const out = classifyIncident('Jeg har møte tirsdag kl 10 eller onsdag kl 14, men torsdag kl 12 går fint');
+  assert.equal(out.request, 'unclear');
+  assert.equal(out.intent, 'none');
+});
+
+test('"kan ikke onsdag, lørdag?" rejects the booked meeting and voids it; "heller lørdag" keeps it', async () => {
+  assert.equal(classifyIncident('Jeg kan ikke onsdag. Kan vi ta lørdag kl 10?').rejectsBooked, true);
+  assert.equal(classifyIncident('Kan vi heller ta lørdag kl 10?').rejectsBooked, false);
+  const client = seed('meeting');
+  const voids = [];
+  const { card, sent, write } = await mail(client, 'Jeg kan ikke torsdag. Kan vi ta lørdag kl 10?', {
+    voidMeeting: async (current, opts) => { voids.push(opts); return { ok: true, client: sales.voidSalesMeetingTime(current.id, { note: opts?.note || 'test' }) || current, error: '' }; },
+  });
+  assert.equal(write.kind, 'sales_propose');
+  assert.equal(voids.length, 1);
+  assert.equal(card.agreedTime, false);
+  assert.doesNotMatch(sent[0].text, /står fortsatt/);
+});
+
+test('after "Møtet står fortsatt, vil du heller flytte?" a plain no or "passer ikke" never voids the working meeting', async () => {
+  const busy = async () => ({ busy: [{ start: FRIDAY_13, end: '2031-03-07T13:00:00.000Z' }] });
+  const offerKept = async () => {
+    const client = seed('meeting');
+    const first = await mail(client, 'Kan vi ta fredag kl 13 i stedet?', { queryBusy: busy });
+    assert.equal(first.write.kind, 'sales_propose');
+    assert.match(first.sent[0].text, /står fortsatt/);
+    assert.ok(lastRow(client.id).keptMeetingAt, 'the offer row remembers that the meeting was kept');
+    return { client, slots: first.write.slots };
+  };
+  const answer = async (client, text, hours = 1) => {
+    const voids = [];
+    const out = await mail(client, text, {
+      ...later(hours),
+      queryBusy: busy,
+      voidMeeting: async (current, opts) => { voids.push(opts); return { ok: true, client: current, error: '' }; },
+    });
+    return { ...out, voids };
+  };
+  for (const text of ['Nei takk, vi holder oss til torsdag', 'Nei takk', 'Den første passer ikke', 'Nei takk, det går fint']) {
+    const { client } = await offerKept();
+    const { voids, card, write, sent } = await answer(client, text);
+    assert.equal(voids.length, 0, `${text}: the meeting is not voided`);
+    assert.equal(card.meetingAt, BOOKED, text);
+    assert.equal(write.needsHuman, true, text);
+    assert.equal(lastRow(client.id).reason, 'declines-kept-offer', text);
+    assert.equal(sent.length, 0, `${text}: nothing is mailed to the client`);
+  }
+  // Words that cancel the meeting itself still do.
+  const { client } = await offerKept();
+  const cancel = await answer(client, 'Vi må dessverre avlyse møtet');
+  assert.equal(cancel.voids.length, 1);
+});
+
+test('a "passer ikke" about one offered time does not stop the pick of another one', async () => {
+  const busy = async () => ({ busy: [{ start: FRIDAY_13, end: '2031-03-07T13:00:00.000Z' }] });
+  for (const text of ['Den første passer ikke, men den siste går', 'Nr 1 passer ikke, nr 3 passer', 'Den første passer dårlig, ta den andre']) {
+    const client = seed('meeting');
+    const first = await mail(client, 'Kan vi ta fredag kl 13 i stedet?', { queryBusy: busy });
+    const slots = first.write.slots;
+    assert.ok(slots.length >= 3, 'three times offered');
+    const pick = await mail(client, text, { ...later(1), queryBusy: busy });
+    assert.equal(pick.write.kind, 'sales_book', text);
+    const index = /andre/.test(text) ? 1 : (/nr 3/i.test(text) ? 2 : slots.length - 1);
+    assert.equal(pick.card.meetingAt, slots[index], text);
+  }
+});
+
+test('a time that is only named (busy then, turned down, conditional, after the sign-off, next to the booked day) never moves the meeting', async () => {
+  const texts = [
+    'Jeg har et annet møte fredag kl 12, så torsdag passer bedre.',
+    'Jeg har tannlege fredag kl 12, men torsdag går fint.',
+    'Fredag kl 12 er jeg i et annet møte, så torsdag passer best',
+    'Fredag kl 12 er vi på kurs',
+    'Vi har allerede en avtale fredag kl 12',
+    'Jeg vil ikke flytte til fredag kl 12',
+    'Du trenger ikke flytte det til fredag kl 12, torsdag går fint',
+    'Ikke skyv det til fredag kl 12',
+    'Hvis det ikke passer torsdag, kan vi ta fredag kl 12',
+    'Torsdag går fint, men hvis dere vil flytte, fredag kl 12 passer også',
+    'Takk, det passer fint.\n\nMvh Ola\nTelefontid: fredag kl 12–14',
+    'Takk, det passer fint.\n\nP.S. Vi har julebord fredag kl 18',
+  ];
+  for (const text of texts) {
+    for (const decideAi of [undefined, async () => ({ request: 'confirm', reply: '' })]) {
+      const client = seed('meeting');
+      const { card, write, sent } = await mail(client, text, { decideAi });
+      assert.equal(card.meetingAt, BOOKED, `${text}: the meeting is not moved`);
+      assert.equal(write.kind === 'sales_book', false, text);
+      assert.equal(sent.some((row) => /flyttet møtet/.test(row.text)), false, text);
+    }
+  }
+  // A time next to a chat or lunch is a weak booking: the AI keeps its veto.
+  const lunch = seed('meeting');
+  const asked = await mail(lunch, 'Hva med lunsj fredag kl 12?', { decideAi: async () => ({ request: 'question', reply: '' }) });
+  assert.equal(asked.card.meetingAt, BOOKED);
+  assert.equal(lastRow(lunch.id).status, 'needs_human');
+  // A plain ask still books.
+  const plain = seed('meeting');
+  const booked = await mail(plain, 'Kan vi ta fredag kl 12 i stedet?');
+  assert.equal(booked.write.kind, 'sales_book');
+  const cancelThenAsk = seed('meeting');
+  const after = await mail(cancelThenAsk, 'Torsdag passer ikke, fredag kl 12 passer bedre.');
+  assert.equal(after.write.kind, 'sales_book');
 });

@@ -29,6 +29,7 @@ const APPLIED_LABEL: Record<string, string> = {
   walk_away: 'Bot spurte hvorfor kunden sa nei',
   walk_away_final: 'Bot takket for svaret',
   gather: 'Bot svarte',
+  guest_add: 'Bot la til gjest i møtet',
   workshop_book: 'Bot booket workshop',
   workshop_propose: 'Bot svarte med workshop-tider',
   workshop_call: 'Bot svarte og lovet å ta kontakt',
@@ -39,6 +40,7 @@ const UNMAILED_LABEL: Record<string, string> = {
   sales_book: 'Bot flyttet møtet (uten svar)',
   sales_cancel: 'Bot avlyste møtet (uten svar)',
   workshop_book: 'Bot booket workshop (uten svar)',
+  guest_declined: 'Gjest avslo møtet — møtet står',
 };
 
 /** Why a mail was left for a rep, keyed by the reason (the part before any `:detail`). */
@@ -54,6 +56,10 @@ const NEEDS_HUMAN_LABEL: Record<string, string> = {
   'move-warning': 'Bot flyttet møtet — sjekk kalenderen, et steg etterpå feilet',
   'no-meet-link': 'Trenger svar fra selger — kunden spør etter møtelenken',
   'book-failed': 'Trenger svar fra selger — boten fikk ikke flyttet møtet',
+  'guest-unknown-address': 'Trenger svar fra selger — kunden vil ha med en person uten kjent e-postadresse',
+  'guest-add-failed': 'Trenger svar fra selger — boten fikk ikke lagt til gjesten',
+  'guest-cancel': 'Trenger svar fra selger — en gjest vil avlyse, møtet står',
+  'guest-counter': 'Trenger svar fra selger — en gjest foreslo ny tid, møtet står',
 };
 
 /** The stage key from a `stage:<key>` reason, or '' when the reason is something else. */

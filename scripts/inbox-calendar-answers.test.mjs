@@ -258,3 +258,169 @@ test('an Exchange bounce without a delivery-status part still names the address 
   assert.deepEqual(bounceRecipients(message), ['post@byggfirma.test']);
   assert.deepEqual(bounceRecipients({ from: 'Kunde <kunde@kalender.test>', subject: 'Re: møtet', text: 'Skriv til ola@kalender.test' }), [], 'a normal mail is no bounce');
 });
+
+// A person the client forwarded the invite to answers it too. Only the card's own address speaks for the client.
+const GUEST = 'kari@partner.example';
+const { appendInboxItem } = await import('../lib/inbox-bot/store.js');
+
+test("a guest's Avslå changes nothing: no void, no mail, a log row \"Gjest avslo møtet\"", async () => {
+  const client = seed({ email: 'ola-g1@kalender.test', eventId: 'evt-g1' });
+  const { sent, voids, result } = await ingest(asMessage(calendarMail({
+    from: 'Kari Hansen <kari@partner.example>',
+    calendar: ics({ uid: 'evt-g1@google.com', attendee: GUEST }),
+  })));
+  assert.equal(result.write.reason, 'guest-declined');
+  assert.equal(voids.length, 0);
+  assert.equal(sent.length, 0);
+  const card = sales.getSalesClientById(client.id);
+  assert.equal(card.agreedTime, true);
+  assert.equal(card.meetingAt, BOOKED);
+  const item = listInboxItems({ salesClientId: client.id }).at(-1);
+  assert.deepEqual([item.kind, item.status, item.reason], ['guest_declined', 'logged', 'guest-declined']);
+  assert.equal(item.summary, `Gjest avslo møtet: ${GUEST}`);
+  const { buildSalesCardLog } = await import('../lib/sales-card-log.js');
+  const rows = buildSalesCardLog({ ...card, inboxBot: presentInboxForClient(client.id) }, NOW.getTime());
+  assert.ok(rows.some((row) => row.name === 'Gjest avslo møtet' && row.text.includes(GUEST)));
+});
+
+test("a guest's Foreslå ny tid is never booked: a person decides and the meeting stays", async () => {
+  const client = seed({ email: 'ola-g2@kalender.test', eventId: 'evt-g2' });
+  const { moves, sent, result } = await ingest(asMessage(calendarMail({
+    from: 'Kari Hansen <kari@partner.example>',
+    subject: 'Nytt tidspunkt foreslått: Asoldi · Online møte',
+    calendar: ics({ method: 'COUNTER', partstat: 'TENTATIVE', uid: 'evt-g2@google.com', start: '20310307T130000', attendee: GUEST }),
+  })));
+  assert.equal(result.write.reason, 'guest-counter');
+  assert.equal(moves.length + sent.length, 0);
+  assert.equal(sales.getSalesClientById(client.id).meetingAt, BOOKED);
+  const item = listInboxItems({ salesClientId: client.id }).at(-1);
+  assert.deepEqual([item.status, item.reason], ['needs_human', 'guest-counter']);
+});
+
+test("a guest's decline on an event we have since replaced still finds the card through the guest list", async () => {
+  const { cardForCalendarAnswer } = await import('../lib/inbox-bot/calendar-answers.js');
+  const cards = [
+    { id: 'c-1', contactEmail: 'ola@kunde.example', calendar: { eventId: 'new-event' }, meetingGuests: [{ email: GUEST, name: 'Kari Hansen' }] },
+    { id: 'c-2', contactEmail: 'per@annet.example', calendar: { eventId: 'other' } },
+  ];
+  const answer = { kind: 'decline', uid: 'old-deleted-event@google.com', attendee: GUEST, eventAt: BOOKED };
+  assert.deepEqual(cardForCalendarAnswer(cards, { text: '' }, answer), { client: cards[0], via: 'attendee' });
+  assert.equal(cardForCalendarAnswer(cards, { text: '' }, { ...answer, attendee: 'ukjent@x.example' }).client, null, 'a stranger finds no card');
+  assert.equal(cardForCalendarAnswer(cards, { text: '' }, { ...answer, kind: 'counter' }).via, 'guest', 'a proposal is found through the guest list too, and only logged');
+  assert.equal(cardForCalendarAnswer(cards, { text: '' }, { ...answer, attendee: 'ola@kunde.example' }).client.id, 'c-1');
+  // The whole path: the stored guest declines the replaced event; the client's meeting is untouched.
+  const card = seed({ email: 'ola-g3@kalender.test', eventId: 'evt-g3-new' });
+  const withGuest = { ...card, meetingGuests: [{ email: GUEST, name: 'Kari Hansen' }] };
+  const { voids, sent, result } = await ingest(asMessage(calendarMail({
+    from: 'Kari Hansen <kari@partner.example>',
+    calendar: ics({ uid: 'evt-g3-old@google.com', attendee: GUEST }),
+  })), { clients: [withGuest] });
+  assert.equal(result.matched, true);
+  assert.equal(result.write.reason, 'guest-declined');
+  assert.equal(voids.length + sent.length, 0);
+});
+
+/** The client's own earlier mail, left for a person, with the Friday 13:00 it asked for. */
+function openRequest(client, { at = '2031-03-07T12:00:00.000Z', receivedAt = '2031-03-03T07:00:00.000Z', candidates = [at], ...extra } = {}) {
+  return appendInboxItem({
+    kind: 'silent',
+    mailbox: 'alexander@asoldi.com',
+    messageId: `open-${client.id}:write`,
+    salesClientId: client.id,
+    receivedAt,
+    status: 'needs_human',
+    reason: 'ai-disagrees:reschedule',
+    text: 'Kan vi skyve til fredag kl 13?',
+    wordsDueAt: at,
+    wordsCandidates: candidates,
+    from: `Ola <${client.contactEmail}>`,
+    wordsRequest: 'question',
+    aiRequest: 'reschedule',
+    ...extra,
+  });
+}
+
+test('the client declines the invite while a new time they asked for is still open: that time is booked, nothing is voided', async () => {
+  const client = seed({ email: 'ola-o1@kalender.test', eventId: 'evt-o1' });
+  const open = openRequest(client);
+  const { moves, voids, sent } = await ingest(asMessage(calendarMail({
+    from: 'Ola <ola-o1@kalender.test>',
+    calendar: ics({ uid: 'evt-o1@google.com', attendee: 'ola-o1@kalender.test' }),
+  })));
+  assert.deepEqual(moves.map((row) => row.dueAt), ['2031-03-07T12:00:00.000Z']);
+  assert.equal(voids.length, 0);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].text, /fredag 7\. mars 2031 kl\. 13:00/i, 'the reply names the time');
+  assert.equal(sent[0].subject, 'Ny tid for møtet med Asoldi');
+  assert.equal(listInboxItems({ salesClientId: client.id }).find((row) => row.id === open.id).status, 'applied', 'the open request is closed');
+});
+
+test('a decline with an open request that cannot be booked keeps void + offer, the requested day first', async () => {
+  const client = seed({ email: 'ola-o2@kalender.test', eventId: 'evt-o2' });
+  openRequest(client);
+  const { moves, voids, sent } = await ingest(asMessage(calendarMail({
+    from: 'Ola <ola-o2@kalender.test>',
+    calendar: ics({ uid: 'evt-o2@google.com', attendee: 'ola-o2@kalender.test' }),
+  })), {
+    // The rep is busy exactly then (13:00-14:00 Oslo on Friday).
+    queryBusy: async () => ({ busy: [{ start: '2031-03-07T12:00:00.000Z', end: '2031-03-07T13:00:00.000Z' }] }),
+  });
+  assert.equal(moves.length, 0);
+  assert.equal(voids.length, 1);
+  const item = listInboxItems({ salesClientId: client.id }).at(-1);
+  assert.equal(item.kind, 'sales_declined');
+  assert.ok(item.offeredSlots.length > 0);
+  assert.equal(osloCalendarYmd(item.offeredSlots[0]), '2031-03-07', 'Friday, the day they asked for, comes first');
+  assert.match(sent[0].text, /Du ba tidligere om fredag 7\. mars 2031 kl\. 13:00/i);
+});
+
+test('an old, ambiguous or already booked open request does not turn a decline into a booking', async () => {
+  const stale = seed({ email: 'ola-o3@kalender.test', eventId: 'evt-o3' });
+  openRequest(stale, { receivedAt: '2031-02-27T07:00:00.000Z' });
+  const first = await ingest(asMessage(calendarMail({ from: 'Ola <ola-o3@kalender.test>', calendar: ics({ uid: 'evt-o3@google.com', attendee: 'ola-o3@kalender.test' }) })));
+  assert.deepEqual([first.moves.length, first.voids.length], [0, 1], 'older than 72 hours');
+  const two = seed({ email: 'ola-o4@kalender.test', eventId: 'evt-o4' });
+  openRequest(two, { candidates: ['2031-03-07T12:00:00.000Z', '2031-03-10T12:00:00.000Z'] });
+  const second = await ingest(asMessage(calendarMail({ from: 'Ola <ola-o4@kalender.test>', calendar: ics({ uid: 'evt-o4@google.com', attendee: 'ola-o4@kalender.test' }) })));
+  assert.deepEqual([second.moves.length, second.voids.length], [0, 1], 'two different times named: not ours to guess');
+  const same = seed({ email: 'ola-o5@kalender.test', eventId: 'evt-o5' });
+  openRequest(same, { at: BOOKED });
+  const third = await ingest(asMessage(calendarMail({ from: 'Ola <ola-o5@kalender.test>', calendar: ics({ uid: 'evt-o5@google.com', attendee: 'ola-o5@kalender.test' }) })));
+  assert.deepEqual([third.moves.length, third.voids.length], [0, 1], 'the request is the very meeting being declined');
+});
+
+test('a decline never books a date from a mail that was not a move request, or from a guest', async () => {
+  const cases = [
+    ['unclear', { wordsRequest: 'unclear', aiRequest: '', reason: 'unclear' }],
+    ['question', { wordsRequest: 'question', aiRequest: 'question', reason: 'ai-disagrees:question' }],
+    ['guest sender', { from: 'Kari Hansen <kari@partner.example>' }],
+    // The AI read a call, a deadline or a bare date where the words read a move: the time was never a request.
+    ['words move, AI call', { wordsRequest: 'reschedule', aiRequest: 'call', reason: 'ai-disagrees:call' }],
+    ['words move, AI other', { wordsRequest: 'reschedule', aiRequest: 'other', reason: 'ai-disagrees:other' }],
+    ['words other, AI move', { wordsRequest: 'other', aiRequest: 'reschedule', reason: 'ai-sees:reschedule' }],
+    ['weak words booking', { wordsRequest: 'reschedule', aiRequest: '', weakBooking: true, reason: 'ai-unavailable' }],
+  ];
+  for (const [index, [label, extra]] of cases.entries()) {
+    const email = `ola-n${index}@kalender.test`;
+    const client = seed({ email, eventId: `evt-n${index}` });
+    openRequest(client, extra);
+    const { moves, voids } = await ingest(asMessage(calendarMail({
+      from: `Ola <${email}>`,
+      calendar: ics({ uid: `evt-n${index}@google.com`, attendee: email }),
+    })));
+    assert.deepEqual([moves.length, voids.length], [0, 1], label);
+  }
+});
+
+test('a time the words named is still booked by a decline when the mail only went to a person for safety (too old, a failed guest step)', async () => {
+  for (const [index, reason] of ['stale-mail', 'guest-add-failed:calendar-down'].entries()) {
+    const email = `ola-s${index}@kalender.test`;
+    const client = seed({ email, eventId: `evt-s${index}` });
+    openRequest(client, { wordsRequest: 'reschedule', aiRequest: '', reason });
+    const { moves, voids } = await ingest(asMessage(calendarMail({
+      from: `Ola <${email}>`,
+      calendar: ics({ uid: `evt-s${index}@google.com`, attendee: email }),
+    })));
+    assert.deepEqual([moves.length, voids.length], [1, 0], reason);
+  }
+});

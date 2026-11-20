@@ -81,12 +81,13 @@ test('safe mode on + emailRedirect: one real send, only to EMAIL_REDIRECT_TO, bc
   });
   fetchCalls.length = 0;
   assert.match(email.resolveMailTransport(), /^redirect:/);
-  await email.sendEmail({ to: 'real-client@example.invalid', subject: 'Tilbud', text: 'x', bcc: 'boss@example.invalid' });
+  await email.sendEmail({ to: 'real-client@example.invalid', subject: 'Tilbud', text: 'x', bcc: 'boss@example.invalid', cc: ['colleague@example.invalid'] });
   assert.equal(fetchCalls.length, 1);
   assert.equal(fetchCalls[0].url, 'https://api.resend.com/emails');
   const body = JSON.parse(fetchCalls[0].init.body);
   assert.deepEqual(body.to, ['dev-inbox@example.invalid']);
   assert.equal(body.bcc, undefined);
+  assert.equal(body.cc, undefined, 'the redirect copies nobody else');
   assert.match(body.subject, /^\[SAFE→real-client@example\.invalid\] Tilbud$/);
   const last = outboxIndex().at(-1);
   assert.equal(last.redirectedTo, 'dev-inbox@example.invalid');

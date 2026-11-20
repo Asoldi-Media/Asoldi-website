@@ -92,7 +92,9 @@ test('calendar writes return stand-ins and record calendarWrite intents (no Goog
   assert.equal((await calendar.deleteMeetingEvent('evt1', 'sales:x')).safeMode, true);
   assert.equal((await calendar.upsertSalesReminderEvent(client, { dueAt: client.meetingAt }, '', 'sales:x')).safeMode, true);
   assert.equal((await calendar.upsertRecordedSalesActionEvent(client, { dueAt: client.meetingAt }, '', 'sales:x')).safeMode, true);
-  assert.equal(intents('calendarWrite').length, 4);
+  assert.deepEqual((await calendar.addGuestsToEvent('evt1', 'sales:x', [{ email: 'kari@partner.example' }])).added, []);
+  assert.deepEqual((await calendar.removeGuestsFromEvent('evt1', 'sales:x', ['kari@partner.example'])).removed, []);
+  assert.equal(intents('calendarWrite').length, 6);
 });
 
 test('calendarWrite allowed: the guard steps aside (the real code runs and fails without a token)', async () => {
