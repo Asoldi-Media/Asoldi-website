@@ -11,6 +11,7 @@ process.env.APP_DATA_DIR = dataDir;
 process.env.DATA_DIR = '';
 
 const { FIXTURE_OFFERS, FIXTURE_CLIENT } = await import('./legal/dark-surface.mjs');
+const { pdfContentSha256 } = await import('./legal/pdf-content.mjs');
 const { DURATION_TERMS_VERSION, contractCopy } = await import('../lib/offer-contract-copy.js');
 const { contractHtmlForOffer } = await import('../lib/offer-contract-html.js');
 const { buildContractPdf, contractArticleModel, contractInputsForOffer } = await import('../lib/offer-contract-pdf.js');
@@ -205,20 +206,20 @@ test('signed contracts from before the wording change match the recorded hashes,
       const offer = FIXTURE_OFFERS[key];
       const inputs = contractInputsForOffer(offer, client);
       const pdf = await buildContractPdf({ client, ...inputs, date: new Date(CONTRACT_DATE) });
-      assert.equal(sha256(pdf), expected.pdfSha256, `${key} pdf`);
+      assert.equal(pdfContentSha256(pdf), expected.pdfContentSha256, `${key} pdf`);
 
       const unsignedInputs = contractInputsForOffer(offer, FIXTURE_CLIENT);
       const unsignedHtml = sha256(contractHtmlForOffer(offer, FIXTURE_CLIENT));
       const unsignedArticleModel = contractArticleModel({ client: FIXTURE_CLIENT, ...unsignedInputs, date: new Date(CONTRACT_DATE) });
       const unsignedArticle = sha256(JSON.stringify(JSON.parse(JSON.stringify({ ...unsignedArticleModel, copy: undefined }))));
-      const unsignedPdf = sha256(await buildContractPdf({ client: FIXTURE_CLIENT, ...unsignedInputs, date: new Date(CONTRACT_DATE) }));
+      const unsignedPdf = pdfContentSha256(await buildContractPdf({ client: FIXTURE_CLIENT, ...unsignedInputs, date: new Date(CONTRACT_DATE) }));
       const current = currentBaseline.contracts[key];
       assert.equal(unsignedHtml, current.htmlSha256, `${key} current html`);
       assert.equal(unsignedArticle, current.articleSha256, `${key} current article`);
-      assert.equal(unsignedPdf, current.pdfSha256, `${key} current pdf`);
+      assert.equal(unsignedPdf, current.pdfContentSha256, `${key} current pdf`);
       assert.notEqual(unsignedHtml, expected.htmlSha256, `${key} html changed`);
       assert.notEqual(unsignedArticle, expected.articleSha256, `${key} article changed`);
-      assert.notEqual(unsignedPdf, expected.pdfSha256, `${key} pdf changed`);
+      assert.notEqual(unsignedPdf, expected.pdfContentSha256, `${key} pdf changed`);
     }
   } finally {
     mock.timers.reset();

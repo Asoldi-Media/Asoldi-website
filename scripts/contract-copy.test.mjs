@@ -1,12 +1,14 @@
 // Contract lines per plan from the clause catalog, the switch's effect on contracts, offer letters
 // and the sales page, and the negative control: with the switch off every client-facing text is
-// byte-identical to the baseline recorded before the catalog existed.
+// byte-identical to the baseline recorded before the catalog existed (a contract PDF by its
+// uncompressed content, so the result does not depend on the zlib build).
 import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import zlib from 'node:zlib';
 
 process.env.APP_DATA_DIR = mkdtempSync(join(tmpdir(), 'contract-copy-'));
 process.env.DATA_DIR = '';
@@ -19,8 +21,9 @@ const { contractCopy } = await import('../lib/offer-contract-copy.js');
 const { SERVICE_MEANINGS_EN } = await import('../lib/service-meanings.js');
 const vocab = await import('../packages/suite/core/delivery/vocab.js');
 const darkSurface = await import('./legal/dark-surface.mjs');
+const { pdfContentSha256 } = await import('./legal/pdf-content.mjs');
 const { contractHtmlForOffer } = await import('../lib/offer-contract-html.js');
-const { contractArticleModel, contractInputsForOffer } = await import('../lib/offer-contract-pdf.js');
+const { buildContractPdf, contractArticleModel, contractInputsForOffer } = await import('../lib/offer-contract-pdf.js');
 const { productsWithTier, setOfferTierIncludesResolver } = await import('../lib/offer-email.js');
 const { buildOfferFromMeetingQuote, isStructuralIncludeLine } = await import('../lib/offer-from-quote.js');
 const { catalogOfferIncludes } = await import('../lib/legal/sales.js');
@@ -104,6 +107,34 @@ test('negative control: with the switch off the contracts, copy, pricing cards, 
     mock.timers.reset();
   }
   assert.deepEqual(surface, baseline);
+});
+
+test('a contract PDF hashes the same whatever deflate wrote it, and one changed word changes the hash', async () => {
+  setSwitch(false);
+  setOfferTierIncludesResolver((tierId) => catalogOfferIncludes(tierId));
+  const client = darkSurface.FIXTURE_CLIENT;
+  const at = new Date('2026-05-04T09:00:00.000Z');
+  const build = (client) => buildContractPdf({ client, ...contractInputsForOffer(darkSurface.FIXTURE_OFFERS.custom, client), date: at });
+  mock.timers.enable({ apis: ['Date'], now: at.getTime() });
+  const deflate = zlib.deflateSync;
+  try {
+    const pdf = await build(client);
+    zlib.deflateSync = (data, options) => deflate(data, { ...options, level: 1 });
+    let other;
+    try {
+      other = await build(client);
+    } finally {
+      zlib.deflateSync = deflate;
+    }
+    assert.notEqual(sha256(other), sha256(pdf), 'another deflate output writes other bytes');
+    assert.equal(pdfContentSha256(other), pdfContentSha256(pdf));
+    assert.equal(pdfContentSha256(pdf), baseline.contracts.custom.pdfContentSha256);
+    const renamed = await build({ ...client, businessName: 'Eksempel Baker AS' });
+    assert.notEqual(pdfContentSha256(renamed), pdfContentSha256(pdf), 'one changed word');
+  } finally {
+    zlib.deflateSync = deflate;
+    mock.timers.reset();
+  }
 });
 
 test('switch off: unsent offers match the baseline, and a change to their static text fails that comparison', () => {

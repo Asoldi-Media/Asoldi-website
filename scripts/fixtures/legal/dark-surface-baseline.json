@@ -3,162 +3,162 @@
     "tier1": {
       "htmlSha256": "d69bdd1d703fee445996b5cf35c14d99521ed454ce1ce5541f8bbadfb44ce4d3",
       "articleSha256": "4e9daedce09284373d0e549a43fefd3473988aa734c64a32d8dad48ba42db79b",
-      "pdfSha256": "d750607158c0d1ad176181a3eb737e32e6233fdc1191ce7f145a47a952c816e2"
+      "pdfContentSha256": "931285a1baff8c1a5c0abef316de3e2086ed730a354dc649515c347dcf69c07f"
     },
     "tier2": {
       "htmlSha256": "be428e6686fb8b99688da9614260ac2623c877b281e81838640072e5508921b0",
       "articleSha256": "928737a1fbc95118567346c982c266252d51a268b157a639a3e7d30f292e09c9",
-      "pdfSha256": "79719fddb8c140598f62c931bdf83c91efad4ed40a92d8218950737bd394368d"
+      "pdfContentSha256": "098a09087b45176ec21853d273548ddd0f608709659bf2ec257fe6f0b9f53bc2"
     },
     "tier3": {
       "htmlSha256": "ff026090815980da64a58f5e53522533310005c2fe025b2922c62adb0e89838a",
       "articleSha256": "7c378f9075983671b0754694d162d57ca5cbc89be1bf608de6dac23e8bd522c3",
-      "pdfSha256": "652dbb6dbe912379dc38c14c89492980cc7783371bb295bcefee07244d430684"
+      "pdfContentSha256": "9b98c6647870308080536c4bf0bf49c93879b01dbbdc7ecd8a8c7f2647feea11"
     },
     "tier2En": {
       "htmlSha256": "586bc788391bbc90de181f7a6885784447f57802c42124c6a2a376c920e62fb1",
       "articleSha256": "125726ee84294cb789affa44c022e2dc4be131689626e095adb03943a5466930",
-      "pdfSha256": "711c0b6c106d92bfc0ed2467d6d807a6df4d37cbebd5f94941cdd07ae0c258f6"
+      "pdfContentSha256": "66366c08abab693c6c97da5103d10f0adae962bfbd6850ae018b0718db0d51ee"
     },
     "tier1Fees": {
       "htmlSha256": "a6ac472efda328b8421a067fa06e369bdaf835b334318b4e5808aac64b6b85f1",
       "articleSha256": "b9d80b4dffc7c452a6131f72e32e7d6a7e098d0a7fefd1be62131b3b31729ad4",
-      "pdfSha256": "471dcc99b0e11e3e5183f3d863c10dc4a68f7fe5167294efbaf9a10b219afcb3"
+      "pdfContentSha256": "022538b520bb52bd0add472b868a41b8bb13c21c4c03d6b7c93e335a102b1782"
     },
     "tier2Mva": {
       "htmlSha256": "ee75798540adf3d4c219b03ba8aaa40f922118575755c7e2b7ba1d478da18e6b",
       "articleSha256": "160cbe429d9ca291fac794b8d7afab6672be8c261811a5e305f4d32568ee670f",
-      "pdfSha256": "05aa794b0d858a17732c6c2a8bb982237a601c5fbf23265484f27b023da7455b"
+      "pdfContentSha256": "1fd3564ff6d2b3425126ac67ea038371d33fe75610e807cb74425df21aa81c75"
     },
     "custom": {
       "htmlSha256": "b52236212f1cee8cf1b37a673829febfb4d5da0e6017917421ca923fece3b0c5",
       "articleSha256": "61254c6f86fd1461cc2badba34ef03086c82df193bf6ca5c75da7bba9114fd15",
-      "pdfSha256": "98457ed5b0cc2438efd3897f506e8b997485db367864cbda08bf5f88c47f529f"
+      "pdfContentSha256": "9649a54e81e5ae391ece93d72dad79b52aa74bca9abe10119c1716a38b3eae58"
     },
     "dual": {
       "htmlSha256": "d378a4f35a71baa89823e349c1db5a0c33bf32b59885da4e7eee8992fc4681df",
       "articleSha256": "151e79dd65e830df1bc7584943b805a9ff0826e115d6f43f166480816edebcab",
-      "pdfSha256": "15d01576e7af35c9bd5d5a93a2666e29d929e1093eb7f276fb487ca31516f49f"
+      "pdfContentSha256": "bc5fadca7b2e8bdda757892249d904c0fc91ed2eb12bc06b57eb3780a8ee5891"
     },
     "tier1Draft": {
       "htmlSha256": "d69bdd1d703fee445996b5cf35c14d99521ed454ce1ce5541f8bbadfb44ce4d3",
       "articleSha256": "4e9daedce09284373d0e549a43fefd3473988aa734c64a32d8dad48ba42db79b",
-      "pdfSha256": "d750607158c0d1ad176181a3eb737e32e6233fdc1191ce7f145a47a952c816e2"
+      "pdfContentSha256": "931285a1baff8c1a5c0abef316de3e2086ed730a354dc649515c347dcf69c07f"
     },
     "tier1ReviewRequested": {
       "htmlSha256": "d69bdd1d703fee445996b5cf35c14d99521ed454ce1ce5541f8bbadfb44ce4d3",
       "articleSha256": "4e9daedce09284373d0e549a43fefd3473988aa734c64a32d8dad48ba42db79b",
-      "pdfSha256": "d750607158c0d1ad176181a3eb737e32e6233fdc1191ce7f145a47a952c816e2"
+      "pdfContentSha256": "931285a1baff8c1a5c0abef316de3e2086ed730a354dc649515c347dcf69c07f"
     },
     "tier1Verified": {
       "htmlSha256": "d69bdd1d703fee445996b5cf35c14d99521ed454ce1ce5541f8bbadfb44ce4d3",
       "articleSha256": "4e9daedce09284373d0e549a43fefd3473988aa734c64a32d8dad48ba42db79b",
-      "pdfSha256": "d750607158c0d1ad176181a3eb737e32e6233fdc1191ce7f145a47a952c816e2"
+      "pdfContentSha256": "931285a1baff8c1a5c0abef316de3e2086ed730a354dc649515c347dcf69c07f"
     },
     "tier2Draft": {
       "htmlSha256": "be428e6686fb8b99688da9614260ac2623c877b281e81838640072e5508921b0",
       "articleSha256": "928737a1fbc95118567346c982c266252d51a268b157a639a3e7d30f292e09c9",
-      "pdfSha256": "79719fddb8c140598f62c931bdf83c91efad4ed40a92d8218950737bd394368d"
+      "pdfContentSha256": "098a09087b45176ec21853d273548ddd0f608709659bf2ec257fe6f0b9f53bc2"
     },
     "tier2ReviewRequested": {
       "htmlSha256": "be428e6686fb8b99688da9614260ac2623c877b281e81838640072e5508921b0",
       "articleSha256": "928737a1fbc95118567346c982c266252d51a268b157a639a3e7d30f292e09c9",
-      "pdfSha256": "79719fddb8c140598f62c931bdf83c91efad4ed40a92d8218950737bd394368d"
+      "pdfContentSha256": "098a09087b45176ec21853d273548ddd0f608709659bf2ec257fe6f0b9f53bc2"
     },
     "tier2Verified": {
       "htmlSha256": "be428e6686fb8b99688da9614260ac2623c877b281e81838640072e5508921b0",
       "articleSha256": "928737a1fbc95118567346c982c266252d51a268b157a639a3e7d30f292e09c9",
-      "pdfSha256": "79719fddb8c140598f62c931bdf83c91efad4ed40a92d8218950737bd394368d"
+      "pdfContentSha256": "098a09087b45176ec21853d273548ddd0f608709659bf2ec257fe6f0b9f53bc2"
     },
     "tier3Draft": {
       "htmlSha256": "ff026090815980da64a58f5e53522533310005c2fe025b2922c62adb0e89838a",
       "articleSha256": "7c378f9075983671b0754694d162d57ca5cbc89be1bf608de6dac23e8bd522c3",
-      "pdfSha256": "652dbb6dbe912379dc38c14c89492980cc7783371bb295bcefee07244d430684"
+      "pdfContentSha256": "9b98c6647870308080536c4bf0bf49c93879b01dbbdc7ecd8a8c7f2647feea11"
     },
     "tier3ReviewRequested": {
       "htmlSha256": "ff026090815980da64a58f5e53522533310005c2fe025b2922c62adb0e89838a",
       "articleSha256": "7c378f9075983671b0754694d162d57ca5cbc89be1bf608de6dac23e8bd522c3",
-      "pdfSha256": "652dbb6dbe912379dc38c14c89492980cc7783371bb295bcefee07244d430684"
+      "pdfContentSha256": "9b98c6647870308080536c4bf0bf49c93879b01dbbdc7ecd8a8c7f2647feea11"
     },
     "tier3Verified": {
       "htmlSha256": "ff026090815980da64a58f5e53522533310005c2fe025b2922c62adb0e89838a",
       "articleSha256": "7c378f9075983671b0754694d162d57ca5cbc89be1bf608de6dac23e8bd522c3",
-      "pdfSha256": "652dbb6dbe912379dc38c14c89492980cc7783371bb295bcefee07244d430684"
+      "pdfContentSha256": "9b98c6647870308080536c4bf0bf49c93879b01dbbdc7ecd8a8c7f2647feea11"
     },
     "tier2EnDraft": {
       "htmlSha256": "586bc788391bbc90de181f7a6885784447f57802c42124c6a2a376c920e62fb1",
       "articleSha256": "125726ee84294cb789affa44c022e2dc4be131689626e095adb03943a5466930",
-      "pdfSha256": "711c0b6c106d92bfc0ed2467d6d807a6df4d37cbebd5f94941cdd07ae0c258f6"
+      "pdfContentSha256": "66366c08abab693c6c97da5103d10f0adae962bfbd6850ae018b0718db0d51ee"
     },
     "tier2EnReviewRequested": {
       "htmlSha256": "586bc788391bbc90de181f7a6885784447f57802c42124c6a2a376c920e62fb1",
       "articleSha256": "125726ee84294cb789affa44c022e2dc4be131689626e095adb03943a5466930",
-      "pdfSha256": "711c0b6c106d92bfc0ed2467d6d807a6df4d37cbebd5f94941cdd07ae0c258f6"
+      "pdfContentSha256": "66366c08abab693c6c97da5103d10f0adae962bfbd6850ae018b0718db0d51ee"
     },
     "tier2EnVerified": {
       "htmlSha256": "586bc788391bbc90de181f7a6885784447f57802c42124c6a2a376c920e62fb1",
       "articleSha256": "125726ee84294cb789affa44c022e2dc4be131689626e095adb03943a5466930",
-      "pdfSha256": "711c0b6c106d92bfc0ed2467d6d807a6df4d37cbebd5f94941cdd07ae0c258f6"
+      "pdfContentSha256": "66366c08abab693c6c97da5103d10f0adae962bfbd6850ae018b0718db0d51ee"
     },
     "tier1FeesDraft": {
       "htmlSha256": "a6ac472efda328b8421a067fa06e369bdaf835b334318b4e5808aac64b6b85f1",
       "articleSha256": "b9d80b4dffc7c452a6131f72e32e7d6a7e098d0a7fefd1be62131b3b31729ad4",
-      "pdfSha256": "471dcc99b0e11e3e5183f3d863c10dc4a68f7fe5167294efbaf9a10b219afcb3"
+      "pdfContentSha256": "022538b520bb52bd0add472b868a41b8bb13c21c4c03d6b7c93e335a102b1782"
     },
     "tier1FeesReviewRequested": {
       "htmlSha256": "a6ac472efda328b8421a067fa06e369bdaf835b334318b4e5808aac64b6b85f1",
       "articleSha256": "b9d80b4dffc7c452a6131f72e32e7d6a7e098d0a7fefd1be62131b3b31729ad4",
-      "pdfSha256": "471dcc99b0e11e3e5183f3d863c10dc4a68f7fe5167294efbaf9a10b219afcb3"
+      "pdfContentSha256": "022538b520bb52bd0add472b868a41b8bb13c21c4c03d6b7c93e335a102b1782"
     },
     "tier1FeesVerified": {
       "htmlSha256": "a6ac472efda328b8421a067fa06e369bdaf835b334318b4e5808aac64b6b85f1",
       "articleSha256": "b9d80b4dffc7c452a6131f72e32e7d6a7e098d0a7fefd1be62131b3b31729ad4",
-      "pdfSha256": "471dcc99b0e11e3e5183f3d863c10dc4a68f7fe5167294efbaf9a10b219afcb3"
+      "pdfContentSha256": "022538b520bb52bd0add472b868a41b8bb13c21c4c03d6b7c93e335a102b1782"
     },
     "tier2MvaDraft": {
       "htmlSha256": "ee75798540adf3d4c219b03ba8aaa40f922118575755c7e2b7ba1d478da18e6b",
       "articleSha256": "160cbe429d9ca291fac794b8d7afab6672be8c261811a5e305f4d32568ee670f",
-      "pdfSha256": "05aa794b0d858a17732c6c2a8bb982237a601c5fbf23265484f27b023da7455b"
+      "pdfContentSha256": "1fd3564ff6d2b3425126ac67ea038371d33fe75610e807cb74425df21aa81c75"
     },
     "tier2MvaReviewRequested": {
       "htmlSha256": "ee75798540adf3d4c219b03ba8aaa40f922118575755c7e2b7ba1d478da18e6b",
       "articleSha256": "160cbe429d9ca291fac794b8d7afab6672be8c261811a5e305f4d32568ee670f",
-      "pdfSha256": "05aa794b0d858a17732c6c2a8bb982237a601c5fbf23265484f27b023da7455b"
+      "pdfContentSha256": "1fd3564ff6d2b3425126ac67ea038371d33fe75610e807cb74425df21aa81c75"
     },
     "tier2MvaVerified": {
       "htmlSha256": "ee75798540adf3d4c219b03ba8aaa40f922118575755c7e2b7ba1d478da18e6b",
       "articleSha256": "160cbe429d9ca291fac794b8d7afab6672be8c261811a5e305f4d32568ee670f",
-      "pdfSha256": "05aa794b0d858a17732c6c2a8bb982237a601c5fbf23265484f27b023da7455b"
+      "pdfContentSha256": "1fd3564ff6d2b3425126ac67ea038371d33fe75610e807cb74425df21aa81c75"
     },
     "customDraft": {
       "htmlSha256": "b52236212f1cee8cf1b37a673829febfb4d5da0e6017917421ca923fece3b0c5",
       "articleSha256": "61254c6f86fd1461cc2badba34ef03086c82df193bf6ca5c75da7bba9114fd15",
-      "pdfSha256": "98457ed5b0cc2438efd3897f506e8b997485db367864cbda08bf5f88c47f529f"
+      "pdfContentSha256": "9649a54e81e5ae391ece93d72dad79b52aa74bca9abe10119c1716a38b3eae58"
     },
     "customReviewRequested": {
       "htmlSha256": "b52236212f1cee8cf1b37a673829febfb4d5da0e6017917421ca923fece3b0c5",
       "articleSha256": "61254c6f86fd1461cc2badba34ef03086c82df193bf6ca5c75da7bba9114fd15",
-      "pdfSha256": "98457ed5b0cc2438efd3897f506e8b997485db367864cbda08bf5f88c47f529f"
+      "pdfContentSha256": "9649a54e81e5ae391ece93d72dad79b52aa74bca9abe10119c1716a38b3eae58"
     },
     "customVerified": {
       "htmlSha256": "b52236212f1cee8cf1b37a673829febfb4d5da0e6017917421ca923fece3b0c5",
       "articleSha256": "61254c6f86fd1461cc2badba34ef03086c82df193bf6ca5c75da7bba9114fd15",
-      "pdfSha256": "98457ed5b0cc2438efd3897f506e8b997485db367864cbda08bf5f88c47f529f"
+      "pdfContentSha256": "9649a54e81e5ae391ece93d72dad79b52aa74bca9abe10119c1716a38b3eae58"
     },
     "dualDraft": {
       "htmlSha256": "d378a4f35a71baa89823e349c1db5a0c33bf32b59885da4e7eee8992fc4681df",
       "articleSha256": "151e79dd65e830df1bc7584943b805a9ff0826e115d6f43f166480816edebcab",
-      "pdfSha256": "15d01576e7af35c9bd5d5a93a2666e29d929e1093eb7f276fb487ca31516f49f"
+      "pdfContentSha256": "bc5fadca7b2e8bdda757892249d904c0fc91ed2eb12bc06b57eb3780a8ee5891"
     },
     "dualReviewRequested": {
       "htmlSha256": "d378a4f35a71baa89823e349c1db5a0c33bf32b59885da4e7eee8992fc4681df",
       "articleSha256": "151e79dd65e830df1bc7584943b805a9ff0826e115d6f43f166480816edebcab",
-      "pdfSha256": "15d01576e7af35c9bd5d5a93a2666e29d929e1093eb7f276fb487ca31516f49f"
+      "pdfContentSha256": "bc5fadca7b2e8bdda757892249d904c0fc91ed2eb12bc06b57eb3780a8ee5891"
     },
     "dualVerified": {
       "htmlSha256": "d378a4f35a71baa89823e349c1db5a0c33bf32b59885da4e7eee8992fc4681df",
       "articleSha256": "151e79dd65e830df1bc7584943b805a9ff0826e115d6f43f166480816edebcab",
-      "pdfSha256": "15d01576e7af35c9bd5d5a93a2666e29d929e1093eb7f276fb487ca31516f49f"
+      "pdfContentSha256": "bc5fadca7b2e8bdda757892249d904c0fc91ed2eb12bc06b57eb3780a8ee5891"
     }
   },
   "copy": {

@@ -12,7 +12,9 @@ the same as before, the portal card is hidden and every route below answers `404
 recorded from the code before the catalog (`node scripts/legal/dark-surface.mjs --write` run on an
 export of that code). The baseline covers every contract fixture both as a sent offer and as an
 unsent one (draft, review requested, verified), which is what the preview, the PDF attached at send
-and the signed contract show. A hub that never turned the switch on writes no new data: the signing
+and the signed contract show. A contract PDF is compared by its uncompressed content
+(`scripts/legal/pdf-content.mjs`), so the check gives the same result whichever zlib build
+compressed it. A hub that never turned the switch on writes no new data: the signing
 snapshot needs an offer stamped while the switch was on. Before switching on,
 `retention.analyticsTraffic` must be enabled in `auto` (the settings save refuses otherwise), and
 each client CMS must also be running its own deletion rule for visit rows; the hub cannot see a

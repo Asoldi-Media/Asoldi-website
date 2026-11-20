@@ -3,7 +3,8 @@
  * The client-facing texts the legal catalog switch may change, computed from synthetic offers:
  * contract articles, HTML and PDF bytes (Norwegian and English, tier, custom, dual, one-time fees
  * and prices with VAT, each as a sent offer and as an unsent one in every status before sending;
- * as SHA-256 hashes, the PDF with time frozen by the caller), the contract copy, the public
+ * as SHA-256 hashes; the PDF with time frozen by the caller and hashed by its uncompressed content,
+ * see ./pdf-content.mjs), the contract copy, the public
  * pricing cards, the offer-letter product blocks, the offers built from a meeting quote and the
  * plans derived from offers whose rep-typed lines equal lines the catalog gives a tier.
  *
@@ -15,6 +16,7 @@
 import { createHash } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+import { pdfContentSha256 } from './pdf-content.mjs';
 
 export const BASELINE_PATH = new URL('../fixtures/legal/dark-surface-baseline.json', import.meta.url);
 
@@ -131,8 +133,10 @@ function plain(value) {
 }
 
 /**
- * Everything the switch may change, as plain JSON. `pdf: true` adds the PDF hashes; the caller
- * must freeze Date first (pdfkit stamps the creation time).
+ * Everything the switch may change, as plain JSON. `pdf: true` adds the PDF content hashes; the
+ * caller must freeze Date first (pdfkit stamps the creation time). A PDF is hashed by its content
+ * with every compressed stream inflated (pdfContentSha256), so the hash is the same whichever zlib
+ * build compressed it.
  */
 export async function darkSurface({ pdf = false } = {}) {
   const { contractHtmlForOffer } = await import('../../lib/offer-contract-html.js');
@@ -153,7 +157,7 @@ export async function darkSurface({ pdf = false } = {}) {
     };
     if (pdf) {
       const buffer = await buildContractPdf({ client: CLIENT, ...inputs, date: new Date(CONTRACT_DATE) });
-      entry.pdfSha256 = sha256(buffer);
+      entry.pdfContentSha256 = pdfContentSha256(buffer);
     }
     out.contracts[key] = entry;
   }
