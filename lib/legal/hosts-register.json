@@ -274,6 +274,8 @@
 
     "api.stripe.com": { "processor": "stripe", "purpose": "Betaling og abonnement", "dataCategories": ["navn", "e-postadresse", "betalingsopplysninger"], "region": "EØS (Irland) og USA" },
     "js.stripe.com": { "processor": "stripe", "purpose": "Betalingsskjema i nettleseren", "dataCategories": ["betalingsopplysninger", "IP-adresse i nettleseren"], "region": "EØS (Irland) og USA" },
+    "hooks.stripe.com": { "processor": "stripe", "purpose": "Bekreftelse av kortbetaling (3D Secure) i nettleseren", "dataCategories": ["betalingsopplysninger", "IP-adresse i nettleseren"], "region": "EØS (Irland) og USA" },
+    "m.stripe.network": { "processor": "stripe", "purpose": "Svindelkontroll i betalingsskjemaet i nettleseren", "dataCategories": ["IP-adresse i nettleseren"], "region": "EØS (Irland) og USA" },
     "api-m.paypal.com": { "processor": "paypal", "purpose": "PayPal-betaling i nettbutikker", "dataCategories": ["navn", "e-postadresse", "betalingsopplysninger"], "region": "EØS (Luxembourg)" },
     "api-m.sandbox.paypal.com": { "noPersonalData": true, "reason": "PayPals testmiljø. Brukes bare med testdata" },
 
@@ -314,6 +316,8 @@
     "img.youtube.com": { "processor": "thirdPartyContent", "purpose": "Forhåndsbilder av video", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },
     "www.youtube.com": { "processor": "thirdPartyContent", "purpose": "Innebygd video", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },
     "vimeo.com": { "processor": "thirdPartyContent", "purpose": "Innebygd video", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },
+    "player.vimeo.com": { "processor": "thirdPartyContent", "purpose": "Innebygd video, lastes etter klikk eller samtykke", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },
+    "www.youtube-nocookie.com": { "processor": "thirdPartyContent", "purpose": "Innebygd video, lastes etter klikk eller samtykke", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },
     "cdn.prod.website-files.com": { "processor": "thirdPartyContent", "purpose": "Bilder og ikoner på asoldi.com og ssu.asoldi.com", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },
     "assets-global.website-files.com": { "processor": "thirdPartyContent", "purpose": "Stilark og bilder på ssu.asoldi.com", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },
     "cdn.tailwindcss.com": { "processor": "thirdPartyContent", "purpose": "Stilark i forhåndsvisninger i Asoldis interne verktøy", "dataCategories": ["IP-adresse i nettleseren"], "region": "Varierer" },

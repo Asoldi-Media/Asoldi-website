@@ -2,7 +2,7 @@
   "version": 1,
   "name": "maker",
   "ref": "main",
-  "commit": "b982c7b8200ec05a91f70b41be1b650574230a6f",
+  "commit": "d11caa1b5d87b7a8dfbab8d3681d11d1e289c860",
   "egress": false,
   "hosts": [
     {
@@ -86,6 +86,12 @@
       ]
     },
     {
+      "host": "data.brreg.no",
+      "via": [
+        "static"
+      ]
+    },
+    {
       "host": "developers.hostinger.com",
       "via": [
         "static"
@@ -129,6 +135,24 @@
       ]
     },
     {
+      "host": "hooks.stripe.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "js.stripe.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "m.stripe.network",
+      "via": [
+        "static"
+      ]
+    },
+    {
       "host": "placehold.co",
       "via": [
         "static"
@@ -136,6 +160,12 @@
     },
     {
       "host": "platform.claude.com",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "player.vimeo.com",
       "via": [
         "static"
       ]
@@ -178,6 +208,12 @@
     },
     {
       "host": "www.proff.no",
+      "via": [
+        "static"
+      ]
+    },
+    {
+      "host": "www.youtube-nocookie.com",
       "via": [
         "static"
       ]
