@@ -263,3 +263,23 @@ test('the rekey route moves the linked sales client to the new key', async () =>
     setSwitch(false);
   }
 });
+
+test('sites made in the same millisecond get different ids, in the digits-only time form', () => {
+  writeFileSync(join(dataDir, 'sites.json'), '[]');
+  const realNow = Date.now;
+  Date.now = () => 1_800_000_000_000;
+  try {
+    const made = [];
+    for (let i = 0; i < 5; i += 1) made.push(hub.createSite({ name: `Samtidig ${i}`, domain: `same-ms-${i}.example.com` }));
+    const ids = made.map((site) => site.id);
+    assert.equal(new Set(ids).size, 5, 'every site has its own id');
+    assert.ok(ids.every((id) => /^\d+$/.test(id)), 'ids stay digits only');
+    assert.equal(ids[0], '1800000000000');
+    assert.deepEqual(ids, [...ids].sort((a, b) => Number(a) - Number(b)), 'ids rise in creation order');
+    assert.equal(hub.getAllSites().length, 5);
+    // an id already in the store (from another process) is skipped
+    assert.equal(hub.nextSiteId([{ id: '1800000000005' }, { id: '1800000000006' }]), '1800000000007');
+  } finally {
+    Date.now = realNow;
+  }
+});

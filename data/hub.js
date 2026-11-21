@@ -290,7 +290,7 @@ export function createSite({
   }
   const sites = readSites();
   const siteKey = requestedKey || generateSiteKey();
-  const id = String(Date.now());
+  const id = nextSiteId(sites);
   const plan = normalizeWebsitePlan(websitePlan);
   const nextFeatures = features ? normalizeFeatures(features) : featuresFromPlan(plan);
   const site = normalizeSite({
@@ -314,6 +314,19 @@ export function createSite({
   sites.push(site);
   writeSites(sites);
   return publicSite(site);
+}
+
+let lastSiteIdMs = 0;
+
+// A site id is the creation time in milliseconds as digits, as it always was. Two sites made in
+// the same millisecond would share one id, so the id never goes back or repeats within this
+// process and skips past any id the store already holds.
+export function nextSiteId(sites = readSites()) {
+  const taken = new Set(sites.map((s) => String(s.id)));
+  let ms = Math.max(Date.now(), lastSiteIdMs + 1);
+  while (taken.has(String(ms))) ms += 1;
+  lastSiteIdMs = ms;
+  return String(ms);
 }
 
 export function updateSite(id, patch = {}) {
