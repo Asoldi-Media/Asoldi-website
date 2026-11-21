@@ -61,3 +61,25 @@ test('pruneAllDataBackups deletes extras from an already-full folder', () => {
 test.after(() => {
   rmSync(dataDir, { recursive: true, force: true });
 });
+
+test('writes of one file in the same millisecond get separate stamped backups', () => {
+  const filePath = storage.getDataFilePath('same-ms-store.json');
+  const realNow = Date.now;
+  Date.now = () => 1_800_000_000_000;
+  try {
+    storage.writeDataJson(filePath, [{ n: 1 }], { keep: 5 });
+    storage.writeDataJson(filePath, [{ n: 2 }], { keep: 5 });
+    storage.writeDataJson(filePath, [{ n: 3 }], { keep: 5 });
+  } finally {
+    Date.now = realNow;
+  }
+  const stamped = readdirSync(join(dataDir, 'backups'))
+    .filter((name) => name.startsWith('same-ms-store.json.') && !name.endsWith('.latest.json'))
+    .sort();
+  assert.equal(stamped.length, 3, 'one backup per write');
+  assert.deepEqual(
+    stamped.map((name) => JSON.parse(readFileSync(join(dataDir, 'backups', name), 'utf8'))[0].n),
+    [1, 2, 3],
+    'each backup holds its own write, in order',
+  );
+});

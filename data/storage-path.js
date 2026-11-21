@@ -156,6 +156,25 @@ function newestStampedBackup(fileName, backupDir) {
  * - previous: the text the file held before (a caller that just read it), used instead of reading a
  *   backup to tell whether this write changed anything.
  */
+const lastBackupMs = new Map();
+
+// The stamped backup name is the time to the millisecond. Two backups of one file inside the same
+// millisecond (a store saved twice in a row) must not share a name, or the second overwrites the
+// first, so the stamp never repeats or goes back for a file in this process and skips a name
+// that already exists on disk.
+function nextBackupPath(backupDir, fileName) {
+  const key = `${backupDir}\0${fileName}`;
+  let ms = Math.max(Date.now(), (lastBackupMs.get(key) || 0) + 1);
+  let path;
+  for (;;) {
+    path = join(backupDir, `${fileName}.${new Date(ms).toISOString().replace(/[:.]/g, '-')}.json`);
+    if (!existsSync(path)) break;
+    ms += 1;
+  }
+  lastBackupMs.set(key, ms);
+  return path;
+}
+
 export function writeDataJson(filePath, data, { backupName = '', latest = true, atomic = false, keep: keepOverride, previous } = {}) {
   ensurePersistentDataDir();
   const serialized = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
@@ -185,8 +204,8 @@ export function writeDataJson(filePath, data, { backupName = '', latest = true, 
   if (latest) writeFileSync(latestPath, serialized, 'utf8');
 
   if (keep > 0 && serialized !== previousLatest) {
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    writeFileSync(join(backupDir, `${fileName}.${stamp}.json`), serialized, 'utf8');
+    const backupPath = nextBackupPath(backupDir, fileName);
+    writeFileSync(backupPath, serialized, 'utf8');
     pruneDataBackupsForFile(fileName, { keep, backupDir });
   }
 }

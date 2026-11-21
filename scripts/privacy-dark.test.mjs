@@ -126,6 +126,12 @@ function runFlow(codeRoot, settings = null, { erasedIds = [], withOutput = false
 test('with every switch off the link, unlink and ingest paths write byte-identical data to the base commit', { skip }, () => {
   const base = runFlow(baseRoot, null, { withOutput: true });
   const ours = runFlow(root, null, { withOutput: true });
+  // A stamped backup (<file>.<time>.json) is named to the millisecond. Writes of one file inside the
+  // same millisecond now keep one backup each, where the base commit kept only the last, so the number of
+  // stamped backups may differ; the data files and the .latest.json copies must still be byte-identical.
+  const withoutStamped = (files) => Object.fromEntries(Object.entries(files).filter(([name]) => !/^backups\/.+\.\d{4}-\d\d-\d\dT[\d-]+Z\.json$/.test(name)));
+  base.files = withoutStamped(base.files);
+  ours.files = withoutStamped(ours.files);
   assert.deepEqual(Object.keys(ours.files).sort(), Object.keys(base.files).sort(), 'the same files');
   for (const [name, body] of Object.entries(base.files)) assert.equal(ours.files[name], body, `${name} is byte-identical`);
   assert.ok(Object.keys(base.files).includes('sales-clients.json'));
