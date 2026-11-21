@@ -437,6 +437,47 @@ test('two processes signing one client at once yield one site, one plan entry an
   }
 });
 
+test('a second process reading the sales store waits for the lock before it migrates old rows, and saves each row once', { timeout: 60_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'asoldi-sales-migrate-'));
+  try {
+    const rows = JSON.parse(readFileSync(join(SEED_DIR, 'sales-clients.json'), 'utf8'));
+    assert.ok(rows.length > 1);
+    for (const row of rows) delete row.salesMigrations;
+    const file = join(dir, 'sales-clients.json');
+    writeFileSync(file, JSON.stringify(rows, null, 2));
+    const child = spawn(process.execPath, [join(HERE, 'fixtures', 'sales-migration-child.mjs')], { cwd: dir, env: { ...process.env, APP_DATA_DIR: dir, DATA_DIR: '' } });
+    let out = '';
+    let err = '';
+    child.stdout.on('data', (chunk) => { out += chunk; });
+    child.stderr.on('data', (chunk) => { err += chunk; });
+    const closed = new Promise((resolve) => child.on('close', resolve));
+    const readyBy = Date.now() + 30_000;
+    while (!out.includes('ready') && Date.now() < readyBy) await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.ok(out.includes('ready'), `the child loaded its modules: ${err}`);
+    const startAt = Date.now() + 800;
+    child.stdin.write(`${startAt}\n`);
+    while (Date.now() < startAt - 300) await new Promise((resolve) => setTimeout(resolve, 20));
+    // This process holds the sales store lock across the moment the child reads: the child must not
+    // write while the lock is held.
+    const { withFileLock } = await import('../data/atomic-json.js');
+    const during = withFileLock(file, () => {
+      const sleeper = new Int32Array(new SharedArrayBuffer(4));
+      Atomics.wait(sleeper, 0, 0, 1200);
+      return readFileSync(file, 'utf8');
+    });
+    assert.equal(JSON.parse(during).filter((row) => row.salesMigrations?.meetingHeldOrphansV1).length, 0, 'nothing was migrated while another process held the lock');
+    assert.equal(await closed, 0, err);
+    const result = JSON.parse(out.trim().split('\n').pop());
+    assert.equal(result.count, rows.length);
+    const after = JSON.parse(readFileSync(file, 'utf8'));
+    assert.equal(after.length, rows.length);
+    assert.ok(after.every((row) => row.salesMigrations?.meetingHeldOrphansV1), 'every row carries the migration mark afterwards');
+    assert.equal(existsSync(`${file}.lock`), false, 'the lock is released');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // ---------------------------------------------------------------- another client's site
 
 const seededSite = (id) => JSON.parse(readFileSync(join(SEED_DIR, 'sites.json'), 'utf8')).find((site) => site.id === id);

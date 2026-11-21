@@ -1,5 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, statSync } from 'fs';
 import { getDataFilePath, ensurePersistentDataDir, writeDataJson } from './storage-path.js';
+import { withFileLock } from './atomic-json.js';
 import { DEVELOPMENT_KEYS, normalizeDevelopment } from '../lib/development-phase.js';
 import { normalizeStoredWebsiteEmail } from '../lib/sales-website-email.js';
 import {
@@ -270,7 +271,8 @@ export function noteSalesStoreReplaced() {
 function writeSalesFile(list) {
   salesRevision += 1;
   ensureDataDir();
-  writeDataJson(SALES_PATH, list);
+  // Atomic: a reader in another process sees the old file or the new one, never half of it.
+  writeDataJson(SALES_PATH, list, { atomic: true });
 }
 
 function emptyReminders() {
@@ -895,9 +897,9 @@ function normalizeSalesClient(raw = {}) {
   return client;
 }
 
-function readState() {
-  const previous = readSalesFile();
-  const list = previous.map(normalizeSalesClient);
+// Whether the stored rows differ from their normalized form in a way that must be saved: the one-time
+// meeting-held migration, the one-month follow-up for won clients, and the inbox meet-link merge.
+function storedRowsNeedWrite(previous, list) {
   const needsOrphanWrite = previous.some((raw) => !raw?.salesMigrations?.meetingHeldOrphansV1);
   const needsFollowUpWrite = previous.some((raw, index) => {
     if (!clientIsSalesWin(list[index])) return false;
@@ -910,10 +912,22 @@ function readState() {
     return firefliesMeetLinksDiffer(before.confirmedMeetLink, after.confirmedMeetLink)
       || firefliesMeetLinksDiffer(before.meetLink, after.meetLink);
   });
-  if (previous.length && (needsOrphanWrite || needsFollowUpWrite || needsInboxMeetWrite)) {
-    writeSalesFile(list);
-  }
-  return list;
+  return previous.length > 0 && (needsOrphanWrite || needsFollowUpWrite || needsInboxMeetWrite);
+}
+
+function readState() {
+  const previous = readSalesFile();
+  const list = previous.map(normalizeSalesClient);
+  if (!storedRowsNeedWrite(previous, list)) return list;
+  // The migration write happens under the file lock and from a fresh read, so a process that
+  // saved something in between is never overwritten with the older rows read above, and two
+  // processes migrating at once do it once.
+  return withFileLock(SALES_PATH, () => {
+    const fresh = readSalesFile();
+    const freshList = fresh.map(normalizeSalesClient);
+    if (storedRowsNeedWrite(fresh, freshList)) writeSalesFile(freshList);
+    return freshList;
+  });
 }
 
 function writeState(items) {
