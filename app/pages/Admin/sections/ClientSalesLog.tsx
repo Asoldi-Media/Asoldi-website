@@ -119,7 +119,7 @@ export function ClientSalesLog({
               <div className="mt-0.5 text-sm text-white truncate">{row.name}</div>
             )}
             {row.text ? (
-              <p className={`text-[12px] text-gray-300 whitespace-pre-wrap break-words ${row.kind === 'note' ? 'mt-0.5 text-sm text-white' : 'mt-1'}`}>{row.text}</p>
+              <p className={`whitespace-pre-wrap break-words ${row.kind === 'note' ? 'mt-0.5 text-sm text-white' : 'mt-1 text-[12px] text-gray-300'}`}>{row.text}</p>
             ) : null}
           </div>
         ))}
