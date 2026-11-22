@@ -182,6 +182,7 @@ import {
   buildSalesCalendarInvite,
 } from './lib/sales-email.js';
 import { appendActionNote, assignmentStampForOwnerChange, clientIsSalesWin, confirmationSendGaps, confirmationShouldSendOnChange, decorateNextActions, isRecordedSalesAction, meetingIsVoided, meetingTimeHasPassed, myphonerMeetingTimeAllowed, normalizeSecondaryInterest, osloWeekRange, resolveMeetingAtOnMyphonerMerge, resolveMeetingModeOnMyphonerMerge, sameMeetingInstant } from './lib/sales-next-actions.js';
+import { parseWorkshopTimeHeuristic } from './lib/workshop-time-parse.js';
 import { isPlaceholderMeetingId, meetingHasOfferTalk, normalizeOfferMeetingIds, offerAutoFillDecision, seedOfferMeetingIds, selectOfferMeetingId } from './lib/offer-meetings.js';
 import { normalizeStoredWebsiteEmail, resolveWebsiteEmail } from './lib/sales-website-email.js';
 import { extractBookingFromLead, salesBookingFacts } from './lib/sales-booking-facts.js';
@@ -3372,11 +3373,22 @@ function buildIsoForLocalTimeInTimeZone({ year = 0, month = 0, day = 0, hour = 0
   return adjusted.toISOString();
 }
 
-function parseMyphonerMeetingAtFromFreeText(text = '', fallbackYear = 0) {
+function parseMyphonerMeetingAtNow(nowHint) {
+  if (nowHint instanceof Date && Number.isFinite(nowHint.getTime())) return nowHint;
+  if (typeof nowHint === 'number' && nowHint > 1970 && nowHint < 3000) return new Date();
+  const parsed = new Date(nowHint);
+  if (Number.isFinite(parsed.getTime())) return parsed;
+  return new Date();
+}
+
+function parseMyphonerMeetingAtFromFreeText(text = '', nowHint = new Date()) {
   const raw = String(text ?? '').replace(/\uFFFD/g, '').trim();
   if (!raw) return '';
+  const now = parseMyphonerMeetingAtNow(nowHint);
+  const heuristic = parseWorkshopTimeHeuristic(raw, { now });
+  if (heuristic?.dueAt) return heuristic.dueAt;
   const pattern = /(?:^|[\s,;:-])(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?(?:\s+|[^\d]{0,12})(\d{1,2})[:.](\d{2})(?!\d)/gim;
-  const inferredYear = Number(fallbackYear) > 1970 ? Number(fallbackYear) : new Date().getUTCFullYear();
+  const inferredYear = now.getUTCFullYear();
   for (const match of raw.matchAll(pattern)) {
     const day = Number(match[1]);
     const month = Number(match[2]);
@@ -3511,7 +3523,13 @@ function parseMyphonerMeetingAt(lead = {}, leadDataMap = new Map()) {
     if (iso) return iso;
   }
   const commentText = resolveLeadCommentText(source, leadDataMap, candidates);
-  const freeTextIso = parseMyphonerMeetingAtFromFreeText(commentText, new Date().getUTCFullYear());
+  const bookedHint = myphonerApi.parseMyPhonerDateToIso(
+    source.last_event?.created_at || source.last_action_or_note?.created_at || source.updated_at
+  );
+  const freeTextIso = parseMyphonerMeetingAtFromFreeText(
+    commentText,
+    bookedHint ? new Date(bookedHint) : new Date()
+  );
   if (freeTextIso) return freeTextIso;
   return '';
 }
@@ -22180,6 +22198,12 @@ async function backfillSalesBookingFacts({ force = false } = {}) {
       let listName = sanitizeText(my.listName);
       let listId = sanitizeText(my.listId);
       let meetingAt = sanitizeText(client.meetingAt);
+      if (!meetingAt) {
+        meetingAt = sanitizeText(parseMyphonerMeetingAtFromFreeText(
+          my.winnerComment,
+          bookedAt || client.createdAt || new Date()
+        ));
+      }
       const leadId = sanitizeText(my.leadId);
       const missing = () => !(bookedByEmail || bookedByName) || !bookedAt || !listName || (!meetingAt && !voided);
       let fetchFailed = false;
@@ -22233,9 +22257,14 @@ async function backfillSalesBookingFacts({ force = false } = {}) {
       if (listId && listId !== sanitizeText(my.listId)) myphonerPatch.listId = listId;
       const patch = { salesMigrations: { bookingFactsV1: true, bookingFactsV2: true } };
       if (Object.keys(myphonerPatch).length) patch.myphoner = myphonerPatch;
-      if (!sanitizeText(client.meetingAt) && meetingAt && myphonerMeetingTimeAllowed(client, meetingAt)) {
+      if (
+        !sanitizeText(client.meetingAt)
+        && meetingAt
+        && myphonerMeetingTimeAllowed(client, meetingAt, { winnerAt: bookedAt || my.lastWinnerWebhookAt })
+      ) {
         patch.meetingAt = meetingAt;
         patch.agreedTime = true;
+        if (!sanitizeText(client.meetingAtSource)) patch.meetingAtSource = 'myphoner';
       }
       patches.push({ id: client.id, patch });
     }

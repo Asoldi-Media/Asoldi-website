@@ -23,6 +23,15 @@ const FRI = new Date('2026-10-30T09:00:00.000Z');
 const cet = (ymd, hh, mm = 0) => new Date(`${ymd}T${String(hh - 1).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00.000Z`).toISOString();
 const due = (text, now = WED) => parseWorkshopTimeHeuristic(text, { now })?.dueAt || '';
 
+test('MyPhoner winner comments: clock first, then weekday and day', () => {
+  const booked = new Date('2026-11-18T10:00:00.000Z');
+  assert.equal(due('E-POST: post@example.no HVOR OG NÅR MØTES: kl. 16. fredag 20.nov Hva som er mest interessant mtp. møtet: Nettside.', booked), cet('2026-11-20', 16));
+  assert.equal(due('HVOR OG NÅR MØTES: kl. 16 torsdag 19. november', booked), cet('2026-11-19', 16));
+  assert.equal(due('HVOR OG NÅR MØTES: kl. 14 onsdag 18. november', booked), cet('2026-11-18', 14));
+  assert.equal(due('HVOR OG NÅR MØTES: kl. 13 tirsdag 17. nov.', booked), cet('2026-11-17', 13));
+  assert.equal(due('HVOR OG NÅR MØTES: mandag 16. november kl 13.', booked), cet('2026-11-16', 13));
+});
+
 test('an explicit date wins over the weekday and the day of month is never the hour', () => {
   assert.equal(due('torsdag 12. november kl 14', FRI), cet('2026-11-12', 14));
   assert.equal(due('12. november kl 14', FRI), cet('2026-11-12', 14));
