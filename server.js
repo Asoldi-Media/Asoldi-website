@@ -3381,12 +3381,7 @@ function parseMyphonerMeetingAtNow(nowHint) {
   return new Date();
 }
 
-function parseMyphonerMeetingAtFromFreeText(text = '', nowHint = new Date()) {
-  const raw = String(text ?? '').replace(/\uFFFD/g, '').trim();
-  if (!raw) return '';
-  const now = parseMyphonerMeetingAtNow(nowHint);
-  const heuristic = parseWorkshopTimeHeuristic(raw, { now });
-  if (heuristic?.dueAt) return heuristic.dueAt;
+function parseMyphonerClockDatePattern(raw, now) {
   const pattern = /(?:^|[\s,;:-])(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?(?:\s+|[^\d]{0,12})(\d{1,2})[:.](\d{2})(?!\d)/gim;
   const inferredYear = now.getUTCFullYear();
   for (const match of raw.matchAll(pattern)) {
@@ -3403,6 +3398,23 @@ function parseMyphonerMeetingAtFromFreeText(text = '', nowHint = new Date()) {
     if (iso) return iso;
   }
   return '';
+}
+
+function parseMyphonerMeetingAtFromFreeText(text = '', nowHint = new Date()) {
+  const raw = String(text ?? '').replace(/\uFFFD/g, '').trim();
+  if (!raw) return '';
+  const now = parseMyphonerMeetingAtNow(nowHint);
+  // 1. The "HVOR OG NÅR MØTES:" part is the agreed meeting; other parts may name a call-back time.
+  const marker = raw.match(/HVOR\s+OG\s+N[ÅA]R\s+M[ØO]TES\s*:/i);
+  if (marker) {
+    const part = raw.slice(marker.index + marker[0].length);
+    const fromPart = parseWorkshopTimeHeuristic(part, { now })?.dueAt || parseMyphonerClockDatePattern(part, now);
+    if (fromPart) return fromPart;
+  }
+  // 2. Main's date-and-clock pattern, 3. the shared heuristic only when neither found a time.
+  const fromPattern = parseMyphonerClockDatePattern(raw, now);
+  if (fromPattern) return fromPattern;
+  return parseWorkshopTimeHeuristic(raw, { now })?.dueAt || '';
 }
 
 function flattenMyphonerLeadDataValue(value, depth = 0) {
@@ -3523,7 +3535,8 @@ function parseMyphonerMeetingAt(lead = {}, leadDataMap = new Map()) {
     if (iso) return iso;
   }
   const commentText = resolveLeadCommentText(source, leadDataMap, candidates);
-  const bookedHint = myphonerApi.parseMyPhonerDateToIso(
+  // Weekday-only or "i morgen" comments are read from the booking moment (the newest winner event), not the latest activity.
+  const bookedHint = latestMyphonerWinnerAt(source) || myphonerApi.parseMyPhonerDateToIso(
     source.last_event?.created_at || source.last_action_or_note?.created_at || source.updated_at
   );
   const freeTextIso = parseMyphonerMeetingAtFromFreeText(

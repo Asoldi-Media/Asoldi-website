@@ -11,6 +11,7 @@ const sales = await import('../data/sales.js');
 const nextActions = await import('../lib/sales-next-actions.js');
 const playbook = await import('../lib/sales-playbook.js');
 const calendarOwner = await import('../lib/sales-calendar-owner.js');
+const { parseWorkshopTimeHeuristic } = await import('../lib/workshop-time-parse.js');
 
 const here = dirname(fileURLToPath(import.meta.url));
 const serverSrc = readFileSync(join(here, '../server.js'), 'utf8');
@@ -347,11 +348,13 @@ test('server.js reads the newest MyPhoner winner event and hands it to the merge
 });
 
 /** Real server.js backfillSalesBookingFacts; MyPhoner HTTP stubbed with a lead that still holds `scheduledFor`. */
-async function bookingBackfill(scheduledFor) {
+async function bookingBackfill(scheduledFor, { realParser = false } = {}) {
   const facts = await import('../lib/sales-booking-facts.js');
   const myphonerApi = await import('../lib/myphoner-api.js');
   const fetched = [];
-  const names = ['sanitizeText', 'normalizeEmail', 'normalizeLooseKey', 'sanitizeMyphonerFieldValue', 'pickLeadDataValue', 'parseMyphonerMeetingAt', 'backfillSalesBookingFacts'];
+  const names = ['sanitizeText', 'normalizeEmail', 'normalizeLooseKey', 'sanitizeMyphonerFieldValue', 'pickLeadDataValue', 'latestMyphonerWinnerAt', 'parseMyphonerMeetingAt', 'backfillSalesBookingFacts'];
+  const parserNames = ['parseMyphonerMeetingAtNow', 'getUtcOffsetMinutesForTimeZone', 'buildIsoForLocalTimeInTimeZone', 'parseMyphonerClockDatePattern', 'parseMyphonerMeetingAtFromFreeText'];
+  if (realParser) names.unshift(...parserNames.filter((name) => serverSrc.includes(`function ${name}(`)));
   const fns = loadServerFunctions(names, {
     salesBookingBackfillRunning: false,
     store: { getAllUsers: async () => [] },
@@ -372,7 +375,7 @@ async function bookingBackfill(scheduledFor) {
     getLeadDataMap: () => new Map(),
     isLikelyMissingMyphonerValue: () => false,
     resolveLeadCommentText: () => '',
-    parseMyphonerMeetingAtFromFreeText: () => '',
+    ...(realParser ? { parseWorkshopTimeHeuristic, SALES_MEETING_TIMEZONE: 'Europe/Oslo' } : { parseMyphonerMeetingAtFromFreeText: () => '' }),
     console: { log() {}, warn() {}, error() {} },
   });
   return { fetched, run: fns.backfillSalesBookingFacts };
@@ -412,6 +415,62 @@ test('startup booking backfill never brings back a voided meeting time from the 
   assert.ok(fetched.includes('L-void-2'));
   assert.equal(sales.getSalesClientById(control.id).meetingAt, T1, 'control: the backfill still fills a missing time');
   assert.equal(sales.getSalesClientById(control.id).agreedTime, true);
+});
+
+test('startup booking backfill reads the agreed time from the real comment parser, relative to the booking', async () => {
+  const myphoner = {
+    leadId: 'L-wire',
+    listName: 'Frisører',
+    bookedByEmail: 'caller@asoldi.com',
+    bookedAt: '2026-11-18T10:00:00.000Z',
+  };
+  let leadSeq = 0;
+  const blank = (comment) => {
+    leadSeq += 1;
+    const card = seedConfirmed({ meetingAtSource: '', myphoner: { ...myphoner, leadId: `L-wire-${leadSeq}`, winnerComment: comment } });
+    sales.updateSalesClient(card.id, { agreedTime: false, meetingAt: '' });
+    return card;
+  };
+  const owner = blank('E-POST: post@example.no HVOR OG NÅR MØTES: kl. 16. fredag 20.nov Hva som er mest interessant: Nettside.');
+  const callback = blank('Ring meg fredag kl 10 for å bekrefte. HVOR OG NÅR MØTES: 24.11 kl 13:00');
+  const noTime = blank('Interessert i ny nettside, ring igjen senere.');
+  const voidedCard = blank('HVOR OG NÅR MØTES: kl. 16. fredag 20.nov');
+  sales.voidSalesMeetingTime(voidedCard.id, { nowMs: Date.parse('2026-11-18T11:00:00.000Z') });
+
+  const { fetched, run } = await bookingBackfill('', { realParser: true });
+  await run();
+
+  const got = sales.getSalesClientById(owner.id);
+  assert.equal(got.meetingAt, '2026-11-20T15:00:00.000Z', 'Fri 20 Nov 16:00 Oslo');
+  assert.equal(got.agreedTime, true);
+  assert.equal(got.meetingAtSource, 'myphoner');
+  assert.deepEqual(fetched.filter((id) => id === owner.myphoner.leadId || id === callback.myphoner.leadId || id === voidedCard.myphoner.leadId), [], 'no lead is fetched when the comment gives the time (or the card is voided)');
+  const cb = sales.getSalesClientById(callback.id);
+  assert.equal(cb.meetingAt, '2026-11-24T12:00:00.000Z', 'Tue 24 Nov 13:00 Oslo, not the call-back time');
+  assert.equal(cb.meetingAtSource, 'myphoner');
+  assert.equal(sales.getSalesClientById(noTime.id).meetingAt, '');
+  assert.equal(sales.getSalesClientById(noTime.id).agreedTime, false);
+  assert.equal(sales.getSalesClientById(voidedCard.id).meetingAt, '', 'a voided card gets no time');
+  assert.equal(sales.getSalesClientById(voidedCard.id).agreedTime, false);
+});
+
+test('a weekday-only comment is read from the winner event, not from later lead activity', async () => {
+  const myphonerApi = await import('../lib/myphoner-api.js');
+  const names = ['sanitizeText', 'parseMyphonerMeetingAtNow', 'getUtcOffsetMinutesForTimeZone', 'buildIsoForLocalTimeInTimeZone', 'parseMyphonerClockDatePattern', 'parseMyphonerMeetingAtFromFreeText', 'latestMyphonerWinnerAt', 'parseMyphonerMeetingAt'];
+  const fns = loadServerFunctions(names, {
+    myphonerApi,
+    parseWorkshopTimeHeuristic,
+    SALES_MEETING_TIMEZONE: 'Europe/Oslo',
+    pickLeadDataValue: () => '',
+    resolveLeadCommentText: (lead) => lead.comment,
+  });
+  const lead = {
+    comment: 'HVOR OG NÅR MØTES: torsdag kl 14',
+    events: [{ kind: 'winner', created_at: '2026-11-18T10:00:00Z' }],
+    updated_at: '2026-12-02T09:00:00Z',
+  };
+  // Booked Wed 18 Nov: "torsdag" is Thu 19 Nov 14:00 Oslo, not a day in December.
+  assert.equal(fns.parseMyphonerMeetingAt(lead, new Map()), '2026-11-19T13:00:00.000Z');
 });
 
 test('isCancelledMeetingTime only matches a stored cancel marker', () => {
