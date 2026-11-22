@@ -3409,7 +3409,7 @@ function parseMyphonerMeetingAtFromFreeText(text = '', nowHint = new Date()) {
   if (marker) {
     const part = raw.slice(marker.index + marker[0].length);
     const fromPart = parseWorkshopTimeHeuristic(part, { now })?.dueAt || parseMyphonerClockDatePattern(part, now);
-    if (fromPart) return fromPart;
+    return fromPart || '';
   }
   // 2. Main's date-and-clock pattern, 3. the shared heuristic only when neither found a time.
   const fromPattern = parseMyphonerClockDatePattern(raw, now);

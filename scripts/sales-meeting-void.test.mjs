@@ -433,6 +433,7 @@ test('startup booking backfill reads the agreed time from the real comment parse
   };
   const owner = blank('E-POST: post@example.no HVOR OG NÅR MØTES: kl. 16. fredag 20.nov Hva som er mest interessant: Nettside.');
   const callback = blank('Ring meg fredag kl 10 for å bekrefte. HVOR OG NÅR MØTES: 24.11 kl 13:00');
+  const phoneOnly = blank('Ring meg fredag kl 10. HVOR OG NÅR MØTES: avtales på telefon');
   const noTime = blank('Interessert i ny nettside, ring igjen senere.');
   const voidedCard = blank('HVOR OG NÅR MØTES: kl. 16. fredag 20.nov');
   sales.voidSalesMeetingTime(voidedCard.id, { nowMs: Date.parse('2026-11-18T11:00:00.000Z') });
@@ -448,6 +449,8 @@ test('startup booking backfill reads the agreed time from the real comment parse
   const cb = sales.getSalesClientById(callback.id);
   assert.equal(cb.meetingAt, '2026-11-24T12:00:00.000Z', 'Tue 24 Nov 13:00 Oslo, not the call-back time');
   assert.equal(cb.meetingAtSource, 'myphoner');
+  assert.equal(sales.getSalesClientById(phoneOnly.id).meetingAt, '', 'a meeting part without a time never falls back to the call-back time');
+  assert.equal(sales.getSalesClientById(phoneOnly.id).agreedTime, false);
   assert.equal(sales.getSalesClientById(noTime.id).meetingAt, '');
   assert.equal(sales.getSalesClientById(noTime.id).agreedTime, false);
   assert.equal(sales.getSalesClientById(voidedCard.id).meetingAt, '', 'a voided card gets no time');
