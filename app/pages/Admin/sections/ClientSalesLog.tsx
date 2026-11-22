@@ -109,16 +109,17 @@ export function ClientSalesLog({
           <p className="text-xs text-gray-500">Ingen notater eller handlinger ennå.</p>
         ) : rows.map((row) => (
           <div key={row.id} className="rounded-lg border border-white/10 bg-black/30 px-2.5 py-2">
-            <div className="flex items-baseline justify-between gap-2">
-              <div className="min-w-0 text-sm text-white truncate">{row.name}</div>
-              <div className="shrink-0 text-[11px] tabular-nums text-gray-400">{logWhen(row.at, nowMs)}</div>
+            <div className="flex items-baseline justify-between gap-2 text-[11px] text-gray-400">
+              <div className="min-w-0 truncate uppercase tracking-wide">
+                {[KIND_LABEL[row.kind] || row.kind, row.formatLabel].filter(Boolean).join(' · ')}
+              </div>
+              <div className="shrink-0 tabular-nums">{logWhen(row.at, nowMs)}</div>
             </div>
-            <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] uppercase tracking-wide text-gray-500">
-              <span>{KIND_LABEL[row.kind] || row.kind}</span>
-              {row.formatLabel ? <span>{row.formatLabel}</span> : null}
-            </div>
+            {row.kind === 'note' ? null : (
+              <div className="mt-0.5 text-sm text-white truncate">{row.name}</div>
+            )}
             {row.text ? (
-              <p className="mt-1 text-[12px] text-gray-300 whitespace-pre-wrap break-words">{row.text}</p>
+              <p className={`text-[12px] text-gray-300 whitespace-pre-wrap break-words ${row.kind === 'note' ? 'mt-0.5 text-sm text-white' : 'mt-1'}`}>{row.text}</p>
             ) : null}
           </div>
         ))}
