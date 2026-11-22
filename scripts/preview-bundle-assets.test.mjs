@@ -10,6 +10,7 @@ import {
   ensureSharedPreviewStyles,
   inlineLocalStylesheets,
   makerAssetFetchUrls,
+  persistRecoveredStylesheets,
   recoverMissingStylesheets,
   rewriteCssForStaticPreview,
 } from '../lib/preview-bundle-assets.js';
@@ -220,5 +221,27 @@ const recoveredIgnoresSvgXmlns = await recoverMissingStylesheets(
 );
 assert.match(recoveredIgnoresSvgXmlns, /font-family:Quicksand/);
 assert.doesNotMatch(recoveredIgnoresSvgXmlns, /recovered from [^"']*w3\.org/);
+
+const recoverWalk = await fs.mkdtemp(path.join(os.tmpdir(), 'recover-walk-'));
+const fetched = [];
+await fs.mkdir(path.join(recoverWalk, 'homefix-vc', 'wp-content'), { recursive: true });
+await fs.writeFile(
+  path.join(recoverWalk, 'index.html'),
+  '<html><head><style data-preview-css="theme.css">body{color:red}</style></head><body>ok</body></html>',
+  'utf8'
+);
+await fs.writeFile(
+  path.join(recoverWalk, 'homefix-vc', 'wp-content', 'page.html'),
+  '<html><head><link rel="stylesheet" href="assets/missing.css"></head><body><img src="https://demo.example.com/hero.jpg"></body></html>',
+  'utf8'
+);
+await persistRecoveredStylesheets(recoverWalk, {
+  fetchImpl: async (url) => {
+    fetched.push(String(url));
+    return { ok: false, text: async () => '', headers: { get: () => '' } };
+  },
+});
+assert.deepEqual(fetched, [], 'already-inlined preview HTML and nested clone dumps must not trigger stylesheet fetches');
+await fs.rm(recoverWalk, { recursive: true, force: true });
 
 console.log('preview-bundle-assets tests passed');
