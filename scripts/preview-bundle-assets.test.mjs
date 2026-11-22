@@ -244,4 +244,32 @@ await persistRecoveredStylesheets(recoverWalk, {
 assert.deepEqual(fetched, [], 'already-inlined preview HTML and nested clone dumps must not trigger stylesheet fetches');
 await fs.rm(recoverWalk, { recursive: true, force: true });
 
+// A real nested page (blog/<slug>/index.html) still gets its missing stylesheet repaired.
+const nestedWalk = await fs.mkdtemp(path.join(os.tmpdir(), 'recover-nested-'));
+await fs.mkdir(path.join(nestedWalk, 'blog', 'first-post'), { recursive: true });
+const nestedPage = '<html><head><link rel="stylesheet" href="assets/site.css"></head><body><img src="https://demo.example.com/hero.jpg"></body></html>';
+await fs.writeFile(path.join(nestedWalk, 'blog', 'first-post', 'index.html'), nestedPage, 'utf8');
+const nestedFetched = [];
+await persistRecoveredStylesheets(nestedWalk, {
+  fetchImpl: async (url) => {
+    nestedFetched.push(String(url));
+    return { ok: false, text: async () => '', headers: { get: () => '' } };
+  },
+});
+assert.ok(nestedFetched.length > 0, 'a real nested page must still try to recover its stylesheet');
+await fs.rm(nestedWalk, { recursive: true, force: true });
+
+// A page already marked data-preview-css="recovered" is skipped, even when its stylesheet link would be fetched.
+const markedWalk = await fs.mkdtemp(path.join(os.tmpdir(), 'recover-marked-'));
+await fs.writeFile(
+  path.join(markedWalk, 'index.html'),
+  '<html><head><style data-preview-css="recovered">body{color:red}</style></head><body><img src="https://demo.example.com/hero.jpg"></body></html>',
+  'utf8'
+);
+const markedFetched = [];
+const markedOpts = { fetchImpl: async (url) => { markedFetched.push(String(url)); return { ok: false, text: async () => '', headers: { get: () => '' } }; } };
+await persistRecoveredStylesheets(markedWalk, markedOpts);
+assert.deepEqual(markedFetched, [], 'an already recovered page must not fetch again');
+await fs.rm(markedWalk, { recursive: true, force: true });
+
 console.log('preview-bundle-assets tests passed');
