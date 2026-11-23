@@ -1260,6 +1260,7 @@ test('the calendar backfill creates no event, and so no client invitation, for a
   });
   const dry = await fns.backfillMissingSalesCalendarEvents({ dryRun: true });
   assert.deepEqual(dry.details.map((d) => d.clientId), ['cal-future']);
+  assert.equal(dry.summary.skippedPast, 1);
   await fns.backfillMissingSalesCalendarEvents({ dryRun: false });
   assert.deepEqual(calls, ['cal-future']);
 });
@@ -1281,4 +1282,32 @@ test('the meeting part ends at a real form label, never at a clock or a leading 
   ]) assert.equal(parse(`HVOR OG NÅR MØTES: ${part}`), T, part);
   assert.equal(parse('HVOR OG NÅR MØTES: avtales senere Hva som er mest interessant: Nettside. fredag kl 10'), '');
   assert.equal(parse('HVOR OG NÅR MØTES: avtales senere TELEFON: ring fredag kl 10'), '');
+});
+
+test('a form label after the marker ends the meeting part, whatever follows it; only meeting labels are skipped', async () => {
+  const names = ['sanitizeText', 'parseMyphonerMeetingAtNow', 'getUtcOffsetMinutesForTimeZone', 'buildIsoForLocalTimeInTimeZone', 'parseMyphonerClockDatePattern', 'parseMyphonerMeetingAtFromFreeText'];
+  const fns = loadServerFunctions(names, { parseWorkshopTimeHeuristic, SALES_MEETING_TIMEZONE: 'Europe/Oslo' });
+  const parse = (text) => fns.parseMyphonerMeetingAtFromFreeText(text, '2026-11-18T10:00:00.000Z');
+  const M = 'HVOR OG NÅR MØTES:';
+  const none = [
+    `${M} Hva som er mest interessant mtp. møtet: Nettside. Ring tilbake fredag kl 10`,
+    `${M} avtales senere TLF: 98765432 ring fredag kl 10`,
+    `${M} avtales senere TELEFON: 98765432 ring fredag kl 10`,
+    `${M} MOBIL: 98765432. Ring torsdag kl 12`,
+    `${M} ORGNR: 912345678. ring meg fredag kl 9`,
+    `${M} E-POST: x@example.no ring fredag kl 10`,
+    `${M}\n\nE-POST: x@example.no ring fredag kl 10`,
+  ];
+  for (const text of none) assert.equal(parse(text), '', text);
+  assert.equal(parse(`${M} DATO: 20.11 TID: 16:00`), '2026-11-20T15:00:00.000Z');
+  assert.equal(parse(`${M} fredag 20.11 KLOKKA: 16:00`), '2026-11-20T15:00:00.000Z');
+});
+
+test('a past comment time does not stop the lead fetch, so a later lead booking is still written', async () => {
+  const card = seedConfirmed({ meetingAtSource: '', myphoner: { leadId: 'L-past-fetch', listName: 'Frisører', bookedByEmail: 'caller@asoldi.com', bookedAt: '2026-11-18T10:00:00.000Z', winnerComment: 'HVOR OG NÅR MØTES: 20.11 kl 16:00' } });
+  sales.updateSalesClient(card.id, { agreedTime: false, meetingAt: '' });
+  const { fetched, run } = await bookingBackfill('2026-12-02 13:00:00 UTC', { realParser: true, nowMs: Date.parse('2026-11-25T09:00:00.000Z') });
+  await run({ force: true });
+  assert.ok(fetched.includes('L-past-fetch'), 'the lead is fetched');
+  assert.equal(sales.getSalesClientById(card.id).meetingAt, '2026-12-02T13:00:00.000Z');
 });

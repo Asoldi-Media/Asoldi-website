@@ -3408,9 +3408,10 @@ function parseMyphonerMeetingAtFromFreeText(text = '', nowHint = new Date()) {
   const marker = raw.match(/HVOR\s+OG\s+N[ÅA]R\s+M[ØO]TES\s*:/i);
   if (marker) {
     let part = raw.slice(marker.index + marker[0].length);
-    // A label ends with a colon that no digit follows ("KL 16:00" and "KL: 16:00" are times); a label right after the marker is part of the answer.
-    for (const label of part.matchAll(/(?:^|\s)(?:[Hh][Vv][Aa]\s+som\s+er\b[^:\n]{0,80}|[A-ZÆØÅ][A-ZÆØÅ0-9 \-/]{1,40}):(?!\s*\d)/g)) {
-      if (!part.slice(0, label.index).trim()) continue;
+    // A label ends with a colon that no clock or date follows ("KL 16:00", "KL: 16:00" are times; "TLF: 98765432" is a label).
+    // Right after the marker only a label that names part of the meeting (TID, DATO, STED ...) belongs to the answer.
+    for (const label of part.matchAll(/(?:^|\s)((?:[Hh][Vv][Aa]\s+som\s+er\b[^:\n]{0,80})|[A-ZÆØÅ][A-ZÆØÅ0-9 \-/]{1,40}):(?!\s*\d{1,2}(?:[:.]\d{1,2})?(?!\d))/g)) {
+      if (!part.slice(0, label.index).trim() && /^(?:TID|DATO|DAG|KL|KLOKKA|KLOKKEN|STED|ADRESSE|M[ØO]TESTED)$/i.test(label[1].trim())) continue;
       part = part.slice(0, label.index);
       break;
     }
@@ -9331,6 +9332,7 @@ async function backfillMissingSalesCalendarEvents({
     warningReasons: {},
     skippedHasEvent: 0,
     skippedNoSchedule: 0,
+    skippedPast: 0,
     skippedUnassigned: 0,
     skippedCap: 0,
     repaired: 0,
@@ -9374,6 +9376,7 @@ async function backfillMissingSalesCalendarEvents({
     const needsOwnerMeet = repairOwnerMeet && salesClientNeedsOwnerMeetBackfill(client);
     if (!needsCreate && !needsRepair && !needsMail && !needsOwnerMeet) {
       if (hasEvent) summary.skippedHasEvent += 1;
+      else if (meetingTimeHasPassed(client)) summary.skippedPast += 1;
       if (thankYouSent) summary.alreadyConfirmed += 1;
       continue;
     }
@@ -22221,6 +22224,8 @@ async function backfillSalesBookingFacts({ force = false } = {}) {
           my.winnerComment,
           bookedAt || client.createdAt || new Date()
         ));
+        // A comment time that has passed is no answer: the lead may still hold a later booking.
+        if (meetingAt && Date.parse(meetingAt) <= Date.now()) meetingAt = '';
       }
       const leadId = sanitizeText(my.leadId);
       const missing = () => !(bookedByEmail || bookedByName) || !bookedAt || !listName || (!meetingAt && !voided);
