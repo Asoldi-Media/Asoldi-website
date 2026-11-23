@@ -3404,17 +3404,17 @@ function parseMyphonerMeetingAtFromFreeText(text = '', nowHint = new Date()) {
   const raw = String(text ?? '').replace(/\uFFFD/g, '').trim();
   if (!raw) return '';
   const now = parseMyphonerMeetingAtNow(nowHint);
-  // 1. The "HVOR OG NÅR MØTES:" part is the agreed meeting; other parts may name a call-back time.
+  // 1. The "HVOR OG NÅR MØTES:" part is the agreed meeting; it ends at the next form label, and other parts may name a call-back time.
   const marker = raw.match(/HVOR\s+OG\s+N[ÅA]R\s+M[ØO]TES\s*:/i);
   if (marker) {
-    const part = raw.slice(marker.index + marker[0].length);
+    let part = raw.slice(marker.index + marker[0].length);
+    const nextLabel = part.match(/(?:^|\s)(?:[Hh][Vv][Aa]\s+som\s+er\b[^:\n]{0,80}|[A-ZÆØÅ][A-ZÆØÅ0-9 \-/]{1,40}):/);
+    if (nextLabel) part = part.slice(0, nextLabel.index);
     const fromPart = parseWorkshopTimeHeuristic(part, { now })?.dueAt || parseMyphonerClockDatePattern(part, now);
     return fromPart || '';
   }
-  // 2. Main's date-and-clock pattern, 3. the shared heuristic only when neither found a time.
-  const fromPattern = parseMyphonerClockDatePattern(raw, now);
-  if (fromPattern) return fromPattern;
-  return parseWorkshopTimeHeuristic(raw, { now })?.dueAt || '';
+  // 2. Without the marker only main's date-and-clock pattern counts (weekday or "i morgen" times are call-backs).
+  return parseMyphonerClockDatePattern(raw, now);
 }
 
 function flattenMyphonerLeadDataValue(value, depth = 0) {
@@ -22211,7 +22211,7 @@ async function backfillSalesBookingFacts({ force = false } = {}) {
       let listName = sanitizeText(my.listName);
       let listId = sanitizeText(my.listId);
       let meetingAt = sanitizeText(client.meetingAt);
-      if (!meetingAt) {
+      if (!meetingAt && !voided) {
         meetingAt = sanitizeText(parseMyphonerMeetingAtFromFreeText(
           my.winnerComment,
           bookedAt || client.createdAt || new Date()
@@ -22272,6 +22272,7 @@ async function backfillSalesBookingFacts({ force = false } = {}) {
       if (Object.keys(myphonerPatch).length) patch.myphoner = myphonerPatch;
       if (
         !sanitizeText(client.meetingAt)
+        && !voided
         && meetingAt
         && myphonerMeetingTimeAllowed(client, meetingAt, { winnerAt: bookedAt || my.lastWinnerWebhookAt })
       ) {

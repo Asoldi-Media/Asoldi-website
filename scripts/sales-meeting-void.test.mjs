@@ -1187,3 +1187,31 @@ test('the sales list cache key follows the inbox store and the live-join store',
   assert.equal((cached.match(/salesListCacheKey\(\)/g) || []).length, 2);
   assert.match(serverSrc, /import \{ inboxStoreRevision(?:, \w+)* \} from '\.\/lib\/inbox-bot\/store\.js';/);
 });
+
+test('forced booking backfill never gives a voided card a time from the comment, even when the booking is dated after the cancel', async () => {
+  const card = seedConfirmed({ meetingAtSource: '', myphoner: {
+    leadId: 'L-void-late', listName: 'Frisører', bookedByEmail: 'caller@asoldi.com',
+    bookedAt: '2026-11-19T10:00:00.000Z', winnerComment: 'HVOR OG NÅR MØTES: kl. 16. fredag 20.nov',
+  } });
+  sales.updateSalesClient(card.id, { agreedTime: false, meetingAt: '' });
+  sales.voidSalesMeetingTime(card.id, { nowMs: Date.parse('2026-11-18T11:00:00.000Z') });
+  assert.equal(nextActions.meetingIsVoided(sales.getSalesClientById(card.id)), true);
+  const { run } = await bookingBackfill('', { realParser: true });
+  await run({ force: true });
+  const after = sales.getSalesClientById(card.id);
+  assert.equal(after.meetingAt, '');
+  assert.equal(after.agreedTime, false);
+});
+
+test('the comment parser ends the meeting part at the next form label and ignores call-back times without the marker', async () => {
+  const names = ['sanitizeText', 'parseMyphonerMeetingAtNow', 'getUtcOffsetMinutesForTimeZone', 'buildIsoForLocalTimeInTimeZone', 'parseMyphonerClockDatePattern', 'parseMyphonerMeetingAtFromFreeText'];
+  const fns = loadServerFunctions(names, { parseWorkshopTimeHeuristic, SALES_MEETING_TIMEZONE: 'Europe/Oslo' });
+  const booked = '2026-11-18T10:00:00.000Z';
+  const parse = (text) => fns.parseMyphonerMeetingAtFromFreeText(text, booked);
+  assert.equal(parse('E-POST: x@example.no HVOR OG NÅR MØTES: avtales senere Hva som er mest interessant mtp. møtet: Nettside. Ring tilbake torsdag kl 12'), '');
+  assert.equal(parse('Ring meg fredag kl 10 for å bekrefte møtet'), '');
+  assert.equal(parse('Kunden vil at vi ringer i morgen kl 09, interessert i nettside'), '');
+  assert.equal(parse('HVOR OG NÅR MØTES: avtales senere TELEFON: ring fredag kl 10'), '');
+  assert.equal(parse('E-POST: post@example.no HVOR OG NÅR MØTES: kl. 16. fredag 20.nov Hva som er mest interessant: Nettside.'), '2026-11-20T15:00:00.000Z');
+  assert.equal(parse('Møtet er 24.11 kl 13:00'), '2026-11-24T12:00:00.000Z');
+});
