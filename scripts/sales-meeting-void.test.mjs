@@ -1311,3 +1311,65 @@ test('a past comment time does not stop the lead fetch, so a later lead booking 
   assert.ok(fetched.includes('L-past-fetch'), 'the lead is fetched');
   assert.equal(sales.getSalesClientById(card.id).meetingAt, '2026-12-02T13:00:00.000Z');
 });
+
+
+test('a past comment time is not re-read from the lead against its later activity', async () => {
+  const facts = await import('../lib/sales-booking-facts.js');
+  const myphonerApi = await import('../lib/myphoner-api.js');
+  const winnerText = 'HVOR OG NÅR MØTES: fredag kl 16 Hva som er mest interessant: Nettside.';
+  const card = seedConfirmed({ meetingAtSource: '', myphoner: { leadId: 'L-probe3', listName: 'Frisører', bookedByEmail: 'caller@asoldi.com', bookedAt: '2026-11-18T10:00:00.000Z', winnerComment: winnerText } });
+  sales.updateSalesClient(card.id, { agreedTime: false, meetingAt: '' });
+  const fetched = [];
+  const names = ['sanitizeText', 'normalizeEmail', 'normalizeLooseKey', 'isLikelyMissingMyphonerValue', 'sanitizeMyphonerFieldValue', 'flattenMyphonerLeadDataValue', 'getLeadDataMap', 'pickLeadDataValue', 'resolveLeadCommentText', 'latestMyphonerWinnerAt', 'parseMyphonerMeetingAtNow', 'getUtcOffsetMinutesForTimeZone', 'buildIsoForLocalTimeInTimeZone', 'parseMyphonerClockDatePattern', 'parseMyphonerMeetingAtFromFreeText', 'parseMyphonerMeetingAt', 'backfillSalesBookingFacts'];
+  const fns = loadServerFunctions(names, {
+    salesBookingBackfillRunning: false,
+    store: { getAllUsers: async () => [] },
+    sales,
+    salesBookingFacts: facts.salesBookingFacts,
+    extractBookingFromLead: facts.extractBookingFromLead,
+    meetingIsVoided: nextActions.meetingIsVoided,
+    myphonerMeetingTimeAllowed: nextActions.myphonerMeetingTimeAllowed,
+    myphonerApi: {
+      isMyPhonerConfigured: () => true,
+      fetchMyPhonerLeadById: async (id) => { fetched.push(id); return { success: true, data: { id, list_name: 'Frisører', comment: winnerText, last_event: { kind: 'call', created_at: '2026-11-24 09:00:00 UTC', comment: 'Ikke svar' } } }; },
+      unwrapMyPhonerLead: (data) => data,
+      fetchMyPhonerLeadEvents: async () => ({ success: false }),
+      fetchMyPhonerCallById: async () => ({ success: false }),
+      parseMyPhonerDateToIso: myphonerApi.parseMyPhonerDateToIso,
+    },
+    parseWorkshopTimeHeuristic,
+    SALES_MEETING_TIMEZONE: 'Europe/Oslo',
+    console: { log() {}, warn() {}, error() {} },
+  });
+  const realNow = Date.now;
+  Date.now = () => Date.parse('2026-11-25T09:00:00.000Z');
+  try { await fns.backfillSalesBookingFacts({ force: true }); } finally { Date.now = realNow; }
+  const got = sales.getSalesClientById(card.id);
+  assert.ok(fetched.includes('L-probe3'), 'the lead is fetched');
+  assert.equal(got.meetingAt, '', 'booked 18 Nov, so "fredag" is a passed day, never one counted from the later call on 24 Nov');
+  assert.equal(got.agreedTime, false);
+});
+
+test('a meeting part that is not set or asks for a call-back gives no meeting time', async () => {
+  const names = ['sanitizeText', 'parseMyphonerMeetingAtNow', 'getUtcOffsetMinutesForTimeZone', 'buildIsoForLocalTimeInTimeZone', 'parseMyphonerClockDatePattern', 'parseMyphonerMeetingAtFromFreeText'];
+  const fns = loadServerFunctions(names, { parseWorkshopTimeHeuristic, SALES_MEETING_TIMEZONE: 'Europe/Oslo' });
+  const parse = (text) => fns.parseMyphonerMeetingAtFromFreeText(text, '2026-11-18T10:00:00.000Z');
+  const callbacks = [
+  "HVOR OG NÅR MØTES: avtales senere. Ring tilbake torsdag kl 12",
+  "HVOR OG NÅR MØTES: ikke avtalt, ringer igjen mandag kl 10",
+  "HVOR OG NÅR MØTES: Kunden sender tidspunkt på e-post. Følg opp fredag kl 10",
+  "HVOR OG NÅR MØTES: avtales senere Tlf: 98765432 ring fredag kl 10",
+  "HVOR OG NÅR MØTES: avtales senere TLF: 98 76 54 32 ring fredag kl 10",
+  "HVOR OG NÅR MØTES: avtales senere TLF: 987 65 432 ring fredag kl 10",
+  "HVOR OG NÅR MØTES: avtales senere TLF: +47 98765432 ring fredag kl 10",
+  "HVOR OG NÅR MØTES: avtales senere ANSATTE: 5 ring fredag kl 10",
+  "HVOR OG NÅR MØTES: avtales senere BUDSJETT: 10.000 kr, ring fredag kl 10",
+  "HVOR OG NÅR MØTES: avtales senere POSTNR: 0150 ring fredag kl 10",
+  "HVOR OG NÅR MØTES: STED: avtales senere. Ring fredag kl 10",
+  "HVOR OG NÅR MØTES: TID: avtales senere TLF: 98765432 fredag kl 10",
+  "HVOR OG NÅR MØTES: DATO: avtales, KL: ring fredag kl 10",
+  "HVOR OG NÅR MØTES: kan ikke fredag kl 16, ring mandag kl 10"
+];
+  for (const text of callbacks) assert.equal(parse(text), '', text);
+  assert.equal(parse('HVOR OG NÅR MØTES: Teams 25.11 kl 14:00 (ring 24.11 kl 10 for å bekrefte)'), '2026-11-25T13:00:00.000Z');
+});

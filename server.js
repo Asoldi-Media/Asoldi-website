@@ -3415,7 +3415,9 @@ function parseMyphonerMeetingAtFromFreeText(text = '', nowHint = new Date()) {
       part = part.slice(0, label.index);
       break;
     }
-    const fromPart = parseWorkshopTimeHeuristic(part, { now })?.dueAt || parseMyphonerClockDatePattern(part, now);
+    // A part that says the time is not set, or asks for a call-back, gives only main's date-and-clock reading.
+    const unsettled = /\b(?:avtales|ikke\s+avtalt|ikke\s+bestemt|ring(?:e|er|es)?|f[øo]lg(?:e)?\s+opp|kontakt(?:es|e)?)\b/i.test(part);
+    const fromPart = (unsettled ? '' : parseWorkshopTimeHeuristic(part, { now })?.dueAt) || parseMyphonerClockDatePattern(part, now);
     return fromPart || '';
   }
   // 2. Without the marker only main's date-and-clock pattern counts (weekday or "i morgen" times are call-backs).
@@ -3516,7 +3518,7 @@ function pickMyphonerWebsiteDomainValue(lead = {}, leadDataMap = new Map()) {
   ]);
 }
 
-function parseMyphonerMeetingAt(lead = {}, leadDataMap = new Map()) {
+function parseMyphonerMeetingAt(lead = {}, leadDataMap = new Map(), bookedAtHint = '') {
   const source = lead && typeof lead === 'object' ? lead : {};
   const candidates = [
     source.scheduled_for,
@@ -3540,14 +3542,12 @@ function parseMyphonerMeetingAt(lead = {}, leadDataMap = new Map()) {
     if (iso) return iso;
   }
   const commentText = resolveLeadCommentText(source, leadDataMap, candidates);
-  // Weekday-only or "i morgen" comments are read from the booking moment (the newest winner event), not the latest activity.
-  const bookedHint = latestMyphonerWinnerAt(source) || myphonerApi.parseMyPhonerDateToIso(
-    source.last_event?.created_at || source.last_action_or_note?.created_at || source.updated_at
-  );
-  const freeTextIso = parseMyphonerMeetingAtFromFreeText(
-    commentText,
-    bookedHint ? new Date(bookedHint) : new Date()
-  );
+  // Weekday-only or "i morgen" comments are read from the booking moment: the stored booking time, else the newest winner event.
+  // Later lead activity is never the anchor; with no booking moment only main's date-and-clock pattern is read.
+  const bookedHint = myphonerApi.parseMyPhonerDateToIso(bookedAtHint) || latestMyphonerWinnerAt(source);
+  const freeTextIso = bookedHint
+    ? parseMyphonerMeetingAtFromFreeText(commentText, new Date(bookedHint))
+    : parseMyphonerClockDatePattern(commentText, new Date());
   if (freeTextIso) return freeTextIso;
   return '';
 }
@@ -22256,7 +22256,7 @@ async function backfillSalesBookingFacts({ force = false } = {}) {
           if (!bookedAt) bookedAt = sanitizeText(extracted.bookedAt);
           if (!listName && extracted.listName) listName = sanitizeText(extracted.listName);
           if (!listId && extracted.listId) listId = sanitizeText(extracted.listId);
-          if (!meetingAt && !voided) meetingAt = sanitizeText(parseMyphonerMeetingAt(lead, getLeadDataMap(lead)));
+          if (!meetingAt && !voided) meetingAt = sanitizeText(parseMyphonerMeetingAt(lead, getLeadDataMap(lead), bookedAt));
           if (!(bookedByEmail || bookedByName) && sanitizeText(my.latestCallId)) {
             const callRes = await myphonerApi.fetchMyPhonerCallById(my.latestCallId);
             if (callRes.success) {
