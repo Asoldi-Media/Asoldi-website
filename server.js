@@ -3408,8 +3408,12 @@ function parseMyphonerMeetingAtFromFreeText(text = '', nowHint = new Date()) {
   const marker = raw.match(/HVOR\s+OG\s+N[ÅA]R\s+M[ØO]TES\s*:/i);
   if (marker) {
     let part = raw.slice(marker.index + marker[0].length);
-    const nextLabel = part.match(/(?:^|\s)(?:[Hh][Vv][Aa]\s+som\s+er\b[^:\n]{0,80}|[A-ZÆØÅ][A-ZÆØÅ0-9 \-/]{1,40}):/);
-    if (nextLabel) part = part.slice(0, nextLabel.index);
+    // A label ends with a colon that no digit follows ("KL 16:00" and "KL: 16:00" are times); a label right after the marker is part of the answer.
+    for (const label of part.matchAll(/(?:^|\s)(?:[Hh][Vv][Aa]\s+som\s+er\b[^:\n]{0,80}|[A-ZÆØÅ][A-ZÆØÅ0-9 \-/]{1,40}):(?!\s*\d)/g)) {
+      if (!part.slice(0, label.index).trim()) continue;
+      part = part.slice(0, label.index);
+      break;
+    }
     const fromPart = parseWorkshopTimeHeuristic(part, { now })?.dueAt || parseMyphonerClockDatePattern(part, now);
     return fromPart || '';
   }
@@ -9363,7 +9367,8 @@ async function backfillMissingSalesCalendarEvents({
     const inWindow = salesMeetingInCalendarRepairWindow(client);
     const hostKey = sanitizeText(client?.calendar?.accountKey);
     const staleHostKey = Boolean(hostKey && hostKey !== sanitizeText(client?.ownerId));
-    const needsCreate = !hasEvent;
+    // A meeting that already happened never gets a new event (and so no Google invitation to the client).
+    const needsCreate = !hasEvent && !meetingTimeHasPassed(client);
     const needsRepair = repairUpcoming && hasEvent && inWindow && staleHostKey;
     const needsMail = sendMissingConfirmations && !thankYouSent && !meetingTimeHasPassed(client);
     const needsOwnerMeet = repairOwnerMeet && salesClientNeedsOwnerMeetBackfill(client);
@@ -22274,6 +22279,7 @@ async function backfillSalesBookingFacts({ force = false } = {}) {
         !sanitizeText(client.meetingAt)
         && !voided
         && meetingAt
+        && !(Date.parse(meetingAt) <= Date.now())
         && myphonerMeetingTimeAllowed(client, meetingAt, { winnerAt: bookedAt || my.lastWinnerWebhookAt })
       ) {
         patch.meetingAt = meetingAt;
