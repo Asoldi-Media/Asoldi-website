@@ -1313,12 +1313,12 @@ test('a past comment time does not stop the lead fetch, so a later lead booking 
 });
 
 
-test('a past comment time is not re-read from the lead against its later activity', async () => {
+async function probeLeadReread({ bookedAt, createdAt }) {
   const facts = await import('../lib/sales-booking-facts.js');
   const myphonerApi = await import('../lib/myphoner-api.js');
   const winnerText = 'HVOR OG NÅR MØTES: fredag kl 16 Hva som er mest interessant: Nettside.';
-  const card = seedConfirmed({ meetingAtSource: '', myphoner: { leadId: 'L-probe3', listName: 'Frisører', bookedByEmail: 'caller@asoldi.com', bookedAt: '2026-11-18T10:00:00.000Z', winnerComment: winnerText } });
-  sales.updateSalesClient(card.id, { agreedTime: false, meetingAt: '' });
+  const card = seedConfirmed({ meetingAtSource: '', myphoner: { leadId: 'L-probe3', listName: 'Frisører', bookedByEmail: 'caller@asoldi.com', ...(bookedAt ? { bookedAt } : {}), winnerComment: winnerText } });
+  sales.updateSalesClient(card.id, { agreedTime: false, meetingAt: '', createdAt });
   const fetched = [];
   const names = ['sanitizeText', 'normalizeEmail', 'normalizeLooseKey', 'isLikelyMissingMyphonerValue', 'sanitizeMyphonerFieldValue', 'flattenMyphonerLeadDataValue', 'getLeadDataMap', 'pickLeadDataValue', 'resolveLeadCommentText', 'latestMyphonerWinnerAt', 'parseMyphonerMeetingAtNow', 'getUtcOffsetMinutesForTimeZone', 'buildIsoForLocalTimeInTimeZone', 'parseMyphonerClockDatePattern', 'parseMyphonerMeetingAtFromFreeText', 'parseMyphonerMeetingAt', 'backfillSalesBookingFacts'];
   const fns = loadServerFunctions(names, {
@@ -1345,9 +1345,24 @@ test('a past comment time is not re-read from the lead against its later activit
   Date.now = () => Date.parse('2026-11-25T09:00:00.000Z');
   try { await fns.backfillSalesBookingFacts({ force: true }); } finally { Date.now = realNow; }
   const got = sales.getSalesClientById(card.id);
+  return { fetched, got };
+}
+
+test('a past comment time is not re-read from the lead against its later activity', async () => {
+  const { fetched, got } = await probeLeadReread({ bookedAt: '2026-11-18T10:00:00.000Z', createdAt: '2026-11-18T10:00:00.000Z' });
   assert.ok(fetched.includes('L-probe3'), 'the lead is fetched');
   assert.equal(got.meetingAt, '', 'booked 18 Nov, so "fredag" is a passed day, never one counted from the later call on 24 Nov');
   assert.equal(got.agreedTime, false);
+});
+
+test('without a stored booking time the card creation time anchors the comment, not the lead activity', async () => {
+  const { got } = await probeLeadReread({ bookedAt: '', createdAt: '2026-11-18T10:00:00.000Z' });
+  assert.equal(got.meetingAt, '');
+});
+
+test('a stored booking time that is later than the card creation never moves a relative comment time later', async () => {
+  const { got } = await probeLeadReread({ bookedAt: '2026-11-24T09:00:00.000Z', createdAt: '2026-11-18T10:00:00.000Z' });
+  assert.equal(got.meetingAt, '');
 });
 
 test('a meeting part that is not set or asks for a call-back gives no meeting time', async () => {
@@ -1372,4 +1387,21 @@ test('a meeting part that is not set or asks for a call-back gives no meeting ti
 ];
   for (const text of callbacks) assert.equal(parse(text), '', text);
   assert.equal(parse('HVOR OG NÅR MØTES: Teams 25.11 kl 14:00 (ring 24.11 kl 10 for å bekrefte)'), '2026-11-25T13:00:00.000Z');
+});
+
+test('more call-back and not-yet-sent cues give no meeting time', async () => {
+  const names = ['sanitizeText', 'parseMyphonerMeetingAtNow', 'getUtcOffsetMinutesForTimeZone', 'buildIsoForLocalTimeInTimeZone', 'parseMyphonerClockDatePattern', 'parseMyphonerMeetingAtFromFreeText'];
+  const fns = loadServerFunctions(names, { parseWorkshopTimeHeuristic, SALES_MEETING_TIMEZONE: 'Europe/Oslo' });
+  const parse = (text) => fns.parseMyphonerMeetingAtFromFreeText(text, '2026-11-18T10:00:00.000Z');
+  for (const part of [
+    'Send SMS torsdag kl 12',
+    'sjekker igjen fredag kl 10',
+    'Purre fredag kl 10',
+    'callback fredag kl 10',
+    'follow up friday at 10',
+    'frist for svar fredag kl 12',
+    'Send tilbud på mail fredag kl 10',
+    'kunden sjekker kalenderen, svar fredag kl 12',
+    'Ikke klart ennå. Prøv igjen mandag kl 10',
+  ]) assert.equal(parse(`HVOR OG NÅR MØTES: ${part}`), '', part);
 });

@@ -3416,7 +3416,7 @@ function parseMyphonerMeetingAtFromFreeText(text = '', nowHint = new Date()) {
       break;
     }
     // A part that says the time is not set, or asks for a call-back, gives only main's date-and-clock reading.
-    const unsettled = /\b(?:avtales|ikke\s+avtalt|ikke\s+bestemt|ring(?:e|er|es)?|f[øo]lg(?:e)?\s+opp|kontakt(?:es|e)?)\b/i.test(part);
+    const unsettled = /\b(?:avtales|ikke\s+avtalt|ikke\s+bestemt|ring(?:e|er|es)?|f[øo]lg(?:e)?\s+opp|kontakt(?:es|e)?|send\w*|sms|e-?post|mail|purr\w*|sjekk\w*|svar\w*|frist|pr[øo]v\w*|igjen|tilbake|call\s*back|callback|follow\s*up)\b/i.test(part);
     const fromPart = (unsettled ? '' : parseWorkshopTimeHeuristic(part, { now })?.dueAt) || parseMyphonerClockDatePattern(part, now);
     return fromPart || '';
   }
@@ -22219,11 +22219,13 @@ async function backfillSalesBookingFacts({ force = false } = {}) {
       let listName = sanitizeText(my.listName);
       let listId = sanitizeText(my.listId);
       let meetingAt = sanitizeText(client.meetingAt);
+      // Relative comment times are read from the earliest booking moment the card knows; a later anchor could only move them later.
+      const anchorMs = [my.bookedAt, client.createdAt].map((value) => Date.parse(sanitizeText(value))).filter(Number.isFinite);
+      const commentAnchor = anchorMs.length ? new Date(Math.min(...anchorMs)).toISOString() : '';
       if (!meetingAt && !voided) {
-        meetingAt = sanitizeText(parseMyphonerMeetingAtFromFreeText(
-          my.winnerComment,
-          bookedAt || client.createdAt || new Date()
-        ));
+        meetingAt = sanitizeText(commentAnchor
+          ? parseMyphonerMeetingAtFromFreeText(my.winnerComment, commentAnchor)
+          : parseMyphonerClockDatePattern(String(my.winnerComment || ''), new Date()));
         // A comment time that has passed is no answer: the lead may still hold a later booking.
         if (meetingAt && Date.parse(meetingAt) <= Date.now()) meetingAt = '';
       }
@@ -22256,7 +22258,7 @@ async function backfillSalesBookingFacts({ force = false } = {}) {
           if (!bookedAt) bookedAt = sanitizeText(extracted.bookedAt);
           if (!listName && extracted.listName) listName = sanitizeText(extracted.listName);
           if (!listId && extracted.listId) listId = sanitizeText(extracted.listId);
-          if (!meetingAt && !voided) meetingAt = sanitizeText(parseMyphonerMeetingAt(lead, getLeadDataMap(lead), bookedAt));
+          if (!meetingAt && !voided) meetingAt = sanitizeText(parseMyphonerMeetingAt(lead, getLeadDataMap(lead), commentAnchor));
           if (!(bookedByEmail || bookedByName) && sanitizeText(my.latestCallId)) {
             const callRes = await myphonerApi.fetchMyPhonerCallById(my.latestCallId);
             if (callRes.success) {
